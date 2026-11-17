@@ -1,0 +1,409 @@
+--- /dev/null
++++ b/scripts/arbiter-fp16-reference.py
+@@ -0,0 +1,234 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Independent publisher-array half recipe. No imports of Torch/ONNX/exporters.
++Torch is supplied by the actual original owner, or tiny CPU literal tests.
++"""
++import hashlib,importlib.util,json,math,pathlib,struct
++PUBLISHER_OWNER_SHA={
++ 'focus':'3b7ae63a8c514188195835f291c0ecce501ca42605354d36405c889788884580',
++ 'context':'4c6f43d0d81539cfc6bf7b6ddf5ae69273e61508d0db3d22a5e7488c60560b6b'}
++
++def need(ok,message):
++ if not ok:raise ValueError(message)
++
++def f32(value):return struct.unpack('<f',struct.pack('<f',value))[0]
++
++def checked_finite(torch,value,label):
++ need(bool(torch.isfinite(value).all().item()),'nonfinite '+label);return value
++
++def tensor_digest(value):
++ # Bounded rows avoid materializing full transposed multi-GiB matrices or bytes.
++ need(value.ndim in (1,2),'parameter digest rank differs')
++ value=value.detach();width=value.shape[1] if value.ndim==2 else 1
++ rows=max(1,(4*1024*1024)//(width*value.element_size()));hasher=hashlib.sha256()
++ for first in range(0,value.shape[0],rows):
++  chunk=value[first:first+rows].contiguous().cpu()
++  hasher.update(chunk.numpy().tobytes(order='C'))
++ return hasher.hexdigest()
++
++def freeze_reference_math(torch):
++ torch.use_deterministic_algorithms(True)
++ torch.backends.cuda.matmul.allow_tf32=False
++ torch.backends.cudnn.allow_tf32=False
++ torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction=False
++ # Current original pinned Torch exposes this separate accumulation authority.
++ need(hasattr(torch.backends.cuda.matmul,'allow_fp16_accumulation'),'missing FP16 accumulation authority')
++ torch.backends.cuda.matmul.allow_fp16_accumulation=False
++
++def rms(torch,value,scale,eps):
++ need(value.dtype==torch.float32 and scale.dtype==torch.float32,'RMS island must be FP32')
++ return (value*torch.rsqrt(value.pow(2).mean(-1,keepdim=True)+eps))*scale
++
++def rotary(torch,q,k,positions,theta):
++ need(q.dtype==k.dtype==torch.float32 and q.shape[-1]%2==0,'RoPE FP32/even head required')
++ dim=q.shape[-1]
++ inv=1.0/(theta**(torch.arange(0,dim,2,device=q.device,dtype=torch.float32)/dim))
++ # Independent mathematical construction from config/native positions, no graph constants.
++ freqs=positions.to(torch.float32).unsqueeze(-1)*inv
++ angles=torch.cat((freqs,freqs),dim=-1).unsqueeze(1)
++ cos=angles.cos();sin=angles.sin()
++ def rotate(x):return torch.cat((-x[...,dim//2:],x[...,:dim//2]),dim=-1)
++ return q*cos+rotate(q)*sin,k*cos+rotate(k)*sin
++
++def live_start(mask):
++ need(isinstance(mask,list) and mask and all(type(x) is int and x in (0,1) for x in mask),'binary mask required')
++ need(1 in mask,'all masked input forbidden');start=mask.index(1)
++ need(mask==[0]*start+[1]*(len(mask)-start),'right padding/hole forbidden');return start
++
++def causal_half_attention(torch,q,k,v,mask,query_block=64):
++ """Independent bounded FP32 causal math over half inputs, half result.
++ No native SDPA or ONNX path is called; this cannot prove actual efficient dispatch.
++ """
++ need(q.dtype==k.dtype==v.dtype==torch.float16,'attention inputs must be half')
++ for label,value in [('Q',q),('K',k),('V',v)]:checked_finite(torch,value,'half attention '+label)
++ need(q.ndim==k.ndim==v.ndim==4 and q.shape[0]==k.shape[0]==v.shape[0]==1,'batch-one attention required')
++ need(k.shape==v.shape and q.shape[2:]==k.shape[2:] and q.shape[1]%k.shape[1]==0,'GQA geometry differs')
++ need(type(query_block) is int and 0<query_block<=64 and len(mask)==q.shape[2],'bounded query block required')
++ start=live_start(mask);heads=q.shape[1];ratio=heads//k.shape[1]
++ # Consecutive repeat, not alternating/tiled KV ordering.
++ key=k[:,:,start:,:].repeat_interleave(ratio,dim=1).float()
++ value=v[:,:,start:,:].repeat_interleave(ratio,dim=1).float()
++ output=torch.zeros_like(q) # Explicit zero for all undefined padded queries.
++ live=q.shape[2]-start;key_axis=torch.arange(live,device=q.device)
++ scale=f32(q.shape[-1]**-0.5)
++ for first in range(0,live,query_block):
++  last=min(live,first+query_block);query=q[:,:,start+first:start+last,:].float()
++  scores=torch.matmul(query,key.transpose(-1,-2))*scale
++  allowed=key_axis.unsqueeze(0)<=torch.arange(first,last,device=q.device).unsqueeze(1)
++  scores=scores.masked_fill(~allowed,float('-inf'))
++  mass=torch.softmax(scores,dim=-1,dtype=torch.float32)
++  result=torch.matmul(mass,value).to(torch.float16)
++  output[:,:,start+first:start+last,:]=checked_finite(torch,result,'attention output')
++ return output
++
++def validate_native(torch,config,focus,row):
++ # Consume native fields only; do not construct, tokenize or recompute a native DTO/digest.
++ need(type(row['decision_position']) is int,'native decision dtype differs')
++ ids=row['input_ids'];mask=row['attention_mask'];positions=row['position_ids'];candidates=row['candidate_positions'];options=row['option_mask']
++ need(isinstance(ids,list) and ids and len(ids)==len(mask)==len(positions),'native tensor lengths differ')
++ need(all(type(x) is int and 0<=x<config['vocab_size'] for x in ids),'vocabulary ID differs')
++ need(positions==list(range(len(ids))) and all(type(x) is int for x in positions),'native positions differ')
++ start=live_start(mask)
++ if focus:
++  need(len(ids)==512 and row['decision_position']==511 and candidates==[2152,9693] and options==[True,True],'native Focus512/readout differs')
++ else:
++  need(start==0 and len(ids)<=8192 and row['decision_position']==len(ids)-1,'Context all-live/final decision differs')
++  need(0<len(candidates)<=8 and len(candidates)==len(options) and any(options) and all(type(x) is bool for x in options),'native option mask differs')
++  need(all(type(x) is int and 0<=x<config['vocab_size'] for x in candidates),'candidate vocabulary ID differs')
++ return ids,mask,positions,candidates,options
++
++class HalfReference:
++ def __init__(self,torch,config,publisher_state,focus,device):
++  self.torch=torch;self.config=dict(config);self.focus=focus;self.device=device
++  c=self.config;self.layers=c['num_hidden_layers'];self.hidden=c['hidden_size'];self.qheads=c['num_attention_heads'];self.kvheads=c['num_key_value_heads'];self.dim=c['head_dim'];self.intermediate=c['intermediate_size'];self.eps=c['rms_norm_eps']
++  need(c['model_type']=='qwen3' and c['hidden_act']=='silu' and c['tie_word_embeddings'] is True and not c.get('attention_bias') and not c.get('use_sliding_window') and not c.get('rope_scaling'),'unreviewed publisher architecture')
++  need(self.qheads>0 and self.kvheads>0 and self.qheads%self.kvheads==0 and self.dim>0 and self.dim%2==0 and self.eps==1e-6 and c['rope_theta']==1000000,'Qwen3 math/geometry differs')
++  expected={'embed_tokens.weight':(c['vocab_size'],self.hidden),'norm.weight':(self.hidden,)}
++  for i in range(self.layers):
++   root=f'layers.{i}.'
++   expected.update({root+'input_layernorm.weight':(self.hidden,),root+'post_attention_layernorm.weight':(self.hidden,),root+'self_attn.q_norm.weight':(self.dim,),root+'self_attn.k_norm.weight':(self.dim,)})
++   for name,shape in {'self_attn.q_proj':(self.qheads*self.dim,self.hidden),'self_attn.k_proj':(self.kvheads*self.dim,self.hidden),'self_attn.v_proj':(self.kvheads*self.dim,self.hidden),'self_attn.o_proj':(self.hidden,self.qheads*self.dim),'mlp.gate_proj':(self.intermediate,self.hidden),'mlp.up_proj':(self.intermediate,self.hidden),'mlp.down_proj':(self.hidden,self.intermediate)}.items():expected[root+name+'.weight']=shape
++  need(set(publisher_state)==set(expected),'missing/extra original publisher arrays')
++  self.weights={};self.census=[]
++  for name,value in publisher_state.items():
++   need(value.dtype==torch.float32 and tuple(value.shape)==expected[name],'original logical FP32 tensor shape/type differs: '+name)
++   checked_finite(torch,value,'original '+name)
++   protected=name.endswith(('norm.weight','layernorm.weight'))
++   rounded=value.detach().to(device=device,dtype=torch.float32 if protected else torch.float16).contiguous()
++   self.weights[name]=checked_finite(torch,rounded,'rounded '+name)
++   info={'parameter':name,'shape':list(value.shape),'protected_fp32':protected,'dtype':'float32' if protected else 'float16','original_fp32_sha256':tensor_digest(value)}
++   if name.endswith('_proj.weight'):info['original_fp32_onnx_layout_sha256']=tensor_digest(value.transpose(0,1))
++   self.census.append(info)
++  self.head=None
++  if focus:
++   need(c['vocab_size']>9693,'trained Focus rows unavailable')
++   self.head=checked_finite(torch,publisher_state['embed_tokens.weight'][[2152,9693]].detach().to(device=device,dtype=torch.float32).contiguous(),'trained Focus readout')
++ def linear(self,value,name):
++  t=self.torch;need(value.dtype==t.float32,'projection source island must be FP32')
++  half=value.to(t.float16);checked_finite(t,half,'half projection input')
++  return checked_finite(t,t.nn.functional.linear(half,self.weights[name]),'half projection output').float()
++ def forward(self,row):
++  t=self.torch;c=self.config;ids,mask,positions,candidates,options=validate_native(t,c,self.focus,row)
++  with t.inference_mode(),t.autocast(device_type=t.device(self.device).type,enabled=False):
++   token=t.tensor([ids],dtype=t.int64,device=self.device);position=t.tensor([positions],dtype=t.int64,device=self.device)
++   hidden=t.nn.functional.embedding(token,self.weights['embed_tokens.weight']).float()
++   for i in range(self.layers):
++    root=f'layers.{i}.';residual=hidden;normal=rms(t,hidden,self.weights[root+'input_layernorm.weight'],self.eps)
++    q=self.linear(normal,root+'self_attn.q_proj.weight').reshape(1,len(ids),self.qheads,self.dim)
++    k=self.linear(normal,root+'self_attn.k_proj.weight').reshape(1,len(ids),self.kvheads,self.dim)
++    v=self.linear(normal,root+'self_attn.v_proj.weight').reshape(1,len(ids),self.kvheads,self.dim).transpose(1,2)
++    q=rms(t,q,self.weights[root+'self_attn.q_norm.weight'],self.eps).transpose(1,2)
++    k=rms(t,k,self.weights[root+'self_attn.k_norm.weight'],self.eps).transpose(1,2)
++    q,k=rotary(t,q,k,position,c['rope_theta'])
++    attention=causal_half_attention(t,q.to(t.float16),k.to(t.float16),v.to(t.float16),mask).float().transpose(1,2).reshape(1,len(ids),self.qheads*self.dim)
++    hidden=residual+self.linear(attention,root+'self_attn.o_proj.weight')
++    residual=hidden;normal=rms(t,hidden,self.weights[root+'post_attention_layernorm.weight'],self.eps)
++    gate=self.linear(normal,root+'mlp.gate_proj.weight');up=self.linear(normal,root+'mlp.up_proj.weight')
++    # Independent explicit FP32 SiLU island followed by half down projection.
++    activated=gate*t.sigmoid(gate);hidden=residual+self.linear(activated*up,root+'mlp.down_proj.weight')
++    checked_finite(t,hidden,'FP32 residual')
++   hidden=rms(t,hidden,self.weights['norm.weight'],self.eps)
++   if self.focus:scores=t.nn.functional.linear(hidden[:,-1,:],self.head)
++   else:
++    decision=hidden[:,row['decision_position'],:]
++    rows=t.nn.functional.embedding(t.tensor([candidates],dtype=t.int64,device=self.device),self.weights['embed_tokens.weight']).float()
++    scores=(rows*decision[:,None,:]).sum(-1).masked_fill(~t.tensor([options],dtype=t.bool,device=self.device),-1e4)
++   checked_finite(t,scores,'FP32 scores');need(scores.dtype==t.float32,'output ABI differs')
++   return scores
++ def parameter_census(self):
++  # Invoke ONLY during an authorized actual reference run. Expected values derive
++  # exclusively from original publisher arrays, never candidate ONNX outputs.
++  rows=[]
++  for info in self.census:
++   value=self.weights[info['parameter']];row=dict(info);row['rounded_sha256']=tensor_digest(value)
++   if info['parameter'].endswith('_proj.weight'):row['onnx_transposed_sha256']=tensor_digest(value.transpose(0,1))
++   rows.append(row)
++  if self.head is not None:
++   value=self.head;rows.append({'parameter':'trained_readout_rows_2152_9693','shape':list(value.shape),'dtype':'float32','protected_fp32':True,'original_fp32_sha256':tensor_digest(value),'original_fp32_onnx_layout_sha256':tensor_digest(value.transpose(0,1)),'rounded_sha256':tensor_digest(value),'onnx_transposed_sha256':tensor_digest(value.transpose(0,1))})
++  return rows
++
++def from_authenticated_original(torch,model,owner_path,asset_root,device):
++ """Actual source adapter, held until Root permits publisher reads/reference work.
++ Original owners authenticate COMPLETE original checkpoints and publisher revision.
++ """
++ owner_path=pathlib.Path(owner_path);raw=owner_path.read_bytes();kind='focus' if model=='focus' else 'context'
++ need(hashlib.sha256(raw).hexdigest()==PUBLISHER_OWNER_SHA[kind],'original publisher owner source differs')
++ freeze_reference_math(torch)
++ spec=importlib.util.spec_from_file_location('original_qwen_publisher',owner_path);owner=importlib.util.module_from_spec(spec);spec.loader.exec_module(owner)
++ if kind=='focus':
++  owner.verify_assets();official=owner.load_official(torch,'cpu');config=official.config.to_dict();state=official.model.state_dict()
++ else:
++  need(model in ('compact','large'),'selected original model differs')
++  original,config=owner.load_authenticated(asset_root,'Qwen/Qwen3-1.7B' if model=='compact' else 'Qwen/Qwen3-4B');state=original.text.state_dict()
++ result=HalfReference(torch,config,state,kind=='focus',device)
++ return result,{'publisher_owner':{'path':str(owner_path),'sha256':PUBLISHER_OWNER_SHA[kind]},'model':model,'candidate_ONNX_used_for_expected_values':False,'logical_source_dtype':'float32','publisher_storage_dtype':'original authenticated publisher (Context BF16 expanded to FP32)','qualification':False}
++
++
++def verify_actual_half_parameters(reference,graph_path,onnx,files):
++ """Independent expected bytes -> ACTUAL candidate ranges; no inference.
++ Native owner first authenticates/holds graph+external file pins and graph math.
++ Never trust exporter per-range hashes as observations of candidate contents.
++ """
++ graph_path=pathlib.Path(graph_path);graph=onnx.load_model(str(graph_path),load_external_data=False)
++ tensors={v.name:v for v in graph.graph.initializer};nodes={n.name:n for n in graph.graph.node}
++ need(len(tensors)==len(graph.graph.initializer) and len(nodes)==len(graph.graph.node),'ambiguous actual graph')
++ census=reference.parameter_census();prefix='base' if reference.focus else 'scorer';used=set();ranges={};bindings=[]
++ for record in census:
++  name=record['parameter'];projection=name.endswith('_proj.weight');head=name=='trained_readout_rows_2152_9693'
++  if projection:
++   pieces=name.split('.');route='/'+prefix+'/layers.'+pieces[1]+'/'+pieces[2]+'/'+pieces[3]+'/MatMul'
++   need(route in nodes and nodes[route].op_type=='MatMul' and len(nodes[route].input)==2,'actual learned projection route differs')
++   initializer=nodes[route].input[1]
++  elif head:
++   route='/MatMul';need(route in nodes and nodes[route].op_type=='MatMul' and len(nodes[route].input)==2,'actual trained head differs');initializer=nodes[route].input[1]
++  else:route=None;initializer=prefix+'.'+name
++  need(initializer in tensors and initializer not in used,'missing/duplicate actual learned initializer');used.add(initializer);tensor=tensors[initializer]
++  expected_shape=list(reversed(record['shape'])) if projection or head else record['shape']
++  protected=record['protected_fp32'];expected_dtype=1 if protected else 10
++  need(list(tensor.dims)==expected_shape and tensor.data_type==expected_dtype,'actual half/protected tensor shape/dtype differs')
++  length=math.prod(expected_shape)*(4 if protected else 2)
++  if tensor.data_location==1:
++   entries={v.key:v.value for v in tensor.external_data};need(len(entries)==len(tensor.external_data) and set(entries)<= {'location','offset','length','checksum'},'external half fields differ')
++   location=entries.get('location','');need(location not in ('','.','..') and len(pathlib.Path(location).parts)==1 and ':' not in location and '\\' not in location,'unsafe actual half location')
++   path=graph_path.parent/location;need(location in files and pathlib.Path(files[location]).resolve()==path.resolve() and not path.is_symlink() and not path.is_junction(),'actual half file escaped native closure')
++   first=int(entries.get('offset','0'));declared=int(entries.get('length',str(length)));need(first>=0 and declared==length and first+length<=path.stat().st_size,'actual half range differs')
++   ranges.setdefault(path,[]).append((first,first+length));hasher=hashlib.sha256()
++   with path.open('rb') as source:
++    source.seek(first);remaining=length
++    while remaining:
++     raw=source.read(min(4*1024*1024,remaining));need(raw,'short actual half range');hasher.update(raw);remaining-=len(raw)
++   actual=hasher.hexdigest()
++  else:
++   raw=onnx.numpy_helper.to_array(tensor).tobytes(order='C');need(len(raw)==length,'inline half byte count differs');actual=hashlib.sha256(raw).hexdigest()
++  expected=record['onnx_transposed_sha256'] if projection or head else record['rounded_sha256']
++  need(actual==expected,'actual candidate bytes differ from independent publisher half recipe: '+name)
++  bindings.append({'parameter':name,'initializer':initializer,'node':route,'transposed':projection or head,'actual_initializer_sha256':actual,'independent_expected_sha256':expected,'original_fp32_sha256':record['original_fp32_sha256'],'shape':expected_shape,'dtype':record['dtype']})
++ for path,spans in ranges.items():
++  spans.sort();need(all(a[1]<=b[0] for a,b in zip(spans,spans[1:])),'overlapping actual half learned ranges')
++ # Every floating initializer is accounted for. The one exporter half-zero is a
++ # literal constant, not an extra embedding/projection or a hidden FP32 copy.
++ floating={v.name for v in graph.graph.initializer if v.data_type in (1,10)};extra=floating-used
++ if extra:
++  need(extra=={'/airk_g5/half_zero'},'unmapped floating actual initializer')
++  zero=tensors['/airk_g5/half_zero'];need(zero.data_type==10 and list(zero.dims)==[] and onnx.numpy_helper.to_array(zero).tobytes()==b'\x00\x00','half zero constant differs')
++ need(len(bindings)==len(census),'incomplete actual learned mapping')
++ return bindings
+--- /dev/null
++++ b/scripts/arbiter-fp16-reference/CONTRACT.md
+@@ -0,0 +1,19 @@
++# Independent G5 half-reference recipe
++
++Private preparation only; no selected publisher/checkpoint load, model forward, GPU/reference execution or native admission until Root releases the actual FP32 and G5 gates. Synthetic CPU-only literal controls are separate and cannot qualify a model.
++
++Only the existing authenticated original publisher owners may load actual arrays: Focus run_focus_export.py verify_assets + load_official on CPU; Context qwen3_reference_r2.py load_authenticated, strict complete index/tied-head and BF16-to-FP32 expansion. Pin their actual source hashes before invoking. Candidate ONNX graphs, exported output scores, W8-dequantized values, failed GQA/Dense or exporter conversion routines never supply expected values. Preserve existing research/model/license attribution and source receipts. This recipe has no download, tokenizer, native DTO, Profile/RuntimeManifest or qualification authority.
++
++All learned embeddings and seven projections/layer are independently rounded from original logical FP32 to half. Norm scales and Focus trained no/yes head rows2152/9693 stay finite FP32. Every learned source and rounded tensor must be finite; overflow refuses. Reject missing/extra weights, unexpected biases, unsupported rope/sliding/activation/ties, and invalid geometry. Natural publisher matrix layout is out/in; record its transpose hash separately for ONNX layout comparison without decoding ONNX outputs. Full tensor/shape/source and rounded census is required, not an FP16 label or attention-only cast.
++
++Use explicit half embedding/GEMM outputs then FP32 residual, RMSNorm epsilon1e-6, Q/K RMSNorm, SiLU/gate multiplication, noninterleaved rotate-half RoPE theta1e6 and final score arithmetic. Positions come unchanged from native compiler. Q-head width and backbone width are independent (Large Q4096 versus hidden2560). K/V heads repeat consecutively. Post-RoPE Q/K and V are half at attention entry. Independent chunked Torch FP32 QK/softmax/AV arithmetic evaluates the same causal half-input math, then rounds the attention output to half before the original FP32 output boundary. It is a reference algorithm, NOT proof of native Flash/MEA execution, latency or placement.
++
++Focus consumes the exact native three Int64 inputs, static512 left-padded nonempty suffix, original position_ids0..511 and final decision511; keep full positions during norm/RoPE before slicing the live suffix for causal reference attention. Padded query outputs are explicit zero before residual, never0*NaN. Readout is the two original FP32 head rows. Context consumes exact native six-input all-live1..8192 ABI, final decision, <=8 valid candidate vocabulary IDs and native option mask. Candidate IDs are vocabulary IDs, not token positions. Sparse rows come from the same rounded half embedding, cast only gathered rows FP32, score FP32 and retain masked -1e4.
++
++The original CompiledInput object is retained opaque and unchanged; do not rebuild a native schema, retokenize, trim, crop or fabricate a digest. Original-FP32 reference arrays may be reused only under the already reviewed exact18-row complete input/candidate/provenance equality; fresh G5 templates must repeat that full equality gate. New producer identity must truthfully state this recipe/rounding/method and preserve original producer identities for reused values. No old numeric pass, CAL/task/resource/placement/latency verdict transfers.
++
++FP32 math must disable TF32 and reduced-precision GEMM accumulation; original reference process owns startup state, environment, deadline and actual settlement. Native G5 GEMM2/debug/Flash-or-MEA math policy is a separate owner. No fake output/deadline/handle proof or within-call precision fallback. Keep frozen numeric tolerances unchanged. Actual selected-model resource bounds/CPU/GPU fit remain unknown; the8GiB export tool cap is not a full-model Torch-reference admission. Lifecycle must review actual native/reference host/device bounds and hardware claims before any selected run.
++
++Complete parameter census includes independently decoded logical original FP32 SHA and ONNX-layout FP32 SHA for every learned projection, plus rounded dtype/layout SHA. Digesting uses bounded <=4MiB contiguous row chunks, including transposed matrices; do not construct multi-GiB temporary byte arrays merely to hash. This census proves actual source/rounding correspondence only when an authorized real run emits it and native owner compares the actual exported initializer closure.
++
++The independent actual-candidate byte binder maps complete publisher parameter names to actual graph initializer consumers, reads/hashes actual half/protected ranges in bounded chunks, checks dtype/shape/no-overlap/complete floating census and compares against independently rounded publisher bytes (including transpose). Exporter-reported range digests are not accepted as observations. Actual source/graph/process fences and native graph-math admission remain with the native owner; no model inference occurs in byte binding.
+--- /dev/null
++++ b/scripts/arbiter-fp16-reference/test_reference.py
+@@ -0,0 +1,147 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Tiny CPU literals only; no selected model/checkpoint, ONNX, native or GPU."""
++import copy,hashlib,json,math,pathlib,struct,tempfile,unittest
++import torch as t
++import importlib.util
++spec=importlib.util.spec_from_file_location('airk_half_reference',pathlib.Path(__file__).resolve().parents[1]/'arbiter-fp16-reference.py')
++r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
++
++def config():return {'model_type':'qwen3','hidden_act':'silu','tie_word_embeddings':True,'attention_bias':False,'use_sliding_window':False,'rope_scaling':None,'rope_theta':1000000,'num_hidden_layers':1,'hidden_size':2,'num_attention_heads':2,'num_key_value_heads':1,'head_dim':2,'intermediate_size':3,'rms_norm_eps':1e-6,'vocab_size':10000}
++def state(c):
++ out={'embed_tokens.weight':t.zeros(c['vocab_size'],2,dtype=t.float32),'norm.weight':t.ones(2,dtype=t.float32)}
++ root='layers.0.'
++ out.update({root+'input_layernorm.weight':t.ones(2),root+'post_attention_layernorm.weight':t.ones(2),root+'self_attn.q_norm.weight':t.ones(2),root+'self_attn.k_norm.weight':t.ones(2)})
++ for n,shape in {'self_attn.q_proj':(4,2),'self_attn.k_proj':(2,2),'self_attn.v_proj':(2,2),'self_attn.o_proj':(2,4),'mlp.gate_proj':(3,2),'mlp.up_proj':(3,2),'mlp.down_proj':(2,3)}.items():out[root+n+'.weight']=t.zeros(shape)
++ out['embed_tokens.weight'][1]=t.tensor([1.,2.]);out['embed_tokens.weight'][2]=t.tensor([3.,4.]);out['embed_tokens.weight'][3]=t.tensor([5.,6.])
++ out['embed_tokens.weight'][2152]=t.tensor([3.0005,4.001]);out['embed_tokens.weight'][9693]=t.tensor([5.002,6.003])
++ return out
++
++def native(focus=False):
++ if focus:return {'prompt':'literalCPUfixture','input_ids':[0]*510+[1,1],'attention_mask':[0]*510+[1,1],'position_ids':list(range(512)),'decision_position':511,'candidate_positions':[2152,9693],'option_mask':[True,True],'input_digest':'opaque-native-control-digest'}
++ return {'prompt':'literalCPUfixture','input_ids':[1,1,1],'attention_mask':[1,1,1],'position_ids':[0,1,2],'decision_position':2,'candidate_positions':[2,3],'option_mask':[True,False],'input_digest':'opaque-native-control-digest'}
++
++class LiteralControls(unittest.TestCase):
++ @classmethod
++ def setUpClass(cls):t.set_num_threads(1)
++ def test_half_rounding_independent_bits(self):
++  values=t.tensor([0.,-0.,1.,-2.,65504.,2**-24,-2**-24,2**-25,1+2**-11,1+3*2**-11],dtype=t.float32).half()
++  self.assertEqual(values.numpy().tobytes(),bytes.fromhex('00000080003c00c0ff7b010001800000003c023c'))
++ def test_rms_fp32_scalar_oracle(self):
++  out=r.rms(t,t.tensor([3.,4.]),t.tensor([2.,3.]),1e-6)
++  expected=t.tensor([6/math.sqrt(12.5+1e-6),12/math.sqrt(12.5+1e-6)],dtype=t.float32)
++  self.assertEqual(out.dtype,t.float32);self.assertTrue(t.allclose(out,expected,rtol=0,atol=1e-6))
++ def test_rms_rejects_half_island(self):
++  with self.assertRaises(ValueError):r.rms(t,t.ones(2).half(),t.ones(2),1e-6)
++ def test_noninterleaved_rope_literal(self):
++  q=t.tensor([[[[1.,2.,3.,4.]]]]);out,_=r.rotary(t,q,q,t.tensor([[2]]),1000000)
++  angles=[2,.002,2,.002];rotated=[-3,-4,1,2];expected=t.tensor([1*math.cos(2)-3*math.sin(2),2*math.cos(.002)-4*math.sin(.002),3*math.cos(2)+math.sin(2),4*math.cos(.002)+2*math.sin(.002)])
++  self.assertTrue(t.allclose(out.flatten(),expected,rtol=0,atol=1e-6))
++ def test_positions_not_shifted_with_padding(self):
++  q=t.ones(1,1,3,2);full,_=r.rotary(t,q,q,t.tensor([[0,1,2]]),1000000)
++  self.assertAlmostEqual(full[0,0,2,0].item(),math.cos(2)-math.sin(2),places=6)
++  self.assertFalse(t.equal(full[0,0,2],full[0,0,0]))
++ def test_uniform_causal_and_consecutive_gqa_literal(self):
++  q=t.zeros(1,4,2,2,dtype=t.float16);k=t.zeros(1,2,2,2,dtype=t.float16);v=t.tensor([[[[2,6],[4,8]],[[10,20],[14,24]]]],dtype=t.float16)
++  out=r.causal_half_attention(t,q,k,v,[1,1],1)
++  expected=t.tensor([[[[2,6],[3,7]],[[2,6],[3,7]],[[10,20],[12,22]],[[10,20],[12,22]]]],dtype=t.float16)
++  self.assertTrue(t.equal(out,expected))
++ def test_left_pad_outputs_zero_and_live_causal_values(self):
++  q=t.zeros(1,2,4,2,dtype=t.float16);k=t.zeros(1,1,4,2,dtype=t.float16);v=t.tensor([[[[60000,60000],[60000,60000],[2,2],[4,4]]]],dtype=t.float16)
++  out=r.causal_half_attention(t,q,k,v,[0,0,1,1]);self.assertTrue(t.equal(out[:,:,:2],t.zeros_like(out[:,:,:2])));self.assertEqual(out[0,0,:,0].tolist(),[0,0,2,3])
++ def test_bad_masks_refuse(self):
++  q=t.zeros(1,2,3,2,dtype=t.float16);kv=t.zeros(1,1,3,2,dtype=t.float16)
++  for mask in [[0,0,0],[1,0,1],[1,1,0]]:
++   with self.subTest(mask=mask),self.assertRaises(ValueError):r.causal_half_attention(t,q,kv,kv,mask)
++ def test_nonfinite_attention_refuse(self):
++  q=t.zeros(1,2,2,2,dtype=t.float16);kv=t.zeros(1,1,2,2,dtype=t.float16);q[0,0,0,0]=float('nan')
++  with self.assertRaisesRegex(ValueError,'nonfinite'):r.causal_half_attention(t,q,kv,kv,[1,1])
++ def test_block_bound_and_half_dtype(self):
++  q=t.zeros(1,2,2,2,dtype=t.float16);kv=t.zeros(1,1,2,2,dtype=t.float16)
++  for block in [0,65]:
++   with self.assertRaises(ValueError):r.causal_half_attention(t,q,kv,kv,[1,1],block)
++  with self.assertRaises(ValueError):r.causal_half_attention(t,q.float(),kv,kv,[1,1])
++ def test_blocking_preserves_full_small_result(self):
++  q=t.tensor([[[[.5,1],[1,-1],[2,.25]],[[1,.5],[.25,2],[1,-.5]]]],dtype=t.float16);k=t.tensor([[[[1,1],[2,-1],[-1,.5]]]],dtype=t.float16);v=t.tensor([[[[2,4],[6,8],[10,12]]]],dtype=t.float16)
++  self.assertTrue(t.equal(r.causal_half_attention(t,q,k,v,[1,1,1],1),r.causal_half_attention(t,q,k,v,[1,1,1],3)))
++ def test_candidate_ids_are_vocabulary_ids(self):
++  row=native();row['candidate_positions']=[9999];row['option_mask']=[True];r.validate_native(t,config(),False,row)
++  row['candidate_positions']=[10000]
++  with self.assertRaises(ValueError):r.validate_native(t,config(),False,row)
++ def test_native_focus_positions_and_final_readout(self):
++  row=native(True);r.validate_native(t,config(),True,row);row['position_ids']=[0]*512
++  with self.assertRaises(ValueError):r.validate_native(t,config(),True,row)
++ def test_original_half_weights_all_and_norm_islands(self):
++  c=config();weights=state(c);ref=r.HalfReference(t,c,weights,False,'cpu')
++  for name,value in ref.weights.items():self.assertEqual(value.dtype,t.float32 if name.endswith(('norm.weight','layernorm.weight')) else t.float16)
++  self.assertEqual(len(ref.weights),13);self.assertEqual(tuple(ref.weights['layers.0.self_attn.q_proj.weight'].shape),(4,2))
++ def test_original_nan_inf_overflow_refuse(self):
++  c=config()
++  for key,value in [('norm.weight',float('nan')),('layers.0.self_attn.q_proj.weight',float('inf')),('embed_tokens.weight',70000.)]:
++   weights=state(c);weights[key].view(-1)[0]=value
++   with self.subTest(key=key),self.assertRaises(ValueError):r.HalfReference(t,c,weights,False,'cpu')
++ def test_missing_extra_dtype_architecture_refuse(self):
++  c=config();weights=state(c);weights['extra']=t.zeros(1)
++  with self.assertRaises(ValueError):r.HalfReference(t,c,weights,False,'cpu')
++  weights=state(c);weights['norm.weight']=weights['norm.weight'].half()
++  with self.assertRaises(ValueError):r.HalfReference(t,c,weights,False,'cpu')
++  for key,value in [('attention_bias',True),('hidden_act','gelu'),('rope_theta',10000)]:
++   changed=dict(c);changed[key]=value
++   with self.subTest(key=key),self.assertRaises(ValueError):r.HalfReference(t,changed,state(c),False,'cpu')
++ def test_complete_tiny_context_fp32_sparse_score_and_mask(self):
++  c=config();ref=r.HalfReference(t,c,state(c),False,'cpu');row=native();original=copy.deepcopy(row);out=ref.forward(row)
++  expected=(3+8)/math.sqrt(2.5+1e-6)
++  self.assertEqual(out.dtype,t.float32);self.assertAlmostEqual(out[0,0].item(),expected,places=5);self.assertEqual(out[0,1].item(),-10000);self.assertEqual(row,original)
++ def test_complete_tiny_focus_protected_head(self):
++  c=config();weights=state(c);ref=r.HalfReference(t,c,weights,True,'cpu');row=native(True);out=ref.forward(row);den=math.sqrt(2.5+1e-6)
++  expected=[(weights['embed_tokens.weight'][token,0].item()+2*weights['embed_tokens.weight'][token,1].item())/den for token in [2152,9693]]
++  for value,oracle in zip(out[0].tolist(),expected):self.assertAlmostEqual(value,oracle,places=5)
++  self.assertEqual(ref.head.dtype,t.float32);self.assertTrue(t.equal(ref.head,weights['embed_tokens.weight'][[2152,9693]]))
++ def test_census_half_transpose_independent_bytes(self):
++  c=config();weights=state(c);weights['layers.0.self_attn.q_proj.weight']=t.tensor([[1.,2.],[3.,4.],[5.,6.],[7.,8.]])
++  ref=r.HalfReference(t,c,weights,True,'cpu');census=ref.parameter_census();entry=next(x for x in census if x['parameter']=='layers.0.self_attn.q_proj.weight')
++  expected=b''.join(struct.pack('<e',v) for v in [1,3,5,7,2,4,6,8]);self.assertEqual(entry['onnx_transposed_sha256'],hashlib.sha256(expected).hexdigest());self.assertTrue(census[-1]['protected_fp32'])
++ def test_full_source_and_rounded_layout_census_literal(self):
++  c=config();weights=state(c);values=[1.0003,2.0007,3.0008,4.0002,5.001,6.002,7.003,8.001];weights['layers.0.self_attn.q_proj.weight']=t.tensor(values).reshape(4,2)
++  ref=r.HalfReference(t,c,weights,False,'cpu');entry=next(x for x in ref.parameter_census() if x['parameter']=='layers.0.self_attn.q_proj.weight');source=weights['layers.0.self_attn.q_proj.weight'].flatten().tolist();transposed=[source[i] for i in [0,2,4,6,1,3,5,7]]
++  self.assertEqual(entry['original_fp32_sha256'],hashlib.sha256(struct.pack('<8f',*source)).hexdigest())
++  self.assertEqual(entry['original_fp32_onnx_layout_sha256'],hashlib.sha256(struct.pack('<8f',*transposed)).hexdigest())
++  self.assertEqual(entry['onnx_transposed_sha256'],hashlib.sha256(struct.pack('<8e',*transposed)).hexdigest())
++ def test_untrusted_origin_refuses_before_import_or_load(self):
++  with tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).parent) as folder:
++   path=pathlib.Path(folder)/'bad.py';path.write_text('raise RuntimeError("must not execute")\n',encoding='utf-8')
++   with self.assertRaisesRegex(ValueError,'publisher owner source differs'):r.from_authenticated_original(None,'focus',path,None,'cpu')
++ def test_reference_math_flags_without_GPU_context(self):
++  self.assertFalse(t.cuda.is_initialized());r.freeze_reference_math(t);self.assertFalse(t.backends.cuda.matmul.allow_tf32);self.assertFalse(t.backends.cuda.matmul.allow_fp16_reduced_precision_reduction);self.assertFalse(t.backends.cuda.matmul.allow_fp16_accumulation);self.assertFalse(t.cuda.is_initialized())
++
++
++class ActualByteBindingControls(unittest.TestCase):
++ def candidate(self,reference,root):
++  import onnx
++  from onnx import helper as h,TensorProto as T
++  initial=[];nodes=[];offset=0;prefix='base' if reference.focus else 'scorer';blob=bytearray()
++  for i,record in enumerate(reference.parameter_census()):
++   name=record['parameter'];projection=name.endswith('_proj.weight');head=name=='trained_readout_rows_2152_9693';value=reference.head if head else reference.weights[name]
++   if projection or head:value=value.transpose(0,1)
++   raw=value.contiguous().numpy().tobytes();initializer='linear_'+str(i) if projection or head else prefix+'.'+name
++   tensor=T();tensor.name=initializer;tensor.data_type=T.FLOAT if record['protected_fp32'] else T.FLOAT16;tensor.dims.extend(list(value.shape));tensor.data_location=1
++   for key,val in [('location','weights.bin'),('offset',str(offset)),('length',str(len(raw)))]:entry=tensor.external_data.add();entry.key=key;entry.value=val
++   initial.append(tensor);blob.extend(raw);offset+=len(raw)
++   if projection:
++    parts=name.split('.');route='/'+prefix+'/layers.'+parts[1]+'/'+parts[2]+'/'+parts[3]+'/MatMul';nodes.append(h.make_node('MatMul',['x',initializer],['z'+str(i)],name=route))
++   elif head:nodes.append(h.make_node('MatMul',['x',initializer],['head'],name='/MatMul'))
++  initial.append(h.make_tensor('/airk_g5/half_zero',T.FLOAT16,[],[0]))
++  graph=h.make_model(h.make_graph(nodes,'literal-candidate',[],[],initial));path=root/'model.onnx';path.write_bytes(graph.SerializeToString());(root/'weights.bin').write_bytes(blob)
++  return onnx,path,{'weights.bin':str(root/'weights.bin')}
++ def test_complete_actual_tiny_initializer_binding(self):
++  c=config();weights=state(c);weights['layers.0.self_attn.q_proj.weight']=t.tensor([[1.,2.],[3.,4.],[5.,6.],[7.,8.]])
++  for focus in [False,True]:
++   with self.subTest(focus=focus),tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).parent) as folder:
++    reference=r.HalfReference(t,c,weights,focus,'cpu');onnx,path,files=self.candidate(reference,pathlib.Path(folder));bindings=r.verify_actual_half_parameters(reference,path,onnx,files)
++    self.assertEqual(len(bindings),14 if focus else 13);self.assertTrue(all(x['actual_initializer_sha256']==x['independent_expected_sha256'] for x in bindings))
++ def test_actual_half_byte_mutation_refuses(self):
++  reference=r.HalfReference(t,config(),state(config()),False,'cpu')
++  with tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).parent) as folder:
++   onnx,path,files=self.candidate(reference,pathlib.Path(folder));weights=pathlib.Path(files['weights.bin']);raw=bytearray(weights.read_bytes());raw[0]^=1;weights.write_bytes(raw)
++   with self.assertRaisesRegex(ValueError,'actual candidate bytes differ'):r.verify_actual_half_parameters(reference,path,onnx,files)
++
++if __name__=='__main__':unittest.main()

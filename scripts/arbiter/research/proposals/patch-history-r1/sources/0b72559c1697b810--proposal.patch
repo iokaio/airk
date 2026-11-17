@@ -1,0 +1,124 @@
+--- a/crates/airk-inference/src/inference_engine/pool/arbiter/CONTRACT.md
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/CONTRACT.md
+@@ -355,3 +355,23 @@
+ qualification-reader allocation slack only; it does not establish native model
+ fit. Original failed runs remain failures and new source/image measurements are
+ required before a new diagnostic attempt.
++
++
++The private full-model profiling diagnostic now uses measurement identity
++compact-fp32-gqa-profiled/2. Scorer::open_profiled applies only with_profiling to
++the exact unchanged ordinary open_configured builder. It never sets an optimized
++model path or save configuration, so pinned ORT uses ordinary !saving_model
++initializer removal. The sole full-model caller records optimized_save.enabled
++false, emits no optimized output record and refuses unexpected optimized files.
++Existing tiny synthetic controls retain their separate optimized-save helper
++unchanged. This removes a diagnostic-only retention mode; profiling still has
++its own overhead and actual production load fit remains unmeasured until a new
++owned run. Prior save-heavy refusals remain failures, not production OOM proof.
++
++Original120s load/score and RSS/committed/CPU/input/source/numeric limits remain.
++Actual28 CPU GQA kernels and all3 exact allocated output shapes/bytes are still
++required. Candidate structural evidence and separately actual tiny optimized
++attributes remain evidence; no full-model optimized graph/attribute snapshot is
++claimed in /2. No task/model/release qualification is granted. Removing the old
++save-heavy helper is conditioned on its single caller migration and clean
++scoped compilation; immutable old image/run evidence remains preserved.
+--- a/crates/airk-retrieval/src/arbiter/runtime.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime.rs
+@@ -331,54 +331,17 @@
+     pub fn open(profile: ExecutionProfile, source: &dyn AssetSource) -> Result<Self> {
+         Self::open_configured(profile, source, Ok)
+     }
++    /// Private profiling uses ordinary production initializer retention.
++    /// This setter adds kernel events only; no optimized model is requested.
+     #[cfg(any(test, feature = "test-support"))]
+     pub fn open_profiled(
+         profile: ExecutionProfile,
+         source: &dyn AssetSource,
+         profiling_prefix: &std::path::Path,
+-        optimized_model: &std::path::Path,
+     ) -> Result<Self> {
+-        // Only this private profiler serializes an optimized graph. Ordinary
+-        // open(None-equivalent) keeps its exact builder and does not save.
+-        let external = optimized_model.with_extension("weights.bin");
+-        ensure!(
+-            optimized_model
+-                .parent()
+-                .is_some_and(std::path::Path::is_dir)
+-                && !optimized_model.exists()
+-                && !external.exists(),
+-            "fresh optimized graph/external weights paths required"
+-        );
+-        let external_name = external
+-            .file_name()
+-            .and_then(|s| s.to_str())
+-            .context("UTF-8 optimized external weights basename required")?;
+-        let scorer = Self::open_configured(profile, source, |builder| {
+-            Ok(builder
+-                .with_profiling(profiling_prefix)?
+-                .with_config_entry(
+-                    "session.optimized_model_external_initializers_file_name",
+-                    external_name,
+-                )?
+-                .with_config_entry(
+-                    "session.optimized_model_external_initializers_min_size_in_bytes",
+-                    "1024",
+-                )?
+-                .with_optimized_model_path(optimized_model)?)
+-        })?;
+-        // Saving remains inside this original load operation. The owned caller
+-        // must also observe these same live output bounds during FFI save.
+-        let graph_bytes = std::fs::metadata(optimized_model)?.len();
+-        let weights_bytes = std::fs::metadata(&external)?.len();
+-        ensure!(
+-            graph_bytes > 0 && graph_bytes <= 64 * 1024 * 1024,
+-            "diagnostic optimized graph output bound exceeded"
+-        );
+-        ensure!(
+-            weights_bytes > 0 && weights_bytes <= 8 * 1024 * 1024 * 1024,
+-            "diagnostic optimized external weights output bound exceeded"
+-        );
+-        Ok(scorer)
++        Self::open_configured(profile, source, |builder| {
++            Ok(builder.with_profiling(profiling_prefix)?)
++        })
+     }
+     fn open_configured(
+         profile: ExecutionProfile,
+--- a/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/attention_diagnostic.rs
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/attention_diagnostic.rs
+@@ -125,7 +125,8 @@
+         "cpu_fit":profile.cpu_fit,"target":current_target(),"isa":isa(),"process_id":std::process::id(),
+         "execution_user":airk_ipc::endpoint::current_user()?,"native_binary_sha256":binary_sha256,
+         "measurement_identity":"native-original-operation-start-to-post-end-retention/1",
+-        "diagnostic_measurement_identity":"compact-fp32-gqa-profiled/1","profiling_enabled":true,
++        "diagnostic_measurement_identity":"compact-fp32-gqa-profiled/2","profiling_enabled":true,
++        "optimized_save":{"enabled":false,"scope":"ordinary production initializer retention; profiling events only; no full-model optimized snapshot"},
+         "operation_journal":output.with_extension("operations.jsonl"),"rows":[],
+         "reference_scope":"original-publisher numeric diagnostic only; old same-artifact custody is NOT new-graph proof"});
+     flush(&mut file, &receipt)?;
+@@ -146,11 +147,7 @@
+     let result=owner.run(||->Result<()> {
+         verify_files(&files,&profile)?;
+         let loaded=operations.observe(operation::Kind::Load,0,None,||Scorer::open_profiled(
+-            ExecutionProfile::for_qualification(profile.clone())?,&files,&profile_prefix,&optimized))?;
+-        receipt["optimized_save"] = json!({"mode":"externalized-injected-initializers",
+-            "graph_limit_bytes":67108864u64,"weights_limit_bytes":8589934592u64,
+-            "external_path":optimized.with_extension("weights.bin"),
+-            "scope":"save included in original load deadline/RSS; fresh output watchdog required"});
++            ExecutionProfile::for_qualification(profile.clone())?,&files,&profile_prefix))?;
+         receipt["load_us"]=json!(loaded.elapsed_us);
+         receipt["load_peak_process_rss_bytes"]=json!(peak_rss());flush(&mut file,&receipt)?;
+         ensure!(loaded.within_deadline,"original diagnostic load deadline exceeded");
+@@ -171,7 +168,9 @@
+             (Err(native),Ok(path))=>{receipt["profiling_path"]=json!(path);return Err(native);},
+             (Ok(_),Err(retention))=>return Err(retention),
+         };
+-        receipt["profiling_path"]=json!(profiling);receipt["optimized_graph_path"]=json!(optimized);
++        receipt["profiling_path"]=json!(profiling);
++        ensure!(!optimized.exists() && !optimized.with_extension("weights.bin").exists(),
++            "profiling-only load must not emit optimized graph/weights artifacts");
+         receipt["peak_process_rss_bytes"]=json!(peak_rss());flush(&mut file,&receipt)?;
+         ensure!(within,"original120s diagnostic score operation exceeded");
+         ensure!(peak_rss().is_some_and(|rss| rss > 0 && rss <= profile.memory_reservation_bytes),"actual diagnostic RSS refused");

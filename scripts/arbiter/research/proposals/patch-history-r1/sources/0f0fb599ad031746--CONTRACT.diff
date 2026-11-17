@@ -1,0 +1,11 @@
+--- D:\code\Github\airk\crates\airk-service\src\service_runtime\arbiter\CONTRACT.md
++++ D:\code\Github\airk\crates\airk-service\src\service_runtime\arbiter\CONTRACT.md
+@@ -364,3 +364,8 @@
+ The warm journal seam is compiled only for native unit-test fixtures with
+ local-inference and test-support. Feature-enabled non-test libraries expose no
+ observer attachment or lifecycle hook; no integration or product caller owns it.
++
++On Windows the journal writer sync_data-flushes each complete record while its
++file remains open before callers rely on directory last-write notifications.
++Ordinary File::flush alone does not establish an observable write notification.
++This storage flush runs only in the separate writer, never the warm callback.

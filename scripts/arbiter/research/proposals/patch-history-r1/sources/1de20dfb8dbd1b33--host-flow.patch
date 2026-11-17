@@ -1,0 +1,483 @@
+diff --git a/packages/vscode/src/explorerControl.ts b/packages/vscode/src/explorerControl.ts
+--- a/packages/vscode/src/explorerControl.ts
++++ b/packages/vscode/src/explorerControl.ts
+@@ -4,6 +4,7 @@
+ import type { RecordValue } from './serviceClient';
+ import type { ServiceConsoleState } from './serviceConsoleView';
+ import { displayPath } from './explorerSource';
++import type {ReferenceRefreshControl} from './workbenchReferenceRefresh';
+ import type { CatalogControl } from './indexingCatalogController';
+ 
+ /**
+@@ -12,7 +13,7 @@
+  * retries, confirmations and page-scoped validation behave exactly as they do today.
+  */
+ export interface ControlSource {
+-    readonly controller: { readonly state: ServiceConsoleState; readonly observationIdentity?: string } & Partial<CatalogControl>;
++    readonly controller: { readonly state: ServiceConsoleState; readonly observationIdentity?: string } & Partial<CatalogControl> & Partial<ReferenceRefreshControl>;
+     run(action: string, fields?: Record<string, unknown>): Promise<void>;
+     retain(): { dispose(): void };
+     onDidChangeState(listener: (state: ServiceConsoleState) => void): { dispose(): void };
+diff --git a/packages/vscode/src/referenceRefresh.ts b/packages/vscode/src/referenceRefresh.ts
+--- a/packages/vscode/src/referenceRefresh.ts
++++ b/packages/vscode/src/referenceRefresh.ts
+@@ -132,6 +132,14 @@
+         try{const reply=await this.client.referenceRefreshReceipt(saved.value.intent);await this.journal.observeRefresh(id,reply);this.requireTrust();return reply;}
+         catch(error){const native=(error as {nativeResponse?:ObjectValue})?.nativeResponse;if(native)try{await this.journal.observeRefresh(id,native);}catch{/* Keep prior accepted proof. */}throw error;}
+     }
++    exportObservation(id:string,requery?:ObjectValue):{json:string;markdown:string}{
++        this.requireTrust();const saved=this.journal.list().find(value=>value.id===id);
++        if(!saved||!('reference_refresh'in saved.value.intent))throw new Error('refresh_intent_not_found');
++        const intent=structuredClone(saved.value.intent),memory=this.originalEvidence.get(id);
++        if(memory){intent.reference_refresh.original_query=structuredClone(memory.query);intent.reference_refresh.original_result=structuredClone(memory.result);}
++        validateRefreshIntent(intent);
++        return refreshExport(intent,saved.value.nativeRefreshLookup,saved.value.nativeRefreshReceipt,requery);
++    }
+     async requery(id:string):Promise<{original:ObjectValue;current:ObjectValue;native_receipt:ObjectValue}>{
+         this.requireTrust();const saved=this.journal.list().find(value=>value.id===id);if(!saved||!('reference_refresh'in saved.value.intent))throw new Error('refresh_intent_not_found');
+         const intent=saved.value.intent,original=this.originalEvidence.get(id)??(intent.reference_refresh.original_query!==null&&intent.reference_refresh.original_result!==null?{query:intent.reference_refresh.original_query,result:intent.reference_refresh.original_result}:undefined);
+diff --git a/packages/vscode/src/serviceConsoleController.ts b/packages/vscode/src/serviceConsoleController.ts
+--- a/packages/vscode/src/serviceConsoleController.ts
++++ b/packages/vscode/src/serviceConsoleController.ts
+@@ -1,5 +1,9 @@
+ // SPDX-License-Identifier: Apache-2.0
+ import { randomUUID } from 'node:crypto';
++import {isDeepStrictEqual} from 'node:util';
++import {ReferenceRefreshFlow,type RefreshFlowHost} from './referenceRefresh';
++import {refreshWithinAuthority,type PreparedWorkbenchRefresh} from './workbenchReferenceRefresh';
++import {validateCombinedCatalogSession} from './catalogSession';
+ import { isDeepStrictEqual } from 'node:util';
+ import { BootstrapObservation, LegacyStartupReview, LegacyStartupTarget, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
+ import { count, identifier, parseConsolePage, record, RecordValue, ServiceClient, ServiceError } from './serviceClient';
+@@ -1054,6 +1058,54 @@
+         if(Array.isArray(this.state.legacyReceipts?.items))this.state.legacyReceipts={...this.state.legacyReceipts,items:this.state.legacyReceipts.items.map(value=>record(value).approval===review.approval?{...record(value),phase:'complete'}:value)};
+         this.state.message='The reviewed old startup was removed. Sources, project settings and old indexes were retained.';
+     }
++    /** Host-only refresh adapter: existing authenticated connection and durable journal. */
++    referenceRefreshFlow(host:RefreshFlowHost,valid:()=>boolean):ReferenceRefreshFlow {
++        this.authorized();const client=this.client,journal=this.journal,identity=this.observationIdentity;
++        if(!client||!journal||!this.state.connected||this.registryObservationSuspended)throw new ServiceError('refresh_control_unavailable');
++        const current=()=>this.host.trusted()&&!this.disposed&&valid()&&client===this.client&&journal===this.journal&&identity===this.observationIdentity;
++        return new ReferenceRefreshFlow(client,journal,{...host,trusted:()=>current()&&host.trusted()});
++    }
++    referenceRefreshPending(selection:RecordValue):Array<{id:string;latest?:RecordValue;historical?:RecordValue}> {
++        this.authorized();
++        return (this.journal?.list()??[]).flatMap(saved=>{
++            if(!('reference_refresh'in saved.value.intent))return [];
++            const selected=record(record(saved.value.intent.reference_refresh.configure_project.request.configuration.selection).selection);
++            if(!refreshWithinAuthority(selected,selection))return [];
++            return [{id:saved.id,latest:saved.value.nativeRefreshLookup,historical:saved.value.nativeRefreshReceipt}];
++        });
++    }
++    private async refreshGrant(selection:RecordValue,valid:()=>boolean):Promise<{selection:RecordValue;capabilities:RecordValue}> {
++        this.authorized();const selected=validateCombinedCatalogSession(selection),client=this.client,identity=this.observationIdentity;
++        const check=()=>{this.authorized();if(!valid()||!client||client!==this.client||identity!==this.observationIdentity||selected.namespace!==this.registryNamespace)throw new ServiceError('refresh_selection_changed');};check();
++        const host=await this.catalogHostContext(selected.context_key,null);check();const descriptor=record(host.descriptor);
++        if(descriptor.namespace!==selected.namespace)throw new ServiceError('refresh_namespace_changed');
++        const reply=await this.catalogRead({catalog_detail:{entity:{kind:'grant',id:selected.grant_id},expected_catalog_revision:descriptor.catalog_revision}});check();
++        const item=record(record(reply.detail).item),grant=record(record(item.value).grant);
++        if(item.kind!=='grant'||grant.id!==selected.grant_id||grant.revision!==selected.expected_grant_revision||grant.revoked!==false||grant.host!==descriptor.host)throw new ServiceError('refresh_grant_changed_review_required',false,reply);
++        const members=Array.isArray(grant.memberships)?grant.memberships.map(value=>record(record(value).membership)):[];
++        if(selected.project_ids.some(project=>!members.some(member=>member.project_id===project&&(selected.index_ids===undefined||selected.index_ids.includes(String(member.index_id))))))throw new ServiceError('refresh_grant_selection_unavailable',false,reply);
++        return {selection:{...selected,expected_catalog_revision:descriptor.catalog_revision},capabilities:record(reply.capabilities)};
++    }
++    async referenceRefreshReconfirm(selection:RecordValue,valid:()=>boolean):Promise<RecordValue>{return (await this.refreshGrant(selection,valid)).selection;}
++    async referenceRefreshPrepare(selection:RecordValue,members:RecordValue[],mode:'selected_only'|'full_reconcile_reviewed',query:RecordValue,result:RecordValue,host:RefreshFlowHost,valid:()=>boolean):Promise<PreparedWorkbenchRefresh>{
++        const flow=this.referenceRefreshFlow(host,valid),client=this.client!,identity=this.observationIdentity;
++        const check=()=>{this.authorized();if(!valid()||client!==this.client||identity!==this.observationIdentity)throw new ServiceError('refresh_selection_changed');};
++        const fresh=await this.refreshGrant(selection,valid);check();
++        if(!isDeepStrictEqual(fresh.selection,selection))throw new ServiceError('refresh_catalog_changed_review_required');
++        if(members.length!==1)throw new ServiceError('refresh_select_one_index');
++        const index=String(members[0].index_id),response=await this.catalogRead({catalog_detail:{entity:{kind:'index',id:index},expected_catalog_revision:selection.expected_catalog_revision}});check();
++        const item=record(record(response.detail).item),definition=record(item.value);
++        if(item.kind!=='index'||definition.id!==index||definition.tombstone!==false)throw new ServiceError('refresh_index_unavailable',false,response);
++        const backing=record(definition.backing),project=identifier(backing.binding,32);
++        // Cached native inspection is a read, never an Inspect job or recovery opener.
++        // Actual admission independently revalidates settings and all source guards.
++        const observation=await client.rpc({inspection:{project}},'inspection');check();const snapshot=record(record(observation.observation).snapshot);
++        if(snapshot.project!==project||snapshot.source_state!=='available'||snapshot.recovery_required!==false||snapshot.settings_digest==null||snapshot.failure!=null||snapshot.publication!==members[0].original_publication)throw new ServiceError('refresh_inspection_changed_review_required',false,observation);
++        const draft={incarnation:identifier(snapshot.incarnation,16),settings:identifier(snapshot.settings_digest,32),configuration:{operation:'refresh_references',selection:{schema:1,selection:structuredClone(selection),mode,members:structuredClone(members)}}};
++        const persist=host.persistEvidenceAllowed?.()===true;
++        const intent=await client.prepareReferenceRefresh(project,draft,query,result,persist);check();
++        return {flow,intent,capabilities:{capabilities:fresh.capabilities}};
++    }
+     /** Trusted host command: capture a native repair preview; execution still needs its separate review. */
+     async projectConfiguration(project:string,draft:RecordValue,valid:()=>boolean=()=>true):Promise<void>{
+         if(!await this.whenIdle())throw new ServiceError('console_not_connected');
+diff --git a/packages/vscode/src/test/referenceRefresh.test.ts b/packages/vscode/src/test/referenceRefresh.test.ts
+--- a/packages/vscode/src/test/referenceRefresh.test.ts
++++ b/packages/vscode/src/test/referenceRefresh.test.ts
+@@ -98,3 +98,12 @@
+     const refusal={status:'reference_refresh_review_required',project:request.project,caller:request.caller,key:request.key,request:request.request,review:{reasons:['unqualified_control_provenance']},future_review:'preserved'};
+     await assert.rejects(e.journal.observeRefresh(saved!,refusal),/cannot_become_unaccepted/);assert.deepEqual(e.journal.list()[0].value.nativeRefreshReceipt,original);assert.deepEqual(e.journal.list()[0].value.nativeRefreshLookup,refusal);
+ });
++
++test('actual flow export restores only retained in-memory original and never writes it to metadata-only journal',async()=>{
++    const intent=fixture(),e=environment(intent);const id=await e.flow.reviewAndSubmit(intent,{capabilities:{reference_refresh_contract:1}});await e.flow.check(id!);
++    const saved=structuredClone(e.journal.list()[0].value),output=JSON.parse(e.flow.exportObservation(id!).json);
++    assert.deepEqual(output.original_query,intent.reference_refresh.original_query);assert.deepEqual(output.original_historical_result,intent.reference_refresh.original_result);
++    assert.deepEqual(output.last_known_historical_native_receipt,receipt(intent));assert.deepEqual(e.journal.list()[0].value,saved);
++    const restarted=new ReferenceRefreshFlow(e.client,e.journal,{trusted:()=>true,confirm:async()=>true,reconfirm:async(value)=>value,query:async()=>{throw new Error('must not invent missing query');}});
++    const recovered=JSON.parse(restarted.exportObservation(id!).json);assert.equal(recovered.original_query,null);assert.equal(recovered.original_historical_result,null);assert.deepEqual(recovered.last_known_historical_native_receipt,receipt(intent));
++});
+diff --git a/packages/vscode/src/test/referenceRefreshControlHost.test.ts b/packages/vscode/src/test/referenceRefreshControlHost.test.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/vscode/src/test/referenceRefreshControlHost.test.ts
+@@ -0,0 +1,25 @@
++// SPDX-License-Identifier: Apache-2.0
++/** Actual shared console adapter uses native metadata reads, never a preparation job. */
++import assert from 'node:assert/strict';
++import test from 'node:test';
++import {ServiceConsoleController} from '../serviceConsoleController';
++import {ServiceClient,type RecordValue} from '../serviceClient';
++import {IntentJournal,type IntentStorage} from '../serviceIntents';
++const id=(x:string)=>x.repeat(32),h=(x:string)=>x.repeat(64),namespace=id('1'),index=`idx_${id('2')}`,project=`prj_${id('3')}`,binding=h('4'),token=`airk-r1:${id('5')}:1:${h('6')}`;
++class Memory implements IntentStorage {readonly data=new Map<string,unknown>();keys(){return [...this.data.keys()];}get<T>(key:string){return this.data.get(key) as T|undefined;}async update(key:string,value:unknown){if(value===undefined)this.data.delete(key);else this.data.set(key,structuredClone(value));}}
++function fixture(){let revoked=false,pending=false;const calls:string[]=[],storage=new Memory(),selection={schema:1,context_key:h('7'),namespace,expected_catalog_revision:1,grant_id:`grt_${id('8')}`,expected_grant_revision:1,project_ids:[project],index_ids:[index]};
++ const client=new ServiceClient({dispose(){},async request(method){const name=typeof method==='string'?method:Object.keys(method as object)[0];calls.push(name);
++  if(name==='catalog_host_context')return {status:name,descriptor:{schema:1,namespace,host:h('9'),key:h('7'),catalog_revision:1,context:null}};
++  if(name==='catalog_detail'){const entity=(method as any).catalog_detail.entity;return {status:name,capabilities:{reference_refresh_contract:1},detail:{namespace,revision:1,item:entity.kind==='grant'?{kind:'grant',value:{grant:{id:selection.grant_id,revision:1,host:h('9'),revoked,memberships:[{membership:{project_id:project,index_id:index}}]}}}:{kind:'index',value:{id:index,tombstone:false,backing:{binding}}}}};}
++  if(name==='inspection')return {status:name,observation:{snapshot:{project:binding,incarnation:id('5'),settings_digest:h('a'),publication:token,source_state:'available',recovery_required:pending}}};
++  if(name==='request_epoch')return {status:name,namespace,epoch:1};
++  throw new Error('unexpected native mutation/read '+name);
++ }});
++ const controller=new ServiceConsoleController({version:'1.8.8',authority:'fixture',storage,trusted:()=>true,changed(){},runtime:{prepareConfiguration:async()=>{throw new Error('generic CLI prepare must not run');}},confirm:async()=>true} as any);
++ const internal=controller as any;internal.client=client;internal.journal=new IntentJournal(storage,'/control',namespace);internal.registryNamespace=namespace;controller.state.connected=true;
++ const members=[{index_id:index,original_publication:token,sources:[{source_root_id:`src_${id('b')}`,source_relative_path:'one.rs',canonical_root:'/fixture/source',indexed_hash:h('c')}]}],query={tool:'airk_search',arguments:{query:'same query',verification:'require',future_query:{preserve:true}}},result={future_complete_result:{preserve:true}};
++ const host={trusted:()=>true,confirm:async()=>true,persistEvidenceAllowed:()=>false,reconfirm:async(value:RecordValue)=>value,query:async()=>({})};
++ return {controller,storage,calls,selection,members,query,result,host,revoke:()=>{revoked=true;},pending:()=>{pending=true;}};
++}
++test('shared native host prepares exact refresh from context grant index and inspection without enqueue or CLI preparation',async()=>{const f=fixture();try{const ready=await f.controller.referenceRefreshPrepare(f.selection,f.members,'selected_only',f.query,f.result,f.host,()=>true);assert.deepEqual(ready.intent.reference_refresh.original_query,f.query);assert.deepEqual(ready.intent.reference_refresh.original_result,f.result);assert.equal(ready.intent.reference_refresh.evidence_retention,'memory_only');const request=ready.intent.reference_refresh.configure_project.request;assert.equal(request.incarnation,id('5'));assert.equal(request.settings,h('a'));assert.equal(ready.intent.reference_refresh.configure_project.project,binding);assert.deepEqual(f.calls,['catalog_host_context','catalog_detail','catalog_detail','inspection','request_epoch']);assert.equal(f.storage.data.size,0,'review preparation reserves no mutation journal row');}finally{f.controller.dispose();}});
++test('revoked native grant and pending recovery refuse before key journal or mutation dispatch',async()=>{for(const reason of ['grant','recovery']){const f=fixture();try{if(reason==='grant')f.revoke();else f.pending();await assert.rejects(f.controller.referenceRefreshPrepare(f.selection,f.members,'full_reconcile_reviewed',f.query,f.result,f.host,()=>true),/review_required/);assert.ok(!f.calls.includes('request_epoch'));assert.equal(f.storage.data.size,0);assert.ok(!f.calls.includes('enqueue')&&!f.calls.includes('configure_project'));}finally{f.controller.dispose();}}});
+diff --git a/packages/vscode/src/test/workbenchReferenceRefreshHost.test.ts b/packages/vscode/src/test/workbenchReferenceRefreshHost.test.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/vscode/src/test/workbenchReferenceRefreshHost.test.ts
+@@ -0,0 +1,51 @@
++// SPDX-License-Identifier: Apache-2.0
++/** Actual message and host callbacks; mocks do not establish native qualification. */
++import assert from 'node:assert/strict';
++import Module from 'node:module';
++import test from 'node:test';
++import {parseWorkbenchMessage,object,type Value} from '../workbenchContracts';
++import {newSession} from '../workbenchSessions';
++import {captureWorkbenchRefresh} from '../workbenchReferenceRefresh';
++const h=(x:string)=>x.repeat(64),id=(x:string)=>x.repeat(32),index=`idx_${id('2')}`,project=`prj_${id('3')}`,source=`src_${id('4')}`,publication=`airk-r1:${id('5')}:1:${h('6')}`;
++function fixture(){
++ let errorReply=false,trusted=true,confirmation=true,submitted=0,checks=0,queries=0,sourceReads=0,prepared:Value|undefined,hostCallbacks:any,late:(()=>void)|undefined,pending=false;
++ const selection={schema:1,context_key:h('a'),namespace:id('b'),expected_catalog_revision:1,grant_id:`grt_${id('c')}`,expected_grant_revision:1,project_ids:[project],index_ids:[index]};
++ const spec={command:'/fixture/airk',root:'/fixture/source',dataDir:'/fixture/data',collection:'fixture',name:'Fixture',combinedSession:selection,service:{installDir:'/fixture/runtime',project:h('d')}};
++ const query={query:'original full query',mode:'hybrid',verification:'require',verification_max_bytes:12345,verification_deadline_ms:2000,reply_detail:'rich',future_native_argument:{preserve:true},project_ids:[project],index_ids:[index]};
++ const original={schema:'airk.combined-read/1',future_original:{preserve:true}},envelope={executed:true,status:'complete',steps:[{id:'step',tool:'search',arguments:query,status:'complete',result:original}],evidence:[{step:'step',publication,text:'original snippet',citation:{path:'api/one.rs',start_line:1,end_line:1,content_hash:h('e')},origin:{index_id:index,project_ids:[project],source_root_id:source,source_relative_path:'api/one.rs'}}]};
++ const flow={reviewAndSubmit:async()=>{if(!await hostCallbacks.confirm('Exact native mutation review','Refresh reviewed files'))return undefined;submitted++;pending=true;throw new Error('refresh_outcome_unknown_check_exact_receipt');},check:async()=>{checks++;return {status:'reference_refresh_receipt',future_receipt:'complete'};},requery:async()=>{checks++;if(!await hostCallbacks.confirm('Run exact query once','Requery current index'))throw new Error('declined');const current=await hostCallbacks.query({tool:'airk_search',arguments:structuredClone(query)},selection);return {original:structuredClone(original),current,native_receipt:{future_receipt:true}};}};
++ const control={state:{},referenceRefreshPending:()=>pending?[{id:id('f')}]:[],referenceRefreshReconfirm:async(value:Value)=>structuredClone(value),referenceRefreshFlow:()=>flow,referenceRefreshPrepare:async(selected:Value,members:Value[],mode:string,savedQuery:Value,result:Value,host:any)=>{prepared={selected,members,mode,query:savedQuery,result};hostCallbacks=host;return {flow,intent:{reference_refresh:{configure_project:{key:{nonce:id('f')}}}},capabilities:{capabilities:{reference_refresh_contract:1}}};}};
++ class Emitter<T>{readonly event=(_fn:(e:T)=>void)=>({dispose(){}});dispose(){}fire(_e:T){}}
++ class Client {constructor(..._args:any[]){}cancel(){}dispose(){}async call(tool:string,args:Value){if(tool==='airk_file_info'){sourceReads++;assert.equal(args.verification,'off');return {payload:{members:[{index_id:index,outcome:'complete',result:{source:{root:'/fixture/source',relative_path:'api/one.rs'},content_hash:h('e')}}],ranking:[{index_id:index,result_pointer:'/members/0/result',origin:{index_id:index,project_ids:[project],source_root_id:source,source_relative_path:'api/one.rs',publication:{token:publication}}}],schema:'airk.combined-read/1'}};}queries++;assert.equal(tool,'airk_search');assert.deepEqual(args,query);if(errorReply){const error=new Error('known_hash does not match current indexed source') as Error&{nativeResponse?:Value};error.nativeResponse={isError:true,future_error:{preserve:true}};throw error;}if(late)await new Promise<void>(resolve=>{late=resolve;});return {payload:{schema:'airk.combined-read/1',future_current:{preserve:true}}};}}
++ const vscode={EventEmitter:Emitter,workspace:{getConfiguration:()=>({get:(key:string,fallback:unknown)=>key==='workbench.persistSessions'?false:fallback,inspect:()=>({globalValue:true})}),onDidChangeConfiguration:()=>({dispose(){}})},window:{showWarningMessage:async(_text:string,_options:any,label:string)=>confirmation?label:undefined},commands:{executeCommand:async()=>undefined}};
++ const loader=Module as unknown as {_load:(name:string,...args:any[])=>any},old=loader._load;loader._load=function(name:string,...args:any[]){if(name==='vscode')return vscode;if(name==='./explorerEvidence')return {...old.call(this,name,...args),EvidenceClient:Client};return old.call(this,name,...args);};
++ let View:any,key:string;
++ try{delete require.cache[require.resolve('../workbenchView')];const module=require('../workbenchView');View=module.WorkbenchView;key=module.workbenchProjectKey(spec);}finally{loader._load=old;}
++ const view=new View({globalStorageUri:{fsPath:'/unused'},extensionUri:{fsPath:'/fixture/extension'}},{trusted:()=>trusted,specs:()=>[spec],activeProject:()=>key!,onDidChangeSpecs:()=>({dispose(){}}),version:'1.8.8',control:{controller:control}} as any);
++ view.session=newSession(key!);const turn={id:'turn',at:1,input:'original query',format:'structured',envelope};view.session.turns.push(turn);view.turnAuthorities.set(turn,JSON.stringify(spec));
++ const send=async(raw:Value)=>{const message=parseWorkbenchMessage(raw);assert.ok(message);return view.message(message);};
++ return {view,turn,envelope,query,selection,send,control,refuseQuery:()=>{errorReply=true;},counts:()=>({submitted,checks,queries,sourceReads}),prepared:()=>prepared,setTrusted:(value:boolean)=>{trusted=value;},decline:()=>{confirmation=false;},markRestored:()=>{view.turnAuthorities=new WeakMap();},delay:()=>{late=()=>{};},release:()=>late?.()};
++}
++test('opaque refresh message rejects native intent authority and persistence injection',()=>{
++ const base={type:'refreshReferences',turn:'turn',cards:['record-0'],mode:'selected_only'};assert.ok(parseWorkbenchMessage(base));
++ for(const extra of [{selection:{}},{persist:true},{request:{}},{mode:'automatic_full'}])assert.equal(parseWorkbenchMessage({...base,...extra}),undefined);
++ assert.equal(parseWorkbenchMessage({...base,cards:['record-0','record-0']}),undefined);
++});
++test('actual host captures full query and native location; lost submission checks exact receipt without replay',async()=>{
++ const f=fixture();try{await assert.rejects(f.send({type:'refreshReferences',turn:'turn',cards:['record-0'],mode:'selected_only'}),/outcome_unknown/);assert.deepEqual(object(f.prepared()!.query).arguments,f.query);assert.equal(f.counts().submitted,1);assert.equal(f.counts().queries,0);assert.equal(f.counts().sourceReads,1);await f.send({type:'checkReferenceRefresh',id:id('f')});assert.deepEqual(f.counts(),{submitted:1,checks:1,queries:0,sourceReads:1});assert.deepEqual(f.turn.envelope,f.envelope);}finally{f.view.dispose();}
++});
++test('restored turn cannot mint authority and declined full review does not submit',async()=>{
++ const f=fixture();try{f.markRestored();await assert.rejects(f.send({type:'refreshReferences',turn:'turn',cards:['record-0'],mode:'selected_only'}),/live_authorized/);assert.equal(f.counts().sourceReads,0);assert.equal(f.counts().submitted,0);}finally{f.view.dispose();}
++ const g=fixture();try{g.decline();await g.send({type:'refreshReferences',turn:'turn',cards:['record-0'],mode:'full_reconcile_reviewed'});assert.equal(g.counts().submitted,0);assert.equal(g.control.referenceRefreshPending().length,0);assert.equal(g.prepared()!.mode,'full_reconcile_reviewed');}finally{g.view.dispose();}
++});
++test('actual host requery keeps exact settings and separate result; late response is only diagnostic',async()=>{
++ const f=fixture();try{await assert.rejects(f.send({type:'refreshReferences',turn:'turn',cards:['record-0'],mode:'selected_only'}));await f.send({type:'requeryReferenceRefresh',id:id('f')});assert.equal(f.counts().queries,1);assert.equal(f.view.session.turns.length,2);assert.deepEqual(f.turn.envelope,f.envelope);assert.equal(f.view.session.turns[1].envelope.future_current.preserve,true);}finally{f.view.dispose();}
++ const g=fixture();try{await assert.rejects(g.send({type:'refreshReferences',turn:'turn',cards:['record-0'],mode:'selected_only'}));g.delay();const waiting=g.send({type:'requeryReferenceRefresh',id:id('f')});for(let n=0;n<20&&g.counts().queries===0;n++)await Promise.resolve();assert.equal(g.counts().queries,1);g.setTrusted(false);g.release();await assert.rejects(waiting,/historical_diagnostic/);const last=g.view.session.turns.at(-1);assert.equal(last.envelope,undefined);assert.equal(last.nativeFailure.future_current.preserve,true);assert.deepEqual(g.turn.envelope,g.envelope);}finally{g.view.dispose();}
++});
++test('mixed native step handles refuse before query reconstruction',()=>{
++ const f=fixture();try{const envelope=structuredClone(f.envelope);envelope.evidence.push({...envelope.evidence[0],step:'different'});assert.throws(()=>captureWorkbenchRefresh(f.turn as any,envelope,['record-0','record-1'],f.selection),/one_qualified_step/);}finally{f.view.dispose();}
++});
++
++test('actual native query refusal keeps full diagnostic without claiming a late successful response',async()=>{
++ const f=fixture();try{await assert.rejects(f.send({type:'refreshReferences',turn:'turn',cards:['record-0'],mode:'selected_only'}));f.refuseQuery();await assert.rejects(f.send({type:'requeryReferenceRefresh',id:id('f')}),/known_hash/);const last=f.view.session.turns.at(-1);assert.equal(last.input,'Refused reference refresh requery');assert.match(last.error,/known_hash/);assert.equal(last.nativeFailure.future_error.preserve,true);assert.equal(last.envelope,undefined);assert.deepEqual(f.turn.envelope,f.envelope);}finally{f.view.dispose();}
++});
+diff --git a/packages/vscode/src/workbenchContracts.ts b/packages/vscode/src/workbenchContracts.ts
+--- a/packages/vscode/src/workbenchContracts.ts
++++ b/packages/vscode/src/workbenchContracts.ts
+@@ -47,6 +47,7 @@
+ /** Verified by the host for presentation only; native envelopes remain unchanged. */
+ export type CapabilityFieldDisplay={state:'verified';values:Record<string,Value>}|{state:'unavailable';error:string};
+ export interface WorkbenchState {
++    referenceRefresh?:Value[];
+     projects: { id: string; name: string }[]; project?: string; session?: WorkbenchSession;
+     recent: WorkbenchSessionSummary[];
+     cards: Record<string, EvidenceCard[]>; busy: boolean; notice?: string; save: string;
+@@ -137,6 +138,9 @@
+     return Object.fromEntries(entries);
+ }
+ export type WorkbenchMessage =
++    | {type:'exportReferenceRefresh';id:string;format:'json'|'markdown';action:'copy'|'save'}
++    | {type:'refreshReferences';turn:string;cards:string[];mode:'selected_only'|'full_reconcile_reviewed'}
++    | {type:'checkReferenceRefresh'|'requeryReferenceRefresh';id:string}
+     | { type: 'ready' | 'stop' | 'new' | 'clear' | 'manage' | 'help' | 'refresh' | 'retrySave' | 'fork' | 'forms' }
+     | { type: 'project' | 'recent' | 'delete'; id: string }
+     | { type: 'rename'; title: string }
+@@ -159,6 +163,9 @@
+     const formFence=()=>str('sessionId')&&str('project',64)&&/^[0-9a-f]{64}$/.test(String(v.project))
+         &&Number.isSafeInteger(v.epoch)&&Number(v.epoch)>=0&&Number.isSafeInteger(v.revision)&&Number(v.revision)>0&&Number(v.revision)<=2147483647
+         &&typeof v.tool==='string'&&FORM_TOOLS.includes(v.tool);
++    if(type==='exportReferenceRefresh'&&exact(['type','id','format','action'])&&str('id',32)&&/^[0-9a-f]{32}$/.test(String(v.id))&&['json','markdown'].includes(String(v.format))&&['copy','save'].includes(String(v.action)))return v as WorkbenchMessage;
++    if(type==='refreshReferences'&&exact(['type','turn','cards','mode'])&&str('turn')&&['selected_only','full_reconcile_reviewed'].includes(String(v.mode))&&Array.isArray(v.cards)&&v.cards.length>0&&v.cards.length<=64&&new Set(v.cards).size===v.cards.length&&v.cards.every(id=>typeof id==='string'&&/^record-(0|[1-9][0-9]*)$/.test(id)))return v as WorkbenchMessage;
++    if(['checkReferenceRefresh','requeryReferenceRefresh'].includes(String(type))&&exact(['type','id'])&&str('id',32)&&/^[0-9a-f]{32}$/.test(String(v.id)))return v as WorkbenchMessage;
+     if(type==='formDraft'&&exact(['type','sessionId','project','epoch','revision','tool','values','scope','recipe'])&&formFence()
+         &&(v.values===undefined||validWorkbenchToolFormValues(v.values))&&(v.scope===undefined||validFormText(v.scope,1024))
+         &&(v.recipe===undefined||typeof v.recipe==='string'&&FORM_RECIPES.includes(v.recipe))){return v as WorkbenchMessage;}
+diff --git a/packages/vscode/src/workbenchReferenceRefresh.ts b/packages/vscode/src/workbenchReferenceRefresh.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/vscode/src/workbenchReferenceRefresh.ts
+@@ -0,0 +1,47 @@
++// SPDX-License-Identifier: Apache-2.0
++/** Host-only preparation from immutable native turns. Webviews supply opaque handles only. */
++import {isDeepStrictEqual} from 'node:util';
++import {catalogBound} from './indexingCatalog';
++import {validateCombinedCatalogSession} from './catalogSession';
++import {evidenceCards} from './workbenchRender';
++import {object,type Value,type WorkbenchTurn} from './workbenchContracts';
++import type {ReferenceRefreshFlow,ReferenceRefreshIntent,RefreshFlowHost} from './referenceRefresh';
++export interface PreparedWorkbenchRefresh {flow:ReferenceRefreshFlow;intent:ReferenceRefreshIntent;capabilities:Value}
++export interface ReferenceRefreshControl {
++    referenceRefreshPrepare(selection:Value,members:Value[],mode:'selected_only'|'full_reconcile_reviewed',query:Value,result:Value,host:RefreshFlowHost,valid:()=>boolean):Promise<PreparedWorkbenchRefresh>;
++    referenceRefreshFlow(host:RefreshFlowHost,valid:()=>boolean):ReferenceRefreshFlow;
++    referenceRefreshReconfirm(selection:Value,valid:()=>boolean):Promise<Value>;
++    referenceRefreshPending(selection:Value):Array<{id:string;latest?:Value;historical?:Value}>;
++}
++export function sameRefreshAuthority(left:Value,right:Value):boolean {
++    const before={...left},after={...right};delete before.expected_catalog_revision;delete after.expected_catalog_revision;
++    return isDeepStrictEqual(before,after);
++}
++/** Receipt visibility may narrow a current frozen selection, never change its grant. */
++export function refreshWithinAuthority(saved:Value,current:Value):boolean {
++    try{const before=validateCombinedCatalogSession(saved),after=validateCombinedCatalogSession(current),left={...before},right={...after};
++        delete (left as Partial<typeof left>).project_ids;delete left.index_ids;delete (right as Partial<typeof right>).project_ids;delete right.index_ids;
++        delete (left as Partial<typeof left>).expected_catalog_revision;delete (right as Partial<typeof right>).expected_catalog_revision;
++        return isDeepStrictEqual(left,right)&&before.project_ids.every(id=>after.project_ids.includes(id))&&!!before.index_ids&&(!after.index_ids||before.index_ids.every(id=>after.index_ids!.includes(id)));
++    }catch{return false;}
++}
++/** No query reconstruction from text, reduced cards or the current form. */
++export function captureWorkbenchRefresh(turn:WorkbenchTurn,envelope:Value,handles:string[],selection:Value):{query:Value;result:Value;cards:ReturnType<typeof evidenceCards>;selection:Value} {
++    if(!turn.envelope||envelope.executed!==true||!['complete','partial'].includes(String(envelope.status))||!handles.length||handles.length>64||new Set(handles).size!==handles.length)throw new Error('refresh_live_evidence_required');
++    const cards=evidenceCards(envelope),selected=handles.map(id=>{const card=cards.find(value=>value.id===id);if(!card)throw new Error('refresh_evidence_handle_expired');return card;});
++    const step=selected[0].step,index=selected[0].indexId,publication=selected[0].publication;
++    if(!step||!index||!publication||selected.some(card=>card.step!==step||card.indexId!==index||card.publication!==publication||!card.sourceRootId||!card.sourceRelativePath))throw new Error('refresh_select_one_qualified_step_and_index');
++    const reports=Array.isArray(envelope.steps)?envelope.steps.map(object):[],report=reports.find(value=>value.id===step);
++    if(!report||report.status!=='complete'||!report.result||!report.arguments)throw new Error('refresh_original_canonical_query_unavailable');
++    const args=structuredClone(object(report.arguments)),tool=String(report.tool).startsWith('airk_')?String(report.tool):`airk_${String(report.tool)}`;
++    const actual=validateCombinedCatalogSession(selection);
++    if(actual.index_ids&&!actual.index_ids.includes(index)||selected.some(card=>!card.projectIds?.length||card.projectIds.some(id=>!actual.project_ids.includes(id))))throw new Error('refresh_evidence_outside_frozen_selection');
++    // Query-specific selectors remain exactly as resolved by native execution.
++    if(args.project_ids!==undefined&&(!Array.isArray(args.project_ids)||args.project_ids.some(id=>!actual.project_ids.includes(String(id)))))throw new Error('refresh_query_scope_differs');
++    if(args.index_ids!==undefined&&(!Array.isArray(args.index_ids)||!args.index_ids.includes(index)))throw new Error('refresh_query_index_differs');
++    const query={tool,arguments:args},result=structuredClone(object(report.result));catalogBound(query,16384);catalogBound(result,65536);
++    const scoped=validateCombinedCatalogSession({...actual,...(args.project_ids!==undefined?{project_ids:args.project_ids}:{}),...(args.index_ids!==undefined?{index_ids:args.index_ids}:{})});
++    if(!scoped.index_ids)throw new Error('refresh_explicit_native_index_selection_required');
++    if(!scoped.index_ids.includes(index)||selected.some(card=>card.projectIds!.some(id=>!scoped.project_ids.includes(id))))throw new Error('refresh_evidence_outside_original_query_selection');
++    return {query,result,cards:selected,selection:structuredClone(scoped) as unknown as Value};
++}
+diff --git a/packages/vscode/src/workbenchView.ts b/packages/vscode/src/workbenchView.ts
+--- a/packages/vscode/src/workbenchView.ts
++++ b/packages/vscode/src/workbenchView.ts
+@@ -1,4 +1,7 @@
+ // SPDX-License-Identifier: Apache-2.0
++import {captureWorkbenchRefresh,sameRefreshAuthority,type ReferenceRefreshControl} from './workbenchReferenceRefresh';
++import type {ReferenceRefreshFlow,RefreshFlowHost} from './referenceRefresh';
++import {validateCombinedCatalogSession} from './catalogSession';
+ import {NativeMetadataProjectionCache} from './nativeMetadata';
+ import * as vscode from 'vscode';
+ import * as path from 'node:path';
+@@ -35,6 +38,20 @@
+ 
+ /** Host owns sessions, evidence and native transport; webview actions carry opaque handles. */
+ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposable {
++    private refreshQueryClient?:EvidenceClient;
++    private readonly refreshRequeries=new Map<string,Value>();
++    private readonly refreshFlows=new Map<string,ReferenceRefreshFlow>();
++    private readonly refreshTurns=new Map<string,string>();
++    private refreshControl():ReferenceRefreshControl {
++        const control=this.host.control.controller;
++        if(!control.referenceRefreshPrepare||!control.referenceRefreshFlow||!control.referenceRefreshReconfirm||!control.referenceRefreshPending)throw new Error('refresh_native_host_flow_unavailable');
++        return control as typeof control&ReferenceRefreshControl;
++    }
++    private refreshState():Value[] {
++        const selection=this.selectedSpec()?.combinedSession;
++        if(!this.permitted()||!selection)return [];
++        try{return this.refreshControl().referenceRefreshPending(selection as unknown as Value).map(value=>({...value,turn:this.refreshTurns.get(value.id),canRequery:this.refreshFlows.has(value.id)}));}catch{return [];}
++    }
+     private view?:vscode.WebviewView;
+     private readonly display=new CurrentTurnProjections();
+     private readonly metadata=new NativeMetadataProjectionCache();
+@@ -143,7 +160,7 @@
+     }
+     private state():WorkbenchState{
+         return {projects:this.host.specs().flatMap(s=>{const id=workbenchProjectKey(s);return id?[{id,name:s.name}]:[];}),project:this.session?.project,session:this.session,sessionEpoch:this.sessionEpoch,recent:this.recent,
+-            ...this.display.project(this.session?.turns??[],turn=>this.metadata.view(turn.envelope??{}).payload??{}),metadataViews:Object.fromEntries((this.session?.turns??[]).filter(turn=>turn.envelope).map(turn=>[turn.id,this.metadata.view(turn.envelope!).payload??{}])),metadataIssues:Object.fromEntries((this.session?.turns??[]).filter(turn=>turn.envelope&&this.metadata.view(turn.envelope).error).map(turn=>[turn.id,this.metadata.view(turn.envelope!).error!])),capabilityDetails:this.capabilityDisplay.project(this.session?.turns??[]),busy:this.busy,notice:this.notice,sourceOpen:this.sourceOpen?.generation===this.generation&&this.sourceOpen.project===this.session?.project?{id:this.sourceOpen.id,observation:this.sourceOpen.observation}:undefined,save:this.saving,status:this.status,publicationRelations:this.publicationRelations(),persistence:this.persistence(),operations:this.operations};
++            ...this.display.project(this.session?.turns??[],turn=>this.metadata.view(turn.envelope??{}).payload??{}),metadataViews:Object.fromEntries((this.session?.turns??[]).filter(turn=>turn.envelope).map(turn=>[turn.id,this.metadata.view(turn.envelope!).payload??{}])),metadataIssues:Object.fromEntries((this.session?.turns??[]).filter(turn=>turn.envelope&&this.metadata.view(turn.envelope).error).map(turn=>[turn.id,this.metadata.view(turn.envelope!).error!])),capabilityDetails:this.capabilityDisplay.project(this.session?.turns??[]),busy:this.busy,notice:this.notice,sourceOpen:this.sourceOpen?.generation===this.generation&&this.sourceOpen.project===this.session?.project?{id:this.sourceOpen.id,observation:this.sourceOpen.observation}:undefined,save:this.saving,status:this.status,publicationRelations:this.publicationRelations(),persistence:this.persistence(),operations:this.operations,referenceRefresh:this.refreshState()};
+     }
+     private send():void{if(!this.disposed){void this.view?.webview.postMessage({type:'state',state:this.state()});}}
+     private sendStatus():void{if(!this.disposed){void this.view?.webview.postMessage({type:'status',sessionId:this.session?.id,project:this.session?.project,status:this.status,publicationRelations:this.publicationRelations()});}}
+@@ -198,7 +215,7 @@
+         if(!this.client){this.client=new EvidenceClient(spec,this.host.version,{workbench:true,clientName:'airk-workbench',timeout:35000});this.clientIdentity=identity;}
+         return this.client;
+     }
+-    stop():void{this.generation++;if(this.busy){const turn=this.session?.turns.at(-1);if(turn&&!turn.envelope){turn.error='Request stopped. Already admitted native reads may still finish; late replies are discarded.';}}this.busy=false;this.client?.cancel('workbench');this.send();}
++    stop():void{this.refreshQueryClient?.cancel('workbench-refresh');this.refreshQueryClient?.dispose();this.refreshQueryClient=undefined;this.refreshFlows.clear();this.refreshRequeries.clear();this.generation++;if(this.busy){const turn=this.session?.turns.at(-1);if(turn&&!turn.envelope){turn.error='Request stopped. Already admitted native reads may still finish; late replies are discarded.';}}this.busy=false;this.client?.cancel('workbench');this.send();}
+     async newSession():Promise<void>{if(this.session){await this.select(this.session.project);}else{await this.refresh();}}
+     async clear():Promise<void>{
+         this.authorized();if(!this.session){return;}
+@@ -291,11 +308,100 @@
+         }catch(error){if(generation===this.generation){turn.error=error instanceof Error?error.message:String(error);if(error instanceof EvidenceFailure&&error.nativeResponse){turn.error=explorerError(error.error.code).message;turn.nativeFailure=structuredClone(error.nativeResponse);}}}
+         finally{if(generation===this.generation){this.busy=false;session.updatedAt=Date.now();this.save(session);this.send();}}
+     }
++    private async refreshReferences(message:Extract<WorkbenchMessage,{type:'refreshReferences'}>):Promise<void> {
++        if(this.busy)throw new Error('refresh_wait_for_current_workbench_read');
++        const session=this.session,turn=session?.turns.find(value=>value.id===message.turn),spec=this.selectedSpec(),identity=JSON.stringify(spec),generation=this.generation;
++        if(!session||!turn?.envelope||!spec?.combinedSession||this.turnAuthorities.get(turn)!==identity)throw new Error('refresh_requires_live_authorized_turn');
++        const captured=captureWorkbenchRefresh(turn,this.logical(turn),message.cards,spec.combinedSession as unknown as Value),control=this.refreshControl();
++        const valid=()=>this.permitted()&&session===this.session&&generation===this.generation&&identity===JSON.stringify(this.selectedSpec())&&this.turnAuthorities.get(turn)===identity;
++        const current=()=>{if(!valid())throw new Error('refresh_selection_changed');};
++        this.busy=true;this.notice=undefined;this.send();
++        try{
++            const sources:Value[]=[],seen=new Set<string>();
++            for(const card of captured.cards){
++                const key=JSON.stringify([card.sourceRootId,card.sourceRelativePath]);if(seen.has(key))continue;seen.add(key);
++                current();const response=await this.evidence().call('airk_file_info',{path:card.path,revision:card.publication,known_hash:card.hash,verification:'off',response_mode:'full',project_ids:captured.selection.project_ids,index_ids:[card.indexId],member_availability:'require'});current();
++                const payload=response.payload,members=Array.isArray(payload.members)?payload.members.map(object):[],member=members.filter(value=>value.index_id===card.indexId&&value.outcome==='complete');
++                if(member.length!==1)throw new Error('refresh_original_source_metadata_unavailable');
++                const body=readResultBody(member[0].result),info=Object.keys(object(body.content)).length?object(body.content):body,source=object(info.source);
++                const origin=evidenceRows(payload).map(row=>object(row.origin)).filter(value=>value.index_id===card.indexId&&value.source_root_id===card.sourceRootId&&value.source_relative_path===card.sourceRelativePath);
++                if(origin.length!==1||typeof source.root!=='string'||source.relative_path!==card.sourceRelativePath||info.content_hash!==card.hash)throw new Error('refresh_original_source_identity_changed');
++                sources.push({source_root_id:card.sourceRootId,source_relative_path:card.sourceRelativePath,canonical_root:source.root,indexed_hash:card.hash});
++            }
++            sources.sort((a,b)=>String(a.source_root_id).localeCompare(String(b.source_root_id))||String(a.source_relative_path).localeCompare(String(b.source_relative_path)));
++            let journaled=false;
++            const flowValid=()=>{
++                if(!journaled)return valid();const now=this.selectedSpec();
++                return this.permitted()&&session===this.session&&this.turnAuthorities.get(turn)===identity&&!!now?.combinedSession
++                    &&now.command===spec.command&&now.root===spec.root&&now.dataDir===spec.dataDir&&now.collection===spec.collection
++                    &&JSON.stringify(now.service)===JSON.stringify(spec.service)&&sameRefreshAuthority(now.combinedSession as unknown as Value,spec.combinedSession as unknown as Value);
++            };
++            const host=this.refreshHost(flowValid,spec),members=[{index_id:captured.cards[0].indexId,original_publication:captured.cards[0].publication,sources}];
++            const prepared=await control.referenceRefreshPrepare(captured.selection,members,message.mode,captured.query,captured.result,host,valid);current();
++            const id=prepared.intent.reference_refresh.configure_project.key.nonce;
++            this.refreshFlows.set(id,prepared.flow);this.refreshTurns.set(id,turn.id);
++            let accepted:string|undefined;
++            try{accepted=await prepared.flow.reviewAndSubmit(prepared.intent,prepared.capabilities);}
++            finally{journaled=control.referenceRefreshPending(captured.selection).some(value=>value.id===id);}
++            if(accepted===undefined){this.refreshFlows.delete(id);this.refreshTurns.delete(id);this.notice='Refresh review canceled.';}
++            else this.notice='Refresh submitted. Check its exact native receipt; requery requires a separate confirmation.';
++        }catch(error){
++            const raw=(error as {nativeResponse?:Value})?.nativeResponse;
++            if(raw){session.turns.push({id:randomUUID(),at:Date.now(),input:'Reference refresh review diagnostic',format:'structured',error:error instanceof Error?error.message:'Refresh review refused; inspect the exact native receipt before any further mutation.',nativeFailure:structuredClone(raw)});session.updatedAt=Date.now();this.save(session);}
++            throw error;
++        }finally{this.busy=false;if(session===this.session)this.send();}
++    }
++    private refreshHost(valid:()=>boolean,spec:LaunchSpec):RefreshFlowHost {
++        return {trusted:valid,persistEvidenceAllowed:()=>false,
++            confirm:async(details,action)=>{if(!valid())throw new Error('refresh_selection_changed');const answer=await vscode.window.showWarningMessage(details,{modal:true},action);if(!valid())throw new Error('refresh_selection_changed');return answer===action;},
++            reconfirm:selection=>this.refreshControl().referenceRefreshReconfirm(selection,valid),
++            query:async(query,selection)=>{
++                if(!valid())throw new Error('refresh_selection_changed');
++                const selected=validateCombinedCatalogSession(selection),client=new EvidenceClient({...spec,combinedSession:selected},this.host.version,{workbench:true,clientName:'airk-workbench',timeout:35000});
++                this.refreshQueryClient=client;
++                try{const response=await client.call(String(query.tool),structuredClone(object(query.arguments)),{timeout:35000,supersede:'workbench-refresh'}),raw=response.rawPayload??response.payload;
++                    if(!valid()){const error=new Error('refresh_late_reply_retained_as_historical_diagnostic') as Error&{nativeResponse?:Value};error.nativeResponse=raw;throw error;}
++                    return raw;
++                }finally{if(this.refreshQueryClient===client)this.refreshQueryClient=undefined;client.dispose();}
++            }};
++    }
++    private async observeReferenceRefresh(id:string,requery:boolean):Promise<void> {
++        const session=this.session,spec=this.selectedSpec(),identity=JSON.stringify(spec),generation=this.generation;
++        if(!session||!spec?.combinedSession||this.busy)throw new Error('refresh_current_selection_required');
++        const valid=()=>this.permitted()&&session===this.session&&generation===this.generation&&identity===JSON.stringify(this.selectedSpec());
++        if(!this.refreshControl().referenceRefreshPending(spec.combinedSession as unknown as Value).some(value=>value.id===id))throw new Error('refresh_saved_intent_outside_current_selection');
++        const flow=this.refreshFlows.get(id)??this.refreshControl().referenceRefreshFlow(this.refreshHost(valid,spec),valid);
++        this.busy=true;this.send();
++        try{
++            if(!requery){await flow.check(id);this.notice='Exact native receipt read; no mutation was replayed.';return;}
++            const result=await flow.requery(id);
++            if(!valid()){const error=new Error('refresh_late_reply_retained_as_historical_diagnostic') as Error&{nativeResponse?:Value};error.nativeResponse=result.current;throw error;}
++            const turn={id:randomUUID(),at:Date.now(),input:'Explicit requery after reviewed reference refresh',format:'structured' as const,envelope:result.current};
++            session.turns.push(turn);this.turnAuthorities.set(turn,identity);this.refreshRequeries.set(id,structuredClone(result.current));session.updatedAt=Date.now();this.save(session);
++            this.notice='New query result retained separately; original evidence and native receipt remain historical.';
++        }catch(error){
++            const raw=(error as {nativeResponse?:Value})?.nativeResponse;
++            if(raw){const late=error instanceof Error&&error.message==='refresh_late_reply_retained_as_historical_diagnostic';session.turns.push({id:randomUUID(),at:Date.now(),input:late?'Late refresh requery diagnostic':'Refused reference refresh requery',format:'structured',error:late?'Reply arrived after trust or selection changed; it is historical diagnostic evidence only.':error instanceof Error?error.message:'Native requery refused; original evidence is retained.',nativeFailure:structuredClone(raw)});session.updatedAt=Date.now();this.save(session);}
++            throw error;
++        }finally{this.busy=false;if(session===this.session)this.send();}
++    }
++    private async exportReferenceRefresh(message:Extract<WorkbenchMessage,{type:'exportReferenceRefresh'}>):Promise<void>{
++        const session=this.session,spec=this.selectedSpec(),identity=JSON.stringify(spec);
++        const valid=()=>this.permitted()&&session===this.session&&identity===JSON.stringify(this.selectedSpec());
++        if(!spec?.combinedSession||!valid()||!this.refreshControl().referenceRefreshPending(spec.combinedSession as unknown as Value).some(value=>value.id===message.id))throw new Error('refresh_saved_intent_outside_current_selection');
++        const flow=this.refreshFlows.get(message.id)??this.refreshControl().referenceRefreshFlow(this.refreshHost(valid,spec),valid),output=flow.exportObservation(message.id,this.refreshRequeries.get(message.id)),text=output[message.format];
++        if(message.action==='copy'){if(!valid())throw new Error('refresh_selection_changed');await vscode.env.clipboard.writeText(text);}
++        else{const uri=await vscode.window.showSaveDialog({defaultUri:vscode.Uri.file(`airk-reference-refresh.${message.format==='json'?'json':'md'}`),filters:message.format==='json'?{JSON:['json']}:{Markdown:['md']}});if(uri){if(!valid())throw new Error('refresh_selection_changed');await vscode.workspace.fs.writeFile(uri,Buffer.from(text));}}
++    }
+     private async message(message:WorkbenchMessage):Promise<void>{
+         if(message.type==='ready'){await this.refresh();if(this.pendingInput){void this.view?.webview.postMessage({type:'prefill',input:this.pendingInput});this.pendingInput=undefined;}if(this.pendingForm){void this.view?.webview.postMessage({type:'prefillForm'});this.pendingForm=false;}return;}
+         if(message.type==='help'){await vscode.commands.executeCommand('airk.explorer.open',WORKBENCH_HELP_ROUTE);return;}
+         this.authorized();
+         switch(message.type){
++            case 'exportReferenceRefresh':await this.exportReferenceRefresh(message);break;
++            case 'refreshReferences':await this.refreshReferences(message);break;
++            case 'checkReferenceRefresh':await this.observeReferenceRefresh(message.id,false);break;
++            case 'requeryReferenceRefresh':await this.observeReferenceRefresh(message.id,true);break;
+             case 'project':await this.select(message.id);break;
+             case 'refresh':{const session=this.session;await this.refresh();if(this.session&&this.session===session){const client=this.evidence(),generation=this.generation,identity=this.clientIdentity;const result=await client.call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS});if(generation===this.generation&&session===this.session&&client===this.client&&identity===this.clientIdentity&&identity===JSON.stringify(this.selectedSpec())&&this.permitted()){this.observeStatus(result.payload,identity!);this.sendStatus();}}break;}
+             case 'new':await this.newSession();break;
+diff --git a/packages/vscode/src/workbenchWebview/main.tsx b/packages/vscode/src/workbenchWebview/main.tsx
+--- a/packages/vscode/src/workbenchWebview/main.tsx
++++ b/packages/vscode/src/workbenchWebview/main.tsx
+@@ -99,7 +99,7 @@
+     const copySelectionLabel=`Copy ${selected.length} selected results as ${copyFormat==='json'?'JSON':'Markdown'}`;
+     const copySelectionTitle=selectionTooLarge?'Select fewer results or use Save export':copySelectionLabel;
+     const selectionUi=format==='structured'&&cards.length>0;
+-    const selectionRow=()=><div class="selection-toolbar"><SelectAll count={rows.length} checked={allSelected} mixed={mixedSelection} onChange={selectMatching}/><button title={copySelectionTitle} aria-label={copySelectionLabel} disabled={!copySelectionAllowed} onClick={()=>send(copySelection)}>Copy selected ({selected.length})</button></div>;
++    const selectionRow=()=><div class="selection-toolbar"><SelectAll count={rows.length} checked={allSelected} mixed={mixedSelection} onChange={selectMatching}/><button disabled={state.busy||selected.length===0} onClick={()=>send({type:'refreshReferences',turn:turn.id,cards:selected,mode:'selected_only'})}>Review refresh selected files…</button><button disabled={state.busy||selected.length===0} onClick={()=>send({type:'refreshReferences',turn:turn.id,cards:selected,mode:'full_reconcile_reviewed'})}>Review full reconciliation…</button><button title={copySelectionTitle} aria-label={copySelectionLabel} disabled={!copySelectionAllowed} onClick={()=>send(copySelection)}>Copy selected ({selected.length})</button></div>;
+     const planText=useMemo(()=>canonical(plan),[turn.envelope]);
+     const formatted=useMemo(()=>format==='json'?canonical(envelope):format==='markdown'?markdown(turn,undefined,state.metadataViews?.[turn.id]??turn.envelope):'', [format,turn]);
+     const publicationNotice=publicationRelationLabel(state.publicationRelations?.[turn.id]??'unknown');
+@@ -209,6 +209,7 @@
+         </header>
+         {state.notice&&<p class="notice" role="status">{state.notice}</p>}
+         {state.sourceOpen&&<details><summary>Complete source-open observation</summary><p>This dated native receipt is separate from the original query and does not promise continued freshness.</p><pre>{canonical(state.sourceOpen.observation)}</pre><button onClick={()=>action({type:'exportSourceOpen',id:state.sourceOpen!.id,format:'copy'})}>Copy complete JSON</button><button onClick={()=>action({type:'exportSourceOpen',id:state.sourceOpen!.id,format:'json'})}>Export JSON...</button></details>}
++        {(state.referenceRefresh??[]).map(value=><section class="reference-refresh" key={String(value.id)}><h4>Reviewed native refresh</h4><button disabled={state.busy} onClick={()=>send({type:'checkReferenceRefresh',id:String(value.id)})}>Check exact receipt</button><button disabled={state.busy||value.canRequery!==true} onClick={()=>send({type:'requeryReferenceRefresh',id:String(value.id)})}>Review same query again...</button><button onClick={()=>send({type:'exportReferenceRefresh',id:String(value.id),format:'json',action:'copy'})}>Copy complete JSON</button><button onClick={()=>send({type:'exportReferenceRefresh',id:String(value.id),format:'markdown',action:'copy'})}>Copy complete Markdown</button><button onClick={()=>send({type:'exportReferenceRefresh',id:String(value.id),format:'json',action:'save'})}>Save complete export...</button><p>Original evidence stays historical. Missing receipts never replay the mutation.</p><pre>{canonical(value)}</pre></section>)}
+         <div class="transcript" ref={transcript}>{!state.session?.turns.length?<section class="welcome"><h1>Explore your project</h1><p>Search indexed files and collect cited evidence.</p><div class="suggestions">{['/search retry --mode lexical','/symbols EvidenceClient','/files'].map(example=><button onClick={()=>{setInput(example);composer.current?.focus();}}>{example}</button>)}</div>{!state.projects.length&&<p>Open a trusted workspace to get started. <button onClick={()=>action({type:'manage'})}>Open Management</button></p>}</section>:state.session.turns.map(turn=><Turn key={turn.id} turn={turn} state={state}/>)}</div>
+         <div class="composer">
+             {(scope||recipe)&&<div class="compose-context">{scope&&<button title="Clear scope" onClick={()=>setScope('')}>{scope} ×</button>}{recipe&&<button title="Clear recipe" onClick={()=>setRecipe('')}>{RECIPES.find(([id])=>id===recipe)?.[1]} ×</button>}</div>}
+@@ -219,7 +220,7 @@
+             }}/>
+             <div class="compose-actions"><div class="menu-anchor add-anchor"><button class="icon-button add-button" title="Add scope, recipe or tool" aria-label="Add scope, recipe or tool" aria-expanded={menu==='add'} aria-controls="evidence-options" onClick={e=>toggle('add',e)}><Icon name="plus"/></button>
+                 {menu==='add'&&<section class="popover above" id="evidence-options" aria-label="Evidence options"><h2>Collect evidence</h2><label>Scope<input aria-label="Literal collection-relative path prefix" placeholder="Project root, or src/component/" maxLength={1024} value={scope} onInput={e=>setScope(e.currentTarget.value)}/></label><label>Recipe<select aria-label="Recipe" value={recipe} onChange={e=>setRecipe(e.currentTarget.value)}><option value="">Command or supported request</option>{RECIPES.map(([id,label])=><option value={id}>{label}</option>)}</select></label><button disabled={!state.project||state.busy||!input.trim()&&!recipe} onClick={()=>run(true)}>Prepare plan before running</button><button disabled={!state.project} onClick={()=>send({type:'forms'})}>Tool forms</button>{state.operations&&<ToolForm state={state} issue={formIssue} currentDraft={currentDraft} onSelect={tool=>changeForm({tool})} onField={(tool,name,value)=>changeForm({tool,field:{name,value}})} onReset={tool=>changeForm({tool},true)} onIssue={setFormIssue}/>}<button onClick={()=>action({type:'help'})}>Commands and help</button></section>}
+-            </div><small title={state.save||'Requests read the local index'}>Local index · Read-only (no generative AI used in AIRK Workbench)</small>{state.busy?<button class="icon-button send-button" aria-label="Stop collecting evidence" title="Stop" onClick={()=>send({type:'stop'})}><Icon name="stop"/></button>:<button class="icon-button send-button" aria-label="Run request" title="Run · Enter (Shift+Enter for a new line)" disabled={!state.project||!input.trim()&&!recipe} onClick={()=>run()}><Icon name="send"/></button>}</div>
++            </div><small title={state.save||'Requests read the local index'}>Sources read-only · Refresh requires review (no generative AI used in AIRK Workbench)</small>{state.busy?<button class="icon-button send-button" aria-label="Stop collecting evidence" title="Stop" onClick={()=>send({type:'stop'})}><Icon name="stop"/></button>:<button class="icon-button send-button" aria-label="Run request" title="Run · Enter (Shift+Enter for a new line)" disabled={!state.project||!input.trim()&&!recipe} onClick={()=>run()}><Icon name="send"/></button>}</div>
+         </div><div class="sr-only" aria-live="polite">{state.busy?'Collecting evidence':'Ready'}</div>
+     </main>;
+ }
+diff --git a/scripts/package-extension.py b/scripts/package-extension.py
+--- a/scripts/package-extension.py
++++ b/scripts/package-extension.py
+@@ -29,7 +29,7 @@
+            "explorerCommands.js", "explorerAssistanceHost.js", "explorerAssistanceLaunch.js",
+            "explorerStrategies.js", "explorerStrategyRunner.js",
+            "explorerDrafts.js", "explorerSuggestions.js", "explorerReview.js", "explorerHandoffs.js", "explorerPlanFiles.js",
+-           "workbenchView.js", "workbenchContracts.js", "workbenchRender.js", "sharedCapabilityFields.js", "nativeMetadata.js", "sourceVerification.js", "publications.js", "workbenchSessions.js", "workbenchStrategies.js")
++           "workbenchView.js", "workbenchContracts.js", "workbenchRender.js", "sharedCapabilityFields.js", "nativeMetadata.js", "sourceVerification.js", "publications.js", "workbenchSessions.js", "workbenchStrategies.js", "workbenchReferenceRefresh.js")
+ # esbuild outputs; referenced by URI or path from host modules, never require()d.
+ BUNDLES = ("explorerWebview.js", "explorerWebview.css", "explorerAssistance.js", "workbenchWebview.js", "workbenchWebview.css")
+ # Host-only implementations that must never ship a second bundled copy.

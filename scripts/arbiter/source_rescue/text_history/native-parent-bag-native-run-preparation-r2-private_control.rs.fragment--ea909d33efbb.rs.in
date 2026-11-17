@@ -1,0 +1,62 @@
+// SPDX-License-Identifier: Apache-2.0
+// A path is not a role: the reviewed outer launcher proves the actual current-SID
+// owner-only anchor before/after execution. Actual exclusion remains ServiceLease.
+pub(super) fn private_base(path: Option<&std::ffi::OsStr>) -> Result<PathBuf> {
+    let path = std::path::Path::new(path.context("missing reviewed parent-bag private base")?);
+    ensure!(path.is_absolute() && !path.components().any(|part| matches!(part,
+        std::path::Component::ParentDir | std::path::Component::CurDir)),
+        "absolute unaliased parent-bag private base required");
+    for ancestor in path.ancestors() {
+        let metadata = std::fs::symlink_metadata(ancestor)?;
+        ensure!(metadata.is_dir() && !metadata.file_type().is_symlink(), "private base ancestor alias refused");
+        #[cfg(windows)] {
+            use std::os::windows::fs::MetadataExt;
+            ensure!(metadata.file_attributes() & 0x400 == 0, "private base reparse ancestor refused");
+        }
+    }
+    #[cfg(unix)] {
+        use std::os::unix::fs::PermissionsExt;
+        ensure!(std::fs::metadata(path)?.permissions().mode() & 0o777 == 0o700,
+            "private base must retain native mode0700");
+    }
+    Ok(path.canonicalize()?)
+}
+
+pub(super) fn private_control() -> Result<tempfile::TempDir> {
+    let supplied = std::env::var_os("AIRK_PARENT_BAG_PRIVATE_BASE");
+    let base = private_base(supplied.as_deref())?;
+    let control = tempfile::Builder::new().prefix("native-control-").tempdir_in(&base)?;
+    #[cfg(unix)] {
+        use std::os::unix::fs::{MetadataExt,PermissionsExt};
+        let parent = std::fs::metadata(&base)?;
+        let actual = std::fs::metadata(control.path())?;
+        ensure!(actual.uid() == parent.uid() && actual.permissions().mode() & 0o777 == 0o700,
+            "private child native owner/mode differs from the reviewed base");
+    }
+    Ok(control)
+}
+
+#[test]
+fn parent_bag_private_base_refuses_missing_relative_file_and_alias_before_native_lease() -> Result<()> {
+    assert!(private_base(None).is_err());
+    assert!(private_base(Some(std::ffi::OsStr::new("relative-private-base"))).is_err());
+    let fixture = tempfile::tempdir()?;
+    let missing = fixture.path().join("absent");
+    assert!(private_base(Some(missing.as_os_str())).is_err());
+    let file = fixture.path().join("file");std::fs::write(&file,b"inert")?;
+    assert!(private_base(Some(file.as_os_str())).is_err());
+    assert!(!missing.exists(),"refusal cannot create the missing base");
+    #[cfg(unix)] {
+        use std::os::unix::fs::{symlink,PermissionsExt};
+        let canonical = fixture.path().canonicalize()?;
+        std::fs::set_permissions(&canonical,std::fs::Permissions::from_mode(0o700))?;
+        private_base(Some(canonical.as_os_str()))?;
+        let alias = canonical.parent().unwrap().join(format!("parent-bag-alias-{}",std::process::id()));
+        symlink(&canonical,&alias)?;
+        let refused=private_base(Some(alias.as_os_str())).is_err();std::fs::remove_file(alias)?;
+        assert!(refused);
+        std::fs::set_permissions(&canonical,std::fs::Permissions::from_mode(0o755))?;
+        assert!(private_base(Some(canonical.as_os_str())).is_err());
+    }
+    Ok(())
+}

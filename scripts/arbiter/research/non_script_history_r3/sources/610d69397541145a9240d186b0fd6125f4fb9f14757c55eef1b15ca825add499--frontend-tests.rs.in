@@ -1,0 +1,70 @@
+// SPDX-License-Identifier: Apache-2.0
+#[cfg(test)]
+mod source_observation_tests {
+    use super::*;
+
+    fn fence(namespace: u8, revision: u64) -> SourceFence {
+        SourceFence {
+            namespace: airk_core::identity::Incarnation::from_bytes([namespace; 16]),
+            revision,
+            project: "ab".repeat(32).parse().unwrap(),
+            fencing_generation: 1,
+        }
+    }
+
+    #[test]
+    fn revision_namespace_and_generation_are_cache_scope_not_mutable_authority() {
+        let old = fence(1, 9);
+        let value = airk_mcp::unified::success(serde_json::json!({
+            "index_state":"available", "publication":{"token":"saved"}
+        }));
+        let cached = CachedStatus::new(CacheScope::Source(old), &value).unwrap();
+        for changed in [fence(2, 9), fence(1, 10), SourceFence { fencing_generation: 2, ..old }] {
+            assert!(cached.reply(CacheScope::Source(changed), cached.captured, true).is_none());
+        }
+        assert!(cached.reply(CacheScope::Source(old), cached.captured + Duration::from_secs(5), true).is_none());
+    }
+
+    #[tokio::test]
+    async fn old_observation_waiting_for_backend_is_explicitly_unsubmitted() -> Result<()> {
+        let control = tempfile::tempdir()?;
+        let old = fence(1, 9);
+        let backend = source_tools(control.path().into(), old.project);
+        let guard = backend.state.lock().await;
+        let mut request = backend.call_observed("airk_status".into(), serde_json::Map::new(), old);
+        // Poll exactly once: admit the old scope, then block on the owned state lock.
+        assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(request.as_mut().poll(cx))).await.is_pending());
+        assert!(backend.accept_source_fence(fence(1, 10)));
+        drop(guard);
+        let reply = request.await?;
+        let detail: serde_json::Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
+        assert_eq!(detail["error"]["query_submitted"], false);
+        assert_eq!(detail["error"]["retryable"], true);
+        assert!(backend.state.lock().await.connection.is_none());
+        assert!(std::fs::read_dir(control.path())?.next().is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn observed_cache_hit_does_not_reopen_registry_and_retains_age() -> Result<()> {
+        let control = tempfile::tempdir()?;
+        let scope = fence(1, 9);
+        let backend = source_tools(control.path().into(), scope.project);
+        let value = airk_mcp::unified::success(serde_json::json!({
+            "index_state":"available", "publication":{"token":"saved"}
+        }));
+        let mut cached = CachedStatus::new(CacheScope::Source(scope), &value).unwrap();
+        cached.captured -= Duration::from_secs(1);
+        let timestamp = cached.observed_unix_ms;
+        backend.state.lock().await.cached_status = Some(cached);
+        // There is deliberately no registry database: the owned observation is the fence.
+        let reply = backend.call_observed("airk_status".into(), serde_json::Map::new(), scope).await?;
+        let body: serde_json::Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
+        assert_eq!(body["cached"], true);
+        assert_eq!(body["observed_unix_ms"], timestamp);
+        assert!(body["cache_age_ms"].as_u64().unwrap() >= 1000);
+        assert!(backend.state.lock().await.connection.is_none());
+        assert!(std::fs::read_dir(control.path())?.next().is_none());
+        Ok(())
+    }
+}

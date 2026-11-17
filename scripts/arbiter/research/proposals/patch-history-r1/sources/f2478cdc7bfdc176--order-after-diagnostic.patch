@@ -1,0 +1,24 @@
+--- a/crates/airk-store/src/service_catalog_setup_storage_windows_tests.rs
++++ b/crates/airk-store/src/service_catalog_setup_storage_windows_tests.rs
+@@ -216,12 +216,17 @@
+     let base = temporary.path().canonicalize()?;
+     let root = SetupDirectory::open_canonical(&base)?;
+     let retained = root.create_dir(OsStr::new("selected"))?;
++    // Windows refuses directory rename while descendant files have open
++    // handles. Establish the actual pathname rebound before opening children;
++    // subsequent metadata must still use this original directory descriptor.
++    std::fs::rename(base.join("selected"), base.join("retained"))
++        .context("rebind fixture directory before opening descendant files")?;
++    std::fs::create_dir(base.join("selected"))
++        .context("create foreign rebound fixture directory")?;
++    std::fs::write(base.join("selected/owner"), b"foreign source")
++        .context("write preserved foreign rebound fixture bytes")?;
+     let original = retained.create_file(OsStr::new("owner"), b"previous owner")?;
+     let prepared = retained.create_file(OsStr::new("prepared"), b"next owner")?;
+-    std::fs::rename(base.join("selected"), base.join("retained"))
+-        .context("rebind fixture directory before opening descendant files")?;
+-    std::fs::create_dir(base.join("selected"))?;
+-    std::fs::write(base.join("selected/owner"), b"foreign source")?;
+     retained.replace_file(
+         OsStr::new("prepared"),
+         &prepared,

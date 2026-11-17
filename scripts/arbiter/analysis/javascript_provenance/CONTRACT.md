@@ -26,3 +26,39 @@ then invoked through that path. Delta and prior-disposition documents are parsed
 from their authenticated reads. Before reporting, those documents, every prior
 proof input consumed, matched current TypeScript, Node and compiler/config are
 rechecked; drift refuses the result.
+
+Declaration files ending in .d.ts are recorded with exact source identity as
+nonemitting candidates, never sent to transpileModule. Other emission errors
+refuse the analysis and identify the exact candidate pathname and SHA256; they
+are not silently treated as generated outputs or successful exclusions.
+
+## Role-only linkage supplement
+
+link_roles.py binds exact unresolved output bytes to observed esbuild module
+labels or TypeScript emission structure, declared package scripts/build owners,
+maintained current or reachable Git source paths, and pinned npm lock/license
+metadata. These are declared owner and generation-role links, not evidence that
+the original source version or exact bundled bytes were reconstructed. Both
+source_version_established and exact_output_reproduced remain false. Missing
+owners are explicit gaps; vendor module bytes are never copied. A separate exact
+literal fixture case may be proved against its maintained test generator.
+No bundler/compiler/product build is executed by this supplement.
+
+The fixture proof owner parses static NoSubstitutionTemplateLiteral or output
+StringLiteral nodes; it never evaluates template expressions or executes a
+generator. Source/compiler/Node pins, reachable Git data, literal locations and
+TAG parameter remain explicit. Exact fixture reproduction does not establish
+which generator was actually used historically or confer runtime qualification.
+Inherited role-report fields remain historical context; exact_fixture_reproduction
+and its source proof describe the later byte comparison.
+
+The standard disposition adapter accepts only the two reviewed exact-generation
+proof kinds, retains the original source/size/hash aliases, and binds their
+source authority and compiler metadata to the pinned analysis receipt. It never
+adapts role-only evidence as exact reproduction. Private shards are create-only,
+size-bounded and owner-audited; the standard consumer reopens their declarations.
+
+Current product source and build recipes remain canonical. Obsolete bundle
+output/source-version gaps are reported honestly rather than bulk-copied into
+the maintained tree. Concrete authored gaps are preserved separately, with
+exact reversible byte maps and owning purpose documentation.

@@ -1,0 +1,21 @@
+--- D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\r154-fresh-attribution-preparation-r3\owned\windows_job_8g.py
++++ D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\r154-composed-launch-preparation-r1\owned\outer_job.py
+@@ -1,6 +1,6 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # PRIVATE derivative of exact maintained Windows multiprocess owner.
+-# Only job-memory enforcement and original absolute-deadline strengthening differ.
++# Whole-route owner: original absolute deadline/authentication, maintained uncapped Job policy.
+ import ctypes
+ import math
+ import os
+@@ -80,8 +80,8 @@
+     observed_members = {}
+     try:
+         limits = ExtendedLimits()
+-        limits.basic.flags = 0x2000 | 0x200  # KILL_ON_JOB_CLOSE | JOB_MEMORY
+-        limits.job_memory = 8 << 30  # Original whole-transport committed-memory ceiling.
++        limits.basic.flags = 0x2000  # Maintained KILL_ON_JOB_CLOSE only; no invented Service memory cap.
++        limits.job_memory = 0  # Service remains outside the separate original8GiB observer Job.
+         checked(api.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)))
+         # Inherit exactly the output and null-input handles, not the runner's
+         # account/token/pipe handles. Parent is never assigned to this job.

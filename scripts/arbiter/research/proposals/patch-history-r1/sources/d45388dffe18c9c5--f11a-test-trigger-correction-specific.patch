@@ -1,0 +1,38 @@
+--- a/crates/airk-store/src/service_integrity_guard.rs
++++ b/crates/airk-store/src/service_integrity_guard.rs
+@@ -207,6 +207,18 @@
+     Ok(())
+ }
+ impl ServiceRegistry {
++    /// Test-only fault on this connection: prove claim rollback when its
++    /// physical repair veto cannot be persisted, without exposing raw SQL.
++    #[cfg(test)]
++    pub(crate) fn refuse_physical_repair_guard_for_test(&self, refuse: bool) -> Result<()> {
++        self.connection.execute_batch(if refuse {
++            "CREATE TEMP TRIGGER refuse_physical_repair_guard BEFORE INSERT ON service_recovery_budget WHEN NEW.scope LIKE 'integrity:%' BEGIN SELECT RAISE(ABORT,'injected'); END;"
++        } else {
++            "DROP TRIGGER refuse_physical_repair_guard;"
++        })?;
++        Ok(())
++    }
++
+     /// Failure-only durability in the existing control store. No ordinary
+     /// successful query prewrite/fsync and no component eviction at saturation.
+     pub fn persist_integrity_damage(
+--- a/crates/airk-store/src/service_collection_tests.rs
++++ b/crates/airk-store/src/service_collection_tests.rs
+@@ -1564,12 +1564,10 @@
+         .pending_job_observation(project)?
+         .context("physical Repair missing")?;
+     assert_eq!(queued.kind, JobKind::Repair);
+-    registry.connection.execute_batch("CREATE TEMP TRIGGER refuse_physical_repair_guard BEFORE INSERT ON service_recovery_budget BEGIN SELECT RAISE(ABORT,'injected'); END;")?;
++    registry.refuse_physical_repair_guard_for_test(true)?;
+     assert!(registry.claim_job_id(&lease, queued.id).is_err());
+     assert_eq!(registry.job(queued.id)?.state, JobState::Pending);
+-    registry
+-        .connection
+-        .execute_batch("DROP TRIGGER refuse_physical_repair_guard;")?;
++    registry.refuse_physical_repair_guard_for_test(false)?;
+     let claimed = registry
+         .claim_job_id(&lease, queued.id)?
+         .context("physical Repair not claimed")?;

@@ -1,0 +1,258 @@
+{
+  "schema": "airk.source-review-routing/1",
+  "qualification": false,
+  "rows": [
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/codex-home/skills/.system/imagegen/scripts/image_gen.py",
+      "source_sha256": "3666b807de3f0a1d0a4a767b886d612c0b8f71025c500bba6693d1c6995a0873",
+      "source_bytes": 35697,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/codex-home/skills/.system/imagegen/scripts/remove_chroma_key.py",
+      "source_sha256": "fa2989807052b857bed08f7fee0caa2502b54c46afc0a6f28cd706c25f636630",
+      "source_bytes": 14354,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/codex-home/skills/.system/openai-docs/scripts/fetch-codex-manual.mjs",
+      "source_sha256": "6172bd2caa95593b735c3e60c0bd5d7ae49ca0a345440f2d2a36e0dfc556801a",
+      "source_bytes": 16248,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/codex-home/skills/.system/openai-docs/scripts/resolve-latest-model-info.cjs",
+      "source_sha256": "2eee6052aa77c9e98d7ea8a59caca73c3158eded7ee707308ec563211c30692f",
+      "source_bytes": 4079,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/codex-home/skills/.system/skill-creator/scripts/generate_openai_yaml.py",
+      "source_sha256": "30c73f1ea7d47dbab2b231bb92c5bf9026f1ad14ba8e3b3a4a544092c4d24ebe",
+      "source_bytes": 6900,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/codex-home/skills/.system/skill-creator/scripts/init_skill.py",
+      "source_sha256": "74dfa9361a93bee6932d6cbb332ed19ac26a27ba3800e69fb07ba7512c1025f9",
+      "source_bytes": 10622,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/codex-home/skills/.system/skill-creator/scripts/quick_validate.py",
+      "source_sha256": "6068513d924ed3559e186dfcdead7439129828dcf402167fd925c06dffbf2806",
+      "source_bytes": 4376,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/codex-home/skills/.system/skill-installer/scripts/github_utils.py",
+      "source_sha256": "2f9702afb9f0da740181fa4a3214f663e460f80cd5cea2e7dcaab00ad269082e",
+      "source_bytes": 680,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/codex-home/skills/.system/skill-installer/scripts/install-skill-from-github.py",
+      "source_sha256": "110cc7e4e395c2c9ba070d47db7d21be5164591c35015ae364fc9c9905b08de8",
+      "source_bytes": 12272,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/codex-home/skills/.system/skill-installer/scripts/list-skills.py",
+      "source_sha256": "2cd6eecbaf9be7c86e80a14d7042f95d6abb83b6baee5f17dd075fa7a71c83de",
+      "source_bytes": 3054,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-75c81e882f00478cb6598ab7cc39e7b2/codex-home/skills/.system/imagegen/scripts/image_gen.py",
+      "source_sha256": "3666b807de3f0a1d0a4a767b886d612c0b8f71025c500bba6693d1c6995a0873",
+      "source_bytes": 35697,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-75c81e882f00478cb6598ab7cc39e7b2/codex-home/skills/.system/imagegen/scripts/remove_chroma_key.py",
+      "source_sha256": "fa2989807052b857bed08f7fee0caa2502b54c46afc0a6f28cd706c25f636630",
+      "source_bytes": 14354,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-75c81e882f00478cb6598ab7cc39e7b2/codex-home/skills/.system/openai-docs/scripts/fetch-codex-manual.mjs",
+      "source_sha256": "6172bd2caa95593b735c3e60c0bd5d7ae49ca0a345440f2d2a36e0dfc556801a",
+      "source_bytes": 16248,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-75c81e882f00478cb6598ab7cc39e7b2/codex-home/skills/.system/openai-docs/scripts/resolve-latest-model-info.cjs",
+      "source_sha256": "2eee6052aa77c9e98d7ea8a59caca73c3158eded7ee707308ec563211c30692f",
+      "source_bytes": 4079,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-75c81e882f00478cb6598ab7cc39e7b2/codex-home/skills/.system/skill-creator/scripts/generate_openai_yaml.py",
+      "source_sha256": "30c73f1ea7d47dbab2b231bb92c5bf9026f1ad14ba8e3b3a4a544092c4d24ebe",
+      "source_bytes": 6900,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-75c81e882f00478cb6598ab7cc39e7b2/codex-home/skills/.system/skill-creator/scripts/init_skill.py",
+      "source_sha256": "74dfa9361a93bee6932d6cbb332ed19ac26a27ba3800e69fb07ba7512c1025f9",
+      "source_bytes": 10622,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-75c81e882f00478cb6598ab7cc39e7b2/codex-home/skills/.system/skill-creator/scripts/quick_validate.py",
+      "source_sha256": "6068513d924ed3559e186dfcdead7439129828dcf402167fd925c06dffbf2806",
+      "source_bytes": 4376,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-75c81e882f00478cb6598ab7cc39e7b2/codex-home/skills/.system/skill-installer/scripts/github_utils.py",
+      "source_sha256": "2f9702afb9f0da740181fa4a3214f663e460f80cd5cea2e7dcaab00ad269082e",
+      "source_bytes": 680,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-75c81e882f00478cb6598ab7cc39e7b2/codex-home/skills/.system/skill-installer/scripts/install-skill-from-github.py",
+      "source_sha256": "110cc7e4e395c2c9ba070d47db7d21be5164591c35015ae364fc9c9905b08de8",
+      "source_bytes": 12272,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-75c81e882f00478cb6598ab7cc39e7b2/codex-home/skills/.system/skill-installer/scripts/list-skills.py",
+      "source_sha256": "2cd6eecbaf9be7c86e80a14d7042f95d6abb83b6baee5f17dd075fa7a71c83de",
+      "source_bytes": 3054,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/v190/p10-private-fixtures-619c272e8a644988b26bbe4334fc8c02/airk-native-Ya1UQi/project-a/a.py",
+      "source_sha256": "e9ba45141ae2db5eda029b11b029ea51a13c91839663bef8ce73cd0644e5debe",
+      "source_bytes": 44,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/v190/p10-private-fixtures-619c272e8a644988b26bbe4334fc8c02/airk-native-Ya1UQi/project-b/b.py",
+      "source_sha256": "7bc385a3da17c651d487877958591a804f9ac595f60e1b1e453c3f07cd8e2992",
+      "source_bytes": 39,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/v190/p14-editor-ui-contract-proposed-r1/base/scripts/tests/editor-ui.test.cjs",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_bytes": 0,
+      "reason": "Third-party Codex skill, private synthetic indexed input, or zero-byte placeholder; not an AIRK implementation owner",
+      "status": "routed_for_nonimplementation_evidence; provisional copy removed; original retained"
+    },
+    {
+      "source": "artifacts/tmporolob5v/synthetic.py",
+      "source_sha256": "0215aeb2418c3644bcab4827004d407f8ceab662540d656e8fb1766648560a74",
+      "source_bytes": 152,
+      "status": "generated_fixture confirmed; provisional duplicate removed",
+      "evidence": "artifacts/v190/final-plan/exec-20261116T052942Z/source-tmporolob5v-resolution-r1.json"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/imagegen/scripts/image_gen.py",
+      "source_sha256": "3666b807de3f0a1d0a4a767b886d612c0b8f71025c500bba6693d1c6995a0873",
+      "source_bytes": 35697,
+      "reason": "Provider system skill replica or upstream rmcp test input; not AIRK authored implementation",
+      "status": "provisional copy removed; original retained; upstream evidence owner pending"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/imagegen/scripts/remove_chroma_key.py",
+      "source_sha256": "fa2989807052b857bed08f7fee0caa2502b54c46afc0a6f28cd706c25f636630",
+      "source_bytes": 14354,
+      "reason": "Provider system skill replica or upstream rmcp test input; not AIRK authored implementation",
+      "status": "provisional copy removed; original retained; upstream evidence owner pending"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/openai-docs/scripts/fetch-codex-manual.mjs",
+      "source_sha256": "6172bd2caa95593b735c3e60c0bd5d7ae49ca0a345440f2d2a36e0dfc556801a",
+      "source_bytes": 16248,
+      "reason": "Provider system skill replica or upstream rmcp test input; not AIRK authored implementation",
+      "status": "provisional copy removed; original retained; upstream evidence owner pending"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/openai-docs/scripts/resolve-latest-model-info.cjs",
+      "source_sha256": "2eee6052aa77c9e98d7ea8a59caca73c3158eded7ee707308ec563211c30692f",
+      "source_bytes": 4079,
+      "reason": "Provider system skill replica or upstream rmcp test input; not AIRK authored implementation",
+      "status": "provisional copy removed; original retained; upstream evidence owner pending"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/skill-creator/scripts/generate_openai_yaml.py",
+      "source_sha256": "30c73f1ea7d47dbab2b231bb92c5bf9026f1ad14ba8e3b3a4a544092c4d24ebe",
+      "source_bytes": 6900,
+      "reason": "Provider system skill replica or upstream rmcp test input; not AIRK authored implementation",
+      "status": "provisional copy removed; original retained; upstream evidence owner pending"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/skill-creator/scripts/init_skill.py",
+      "source_sha256": "74dfa9361a93bee6932d6cbb332ed19ac26a27ba3800e69fb07ba7512c1025f9",
+      "source_bytes": 10622,
+      "reason": "Provider system skill replica or upstream rmcp test input; not AIRK authored implementation",
+      "status": "provisional copy removed; original retained; upstream evidence owner pending"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/skill-creator/scripts/quick_validate.py",
+      "source_sha256": "6068513d924ed3559e186dfcdead7439129828dcf402167fd925c06dffbf2806",
+      "source_bytes": 4376,
+      "reason": "Provider system skill replica or upstream rmcp test input; not AIRK authored implementation",
+      "status": "provisional copy removed; original retained; upstream evidence owner pending"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/skill-installer/scripts/github_utils.py",
+      "source_sha256": "2f9702afb9f0da740181fa4a3214f663e460f80cd5cea2e7dcaab00ad269082e",
+      "source_bytes": 680,
+      "reason": "Provider system skill replica or upstream rmcp test input; not AIRK authored implementation",
+      "status": "provisional copy removed; original retained; upstream evidence owner pending"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/skill-installer/scripts/install-skill-from-github.py",
+      "source_sha256": "110cc7e4e395c2c9ba070d47db7d21be5164591c35015ae364fc9c9905b08de8",
+      "source_bytes": 12272,
+      "reason": "Provider system skill replica or upstream rmcp test input; not AIRK authored implementation",
+      "status": "provisional copy removed; original retained; upstream evidence owner pending"
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/skill-installer/scripts/list-skills.py",
+      "source_sha256": "2cd6eecbaf9be7c86e80a14d7042f95d6abb83b6baee5f17dd075fa7a71c83de",
+      "source_bytes": 3054,
+      "reason": "Provider system skill replica or upstream rmcp test input; not AIRK authored implementation",
+      "status": "provisional copy removed; original retained; upstream evidence owner pending"
+    },
+    {
+      "source": "artifacts/security-rmcp-2026-11-09/source/rmcp-3.9.0/tests/test_with_python/client.py",
+      "source_sha256": "522e2401016ad7d87efa6b13a113c618cc1c1ee568b8f51bd1b92a605668b0ab",
+      "source_bytes": 775,
+      "reason": "Provider system skill replica or upstream rmcp test input; not AIRK authored implementation",
+      "status": "provisional copy removed; original retained; upstream evidence owner pending"
+    },
+    {
+      "source": "artifacts/security-rmcp-2026-11-09/source/rmcp-3.9.0/tests/test_with_python/server.py",
+      "source_sha256": "d27a404deb187a66f6b521d2deea4743bb8dc1e64179f2bf2e3a6cfb58aaa4d9",
+      "source_bytes": 418,
+      "reason": "Provider system skill replica or upstream rmcp test input; not AIRK authored implementation",
+      "status": "provisional copy removed; original retained; upstream evidence owner pending"
+    }
+  ]
+}

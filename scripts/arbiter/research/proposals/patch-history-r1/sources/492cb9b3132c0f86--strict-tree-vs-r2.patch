@@ -1,0 +1,16 @@
+--- r2/run_checkpoint_sections.py
++++ r3/run_checkpoint_sections.py
+@@ -23,8 +23,13 @@
+   parts=line.split('\t')
+   if len(parts)==5:records[parts[3].replace('\\','/') ]={'start_ms':int(parts[0]),'end_ms':int(parts[1]),'output_mtime':parts[2],'command_hash':parts[4]}
+  return records
++def require_complete_tree(command):
++ tree=command.get('actual_tree_result')
++ if not isinstance(tree,dict) or tree.get('schema')!='airk.private.process-tree-result/1' or tree.get('exit_code')!=0 or tree.get('wait')!='Start-Process-Wait-process-and-descendants':raise ValueError('actual original complete process-tree result required')
++ if command.get('owned_job_final_active_processes')!=0 or command.get('owned_job_final_member_pids')!=[]:raise ValueError('actual final original Job0 required')
+ def verify_section(value,index,o,plan_sha):
+  expected=['flash-remainder','llm-remainder','final-provider-all-closure'][index]
++ require_complete_tree(value.get('command',{}))
+  if value.get('schema')!='airk.private.cuda-checkpoint-section/1' or value.get('status')!='PASS_TARGET_SECTION_ONLY_UNQUALIFIED' or value.get('qualification') is not False or value.get('section_id')!=expected or value.get('section_index')!=index or value.get('plan',{}).get('sha256')!=plan_sha or not o.successful(value.get('command',{})):raise ValueError('actual natural predecessor target success required')
+  first=datetime.datetime.fromisoformat(value['started_utc']);last=datetime.datetime.fromisoformat(value['completed_utc']);cutoff=datetime.datetime.fromisoformat(value['absolute_cutoff_utc'])
+  if value.get('original_section_seconds')!=10800 or cutoff!=min(first+datetime.timedelta(seconds=10800),CAMPAIGN) or not first<=last<=cutoff or value.get('elapsed_seconds',10801)>10800:raise ValueError('predecessor fixed section/campaign deadline refused')

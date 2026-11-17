@@ -1,0 +1,158 @@
+// SPDX-License-Identifier: Apache-2.0
+fn verify_inputs_fixture(inputs: &[(&str, &str)]) -> Result<(IntegrityFixture, airk_core::service::JobRecord)> {
+    use airk_core::service::{JobKind, RequestKey};
+    let (temporary, collection, mut registry, bound, lease, store, scope) = integrity_fixture()?;
+    let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
+    {
+        let writer = store.lock()?;
+        for (path, text) in inputs {
+            let input = audit_retained_input(&store, &writer, &quota, &scope, path, text)?;
+            let mut current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
+            let token = current.head()?.token()?;
+            current.commit_artifact(&token, path, Some(&input))?;
+        }
+    }
+    let (namespace, epoch) = registry.saved_request_epoch()?;
+    let job = registry.enqueue(lease.identity().0, namespace, &RequestKey {
+        namespace, epoch, nonce: Incarnation::from_bytes([109; 16]),
+    }, JobKind::Verify)?;
+    let claimed = registry.claim_job_id(&lease, job.id)?.context("Verify was not claimed")?;
+    let read = store.current_read(&scope)?;
+    collection.integrity_owner(&registry, &lease, &bound)?.anchor(&read)?;
+    drop(read);
+    Ok(((temporary, collection, registry, bound, lease, store, scope), claimed))
+}
+
+#[test]
+fn verify_physical_retained_corruption_preserves_prior_cursor_and_revokes_clean_drain() -> Result<()> {
+    for kind in ["sources", "artifacts"] {
+        let ((_temporary, collection, registry, bound, lease, store, scope), job) =
+            verify_inputs_fixture(&[("a.txt", "first retained input"), ("b.txt", "second retained input")])?;
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        let mut writer = store.lock()?;
+        let first = owner.verify_turn(&mut writer, job.id, 1, 1 << 20, 100, || Ok(()))?;
+        assert_eq!(first.verified_files, 1);
+        assert!(first.completed.is_none());
+        let prior = serde_json::to_value(&first.progress)?;
+        let artifact = store.current_read(&scope)?.artifact("b.txt")?.context("second artifact missing")?;
+        let reference = artifact.retained.as_ref().context("retained fixture missing")?;
+        let digest = if kind == "sources" {
+            reference.source_encoding.as_ref().map_or(artifact.content_hash.as_str(), |value| value.stored_digest.as_str())
+        } else {
+            reference.payload_encoding.as_ref().map_or(reference.object.as_str(), |value| value.stored_digest.as_str())
+        };
+        let object = store.directory().join("objects").join(kind).join(digest);
+        let mut bytes = fs::read(&object)?;
+        ensure!(!bytes.is_empty(), "retained fixture object is empty");
+        bytes[0] ^= 0x80;
+        fs::write(&object, bytes)?;
+        let error = owner.verify_turn(&mut writer, job.id, 1, 1 << 20, 200, || Ok(()))
+            .err().context("physically changed retained object was accepted")?;
+        assert!(error.downcast_ref::<crate::service::registry::AuditDrainProof>().is_none());
+        let saved: serde_json::Value = serde_json::from_slice(&fs::read(collection.directory.join("integrity-observation.json"))?)?;
+        assert_eq!(saved["verify"]["after"], prior["after"]);
+        assert_eq!(saved["verify"]["checked_files"], prior["checked_files"]);
+        assert_eq!(saved["verify"]["checked_bytes"], prior["checked_bytes"]);
+        assert_eq!(saved["verify"]["unresolved"], true);
+        assert_eq!(saved["verify"]["objects_complete"], false);
+        assert!(bound.live_integrity().revoked());
+        assert_eq!(registry.integrity_audit_veto(&lease)?, Some(job.id));
+        assert!(crate::service::registry::AuditDrainProof::new(&registry, &lease, &bound, job.id).is_err());
+    }
+    Ok(())
+}
+
+#[test]
+fn verify_physical_fts_corruption_refuses_lexical_completion_and_persists_uncertainty() -> Result<()> {
+    let ((_temporary, collection, registry, bound, lease, store, scope), job) =
+        verify_inputs_fixture(&[("a.txt", "physical lexical retained input")])?;
+    {
+        let connection = rusqlite::Connection::open(store.directory().join("current.sqlite3"))?;
+        let (id, mut bytes): (i64, Vec<u8>) = connection.query_row(
+            "SELECT id,block FROM current_fts_data WHERE length(block)>0 ORDER BY id DESC LIMIT 1", [],
+            |row| Ok((row.get(0)?, row.get(1)?)))?;
+        bytes[0] ^= 0x80;
+        assert_eq!(connection.execute("UPDATE current_fts_data SET block=?1 WHERE id=?2", rusqlite::params![bytes,id])?, 1);
+    }
+    let direct = store.current_read(&scope)?.verify_lexical_integrity().err().context("FTS corruption fixture remained valid")?;
+    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+    let mut writer = store.lock()?;
+    let error = owner.verify_turn(&mut writer, job.id, 1, 1 << 20, 100, || Ok(()))
+        .err().context("Verify accepted physical FTS corruption")?;
+    assert_eq!(format!("{error:#}"), format!("{direct:#}"));
+    let saved: serde_json::Value = serde_json::from_slice(&fs::read(collection.directory.join("integrity-observation.json"))?)?;
+    assert_eq!(saved["verify"]["checked_files"], 0);
+    assert!(saved["verify"]["after"].is_null());
+    assert!(saved["verify"]["lexical_observed_unix_ms"].is_null());
+    assert_eq!(saved["verify"]["unresolved"], true);
+    assert!(bound.live_integrity().revoked());
+    assert_eq!(registry.integrity_audit_veto(&lease)?, Some(job.id));
+    assert!(crate::service::registry::AuditDrainProof::new(&registry, &lease, &bound, job.id).is_err());
+    Ok(())
+}
+
+#[test]
+fn verify_progress_quota_failure_preserves_prior_receipt_and_revokes_completion() -> Result<()> {
+    let later = format!("{}.txt", "z".repeat(200));
+    let text = "larger physical retained quota input\n".repeat(64);
+    let ((_temporary, collection, registry, bound, lease, store, _scope), job) =
+        verify_inputs_fixture(&[("a.txt", "first input"), (&later, &text)])?;
+    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+    let mut writer = store.lock()?;
+    let first = owner.verify_turn(&mut writer, job.id, 1, 1 << 20, 100, || Ok(()))?;
+    assert_eq!(first.verified_files, 1);
+    assert!(first.completed.is_none());
+    let receipt = collection.directory.join("integrity-observation.json");
+    let before = fs::read(&receipt)?;
+    let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
+    let original = quota.policy()?;
+    let status = quota.status()?;
+    let mut full = original.clone();
+    full.root_bytes = status.used_bytes.checked_add(status.reserved_bytes).context("quota overflow")?;
+    quota.configure(full)?;
+    let result = owner.verify_turn(&mut writer, job.id, 1, 1 << 20, 200, || Ok(()));
+    quota.configure(original)?;
+    let error = result.err().context("Verify progress write unexpectedly fit exhausted quota")?;
+    assert!(error.is::<crate::quota::QuotaPressure>(), "{error:#}");
+    assert_eq!(fs::read(&receipt)?, before);
+    assert!(bound.live_integrity().revoked());
+    assert_eq!(registry.integrity_audit_veto(&lease)?, Some(job.id));
+    assert!(crate::service::registry::AuditDrainProof::new(&registry, &lease, &bound, job.id).is_err());
+    Ok(())
+}
+
+#[test]
+fn verify_oversized_object_does_not_advance_and_larger_allowance_completes_same_job() -> Result<()> {
+    use crate::service::registry::AuditEvidence;
+    use airk_core::service::JobOutcome;
+    let text = "bounded retained input ".repeat(64);
+    let ((_temporary, collection, mut registry, bound, lease, store, scope), job) =
+        verify_inputs_fixture(&[("big.txt", &text)])?;
+    let artifact = store.current_read(&scope)?.artifact("big.txt")?.context("large artifact missing")?;
+    let bytes = artifact.bytes as u64 + artifact.retained.as_ref().context("large retained fixture missing")?.object_bytes as u64;
+    ensure!(bytes > 1, "oversize fixture budget is empty");
+    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+    let mut writer = store.lock()?;
+    for now in [100, 200] {
+        let turn = owner.verify_turn(&mut writer, job.id, 1, bytes - 1, now, || Ok(()))?;
+        assert!(turn.blocked_large);
+        assert_eq!(turn.verified_files, 0);
+        assert!(!turn.progress.complete());
+        assert!(turn.completed.is_none());
+        let progress = serde_json::to_value(&turn.progress)?;
+        assert_eq!(progress["checked_files"], 0);
+        assert_eq!(progress["checked_bytes"], 0);
+        assert!(progress["after"].is_null());
+    }
+    let complete = owner.verify_turn(&mut writer, job.id, 1, bytes, 300, || Ok(()))?;
+    assert!(!complete.blocked_large);
+    assert_eq!(complete.verified_files, 1);
+    assert!(complete.progress.complete());
+    let proof = complete.completed.context("larger allowance did not produce physical completion")?;
+    drop(writer);
+    registry.complete_job_with_maintenance_and_audit_at(&lease, job.id,
+        JobOutcome::Succeeded { revision: Some(proof.revision()?) }, 301, None, Some(AuditEvidence::Complete(&proof)))?;
+    assert!(registry.integrity_audit_veto(&lease)?.is_none());
+    assert!(!bound.live_integrity().revoked());
+    Ok(())
+}

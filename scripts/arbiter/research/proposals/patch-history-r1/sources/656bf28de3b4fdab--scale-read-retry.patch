@@ -1,0 +1,253 @@
+diff --git a/scripts/benchmark-scale.py b/scripts/benchmark-scale.py
+--- a/scripts/benchmark-scale.py
++++ b/scripts/benchmark-scale.py
+@@ -56,8 +56,11 @@
+                                  "accepted_job": receipt["id"],
+                                  "scope": "durable inspection/configuration completion; process counters not sampled"})
+             return fixture.rpc({"configuration_result": {"id": receipt["id"]}})["result"]
+-        value, metrics = measured([str(fixture.binary), *fixture.arguments(prefix), *args], directory,
+-                                  prefix + "-" + label, timeout=timeout, environment=fixture.environment)
++        # Only these source/evidence reads may repeat a complete typed rejection.
++        # Never put index/configuration or other mutations through this path.
++        measure = measured_read if args[0] in ("status", "search", "files", "read") else measured
++        value, metrics = measure([str(fixture.binary), *fixture.arguments(prefix), *args], directory,
++                                 prefix + "-" + label, timeout=timeout, environment=fixture.environment)
+         if "content" in value:
+             assert not value.get("isError"), value
+             value = clients.tool_value(value)
+@@ -142,7 +145,7 @@
+     return {"counter_basis": "OS counters unavailable in this harness; inspect native usage resource report"}
+ 
+ 
+-def measured(command, output_directory, label, timeout=1800, environment=None):
++def measured(command, output_directory, label, timeout=1800, environment=None, *, allow_typed_read_rejection=False):
+     started = time.monotonic()
+     path = output_directory / (label + ".json")
+     errors = output_directory / (label + ".stderr")
+@@ -185,11 +188,70 @@
+                 process.kill()
+                 process.wait()
+     metrics.update(label=label, wall_ms=round((time.monotonic() - started) * 1000, 3), exit_code=process.returncode)
+-    if process.returncode:
+-        raise RuntimeError(f"{label} failed: {errors.read_text(errors='replace')[:4000]}")
+     if path.stat().st_size > 16 * 1024 * 1024:
+         raise ValueError("benchmark command response exceeds 16 MiB")
+-    return json.loads(path.read_text(encoding="utf-8-sig")), metrics
++    value = None
++    if allow_typed_read_rejection:
++        try:
++            value = json.loads(path.read_text(encoding="utf-8-sig"))
++        except (ValueError, UnicodeError):
++            pass
++    if process.returncode and not (allow_typed_read_rejection
++                                   and process.returncode == 1
++                                   and clients.read_retry_delay(value) is not None):
++        raise RuntimeError(f"{label} failed: {errors.read_text(errors='replace')[:4000]}")
++    if value is None:
++        value = json.loads(path.read_text(encoding="utf-8-sig"))
++    return value, metrics
++
++
++def measured_read(command, output_directory, label, timeout=1800, environment=None):
++    """Same read only; original deadline, finite attempts and complete attempt costs."""
++    started = time.monotonic()
++    deadline = started + timeout
++    attempts = []
++    summary = {"label": label, "completed": False, "attempts": attempts}
++
++    def observe(until):
++        remaining = clients.remaining(until, timeout)
++        attempt_label = label if not attempts else f"{label}-retry-{len(attempts)}"
++        attempt = {"label": attempt_label, "exit_code": None}
++        attempts.append(attempt)
++        attempt_started = time.monotonic()
++        try:
++            value, metrics = measured(command, output_directory, attempt_label,
++                                      timeout=remaining, environment=environment,
++                                      allow_typed_read_rejection=True)
++            attempt.update(metrics)
++            return value
++        except BaseException as error:
++            attempt.update(failure_type=type(error).__name__,
++                           wall_ms=round((time.monotonic() - attempt_started) * 1000, 3))
++            raise
++
++    try:
++        value, retries = clients.read_envelope(observe, deadline, attempts=41)
++        summary.update(completed=True, exit_code=0, read_retry_count=retries)
++        # Sum sequential process CPU/logical I/O only where every attempt has
++        # that counter. A peak is the maximum single client-process peak, never
++        # the service/worker process-tree footprint or physical disk traffic.
++        for key in ("cpu_us", "read_bytes", "write_bytes"):
++            if attempts and all(key in item for item in attempts):
++                summary[key] = sum(item[key] for item in attempts)
++        for key in ("peak_rss_bytes", "child_lifetime_peak_rss_bytes"):
++            if attempts and all(key in item for item in attempts):
++                summary[key] = max(item[key] for item in attempts)
++        summary["counter_basis"] = "sequential client-attempt totals; maximum per-client peak; excludes service/workers; unavailable counters omitted"
++        return value, summary
++    finally:
++        summary.update(read_attempt_count=len(attempts),
++                       read_retry_count=max(0, len(attempts) - 1),
++                       wall_ms=round((time.monotonic() - started) * 1000, 3))
++        # Keep rejection files and failed/exhausted summaries too; no overwrite
++        # or conversion of a rejected run into a passing measurement.
++        with (output_directory / (label + "-attempts.json")).open("x", encoding="utf-8") as output:
++            json.dump(summary, output, indent=2)
++            output.write("\n")
+ 
+ 
+ def machine_environment(directory):
+diff --git a/scripts/tests/test_scale_measurement.py b/scripts/tests/test_scale_measurement.py
+--- a/scripts/tests/test_scale_measurement.py
++++ b/scripts/tests/test_scale_measurement.py
+@@ -1,11 +1,13 @@
+ # SPDX-License-Identifier: Apache-2.0
+ """Exercise benchmark process accounting and child failure handling."""
+ import importlib.util
++import json
+ from pathlib import Path
+ import platform
+ import sys
+ import tempfile
+ import unittest
++from unittest import mock
+ 
+ SPEC = importlib.util.spec_from_file_location("benchmark_scale", Path(__file__).parents[1] / "benchmark-scale.py")
+ BENCHMARK = importlib.util.module_from_spec(SPEC)
+@@ -54,5 +56,135 @@
+                     Path(directory), "failure")
+ 
+ 
++    def test_only_explicit_read_path_can_return_nonzero_typed_rejection(self):
++        hint = {"status": "retry", "retryable": True, "code": "selection_busy",
++                "retry_after_ms": 25, "action": "repeat_same_request"}
++        envelope = {"isError": True, "content": [{"type": "text", "text": json.dumps(hint)}]}
++        command = [sys.executable, "-c", "import sys; print(" + repr(json.dumps(envelope)) + "); sys.exit(1)"]
++        with tempfile.TemporaryDirectory() as directory:
++            with self.assertRaises(RuntimeError):
++                BENCHMARK.measured(command, Path(directory), "ordinary", timeout=10)
++            actual, metrics = BENCHMARK.measured(command, Path(directory), "read", timeout=10,
++                                                 allow_typed_read_rejection=True)
++            self.assertEqual(actual, envelope)
++            self.assertEqual(metrics["exit_code"], 1)
++            self.assertEqual(BENCHMARK.clients.read_retry_delay(actual), 0.025)
++
++    def test_exit_two_with_typed_stdout_is_terminal_without_read_replay(self):
++        hint = {"status": "retry", "retryable": True, "code": "selection_busy",
++                "retry_after_ms": 25, "action": "repeat_same_request"}
++        envelope = {"isError": True, "content": [{"type": "text", "text": json.dumps(hint)}]}
++        command = [sys.executable, "-c", "import sys; print(" + repr(json.dumps(envelope)) + "); sys.exit(2)"]
++        with tempfile.TemporaryDirectory() as directory:
++            owner = Path(directory)
++            with self.assertRaises(RuntimeError):
++                BENCHMARK.measured_read(command, owner, "terminal-exit-two", timeout=10)
++            self.assertEqual(json.loads((owner / "terminal-exit-two.json").read_text()), envelope)
++            self.assertFalse((owner / "terminal-exit-two-retry-1.json").exists())
++            saved = json.loads((owner / "terminal-exit-two-attempts.json").read_text())
++            self.assertFalse(saved["completed"])
++            self.assertEqual(saved["read_attempt_count"], 1)
++            self.assertEqual(saved["read_retry_count"], 0)
++            self.assertEqual(saved["attempts"][0]["failure_type"], "RuntimeError")
++
++    def test_same_read_retry_preserves_original_deadline_and_all_attempt_costs(self):
++        clock = [0.0]
++        hint = {"status": "retry", "retryable": True, "code": "selection_busy",
++                "retry_after_ms": 25, "action": "repeat_same_request"}
++        rejected = {"isError": True, "content": [{"text": json.dumps(hint), "type": "text"}]}
++        success = {"isError": False, "content": [{"text": '{"hits":["exact"]}', "type": "text"}]}
++        command = ["unchanged.exe", "search", "sentinel", "--limit", "1"]
++        calls = []
++
++        def measure(actual, directory, label, timeout, environment, *, allow_typed_read_rejection):
++            calls.append((list(actual), label, timeout, environment, allow_typed_read_rejection))
++            clock[0] += 0.2
++            ordinal = len(calls)
++            return (rejected if ordinal == 1 else success), {
++                "label": label, "exit_code": 1 if ordinal == 1 else 0,
++                "cpu_us": ordinal * 10, "read_bytes": ordinal * 20,
++                "peak_rss_bytes": ordinal * 100, "wall_ms": 200}
++
++        with tempfile.TemporaryDirectory() as directory, \
++                mock.patch.object(BENCHMARK, "measured", side_effect=measure), \
++                mock.patch.object(BENCHMARK.time, "monotonic", side_effect=lambda: clock[0]), \
++                mock.patch.object(BENCHMARK.time, "sleep", side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)):
++            value, metrics = BENCHMARK.measured_read(command, Path(directory), "same", timeout=1,
++                                                    environment={"fixture": "same"})
++            self.assertIs(value, success)
++            self.assertEqual([call[0] for call in calls], [command, command])
++            self.assertEqual([call[1] for call in calls], ["same", "same-retry-1"])
++            self.assertEqual(calls[0][2], 1)
++            self.assertAlmostEqual(calls[1][2], 0.775)
++            self.assertTrue(all(call[3:] == ({"fixture": "same"}, True) for call in calls))
++            self.assertEqual(metrics["read_attempt_count"], 2)
++            self.assertEqual(metrics["read_retry_count"], 1)
++            self.assertEqual(metrics["cpu_us"], 30)
++            self.assertEqual(metrics["read_bytes"], 60)
++            self.assertEqual(metrics["peak_rss_bytes"], 200)
++            self.assertNotIn("write_bytes", metrics)  # Missing is not zero.
++            self.assertGreaterEqual(metrics["wall_ms"], 425)
++            saved = json.loads((Path(directory) / "same-attempts.json").read_text())
++            self.assertTrue(saved["completed"])
++            self.assertEqual([item["exit_code"] for item in saved["attempts"]], [1, 0])
++
++    def test_read_deadline_and_attempt_exhaustion_stay_failed_and_retained(self):
++        hint = {"status": "retry", "retryable": True, "code": "publication_busy",
++                "retry_after_ms": 25, "action": "repeat_same_request"}
++        rejected = {"isError": True, "content": [{"text": json.dumps(hint), "type": "text"}]}
++        for timeout, elapsed, expected_attempts in [(0.21, 0.2, 1), (10, 0, 41)]:
++            with self.subTest(timeout=timeout), tempfile.TemporaryDirectory() as directory:
++                clock = [0.0]
++
++                def measure(*args, **kwargs):
++                    clock[0] += elapsed
++                    return rejected, {"label": args[2], "exit_code": 1}
++
++                with mock.patch.object(BENCHMARK, "measured", side_effect=measure) as measured, \
++                        mock.patch.object(BENCHMARK.time, "monotonic", side_effect=lambda: clock[0]), \
++                        mock.patch.object(BENCHMARK.time, "sleep", side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)):
++                    with self.assertRaisesRegex(AssertionError, "no further safe replay"):
++                        BENCHMARK.measured_read(["same.exe", "search", "exact"], Path(directory), "exhausted", timeout=timeout)
++                    self.assertEqual(measured.call_count, expected_attempts)
++                saved = json.loads((Path(directory) / "exhausted-attempts.json").read_text())
++                self.assertFalse(saved["completed"])
++                self.assertEqual(saved["read_attempt_count"], expected_attempts)
++                self.assertTrue(all(attempt["exit_code"] == 1 for attempt in saved["attempts"]))
++
++    def test_terminal_read_failure_is_not_replayed_and_summary_stays_failed(self):
++        with tempfile.TemporaryDirectory() as directory, \
++                mock.patch.object(BENCHMARK, "measured", side_effect=RuntimeError("non-retry failure")) as measured:
++            with self.assertRaisesRegex(RuntimeError, "non-retry failure"):
++                BENCHMARK.measured_read(["same.exe", "search", "exact"], Path(directory), "terminal", timeout=1)
++            self.assertEqual(measured.call_count, 1)
++            saved = json.loads((Path(directory) / "terminal-attempts.json").read_text())
++            self.assertFalse(saved["completed"])
++            self.assertEqual(saved["attempts"][0]["failure_type"], "RuntimeError")
++
++    def test_native_index_and_configuration_never_enter_read_retry_path(self):
++        with tempfile.TemporaryDirectory() as directory:
++            owner = Path(directory)
++            fixture = mock.Mock()
++            fixture.binary = Path("native.exe")
++            fixture.arguments.return_value = ["--collection", "probe"]
++            fixture.projects = {"probe": {"binding": "owned"}}
++            runner = BENCHMARK.native_runner(fixture, owner, owner / "state", owner, "probe", [], 1)
++            with mock.patch.object(BENCHMARK, "measured", side_effect=RuntimeError("single mutation")) as measured, \
++                    mock.patch.object(BENCHMARK, "measured_read") as retried:
++                with self.assertRaisesRegex(RuntimeError, "single mutation"):
++                    runner("index", "index")
++                self.assertEqual(measured.call_count, 1)
++                retried.assert_not_called()
++            configuration = owner / "configuration.json"
++            configuration.write_text('{"operation":"vectors","enabled":false}')
++            fixture.configure.reset_mock()
++            fixture.configure.side_effect = RuntimeError("single configuration")
++            with mock.patch.object(BENCHMARK, "measured_read") as retried:
++                with self.assertRaisesRegex(RuntimeError, "single configuration"):
++                    runner("configure", "configure", "--file", str(configuration))
++                self.assertEqual(fixture.configure.call_count, 1)
++                retried.assert_not_called()
++
++
+ if __name__ == "__main__":
+     unittest.main()

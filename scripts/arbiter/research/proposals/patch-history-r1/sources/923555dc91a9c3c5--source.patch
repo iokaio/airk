@@ -1,0 +1,1295 @@
+--- a/crates/airk-retrieval/src/arbiter/runtime.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime.rs
+@@ -386,6 +386,11 @@
+     Ok(bytes)
+ }
+ 
++enum OpenMode {
++    Execution,
++    #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
++    PlacementDiagnostic,
++}
+ impl Scorer {
+     pub fn open(profile: ExecutionProfile, source: &dyn AssetSource) -> Result<Self> {
+         Self::open_configured(profile, source, Ok)
+@@ -409,6 +414,32 @@
+             ort::session::builder::SessionBuilder,
+         ) -> Result<ort::session::builder::SessionBuilder>,
+     ) -> Result<Self> {
++        match Self::open_internal(profile, source, configure, OpenMode::Execution)? {
++            Some(scorer) => Ok(scorer),
++            None => {
++                anyhow::bail!("diagnostic cannot produce an execution scorer")
++            }
++        }
++    }
++    #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
++    pub fn diagnose_cuda_placement(
++        profile: ExecutionProfile,
++        source: &dyn AssetSource,
++    ) -> Result<()> {
++        cuda::diagnostic::require_diagnostic_profile(&profile)?;
++        match Self::open_internal(profile, source, Ok, OpenMode::PlacementDiagnostic)? {
++            None => Ok(()),
++            Some(_) => anyhow::bail!("diagnostic unexpectedly constructed a scorer"),
++        }
++    }
++    fn open_internal(
++        profile: ExecutionProfile,
++        source: &dyn AssetSource,
++        configure: impl FnOnce(
++            ort::session::builder::SessionBuilder,
++        ) -> Result<ort::session::builder::SessionBuilder>,
++        _mode: OpenMode,
++    ) -> Result<Option<Self>> {
+         crate::native_inference::require_service_compute()?;
+         profile.description.validate()?;
+         profile.validate_native_source()?;
+@@ -545,6 +576,11 @@
+                 .build()])?;
+         }
+         builder = configure(builder)?;
++        #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
++        if matches!(_mode, OpenMode::PlacementDiagnostic) {
++            cuda::diagnostic::require_diagnostic_profile(&profile)?;
++            builder = builder.with_config_entry("session.disable_cpu_ep_fallback", "0")?;
++        }
+         for asset in profile
+             .description
+             .assets
+@@ -609,13 +645,29 @@
+             #[cfg(feature = "gpu-cuda")]
+             gpu.clone(),
+         );
++        #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
++        if matches!(_mode, OpenMode::PlacementDiagnostic) {
++            cuda::diagnostic::session_created(gpu.as_ref().context("diagnostic binding missing")?)?;
++        }
+         #[cfg(feature = "gpu-cuda")]
+         if let Some(claim) = cold {
+             claim.settle()?;
+         }
+         #[cfg(feature = "gpu-cuda")]
+         if let Some(binding) = &gpu {
+-            binding.device.placement(&session)?.require_strict()?;
++            let diagnostic = {
++                #[cfg(feature = "test-support")]
++                {
++                    matches!(_mode, OpenMode::PlacementDiagnostic)
++                }
++                #[cfg(not(feature = "test-support"))]
++                {
++                    false
++                }
++            };
++            if !diagnostic {
++                binding.device.placement(&session)?.require_strict()?;
++            }
+         }
+ 
+         let focus = profile.description.abi.readout == Readout::FocusYesNo;
+@@ -727,14 +779,19 @@
+                 "Focus output must be the exact raw no/yes pair"
+             );
+         }
+-        Ok(Self {
++        #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
++        if matches!(_mode, OpenMode::PlacementDiagnostic) {
++            cuda::diagnostic::finish(session, gpu.as_ref().context("diagnostic binding missing")?)?;
++            return Ok(None);
++        }
++        Ok(Some(Self {
+             profile,
+             compiler,
+             session: Mutex::new(session),
+             _environment: environment,
+             physical_cores,
+             joint_calibration,
+-        })
++        }))
+     }
+     #[cfg(any(test, feature = "test-support"))]
+     pub fn finish_profiling(&self) -> Result<std::path::PathBuf> {
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
+@@ -25,6 +25,9 @@
+     decode_metadata_custody, encode_historical_tool_custody, encode_metadata_custody,
+     validate_custody_compatibility, validate_historical_tool_custody, validate_metadata_custody,
+ };
++pub(super) mod diagnostic;
++#[cfg(feature = "test-support")]
++pub use diagnostic::{LoadObserver, LoadSnapshot};
+ mod eligibility;
+ mod manifest;
+ mod numeric;
+@@ -380,7 +383,7 @@
+             }
+         }
+     }
+-    #[cfg(all(windows, target_arch = "x86_64"))]
++    #[cfg(any(feature = "test-support", all(windows, target_arch = "x86_64")))]
+     fn poison(&self) {
+         self.poisoned.store(true, Ordering::Release);
+         self.epoch.fetch_add(1, Ordering::AcqRel);
+@@ -609,7 +612,7 @@
+     pub load_deadline: Instant,
+     pub evidence: Option<DeviceEvidence>,
+     pub host_warm_extra_bytes: Option<u64>,
+-    log: Arc<Mutex<(Vec<String>, usize, bool)>>,
++    log: Arc<Mutex<diagnostic::Capture>>,
+     admission: Arc<Mutex<eligibility::AdmissionState>>,
+     session_alive: Arc<AtomicBool>,
+ }
+@@ -652,7 +655,7 @@
+             load_deadline: deadline,
+             evidence: Some(evidence),
+             host_warm_extra_bytes: Some(host),
+-            log: Arc::new(Mutex::new((Vec::new(), 0, false))),
++            log: Arc::new(Mutex::new(diagnostic::Capture::default())),
+             admission: Arc::new(Mutex::new(admission)),
+             session_alive: Arc::new(AtomicBool::new(true)),
+         })
+@@ -676,7 +679,7 @@
+             load_deadline: deadline,
+             evidence: None,
+             host_warm_extra_bytes: None,
+-            log: Arc::new(Mutex::new((Vec::new(), 0, false))),
++            log: Arc::new(Mutex::new(diagnostic::Capture::default())),
+             admission: Arc::new(Mutex::new(eligibility::AdmissionState::Scientific)),
+             session_alive: Arc::new(AtomicBool::new(true)),
+         })
+@@ -704,13 +707,7 @@
+                 move |_level, _category, _id, location, message| {
+                     // Native bounded observations only, never a placement permit.
+                     if let Ok(mut sink) = log.lock() {
+-                        let entry = format!("{location}: {message}");
+-                        if entry.len() > 4096 || sink.1.saturating_add(entry.len()) > 65536 {
+-                            sink.2 = true;
+-                        } else {
+-                            sink.1 += entry.len();
+-                            sink.0.push(entry);
+-                        }
++                        sink.push(location, message);
+                     }
+                 },
+             ))?)
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/CONTRACT.md
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/CONTRACT.md
+@@ -541,3 +541,51 @@
+ caller. Cross-host unit controls parse descriptors directly and exercise compiled
+ approval through RuntimeManifest::approved; they do not consume the Windows
+ descriptor approval wrapper. Its function body and Windows behavior are unchanged.
++
++# Disposable CUDA session placement diagnostic
++
++Private test-support only. Normal Scorer open/profiling retains CUDA-only provider
++registration, disable_cpu_ep_fallback=1 and complete strict final placement gate.
++The diagnostic requires a current native evaluation lease, unqualified Compact
++FP32 profile and same admitted device/bounds; it cannot accept release authority.
++It retains exactly the existing graph/external-byte/large-initializer/ABI setup.
++Only its private OpenMode permits disable_cpu_ep_fallback=0 to inspect actual
++partitioning. No CPU exception or hybrid policy is thereby admitted.
++
++A successful diagnostic observes a complete final SessionState map, explicitly
++synchronizes, drops the actual SessionOwner and synchronizes/checks poison and
++pending claims again. It returns data before Scorer construction. No Session,
++Scorer, run callback or executable capability is returned. Failed creation,
++partial placement or uncertain settlement retains error/log/observation evidence
++and existing unknown-work custody; Drop alone never proves release.
++
++An opaque cloned log observer survives consumed ExecutionProfile/Binding failure.
++It carries data only. Existing 65536-byte total and 4096-byte formatted-entry caps
++remain. Selected CPU preference/missing/unsupported-kernel/assignment diagnostics
++retain location and message; seen/selected/retained/omitted/bytes/truncated fields
++make selection and loss explicit. Unselected optimizer noise counts as seen,
++not omitted. Logs never substitute for the final same-core placement collector.
++
++Native ignored selector cuda_load_only_placement_diagnostic returns private
++schema airk.private.cuda-placement-diagnostic/1. It retains actual PID, binary,
++request/profile/source/runtime pins, original120-second expiry, process16GiB,
++Job24GiB, native host reservation, control/host release and poison observations.
++It creates no operation journal and dispatches no forward. Session load is explicit.
++Diagnostic complete requires session creation, full placement, untruncated selected
++logs, observed pre/post teardown synchronization, pending claims zero, no poison,
++actual host/control release and original deadline. Failure never becomes a pass.
++
++The owning source transition explicitly advances current runtime.rs identity
++without rewriting legacy CPU metadata, task/compiler identity or qualification.
++Inverse textual replay of the reviewed runtime delta must reproduce prior9e.
++G5's old9e->DDE supplement must be rebased onto this new source rather than copied.
++This diagnostic grants no execution or precision admission, qualification or
++publication.
++
++A caught SessionOwner Drop panic means unknown native release even if a later
++synchronization succeeds. Before that observation the diagnostic invokes the
++existing device poison/epoch owner and retains a Binding clone; the native
++Custody then observes actual device poison and retains the owner, lease, charge,
++control and files. Teardown.poisoned records that device state. The separate
++process_cuda_poisoned field remains the actual global runtime-loader observation;
++per-device poison does not fabricate global loader poison. Neither can pass.
+--- a/crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition.rs
+@@ -15,7 +15,7 @@
+     "d2879546ba9e949fdd8b135a244923de2adb781e8598539cc33f4d7d6f0794eb";
+ // Exact runtime owner hook bytes. A different build source requires a new reviewed row.
+ const CURRENT_RUNTIME_SOURCE: Option<&str> =
+-    Some("9e539508f52e403368124ee38f91085f4b318f87fcffe45f898728cf9c0db49d");
++    Some("254f1209c5136f964b5ae8f6c1edee7560a65d07658352339ada8c943e379db0");
+ const LEGACY_CORE: &str = "ddd9dbc76ae2c7e92c3b57b58a9443161fb045bbc175596f57bb41c9b1b5bbe6";
+ const CURRENT_CORE: &str = "77fa25e4623f32e568a7163553cf7531cd4425dbb157ea2b67fef7940998c57f";
+ const CURRENT_TASK: &str = "cc25cb7e3a3b6ea4cb78f232c0c1bf6764005e79775af20a1d0b3aa5d8d1bdab";
+--- a/crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition/tests.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition/tests.rs
+@@ -226,7 +226,7 @@
+ fn cuda_bridge_and_driver_closure_preserve_closed_cpu_runtime_source() -> Result<()> {
+     assert_eq!(
+         source_sha(include_bytes!("../../runtime.rs"))?.to_string(),
+-        "9e539508f52e403368124ee38f91085f4b318f87fcffe45f898728cf9c0db49d"
++        "254f1209c5136f964b5ae8f6c1edee7560a65d07658352339ada8c943e379db0"
+     );
+     assert_eq!(
+         source_sha(include_bytes!("../cuda/windows.rs"))?.to_string(),
+@@ -242,7 +242,7 @@
+     let record = serde_json::to_value(witness.record(&profile)?)?;
+     assert_eq!(
+         record["current_runtime_source"],
+-        "9e539508f52e403368124ee38f91085f4b318f87fcffe45f898728cf9c0db49d"
++        "254f1209c5136f964b5ae8f6c1edee7560a65d07658352339ada8c943e379db0"
+     );
+     assert_eq!(
+         record["current_task_policy"],
+@@ -253,3 +253,31 @@
+     assert_eq!(serde_json::to_vec(&profile)?, before);
+     Ok(())
+ }
++
++#[test]
++fn placement_diagnostic_supplement_binds_current_runtime_without_qualification_transfer()
++-> Result<()> {
++    assert_eq!(
++        source_sha(include_bytes!("../../runtime.rs"))?.to_string(),
++        "254f1209c5136f964b5ae8f6c1edee7560a65d07658352339ada8c943e379db0"
++    );
++    assert_eq!(
++        source_sha(include_bytes!("../cuda/diagnostic.rs"))?.to_string(),
++        "29c7376e8e70c74562e53da3ad622fb0668b093e48f353e88cdc18f6e337d081"
++    );
++    assert_eq!(
++        source_sha(include_bytes!("../cuda.rs"))?.to_string(),
++        "81d80bf79baa783d9592446c1fef5f00155641d39d0674997996a1206c71ad87"
++    );
++    assert_ne!(
++        CURRENT_RUNTIME_SOURCE,
++        Some("9e539508f52e403368124ee38f91085f4b318f87fcffe45f898728cf9c0db49d")
++    );
++    let profile = legacy_focus()?;
++    let original = serde_json::to_vec(&profile)?;
++    let record = serde_json::to_value(CpuSourceTransition::admit(&profile)?.record(&profile)?)?;
++    assert_eq!(record["task_qualification_transferred"], false);
++    assert_eq!(record["public_source_rewritten"], false);
++    assert_eq!(serde_json::to_vec(&profile)?, original);
++    Ok(())
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition/CONTRACT.md
++++ b/crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition/CONTRACT.md
+@@ -157,3 +157,30 @@
+ execution receipts distinguish this loader correction from historical1114
+ failures. CPU transition records alone do not identify the full native image;
+ no old numeric, resource, CAL or qualification result transfers to the new build.
++
++## Disposable placement diagnostic source supplement
++
++The previous runtime source 9e539508f52e403368124ee38f91085f4b318f87fcffe45f898728cf9c0db49d remains historical. The current runtime source
++254f1209c5136f964b5ae8f6c1edee7560a65d07658352339ada8c943e379db0 wraps the existing open path in an internal result mode and adds a
++`gpu-cuda` plus `test-support` evaluation-only disposable diagnostic. Ordinary
++CPU opening selects `Execution`, uses the same builder, assets, session owner,
++ABI checks and resulting Scorer. CUDA production still forbids CPU fallback and
++requires strict placement. No descriptor, task/compiler policy, calibration,
++qualification, download or public source is relabelled. The first eight closed
++CPU controls are preserved byte-for-byte; the existing CUDA custody control's
++runtime literals deliberately advance, and a separate supplement pins the new
++observation owner. The inverse transformation record reconstructs exact prior
++runtime bytes; it is mechanical source evidence, not a compiled behavioral pass.
++
++Current Compact's task digest binds context_action.rs plus core semantics and
++its compiler digest binds compiler.rs plus qwen.rs. This runtime-only change
++therefore does not require retagging retained Compact metadata: current-policy
++admission remains available, while every diagnostic consumes a freshly built,
++explicitly pinned native source group. The legacy CPU witness is not Compact's
++admission path. G5 must be rebased on this runtime source: do not overwrite it
++with the historical DDE proposal or duplicate startup GEMM initialization.
++
++The supplemental source pins also bind current cuda.rs wiring and diagnostic
++unknown-release behavior. A caught SessionOwner Drop panic invokes the actual
++device poison/epoch owner and retains Binding before post-sync; native custody
++therefore retains all owned resources. The original closed CPU path is unchanged.
+--- a/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification.rs
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification.rs
+@@ -1235,3 +1235,330 @@
+         assert!(diagnostic_settlement(admitted, retained, cleaned, released, poisoned).is_err());
+     }
+ }
++
++fn placement_diagnostic_evidence(
++    loaded: bool,
++    snapshot: Option<&cuda::LoadSnapshot>,
++    retained: bool,
++    cleaned: bool,
++    released: bool,
++    poisoned: bool,
++) -> Result<()> {
++    ensure!(loaded, "disposable session diagnostic returned failure");
++    snapshot
++        .context("disposable session observer is absent")?
++        .validate()?;
++    diagnostic_settlement(true, retained, cleaned, released, poisoned)
++}
++#[test]
++#[ignore = "disposable session placement only: original120s/16GiB/24GiB, actual CUDA lease/device; no scorer or forward"]
++fn cuda_load_only_placement_diagnostic() -> Result<()> {
++    let started_ns = airk_process::monotonic::now_ns()?;
++    let started = Instant::now();
++    let execution_user = airk_ipc::endpoint::current_user()?;
++    let default_owner = diagnostic_default_owner()?;
++    ensure!(
++        execution_user == default_owner,
++        "diagnostic default owner differs from execution user"
++    );
++    let (request, request_pin) = request()?;
++    let Request::Probe {
++        schema,
++        gpu_input,
++        runtime_manifest,
++        bounds,
++        cold_bytes,
++        warm_bytes,
++        headroom_bytes,
++        job_limit_bytes,
++    } = request
++    else {
++        anyhow::bail!("placement diagnostic requires unchanged native Probe request")
++    };
++    ensure!(schema == SCHEMA, "unknown diagnostic request schema");
++    bounds.validate()?;
++    ensure!(
++        bounds.deadline_ms == 120000
++            && bounds.host_limit_bytes == 16 << 30
++            && bounds.device_limit_bytes == 24 << 30
++            && job_limit_bytes == 24 << 30,
++        "placement diagnostic original bounds differ"
++    );
++    let deadline = started + Duration::from_millis(bounds.deadline_ms);
++    let expires_ns = started_ns
++        .checked_add(bounds.deadline_ms * 1_000_000)
++        .context("diagnostic expiry overflow")?;
++    // Actual source assets are authenticated below before disposable session creation.
++    let (input, profile, files, _) = inputs_from(&gpu_input)?;
++    let capacity_plan = bounds_validate(
++        &bounds,
++        cold_bytes,
++        warm_bytes,
++        headroom_bytes,
++        job_limit_bytes,
++        profile.memory_reservation_bytes,
++    )?;
++    ensure!(
++        profile.model == ModelChoice::ContextQwenCompact
++            && profile.device_execution.is_some()
++            && profile.cpu_fit.is_none(),
++        "placement diagnostic requires frozen Compact GPU metadata"
++    );
++    pinned(&runtime_manifest, 128 << 10)?;
++    let (root, manifest) = airk_host::gpu_runtime::installed_paths()?;
++    ensure!(
++        manifest.as_path() == Path::new(&runtime_manifest.path),
++        "diagnostic manifest differs from installed runtime locator"
++    );
++    let actual_job = job_limits(bounds.host_limit_bytes, job_limit_bytes)?;
++    let mut resources = airk_kernel::service_resources::Resources::detect(ResourceConfiguration {
++        preset: ResourcePreset::Throughput,
++        ..ResourceConfiguration::default()
++    })?;
++    let available = airk_kernel::service_resource_observations::available_memory();
++    resources.observe(
++        airk_kernel::service_resource_observations::rss(std::process::id()),
++        available,
++        true,
++    );
++    let incarnation = Incarnation::from_bytes(request_pin.sha256.as_bytes()[..16].try_into()?);
++    let charge =
++        Arc::new(resources.reserve_optional(incarnation, bounds.host_limit_bytes, available)?);
++    let charge_release = charge.release_observer();
++    let (parent, control) = private_control()?;
++    let mut control_parent = Some(parent);
++    let lease = Arc::new(airk_store::service::ServiceLease::acquire(&control)?);
++    let owner = Arc::new(airk_kernel::inference_owner::NativeInferenceOwner::admit(
++        lease.clone(),
++    )?);
++    let binary = file_hash(&std::env::current_exe()?)?;
++    let mut file = OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .open(output()?)?;
++    let mut receipt = json!({
++        "schema":"airk.private.cuda-placement-diagnostic/1", "diagnostic_complete":false,
++        "operation_scope":"Disposable session creation and final placement observation only; no Scorer, forward, hybrid policy or qualification is returned",
++        "outcome":"not_dispatched","qualification":false,"product_admission":false,
++        "session_load_dispatched":false,"session_created":false,"strict_production_unchanged":true,
++        "cpu_fallback_disabled":false,"scorer_returned":false,"forward_dispatched":false,
++        "model_requests_dispatched":false,"operations_journal_created":false,"forward_count_observed":null,
++        "placement":null,"logs":null,"teardown":null,
++        "request":request_pin,"native_input":gpu_input,"profile":profile.manifest,"source_manifest":input.source_manifest,
++        "runtime_manifest":runtime_manifest,"pid":std::process::id(),"native_binary_sha256":binary,
++        "execution_user":execution_user,"default_owner":default_owner,"bounds":bounds,"actual_job":actual_job,
++        "native_host_reservation_bytes":charge.bytes(),"resource_snapshot":resources.snapshot(),
++        "original_expires_monotonic_ns":expires_ns,"error":null,"error_chain":[],"diagnostic_error":null
++    });
++    flush(&mut file, &receipt)?;
++    let mut dispatched = false;
++    let mut observer = None;
++    let run = owner.run(|| -> Result<()> {
++        let mut custody = Custody {
++            scorer: None,
++            device: None,
++            owner: owner.clone(),
++            lease: lease.clone(),
++            charge: Some(charge),
++            control: &mut control_parent,
++            files: Some(files),
++        };
++        ensure!(
++            Instant::now() < deadline,
++            "original placement diagnostic expiry before admission"
++        );
++        verify_files(custody.files.as_ref().unwrap(), &profile)?;
++        let runtime = airk_host::gpu_runtime::admit(lease.clone(), &root, &manifest, deadline)?;
++        ensure!(
++            runtime.manifest_identity() == runtime_manifest.sha256,
++            "diagnostic runtime differs from frozen manifest"
++        );
++        let adapters = runtime.adapters(deadline)?;
++        ensure!(
++            adapters.len() == 1,
++            "placement diagnostic requires one actual adapter"
++        );
++        let device = runtime.device(adapters[0].uuid, deadline)?;
++        custody.device = Some(device.clone());
++        receipt["adapter_before"] = serde_json::to_value(device.observation(deadline)?)?;
++        let catalog =
++            airk_kernel::inference_owner::evaluation_catalog(lease.clone(), vec![profile.clone()])?;
++        let execution = catalog
++            .execution_profile(profile.manifest)?
++            .bind_cuda_probe(device, capacity_plan, deadline)?;
++        observer = Some(execution.cuda_load_observer()?);
++        ensure!(
++            Instant::now() < deadline,
++            "original placement diagnostic expiry before session load"
++        );
++        dispatched = true;
++        receipt["session_load_dispatched"] = json!(true);
++        let result = Scorer::diagnose_cuda_placement(execution, custody.files.as_ref().unwrap());
++        let post_files = verify_files(custody.files.as_ref().unwrap(), &profile);
++        result.and(post_files)
++    });
++    let admission = run.and_then(std::convert::identity);
++    let snapshot = observer
++        .as_ref()
++        .map(cuda::LoadObserver::snapshot)
++        .transpose();
++    drop(owner);
++    drop(lease);
++    let retained = control_parent.is_none();
++    let cleanup = control_parent
++        .take()
++        .map(tempfile::TempDir::close)
++        .transpose();
++    let cleaned = matches!(&cleanup, Ok(Some(())));
++    let mut released_future = std::pin::pin!(charge_release.wait());
++    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
++    let released = matches!(
++        std::future::Future::poll(released_future.as_mut(), &mut cx),
++        std::task::Poll::Ready(Ok(()))
++    );
++    let poisoned = cuda::process_poisoned();
++    receipt["session_load_dispatched"] = json!(dispatched);
++    if let Ok(Some(value)) = &snapshot {
++        receipt["session_created"] = json!(value.session_created);
++        receipt["placement"] = serde_json::to_value(&value.placement)?;
++        receipt["logs"] = serde_json::to_value(&value.logs)?;
++        receipt["teardown"] = serde_json::to_value(&value.teardown)?;
++    }
++    receipt["native_control_retained_for_unknown_cuda"] = json!(retained);
++    receipt["native_control_cleanup_observed"] = json!(cleaned);
++    receipt["native_control_cleanup_error"] =
++        json!(cleanup.as_ref().err().map(ToString::to_string));
++    receipt["native_host_charge_release_observed"] = json!(released);
++    receipt["process_cuda_poisoned"] = json!(poisoned);
++    if let Err(error) = &admission {
++        receipt["error"] = json!(format!("{error:#}"));
++        receipt["error_chain"] = json!(error.chain().map(ToString::to_string).collect::<Vec<_>>());
++    }
++    let post = (|| -> Result<()> {
++        ensure!(dispatched, "disposable session load was not dispatched");
++        ensure!(cleanup.is_ok(), "native diagnostic control cleanup failed");
++        let observed = snapshot
++            .as_ref()
++            .map_err(|error| anyhow::anyhow!("{error:#}"))?;
++        placement_diagnostic_evidence(
++            admission.is_ok(),
++            observed.as_ref(),
++            retained,
++            cleaned,
++            released,
++            poisoned,
++        )?;
++        pinned(&request_pin, 1 << 20)?;
++        pinned(&gpu_input, 1 << 20)?;
++        pinned(&input.profile, 1 << 20)?;
++        pinned(&input.source_manifest, 16 << 20)?;
++        pinned(&runtime_manifest, 128 << 10)?;
++        ensure!(
++            Instant::now() < deadline,
++            "original placement diagnostic expiry during postpins"
++        );
++        Ok(())
++    })();
++    let peak = peak_rss();
++    let peak_decision = final_host_peak(peak, bounds.host_limit_bytes);
++    receipt["peak_process_rss_bytes"] = json!(peak);
++    receipt["final_host_peak_error"] = json!(peak_decision.as_ref().err().map(ToString::to_string));
++    let final_result = admission.and(post).and(peak_decision.map(|_| ()));
++    receipt["outcome"] = json!(if final_result.is_ok() {
++        "placement_observed"
++    } else if dispatched {
++        "failed"
++    } else {
++        "not_dispatched"
++    });
++    receipt["diagnostic_complete"] = json!(final_result.is_ok());
++    receipt["diagnostic_error"] = json!(final_result.as_ref().err().map(|e| format!("{e:#}")));
++    receipt["elapsed_us_to_final_report_start"] = json!(started.elapsed().as_micros());
++    flush(&mut file, &receipt)?;
++    if Instant::now() >= deadline {
++        receipt["diagnostic_complete"] = json!(false);
++        receipt["outcome"] = json!("failed");
++        receipt["final_report_retention_exceeded_original_deadline"] = json!(true);
++        receipt["diagnostic_error"] =
++            json!("original placement diagnostic expiry during final report retention");
++        flush(&mut file, &receipt)?;
++        anyhow::bail!("original placement diagnostic expiry during final report retention");
++    }
++    final_result
++}
++
++fn synthetic_placement_snapshot() -> cuda::LoadSnapshot {
++    let mut value = cuda::LoadSnapshot {
++        session_created: true,
++        placement: Some(cuda::PlacementObservation {
++            scope: "onnxruntime-final-session-state-ep-placement",
++            complete: true,
++            shim_status: 0,
++            ort_error_code: 0,
++            reported_nodes: 1,
++            reported_string_bytes: 30,
++            nodes: vec![cuda::PlacedNode {
++                subgraph_index: 0,
++                name: "shape".into(),
++                domain: "".into(),
++                op: "Shape".into(),
++                ep: "CPUExecutionProvider".into(),
++            }],
++        }),
++        teardown: Some(Default::default()),
++        ..Default::default()
++    };
++    let teardown = value.teardown.as_mut().unwrap();
++    teardown.pre_sync_observed = true;
++    teardown.session_drop_attempted = true;
++    teardown.session_drop_returned = true;
++    teardown.post_sync_observed = true;
++    teardown.pending_claims = Some(0);
++    value
++}
++#[test]
++fn placement_diagnostic_observation_never_substitutes_for_load_or_custody() -> Result<()> {
++    let value = synthetic_placement_snapshot();
++    placement_diagnostic_evidence(true, Some(&value), false, true, true, false)?;
++    // CPU assignment is observable here; the unchanged production strict gate refuses it.
++    assert!(value.placement.as_ref().unwrap().validate_strict().is_err());
++    assert!(placement_diagnostic_evidence(false, Some(&value), false, true, true, false).is_err());
++    assert!(placement_diagnostic_evidence(true, None, false, true, true, false).is_err());
++    for (retained, cleaned, released, poisoned) in [
++        (true, false, false, true),
++        (false, false, true, false),
++        (false, true, false, false),
++        (false, true, true, true),
++    ] {
++        assert!(
++            placement_diagnostic_evidence(
++                true,
++                Some(&value),
++                retained,
++                cleaned,
++                released,
++                poisoned
++            )
++            .is_err()
++        );
++    }
++    Ok(())
++}
++#[test]
++fn placement_diagnostic_partial_capture_or_unproven_teardown_refuses() {
++    for mutation in 0..5 {
++        let mut value = synthetic_placement_snapshot();
++        match mutation {
++            0 => value.session_created = false,
++            1 => value.placement.as_mut().unwrap().complete = false,
++            2 => value.logs.truncated = true,
++            3 => value.teardown.as_mut().unwrap().session_drop_returned = false,
++            4 => value.teardown.as_mut().unwrap().pending_claims = None,
++            _ => unreachable!(),
++        }
++        assert!(
++            placement_diagnostic_evidence(true, Some(&value), false, true, true, false).is_err(),
++            "mutation {mutation}"
++        );
++    }
++}
+--- a/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification/CONTRACT.md
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification/CONTRACT.md
+@@ -113,3 +113,85 @@
+ made by this diagnostic caller. Production admission includes cuInit; these
+ flags do not assert that driver internals allocate nothing, create no internal
+ contexts or perform no internal adapter observation.
++
++
++# Disposable CUDA session placement diagnostic
++
++Private test-support only. Normal Scorer open/profiling retains CUDA-only provider
++registration, disable_cpu_ep_fallback=1 and complete strict final placement gate.
++The diagnostic requires a current native evaluation lease, unqualified Compact
++FP32 profile and same admitted device/bounds; it cannot accept release authority.
++It retains exactly the existing graph/external-byte/large-initializer/ABI setup.
++Only its private OpenMode permits disable_cpu_ep_fallback=0 to inspect actual
++partitioning. No CPU exception or hybrid policy is thereby admitted.
++
++A successful diagnostic observes a complete final SessionState map, explicitly
++synchronizes, drops the actual SessionOwner and synchronizes/checks poison and
++pending claims again. It returns data before Scorer construction. No Session,
++Scorer, run callback or executable capability is returned. Failed creation,
++partial placement or uncertain settlement retains error/log/observation evidence
++and existing unknown-work custody; Drop alone never proves release.
++
++An opaque cloned log observer survives consumed ExecutionProfile/Binding failure.
++It carries data only. Existing 65536-byte total and 4096-byte formatted-entry caps
++remain. Selected CPU preference/missing/unsupported-kernel/assignment diagnostics
++retain location and message; seen/selected/retained/omitted/bytes/truncated fields
++make selection and loss explicit. Unselected optimizer noise counts as seen,
++not omitted. Logs never substitute for the final same-core placement collector.
++
++Native ignored selector cuda_load_only_placement_diagnostic returns private
++schema airk.private.cuda-placement-diagnostic/1. It retains actual PID, binary,
++request/profile/source/runtime pins, original120-second expiry, process16GiB,
++Job24GiB, native host reservation, control/host release and poison observations.
++It creates no operation journal and dispatches no forward. Session load is explicit.
++Diagnostic complete requires session creation, full placement, untruncated selected
++logs, observed pre/post teardown synchronization, pending claims zero, no poison,
++actual host/control release and original deadline. Failure never becomes a pass.
++
++The owning source transition explicitly advances current runtime.rs identity
++without rewriting legacy CPU metadata, task/compiler identity or qualification.
++Inverse textual replay of the reviewed runtime delta must reproduce prior9e.
++G5's old9e->DDE supplement must be rebased onto this new source rather than copied.
++This diagnostic grants no execution or precision admission, qualification or
++publication.
++
++## Native placement diagnostic result ownership
++
++The ignored cuda_load_only_placement_diagnostic uses the unchanged frozen Probe
++request, installed manifest locator, unqualified Compact FP32 profile, actual
++native ServiceLease/NativeInferenceOwner, same-device evaluation binding and
++original120s/process16GiB/Job24GiB limits. It authenticates actual model files for
++session construction, observes the admitted adapter and creates the diagnostic
++device context. It never returns a Scorer, dispatches a forward or creates an
++operation journal. Session creation is explicit, not labeled no-model-loading.
++
++Its operation_scope is exactly: Disposable session creation and final placement
++observation only; no Scorer, forward, hybrid policy or qualification is returned.
++The distinct airk.private.cuda-placement-diagnostic/1 receipt sets qualification
++and product_admission false, cpu_fallback_disabled false for this private loader,
++and strict_production_unchanged true. Existing production strict placement stays
++mandatory. A CPU-assigned node may appear as an observation, never admission.
++
++An opaque LoadObserver survives the consuming diagnostic call. Both success and
++failure capture the final available session_created, placement, selected bounded
++logs and teardown observation without inventing missing fields. Success requires
++both diagnose_cuda_placement returning Ok and the owning LoadSnapshot::validate,
++plus actual outer control/host-charge release, no poison, unchanged pins, final
++RSS and original expiry. A failed/partial/truncated/uncertain observation retains
++full error/error_chain and diagnostic_error; it cannot exit as a complete pass.
++Snapshots are data only and do not prove cleanup without the actual owner facts.
++
++Outcome placement_observed is emitted only after all those final proofs pass;
++otherwise it is failed or not_dispatched. session_load_dispatched is set only
++immediately before the actual consuming diagnostic call. The separate parent
++still proves retained-HANDLE exit/empty Job and seals this native result/stdout.
++No row scores, execution identity or forward completion evidence is emitted.
++
++A caught SessionOwner Drop panic poisons the actual device and retains its
++Binding before post-sync. Existing native Custody observes device poison and
++retains owner, lease, host charge, source files and control root. The teardown
++poisoned field reports that device observation. process_cuda_poisoned separately
++reports the actual global loader poison state and may remain false. These are
++not interchangeable proofs: any unknown retained-custody path prevents diagnostic
++completion even when global process_cuda_poisoned is false. Parent process exit
++never relabels that unknown native teardown as an observed native release.
+--- /dev/null
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic.rs
+@@ -0,0 +1,328 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Bounded observations only; never a session, scorer or execution capability.
++use super::*;
++#[derive(Clone, Debug, Serialize)]
++pub struct LogRow {
++    pub location: String,
++    pub message: String,
++}
++#[derive(Clone, Debug, Default, Serialize)]
++pub struct LogSnapshot {
++    pub seen: u64,
++    pub selected: u64,
++    pub retained: u64,
++    pub omitted: u64,
++    pub bytes: usize,
++    pub truncated: bool,
++    pub rows: Vec<LogRow>,
++}
++#[derive(Default)]
++pub(crate) struct Capture {
++    logs: LogSnapshot,
++    #[cfg(feature = "test-support")]
++    state: LoadSnapshot,
++}
++impl Capture {
++    pub(super) fn push(&mut self, location: &str, message: &str) {
++        self.logs.seen = self.logs.seen.saturating_add(1);
++        if self.logs.seen == u64::MAX {
++            self.logs.truncated = true;
++        }
++        if !selected(message) {
++            return;
++        }
++        self.logs.selected = self.logs.selected.saturating_add(1);
++        let bytes = location
++            .len()
++            .saturating_add(2)
++            .saturating_add(message.len());
++        if bytes > 4096
++            || self.logs.bytes.saturating_add(bytes) > 65536
++            || self.logs.rows.len() >= 65536
++        {
++            self.logs.omitted = self.logs.omitted.saturating_add(1);
++            self.logs.truncated = true;
++        } else {
++            self.logs.bytes += bytes;
++            self.logs.rows.push(LogRow {
++                location: location.into(),
++                message: message.into(),
++            });
++            self.logs.retained += 1;
++        }
++        if self.logs.seen == u64::MAX || self.logs.selected == u64::MAX {
++            self.logs.truncated = true;
++        }
++    }
++}
++fn selected(message: &str) -> bool {
++    [
++        "ORT optimization- Force fallback to CPU execution for node:",
++        "CUDA kernel not found in registries for Op type:",
++        "CUDA kernel not supported. Fallback to CPU execution provider for Op type:",
++        "This session contains graph nodes that are assigned to the default CPU EP",
++        "Could not find an implementation for",
++        "CUDA_EP Halting assignment due to capacity threshold",
++    ]
++    .iter()
++    .any(|prefix| message.starts_with(prefix))
++}
++#[cfg(feature = "test-support")]
++#[derive(Clone, Debug, Default, Serialize)]
++pub struct Teardown {
++    pub pre_sync_observed: bool,
++    pub session_drop_attempted: bool,
++    pub session_drop_returned: bool,
++    pub post_sync_observed: bool,
++    pub pending_claims: Option<usize>,
++    pub poisoned: bool,
++    pub errors: Vec<String>,
++}
++#[cfg(feature = "test-support")]
++impl Teardown {
++    pub fn validate(&self) -> Result<()> {
++        ensure!(
++            self.pre_sync_observed
++                && self.session_drop_attempted
++                && self.session_drop_returned
++                && self.post_sync_observed
++                && self.pending_claims == Some(0)
++                && !self.poisoned
++                && self.errors.is_empty(),
++            "disposable CUDA session teardown is incomplete or uncertain"
++        );
++        Ok(())
++    }
++}
++#[cfg(feature = "test-support")]
++pub(crate) fn settle_with<T>(
++    session: T,
++    pre: impl FnOnce(&T) -> Result<()>,
++    unknown_release: impl FnOnce(),
++    post: impl FnOnce() -> (Result<()>, Option<usize>, bool),
++) -> Teardown {
++    let before = pre(&session);
++    let dropped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(session)));
++    if dropped.is_err() {
++        // Unknown native release must alter actual custody before later observations.
++        unknown_release();
++    }
++    let (after, pending_claims, poisoned) = post();
++    let mut errors = Vec::new();
++    if let Err(error) = &before {
++        errors.push(format!("pre-sync: {error:#}"));
++    }
++    if dropped.is_err() {
++        errors.push("session Drop panicked; release is unknown".into());
++    }
++    if let Err(error) = &after {
++        errors.push(format!("post-sync: {error:#}"));
++    }
++    Teardown {
++        pre_sync_observed: before.is_ok(),
++        session_drop_attempted: true,
++        session_drop_returned: dropped.is_ok(),
++        post_sync_observed: after.is_ok(),
++        pending_claims,
++        poisoned,
++        errors,
++    }
++}
++#[cfg(feature = "test-support")]
++#[derive(Clone, Debug, Default, Serialize)]
++pub struct LoadSnapshot {
++    pub session_created: bool,
++    pub placement: Option<PlacementObservation>,
++    pub logs: LogSnapshot,
++    pub teardown: Option<Teardown>,
++}
++#[cfg(feature = "test-support")]
++impl LoadSnapshot {
++    pub fn validate(&self) -> Result<()> {
++        ensure!(self.session_created, "diagnostic session was not created");
++        complete_placement(
++            self.placement
++                .as_ref()
++                .context("diagnostic placement missing")?,
++        )?;
++        self.teardown
++            .as_ref()
++            .context("diagnostic teardown missing")?
++            .validate()?;
++        let logs = &self.logs;
++        ensure!(
++            !logs.truncated
++                && logs.omitted == 0
++                && logs.retained == logs.rows.len() as u64
++                && logs.selected == logs.retained
++                && logs.seen >= logs.selected
++                && logs.bytes <= 65536
++                && logs
++                    .rows
++                    .iter()
++                    .all(|r| r.location.len() + 2 + r.message.len() <= 4096)
++                && logs.bytes
++                    == logs
++                        .rows
++                        .iter()
++                        .map(|r| r.location.len() + 2 + r.message.len())
++                        .sum::<usize>(),
++            "diagnostic selected logs are incomplete or inconsistent"
++        );
++        Ok(())
++    }
++}
++#[cfg(feature = "test-support")]
++#[derive(Clone)]
++pub struct LoadObserver(Arc<Mutex<Capture>>);
++#[cfg(feature = "test-support")]
++impl LoadObserver {
++    pub fn snapshot(&self) -> Result<LoadSnapshot> {
++        let capture = self
++            .0
++            .lock()
++            .map_err(|_| anyhow::anyhow!("CUDA diagnostic observation poisoned"))?;
++        let mut state = capture.state.clone();
++        state.logs = capture.logs.clone();
++        Ok(state)
++    }
++}
++#[cfg(feature = "test-support")]
++impl super::super::ExecutionProfile {
++    pub fn cuda_load_observer(&self) -> Result<LoadObserver> {
++        require_diagnostic_profile(self)?;
++        Ok(LoadObserver(
++            self.gpu
++                .as_ref()
++                .context("CUDA diagnostic binding missing")?
++                .log
++                .clone(),
++        ))
++    }
++}
++#[cfg(feature = "test-support")]
++pub(crate) fn authority(
++    evaluation: bool,
++    release: bool,
++    unqualified: bool,
++    compact: bool,
++    fp32: bool,
++    binding: bool,
++) -> Result<()> {
++    ensure!(
++        evaluation && !release && unqualified && compact && fp32 && binding,
++        "placement diagnostic requires unqualified native evaluation Compact FP32 binding"
++    );
++    Ok(())
++}
++#[cfg(feature = "test-support")]
++pub(crate) fn require_diagnostic_profile(profile: &super::super::ExecutionProfile) -> Result<()> {
++    crate::native_inference::require_service_compute()?;
++    profile.validate_native_source()?;
++    authority(
++        profile.execution_authorized() && profile.evaluation(),
++        profile.release,
++        profile.description.qualification.is_none(),
++        profile.description.model == airk_core::arbiter::ModelChoice::ContextQwenCompact,
++        profile
++            .description
++            .device_execution
++            .as_ref()
++            .is_some_and(|p| p.precision == DevicePrecision::Float32),
++        profile.gpu.as_ref().is_some_and(|b| b.evidence.is_none()),
++    )
++}
++#[cfg(feature = "test-support")]
++pub(crate) fn session_created(binding: &Binding) -> Result<()> {
++    binding
++        .log
++        .lock()
++        .map_err(|_| anyhow::anyhow!("CUDA diagnostic observation poisoned"))?
++        .state
++        .session_created = true;
++    Ok(())
++}
++#[cfg(feature = "test-support")]
++pub(crate) fn complete_placement(value: &PlacementObservation) -> Result<()> {
++    ensure!(
++        value.complete
++            && value.scope == "onnxruntime-final-session-state-ep-placement"
++            && value.reported_nodes <= 65536
++            && value.reported_string_bytes <= 16 << 20
++            && value
++                .nodes
++                .iter()
++                .all(|n| [&n.name, &n.domain, &n.op, &n.ep]
++                    .iter()
++                    .all(|v| v.len() <= 4096))
++            && value.shim_status == 0
++            && value.ort_error_code == 0
++            && !value.nodes.is_empty()
++            && value.reported_nodes == value.nodes.len() as u64
++            && value
++                .nodes
++                .iter()
++                .all(|n| !n.op.is_empty() && !n.ep.is_empty())
++            && value.reported_string_bytes
++                == value
++                    .nodes
++                    .iter()
++                    .map(|n| n.name.len() + n.domain.len() + n.op.len() + n.ep.len())
++                    .sum::<usize>() as u64,
++        "diagnostic final SessionState placement is incomplete"
++    );
++    Ok(())
++}
++#[cfg(feature = "test-support")]
++pub(crate) fn finish(
++    session: super::super::session_owner::SessionOwner,
++    binding: &Binding,
++) -> Result<()> {
++    let placement = binding.device.placement(&session);
++    // Keep partial placement even when subsequent settlement fails.
++    if let Ok(value) = &placement {
++        binding
++            .log
++            .lock()
++            .map_err(|_| anyhow::anyhow!("CUDA diagnostic observation poisoned"))?
++            .state
++            .placement = Some(value.clone());
++    }
++    let teardown = settle_with(
++        session,
++        |s| s.synchronize(binding.load_deadline),
++        || {
++            binding.device.poison();
++            std::mem::forget(binding.clone());
++        },
++        || {
++            let result = binding.device.synchronize(binding.load_deadline);
++            (
++                result,
++                binding.device.pending_claims(),
++                binding.device.poisoned(),
++            )
++        },
++    );
++    binding
++        .log
++        .lock()
++        .map_err(|_| anyhow::anyhow!("CUDA diagnostic observation poisoned"))?
++        .state
++        .teardown = Some(teardown.clone());
++    let observed = placement?;
++    complete_placement(&observed)?;
++    teardown.validate()?;
++    ensure!(
++        !binding
++            .log
++            .lock()
++            .map_err(|_| anyhow::anyhow!("CUDA diagnostic observation poisoned"))?
++            .logs
++            .truncated,
++        "selected CUDA diagnostic logs were truncated"
++    );
++    in_time(binding.load_deadline)
++}
++#[cfg(test)]
++mod tests;
+--- /dev/null
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic/tests.rs
+@@ -0,0 +1,215 @@
++// SPDX-License-Identifier: Apache-2.0
++use super::*;
++#[test]
++fn selected_log_prefixes_are_literal_and_exclude_verbose_noise() {
++    for message in [
++        "ORT optimization- Force fallback to CPU execution for node: node0",
++        "CUDA kernel not found in registries for Op type: Foo",
++        "CUDA kernel not supported. Fallback to CPU execution provider for Op type: Bar",
++        "This session contains graph nodes that are assigned to the default CPU EP",
++        "Could not find an implementation for Foo",
++        "CUDA_EP Halting assignment due to capacity threshold",
++    ] {
++        assert!(selected(message));
++    }
++    assert!(!selected("Node placements"));
++    assert!(!selected("unrelated verbose initialization"));
++}
++#[test]
++fn log_selection_counts_utf8_and_retains_failure_observations() {
++    let mut sink = Capture::default();
++    sink.push("ignored", "unrelated");
++    let message = "Could not find an implementation for \u{e9}";
++    sink.push("\u{3bb}", message);
++    assert_eq!(
++        (
++            sink.logs.seen,
++            sink.logs.selected,
++            sink.logs.retained,
++            sink.logs.omitted
++        ),
++        (2, 1, 1, 0)
++    );
++    assert_eq!(sink.logs.bytes, 2 + 2 + message.len());
++    assert_eq!(sink.logs.rows[0].message, message);
++    assert!(!sink.logs.truncated);
++}
++#[test]
++fn oversized_and_total_log_overflow_are_explicit() {
++    let mut sink = Capture::default();
++    sink.push(
++        "",
++        &format!("Could not find an implementation for {}", "x".repeat(4096)),
++    );
++    assert_eq!(
++        (sink.logs.selected, sink.logs.retained, sink.logs.omitted),
++        (1, 0, 1)
++    );
++    assert!(sink.logs.truncated);
++    for _ in 0..2000 {
++        sink.push("", "Could not find an implementation for x");
++    }
++    assert!(sink.logs.bytes <= 65536);
++    assert_eq!(sink.logs.selected, sink.logs.retained + sink.logs.omitted);
++}
++#[test]
++fn log_counter_saturation_is_never_complete() {
++    let mut sink = Capture::default();
++    sink.logs.seen = u64::MAX;
++    sink.push("", "Could not find an implementation for x");
++    assert!(sink.logs.truncated);
++}
++#[cfg(feature = "test-support")]
++#[test]
++fn diagnostic_authority_refuses_each_non_scientific_input() {
++    assert!(authority(true, false, true, true, true, true).is_ok());
++    for row in [
++        (false, false, true, true, true, true),
++        (true, true, true, true, true, true),
++        (true, false, false, true, true, true),
++        (true, false, true, false, true, true),
++        (true, false, true, true, false, true),
++        (true, false, true, true, true, false),
++    ] {
++        assert!(authority(row.0, row.1, row.2, row.3, row.4, row.5).is_err());
++    }
++}
++#[cfg(feature = "test-support")]
++fn placement() -> PlacementObservation {
++    PlacementObservation {
++        scope: "onnxruntime-final-session-state-ep-placement",
++        complete: true,
++        shim_status: 0,
++        ort_error_code: 0,
++        reported_nodes: 1,
++        reported_string_bytes: 26,
++        nodes: vec![PlacedNode {
++            subgraph_index: 0,
++            name: "n".into(),
++            domain: "".into(),
++            op: "Shape".into(),
++            ep: "CPUExecutionProvider".into(),
++        }],
++    }
++}
++#[cfg(feature = "test-support")]
++#[test]
++fn complete_cpu_observation_never_satisfies_strict_qualification() {
++    let mut value = placement();
++    assert!(complete_placement(&value).is_ok());
++    assert!(value.validate_strict().is_err());
++    value.complete = false;
++    assert!(complete_placement(&value).is_err());
++    value.complete = true;
++    value.reported_nodes = 2;
++    assert!(complete_placement(&value).is_err());
++}
++#[cfg(feature = "test-support")]
++#[test]
++fn teardown_observes_pre_drop_post_without_returning_session() {
++    use std::cell::RefCell;
++    let events = RefCell::new(Vec::new());
++    struct Session<'a>(&'a RefCell<Vec<&'static str>>);
++    impl Drop for Session<'_> {
++        fn drop(&mut self) {
++            self.0.borrow_mut().push("drop");
++        }
++    }
++    let observed = settle_with(
++        Session(&events),
++        |_| {
++            events.borrow_mut().push("pre");
++            Ok(())
++        },
++        || panic!("successful Drop must not retain custody"),
++        || {
++            events.borrow_mut().push("post");
++            (Ok(()), Some(0), false)
++        },
++    );
++    assert_eq!(*events.borrow(), ["pre", "drop", "post"]);
++    assert!(observed.validate().is_ok());
++}
++#[cfg(feature = "test-support")]
++#[test]
++fn teardown_preserves_failed_sync_unknown_claims_and_poison() {
++    let value = settle_with(
++        (),
++        |_| Err(anyhow::anyhow!("pre failed")),
++        || panic!("a returned sync error is not a Drop panic"),
++        || (Err(anyhow::anyhow!("post failed")), None, true),
++    );
++    assert!(value.session_drop_returned);
++    assert_eq!(value.errors.len(), 2);
++    assert!(value.validate().is_err());
++    for claims in [None, Some(1)] {
++        assert!(
++            settle_with((), |_| Ok(()), || {}, || (Ok(()), claims, false))
++                .validate()
++                .is_err()
++        );
++    }
++}
++#[cfg(feature = "test-support")]
++#[test]
++fn teardown_drop_panic_triggers_retention_before_post_observation() {
++    use std::cell::{Cell, RefCell};
++    struct BadDrop<'a>(&'a RefCell<Vec<&'static str>>);
++    impl Drop for BadDrop<'_> {
++        fn drop(&mut self) {
++            self.0.borrow_mut().push("drop panic");
++            panic!("injected drop failure");
++        }
++    }
++    let events = RefCell::new(Vec::new());
++    let poisoned = Cell::new(false);
++    let epoch = Cell::new(7u64);
++    let retained = RefCell::new(None);
++    let custody = Arc::new(());
++    let value = settle_with(
++        BadDrop(&events),
++        |_| Ok(()),
++        || {
++            events.borrow_mut().push("poison and retain");
++            poisoned.set(true);
++            epoch.set(epoch.get() + 1);
++            *retained.borrow_mut() = Some(custody.clone());
++        },
++        || {
++            events.borrow_mut().push("post sync");
++            assert!(poisoned.get());
++            assert_eq!(epoch.get(), 8);
++            assert_eq!(Arc::strong_count(&custody), 2);
++            (Ok(()), Some(0), poisoned.get())
++        },
++    );
++    assert_eq!(
++        *events.borrow(),
++        ["drop panic", "poison and retain", "post sync"]
++    );
++    assert!(!value.session_drop_returned);
++    assert!(value.poisoned);
++    assert!(retained.borrow().is_some());
++    assert!(value.validate().is_err());
++}
++
++#[cfg(feature = "test-support")]
++#[test]
++fn snapshot_rejects_missing_teardown_or_truncated_logs() {
++    let mut value = LoadSnapshot {
++        session_created: true,
++        placement: Some(placement()),
++        logs: LogSnapshot::default(),
++        teardown: None,
++    };
++    assert!(value.validate().is_err());
++    value.teardown = Some(settle_with(
++        (),
++        |_| Ok(()),
++        || {},
++        || (Ok(()), Some(0), false),
++    ));
++    assert!(value.validate().is_ok());
++    value.logs.truncated = true;
++    assert!(value.validate().is_err());
++}

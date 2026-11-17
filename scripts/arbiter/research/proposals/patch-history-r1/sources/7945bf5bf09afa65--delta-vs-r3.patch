@@ -1,0 +1,118 @@
+--- r3/worker_logic.py
++++ r4/worker_logic.py
+@@ -26,19 +26,20 @@
+             owner=original[id]
+             if pair['label']!=owner['label'] or pair['role']!=owner['role'] or pair['rights_scope']!=owner['rights_review'] or pair['question_sha256']!=owner['question_sha256'] or pair['document_sha256']!=owner['function_sha256']:
+                 raise ValueError('original role/label/source binding changed')
+-            component=owner['component']
++            component=owner['component'];eligibility=owner['eligibility']
++            if eligibility not in('NATIVE_FIT_SUPPORTED_PAIR','UNKNOWN_RIGHTS','NATIVE_FOCUS512_OVERFLOW'):raise ValueError('unknown frozen original eligibility')
+         elif id in general:
+             owner=general[id]
+             if pair['role']!='REPLAY' or pair['label']!=1 or pair['question_sha256']!=owner['question_sha256'] or pair['document_sha256']!=owner['window_sha256'] or pair['rights_scope']!=owner['rights_review']:
+                 raise ValueError('replay original human evidence binding changed')
+-            component='qasper:'+owner['family']
++            component='qasper:'+owner['family'];eligibility=None
+         else:raise ValueError('unknown native row')
+         if digest(pair['question'].encode())!=pair['question_sha256'] or digest(pair['document'].encode())!=pair['document_sha256']:raise ValueError('native question/window bytes changed')
+         for recipe in('publisher','software_evidence_v1'):
+             result=record[recipe]
+             if result['kind']=='compiled':check_input(result['input'])
+             elif result['kind']!='refused' or not result['reason']:raise ValueError('native refusal absent')
+-        rows[id]=dict(record,component=component)
++        rows[id]=dict(record,component=component,eligibility=eligibility)
+     if set(rows)!=set(original)|set(general):raise ValueError('native row subset')
+     return rows
+ 
+@@ -46,9 +47,9 @@
+     return 'publisher'if row['pair']['role']=='REPLAY'else chosen
+ 
+ def training_schedule(rows,recipe,seed=1908):
+-    # Frozen identities and roles only; no score/label/difficulty affects order.
++    # Eligibility is the original frozen F0 roster, never post-F1 fit/score.
+     eligible=lambda role:[r for r in rows.values()if r['pair']['role']==role and r['pair']['rights_scope']=='PERMITTED_PRIVATE_RESEARCH_SCOPE']
+-    code=eligible('TRAIN');replay=eligible('REPLAY')
++    code=[r for r in eligible('TRAIN')if r['eligibility']=='NATIVE_FIT_SUPPORTED_PAIR'];replay=eligible('REPLAY')
+     if len(code)!=400 or len(replay)!=45:raise ValueError('exact400code+45originalreplay required')
+     for row in code+replay:
+         if row[effective_recipe(row,recipe)]['kind']!='compiled':raise ValueError('frozen train/replay native refusal; no crop/refill or silent drop')
+--- r3/test_worker_logic.py
++++ r4/test_worker_logic.py
+@@ -5,7 +5,7 @@
+ 
+ def row(id,role,label=1,component='c'):
+     input={'input_ids':[0]*512,'attention_mask':[1]*512,'position_ids':list(range(512)),'candidate_positions':[2152,9693],'option_mask':[True,True],'decision_position':511,'input_digest':'ab'*32}
+-    return{'pair':{'id':id,'role':role,'label':label,'rights_scope':'PERMITTED_PRIVATE_RESEARCH_SCOPE'},'publisher':{'kind':'compiled','input':input},'software_evidence_v1':{'kind':'compiled','input':copy.deepcopy(input)},'component':component}
++    return{'pair':{'id':id,'role':role,'label':label,'rights_scope':'PERMITTED_PRIVATE_RESEARCH_SCOPE'},'publisher':{'kind':'compiled','input':input},'software_evidence_v1':{'kind':'compiled','input':copy.deepcopy(input)},'component':component,'eligibility':'NATIVE_FIT_SUPPORTED_PAIR' if role!='REPLAY' else None}
+ def schedule_rows():return{r['pair']['id']:r for r in [row('code'+str(i),'TRAIN',i%2)for i in range(400)]+[row('replay'+str(i),'REPLAY')for i in range(45)]}
+ def score_fixture(gain=True):
+     rows={};scores=[]
+@@ -44,6 +44,42 @@
+         data=schedule_rows();schedule=w.training_schedule(data,'publisher');self.assertEqual(len(schedule),445);self.assertEqual(len({r['pair']['id']for r in schedule}),445)
+         groups=w.batches(schedule);self.assertEqual([len(x)for x in groups],[32]*13+[29]);self.assertEqual(sum(r['pair']['role']=='REPLAY'for r in schedule),45)
+         self.assertEqual([r['pair']['role']for r in schedule[:10]],['TRAIN']*9+['REPLAY'])
++    def test_frozen400_excludes_overflow_unknown_rights_and_DEV(self):
++        rows=schedule_rows();expected={f'code{i}' for i in range(400)}
++        overflow=row('original-overflow','TRAIN');overflow['eligibility']='NATIVE_FOCUS512_OVERFLOW'
++        # Even a later F1 fit cannot turn the originally excluded row into loss.
++        unknown=row('unknown-rights','TRAIN');unknown['pair']['rights_scope']='UNKNOWN';unknown['eligibility']='UNKNOWN_RIGHTS'
++        dev=row('reserved-dev','DEV')
++        for value in [overflow,unknown,dev]:rows[value['pair']['id']]=value
++        for recipe in ['publisher','software_evidence_v1']:
++            scheduled=w.training_schedule(rows,recipe)
++            self.assertEqual({r['pair']['id'] for r in scheduled if r['pair']['role']=='TRAIN'},expected)
++            self.assertEqual(len(scheduled),445)
++
++    def test_admitted_F1_refusal_stops_without_drop_or_refill(self):
++        rows=schedule_rows();rows['code0']['software_evidence_v1']={'kind':'refused','reason':'new F1 overflow'}
++        alternate=row('original-overflow','TRAIN');alternate['eligibility']='NATIVE_FOCUS512_OVERFLOW';rows['original-overflow']=alternate
++        with self.assertRaisesRegex(ValueError,'native refusal'):w.training_schedule(rows,'software_evidence_v1')
++
++    def test_native_rows_binds_original_frozen_eligibility(self):
++        roster=[];replay=[];records=[]
++        for i in range(2000):
++            ident=f'id{i}';role='TRAIN' if i<1955 else 'REPLAY';record=row(ident,role)
++            pair=record['pair'];pair.update(question='question',document='source',question_sha256=w.digest(b'question'),document_sha256=w.digest(b'source'))
++            if i<1955:
++                eligibility='NATIVE_FOCUS512_OVERFLOW' if i==0 else 'NATIVE_FIT_SUPPORTED_PAIR'
++                roster.append({'id':ident,'label':1,'role':role,'rights_review':pair['rights_scope'],'question_sha256':pair['question_sha256'],'function_sha256':pair['document_sha256'],'component':'literal-component','eligibility':eligibility})
++            else:replay.append({'id':ident,'rights_review':pair['rights_scope'],'question_sha256':pair['question_sha256'],'window_sha256':pair['document_sha256'],'family':'literal-paper'})
++            record['eligibility']='untrusted postfit label';records.append(record)
++        emission={'schema':'airk.private.focus-instruction-emission/1','census':{'schema':'airk.private.focus-instruction-census/1','qualification':False,'model_requests_dispatched':False,'original_denominator':2000,'rows':records}}
++        bound=w.native_rows(emission,roster,replay)
++        self.assertEqual(len(bound),2000)
++        self.assertEqual(bound['id0']['eligibility'],'NATIVE_FOCUS512_OVERFLOW')
++        self.assertEqual(bound['id1']['eligibility'],'NATIVE_FIT_SUPPORTED_PAIR')
++        self.assertIsNone(bound['id1999']['eligibility'])
++        roster[0]['eligibility']='invented'
++        with self.assertRaisesRegex(ValueError,'unknown frozen original eligibility'):w.native_rows(emission,roster,replay)
++
+     def test_order_independent_and_never_score_driven(self):
+         one=schedule_rows();two=copy.deepcopy(dict(reversed(list(one.items()))))
+         for i,r in enumerate(two.values()):r['score']=float(i);r['pair']['label']=1-r['pair']['label']
+--- r3/WORKER-CONTRACT.md
++++ r4/WORKER-CONTRACT.md
+@@ -10,6 +10,22 @@
+ 
+ General QASPER replay retains the original publisher instruction; only software code rows use the DEV-selected instruction. Both are native-emitted. Code comparisons use the identical selected instruction for original/adapted weights; replay is original human paragraph relevance, never complete evidence.
+ 
+-R2 actual-owned continuity: DEV selection consumes a pinned naturally successful SCORE receipt/start/plan/result. A pure immutable key binds checkpoint/model/runtime/data/fullsource/owner/baseimage/versions/commonenvironment/deviceidentity/host+GPUcaps across stages. Only mode, output-local caches, wall and selection/probe evidence vary; the selected instruction is verified separately. Probeâ†’train also preserves the selected instruction. Exactly85score list entries and unique IDs are required before mapping. R1 remains preserved; no oldrun is relabelled.
++R2 actual-owned continuity: DEV selection consumes a pinned naturally successful SCORE receipt/start/plan/result. A pure immutable key binds checkpoint/model/runtime/data/fullsource/owner/baseimage/versions/commonenvironment/deviceidentity/host+GPUcaps across stages. Only mode, output-local caches, wall and selection/probe evidence vary; the selected instruction is verified separately. ProbeÃ¢â€ â€™train also preserves the selected instruction. Exactly85score list entries and unique IDs are required before mapping. R1 remains preserved; no oldrun is relabelled.
+ 
+ R3 parent clock closure: after actual maintained owned settlement (including worker finally output retention), parent hashes final worker result, child log, actual plan and every consumed execution-source pin, preserving hash failures separately from the original owned result/failure. It constructs/validates the full receipt body, then samples the original clock LAST; at/after original wall cap is nonpass. Only final elapsed/disposition insertion, final execution.json serialization/write and terminal reporting are excluded. Hash exceptions/mismatches never erase original natural-nonzero versus unsettled evidence or create a pass. No clock renewal, replay, extra model run or process-control change.
++
++
++Frozen supervision eligibility (additive R4)
++
++The original1955 role roster owns eligibility as well as labels/rights/splits.
++`native_rows` retains each original owner's exact eligibility (1867 supported,
++86 unknown rights,2 originalFocus512 overflow) beside the full native outcome.
++The TRAIN loss population is exactly role TRAIN + PERMITTED_PRIVATE_RESEARCH_SCOPE
+++ frozen NATIVE_FIT_SUPPORTED_PAIR. Its original400 IDs are pinned independently
++before F1 fit/scoring; the known originally overflowed permitted TRAIN row stays
++in the1955 census and refusal report, and never joins the loss population.
++DEV and unknown-rights rows never join TRAIN. All declared45 replay rows remain
++required. Every admitted TRAIN row must compile under the actual selected recipe,
++and every replay under publisher: a new F1 refusal stops, with no drop/refill.
++All original labels/roles/rights/eligibility bytes and consumed reserved splits
++remain unchanged. This adds no human judgments, terminal evidence or promotion.

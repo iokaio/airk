@@ -1,0 +1,408 @@
+--- a/crates/airk-core/src/arbiter/CONTRACT.md
++++ b/crates/airk-core/src/arbiter/CONTRACT.md
+@@ -1025,3 +1025,21 @@
+ Rust-native semantic cases cover independent stages, all three model slots, requested vs actual FP32/FP16/CPU fallback, typed refusals, local candidate vs qualification, every lifecycle availability, eight current management operations, twelve disabled configuration combinations and exact legacy raw-SHA/revision migration input. All fixture cases explicitly qualification=false; synthetic evidence hashes do not qualify hardware/models. Actual absence is ordinary disabled configurable state without InitializationStatus; retained v1/v2 may have a positively proven non-writable initialization observation. Ambiguous/corrupt/unresolved current state is typed failure, never fake disabled current revision1.
+ 
+ Empty-variant model summaries retain Rust-owned supported model-family task roles (FocusRank or ContextAction), even when availability remains Unqualified. SelectedModel::supported_tasks is descriptive only, never model/device admission. Frontend enrollment controls consume native metadata; they never infer roles from labels. Nonempty variants retain the union of actual immutable descriptions.
++
++
++## D08 all-unavailable Context probe calibration
++
++Calibration `/2` may contain zero acceptance rules only when its complete, unique
++four-class disposition list marks Read, Sufficient, Clarify and NoJustifiedRead
++Unsupported with bounded nonempty reasons. Missing, duplicate or inconsistent
++dispositions refuse; every Supported class still requires its matching rule and
++all existing terminal proof constraints. The full model/compiler/task/ABI and
++trained-asset bindings remain mandatory. With zero rules, every action and margin
++abstains: this describes unqualified native numerical/resource probe metadata,
++not advice, model admission, task qualification or terminal permission.
++
++Historical `/1` still requires nonempty rules and forbids `/2` dispositions. Its
++retained bytes and interpretation are unchanged. This source change intentionally
++changes the current Context task-policy digest; native current-policy metadata
++must be regenerated. Earlier profiles, CAL and measurements retain their original
++identities and are never retagged as current evidence.
+--- a/crates/airk-core/src/arbiter/context_action/calibration.rs
++++ b/crates/airk-core/src/arbiter/context_action/calibration.rs
+@@ -1,3 +1,5 @@
++\\?\D:\code\Github\airk\artifacts\v190\final-plan\exec-20261116T052942Z\gpu-calibration-unavailable-proposal-r1\native-proposal\crates\airk-core\src\arbiter\context_action\calibration.rs:
++
+ // SPDX-License-Identifier: Apache-2.0
+ //! Authenticated joint-card acceptance policy, not probability calibration.
+ use super::*;
+@@ -105,11 +107,22 @@
+                 && profile.tasks.contains(&Task::ContextAction)
+                 && profile.task_policies.get(&Task::ContextAction) == Some(&task_policy)
+                 && self.score_abi == profile.abi
+-                && !self.rules.is_empty()
+                 && self.rules.len() <= 32,
+             "joint calibration profile/task/ABI binding mismatch"
+         );
+         self.validate_class_support()?;
++        // An empty /2 policy describes a probe with no admitted action. Complete
++        // Unsupported dispositions remain authenticated, not acceptance rules.
++        ensure!(
++            !self.rules.is_empty()
++                || self.schema == CALIBRATION_SCHEMA_V2
++                    && self.class_support.as_ref().is_some_and(|classes| {
++                        classes
++                            .iter()
++                            .all(|class| matches!(class.support, ClassSupport::Unsupported { .. }))
++                    }),
++            "empty joint policy requires complete unsupported /2 dispositions"
++        );
+         let mut expected = BTreeMap::new();
+         for asset in &profile.assets {
+             if matches!(
+@@ -418,4 +431,155 @@
+         assert!(!calibration.accepts(&card, 100.0));
+         Ok(())
+     }
+-}
++
++    fn unavailable_fixture() -> Result<(Profile, JointCalibration)> {
++        let (profile, mut value) = fixture()?;
++        value.schema = CALIBRATION_SCHEMA_V2.into();
++        value.rules.clear();
++        // Literal complete class list, independent of implementation enumeration.
++        value.class_support = Some(vec![
++            ClassDisposition {
++                action: ContextActionClass::Read,
++                support: ClassSupport::Unsupported {
++                    reason: "Read evidence unavailable".into(),
++                },
++            },
++            ClassDisposition {
++                action: ContextActionClass::Sufficient,
++                support: ClassSupport::Unsupported {
++                    reason: "Sufficient evidence unavailable".into(),
++                },
++            },
++            ClassDisposition {
++                action: ContextActionClass::Clarify,
++                support: ClassSupport::Unsupported {
++                    reason: "Clarify evidence unavailable".into(),
++                },
++            },
++            ClassDisposition {
++                action: ContextActionClass::NoJustifiedRead,
++                support: ClassSupport::Unsupported {
++                    reason: "NoJustifiedRead evidence unavailable".into(),
++                },
++            },
++        ]);
++        Ok((profile, value))
++    }
++    #[test]
++    fn unavailable_v2_round_trips_without_admitting_any_action() -> Result<()> {
++        let (profile, value) = unavailable_fixture()?;
++        let raw = serde_json::to_vec(&value)?;
++        let parsed = JointCalibration::parse_and_validate(&raw, &profile, value.task_policy)?;
++        assert_eq!(serde_json::to_vec(&parsed)?, raw);
++        assert!(parsed.rules.is_empty());
++        let cases: serde_json::Value = serde_json::from_slice(include_bytes!(
++            "../../../../../fixtures/split/arbiter/context_action_cases.json"
++        ))?;
++        let response: ContextResponseV2 =
++            serde_json::from_value(cases["cases"][0]["input"].clone())?;
++        let AssessmentResult::Selected { mut card, .. } =
++            response.assessment_history[0].result.clone()
++        else {
++            anyhow::bail!("fixture changed")
++        };
++        for action in [
++            ContextAction::Read {
++                choice: Sha256Digest::from_bytes([1; 32]),
++            },
++            ContextAction::Sufficient,
++            ContextAction::Clarify,
++            ContextAction::NoJustifiedRead,
++        ] {
++            card.action = action;
++            for margin in [0.0, 1.0, f32::MAX, f32::INFINITY, f32::NAN] {
++                assert!(!parsed.accepts(&card, margin));
++            }
++        }
++        Ok(())
++    }
++    #[test]
++    fn unavailable_v2_requires_complete_unique_reasoned_dispositions() -> Result<()> {
++        let (profile, value) = unavailable_fixture()?;
++        for classes in [
++            None,
++            Some(vec![]),
++            Some(value.class_support.as_ref().unwrap()[..3].to_vec()),
++        ] {
++            let mut changed = value.clone();
++            changed.class_support = classes;
++            assert!(changed.validate(&profile, value.task_policy).is_err());
++        }
++        let mut duplicate = value.clone();
++        duplicate.class_support.as_mut().unwrap()[3].action = ContextActionClass::Read;
++        assert!(duplicate.validate(&profile, value.task_policy).is_err());
++        for reason in ["".into(), " \n\t".into(), "x".repeat(1025)] {
++            let mut changed = value.clone();
++            changed.class_support.as_mut().unwrap()[0].support =
++                ClassSupport::Unsupported { reason };
++            assert!(changed.validate(&profile, value.task_policy).is_err());
++        }
++        Ok(())
++    }
++    #[test]
++    fn unavailable_v2_refuses_supported_without_rule_and_unsupported_with_rule() -> Result<()> {
++        let (profile, value) = unavailable_fixture()?;
++        for index in 0..4 {
++            let mut changed = value.clone();
++            changed.class_support.as_mut().unwrap()[index].support = ClassSupport::Supported {
++                qualification: if index == 0 {
++                    None
++                } else {
++                    Some(Sha256Digest::from_bytes([9; 32]))
++                },
++            };
++            assert!(changed.validate(&profile, value.task_policy).is_err());
++        }
++        let (_, historical) = fixture()?;
++        let mut changed = value.clone();
++        changed.rules = historical.rules;
++        assert!(changed.validate(&profile, value.task_policy).is_err());
++        Ok(())
++    }
++    #[test]
++    fn unavailable_v2_keeps_complete_asset_profile_and_abi_bindings() -> Result<()> {
++        let (profile, value) = unavailable_fixture()?;
++        for name in ["model.bin", "weights.data", "tokenizer.bin"] {
++            let mut changed = value.clone();
++            changed.assets.remove(name);
++            assert!(changed.validate(&profile, value.task_policy).is_err());
++        }
++        let mut changed = value.clone();
++        changed.compiler = Sha256Digest::from_bytes([88; 32]);
++        assert!(changed.validate(&profile, value.task_policy).is_err());
++        changed = value.clone();
++        changed.score_abi.readout = Readout::PointerHead;
++        assert!(changed.validate(&profile, value.task_policy).is_err());
++        assert!(
++            value
++                .validate(&profile, Sha256Digest::from_bytes([99; 32]))
++                .is_err()
++        );
++        Ok(())
++    }
++    #[test]
++    fn historical_v1_still_requires_nonempty_rules_and_no_v2_dispositions() -> Result<()> {
++        let (profile, mut value) = fixture()?;
++        value.validate(&profile, value.task_policy)?;
++        value.rules.clear();
++        assert!(value.validate(&profile, value.task_policy).is_err());
++        let (_, mut unavailable) = unavailable_fixture()?;
++        unavailable.schema = CALIBRATION_SCHEMA.into();
++        assert!(
++            unavailable
++                .validate(&profile, unavailable.task_policy)
++                .is_err()
++        );
++        unavailable.class_support = None;
++        assert!(
++            unavailable
++                .validate(&profile, unavailable.task_policy)
++                .is_err()
++        );
++        Ok(())
++    }
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime/qualification/CONTRACT.md
++++ b/crates/airk-retrieval/src/arbiter/runtime/qualification/CONTRACT.md
+@@ -196,3 +196,25 @@
+ memory/time and source custody. The failed flash numerical run stays failed.
+ No promotion, terminal labels, model-training acceptance, public source URL,
+ release authority or scope/limit waiver is created by this private proposal.
++
++
++## D08 source-only current Focus metadata (/3)
++
++The additive private regeneration request `/3` admits exactly the original three
++selected asset closures and no graph override. Historical `/1` still requires
++Focus metadata/policy equality; `/2` still emits exactly one authorized Context
++graph override. `/3` reuses the unchanged Focus512 compiler, neural/tokenizer/
++notice/fixture bytes, ABI, CPU runtime/fit and resource bounds, while the native
++constructor emits current source-bound relative-relevance metadata, task policy
++and private manifest. No learned threshold or probability calibration is added.
++Context uses the existing current8192 metadata constructor with unchanged original
++graphs; a Compact GQA graph remains the separate explicit `/2` request.
++
++All current source/build/request seals and original physical asset authentication
++remain mandatory. Source-only regeneration grants no old qualification transfer,
++public source availability, URLs, product Import or provisioning permission. New
++metadata has empty qualification/targets/downloads and uses the actual native
++EvaluationOwner route. Legacy CPU compatibility, if activated, needs a separately
++reviewed exact native ExecutionProfile-owned row; metadata regeneration alone
++cannot bypass current policy or CAL validation. Historical evidence retains its
++original policies and hashes.
+--- a/crates/airk-retrieval/src/arbiter/runtime/qualification/regeneration.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/qualification/regeneration.rs
+@@ -1,3 +1,5 @@
++\\?\D:\code\Github\airk\artifacts\v190\final-plan\exec-20261116T052942Z\gpu-current-policy-regeneration-proposal-r1\native-proposal\crates\airk-retrieval\src\arbiter\runtime\qualification\regeneration.rs:
++
+ // SPDX-License-Identifier: Apache-2.0
+ //! Same-weight, current-policy metadata staging. Never a product catalog emitter.
+ use super::*;
+@@ -70,7 +72,13 @@
+ }
+ 
+ fn graph_request_scope_dense(schema: &str, compact: bool, large: bool, dense: bool) -> bool {
+-    (schema == "airk.private.context-metadata-regeneration/1" && !compact && !large && !dense)
++    (matches!(
++        schema,
++        "airk.private.context-metadata-regeneration/1"
++            | "airk.private.context-metadata-regeneration/3"
++    ) && !compact
++        && !large
++        && !dense)
+         || (schema == "airk.private.context-metadata-regeneration/2"
+             && usize::from(compact) + usize::from(large) + usize::from(dense) == 1)
+ }
+@@ -111,6 +119,50 @@
+     ] {
+         assert!(!graph_request_scope_dense(schema, compact, large, dense));
+     }
++}
++
++/// /3 changes only the source-bound Focus metadata. It never changes neural
++/// inputs, CPU execution requirements or public asset-source authority.
++fn validate_focus_metadata_transition(
++    old: &Profile,
++    current: &Profile,
++    source_only: bool,
++) -> Result<()> {
++    ensure!(
++        old.model == ModelChoice::FocusQwenReranker06B
++            && current.model == old.model
++            && old.max_tokens == 512
++            && current.max_tokens == 512
++            && current.compiler == old.compiler
++            && current.max_candidates == old.max_candidates
++            && current.memory_reservation_bytes == old.memory_reservation_bytes
++            && current.peak_disk_bytes == old.peak_disk_bytes
++            && current.runtime == old.runtime
++            && current.runtime == RUNTIME
++            && current.device_execution.is_none()
++            && old.device_execution.is_none()
++            && serde_json::to_value(&current.abi)? == serde_json::to_value(&old.abi)?
++            && serde_json::to_value(&current.cpu_fit)? == serde_json::to_value(&old.cpu_fit)?,
++        "Focus metadata transition changed its static compiler, ABI or CPU bounds"
++    );
++    if source_only {
++        let policy = crate::arbiter::compiler::focus::policy_digest()?;
++        ensure!(
++            current.stage == Some(Stage::Focus)
++                && current.tasks == BTreeSet::from([Task::FocusRank])
++                && current.policy == policy
++                && current.task_policies == BTreeMap::from([(Task::FocusRank, policy)]),
++            "Focus /3 metadata must bind the actual current native policy"
++        );
++    } else {
++        ensure!(
++            current.calibration == old.calibration
++                && current.policy == old.policy
++                && current.task_policies == old.task_policies,
++            "Focus source/metadata changed; independent original public availability cannot transfer"
++        );
++    }
++    Ok(())
+ }
+ 
+ fn pinned_metadata(pin: &ResourceFilePin, maximum: u64) -> Result<Vec<u8>> {
+@@ -409,7 +461,7 @@
+         "input":request_pin,"source_commit":input.source_commit,"source_files":input.source_files,
+         "source_catalog":input.source_catalog,"native_build_receipt":input.native_build_receipt,"native_source_group":native_source_group,"original_acquisition_receipt":input.acquisition_receipt,"original_asset_census":input.asset_census,
+         "resource_policy":policy,"resource_policy_digest":policy_digest,"native_binary":binary,"native_binary_sha256":binary_sha256,"started_unix_ms":started_unix_ms,"elapsed_us":started.elapsed().as_micros(),"profiles":rows,
+-        "NN_invocations":0,"task_qualified":false,"release_qualified":false,"public_source_available":false,
++        "source_only_focus_policy_transition":input.schema == "airk.private.context-metadata-regeneration/3","NN_invocations":0,"task_qualified":false,"release_qualified":false,"public_source_available":false,
+         "limits":"Private same-weight metadata staging only. Old2048 numeric fixtures remain historical controls. New metadata has no product download authority. Context terminals remain unsupported; Read uses an extreme raw-score-only bootstrap, not fitted positive evidence."})
+     };
+     let report_path = input
+@@ -469,14 +521,11 @@
+                 "native preparation lost exact resource policy"
+             );
+             if old.declared_stage() == Some(Stage::Focus) {
+-                ensure!(
+-                    prepared.profile.max_tokens == 512
+-                        && prepared.profile.compiler == old.compiler
+-                        && prepared.profile.calibration == old.calibration
+-                        && prepared.profile.policy == old.policy
+-                        && prepared.profile.task_policies == old.task_policies,
+-                    "Focus source/metadata changed; independent original public availability cannot transfer"
+-                );
++                validate_focus_metadata_transition(
++                    &old,
++                    &prepared.profile,
++                    input.schema == "airk.private.context-metadata-regeneration/3",
++                )?;
+             } else {
+                 ensure!(
+                     prepared.profile.max_tokens == 8192
+@@ -595,3 +644,63 @@
+     )?;
+     run
+ }
++
++#[test]
++fn source_only_v3_preserves_original_graph_scope() {
++    assert!(graph_request_scope_dense(
++        "airk.private.context-metadata-regeneration/3",
++        false,
++        false,
++        false
++    ));
++    for (compact, large, dense) in [
++        (true, false, false),
++        (false, true, false),
++        (false, false, true),
++        (true, true, false),
++    ] {
++        assert!(!graph_request_scope_dense(
++            "airk.private.context-metadata-regeneration/3",
++            compact,
++            large,
++            dense
++        ));
++    }
++}
++
++#[test]
++fn source_only_focus_metadata_is_versioned_and_keeps_cpu_shape() -> Result<()> {
++    let catalog: OriginalCatalog =
++        serde_json::from_slice(include_bytes!("../../release-catalog.json"))?;
++    let old = catalog
++        .profiles
++        .into_iter()
++        .find(|value| value.model == ModelChoice::FocusQwenReranker06B)
++        .context("Focus fixture")?;
++    let mut current = old.clone();
++    let policy = crate::arbiter::compiler::focus::policy_digest()?;
++    current.policy = policy;
++    current.task_policies = BTreeMap::from([(Task::FocusRank, policy)]);
++    current.calibration = Sha256Digest::from_bytes([0x67; 32]);
++    validate_focus_metadata_transition(&old, &current, true)?;
++    assert!(validate_focus_metadata_transition(&old, &current, false).is_err());
++    validate_focus_metadata_transition(&old, &old, false)?;
++    for mutation in 0..7 {
++        let mut changed = current.clone();
++        match mutation {
++            0 => changed.max_tokens = 8192,
++            1 => changed.compiler = Sha256Digest::from_bytes([0x89; 32]),
++            2 => changed.memory_reservation_bytes += 1,
++            3 => changed.runtime = "onnxruntime-cuda/1.30.0".into(),
++            4 => changed.max_candidates += 1,
++            5 => changed.model = ModelChoice::ContextQwenCompact,
++            6 => changed.task_policies.clear(),
++            _ => unreachable!(),
++        }
++        assert!(
++            validate_focus_metadata_transition(&old, &changed, true).is_err(),
++            "mutation {mutation}"
++        );
++    }
++    Ok(())
++}

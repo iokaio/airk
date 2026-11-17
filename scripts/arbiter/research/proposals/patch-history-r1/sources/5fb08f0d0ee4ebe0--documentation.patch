@@ -1,0 +1,198 @@
+--- a/README.md
++++ b/README.md
+@@ -1,6 +1,6 @@
+ # AIRK: Local Search for Coding Agents
+ 
+-P11a’s [per-file profile family reporting candidate](docs/profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P11a is **unaccepted**; sequential P10 acceptance and native/CLI/MCP/Workbench qualification remain prerequisites.
++P11a’s [per-file profile family reporting candidate](docs/profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P10 is accepted for local development. P11a is **unaccepted**: focused native, Mac ARM, Workbench and actual CLI/console/MCP checks have passed, while the remaining final qualification gates and primary review are pending. The working version remains **1.8.8**, unpublished.
+ 
+ The unpublished **1.8.8 P10 working build** implements [reviewed index splitting](docs/index-splitting.md): independent destination storage, inherited source restrictions, sealed build, reviewed Project cutover and exact recovery through cleanup and funding acknowledgment. Frozen Windows qualification passed all **22 gates**, including the full workspace and actual CLI/MCP process checks; focused Mac ARM batches also passed and cleaned their Cargo targets. **P10 has passed its local phase checks; the working build remains unpublished.** See the [exact evidence and platform/resource limits](docs/research/implementation-v190.md#p10--local-phase-checkpoint-5-november-2026).
+ 
+--- a/packages/vscode/README.md
++++ b/packages/vscode/README.md
+@@ -1,6 +1,6 @@
+ # AIRK: Local Search for Coding Agents
+ 
+-P11a’s [per-file profile family reporting candidate](https://github.com/iokaio/airk/blob/main/docs/profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P11a is **unaccepted**; sequential P10 acceptance and native/CLI/MCP/Workbench qualification remain prerequisites.
++P11a’s [per-file profile family reporting candidate](https://github.com/iokaio/airk/blob/main/docs/profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P10 is accepted for local development. P11a is **unaccepted**: focused native, Mac ARM, Workbench and actual CLI/console/MCP checks have passed, while the remaining final qualification gates and primary review are pending. The working version remains **1.8.8**, unpublished.
+ 
+ The unpublished **1.8.8 P10 working build** implements [reviewed index splitting](https://github.com/iokaio/airk/blob/main/docs/index-splitting.md): independent destination storage, inherited source restrictions, sealed build, reviewed Project cutover and exact recovery through cleanup and funding acknowledgment. Frozen Windows qualification passed all **22 gates**, including the full workspace and actual CLI/MCP process checks; focused Mac ARM batches also passed and cleaned their Cargo targets. **P10 has passed its local phase checks; the working build remains unpublished.** See the [exact evidence and platform/resource limits](https://github.com/iokaio/airk/blob/main/docs/research/implementation-v190.md#p10--local-phase-checkpoint-5-november-2026).
+ 
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -1,6 +1,6 @@
+ # AIRK documentation
+ 
+-P11a’s [per-file profile family reporting candidate](profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P11a is **unaccepted**; sequential P10 acceptance and native/CLI/MCP/Workbench qualification remain prerequisites.
++P11a’s [per-file profile family reporting candidate](profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P10 is accepted for local development. P11a is **unaccepted**: focused native, Mac ARM, Workbench and actual CLI/console/MCP checks have passed, while the remaining final qualification gates and primary review are pending. The working version remains **1.8.8**, unpublished.
+ 
+ [Permanent source exclusions](source-policy.md) describes P9's reviewed deny,
+ native enforcement, removal and separate cleanup observations. Windows workspace/
+--- a/docs/releases/release-1.8.8.md
++++ b/docs/releases/release-1.8.8.md
+@@ -1,6 +1,6 @@
+ # AIRK 1.8.8 manual-test working build
+ 
+-P11a’s [per-file profile family reporting candidate](../profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P11a is **unaccepted**; sequential P10 acceptance and native/CLI/MCP/Workbench qualification remain prerequisites.
++P11a’s [per-file profile family reporting candidate](../profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P10 is accepted for local development. P11a is **unaccepted**: focused native, Mac ARM, Workbench and actual CLI/console/MCP checks have passed, while the remaining final qualification gates and primary review are pending. The working version remains **1.8.8**, unpublished.
+ 
+ P10's [reviewed split workflow](../index-splitting.md) adds independent
+ partitions, sealed build, complete Project review and exact recovery through
+--- a/docs/profile-family-reporting.md
++++ b/docs/profile-family-reporting.md
+@@ -1,9 +1,11 @@
+ # Per-file profile family reporting — P11a candidate
+ 
+ This is the **unaccepted P11a candidate** in the unpublished 1.8.8 working build.
+-It depends on sequential P10 acceptance. Implementation, native/CLI/MCP/Workbench
+-parity and frozen qualification must pass before acceptance; the existence of
+-this guide is not validation evidence. No new extraction profile is introduced.
++P10 is accepted for local development. Focused native tests, Mac ARM tests,
++Workbench tests and actual native/CLI/console/MCP parity checks passed. Remaining
++final qualification gates and primary review are pending; see the
++[dated evidence and limits](research/implementation-v190.md#p11a--reporting-evidence-final-qualification-pending-6-november-2026).
++No new extraction profile is introduced.
+ 
+ Opt in on the existing file-information read:
+ 
+--- a/docs/reply-detail.md
++++ b/docs/reply-detail.md
+@@ -97,4 +97,4 @@
+ 
+ ## P11a candidate: explicit per-file family metadata
+ 
+-The unaccepted [family-reporting candidate](profile-family-reporting.md) uses `include_profile_families` on existing FileInfo reads. Default/false retain the old representation and validator. Workbench’s schema-driven File info form offers an explicit choice; complete native report metadata survives structured details, JSON/Markdown copies/exports and session restore. Reporting adds no source reads or profile migration; existing verification remains independent. Full qualification and sequential phase acceptance remain pending.
++The unaccepted [family-reporting candidate](profile-family-reporting.md) uses `include_profile_families` on existing FileInfo reads. Default/false retain the old representation and validator. Workbench’s schema-driven File info form offers an explicit choice; complete native report metadata survives structured details, JSON/Markdown copies/exports and session restore. Reporting adds no source reads or profile migration; existing verification remains independent. Focused native, Mac ARM, Workbench and actual CLI/console/MCP parity checks passed. The remaining final qualification gates and P11a primary review/acceptance remain pending; P10 is already accepted for local development.
+--- a/docs/workbench/implementation.md
++++ b/docs/workbench/implementation.md
+@@ -154,4 +154,4 @@
+ 
+ ## P11a candidate: explicit per-file family metadata
+ 
+-The unaccepted [family-reporting candidate](../profile-family-reporting.md) uses `include_profile_families` on existing FileInfo reads. Default/false retain the old representation and validator. Workbench’s schema-driven File info form offers an explicit choice; complete native report metadata survives structured details, JSON/Markdown copies/exports and session restore. Reporting adds no source reads or profile migration; existing verification remains independent. Full qualification and sequential phase acceptance remain pending.
++The unaccepted [family-reporting candidate](../profile-family-reporting.md) uses `include_profile_families` on existing FileInfo reads. Default/false retain the old representation and validator. Workbench’s schema-driven File info form offers an explicit choice; complete native report metadata survives structured details, JSON/Markdown copies/exports and session restore. Reporting adds no source reads or profile migration; existing verification remains independent. Focused native, Mac ARM, Workbench and actual CLI/console/MCP parity checks passed. The remaining final qualification gates and P11a primary review/acceptance remain pending; P10 is already accepted for local development.
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -1,4 +1,16 @@
+ # Architecture
++
++P11a's unpublished **1.8.8 candidate** adds opt-in
++[per-file family reporting](profile-family-reporting.md). Core owns the fixed
++18-family contract and independent support, retention and reply observations.
++Ingest qualifies the saved producer/profile metadata through its existing pure
++adapter registry; it does not execute a producer for this read. Kernel binds the
++report to one authenticated current file/publication and keeps configured and
++published collection policy separate from that file's applied profile. Scoped
++callers receive explicit unavailable policy observations. Existing canonical
++FileInfo handlers carry the complete report through CLI, MCP and Workbench;
++reporting adds no source scan or profile migration. Existing source verification
++is independent. Focused checks passed; final P11a qualification/review is pending.
+ 
+ P10's **1.8.8 working build** adds reviewed [index splitting](index-splitting.md).
+ Its frozen Windows qualification passed all 22 gates, including actual process,
+--- a/docs/research/implementation-v190.md
++++ b/docs/research/implementation-v190.md
+@@ -9,12 +9,14 @@
+ Progress below is observed local evidence; it does not establish publication or
+ cross-platform qualification.
+ 
+-**Current checkpoint, 5 November 2026:** P9 and P10 are accepted for unpublished
+-local development. P10 is committed as `c2584cb`; its broad Windows qualification,
+-final witness correction, focused Mac ARM checks and Cargo cleanup retain their
+-exact source identities below. P11a reporting is being implemented and validated;
+-P11–P14 and the deleted-source follow-up remain unaccepted. Earlier dated pending/failure records
+-describe their original checkpoints and are not relabeled as current evidence.
++**Current checkpoint, 6 November 2026:** P9 and P10 are accepted for unpublished
++local development; P10 is committed as `c2584cb`. P11a reporting is implemented
++with focused native, Mac ARM, Workbench and actual native/CLI/console/MCP parity
++checks passed. Its final qualification queue is still running; P11a acceptance
++and the remaining P11b–P14/deleted-source work remain pending. Current test source
++`97956846…` and the reused runtime's original compiled source `33e6df13…` are
++separate identities. Earlier dated pending/failure records retain their original
++status and are not relabeled as current evidence.
+ 
+ ## Entry identity and boundaries
+ 
+@@ -4721,3 +4723,60 @@
+ above still apply. P11–P14, deleted-source recovery, final local test installer
+ and contributor PR #60 assessment remain unfinished. No push, publication or
+ normal installation is part of this checkpoint.
++
++
++### P10 — supplemental preceding-phase latency comparison, 6 November 2026
++
++`p10-versus-p9-gates-r1.json` compares the existing P10 frozen measurement
++reports with the accepted P9 R5 reports: **all 84 gates passed**, with unchanged
++limits. The earlier P10 helper retained its P8 preceding anchor; this supplemental
++comparison supplies the direct P9 preceding-phase comparison. It reuses actual
++saved measurements and does not rerun workloads, change limits, relabel runtime
++source identities or establish a new speedup claim.
++
++### P11a — reporting evidence; final qualification pending, 6 November 2026
++
++P11a is **not accepted**. Version **1.8.8** remains unpublished. The 27-file
++feature/test tree adds opt-in metadata reporting, not Lean/Rich retained-profile
++migration. Later phases and deleted-source recovery remain unfinished.
++
++Completed observations retained separately:
++
++- Original native source **`33e6df135da90839f409dfbba6dd2ce338af31675875e99f20d0b94af212f3f7` / 948 inputs**:
++  scoped formatting/Clippy and **18 focused native tests** passed. The new
++  flattened conditional display regression subsequently passed on its own
++  current test source; this is a display fixture, not native transport evidence.
++- Mac Neo `p11-native-20261106-r1` used that original `33e6df13…` source and
++  passed **nine steps / 12 tests**: formatting, Core3, Ingest1, and Kernel2/MCP1/
++  CLI1 in minimal and all-feature modes. Collected cleanup proves `cargo clean`
++  exit0, target absent, source/reports preserved and timing reports retained.
++  This is focused ARM macOS evidence, not a full Mac workspace/runtime campaign,
++  Intel/Linux, model/OCR, installed-editor or signing qualification.
++- Workbench compile/bundles passed; the full UI run reports **741 passed,
++  0 failed, 19 skipped / 760 total**. Skips remain skips.
++- Actual R4 process checks passed in both feature modes. They exercise complete
++  canonical native, CLI tools call, real tools console, convenience info and MCP
++  alias results and input catalogs; Full/Terse and absent/Lean/Rich reply choices,
++  scoped unknowns, full-root policy observations, conditional validators and
++  invalid boolean refusal are covered. Positive replies check outer error flags
++  before unwrapping and exactly one requested index. Earlier shape/prompt fixture
++  failures remain recorded; assertions were corrected to the existing flattened
++  `ConditionalRead` and `Result:` console protocol, without product changes.
++
++The current test/source identity is
++**`979568465e27b37bc82538ca91e6f5ef843f20886270679ba7da1f42e40e53fc` / 948 inputs**.
++The exact R1 release pair retains its original compiled `33e6df13…` source and
++build receipt. Only two external test inputs differ; **946 other declared native
++inputs and all production module bytes are unchanged**, independently verified.
++Reuse requires equality with the original full runtime seal before/after stages;
++it is not a fresh build or a relabeled producer. Current test revision and
++original binary identity are recorded separately.
++
++`p11a-final-qualification-r2.json` is **in progress**: the plan has 18 fresh stages
++and two explicitly adopted passed R4 transport checks, each with its original
++receipt and `executed_in_this_queue=false`. Do not infer any remaining gate result
++from this checkpoint. Pinned Nextest CI-profile execution is still being
++collected; it does not cover the four routine excluded campaigns or doctests.
++Those remain explicit P14 qualification requirements. Final primary review and
++phase acceptance follow collection of all required results. No publication,
++normal installation or completion of the full plan is claimed.
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -31,6 +31,8 @@
+ - Local development Clippy enables incremental compilation on Windows and disables it on other hosts by default; `--incremental on|off` is an explicit per-run override. Keep this development choice out of release builds and checked-in profile/CI policy. Do not routinely run `cargo clean` on Windows or replace warm targets without a concrete cache/disk diagnosis.
+ - Batch the required Mac Neo checks over the existing SSH setup, collect every result and timing report, then run `cargo clean` there after testing, including failed batches, because its drive space is limited. Retain needed evidence outside the cleaned target first. This Neo exception does not authorize routine cleanup elsewhere.
+ - The next necessary build/Clippy run must retain Cargo `--timings` evidence and report its command, scope, target directory, incremental setting, elapsed time and result. Reuse observed timing reports when assessing a bottleneck; do not start speculative benchmark or broad-build campaigns merely to measure these workflow choices.
++- Coalesce tests with the same package, feature and target configuration into one scoped Cargo/Nextest invocation where practical; use the pinned Nextest CI profile for its documented routine selection. Before an optimized runtime freeze, run the actual affected process/transport integration preflight against a matched development pair when that can expose protocol/fixture failures sooner. Preserve the required final gates and collect each complete run before correcting source.
++- Place assertion-only regressions in existing external `#[cfg(test)]` modules where appropriate so editing tests does not invalidate production release compilation. Reuse an existing runtime only after verifying all production inputs and complete artifact seals are unchanged; retain its original compiled-source/build identity and record the current test-source identity separately. Never label reuse as a fresh build. P14 must restore the four routine excluded campaigns and run doctests; scoped or CI-profile passes do not replace them.
+ - Keep routine CI lean as documented in CONTRIBUTING.md and docs/ci-and-builds.md. Avoid duplicated broad suites, speculative reruns and additional full diagnostic matrices. Full qualification remains opt-in when explicitly requested; restore individual routine gates when evidence justifies their cost. Preserve required release artifact and provenance checks, and never hide a real failure by weakening assertions or relabeling skipped coverage as passing.
+ - Require a separate review of the complete diff and validation evidence before another corrective push. When work is delegated, the primary agent performs that review independently of the implementer. Without delegation, perform an explicit review pass after implementation; do not claim it was independently reviewed.
+ - Report observed facts: what passed, what failed, what was not run and what remains unknown. Do not claim cross-platform success from local results, or say "nearly done" without evidence. For a release task, completion means the authorized merge and publication workflows succeeded and the published outputs were verified.
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -31,6 +31,8 @@
+ - Local development Clippy enables incremental compilation on Windows and disables it on other hosts by default; `--incremental on|off` is an explicit per-run override. Keep this development choice out of release builds and checked-in profile/CI policy. Do not routinely run `cargo clean` on Windows or replace warm targets without a concrete cache/disk diagnosis.
+ - Batch the required Mac Neo checks over the existing SSH setup, collect every result and timing report, then run `cargo clean` there after testing, including failed batches, because its drive space is limited. Retain needed evidence outside the cleaned target first. This Neo exception does not authorize routine cleanup elsewhere.
+ - The next necessary build/Clippy run must retain Cargo `--timings` evidence and report its command, scope, target directory, incremental setting, elapsed time and result. Reuse observed timing reports when assessing a bottleneck; do not start speculative benchmark or broad-build campaigns merely to measure these workflow choices.
++- Coalesce tests with the same package, feature and target configuration into one scoped Cargo/Nextest invocation where practical; use the pinned Nextest CI profile for its documented routine selection. Before an optimized runtime freeze, run the actual affected process/transport integration preflight against a matched development pair when that can expose protocol/fixture failures sooner. Preserve the required final gates and collect each complete run before correcting source.
++- Place assertion-only regressions in existing external `#[cfg(test)]` modules where appropriate so editing tests does not invalidate production release compilation. Reuse an existing runtime only after verifying all production inputs and complete artifact seals are unchanged; retain its original compiled-source/build identity and record the current test-source identity separately. Never label reuse as a fresh build. P14 must restore the four routine excluded campaigns and run doctests; scoped or CI-profile passes do not replace them.
+ - Keep routine CI lean as documented in CONTRIBUTING.md and docs/ci-and-builds.md. Avoid duplicated broad suites, speculative reruns and additional full diagnostic matrices. Full qualification remains opt-in when explicitly requested; restore individual routine gates when evidence justifies their cost. Preserve required release artifact and provenance checks, and never hide a real failure by weakening assertions or relabeling skipped coverage as passing.
+ - Require a separate review of the complete diff and validation evidence before another corrective push. When work is delegated, the primary agent performs that review independently of the implementer. Without delegation, perform an explicit review pass after implementation; do not claim it was independently reviewed.
+ - Report observed facts: what passed, what failed, what was not run and what remains unknown. Do not claim cross-platform success from local results, or say "nearly done" without evidence. For a release task, completion means the authorized merge and publication workflows succeeded and the published outputs were verified.

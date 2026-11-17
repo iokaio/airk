@@ -1,0 +1,153 @@
+--- a/provision_cuda_runtime.py
++++ b/provision_cuda_runtime.py
+@@ -46,7 +46,7 @@
+  cmd=o.configure_argv(dest,'x86_64-pc-windows-msvc',tools)
+  if cmd.count('-Donnxruntime_USE_CUDA=OFF')!=1:raise ValueError('CPU configure contract drift')
+  cmd[cmd.index('-Donnxruntime_USE_CUDA=OFF')]='-Donnxruntime_USE_CUDA=ON'
+- cmd += ['-Donnxruntime_BUILD_CUDA_EP_AS_PLUGIN=OFF','-DCMAKE_CUDA_ARCHITECTURES=86','-DCMAKE_OBJECT_PATH_MAX=240','-DCMAKE_CUDA_COMPILER='+str(CUDA/'bin/nvcc.exe'),'-Donnxruntime_CUDA_HOME='+str(CUDA),'-DCUDAToolkit_ROOT='+str(CUDA),'-Donnxruntime_CUDNN_HOME='+str(INPUT/'cudnn-dev'),'-DCUDNN_PATH='+str(INPUT/'cudnn-dev'),'-DFETCHCONTENT_SOURCE_DIR_CUDNN_FRONTEND='+str(frontend),'-DFETCHCONTENT_UPDATES_DISCONNECTED=ON','-Donnxruntime_NVCC_THREADS=2','-Donnxruntime_USE_FLASH_ATTENTION=ON','-Donnxruntime_FLASH_NVCC_THREADS=1','-Donnxruntime_USE_MEMORY_EFFICIENT_ATTENTION=ON','-Donnxruntime_USE_TRT_FUSED_ATTENTION=OFF','-Donnxruntime_USE_LEAN_ATTENTION=OFF','-Donnxruntime_USE_FP4_QMOE=OFF','-Donnxruntime_USE_FP8_QMOE=OFF','-Donnxruntime_USE_FPA_INTB_GEMM=OFF','-Donnxruntime_USE_CUDA_NHWC_OPS=OFF','-Donnxruntime_CUDA_MINIMAL=OFF']
++ cmd += ['-Donnxruntime_BUILD_CUDA_EP_AS_PLUGIN=OFF','-DCMAKE_CUDA_ARCHITECTURES=86','-DCMAKE_OBJECT_PATH_MAX=240','-DCMAKE_CUDA_COMPILER='+str(CUDA/'bin/nvcc.exe'),'-Donnxruntime_CUDA_HOME='+str(CUDA),'-DCUDAToolkit_ROOT='+str(CUDA),'-Donnxruntime_CUDNN_HOME='+str(INPUT/'cudnn-dev'),'-DCUDNN_PATH='+str(INPUT/'cudnn-dev'),'-DFETCHCONTENT_SOURCE_DIR_CUDNN_FRONTEND='+frontend.as_posix(),'-DFETCHCONTENT_UPDATES_DISCONNECTED=ON','-Donnxruntime_NVCC_THREADS=2','-Donnxruntime_USE_FLASH_ATTENTION=ON','-Donnxruntime_FLASH_NVCC_THREADS=1','-Donnxruntime_USE_MEMORY_EFFICIENT_ATTENTION=ON','-Donnxruntime_USE_TRT_FUSED_ATTENTION=OFF','-Donnxruntime_USE_LEAN_ATTENTION=OFF','-Donnxruntime_USE_FP4_QMOE=OFF','-Donnxruntime_USE_FP8_QMOE=OFF','-Donnxruntime_USE_FPA_INTB_GEMM=OFF','-Donnxruntime_USE_CUDA_NHWC_OPS=OFF','-Donnxruntime_CUDA_MINIMAL=OFF']
+  return cmd
+ 
+ def safe_frontend(o,archive,output,lock):
+@@ -94,6 +94,33 @@
+   target=o.plain(o.child(root,row['path']),regular=True)
+   if digest(target)!=row['before_sha256']:raise ValueError('patch target before SHA256 differs: '+row['path'])
+  return dispatch()
++
++def configured_build_preflight(o,destination,command,lock):
++ build=destination/'b/Release';cache=o.verify_cmake_cache(build/'CMakeCache.txt',command)
++ ninja=o.plain(build/'build.ninja',regular=True);rules=o.plain(build/'CMakeFiles/rules.ninja',regular=True)
++ if ninja.stat().st_size>64*1024**2 or rules.stat().st_size>16*1024**2:raise ValueError('configured Ninja graph exceeds bound')
++ text=ninja.read_text(encoding='utf8');rule_text=rules.read_text(encoding='utf8')
++ if 'allow-unsupported-compiler' in (text+rule_text+str(cache)).lower():raise ValueError('unsupported CUDA compiler override refused')
++ lines=text.splitlines();targets={}
++ for name in ('onnxruntime_session.lib','all','re2','onnxruntime_providers_cuda.dll','onnxruntime_providers_shared.dll'):
++  found=[line for line in lines if line.startswith('build '+name+':') or line.startswith('build '+name+' ')]
++  if len(found)!=1:raise ValueError('configured native target missing/ambiguous: '+name)
++  targets[name]=found[0]
++ if ': CXX_STATIC_LIBRARY_LINKER' not in targets['onnxruntime_session.lib']:raise ValueError('session target is not a static archive')
++ capi=[line for line in lines if line.startswith('build ') and 'onnxruntime_c_api.cc.obj: CXX_COMPILER__onnxruntime_session_' in line]
++ if len(capi)!=1:raise ValueError('final CAPI compilation target missing/ambiguous')
++ output,rest=capi[0][6:].split(': ',1);source=rest.split()[1].replace('$:',':').replace(chr(92),'/')
++ expected=(destination/'source'/lock['final_placement']['path']).as_posix()
++ if source!=expected or output not in targets['onnxruntime_session.lib'].split():raise ValueError('final CAPI source/object is not in actual session archive')
++ if o.digest(destination/'source'/lock['final_placement']['path'])!=lock['final_placement']['after_sha256']:raise ValueError('final CAPI source bytes differ before compile')
++ maximum=0;objects=0
++ for line in lines:
++  if line.startswith('build ') and ('.obj: CXX_COMPILER' in line or '.obj: CUDA_COMPILER' in line):
++   relative=line[6:].split(': ',1)[0];path=o.plain(build/relative)
++   if not path.is_relative_to(build):raise ValueError('configured object escapes build root')
++   maximum=max(maximum,len(str(path)));objects+=1
++ if not objects or maximum>240:raise ValueError('configured object path exceeds reviewed Windows bound')
++ return {'cache_sha256':o.digest(build/'CMakeCache.txt'),'ninja_sha256':o.digest(ninja),'rules_sha256':o.digest(rules),'checked_flags':sum(x.startswith('-D') for x in command),'objects':objects,'max_object_path':maximum,'final_capi_source_sha256':lock['final_placement']['after_sha256']}
+ 
+ def main():
+  ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('--destination',type=Path,required=True);ap.add_argument('--approved-script-sha256',required=True);ap.add_argument('--approved-lock-sha256',required=True);ap.add_argument('--execute-build',action='store_true');ap.add_argument('--timeout-seconds',type=int,default=10800);a=ap.parse_args()
+@@ -191,7 +218,7 @@
+   verify_input_closure(o,closure);verify_mirror_closure(o,dest/'source/mirror',mirrors)
+   write(dest/'frozen-input-closure.json',closure);receipt['frozen_input_closure_sha256']=digest(dest/'frozen-input-closure.json')
+   command=gpu_command(o,dest,tools,frontend);receipt['configure_argv']=command;run(command,dest,'configure',True)
+-  o.verify_cmake_cache(dest/'b/Release/CMakeCache.txt',command)
++  receipt['configured_preflight']=configured_build_preflight(o,dest,command,lock)
+   core_build=[tools['cmake']['path'],'--build',str(dest/'b/Release'),'--config','Release','--target','onnxruntime_session','--parallel','2'];receipt['core_build_argv']=core_build;run(core_build,dest,'core-session-build',True)
+   build=[tools['cmake']['path'],'--build',str(dest/'b/Release'),'--config','Release','--target','all','re2','--parallel','2'];receipt['build_argv']=build;run(build,dest,'build',True)
+   if o.source_inventory(dest/'source',exclude_mirror=True)!=source_rows or o.source_inventory(frontend)!=frontend_rows:raise ValueError('compiled source drift')
+--- a/cuda-runtime-producer-lock.json
++++ b/cuda-runtime-producer-lock.json
+@@ -90,7 +90,7 @@
+     "no_second_ort_core": true
+   },
+   "build_path": {
+-    "fresh_child": "cu6",
++    "fresh_child": "cu8",
+     "object_path_max": 240,
+     "temp_child": "t",
+     "cuda_cache_child": "cc",
+@@ -105,5 +105,6 @@
+     "symbol": "airk_ort_collect_final_placement_v1",
+     "abi": "Windows x64 __cdecl, same static core, final live SessionState tree; no API table changes",
+     "symbol_resolution": "Windows PE optional export from actual static-core-containing EXE; typed lookup in module containing OrtGetApiBase; missing export refuses GPU before model work"
+-  }
++  },
++  "cmake_frontend_path_spelling": "Path.as_posix(), matching actual CMake PATH cache; CPU validator unchanged"
+ }
+--- a/CONTRACT.md
++++ b/CONTRACT.md
+@@ -43,3 +43,9 @@
+ The same Windows function definition is explicitly __declspec(dllexport). Its CAPI archive object's linker export directive must be retained in the actual static-core-containing EXE. ABI/header fields and function behavior are unchanged. Rust resolves only this known symbol from the authenticated module containing the actual linked OrtGetApiBase function, using typed GetProcAddress and held module/image custody. Missing export in a CPU-only binary is RuntimeUnavailable before model work; CPU-only --all-features has no unresolved custom extern. Version alone never establishes GPU support: approved producer/source/static-core/runtime closure pins remain mandatory. No new core, DLL, process or API-table entry is introduced.
+ 
+ Actual PE export inspection after the authorized build is required; this patch/control proof does not claim an export already exists in any binary. Fresh producer output stays cu6 (R6 was never executed), exactly matching the enforced lock/card; R6 remains immutable.
++
++## R8 captured configuration correction
++
++The actual R7/cu6 attempt completed the header syntax check and CMake configure, then stopped at the unchanged CPU cache verifier before any ORT object build. Exhaustive comparison found exactly one difference: CMake typed FETCHCONTENT_SOURCE_DIR_CUDNN_FRONTEND as PATH and used forward slashes, while the GPU command used backslashes. R8 emits frontend.as_posix() for this one reviewed GPU flag. CPU cache validation and every other requested flag remain unchanged. The failed cu6 tree/receipt stays immutable; use exact fresh cu8.
++
++Before object compilation, the GPU producer verifies the configured target graph: unique session/all/re2/provider targets, exact final CAPI source/object connection and expected after SHA, no unsupported-compiler override, and all generated object paths within the explicit240-character limit. This is a preflight of actual configured inputs, not C++ syntax/link/model qualification. The actual captured cache must pass unchanged CPU verification under the corrected GPU argv; wrong frontend/CUDA/architecture/core/attention/compiler values and source/target corruption must refuse cheaply.
+--- a/test_provision_cuda_runtime.py
++++ b/test_provision_cuda_runtime.py
+@@ -82,4 +82,51 @@
+     g.identity_and_parent(cpu,g.PARENT/'cu4',{'build_path':{'fresh_child':'cu5'}})
+    self.assertEqual(processes.call_count,1)
+ 
++class CapturedConfigurationControls(unittest.TestCase):
++ CAPTURED=Path('C:/Users/tdotn/AppData/Local/airk-final-exec-20261116T052942Z/cu6')
++ def setUp(self):
++  self.receipt=json.loads((self.CAPTURED/'gpu-build-receipt.json').read_text(encoding='utf8'))
++  self.lock=json.loads((HERE/'cuda-runtime-producer-lock.json').read_text(encoding='utf8'))
++  self.command=g.gpu_command(cpu,self.CAPTURED,self.receipt['toolchain'],self.CAPTURED/'frontend')
++  self.cache=(self.CAPTURED/'b/Release/CMakeCache.txt').read_text(encoding='utf8')
++  self.ninja=(self.CAPTURED/'b/Release/build.ninja').read_text(encoding='utf8')
++ def test_actual_captured_cache_all_flags_pass_without_cpu_changes(self):
++  cache=cpu.verify_cmake_cache(self.CAPTURED/'b/Release/CMakeCache.txt',self.command)
++  self.assertEqual(cache['FETCHCONTENT_SOURCE_DIR_CUDNN_FRONTEND'],(self.CAPTURED/'frontend').as_posix())
++  self.assertGreater(sum(x.startswith('-D') for x in self.command),50)
++ def test_captured_cache_semantic_changes_refused(self):
++  import re
++  changes={'FETCHCONTENT_SOURCE_DIR_CUDNN_FRONTEND':(self.CAPTURED/'other-frontend').as_posix(),'onnxruntime_USE_CUDA':'OFF','onnxruntime_BUILD_SHARED_LIB':'ON','CMAKE_CUDA_ARCHITECTURES':'80','onnxruntime_USE_FLASH_ATTENTION':'OFF','CMAKE_CUDA_COMPILER':'C:/foreign/nvcc.exe'}
++  with tempfile.TemporaryDirectory(dir=HERE) as t:
++   for key,value in changes.items():
++    with self.subTest(key=key):
++     altered,count=re.subn(r'^'+re.escape(key)+r':([^=]*)=.*$',lambda m:key+':'+m.group(1)+'='+value,self.cache,count=1,flags=re.M);self.assertEqual(count,1)
++     f=Path(t)/'cache.txt';f.write_bytes(altered.encode())
++     with self.assertRaises(ValueError):cpu.verify_cmake_cache(f,self.command)
++ def proxy(self,root,ninja=None,cache=None,wrong_source=False):
++  actual_ninja=self.CAPTURED/'b/Release/build.ninja';actual_cache=self.CAPTURED/'b/Release/CMakeCache.txt';capi=self.CAPTURED/'source'/self.lock['final_placement']['path']
++  if ninja is not None:(root/'build.ninja').write_bytes(ninja.encode())
++  if cache is not None:(root/'cache.txt').write_bytes(cache.encode())
++  def plain(path,regular=False):
++   path=Path(path)
++   if path==actual_ninja and ninja is not None:return cpu.plain(root/'build.ninja',regular=regular)
++   return cpu.plain(path,regular=regular)
++  def verify(path,command):return cpu.verify_cmake_cache(root/'cache.txt' if cache is not None else path,command)
++  def digest(path):return '0'*64 if wrong_source and Path(path)==capi else cpu.digest(path)
++  return SimpleNamespace(plain=plain,verify_cmake_cache=verify,digest=digest)
++ def test_actual_configured_source_and_targets_pass(self):
++  result=g.configured_build_preflight(cpu,self.CAPTURED,self.command,self.lock)
++  self.assertGreater(result['objects'],0);self.assertLessEqual(result['max_object_path'],240)
++ def test_missing_build_target_refused(self):
++  with tempfile.TemporaryDirectory(dir=HERE) as t:
++   proxy=self.proxy(Path(t),ninja=self.ninja.replace('build re2:','build foreign-re2:',1))
++   with self.assertRaises(ValueError):g.configured_build_preflight(proxy,self.CAPTURED,self.command,self.lock)
++ def test_changed_final_source_refused_before_compile(self):
++  with tempfile.TemporaryDirectory(dir=HERE) as t:
++   with self.assertRaises(ValueError):g.configured_build_preflight(self.proxy(Path(t),wrong_source=True),self.CAPTURED,self.command,self.lock)
++ def test_unsupported_compiler_override_refused(self):
++  with tempfile.TemporaryDirectory(dir=HERE) as t:
++   proxy=self.proxy(Path(t),cache=self.cache+'\nCMAKE_CUDA_FLAGS:STRING=--allow-unsupported-compiler\n')
++   with self.assertRaises(ValueError):g.configured_build_preflight(proxy,self.CAPTURED,self.command,self.lock)
++
+ if __name__=='__main__':unittest.main()
+--- a/README.md
++++ b/README.md
+@@ -1,7 +1,7 @@
+-# R7 optional export handoff
++# R8 cache spelling correction
+ 
+-R6 remains immutable/unexecuted. R7 adds only __declspec(dllexport) to the reviewed Windows final-map function definition; its CAPI archive object is already linked through OrtGetApiBase and must carry the export directive into the actual service EXE. The exact ABI/header, bounded final SessionState traversal and producer script remain unchanged. Rust uses typed optional GetProcAddress from the authenticated module containing the linked OrtGetApiBase function; CPU-only builds need no custom extern and report missing export as RuntimeUnavailable before model work. Native producer/runtime/source authority remains mandatory; an export/version alone never proves a GPU path. No second core or helper DLL is introduced.
++Actual R7/cu6 completed its C++ header syntax-only check and CMake configure, then refused the cache before ORT object compilation. Exhaustive comparison found exactly one mismatch: frontend PATH slash spelling. R8 emits frontend.as_posix() for that one GPU flag. CPU validation and all native C++/offline/frontend patches remain byte-identical. The full actual captured cache now passes the unchanged CPU verifier for every requested flag; captured-configuration-audit.json records the complete comparison and source/Ninja identities.
+ 
+-All five real GNU patch stages passed on fresh archive-derived copies using the canonical owned runner and exact target before/after hashes. Receipt2d7eba4b... is retained under protected gpu-patch-controls-r7. Twelve Python controls pass. There has been no C++ build, CMake configure, native selected-model/GPU call or Cargo work by this agent. Actual PE export inspection and native walker controls remain post-build gates.
++The new post-configure preflight verifies unique session/all/re2/provider targets, final CAPI source/object membership and expected source hash, generated object path bound240, and absence of unsupported-compiler override. It is exercised on the captured actual cu6 configuration, with tampered cache/frontend/CUDA/architecture/core/attention/compiler values, removed target, changed CAPI hash and unsupported-compiler flag all refused. Eighteen cheap controls pass; no actual new configure, compiler, model or Cargo ran.
+ 
+-The exact fresh output remains cu6, matching enforced lock/card (R6 never ran). R4/cu3 failure and R5/R6 source proofs are preserved. LF corrections, full closure rechecks, combined Flash/memory-efficient runtime, FP32-unfused/TF32off first gate and separate later FP16 G5 are unchanged. The real job needs Root's direct trigger under its original10800-second owned observer; this review packet does not launch it.
++Choose fresh cu8 rather than a resume framework: exact lock/card/producer fresh child is enforced, failed cu6 and its raw receipt/cache remain untouched. Root must review and directly trigger one bounded10800-second job. All previous real GNU patch proofs still apply to identical patches. Combined static-core/export/runtime strategy and FP32-first/FP16-later gates remain unchanged. This packet establishes configuration equivalence/preflight only, not a compiled core or GPU/model pass.

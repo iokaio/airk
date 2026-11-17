@@ -1,0 +1,100 @@
+# SPDX-License-Identifier: Apache-2.0
+from pathlib import Path
+import difflib
+
+out = Path(__file__).resolve().parent
+files = {}
+p = Path('crates/airk-retrieval/src/lib.rs')
+before = p.read_text(encoding='utf-8')
+old = '''    let query = terms(query);
+    let mut selected = None;
+'''
+new = '''    // Focus a selected chunk on its contiguous query spelling when available.
+    // This changes only the excerpt, never AND matching or candidate ordering.
+    let literal = query.trim();
+    let literal = literal
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .filter(|value| !value.is_empty())
+        .unwrap_or(literal);
+    if allowance > 0 && !literal.is_empty()
+        && let Some(found) = text.find(literal)
+    {
+        let before = allowance.saturating_sub(literal.len()).min(allowance / 4);
+        let mut start = found.saturating_sub(before);
+        while !text.is_char_boundary(start) {
+            start += 1;
+        }
+        let mut end = text.len().min(start.saturating_add(allowance));
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        return ByteSpan { start, end };
+    }
+    let query = terms(query);
+    let mut selected = None;
+'''
+assert before.count(old) == 1
+files[str(p)] = (before, before.replace(old, new))
+p = Path('crates/airk-kernel/tests/search_filters.rs')
+before = p.read_text(encoding='utf-8')
+addition = r'''
+
+#[test]
+fn focused_literals_preserve_and_candidates_order_locations_and_publication() -> Result<()> {
+    let root = tempdir()?;
+    let data = tempdir()?;
+    let literal = "sha256-full-saved-source";
+    for allowance in 1..=64 {
+        let text = "λ before λ exact-near-end";
+        let span = airk_retrieval::focus_span(text, "λ exact-near-end", allowance);
+        assert!(text.is_char_boundary(span.start) && text.is_char_boundary(span.end));
+        assert!(span.end - span.start <= allowance);
+    }
+    let text = format!(
+        "sha256 full saved source\n{}\nλ literal {literal}/1 is here\n{}\n",
+        "context before ".repeat(12),
+        "context after ".repeat(12),
+    );
+    fs::write(root.path().join("literal.md"), &text)?;
+    fs::write(root.path().join("separate.md"), "sha256 full saved source\n")?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let ask = SearchQuery { text: literal.into(), ..query(10) };
+    let complete = kernel.search_response(&ask, CurrentSearchMode::Lexical, None)?;
+    for spelling in [literal.to_owned(), format!("\"{literal}\"")] {
+        let focused = kernel.search_response(
+            &SearchQuery { text: spelling, ..ask.clone() },
+            CurrentSearchMode::Lexical,
+            Some(64),
+        )?;
+        assert_eq!(focused.publication, complete.publication);
+        assert_eq!(
+            focused.hits.iter().map(|hit| &hit.citation.path).collect::<Vec<_>>(),
+            complete.hits.iter().map(|hit| &hit.citation.path).collect::<Vec<_>>(),
+            "Focusing must not turn quotes into phrase matching or reorder candidates",
+        );
+        assert_eq!(focused.hits.len(), 2, "Separated AND terms remain eligible");
+        let hit = focused.hits.iter().find(|hit| hit.citation.path == "literal.md").unwrap();
+        assert!(hit.text.contains(literal));
+        assert!(hit.text.len() <= 64);
+        assert!(hit.citation.start_line <= 3 && hit.citation.end_line >= 3);
+        assert_eq!(hit.citation.content_hash,
+            complete.hits.iter().find(|hit| hit.citation.path == "literal.md").unwrap().citation.content_hash);
+        assert!(hit.truncated);
+        assert!(text.contains(&hit.text), "The excerpt remains an original UTF-8 span");
+    }
+    Ok(())
+}
+'''
+files[str(p)] = (before, before + addition)
+patch = ''.join(''.join(difflib.unified_diff(a.splitlines(keepends=True), b.splitlines(keepends=True),
+    fromfile='a/' + name.replace('\\', '/'), tofile='b/' + name.replace('\\', '/')))
+    for name, (a, b) in files.items())
+(out / 'lexical-snippet.patch').write_text(patch, encoding='utf-8', newline='\n')
+for name, (a, b) in files.items():
+    q = out / 'proposed' / name
+    q.parent.mkdir(parents=True, exist_ok=True)
+    q.write_text(b, encoding='utf-8', newline='\n')
+print('Prepared lexical-snippet.patch; production sources unchanged')

@@ -1,0 +1,168 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Disposal of fully acknowledged allocations already handed to ordinary Current.
+//! Active/unacknowledged operation funding never gains retirement authority here.
+use super::*;
+use crate::service::registry::catalog::setup::storage::{SetupDirectory, SetupFileMode};
+use std::ffi::{OsStr, OsString};
+
+pub(super) fn participant(
+    record: &FundingReceipt,
+    registration: &ProjectRegistration,
+) -> Result<Option<IndexId>> {
+    let Some(part) = record
+        .participants
+        .iter()
+        .find(|part| part.collection == registration.collection)
+    else {
+        return Ok(None);
+    };
+    ensure!(
+        record.request.registration(part.index_id) == Some(registration)
+            && record.complete
+            && record.release_acknowledged
+            && part.remaining_growth == 0,
+        "retirement requires exact fully acknowledged ordinary Current ownership"
+    );
+    ensure!(
+        record
+            .children
+            .iter()
+            .filter(|child| child.index_id == part.index_id)
+            .all(|child| child.current_owned
+                && !child.closed
+                && matches!(child.kind, FundingChildKind::Current { .. })),
+        "retirement cannot adopt operation-owned or ordinary reservation children"
+    );
+    Ok(Some(part.index_id))
+}
+struct Row {
+    name: OsString,
+    owned: File,
+    scratch: OsString,
+    next: Option<Vec<u8>>,
+}
+/// Caller has exact native retired participant, positive whole-logical absence,
+/// actual global writer exclusion and the existing lifecycle/ledger handles.
+pub(in crate::quota) struct RetiredCurrentInventory {
+    directory: SetupDirectory,
+    root: PathBuf,
+    rows: Vec<Row>,
+}
+impl RetiredCurrentInventory {
+    pub(in crate::quota) fn capture(
+        control: &SetupDirectory,
+        root: &SetupDirectory,
+        logical_root: &Path,
+        registration: &ProjectRegistration,
+    ) -> Result<Option<Self>> {
+        // Validate ALL known funding metadata before any ordinary/funded effect.
+        // Zero-credit live or unacknowledged participants still refuse.
+        pinned_records_checked(control, root, logical_root, Some(registration))?;
+        let directory = match control.open_dir(OsStr::new(DIRECTORY)) {
+            Ok(directory) => directory,
+            Err(error) if absent(&error) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let mut rows = Vec::new();
+        for (visited, entry) in directory.entries()?.enumerate() {
+            ensure!(
+                visited < MAX_OPERATIONS * 2 + 1,
+                "excessive retired Current funding inventory"
+            );
+            let name = entry?;
+            let text = name.to_str().context("funding name UTF-8")?;
+            if text == "leases" || text.starts_with("funding-") {
+                continue;
+            }
+            let owned = directory.open_file(&name, SetupFileMode::Read)?;
+            let mut record: FundingReceipt =
+                serde_json::from_slice(&directory.read_file(&name, MAX_RECORD_BYTES)?)?;
+            record.validate()?;
+            ensure!(
+                text == record.filename()
+                    && record.data_root == logical_root
+                    && record.root_identity
+                        == pinned_identity(root, logical_root, record.request.namespace)?,
+                "retired Current funding identity changed"
+            );
+            let Some(index) = participant(&record, registration)? else {
+                continue;
+            };
+            if !record.children.iter().any(|child| child.index_id == index) {
+                continue;
+            }
+            let scratch = OsString::from(format!(
+                "funding-retire-{}-{}",
+                record.request.operation_id, record.revision
+            ));
+            record.children.retain(|child| child.index_id != index);
+            advance(&mut record)?;
+            record.validate()?;
+            let next = if record.children.is_empty() {
+                None
+            } else {
+                Some(serde_json::to_vec(&record)?)
+            };
+            if let Some(bytes) = &next {
+                ensure!(
+                    bytes.len() as u64 <= MAX_RECORD_BYTES,
+                    "retired Current metadata exceeds bound"
+                );
+                match directory.read_file(&scratch, MAX_RECORD_BYTES) {
+                    Ok(prior) => ensure!(
+                        bytes.starts_with(&prior),
+                        "retired Current scratch belongs to another write"
+                    ),
+                    Err(error) if absent(&error) => (),
+                    Err(error) => return Err(error),
+                }
+            }
+            rows.push(Row {
+                name,
+                owned,
+                scratch,
+                next,
+            });
+        }
+        Ok(Some(Self {
+            directory,
+            root: logical_root.to_path_buf(),
+            rows,
+        }))
+    }
+    pub(in crate::quota) fn apply(&self) -> Result<()> {
+        for row in &self.rows {
+            if let Some(bytes) = &row.next {
+                // Same bounded ledger metadata capacity rule as ordinary
+                // release_current; no source, model or new operation allocation.
+                crate::capacity::require_growth(&self.root, MAX_RECORD_BYTES)?;
+                let mut pending = match self
+                    .directory
+                    .open_file(&row.scratch, SetupFileMode::ReadWrite)
+                {
+                    Ok(file) => file,
+                    Err(error) if absent(&error) => self
+                        .directory
+                        .open_file(&row.scratch, SetupFileMode::CreateNew)?,
+                    Err(error) => return Err(error),
+                };
+                pending.set_len(0)?;
+                pending.write_all(bytes)?;
+                pending.sync_all()?;
+                self.directory
+                    .replace_file(&row.scratch, &pending, &row.name, &row.owned)?;
+            } else {
+                // Native catalog retains operation/release history, exactly as
+                // ordinary release_current forgetting its final acknowledged child.
+                self.directory
+                    .unlink_file_if_identity(&row.name, &row.owned)?;
+            }
+        }
+        self.directory.sync()
+    }
+}
+fn absent(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<io::Error>()
+        .is_some_and(|error| error.kind() == io::ErrorKind::NotFound)
+}

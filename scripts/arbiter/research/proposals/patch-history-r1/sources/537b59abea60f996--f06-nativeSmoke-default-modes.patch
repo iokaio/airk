@@ -1,0 +1,20 @@
+--- a/packages/vscode/src/test/nativeSmoke.test.ts
++++ b/packages/vscode/src/test/nativeSmoke.test.ts
+@@ -92,6 +92,8 @@
+         const expectedVersion=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../package.json'),'utf8')).version;
+         const first=await quickStatus(session);assert.equal(first.version,expectedVersion);assert.ok(['ok','updating','paused','unknown','needs_attention'].includes(first.health));
+         assert.equal(first.files,1);assert.equal(first.cached,false);assert.ok(first.observed_unix_ms>0);
++        const primedTerse=await read('status',{response_mode:'terse'});
++        assert.equal(primedTerse.generation,undefined);assert.equal(primedTerse.publication.token,first.publication.token);
+         const full=await read('status',{response_mode:'full'});
+         assert.equal(full.cached,false,'full rendering requires a distinct observation');assert.ok(Number.isInteger(full.generation));
+         assert.ok(full.observed_unix_ms>=first.observed_unix_ms);assert.equal(full.publication.token,first.publication.token);
+@@ -104,7 +106,7 @@
+         const included=await read('status',{response_mode:'terse',include_status:true});assert.equal(included.cached,false);assert.equal(included.generation,undefined);assert.ok(included.freshness);
+         const includedHit=await read('status',{response_mode:'terse',include_status:true});assert.equal(includedHit.cached,true);assert.equal(includedHit.observed_unix_ms,included.observed_unix_ms);
+         const beforeDetail=await read('status',{response_mode:'terse'});assert.equal(beforeDetail.cached,false);assert.equal((await read('status',{response_mode:'terse'})).cached,true);
+-        for(const value of [first,full,cached,legacy,terse,included,includedHit,beforeDetail]){assert.equal(value.runtime,undefined);assert.equal(value.work,undefined);assert.equal(value.explorer,undefined);assert.ok(Buffer.byteLength(JSON.stringify(value))<1024);}
++        for(const value of [first,primedTerse,full,cached,legacy,terse,included,includedHit,beforeDetail]){assert.equal(value.runtime,undefined);assert.equal(value.work,undefined);assert.equal(value.explorer,undefined);assert.ok(Buffer.byteLength(JSON.stringify(value))<1024);}
+         const detail=await read('diagnostics');assert.ok(detail.runtime);assert.ok(detail.work);
+         const after=await read('status',{response_mode:'terse'});assert.equal(after.cached,false);assert.ok(after.observed_unix_ms>=first.observed_unix_ms);
+     }finally{session?.close();await fixture.dispose();}

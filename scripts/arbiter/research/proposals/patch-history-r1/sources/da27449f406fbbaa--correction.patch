@@ -1,0 +1,20 @@
+--- r4/crates/airk-inference/src/inference_engine/pool/arbiter/eligibility.rs
++++ r5/crates/airk-inference/src/inference_engine/pool/arbiter/eligibility.rs
+@@ -644,12 +644,11 @@
+             #[cfg(feature = "gpu-cuda")]
+             require_retained_memo_open(shared, residents, warm.stage)?;
+             #[cfg(feature = "gpu-cuda")]
+-            if let Some(device) = native_device.as_ref() {
+-                if warm.profile.description().device_execution.is_some()
+-                    && requires_profile(&warm.profile)
+-                {
+-                    require_memo_open(shared, warm.profile.description(), device)?;
+-                }
++            if let Some(device) = native_device.as_ref()
++                && warm.profile.description().device_execution.is_some()
++                && requires_profile(&warm.profile)
++            {
++                require_memo_open(shared, warm.profile.description(), device)?;
+             }
+             device::warm_admission(warm.deadline, warm.authority.as_deref(), Instant::now)
+         });

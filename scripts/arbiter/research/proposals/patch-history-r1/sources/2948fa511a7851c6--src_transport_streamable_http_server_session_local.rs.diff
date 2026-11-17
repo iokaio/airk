@@ -1,0 +1,79 @@
+--- old/src/transport/streamable_http_server/session/local.rs
+
++++ new/src/transport/streamable_http_server/session/local.rs
+
+@@ -43,4 +43,18 @@
+
+         self
+     }
++
++    /// Clone the session handle out of the map, so the lock is released
++    /// before the caller waits on the session worker.
++    async fn session_handle(
++        &self,
++        id: &SessionId,
++    ) -> Result<LocalSessionHandle, LocalSessionManagerError> {
++        self.sessions
++            .read()
++            .await
++            .get(id)
++            .cloned()
++            .ok_or_else(|| LocalSessionManagerError::SessionNotFound(id.clone()))
++    }
+ }
+ 
+@@ -73,8 +87,5 @@
+
+         message: ClientJsonRpcMessage,
+     ) -> Result<ServerJsonRpcMessage, Self::Error> {
+-        let sessions = self.sessions.read().await;
+-        let handle = sessions
+-            .get(id)
+-            .ok_or(LocalSessionManagerError::SessionNotFound(id.clone()))?;
++        let handle = self.session_handle(id).await?;
+         let response = handle.initialize(message).await?;
+         Ok(response)
+@@ -103,8 +114,5 @@
+
+         message: ClientJsonRpcMessage,
+     ) -> Result<impl Stream<Item = ServerSseMessage> + Send + 'static, Self::Error> {
+-        let sessions = self.sessions.read().await;
+-        let handle = sessions
+-            .get(id)
+-            .ok_or(LocalSessionManagerError::SessionNotFound(id.clone()))?;
++        let handle = self.session_handle(id).await?;
+         let receiver = handle.establish_request_wise_channel().await?;
+         let http_request_id = receiver.http_request_id;
+@@ -117,8 +125,5 @@
+
+         id: &SessionId,
+     ) -> Result<impl Stream<Item = ServerSseMessage> + Send + 'static, Self::Error> {
+-        let sessions = self.sessions.read().await;
+-        let handle = sessions
+-            .get(id)
+-            .ok_or(LocalSessionManagerError::SessionNotFound(id.clone()))?;
++        let handle = self.session_handle(id).await?;
+         let receiver = handle.establish_common_channel().await?;
+         Ok(ReceiverStream::new(receiver.inner))
+@@ -137,8 +142,5 @@
+
+             return Ok(stream.left_stream());
+         }
+-        let sessions = self.sessions.read().await;
+-        let handle = sessions
+-            .get(id)
+-            .ok_or(LocalSessionManagerError::SessionNotFound(id.clone()))?;
++        let handle = self.session_handle(id).await?;
+         let receiver = handle.resume(last_event_id.parse()?).await?;
+         Ok(ReceiverStream::new(receiver.inner).right_stream())
+@@ -150,8 +152,5 @@
+
+         message: ClientJsonRpcMessage,
+     ) -> Result<(), Self::Error> {
+-        let sessions = self.sessions.read().await;
+-        let handle = sessions
+-            .get(id)
+-            .ok_or(LocalSessionManagerError::SessionNotFound(id.clone()))?;
++        let handle = self.session_handle(id).await?;
+         handle.push_message(message, None).await?;
+         Ok(())

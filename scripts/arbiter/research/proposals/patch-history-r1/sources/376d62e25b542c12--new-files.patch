@@ -1,0 +1,1620 @@
+--- /dev/null
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/CONTRACT.md
+@@ -0,0 +1,61 @@
++# Distributable CUDA runtime provenance
++
++This Rust owner projects authenticated successful private GPU build/aggregate
++metadata into a path-free distributable notice and an exact package-file roster.
++It grants no runtime, device, model, numerical or scientific qualification.
++The existing CPU verifier and C7 six-field opaque static_ort projection do not
++change. Raw producer/continuation receipts, commands/logs, absolute private
++paths, source trees, toolkit/developer files, model assets and state never ship.
++
++Public schema airk.native.cuda-runtime-provenance/1 binds the successful opaque
++producer/continuation receipt SHA (static_core_build), independent maintained
++build/aggregate proof SHAs, exact aggregate archive hash/length, producer and
++verifier source/lock hashes, source/component versions and inventories, compiler/
++tool identities, semantic CMake options, runtime DLL hashes and original legal
++notice identities. Failed-parent ancestry is an opaque historical digest only;
++syntax diagnostics or compiled kernels cannot become model/qualification claims.
++No actual output hash is known until the current build naturally succeeds.
++
++The public decoder is direct typed deny_unknown_fields with bounded vectors and
++strings; it authenticates the exact Core Notice Asset named
++airk-cuda-build-provenance.json. The static build must equal the compiled/runtime
++owner's expected build identity. Its DLL roster must exactly equal the native
++RuntimeManifest files (name, length and hash), never a wildcard or prefix copy.
++Only the explicit provider pair and reviewed CUDA/cuDNN runtime basenames are
++allowed. Driver nvcuda.dll, second onnxruntime.dll, injection/debug/developer DLLs
++and unlisted helpers refuse. Each selected component needs at least one exact
++original notice as direct protected basenames airk-cuda-notice-<component>-<leaf>. Names are
++ASCII relative package names without separators in basenames, traversal, case
++collisions, colon/control characters or reserved Windows device names. No legal
++text is inferred from DLL/version names; original pinned notices and existing
++redistribution review remain mandatory.
++
++The metadata-only native projector consumes SHA/length-pinned successful private
++producer, maintained proof and aggregate proof, source locks and legal inputs.
++It reopens their exact authenticated bytes, reconciles same-build provider rows,
++aggregate producer-proof binding, source inventories, compiler/options/dependency
++closure and actual original notice bytes. It emits only the typed allowlist.
++Its output remains unapproved; the existing compiled RuntimeManifest/2 SHA and
++held-file/PE/module/source/lease gates remain the activation authority. Neither
++serialized proof booleans nor this public JSON can create a capability.
++
++The native legal_assets() accessor returns exact RoleNotice CoreAssets for the
++loader to hold/open/hash every direct-child legal file; semantic coverage labels
++alone never substitute for actual notice custody.
++
++Native loader API: provenance::validate(raw, CoreAsset, expected_static_build,
++&[manifest::RuntimeFile]) returns the validated descriptive public record. Loader
++owns actual held-file custody and all payload-byte/PE checks. Product manifest/2
++references this Core Notice Asset; scientific manifest/1 keeps its historical raw
++private receipt semantics. Metadata preparation has no model invocation. Root
++retains the raw private evidence separately and reviews successful same-build
++proof before compiling approval.
++
++The legal projector requires a SHA-pinned exact private legal roster and its
++maintained extractor source, alongside actual notice bytes. This roster contains
++component, package_name, bytes, sha256 and source_artifact_sha256 per file. It is
++an input hash inventory, not an approval/rights flag or runtime contract mirror.
++Versions absent from source metadata remain absent. Installed CUDA toolkit
++inventory identity is explicitly distinct from an archive hash; source archives
++and modified inventories are never conflated. Compiler version-kind identifies
++MSVC toolset separately from exact compiler executable identity.
+--- /dev/null
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/strict.rs
+@@ -0,0 +1,70 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Reject duplicate keys before private projection; never collapse JSON maps.
++use super::*;
++use serde::de::{MapAccess, SeqAccess, Visitor};
++struct Unique(Value);
++impl<'de> Deserialize<'de> for Unique {
++    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
++        struct V;
++        impl<'de> Visitor<'de> for V {
++            type Value = Unique;
++            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++                f.write_str("bounded JSON with unique keys")
++            }
++            fn visit_bool<E: serde::de::Error>(self, v: bool) -> std::result::Result<Unique, E> {
++                Ok(Unique(Value::Bool(v)))
++            }
++            fn visit_i64<E: serde::de::Error>(self, v: i64) -> std::result::Result<Unique, E> {
++                Ok(Unique(v.into()))
++            }
++            fn visit_u64<E: serde::de::Error>(self, v: u64) -> std::result::Result<Unique, E> {
++                Ok(Unique(v.into()))
++            }
++            fn visit_f64<E: serde::de::Error>(self, v: f64) -> std::result::Result<Unique, E> {
++                Ok(Unique(
++                    serde_json::Number::from_f64(v)
++                        .ok_or_else(|| E::custom("nonfinite JSON"))?
++                        .into(),
++                ))
++            }
++            fn visit_str<E: serde::de::Error>(self, v: &str) -> std::result::Result<Unique, E> {
++                Ok(Unique(Value::String(v.into())))
++            }
++            fn visit_string<E: serde::de::Error>(
++                self,
++                v: String,
++            ) -> std::result::Result<Unique, E> {
++                Ok(Unique(Value::String(v)))
++            }
++            fn visit_unit<E: serde::de::Error>(self) -> std::result::Result<Unique, E> {
++                Ok(Unique(Value::Null))
++            }
++            fn visit_seq<A: SeqAccess<'de>>(
++                self,
++                mut a: A,
++            ) -> std::result::Result<Unique, A::Error> {
++                let mut v = Vec::new();
++                while let Some(x) = a.next_element::<Unique>()? {
++                    v.push(x.0);
++                }
++                Ok(Unique(Value::Array(v)))
++            }
++            fn visit_map<A: MapAccess<'de>>(
++                self,
++                mut a: A,
++            ) -> std::result::Result<Unique, A::Error> {
++                let mut m = serde_json::Map::new();
++                while let Some((k, v)) = a.next_entry::<String, Unique>()? {
++                    if m.insert(k, v.0).is_some() {
++                        return Err(serde::de::Error::custom("duplicate private provenance key"));
++                    }
++                }
++                Ok(Unique(Value::Object(m)))
++            }
++        }
++        d.deserialize_any(V)
++    }
++}
++pub(super) fn parse(raw: &[u8]) -> Result<Value> {
++    Ok(serde_json::from_slice::<Unique>(raw)?.0)
++}
+--- /dev/null
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/tests.rs
+@@ -0,0 +1,230 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Synthetic metadata only; these inputs are never a genuine build/runtime proof.
++use super::*;
++use serde_json::json;
++#[derive(Default)]
++struct Memory {
++    files: BTreeMap<String, Vec<u8>>,
++}
++impl Memory {
++    fn pin(&mut self, name: &str, bytes: Vec<u8>) -> ResourceFilePin {
++        let path = std::env::temp_dir()
++            .join("airk-provenance-synthetic")
++            .join(name)
++            .to_string_lossy()
++            .into_owned();
++        let sha256 = Sha256Digest::from_bytes(Sha256::digest(&bytes).into());
++        self.files.insert(path.clone(), bytes);
++        ResourceFilePin { path, sha256 }
++    }
++    fn json(&mut self, name: &str, v: Value) -> ResourceFilePin {
++        self.pin(name, serde_json::to_vec(&v).unwrap())
++    }
++}
++impl Source for Memory {
++    fn recheck(&self) -> Result<()> {
++        Ok(())
++    }
++
++    fn read(&self, p: &ResourceFilePin, max: u64) -> Result<Vec<u8>> {
++        let b = self.files.get(&p.path).context("synthetic input missing")?;
++        ensure!(b.len() as u64 <= max, "synthetic bound");
++        Ok(b.clone())
++    }
++    fn authenticate(&self, p: &ResourceFilePin, n: u64, max: u64) -> Result<()> {
++        let b = self.read(p, max)?;
++        ensure!(
++            b.len() as u64 == n && Sha256Digest::from_bytes(Sha256::digest(&b).into()) == p.sha256,
++            "synthetic bytes changed"
++        );
++        Ok(())
++    }
++}
++fn row(pin: &ResourceFilePin, bytes: u64) -> Value {
++    json!({"path":pin.path,"bytes":bytes,"sha256":pin.sha256})
++}
++fn fixture() -> Result<(Memory, Input)> {
++    let mut m = Memory::default();
++    let version = m.json("version", json!({"cuda":{"version":"12.8.1"}}));
++    let nvcc = m.pin("nvcc", b"synthetic compiler".to_vec());
++    let cuda=m.json("cuda-inventory",json!([{"path":"version.json","bytes":m.files[&version.path].len(),"sha256":version.sha256},{"path":"bin/nvcc.exe","bytes":m.files[&nvcc.path].len(),"sha256":nvcc.sha256}]));
++    let cudnn = m.json("cudnn-inventory", json!({"files":[]}));
++    let archive = Sha256Digest::from_bytes([41; 32]);
++    let cpu=m.json("cpu-lock",json!({"ort_version":"1.30.0","upstream_commit":"synthetic-pinned-revision","source":{"sha256":archive},"dependencies":[]}));
++    let source_lock=m.json("gpu-lock",json!({"ort_version":"1.30.0","upstream_commit":"synthetic-pinned-revision","cpu_lock_sha256":cpu.sha256,"cudnn":{"extraction_receipt_sha256":cudnn.sha256,"sha256":"c1a4567d822ebda7373fa1f19255dff4942302de741f830160b6c7d1fb31af23"},"loader_patch_sha256":Sha256Digest::from_bytes([42;32]),"offline_helper":{"patch_sha256":Sha256Digest::from_bytes([43;32])},"final_placement":{"patch_sha256":Sha256Digest::from_bytes([44;32])},"dependencies":[]}));
++    let mut tools = serde_json::Map::new();
++    for name in ["compiler", "cmake", "ninja", "python", "patch", "vcvars"] {
++        let p = m.pin(name, format!("synthetic {name}").into_bytes());
++        let mut r = row(&p, m.files[&p.path].len() as u64);
++        if matches!(name, "cmake" | "ninja" | "python") {
++            r["version"] = json!("1.0.0");
++        }
++        tools.insert(name.into(), r);
++    }
++    tools.insert("msvc_toolset".into(), json!("14.44.35207"));
++    let tools = Value::Object(tools);
++    let mut configure = vec![
++        json!("cmake"),
++        json!("-Donnxruntime_USE_CUDA=ON"),
++        json!("-Donnxruntime_BUILD_SHARED_LIB=OFF"),
++        json!("-Donnxruntime_BUILD_CUDA_EP_AS_PLUGIN=OFF"),
++        json!("-DCMAKE_CUDA_ARCHITECTURES=86"),
++    ];
++    for name in PATH_OPTIONS {
++        configure.push(json!(format!(
++            "-D{name}={}",
++            if *name == "CMAKE_CUDA_COMPILER" {
++                nvcc.path.clone()
++            } else {
++                std::env::temp_dir().to_string_lossy().into_owned()
++            }
++        )));
++    }
++    let ok = json!({"exit_code":0,"timed_out":false,"log_oversized":false,"owned_descendants_settled":true,"owned_job_forced_termination":false});
++    let mut payloads = Vec::new();
++    let mut providers = Vec::new();
++    for name in [
++        "onnxruntime_providers_shared.dll",
++        "onnxruntime_providers_cuda.dll",
++    ] {
++        let pin = m.pin(name, vec![7]);
++        providers.push(json!({"path":format!("b/Release/{name}"),"bytes":1,"sha256":pin.sha256}));
++        payloads.push(PayloadInput {
++            file: manifest::RuntimeFile {
++                name: name.into(),
++                bytes: 1,
++                sha256: pin.sha256,
++                imports: BTreeSet::new(),
++                delay_imports: BTreeSet::new(),
++            },
++            source: pin,
++        });
++    }
++    let receipt=m.json("producer",json!({"status":"PASS_PRODUCER_ONLY_UNQUALIFIED","commands":[ok.clone()],"policy":{"one_static_core":true,"optional_shared_cuda_provider":true,"runtime_version":"1.30.0"},"toolchain":tools,"provider_dlls":providers,"configure_argv":configure}));
++    let build_value = json!({"schema":"airk.cuda-static-build-proof/1","target":"x86_64-pc-windows-msvc","ort_version":"1.30.0","qualification":false,"build_receipt":{"sha256":receipt.sha256},"toolchain":tools,"provider_dlls":providers,"producer_script_sha256":Sha256Digest::from_bytes([45;32]),"producer_lock_sha256":source_lock.sha256,"source_inventory_sha256":Sha256Digest::from_bytes([46;32]),"cuda_inventory_sha256":cuda.sha256});
++    let build_sha = canonical_sha(&build_value)?;
++    let build = m.json("build-proof", build_value);
++    let aggregate_archive = m.pin("onnxruntime.lib", vec![3; 70_000]);
++    let out = json!({"path":"gpu-aggregate/onnxruntime.lib","bytes":70_000,"sha256":aggregate_archive.sha256});
++    let plan = json!({"synthetic":true,"inputs":[]});
++    let plan_sha = canonical_sha(&plan)?;
++    let lib = m.pin("lib.exe", b"synthetic archiver".to_vec());
++    let aggregate_receipt=m.json("aggregate-receipt",json!({"status":"PASS_GPU_AGGREGATE_ONLY_UNQUALIFIED","command":ok,"output":out,"plan":plan,"tool":row(&lib,m.files[&lib.path].len() as u64)}));
++    let aggregate_proof=m.json("aggregate-proof",json!({"schema":"airk.cuda-static-aggregate-proof/1","qualification":false,"producer_proof_sha256":build_sha,"receipt_sha256":aggregate_receipt.sha256,"output":out,"plan_sha256":plan_sha}));
++    let verifier = m.pin("verifier.py", b"synthetic verifier; no authority".to_vec());
++    let legal_owner = m.pin(
++        "legal.py",
++        b"synthetic legal owner; no rights inference".to_vec(),
++    );
++    let mut notices = Vec::new();
++    let mut legal = Vec::new();
++    for (name, source_hash) in [
++        ("onnxruntime", archive),
++        ("cuda", cuda.sha256),
++        (
++            "cudnn",
++            "c1a4567d822ebda7373fa1f19255dff4942302de741f830160b6c7d1fb31af23".parse()?,
++        ),
++    ] {
++        let pin = m.pin(&format!("{name}-license"), b"synthetic license".to_vec());
++        let package = format!("airk-cuda-notice-{name}-license.txt");
++        let bytes = m.files[&pin.path].len() as u64;
++        legal.push(json!({"component":name,"package_name":package,"bytes":bytes,"sha256":pin.sha256,"source_artifact_sha256":source_hash}));
++        notices.push(NoticeInput {
++            component: name.into(),
++            package_name: package,
++            source: pin,
++            original_source_sha256: source_hash,
++            bytes,
++        });
++    }
++    let legal_inventory = m.json("legal-inventory", Value::Array(legal));
++    Ok((
++        m,
++        Input {
++            build_proof: build,
++            producer_receipt: receipt,
++            aggregate_proof,
++            aggregate_receipt,
++            source_lock,
++            cpu_lock: cpu,
++            cuda_inventory: cuda,
++            cuda_version: version,
++            cudnn_inventory: cudnn,
++            verifier,
++            aggregate_archive,
++            legal_inventory,
++            legal_owner,
++            payloads,
++            notices,
++        },
++    ))
++}
++#[test]
++fn synthetic_projector_emits_only_exact_public_roster() -> Result<()> {
++    let (m, input) = fixture()?;
++    let value = project(&m, input)?;
++    assert_eq!(value.package_files.len(), 6);
++    assert_eq!(value.provenance.name, "airk-cuda-build-provenance.json");
++    assert_eq!(value.provenance.role, AssetRole::Notice);
++    let raw = String::from_utf8(value.bytes)?;
++    assert!(!raw.contains("airk-provenance-synthetic"));
++    assert!(!raw.contains("\"configure_argv\":"));
++    assert!(!raw.contains("commands"));
++    Ok(())
++}
++#[test]
++fn synthetic_projector_refuses_failed_or_unsettled_producer() -> Result<()> {
++    for field in ["status", "owned_job_forced_termination"] {
++        let (mut m, mut input) = fixture()?;
++        let mut value: Value = serde_json::from_slice(&m.files[&input.producer_receipt.path])?;
++        if field == "status" {
++            value["status"] = json!("FAILED_PRESERVED_NO_RETRY");
++        } else {
++            value["commands"][0][field] = json!(true);
++        }
++        input.producer_receipt = m.json("changed-producer", value);
++        assert!(project(&m, input).is_err());
++    }
++    Ok(())
++}
++#[test]
++fn private_json_duplicates_floats_and_unlisted_path_options_refuse() -> Result<()> {
++    assert!(strict::parse(br#"{"a":1,"a":2}"#).is_err());
++    assert!(strict::parse(br#"{"nested":{"b":1,"b":2}}"#).is_err());
++    assert!(canonical_sha(&json!({"elapsed":0.1})).is_err());
++    assert!(options(&json!(["-DUNKNOWN=C:/Users/private"])).is_err());
++    Ok(())
++}
++#[test]
++fn synthetic_projector_refuses_missing_notice_or_changed_blob() -> Result<()> {
++    let (mut m, input) = fixture()?;
++    m.files
++        .get_mut(&input.notices[0].source.path)
++        .unwrap()
++        .push(b'X');
++    assert!(project(&m, input).is_err());
++    let (m, mut input) = fixture()?;
++    input.notices.pop();
++    assert!(project(&m, input).is_err());
++    Ok(())
++}
++
++#[test]
++fn final_source_custody_failure_refuses_projection_before_publication() -> Result<()> {
++    struct Lost(Memory);
++    impl Source for Lost {
++        fn read(&self, p: &ResourceFilePin, max: u64) -> Result<Vec<u8>> {
++            self.0.read(p, max)
++        }
++        fn authenticate(&self, p: &ResourceFilePin, n: u64, max: u64) -> Result<()> {
++            self.0.authenticate(p, n, max)
++        }
++        fn recheck(&self) -> Result<()> {
++            anyhow::bail!("synthetic original held object drift")
++        }
++    }
++    let (source, input) = fixture()?;
++    assert!(project(&Lost(source), input).is_err());
++    Ok(())
++}
+--- /dev/null
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection.rs
+@@ -0,0 +1,535 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Metadata-only projection of exact pinned maintained-owner outputs.
++use super::*;
++use airk_core::arbiter::resource_policy::ResourceFilePin;
++use serde_json::Value;
++mod strict;
++
++pub(in crate::arbiter::runtime::cuda) trait Source {
++    /// The actual native caller retains no-follow/owner/held-object custody.
++    fn read(&self, pin: &ResourceFilePin, maximum: u64) -> Result<Vec<u8>>;
++    /// Stream-authenticate large DLL bytes without allocating an entire DLL.
++    fn authenticate(&self, pin: &ResourceFilePin, bytes: u64, maximum: u64) -> Result<()>;
++    /// Recheck every held source under the original caller deadline before return.
++    fn recheck(&self) -> Result<()>;
++}
++pub(in crate::arbiter::runtime::cuda) struct PayloadInput {
++    pub file: manifest::RuntimeFile,
++    pub source: ResourceFilePin,
++}
++pub(in crate::arbiter::runtime::cuda) struct NoticeInput {
++    pub component: String,
++    pub package_name: String,
++    pub source: ResourceFilePin,
++    pub original_source_sha256: Sha256Digest,
++    pub bytes: u64,
++}
++pub(in crate::arbiter::runtime::cuda) struct Input {
++    pub build_proof: ResourceFilePin,
++    pub producer_receipt: ResourceFilePin,
++    pub aggregate_proof: ResourceFilePin,
++    pub aggregate_receipt: ResourceFilePin,
++    pub source_lock: ResourceFilePin,
++    pub cpu_lock: ResourceFilePin,
++    pub cuda_inventory: ResourceFilePin,
++    pub cuda_version: ResourceFilePin,
++    pub cudnn_inventory: ResourceFilePin,
++    pub verifier: ResourceFilePin,
++    pub aggregate_archive: ResourceFilePin,
++    pub legal_inventory: ResourceFilePin,
++    pub legal_owner: ResourceFilePin,
++    pub payloads: Vec<PayloadInput>,
++    pub notices: Vec<NoticeInput>,
++}
++#[derive(Serialize)]
++pub(in crate::arbiter::runtime::cuda) struct Prepared {
++    pub provenance: Asset,
++    pub bytes: Vec<u8>,
++    pub package_files: Vec<PublicFile>,
++}
++fn read(source: &dyn Source, pin: &ResourceFilePin, maximum: u64) -> Result<Vec<u8>> {
++    pin.validate()?;
++    let bytes = source.read(pin, maximum)?;
++    ensure!(
++        bytes.len() as u64 <= maximum
++            && Sha256Digest::from_bytes(Sha256::digest(&bytes).into()) == pin.sha256,
++        "pinned private projection input differs"
++    );
++    Ok(bytes)
++}
++fn json(source: &dyn Source, pin: &ResourceFilePin) -> Result<Value> {
++    strict::parse(&read(source, pin, 16 << 20)?)
++}
++fn sha(value: &Value) -> Result<Sha256Digest> {
++    let v: Sha256Digest = value.as_str().context("SHA field missing")?.parse()?;
++    ensure!(nonzero(v), "zero source SHA");
++    Ok(v)
++}
++fn text(value: &Value) -> Result<String> {
++    let v = value.as_str().context("public source token missing")?;
++    ensure!(token(v, 128), "source text is not a safe public token");
++    Ok(v.into())
++}
++fn size(value: &Value) -> Result<u64> {
++    let v = value.as_u64().context("source length missing")?;
++    ensure!(v > 0, "zero source length");
++    Ok(v)
++}
++fn rows(value: &Value) -> Result<&[Value]> {
++    value
++        .as_array()
++        .map(Vec::as_slice)
++        .context("source array missing")
++}
++fn canonical_sha(value: &Value) -> Result<Sha256Digest> {
++    fn ordered(value: &Value) -> Result<Value> {
++        Ok(match value {
++            Value::Object(map) => {
++                let ordered: BTreeMap<_, _> = map
++                    .iter()
++                    .map(|(k, v)| Ok((k.clone(), ordered(v)?)))
++                    .collect::<Result<_>>()?;
++                Value::Object(ordered.into_iter().collect())
++            }
++            Value::Array(v) => Value::Array(v.iter().map(ordered).collect::<Result<_>>()?),
++            Value::Number(v) => {
++                ensure!(
++                    v.is_i64() || v.is_u64(),
++                    "nonintegral private canonical proof refused"
++                );
++                value.clone()
++            }
++            _ => value.clone(),
++        })
++    }
++    Ok(Sha256Digest::from_bytes(
++        Sha256::digest(serde_json::to_vec(&ordered(value)?)?).into(),
++    ))
++}
++fn successful(value: &Value) -> bool {
++    value["exit_code"] == 0
++        && value["timed_out"] == false
++        && value["log_oversized"] == false
++        && value["owned_descendants_settled"] == true
++        && value["owned_job_forced_termination"] == false
++        && value.get("cleanup_refusal").is_none()
++}
++fn checked_rows(inventory: &Value, name: &str, bytes: u64, hash: Sha256Digest) -> Result<()> {
++    ensure!(
++        rows(inventory)?
++            .iter()
++            .filter(|r| r["path"].as_str().is_some_and(|p| p
++                .rsplit(['/', '\\'])
++                .next()
++                .is_some_and(|n| n.eq_ignore_ascii_case(name)))
++                && r["bytes"].as_u64() == Some(bytes)
++                && r["sha256"].as_str() == Some(hash.to_string().as_str()))
++            .count()
++            == 1,
++        "payload not uniquely bound to authenticated producer/dependency inventory"
++    );
++    Ok(())
++}
++const PATH_OPTIONS: &[&str] = &[
++    "CMAKE_MAKE_PROGRAM",
++    "Patch_EXECUTABLE",
++    "PYTHON_EXECUTABLE",
++    "Python3_EXECUTABLE",
++    "CMAKE_CUDA_COMPILER",
++    "onnxruntime_CUDA_HOME",
++    "CUDAToolkit_ROOT",
++    "onnxruntime_CUDNN_HOME",
++    "CUDNN_PATH",
++    "FETCHCONTENT_SOURCE_DIR_CUDNN_FRONTEND",
++];
++fn options(value: &Value) -> Result<Vec<BuildOption>> {
++    let mut output = Vec::new();
++    let mut seen = BTreeSet::new();
++    let mut private = BTreeSet::new();
++    for arg in rows(value)? {
++        let arg = arg.as_str().context("configure argument not text")?;
++        if let Some(def) = arg.strip_prefix("-D") {
++            let (name, v) = def
++                .split_once('=')
++                .context("configure definition missing value")?;
++            ensure!(seen.insert(name), "duplicate configure definition");
++            if PATH_OPTIONS.contains(&name) {
++                private.insert(name);
++                continue;
++            }
++            ensure!(
++                token(name, 128) && (v.is_empty() || token(v, 256)),
++                "unsafe semantic build option"
++            );
++            output.push(BuildOption {
++                name: name.into(),
++                value: v.into(),
++            });
++        }
++    }
++    ensure!(
++        private.len() == PATH_OPTIONS.len(),
++        "private path option roster differs"
++    );
++    output.sort_by(|a, b| a.name.cmp(&b.name));
++    Ok(output)
++}
++/// Output is descriptive and unapproved. The existing maintained verifier owns
++/// full source/Ninja/COFF/build proof, and exact compiled manifest SHA remains
++/// the separate runtime activation authority. No serialized bool grants it.
++pub(in crate::arbiter::runtime::cuda) fn project(
++    source: &dyn Source,
++    input: Input,
++) -> Result<Prepared> {
++    ensure!(
++        (2..=64).contains(&input.payloads.len()) && (3..=512).contains(&input.notices.len()),
++        "projection input capacity"
++    );
++    let build = json(source, &input.build_proof)?;
++    let producer = json(source, &input.producer_receipt)?;
++    let aggregate = json(source, &input.aggregate_proof)?;
++    let command = json(source, &input.aggregate_receipt)?;
++    let lock = json(source, &input.source_lock)?;
++    let cpu = json(source, &input.cpu_lock)?;
++    let cuda = json(source, &input.cuda_inventory)?;
++    let cuda_version = json(source, &input.cuda_version)?;
++    let cudnn = json(source, &input.cudnn_inventory)?;
++    read(source, &input.verifier, 1 << 20)?;
++    read(source, &input.legal_owner, 1 << 20)?;
++    let legal_inventory = json(source, &input.legal_inventory)?;
++    ensure!(
++        rows(&legal_inventory)?.len() == input.notices.len(),
++        "exact legal owner roster required"
++    );
++    ensure!(
++        build["schema"] == "airk.cuda-static-build-proof/1"
++            && build["target"] == "x86_64-pc-windows-msvc"
++            && build["ort_version"] == "1.30.0"
++            && build["qualification"] == false
++            && sha(&build["build_receipt"]["sha256"])? == input.producer_receipt.sha256
++            && producer["status"] == "PASS_PRODUCER_ONLY_UNQUALIFIED",
++        "successful same-build producer proof required"
++    );
++    let commands = rows(&producer["commands"])?;
++    ensure!(
++        !commands.is_empty() && commands.len() <= 16 && commands.iter().all(successful),
++        "producer did not naturally settle successfully"
++    );
++    ensure!(
++        producer["policy"]["one_static_core"] == true
++            && producer["policy"]["optional_shared_cuda_provider"] == true
++            && producer["policy"]["runtime_version"] == "1.30.0",
++        "producer core policy differs"
++    );
++    ensure!(
++        aggregate["schema"] == "airk.cuda-static-aggregate-proof/1"
++            && aggregate["qualification"] == false
++            && sha(&aggregate["producer_proof_sha256"])? == canonical_sha(&build)?
++            && sha(&aggregate["receipt_sha256"])? == input.aggregate_receipt.sha256
++            && command["status"] == "PASS_GPU_AGGREGATE_ONLY_UNQUALIFIED"
++            && successful(&command["command"]),
++        "matching naturally settled static aggregate required"
++    );
++    ensure!(
++        build["toolchain"] == producer["toolchain"]
++            && build["provider_dlls"] == producer["provider_dlls"]
++            && aggregate["output"] == command["output"]
++            && sha(&aggregate["plan_sha256"])? == canonical_sha(&command["plan"])?
++            && sha(&lock["cpu_lock_sha256"])? == input.cpu_lock.sha256
++            && sha(&build["cuda_inventory_sha256"])? == input.cuda_inventory.sha256
++            && sha(&lock["cudnn"]["extraction_receipt_sha256"])? == input.cudnn_inventory.sha256,
++        "proof/source/aggregate closure mismatch"
++    );
++    ensure!(
++        input.aggregate_archive.sha256 == sha(&aggregate["output"]["sha256"])?,
++        "aggregate artifact pin differs"
++    );
++    source.authenticate(
++        &input.aggregate_archive,
++        size(&aggregate["output"]["bytes"])?,
++        2u64 << 30,
++    )?;
++    let original_lock = build
++        .get("ancestry")
++        .and_then(|a| a.get("original_r8_lock"))
++        .unwrap_or(&build["producer_lock_sha256"]);
++    ensure!(
++        sha(original_lock)? == input.source_lock.sha256
++            && lock["ort_version"] == "1.30.0"
++            && cpu["ort_version"] == "1.30.0"
++            && lock["upstream_commit"] == cpu["upstream_commit"],
++        "source lock ancestry differs"
++    );
++    let mut components = vec![Component {
++        name: "onnxruntime".into(),
++        version: Some("1.30.0".into()),
++        upstream_sha1: None,
++        source_revision: Some(text(&cpu["upstream_commit"])?),
++        original_url: cpu["source"]
++            .get("url")
++            .and_then(Value::as_str)
++            .map(str::to_owned),
++        source_kind: SourceKind::Archive,
++        source_sha256: sha(&cpu["source"]["sha256"])?,
++        inventory_sha256: Some(sha(&build["source_inventory_sha256"])?),
++        source_changes: vec![
++            sha(&lock["loader_patch_sha256"])?,
++            sha(&lock["offline_helper"]["patch_sha256"])?,
++            sha(&lock["final_placement"]["patch_sha256"])?,
++        ],
++    }];
++    if let Some(change) = producer.get("changed_source_after_sha256") {
++        components[0].source_changes.push(sha(change)?);
++    }
++    ensure!(
++        cuda_version["cuda"]["version"] == "12.8.1",
++        "CUDA version differs"
++    );
++    checked_rows(
++        &cuda,
++        "version.json",
++        read(source, &input.cuda_version, 1 << 20)?.len() as u64,
++        input.cuda_version.sha256,
++    )?;
++    components.push(Component {
++        name: "cuda".into(),
++        version: Some("12.8.1".into()),
++        upstream_sha1: None,
++        source_revision: None,
++        original_url: None,
++        source_kind: SourceKind::InstalledToolkitInventory,
++        source_sha256: input.cuda_inventory.sha256,
++        inventory_sha256: Some(input.cuda_inventory.sha256),
++        source_changes: Vec::new(),
++    });
++    ensure!(
++        lock["cudnn"]["sha256"]
++            == "c1a4567d822ebda7373fa1f19255dff4942302de741f830160b6c7d1fb31af23",
++        "cuDNN source archive differs"
++    );
++    components.push(Component {
++        name: "cudnn".into(),
++        version: Some("9.10.2.21".into()),
++        upstream_sha1: None,
++        source_revision: None,
++        original_url: None,
++        source_kind: SourceKind::Archive,
++        source_sha256: sha(&lock["cudnn"]["sha256"])?,
++        inventory_sha256: Some(input.cudnn_inventory.sha256),
++        source_changes: Vec::new(),
++    });
++    for dependency in rows(&cpu["dependencies"])?
++        .iter()
++        .chain(rows(&lock["dependencies"])?)
++    {
++        components.push(Component {
++            name: text(&dependency["name"])?,
++            version: dependency.get("version").map(text).transpose()?,
++            upstream_sha1: dependency.get("upstream_sha1").map(text).transpose()?,
++            source_revision: None,
++            original_url: dependency
++                .get("url")
++                .and_then(Value::as_str)
++                .map(str::to_owned),
++            source_kind: SourceKind::Archive,
++            source_sha256: sha(&dependency["sha256"])?,
++            inventory_sha256: None,
++            source_changes: Vec::new(),
++        });
++    }
++    let mut tools = Vec::new();
++    for name in ["compiler", "cmake", "ninja", "python", "patch", "vcvars"] {
++        let t = &build["toolchain"][name];
++        let version = if name == "compiler" {
++            Some(text(&build["toolchain"]["msvc_toolset"])?)
++        } else {
++            t.get("version").map(text).transpose()?
++        };
++        let version_kind = version.as_ref().map(|_| {
++            if name == "compiler" {
++                "msvc-toolset".into()
++            } else {
++                "reported-tool-version".into()
++            }
++        });
++        let pin = ResourceFilePin {
++            path: t["path"].as_str().context("tool path absent")?.into(),
++            sha256: sha(&t["sha256"])?,
++        };
++        source.authenticate(&pin, size(&t["bytes"])?, 1u64 << 30)?;
++        tools.push(Tool {
++            name: name.into(),
++            version,
++            version_kind,
++            bytes: size(&t["bytes"])?,
++            sha256: sha(&t["sha256"])?,
++        });
++    }
++    let archive_tool = &command["tool"];
++    tools.push(Tool {
++        name: "archiver".into(),
++        version: None,
++        version_kind: None,
++        bytes: size(&archive_tool["bytes"])?,
++        sha256: sha(&archive_tool["sha256"])?,
++    });
++    let archive_pin = ResourceFilePin {
++        path: archive_tool["path"]
++            .as_str()
++            .context("archiver path absent")?
++            .into(),
++        sha256: sha(&archive_tool["sha256"])?,
++    };
++    source.authenticate(&archive_pin, size(&archive_tool["bytes"])?, 1u64 << 30)?;
++    let nvcc = rows(&cuda)?
++        .iter()
++        .find(|v| v["path"] == "bin/nvcc.exe")
++        .context("actual CUDA compiler inventory missing")?;
++    let nvcc_path = rows(&producer["configure_argv"])?
++        .iter()
++        .filter_map(Value::as_str)
++        .find_map(|v| v.strip_prefix("-DCMAKE_CUDA_COMPILER="))
++        .context("CUDA compiler binding missing")?;
++    let nvcc_pin = ResourceFilePin {
++        path: nvcc_path.into(),
++        sha256: sha(&nvcc["sha256"])?,
++    };
++    source.authenticate(&nvcc_pin, size(&nvcc["bytes"])?, 1u64 << 30)?;
++    tools.push(Tool {
++        name: "nvcc".into(),
++        version: None,
++        version_kind: None,
++        bytes: size(&nvcc["bytes"])?,
++        sha256: nvcc_pin.sha256,
++    });
++    let mut files = Vec::new();
++    let mut native_files = Vec::new();
++    for payload in input.payloads {
++        let f = payload.file;
++        ensure!(
++            input_payload_valid(&f) && payload.source.sha256 == f.sha256,
++            "unsafe payload input"
++        );
++        let inventory = match component_for(&f.name) {
++            Some("onnxruntime") => &producer["provider_dlls"],
++            Some("cudnn") => &cudnn["files"],
++            Some("cuda") => &cuda,
++            _ => anyhow::bail!("unknown payload"),
++        };
++        checked_rows(inventory, &f.name, f.bytes, f.sha256)?;
++        source.authenticate(&payload.source, f.bytes, 2u64 << 30)?;
++        files.push(PublicFile {
++            name: f.name.clone(),
++            bytes: f.bytes,
++            sha256: f.sha256,
++        });
++        native_files.push(f);
++    }
++    let mut legal = Vec::new();
++    for notice in input.notices {
++        ensure!(
++            notice.bytes > 0 && notice.bytes <= 2 << 20,
++            "notice byte capacity"
++        );
++        let raw = read(source, &notice.source, 2 << 20)?;
++        ensure!(raw.len() as u64 == notice.bytes, "notice bytes differ");
++        ensure!(
++            components
++                .iter()
++                .any(|c| c.name == notice.component
++                    && c.source_sha256 == notice.original_source_sha256),
++            "notice source archive not in exact selected component closure"
++        );
++        ensure!(
++            rows(&legal_inventory)?
++                .iter()
++                .filter(
++                    |v| v["component"].as_str() == Some(notice.component.as_str())
++                        && v["package_name"].as_str() == Some(notice.package_name.as_str())
++                        && v["bytes"].as_u64() == Some(notice.bytes)
++                        && v["sha256"].as_str() == Some(notice.source.sha256.to_string().as_str())
++                        && v["source_artifact_sha256"].as_str()
++                            == Some(notice.original_source_sha256.to_string().as_str())
++                )
++                .count()
++                == 1,
++            "notice is not uniquely bound to the exact legal-owner roster"
++        );
++        legal.push(LegalNotice {
++            component: notice.component,
++            file: PublicFile {
++                name: notice.package_name,
++                bytes: notice.bytes,
++                sha256: notice.source.sha256,
++            },
++            original_source_sha256: notice.original_source_sha256,
++        });
++    }
++    let value = PublicRuntimeProvenance {
++        schema: "airk.native.cuda-runtime-provenance/1".into(),
++        target: "x86_64-pc-windows-msvc".into(),
++        ort_version: "1.30.0".into(),
++        static_core_build: input.producer_receipt.sha256,
++        producer_script_sha256: sha(&build["producer_script_sha256"])?,
++        producer_lock_sha256: sha(&build["producer_lock_sha256"])?,
++        verifier_sha256: input.verifier.sha256,
++        build_proof_sha256: input.build_proof.sha256,
++        legal_inventory_sha256: input.legal_inventory.sha256,
++        legal_owner_sha256: input.legal_owner.sha256,
++        configure_argv_sha256: Sha256Digest::from_bytes(
++            Sha256::digest(serde_json::to_vec(&producer["configure_argv"])?).into(),
++        ),
++        historical_failed_parent: producer
++            .get("parent_failed_receipt")
++            .map(|v| sha(&v["sha256"]))
++            .transpose()?,
++        aggregate: Aggregate {
++            file: PublicFile {
++                name: "onnxruntime.lib".into(),
++                bytes: size(&aggregate["output"]["bytes"])?,
++                sha256: sha(&aggregate["output"]["sha256"])?,
++            },
++            proof_sha256: input.aggregate_proof.sha256,
++            receipt_sha256: input.aggregate_receipt.sha256,
++            plan_sha256: sha(&aggregate["plan_sha256"])?,
++        },
++        components,
++        tools,
++        options: options(&producer["configure_argv"])?,
++        files,
++        legal,
++    };
++    validate_description(&value, value.static_core_build, &native_files)?;
++    let bytes = serde_json::to_vec(&value)?;
++    ensure!(bytes.len() <= MAX_JSON, "public projection byte capacity");
++    let provenance = Asset {
++        name: NAME.into(),
++        role: AssetRole::Notice,
++        bytes: bytes.len() as u64,
++        sha256: Sha256Digest::from_bytes(Sha256::digest(&bytes).into()),
++    };
++    validate(&bytes, &provenance, value.static_core_build, &native_files)?;
++    let mut package_files = value.files.clone();
++    package_files.extend(value.legal.into_iter().map(|v| v.file));
++    package_files.push(PublicFile {
++        name: NAME.into(),
++        bytes: provenance.bytes,
++        sha256: provenance.sha256,
++    });
++    source.recheck()?;
++    Ok(Prepared {
++        provenance,
++        bytes,
++        package_files,
++    })
++}
++fn input_payload_valid(value: &manifest::RuntimeFile) -> bool {
++    basename(&value.name)
++        && component_for(&value.name).is_some()
++        && value.bytes > 0
++        && value.bytes <= 2u64 << 30
++        && nonzero(value.sha256)
++}
++
++#[cfg(test)]
++mod tests;
+--- /dev/null
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/tests.rs
+@@ -0,0 +1,294 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Synthetic metadata/refusal cases only; no DLL, device or model qualification.
++use super::*;
++fn hash(n: u8) -> Sha256Digest {
++    Sha256Digest::from_bytes([n; 32])
++}
++fn fixture() -> (PublicRuntimeProvenance, Vec<manifest::RuntimeFile>) {
++    let files = vec![
++        PublicFile {
++            name: "onnxruntime_providers_shared.dll".into(),
++            bytes: 7,
++            sha256: hash(1),
++        },
++        PublicFile {
++            name: "onnxruntime_providers_cuda.dll".into(),
++            bytes: 9,
++            sha256: hash(2),
++        },
++    ];
++    let native = files
++        .iter()
++        .map(|v| manifest::RuntimeFile {
++            name: v.name.clone(),
++            bytes: v.bytes,
++            sha256: v.sha256,
++            imports: BTreeSet::new(),
++            delay_imports: BTreeSet::new(),
++        })
++        .collect();
++    let components = vec![
++        Component {
++            name: "onnxruntime".into(),
++            version: Some("1.30.0".into()),
++            upstream_sha1: None,
++            source_revision: None,
++            original_url: None,
++            source_kind: SourceKind::Archive,
++            source_sha256: hash(3),
++            inventory_sha256: Some(hash(4)),
++            source_changes: vec![hash(5)],
++        },
++        Component {
++            name: "cuda".into(),
++            version: Some("12.8.1".into()),
++            upstream_sha1: None,
++            source_revision: None,
++            original_url: None,
++            source_kind: SourceKind::InstalledToolkitInventory,
++            source_sha256: hash(6),
++            inventory_sha256: Some(hash(6)),
++            source_changes: vec![],
++        },
++        Component {
++            name: "cudnn".into(),
++            version: Some("9.10.2.21".into()),
++            upstream_sha1: None,
++            source_revision: None,
++            original_url: None,
++            source_kind: SourceKind::Archive,
++            source_sha256: hash(7),
++            inventory_sha256: Some(hash(8)),
++            source_changes: vec![],
++        },
++    ];
++    let legal = vec![
++        LegalNotice {
++            component: "onnxruntime".into(),
++            file: PublicFile {
++                name: "airk-cuda-notice-onnxruntime-license.txt".into(),
++                bytes: 2,
++                sha256: hash(9),
++            },
++            original_source_sha256: hash(3),
++        },
++        LegalNotice {
++            component: "cuda".into(),
++            file: PublicFile {
++                name: "airk-cuda-notice-cuda-license.txt".into(),
++                bytes: 3,
++                sha256: hash(10),
++            },
++            original_source_sha256: hash(6),
++        },
++        LegalNotice {
++            component: "cudnn".into(),
++            file: PublicFile {
++                name: "airk-cuda-notice-cudnn-license.txt".into(),
++                bytes: 4,
++                sha256: hash(11),
++            },
++            original_source_sha256: hash(7),
++        },
++    ];
++    (
++        PublicRuntimeProvenance {
++            schema: "airk.native.cuda-runtime-provenance/1".into(),
++            target: "x86_64-pc-windows-msvc".into(),
++            ort_version: "1.30.0".into(),
++            static_core_build: hash(12),
++            producer_script_sha256: hash(13),
++            producer_lock_sha256: hash(14),
++            verifier_sha256: hash(15),
++            build_proof_sha256: hash(16),
++            configure_argv_sha256: hash(17),
++            legal_inventory_sha256: hash(18),
++            legal_owner_sha256: hash(19),
++            historical_failed_parent: Some(hash(20)),
++            aggregate: Aggregate {
++                file: PublicFile {
++                    name: "onnxruntime.lib".into(),
++                    bytes: 70_000,
++                    sha256: hash(21),
++                },
++                proof_sha256: hash(22),
++                receipt_sha256: hash(23),
++                plan_sha256: hash(24),
++            },
++            components,
++            tools: vec![
++                Tool {
++                    name: "compiler".into(),
++                    version: Some("14.44.35207".into()),
++                    version_kind: Some("msvc-toolset".into()),
++                    bytes: 3,
++                    sha256: hash(25),
++                },
++                Tool {
++                    name: "cmake".into(),
++                    version: Some("3.31.6".into()),
++                    version_kind: Some("reported-tool-version".into()),
++                    bytes: 4,
++                    sha256: hash(26),
++                },
++                Tool {
++                    name: "ninja".into(),
++                    version: Some("1.12.1".into()),
++                    version_kind: Some("reported-tool-version".into()),
++                    bytes: 5,
++                    sha256: hash(27),
++                },
++            ],
++            options: vec![
++                BuildOption {
++                    name: "onnxruntime_USE_CUDA".into(),
++                    value: "ON".into(),
++                },
++                BuildOption {
++                    name: "onnxruntime_BUILD_SHARED_LIB".into(),
++                    value: "OFF".into(),
++                },
++                BuildOption {
++                    name: "onnxruntime_BUILD_CUDA_EP_AS_PLUGIN".into(),
++                    value: "OFF".into(),
++                },
++                BuildOption {
++                    name: "CMAKE_CUDA_ARCHITECTURES".into(),
++                    value: "86".into(),
++                },
++            ],
++            files,
++            legal,
++        },
++        native,
++    )
++}
++fn raw_asset(value: &PublicRuntimeProvenance) -> Result<(Vec<u8>, Asset)> {
++    let raw = serde_json::to_vec(value)?;
++    let asset = Asset {
++        name: NAME.into(),
++        role: AssetRole::Notice,
++        bytes: raw.len() as u64,
++        sha256: Sha256Digest::from_bytes(Sha256::digest(&raw).into()),
++    };
++    Ok((raw, asset))
++}
++fn accepts(value: &PublicRuntimeProvenance, native: &[manifest::RuntimeFile]) -> bool {
++    let (raw, asset) = raw_asset(value).unwrap();
++    validate(&raw, &asset, hash(12), native).is_ok()
++}
++#[test]
++fn public_provenance_roundtrip_and_exact_legal_assets() -> Result<()> {
++    let (value, native) = fixture();
++    let (raw, asset) = raw_asset(&value)?;
++    let parsed = validate(&raw, &asset, hash(12), &native)?;
++    assert_eq!(serde_json::to_vec(&parsed)?, raw);
++    let legal = parsed.legal_assets();
++    assert_eq!(
++        legal.iter().map(|v| v.name.as_str()).collect::<Vec<_>>(),
++        [
++            "airk-cuda-notice-onnxruntime-license.txt",
++            "airk-cuda-notice-cuda-license.txt",
++            "airk-cuda-notice-cudnn-license.txt"
++        ]
++    );
++    assert!(legal.iter().all(|v| v.role == AssetRole::Notice));
++    let text = String::from_utf8(raw)?;
++    assert!(!text.contains("C:\\"));
++    assert!(!text.contains("/Users/"));
++    Ok(())
++}
++#[test]
++fn public_provenance_refuses_tampered_bytes_and_wrong_static_build() -> Result<()> {
++    let (value, native) = fixture();
++    let (mut raw, asset) = raw_asset(&value)?;
++    assert!(validate(&raw, &asset, hash(31), &native).is_err());
++    raw.push(b' ');
++    assert!(validate(&raw, &asset, hash(12), &native).is_err());
++    let mut wrong = asset.clone();
++    wrong.role = AssetRole::Fixture;
++    assert!(validate(&serde_json::to_vec(&value)?, &wrong, hash(12), &native).is_err());
++    Ok(())
++}
++#[test]
++fn public_provenance_refuses_driver_second_core_case_alias_and_roster_drift() {
++    let (value, native) = fixture();
++    for name in [
++        "nvcuda.dll",
++        "onnxruntime.dll",
++        "cuinj64_128.dll",
++        "helper.dll",
++        "ONNXRUNTIME_PROVIDERS_CUDA.DLL",
++        "../cudart64_12.dll",
++    ] {
++        let mut changed = value.clone();
++        changed.files[1].name = name.into();
++        assert!(!accepts(&changed, &native), "{name}");
++    }
++    let mut changed = value.clone();
++    changed.files[1].sha256 = hash(30);
++    assert!(!accepts(&changed, &native));
++    let mut changed = value.clone();
++    changed.files.push(changed.files[0].clone());
++    assert!(!accepts(&changed, &native));
++}
++#[test]
++fn public_provenance_refuses_missing_legal_and_private_paths() {
++    let (value, native) = fixture();
++    let mut changed = value.clone();
++    changed.legal.pop();
++    assert!(!accepts(&changed, &native));
++    for name in [
++        "C:/Users/tdotn/license.txt",
++        "notices/cuda/license.txt",
++        "airk-cuda-notice-cuda-../license.txt",
++        "airk-cuda-notice-cuda-library.dll",
++    ] {
++        let mut changed = value.clone();
++        changed.legal[1].file.name = name.into();
++        assert!(!accepts(&changed, &native));
++    }
++    let mut changed = value.clone();
++    changed.tools[0].version = Some("C:/private/compiler.log".into());
++    assert!(!accepts(&changed, &native));
++}
++#[test]
++fn public_provenance_refuses_duplicate_or_unknown_fields() -> Result<()> {
++    let (value, native) = fixture();
++    let (raw, _) = raw_asset(&value)?;
++    let text = String::from_utf8(raw)?;
++    for changed in [
++        text.replacen(
++            "{",
++            "{\"schema\":\"airk.native.cuda-runtime-provenance/1\",",
++            1,
++        ),
++        text.replacen("{", "{\"qualified\":true,", 1),
++    ] {
++        let raw = changed.into_bytes();
++        let asset = Asset {
++            name: NAME.into(),
++            role: AssetRole::Notice,
++            bytes: raw.len() as u64,
++            sha256: Sha256Digest::from_bytes(Sha256::digest(&raw).into()),
++        };
++        assert!(validate(&raw, &asset, hash(12), &native).is_err());
++    }
++    Ok(())
++}
++#[test]
++fn public_provenance_refuses_shared_core_options_fake_source_kind_and_bounds() {
++    let (value, native) = fixture();
++    let mut changed = value.clone();
++    changed.options[1].value = "ON".into();
++    assert!(!accepts(&changed, &native));
++    let mut changed = value.clone();
++    changed.components[1].source_kind = SourceKind::Archive;
++    assert!(!accepts(&changed, &native));
++    let mut changed = value.clone();
++    changed.aggregate.file.bytes = 0;
++    assert!(!accepts(&changed, &native));
++    let mut changed = value.clone();
++    changed.options.push(changed.options[0].clone());
++    assert!(!accepts(&changed, &native));
++}
+--- /dev/null
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance.rs
+@@ -0,0 +1,412 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Path-free same-build runtime provenance, not runtime or model authority.
++use super::*;
++use airk_core::arbiter::{Asset, AssetRole};
++use serde::{Deserialize, Serialize};
++
++#[cfg(feature = "test-support")]
++pub(super) mod projection;
++#[cfg(test)]
++mod tests;
++
++pub(super) const NAME: &str = "airk-cuda-build-provenance.json";
++const MAX_JSON: usize = 262_144;
++
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub(super) struct PublicFile {
++    pub name: String,
++    pub bytes: u64,
++    pub sha256: Sha256Digest,
++}
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub(super) enum SourceKind {
++    Archive,
++    InstalledToolkitInventory,
++}
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub(super) struct Component {
++    pub name: String,
++    pub version: Option<String>,
++    pub upstream_sha1: Option<String>,
++    pub source_revision: Option<String>,
++    pub original_url: Option<String>,
++    pub source_kind: SourceKind,
++    pub source_sha256: Sha256Digest,
++    pub inventory_sha256: Option<Sha256Digest>,
++    pub source_changes: Vec<Sha256Digest>,
++}
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub(super) struct Tool {
++    pub name: String,
++    pub version: Option<String>,
++    pub version_kind: Option<String>,
++    pub bytes: u64,
++    pub sha256: Sha256Digest,
++}
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub(super) struct BuildOption {
++    pub name: String,
++    pub value: String,
++}
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub(super) struct LegalNotice {
++    pub component: String,
++    pub file: PublicFile,
++    pub original_source_sha256: Sha256Digest,
++}
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub(super) struct Aggregate {
++    pub file: PublicFile,
++    pub proof_sha256: Sha256Digest,
++    pub receipt_sha256: Sha256Digest,
++    pub plan_sha256: Sha256Digest,
++}
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub(super) struct PublicRuntimeProvenance {
++    pub schema: String,
++    pub target: String,
++    pub ort_version: String,
++    pub static_core_build: Sha256Digest,
++    pub producer_script_sha256: Sha256Digest,
++    pub producer_lock_sha256: Sha256Digest,
++    pub verifier_sha256: Sha256Digest,
++    pub build_proof_sha256: Sha256Digest,
++    pub configure_argv_sha256: Sha256Digest,
++    pub legal_inventory_sha256: Sha256Digest,
++    pub legal_owner_sha256: Sha256Digest,
++    pub historical_failed_parent: Option<Sha256Digest>,
++    pub aggregate: Aggregate,
++    pub components: Vec<Component>,
++    pub tools: Vec<Tool>,
++    pub options: Vec<BuildOption>,
++    pub files: Vec<PublicFile>,
++    pub legal: Vec<LegalNotice>,
++}
++fn nonzero(value: Sha256Digest) -> bool {
++    value.as_bytes().iter().any(|b| *b != 0)
++}
++fn token(value: &str, maximum: usize) -> bool {
++    !value.is_empty()
++        && value.len() <= maximum
++        && !value.contains("..")
++        && value
++            .bytes()
++            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'+'))
++}
++fn basename(value: &str) -> bool {
++    if !token(value, 128) || value != value.to_ascii_lowercase() {
++        return false;
++    }
++    let stem = value.split('.').next().unwrap_or_default();
++    !matches!(stem, "con" | "prn" | "aux" | "nul" | "clock$")
++        && !(stem.len() == 4
++            && (stem.starts_with("com") || stem.starts_with("lpt"))
++            && stem.as_bytes()[3].is_ascii_digit())
++}
++fn public_source_url(value: &str) -> bool {
++    let Some(tail) = value.strip_prefix("https://") else {
++        return false;
++    };
++    let Some((host, path)) = tail.split_once('/') else {
++        return false;
++    };
++    value.len() <= 1024
++        && matches!(
++            host,
++            "github.com" | "codeload.github.com" | "developer.download.nvidia.com"
++        )
++        && !path.is_empty()
++        && !path.contains("..")
++        && value
++            .bytes()
++            .all(|b| b.is_ascii_graphic() && !matches!(b, b'\\' | b'@' | b'?' | b'#'))
++        && !path.contains(':')
++}
++fn component_for(name: &str) -> Option<&'static str> {
++    match name {
++        "onnxruntime_providers_shared.dll" | "onnxruntime_providers_cuda.dll" => {
++            Some("onnxruntime")
++        }
++        "cudnn64_9.dll"
++        | "cudnn_adv64_9.dll"
++        | "cudnn_cnn64_9.dll"
++        | "cudnn_engines_precompiled64_9.dll"
++        | "cudnn_engines_runtime_compiled64_9.dll"
++        | "cudnn_graph64_9.dll"
++        | "cudnn_heuristic64_9.dll"
++        | "cudnn_ops64_9.dll" => Some("cudnn"),
++        "cublas64_12.dll"
++        | "cublaslt64_12.dll"
++        | "cudart64_12.dll"
++        | "cufft64_11.dll"
++        | "curand64_10.dll"
++        | "cusolver64_11.dll"
++        | "cusparse64_12.dll"
++        | "nvjitlink_120_0.dll"
++        | "nvrtc64_120_0.dll"
++        | "nvrtc-builtins64_128.dll"
++        | "nvfatbin_120_0.dll" => Some("cuda"),
++        _ => None,
++    }
++}
++fn validate_description(
++    value: &PublicRuntimeProvenance,
++    build: Sha256Digest,
++    files: &[manifest::RuntimeFile],
++) -> Result<()> {
++    ensure!(
++        value.schema == "airk.native.cuda-runtime-provenance/1"
++            && value.target == "x86_64-pc-windows-msvc"
++            && value.ort_version == "1.30.0"
++            && value.static_core_build == build
++            && nonzero(build),
++        "unknown/mismatched public CUDA provenance"
++    );
++    ensure!(
++        [
++            value.producer_script_sha256,
++            value.producer_lock_sha256,
++            value.verifier_sha256,
++            value.build_proof_sha256,
++            value.configure_argv_sha256,
++            value.legal_inventory_sha256,
++            value.legal_owner_sha256,
++            value.aggregate.proof_sha256,
++            value.aggregate.receipt_sha256,
++            value.aggregate.plan_sha256
++        ]
++        .into_iter()
++        .all(nonzero)
++            && value.historical_failed_parent.is_none_or(nonzero),
++        "missing public build/source identity"
++    );
++    ensure!(
++        value.aggregate.file.name == "onnxruntime.lib"
++            && value.aggregate.file.bytes > 65_536
++            && value.aggregate.file.bytes <= 2u64 << 30
++            && nonzero(value.aggregate.file.sha256),
++        "invalid static aggregate identity"
++    );
++    ensure!(
++        (3..=64).contains(&value.components.len())
++            && (3..=16).contains(&value.tools.len())
++            && (1..=128).contains(&value.options.len())
++            && (2..=64).contains(&value.files.len())
++            && (3..=512).contains(&value.legal.len()),
++        "public provenance capacity"
++    );
++    let mut components = BTreeSet::new();
++    for row in &value.components {
++        ensure!(
++            token(&row.name, 64)
++                && row.name == row.name.to_ascii_lowercase()
++                && row.version.as_ref().is_none_or(|v| token(v, 128))
++                && row.upstream_sha1.as_ref().is_none_or(|v| v.len() == 40
++                    && v.bytes()
++                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
++                && row.source_revision.as_ref().is_none_or(|v| token(v, 128))
++                && row
++                    .original_url
++                    .as_ref()
++                    .is_none_or(|v| public_source_url(v))
++                && nonzero(row.source_sha256)
++                && row.inventory_sha256.is_none_or(nonzero)
++                && row.source_changes.len() <= 16
++                && row.source_changes.iter().copied().all(nonzero)
++                && components.insert(row.name.clone()),
++            "invalid/duplicate source component"
++        );
++    }
++    for (name, version) in [
++        ("onnxruntime", "1.30.0"),
++        ("cuda", "12.8.1"),
++        ("cudnn", "9.10.2.21"),
++    ] {
++        ensure!(
++            value.components.iter().any(|v| v.name == name
++                && v.version.as_deref() == Some(version)
++                && if name == "cuda" {
++                    matches!(v.source_kind, SourceKind::InstalledToolkitInventory)
++                        && v.inventory_sha256 == Some(v.source_sha256)
++                } else {
++                    matches!(v.source_kind, SourceKind::Archive)
++                }),
++            "required source version missing"
++        );
++    }
++    let mut tools = BTreeSet::new();
++    for row in &value.tools {
++        ensure!(
++            token(&row.name, 32)
++                && matches!(
++                    row.name.as_str(),
++                    "compiler"
++                        | "cmake"
++                        | "ninja"
++                        | "python"
++                        | "patch"
++                        | "vcvars"
++                        | "archiver"
++                        | "nvcc"
++                )
++                && row.version.as_ref().is_none_or(|v| token(v, 128))
++                && row.version.is_some() == row.version_kind.is_some()
++                && row
++                    .version_kind
++                    .as_deref()
++                    .is_none_or(|v| matches!(v, "msvc-toolset" | "reported-tool-version"))
++                && row.bytes > 0
++                && row.bytes <= 1u64 << 30
++                && nonzero(row.sha256)
++                && tools.insert(row.name.clone()),
++            "invalid/duplicate tool identity"
++        );
++    }
++    ensure!(
++        ["compiler", "cmake", "ninja"]
++            .iter()
++            .all(|n| tools.contains(*n)),
++        "compiler tool closure missing"
++    );
++    let mut options = BTreeSet::new();
++    for row in &value.options {
++        ensure!(
++            token(&row.name, 128)
++                && (row.value.is_empty() || token(&row.value, 256))
++                && options.insert(row.name.clone()),
++            "unsafe/duplicate semantic build option"
++        );
++    }
++    for (name, expected) in [
++        ("onnxruntime_USE_CUDA", "ON"),
++        ("onnxruntime_BUILD_SHARED_LIB", "OFF"),
++        ("onnxruntime_BUILD_CUDA_EP_AS_PLUGIN", "OFF"),
++        ("CMAKE_CUDA_ARCHITECTURES", "86"),
++    ] {
++        ensure!(
++            value
++                .options
++                .iter()
++                .any(|v| v.name == name && v.value == expected),
++            "same static-core build option missing"
++        );
++    }
++    let mut payload = BTreeMap::new();
++    let mut total = 0u64;
++    for row in &value.files {
++        ensure!(
++            basename(&row.name)
++                && component_for(&row.name).is_some()
++                && row.bytes > 0
++                && row.bytes <= 2u64 << 30
++                && nonzero(row.sha256)
++                && payload
++                    .insert(row.name.clone(), (row.bytes, row.sha256))
++                    .is_none(),
++            "unapproved/duplicate runtime payload"
++        );
++        total = total.checked_add(row.bytes).context("payload overflow")?;
++        ensure!(total <= 8u64 << 30, "payload capacity");
++    }
++    ensure!(
++        [
++            "onnxruntime_providers_shared.dll",
++            "onnxruntime_providers_cuda.dll"
++        ]
++        .iter()
++        .all(|n| payload.contains_key(*n)),
++        "provider pair missing"
++    );
++    let observed: BTreeMap<_, _> = files
++        .iter()
++        .map(|r| (r.name.clone(), (r.bytes, r.sha256)))
++        .collect();
++    ensure!(
++        observed.len() == files.len() && observed == payload,
++        "public/native DLL closure mismatch"
++    );
++    let mut legal = BTreeSet::new();
++    let mut covered = BTreeSet::new();
++    let mut notice_bytes = 0u64;
++    for row in &value.legal {
++        let prefix = format!("airk-cuda-notice-{}-", row.component);
++        let leaf = row
++            .file
++            .name
++            .strip_prefix(&prefix)
++            .context("legal package root differs")?;
++        ensure!(
++            components.contains(&row.component)
++                && value
++                    .components
++                    .iter()
++                    .any(|v| v.name == row.component
++                        && v.source_sha256 == row.original_source_sha256)
++                && basename(&row.file.name)
++                && basename(leaf)
++                && [".txt", ".html", ".md"]
++                    .iter()
++                    .any(|ext| row.file.name.ends_with(ext))
++                && row.file.bytes > 0
++                && row.file.bytes <= 2 << 20
++                && nonzero(row.file.sha256)
++                && nonzero(row.original_source_sha256)
++                && legal.insert(row.file.name.clone()),
++            "invalid/duplicate original legal notice"
++        );
++        notice_bytes = notice_bytes
++            .checked_add(row.file.bytes)
++            .context("notice overflow")?;
++        ensure!(notice_bytes <= 16 << 20, "notice closure capacity");
++        covered.insert(row.component.clone());
++    }
++    ensure!(
++        covered == components,
++        "complete original component notice coverage required"
++    );
++    Ok(())
++}
++/// The caller retains protected metadata and actual PE/held-file custody. This
++/// decoder describes the build; it cannot construct runtime/device eligibility.
++pub(super) fn validate(
++    raw: &[u8],
++    asset: &Asset,
++    expected_static_build: Sha256Digest,
++    files: &[manifest::RuntimeFile],
++) -> Result<PublicRuntimeProvenance> {
++    ensure!(
++        asset.name == NAME
++            && asset.role == AssetRole::Notice
++            && raw.len() <= MAX_JSON
++            && raw.len() as u64 == asset.bytes
++            && nonzero(asset.sha256)
++            && Sha256Digest::from_bytes(Sha256::digest(raw).into()) == asset.sha256,
++        "public CUDA provenance bytes/asset mismatch"
++    );
++    let value: PublicRuntimeProvenance = serde_json::from_slice(raw)?;
++    validate_description(&value, expected_static_build, files)?;
++    Ok(value)
++}
++
++impl PublicRuntimeProvenance {
++    /// Exact direct-child assets for the loader's original held-file custody.
++    pub(super) fn legal_assets(&self) -> Vec<Asset> {
++        self.legal
++            .iter()
++            .map(|v| Asset {
++                name: v.file.name.clone(),
++                role: AssetRole::Notice,
++                bytes: v.file.bytes,
++                sha256: v.file.sha256,
++            })
++            .collect()
++    }
++}

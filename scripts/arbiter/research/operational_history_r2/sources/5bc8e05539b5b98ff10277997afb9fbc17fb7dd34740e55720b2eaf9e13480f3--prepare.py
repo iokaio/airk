@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: Apache-2.0
+from pathlib import Path
+import difflib
+root=Path.cwd(); changes={}
+name='crates/airk-cli/src/runtime_install.rs';old=(root/name).read_text();new=old
+anchor='''fn digest(value: &str) -> Result<()> {'''
+helper='''/// Preserve reset semantics for damaged receipts; only healthy no-ops avoid publication.
+fn clear_startup_attempts(root: &Path, identity: &str) -> Result<()> {
+    let name = format!("startup-{identity}.json");
+    let path = root.join(&name);
+    match fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+        Ok(_) => {}
+    }
+    // A dangling link is a present entry: retain the old guarded read/replacement path.
+    // Previously this path replaced any safe existing receipt without parsing it.
+    // Failed reads/parses must therefore retain that replacement/error behavior.
+    if read_bounded(&path, 4096)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<StartupAttempts>(&bytes).ok())
+        .is_some_and(|state| state.attempts_unix_ms.is_empty())
+    {
+        return Ok(());
+    }
+    replace_json(root, &name, &StartupAttempts::default())
+}
+
+'''
+assert old.count(anchor)==1;new=new.replace(anchor,helper+anchor,1)
+anchor='''            replace_json(
+                root,
+                &format!("startup-{}.json", approval.manifest_sha256),
+                &StartupAttempts::default(),
+            )?;'''
+assert old.count(anchor)==1;new=new.replace(anchor,'            clear_startup_attempts(root, &approval.manifest_sha256)?;',1);changes[name]=(old,new)
+name='crates/airk-cli/src/runtime_install_tests.rs';old=(root/name).read_text()
+extra='''
+
+#[test]
+fn healthy_startup_reset_avoids_noops_without_tightening_damaged_receipts() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().canonicalize()?;
+    let identity = "a".repeat(64);
+    let path = root.join(format!("startup-{identity}.json"));
+    clear_startup_attempts(&root, &identity)?;
+    assert!(!path.exists(), "an absent healthy circuit needs no receipt");
+    let empty = br#"{ "attempts_unix_ms": [] }"#;
+    fs::write(&path, empty)?;
+    clear_startup_attempts(&root, &identity)?;
+    assert_eq!(fs::read(&path)?, empty, "valid empty bytes remain unchanged");
+    for original in [b"damaged receipt".as_slice(), br#"{"attempts_unix_ms":[1,2,3,4]}"#.as_slice()] {
+        fs::write(&path, original)?;
+        clear_startup_attempts(&root, &identity)?;
+        let state: StartupAttempts = serde_json::from_slice(&fs::read(&path)?)?;
+        assert!(state.attempts_unix_ms.is_empty());
+    }
+    fs::remove_file(&path)?;
+    fs::create_dir(&path)?;
+    assert!(clear_startup_attempts(&root, &identity).is_err());
+    assert!(path.is_dir(), "unsafe receipt topology remains preserved");
+    Ok(())
+}
+'''
+extra += r'''
+
+#[test]
+#[cfg(any(unix, windows))]
+fn healthy_startup_reset_does_not_treat_a_dangling_link_as_absent() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().canonicalize()?;
+    let identity = "b".repeat(64);
+    let path = root.join(format!("startup-{identity}.json"));
+    let missing = root.join("missing-target");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&missing, &path)?;
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(&missing, &path)?;
+    assert!(!path.try_exists()?);
+    assert!(fs::symlink_metadata(&path)?.file_type().is_symlink());
+    // replace_json previously replaced dangling links rather than retaining them.
+    clear_startup_attempts(&root, &identity)?;
+    assert!(fs::symlink_metadata(&path)?.is_file());
+    assert!(!fs::symlink_metadata(&path)?.file_type().is_symlink());
+    assert!(!missing.exists());
+    let state: StartupAttempts = serde_json::from_slice(&fs::read(&path)?)?;
+    assert!(state.attempts_unix_ms.is_empty());
+    Ok(())
+}
+'''
+changes[name]=(old,old+extra)
+patch=''.join(''.join(difflib.unified_diff(a.splitlines(True),b.splitlines(True),fromfile='a/'+n,tofile='b/'+n)) for n,(a,b) in changes.items())
+(root/'artifacts/optimizations/f03-draft/receipt-only.patch').write_text(patch,encoding='utf-8',newline='\n')
+for n,(_,body) in changes.items():
+ p=root/'artifacts/optimizations/f03-draft/source'/n;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(body,encoding='utf-8',newline='\n')

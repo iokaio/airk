@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: Apache-2.0
+
+impl Kernel {
+    /// Owning native worker startup/re-observation. Absence alone permits
+    /// initial metadata enrollment; malformed/foreign/unresolved state never
+    /// falls through to a fresh clean enrollment. Ordinary reads stay strict.
+    pub fn prepare_native_owner(
+        &self, registry:&airk_store::service::registry::ServiceRegistry,
+        lease:std::sync::Arc<airk_store::service::ProjectLease>,
+        bound:&airk_store::service::data_scope::BoundDataRoot,
+    )->Result<airk_store::service::collection::integrity::native_owner::NativeOwnerAuthority> {
+        let collection=self.service_collection.as_ref().context("native owner requires service collection")?;
+        let owner=collection.integrity_owner(registry,lease.as_ref(),bound)?;
+        if let Some(authority)=owner.load_native_owner(lease.clone())? {return Ok(authority)}
+        let store=collection.selected_store()?;
+        let mut writer=store.lock()?;
+        let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis().try_into()?;
+        owner.enroll_native_owner(lease.clone(),&mut writer,now)
+    }
+}

@@ -1,0 +1,541 @@
+--- a/crates/airk-cli/src/derived_worker.rs
++++ b/crates/airk-cli/src/derived_worker.rs
+@@ -50,13 +50,14 @@
+     let Some(Command::Activate {
+         identity: accepted,
+         pool,
++        pool_pending,
+         ..
+     }) = service_ipc::read_frame(&mut std::io::stdin().lock())?
+     else {
+         anyhow::bail!("cleanup worker was not activated")
+     };
+     ensure!(
+-        accepted == identity && pool.is_none(),
++        accepted == identity && pool.is_none() && !pool_pending,
+         "cleanup activation identity or role differs"
+     );
+     airk_kernel::service_execution::install(Path::new(&registration.data_root), identity)?;
+@@ -252,6 +253,7 @@
+             Command::ConfigurePool {
+                 identity: expected,
+                 pool: None,
++                pool_pending: false,
+             } if expected == identity => Reply::PoolConfigured,
+             Command::Stop => break,
+             _ => Reply::Failed,
+--- a/crates/airk-cli/src/embedding_pool_client.rs
++++ b/crates/airk-cli/src/embedding_pool_client.rs
+@@ -10,7 +10,7 @@
+     collections::BTreeSet,
+     path::{Path, PathBuf},
+     sync::{
+-        Arc, Mutex, OnceLock,
++        Arc, Condvar, Mutex, OnceLock,
+         atomic::{AtomicBool, Ordering},
+         mpsc,
+     },
+@@ -91,8 +91,16 @@
+     );
+     Ok(result.response)
+ }
++fn admission_remaining(deadline:Instant)->Result<Duration>{
++    deadline.checked_duration_since(Instant::now()).filter(|remaining|!remaining.is_zero())
++        .context("embedding admission deadline expired before inference submission")
++        .map_err(|error|error.context(HelperUnavailable))
++}
+ impl Client {
+-    fn new(access: protocol::Access) -> Result<Self> {
++    #[cfg(test)]
++    fn new(access:protocol::Access)->Result<Self>{Self::new_before(access,Instant::now()+Duration::from_secs(10))}
++    fn new_before(access:protocol::Access,deadline:Instant)->Result<Self>{
++        admission_remaining(deadline)?;
+         ensure!(
+             access.role == protocol::role(access.grant.pool),
+             "invalid embedding pool role"
+@@ -108,9 +116,9 @@
+                 let runtime=tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+                 runtime.block_on(async {
+                     let address=local_ipc::endpoint(&access.runtime,&access.role)?;
+-                    let mut stream=tokio::time::timeout(Duration::from_secs(5),local_ipc::connect(&address)).await??;
+-                    local_ipc::write_message(&mut stream,&access.grant,Duration::from_secs(5)).await?;
+-                    let observation:protocol::Observation=local_ipc::read_message(&mut stream,Duration::from_secs(5)).await?.context("embedding pool rejected capability")?;
++                    let mut stream=tokio::time::timeout(admission_remaining(deadline)?.min(Duration::from_secs(5)),local_ipc::connect(&address)).await??;
++                    local_ipc::write_message(&mut stream,&access.grant,admission_remaining(deadline)?.min(Duration::from_secs(5))).await?;
++                    let observation:protocol::Observation=local_ipc::read_message(&mut stream,admission_remaining(deadline)?.min(Duration::from_secs(5))).await?.context("embedding pool rejected capability")?;
+                     ensure!(matches!(observation,protocol::Observation::Ready{pool,role} if pool==access.grant.pool&&role==access.role),"embedding pool identity mismatch");
+                     let _=ready.send(Ok(()));
+                     while let Ok(work)=receiver.recv() {
+@@ -133,7 +141,7 @@
+             exchange_failed.store(true,Ordering::Release);
+         })?;
+         initialized
+-            .recv_timeout(Duration::from_secs(10))
++            .recv_timeout(admission_remaining(deadline)?)
+             .map_err(|_| HelperUnavailable)??;
+         Ok(Self {
+             sender,
+@@ -248,12 +256,17 @@
+     attempts: u32,
+     retry_at: Instant,
+     generation: u64,
++    pending: bool,
++    closed: bool,
++    connecting: bool,
+ }
+ struct Hub {
+     runtime: PathBuf,
+     identity: airk_core::service::WorkerIdentity,
+     state: Mutex<HubState>,
+-    connecting: Mutex<()>,
++    changed: Condvar,
++    #[cfg(test)]
++    waiting: Mutex<Option<mpsc::Sender<()>>>,
+ }
+ impl Hub {
+     fn new(runtime: &Path, identity: airk_core::service::WorkerIdentity) -> Result<Self> {
+@@ -266,11 +279,20 @@
+                 attempts: 0,
+                 retry_at: Instant::now(),
+                 generation: 0,
++                pending: false,
++                closed: false,
++                connecting: false,
+             }),
+-            connecting: Mutex::new(()),
++            changed: Condvar::new(),
++            #[cfg(test)]
++            waiting: Mutex::new(None),
+         })
+     }
+     fn update(&self, access: Option<protocol::Access>) -> Result<()> {
++        self.update_pending(access,false)
++    }
++    fn update_pending(&self,access:Option<protocol::Access>,pending:bool)->Result<()>{
++        ensure!(!(pending&&access.is_some()),"ready helper cannot also be pending");
+         if let Some(access) = &access {
+             access.grant.project.validate()?;
+             ensure!(
+@@ -286,6 +308,7 @@
+             .state
+             .lock()
+             .map_err(|_| anyhow::anyhow!("pool authority unavailable"))?;
++        ensure!(!state.closed,"embedding authority owner closed");
+         // A duplicate control acknowledgment must not reset a failed connection's retry budget.
+         let unchanged = match (&state.access, &access) {
+             (Some(old), Some(new)) => {
+@@ -294,55 +317,65 @@
+             (None, None) => true,
+             _ => false,
+         };
+-        if !unchanged {
++        if !unchanged || state.pending!=pending {
+             state.generation = state
+                 .generation
+                 .checked_add(1)
+                 .context("pool authority generation exhausted")?;
+             state.access = access;
++            state.pending = pending;
+             state.client = None;
+             state.attempts = 0;
+             state.retry_at = Instant::now();
+         }
++        self.changed.notify_all();
+         Ok(())
+     }
++    fn close(&self){
++        let mut state=self.state.lock().unwrap_or_else(|error|error.into_inner());
++        state.closed=true;state.pending=false;state.access=None;state.client=None;
++        state.generation=state.generation.saturating_add(1);
++        self.changed.notify_all();
++    }
+     fn client(&self) -> Result<Arc<Client>> {
+-        let (access, generation) = {
+-            let mut state = self
+-                .state
+-                .lock()
+-                .map_err(|_| anyhow::anyhow!("pool authority unavailable"))?;
+-            if let Some(client) = &state.client
+-                && !client.failed.load(Ordering::Acquire)
+-            {
+-                return Ok(client.clone());
+-            }
+-            let access = state.access.clone().ok_or(HelperUnavailable)?;
+-            ensure!(
+-                state.attempts < 3 && Instant::now() >= state.retry_at,
+-                HelperUnavailable
+-            );
+-            // Only one inference caller establishes a connection. Authority updates remain independent.
+-            let guard = self
+-                .connecting
+-                .try_lock()
+-                .map_err(|_| anyhow::anyhow!("embedding reconnect busy"))?;
+-            state.attempts += 1;
+-            state.retry_at = Instant::now() + Duration::from_secs(1 << state.attempts);
+-            (access, (state.generation, guard))
++        self.client_before(Instant::now()+Duration::from_secs(10))
++    }
++    fn client_before(&self,deadline:Instant)->Result<Arc<Client>>{
++        let (access,generation)={
++            let mut state=self.state.lock().map_err(|_|anyhow::anyhow!("pool authority unavailable"))?;
++            loop {
++                admission_remaining(deadline)?;
++                if state.closed{return Err(anyhow::anyhow!("embedding authority owner closed").context(HelperUnavailable));}
++                if let Some(client)=&state.client && !client.failed.load(Ordering::Acquire){return Ok(client.clone());}
++                if state.access.is_none()&&!state.pending{
++                    return Err(anyhow::anyhow!("embedding authority unavailable or revoked").context(HelperUnavailable));
++                }
++                if state.access.is_some()&&!state.connecting{break;}
++                let now=Instant::now();
++                if now>=deadline{return Err(anyhow::anyhow!("embedding authority admission deadline expired; no inference submitted").context(HelperUnavailable));}
++                #[cfg(test)]
++                if let Some(waiting)=self.waiting.lock().unwrap().as_ref(){let _=waiting.send(());}
++                let (next,_)=self.changed.wait_timeout(state,deadline.saturating_duration_since(now))
++                    .map_err(|_|anyhow::anyhow!("pool authority unavailable"))?;
++                state=next;
++            }
++            ensure!(state.attempts<3&&Instant::now()>=state.retry_at,HelperUnavailable);
++            state.connecting=true;
++            state.attempts+=1;
++            state.retry_at=Instant::now()+Duration::from_secs(1<<state.attempts);
++            (state.access.clone().context("ready helper authority missing")?,state.generation)
+         };
+-        let client = Arc::new(Client::new(access)?);
+-        let mut state = self
+-            .state
+-            .lock()
+-            .map_err(|_| anyhow::anyhow!("pool authority unavailable"))?;
+-        ensure!(
+-            state.generation == generation.0,
+-            "embedding authority changed during connection"
+-        );
+-        state.client = Some(client.clone());
+-        Ok(client)
+-    }
++        // Handshake is outside the authority mutex. Updates/close wake pending
++        // callers and fence this result; no request is replayed here.
++        let connected=Client::new_before(access,deadline).map(Arc::new);
++        let mut state=self.state.lock().map_err(|_|anyhow::anyhow!("pool authority unavailable"))?;
++        state.connecting=false;self.changed.notify_all();
++        ensure!(!state.closed&&state.generation==generation,"embedding authority changed during connection");
++        let client=connected?;
++        admission_remaining(deadline)?;
++        state.client=Some(client.clone());Ok(client)
++    }
++
+ }
+ struct ModelBinding {
+     client: Arc<Client>,
+@@ -411,9 +444,10 @@
+     runtime: &Path,
+     identity: airk_core::service::WorkerIdentity,
+     access: Option<protocol::Access>,
++    pending: bool,
+ ) -> Result<()> {
+     let hub = Arc::new(Hub::new(runtime, identity)?);
+-    hub.update(access)?;
++    hub.update_pending(access,pending)?;
+     ensure!(
+         HUB.set(hub.clone()).is_ok(),
+         "pool connector already installed"
+@@ -425,6 +459,11 @@
+         .context("pool connector not installed")?
+         .update(access)
+ }
++
++pub fn update_pending(access:Option<protocol::Access>,pending:bool)->Result<()>{
++    HUB.get().context("pool connector not installed")?.update_pending(access,pending)
++}
++pub fn close(){if let Some(hub)=HUB.get(){hub.close();}}
+ 
+ #[cfg(test)]
+ mod tests {
+@@ -488,6 +527,87 @@
+         assert!(hub.client().is_err()); // Duplicate grants cannot reset exhaustion.
+         hub.update(None)?;
+         assert!(hub.state.lock().unwrap().access.is_none());
++        Ok(())
++    }
++    #[test]
++    fn authority_deadline_does_not_spend_connection_retry_budget()->Result<()> {
++        let directory=tempfile::tempdir()?;let access=fixture_access(directory.path())?;
++        let hub=fixture_hub(&access)?;hub.update_pending(None,true)?;
++        let error=hub.client_before(Instant::now()).err().context("pending wait unexpectedly succeeded")?;
++        assert!(error.is::<HelperUnavailable>());
++        assert!(format!("{error:#}").contains("before inference submission"));
++        let state=hub.state.lock().unwrap();assert_eq!(state.attempts,0);assert!(!state.connecting);
++        Ok(())
++    }
++    #[test]
++    fn pending_wait_wakes_on_suppression_and_close_without_submission()->Result<()> {
++        for close in [false,true] {
++            let directory=tempfile::tempdir()?;let access=fixture_access(directory.path())?;
++            let hub=fixture_hub(&access)?;hub.update_pending(None,true)?;
++            let (waiting,observed)=mpsc::channel();*hub.waiting.lock().unwrap()=Some(waiting);
++            let other=hub.clone();let call=std::thread::spawn(move||other.client());
++            observed.recv_timeout(Duration::from_secs(5))?;
++            if close{hub.close();}else{hub.update(None)?;}
++            let error=call.join().map_err(|_|anyhow::anyhow!("waiter panic"))?.err().context("terminal state became a client")?;
++            assert!(error.is::<HelperUnavailable>());
++            assert!(format!("{error:#}").contains(if close{"owner closed"}else{"unavailable or revoked"}));
++            assert_eq!(hub.state.lock().unwrap().attempts,0);
++            if close{assert!(hub.update(Some(access)).is_err());}
++        }
++        Ok(())
++    }
++    #[tokio::test(flavor="multi_thread",worker_threads=2)]
++    async fn delayed_authority_coalesces_four_first_connections_without_inference()->Result<()> {
++        let directory=tempfile::tempdir()?;let root=directory.path().join("runtime");local_ipc::prepare_root(&root)?;
++        let access=fixture_access(&root)?;let peer=fixture_pool(access.clone(),0).await?;
++        let hub=fixture_hub(&access)?;hub.update_pending(None,true)?;
++        let (waiting,observed)=mpsc::channel();*hub.waiting.lock().unwrap()=Some(waiting);
++        let mut calls=Vec::new();
++        for _ in 0..4{let hub=hub.clone();calls.push(tokio::task::spawn_blocking(move||hub.client()));}
++        tokio::task::spawn_blocking(move||->Result<()>{for _ in 0..4{observed.recv_timeout(Duration::from_secs(5))?;}Ok(())}).await??;
++        assert_eq!(hub.state.lock().unwrap().attempts,0);
++        hub.update(Some(access))?;
++        let mut clients=Vec::new();for call in calls{clients.push(call.await??);}
++        assert!(clients.iter().all(|client|Arc::ptr_eq(client,&clients[0])));
++        assert_eq!(hub.state.lock().unwrap().attempts,1);
++        assert!(hub.client_before(Instant::now()).is_err(),"cached connection cannot renew an expired admission");
++        assert_eq!(hub.state.lock().unwrap().attempts,1);
++        hub.close();drop(clients);drop(hub);
++        assert!(peer.await??.is_empty());
++        Ok(())
++    }
++    #[tokio::test(flavor="multi_thread",worker_threads=2)]
++    async fn replacement_during_handshake_cannot_publish_or_submit_old_authority()->Result<()> {
++        let directory=tempfile::tempdir()?;let root=directory.path().join("runtime");local_ipc::prepare_root(&root)?;
++        let old=fixture_access(&root)?;let mut replacement=old.clone();
++        replacement.grant.pool=airk_kernel::service_broker::new_instance_id()?;
++        replacement.grant.token=airk_core::identity::Sha256Digest::from_bytes([72;32]);
++        replacement.role=protocol::role(replacement.grant.pool);
++        let next_peer=fixture_pool(replacement.clone(),0).await?;
++        let mut listener=local_ipc::Listener::bind(&local_ipc::endpoint(&old.runtime,&old.role)?)?;
++        let (entered,started)=tokio::sync::oneshot::channel();let (release,wait)=tokio::sync::oneshot::channel();
++        let old_access=old.clone();
++        let old_peer=tokio::spawn(async move{
++            let mut stream=listener.accept().await?;
++            let _:protocol::Grant=local_ipc::read_message(&mut stream,Duration::from_secs(5)).await?.context("missing old grant")?;
++            let _=entered.send(());wait.await?;
++            local_ipc::write_message(&mut stream,&protocol::Observation::Ready{pool:old_access.grant.pool,role:old_access.role},Duration::from_secs(5)).await?;
++            let operation:Option<protocol::Envelope>=local_ipc::read_message(&mut stream,Duration::from_secs(5)).await?;
++            ensure!(operation.is_none(),"retired handshake submitted an operation");
++            Ok::<_,anyhow::Error>(())
++        });
++        let hub=fixture_hub(&old)?;hub.update(Some(old))?;
++        let joining=hub.clone();let first=tokio::task::spawn_blocking(move||joining.client());
++        started.await?;
++        hub.update_pending(None,true)?;hub.update(Some(replacement))?;
++        release.send(()).map_err(|_|anyhow::anyhow!("old peer disappeared"))?;
++        let error=first.await?.err().context("retired connection became current")?;
++        assert!(format!("{error:#}").contains("authority changed"));
++        assert!(hub.state.lock().unwrap().client.is_none());
++        assert_eq!(hub.state.lock().unwrap().attempts,0);
++        let joining=hub.clone();let current=tokio::task::spawn_blocking(move||joining.client()).await??;
++        hub.close();drop(current);drop(hub);
++        old_peer.await??;assert!(next_peer.await??.is_empty());
+         Ok(())
+     }
+     async fn fixture_pool(
+--- a/crates/airk-cli/src/project_protocol.rs
++++ b/crates/airk-cli/src/project_protocol.rs
+@@ -27,10 +27,14 @@
+         identity: WorkerIdentity,
+         allowance: QueryAllowance,
+         pool: Option<Box<crate::embedding_pool_protocol::Access>>,
++        #[serde(default)]
++        pool_pending: bool,
+     },
+     ConfigurePool {
+         identity: WorkerIdentity,
+         pool: Option<Box<crate::embedding_pool_protocol::Access>>,
++        #[serde(default)]
++        pool_pending: bool,
+     },
+     RunJob {
+         identity: WorkerIdentity,
+--- a/crates/airk-cli/src/project_supervisor.rs
++++ b/crates/airk-cli/src/project_supervisor.rs
+@@ -37,6 +37,7 @@
+     runtime: PathBuf,
+     last_renewal: Instant,
+     pool_binding: Option<Incarnation>,
++    pool_pending: bool,
+     last_status: Instant,
+     waiting: Option<(
+         Incarnation,
+@@ -147,6 +148,7 @@
+             runtime: root.into(),
+             last_renewal: Instant::now(),
+             pool_binding: None,
++            pool_pending: false,
+             last_status: Instant::now(),
+             waiting: None,
+         };
+@@ -223,14 +225,17 @@
+         identity: WorkerIdentity,
+         allowance: QueryAllowance,
+         pool: Option<crate::embedding_pool_protocol::Access>,
++        helper_pending: bool,
+     ) -> Result<()> {
+         let pool_binding = pool.as_ref().map(|access| access.grant.pool);
++        let pool_pending=helper_pending&&!self.derived&&pool_binding.is_none();
+         service_ipc::write_frame(
+             self.input.as_mut().context("project input missing")?,
+             &WorkerCommand::Activate {
+                 identity,
+                 allowance,
+                 pool: pool.map(Box::new),
++                pool_pending,
+             },
+         )?;
+         ensure!(
+@@ -241,12 +246,14 @@
+             "project activation failed"
+         );
+         self.pool_binding = pool_binding;
++        self.pool_pending = pool_pending;
+         Ok(())
+     }
+ 
+     fn configure_pool(
+         &mut self,
+         pool: Option<crate::embedding_pool_protocol::Access>,
++        pool_pending: bool,
+     ) -> Result<()> {
+         let pool_binding = pool.as_ref().map(|access| access.grant.pool);
+         service_ipc::write_frame(
+@@ -254,6 +261,7 @@
+             &WorkerCommand::ConfigurePool {
+                 identity: self.identity.context("project identity missing")?,
+                 pool: pool.map(Box::new),
++                pool_pending,
+             },
+         )?;
+         ensure!(
+@@ -264,6 +272,7 @@
+             "project pool configuration unknown"
+         );
+         self.pool_binding = pool_binding;
++        self.pool_pending = pool_pending;
+         Ok(())
+     }
+     fn run_job(&mut self, allowance: airk_core::service_resources::WorkAllowance) -> Result<()> {
+@@ -524,6 +533,7 @@
+     policy: &'a Mutex<Broker>,
+     pool: &'a mut Option<Pool>,
+     resources: &'a mut airk_kernel::service_resources::Resources,
++    helper_pending: bool,
+ }
+ 
+ fn settle_failed_start(root: &Path, instance: Incarnation, project: ProjectBinding) {
+@@ -548,6 +558,7 @@
+         policy,
+         pool,
+         resources,
++        helper_pending,
+     } = admission;
+     let project = registration.binding;
+     if let Some(worker) = workers.get(&project) {
+@@ -631,7 +642,7 @@
+         .as_mut()
+         .filter(|_| !derived)
+         .and_then(|pool| pool.access(identity.worker, registration).ok());
+-    if let Err(error) = worker.activate(identity, allowance, access) {
++    if let Err(error) = worker.activate(identity, allowance, access,helper_pending) {
+         drop(worker);
+         resources.process_exited(identity)?;
+         if let Some(pool) = pool.as_mut() {
+@@ -990,7 +1001,9 @@
+                             .as_ref()
+                             .filter(|_| !worker.derived)
+                             .map(Pool::identity);
+-                        if worker.pool_binding != desired_pool {
++                        let desired_pending=desired_pool.is_none()&&!worker.derived
++                            &&!pool_recovery.suppressed&&pool_recovery.attempts<3;
++                        if worker.pool_binding != desired_pool || worker.pool_pending!=desired_pending {
+                             let access = (|| -> Result<_> {
+                                 match pool.as_mut() {
+                                     Some(pool) => Ok(Some(
+@@ -1018,7 +1031,7 @@
+                                     continue;
+                                 }
+                             };
+-                            if let Err(error) = worker.configure_pool(access) {
++                            if let Err(error) = worker.configure_pool(access,desired_pending) {
+                                 if clean_disconnected_exit(&mut worker.child, &error) {
+                                     clean_renewals.insert(*project);
+                                 }
+@@ -1140,6 +1153,7 @@
+                                         policy: &policy,
+                                         pool: &mut pool,
+                                         resources: &mut resources,
++                                    helper_pending: !pool_recovery.suppressed&&pool_recovery.attempts<3,
+                                     },
+                                 )?;
+                                 workers
+@@ -1352,6 +1366,7 @@
+                                     policy: &policy,
+                                     pool: &mut pool,
+                                     resources: &mut resources,
++                                helper_pending: !pool_recovery.suppressed&&pool_recovery.attempts<3,
+                                 },
+                             );
+                         }
+@@ -1403,6 +1418,7 @@
+                                     policy: &policy,
+                                     pool: &mut pool,
+                                     resources: &mut resources,
++                                helper_pending: !pool_recovery.suppressed&&pool_recovery.attempts<3,
+                                 },
+                             );
+                         }
+--- a/crates/airk-cli/src/project_worker.rs
++++ b/crates/airk-cli/src/project_worker.rs
+@@ -448,6 +448,7 @@
+         identity: accepted,
+         allowance,
+         pool,
++        pool_pending,
+     }) = service_ipc::read_frame(&mut std::io::stdin().lock())?
+     else {
+         anyhow::bail!("project owner was not activated")
+@@ -458,7 +459,7 @@
+             && allowance.response_bytes == allowance.concurrent_queries * MAX_FRAME_BYTES,
+         "project activation identity or allowance mismatch"
+     );
+-    crate::embedding_pool_client::install(&init.runtime, identity, pool.map(|access| *access))?;
++    crate::embedding_pool_client::install(&init.runtime, identity, pool.map(|access| *access),pool_pending)?;
+     let storage = airk_store::service::data_scope::bind(
+         Path::new(&registration.data_root),
+         &init.runtime,
+@@ -557,6 +558,7 @@
+                     break;
+                 }
+             }
++            crate::embedding_pool_client::close();
+             control_closing.store(true, Ordering::Release);
+             control_activity.notify_one();
+         })?;
+@@ -1075,8 +1077,10 @@
+                         let renewed=expected==identity&&airk_kernel::service_execution::renew(identity).is_ok()&&state.broker.lock().map_err(|_|anyhow::anyhow!("query policy unavailable"))?.renew(identity,Instant::now(),Duration::from_secs(300)).is_ok();
+                         service_ipc::write_frame(&mut std::io::stdout().lock(),&if renewed{Reply::Renewed}else{Reply::Failed})?;
+                     },
+-                    Some(Command::ConfigurePool{identity:expected,pool})=>{
+-                        let accepted=expected==identity && crate::embedding_pool_client::update(pool.map(|access| *access)).is_ok();
++                    Some(Command::ConfigurePool{identity:expected,pool,pool_pending})=>{
++                        let accepted=expected==identity && (if pool_pending{
++                            crate::embedding_pool_client::update_pending(pool.map(|access| *access),true)
++                        }else{crate::embedding_pool_client::update(pool.map(|access| *access))}).is_ok();
+                         service_ipc::write_frame(&mut std::io::stdout().lock(), &if accepted{Reply::PoolConfigured}else{Reply::Failed})?;
+                     },
+                     Some(Command::RunJob{identity:expected, allowance})=>{
+@@ -1128,6 +1132,7 @@
+             }
+         }
+     }
++    crate::embedding_pool_client::close();
+     closing.store(true, Ordering::Release);
+     drop(work_sender);
+     // Idle client reads must not hold an intentionally stopped owner open.

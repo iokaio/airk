@@ -1,0 +1,39 @@
+--- private/runner-r1.py
++++ private/runner-r2.py
+@@ -42,6 +42,20 @@
+ def write_new(path,value):
+     with Path(path).open('x',encoding='utf-8',newline='\n') as stream:
+         json.dump(value,stream,indent=2);stream.write('\n');stream.flush();os.fsync(stream.fileno())
++
++def final_phase_observation(receipt,log,started,deadline,*,clock=time.monotonic,hash_file=digest):
++    """Hash every remaining file proof before ONE final monotonic cutoff sample."""
++    if log.exists():
++        receipt['stdout']={'path':str(log),'bytes':log.stat().st_size,'sha256':hash_file(log)}
++    final_now=clock()
++    receipt['elapsed_seconds']=final_now-started
++    receipt['original_phase_expired']=final_now>=deadline
++    late_failure=receipt['original_phase_expired'] and receipt['failure'] is None
++    if receipt['original_phase_expired']:
++        receipt['complete']=False
++        if late_failure:
++            receipt['failure']={'type':'TimeoutError','message':'Original whole phase expired during final file observation'}
++    return late_failure
+ 
+ def natural_multi(result):
+     return (result.get('exit_code')==0 and result.get('timed_out') is False and result.get('log_oversized') is False and result.get('owned_descendants_settled') is True and result.get('owned_job_forced_termination') is False and result.get('owned_job_final_active_processes')==0 and result.get('owned_job_final_member_pids')==[] and result.get('child_assigned_before_resume') is True and result.get('parent_assigned_to_job') is False)
+@@ -118,12 +132,11 @@
+         if hasattr(error,'owned_cleanup'):receipt['actual_cleanup_failure']=error.owned_cleanup
+         raise
+     finally:
+-        receipt['elapsed_seconds']=time.monotonic()-started
+-        receipt['original_phase_expired']=time.monotonic()>=deadline
+-        if receipt['original_phase_expired']:receipt['complete']=False
+-        if log.exists():receipt['stdout']={'path':str(log),'bytes':log.stat().st_size,'sha256':digest(log)}
++        late_failure=final_phase_observation(receipt,log,started,deadline)
+         write_new(receipt_path,receipt)
+         print(json.dumps({'receipt':str(receipt_path),'complete':receipt['complete'],'phase':args.phase,'failure':receipt['failure']}),flush=True)
++        if late_failure:
++            raise TimeoutError('Original whole phase expired during final file observation')
+ 
+ def main():
+     parser=argparse.ArgumentParser(description=__doc__)

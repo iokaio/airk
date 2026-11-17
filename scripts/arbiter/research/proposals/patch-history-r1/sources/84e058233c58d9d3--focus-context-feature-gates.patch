@@ -1,0 +1,39 @@
+--- crates/airk-kernel/src/arbiter/focus.rs
++++ crates/airk-kernel/src/arbiter/focus.rs
+@@ -162,6 +162,7 @@
+         Ok(())
+     }
+ 
++    #[cfg(feature = "local-inference")]
+     pub(super) fn observe_optional_history(
+         &self,
+         history: &[airk_core::arbiter::context_action::AssessmentEvent],
+@@ -172,6 +173,7 @@
+         Ok(())
+     }
+ 
++    #[cfg(feature = "local-inference")]
+     pub(super) fn observe_context_work(&self, observed: Option<usize>) -> Result<()> {
+         if let Some(context) = &self.arbiter_context {
+             let mut held = state(context)?;
+@@ -188,6 +190,7 @@
+         Ok(())
+     }
+ 
++    #[cfg(any(feature = "local-inference", test))]
+     pub(super) fn optional_work_available(&self) -> Result<bool> {
+         let Some(context) = &self.arbiter_context else {
+             return Ok(false);
+--- crates/airk-kernel/src/arbiter/CONTRACT.md
++++ crates/airk-kernel/src/arbiter/CONTRACT.md
+@@ -70,3 +70,10 @@
+ `arbiter::joint::focus_pack_tests::` and MCP `focus_handler_tests::`.
+ Injected scorers establish application, scope, custody and framing behavior;
+ they do not establish optional-model quality or installed transport behavior.
++
++Context-only history/token accounting mutators compile with `local-inference`,
++matching their learned Context actuator callers. The shared availability accessor
++also compiles for tests so feature-independent Focus accounting regressions keep
++their assertions. A no-default-features production build omits these unused
++Context helpers; canonical Focus dispatch, authority and budget behavior do not
++change, and no local inference capability is added to the lightweight caller.

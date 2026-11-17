@@ -1,0 +1,1229 @@
+--- /dev/null
++++ b/crates/airk-cli/tests/combined_reads/single_member_retry.rs
+@@ -0,0 +1,123 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Actual native/CLI/MCP rejection phases retain exact single-member replay facts.
++use super::*;
++
++fn hold_current_gate(path: &Path) -> Result<fs::File> {
++    let file = fs::OpenOptions::new().read(true).write(true).open(path)?;
++    let deadline = Instant::now() + Duration::from_secs(5);
++    loop {
++        match file.try_lock() {
++            Ok(()) => return Ok(file),
++            Err(fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
++                std::thread::sleep(Duration::from_millis(5));
++            }
++            Err(error) => return Err(error.into()),
++        }
++    }
++}
++
++#[tokio::test]
++async fn single_required_member_busy_read_keeps_exact_retry_basis_through_native_cli_and_mcp()
++-> Result<()> {
++    let f = Fixture::new(false)?;
++    let _service = f.start().await?;
++    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
++    let mut mcp = McpSession::start(&f)?;
++    let arguments = json!({"project_ids":[f.projects[0]],"index_ids":[f.indexes[0]],"member_availability":"require",
++        "path":"api/policy.md","start_line":1,"end_line":1,"max_bytes":4096,
++        "verification":"off","response_mode":"full"});
++    let warm = native_read(backend.as_ref(), "airk_read_file", &arguments).await?;
++    ensure!(warm["isError"] != true, "warm fixture read failed: {warm}");
++    let registration = &f.registrations[0];
++    let collection = airk_store::service::collection::Collection::existing(
++        Path::new(&registration.data_root),
++        &registration.root,
++        &registration.collection,
++    )?;
++    let store = collection.selected_store()?;
++    let directory = store.directory();
++    let gate = directory
++        .parent()
++        .context("incarnation parent missing")?
++        .parent()
++        .context("collection parent missing")?
++        .join(".current-gates")
++        .join(directory.file_name().context("incarnation missing")?);
++    let held = hold_current_gate(&gate)?;
++    // native read: each held-gate rejection must execute exactly once to retain
++    // its actual phase; the retry helper is the behavior under examination.
++    let native = tokio::time::timeout(
++        Duration::from_secs(15),
++        backend.call(
++            "airk_read_file".into(),
++            arguments.as_object().unwrap().clone(),
++        ),
++    )
++    .await??;
++    let mut command = Command::new(&f.candidate);
++    command
++        .arg("--combined-session")
++        .arg(serde_json::to_string(&f.session)?)
++        .arg("--service-runtime-dir")
++        .arg(&f.control)
++        .args(["tools", "call", "airk_read_file", "--args"])
++        .arg(arguments.to_string());
++    // native read: one deliberate negative CLI observation, never a replay loop.
++    let cli = tokio::task::spawn_blocking(move || {
++        read_retry::once_until(&command, Instant::now() + Duration::from_secs(15))
++    })
++    .await??;
++    ensure!(
++        cli.status.code() == Some(1),
++        "blocked CLI unexpectedly succeeded: {cli:?}"
++    );
++    let cli: Value = serde_json::from_slice(&cli.stdout)?;
++    // native read: one deliberate negative wire observation of the exact read.
++    let wire = mcp.request(
++        2,
++        "tools/call",
++        json!({"name":"read_file","arguments":arguments}),
++    )?;
++    for (route, envelope) in [("native", &native), ("CLI", &cli), ("MCP", &wire["result"])] {
++        assert_eq!(envelope["isError"], true, "{route}: {envelope}");
++        let canonical = body(envelope)?;
++        let untouched = canonical.clone();
++        let retry = airk_core::combined_reads::read_retry::validated_retry(&canonical)
++            .with_context(|| {
++                format!("{route}: exact single-member retry metadata absent: {canonical}")
++            })?;
++        assert_eq!(
++            canonical, untouched,
++            "retry validation changed the original failure"
++        );
++        assert_eq!(retry.index_id, f.indexes[0]);
++        assert_eq!(
++            canonical["selection"]["identity"],
++            json!(retry.selection_identity)
++        );
++        assert_eq!(canonical["error"]["code"], "member_unavailable");
++        assert_eq!(canonical["error"]["retryable"], false);
++        let original = canonical
++            .pointer(&retry.result_pointer)
++            .context("original retry basis missing")?;
++        assert_eq!(
++            original
++                .get("code")
++                .or_else(|| original.get("error").and_then(|value| value.get("code"))),
++            Some(&json!(retry.code))
++        );
++        let mut forged = canonical.clone();
++        forged["read_retry"]["selection_identity"] = json!("ff".repeat(32));
++        assert!(airk_core::combined_reads::read_retry::validated_retry(&forged).is_none());
++    }
++    drop(held);
++    let recovered = native_read(backend.as_ref(), "airk_read_file", &arguments).await?;
++    assert_ne!(
++        recovered["isError"], true,
++        "read did not recover after exact gate release: {recovered}"
++    );
++    backend.close();
++    backend.shutdown().await?;
++    f.assert_sources_unchanged()?;
++    Ok(())
++}
+--- a/crates/airk-cli/tests/combined_reads.rs
++++ b/crates/airk-cli/tests/combined_reads.rs
+@@ -3,6 +3,8 @@
+ //! component-format fixture. This is not Genesis or installer qualification.
+ #[path = "common/read_retry.rs"]
+ mod read_retry;
++#[path = "combined_reads/single_member_retry.rs"]
++mod single_member_retry;
+ 
+ #[path = "combined_reads/permanent_trim.rs"]
+ mod permanent_trim;
+--- a/crates/airk-cli/tests/common/read_retry.rs
++++ b/crates/airk-cli/tests/common/read_retry.rs
+@@ -21,6 +21,13 @@
+         return None;
+     }
+     let hint: Value = serde_json::from_str(content[0].get("text")?.as_str()?).ok()?;
++    if let Some(retry) = airk_core::combined_reads::read_retry::validated_retry(&hint) {
++        return Some(Retry {
++            delay: Duration::from_millis(retry.retry_after_ms),
++            fresh_brokerage: retry.fresh_brokerage_required,
++            publication: matches!(retry.code.as_str(), "publication_busy" | "selection_busy"),
++        });
++    }
+     let (delay, fresh_brokerage, publication) = if hint.get("status") == Some(&Value::from("retry"))
+     {
+         if hint.get("retryable")? != true
+@@ -60,6 +67,207 @@
+     classify(envelope).filter(|retry| Instant::now() + retry.delay < deadline)
+ }
+ 
++fn evidence_read_tool(name: &str) -> bool {
++    matches!(
++        name,
++        "airk_status"
++            | "airk_diagnostics"
++            | "airk_capabilities"
++            | "airk_search"
++            | "airk_list_files"
++            | "airk_read_file"
++            | "airk_file_info"
++            | "airk_symbols"
++            | "airk_code_facts"
++            | "airk_document_facts"
++            | "airk_references"
++            | "airk_relationships"
++            | "airk_context"
++            | "airk_outline"
++            | "airk_imports"
++            | "airk_changes"
++            | "airk_query_scope"
++            | "airk_recommendations"
++            | "airk_help"
++    )
++}
++
++/// A known setup refusal is safe only when tied to the caller's original,
++/// validated frozen selection. Generic callers do not infer this selection.
++pub fn classify_for_scope(
++    envelope: &Value,
++    expected: &airk_core::service::ScopedConnectRequest,
++) -> Option<Retry> {
++    expected.validate().ok()?;
++    if let Some(retry) = classify(envelope) {
++        return Some(retry);
++    }
++    if envelope.get("isError")?.as_bool()? != true {
++        return None;
++    }
++    let content = envelope.get("content")?.as_array()?;
++    if content.len() != 1 || content[0].get("type")?.as_str()? != "text" {
++        return None;
++    }
++    let body: Value = serde_json::from_str(content[0].get("text")?.as_str()?).ok()?;
++    if envelope.get("structuredContent")? != &body {
++        return None;
++    }
++    let fields = body.as_object()?;
++    if fields
++        .keys()
++        .any(|key| !matches!(key.as_str(), "error" | "requested_scope"))
++    {
++        return None;
++    }
++    let requested = body.get("requested_scope")?;
++    if requested
++        .as_object()?
++        .keys()
++        .any(|key| !matches!(key.as_str(), "confirmed" | "selection"))
++        || requested.get("confirmed")?.as_bool()? != false
++    {
++        return None;
++    }
++    let mut observed: airk_core::service::ScopedConnectRequest =
++        serde_json::from_value(requested.get("selection")?.clone()).ok()?;
++    observed.validate().ok()?;
++    let mut expected = expected.clone();
++    expected.project_ids.sort();
++    observed.project_ids.sort();
++    if observed != expected {
++        return None;
++    }
++    let error = body.get("error")?;
++    if error.as_object()?.keys().any(|key| {
++        !matches!(
++            key.as_str(),
++            "code"
++                | "retryable"
++                | "query_submitted"
++                | "retry_after_ms"
++                | "fresh_brokerage_required"
++                | "query_replay_safe"
++                | "native_control_response"
++        )
++    }) || error.get("query_submitted")?.as_bool()? != false
++        || error.get("retryable")?.as_bool()? != true
++        || error.get("fresh_brokerage_required")?.as_bool()? != true
++        || error
++            .get("query_replay_safe")
++            .is_some_and(|value| value != true)
++    {
++        return None;
++    }
++    match error.get("code")?.as_str()? {
++        "scoped_status_prepare_timeout" => {
++            if error.get("native_control_response").is_some() {
++                return None;
++            }
++        }
++        "scoped_connection_unavailable" => {
++            let native = error.get("native_control_response")?;
++            if native
++                .as_object()?
++                .keys()
++                .any(|key| !matches!(key.as_str(), "status" | "code"))
++                || native.get("status")?.as_str()? != "failure"
++                || !matches!(
++                    native.get("code")?.as_str()?,
++                    "broker_busy"
++                        | "project_starting_or_unavailable"
++                        | "project_unavailable_or_busy"
++                        | "previous_workers_draining"
++                        | "catalog_revision_changed"
++                        | "catalog_clock_pending"
++                        | "catalog_connection_busy"
++                        | "project_capacity_busy"
++                        | "project_restart_backoff"
++                )
++            {
++                return None;
++            }
++        }
++        _ => return None,
++    }
++    let delay = error.get("retry_after_ms")?.as_u64()?;
++    (1..=1000).contains(&delay).then_some(Retry {
++        delay: Duration::from_millis(delay),
++        fresh_brokerage: true,
++        publication: false,
++    })
++}
++
++pub fn within_for_scope(
++    envelope: &Value,
++    expected: &airk_core::service::ScopedConnectRequest,
++    deadline: Instant,
++) -> Option<Retry> {
++    classify_for_scope(envelope, expected).filter(|retry| Instant::now() + retry.delay < deadline)
++}
++
++/// Only the test-owned `tools call` evidence-read form supplies an implicit
++/// expected scope. Mutation commands, mixed selectors and duplicate flags do not.
++pub fn original_cli_scope(
++    command: &std::process::Command,
++) -> Option<airk_core::service::ScopedConnectRequest> {
++    let arguments = command
++        .get_args()
++        .map(|value| value.to_str())
++        .collect::<Option<Vec<_>>>()?;
++    let mut offset = 0;
++    let mut selection = None;
++    let mut runtime = false;
++    while offset < arguments.len() && arguments[offset] != "tools" {
++        let value = arguments[offset];
++        if value == "--catalog-session" {
++            if selection.is_some() {
++                return None;
++            }
++            offset += 1;
++            selection = Some(
++                serde_json::from_str::<airk_core::service::ScopedConnectRequest>(
++                    *arguments.get(offset)?,
++                )
++                .ok()?,
++            );
++        } else if let Some(value) = value.strip_prefix("--catalog-session=") {
++            if selection.is_some() {
++                return None;
++            }
++            selection =
++                Some(serde_json::from_str::<airk_core::service::ScopedConnectRequest>(value).ok()?);
++        } else if value == "--service-runtime-dir" {
++            if runtime {
++                return None;
++            }
++            runtime = true;
++            offset += 1;
++            if arguments.get(offset)?.is_empty() {
++                return None;
++            }
++        } else {
++            return None;
++        }
++        offset += 1;
++    }
++    let suffix = arguments.get(offset..)?;
++    if suffix.len() != 3 && suffix.len() != 5 {
++        return None;
++    }
++    if suffix[0] != "tools" || suffix[1] != "call" || !evidence_read_tool(suffix[2]) {
++        return None;
++    }
++    if suffix.len() == 5
++        && (suffix[3] != "--args" || !serde_json::from_str::<Value>(suffix[4]).ok()?.is_object())
++    {
++        return None;
++    }
++    let selection = selection?;
++    selection.validate().ok()?;
++    Some(selection)
++}
++
+ pub fn from_output(output: &std::process::Output, deadline: Instant) -> Option<Retry> {
+     // Tool rejection exits 1. A killed or otherwise failed process is not a reply.
+     if !output.status.success() && output.status.code() != Some(1) {
+@@ -81,7 +289,14 @@
+ ) -> std::io::Result<std::process::Output> {
+     loop {
+         let output = once_until(command, deadline)?;
+-        let retry = from_output(&output, deadline);
++        let retry = from_output(&output, deadline).or_else(|| {
++            if output.status.code() != Some(1) {
++                return None;
++            }
++            let expected = original_cli_scope(command)?;
++            let envelope: Value = serde_json::from_slice(&output.stdout).ok()?;
++            within_for_scope(&envelope, &expected, deadline)
++        });
+         let Some(retry) = retry else {
+             return Ok(output);
+         };
+@@ -413,6 +628,38 @@
+     }
+ }
+ 
++/// Explicit scope-bearing callers may repeat a known pre-query setup refusal;
++/// an uncertain exchange or a crossed/revoked scope remains terminal.
++pub async fn backend_for_scope(
++    backend: &dyn airk_mcp::remote::RemoteTools,
++    name: &str,
++    arguments: &Map<String, Value>,
++    expected: &airk_core::service::ScopedConnectRequest,
++    deadline: Instant,
++    mut rejected: impl FnMut(&Value),
++) -> Result<Value> {
++    expected.validate()?;
++    loop {
++        anyhow::ensure!(
++            Instant::now() < deadline,
++            "scoped read retry deadline exhausted"
++        );
++        let reply = tokio::time::timeout_at(
++            deadline.into(),
++            backend.call(name.into(), arguments.clone()),
++        )
++        .await??;
++        let retry = evidence_read_tool(name)
++            .then(|| within_for_scope(&reply, expected, deadline))
++            .flatten();
++        let Some(retry) = retry else {
++            return Ok(reply);
++        };
++        rejected(&reply);
++        tokio::time::sleep(retry.delay).await;
++    }
++}
++
+ /// Independently observed readiness may be unavailable after an otherwise complete
+ /// read. Validate that precise fixture state and each original reply's derived
+ /// receipt allocation before comparing their unchanged evidence and work budgets.
+--- a/crates/airk-cli/tests/native_read_retry.rs
++++ b/crates/airk-cli/tests/native_read_retry.rs
+@@ -12,6 +12,176 @@
+ 
+ fn envelope(hint: Value) -> Value {
+     json!({"isError":true,"content":[{"type":"text","text":hint.to_string()}]})
++}
++
++fn single_required_retry(hint: Value) -> Value {
++    let index = format!("idx_{}", "01".repeat(16));
++    let mut value = json!({"schema":"airk.combined-read/1",
++        "selection":{"project_ids":[format!("prj_{}","02".repeat(16))],"index_ids":[index],
++            "grant_id":format!("grt_{}","03".repeat(16)),"grant_revision":1,
++            "member_availability":"require","identity":"04".repeat(32)},
++        "publication_vector":{"authority":"05".repeat(32),"observed_from_unix_ms":1,"observed_to_unix_ms":2,
++            "members":[{"index_id":index,"publication":null}]},
++        "members":[{"index_id":index,"is_error":true,"outcome":"failed",
++            "allocation":{"index_id":index,"limit":1,"max_bytes":4096,"deadline_ms":2000,
++                "verification_max_sources":1,"verification_max_bytes":4096,"verification_deadline_ms":2000},
++            "result":hint}],"ranking":[],"partial":true,"truncated":false,
++        "error":{"code":"member_unavailable","retryable":false,"failed_members":[index]}});
++    value["read_retry"] = serde_json::to_value(
++        airk_core::combined_reads::read_retry::proposed_retry(&value).expect("safe fixture hint"),
++    )
++    .unwrap();
++    value
++}
++
++fn original_scoped_selection() -> airk_core::service::ScopedConnectRequest {
++    serde_json::from_value(json!({"schema":1,"context_key":"01".repeat(32),"namespace":"02".repeat(16),
++        "expected_catalog_revision":1,"grant_id":format!("grt_{}","03".repeat(16)),"expected_grant_revision":1,
++        "index_id":format!("idx_{}","04".repeat(16)),"project_ids":[format!("prj_{}","05".repeat(16))]})).unwrap()
++}
++fn scoped_setup_hint(expected: &airk_core::service::ScopedConnectRequest) -> Value {
++    json!({"error":{"code":"scoped_status_prepare_timeout","query_submitted":false,"retryable":true,
++        "fresh_brokerage_required":true,"retry_after_ms":1},"requested_scope":{"confirmed":false,"selection":expected}})
++}
++fn scoped_setup_envelope(body: Value) -> Value {
++    let mut result = envelope(body.clone());
++    result["structuredContent"] = body;
++    result
++}
++
++#[test]
++fn scoped_setup_retry_requires_the_original_validated_selection_and_a_known_read_context() {
++    let expected = original_scoped_selection();
++    let hint = scoped_setup_hint(&expected);
++    let refused = scoped_setup_envelope(hint.clone());
++    assert!(
++        read_retry::classify(&refused).is_none(),
++        "generic callers cannot guess original scope"
++    );
++    assert!(read_retry::classify_for_scope(&refused, &expected).is_some());
++    assert!(
++        read_retry::classify_for_scope(&envelope(hint.clone()), &expected).is_none(),
++        "the exact known setup envelope is required"
++    );
++    for (pointer, value) in [
++        ("/error/query_submitted", Value::Null),
++        ("/error/retryable", json!(false)),
++        ("/error/fresh_brokerage_required", json!(false)),
++        ("/error/retry_after_ms", json!(1001)),
++        ("/requested_scope/confirmed", json!(true)),
++        (
++            "/requested_scope/selection/expected_catalog_revision",
++            json!(2),
++        ),
++        (
++            "/requested_scope/selection/expected_grant_revision",
++            json!(2),
++        ),
++        (
++            "/requested_scope/selection/grant_id",
++            json!(format!("grt_{}", "09".repeat(16))),
++        ),
++        (
++            "/requested_scope/selection/project_ids",
++            json!([format!("prj_{}", "09".repeat(16))]),
++        ),
++    ] {
++        let mut invalid = hint.clone();
++        *invalid.pointer_mut(pointer).unwrap() = value;
++        assert!(
++            read_retry::classify_for_scope(&scoped_setup_envelope(invalid), &expected).is_none(),
++            "{pointer}"
++        );
++    }
++    let mut native = hint.clone();
++    native["error"]["code"] = json!("scoped_connection_unavailable");
++    native["error"]["native_control_response"] =
++        json!({"status":"failure","code":"catalog_connection_busy"});
++    assert!(
++        read_retry::classify_for_scope(&scoped_setup_envelope(native.clone()), &expected).is_some()
++    );
++    native["error"]["native_control_response"]["code"] = json!("grant_revoked");
++    assert!(read_retry::classify_for_scope(&scoped_setup_envelope(native), &expected).is_none());
++    let mut command = std::process::Command::new("airk");
++    command.args([
++        "--catalog-session",
++        &serde_json::to_string(&expected).unwrap(),
++        "--service-runtime-dir",
++        "owned-control",
++        "tools",
++        "call",
++        "airk_status",
++        "--args",
++        "{}",
++    ]);
++    assert_eq!(
++        read_retry::original_cli_scope(&command),
++        Some(expected.clone())
++    );
++    for suffix in [
++        vec!["tools", "call", "airk_draft_plan"],
++        vec!["service", "stop"],
++        vec!["job", "index"],
++    ] {
++        let mut mutation = std::process::Command::new("airk");
++        mutation
++            .args([
++                "--catalog-session",
++                &serde_json::to_string(&expected).unwrap(),
++            ])
++            .args(suffix);
++        assert!(read_retry::original_cli_scope(&mutation).is_none());
++    }
++    let mut duplicate = std::process::Command::new("airk");
++    for _ in 0..2 {
++        duplicate.args([
++            "--catalog-session",
++            &serde_json::to_string(&expected).unwrap(),
++        ]);
++    }
++    duplicate.args(["tools", "call", "airk_status"]);
++    assert!(read_retry::original_cli_scope(&duplicate).is_none());
++}
++
++#[test]
++fn combined_replay_requires_exact_outer_single_member_metadata_and_keeps_the_failure() {
++    let hint = json!({"status":"retry","code":"selection_busy","retryable":true,
++        "action":"repeat_same_request","retry_after_ms":25});
++    let combined = single_required_retry(hint.clone());
++    assert!(read_retry::classify(&envelope(combined.clone())).is_some());
++    assert_eq!(combined["members"][0]["result"], hint);
++    for (pointer, replacement) in [
++        ("/selection/member_availability", json!("report")),
++        ("/read_retry/selection_identity", json!("09".repeat(32))),
++        ("/members/0/result/retry_after_ms", json!(0)),
++        ("/members/0/result/action", json!("review_required")),
++    ] {
++        let mut invalid = combined.clone();
++        *invalid.pointer_mut(pointer).unwrap() = replacement;
++        assert!(
++            read_retry::classify(&envelope(invalid)).is_none(),
++            "{pointer}"
++        );
++    }
++    let mut undeclared = combined.clone();
++    undeclared.as_object_mut().unwrap().remove("read_retry");
++    assert!(read_retry::classify(&envelope(undeclared)).is_none());
++    for (field, value) in [
++        ("future_detail", json!({"preserved":true})),
++        ("index_state", json!("available")),
++        ("chunks", json!(1)),
++        ("symbols", json!([])),
++    ] {
++        let mut mixed = combined.clone();
++        mixed["members"][0]["result"][field] = value;
++        assert!(read_retry::classify(&envelope(mixed)).is_none(), "{field}");
++    }
++    let mut multiple = combined.clone();
++    multiple["members"]
++        .as_array_mut()
++        .unwrap()
++        .push(combined["members"][0].clone());
++    assert!(read_retry::classify(&envelope(multiple)).is_none());
+ }
+ 
+ fn readiness_pair() -> Result<(Value, Value)> {
+@@ -191,6 +361,18 @@
+         .clone();
+     let success = json!({"isError":false,"content":[{"type":"text","text":"{}"}]});
+     for (hint, repeats) in [
++        (
++            single_required_retry(
++                json!({"status":"retry","code":"selection_busy","retryable":true,
++                "action":"repeat_same_request","retry_after_ms":1}),
++            ),
++            true,
++        ),
++        (
++            single_required_retry(json!({"error":{"code":"direct_query_setup","reason":"busy",
++                "query_submitted":false,"retryable":true,"fresh_brokerage_required":true,"retry_after_ms":1}})),
++            true,
++        ),
+         (
+             json!({"status":"retry","code":"selection_busy","retryable":true,"action":"repeat_same_request","retry_after_ms":1}),
+             true,
+@@ -239,6 +421,68 @@
+                 .all(|(name, args)| name == "airk_symbols" && args == &arguments)
+         );
+     }
++    let expected = original_scoped_selection();
++    for (crossed, tool, repeats) in [
++        (false, "airk_symbols", true),
++        (true, "airk_symbols", false),
++        (false, "airk_draft_plan", false),
++    ] {
++        let mut refusal = scoped_setup_hint(&expected);
++        if crossed {
++            refusal["requested_scope"]["selection"]["expected_grant_revision"] = json!(2);
++        }
++        let refusal = scoped_setup_envelope(refusal);
++        let backend = Backend {
++            replies: Mutex::new([refusal.clone(), success.clone()].into()),
++            calls: Mutex::new(Vec::new()),
++        };
++        let mut observed = Vec::new();
++        let result = read_retry::backend_for_scope(
++            &backend,
++            tool,
++            &arguments,
++            &expected,
++            Instant::now() + Duration::from_secs(5),
++            |reply| observed.push(reply.clone()),
++        )
++        .await?;
++        assert_eq!(
++            result,
++            if repeats {
++                success.clone()
++            } else {
++                refusal.clone()
++            }
++        );
++        assert_eq!(observed, if repeats { vec![refusal] } else { vec![] });
++        let calls = backend.calls.lock().unwrap();
++        assert_eq!(calls.len(), if repeats { 2 } else { 1 });
++        assert!(
++            calls
++                .iter()
++                .all(|(name, args)| name == tool && args == &arguments)
++        );
++    }
++    let backend = Backend {
++        replies: Mutex::new([success].into()),
++        calls: Mutex::new(Vec::new()),
++    };
++    assert!(
++        read_retry::backend_for_scope(
++            &backend,
++            "airk_status",
++            &arguments,
++            &expected,
++            Instant::now(),
++            |_| {}
++        )
++        .await
++        .is_err()
++    );
++    assert!(
++        backend.calls.lock().unwrap().is_empty(),
++        "an exhausted original deadline cannot dispatch another read"
++    );
+     Ok(())
+ }
+ 
+--- /dev/null
++++ b/crates/airk-core/src/combined_reads/read_retry.rs
+@@ -0,0 +1,432 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Explicit replay metadata for one failed required read member only.
++use super::{
++    COMBINED_READ_SCHEMA, MemberAllocation, MemberAvailability, PublicationVector,
++    SelectedScopeObservation,
++};
++use crate::{
++    identity::Sha256Digest,
++    index_catalog::{IndexId, MAX_SELECTION, encoded_size, unique_bounded},
++};
++use serde::{Deserialize, Serialize};
++use serde_json::Value;
++
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct SingleRequiredMemberRetry {
++    pub schema: u32,
++    pub scope: String,
++    pub index_id: IndexId,
++    pub selection_identity: Sha256Digest,
++    pub action: String,
++    pub query_replay_safe: bool,
++    /// Exact pointer into the complete, unmodified original native failure.
++    pub result_pointer: String,
++    pub code: String,
++    pub retry_after_ms: u64,
++    pub fresh_brokerage_required: bool,
++}
++
++const STORAGE_HINT_FIELDS: &[&str] = &[
++    "status",
++    "code",
++    "retryable",
++    "action",
++    "retry_after_ms",
++    "request_id",
++    "scope_observation",
++    "query_replay_safe",
++    "query_submitted",
++    "fresh_brokerage_required",
++];
++const DIRECT_HINT_FIELDS: &[&str] = &[
++    "error",
++    "request_id",
++    "scope_observation",
++    "query_replay_safe",
++    "query_submitted",
++    "fresh_brokerage_required",
++];
++const DIRECT_ERROR_FIELDS: &[&str] = &[
++    "code",
++    "reason",
++    "query_submitted",
++    "retryable",
++    "retry_after_ms",
++    "fresh_brokerage_required",
++    "query_replay_safe",
++];
++
++fn only_fields(value: &Value, fields: &[&str]) -> bool {
++    value
++        .as_object()
++        .is_some_and(|object| object.keys().all(|key| fields.contains(&key.as_str())))
++}
++
++fn framing_agrees(
++    body: &Value,
++    selection: &SelectedScopeObservation,
++    index_id: IndexId,
++) -> Option<()> {
++    if let Some(request_id) = body.get("request_id") {
++        let request_id = request_id.as_str()?;
++        if request_id.is_empty() || request_id.len() > 128 {
++            return None;
++        }
++    }
++    if let Some(observation) = body.get("scope_observation") {
++        let observation: crate::scoped_reads::ScopeObservation =
++            serde_json::from_value(observation.clone()).ok()?;
++        observation.validate().ok()?;
++        if observation.members.len() != 1
++            || observation.members[0].index_id != index_id
++            || observation.grant.id != selection.grant_id
++            || observation.grant.revision != selection.grant_revision
++            || observation.members[0]
++                .memberships
++                .iter()
++                .any(|membership| !selection.project_ids.contains(&membership.project_id))
++        {
++            return None;
++        }
++    }
++    Some(())
++}
++
++/// Derive only from the complete canonical composition. This is not a scan for
++/// arbitrary nested `retryable` flags and cannot authorize a partial union replay.
++pub fn proposed_retry(combined: &Value) -> Option<SingleRequiredMemberRetry> {
++    encoded_size(combined, crate::MAX_RESPONSE_BYTES).ok()?;
++    if combined.get("schema")?.as_str()? != COMBINED_READ_SCHEMA
++        || combined.get("partial")?.as_bool()? != true
++        || combined.get("truncated")?.as_bool()? != false
++        || !combined.get("ranking")?.as_array()?.is_empty()
++        || combined
++            .get("shared_values")
++            .is_some_and(|value| !value.is_null())
++    {
++        return None;
++    }
++    let selection: SelectedScopeObservation =
++        serde_json::from_value(combined.get("selection")?.clone()).ok()?;
++    if selection.member_availability != MemberAvailability::Require
++        || selection.index_ids.len() != 1
++        || selection.project_ids.is_empty()
++    {
++        return None;
++    }
++    unique_bounded(&selection.project_ids, MAX_SELECTION).ok()?;
++    let index_id = selection.index_ids[0];
++    let members = combined.get("members")?.as_array()?;
++    if members.len() != 1 {
++        return None;
++    }
++    let member = &members[0];
++    if member.get("index_id")?.as_str()? != index_id.to_string()
++        || member.get("outcome")?.as_str()? != "failed"
++        || member.get("is_error")?.as_bool()? != true
++        || member.get("cutoff").is_some_and(|value| !value.is_null())
++    {
++        return None;
++    }
++    let allocation: MemberAllocation =
++        serde_json::from_value(member.get("allocation")?.clone()).ok()?;
++    if allocation.index_id != index_id
++        || !(1..=100).contains(&allocation.limit)
++        || !(1..=65_536).contains(&allocation.max_bytes)
++        || !(1..=30_000).contains(&allocation.deadline_ms)
++        || allocation.verification_max_sources > crate::verification::MAX_SOURCES
++        || allocation.verification_max_bytes > crate::verification::MAX_BYTES
++        || allocation.verification_deadline_ms > crate::verification::MAX_DEADLINE_MS
++    {
++        return None;
++    }
++    let failure = combined.get("error")?;
++    let failed = failure.get("failed_members")?.as_array()?;
++    if failure.get("code")?.as_str()? != "member_unavailable"
++        || failure.get("retryable")?.as_bool()? != false
++        || failed.len() != 1
++        || failed[0].as_str()? != index_id.to_string()
++    {
++        return None;
++    }
++    let publications: PublicationVector =
++        serde_json::from_value(combined.get("publication_vector")?.clone()).ok()?;
++    publications.validate().ok()?;
++    if publications.members.len() != 1
++        || publications.members[0].index_id != index_id
++        || publications.members[0].publication.is_some()
++    {
++        return None;
++    }
++    let result = member.get("result")?;
++    if !result.is_object() || result.get("isError").is_some_and(|value| value != true) {
++        return None;
++    }
++    let (body, suffix) = if let Some(body) = result.get("structuredContent") {
++        if result.get("isError")?.as_bool()? != true {
++            return None;
++        }
++        let content = result.get("content")?.as_array()?;
++        if content.len() != 1 || content[0].get("type")?.as_str()? != "text" {
++            return None;
++        }
++        let text: Value = serde_json::from_str(content[0].get("text")?.as_str()?).ok()?;
++        if &text != body {
++            return None;
++        }
++        (body, "/structuredContent")
++    } else {
++        if result.get("content").is_some() {
++            return None;
++        }
++        (result, "")
++    };
++    if !body.is_object()
++        || body
++            .get("query_replay_safe")
++            .is_some_and(|value| value != true)
++        || body
++            .get("query_submitted")
++            .is_some_and(|value| value != false)
++    {
++        return None;
++    }
++    framing_agrees(body, &selection, index_id)?;
++    let (code, delay, fresh) = if body.get("status").and_then(Value::as_str) == Some("retry") {
++        let code = body.get("code")?.as_str()?;
++        if !only_fields(body, STORAGE_HINT_FIELDS)
++            || !matches!(code, "publication_busy" | "selection_busy")
++            || body.get("retryable")?.as_bool()? != true
++            || body.get("action")?.as_str()? != "repeat_same_request"
++            || body.get("error").is_some_and(|value| !value.is_null())
++            || body
++                .get("fresh_brokerage_required")
++                .is_some_and(|value| value != false)
++        {
++            return None;
++        }
++        (code, body.get("retry_after_ms")?.as_u64()?, false)
++    } else {
++        if !only_fields(body, DIRECT_HINT_FIELDS) {
++            return None;
++        }
++        let error = body.get("error")?;
++        if !only_fields(error, DIRECT_ERROR_FIELDS) {
++            return None;
++        }
++        let code = error.get("code")?.as_str()?;
++        let fresh = match code {
++            "direct_query_admission" => false,
++            "direct_query_setup" => true,
++            _ => return None,
++        };
++        if error.get("reason")?.as_str()? != "busy"
++            || error.get("query_submitted")?.as_bool()? != false
++            || error.get("retryable")?.as_bool()? != true
++            || error.get("fresh_brokerage_required")?.as_bool()? != fresh
++            || error
++                .get("query_replay_safe")
++                .is_some_and(|value| value != true)
++            || body
++                .get("fresh_brokerage_required")
++                .is_some_and(|value| value != fresh)
++        {
++            return None;
++        }
++        (code, error.get("retry_after_ms")?.as_u64()?, fresh)
++    };
++    if !(1..=1000).contains(&delay) {
++        return None;
++    }
++    Some(SingleRequiredMemberRetry {
++        schema: 1,
++        scope: "same_single_required_member".into(),
++        index_id,
++        selection_identity: selection.identity,
++        action: "repeat_same_request".into(),
++        query_replay_safe: true,
++        result_pointer: format!("/members/0/result{suffix}"),
++        code: code.into(),
++        retry_after_ms: delay,
++        fresh_brokerage_required: fresh,
++    })
++}
++
++/// Consumers validate the declared metadata against the original exact child;
++/// changing any selection, outcome, publication, hint or pointer invalidates it.
++pub fn validated_retry(combined: &Value) -> Option<SingleRequiredMemberRetry> {
++    let declared: SingleRequiredMemberRetry =
++        serde_json::from_value(combined.get("read_retry")?.clone()).ok()?;
++    (declared == proposed_retry(combined)?).then_some(declared)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use serde_json::json;
++
++    fn combined(hint: Value) -> Value {
++        let index = format!("idx_{}", "01".repeat(16));
++        json!({"schema":COMBINED_READ_SCHEMA,"selection":{"project_ids":[format!("prj_{}","02".repeat(16))],
++            "index_ids":[index],"grant_id":format!("grt_{}","03".repeat(16)),"grant_revision":1,
++            "member_availability":"require","identity":"04".repeat(32)},
++            "publication_vector":{"authority":"05".repeat(32),"observed_from_unix_ms":1,"observed_to_unix_ms":2,
++                "members":[{"index_id":index,"publication":null}]},
++            "members":[{"index_id":index,"is_error":true,"outcome":"failed",
++                "allocation":{"index_id":index,"limit":1,"max_bytes":4096,"deadline_ms":2000,
++                    "verification_max_sources":1,"verification_max_bytes":4096,"verification_deadline_ms":2000},
++                "result":{"isError":true,"content":[{"type":"text","text":hint.to_string()}],"structuredContent":hint}}],
++            "ranking":[],"partial":true,"truncated":false,
++            "error":{"code":"member_unavailable","retryable":false,"failed_members":[index]}})
++    }
++    fn hint() -> Value {
++        json!({"status":"retry","code":"selection_busy","retryable":true,"action":"repeat_same_request","retry_after_ms":25})
++    }
++
++    #[test]
++    fn only_exact_single_required_member_metadata_authorizes_same_read_retry() {
++        let mut value = combined(hint());
++        assert!(
++            validated_retry(&value).is_none(),
++            "an inner retry alone is not an outer replay instruction"
++        );
++        let proposed = proposed_retry(&value).unwrap();
++        assert_eq!(
++            proposed.result_pointer,
++            "/members/0/result/structuredContent"
++        );
++        value["read_retry"] = serde_json::to_value(&proposed).unwrap();
++        assert_eq!(validated_retry(&value), Some(proposed));
++        for (pointer, replacement) in [
++            ("/selection/member_availability", json!("report")),
++            ("/selection/identity", json!("09".repeat(32))),
++            (
++                "/selection/index_ids",
++                json!([
++                    format!("idx_{}", "01".repeat(16)),
++                    format!("idx_{}", "09".repeat(16))
++                ]),
++            ),
++            (
++                "/members/0/index_id",
++                json!(format!("idx_{}", "09".repeat(16))),
++            ),
++            ("/members/0/is_error", json!(false)),
++            ("/members/0/outcome", json!("complete")),
++            ("/members/0/allocation/limit", json!(0)),
++            ("/members/0/result/content/0/text", json!("different")),
++            ("/partial", json!(false)),
++            ("/truncated", json!(true)),
++            (
++                "/ranking",
++                json!([{"result_pointer":"/members/0/result/hits/0"}]),
++            ),
++            (
++                "/publication_vector/members/0/publication",
++                json!({"token":"published"}),
++            ),
++            ("/error/retryable", json!(true)),
++            (
++                "/read_retry/result_pointer",
++                json!("/members/0/result/error"),
++            ),
++            ("/read_retry/retry_after_ms", json!(1)),
++            ("/read_retry/query_replay_safe", json!(false)),
++        ] {
++            let mut invalid = value.clone();
++            *invalid.pointer_mut(pointer).unwrap() = replacement;
++            assert!(validated_retry(&invalid).is_none(), "{pointer}");
++        }
++        let mut multiple = value.clone();
++        multiple["members"]
++            .as_array_mut()
++            .unwrap()
++            .push(value["members"][0].clone());
++        assert!(validated_retry(&multiple).is_none());
++        for hint in [
++            json!({"status":"retry","code":"unknown_busy","retryable":true,"action":"repeat_same_request","retry_after_ms":25}),
++            json!({"status":"retry","code":"selection_busy","retryable":true,"action":"repeat_same_request","retry_after_ms":1001}),
++            json!({"error":{"code":"unavailable","retryable":true,"nested":hint()}}),
++            json!({"error":{"code":"direct_query_setup","reason":"busy","query_submitted":true,"retryable":true,"fresh_brokerage_required":true,"retry_after_ms":25}}),
++        ] {
++            assert!(proposed_retry(&combined(hint)).is_none());
++        }
++        let mut evidence = combined(hint());
++        evidence["members"][0]["result"]["structuredContent"]["hits"] = json!([]);
++        evidence["members"][0]["result"]["content"][0]["text"] =
++            json!(evidence["members"][0]["result"]["structuredContent"].to_string());
++        assert!(proposed_retry(&evidence).is_none());
++        for (field, value) in [
++            ("future_detail", json!({"preserved":true})),
++            ("index_state", json!("available")),
++            ("chunks", json!(1)),
++            ("symbols", json!([])),
++            ("meta", json!({"evidence":"partial"})),
++        ] {
++            let mut mixed = hint();
++            mixed[field] = value;
++            let original = combined(mixed);
++            assert!(proposed_retry(&original).is_none(), "{field}");
++            assert!(
++                original["members"][0]["result"]["structuredContent"]
++                    .get(field)
++                    .is_some(),
++                "unknown data must remain intact"
++            );
++        }
++        let mut framed = hint();
++        framed["request_id"] = json!("original-request");
++        framed["scope_observation"] = json!({"schema":1,"qualifier":"selected_subset","fingerprint":"07".repeat(32),
++            "provenance":"user_reviewed_project_grant","grant":{"id":format!("grt_{}","03".repeat(16)),"revision":1},
++            "members":[{"index_id":format!("idx_{}","01".repeat(16)),
++                "memberships":[{"project_id":format!("prj_{}","02".repeat(16)),"membership_revision":1}],
++                "source_root_ids":[format!("src_{}","06".repeat(16))],"source_revision":1,"policy_epoch":0,"policy_digest":null}]});
++        assert!(proposed_retry(&combined(framed.clone())).is_some());
++        framed["scope_observation"]["grant"]["revision"] = json!(2);
++        assert!(proposed_retry(&combined(framed.clone())).is_none());
++        framed["scope_observation"]["grant"]["revision"] = json!(1);
++        framed["scope_observation"]["future_evidence"] = json!({"symbols":[]});
++        assert!(proposed_retry(&combined(framed)).is_none());
++        for (field, value) in [
++            ("query_replay_safe", json!(false)),
++            ("query_submitted", json!(true)),
++            ("fresh_brokerage_required", json!(true)),
++        ] {
++            let mut unsafe_hint = hint();
++            unsafe_hint[field] = value;
++            assert!(proposed_retry(&combined(unsafe_hint)).is_none(), "{field}");
++        }
++        for (code, fresh) in [
++            ("direct_query_admission", false),
++            ("direct_query_setup", true),
++        ] {
++            let value = combined(
++                json!({"error":{"code":code,"reason":"busy","query_submitted":false,
++                "retryable":true,"fresh_brokerage_required":fresh,"retry_after_ms":50}}),
++            );
++            assert_eq!(
++                proposed_retry(&value).unwrap().fresh_brokerage_required,
++                fresh
++            );
++            for (pointer, flag) in [
++                ("/error/query_replay_safe", json!(false)),
++                ("/status", json!("complete")),
++                ("/error/future_detail", json!({"preserved":true})),
++            ] {
++                let mut invalid = value.clone();
++                let body = &mut invalid["members"][0]["result"]["structuredContent"];
++                if pointer == "/status" {
++                    body["status"] = flag;
++                } else if pointer == "/error/query_replay_safe" {
++                    body["error"]["query_replay_safe"] = flag;
++                } else {
++                    body["error"]["future_detail"] = flag;
++                }
++                invalid["members"][0]["result"]["content"][0]["text"] =
++                    json!(invalid["members"][0]["result"]["structuredContent"].to_string());
++                assert!(proposed_retry(&invalid).is_none(), "{pointer}");
++            }
++        }
++    }
++}
+--- a/crates/airk-core/src/combined_reads.rs
++++ b/crates/airk-core/src/combined_reads.rs
+@@ -17,6 +17,7 @@
+ pub mod header_templates;
+ pub mod origins;
+ pub mod query_scope;
++pub mod read_retry;
+ pub mod recommendations;
+ pub mod shared_values;
+ pub use origins::{PublicationMemberRef, QualifiedOrigin, RankedOrigin, materialize_ranked_origin};
+--- a/crates/airk-kernel/src/combined_reads.rs
++++ b/crates/airk-kernel/src/combined_reads.rs
+@@ -106,6 +106,9 @@
+     pub truncated: bool,
+     #[serde(skip_serializing_if = "Option::is_none")]
+     pub error: Option<CombinedReadFailure>,
++    /// Safe only for the exact sole failed required member; all native detail remains inline.
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub read_retry: Option<airk_core::combined_reads::read_retry::SingleRequiredMemberRetry>,
+ }
+ 
+ #[derive(Clone, Debug, Serialize, Deserialize)]
+@@ -593,6 +596,7 @@
+         shared_values: None,
+         partial,
+         truncated,
++        read_retry: None,
+         error: (partial && request.selection.member_availability == MemberAvailability::Require)
+             .then(|| CombinedReadFailure {
+                 code: "member_unavailable".into(),
+@@ -642,6 +646,8 @@
+             });
+     }
+     result.publication_vector.validate()?;
++    result.read_retry =
++        airk_core::combined_reads::read_retry::proposed_retry(&serde_json::to_value(&result)?);
+     encoded_size(&result, airk_core::MAX_RESPONSE_BYTES).map_err(|_| CombinedReplyBudget)?;
+     Ok(result)
+ }
+--- a/crates/airk-kernel/src/combined_reads_tests.rs
++++ b/crates/airk-kernel/src/combined_reads_tests.rs
+@@ -101,6 +101,69 @@
+         "hits":hits,"truncated":false,"search_execution":{"served_mode":"lexical","incomplete":false},
+         "source_verification":{"full_native_receipt":{"references":[1,2],"dated":true}}}),
+     })
++}
++
++#[test]
++fn single_required_member_failure_exposes_exact_safe_read_retry_without_losing_native_data()
++-> Result<()> {
++    use airk_core::combined_reads::read_retry::validated_retry;
++    let mut composition = request()?;
++    composition.selection.members.truncate(1);
++    composition.selection.member_availability = MemberAvailability::Require;
++    let hint = json!({"status":"retry","code":"selection_busy","retryable":true,
++        "action":"repeat_same_request","retry_after_ms":25});
++    let failed = MemberInput {
++        index_id: index(1),
++        is_error: true,
++        exhausted: false,
++        result: hint.clone(),
++        sources: vec![],
++    };
++    let result = compose(&composition, vec![failed.clone()])?;
++    let value = serde_json::to_value(&result)?;
++    let retry =
++        validated_retry(&value).context("single safe member lost its explicit retry contract")?;
++    assert_eq!(retry.code, "selection_busy");
++    assert_eq!(retry.selection_identity, result.selection.identity);
++    assert_eq!(value.pointer(&retry.result_pointer), Some(&hint));
++    assert_eq!(result.members[0].result, hint);
++    assert_eq!(result.error.as_ref().unwrap().code, "member_unavailable");
++    assert!(
++        !result.error.as_ref().unwrap().retryable,
++        "generic whole-union replay stays disabled"
++    );
++    for (field, value) in [
++        ("native_detail", json!({"preserved":[1,2,3]})),
++        ("chunks", json!(1)),
++        ("symbols", json!([])),
++    ] {
++        let mut unknown = failed.clone();
++        unknown.result[field] = value;
++        let original = unknown.result.clone();
++        let blocked = compose(&composition, vec![unknown])?;
++        assert!(
++            blocked.read_retry.is_none(),
++            "unknown member fields cannot confer replay authority"
++        );
++        assert_eq!(
++            blocked.members[0].result, original,
++            "the full original failure remains available"
++        );
++    }
++    composition.selection.member_availability = MemberAvailability::Report;
++    assert!(
++        compose(&composition, vec![failed.clone()])?
++            .read_retry
++            .is_none()
++    );
++    let mut multiple = request()?;
++    multiple.selection.member_availability = MemberAvailability::Require;
++    assert!(
++        compose(&multiple, vec![failed, input(2, vec![])?])?
++            .read_retry
++            .is_none()
++    );
++    Ok(())
+ }
+ 
+ #[test]

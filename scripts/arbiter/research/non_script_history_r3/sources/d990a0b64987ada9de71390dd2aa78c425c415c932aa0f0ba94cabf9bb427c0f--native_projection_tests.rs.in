@@ -1,0 +1,158 @@
+// SPDX-License-Identifier: Apache-2.0
+use super::*;
+fn fact(name:&str,id:u32)->airk_core::extraction::LocalFact{
+    airk_core::extraction::LocalFact{id,owner:None,kind:"heading".into(),name:name.into(),
+        span:airk_core::extraction::LocalSpan{start:0,end:4},syntax_kind:"heading".into(),start_line:1,end_line:1,
+        location:airk_core::DocumentLocation::Lines{start:1,end:1},document:None,code:None,region:None,attributes:Default::default()}
+}
+#[test]
+fn publication_pages_preserve_original_ordinals_without_source_materialization()->Result<()> {
+    let fixture=Fixture::new()?;
+    let input=retained_input_with_facts(&fixture,"one.txt","body",vec![fact("Zulu",0),fact("Alpha",1),fact("Alpha",2)])?;
+    let lock=fixture.store.lock()?;
+    fixture.store.current_write(&lock,&fixture.quota,&fixture.scope,CAPACITY)?
+        .commit_artifact(&fixture.head.token()?,"one.txt",Some(&input))?;
+    drop(lock);
+    let read=fixture.store.current_read(&fixture.scope)?;
+    let full=fixture.store.load_retained(&input.artifact)?;
+    let page=read.native_fact_page("one.txt",0)?.context("projection absent")?;
+    assert_eq!(page.rows.iter().map(|row|row.ordinal).collect::<Vec<_>>(),vec![1,2,0]);
+    for row in &page.rows{assert_eq!(serde_json::to_value(&row.fact)?,serde_json::to_value(&full.facts[row.ordinal])?);}
+    let mut query=airk_core::FactQuery{path_prefix:"one.txt".into(),name:None,kind:None,language:None,
+        exact_name:false,limit:100,max_bytes:65536,path_exact:true,document_only:false};
+    let strict=read.native_facts_page(&fixture.store,&query,false,&Default::default())?;
+    let projected=page.rows.iter().map(|row|super::super::discovery::fact_hit(&full,&row.fact)).collect::<Vec<_>>();
+    assert_eq!(serde_json::to_value(&strict.facts)?,serde_json::to_value(&projected)?);
+    query.max_bytes=1;
+    let refused=read.native_facts_page(&fixture.store,&query,false,&Default::default())?;
+    assert_eq!(refused.page.required_record_bytes,Some(serde_json::to_vec(&projected[0])?.len()));
+    assert!(read.audit_native_fact_projection(&fixture.store,"one.txt")?);
+    let source=fixture.store.directory().join("objects/sources").join(&input.artifact.content_hash);
+    let held=source.with_extension("held");fs::rename(&source,&held)?;
+    let selected=read.native_fact_page("one.txt",0)?.context("selected projection depended on source")?;
+    assert_eq!(selected.rows.len(),3);
+    assert!(read.audit_native_fact_projection(&fixture.store,"one.txt").is_err());
+    fs::rename(held,source)?;
+    drop(read);
+    let lock=fixture.store.lock()?;
+    let mut writer=fixture.store.current_write(&lock,&fixture.quota,&fixture.scope,CAPACITY)?;
+    let token=writer.head()?.token()?;
+    writer.commit_artifact(&token,"one.txt",None)?;
+    drop(writer);drop(lock);
+    assert!(fixture.store.current_read(&fixture.scope)?.native_fact_header("one.txt")?.is_none());
+    Ok(())
+}
+#[test]
+fn unsupported_native_projection_is_explicit_not_empty_evidence()->Result<()> {
+    let fixture=Fixture::new()?;
+    let facts=(0..513).map(|id|fact(&format!("name-{id}"),id)).collect();
+    let input=retained_input_with_facts(&fixture,"many.txt","body",facts)?;
+    let lock=fixture.store.lock()?;
+    fixture.store.current_write(&lock,&fixture.quota,&fixture.scope,CAPACITY)?
+        .commit_artifact(&fixture.head.token()?,"many.txt",Some(&input))?;
+    drop(lock);
+    let read=fixture.store.current_read(&fixture.scope)?;
+    let header=read.native_fact_header("many.txt")?.context("missing explicit projection state")?;
+    assert!(!header.supported);assert_eq!(header.facts,513);
+    assert!(read.native_fact_page("many.txt",0)?.is_none());
+    assert!(!read.audit_native_fact_projection(&fixture.store,"many.txt")?);
+    assert_eq!(fixture.store.load_retained(&input.artifact)?.facts.len(),513);
+    Ok(())
+}
+
+#[test]
+fn scalar_projection_is_derived_checked_and_replayed_with_existing_map()->Result<()> {
+    use airk_core::{changes::{FileState,FileStamps},publication::InventoryFile};
+    let fixture=Fixture::new()?;
+    let input=retained_input_at(&fixture,"one.txt","body")?;
+    let retained=input.artifact.retained.as_ref().unwrap();
+    let file=InventoryFile{continuity:Vec::new(),continuity_coverage:Default::default(),
+        state:FileState{artifact_id:airk_core::identity::ArtifactId::from_bytes([48;16]),
+            stamps:FileStamps{first_generation:1,path_generation:1,content_generation:1,evidence_generation:1},
+            source_hash:input.artifact.content_hash.parse()?,profile_id:retained.profile.as_ref().unwrap().identity()?,
+            payload_digest:retained.object.parse()?,evidence_digest:Sha256Digest::from_bytes([49;32]),
+            root:fixture.scope.root.clone(),path:"one.txt".into()},
+        source_bytes:input.artifact.bytes,payload_bytes:retained.object_bytes,extracted_bytes:retained.extracted_bytes,
+        chunks:retained.chunks,indexed_lines:1,facts:retained.facts,raw_source:true,language:input.artifact.language.clone(),
+        extraction_method:input.artifact.extraction_method.clone(),parse_status:input.artifact.parse_status.clone()};
+    let reservation=fixture.quota.reserve(&fixture.scope.collection,1<<20)?;
+    let reference=fixture.store.retain_current_metadata("one.txt",&file,&reservation)?;
+    let mut wrong=reference.clone();wrong.scalars.as_mut().unwrap().indexed_lines=2;
+    assert!(fixture.store.read_current_metadata(&wrong).is_err());
+    let mut legacy=reference.clone();legacy.scalars=None;
+    assert_eq!(fixture.store.read_current_metadata(&legacy)?,file);
+    let (_reservation,sealed)=fixture.sealed()?;
+    let connection=database::open_reader(&fixture.store.directory().join("current.sqlite3"))?;
+    let mut wrong_file=file.clone();wrong_file.indexed_lines=2;
+    let wrong_producer=fixture.store.retain_current_metadata("one.txt",&wrong_file,&reservation)?;
+    {
+    let mut rejected=map::MapPlan::new(&connection,&fixture.scope,fixture.head.artifact_root)?;
+    let error=metadata::prepare(&fixture.store,&fixture.scope,&mut rejected,
+        &[ArtifactChange::Upsert(Box::new(input.clone()))],&[wrong_producer],1).unwrap_err();
+    assert!(error.to_string().contains("indexed line count mismatch"));
+    }
+    let mut plan=map::MapPlan::new(&connection,&fixture.scope,fixture.head.artifact_root)?;
+    let first=map::MapChange::new(&fixture.scope,map::MapDomain::Artifact,b"one.txt",Some(input.bytes()?))?;
+    plan.put(first.key(),first.value())?;
+    let upserts=[ArtifactChange::Upsert(Box::new(input.clone()))];
+    let mut changes=vec![first];
+    changes.extend(metadata::prepare(&fixture.store,&fixture.scope,&mut plan,&upserts,&[reference.clone()],1)?);
+    changes.sort_by_key(map::MapChange::key);
+    let mut target=fixture.target(&sealed);target.artifact_root=plan.root()?;drop(connection);
+    let lock=fixture.store.lock()?;
+    let mut writer=fixture.store.current_write(&lock,&fixture.quota,&fixture.scope,CAPACITY)?;
+    let pending=writer.prepare_mapped(&fixture.head.token()?,target,&sealed,&[input],None,&changes)?;
+    writer.mark_applying(&pending)?;
+    drop(writer);drop(lock); // resume from the actual durable pending journal
+    let lock=fixture.store.lock()?;
+    let mut writer=fixture.store.current_write(&lock,&fixture.quota,&fixture.scope,CAPACITY)?;
+    let replay=writer.pending()?.context("pending scalar publication lost")?;
+    writer.commit(&replay,replay.target.lexical_commit)?;drop(writer);drop(lock);
+    let read=fixture.store.current_read(&fixture.scope)?;
+    let scalar=read.file_scalars("one.txt")?.context("scalar projection missing")?;
+    assert_eq!(scalar.indexed_lines,file.indexed_lines);assert_eq!(scalar.state,file.state);
+    assert!(read.audit_file_scalars(&fixture.store,"one.txt")?);
+    let object=fixture.store.directory().join("current-metadata").join(format!("{}.json",reference.digest));
+    let held=object.with_extension("held");fs::rename(&object,&held)?;
+    assert_eq!(read.file_scalars("one.txt")?.unwrap().indexed_lines,1);
+    assert!(read.file_metadata(&fixture.store,"one.txt").is_err());
+    assert!(read.audit_file_scalars(&fixture.store,"one.txt").is_err());
+    fs::rename(held,object)?;
+    Ok(())
+}
+
+#[test]
+fn native_pages_resume_and_replacement_retires_old_map_records()->Result<()> {
+    let fixture=Fixture::new()?;
+    let facts=(0..65).map(|id|fact(&format!("N{:03}",64-id),id)).collect();
+    let input=retained_input_with_facts(&fixture,"pages.txt","body",facts)?;
+    let lock=fixture.store.lock()?;
+    fixture.store.current_write(&lock,&fixture.quota,&fixture.scope,CAPACITY)?
+        .commit_artifact(&fixture.head.token()?,"pages.txt",Some(&input))?;
+    drop(lock);
+    let read=fixture.store.current_read(&fixture.scope)?;
+    let header=read.native_fact_header("pages.txt")?.context("header absent")?;
+    assert!(header.supported);assert_eq!(header.pages,3);
+    let mut ordinals=Vec::new();
+    for number in 0..header.pages{
+        let page=read.native_fact_page("pages.txt",number)?.context("page absent")?;
+        assert_eq!(page.rows.len(),if number==2{1}else{32});
+        ordinals.extend(page.rows.iter().map(|row|row.ordinal));
+    }
+    assert_eq!(ordinals,(0..65).rev().collect::<Vec<_>>());
+    assert!(read.native_fact_page("pages.txt",3).is_err());
+    let token=read.token()?;drop(read);
+    let replacement=retained_input_with_facts(&fixture,"pages.txt","body",vec![fact("Only",0)])?;
+    let lock=fixture.store.lock()?;
+    fixture.store.current_write(&lock,&fixture.quota,&fixture.scope,CAPACITY)?
+        .commit_artifact(&token,"pages.txt",Some(&replacement))?;
+    drop(lock);
+    let read=fixture.store.current_read(&fixture.scope)?;
+    assert_eq!(read.native_fact_header("pages.txt")?.unwrap().pages,1);
+    assert_eq!(read.native_fact_page("pages.txt",0)?.unwrap().rows[0].fact.name,"Only");
+    for retired in [1,2]{
+        assert!(read.map_get(map::MapDomain::NativeFactPage,&serde_json::to_vec(&("pages.txt",retired))?)?.is_none());
+    }
+    assert!(read.audit_native_fact_projection(&fixture.store,"pages.txt")?);
+    Ok(())
+}

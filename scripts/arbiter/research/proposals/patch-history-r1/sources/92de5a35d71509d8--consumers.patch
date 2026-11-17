@@ -1,0 +1,334 @@
+--- crates/airk-host/build.rs
++++ crates/airk-host/build.rs
+@@ -34,10 +34,10 @@
+     );
+     for profile in profiles {
+         let id = profile["id"].as_str().unwrap();
+-        assert!(["minilm-l6-v2-u8-v2", "minilm-l6-v2-s8-v2"].contains(&id));
++        assert!(["minilm-l6-v2-u8-v3", "minilm-l6-v2-s8-v3"].contains(&id));
+         let precision = match id {
+-            "minilm-l6-v2-u8-v2" => "mixed-u8",
+-            "minilm-l6-v2-s8-v2" => "mixed-s8",
++            "minilm-l6-v2-u8-v3" => "uint8",
++            "minilm-l6-v2-s8-v3" => "int8",
+             _ => panic!("only the two pinned INT8 models may be embedded"),
+         };
+         assert_eq!(profile["precision"], precision);
+@@ -48,11 +48,7 @@
+             .find(|a| a["name"] == "model.onnx")
+             .unwrap();
+         assert_eq!(weight["sha256"], profile["manifest"]["model_sha256"]);
+-        assert!(
+-            profile["quantization"]["fp32_embeddings_retained"]
+-                .as_bool()
+-                .unwrap()
+-        );
++        assert!(profile.get("quantization").is_none_or(|value|value.is_null()),"original graph must not inherit trained mixed policy");
+         let destination = output.join(id);
+         fs::create_dir_all(&destination).unwrap();
+         fs::write(
+@@ -66,7 +62,7 @@
+         let prepared = directory.join(id);
+         let manifest_path = prepared.join("model.json");
+         println!("cargo:rerun-if-changed={}", manifest_path.display());
+-        let manifest = fs::read(manifest_path).expect("Prepare BOTH trained mixed-INT8 models from explicit authenticated local inputs using scripts/provision-local-model.py, then set AIRK_BUNDLED_MODEL_DIR");
++        let manifest = fs::read(manifest_path).expect("Prepare BOTH exact original INT8 models from explicit authenticated local inputs using scripts/provision-local-model.py, then set AIRK_BUNDLED_MODEL_DIR");
+         assert_eq!(
+             serde_json::from_slice::<serde_json::Value>(&manifest).unwrap(),
+             profile["manifest"]
+--- crates/airk-host/src/bundled_assets.rs
++++ crates/airk-host/src/bundled_assets.rs
+@@ -59,11 +59,11 @@
+             .id
+             .as_str()
+         {
+-            "minilm-l6-v2-u8-v2" => {
+-                include_bytes!(concat!(env!("OUT_DIR"), "/minilm-l6-v2-u8-v2/model.json"))
++            "minilm-l6-v2-u8-v3" => {
++                include_bytes!(concat!(env!("OUT_DIR"), "/minilm-l6-v2-u8-v3/model.json"))
+             }
+-            "minilm-l6-v2-s8-v2" => {
+-                include_bytes!(concat!(env!("OUT_DIR"), "/minilm-l6-v2-s8-v2/model.json"))
++            "minilm-l6-v2-s8-v3" => {
++                include_bytes!(concat!(env!("OUT_DIR"), "/minilm-l6-v2-s8-v3/model.json"))
+             }
+             _ => anyhow::bail!("unsupported bundled model"),
+         },
+--- crates/airk-retrieval/src/model_catalog/policy_cases.rs
++++ crates/airk-retrieval/src/model_catalog/policy_cases.rs
+@@ -1,75 +1,42 @@
+ // SPDX-License-Identifier: Apache-2.0
+-//! Native-owned policy capture for build/provision/package consumers.
++//! Native policy capture: original publisher bytes under the current provider.
+ use super::*;
+ #[test]
+-fn emitted_model_policy_retains_approved_trained_catalog_and_refusals() -> Result<()> {
+-    let catalog = inspect_catalog()?.catalog;
+-    catalog.validate()?;
+-    let value = serde_json::to_value(&catalog)?;
+-    for (pointer, replacement) in [
+-        (
+-            "/profiles/0/manifest/model_sha256",
+-            serde_json::json!("00".repeat(32)),
+-        ),
+-        (
+-            "/profiles/0/manifest/tokenizer_sha256",
+-            serde_json::json!("01".repeat(32)),
+-        ),
+-        ("/profiles/0/id", serde_json::json!("minilm-l6-v2-u8-v1")),
+-        (
+-            "/profiles/1/quantization/signed_lowering/maximum_inner_dimension",
+-            serde_json::json!(65536),
+-        ),
+-        (
+-            "/profiles/0/quantization/fp32_embeddings_retained",
+-            serde_json::json!(false),
+-        ),
++fn emitted_model_policy_retains_approved_trained_catalog_and_refusals()->Result<()> {
++    // Retained test identity; active policy now explicitly selects original
++    // weights. Its capture still carries no platform or task qualification.
++    let catalog=inspect_catalog()?.catalog;catalog.validate()?;
++    let value=serde_json::to_value(&catalog)?;
++    for (pointer,replacement) in [
++        ("/profiles/0/manifest/model_sha256",serde_json::json!("00".repeat(32))),
++        ("/profiles/0/manifest/tokenizer_sha256",serde_json::json!("01".repeat(32))),
++        ("/profiles/0/id",serde_json::json!("minilm-l6-v2-u8-v2")),
++        ("/profiles/1/manifest/license_sha256",serde_json::json!("02".repeat(32))),
++        ("/profiles/0/precision",serde_json::json!("mixed-u8")),
+     ] {
+-        let mut invalid = value.clone();
+-        // Each independent unsupported mutation must fail the owning native
+-        // validator before any build consumer accepts the captured catalog.
+-        *invalid
+-            .pointer_mut(pointer)
+-            .context("independent policy mutation missing")? = replacement;
+-        assert!(
+-            serde_json::from_value::<ModelCatalog>(invalid)?
+-                .validate()
+-                .is_err()
+-        );
++        let mut changed=value.clone();*changed.pointer_mut(pointer).context("independent policy mutation missing")?=replacement;
++        assert!(serde_json::from_value::<ModelCatalog>(changed)?.validate().is_err());
+     }
+-    let mut fake_url = value.clone();
+-    fake_url["profiles"][0]["assets"][0]["url"] = "https://example.invalid/trained-model".into();
+-    assert!(
+-        serde_json::from_value::<ModelCatalog>(fake_url)?
+-            .validate()
+-            .is_err()
+-    );
+-    let mut false_precision = value.clone();
+-    false_precision["profiles"][0]["quantization"]["quantized_linear_parameters"] =
+-        10_616_832.into();
+-    assert!(
+-        serde_json::from_value::<ModelCatalog>(false_precision)?
+-            .validate()
+-            .is_err()
+-    );
+-    let old = legacy_catalog()?;
+-    assert!(old.validate().is_err());
+-    for profile in &old.profiles {
+-        assert!(approved_manifest(&profile.manifest).is_err());
+-    }
+-    let capture = serde_json::json!({"schema":"airk.minilm.native-policy/2","catalog":catalog,"scope":"candidate build policy; human quality and installed platform qualification are not inferred"});
+-    let path = std::env::var_os("AIRK_EMIT_MODEL_POLICY")
+-        .map(std::path::PathBuf::from)
+-        .unwrap_or_else(|| std::env::temp_dir().join("airk-minilm-policy-observed.json"));
+-    std::fs::write(&path, serde_json::to_vec_pretty(&capture)?)?;
+-    let retained = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+-        .join("../../fixtures/models/model-policy.json");
+-    assert_eq!(
+-        serde_json::from_slice::<serde_json::Value>(&std::fs::read(&retained).unwrap_or_default())
+-            .ok(),
+-        Some(capture),
+-        "native policy capture differs: {}",
+-        path.display()
+-    );
++    let mut fake_url=value.clone();fake_url["profiles"][0]["assets"][0]["url"]="https://example.invalid/model".into();
++    assert!(serde_json::from_value::<ModelCatalog>(fake_url)?.validate().is_err());
++    // The previous mixed policy is independently well-formed but cannot be
++    // attached to original graphs. Keep its historical math checker exercised.
++    let previous=QuantizationPolicy {schema:"airk.minilm.quantization/2".into(),activation_precision:"unsigned asymmetric INT8".into(),signed_lowering:None,
++        fp32_embeddings_retained:true,protected_fp32_nodes:(0..6).map(|layer|format!("/inner/encoder/layer.{layer}/output/dense/MatMul")).collect(),
++        constant_linear_parameters:10_616_832,quantized_linear_parameters:7_077_888,
++        trained_checkpoint_sha256:"51517cd30b9318cfabfffcf844d6312486a4d84a5027ff88e32ce73da523b906".into()};
++    previous.validate(false)?;
++    let mut false_training=value.clone();false_training["profiles"][0]["quantization"]=serde_json::to_value(previous)?;
++    assert!(serde_json::from_value::<ModelCatalog>(false_training)?.validate().is_err());
++    let old=legacy_catalog()?;assert!(old.validate().is_err());
++    // Original graph manifests are restored, but old runtime/profile records
++    // remain inactive metadata. Their manifest bytes are intentionally equal.
++    for profile in &catalog.profiles {approved_manifest(&profile.manifest)?;assert!(profile.quantization.is_none());}
++    let capture=serde_json::json!({"schema":"airk.minilm.native-policy/2","catalog":catalog,"scope":"candidate build policy; human quality and installed platform qualification are not inferred"});
++    let path=std::env::var_os("AIRK_EMIT_MODEL_POLICY").map(std::path::PathBuf::from)
++        .unwrap_or_else(||std::env::temp_dir().join("airk-minilm-policy-observed.json"));
++    std::fs::write(&path,serde_json::to_vec_pretty(&capture)?)?;
++    let retained=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/models/model-policy.json");
++    assert_eq!(serde_json::from_slice::<serde_json::Value>(&std::fs::read(&retained).unwrap_or_default()).ok(),Some(capture),"native policy capture differs: {}",path.display());
+     Ok(())
+ }
+--- crates/airk-retrieval/src/model/object_metadata_tests.rs
++++ crates/airk-retrieval/src/model/object_metadata_tests.rs
+@@ -329,7 +329,7 @@
+             .iter()
+             .map(|p| p.id.as_str())
+             .collect::<std::collections::BTreeSet<_>>(),
+-        std::collections::BTreeSet::from(["minilm-l6-v2-u8-v2", "minilm-l6-v2-s8-v2"])
++        std::collections::BTreeSet::from(["minilm-l6-v2-u8-v3", "minilm-l6-v2-s8-v3"])
+     );
+     for profile in &catalog.profiles {
+         let descriptor = descriptor_from_manifest(DescriptorManifest::Onnx(&profile.manifest))?;
+--- scripts/provision-local-model.py
++++ scripts/provision-local-model.py
+@@ -16,7 +16,7 @@
+ _spec.loader.exec_module(_policy)
+ _policy.validate_catalog(CATALOG)
+ PROFILE = CATALOG["profiles"][0]
+-if CATALOG["schema"] != 2 or PROFILE["id"] != CATALOG["default_profile"] or PROFILE["precision"] != "mixed-u8" or len(CATALOG["profiles"]) != 2:
++if CATALOG["schema"] != 2 or PROFILE["id"] != CATALOG["default_profile"] or PROFILE["precision"] != "uint8" or len(CATALOG["profiles"]) != 2:
+     raise ValueError("No approved INT8 provisioning profiles")
+ REVISION = PROFILE["manifest"]["revision"]
+ SOURCE = PROFILE["manifest"]["source"]
+@@ -62,7 +62,7 @@
+             verify(path, size, digest)
+             continue
+         if source_directory is None and (not download or url is None):
+-            raise ValueError(f"Missing {name}; trained assets require explicit authenticated local build inputs")
++            raise ValueError(f"Missing {name}; assets require explicit authenticated local inputs")
+         temporary = None
+         try:
+             with tempfile.NamedTemporaryFile(dir=destination, prefix="model-download-", delete=False) as output:
+@@ -109,7 +109,7 @@
+ def main():
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument("--destination", type=Path, required=True)
+-    parser.add_argument("--download", action="store_true", help="fetch only when the native catalog supplies an authenticated URL; trained-v2 assets are local-build inputs")
++    parser.add_argument("--download", action="store_true", help="fetch only when the native catalog supplies an authenticated URL; current assets use authenticated local inputs")
+     parser.add_argument("--profile", choices=[profile["id"] for profile in CATALOG["profiles"]])
+     parser.add_argument("--source-directory", type=Path, help="explicit local model.onnx/tokenizer.json/LICENSE inputs for --profile")
+     args = parser.parse_args()
+--- crates/airk-cli/tests/model_catalog.rs
++++ crates/airk-cli/tests/model_catalog.rs
+@@ -53,7 +53,7 @@
+             .any(|p| p["id"] == value["selection"]["profile_id"])
+     );
+     assert_eq!(value["catalog"]["schema"], 2);
+-    assert_eq!(value["catalog"]["default_profile"], "minilm-l6-v2-u8-v2");
++    assert_eq!(value["catalog"]["default_profile"], "minilm-l6-v2-u8-v3");
+     let runtime = "onnxruntime-cpu/1.30.0/airk-trained-mixed-int8-b1-v2";
+     assert_eq!(value["capabilities"]["runtime"], runtime);
+     // Independent current-contract expectations: no FP32 profile, inherited
+@@ -61,20 +61,20 @@
+     // The mixed policy explicitly retains embeddings and six FFN outputs FP32.
+     let expected = [
+         (
+-            "minilm-l6-v2-u8-v2",
+-            "mixed-u8",
+-            "e7399e81737d3f9707a304be116a229983bc9fff0974d1b087293789021d2d7b",
+-            69_325_926,
++            "minilm-l6-v2-u8-v3",
++            "uint8",
++            "b941bf19f1f1283680f449fa6a7336bb5600bdcd5f84d10ddc5cd72218a0fd21",
++            23_046_789,
+         ),
+         (
+-            "minilm-l6-v2-s8-v2",
+-            "mixed-s8",
+-            "4788597b6d26061b778ac6255723d4bb004e4927446c480ecaebe19e4ea7f47c",
+-            69_355_444,
++            "minilm-l6-v2-s8-v3",
++            "int8",
++            "4278337fd0ff3c68bfb6291042cad8ab363e1d9fbc43dcb499fe91c871902474",
++            23_026_053,
+         ),
+     ];
+     let tokenizer = "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037";
+-    let license = "9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd";
++    let license = "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30";
+     for (profile, (id, precision, model, bytes)) in profiles.iter().zip(expected) {
+         assert_eq!(profile["id"], id);
+         assert_eq!(profile["precision"], precision);
+@@ -82,25 +82,13 @@
+         assert_eq!(profile["manifest"]["model_sha256"], model);
+         assert_eq!(profile["manifest"]["tokenizer_sha256"], tokenizer);
+         assert_eq!(profile["manifest"]["license_sha256"], license);
+-        assert_eq!(
+-            profile["quantization"]["schema"],
+-            "airk.minilm.quantization/2"
+-        );
+-        assert_eq!(profile["quantization"]["fp32_embeddings_retained"], true);
+-        assert_eq!(
+-            profile["quantization"]["constant_linear_parameters"],
+-            10_616_832
+-        );
+-        assert_eq!(
+-            profile["quantization"]["quantized_linear_parameters"],
+-            7_077_888
+-        );
++        assert!(profile.get("quantization").is_none_or(|value|value.is_null()));
+         assert_eq!(
+             profile["assets"],
+             json!([
+                 {"name":"model.onnx","bytes":bytes,"sha256":model,"url":null},
+                 {"name":"tokenizer.json","bytes":466247,"sha256":tokenizer,"url":null},
+-                {"name":"LICENSE","bytes":34889,"sha256":license,"url":null}
++                {"name":"LICENSE","bytes":11358,"sha256":license,"url":null}
+             ])
+         );
+     }
+--- scripts/tests/test_trained_model_inputs.py
++++ scripts/tests/test_trained_model_inputs.py
+@@ -1,5 +1,5 @@
+ # SPDX-License-Identifier: Apache-2.0
+-"""Independent trained-v2 acquisition and retained-v1 identity regressions."""
++"""Independent current-original acquisition and retained-v1 identity regressions."""
+ import copy
+ import hashlib
+ import importlib.util
+@@ -18,16 +18,15 @@
+ class TrainedModelInputs(unittest.TestCase):
+     def test_trained_catalog_has_new_identities_and_no_false_upstream_asset_urls(self):
+         profiles = MODULE.CATALOG["profiles"]
+-        self.assertEqual([p["id"] for p in profiles], ["minilm-l6-v2-u8-v2", "minilm-l6-v2-s8-v2"])
++        self.assertEqual([p["id"] for p in profiles], ["minilm-l6-v2-u8-v3", "minilm-l6-v2-s8-v3"])
+         self.assertEqual([p["manifest"]["model_sha256"] for p in profiles], [
+-            "e7399e81737d3f9707a304be116a229983bc9fff0974d1b087293789021d2d7b",
+-            "4788597b6d26061b778ac6255723d4bb004e4927446c480ecaebe19e4ea7f47c"])
++            "b941bf19f1f1283680f449fa6a7336bb5600bdcd5f84d10ddc5cd72218a0fd21",
++            "4278337fd0ff3c68bfb6291042cad8ab363e1d9fbc43dcb499fe91c871902474"])
+         for profile in profiles:
+             self.assertTrue(all(asset["url"] is None for asset in profile["assets"]))
+-            self.assertEqual(profile["quantization"]["quantized_linear_parameters"], 7_077_888)
+-            self.assertEqual(profile["quantization"]["constant_linear_parameters"], 10_616_832)
+-            self.assertEqual(len(profile["quantization"]["protected_fp32_nodes"]), 6)
+-            self.assertTrue(profile["quantization"]["fp32_embeddings_retained"])
++            self.assertIsNone(profile.get("quantization"))
++            self.assertEqual(profile["qualification"]["verified_platforms"], [])
++            self.assertEqual(profile["manifest"]["license_sha256"], "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30")
+ 
+     def test_retained_v1_profiles_preserve_their_original_runtime_and_hashes(self):
+         original = json.loads((ROOT / "crates/airk-retrieval/src/model_catalog_v1.json").read_bytes())
+--- scripts/tests/test_service_runtime_build.py
++++ scripts/tests/test_service_runtime_build.py
+@@ -129,7 +129,7 @@
+         builder = importlib.util.module_from_spec(specification)
+         specification.loader.exec_module(builder)
+         report = {"schema": 1, "source": "embedded", "engine": "onnxruntime-cpu/1.30.0", "dimensions": 384,
+-                  "repeat_equal": True, "profile": "minilm-l6-v2-u8-v2", "legacy_identity": "a" * 64, "pipeline_digest": "b" * 64}
++                  "repeat_equal": True, "profile": "minilm-l6-v2-u8-v3", "legacy_identity": "a" * 64, "pipeline_digest": "b" * 64}
+         for field, value in ((None, None), ("schema", True), ("source", "directory"), ("engine", "onnxruntime-cpu/1.22.1"),
+                              ("dimensions", 383), ("repeat_equal", 1), ("profile", "fp32"), ("profile", "minilm-l6-v2-u8-v1"), ("pipeline_digest", "incomplete")):
+             candidate = {**report, **({field: value} if field else {})}
+--- scripts/tests/test_model_provisioning.py
++++ scripts/tests/test_model_provisioning.py
+@@ -16,8 +16,8 @@
+     def test_provisioning_uses_the_native_catalog_without_changing_the_pinned_manifest(self):
+         profile = MODULE.PROFILE
+         self.assertEqual(profile["id"], MODULE.CATALOG["default_profile"])
+-        self.assertEqual(profile["precision"], "mixed-u8")
+-        self.assertEqual(MODULE.ASSETS["model.onnx"][1], 69_325_926)
++        self.assertEqual(profile["precision"], "uint8")
++        self.assertEqual(MODULE.ASSETS["model.onnx"][1], 23_046_789)
+         self.assertEqual(MODULE.ASSETS["model.onnx"][2], profile["manifest"]["model_sha256"])
+         self.assertEqual(profile["manifest"]["dimensions"], 384)
+ 

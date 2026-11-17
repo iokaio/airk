@@ -1,0 +1,45 @@
+{
+  "base_bytes": 150867,
+  "base_sha256": "664a2991e24a3b879d7ba75a36039a01a1a31739807904576d6dcd2a90cad2e2",
+  "edits": [
+    {
+      "delete_bytes": 65,
+      "deleted_sha256": "efcfc95b9b120e635975f3336a231bc3dbd696440304acc6ec706c15d923e1d2",
+      "insert_base64": "ICAgICAgc3RhdGljX2Nhc3Q8dWludDE2X3Q+KHJlaW50ZXJwcmV0X2Nhc3Q8dWludHB0cl90Pigmc2VlZCkgJiAweEZGRkZ1KTsK",
+      "offset": 19650
+    },
+    {
+      "delete_bytes": 7,
+      "deleted_sha256": "9a349bbd1a21104f051e34b2c8a9e70cc7fbb50bc19a67781f2a140c386d9438",
+      "insert_base64": "I2Vsc2UK",
+      "offset": 44785
+    },
+    {
+      "delete_bytes": 0,
+      "deleted_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "insert_base64": "I2VuZGlmCg==",
+      "offset": 44907
+    },
+    {
+      "delete_bytes": 0,
+      "deleted_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "insert_base64": "I2lmZGVmIE5ERUJVRwogIHRlbXBsYXRlIDxjbGFzcyBLPgogIHZvaWQgQXNzZXJ0SGFzaEVxQ29uc2lzdGVudChjb25zdCBLJikgewogICAgcmV0dXJuOwogIH0KI2Vsc2UK",
+      "offset": 133230
+    },
+    {
+      "delete_bytes": 33,
+      "deleted_sha256": "eed534f8246c76b3631d5c0c7f341989bc5fcd8d45ae63e3e3f9d9bdade51deb",
+      "insert_base64": "",
+      "offset": 133297
+    },
+    {
+      "delete_bytes": 0,
+      "deleted_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "insert_base64": "I2VuZGlmCg==",
+      "offset": 134572
+    }
+  ],
+  "schema": "airk.exact-byte-recovery/1",
+  "target_bytes": 150956,
+  "target_sha256": "0650217577257a5dd90cb1eec585113d49a5476cb57add084939adebab74b83a"
+}

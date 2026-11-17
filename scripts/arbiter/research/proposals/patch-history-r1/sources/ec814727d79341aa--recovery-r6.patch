@@ -1,0 +1,2381 @@
+diff --git a/crates/airk-cli/src/catalog_source_change_control.rs b/crates/airk-cli/src/catalog_source_change_control.rs
+--- a/crates/airk-cli/src/catalog_source_change_control.rs
++++ b/crates/airk-cli/src/catalog_source_change_control.rs
+@@ -96,6 +96,12 @@
+     // Its native worker census and fence bind the immutable index backing;
+     // it does not need an enabled source roster or readable RootConfig.
+     if selection.change == SourceMutationSelection::RetireIndex {
++        ensure!(
++            registry
++                .catalog_active_split_for_binding(index.backing.binding)?
++                .is_none(),
++            "active split owns this participant; cancel or finish its exact recovery before retirement"
++        );
+         return Ok(IndexReview {
+             index,
+             sources: Vec::new(),
+diff --git a/crates/airk-cli/tests/combined_reads/deleted_source_recovery.rs b/crates/airk-cli/tests/combined_reads/deleted_source_recovery.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/airk-cli/tests/combined_reads/deleted_source_recovery.rs
+@@ -0,0 +1,834 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Post-P14 acceptance regressions. Prepared inertly; not compiled or executed.
++//! Existing leaf deletion already passed on source 224ee433. These cases extend
++//! the native fixture to removed ancestors and missing storage; they do not
++//! assert that production currently poisons unrelated indexes.
++use super::*;
++
++async fn deletion_read_grant(
++    f: &Fixture,
++    project: usize,
++    index: usize,
++    nonce: u8,
++) -> Result<CombinedConnectRequest> {
++    let response = airk_cli::service_runtime::request(
++        &f.control,
++        ControlMethod::CatalogGrantDraft {
++            context_key: f.session.context_key,
++            selection: GrantDraftSelection {
++                key: policy_key(f, nonce).await?,
++                expected_catalog_revision: policy_revision(f)?,
++                project_ids: vec![f.projects[project]],
++                index_ids: Some(vec![f.indexes[index]]),
++            },
++        },
++    )
++    .await?;
++    let ControlResponse::CatalogGrantDraft { draft } = response else {
++        anyhow::bail!(
++            "dedicated deletion grant review refused: {}",
++            serde_json::to_string(&response)?
++        );
++    };
++    let CatalogOperation::CreateGrant { grant } = &draft.request.operation else {
++        anyhow::bail!("native grant operation missing");
++    };
++    let grant = grant.clone();
++    let response = airk_cli::service_runtime::request(
++        &f.control,
++        ControlMethod::CatalogApply {
++            request: draft.request,
++            preview_digest: draft.preview_digest,
++        },
++    )
++    .await?;
++    let ControlResponse::CatalogApplied { receipt, .. } = response else {
++        anyhow::bail!(
++            "dedicated deletion grant admission refused: {}",
++            serde_json::to_string(&response)?
++        );
++    };
++    let mut selected = f.session.clone();
++    selected.project_ids = vec![f.projects[project]];
++    selected.index_ids = Some(vec![f.indexes[index]]);
++    selected.grant_id = grant.id;
++    selected.expected_grant_revision = grant.revision;
++    selected.expected_catalog_revision = receipt.catalog_revision;
++    Ok(selected)
++}
++
++fn deletion_query() -> Value {
++    json!({"query":"boundaryneedle","mode":"lexical","limit":12,"max_bytes":8192,
++        "verification":"off","response_mode":"full"})
++}
++
++async fn healthy_deletion_read(f: &Fixture, mcp: &mut McpSession, id: u64) -> Result<Value> {
++    let query = deletion_query();
++    let cli = f.cli("airk_search", &query).await?;
++    let wire = mcp.call(id, "airk_search", query)?;
++    ensure!(
++        cli["isError"] != true && wire["result"]["isError"] != true,
++        "healthy selected member refused: CLI={cli}; MCP={wire}"
++    );
++    policy_parity(
++        "healthy index across unrelated source loss",
++        &cli,
++        &wire["result"],
++    )?;
++    let result = body(&cli)?;
++    let members = result["members"]
++        .as_array()
++        .context("healthy member inventory missing")?;
++    let expected = f
++        .session
++        .index_ids
++        .as_ref()
++        .filter(|ids| ids.len() == 1)
++        .context("healthy grant must select exactly one explicit index")?[0];
++    ensure!(
++        members.len() == 1 && members[0]["index_id"] == expected.to_string(),
++        "healthy read broadened or crossed index scope: {result}"
++    );
++    let member = member_body(&result, &members[0])?;
++    ensure!(
++        member["hits"]
++            .as_array()
++            .is_some_and(|hits| !hits.is_empty()),
++        "healthy member evidence missing: {member}"
++    );
++    // Only the exact retained publication is compared across independent dated reads.
++    Ok(
++        result["publication_vector"]["members"][0]["publication"]["token"]
++            .as_str()
++            .context("healthy publication token missing")?
++            .into(),
++    )
++}
++
++async fn stop_deletion_service(f: &Fixture, service: &mut Option<OwnedProcess>) -> Result<()> {
++    let response = airk_cli::service_runtime::request(&f.control, ControlMethod::Shutdown).await?;
++    ensure!(
++        !matches!(response, ControlResponse::Failure { .. }),
++        "owned service shutdown refused: {}",
++        serde_json::to_string(&response)?
++    );
++    drop(service.take());
++    Ok(())
++}
++
++fn delete_owned_source_parent(f: &Fixture, data_lost: bool) -> Result<()> {
++    let owner = f.owner.path().canonicalize()?;
++    let root = Path::new(&f.registrations[2].root);
++    let removed = root.parent().context("nested source parent missing")?;
++    ensure!(
++        removed.starts_with(&owner)
++            && removed != owner
++            && !f.control.starts_with(removed)
++            && !f.candidate.starts_with(removed),
++        "deletion target escaped its isolated fixture"
++    );
++    ensure!(
++        Path::new(&f.registrations[2].data_root).starts_with(removed) == data_lost,
++        "fixture storage loss mode differs from planned deletion"
++    );
++    fs::remove_dir_all(removed)?;
++    ensure!(!root.exists(), "fixture did not remove source");
++    Ok(())
++}
++
++async fn deleted_ancestor_case(data_lost: bool, policy_bearing: bool) -> Result<()> {
++    // The existing fixture has three indexes. A=2 and B=1 are the two measured
++    // independent indexes; index 0 remains an untouched isolation control.
++    let mut f = Fixture::with_runtime_layout(true, 3, false, Some(data_lost))?;
++    let mut service = Some(f.start().await?);
++    let expected_policy = if policy_bearing {
++        let trim = policy_draft(&f, 141, trim_selector()).await?;
++        apply_policy(&f, &trim).await?;
++        Some(wait_policy(&f).await?)
++    } else {
++        None
++    };
++    let healthy_session = deletion_read_grant(&f, 0, 1, 142).await?;
++    let affected_session = deletion_read_grant(&f, 2, 2, 143).await?;
++    f.session = affected_session.clone();
++    let mut affected = McpSession::start(&f)?;
++    let warm = affected.call(10, "airk_search", deletion_query())?;
++    ensure!(
++        warm["result"]["isError"] != true,
++        "affected baseline failed: {warm}"
++    );
++    f.session = healthy_session.clone();
++    let mut healthy = McpSession::start(&f)?;
++    let baseline = healthy_deletion_read(&f, &mut healthy, 20).await?;
++
++    if data_lost {
++        // Windows may deny deleting an open SQLite file. Stop exact owned
++        // clients/owners first; do not weaken sharing or use ACL workarounds.
++        drop(affected);
++        drop(healthy);
++        stop_deletion_service(&f, &mut service).await?;
++        delete_owned_source_parent(&f, true)?;
++    } else {
++        delete_owned_source_parent(&f, false)?;
++        ensure!(
++            healthy_deletion_read(&f, &mut healthy, 30).await? == baseline,
++            "warm healthy publication changed after A ancestor removal"
++        );
++        drop(affected);
++        drop(healthy);
++        stop_deletion_service(&f, &mut service).await?;
++    }
++
++    // Cold startup must preserve B even when A cannot start an evidence worker.
++    service = Some(f.start().await?);
++    f.session = healthy_session.clone();
++    let mut healthy = McpSession::start(&f)?;
++    ensure!(
++        healthy_deletion_read(&f, &mut healthy, 40).await? == baseline,
++        "cold healthy publication changed after A loss"
++    );
++    if data_lost {
++        f.session = affected_session.clone();
++        let mut unavailable = McpSession::start(&f)?;
++        let reply = unavailable.request(
++            50,
++            "tools/call",
++            json!({"name":"airk_search","arguments":deletion_query()}),
++        )?;
++        ensure!(
++            reply.get("error").is_some() || reply["result"]["isError"] == true,
++            "missing-storage read unexpectedly produced evidence: {reply}"
++        );
++        drop(unavailable);
++        let registry = ServiceRegistry::open_saved(&f.control)?;
++        let budget = registry.recovery_budget(
++            &f.registrations[2].binding.to_string(),
++            airk_cli::runtime_pair::engine_identity_at(&f.candidate)?,
++        )?;
++        ensure!(
++            budget.failures <= 3,
++            "missing storage escaped its durable startup circuit: {budget:?}"
++        );
++        drop(registry);
++        f.session = healthy_session.clone();
++        ensure!(
++            healthy_deletion_read(&f, &mut healthy, 60).await? == baseline,
++            "healthy member failed after an actual missing-storage admission"
++        );
++    }
++
++    // A missing ancestor is not the existing positively confirmed missing leaf.
++    // Retire deliberately through the metadata owner, without inspecting A's
++    // missing Kernel state or manufacturing a worker completion.
++    let registration = f.registrations[2].clone();
++    ensure!(
++        ServiceRegistry::open_saved(&f.control)?.is_registered(registration.binding)?,
++        "unproven ancestor absence silently retired the index"
++    );
++    let retirement = policy_draft(&f, 144, SourceMutationSelection::RetireIndex).await?;
++    apply_policy(&f, &retirement).await?;
++    let evidence_method = ControlMethod::CatalogIndexRetirementEvidence {
++        index_id: f.indexes[2],
++    };
++    let native = airk_cli::service_runtime::request(&f.control, evidence_method.clone()).await?;
++    ensure!(
++        policy_rpc_cli(&f, evidence_method).await? == serde_json::to_value(&native)?,
++        "explicit retirement transport omitted native evidence"
++    );
++    let ControlResponse::CatalogIndexRetirementEvidence {
++        evidence: Some(evidence),
++        ..
++    } = native
++    else {
++        anyhow::bail!("exact native retirement evidence missing");
++    };
++    evidence.validate()?;
++    ensure!(
++        evidence.index.tombstone && evidence.index.backing == registration,
++        "retirement changed the selected backing"
++    );
++    let deadline = Instant::now() + Duration::from_secs(90);
++    loop {
++        let registry = ServiceRegistry::open_saved(&f.control)?;
++        let settled = registry.project_was_removed(registration.binding)?;
++        ensure!(
++            !registry.is_registered(registration.binding)?,
++            "retired source became registered again"
++        );
++        if settled {
++            break;
++        }
++        ensure!(
++            Instant::now() < deadline,
++            "explicit absent-storage cleanup did not settle; policy={policy_bearing}; inspect owned receipts"
++        );
++        drop(registry);
++        // Continuously exercise B while A's asynchronous cleanup is observed.
++        ensure!(
++            healthy_deletion_read(&f, &mut healthy, 70).await? == baseline,
++            "healthy member became unusable during A cleanup"
++        );
++        tokio::time::sleep(Duration::from_millis(100)).await;
++    }
++    let registry = ServiceRegistry::open_saved(&f.control)?;
++    ensure!(
++        !registry
++            .pending_project_removals(None, 32)?
++            .iter()
++            .any(|project| project.binding == registration.binding),
++        "completed absent-storage cleanup remained in the error-poll selection"
++    );
++    if let Some(expected) = expected_policy {
++        let current = registry
++            .catalog_policy_status(f.indexes[2])?
++            .context("absent storage erased permanent policy")?;
++        ensure!(
++            current.policy == expected.policy && current.job == expected.job,
++            "absent-storage cleanup changed policy/job lineage"
++        );
++    }
++    drop(registry);
++    let worker = airk_cli::service_runtime::request(
++        &f.control,
++        ControlMethod::Worker {
++            project: registration.binding,
++        },
++    )
++    .await?;
++    ensure!(
++        matches!(worker, ControlResponse::Worker { identity: None, .. }),
++        "retirement left or restarted A's evidence worker"
++    );
++    ensure!(
++        !Path::new(&registration.root).exists(),
++        "cleanup recreated the removed source ancestor"
++    );
++    if data_lost {
++        ensure!(
++            !Path::new(&registration.data_root).exists(),
++            "cleanup recreated removed storage to open its quota or capsule"
++        );
++    }
++    ensure!(
++        healthy_deletion_read(&f, &mut healthy, 80).await? == baseline,
++        "healthy final publication changed"
++    );
++    drop(healthy);
++    stop_deletion_service(&f, &mut service).await?;
++    service = Some(f.start().await?);
++    f.session = healthy_session;
++    let mut healthy = McpSession::start(&f)?;
++    ensure!(
++        healthy_deletion_read(&f, &mut healthy, 90).await? == baseline,
++        "healthy publication failed after retired-A cold restart"
++    );
++    let worker = airk_cli::service_runtime::request(
++        &f.control,
++        ControlMethod::Worker {
++            project: registration.binding,
++        },
++    )
++    .await?;
++    ensure!(
++        matches!(worker, ControlResponse::Worker { identity: None, .. }),
++        "retired missing source restarted after service restart"
++    );
++    drop(healthy);
++    stop_deletion_service(&f, &mut service).await?;
++    Ok(())
++}
++
++#[tokio::test]
++async fn post_p14_removed_source_ancestor_keeps_healthy_cli_mcp_warm_and_cold() -> Result<()> {
++    deleted_ancestor_case(false, false).await
++}
++
++#[tokio::test]
++async fn post_p14_source_and_storage_loss_supports_explicit_retirement() -> Result<()> {
++    deleted_ancestor_case(true, false).await
++}
++
++#[tokio::test]
++async fn post_p14_policy_bearing_missing_storage_settles_without_losing_policy() -> Result<()> {
++    deleted_ancestor_case(true, true).await
++}
++
++// Uses the real native Index job, never a forged publication or watch event.
++#[cfg(feature = "embedding-worker")]
++#[tokio::test]
++async fn post_p14_individual_file_removal_keeps_healthy_index_and_reconciles_retained_paths()
++-> Result<()> {
++    let mut f = Fixture::new(true)?;
++    let mut service = Some(f.start().await?);
++    let healthy_session = deletion_read_grant(&f, 0, 1, 151).await?;
++    let affected_session = deletion_read_grant(&f, 2, 2, 152).await?;
++    f.session = healthy_session.clone();
++    let mut healthy = McpSession::start(&f)?;
++    let before = healthy_deletion_read(&f, &mut healthy, 100).await?;
++    let selected = Path::new(&f.registrations[2].root).join("api/policy.md");
++    let preserved = Path::new(&f.registrations[2].root).join("impl/policy.md");
++    let preserved_bytes = fs::read(&preserved)?;
++    fs::remove_file(&selected)?;
++    ensure!(
++        healthy_deletion_read(&f, &mut healthy, 101).await? == before,
++        "warm healthy member changed after A file removal"
++    );
++    fixture_job(&f, 2, airk_core::service::JobKind::Index).await?;
++    f.session = affected_session.clone();
++    let mut affected = McpSession::start(&f)?;
++    let args = json!({"prefix":"api/","limit":16,"max_bytes":8192,"response_mode":"full"});
++    let cli = f.cli("airk_list_files", &args).await?;
++    let wire = affected.call(102, "airk_list_files", args)?;
++    ensure!(
++        cli["isError"] != true && wire["result"]["isError"] != true,
++        "surviving A index refused after ordinary reconciliation: {cli}; {wire}"
++    );
++    policy_parity(
++        "removed-file native retained inventory",
++        &cli,
++        &wire["result"],
++    )?;
++    ensure!(
++        !serde_json::to_string(&body(&cli)?)?.contains("api/policy.md"),
++        "reconciled file inventory still contains removed path"
++    );
++    ensure!(
++        ServiceRegistry::open_saved(&f.control)?.is_registered(f.registrations[2].binding)?,
++        "a single missing file retired its whole index"
++    );
++    ensure!(
++        fs::read(&preserved)? == preserved_bytes && !selected.exists(),
++        "reconciliation changed surviving source bytes or recreated removed file"
++    );
++    drop(affected);
++    f.session = healthy_session.clone();
++    ensure!(
++        healthy_deletion_read(&f, &mut healthy, 103).await? == before,
++        "healthy member changed during A reconciliation"
++    );
++    drop(healthy);
++    stop_deletion_service(&f, &mut service).await?;
++    service = Some(f.start().await?);
++    let mut healthy = McpSession::start(&f)?;
++    ensure!(
++        healthy_deletion_read(&f, &mut healthy, 104).await? == before,
++        "healthy member changed after cold restart"
++    );
++    f.session = affected_session;
++    let retirement = policy_draft(&f, 153, SourceMutationSelection::RetireIndex).await?;
++    apply_policy(&f, &retirement).await?;
++    let deadline = Instant::now() + Duration::from_secs(90);
++    loop {
++        if ServiceRegistry::open_saved(&f.control)?
++            .project_was_removed(f.registrations[2].binding)?
++        {
++            break;
++        }
++        ensure!(
++            Instant::now() < deadline,
++            "explicit A retirement did not settle"
++        );
++        f.session = healthy_session.clone();
++        ensure!(
++            healthy_deletion_read(&f, &mut healthy, 105).await? == before,
++            "healthy member changed during explicit A retirement"
++        );
++        tokio::time::sleep(Duration::from_millis(100)).await;
++    }
++    ensure!(
++        fs::read(&preserved)? == preserved_bytes,
++        "retirement removed surviving source"
++    );
++    drop(healthy);
++    stop_deletion_service(&f, &mut service).await?;
++    Ok(())
++}
++
++#[tokio::test]
++async fn post_p14_missing_collection_settles_ordinary_credit_without_poisoning_healthy_shared_root()
++-> Result<()> {
++    let mut f = Fixture::with_shared_runtime()?;
++    let mut service = Some(f.start().await?);
++    let healthy_session = deletion_read_grant(&f, 0, 1, 161).await?;
++    f.session = healthy_session.clone();
++    let mut healthy = McpSession::start(&f)?;
++    let before = healthy_deletion_read(&f, &mut healthy, 110).await?;
++    drop(healthy);
++    stop_deletion_service(&f, &mut service).await?;
++    let registration = f.registrations[2].clone();
++    let data = Path::new(&registration.data_root);
++    ensure!(
++        data == Path::new(&f.registrations[1].data_root),
++        "fixture did not share quota root"
++    );
++    let grants = data.join(".quota-1.4/current-grants");
++    let inventory = |collection: &str| -> Result<Vec<(PathBuf, Vec<u8>)>> {
++        let mut rows = Vec::new();
++        for entry in fs::read_dir(&grants)? {
++            let path = entry?.path();
++            let bytes = fs::read(&path)?;
++            let body: Value = serde_json::from_slice(&bytes)?;
++            if body["scope"]["collection"] == collection {
++                rows.push((path, bytes));
++            }
++        }
++        rows.sort_by(|a, b| a.0.cmp(&b.0));
++        Ok(rows)
++    };
++    let a_rows = inventory(&registration.collection)?;
++    ensure!(
++        !a_rows.is_empty(),
++        "fixture did not leave real native durable Current allowance; do not claim grant recovery without a paid native fixture"
++    );
++    let b_rows = inventory(&f.registrations[1].collection)?;
++    ensure!(
++        !b_rows.is_empty(),
++        "healthy native Current allowance fixture is vacuous"
++    );
++    let quota = airk_store::quota::Quota::open_service(data)?;
++    let previous_policy = quota.policy()?;
++    let capacity = quota.status()?;
++    let mut constrained = previous_policy.clone();
++    constrained.root_bytes = capacity.used_bytes + capacity.reserved_bytes + 128;
++    quota.configure_if_current(constrained, Some(&previous_policy))?;
++    ensure!(
++        quota.reserve(&f.registrations[1].collection, 4096).is_err(),
++        "ordinary writer consumed unavailable prepaid allowance"
++    );
++    let logical = data.join("collections-1.4").join(&registration.collection);
++    let owner = f.owner.path().canonicalize()?;
++    ensure!(
++        logical.starts_with(&owner) && logical != data && !f.control.starts_with(&logical),
++        "selected collection deletion escaped fixture"
++    );
++    fs::remove_dir_all(&logical)?;
++    service = Some(f.start().await?);
++    let mut healthy = McpSession::start(&f)?;
++    ensure!(
++        healthy_deletion_read(&f, &mut healthy, 111).await? == before,
++        "cold shared-root healthy member changed after A storage loss"
++    );
++    let retirement = policy_draft(&f, 162, SourceMutationSelection::RetireIndex).await?;
++    apply_policy(&f, &retirement).await?;
++    let deadline = Instant::now() + Duration::from_secs(90);
++    loop {
++        let registry = ServiceRegistry::open_saved(&f.control)?;
++        if registry.project_was_removed(registration.binding)? {
++            ensure!(
++                !registry
++                    .pending_project_removals(None, 32)?
++                    .iter()
++                    .any(|p| p.binding == registration.binding),
++                "settled shared-root removal remained selected for cleanup"
++            );
++            break;
++        }
++        ensure!(
++            Instant::now() < deadline,
++            "shared-root credit settlement did not finish"
++        );
++        drop(registry);
++        ensure!(
++            healthy_deletion_read(&f, &mut healthy, 112).await? == before,
++            "healthy B failed while exact A credit settled"
++        );
++        tokio::time::sleep(Duration::from_millis(100)).await;
++    }
++    ensure!(
++        inventory(&registration.collection)?.is_empty(),
++        "disposed A durable grants leaked"
++    );
++    ensure!(
++        inventory(&f.registrations[1].collection)? == b_rows,
++        "A cleanup changed B grant identity/bytes"
++    );
++    let paid_b = quota.reserve(&f.registrations[1].collection, 4096)?;
++    paid_b.charge(4096)?;
++    drop(paid_b);
++    ensure!(
++        !logical.exists(),
++        "cleanup recreated missing logical collection"
++    );
++    f.assert_sources_unchanged()?;
++    drop(healthy);
++    stop_deletion_service(&f, &mut service).await?;
++    service = Some(f.start().await?);
++    f.session = healthy_session;
++    let mut healthy = McpSession::start(&f)?;
++    ensure!(
++        healthy_deletion_read(&f, &mut healthy, 113).await? == before,
++        "healthy B failed after settled A restart"
++    );
++    let worker = airk_cli::service_runtime::request(
++        &f.control,
++        ControlMethod::Worker {
++            project: registration.binding,
++        },
++    )
++    .await?;
++    ensure!(
++        matches!(worker, ControlResponse::Worker { identity: None, .. }),
++        "retired A evidence worker restarted"
++    );
++    drop(healthy);
++    stop_deletion_service(&f, &mut service).await?;
++    Ok(())
++}
++
++// Called ONLY after a real shared-root provider cutover and native two-participant
++// finalization/ack. No complete/release/current_owned bit is constructed by tests.
++#[cfg(feature = "embedding-worker")]
++pub(crate) async fn retire_completed_destination(
++    f: &mut Fixture,
++    service: &mut Option<OwnedProcess>,
++    complete: &airk_core::catalog_split::SplitSnapshot,
++    interrupt_retirement: bool,
++) -> Result<()> {
++    use airk_store::quota::funding::FundingChildKind;
++    let destination = complete.request.destination_registration.clone();
++    ensure!(
++        destination.data_root == complete.request.original_registration.data_root,
++        "terminal Current preservation regression requires a genuinely shared root"
++    );
++    let quota = airk_store::quota::Quota::open_service(Path::new(&destination.data_root))?;
++    let operation = complete.receipt.operation_id;
++    let before = quota.observe_funding(operation)?;
++    ensure!(
++        before.complete && before.release_acknowledged,
++        "actual native cutover did not acknowledge ordinary Current ownership"
++    );
++    let selected: Vec<_> = before
++        .children
++        .iter()
++        .filter(|child| child.index_id == complete.request.destination.index_id)
++        .cloned()
++        .collect();
++    let original: Vec<_> = before
++        .children
++        .iter()
++        .filter(|child| child.index_id == complete.request.original_index)
++        .cloned()
++        .collect();
++    ensure!(
++        !selected.is_empty()
++            && !original.is_empty()
++            && selected
++                .iter()
++                .chain(&original)
++                .all(|child| child.current_owned
++                    && matches!(child.kind, FundingChildKind::Current { .. })),
++        "real native terminal WAL children missing; no fabricated positive fixture"
++    );
++    let healthy = deletion_read_grant(f, 2, 2, 181).await?;
++    f.session = healthy;
++    let mut mcp = McpSession::start(f)?;
++    let token = healthy_deletion_read(f, &mut mcp, 120).await?;
++    drop(mcp);
++    stop_deletion_service(f, service).await?;
++    let logical = Path::new(&destination.data_root)
++        .join("collections-1.4")
++        .join(&destination.collection);
++    let owner = f.owner.path().canonicalize()?;
++    ensure!(
++        logical.starts_with(&owner)
++            && logical != Path::new(&destination.data_root)
++            && !f.control.starts_with(&logical),
++        "terminal selected deletion escaped fixture"
++    );
++    fs::remove_dir_all(&logical)?;
++    *service = Some(f.start().await?);
++    let mut mcp = McpSession::start(f)?;
++    ensure!(
++        healthy_deletion_read(f, &mut mcp, 121).await? == token,
++        "surviving original changed after terminal destination loss"
++    );
++    drop(mcp);
++    let response = airk_cli::service_runtime::request(
++        &f.control,
++        ControlMethod::CatalogSourceMutationDraft {
++            selection: SourceMutationDraftSelection {
++                key: policy_key(f, 182).await?,
++                expected_catalog_revision: policy_revision(f)?,
++                index_id: complete.request.destination.index_id,
++                change: SourceMutationSelection::RetireIndex,
++            },
++        },
++    )
++    .await?;
++    let ControlResponse::CatalogSourceMutationDraft { draft } = response else {
++        anyhow::bail!(
++            "completed split destination retirement review refused: {}",
++            serde_json::to_string(&response)?
++        );
++    };
++    // A test-only OS share denial interrupts the REAL native metadata replace,
++    // not a fabricated completed funding row or a production fault environment.
++    #[cfg(windows)]
++    let interrupted_parent = if interrupt_retirement {
++        use std::os::windows::fs::OpenOptionsExt;
++        Some(
++            std::fs::OpenOptions::new()
++                .read(true)
++                .share_mode(1 | 2)
++                .open(
++                    Path::new(&destination.data_root)
++                        .join(".quota-1.4/split-allocations")
++                        .join(format!("f-{operation}.json")),
++                )?,
++        )
++    } else {
++        None
++    };
++    #[cfg(not(windows))]
++    ensure!(
++        !interrupt_retirement,
++        "OS share-denial regression is Windows-only"
++    );
++    apply_policy(f, &draft).await?;
++    #[cfg(windows)]
++    if let Some(parent) = interrupted_parent {
++        let scratch = Path::new(&destination.data_root)
++            .join(".quota-1.4/split-allocations")
++            .join(format!("funding-retire-{}", before.identity()?));
++        let deadline = Instant::now() + Duration::from_secs(30);
++        loop {
++            if scratch
++                .metadata()
++                .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
++            {
++                break;
++            }
++            ensure!(
++                Instant::now() < deadline,
++                "actual interrupted A disposal never created its exact owned scratch"
++            );
++            tokio::time::sleep(Duration::from_millis(25)).await;
++        }
++        // Keep target share denial through shutdown: A cannot accidentally finish
++        // between observing its scratch and excluding the native metadata actor.
++        stop_deletion_service(f, service).await?;
++        ensure!(
++            !ServiceRegistry::open_saved(&f.control)?.project_was_removed(destination.binding)?,
++            "share denial did not interrupt native disposal"
++        );
++        drop(parent);
++        let interrupted = quota.observe_funding(operation)?;
++        ensure!(
++            interrupted.children == before.children && scratch.is_file(),
++            "interruption prematurely released funded Current ownership"
++        );
++        let original_registration = &complete.request.original_registration;
++        let collection = airk_store::service::collection::Collection::existing(
++            Path::new(&original_registration.data_root),
++            &original_registration.root,
++            &original_registration.collection,
++        )?;
++        let store = collection.selected_store()?;
++        let writer = store.lock()?;
++        let mut grants = quota.current_grants(&writer)?;
++        let grant = grants
++            .iter_mut()
++            .find(|grant| {
++                original.iter().any(|child| {
++            matches!(&child.kind, FundingChildKind::Current { scope, .. } if scope == grant.scope())
++        })
++            })
++            .context("actual healthy B Current grant not found")?;
++        let capacity = grant.capacity();
++        ensure!(capacity > 1, "real Current fixture lacks resize headroom");
++        grant.resize(&writer, capacity - 1)?;
++        grant.resize(&writer, capacity)?;
++        drop(grants);
++        drop(writer);
++        drop(store);
++        drop(collection);
++        let advanced = quota.observe_funding(operation)?;
++        ensure!(
++            advanced.revision > interrupted.revision
++                && advanced.children == interrupted.children
++                && advanced.request == interrupted.request
++                && advanced.release == interrupted.release,
++            "real B Current resize did not advance only the mutable funding revision"
++        );
++        ensure!(
++            scratch.is_file(),
++            "B progress incorrectly removed A scratch"
++        );
++        *service = Some(f.start().await?);
++    }
++    // This is an explicit new grant review after restrictive native retirement;
++    // never silently renew the old Project authority or relax its errors.
++    f.session = deletion_read_grant(f, 2, 2, 183).await?;
++    let mut mcp = McpSession::start(f)?;
++    let deadline = Instant::now() + Duration::from_secs(90);
++    loop {
++        if ServiceRegistry::open_saved(&f.control)?.project_was_removed(destination.binding)? {
++            break;
++        }
++        ensure!(
++            Instant::now() < deadline,
++            "acknowledged Current-owned destination cleanup did not settle"
++        );
++        ensure!(
++            healthy_deletion_read(f, &mut mcp, 122).await? == token,
++            "terminal A disposal changed surviving B publication"
++        );
++        tokio::time::sleep(Duration::from_millis(100)).await;
++    }
++    let after = quota.observe_funding(operation)?;
++    ensure!(
++        after.complete
++            && after.release_acknowledged
++            && after.release == before.release
++            && after.request == before.request
++            && !after
++                .children
++                .iter()
++                .any(|child| child.index_id == complete.request.destination.index_id)
++            && after.children == original,
++        "terminal disposal changed immutable funding lineage or surviving original Current credit"
++    );
++    if interrupt_retirement {
++        let scratch = Path::new(&destination.data_root)
++            .join(".quota-1.4/split-allocations")
++            .join(format!("funding-retire-{}", before.identity()?));
++        ensure!(
++            !scratch.exists(),
++            "A retry leaked immutable owned scratch after real B revision advance"
++        );
++    }
++    let saved = ServiceRegistry::open_saved(&f.control)?
++        .catalog_split_status(operation)?
++        .context("completed split receipt missing")?;
++    ensure!(
++        saved == *complete,
++        "ordinary Current disposal changed the exact completed native receipt"
++    );
++    ensure!(
++        !logical.exists(),
++        "terminal disposal recreated the missing destination"
++    );
++    f.assert_sources_unchanged()?;
++    drop(mcp);
++    stop_deletion_service(f, service).await?;
++    *service = Some(f.start().await?);
++    let mut mcp = McpSession::start(f)?;
++    ensure!(
++        healthy_deletion_read(f, &mut mcp, 123).await? == token,
++        "surviving original failed after retired terminal destination restart"
++    );
++    let worker = airk_cli::service_runtime::request(
++        &f.control,
++        ControlMethod::Worker {
++            project: destination.binding,
++        },
++    )
++    .await?;
++    ensure!(
++        matches!(worker, ControlResponse::Worker { identity: None, .. }),
++        "retired terminal destination worker restarted"
++    );
++    drop(mcp);
++    stop_deletion_service(f, service).await?;
++    Ok(())
++}
+diff --git a/crates/airk-cli/tests/combined_reads/permanent_trim.rs b/crates/airk-cli/tests/combined_reads/permanent_trim.rs
+--- a/crates/airk-cli/tests/combined_reads/permanent_trim.rs
++++ b/crates/airk-cli/tests/combined_reads/permanent_trim.rs
+@@ -11,6 +11,9 @@
+     index_catalog::PathScope,
+     service::{JobOutcome, RequestKey},
+ };
++
++#[path = "deleted_source_recovery.rs"]
++pub(super) mod deleted_source_recovery;
+ 
+ pub(super) async fn policy_key(f: &Fixture, nonce: u8) -> Result<RequestKey> {
+     let response =
+diff --git a/crates/airk-cli/tests/combined_reads/split.rs b/crates/airk-cli/tests/combined_reads/split.rs
+--- a/crates/airk-cli/tests/combined_reads/split.rs
++++ b/crates/airk-cli/tests/combined_reads/split.rs
+@@ -65,6 +65,9 @@
+ }
+ 
+ async fn draft(f: &Fixture, nonce: u8) -> Result<SplitDraft> {
++    draft_at_root(f, nonce, false).await
++}
++async fn draft_at_root(f: &Fixture, nonce: u8, shared: bool) -> Result<SplitDraft> {
+     let method = ControlMethod::CatalogSplitSourceState {
+         index_id: f.indexes[2],
+         expected_catalog_revision: revision(f)?,
+@@ -96,13 +99,16 @@
+             path: "api".into(),
+         }],
+         destination_name: "Process split destination".into(),
+-        destination_data_root: f
+-            .owner
+-            .path()
+-            .join(format!("split-data-{nonce}"))
+-            .to_str()
+-            .context("UTF8 destination")?
+-            .into(),
++        destination_data_root: if shared {
++            f.registrations[2].data_root.clone()
++        } else {
++            f.owner
++                .path()
++                .join(format!("split-data-{nonce}"))
++                .to_str()
++                .context("UTF8 destination")?
++                .into()
++        },
+         destination_collection: format!("split{nonce}"),
+         projects: state
+             .affected_projects
+@@ -164,8 +170,12 @@
+         "escaping selector admitted"
+     );
+     ensure!(
+-        !Path::new(&draft.request.destination_registration.data_root).exists(),
+-        "read-only review allocated destination"
++        Path::new(&draft.request.destination_registration.data_root).exists() == shared
++            && !Path::new(&draft.request.destination_registration.data_root)
++                .join("collections-1.4")
++                .join(&draft.request.destination_registration.collection)
++                .exists(),
++        "read-only review allocated destination or changed root presence"
+     );
+     Ok(*draft)
+ }
+@@ -540,6 +550,22 @@
+ #[tokio::test]
+ async fn split_actual_service_provider_cutover_retains_complete_rpc_cli_mcp_evidence() -> Result<()>
+ {
++    provider_cutover_with_retirement(false, false).await
++}
++#[cfg(feature = "embedding-worker")]
++#[tokio::test]
++async fn post_p14_completed_shared_root_current_owned_destination_can_retire_without_changing_original()
++-> Result<()> {
++    provider_cutover_with_retirement(true, false).await
++}
++#[cfg(all(windows, feature = "embedding-worker"))]
++#[tokio::test]
++async fn post_p14_interrupted_retirement_reuses_funding_scratch_after_real_healthy_current_revision()
++-> Result<()> {
++    provider_cutover_with_retirement(true, true).await
++}
++#[cfg(feature = "embedding-worker")]
++async fn provider_cutover_with_retirement(shared: bool, interrupt_retirement: bool) -> Result<()> {
+     let mut f = Fixture::with_helper()?;
+     f.session.project_ids = vec![f.projects[2]];
+     f.session.index_ids = Some(vec![f.indexes[2]]);
+@@ -567,7 +593,12 @@
+     fixture_job(&f, 2, airk_core::service::JobKind::Index).await?;
+     fixture_job(&f, 2, airk_core::service::JobKind::Vectors).await?;
+     pause_quiescent_original(&f, 2).await?;
+-    let mut capture = metrics::Capture::start(&mut f, &mut _service, "complete").await?;
++    // New lifecycle scenario has no historical complete-workload cost claim.
++    let mut capture = if shared {
++        None
++    } else {
++        metrics::Capture::start(&mut f, &mut _service, "complete").await?
++    };
+     let old = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+     let mut old_mcp = McpSession::start(&f)?;
+     let vector = json!({"query":"boundaryneedle","mode":"vector","limit":8,"max_bytes":8192,"verification":"off","response_mode":"full"});
+@@ -590,7 +621,7 @@
+         &body(&warm)?,
+         &body(&warm_mcp["result"])?,
+     )?;
+-    let reviewed = draft(&f, 131).await?;
++    let reviewed = draft_at_root(&f, 131, shared).await?;
+     if let Some(observer) = capture.as_mut() {
+         observer.destination(&f, &reviewed)?;
+     }
+@@ -642,14 +673,14 @@
+         "real provider-bearing original worker was not captured by native cutover: {obligation:?}"
+     );
+     ensure!(
+-        complete.receipt.funding_release_receipts.len() == 2
++        complete.receipt.funding_release_receipts.len() == if shared { 1 } else { 2 }
+             && complete
+                 .finalization
+                 .as_ref()
+                 .context("native finalization absent")?
+                 .funding_acknowledged
+                 .len()
+-                == 2,
++                == if shared { 1 } else { 2 },
+         "actual native roots were not acknowledged"
+     );
+     // Old client authority is never renewed across restrictive original cutover.
+@@ -859,6 +890,16 @@
+     if let Some(observer) = capture.take() {
+         observer.finish(&f, &mut _service, &complete).await?;
+     }
++    if shared {
++        let mut service = Some(_service);
++        super::permanent_trim::deleted_source_recovery::retire_completed_destination(
++            &mut f,
++            &mut service,
++            &complete,
++            interrupt_retirement,
++        )
++        .await?;
++    }
+     Ok(())
+ }
+ 
+diff --git a/crates/airk-cli/tests/combined_reads.rs b/crates/airk-cli/tests/combined_reads.rs
+--- a/crates/airk-cli/tests/combined_reads.rs
++++ b/crates/airk-cli/tests/combined_reads.rs
+@@ -167,6 +167,32 @@
+     }
+ 
+     fn with_runtime(dedicated_is_indexed: bool, count: usize, helper: bool) -> Result<Self> {
++        Self::with_runtime_layout(dedicated_is_indexed, count, helper, None)
++    }
++    fn with_runtime_layout(
++        dedicated_is_indexed: bool,
++        count: usize,
++        helper: bool,
++        removed_last_parent: Option<bool>,
++    ) -> Result<Self> {
++        Self::with_runtime_topology(
++            dedicated_is_indexed,
++            count,
++            helper,
++            removed_last_parent,
++            false,
++        )
++    }
++    fn with_shared_runtime() -> Result<Self> {
++        Self::with_runtime_topology(true, 3, false, None, true)
++    }
++    fn with_runtime_topology(
++        dedicated_is_indexed: bool,
++        count: usize,
++        helper: bool,
++        removed_last_parent: Option<bool>,
++        shared: bool,
++    ) -> Result<Self> {
+         ensure!(
+             (3..=32).contains(&count),
+             "fixture index count outside bound"
+@@ -221,10 +247,28 @@
+             .collect::<Vec<_>>();
+         let mut registrations = Vec::new();
+         for n in 0..count {
+-            let source = base.join(format!("source{n}"));
+-            let data = base.join(format!("data{n}"));
++            let nested = n + 1 == count && removed_last_parent.is_some();
++            let parent = if nested {
++                let parent = base.join("removed-parent");
++                fs::create_dir(&parent)?;
++                parent
++            } else {
++                base.clone()
++            };
++            let source = parent.join(format!("source{n}"));
++            let data = if shared {
++                base.join("shared-data")
++            } else if nested && removed_last_parent == Some(true) {
++                parent.join(format!("data{n}"))
++            } else {
++                base.join(format!("data{n}"))
++            };
+             fs::create_dir(&source)?;
+-            fs::create_dir(&data)?;
++            if shared {
++                fs::create_dir_all(&data)?;
++            } else {
++                fs::create_dir(&data)?;
++            }
+             for directory in ["api", "impl", "private", "api-other"] {
+                 fs::create_dir(source.join(directory))?;
+                 fs::write(
+diff --git a/crates/airk-store/src/quota/current.rs b/crates/airk-store/src/quota/current.rs
+--- a/crates/airk-store/src/quota/current.rs
++++ b/crates/airk-store/src/quota/current.rs
+@@ -756,3 +756,46 @@
+         std::process::exit(0);
+     }
+ }
++
++// Caller retains the actual ledger lock and positive complete-collection
++// absence proof. Inventory is read-only; no recovery of another collection.
++pub(super) fn retired_inventory(
++    directory: &crate::service::registry::catalog::setup::storage::SetupDirectory,
++    collection: &str,
++) -> Result<Vec<(std::ffi::OsString, File)>> {
++    use crate::service::registry::catalog::setup::storage::SetupFileMode;
++    let mut selected = Vec::new();
++    let mut records = 0;
++    for (visited, entry) in directory.entries()?.enumerate() {
++        ensure!(
++            visited < MAX_RESERVATIONS * 2 + 2,
++            "excessive current quota grant state"
++        );
++        let name = entry?;
++        let text = name.to_str().context("invalid current quota grant name")?;
++        let file = directory.open_file(&name, SetupFileMode::Read)?;
++        ensure!(
++            file.metadata()?.len() <= RECORD_MAX,
++            "oversized current quota grant"
++        );
++        if text.starts_with("grant-") && text.len() <= 128 {
++            // Unpublished atomic-write scratch cannot own a transaction.
++            // Its collection is not authenticated; preserve it without deletion.
++            continue;
++        }
++        let mut bytes = Vec::new();
++        file.try_clone()?
++            .take(RECORD_MAX + 1)
++            .read_to_end(&mut bytes)?;
++        let record = decode_record(Some(&name), &bytes)?;
++        records += 1;
++        ensure!(
++            records <= MAX_RESERVATIONS,
++            "current quota grant count exhausted"
++        );
++        if record.scope.collection == collection {
++            selected.push((name, file));
++        }
++    }
++    Ok(selected)
++}
+diff --git a/crates/airk-store/src/quota/funding.rs b/crates/airk-store/src/quota/funding.rs
+--- a/crates/airk-store/src/quota/funding.rs
++++ b/crates/airk-store/src/quota/funding.rs
+@@ -679,6 +679,14 @@
+     root: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+     logical_root: &Path,
+ ) -> Result<Vec<LiveRecord>> {
++    pinned_records_checked(control, root, logical_root, None)
++}
++fn pinned_records_checked(
++    control: &crate::service::registry::catalog::setup::storage::SetupDirectory,
++    root: &crate::service::registry::catalog::setup::storage::SetupDirectory,
++    logical_root: &Path,
++    retired_registration: Option<&ProjectRegistration>,
++) -> Result<Vec<LiveRecord>> {
+     use crate::service::registry::catalog::setup::storage::SetupFileMode;
+     use std::ffi::OsStr;
+     let directory = match control.open_dir(OsStr::new(DIRECTORY)) {
+@@ -738,6 +746,9 @@
+                     == pinned_identity(root, logical_root, record.request.namespace)?,
+             "pinned funding root binding changed"
+         );
++        if let Some(registration) = retired_registration {
++            retired::participant(&record, registration)?;
++        }
+         result.extend(accounting(&record)?);
+         operations += 1;
+         ensure!(
+@@ -2344,3 +2355,7 @@
+         Ok(record)
+     }
+ }
++
++#[path = "funding_retired.rs"]
++mod retired;
++pub(super) use retired::RetiredCurrentInventory;
+diff --git a/crates/airk-store/src/quota/funding_retired.rs b/crates/airk-store/src/quota/funding_retired.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/airk-store/src/quota/funding_retired.rs
+@@ -0,0 +1,286 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Disposal of fully acknowledged allocations already handed to ordinary Current.
++//! Active/unacknowledged operation funding never gains retirement authority here.
++use super::*;
++use crate::service::registry::catalog::setup::storage::{SetupDirectory, SetupFileMode};
++use std::ffi::{OsStr, OsString};
++
++pub(super) fn participant(
++    record: &FundingReceipt,
++    registration: &ProjectRegistration,
++) -> Result<Option<IndexId>> {
++    let Some(part) = record
++        .participants
++        .iter()
++        .find(|part| part.collection == registration.collection)
++    else {
++        return Ok(None);
++    };
++    ensure!(
++        record.request.registration(part.index_id) == Some(registration)
++            && record.complete
++            && record.release_acknowledged
++            && part.remaining_growth == 0,
++        "retirement requires exact fully acknowledged ordinary Current ownership"
++    );
++    ensure!(
++        record
++            .children
++            .iter()
++            .filter(|child| child.index_id == part.index_id)
++            .all(|child| child.current_owned
++                && !child.closed
++                && matches!(child.kind, FundingChildKind::Current { .. })),
++        "retirement cannot adopt operation-owned or ordinary reservation children"
++    );
++    Ok(Some(part.index_id))
++}
++struct Row {
++    name: OsString,
++    owned: File,
++    scratch: OsString,
++    next: Option<Vec<u8>>,
++}
++/// Caller has exact native retired participant, positive whole-logical absence,
++/// actual global writer exclusion and the existing lifecycle/ledger handles.
++pub(in crate::quota) struct RetiredCurrentInventory {
++    directory: SetupDirectory,
++    root: PathBuf,
++    rows: Vec<Row>,
++}
++impl RetiredCurrentInventory {
++    pub(in crate::quota) fn capture(
++        control: &SetupDirectory,
++        root: &SetupDirectory,
++        logical_root: &Path,
++        registration: &ProjectRegistration,
++    ) -> Result<Option<Self>> {
++        // Validate ALL known funding metadata before any ordinary/funded effect.
++        // Zero-credit live or unacknowledged participants still refuse.
++        pinned_records_checked(control, root, logical_root, Some(registration))?;
++        let directory = match control.open_dir(OsStr::new(DIRECTORY)) {
++            Ok(directory) => directory,
++            Err(error) if absent(&error) => return Ok(None),
++            Err(error) => return Err(error),
++        };
++        let mut rows = Vec::new();
++        for (visited, entry) in directory.entries()?.enumerate() {
++            ensure!(
++                visited < MAX_OPERATIONS * 2 + 1,
++                "excessive retired Current funding inventory"
++            );
++            let name = entry?;
++            let text = name.to_str().context("funding name UTF-8")?;
++            if text == "leases" || text.starts_with("funding-") {
++                continue;
++            }
++            let owned = directory.open_file(&name, SetupFileMode::Read)?;
++            let mut record: FundingReceipt =
++                serde_json::from_slice(&directory.read_file(&name, MAX_RECORD_BYTES)?)?;
++            record.validate()?;
++            ensure!(
++                text == record.filename()
++                    && record.data_root == logical_root
++                    && record.root_identity
++                        == pinned_identity(root, logical_root, record.request.namespace)?,
++                "retired Current funding identity changed"
++            );
++            let Some(index) = participant(&record, registration)? else {
++                continue;
++            };
++            if !record.children.iter().any(|child| child.index_id == index) {
++                continue;
++            }
++            let scratch = OsString::from(format!("funding-retire-{}", record.identity()?));
++            record.children.retain(|child| child.index_id != index);
++            advance(&mut record)?;
++            record.validate()?;
++            let next = if record.children.is_empty() {
++                None
++            } else {
++                Some(serde_json::to_vec(&record)?)
++            };
++            if let Some(bytes) = &next {
++                ensure!(
++                    bytes.len() as u64 <= MAX_RECORD_BYTES,
++                    "retired Current metadata exceeds bound"
++                );
++            }
++            // Validate the exact bounded plain scratch before ANY grant effects,
++            // including final-parent disposal. No prefix-wide deletion is allowed.
++            match directory.read_file(&scratch, MAX_RECORD_BYTES) {
++                Ok(_) => (),
++                Err(error) if absent(&error) => (),
++                Err(error) => return Err(error),
++            }
++            rows.push(Row {
++                name,
++                owned,
++                scratch,
++                next,
++            });
++        }
++        Ok(Some(Self {
++            directory,
++            root: logical_root.to_path_buf(),
++            rows,
++        }))
++    }
++    pub(in crate::quota) fn apply(&self) -> Result<()> {
++        self.apply_with_hook(|_| Ok(()))
++    }
++    fn apply_with_hook(
++        &self,
++        mut checkpoint: impl FnMut(PersistPoint) -> Result<()>,
++    ) -> Result<()> {
++        for row in &self.rows {
++            if let Some(bytes) = &row.next {
++                // Same bounded ledger metadata capacity rule as ordinary
++                // release_current; no source, model or new operation allocation.
++                crate::capacity::require_growth(&self.root, MAX_RECORD_BYTES)?;
++                let mut pending = match self
++                    .directory
++                    .open_file(&row.scratch, SetupFileMode::ReadWrite)
++                {
++                    Ok(file) => file,
++                    Err(error) if absent(&error) => self
++                        .directory
++                        .open_file(&row.scratch, SetupFileMode::CreateNew)?,
++                    Err(error) => return Err(error),
++                };
++                pending.set_len(0)?;
++                let middle = bytes.len() / 2;
++                pending.write_all(&bytes[..middle])?;
++                checkpoint(PersistPoint::PendingPrefix)?;
++                pending.write_all(&bytes[middle..])?;
++                pending.sync_all()?;
++                checkpoint(PersistPoint::PendingSynced)?;
++                self.directory
++                    .replace_file(&row.scratch, &pending, &row.name, &row.owned)?;
++            } else {
++                // Forget the operation only after its one exact immutable scratch
++                // is gone and that unlink is durable. An interrupted write must
++                // never outlive the parent authority needed to reclaim it.
++                match self.directory.open_file(&row.scratch, SetupFileMode::Read) {
++                    Ok(pending) => {
++                        ensure!(
++                            pending.metadata()?.len() <= MAX_RECORD_BYTES,
++                            "oversized retired Current scratch"
++                        );
++                        self.directory
++                            .unlink_file_if_identity(&row.scratch, &pending)?;
++                        self.directory.sync()?;
++                    }
++                    Err(error) if absent(&error) => (),
++                    Err(error) => return Err(error),
++                }
++                // Native catalog retains operation/release history, exactly as
++                // ordinary release_current forgetting its final acknowledged child.
++                checkpoint(PersistPoint::BeforeParentUnlink)?;
++                self.directory
++                    .unlink_file_if_identity(&row.name, &row.owned)?;
++            }
++        }
++        self.directory.sync()
++    }
++}
++fn absent(error: &anyhow::Error) -> bool {
++    error
++        .downcast_ref::<io::Error>()
++        .is_some_and(|error| error.kind() == io::ErrorKind::NotFound)
++}
++
++#[derive(Clone, Copy, PartialEq, Eq)]
++enum PersistPoint {
++    PendingPrefix,
++    PendingSynced,
++    BeforeParentUnlink,
++}
++
++#[cfg(test)]
++mod persistence_tests {
++    use super::*;
++    // Persistence-only custody test. It deliberately does not manufacture a
++    // terminal FundingReceipt or assert native release authority: the separate
++    // real shared-root provider-cutover retirement fixture covers admission.
++    fn inventory(path: &Path, next: Option<&[u8]>) -> Result<RetiredCurrentInventory> {
++        let directory = SetupDirectory::open_canonical(path)?;
++        let name = OsString::from("f-owned.json");
++        let owned = directory.open_file(&name, SetupFileMode::Read)?;
++        Ok(RetiredCurrentInventory {
++            directory,
++            root: path.to_path_buf(),
++            rows: vec![Row {
++                name,
++                owned,
++                scratch: OsString::from("funding-retire-immutable-allocation"),
++                next: next.map(Vec::from),
++            }],
++        })
++    }
++    #[test]
++    fn interrupted_custody_reuses_one_scratch_across_payload_revisions_and_final_forget()
++    -> Result<()> {
++        let temp = tempfile::tempdir()?;
++        let root = temp.path().canonicalize()?;
++        fs::write(root.join("f-owned.json"), b"original-authority")?;
++        fs::write(root.join("unrelated-owned-row"), b"preserved")?;
++        let first = inventory(&root, Some(b"revision-one-after-A"))?;
++        assert!(
++            first
++                .apply_with_hook(|point| {
++                    if point == PersistPoint::PendingPrefix {
++                        anyhow::bail!("injected interrupted write")
++                    }
++                    Ok(())
++                })
++                .is_err()
++        );
++        drop(first);
++        assert_eq!(fs::read(root.join("f-owned.json"))?, b"original-authority");
++        assert!(root.join("funding-retire-immutable-allocation").exists());
++        // Model the intervening authority revision at this persistence boundary;
++        // this is not a claim of a real native B Current resize in this unit.
++        fs::write(root.join("f-owned.json"), b"revision-two-B-progress")?;
++        let second = inventory(&root, Some(b"revision-three-after-A"))?;
++        second.apply()?;
++        drop(second);
++        assert_eq!(
++            fs::read(root.join("f-owned.json"))?,
++            b"revision-three-after-A"
++        );
++        assert!(!root.join("funding-retire-immutable-allocation").exists());
++        // Crash before replacing the final metadata leaves scratch plus parent.
++        let partial = inventory(&root, Some(b"partial-final-metadata"))?;
++        assert!(
++            partial
++                .apply_with_hook(|point| {
++                    if point == PersistPoint::PendingPrefix {
++                        anyhow::bail!("injected final interruption")
++                    }
++                    Ok(())
++                })
++                .is_err()
++        );
++        drop(partial);
++        let last = inventory(&root, None)?;
++        assert!(
++            last.apply_with_hook(|point| {
++                if point == PersistPoint::BeforeParentUnlink {
++                    anyhow::bail!("injected after scratch unlink")
++                }
++                Ok(())
++            })
++            .is_err()
++        );
++        drop(last);
++        assert!(!root.join("funding-retire-immutable-allocation").exists());
++        assert!(root.join("f-owned.json").exists());
++        let retry = inventory(&root, None)?;
++        retry.apply()?;
++        drop(retry);
++        assert!(!root.join("f-owned.json").exists());
++        assert_eq!(fs::read(root.join("unrelated-owned-row"))?, b"preserved");
++        Ok(())
++    }
++}
+diff --git a/crates/airk-store/src/quota/retired.rs b/crates/airk-store/src/quota/retired.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/airk-store/src/quota/retired.rs
+@@ -0,0 +1,310 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Exact ordinary-credit disposal for an already retired, wholly absent collection.
++//! No opener here creates a directory, advisory, lifecycle, ledger or lease.
++use super::*;
++use crate::service::ProjectLease;
++use crate::service::registry::catalog::setup::storage::{
++    SetupDirectory, SetupFileMode, file_identity,
++};
++use airk_core::identity::Incarnation;
++use airk_core::service::ProjectRegistration;
++use std::ffi::{OsStr, OsString};
++
++/// Internal native custody, not serde/Clone or a caller-provided absence flag.
++/// The registry keeps this through its exact retired cleanup transaction.
++pub(crate) struct AbsentCollectionSettlement<'a> {
++    project: &'a ProjectLease,
++    binding: airk_core::service::ProjectBinding,
++    control_path: PathBuf,
++    root_path: PathBuf,
++    collection: String,
++    root: SetupDirectory,
++    namespace: SetupDirectory,
++    locks: SetupDirectory,
++    control: SetupDirectory,
++    bound_owner: File,
++    bound_owner_bytes: Vec<u8>,
++    lifecycle: File,
++    advisory: File,
++    ledger: File,
++}
++impl<'a> AbsentCollectionSettlement<'a> {
++    pub(crate) fn settle(
++        registration: &ProjectRegistration,
++        lease: &'a ProjectLease,
++        control: &Path,
++        namespace: Incarnation,
++    ) -> Result<Self> {
++        Self::settle_with_hook(registration, lease, control, namespace, |_| Ok(()))
++    }
++    fn settle_with_hook(
++        registration: &ProjectRegistration,
++        lease: &'a ProjectLease,
++        control: &Path,
++        namespace: Incarnation,
++        mut checkpoint: impl FnMut(SettlementPoint) -> Result<()>,
++    ) -> Result<Self> {
++        ensure!(
++            lease.identity().0 == registration.binding && lease.root == control,
++            "foreign retired collection lease"
++        );
++        registration.validate()?;
++        crate::validate_collection(&registration.collection)?;
++        let root_path = PathBuf::from(&registration.data_root);
++        ensure_current_root(&root_path)?;
++        let root = SetupDirectory::open_canonical(&root_path)?;
++        let bound_owner = root.open_file(
++            OsStr::new(crate::service::data_scope::OWNER),
++            SetupFileMode::Read,
++        )?;
++        let bound_owner_bytes =
++            root.read_file(OsStr::new(crate::service::data_scope::OWNER), 16384)?;
++        ensure!(
++            crate::service::data_scope::has_saved_binding(&root_path, control, namespace)?,
++            "absent collection requires actual saved native data-root binding"
++        );
++        let lifecycle = root.open_file(
++            OsStr::new(Namespace::Service.lifecycle()),
++            SetupFileMode::ReadWrite,
++        )?;
++        ensure!(lifecycle.metadata()?.len() == 0, "unknown lifecycle owner");
++        lifecycle.try_lock_shared()?;
++        ensure_current_root(&root_path)?;
++        let collections = root.open_dir(OsStr::new(Namespace::Service.collections()))?;
++        let locks = collections.open_dir(OsStr::new(".writer-locks"))?;
++        let advisory = locks.open_file(
++            OsStr::new(&registration.collection),
++            SetupFileMode::ReadWrite,
++        )?;
++        ensure!(
++            advisory.metadata()?.len() == 0,
++            "unknown collection advisory"
++        );
++        advisory.try_lock()?;
++        let ledger_control = root.open_dir(OsStr::new(Namespace::Service.control()))?;
++        let ledger =
++            ledger_control.open_file(OsStr::new("ledger.lock"), SetupFileMode::ReadWrite)?;
++        ensure!(ledger.metadata()?.len() == 0, "unknown quota ledger lock");
++        ledger.try_lock()?;
++        let proof = Self {
++            project: lease,
++            binding: registration.binding,
++            control_path: control.to_path_buf(),
++            root_path,
++            collection: registration.collection.clone(),
++            root,
++            namespace: collections,
++            locks,
++            control: ledger_control,
++            bound_owner,
++            bound_owner_bytes,
++            lifecycle,
++            advisory,
++            ledger,
++        };
++        proof.revalidate()?;
++        for (visited, entry) in proof.control.entries()?.enumerate() {
++            ensure!(
++                visited < MAX_RESERVATIONS * 2 + 8,
++                "excessive quota control inventory"
++            );
++            let name = entry?;
++            let text = name.to_str().context("invalid quota control name")?;
++            if text.starts_with("policy-") && text.len() <= 128 {
++                ensure!(
++                    proof
++                        .control
++                        .open_file(&name, SetupFileMode::Read)?
++                        .metadata()?
++                        .len()
++                        <= POLICY_MAX,
++                    "oversized pending quota policy"
++                );
++            } else {
++                ensure!(
++                    [
++                        "ledger.lock",
++                        "policy.json",
++                        "reservations",
++                        "current-grants",
++                        "split-allocations"
++                    ]
++                    .contains(&text),
++                    "unknown quota control ownership"
++                );
++                if text == "policy.json" {
++                    let policy: QuotaPolicy =
++                        serde_json::from_slice(&proof.control.read_file(&name, POLICY_MAX)?)?;
++                    policy.validate()?;
++                }
++            }
++        }
++        // Operation funding refuses; fully acknowledged Current-owned children
++        // are ordinary growth credit and have a separate exact disposal plan.
++        let terminal_current = funding::RetiredCurrentInventory::capture(
++            &proof.control,
++            &proof.root,
++            &proof.root_path,
++            registration,
++        )?;
++        let reservations = proof.control.open_dir(OsStr::new("reservations"))?;
++        let mut ordinary = Vec::new();
++        for (visited, entry) in reservations.entries()?.enumerate() {
++            ensure!(
++                visited < MAX_RESERVATIONS * 2 + 2,
++                "excessive reservation inventory"
++            );
++            let name = entry?;
++            let text = name.to_str().context("invalid reservation name")?;
++            ensure!(
++                text.starts_with("r-")
++                    && text.len() <= 128
++                    && text
++                        .bytes()
++                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.'),
++                "unknown reservation inventory entry"
++            );
++            let row = reservations.open_file(&name, SetupFileMode::Read)?;
++            if let Some(stem) = text.strip_suffix(".lease") {
++                ensure!(!stem.contains('.'), "noncanonical reservation lease name");
++                ensure!(
++                    row.metadata()?.len() == 0,
++                    "unknown reservation lease contents"
++                );
++                continue;
++            }
++            ensure!(
++                !text.contains('.') && row.metadata()?.len() <= RECORD_MAX,
++                "invalid reservation record"
++            );
++            let mut bytes = Vec::new();
++            row.try_clone()?
++                .take(RECORD_MAX + 1)
++                .read_to_end(&mut bytes)?;
++            ensure!(bytes.len() as u64 <= RECORD_MAX, "reservation record grew");
++            let record: Record = serde_json::from_slice(&bytes)?;
++            ensure!(record.bytes > 0, "invalid reservation credit");
++            if !record.collection.is_empty() {
++                crate::validate_collection(&record.collection)?;
++            }
++            if record.collection != proof.collection {
++                continue;
++            }
++            let lease_name = OsString::from(format!("{text}.lease"));
++            let held = reservations.open_file(&lease_name, SetupFileMode::ReadWrite)?;
++            ensure!(
++                held.metadata()?.len() == 0,
++                "unknown selected reservation lease"
++            );
++            held.try_lock()
++                .context("retired collection still has a live ordinary reservation")?;
++            ordinary.push((name, row, lease_name, held));
++        }
++        let grants = match proof.control.open_dir(OsStr::new("current-grants")) {
++            Ok(directory) => {
++                let rows = current::retired_inventory(&directory, &proof.collection)?;
++                Some((directory, rows))
++            }
++            Err(error) if absent(&error) => None,
++            Err(error) => return Err(error),
++        };
++        // Every target lease and row is held and every inventory validated before
++        // the first effect. Complete logical absence proves ALL selected current
++        // journals, database payloads and stages disposed; never synthesize Ready.
++        proof.revalidate()?;
++        checkpoint(SettlementPoint::BeforeUnlink)?;
++        proof.revalidate()?;
++        if let Some(plan) = &terminal_current {
++            plan.apply()?;
++        }
++        if let Some((directory, rows)) = &grants {
++            for (name, row) in rows {
++                directory.unlink_file_if_identity(name, row)?;
++                checkpoint(SettlementPoint::AfterGrant)?;
++            }
++            directory.sync()?;
++        }
++        for (name, row, lease_name, held) in &ordinary {
++            reservations.unlink_file_if_identity(name, row)?;
++            checkpoint(SettlementPoint::AfterReservationRecord)?;
++            reservations.unlink_file_if_identity(lease_name, held)?;
++        }
++        reservations.sync()?;
++        proof.revalidate()?;
++        Ok(proof)
++    }
++    pub(crate) fn revalidate(&self) -> Result<()> {
++        ensure!(
++            self.project.identity().0 == self.binding && self.project.root == self.control_path,
++            "retired project custody changed"
++        );
++        ensure_current_root(&self.root_path)?;
++        ensure!(
++            self.root.identity()?.0 == self.namespace.identity()?.0
++                && self.root.identity()?.0 == self.control.identity()?.0
++                && self.root.identity()?.0 == self.locks.identity()?.0,
++            "retired quota control crosses filesystem"
++        );
++        ensure!(
++            SetupDirectory::open_canonical(&self.root_path)?.identity()? == self.root.identity()?
++                && self
++                    .root
++                    .open_dir(OsStr::new(Namespace::Service.collections()))?
++                    .identity()?
++                    == self.namespace.identity()?
++                && self
++                    .root
++                    .open_dir(OsStr::new(Namespace::Service.control()))?
++                    .identity()?
++                    == self.control.identity()?
++                && self
++                    .namespace
++                    .open_dir(OsStr::new(".writer-locks"))?
++                    .identity()?
++                    == self.locks.identity()?,
++            "retired quota directory changed"
++        );
++        ensure!(
++            self.root
++                .read_file(OsStr::new(crate::service::data_scope::OWNER), 16384)?
++                == self.bound_owner_bytes,
++            "retired data-root binding changed"
++        );
++        for (directory, name, retained) in [
++            (
++                &self.root,
++                crate::service::data_scope::OWNER,
++                &self.bound_owner,
++            ),
++            (&self.root, Namespace::Service.lifecycle(), &self.lifecycle),
++            (&self.locks, self.collection.as_str(), &self.advisory),
++            (&self.control, "ledger.lock", &self.ledger),
++        ] {
++            ensure!(
++                file_identity(&directory.open_file(OsStr::new(name), SetupFileMode::Read)?)?
++                    == file_identity(retained)?,
++                "retired quota owner changed"
++            );
++        }
++        match self.namespace.open_dir(OsStr::new(&self.collection)) {
++            Err(error) if absent(&error) => Ok(()),
++            Err(error) => Err(error),
++            Ok(_) => anyhow::bail!("retired logical collection reappeared; no credit disposal"),
++        }
++    }
++}
++fn absent(error: &anyhow::Error) -> bool {
++    error
++        .downcast_ref::<io::Error>()
++        .is_some_and(|error| error.kind() == io::ErrorKind::NotFound)
++}
++
++#[derive(Clone, Copy, PartialEq, Eq)]
++enum SettlementPoint {
++    BeforeUnlink,
++    AfterGrant,
++    AfterReservationRecord,
++}
++#[cfg(test)]
++#[path = "retired_tests.rs"]
++mod tests;
+diff --git a/crates/airk-store/src/quota/retired_tests.rs b/crates/airk-store/src/quota/retired_tests.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/airk-store/src/quota/retired_tests.rs
+@@ -0,0 +1,326 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Real quota APIs and OS leases; no synthesized journal/publication/Ready state.
++use super::*;
++use crate::FileStore;
++use airk_core::identity::Sha256Digest;
++
++struct Fixture {
++    quota: Quota,
++    registration: ProjectRegistration,
++    healthy: ProjectRegistration,
++    control: PathBuf,
++    namespace: Incarnation,
++    _owner: tempfile::TempDir,
++}
++impl Fixture {
++    fn new() -> Result<Self> {
++        let owner = tempfile::tempdir()?;
++        let base = owner.path().canonicalize()?;
++        let control = base.join("control");
++        fs::create_dir(&control)?;
++        let root = base.join("data");
++        let namespace = Incarnation::from_bytes([71; 16]);
++        crate::service::data_scope::bind(&root, &control, namespace)?;
++        let quota = Quota::open_service(&root)?;
++        quota.configure(QuotaPolicy {
++            root_bytes: 64 * 1024 * 1024,
++            default_collection_bytes: 32 * 1024 * 1024,
++            collections: BTreeMap::new(),
++        })?;
++        let mut registrations = Vec::new();
++        for name in ["retired-a", "healthy-b"] {
++            let source = base.join(name);
++            fs::create_dir(&source)?;
++            fs::write(source.join("source.md"), b"source preserved")?;
++            let registration = ProjectRegistration::new(
++                source.to_str().unwrap().into(),
++                root.to_str().unwrap().into(),
++                name.into(),
++            )?;
++            let directory = root.join("collections-1.4").join(name);
++            let store = FileStore::new(&directory);
++            let writer = store.lock()?;
++            fs::write(directory.join("payload"), name)?;
++            for n in [1, 2] {
++                // Actual separately admitted durable preparation credit. It is
++                // deliberately preserved by Drop, exactly as after process exit.
++                drop(quota.reserve_current(
++                    &writer,
++                    CurrentGrantScope {
++                        collection: name.into(),
++                        incarnation: Incarnation::from_bytes([n; 16]),
++                        transaction: Sha256Digest::from_bytes([n; 32]),
++                    },
++                    4096,
++                )?);
++            }
++            drop(writer);
++            registrations.push(registration);
++        }
++        Ok(Self {
++            quota,
++            registration: registrations.remove(0),
++            healthy: registrations.remove(0),
++            control,
++            namespace,
++            _owner: owner,
++        })
++    }
++    fn directory(&self) -> PathBuf {
++        self.quota
++            .root
++            .join("collections-1.4")
++            .join(&self.registration.collection)
++    }
++    fn grants(&self, collection: &str) -> Result<Vec<(PathBuf, Vec<u8>)>> {
++        let mut result = Vec::new();
++        for entry in fs::read_dir(self.quota.control_path().join("current-grants"))? {
++            let path = entry?.path();
++            let bytes = fs::read(&path)?;
++            let value: serde_json::Value = serde_json::from_slice(&bytes)?;
++            if value["scope"]["collection"] == collection {
++                result.push((path, bytes));
++            }
++        }
++        result.sort_by(|a, b| a.0.cmp(&b.0));
++        Ok(result)
++    }
++    fn lease(&self) -> Result<ProjectLease> {
++        ProjectLease::acquire(&self.control, self.registration.binding)
++    }
++    fn assert_sources(&self) -> Result<()> {
++        for registration in [&self.registration, &self.healthy] {
++            assert_eq!(
++                fs::read(Path::new(&registration.root).join("source.md"))?,
++                b"source preserved"
++            );
++        }
++        Ok(())
++    }
++}
++#[test]
++fn absent_collection_releases_only_its_disposed_ordinary_credit_and_allows_shared_root_writer()
++-> Result<()> {
++    let f = Fixture::new()?;
++    let healthy = f.grants(&f.healthy.collection)?;
++    assert_eq!(f.grants(&f.registration.collection)?.len(), 2);
++    let before = f.quota.status()?;
++    f.quota.configure(QuotaPolicy {
++        root_bytes: before.used_bytes + before.reserved_bytes + 128,
++        default_collection_bytes: 32 * 1024 * 1024,
++        collections: BTreeMap::new(),
++    })?;
++    assert!(f.quota.reserve(&f.healthy.collection, 4096).is_err());
++    fs::remove_dir_all(f.directory())?;
++    let lease = f.lease()?;
++    let proof =
++        AbsentCollectionSettlement::settle(&f.registration, &lease, &f.control, f.namespace)?;
++    assert!(f.grants(&f.registration.collection)?.is_empty());
++    assert_eq!(f.grants(&f.healthy.collection)?, healthy);
++    proof.revalidate()?;
++    drop(proof);
++    let healthy_credit = f.quota.reserve(&f.healthy.collection, 4096)?;
++    healthy_credit.charge(4096)?;
++    assert!(!f.directory().exists());
++    f.assert_sources()?;
++    Ok(())
++}
++#[test]
++fn live_old_ordinary_lease_refuses_all_selected_grant_release() -> Result<()> {
++    let f = Fixture::new()?;
++    let held = f.quota.reserve(&f.registration.collection, 4096)?;
++    let original = f.grants(&f.registration.collection)?;
++    let healthy = f.grants(&f.healthy.collection)?;
++    fs::remove_dir_all(f.directory())?;
++    let lease = f.lease()?;
++    assert!(
++        AbsentCollectionSettlement::settle(&f.registration, &lease, &f.control, f.namespace)
++            .is_err()
++    );
++    assert_eq!(f.grants(&f.registration.collection)?, original);
++    assert_eq!(f.grants(&f.healthy.collection)?, healthy);
++    drop(held);
++    drop(AbsentCollectionSettlement::settle(
++        &f.registration,
++        &lease,
++        &f.control,
++        f.namespace,
++    )?);
++    assert!(f.grants(&f.registration.collection)?.is_empty());
++    f.assert_sources()?;
++    Ok(())
++}
++#[test]
++fn interrupted_disposal_is_idempotent_without_releasing_other_collection_or_source() -> Result<()> {
++    let f = Fixture::new()?;
++    let original = f.grants(&f.registration.collection)?;
++    let healthy = f.grants(&f.healthy.collection)?;
++    fs::remove_dir_all(f.directory())?;
++    let lease = f.lease()?;
++    assert!(
++        AbsentCollectionSettlement::settle_with_hook(
++            &f.registration,
++            &lease,
++            &f.control,
++            f.namespace,
++            |point| {
++                ensure!(
++                    point != SettlementPoint::BeforeUnlink,
++                    "injected before effect"
++                );
++                Ok(())
++            }
++        )
++        .is_err()
++    );
++    assert_eq!(f.grants(&f.registration.collection)?, original);
++    assert!(
++        AbsentCollectionSettlement::settle_with_hook(
++            &f.registration,
++            &lease,
++            &f.control,
++            f.namespace,
++            |point| {
++                ensure!(
++                    point != SettlementPoint::AfterGrant,
++                    "injected after actual disposed grant unlink"
++                );
++                Ok(())
++            }
++        )
++        .is_err()
++    );
++    assert_eq!(f.grants(&f.registration.collection)?.len(), 1);
++    assert_eq!(f.grants(&f.healthy.collection)?, healthy);
++    drop(AbsentCollectionSettlement::settle(
++        &f.registration,
++        &lease,
++        &f.control,
++        f.namespace,
++    )?);
++    drop(AbsentCollectionSettlement::settle(
++        &f.registration,
++        &lease,
++        &f.control,
++        f.namespace,
++    )?);
++    assert!(f.grants(&f.registration.collection)?.is_empty());
++    assert_eq!(f.grants(&f.healthy.collection)?, healthy);
++    f.assert_sources()?;
++    Ok(())
++}
++#[test]
++fn missing_old_advisory_or_reappeared_collection_never_creates_custody_or_releases_credit()
++-> Result<()> {
++    let f = Fixture::new()?;
++    let original = f.grants(&f.registration.collection)?;
++    let healthy = f.grants(&f.healthy.collection)?;
++    fs::remove_dir_all(f.directory())?;
++    let lease = f.lease()?;
++    assert!(
++        AbsentCollectionSettlement::settle_with_hook(
++            &f.registration,
++            &lease,
++            &f.control,
++            f.namespace,
++            |point| {
++                if point == SettlementPoint::BeforeUnlink {
++                    fs::create_dir(f.directory())?;
++                    fs::write(f.directory().join("foreign"), b"preserved")?;
++                }
++                Ok(())
++            }
++        )
++        .is_err()
++    );
++    assert_eq!(fs::read(f.directory().join("foreign"))?, b"preserved");
++    assert_eq!(f.grants(&f.registration.collection)?, original);
++    fs::remove_dir_all(f.directory())?;
++    let advisory = f
++        .quota
++        .root
++        .join("collections-1.4/.writer-locks")
++        .join(&f.registration.collection);
++    fs::remove_file(&advisory)?;
++    assert!(
++        AbsentCollectionSettlement::settle(&f.registration, &lease, &f.control, f.namespace)
++            .is_err()
++    );
++    assert!(!advisory.exists() && !f.directory().exists());
++    assert_eq!(f.grants(&f.registration.collection)?, original);
++    assert_eq!(f.grants(&f.healthy.collection)?, healthy);
++    f.assert_sources()?;
++    Ok(())
++}
++#[test]
++fn admitted_funding_is_preserved_instead_of_implicitly_adopted_for_retirement() -> Result<()> {
++    use super::super::funding::{FundingBudget, FundingRequest};
++    use airk_core::index_catalog::IndexId;
++    let f = Fixture::new()?;
++    let first = IndexId::from_identity(Incarnation::from_bytes([81; 16]));
++    let second = IndexId::from_identity(Incarnation::from_bytes([82; 16]));
++    let data = f.quota.root.to_str().unwrap().to_owned();
++    let request = FundingRequest {
++        operation_id: Incarnation::from_bytes([83; 16]),
++        request_digest: Sha256Digest::from_bytes([84; 32]),
++        namespace: f.namespace,
++        original_index: first,
++        original: f.registration.clone(),
++        destination_index: second,
++        destination: f.healthy.clone(),
++        budgets: vec![
++            FundingBudget {
++                index_id: first,
++                bytes: 2 * 1024 * 1024,
++            },
++            FundingBudget {
++                index_id: second,
++                bytes: 2 * 1024 * 1024,
++            },
++        ],
++        quota_digests: BTreeMap::from([(data, f.quota.funding_policy_digest()?)]),
++    };
++    let funded = f.quota.reserve_funding(&request)?;
++    let original = f.grants(&f.registration.collection)?;
++    let healthy = f.grants(&f.healthy.collection)?;
++    fs::remove_dir_all(f.directory())?;
++    let lease = f.lease()?;
++    assert!(
++        AbsentCollectionSettlement::settle(&f.registration, &lease, &f.control, f.namespace)
++            .is_err()
++    );
++    assert_eq!(f.quota.observe_funding(request.operation_id)?, funded);
++    assert_eq!(f.grants(&f.registration.collection)?, original);
++    assert_eq!(f.grants(&f.healthy.collection)?, healthy);
++    f.assert_sources()?;
++    Ok(())
++}
++
++#[test]
++fn held_existing_collection_advisory_refuses_disposed_current_grant_release() -> Result<()> {
++    let f = Fixture::new()?;
++    let original = f.grants(&f.registration.collection)?;
++    let healthy = f.grants(&f.healthy.collection)?;
++    let old_writer = crate::service::acquire_existing_file(
++        &f.quota.root.join("collections-1.4/.writer-locks"),
++        &f.registration.collection,
++    )?;
++    fs::remove_dir_all(f.directory())?;
++    let lease = f.lease()?;
++    assert!(
++        AbsentCollectionSettlement::settle(&f.registration, &lease, &f.control, f.namespace)
++            .is_err()
++    );
++    assert_eq!(f.grants(&f.registration.collection)?, original);
++    assert_eq!(f.grants(&f.healthy.collection)?, healthy);
++    drop(old_writer);
++    drop(AbsentCollectionSettlement::settle(
++        &f.registration,
++        &lease,
++        &f.control,
++        f.namespace,
++    )?);
++    assert!(f.grants(&f.registration.collection)?.is_empty());
++    f.assert_sources()?;
++    Ok(())
++}
+diff --git a/crates/airk-store/src/quota.rs b/crates/airk-store/src/quota.rs
+--- a/crates/airk-store/src/quota.rs
++++ b/crates/airk-store/src/quota.rs
+@@ -70,6 +70,8 @@
+ pub(crate) const PREPARED_PUBLICATION_MAX: u64 = 4096;
+ const PREPARED_PUBLICATION: &str = "prepared-publication.json";
+ mod current;
++mod retired;
++pub(crate) use retired::AbsentCollectionSettlement;
+ pub mod funding;
+ #[cfg(any(unix, windows))]
+ pub(crate) mod setup;
+diff --git a/crates/airk-store/src/service_catalog_source_change.rs b/crates/airk-store/src/service_catalog_source_change.rs
+--- a/crates/airk-store/src/service_catalog_source_change.rs
++++ b/crates/airk-store/src/service_catalog_source_change.rs
+@@ -1371,6 +1371,7 @@
+             expected_source_revision,
+             reason,
+         } => {
++            super::split::require_retirement(db, *id)?;
+             let (saved, definition, source, tombstone, _) = registration(db, *id)?;
+             ensure!(
+                 definition == *expected_definition_revision && source == *expected_source_revision,
+diff --git a/crates/airk-store/src/service_catalog_split.rs b/crates/airk-store/src/service_catalog_split.rs
+--- a/crates/airk-store/src/service_catalog_split.rs
++++ b/crates/airk-store/src/service_catalog_split.rs
+@@ -2284,6 +2284,24 @@
+     }
+ }
+ 
++// Generic retirement must not strand an admitted split's paid children or
++// destroy either participant's recovery authority, including before cutover.
++pub(super) fn require_retirement(db: &Connection, index: IndexId) -> Result<()> {
++    if !available(db)? {
++        return Ok(());
++    }
++    let active: bool = db.query_row(
++        "SELECT EXISTS(SELECT 1 FROM index_split_participants WHERE index_id=?1 AND active=1)",
++        [index.to_string()],
++        |row| row.get(0),
++    )?;
++    ensure!(
++        !active,
++        "active split owns this participant; finish exact split recovery before retirement"
++    );
++    Ok(())
++}
++
+ pub(super) fn require_policy_change(
+     db: &Connection,
+     index: IndexId,
+diff --git a/crates/airk-store/src/service_catalog_split_tests.rs b/crates/airk-store/src/service_catalog_split_tests.rs
+--- a/crates/airk-store/src/service_catalog_split_tests.rs
++++ b/crates/airk-store/src/service_catalog_split_tests.rs
+@@ -1570,3 +1570,23 @@
+     );
+     Ok(())
+ }
++
++#[test]
++fn generic_retirement_refuses_both_live_split_participants_before_any_storage_effect() -> Result<()>
++{
++    let (_owner, mut registry, request, baseline, plan) = fixture()?;
++    let state = registry.catalog_reserve_split(&request, &baseline, &plan)?;
++    assert!(require_retirement(&registry.connection, request.original_index).is_err());
++    assert!(require_retirement(&registry.connection, request.destination.index_id).is_err());
++    require_retirement(
++        &registry.connection,
++        IndexId::from_identity(Incarnation::from_bytes([199; 16])),
++    )?;
++    assert_eq!(
++        registry
++            .catalog_active_split_for_binding(request.original_registration.binding)?
++            .context("saved split missing")?,
++        state
++    );
++    Ok(())
++}
+diff --git a/crates/airk-store/src/service_project_removal.rs b/crates/airk-store/src/service_project_removal.rs
+--- a/crates/airk-store/src/service_project_removal.rs
++++ b/crates/airk-store/src/service_project_removal.rs
+@@ -3,7 +3,7 @@
+ use super::{ServiceRegistry, bump};
+ use crate::service::ProjectLease;
+ use airk_core::service::{ProjectBinding, ProjectRegistration};
+-use anyhow::{Result, ensure};
++use anyhow::{Context, Result, ensure};
+ use rusqlite::{Connection, TransactionBehavior, params};
+ use std::path::Path;
+ 
+@@ -109,6 +109,10 @@
+             return Ok(false);
+         }
+         super::catalog::source_change::require_retired(&self.connection, project)?;
++        ensure!(
++            self.catalog_active_split_for_binding(project)?.is_none(),
++            "active split recovery owns this retired participant; finish exact split recovery first"
++        );
+         let registration = self.retained_project(project)?.registration;
+         let policy = super::catalog::policy::retired_for_binding(&self.connection, project)?;
+         let directory = Path::new(&registration.data_root)
+@@ -120,7 +124,48 @@
+             Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+             Err(error) => return Err(error.into()),
+         };
+-        if present || policy.is_some() {
++        // Explicit committed retirement, not a source watcher observation, is
++        // the authority for logical cleanup. Never recreate a missing data root
++        // just to retain a capsule or open its quota ledger.
++        let absent_data = if present {
++            None
++        } else {
++            RetiredDataAbsence::capture(Path::new(&registration.data_root))?
++        };
++        if let Some(snapshot) = &policy {
++            let job = self.job(snapshot.job)?;
++            ensure!(
++                matches!(
++                    job.state,
++                    airk_core::service::JobState::Succeeded
++                        | airk_core::service::JobState::Failed
++                        | airk_core::service::JobState::Canceled
++                ),
++                "retirement must settle the current policy job before cleanup"
++            );
++        }
++        let absent_collection = if !present && absent_data.is_none() {
++            match crate::quota::AbsentCollectionSettlement::settle(
++                &registration,
++                &lease,
++                &self.root,
++                self.incarnation()?,
++            ) {
++                Ok(proof) => Some(proof),
++                Err(error)
++                    if matches!(
++                        error.downcast_ref::<std::fs::TryLockError>(),
++                        Some(std::fs::TryLockError::WouldBlock)
++                    ) =>
++                {
++                    return Ok(false);
++                }
++                Err(error) => return Err(error),
++            }
++        } else {
++            None
++        };
++        if present {
+             super::super::data_scope::check(
+                 Path::new(&registration.data_root),
+                 &self.root,
+@@ -137,16 +182,6 @@
+                 // Stable ownership must also make old readers refuse a reset
+                 // collection whose inner publication has already been removed.
+                 let owner_present = directory.join("service-owner.json").try_exists()?;
+-                let job = self.job(snapshot.job)?;
+-                ensure!(
+-                    matches!(
+-                        job.state,
+-                        airk_core::service::JobState::Succeeded
+-                            | airk_core::service::JobState::Failed
+-                            | airk_core::service::JobState::Canceled
+-                    ),
+-                    "retirement must settle the current policy job before cleanup"
+-                );
+                 let copy = crate::current::policy_capsule::PolicyCapsule::retirement_copy(
+                     &directory,
+                     &registration,
+@@ -189,6 +224,12 @@
+             )?,
+             "removal ownership changed"
+         );
++        if let Some(absent) = &absent_data {
++            absent.revalidate()?;
++        }
++        if let Some(absent) = &absent_collection {
++            absent.revalidate()?;
++        }
+         // Child metadata is removed before its FK parents. Other projects/plans remain.
+         for table in [
+             "service_plan_jobs",
+@@ -246,6 +287,14 @@
+                 [project.to_string()],
+             )?;
+         }
++        // The held ancestor still names the absent data tree at the native
++        // metadata commit boundary. This records no physical disposal claim.
++        if let Some(absent) = &absent_data {
++            absent.revalidate()?;
++        }
++        if let Some(absent) = &absent_collection {
++            absent.revalidate()?;
++        }
+         bump(&tx)?;
+         tx.commit()?;
+         Ok(true)
+@@ -255,3 +304,93 @@
+ pub(super) fn removed_root_identity(root: &str) -> airk_core::identity::Sha256Digest {
+     airk_core::identity::framed_digest(b"airk-removed-source/1", &[root.as_bytes()])
+ }
++
++// Native-only, nonserializable proof. No source path, quota opener, marker or
++// missing directory creation is involved. A present/redirected/unavailable data
++// root must use the existing ownership-aware physical cleanup instead.
++struct RetiredDataAbsence {
++    ancestor_path: std::path::PathBuf,
++    ancestor: super::catalog::setup::storage::SetupDirectory,
++    missing: std::ffi::OsString,
++}
++impl RetiredDataAbsence {
++    fn capture(data: &Path) -> Result<Option<Self>> {
++        match std::fs::symlink_metadata(data) {
++            Ok(_) => return Ok(None),
++            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
++            Err(error) => return Err(error.into()),
++        }
++        let mut selected = None;
++        for candidate in data.ancestors().skip(1) {
++            match std::fs::symlink_metadata(candidate) {
++                Ok(metadata) => {
++                    ensure!(
++                        metadata.is_dir() && !metadata.file_type().is_symlink(),
++                        "retired data ancestor is not a plain directory"
++                    );
++                    selected = Some(candidate.to_path_buf());
++                    break;
++                }
++                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
++                Err(error) => return Err(error.into()),
++            }
++        }
++        let ancestor_path = selected.context("retired data has no existing ancestor")?;
++        let ancestor =
++            super::catalog::setup::storage::SetupDirectory::open_canonical(&ancestor_path)?;
++        let relative = data.strip_prefix(&ancestor_path)?;
++        let missing = match relative
++            .components()
++            .next()
++            .context("retired data missing child absent")?
++        {
++            std::path::Component::Normal(name) => name.to_os_string(),
++            _ => anyhow::bail!("invalid retired data absence path"),
++        };
++        let proof = Self {
++            ancestor_path,
++            ancestor,
++            missing,
++        };
++        proof.revalidate()?;
++        Ok(Some(proof))
++    }
++    fn revalidate(&self) -> Result<()> {
++        ensure!(
++            super::catalog::setup::storage::SetupDirectory::open_canonical(&self.ancestor_path)?
++                .identity()?
++                == self.ancestor.identity()?,
++            "retired data ancestor changed"
++        );
++        match self.ancestor.open_dir(&self.missing) {
++            Err(error)
++                if error
++                    .downcast_ref::<std::io::Error>()
++                    .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
++            {
++                Ok(())
++            }
++            Err(error) => Err(error),
++            Ok(_) => anyhow::bail!(
++                "retired data reappeared; physical cleanup requires ownership validation"
++            ),
++        }
++    }
++}
++
++#[cfg(test)]
++mod missing_data_tests {
++    use super::*;
++    #[test]
++    fn missing_data_proof_preserves_reappeared_tree() -> Result<()> {
++        let owner = tempfile::tempdir()?;
++        let path = owner.path().canonicalize()?.join("removed").join("data");
++        let proof = RetiredDataAbsence::capture(&path)?.context("absence proof missing")?;
++        std::fs::create_dir_all(&path)?;
++        std::fs::write(path.join("sentinel"), b"preserved")?;
++        assert!(proof.revalidate().is_err());
++        assert_eq!(std::fs::read(path.join("sentinel"))?, b"preserved");
++        assert!(RetiredDataAbsence::capture(&path)?.is_none());
++        Ok(())
++    }
++}

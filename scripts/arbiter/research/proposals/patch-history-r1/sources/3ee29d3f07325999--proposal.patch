@@ -1,0 +1,762 @@
+--- /dev/null
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification/cuda_resources/CONTRACT.md
+@@ -0,0 +1,76 @@
++# Private native CUDA resource benchmark
++
++This ignored qualification batch is distinct from product management and tiny
++component GpuProbeReservation. It retains one original fixed3600-second native
++batch cutoff plus the maintained original3600-second external parent. Each of
++one load, one warmup and
++twenty predeclared maximum-input samples has its own original120-second cutoff.
++It never increases the120-second
++product request or125-second delivery budget. No retry or denominator change.
++Complete Context17/128/8192 numeric and twelve-case Focus numeric remain separate
++component proofs using their existing single120-second owner.
++
++A native Rust request emitter serializes scalar pins and explicit host/device/
++Job bounds. Request data is not an execution permit. One actual private-control
++ServiceLease, NativeInferenceOwner, Kernel optional host reservation and actual
++native GPU device/session are retained through the whole benchmark. The same
++session and source serve all21 forwards. Current native ResourcePolicy supplies
++8192 shared/Context, Focus512, N8, twenty samples and nearest-rank p95 index18.
++The original actual max-input compiler is reused; no shorter tensor substitute.
++
++The complete forward labels (warmup then samples1 through20), original input
++digest and actual final placement are durably retained before the first score.
++The actual native attention_backend_plan, when present, authenticates its graph,
++operator/dtype/node roster; it is separate from stock per-forward backend debug
++output. A forward is appended to completed only after actual scorer success and
++native sync. One Scorer.score_with_deadline means one actual Session.run.
++No completion is inferred from journal operations, expected labels or logs.
++
++The existing journal gains a bounded per-operation absolute-expiry entry, with
++unchanged historical create/observe behavior and event schema. Each expiry is
++fixed before start fsync, clipped to the original native batch cutoff and never
++renewed after observer IO. Provider Instant is captured conservatively before native QPC
++sampling; the original native journal expiry is the external watchdog authority.
++The maintained owned Resource20 parent remains required for unreturned FFI,
++actual image/SID/Job ownership, commit/RSS/log watches and real settlement.
++
++Host peak comes from actual persistent process RSS and strict original bounds.
++GPU free/total capacity comes only from the existing authenticated native device
++observer. These are occupancy/headroom observations, not process GPU peak.
++measured_peak_device_bytes stays null and final_gpu_qualification stays false:
++ORT1.30 arena stats alone exclude context/library allocations and current pinned
++Rust ORT API22 lacks API23 AllocatorGetStats. Neither reserved bytes nor free-memory
++delta nor a scoped allocator maximum may replace an unavailable process peak.
++A complete latency/placement/host series can pass independently; dependent final
++GPU qualification remains blocked until genuine complete peak evidence exists.
++
++First native error/overrun/host excess stops the remaining population. Core partial
++series remains truthful with no fabricated zero or partial p95. Unknown CUDA work
++retains actual source/session/lease/host claim/native owner/control root. Actual
++scorer teardown precedes release/poison/claim observations; complete input hashes,
++control cleanup and final persistent RSS are retained before final whole cutoff.
++No advice, calibration, scientific-to-product transfer or product Ready follows.
++
++Original explicit host/Job ceilings remain Focus4/8GiB, Compact16/32GiB and
++Large40/48GiB from their retained owned Resource20 cards. A metadata variant
++cannot silently change that pair; other historical models refuse. Actual process
++and Job both retain the Job containment ceiling; separate parent commit watches
++and native persistent RSS remain distinct from that cap.
++
++The metadata-only emitter writes a native policy sidecar with exact model pairs,
++Core ResourcePolicy and literal1/1/20 schedule. The parent consumes that native
++output and authenticates its BenchmarkRequest wrapper, then the nested original
++Core ResourceRunInput unchanged. Native journal identity binds wrapper SHA; model,
++profile and source bind the nested Core owner. The original external parent
++cutoff starts before process creation and remains independently authoritative:
++this later native batch clock cannot extend it or manufacture parent settlement.
++
++The NN0 request emitter also compiles the exact maximum resource input using the
++existing Compiler::from_verified, compiler/tokenizer pins and original source
++fixture. No Scorer or weight load is used. A fresh expectations sidecar records
++that complete CompiledInput, model/profile/Core policy and22 native operation
++slots with real input digests. BenchmarkRequest pins it. The actual benchmark
++reconstructs this metadata expectation before load, then independently compares
++the actual resident Scorer compiler's complete result before the first forward.
++The Python parent reads these native outputs; it never constructs Core input or
++native roster fields. Expected data grants no completion or execution authority.
+--- a/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification.rs
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification.rs
+@@ -133,6 +133,7 @@
+ }
+ #[derive(Clone, Copy)]
+ enum CaseKind {
++    ContextAll,
+     Context17,
+     Context128,
+     Focus512,
+@@ -143,6 +144,22 @@
+     fixture: &NumericFixture,
+ ) -> Result<Vec<usize>> {
+     match kind {
++        CaseKind::ContextAll => {
++            ensure!(
++                matches!(
++                    profile.model,
++                    ModelChoice::ContextQwenCompact | ModelChoice::ContextQwenLarge
++                ),
++                "complete numeric Context selector cannot consume Focus"
++            );
++            complete_context_rows(
++                &fixture
++                    .rows
++                    .iter()
++                    .map(|r| r.input.input_ids.len())
++                    .collect::<Vec<_>>(),
++            )
++        }
+         CaseKind::Context17 | CaseKind::Context128 => {
+             ensure!(
+                 matches!(
+@@ -940,3 +957,18 @@
+     assert!(custody_locator_rows(b"metadata\t-\ttoo-few").is_err());
+     Ok(())
+ }
++
++mod cuda_resources;
++#[test]
++#[ignore = "actual approved CUDA runtime/current exact independent full3 references; one original120 component cutoff"]
++fn cuda_original_context_full_component() -> Result<()> {
++    probe(CaseKind::ContextAll)
++}
++
++fn complete_context_rows(widths: &[usize]) -> Result<Vec<usize>> {
++    ensure!(
++        widths == [17, 128, 8192],
++        "complete native Context17/128/8192 denominator required"
++    );
++    Ok(vec![0, 1, 2])
++}
+--- a/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/operation.rs
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/operation.rs
+@@ -231,6 +231,32 @@
+         input: Option<Sha256Digest>,
+         call: impl FnOnce() -> Result<T>,
+     ) -> Result<Returned<T>> {
++        self.observe_at(kind, ordinal, input, self.absolute_expires_ns, call)
++    }
++    /// Independent resource benchmark: fixed before start retention and clipped
++    /// to the original parent. This does not renew a component expiry.
++    #[cfg(feature = "gpu-cuda")]
++    pub fn observe_before<T>(
++        &mut self,
++        kind: Kind,
++        ordinal: usize,
++        input: Option<Sha256Digest>,
++        expires_ns: u64,
++        call: impl FnOnce() -> Result<T>,
++    ) -> Result<Returned<T>> {
++        let expires = self
++            .absolute_expires_ns
++            .map_or(expires_ns, |original| original.min(expires_ns));
++        self.observe_at(kind, ordinal, input, Some(expires), call)
++    }
++    fn observe_at<T>(
++        &mut self,
++        kind: Kind,
++        ordinal: usize,
++        input: Option<Sha256Digest>,
++        absolute_expires_ns: Option<u64>,
++        call: impl FnOnce() -> Result<T>,
++    ) -> Result<Returned<T>> {
+         let file = &mut self.file;
+         observe(
+             Attempt {
+@@ -239,7 +265,7 @@
+                 ordinal,
+                 input,
+                 deadline_ms: self.deadline_ms,
+-                absolute_expires_ns: self.absolute_expires_ns,
++                absolute_expires_ns,
+             },
+             &mut self.sequence,
+             &mut airk_process::monotonic::now_ns,
+--- /dev/null
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification/cuda_resources.rs
+@@ -0,0 +1,420 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Separate qualification batch; no GpuProbeReservation/product budget transfer.
++use super::*;
++const SCHEMA: &str = "airk.private.cuda-resource-benchmark-request/1";
++const OUTER_MS: u64 = 3_600_000;
++#[derive(Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct BenchmarkRequest {
++    schema: String,
++    gpu_input: ResourceFilePin,
++    runtime_manifest: ResourceFilePin,
++    expectations: ResourceFilePin,
++    host_limit_bytes: u64,
++    device_limit_bytes: u64,
++    cold_bytes: u64,
++    warm_bytes: u64,
++    headroom_bytes: u64,
++    job_limit_bytes: u64,
++    outer_deadline_ms: u64,
++}
++fn model_limits(model: ModelChoice) -> Result<(u64, u64)> {
++    match model {
++        ModelChoice::FocusQwenReranker06B => Ok((4 << 30, 8 << 30)),
++        ModelChoice::ContextQwenCompact => Ok((16 << 30, 32 << 30)),
++        ModelChoice::ContextQwenLarge => Ok((40 << 30, 48 << 30)),
++        ModelChoice::SmallIntern
++        | ModelChoice::SmallStrands
++        | ModelChoice::LargeIntern
++        | ModelChoice::LargeKev => {
++            anyhow::bail!("model outside the frozen resource benchmark roster")
++        }
++    }
++}
++impl BenchmarkRequest {
++    fn validate(&self, profile: &Profile, policy: &ResourcePolicy) -> Result<DeviceCapacityPlan> {
++        policy.validate()?;
++        ensure!(
++            self.schema == SCHEMA && self.outer_deadline_ms == OUTER_MS,
++            "unknown independent resource batch/schema/cutoff"
++        );
++        self.gpu_input.validate()?;
++        self.runtime_manifest.validate()?;
++        self.expectations.validate()?;
++        ensure!(
++            profile.device_execution.is_some() && profile.cpu_fit.is_none(),
++            "GPU benchmark requires actual native GPU metadata"
++        );
++        let original = model_limits(profile.model)?;
++        ensure!(
++            self.host_limit_bytes == profile.memory_reservation_bytes
++                && (self.host_limit_bytes, self.job_limit_bytes) == original,
++            "original benchmark host/Job bounds differ"
++        );
++        ensure!(
++            self.device_limit_bytes > 0
++                && self
++                    .cold_bytes
++                    .checked_add(self.headroom_bytes)
++                    .is_some_and(|n| n <= self.device_limit_bytes),
++            "original device planning bound differs"
++        );
++        DeviceCapacityPlan::probe(self.cold_bytes, self.warm_bytes, self.headroom_bytes)
++    }
++}
++#[test]
++#[ignore = "NN0: explicit frozen scalar pins/bounds; serializes existing native resource benchmark owner"]
++fn emit_cuda_resource_benchmark_request() -> Result<()> {
++    let started = Instant::now();
++    let limit = number("AIRK_CUDA_DEADLINE_MS")?;
++    ensure!(
++        (1..=120_000).contains(&limit),
++        "original benchmark metadata emission limit differs"
++    );
++    let deadline = started + Duration::from_millis(limit);
++    let gpu_input = env_pin(
++        "AIRK_SOFTWARE_V2_NATIVE_INPUT",
++        "AIRK_SOFTWARE_V2_NATIVE_INPUT_SHA256",
++    )?;
++    let (input, profile, files, _) = inputs_from(&gpu_input)?;
++    let compiled = metadata_input(&profile, &files)?;
++    let output = PathBuf::from(text("AIRK_CUDA_REQUEST_OUTPUT")?);
++    ensure!(
++        Instant::now() < deadline,
++        "original benchmark metadata cutoff expired before retention"
++    );
++    let expectations = write_json(
++        &output.with_extension("expectations.json"),
++        &parent_expectations(&gpu_input, &input, &profile, &compiled),
++    )?;
++    let value = BenchmarkRequest {
++        schema: SCHEMA.into(),
++        gpu_input,
++        expectations,
++        runtime_manifest: env_pin(
++            "AIRK_CUDA_RUNTIME_MANIFEST",
++            "AIRK_CUDA_RUNTIME_MANIFEST_SHA256",
++        )?,
++        host_limit_bytes: number("AIRK_CUDA_HOST_LIMIT_BYTES")?,
++        device_limit_bytes: number("AIRK_CUDA_DEVICE_LIMIT_BYTES")?,
++        cold_bytes: number("AIRK_CUDA_COLD_BYTES")?,
++        warm_bytes: number("AIRK_CUDA_WARM_BYTES")?,
++        headroom_bytes: number("AIRK_CUDA_HEADROOM_BYTES")?,
++        job_limit_bytes: number("AIRK_CUDA_JOB_LIMIT_BYTES")?,
++        outer_deadline_ms: number("AIRK_CUDA_RESOURCE_OUTER_MS")?,
++    };
++    value.validate(&profile, &input.policy)?;
++    write_json(&output, &value)?;
++    let rows=[ModelChoice::FocusQwenReranker06B,ModelChoice::ContextQwenCompact,ModelChoice::ContextQwenLarge].into_iter().map(|model|->Result<Value>{
++        let(host,job)=model_limits(model)?;
++        Ok(json!({"model":model,"host_limit_bytes":host,"process_containment_bytes":job,"job_limit_bytes":job}))
++    }).collect::<Result<Vec<_>>>()?;
++    write_json(
++        &output.with_extension("policy.json"),
++        &json!({"schema":"airk.private.cuda-resource-benchmark-policy/1","resource_policy":ResourcePolicy::software_v2(),"whole_process_ms":OUTER_MS,"load_operations":1,"warmup_operations":1,"sample_operations":20,"forward_roster":forward_roster(),"model_limits":rows,"gpu_process_peak_required_for_final_qualification":true}),
++    )?;
++    pinned(&value.gpu_input, 1 << 20)?;
++    pinned(&input.profile, 1 << 20)?;
++    ensure!(
++        Instant::now() < deadline,
++        "original benchmark metadata cutoff expired after retention/posthash"
++    );
++    Ok(())
++}
++fn metadata_input(profile: &Profile, files: &Files) -> Result<CompiledInput> {
++    let compiler = profile
++        .assets
++        .iter()
++        .find(|a| a.role == AssetRole::Compiler)
++        .context("resource compiler metadata absent")?;
++    let tokenizer = profile
++        .assets
++        .iter()
++        .find(|a| a.role == AssetRole::Tokenizer)
++        .context("resource tokenizer metadata absent")?;
++    let compiler =
++        Compiler::from_verified(&files.read_asset(compiler)?, &files.read_asset(tokenizer)?)?;
++    resource_input(profile, files, |state, question, options| {
++        compiler.compile(state, question, options)
++    })
++}
++fn operation_roster(digest: Sha256Digest) -> Vec<Value> {
++    std::iter::once(json!({"kind":"load","ordinal":0,"input_digest":null}))
++        .chain(std::iter::once(
++            json!({"kind":"warmup","ordinal":0,"input_digest":digest}),
++        ))
++        .chain((1..=20).map(|n| json!({"kind":"sample","ordinal":n,"input_digest":digest})))
++        .collect()
++}
++fn parent_expectations(
++    gpu_input: &ResourceFilePin,
++    input: &ResourceRunInput,
++    profile: &Profile,
++    compiled: &CompiledInput,
++) -> Value {
++    json!({"schema":"airk.private.cuda-resource-benchmark-expectations/1","native_input":gpu_input,"model":profile.model,"profile":profile.manifest,
++        "policy":input.policy,"policy_digest":input.policy_digest,"expected_resource_input":compiled,
++        "native_operation_roster":operation_roster(compiled.input_digest),"forward_roster":forward_roster()})
++}
++/// Provider Instant starts before sampling native monotonic time. Native journal
++/// and external owner enforce the exact original absolute expiry through sync.
++fn cutoff(
++    original: Instant,
++    original_ns: u64,
++    now: Instant,
++    now_ns: u64,
++    operation_ms: u64,
++) -> Result<(Instant, u64)> {
++    ensure!(
++        operation_ms == 120_000 && now < original && now_ns < original_ns,
++        "original benchmark cutoff exhausted or changed"
++    );
++    let instant = now
++        .checked_add(Duration::from_millis(operation_ms))
++        .context("operation Instant overflow")?
++        .min(original);
++    let native = now_ns
++        .checked_add(operation_ms * 1_000_000)
++        .context("operation native expiry overflow")?
++        .min(original_ns);
++    Ok((instant, native))
++}
++fn observed<T>(
++    journal: &mut operation::Journal,
++    outer: Instant,
++    outer_ns: u64,
++    kind: operation::Kind,
++    ordinal: usize,
++    input: Option<Sha256Digest>,
++    call: impl FnOnce(Instant) -> Result<T>,
++) -> Result<operation::Returned<T>> {
++    let now = Instant::now();
++    let (deadline, expires) = cutoff(
++        outer,
++        outer_ns,
++        now,
++        airk_process::monotonic::now_ns()?,
++        120_000,
++    )?;
++    journal.observe_before(kind, ordinal, input, expires, || call(deadline))
++}
++fn forward_roster() -> Vec<String> {
++    std::iter::once("warmup-0".into())
++        .chain((1..=20).map(|n| format!("sample-{n:02}")))
++        .collect()
++}
++fn actual_forward<T>(
++    completed: &mut Vec<String>,
++    label: &str,
++    call: impl FnOnce() -> Result<T>,
++) -> Result<T> {
++    let value = call()?;
++    completed.push(label.into());
++    Ok(value)
++}
++#[test]
++#[ignore = "actual owned exclusive GPU window, frozen native input/runtime/bounds; load1 warmup1 samples20, original120/3600"]
++fn cuda_selected_native_resources20() -> Result<()> {
++    let started = Instant::now();
++    let started_ns = airk_process::monotonic::now_ns()?;
++    let request_pin = env_pin(
++        "AIRK_CUDA_RESOURCE_INPUT",
++        "AIRK_CUDA_RESOURCE_INPUT_SHA256",
++    )?;
++    let request: BenchmarkRequest = serde_json::from_slice(&pinned(&request_pin, 1 << 20)?)?;
++    let (input, profile, files, _) = inputs_from(&request.gpu_input)?;
++    let plan = request.validate(&profile, &input.policy)?;
++    let expected: Value = serde_json::from_slice(&pinned(&request.expectations, 16 << 20)?)?;
++    let metadata_compiled = metadata_input(&profile, &files)?;
++    ensure!(
++        expected == parent_expectations(&request.gpu_input, &input, &profile, &metadata_compiled),
++        "native parent expectations differ from frozen compiler/policy/denominator"
++    );
++    let outer = started + Duration::from_millis(OUTER_MS);
++    let outer_ns = started_ns
++        .checked_add(OUTER_MS * 1_000_000)
++        .context("batch native cutoff overflow")?;
++    let actual_job = job_limits(request.job_limit_bytes, request.job_limit_bytes)?;
++    let mut resources = airk_kernel::service_resources::Resources::detect(ResourceConfiguration {
++        preset: ResourcePreset::Throughput,
++        ..ResourceConfiguration::default()
++    })?;
++    let available = airk_kernel::service_resource_observations::available_memory();
++    resources.observe(
++        airk_kernel::service_resource_observations::rss(std::process::id()),
++        available,
++        true,
++    );
++    let incarnation = Incarnation::from_bytes(request_pin.sha256.as_bytes()[..16].try_into()?);
++    let charge =
++        Arc::new(resources.reserve_optional(incarnation, request.host_limit_bytes, available)?);
++    let release = charge.release_observer();
++    let (parent, control) = private_control()?;
++    let mut control_parent = Some(parent);
++    let lease = Arc::new(airk_store::service::ServiceLease::acquire(&control)?);
++    let owner = Arc::new(airk_kernel::inference_owner::NativeInferenceOwner::admit(
++        lease.clone(),
++    )?);
++    let output = output()?;
++    let mut file = OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .open(&output)?;
++    let binary = file_hash(&std::env::current_exe()?)?;
++    let mut receipt = json!({"schema":"airk.private.cuda-native-resource/1","complete":false,"latency_host_placement_passed":false,
++        "evaluation":true,"release_qualified":false,"numeric_status":"unavailable_in_resource_only_run",
++        "input_sha256":request_pin.sha256,"profile_source_sha256":input.profile.sha256,
++        "process_id":std::process::id(),"model":profile.model,"target":current_target(),"isa":isa(),
++        "cpu_fit":profile.cpu_fit,"device_execution":profile.device_execution,
++        "operation_journal":output.with_extension("operations.jsonl"),
++        "measurement_identity":"native-original-operation-start-to-post-end-retention/1",
++        "capacity_observation_scope":"selected native device occupancy/headroom only; not per-process allocation or peak",
++        "final_gpu_qualification":false,"gpu_peak_status":"unavailable_complete_process_observer","measured_peak_device_bytes":null,
++        "request":request_pin,"native_input":request.gpu_input,"profile":profile.manifest,"runtime_manifest":request.runtime_manifest,
++        "source_manifest":input.source_manifest,"resource_policy":input.policy,"resource_policy_digest":input.policy_digest,
++        "pid":std::process::id(),"native_binary_sha256":binary,"execution_user":airk_ipc::endpoint::current_user()?,
++        "bounds":request,"actual_job":actual_job,"native_host_reservation_bytes":charge.bytes(),
++        "original_native_batch_expires_monotonic_ns":outer_ns,"forward_roster":forward_roster(),"completed_forwards":[],
++        "resource":ResourceSeries::new(profile.memory_reservation_bytes)?,"scope":"independent qualification load1/warmup1/samples20; no full process GPU peak, numeric/CAL/product Ready or final GPU qualification"});
++    flush(&mut file, &receipt)?;
++    let mut journal = operation::Journal::create(
++        &output,
++        operation::Identity {
++            input_sha256: request_pin.sha256,
++            profile: profile.manifest,
++            process_id: std::process::id(),
++            native_binary_sha256: binary,
++        },
++        input.policy.deadline_ms,
++    )?;
++    let mut completed = Vec::new();
++    let run=owner.run(||->Result<()> {
++        let mut custody=Custody{scorer:None,device:None,owner:owner.clone(),lease:lease.clone(),charge:Some(charge),control:&mut control_parent,files:Some(files)};
++        ensure!(Instant::now()<outer,"original resource batch expired before load");
++        verify_files(custody.files.as_ref().unwrap(),&profile)?;
++        pinned(&request.runtime_manifest,128<<10)?;
++        let loaded=observed(&mut journal,outer,outer_ns,operation::Kind::Load,0,None,|deadline|{
++            let(root,manifest)=airk_host::gpu_runtime::installed_paths()?;
++            ensure!(manifest.as_path()==Path::new(&request.runtime_manifest.path),"benchmark manifest differs from native installed runtime");
++            let runtime=airk_host::gpu_runtime::admit(lease.clone(),&root,&manifest,deadline)?;
++            ensure!(runtime.manifest_identity()==request.runtime_manifest.sha256,"benchmark runtime differs from frozen pin");
++            let adapters=runtime.adapters(deadline)?;
++            ensure!(adapters.len()==1,"scientific resource benchmark requires exactly one actually observed adapter");
++            let device=runtime.device(adapters[0].uuid,deadline)?;
++            receipt["capacity_before_load"]=serde_json::to_value(device.observation(deadline)?)?;
++            custody.device=Some(device.clone());
++            let catalog=airk_kernel::inference_owner::evaluation_catalog(lease.clone(),vec![profile.clone()])?;
++            let execution=catalog.execution_profile(profile.manifest)?.bind_cuda_probe(device,plan,deadline)?;
++            Scorer::open(execution,custody.files.as_ref().unwrap())
++        })?;
++        receipt["load_us"]=json!(loaded.elapsed_us);receipt["load_native_call_us"]=json!(loaded.native_call_elapsed_us);
++        custody.scorer=Some(loaded.value?);
++        ensure!(loaded.within_deadline,"original resource load deadline exceeded");
++        let scorer=custody.scorer.as_ref().unwrap();
++        let placement=scorer.device_placement()?.context("actual final GPU placement unavailable")?;
++        placement.validate_strict()?;
++        let compiled=resource_input(&profile,custody.files.as_ref().unwrap(),|state,question,candidates|scorer.compile(state,question,candidates))?;
++        ensure!(serde_json::to_value(&compiled)?==expected["expected_resource_input"],"actual native Scorer compiler differs from pre-frozen metadata input");
++        receipt["expectations"]=json!(request.expectations);
++        receipt["native_operation_roster"]=expected["native_operation_roster"].clone();
++        receipt["execution_identity"]=json!(scorer.execution_identity()?);
++        receipt["final_placement"]=json!(placement);
++        receipt["attention_backend_plan"]=scorer.attention_backend_plan()?.unwrap_or(Value::Null);
++        receipt["input"]=json!(compiled);
++        // Original labels + actual authenticated graph plan are retained before
++        // the first real forward. No expected completion is recorded here.
++        flush(&mut file,&receipt)?;
++        let warmed=observed(&mut journal,outer,outer_ns,operation::Kind::Warmup,0,Some(compiled.input_digest),|deadline|
++            actual_forward(&mut completed,"warmup-0",||scorer.score_with_deadline(&compiled,deadline)))?;
++        receipt["warmup"]=json!({"elapsed_us":warmed.elapsed_us,"native_call_elapsed_us":warmed.native_call_elapsed_us,"success":warmed.value.is_ok()});
++        receipt["completed_forwards"]=json!(completed);flush(&mut file,&receipt)?;
++        warmed.value?;
++        ensure!(warmed.within_deadline&&warmed.elapsed_us<=input.policy.p95_limit_us,"first warmup overrun; no measured forward admitted");
++        final_host_peak(peak_rss(),request.host_limit_bytes)?;
++        let mut series=ResourceSeries::new(profile.memory_reservation_bytes)?;
++        let mut ordinal=0;
++        let measured=observe_series(&mut series,&input.policy,|| {
++            ordinal+=1;
++            let label=format!("sample-{ordinal:02}");
++            let returned=observed(&mut journal,outer,outer_ns,operation::Kind::Sample,ordinal,Some(compiled.input_digest),|deadline|
++                actual_forward(&mut completed,&label,||scorer.score_with_deadline(&compiled,deadline)))?;
++            returned.value?;
++            let sample=ResourceSample{elapsed_us:returned.elapsed_us,peak_process_rss_bytes:peak_rss().context("actual benchmark host peak unavailable")?};
++            if !returned.within_deadline&&sample.elapsed_us<=input.policy.p95_limit_us {
++                anyhow::bail!("original parent clipped sample expiry exceeded");
++            }
++            Ok(sample)
++        },|series| {receipt["resource"]=json!(series);flush(&mut file,&receipt) });
++        receipt["resource"]=json!(series);receipt["completed_forwards"]=json!(completed);flush(&mut file,&receipt)?;
++        measured?;
++        ensure!(completed==forward_roster(),"actual completed forward denominator differs");
++        scorer.synchronize(outer)?;ensure!(scorer.device_settled(),"resource GPU settlement remains unknown");
++        let device=custody.device.as_ref().context("actual resource device absent")?;
++        receipt["capacity_after_scores"]=serde_json::to_value(device.observation(outer)?)?;
++        drop(custody.scorer.take());
++        ensure!(!device.poisoned()&&device.pending_claims()==Some(0),"actual resource teardown settlement remains unknown");
++        verify_files(custody.files.as_ref().unwrap(),&profile)?;
++        for pin in [&request_pin,&request.gpu_input,&input.profile] {pinned(pin,1<<20)?;}
++        pinned(&input.source_manifest,16<<20)?;pinned(&request.runtime_manifest,128<<10)?;pinned(&request.expectations,16<<20)?;
++        ensure!(Instant::now()<outer,"original resource batch expired during teardown/posthash");
++        Ok(())
++    });
++    let result = run.and_then(std::convert::identity);
++    drop(owner);
++    drop(lease);
++    let retained = control_parent.is_none();
++    let cleanup = control_parent
++        .take()
++        .map(tempfile::TempDir::close)
++        .transpose();
++    let mut waiting = std::pin::pin!(release.wait());
++    let released = matches!(
++        std::future::Future::poll(
++            waiting.as_mut(),
++            &mut std::task::Context::from_waker(std::task::Waker::noop())
++        ),
++        std::task::Poll::Ready(Ok(()))
++    );
++    receipt["native_control_retained_for_unknown_cuda"] = json!(retained);
++    receipt["native_control_cleanup_observed"] = json!(matches!(&cleanup, Ok(Some(()))));
++    receipt["native_control_cleanup_error"] =
++        json!(cleanup.as_ref().err().map(ToString::to_string));
++    receipt["native_host_charge_release_observed"] = json!(released);
++    let peak = peak_rss();
++    let peak_decision = final_host_peak(peak, request.host_limit_bytes);
++    receipt["final_host_peak_error"] = json!(peak_decision.as_ref().err().map(ToString::to_string));
++    let result = match (result, cleanup, peak_decision) {
++        (Err(primary), _, _) => Err(primary),
++        (Ok(()), Err(cleanup), _) => Err(cleanup.into()),
++        (Ok(()), Ok(_), Err(peak)) => Err(peak),
++        (Ok(()), Ok(_), Ok(_)) if released => Ok(()),
++        (Ok(()), Ok(_), Ok(_)) => Err(anyhow::anyhow!("native resource host release unknown")),
++    };
++    receipt["completed_forwards"] = json!(completed);
++    receipt["peak_process_rss_bytes"] = json!(peak);
++    receipt["process_cuda_poisoned"] = json!(cuda::process_poisoned());
++    receipt["complete"] = json!(result.is_ok());
++    receipt["latency_host_placement_passed"] = json!(result.is_ok());
++    if let Err(error) = &result {
++        receipt["error"] = json!(format!("{error:#}"));
++        if let Some(refusal) = error.downcast_ref::<cuda::PlacementRefusal>() {
++            receipt["placement_refusal"] = json!(&refusal.observation);
++        }
++    }
++    receipt["elapsed_us_to_final_report_start"] = json!(started.elapsed().as_micros());
++    flush(&mut file, &receipt)?;
++    if Instant::now() >= outer {
++        receipt["complete"] = json!(false);
++        receipt["latency_host_placement_passed"] = json!(false);
++        receipt["final_retention_exceeded_original_batch_cutoff"] = json!(true);
++        flush(&mut file, &receipt)?;
++        return result.and_then(|()| {
++            Err(anyhow::anyhow!(
++                "original resource batch cutoff exhausted during final receipt retention"
++            ))
++        });
++    }
++    result
++}
++#[cfg(test)]
++mod tests;
+--- /dev/null
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification/cuda_resources/tests.rs
+@@ -0,0 +1,161 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Injected schedules/clocks only; no CUDA witness or measured peak is fabricated.
++use super::*;
++use std::cell::Cell;
++#[test]
++fn frozen_resource_roster_is_twenty_one_forwards_with_one_warmup_and_twenty_samples() {
++    let roster = forward_roster();
++    assert_eq!(roster.len(), 21);
++    assert_eq!(roster.first().map(String::as_str), Some("warmup-0"));
++    assert_eq!(roster[1], "sample-01");
++    assert_eq!(roster[20], "sample-20");
++    assert_eq!(roster.iter().collect::<BTreeSet<_>>().len(), 21);
++    assert!(!roster.iter().any(|r| r.contains("load")));
++}
++#[test]
++fn operation_cutoff_clips_to_fixed_parent_and_never_refreshes_after_observer_io() -> Result<()> {
++    let start = Instant::now();
++    let outer = start + Duration::from_secs(3600);
++    let (d, n) = cutoff(outer, 3_600_000_000_000, start, 0, 120_000)?;
++    assert_eq!(d, start + Duration::from_secs(120));
++    assert_eq!(n, 120_000_000_000);
++    let (d, n) = cutoff(
++        outer,
++        3_600_000_000_000,
++        start + Duration::from_secs(3590),
++        3_590_000_000_000,
++        120_000,
++    )?;
++    assert_eq!(d, outer);
++    assert_eq!(n, 3_600_000_000_000);
++    assert!(cutoff(outer, 3_600_000_000_000, outer, 3_600_000_000_000, 120_000).is_err());
++    assert!(cutoff(outer, 3_600_000_000_000, start, 0, 120_001).is_err());
++    Ok(())
++}
++#[test]
++fn forward_completion_never_includes_failed_or_undispatched_calls() -> Result<()> {
++    let mut completed = vec![];
++    let calls = Cell::new(0);
++    actual_forward(&mut completed, "warmup-0", || {
++        calls.set(calls.get() + 1);
++        Ok(())
++    })?;
++    let failure = actual_forward(&mut completed, "sample-01", || -> Result<()> {
++        calls.set(calls.get() + 1);
++        anyhow::bail!("actual observed refusal")
++    });
++    assert!(failure.is_err());
++    assert_eq!(calls.get(), 2);
++    assert_eq!(completed, ["warmup-0"]);
++    assert_ne!(completed, forward_roster());
++    Ok(())
++}
++#[test]
++fn complete_component_context_denominator_refuses_shortened_or_reordered_cases() -> Result<()> {
++    assert_eq!(
++        super::super::complete_context_rows(&[17, 128, 8192])?,
++        [0, 1, 2]
++    );
++    for widths in [
++        &[17, 128][..],
++        &[17, 128, 2048][..],
++        &[128, 17, 8192][..],
++        &[17, 128, 8192, 8192][..],
++    ] {
++        assert!(super::super::complete_context_rows(widths).is_err());
++    }
++    Ok(())
++}
++#[test]
++fn resource_series_stops_first_actual_overrun_and_never_reports_partial_p95() -> Result<()> {
++    let policy = ResourcePolicy::software_v2();
++    let mut series = ResourceSeries::new(16 << 30)?;
++    let calls = Cell::new(0);
++    let retained = Cell::new(0);
++    let result = observe_series(
++        &mut series,
++        &policy,
++        || {
++            let n = calls.get() + 1;
++            calls.set(n);
++            Ok(ResourceSample {
++                elapsed_us: if n == 3 { 120_000_001 } else { 17_000 },
++                peak_process_rss_bytes: 4 << 30,
++            })
++        },
++        |_| {
++            retained.set(retained.get() + 1);
++            Ok(())
++        },
++    );
++    assert!(result.is_err());
++    assert_eq!(calls.get(), 3);
++    assert_eq!(retained.get(), 3);
++    assert_eq!(series.samples.len(), 3);
++    assert_eq!(series.samples[2].elapsed_us, 120_000_001);
++    assert!(!series.complete);
++    assert!(series.nearest_rank_p95_us.is_none());
++    Ok(())
++}
++
++#[test]
++fn original_three_model_host_and_job_caps_are_literal_and_old_models_refuse() -> Result<()> {
++    assert_eq!(
++        model_limits(ModelChoice::FocusQwenReranker06B)?,
++        (4_294_967_296, 8_589_934_592)
++    );
++    assert_eq!(
++        model_limits(ModelChoice::ContextQwenCompact)?,
++        (17_179_869_184, 34_359_738_368)
++    );
++    assert_eq!(
++        model_limits(ModelChoice::ContextQwenLarge)?,
++        (42_949_672_960, 51_539_607_552)
++    );
++    assert!(model_limits(ModelChoice::SmallIntern).is_err());
++    assert!(model_limits(ModelChoice::SmallStrands).is_err());
++    assert!(model_limits(ModelChoice::LargeIntern).is_err());
++    assert!(model_limits(ModelChoice::LargeKev).is_err());
++    Ok(())
++}
++
++#[test]
++fn native_operation_roster_carries_real_input_digest_and_exact_twenty_two_entries() {
++    let digest = Sha256Digest::from_bytes([73; 32]);
++    let roster = operation_roster(digest);
++    assert_eq!(roster.len(), 22);
++    assert_eq!(
++        roster[0],
++        json!({"kind":"load","ordinal":0,"input_digest":null})
++    );
++    assert_eq!(
++        roster[1],
++        json!({"kind":"warmup","ordinal":0,"input_digest":digest})
++    );
++    assert_eq!(
++        roster[21],
++        json!({"kind":"sample","ordinal":20,"input_digest":digest})
++    );
++    assert!(
++        roster[1..]
++            .iter()
++            .all(|row| row["input_digest"] == json!(digest))
++    );
++}
++
++#[test]
++fn later_warm_operation_outlives_expired_load_cutoff_without_renewing_original_batch() -> Result<()>
++{
++    let start = Instant::now();
++    let outer = start + Duration::from_secs(3600);
++    let (load, load_ns) = cutoff(outer, 3_600_000_000_000, start, 0, 120_000)?;
++    let later = start + Duration::from_secs(180);
++    assert!(later > load);
++    let (warm, warm_ns) = cutoff(outer, 3_600_000_000_000, later, 180_000_000_000, 120_000)?;
++    assert_eq!(load_ns, 120_000_000_000);
++    assert_eq!(warm, start + Duration::from_secs(300));
++    assert_eq!(warm_ns, 300_000_000_000);
++    assert!(warm < outer);
++    assert!(warm_ns < 3_600_000_000_000);
++    Ok(())
++}

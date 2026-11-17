@@ -1,0 +1,117 @@
+--- a/docs/arbiter/user-guide.md
++++ b/docs/arbiter/user-guide.md
+@@ -85,6 +85,18 @@
+ use the ordinary native candidate ordering. With Context off, Focus can still
+ help ordinary retrieval where supported.
+ 
++The service installer includes bundled MiniLM, but no optional Focus or Context
++weights. Optional model acquisition belongs to AIRK Service after you choose a
++supported profile and explicitly provision it. Installing or updating AIRK does
++not download those optional weights.
++
++When a qualified profile is offered, its catalog identifies the canonical public
++source for the exact compatible assets. A backup source is usable only if it has
++been verified for those same assets; a backup is not promised for every profile.
++A publisher's general model download is not automatically a compatible AIRK
++profile. If no verified source is available, the profile remains unavailable;
++AIRK does not silently choose different weights, precision or execution.
++
+ Model provisioning is an explicit management operation. A status query, ordinary
+ search or contextual question does not authorize a download. Review the selected
+ profile, transfer and staging/rollback disk requirements before provisioning.
+@@ -180,7 +192,9 @@
+ inference is local inside AIRK Service. The product does not send indexed
+ questions or evidence to a cloud model, run a model server or execute code from
+ a model repository. Offline import must authenticate the same complete assets
+-as online provisioning. Missing assets remain unavailable when offline.
++as online provisioning. A separately obtained manual offline bundle is a
++secondary option, not a required installer payload. Missing assets remain
++unavailable when offline.
+ 
+ Disable each stage through its supported native controls. Disablement prevents
+ new optional work and suppresses stale delivery while already admitted work
+--- a/docs/split/codex-plan.md
++++ b/docs/split/codex-plan.md
+@@ -614,6 +614,15 @@
+ 
+ Retain the initial 256-token WordPiece, 384-dimensional masked-mean/L2 and batch-one execution contract unless a separate change is approved. Keep the strict two-profile embedded MiniLM catalog; create a separate qualified Arbiter catalog instead of relaxing its pinned validation. New weights change `EmbeddingDescriptor` identity even at the same dimension. Invalidate affected caches and regenerate semantic representations through approved mechanisms while preserving lexical availability and honest readiness. Arbiter enable/disable/model switches themselves do not change semantic representations or require re-indexing.
+ 
++Optional Arbiter weights are excluded from the service installer and the VSIX;
++only bundled MiniLM remains in the installer/runtime payload. The primary optional
++model delivery path is app-owned, explicit on-demand acquisition from a verified
++canonical public/common origin. Use a separately verified backup only where one
++actually exists for the exact compatible artifact. Manual offline bundles are
++secondary, not a required installer payload. A profile without available verified
++native artifacts remains unavailable; do not invent upstream or release URLs.
++This delivery change does not authorize publication or a cloud inference provider.
++
+ Arbiter Focus and Arbiter Context are independently disabled by default and explicitly enabled for named immutable index identities. Focus may run while Context is off; Context may gather deterministically when Focus is unavailable or off. Each stage has its own explicit consent and resource admission. New/recreated/imported indexes do not inherit consent. Rename preserves enrollment. One selected Context model per service is shared only by its enrolled indexes; the shared Focus component has separate enrollment and full combined resource accounting when both stages run. No sidecar, Python serving, additional installer/executable, model server, cloud fallback, autonomous agent loop or model-supplied executable/custom operator.
+ 
+ Enable/apply without selected indexes is incomplete configuration and does not download a model. A service-wide enable switch permits the capability but never enrolls every current or future index. Global off and excluded indexes preserve ordinary complete results under the exact-byte/parsed-equality rules; model choice never grants access to an index.
+@@ -690,10 +699,10 @@
+ | A2 — Prepare the Qwen candidates and shared reranker | Prepare the smaller Qwen, larger Qwen and shared reranker under the recorded comparison protocol. Evaluate unchanged models, then train/adapt for measured gaps in relevance, evidence roles, complementary context, bounded next-read choice and uncertainty/abstention. Export and calibrate each complete supported head/readout. | Each model demonstrates useful contribution to fuller contextual responses under the common task/budget suite; routing accuracy alone cannot qualify it. Immutable bundles, reference fixtures, rights/notices and resource receipts exist; larger choices justify cost. Prepared is not product-selectable. |
+ | A3 — Core contracts and state | Core configuration/profile/status/advice/packet and composed contextual-response contracts; bounded expansion inputs, permitted read choices, sufficiency/gap reasons, accounting and termination; management/read applicability and retained-state fixtures. Separate reviewed contract landing before consumers. | D8/state decisions and new task applicability resolved; every expansion preserves authorization/publication and original budgets; authenticated catalog trust and independent fixtures/generation reviewed. No new hand-written TS/Python native mirror. |
+ | A4 — Embedded scorer and lifetime | Retrieval scorer behind an owned facade; inference owner admission/completion/drain; service composition hooks. Prefer existing static ONNX only where it faithfully executes each full scoring path. | Tokenization/masks/positions/raw scores/typed decisions match reference tolerances; native failure/cancellation/pins/charges obey service ownership; no extra executable. Alternative embedded runtime needs its own pinned dependency/package qualification. |
+-| A5 — Provisioning and enrollment | Service-owned asset transaction, Store-approved state, immutable per-index enrollment, resource observer/admission and lifecycle. | Download/verify/warm/activate/switch/rollback/disable/remove/restart cases pass; index opt-out never enters optional scoring; current availability is rechecked/reserved. |
++| A5 — Provisioning and enrollment | Service-owned on-demand acquisition from verified canonical public/common sources, Store-approved state, immutable per-index enrollment, resource observer/admission and lifecycle. | Exact available-source/backup-if-present, download/verify/warm/activate/switch/rollback/disable/remove/restart cases pass; optional weights are absent from installers; index opt-out never enters optional scoring; current availability is rechecked/reserved. |
+ | A6 — Context gathering and canonical responses | Kernel/frontend/MCP: implement §9.0 through canonical reads, deterministic recipes/packets first, then qualified local selection and bounded additional evidence gathering. | Multi-source questions produce fuller cited context than initial raw hits; gap handling and termination work; fewer downstream turns are evaluated without sacrificing goal completion. Explicit direct reads retain semantics; scope/publication/budgets and mixed-index/full-result transport parity pass. |
+ | A7 — Workbench answers and controls | Existing clients expose the composed question/context flow; Workbench shows organized cited answers, evidence roles, limitations, source navigation, packet preview/copy/export and full/expanded evidence. Add model/index controls through service authority. | Users answer held-out file questions beyond what individual raw-result views supply; agent and Workbench contexts agree for equivalent requests. Two Qwen choices and their shared reranker show task/fit/availability/selected-active state; only eligible profiles activate and MiniLM status stays separate. |
+-| A8 — Promote and ship | Frozen model/service/package owners across supported targets/backends. | Each promoted profile passes service/platform/package/offline/coexistence gates; both Qwen choices and their shared reranker qualify; trained MiniLM independently passes normal release/regeneration packaging. |
++| A8 — Promote and ship | Frozen model/service/package owners across supported targets/backends. | Each promoted optional profile passes app-owned on-demand acquisition, authenticated cache/offline-inference, service/platform/package/coexistence gates; both Qwen choices and their shared reranker qualify. Optional manual offline bundles are secondary and are not required installer payloads. Retained MiniLM independently passes normal release/regeneration packaging. |
+ 
+ A1/A2 and A4–A7 can use a private explicitly scoped development qualification harness. That does not enroll user indexes or make an unqualified bundle selectable. The user's campaign instructions authorize model preparation and implementation; ordinary product enablement does not authorize training.
+ 
+@@ -732,7 +741,8 @@
+ 
+ ### 9.4 Assets, resources and isolation
+ 
+-- Authenticate the release-approved catalog separately from checking downloaded hashes. Pin exact lengths/digests, roles, base/head/tokenizer dependencies, sources, notices, compatibility, fixtures and staging/rollback disk needs. Download only selected missing data; never execute model-repository code or fetch evidence-supplied URLs.
++- Authenticate the release-approved catalog separately from checking downloaded hashes. Pin exact lengths/digests, roles, base/head/tokenizer dependencies, sources, notices, compatibility, fixtures and staging/rollback disk needs. Exclude optional Arbiter weights from installers; acquire only explicitly selected missing assets through the native service from the verified canonical public/common source. Permit a backup only if its availability, source identity and exact compatible bytes have been verified. A source fallback preserves the original operation identity, absolute deadline, byte limits and authentication; it is not a model/precision switch or an unbounded retry. Never execute model-repository code or fetch evidence-supplied URLs.
++- Source availability is a separate admission prerequisite. Publisher BF16 files or a community ONNX file with another hash/ABI cannot substitute for AIRK's qualified derived artifacts. Do not fabricate Hugging Face paths or unpublished GitHub multipart URLs. If exact native artifacts are not publicly available on an approved origin, retain honest unavailability. Review any source-origin, redirect, range/part or backup contract change and fixtures before consumers; reuse the existing verified Store transaction. This amendment authorizes no publication or cloud serving.
+ - Use installation-owned private content-addressed assets outside sources/index contents. Public immutable weights may be shared within the installation; private features/caches stay index/user isolated. No cross-user shared store.
+ - States: disabled → requested/download → verify → warm/qualify → ready; constrained, switching/draining, failed and removal have explicit outcomes. Downloaded is not ready. A canceled/superseded request never resumes after restart. Offline import uses identical authentication/verification.
+ - Retain the previous qualified bundle for rollback; one selected Context model plus the shared Focus component are admitted under combined resource limits; switching Context can temporarily disable Context without disabling eligible Focus. Disclose selected versus active identity and failed rollback. Existing verified assets may warm on restart; missing assets require explicit reprovisioning, never ordinary-read/startup downloads.
+--- a/docs/split/split-plan.md
++++ b/docs/split/split-plan.md
+@@ -1455,6 +1455,21 @@
+ results. Record reviewed native contract/catalog/state decisions before dependent
+ consumers, including independent stage configuration and receipts.
+ 
++The user's later delivery requirement excludes optional Arbiter weights from the
++installer and the extension. Bundled MiniLM remains available with the service.
++Optional model assets are acquired by the app on demand from a verified canonical
++public/common source, after explicit provisioning. A verified backup is supported
++only where one actually exists for the same compatible artifact. Optional manual
++offline bundles remain secondary; they are not required installer payloads.
++
++The current AIRK-derived native exports must not be equated with a publisher's
++BF16 checkpoint or another community ONNX graph. If their exact authenticated
++bytes are not available from an approved public source, keep those profiles
++unavailable. Source-origin/redirect/part/backup contract changes require the normal
++recorded decision and native fixtures before consumers. This records the required
++delivery design, not public source availability, qualification or permission to
++publish artifacts or add cloud inference.
++
+ Product Help must explain the pipeline, each model's role, independent stage
+ enablement, index consent, provisioning/offline use, selected versus active state,
+ resource requirements, fallback, removal and errors. Hardware requirements come
+--- a/README.md
++++ b/README.md
+@@ -6,7 +6,7 @@
+ 
+ Browser and editor share Overview, Search, Indexes, Activity, Agents, Service and Help. Editor evidence/review/strategy tools and Workbench remain available. Native Admin keeps credentials and request custody in the native owner; uncertain outcomes retain their original identity and never authorize automatic replay. Complete native evidence, provenance, continuations and errors remain available for inspection and export.
+ 
+-Bundled MiniLM retrieval and optional Arbiter answers have separate roles. Arbiter is off by default and requires explicit immutable-index enrollment and a verified supported profile. Its implementation is not a claim of independent model, device, quality or platform qualification. `airkctl arbiter status` and actual tool schemas describe served capabilities. Product Help has one generated source catalog for the editor, browser and static site and remains available offline where bundled.
++Bundled MiniLM retrieval and optional Arbiter answers have separate roles. The service installer includes MiniLM; optional Focus/Context weights are acquired separately through explicit provisioning when a verified public source is available. Arbiter is off by default and requires explicit immutable-index enrollment and a verified supported profile. Its implementation is not a claim of independent model, device, quality or platform qualification. `airkctl arbiter status` and actual tool schemas describe served capabilities. Product Help has one generated source catalog for the editor, browser and static site and remains available offline where bundled.
+ 
+ <details>
+ <summary>Historical source checkpoints and predecessor candidate notices</summary>
+@@ -331,7 +331,7 @@
+ 
+ A per-user service owns authenticated HTTPS ingress, registration, durable work and resource policy. It is the only resident AIRK process: project owners, cleanup owners and the source watcher run inside it, and an owner that does not drain by its deadline is quarantined (its project reports a stuck owner and the other projects keep running) until an explicit service restart. Its asynchronous adapter routes canonical evidence reads to those in-process project owners; source scanning and inference do not execute in the serialized metadata actor. The service owns shared in-process inference with bounded admission and truthful completion barriers.
+ 
+-The split native payload contains matching `airk` and `airkctl` images, model assets and required notices. The service owns bundled MiniLM and static CPU ONNX Runtime; the client is a separate executable. MCP clients connect directly over HTTPS; inference has no separate `airk-embed` process. Since 1.8.22 the temporary processes are one window helper per VS Code window (`airkctl session` after the split), CLI and installer one-shots, at most one isolated PDF parser child and a user-opened `tools shell`. Windows, Linux and both Mac architectures are targets; final native, model and installed-platform qualification of the 1.9.0 candidate remains separately recorded. Earlier runtime-pair evidence retains its original version and scope.
++The split native payload contains matching `airk` and `airkctl` images, bundled MiniLM assets and required notices. Optional Arbiter weights are not installer payloads. The service owns bundled MiniLM and static CPU ONNX Runtime; the client is a separate executable. MCP clients connect directly over HTTPS; inference has no separate `airk-embed` process. Since 1.8.22 the temporary processes are one window helper per VS Code window (`airkctl session` after the split), CLI and installer one-shots, at most one isolated PDF parser child and a user-opened `tools shell`. Windows, Linux and both Mac architectures are targets; final native, model and installed-platform qualification of the 1.9.0 candidate remains separately recorded. Earlier runtime-pair evidence retains its original version and scope.
+ 
+ The Mac layout keeps the service and matching client in its verified app payload, with a macOS 13.3 deployment target and direct managed service startup. Static inference and model license notices remain in the distribution. See the [current signing contract](docs/native-signing.md) and [native installation](docs/service-installation.md). Signing, lifecycle and installed-platform qualification remain separate from portable ownership/package checks.
+ 

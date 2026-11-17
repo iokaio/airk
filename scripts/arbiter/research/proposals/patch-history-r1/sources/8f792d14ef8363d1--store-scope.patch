@@ -1,0 +1,245 @@
+--- a/crates/airk-store/src/service_registry.rs
++++ b/crates/airk-store/src/service_registry.rs
+@@ -20,6 +20,10 @@
+ const APPLICATION: i64 = 0x41535256;
+ const MAX_DATABASE_BYTES: u64 = 32 * 1024 * 1024;
+ pub const MAX_PROJECTS: usize = 1024;
++
++#[path = "service_scope.rs"]
++mod scope;
++pub use scope::{SavedScopeObservation, SavedScopeResolution};
+ 
+ /// Only callers that have established a read-only operation may retry this failure.
+ /// Corruption, I/O, validation and missing records remain ordinary failures.
+--- /dev/null
++++ b/crates/airk-store/src/service_scope.rs
+@@ -0,0 +1,229 @@
++// SPDX-License-Identifier: Apache-2.0
++//! One bounded saved-registry scope observation; no index/source access or migration.
++use super::*;
++
++/// Owned metadata from one SQLite read snapshot, not execution authorization.
++pub struct SavedScopeObservation {
++    pub namespace: Incarnation,
++    pub revision: u64,
++    pub resolution: SavedScopeResolution,
++}
++
++pub enum SavedScopeResolution {
++    Registered(Box<RegisteredProject>),
++    Missing,
++    Removed,
++    Ambiguous,
++}
++
++impl ServiceRegistry {
++    /// Match with native Path equality, including saved historical root spelling.
++    /// Active rows win before inactive rows/history; validate all visited rows as
++    /// the existing paginated resolver does. This is a scan, not an indexed lookup.
++    pub fn observe_source_scope(
++        &mut self,
++        root: &Path,
++        collection: Option<&str>,
++    ) -> Result<SavedScopeObservation> {
++        let registration_state = self.registration_state;
++        let transaction = self.connection.transaction()?;
++        let (namespace, revision): (String, i64) = transaction.query_row(
++            "SELECT incarnation,revision FROM service_meta WHERE id=1", [],
++            |row| Ok((row.get(0)?, row.get(1)?)),
++        )?;
++        let namespace = namespace.parse()?;
++        let revision = u64::try_from(revision).context("invalid service registry revision")?;
++        let mut seen = 0usize;
++        for inactive in [false, true] {
++            let sql = if inactive && registration_state {
++                "SELECT substr(payload,1,20481),epoch,paused,binding FROM projects WHERE registered=0 ORDER BY binding"
++            } else if inactive {
++                "SELECT substr(payload,1,20481),epoch,paused,binding FROM projects WHERE 0 ORDER BY binding"
++            } else if registration_state {
++                "SELECT substr(payload,1,20481),epoch,paused,binding FROM projects WHERE registered=1 ORDER BY binding"
++            } else {
++                "SELECT substr(payload,1,20481),epoch,paused,binding FROM projects ORDER BY binding"
++            };
++            let mut statement = transaction.prepare(sql)?;
++            let mut rows = statement.query([])?;
++            let mut first = None;
++            let mut matching = 0usize;
++            while let Some(row) = rows.next()? {
++                let (payload, epoch, paused) = project_row(row)?;
++                let project = decode(&payload, epoch, paused)?;
++                let binding: String = row.get(3)?;
++                ensure!(binding == project.registration.binding.to_string(), "foreign service registration");
++                seen += 1;
++                ensure!(seen <= MAX_PROJECTS, "configured source lookup exceeds registry bound");
++                if Path::new(&project.registration.root) == root
++                    && collection.is_none_or(|name| name == project.registration.collection)
++                {
++                    matching += 1;
++                    if first.is_none() {
++                        first = Some(project);
++                    }
++                }
++            }
++            // Continue validating every row in this role even after ambiguity.
++            // Do not inspect inactive rows if any active registration matched.
++            if matching != 0 {
++                let resolution = if inactive {
++                    SavedScopeResolution::Removed
++                } else if matching == 1 {
++                    SavedScopeResolution::Registered(Box::new(first.expect("one matching project")))
++                } else {
++                    SavedScopeResolution::Ambiguous
++                };
++                return Ok(SavedScopeObservation { namespace, revision, resolution });
++            }
++        }
++        // Legacy saved formats may have no removal-history table. Preserve the
++        // existing root-only historical tombstone even with a collection filter.
++        let root_text = root.to_str().context("non-UTF-8 configured source")?;
++        let present: bool = transaction.query_row(
++            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name='service_removed_projects' AND type='table')",
++            [], |row| row.get(0),
++        )?;
++        let removed = present && transaction.query_row(
++            "SELECT EXISTS(SELECT 1 FROM service_removed_projects WHERE root_identity=?1)",
++            [super::project_removal::removed_root_identity(root_text).to_string()],
++            |row| row.get::<_, bool>(0),
++        )?;
++        Ok(SavedScopeObservation {
++            namespace, revision,
++            resolution: if removed { SavedScopeResolution::Removed } else { SavedScopeResolution::Missing },
++        })
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn project(root: &str, data: &str, collection: &str) -> Result<ProjectRegistration> {
++        ProjectRegistration::new(root.into(), data.into(), collection.into())
++    }
++
++    #[test]
++    fn exact_scope_keeps_active_ambiguity_pause_and_collection_precedence() -> Result<()> {
++        let directory = tempfile::tempdir()?;
++        let namespace = Incarnation::from_bytes([31; 16]);
++        let mut registry = ServiceRegistry::open(directory.path(), namespace)?;
++        let first = project("/fictional/source", "/derived/first", "first")?;
++        let second = project("/fictional/source", "/derived/second", "second")?;
++        for row in [&first, &second] { registry.register(row)?; }
++        registry.pause(first.binding, true)?;
++        assert!(matches!(registry.observe_source_scope(Path::new(&first.root), None)?.resolution, SavedScopeResolution::Ambiguous));
++        let observed = registry.observe_source_scope(Path::new(&first.root), Some("first"))?;
++        assert_eq!(observed.namespace, namespace);
++        assert_eq!(observed.revision, registry.list(None, None, 32)?.revision);
++        let SavedScopeResolution::Registered(found) = observed.resolution else { anyhow::bail!("active filtered registration missing") };
++        assert_eq!(found.registration, first);
++        assert!(found.paused);
++        assert_eq!(found.fencing_generation, registry.get(first.binding)?.fencing_generation);
++        registry.connection.execute("UPDATE projects SET registered=0,paused=1 WHERE binding=?1", [second.binding.to_string()])?;
++        assert!(matches!(registry.observe_source_scope(Path::new(&first.root), None)?.resolution, SavedScopeResolution::Registered(_)));
++        assert!(matches!(registry.observe_source_scope(Path::new(&first.root), Some("second"))?.resolution, SavedScopeResolution::Removed));
++        Ok(())
++    }
++
++    #[test]
++    fn exact_scope_preserves_native_path_equivalence_without_filesystem_reads() -> Result<()> {
++        let directory = tempfile::tempdir()?;
++        let mut registry = ServiceRegistry::open(directory.path(), Incarnation::from_bytes([32; 16]))?;
++        let saved = project("/offline/source/", "/derived/offline", "offline")?;
++        registry.register(&saved)?;
++        for query in ["/offline/source", "/offline//source/.", "/Offline/source", "/offline/other"] {
++            let equal = Path::new(&saved.root) == Path::new(query);
++            assert_eq!(matches!(registry.observe_source_scope(Path::new(query), None)?.resolution, SavedScopeResolution::Registered(_)), equal);
++        }
++        #[cfg(windows)]
++        {
++            let windows = project(r"C:\offline\source", "/derived/windows", "windows")?;
++            registry.register(&windows)?;
++            for query in [r"C:/offline/source", r"C:\offline\source\", r"c:\offline\source", r"\\?\C:\offline\source"] {
++                assert_eq!(matches!(registry.observe_source_scope(Path::new(query), None)?.resolution, SavedScopeResolution::Registered(_)), Path::new(&windows.root) == Path::new(query));
++            }
++        }
++        Ok(())
++    }
++
++    #[test]
++    fn exact_scope_keeps_root_history_even_with_different_requested_collection() -> Result<()> {
++        let directory = tempfile::tempdir()?;
++        let mut registry = ServiceRegistry::open(directory.path(), Incarnation::from_bytes([33; 16]))?;
++        let root = "/fictional/removed";
++        registry.connection.execute("INSERT INTO service_removed_projects(binding,root_identity,removed_ms) VALUES(?1,?2,0)", params!["a".repeat(64), super::super::project_removal::removed_root_identity(root).to_string()])?;
++        assert!(matches!(registry.observe_source_scope(Path::new(root), Some("different"))?.resolution, SavedScopeResolution::Removed));
++        let live = project(root, "/derived/readded", "live")?;
++        registry.register(&live)?;
++        assert!(matches!(registry.observe_source_scope(Path::new(root), None)?.resolution, SavedScopeResolution::Registered(_)));
++        Ok(())
++    }
++
++    #[test]
++    fn exact_scope_retains_unrelated_record_corruption_detection() -> Result<()> {
++        let directory = tempfile::tempdir()?;
++        let mut registry = ServiceRegistry::open(directory.path(), Incarnation::from_bytes([34; 16]))?;
++        let wanted = project("/fictional/wanted", "/derived/wanted", "wanted")?;
++        let unrelated = project("/fictional/unrelated", "/derived/unrelated", "unrelated")?;
++        registry.register(&wanted)?;registry.register(&unrelated)?;
++        registry.connection.execute("UPDATE projects SET payload=?1 WHERE binding=?2", params![b"invalid registration".as_slice(), unrelated.binding.to_string()])?;
++        assert!(registry.observe_source_scope(Path::new(&wanted.root), None).is_err());
++        Ok(())
++    }
++
++    #[test]
++    fn exact_scope_preserves_role_aware_1024_bound() -> Result<()> {
++        let directory = tempfile::tempdir()?;
++        let mut registry = ServiceRegistry::open(directory.path(), Incarnation::from_bytes([35; 16]))?;
++        let wanted = project("/fictional/wanted", "/derived/wanted", "wanted")?;
++        registry.register(&wanted)?;
++        {
++            let transaction = registry.connection.transaction()?;
++            for index in 0..MAX_PROJECTS {
++                let row = project(&format!("/fictional/unrelated-{index}"), "/derived/unrelated", "other")?;
++                transaction.execute("INSERT INTO projects(binding,payload,epoch,paused,registered) VALUES(?1,?2,0,0,1)",
++                    params![row.binding.to_string(), serde_json::to_vec(&row)?])?;
++            }
++            transaction.commit()?;
++        }
++        assert!(registry.observe_source_scope(Path::new(&wanted.root), None).is_err(), "active match cannot hide too many active rows");
++        registry.connection.execute("UPDATE projects SET registered=0,paused=1 WHERE binding<>?1", [wanted.binding.to_string()])?;
++        assert!(matches!(registry.observe_source_scope(Path::new(&wanted.root), None)?.resolution, SavedScopeResolution::Registered(_)), "inactive rows must not consume a successful active role's budget");
++        assert!(registry.observe_source_scope(Path::new("/fictional/missing"), None).is_err(), "a missing active match must charge both roles");
++        Ok(())
++    }
++
++    #[test]
++    fn exact_scope_saved_formats_are_read_only_and_preserve_namespace_and_pause() -> Result<()> {
++        for version in [2i64, 4, 5, 6, 10] {
++            let directory = tempfile::tempdir()?;
++            let namespace = Incarnation::from_bytes([36; 16]);
++            let wanted = project("/fictional/legacy", "/derived/legacy", "legacy")?;
++            let mut registry = ServiceRegistry::open(directory.path(), namespace)?;
++            registry.register(&wanted)?;
++            registry.pause(wanted.binding, true)?;
++            if version < 7 { registry.connection.execute_batch("DROP TABLE service_watch_traversal;")?; }
++            if version < 6 { registry.connection.execute_batch("ALTER TABLE projects DROP COLUMN cleanup_guard;")?; }
++            if version < 5 { registry.connection.execute_batch("ALTER TABLE projects DROP COLUMN registered;")?; }
++            if version < 10 { registry.connection.execute_batch("DROP TABLE service_removed_projects;")?; }
++            registry.connection.pragma_update(None, "user_version", version)?;
++            drop(registry);
++            let path = directory.path().join("service-1.4.sqlite3");
++            let before = fs::read(&path)?;
++            let mut saved = ServiceRegistry::open_saved(directory.path())?;
++            let observed = saved.observe_source_scope(Path::new(&wanted.root), None)?;
++            assert_eq!(observed.namespace, namespace);
++            let SavedScopeResolution::Registered(found) = observed.resolution else { anyhow::bail!("legacy active registration missing") };
++            assert_eq!(found.registration, wanted);assert!(found.paused);
++            assert!(matches!(saved.observe_source_scope(Path::new("/fictional/missing"), None)?.resolution, SavedScopeResolution::Missing));
++            let saved_version: i64 = saved.connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
++            assert_eq!(saved_version, version);
++            drop(saved);
++            assert_eq!(fs::read(path)?, before, "saved observation may not migrate or write");
++        }
++        Ok(())
++    }
++
++}

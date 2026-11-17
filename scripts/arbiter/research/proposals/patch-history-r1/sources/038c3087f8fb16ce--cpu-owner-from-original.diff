@@ -1,0 +1,26 @@
+--- tools\retrieval-train\training_execution.py
++++ cpu_export_execution.py
+@@ -449,13 +449,18 @@
+         raise ValueError('training seal differs from primary-reviewed hash')
+     seal = json.loads(raw)
+     output = args.log_dir.resolve()
+-    if output != Path(seal['launch_log_dir']).resolve() or not output.is_relative_to(Path(__file__).resolve().parents[2] / 'artifacts') or output.exists():
++    if output != Path(seal['launch_log_dir']).resolve() or not output.is_relative_to(Path(seal['cwd']).resolve() / 'artifacts') or output.exists():
+         raise ValueError('fresh reviewed private training log directory required')
+-    if seal['limits']['wall_seconds'] > 600 or seal['limits']['host_committed_bytes'] > 8 * 1024**3 or seal['limits']['cuda_allocator_bytes'] > 4 * 1024**3:
++    if seal['limits']['wall_seconds'] > 600 or seal['limits']['host_committed_bytes'] > 16 * 1024**3 or seal['limits']['cuda_allocator_bytes'] > 4 * 1024**3:
+         raise ValueError('reviewed one-trial resource ceiling exceeded')
+-    baseline = gpu_observation(seal['nvidia_smi'])
+-    if any(baseline[k] != seal['gpu'][k] for k in ('uuid', 'name', 'driver_version', 'compute_capability')) or baseline['free_mib'] < seal['limits']['minimum_gpu_free_mib']:
+-        raise ValueError('actual GPU identity/free-memory reserve differs')
++    if seal['environment']['CUDA_VISIBLE_DEVICES'] != '' or seal['limits']['cuda_allocator_bytes'] != 0:
++        raise ValueError('Explicit CPU-only export required')
++    class Memory(ctypes.Structure):
++        _fields_=[('length',wintypes.DWORD),('load',wintypes.DWORD)]+[(name,ctypes.c_ulonglong)for name in ['total_physical','free_physical','total_page','free_page','total_virtual','free_virtual','extended']]
++    memory=Memory();memory.length=ctypes.sizeof(memory)
++    if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(memory)) or memory.free_physical < seal['limits']['minimum_host_free_bytes']:
++        raise ValueError('Reviewed free host physical-memory reserve unavailable')
++    baseline={'cpu_only':True,'free_host_physical_bytes':int(memory.free_physical),'total_host_physical_bytes':int(memory.total_physical)}
+     env = dict(os.environ)
+     env.update(seal['environment'])
+     env['AIRK_TRAIN_START_GATE'] = '1'

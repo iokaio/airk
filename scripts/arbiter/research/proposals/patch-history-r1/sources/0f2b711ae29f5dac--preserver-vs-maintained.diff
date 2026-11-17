@@ -1,0 +1,40 @@
+--- D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\final-plan-current-policy-preparation-20261116T085632Z\current-orchestration\final-integrated-native-preservation-r1\preserve_current.py
++++ d06/preserve_current.py
+@@ -4,11 +4,11 @@
+ B=Path(__file__).resolve().parent
+ R=Path(r'D:\code\Github\airk')
+ E=R/'artifacts/v190/final-plan/exec-20261116T052942Z'
+-RECEIPT=E/'final-integrated-images-build-r1.json'
+-LOG=E/'final-integrated-images-build-r1.log'
++RECEIPT=E/'d06-integrated-images-build-r1.json'
++LOG=E/'d06-integrated-images-build-r1.log'
+ SID='S-1-5-21-3678370870-3858642417-826968105-1002'
+-GROUP='c9fe0a57f24f293c782dea60dce968bbc297f19adfe0c989d8793bae309397f3'
+-COMMIT='59580fa6e6742e8101fd35346a2b999621671278'
++GROUP='8189b523f7c4b2f6d0b62cfb161ea8f431c60f304f175680f9f2b218b240992f'
++COMMIT='e306258a2b6913e6ba91a20fe0b50dbe6ae8361f'
+ assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=R,text=True).strip()==COMMIT
+ PACKAGES=['airk-service','airk-inference','airk-retrieval','airk-kernel','airk-cli::combined_reads']
+ def sha(p):
+@@ -28,7 +28,7 @@
+ for key in ('inputs_unchanged','runner_unchanged','runtime_unchanged','command_inputs_unchanged'):assert receipt[key] is True
+ assert receipt['changed_groups']==[] and receipt['groups']['native']['sha256']==GROUP and receipt['incremental']=='0'
+ assert receipt['log']==LOG.name
+-assert receipt['command'][1:]==['test','--workspace','--all-features','--locked','--no-run','--timings','--message-format=json-render-diagnostics']
++assert receipt['command'][1:]==['test','-p','airk-service','-p','airk-inference','-p','airk-retrieval','-p','airk-kernel','-p','airk-cli','--all-features','--no-run','--message-format=json-render-diagnostics','--locked','--timings']
+ rows=[]
+ for line in LOG.read_text(encoding='utf-8').splitlines():
+     if line.lstrip().startswith('{'):rows.append(json.loads(line))
+@@ -74,9 +74,9 @@
+ assert sha(RECEIPT)==pin(RECEIPT)['sha256']
+ inventory={'schema':'airk.preserved-native-test-images/1','utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+  'source_commit':COMMIT,'native_group':GROUP,'actual_build_receipt':{'path':str(RECEIPT),'sha256':sha(RECEIPT)},
+- 'images':result,'source_dirty':True,'reviewed_delta':'Reviewed Dense seven-file plus Mac diagnostics four-file plus Service private-grant three-file section is exact nativec9fe. HEAD59580 is build ancestry with dirty reviewed sources; no clean-source equivalence. Original failures retained.','scope':'Actual all-feature Cargo no-run test-image inventory and unchanged byte copies; no testcase counts inferred, selected model execution, qualification, signing or publication.'}
+-(B/'native-test-images-final-integrated-r1.json').write_text(json.dumps(inventory,indent=2)+'\n',encoding='utf-8')
+-side={'schema':'airk.private-current-image-preservation-binding/1','inventory':pin(B/'native-test-images-final-integrated-r1.json'),
++ 'images':result,'source_dirty':False,'reviewed_delta':'Clean committed e306 D06 frontend/worker admitted-parent correction plus reviewed Installer/ar correction. Native8189 exact build inputs. Original R7 failure retained; no model execution or old whole-source qualification relabel.','scope':'Actual all-feature Cargo no-run test-image inventory and unchanged byte copies; no testcase counts inferred, selected model execution, qualification, signing or publication.'}
++(B/'native-test-images-d06-r1.json').write_text(json.dumps(inventory,indent=2)+'\n',encoding='utf-8')
++side={'schema':'airk.private-current-image-preservation-binding/1','inventory':pin(B/'native-test-images-d06-r1.json'),
+  'build_receipt':pin(RECEIPT),'cargo_json':pin(LOG),'actual_static_ORT_rows':ort,'images':bindings,
+  'testcases_listed_or_run':False,'native_model_request_dispatched':False,'preserver_source':pin(Path(__file__).resolve()),'creation_policy':'Fresh protected human1002 parent inheritance; no existing owner/ACL changes. Copy occurs only after actual completed PASS with unchangedinputs and exact currentCargoJSON.','artifact_or_target_approval':'pending explicit Root review; none invented'}
+ (B/'source-owners.json').write_text(json.dumps([{'path':path,**policy} for path,policy in source_policies.items()],indent=2)+'\n',encoding='utf-8')

@@ -1,0 +1,126 @@
+--- a/crates/airk-cli/tests/combined_reads/deleted_source_recovery.rs
++++ b/crates/airk-cli/tests/combined_reads/deleted_source_recovery.rs
+@@ -104,6 +104,54 @@
+     )
+ }
+ 
++// Missing storage is a failed member under Report, not an RPC or whole-union
++// failure. Explicit Require still refuses while retaining that same complete A
++// outcome. Exercise all three actual read paths without replaying a mutation.
++async fn missing_storage_reads(f: &Fixture, mcp: &mut McpSession, first_id: u64) -> Result<()> {
++    for (offset, required) in [false, true].into_iter().enumerate() {
++        let mut args = deletion_query();
++        args["project_ids"] = json!(f.session.project_ids);
++        args["member_availability"] = json!(if required { "require" } else { "report" });
++        let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
++        let native = native_read(backend.as_ref(), "airk_search", &args).await;
++        backend.close();
++        backend.shutdown().await?;
++        let native = native?;
++        let cli = f.cli("airk_search", &args).await?;
++        let wire = mcp.call(first_id + offset as u64, "airk_search", args)?;
++        ensure!(wire.get("error").is_none() && wire["result"].is_object(),
++            "missing storage produced an RPC failure instead of a member result: {wire}");
++        policy_parity("missing storage native/CLI", &native, &cli)?;
++        policy_parity("missing storage native/MCP", &native, &wire["result"])?;
++        for reply in [&native, &cli, &wire["result"]] {
++            ensure!(reply.get("isError").is_none_or(Value::is_boolean)
++                && (reply["isError"] == true) == required,
++                "missing storage Report/Require outer flag differs: {reply}");
++        }
++        let value = body(&native)?;
++        ensure!(value["schema"] == "airk.combined-read/1" && value["partial"] == true
++            && value["ranking"].as_array().is_some_and(Vec::is_empty),
++            "missing storage invented complete or ranked evidence: {value}");
++        let members = value["members"].as_array().context("missing storage member inventory absent")?;
++        ensure!(members.len() == 1 && members[0]["index_id"] == json!(f.indexes[2])
++            && members[0]["outcome"] == "failed" && members[0]["is_error"] == true,
++            "missing storage omitted or changed selected A: {value}");
++        let child = member_body(&value, &members[0])?;
++        ensure!(child["error"]["code"] == "scoped_connection_unavailable"
++            && child["error"]["query_submitted"] == false && child["error"]["retryable"] == false,
++            "missing storage failed for another reason: {child}");
++        let publications = value["publication_vector"]["members"].as_array()
++            .context("missing storage publication inventory absent")?;
++        ensure!(publications.len() == 1 && publications[0]["index_id"] == json!(f.indexes[2])
++            && publications[0]["publication"].is_null(),
++            "missing storage invented an A publication: {value}");
++        ensure!(if required { value["error"]["code"] == "member_unavailable" }
++            else { value["error"].is_null() },
++            "explicit member availability contract changed: {value}");
++    }
++    Ok(())
++}
++
+ async fn stop_deletion_service(f: &Fixture, service: &mut Option<OwnedProcess>) -> Result<()> {
+     let response = airk_cli::service_runtime::request(&f.control, ControlMethod::Shutdown).await?;
+     ensure!(
+@@ -189,15 +237,7 @@
+     if data_lost {
+         f.session = affected_session.clone();
+         let mut unavailable = McpSession::start(&f)?;
+-        let reply = unavailable.request(
+-            50,
+-            "tools/call",
+-            json!({"name":"airk_search","arguments":deletion_query()}),
+-        )?;
+-        ensure!(
+-            reply.get("error").is_some() || reply["result"]["isError"] == true,
+-            "missing-storage read unexpectedly produced evidence: {reply}"
+-        );
++        missing_storage_reads(&f, &mut unavailable, 50).await?;
+         drop(unavailable);
+         let registry = ServiceRegistry::open_saved(&f.control)?;
+         let budget = registry.recovery_budget(
+@@ -372,7 +412,11 @@
+         healthy_deletion_read(&f, &mut healthy, 101).await? == before,
+         "warm healthy member changed after A file removal"
+     );
++    // This shared fixture deliberately starts paused. Ordinary Index work must
++    // be explicitly admitted, then drained before restoring that user choice.
++    fixture_pause(&f, 2, false).await?;
+     fixture_job(&f, 2, airk_core::service::JobKind::Index).await?;
++    super::super::split::pause_quiescent_original(&f, 2).await?;
+     f.session = affected_session.clone();
+     let mut affected = McpSession::start(&f)?;
+     let args = json!({"prefix":"api/","limit":16,"max_bytes":8192,"response_mode":"full"});
+@@ -616,7 +660,11 @@
+                 .chain(&original)
+                 .all(|child| child.current_owned
+                     && matches!(child.kind, FundingChildKind::Current { .. })),
+-        "real native terminal WAL children missing; no fabricated positive fixture"
++        "real native terminal WAL children missing; selected={}, original={}; complete bounded actual funding={}",
++        selected.len(), original.len(), {
++            airk_core::index_catalog::encoded_size(&before, airk_core::MAX_RESPONSE_BYTES)?;
++            serde_json::to_string(&before)?
++        }
+     );
+     let healthy = deletion_read_grant(f, 2, 2, 181).await?;
+     f.session = healthy;
+@@ -1076,9 +1124,14 @@
+     require_members: bool,
+ ) -> Result<Value> {
+     let mut args = json!({"query":"boundaryneedle","mode":"lexical","limit":12,
+-        "max_bytes":16384,"response_mode":"full","verification":mode,
+-        "verification_max_sources":8,"verification_max_bytes":32768,
+-        "verification_deadline_ms":4000});
++        "max_bytes":16384,"response_mode":"full","verification":mode});
++    // Off forbids all verification budgets in the canonical native catalog.
++    // Report/Require retain the originally bounded verification workload.
++    if mode != "off" {
++        args["verification_max_sources"] = json!(8);
++        args["verification_max_bytes"] = json!(32768);
++        args["verification_deadline_ms"] = json!(4000);
++    }
+     if require_members {
+         args["member_availability"] = json!("require");
+     }
+@@ -1112,7 +1165,7 @@
+     let value = body(&native)?;
+     let members = value["members"]
+         .as_array()
+-        .context("union outcomes absent")?;
++        .with_context(|| format!("union members absent; complete bounded native body: {value}"))?;
+     let ids: std::collections::BTreeSet<_> = members
+         .iter()
+         .map(|member| serde_json::from_value::<IndexId>(member["index_id"].clone()))

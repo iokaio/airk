@@ -1,0 +1,222 @@
+--- a/crates/airk-kernel/src/current/enrichment.rs
++++ b/crates/airk-kernel/src/current/enrichment.rs
+@@ -8,7 +8,8 @@
+ use airk_store::{
+     FileStore,
+     current::{
+-        ArtifactChange, CapturedInput, CurrentRead, MAX_PENDING_INPUTS, resources::ResourceChange,
++        ArtifactChange, CapturedInput, CurrentRead, MAX_PENDING_INPUTS, collection::CollectionState,
++        resources::ResourceChange,
+     },
+     quota::Reservation,
+ };
+@@ -207,6 +208,16 @@
+     let state = read
+         .collection_state()?
+         .context("current configuration missing")?;
++    readiness_with_state(read, store, &state, policy)
++}
++
++/// Reuse scalar metadata from this exact authorized read; callers retain policy-read ordering.
++pub(super) fn readiness_with_state(
++    read: &CurrentRead,
++    store: &FileStore,
++    state: &CollectionState,
++    policy: DefaultSearchPolicy,
++) -> Result<SemanticReadiness> {
+     if crate::shared_models::semantic_upgrade_pending(store, state.configuration.model.as_ref()) {
+         return Ok(SemanticReadiness {
+             version: 1,
+@@ -226,9 +237,6 @@
+     if let Some(work) = read_work(read, store)? {
+         return Ok(work.readiness(policy));
+     }
+-    let state = read
+-        .collection_state()?
+-        .context("current configuration missing")?;
+     let c = &state.configuration;
+     let enabled = c.model.is_some();
+     Ok(SemanticReadiness {
+--- a/crates/airk-kernel/src/current/progress.rs
++++ b/crates/airk-kernel/src/current/progress.rs
+@@ -6,7 +6,7 @@
+ };
+ use airk_store::{
+     FileStore,
+-    current::{CurrentRead, resources::ResourceChange},
++    current::{CurrentRead, collection::CollectionState, resources::ResourceChange},
+     quota::Reservation,
+ };
+ use anyhow::{Result, ensure};
+@@ -154,7 +154,23 @@
+     let total = read
+         .collection_state()?
+         .map_or(0, |state| state.counts.files);
+-    Ok(DiscoveryReadiness {
++    Ok(ready(total))
++}
++
++/// Keep work authoritative while reusing this read's already-authenticated scalar metadata.
++pub(super) fn readiness_with_state(
++    read: &CurrentRead,
++    store: &FileStore,
++    state: &CollectionState,
++) -> Result<DiscoveryReadiness> {
++    if let Some(work) = read_work(read, store)? {
++        return Ok(work.readiness());
++    }
++    Ok(ready(state.counts.files))
++}
++
++fn ready(total: u64) -> DiscoveryReadiness {
++    DiscoveryReadiness {
+         version: 1,
+         state: DiscoveryState::Ready,
+         epoch: None,
+@@ -162,7 +178,7 @@
+         committed_artifacts: total,
+         total_artifacts: Some(total),
+         failure: None,
+-    })
++    }
+ }
+ 
+ pub(super) fn read_work(read: &CurrentRead, store: &FileStore) -> Result<Option<ScanWork>> {
+--- a/crates/airk-kernel/src/current/runtime.rs
++++ b/crates/airk-kernel/src/current/runtime.rs
+@@ -31,8 +31,10 @@
+         let state = read
+             .collection_state()?
+             .context("current collection configuration missing")?;
+-        let semantic = super::enrichment::readiness(&read, &self.store)?;
+-        let discovery = super::progress::readiness(&read, &self.store)?;
++        let policy = super::enrichment::read_policy(&read, &self.store)?;
++        let semantic =
++            super::enrichment::readiness_with_state(&read, &self.store, &state, policy)?;
++        let discovery = super::progress::readiness_with_state(&read, &self.store, &state)?;
+         let pending = crate::shared_models::semantic_upgrade_pending(
+             &self.store,
+             state.configuration.model.as_ref(),
+--- a/crates/airk-kernel/tests/current_runtime.rs
++++ b/crates/airk-kernel/tests/current_runtime.rs
+@@ -9,6 +9,40 @@
+ fn unlinked_tempdir() -> Result<tempfile::TempDir> {
+     // Model guards require real ancestors; macOS exposes temporary paths through /var.
+     Ok(tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?)
++}
++
++/// Compare independently exposed scalar output with detailed publication-bound observations.
++fn assert_summary_parity(kernel: &Kernel) -> Result<()> {
++    let status = kernel.status()?;
++    let summary = kernel.status_summary()?;
++    assert_eq!(summary["index_state"], "available");
++    assert_eq!(summary["files"], status.files);
++    assert_eq!(summary["generation"], status.generation);
++    assert_eq!(summary["indexed_vectors"], status.indexed_vectors);
++    assert_eq!(
++        summary["publication"]["token"],
++        serde_json::to_value(&status.publication.as_ref().expect("published fixture").token)?
++    );
++    assert_eq!(
++        summary["semantic_readiness"]["state"],
++        serde_json::to_value(status.semantic_readiness.state)?
++    );
++    assert_eq!(
++        summary["semantic_readiness"]["completed_artifacts"],
++        status.semantic_readiness.completed_artifacts
++    );
++    assert_eq!(
++        summary["semantic_readiness"]["selected_artifacts"],
++        status.semantic_readiness.selected_artifacts
++    );
++    assert_eq!(
++        summary["discovery_readiness"]["state"],
++        serde_json::to_value(status.discovery_readiness.state)?
++    );
++    if status.semantic_readiness.state == SemanticState::Failed {
++        assert_eq!(summary["health"], "needs_attention");
++    }
++    Ok(())
+ }
+ 
+ #[test]
+@@ -102,6 +136,7 @@
+     kernel.index()?;
+     let before = kernel.status()?;
+     assert_eq!(before.files, 2);
++    assert_summary_parity(&kernel)?;
+     assert!(
+         directory
+             .path()
+@@ -428,6 +463,7 @@
+     other.scheduled_index(false, false)?;
+     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+     kernel.scheduled_index(false, false)?;
++    assert_summary_parity(&kernel)?;
+     let mut completed = kernel.status()?.semantic_readiness.completed_artifacts;
+     assert!(completed < 65);
+     kernel.schedule_pause(true)?;
+@@ -494,6 +530,7 @@
+         reopened.status()?.semantic_readiness.state,
+         SemanticState::Ready
+     );
++    assert_summary_parity(&reopened)?;
+     assert_eq!(reopened.run_scheduled_enrichment()?.state, "idle");
+     assert_eq!(other.status()?.publication, foreign_head);
+     Ok(())
+@@ -611,6 +648,7 @@
+     );
+     let status = kernel.status()?;
+     assert_eq!(status.semantic_readiness.state, SemanticState::Failed);
++    assert_summary_parity(&kernel)?;
+     assert_eq!(status.semantic_readiness.completed_artifacts, 0);
+     let query = SearchQuery {
+         text: "authenticate".into(),
+--- a/crates/airk-kernel/src/current/indexing/tests.rs
++++ b/crates/airk-kernel/src/current/indexing/tests.rs
+@@ -1357,3 +1357,45 @@
+     }
+     assert_eq!(publication_interval(Duration::MAX), Duration::from_secs(30));
+ }
++
++
++#[test]
++fn scalar_summary_preserves_policy_semantic_and_discovery_corruption_precedence() -> Result<()> {
++    use airk_core::readiness::DefaultSearchPolicy;
++    let root = model_data_directory()?;
++    let data = model_data_directory()?;
++    write_static_test_model(&data.path().join("models/local"))?;
++    std::fs::write(root.path().join("fixture.txt"), "authenticate original\n")?;
++    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
++    kernel.scheduled_index(false, false)?;
++    kernel.set_default_semantic_search_policy(DefaultSearchPolicy::LexicalWhilePending)?;
++    let read = kernel.current_reader()?;
++    let state = read.collection_state()?.expect("published state");
++    let mut resources = Vec::new();
++    for key in ["semantic-policy", "semantic-work", "scan-work"] {
++        let reference = read.resource_reference(key)?.expect("fixture resource");
++        let path = kernel.store.directory().join("current-resources")
++            .join(format!("{}.json", reference.digest));
++        let original = std::fs::read(&path)?;
++        let mut corrupt = original.clone();
++        corrupt[0] ^= 1;
++        std::fs::write(&path, corrupt)?;
++        resources.push((path, original));
++    }
++    let error = kernel.status_summary().unwrap_err();
++    assert!(!format!("{error:#}").contains("read current semantic work"));
++    // The policy error wins over corrupt semantic and discovery work.
++    assert!(super::super::enrichment::read_policy(&read, &kernel.store).is_err());
++    std::fs::write(&resources[0].0, &resources[0].1)?;
++    let error = kernel.status_summary().unwrap_err();
++    assert!(format!("{error:#}").contains("read current semantic work"));
++    // Standalone readiness retains policy -> state -> upgrade -> semantic work.
++    assert!(super::super::enrichment::readiness(&read, &kernel.store).is_err());
++    std::fs::write(&resources[1].0, &resources[1].1)?;
++    assert!(kernel.status_summary().is_err());
++    assert!(super::super::progress::readiness(&read, &kernel.store).is_err());
++    assert!(super::super::progress::readiness_with_state(&read, &kernel.store, &state).is_err());
++    std::fs::write(&resources[2].0, &resources[2].1)?;
++    assert!(kernel.status_summary().is_ok());
++    Ok(())
++}

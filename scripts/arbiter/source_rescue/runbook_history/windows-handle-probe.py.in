@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+import ctypes
+from ctypes import wintypes
+k = ctypes.WinDLL('kernel32', use_last_error=True)
+k.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                         ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD,
+                         wintypes.HANDLE]
+k.CreateFileW.restype = wintypes.HANDLE
+k.CloseHandle.argtypes = [wintypes.HANDLE]
+for path in paths:
+    handle = k.CreateFileW(path, 0x80, 3, None, 3, 0x02200000, None)
+    error = (ctypes.get_last_error()
+             if handle == ctypes.c_void_p(-1).value else 0)
+    if not error:
+        k.CloseHandle(handle)
+    print(path, error)

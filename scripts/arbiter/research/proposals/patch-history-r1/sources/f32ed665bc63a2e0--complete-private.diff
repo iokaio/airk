@@ -1,0 +1,95 @@
+--- crates/airk-supervisor/src/project_worker/CONTRACT.md
++++ crates/airk-supervisor/src/project_worker/CONTRACT.md
+@@ -47,3 +47,18 @@
+ remain unchanged. Runtime bundle/work observations remain async. Native model
+ execution, lease/reservations and completion/drain stay under their existing
+ owning service; this transport bridge creates no inference owner.
++
++Native I1 QueryResult embeds the existing closed MCP-shaped tool result
++(content, optional structuredContent and isError). The negotiated public SDK
++resultType discriminator belongs to the outer MCP transport, not this native
++frame. Normal LocalTools dispatch already omits it; worker-level early scoped
++and recognized unscoped error serialization must omit it too. Keep every error
++body, scope observation, retry flag and native-body distinction unchanged.
++Kernel closed-envelope sizing continues to refuse arbitrary extensions; no
++frame/allocation increase or unknown-field trimming is authorized.
++
++Cheap proof: response_tests::early_worker_errors_use_closed_native_envelopes
++constructs real SDK refusals, demonstrates the SDK discriminator, then checks
++actual worker helpers against Kernel context_member_payload_bytes without a
++model/worker process. A framing correction does not establish that an underlying
++member operation succeeded or authorize replay of a failed finite Answer.
+--- crates/airk-supervisor/src/project_worker.rs
++++ crates/airk-supervisor/src/project_worker.rs
+@@ -568,7 +568,9 @@
+ /// This worker boundary previously exposed only a fixed public failure. Keep
+ /// unknown internal paths/content private while retaining recognized receipts.
+ fn unscoped_worker_error(error: &anyhow::Error) -> serde_json::Value {
+-    if let Some(reply) = airk_mcp::response::typed_error_result(error) {
++    if let Some(mut reply) = airk_mcp::response::typed_error_result(error) {
++        // This is the closed native I1 result, not negotiated public MCP.
++        reply.result_type = None;
+         return serde_json::to_value(reply).expect("typed worker failure receipt");
+     }
+     let body = serde_json::json!({"error":{"code":"read_failed",
+@@ -579,7 +581,10 @@
+ /// Preserve the direct transport's native/MCP envelope distinction while using
+ /// the same bounded, typed refusal factory as canonical MCP reads.
+ fn scoped_worker_error(kernel: &Kernel, error: &anyhow::Error, native: bool) -> serde_json::Value {
+-    let reply = airk_mcp::response::scoped_error_result(kernel, error);
++    let mut reply = airk_mcp::response::scoped_error_result(kernel, error);
++    // Match LocalTools normal dispatch for every early worker error exit.
++    // The outer MCP adapter owns its negotiated discriminator.
++    reply.result_type = None;
+     if native {
+         // The canonical factory always supplies JSON for a scoped response,
+         // including generic failures and frame-budget refusals.
+--- crates/airk-supervisor/src/project_worker/response_tests.rs
++++ crates/airk-supervisor/src/project_worker/response_tests.rs
+@@ -97,3 +97,46 @@
+     assert!(!reply.to_string().contains(sentinel));
+     Ok(())
+ }
++
++#[test]
++fn early_worker_errors_use_closed_native_envelopes() -> Result<()> {
++    let root = tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?;
++    let admin = Kernel::open(root.path(), None)?;
++    let scoped = session(&admin)?;
++    let error = anyhow::Error::new(airk_core::scoped_reads::ScopeReadRefused);
++    let sdk = airk_mcp::response::scoped_error_result(&scoped, &error);
++    assert!(
++        sdk.result_type.is_some(),
++        "control must exercise the real SDK constructor"
++    );
++    let sdk_value = serde_json::to_value(&sdk)?;
++    assert!(
++        airk_kernel::combined_reads::context_member_payload_bytes(&sdk_value).is_err(),
++        "the public SDK envelope is not an unreserved native frame"
++    );
++    let native = scoped_worker_error(&scoped, &error, false);
++    assert!(native.get("resultType").is_none());
++    assert_eq!(body(&native), scoped_worker_error(&scoped, &error, true));
++    let mut expected = sdk_value;
++    expected.as_object_mut().unwrap().remove("resultType");
++    assert_eq!(
++        native, expected,
++        "only the native/public discriminator differs"
++    );
++    assert!(airk_kernel::combined_reads::context_member_payload_bytes(&native)? > 0);
++    assert_eq!(body(&native)["error"]["code"], "scoped_read_unavailable");
++    let typed = anyhow::Error::new(airk_store::quota::QuotaContention);
++    let sdk =
++        airk_mcp::response::typed_error_result(&typed).context("real typed refusal absent")?;
++    assert!(sdk.result_type.is_some());
++    let native = unscoped_worker_error(&typed);
++    let mut expected = serde_json::to_value(sdk)?;
++    expected.as_object_mut().unwrap().remove("resultType");
++    assert_eq!(native, expected);
++    assert!(airk_kernel::combined_reads::context_member_payload_bytes(&native)? > 0);
++    let unknown = unscoped_worker_error(&anyhow::anyhow!("private/sentinel"));
++    assert!(unknown.get("resultType").is_none());
++    assert!(airk_kernel::combined_reads::context_member_payload_bytes(&unknown)? > 0);
++    assert!(!unknown.to_string().contains("private/sentinel"));
++    Ok(())
++}

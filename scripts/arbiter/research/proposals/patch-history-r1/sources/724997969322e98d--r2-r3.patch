@@ -1,0 +1,211 @@
+--- r2/crates/airk-service/src/service_runtime/arbiter/CONTRACT.md
++++ r3/crates/airk-service/src/service_runtime/arbiter/CONTRACT.md
+@@ -593,3 +593,5 @@
+ copy/export retains precision, native fallback reasons and all variant metadata.
+ The additional observation is bounded256KiB inside unchanged original reply/frame
+ ceilings. No retries or replacement clock are introduced.
++
++Diagnostics additionally requires positive physical current4 binding observations before/after each strict read (canonical raw SHA, revision and native catalog binding), repeated around the complete stage snapshot. Management load() synthesized disabled defaults are never accepted as physical current4. Both stages also require equal read-only Shared selection/residency stamps before/after: actual generation, cached document, selected manifests/reasons, ready and intent maps, eligibility and cached/native epoch/poison state. Changed selection/eligibility yields unavailable. This does not claim atomic unrelated download or work-progress counters. No CUDA probe is permitted.
+--- r2/crates/airk-service/src/service_runtime/arbiter/read_device_status/tests.rs
++++ r3/crates/airk-service/src/service_runtime/arbiter/read_device_status/tests.rs
+@@ -56,3 +56,87 @@
+     assert!(live(attempt).is_err());
+     Ok(())
+ }
++
++#[test]
++fn strict_diagnostic_current4_requires_a_real_file_and_exact_binding_without_recreating_missing_file()
++-> Result<()> {
++    let root = tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?;
++    let lease = Arc::new(airk_store::service::ServiceLease::acquire(root.path())?);
++    let store = airk_store::service::arbiter::ConfigurationStore::open(
++        lease,
++        Sha256Digest::from_bytes([1; 32]),
++        Incarnation::from_bytes([2; 16]),
++    )?;
++    let binding = DeviceCatalogBinding {
++        catalog: Sha256Digest::from_bytes([3; 32]),
++        source: Sha256Digest::from_bytes([4; 32]),
++    };
++    let document = store
++        .device(binding.clone())
++        .initialize_checked(None, || Ok(()))?;
++    let path = root.path().join("arbiter-v3/configuration.json");
++    let bytes = std::fs::read(&path)?;
++    assert_eq!(
++        strict_current_configuration(&store.device(binding.clone()))?,
++        Some(document)
++    );
++    assert_eq!(std::fs::read(&path)?, bytes);
++    let wrong = DeviceCatalogBinding {
++        catalog: Sha256Digest::from_bytes([9; 32]),
++        ..binding.clone()
++    };
++    assert!(strict_current_configuration(&store.device(wrong)).is_err());
++    assert_eq!(std::fs::read(&path)?, bytes);
++    // Remove only this test's just-created current file. Its native directory and
++    // lock remain, exercising the separate missing-file management fallback.
++    std::fs::remove_file(&path)?;
++    let names = || -> Result<Vec<_>> {
++        let mut out = std::fs::read_dir(path.parent().unwrap())?
++            .map(|row| row.map(|v| v.file_name()))
++            .collect::<std::io::Result<Vec<_>>>()?;
++        out.sort();
++        Ok(out)
++    };
++    let before = names()?;
++    assert!(strict_current_configuration(&store.device(binding))?.is_none());
++    assert!(!path.exists());
++    assert_eq!(names()?, before);
++    Ok(())
++}
++#[test]
++fn same_revision_selection_generation_epoch_ready_intent_and_reason_changes_refuse_partial_snapshot()
++-> Result<()> {
++    use std::cell::Cell;
++    // Independent injected native stamp components; the persisted revision stays5.
++    let stamp = Cell::new((7u64, 11u64, 11u64, false, true, 13u64, 17u64));
++    let revision = Cell::new(5u64);
++    let original = stamp.get();
++    assert_eq!(
++        with_selection_snapshot(|| Ok(stamp.get()), || Ok("complete snapshot"))?,
++        "complete snapshot"
++    );
++    for changed in [
++        (8, 11, 11, false, true, 13, 17),
++        (7, 12, 11, false, true, 13, 17),
++        (7, 11, 12, false, true, 13, 17),
++        (7, 11, 11, true, true, 13, 17),
++        (7, 11, 11, false, false, 13, 17),
++        (7, 11, 11, false, true, 14, 17),
++        (7, 11, 11, false, true, 13, 18),
++    ] {
++        stamp.set(original);
++        let observed = Cell::new(false);
++        let output = with_selection_snapshot(
++            || Ok(stamp.get()),
++            || {
++                observed.set(true);
++                stamp.set(changed);
++                Ok("must not deliver partial snapshot")
++            },
++        );
++        assert!(output.is_err());
++        assert!(observed.get());
++        assert_eq!(revision.get(), 5);
++    }
++    Ok(())
++}
+--- r2/crates/airk-service/src/service_runtime/arbiter/read_device_status.rs
++++ r3/crates/airk-service/src/service_runtime/arbiter/read_device_status.rs
+@@ -52,7 +52,6 @@
+     }
+     #[cfg(feature = "local-inference")]
+     fn read_current_device_snapshot(&self, scope: ScopeBinding) -> Result<ScopedDeviceStatus> {
+-        use airk_store::service::arbiter::device::StoredConfiguration;
+         // load is a read-only strict decoder. NEVER call load_or_migrate or the
+         // management current_device_configuration accessor on an evidence read.
+         let store = self.configuration.device(device_management::binding()?);
+@@ -65,23 +64,31 @@
+                 );
+             }
+         };
+-        let snapshot = (|| -> Result<_> {
+-            let focus = self.focus.device_stage_status(&document)?;
+-            let context = self.context.device_stage_status(&document)?;
+-            let snapshot = DeviceStatus {
+-                schema: "airk.arbiter.status/3".into(),
+-                initialization: None,
+-                configuration: document.clone(),
+-                focus,
+-                context,
+-            };
+-            snapshot.validate()?;
+-            ensure!(
+-                matches!(store.load()?,StoredConfiguration::Device(current) if current==document),
+-                "device snapshot changed"
+-            );
+-            ScopedDeviceStatus::from_status(snapshot, scope.clone())
+-        })();
++        let snapshot = with_selection_snapshot(
++            || {
++                Ok((
++                    self.focus.devices.read_diagnostic_stamp()?,
++                    self.context.devices.read_diagnostic_stamp()?,
++                ))
++            },
++            || -> Result<_> {
++                let focus = self.focus.device_stage_status(&document)?;
++                let context = self.context.device_stage_status(&document)?;
++                let snapshot = DeviceStatus {
++                    schema: "airk.arbiter.status/3".into(),
++                    initialization: None,
++                    configuration: document.clone(),
++                    focus,
++                    context,
++                };
++                snapshot.validate()?;
++                ensure!(
++                    strict_current_configuration(&store)? == Some(document.clone()),
++                    "device snapshot changed"
++                );
++                ScopedDeviceStatus::from_status(snapshot, scope.clone())
++            },
++        );
+         snapshot.or_else(|error| {
+             if error.is::<airk_core::scoped_reads::ScopeReadRefused>() {
+                 return Err(error);
+@@ -99,10 +106,49 @@
+     store: &airk_store::service::arbiter::device::DeviceConfigurationStore<'_>,
+ ) -> Result<Option<DeviceConfiguration>> {
+     use airk_store::service::arbiter::device::StoredConfiguration;
+-    match store.load()? {
+-        StoredConfiguration::Device(value) => Ok(Some(value)),
+-        StoredConfiguration::Legacy(_) => Ok(None),
+-    }
++    use sha2::{Digest, Sha256};
++    // Management load intentionally synthesizes disabled current state on absence.
++    // Evidence must first prove an actual canonical current4 file exists.
++    let Some(before) = store.inspect_device_binding()? else {
++        return Ok(None);
++    };
++    let StoredConfiguration::Device(value) = store.load()? else {
++        return Ok(None);
++    };
++    let raw_sha = airk_core::identity::Sha256Digest::from_bytes(
++        Sha256::digest(value.canonical_bytes()?).into(),
++    );
++    ensure!(
++        before.binding == value.device_catalog
++            && before.revision == value.revision
++            && before.configuration_sha256 == raw_sha,
++        "current4 changed after physical binding observation"
++    );
++    let after = store
++        .inspect_device_binding()?
++        .context("current4 disappeared during diagnostic read")?;
++    ensure!(
++        after.binding == before.binding
++            && after.revision == before.revision
++            && after.configuration_sha256 == before.configuration_sha256,
++        "current4 binding changed during diagnostic read"
++    );
++    Ok(Some(value))
++}
++/// One bounded read-only selection/residency observation. Work progress need not
++/// be atomic; a changed native selection or eligibility never delivers a pair.
++#[cfg(feature = "local-inference")]
++fn with_selection_snapshot<S: PartialEq, T>(
++    sample: impl Fn() -> Result<S>,
++    observe: impl FnOnce() -> Result<T>,
++) -> Result<T> {
++    let before = sample()?;
++    let value = observe()?;
++    ensure!(
++        sample()? == before,
++        "native selection/residency changed during scoped device observation"
++    );
++    Ok(value)
+ }
+ #[cfg(all(test, feature = "local-inference"))]
+ mod tests;

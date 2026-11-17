@@ -1,0 +1,241 @@
+--- a/crates/airk-cli/tests/combined_reads/deleted_source_recovery.rs
++++ b/crates/airk-cli/tests/combined_reads/deleted_source_recovery.rs
+@@ -679,13 +679,11 @@
+         .cloned()
+         .collect();
+     ensure!(
+-        !selected.is_empty()
+-            && !original.is_empty()
+-            && selected
+-                .iter()
+-                .chain(&original)
+-                .all(|child| child.current_owned
+-                    && matches!(child.kind, FundingChildKind::Current { .. })),
++        selected.len() == 1
++            && original.is_empty()
++            && before.children == selected
++            && selected.iter().all(|child| child.current_owned
++                && matches!(child.kind, FundingChildKind::Current { .. })),
+         "real native terminal WAL children missing; selected={}, original={}; complete bounded actual funding={}",
+         selected.len(),
+         original.len(),
+@@ -700,6 +698,35 @@
+     let token = healthy_deletion_read(f, &mut mcp, 120).await?;
+     drop(mcp);
+     stop_deletion_service(f, service).await?;
++    // The original already owns a standalone native WAL allowance. The split
++    // reuses it; only the newly created destination consumes funded Current.
++    let original_registration = &complete.request.original_registration;
++    let ordinary_inventory = || -> Result<Vec<(PathBuf, Vec<u8>)>> {
++        let mut rows = Vec::new();
++        for entry in fs::read_dir(Path::new(&destination.data_root).join(".quota-1.4/current-grants"))? {
++            let path = entry?.path();
++            let metadata = fs::symlink_metadata(&path)?;
++            ensure!(metadata.is_file() && !metadata.file_type().is_symlink()
++                && metadata.len() <= 65536, "invalid ordinary Current fixture record");
++            let bytes = fs::read(&path)?;
++            let record: Value = serde_json::from_slice(&bytes)?;
++            if record["scope"]["collection"] == original_registration.collection {
++                rows.push((path, bytes));
++            }
++        }
++        rows.sort_by(|a, b| a.0.cmp(&b.0));
++        Ok(rows)
++    };
++    let ordinary_before = ordinary_inventory()?;
++    ensure!(!ordinary_before.is_empty(), "original native standalone WAL credit missing");
++    #[cfg(windows)]
++    let ordinary_scope: airk_store::quota::CurrentGrantScope = serde_json::from_value(
++        serde_json::from_slice::<Value>(&ordinary_before[0].1)?["scope"].clone())?;
++    let parent_path = Path::new(&destination.data_root)
++        .join(".quota-1.4/split-allocations").join(format!("f-{operation}.json"));
++    let scratch = parent_path.parent().context("funding parent directory missing")?
++        .join(format!("funding-retire-{}", before.identity()?));
++    ensure!(!scratch.try_exists()?, "native fixture unexpectedly has retirement scratch");
+     let logical = Path::new(&destination.data_root)
+         .join("collections-1.4")
+         .join(&destination.collection);
+@@ -736,7 +763,7 @@
+             serde_json::to_string(&response)?
+         );
+     };
+-    // A test-only OS share denial interrupts the REAL native metadata replace,
++    // A test-only OS share denial interrupts the REAL native final-parent unlink,
+     // not a fabricated completed funding row or a production fault environment.
+     #[cfg(windows)]
+     let interrupted_parent = if interrupt_retirement {
+@@ -762,25 +789,8 @@
+     apply_policy(f, &draft).await?;
+     #[cfg(windows)]
+     if let Some(parent) = interrupted_parent {
+-        let scratch = Path::new(&destination.data_root)
+-            .join(".quota-1.4/split-allocations")
+-            .join(format!("funding-retire-{}", before.identity()?));
+-        let deadline = Instant::now() + Duration::from_secs(30);
+-        loop {
+-            if scratch
+-                .metadata()
+-                .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
+-            {
+-                break;
+-            }
+-            ensure!(
+-                Instant::now() < deadline,
+-                "actual interrupted A disposal never created its exact owned scratch"
+-            );
+-            tokio::time::sleep(Duration::from_millis(25)).await;
+-        }
+-        // Keep target share denial through shutdown: A cannot accidentally finish
+-        // between observing its scratch and excluding the native metadata actor.
++        // The destination is the sole funded child, so native cleanup unlinks
++        // its parent directly. No replacement scratch belongs to this branch.
+         stop_deletion_service(f, service).await?;
+         ensure!(
+             !ServiceRegistry::open_saved(&f.control)?.project_was_removed(destination.binding)?,
+@@ -790,7 +800,7 @@
+         // OwnedProcess::drop drains this exact Job, waits for every captured
+         // descendant HANDLE and ActiveProcesses==0, then reaps the root child.
+         // Now force the owning cleanup attempt to finish synchronously: merely
+-        // observing scratch before killing a worker cannot prove rename failed.
++        // stopping a worker alone cannot prove the anchored unlink was denied.
+         let saved = ServiceRegistry::open_saved(&f.control)?;
+         let incarnation = saved.incarnation()?;
+         drop(saved);
+@@ -802,23 +812,24 @@
+             "exact A retirement was not pending before synchronous retry"
+         );
+         let funding_before_denial = quota.observe_funding(operation)?;
++        ensure!(funding_before_denial == before, "native interruption changed full funding parent before denied retry");
+         let denial = native
+             .purge_removed_project_turn(destination.binding)
+             .err()
+-            .context("no-DELETE HANDLE failed to deny actual native metadata replacement")?;
++            .context("no-DELETE HANDLE failed to deny actual native final-parent unlink")?;
+         let os = denial
+             .downcast_ref::<std::io::Error>()
+             .context("native metadata denial lost its typed OS error")?;
+         let expected_context = match os.raw_os_error() {
+-            Some(32) => "NtSetInformationFile setup publication: NTSTATUS 0xc0000043",
+-            Some(5) => "NtSetInformationFile setup publication: NTSTATUS 0xc0000022",
+-            other => anyhow::bail!("unexpected native replacement OS error {other:?}: {denial:#}"),
++            Some(32) => "NtCreateFile relative child: NTSTATUS 0xc0000043",
++            Some(5) => "NtCreateFile relative child: NTSTATUS 0xc0000022",
++            other => anyhow::bail!("unexpected native unlink OS error {other:?}: {denial:#}"),
+         };
+         ensure!(
+             denial
+                 .chain()
+                 .any(|cause| cause.to_string() == expected_context),
+-            "denial was not the exact anchored metadata replacement: {denial:#}"
++            "denial was not the exact anchored final-parent unlink open: {denial:#}"
+         );
+         ensure!(
+             !native.project_was_removed(destination.binding)?
+@@ -827,17 +838,16 @@
+                     .contains(&destination)
+                 && native.catalog_split_status(operation)?.as_ref() == Some(complete)
+                 && quota.observe_funding(operation)? == funding_before_denial
+-                && scratch.is_file(),
+-            "denied native retry changed exact retirement/funding/terminal receipt or lost scratch"
++                && !scratch.try_exists()?,
++            "denied native retry changed exact retirement/funding/terminal receipt or created replacement scratch"
+         );
+         drop(native);
+         drop(parent);
+         let interrupted = quota.observe_funding(operation)?;
+         ensure!(
+-            interrupted.children == before.children && scratch.is_file(),
++            interrupted == before && !scratch.try_exists()?,
+             "interruption prematurely released funded Current ownership"
+         );
+-        let original_registration = &complete.request.original_registration;
+         let collection = airk_store::service::collection::Collection::existing(
+             Path::new(&original_registration.data_root),
+             &original_registration.root,
+@@ -846,34 +856,22 @@
+         let store = collection.selected_store()?;
+         let writer = store.lock()?;
+         let mut grants = quota.current_grants(&writer)?;
+-        let grant = grants
+-            .iter_mut()
+-            .find(|grant| {
+-                original.iter().any(|child| {
+-            matches!(&child.kind, FundingChildKind::Current { scope, .. } if scope == grant.scope())
+-        })
+-            })
+-            .context("actual healthy B Current grant not found")?;
++        let grant = grants.iter_mut().find(|grant| grant.scope() == &ordinary_scope)
++            .context("exact healthy original standalone Current grant not found")?;
+         let capacity = grant.capacity();
+         ensure!(capacity > 1, "real Current fixture lacks resize headroom");
+         grant.resize(&writer, capacity - 1)?;
++        ensure!(quota.current_grant(&writer, &ordinary_scope)?.context("resized grant missing")?
++            .capacity() == capacity - 1 && ordinary_inventory()? != ordinary_before,
++            "ordinary Current resize did not persist real progress");
+         grant.resize(&writer, capacity)?;
+         drop(grants);
+         drop(writer);
+         drop(store);
+         drop(collection);
+-        let advanced = quota.observe_funding(operation)?;
+-        ensure!(
+-            advanced.revision > interrupted.revision
+-                && advanced.children == interrupted.children
+-                && advanced.request == interrupted.request
+-                && advanced.release == interrupted.release,
+-            "real B Current resize did not advance only the mutable funding revision"
+-        );
+-        ensure!(
+-            scratch.is_file(),
+-            "B progress incorrectly removed A scratch"
+-        );
++        ensure!(quota.observe_funding(operation)? == interrupted
++                && ordinary_inventory()? == ordinary_before && !scratch.try_exists()?,
++            "ordinary B progress changed A funding lineage/revision or failed exact restoration");
+         *service = Some(f.start().await?);
+     }
+     // This is an explicit new grant review after restrictive native retirement;
+@@ -895,28 +893,10 @@
+         );
+         tokio::time::sleep(Duration::from_millis(100)).await;
+     }
+-    let after = quota.observe_funding(operation)?;
+-    ensure!(
+-        after.complete
+-            && after.release_acknowledged
+-            && after.release == before.release
+-            && after.request == before.request
+-            && !after
+-                .children
+-                .iter()
+-                .any(|child| child.index_id == complete.request.destination.index_id)
+-            && after.children == original,
+-        "terminal disposal changed immutable funding lineage or surviving original Current credit"
+-    );
+-    if interrupt_retirement {
+-        let scratch = Path::new(&destination.data_root)
+-            .join(".quota-1.4/split-allocations")
+-            .join(format!("funding-retire-{}", before.identity()?));
+-        ensure!(
+-            !scratch.exists(),
+-            "A retry leaked immutable owned scratch after real B revision advance"
+-        );
+-    }
++    ensure!(matches!(fs::symlink_metadata(&parent_path),
++        Err(error) if error.kind() == std::io::ErrorKind::NotFound)
++        && !scratch.try_exists()? && ordinary_inventory()? == ordinary_before,
++        "final funded parent was not removed or original ordinary Current credit changed");
+     let saved = ServiceRegistry::open_saved(&f.control)?
+         .catalog_split_status(operation)?
+         .context("completed split receipt missing")?;
+--- a/crates/airk-cli/tests/combined_reads/split.rs
++++ b/crates/airk-cli/tests/combined_reads/split.rs
+@@ -720,7 +720,7 @@
+ }
+ #[cfg(all(windows, feature = "embedding-worker"))]
+ #[tokio::test]
+-async fn post_p14_interrupted_retirement_reuses_funding_scratch_after_real_healthy_current_revision()
++async fn post_p14_interrupted_final_funding_retirement_preserves_ordinary_current_progress()
+ -> Result<()> {
+     provider_cutover_with_retirement(true, true, false).await
+ }

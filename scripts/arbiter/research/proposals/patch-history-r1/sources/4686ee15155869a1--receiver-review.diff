@@ -1,0 +1,55 @@
+--- reviewed-6c-receiver.py
++++ next-source-receiver.py
+@@ -2,23 +2,23 @@
+ from pathlib import Path
+ import json,os,sys,stat,hashlib,subprocess,tarfile,importlib.util,time
+ from datetime import datetime,timezone
+-started=time.monotonic();uid=os.getuid();assert uid==501==os.stat('/dev/console').st_uid and uid!=0
+-base=Path.home()/'airk-builds/arbiter-final-20261116-r1';source=base/'source';e=base/'evidence';transfer=base/'transfer';old_path=transfer/'bridge-dda749cb-r1/source-bridge-manifest.json'
++started=time.monotonic();uid=os.getuid();assert uid==os.geteuid()==501==os.stat('/dev/console').st_uid and uid!=0
++base=Path.home()/'airk-builds/arbiter-final-20261116-r1';source=base/'source';e=base/'evidence';transfer=base/'transfer';old_path=transfer/'bridge-6c241079-r1/source-bridge-manifest.json'
+ for q in (base,source,e,transfer):assert q.lstat().st_uid==uid and not q.is_symlink() and os.access(q,os.W_OK|os.X_OK)
+ assert stat.S_IMODE(base.stat().st_mode)&0o077==0
+ assert not (source/'target').exists()
+ def sha(q):
+  with q.open('rb') as f:return hashlib.file_digest(f,'sha256').hexdigest()
+ def git(*args,input=None):return subprocess.check_output(['git','--no-optional-locks',*args],cwd=source,input=input,stderr=subprocess.PIPE)
+-old=json.loads(old_path.read_text());assert sha(old_path)=='515a03c9236d262f95c19bfa39c5c139e08395669f2abdb465362560e4205d94'
+-assert git('rev-parse','HEAD').decode().strip()==old['commit']=='dda749cbdf77b3e2106003ff10a683ec3aec3202'
++old=json.loads(old_path.read_text());assert sha(old_path)=='1f8b6040bf162c85cccda1f94ce31381c8a4657bb951cdd63e5932fb8f5dfe5b'
++assert git('rev-parse','HEAD').decode().strip()==old['commit']=='6c2410791999fa7691b9be97441f371d4048d870'
+ assert not git('status','--porcelain=v1','--untracked-files=all')
+ before={}
+ for row in old['files']:
+  q=source/row['path'];s=q.lstat();assert stat.S_ISREG(s.st_mode) and s.st_uid==uid and s.st_nlink==1 and sha(q)==row['sha256'];before[row['path']]={'uid':s.st_uid,'mode':stat.S_IMODE(s.st_mode),'inode':s.st_ino,'sha256':row['sha256']}
+ original=Path.home()/'code/airk';dirty_before=subprocess.check_output(['git','--no-optional-locks','status','--porcelain=v1','-z','--untracked-files=normal'],cwd=original);assert hashlib.sha256(dirty_before).hexdigest()=='943936de2803601aa34eeb0d5c974bbb94261dc762496bd44196177755734b06'
+-incoming=transfer/'bridge-6c241079-r1';assert not incoming.exists();incoming.mkdir(mode=0o700)
+-expected={'source-bridge-manifest.json': {'name': 'source-bridge-manifest.json', 'bytes': 923917, 'sha256': '1f8b6040bf162c85cccda1f94ce31381c8a4657bb951cdd63e5932fb8f5dfe5b'}, 'raw-source-delta.tar': {'name': 'raw-source-delta.tar', 'bytes': 1546240, 'sha256': 'c78598694295535c1e6829d9c647063b94324edc72a051b2dc07a2ef2d6b3152'}, 'dda749cb-to-6c241079.bundle': {'name': 'dda749cb-to-6c241079.bundle', 'bytes': 163687, 'sha256': 'beef4e82d5eb05d94f9e5d5c048815963484174aec8cdb65e9bd0beca9f9c359'}}
++incoming=transfer/'bridge-c547e654-r1';assert not incoming.exists();incoming.mkdir(mode=0o700)
++expected={'source-bridge-manifest.json': {'name': 'source-bridge-manifest.json', 'bytes': 925014, 'sha256': '41a70c2bd4239d55ff95c372778e5fdcf10f6cff30326144a818175fe51169c7'}, 'raw-source-delta.tar': {'name': 'raw-source-delta.tar', 'bytes': 1382400, 'sha256': 'dac7637a6d1c68f0e26c76c04031a40132233db1850a495accef6b5b49b31ad5'}, '6c241079-to-c547e654.bundle': {'name': '6c241079-to-c547e654.bundle', 'bytes': 57714, 'sha256': '3de5d819a683ce1e971a2ee6cbec21195dc8870ac43628e0400eb2c75faf99ad'}}
+ received=[]
+ with tarfile.open(fileobj=sys.stdin.buffer,mode='r|gz') as stream:
+  for member in stream:
+@@ -29,12 +29,12 @@
+    out.flush();os.fsync(out.fileno())
+   assert sha(q)==expected[member.name]['sha256'];received.append(member.name)
+ assert set(received)==set(expected)
+-manifest=json.loads((incoming/'source-bridge-manifest.json').read_text());assert manifest['base_commit']==old['commit'] and manifest['base_raw_c7']==old['raw_c7'] and manifest['commit']=='6c2410791999fa7691b9be97441f371d4048d870'
++manifest=json.loads((incoming/'source-bridge-manifest.json').read_text());assert manifest['base_commit']==old['commit'] and manifest['base_raw_c7']==old['raw_c7'] and manifest['commit']=='c547e6547b1312c2e113bd1ddc9ab84969c229c0'
+ rows={r['path']:r for r in manifest['files']};change_names=set(manifest['raw_or_mode_changed']);commands=[]
+ def run(args):
+  t=time.monotonic();r=subprocess.run(args,cwd=source,capture_output=True,check=True);commands.append({'argv':args,'cwd':str(source),'exit_code':r.returncode,'elapsed_seconds':time.monotonic()-t,'stdout':r.stdout.decode(),'stderr':r.stderr.decode()});return r.stdout
+-run(['git','bundle','verify',str(incoming/'dda749cb-to-6c241079.bundle')])
+-run(['git','fetch','--no-tags',str(incoming/'dda749cb-to-6c241079.bundle'),'HEAD'])
++run(['git','bundle','verify',str(incoming/'6c241079-to-c547e654.bundle')])
++run(['git','fetch','--no-tags',str(incoming/'6c241079-to-c547e654.bundle'),'HEAD'])
+ assert git('rev-parse','FETCH_HEAD').decode().strip()==manifest['commit']
+ run(['git','checkout','--detach',manifest['commit']])
+ seen=set();overlaid=[]
+@@ -64,5 +64,5 @@
+ dirty_after=subprocess.check_output(['git','--no-optional-locks','status','--porcelain=v1','-z','--untracked-files=normal'],cwd=original);assert dirty_after==dirty_before
+ absent=[str(q.relative_to(source)) for q in [source/'target',source/'packages/vscode/out',source/'packages/vscode/node_modules',source/'packages/admin/node_modules'] if not q.exists()];assert len(absent)==4
+ proof={'schema':'airk.neo-authentic-source-bridge-proof/1','utc':datetime.now(timezone.utc).isoformat(),'elapsed_seconds':time.monotonic()-started,'uid':uid,'console_uid':os.stat('/dev/console').st_uid,'base_commit':old['commit'],'commit':manifest['commit'],'normalized_tree':manifest['normalized_tree'],'raw_c7':seal,'source_files_verified':len(rows),'source_delta_files_received':len(change_names),'raw_overlay_files':len(overlaid),'deleted_public_paths':manifest['deleted'],'unchanged_source_file_ids_modes_preserved':len(unchanged),'all_current_source_files_regular_owner_uid':uid,'source_clean':True,'staged_tree_unchanged_by_raw_overlay':True,'full_staged_catalog_sha256':hashlib.sha256(git('ls-files','--stage','-z')).hexdigest(),'original_dirty_checkout_preserved':True,'original_dirty_status_sha256':hashlib.sha256(dirty_after).hexdigest(),'original_dirty_entries':365,'old_source_custody_retained':True,'old_c7_not_retagged':old['raw_c7'],'transfer_files':expected,'public_source_inventory':{'manifest_sha256':expected['source-bridge-manifest.json']['sha256'],'source_files':len(rows)},'commands':commands,'ignored_outputs_absent':absent,'Windows_observer_transferred':False,'Cargo_or_build_invoked':False,'static_and_model_inputs_rebuilt_or_changed':False,'scope':'Only genuine Git transition and reviewed current public source raw overlay; no target, package, install/service, model or ORT build.'}
+-with (e/'source-bridge-6c241079-r1.json').open('x') as f:json.dump(proof,f,indent=2);f.write('\n');f.flush();os.fsync(f.fileno())
++with (e/'source-bridge-c547e654-r1.json').open('x') as f:json.dump(proof,f,indent=2);f.write('\n');f.flush();os.fsync(f.fileno())
+ print(json.dumps(proof,indent=2),flush=True)

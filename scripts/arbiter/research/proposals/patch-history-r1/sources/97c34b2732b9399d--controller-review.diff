@@ -1,0 +1,85 @@
+--- old-reviewed-batch-controller.py
++++ remaining-nextest-continuation.py
+@@ -3,9 +3,10 @@
+ import os,sys,json,time,hashlib,stat,subprocess,importlib.util,resource,shutil,re
+ from datetime import datetime,timezone
+ C=None
++VERSION_PREFLIGHT="import os,sys,stat,json,shutil,hashlib,subprocess,re\nfrom pathlib import Path\nassert os.getuid()==501==os.geteuid()==os.stat('/dev/console').st_uid and os.getuid()!=0\nexpected=json.loads(sys.argv[1]);rows=[]\nfor name,args,pattern in [('cargo',['--version'],r'^cargo 1\\.98\\.0(?:\\s|$)'),('rustc',['-Vv'],r'^rustc 1\\.98\\.0(?:\\s|$)'),('cargo-nextest',['nextest','--version'],r'^cargo-nextest 0\\.9\\.148(?:\\s|$)')]:\n path=shutil.which(name);assert path,name+' missing';p=Path(path);s=p.stat();assert stat.S_ISREG(s.st_mode) and s.st_uid==501\n actual=hashlib.sha256(p.read_bytes()).hexdigest()\n if name=='cargo-nextest':assert str(p)==expected['path'] and not p.is_symlink() and s.st_nlink==1 and s.st_size==expected['bytes'] and actual==expected['sha256']\n run=subprocess.run([path,*args],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=15);assert len(run.stdout)+len(run.stderr)<=65536\n assert run.returncode==0 and re.search(pattern,run.stdout),{'tool':name,'exit':run.returncode,'stdout':run.stdout,'stderr':run.stderr}\n rows.append({'tool':name,'path':path,'resolved':str(p.resolve()),'uid':s.st_uid,'sha256':actual,'version_argv':[path,*args],'exit_code':run.returncode,'stdout':run.stdout,'stderr':run.stderr})\nprint(json.dumps({'passed':True,'actor':{'real':os.getuid(),'effective':os.geteuid(),'console':os.stat('/dev/console').st_uid},'PATH':os.environ['PATH'],'tools':rows,'scope':'Resolution/hash/versiononly beforecompile; no tool install/download/rebuild'},indent=2))\n"
+ 
+ def validate_config(value):
+- assert isinstance(value,dict) and value.get('status')=='frozen_declared_overlay'
++ assert isinstance(value,dict) and value.get('status')=='frozen_declared_overlay_continuation'
+  for field,size in (('commit',40),('tree',40),('manifest_sha256',64),('static_sha256',64)):
+   item=value.get(field);assert isinstance(item,str) and len(item)==size and all(c in '0123456789abcdef' for c in item)
+  assert value['commit']=='059a2a893069f89e8ea8aefec7f9bdb8bb6063b6' and value['external_delta_commit']=='e306258a2b6913e6ba91a20fe0b50dbe6ae8361f'
+@@ -14,7 +15,7 @@
+  assert re.fullmatch('[0-9a-f]{64}',value['expected_dirty_status_sha256'])
+  seal=value.get('raw_c7');assert isinstance(seal,dict) and isinstance(seal.get('files'),int) and seal['files']>0
+  digest=seal.get('sha256');assert isinstance(digest,str) and len(digest)==64 and all(c in '0123456789abcdef' for c in digest)
+- assert [x['name'] for x in value.get('commands',[])]==['scoped-clippy', 'mac-system-control-anchor', 'affected-control-regressions', 'private-log-controls', 'exact-reference-refresh']
++ assert [x['name'] for x in value.get('commands',[])]==['affected-control-regressions', 'private-log-controls', 'exact-reference-refresh']
+  return value
+ 
+ def read_config():
+@@ -64,7 +65,7 @@
+  return source,base
+ 
+ def capture_final_refresh(out):
+- actor();base=Path(C['base']);log=out/'receipts'/'neo-native-name-exact-reference-refresh-r1.log'
++ actor();base=Path(C['base']);log=out/'receipts'/'neo-system-control-nextest-continuation-exact-reference-refresh-r1.log'
+  metadata=log.lstat();assert stat.S_ISREG(metadata.st_mode) and metadata.st_uid==501 and metadata.st_nlink==1 and metadata.st_size<=8*1024*1024 and not log.is_symlink()
+  names=re.findall(r'^failed refresh fixture retained: (.+?)(?:; secondary diagnostic capture failed:.*)?$',log.read_text(encoding='utf-8'),re.MULTILINE)
+  assert len(names)<=1
+@@ -113,20 +114,42 @@
+  fresh(out/'refresh-final-capture.json',{'found':True,'fixture':str(fixture),'destination':str(destination),'entries':entries,'metadata_only':metadata_only,'scope':'Complete original live snapshot plus final physical private ring after actual owned descendants settled. No source/DB/corpus reads, writer flush/control/retry/signal, gracefulStop or service HANDLE claim.'})
+ 
+ 
++def verify_reused_proofs():
++ actor();observed={}
++ for pin in C['continuation']['prior_proofs']:
++  path=Path(pin['path']);st=path.lstat();assert stat.S_ISREG(st.st_mode) and st.st_uid==501 and st.st_nlink==1 and not path.is_symlink() and st.st_size==pin['bytes'] and sha(path)==pin['sha256']
++  observed[path.name]=json.loads(path.read_bytes())
++ batch=observed['batch-result.json'];assert batch['passed'] is False and batch['inputs_unchanged'] is True and batch['raw_c7_after']==C['raw_c7'] and not batch['evidence_errors']
++ assert [(x['phase'],x['passed']) for x in batch['phases']]==[('scoped-clippy',True),('mac-system-control-anchor',True),('affected-control-regressions',False)]
++ clean=observed['cargo-clean-result.json'];assert clean['passed'] is True and clean['target_exists_after'] is False
++ assert observed['neo-native-name-scoped-clippy-r1.json']['passed'] is True
++ meta=observed['neo-system-control-anchor-metadata-r1.json'];assert meta['passed'] is True and meta['selected_tests']==1
++ assert not Path(C['target']).exists()
++ return C['continuation']
++
+ def main():
+  global C
+  C=read_config()
+  source,base=preflight();out=Path(C['out']);target=Path(C['target'])
++ reused=verify_reused_proofs()
+  assert not out.exists() and not target.exists();os.umask(0o077);out.mkdir(mode=0o700);(out/'logs').mkdir();(out/'receipts').mkdir();(out/'fixtures').mkdir()
+  soft,hard=resource.getrlimit(resource.RLIMIT_NOFILE);assert hard==resource.RLIM_INFINITY or hard>=4096
+  resource.setrlimit(resource.RLIMIT_NOFILE,(max(soft,4096),hard))
+  owner=load('actual_darwin_owner',source/'scripts/provision-static-onnx-runtime.py')
+  env=dict(os.environ,PYTHONDONTWRITEBYTECODE='1',PYTHONNOUSERSITE='1',CARGO_BUILD_JOBS='2',CARGO_INCREMENTAL='0',CARGO_TARGET_DIR=str(target),AIRK_BUNDLED_MODEL_DIR='/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/inputs/bundled-model-v3',AIRK_TEST_MODEL_DIR='/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/inputs/bundled-model-v3/minilm-l6-v2-s8-v3',RUST_TEST_THREADS='2')
+- env['PATH']=str(Path(C['python']).parent)+':'+str(Path(C['node']).parent)+':'+str(Path.home()/'.cargo/bin')+':/usr/bin:/bin:/usr/sbin:/sbin'
++ env['PATH']=str(Path(C['python']).parent)+':'+str(Path(C['node']).parent)+':'+str(Path(C['nextest']['path']).parent)+':'+str(Path.home()/'.cargo/bin')+':/usr/bin:/bin:/usr/sbin:/sbin'
+  start=time.monotonic();records=[];cleanup=None;all_settled=True;error=None;passed=False
+  initial={'schema':'airk.neo-integrated-platform-start/1','utc':datetime.now(timezone.utc).isoformat(),'actor':actor(),'config':C,'status':'started','passed':False,'descriptor_before':[soft,hard],'descriptor_after':list(resource.getrlimit(resource.RLIMIT_NOFILE)),'owner_script_sha256':sha(source/'scripts/provision-static-onnx-runtime.py'),'receipt_runner_sha256':sha(source/'scripts/dev/receipt_runner.py'),'original_dirty_status_sha256':hashlib.sha256(subprocess.check_output(['git','--no-optional-locks','status','--porcelain=v1','-z','--untracked-files=normal'],cwd=Path.home()/'code/airk')).hexdigest()}
++ initial['continuation']=reused
+  fresh(out/'batch-start.json',initial)
+  try:
++  actor();all_settled=False
++  fresh(out/'tool-preflight-start.json',{'argv':[C['python'],'-I','-B','-c','<frozen-version-preflight>',json.dumps(C['nextest'],sort_keys=True)],'deadline_seconds':60,'status':'started','passed':False})
++  checked=owner.run_owned([C['python'],'-I','-B','-c',VERSION_PREFLIGHT,json.dumps(C['nextest'],sort_keys=True)],source,out/'logs/tool-preflight.log',60,env)
++  all_settled=checked.get('owned_descendants_settled') is True
++  ok=owner.successful(checked) and all_settled and not checked.get('owned_group_signaled',False)
++  fresh(out/'tool-preflight-result.json',{'result':checked,'passed':ok})
++  if not ok:raise RuntimeError('tool-resolution/version/hash preflight failed; no compilation attempted')
+   for command in C['commands']:
+    actor();name=command['name'];fixture=out/'fixtures'/name;fixture.mkdir(mode=0o700)
+    fresh(out/(name+'-outer-start.json'),{'utc':datetime.now(timezone.utc).isoformat(),'actor':actor(),'argv':command['argv'],'deadline_seconds':10800,'status':'started','passed':False})
+@@ -176,7 +199,7 @@
+   except BaseException as failure:
+    evidence_errors.append({'stage':'final_input_observation','type':type(failure).__name__,'message':str(failure)});passed=False
+   passed=passed and unchanged and not evidence_errors
+-  fresh(out/'batch-result.json',{'schema':'airk.neo-integrated-platform-result/1','utc':datetime.now(timezone.utc).isoformat(),'actor':actor(),'passed':passed,'elapsed_seconds':time.monotonic()-start,'phases':records,'cleanup':cleanup,'cleanup_blocker':cleanup_blocker,'error':error,'evidence_errors':evidence_errors,'inputs_unchanged':bool(unchanged),'raw_c7_after':current,'original_dirty_status_sha256':dirty,'scope':'Actual Darwin compiled component gates only. No larger-model fit, signing, installed journey or Windows observer qualification.'})
++  fresh(out/'batch-result.json',{'schema':'airk.neo-integrated-platform-result/1','utc':datetime.now(timezone.utc).isoformat(),'actor':actor(),'passed':passed,'elapsed_seconds':time.monotonic()-start,'phases':records,'cleanup':cleanup,'cleanup_blocker':cleanup_blocker,'error':error,'evidence_errors':evidence_errors,'inputs_unchanged':bool(unchanged),'raw_c7_after':current,'original_dirty_status_sha256':dirty,'continuation':C['continuation'],'scope':'Remaining three actual Darwin component phases only; prior Clippy/metadata retain original identities; old missing-nextest batch remains failed. No whole platform/all-gates qualification.'})
+  if not passed:raise SystemExit(1)
+ 
+ if __name__=='__main__':main()

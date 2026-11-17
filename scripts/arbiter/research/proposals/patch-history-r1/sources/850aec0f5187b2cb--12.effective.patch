@@ -1,0 +1,438 @@
+--- a/packages/vscode/src/explorerEvidence.ts
++++ b/packages/vscode/src/explorerEvidence.ts
+@@ -1,5 +1,7 @@
+ // SPDX-License-Identifier: Apache-2.0
+ import * as path from 'node:path';
++import { validateCatalogSession } from './catalogSession';
++import { isDeepStrictEqual } from 'node:util';
+ import { explorerError, ExplorerError } from './explorerErrors';
+ import { McpSessionError, McpStdioOptions, McpStdioSession } from './mcpStdioSession';
+ import { LaunchSpec, launchArgs } from './model';
+@@ -53,7 +55,100 @@
+  * Accept only the native "safe to repeat this exact read" replies (publication or
+  * selection busy, or an unsubmitted busy admission). Anything else is a real result.
+  */
+-export function readRetryDelay(envelope: unknown): number | undefined {
++/** Exact counterpart of Core combined_reads::read_retry::validated_retry.
++ * The declared pointer retains the original native receipt. A failed sibling in
++ * a partial union never grants permission to replay its successful siblings. */
++export function singleRequiredMemberRetry(combined: Record<string, any>): Record<string, unknown> | undefined {
++    const object=(value:unknown):value is Record<string,any>=>!!value&&typeof value==='object'&&!Array.isArray(value);
++    const integer=(value:unknown,min:number,max=Number.MAX_SAFE_INTEGER):value is number=>Number.isSafeInteger(value)&&Number(value)>=min&&Number(value)<=max;
++    const fields=(value:Record<string,unknown>,keys:string[])=>Object.keys(value).every(key=>keys.includes(key));
++    const id=(value:unknown,prefix:string)=>typeof value==='string'&&new RegExp(`^${prefix}_[0-9a-f]{32}$`).test(value);
++    const digest=(value:unknown)=>typeof value==='string'&&/^[0-9a-f]{64}$/.test(value);
++    try {
++        if(Buffer.byteLength(JSON.stringify(combined),'utf8')>65536||combined.schema!=='airk.combined-read/1'
++            ||combined.partial!==true||combined.truncated!==false||!Array.isArray(combined.ranking)||combined.ranking.length!==0
++            ||combined.shared_values!==undefined&&combined.shared_values!==null)return;
++        const selected=combined.selection;
++        if(!object(selected)||!fields(selected,['project_ids','index_ids','grant_id','grant_revision','member_availability','identity'])
++            ||selected.member_availability!=='require'||!Array.isArray(selected.index_ids)||selected.index_ids.length!==1||!id(selected.index_ids[0],'idx')
++            ||!Array.isArray(selected.project_ids)||selected.project_ids.length<1||selected.project_ids.length>32
++            ||!selected.project_ids.every((value:unknown)=>id(value,'prj'))||new Set(selected.project_ids).size!==selected.project_ids.length
++            ||!id(selected.grant_id,'grt')||!integer(selected.grant_revision,1)||!digest(selected.identity))return;
++        const index=selected.index_ids[0];
++        if(!Array.isArray(combined.members)||combined.members.length!==1)return;
++        const member=combined.members[0];
++        if(!object(member)||member.index_id!==index||member.outcome!=='failed'||member.is_error!==true
++            ||member.cutoff!==undefined&&member.cutoff!==null)return;
++        const allocation=member.allocation;
++        if(!object(allocation)||!fields(allocation,['index_id','limit','max_bytes','deadline_ms','verification_max_sources','verification_max_bytes','verification_deadline_ms'])
++            ||allocation.index_id!==index||!integer(allocation.limit,1,100)||!integer(allocation.max_bytes,1,65536)||!integer(allocation.deadline_ms,1,30000)
++            ||!integer(allocation.verification_max_sources,0,256)||!integer(allocation.verification_max_bytes,0,1073741824)
++            ||!integer(allocation.verification_deadline_ms,0,30000))return;
++        const error=combined.error;
++        if(!object(error)||error.code!=='member_unavailable'||error.retryable!==false
++            ||!Array.isArray(error.failed_members)||error.failed_members.length!==1||error.failed_members[0]!==index)return;
++        const vector=combined.publication_vector;
++        if(!object(vector)||!fields(vector,['authority','observed_from_unix_ms','observed_to_unix_ms','members'])||!digest(vector.authority)
++            ||!integer(vector.observed_from_unix_ms,0)||!integer(vector.observed_to_unix_ms,vector.observed_from_unix_ms)
++            ||!Array.isArray(vector.members)||vector.members.length!==1)return;
++        const publication=vector.members[0];
++        if(!object(publication)||!fields(publication,['index_id','publication'])||publication.index_id!==index
++            ||publication.publication!==undefined&&publication.publication!==null)return;
++        const result=member.result;
++        if(!object(result)||Object.hasOwn(result,'isError')&&result.isError!==true)return;
++        let body=result,suffix='';
++        if(Object.hasOwn(result,'structuredContent')){
++            if(result.isError!==true||!Array.isArray(result.content)||result.content.length!==1
++                ||result.content[0]?.type!=='text'||typeof result.content[0]?.text!=='string')return;
++            if(!isDeepStrictEqual(JSON.parse(result.content[0].text),result.structuredContent))return;
++            body=result.structuredContent;suffix='/structuredContent';
++        }else if(Object.hasOwn(result,'content'))return;
++        if(!object(body)||Object.hasOwn(body,'query_replay_safe')&&body.query_replay_safe!==true
++            ||Object.hasOwn(body,'query_submitted')&&body.query_submitted!==false)return;
++        if(Object.hasOwn(body,'request_id')&&(typeof body.request_id!=='string'||body.request_id.length===0||Buffer.byteLength(body.request_id,'utf8')>128))return;
++        if(Object.hasOwn(body,'scope_observation')){
++            const scope=body.scope_observation;
++            if(!object(scope)||!fields(scope,['schema','qualifier','fingerprint','provenance','grant','members'])||scope.schema!==1
++                ||scope.qualifier!=='selected_subset'||!digest(scope.fingerprint)||!['user_reviewed_project_grant','imported_legacy_snapshot'].includes(scope.provenance)
++                ||!object(scope.grant)||!fields(scope.grant,['id','revision'])||scope.grant.id!==selected.grant_id||scope.grant.revision!==selected.grant_revision
++                ||!Array.isArray(scope.members)||scope.members.length!==1||Buffer.byteLength(JSON.stringify(scope),'utf8')>16384)return;
++            const scoped=scope.members[0];
++            if(!object(scoped)||!fields(scoped,['index_id','memberships','source_root_ids','source_revision','policy_epoch','policy_digest'])
++                ||scoped.index_id!==index||!integer(scoped.source_revision,1)||!integer(scoped.policy_epoch,0)
++                ||(scoped.policy_epoch===0?scoped.policy_digest!==undefined&&scoped.policy_digest!==null:!digest(scoped.policy_digest))
++                ||!Array.isArray(scoped.memberships)||scoped.memberships.length<1||scoped.memberships.length>32
++                ||!scoped.memberships.every((item:unknown)=>object(item)&&fields(item,['project_id','membership_revision'])
++                    &&id(item.project_id,'prj')&&selected.project_ids.includes(item.project_id)&&integer(item.membership_revision,1))
++                ||new Set(scoped.memberships.map((item:any)=>item.project_id)).size!==scoped.memberships.length
++                ||!Array.isArray(scoped.source_root_ids)||scoped.source_root_ids.length>17
++                ||!scoped.source_root_ids.every((source:unknown)=>id(source,'src'))||new Set(scoped.source_root_ids).size!==scoped.source_root_ids.length)return;
++        }
++        let code:string,delay:unknown,fresh:boolean;
++        if(body.status==='retry'){
++            if(!fields(body,['status','code','retryable','action','retry_after_ms','request_id','scope_observation','query_replay_safe','query_submitted','fresh_brokerage_required'])
++                ||!['publication_busy','selection_busy'].includes(body.code)||body.retryable!==true||body.action!=='repeat_same_request'
++                ||Object.hasOwn(body,'fresh_brokerage_required')&&body.fresh_brokerage_required!==false)return;
++            code=body.code;delay=body.retry_after_ms;fresh=false;
++        }else{
++            if(!fields(body,['error','request_id','scope_observation','query_replay_safe','query_submitted','fresh_brokerage_required'])||!object(body.error))return;
++            const refusal=body.error;
++            if(!fields(refusal,['code','reason','query_submitted','retryable','retry_after_ms','fresh_brokerage_required','query_replay_safe'])
++                ||!['direct_query_admission','direct_query_setup'].includes(refusal.code))return;
++            code=refusal.code;fresh=code==='direct_query_setup';
++            if(refusal.reason!=='busy'||refusal.query_submitted!==false||refusal.retryable!==true||refusal.fresh_brokerage_required!==fresh
++                ||Object.hasOwn(refusal,'query_replay_safe')&&refusal.query_replay_safe!==true
++                ||Object.hasOwn(body,'fresh_brokerage_required')&&body.fresh_brokerage_required!==fresh)return;
++            delay=refusal.retry_after_ms;
++        }
++        if(!integer(delay,1,1000))return;
++        const proposed={schema:1,scope:'same_single_required_member',index_id:index,selection_identity:selected.identity,
++            action:'repeat_same_request',query_replay_safe:true,result_pointer:`/members/0/result${suffix}`,code,retry_after_ms:delay,fresh_brokerage_required:fresh};
++        if(isDeepStrictEqual(combined.read_retry,proposed))return proposed;
++    }catch{/* Unparseable or unbounded metadata never permits another read. */}
++    return;
++}
++
++export function readRetryDelay(envelope: unknown, expectedScope?: unknown): number | undefined {
+     if (!envelope || typeof envelope !== 'object') { return; }
+     const value = envelope as Record<string, unknown>, content = value.content;
+     if (value.isError !== true || !Array.isArray(content) || content.length !== 1 || content[0]?.type !== 'text' || typeof content[0]?.text !== 'string') { return; }
+@@ -61,6 +156,28 @@
+     try { hint = JSON.parse(content[0].text); } catch { return; }
+     if (!hint || typeof hint !== 'object') { return; }
+     let delay: unknown;
++    if (hint.schema === 'airk.combined-read/1') {
++        if(value.structuredContent!==undefined&&!isDeepStrictEqual(value.structuredContent,hint))return;
++        return singleRequiredMemberRetry(hint)?.retry_after_ms as number|undefined;
++    }
++    if (hint.error?.code === 'scoped_status_prepare_timeout' || hint.error?.code === 'scoped_connection_unavailable') {
++        const error=hint.error,scope=hint.requested_scope;
++        const fields=(value:unknown,keys:string[]):value is Record<string,any>=>!!value&&typeof value==='object'&&!Array.isArray(value)
++            &&Object.keys(value).every(key=>keys.includes(key));
++        if(!fields(hint,['error','requested_scope'])||!fields(error,['code','query_submitted','retryable','retry_after_ms','fresh_brokerage_required','native_control_response','query_replay_safe'])
++            ||error.query_submitted!==false||error.retryable!==true||error.fresh_brokerage_required!==true
++            ||Object.hasOwn(error,'query_replay_safe')&&error.query_replay_safe!==true
++            ||!fields(scope,['confirmed','selection'])||scope.confirmed!==false||expectedScope===undefined
++            ||!isDeepStrictEqual(value.structuredContent,hint))return;
++        try {if(!isDeepStrictEqual(validateCatalogSession(scope.selection),validateCatalogSession(expectedScope)))return;}catch{return;}
++        if(error.code==='scoped_connection_unavailable'){
++            const native=error.native_control_response;
++            if(!fields(native,['status','code'])||native.status!=='failure'||!['broker_busy','project_starting_or_unavailable',
++                'project_unavailable_or_busy','previous_workers_draining','catalog_revision_changed','catalog_clock_pending',
++                'catalog_connection_busy','project_capacity_busy','project_restart_backoff'].includes(native.code))return;
++        }else if(error.native_control_response!==undefined)return;
++        return Number.isInteger(error.retry_after_ms)&&error.retry_after_ms>=1&&error.retry_after_ms<=1000?error.retry_after_ms:undefined;
++    }
+     if (hint.status === 'retry') {
+         if (hint.retryable !== true || hint.action !== 'repeat_same_request' || !['publication_busy', 'selection_busy'].includes(hint.code)) { return; }
+         delay = hint.retry_after_ms;
+@@ -192,7 +309,7 @@
+                 if (error instanceof McpSessionError && error.code === 'rpc') { throw new EvidenceFailure(explorerError('TOOL_ERROR', error.message)); }
+                 throw new EvidenceFailure(explorerError('SERVICE_UNAVAILABLE', error instanceof Error ? error.message : String(error)));
+             }
+-            const delay = task.tool === 'airk_parse' ? undefined : readRetryDelay(envelope);
++            const delay = task.tool === 'airk_parse' ? undefined : readRetryDelay(envelope,this.spec.catalogSession);
+             if (delay !== undefined && Date.now() + delay < deadline && !this.disposed) {
+                 await new Promise(resolve => setTimeout(resolve, delay)); continue;
+             }
+--- a/packages/vscode/src/test/nativeReadRetry.ts
++++ b/packages/vscode/src/test/nativeReadRetry.ts
+@@ -20,21 +20,25 @@
+ 
+ export type ReadRetryReceipt={code:string;query_submitted:false}|{code:string;action:'repeat_same_request'};
+ /** Observe both native receipt shapes through the same strict replay validator. */
+-export function readRetryReceipt(reply:any):ReadRetryReceipt{
+-    assert.notEqual(readRetryDelay(reply),undefined,`Unrecognized native read refusal: ${boundedReply(reply)}`);
++export function readRetryReceipt(reply:any,expectedScope?:unknown):ReadRetryReceipt{
++    assert.notEqual(readRetryDelay(reply,expectedScope),undefined,`Unrecognized native read refusal: ${boundedReply(reply)}`);
+     const body=JSON.parse(reply.content[0].text);
++    if(body.schema==='airk.combined-read/1'){
++        const code=body.read_retry.code;
++        return ['direct_query_admission','direct_query_setup'].includes(code)?{code,query_submitted:false}:{code,action:'repeat_same_request'};
++    }
+     return body.error?{code:body.error.code,query_submitted:false}:{code:body.code,action:'repeat_same_request'};
+ }
+ 
+ /** Repeat one MCP read only after an explicit typed rejection, within its original budget. */
+-export async function requestWithReadRetry(session:McpStdioSession,name:string,args:Record<string,unknown>={},timeout=120000,onReply?:(reply:any)=>void):Promise<any>{
++export async function requestWithReadRetry(session:McpStdioSession,name:string,args:Record<string,unknown>={},timeout=120000,onReply?:(reply:any)=>void,expectedScope?:unknown):Promise<any>{
+     const deadline=performance.now()+timeout;
+     while(true){
+         const result=await session.request('tools/call',{name,arguments:args},Math.max(1,deadline-performance.now()));
+         // Test assertions and diagnostics see every receipt, including refusals;
+         // the shared native hint parser alone determines whether retry is safe.
+         onReply?.(result);
+-        const delay=readRetryDelay(result);
++        const delay=readRetryDelay(result,expectedScope);
+         if(delay!==undefined&&performance.now()+delay<deadline){await new Promise(resolve=>setTimeout(resolve,delay));continue;}
+         assert.notEqual(result?.isError,true,`${name} failed: ${boundedReply(result)}`);
+         return result;
+@@ -61,7 +65,7 @@
+ /** Observe the same scoped read after an explicit timeout/refusal; never accept either as readiness.
+  * Optional measurements contain fixed categories and numbers only; observer failures cannot affect reads.
+  */
+-export async function observeQuickStatus(read:(deadline:number)=>Promise<RecordValue>,deadline=performance.now()+60000,observer?:QuickStatusObserver):Promise<RecordValue>{
++export async function observeQuickStatus(read:(deadline:number)=>Promise<RecordValue>,deadline=performance.now()+60000,observer?:QuickStatusObserver,expectedScope?:unknown):Promise<RecordValue>{
+     let project:unknown;
+     const started=observer?performance.now():0;let attempts=0;
+     const emit=(value:QuickStatusObservation)=>{try{observer?.(value);}catch{/* Measurements never control native reads. */}};
+@@ -73,7 +77,7 @@
+         }
+         if(observer){
+             const ended=performance.now();
+-            let outcome:QuickStatusOutcome=status.isError===true?(readRetryDelay(status)!==undefined?'retry':'error'):
++            let outcome:QuickStatusOutcome=status.isError===true?(readRetryDelay(status,expectedScope)!==undefined?'retry':'error'):
+                 status.index_state==='available'?'available':status.index_state==='unavailable'?'unavailable':
+                 status.index_state==='unknown'?'status_timeout':'other';
+             if(ended>=deadline)outcome='late';
+@@ -87,7 +91,7 @@
+         if(status.isError===true){
+             // A timed-out call can still hold native materialization admission.
+             // Only the existing exact read-retry contract permits another read.
+-            const delay=readRetryDelay(status);
++            const delay=readRetryDelay(status,expectedScope);
+             assert.ok(delay!==undefined,`status failed: ${boundedReply(status)}`);
+             assert.ok(performance.now()+delay<deadline,'Quick status observation budget exhausted');
+             await new Promise(resolve=>setTimeout(resolve,delay));continue;
+@@ -106,6 +110,10 @@
+ 
+ export async function readNative(command:string,args:readonly string[],cwd:string,until?:number):Promise<unknown>{
+     const deadline=Math.min(until??Infinity,performance.now()+120000);
++    // Only the original launch argument can bind an unconfirmed setup receipt.
++    const selectors=args.flatMap((arg,index)=>arg==='--catalog-session'?[args[index+1]]:[]);
++    let expectedScope:unknown;
++    if(selectors.length===1){try{expectedScope=JSON.parse(selectors[0]);}catch{/* Refuse scoped replay without a valid selector. */}}
+     while(true){
+         const started=performance.now();
+         if(started>=deadline)throw new Error('Native fixture read exceeded its original observation budget');
+@@ -113,9 +121,10 @@
+         const result=await new Promise<{envelope:unknown;delay?:number}>((resolve,reject)=>{
+             execFile(command,[...args],{cwd,timeout,maxBuffer:1024*1024,windowsHide:true,encoding:'utf8'},(error,stdout,stderr)=>{
+                 let envelope:unknown;try{envelope=JSON.parse(stdout);}catch{ /* Report the actual process failure below. */ }
+-                const delay=readRetryDelay(envelope);
++                const delay=readRetryDelay(envelope,expectedScope);
+                 if(error&&!(error.code===1&&!error.killed&&!error.signal&&delay!==undefined)){
+-                    reject(new NativeProcessError(command,error,stderr,Math.round(performance.now()-started),timeout));return;
++                    reject(Object.assign(new NativeProcessError(command,error,stderr,Math.round(performance.now()-started),timeout),
++                        {nativeStdout:stdout,nativeStderr:stderr,...(envelope!==undefined?{nativeResponse:envelope}:{})}));return;
+                 }
+                 if(envelope===undefined){reject(new Error('Native read returned no JSON envelope'));return;}
+                 resolve({envelope,delay});
+--- a/packages/vscode/src/test/nativeSmoke.test.ts
++++ b/packages/vscode/src/test/nativeSmoke.test.ts
+@@ -10,12 +10,12 @@
+ import {McpStdioSession} from '../mcpStdioSession';
+ import {assertQuickStatusTimeout,observeQuickStatus,requestWithReadRetry,readRetryReceipt,ReadRetryReceipt,QuickStatusObservation,QuickStatusObserver} from './nativeReadRetry';
+ 
+-async function quickStatus(session:McpStdioSession,observer?:QuickStatusObserver):Promise<any>{
++async function quickStatus(session:McpStdioSession,observer?:QuickStatusObserver,expectedScope?:LaunchSpec['catalogSession']):Promise<any>{
+     return observeQuickStatus(async deadline=>{
+         // native read: observeQuickStatus applies the typed retry contract to this reply.
+         const result=await session.request('tools/call',{name:'status',arguments:{}},Math.max(1,deadline-performance.now()));
+         return result.isError===true?result:JSON.parse(result.content[0].text);
+-    },undefined,observer);
++    },undefined,observer,expectedScope);
+ }
+ 
+ function assertSelectedScope(status:any,spec:LaunchSpec):void{
+@@ -88,7 +88,7 @@
+     try{
+         const spec=await fixture.register('pinned-status');const {launchArgs}=await import('../model');
+         session=(await McpStdioSession.open({command:spec.command,args:launchArgs(spec,'mcp',true),cwd:fixture.owner,clientName:'pinned-status-test',clientVersion:'1.6.4'},60000)).session;
+-        const status=await quickStatus(session,observe);assertSelectedScope(status,spec);
++        const status=await quickStatus(session,observe,spec.catalogSession);assertSelectedScope(status,spec);
+         assertEmptySetupStatus(status);
+         const embedding=await fixture.embedding();assert.equal(embedding.loads,0);assert.equal(embedding.sessions,0);
+     }catch(error){await fixture.retainFailure(error,session?[session]:[]);throw error;}finally{
+@@ -105,11 +105,11 @@
+         const {launchArgs}=await import('../model');
+         session=(await McpStdioSession.open({command:spec.command,args:launchArgs(spec),cwd:fixture.owner,clientName:'status-cache-test',clientVersion:'1.6.1'},60000)).session;
+         const read=async(name:string,args:Record<string,unknown>={})=>{
+-            const result=await requestWithReadRetry(session!,name,args,name.endsWith('diagnostics')?60000:15000);
++            const result=await requestWithReadRetry(session!,name,args,name.endsWith('diagnostics')?60000:15000,undefined,spec.catalogSession);
+             const value=JSON.parse(result.content[0].text);assert.deepEqual(result.structuredContent,value,JSON.stringify(result));return value;
+         };
+         const expectedVersion=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../package.json'),'utf8')).version;
+-        const first=await quickStatus(session);assert.equal(first.version,expectedVersion);assert.ok(['ok','updating','paused','unknown','needs_attention'].includes(first.health));
++        const first=await quickStatus(session,undefined,spec.catalogSession);assert.equal(first.version,expectedVersion);assert.ok(['ok','updating','paused','unknown','needs_attention'].includes(first.health));
+         assert.equal(first.files,1);assert.equal(first.cached,false);assert.ok(first.observed_unix_ms>0);
+         const primedTerse=await read('status',{response_mode:'terse'});
+         assert.equal(primedTerse.generation,undefined);assert.equal(primedTerse.publication.token,first.publication.token);
+@@ -151,7 +151,7 @@
+                 const result=await session.request('tools/call',{name:'projects',arguments:{}},10000);
+                 return JSON.parse(result.content[0].text).default_project;
+             }));
+-            const observations=await Promise.all(sessions.map(session=>quickStatus(session)));
++            const observations=await Promise.all(sessions.map(session=>quickStatus(session,undefined,binding==='pinned'?spec.catalogSession:undefined)));
+             for(const [index,observation] of observations.entries()){
+                 if(binding==='pinned'){assertSelectedScope(observation,spec);assertEmptySetupStatus(observation);}
+                 else{assert.equal(observation.project,expected[index]);assert.equal(observation.index_state,'unavailable');assert.equal(observation.files,null);assert.equal(observation.publication,null);}
+@@ -178,7 +178,7 @@
+             const session=(await McpStdioSession.open({command:fixture.launcher,args,cwd:fixture.owner,
+                 clientName:`mixed-${binding}-status`,clientVersion:expectedVersion},60000)).session;
+             sessions.push(session);
+-            const first=await quickStatus(session);assert.equal(first.version,expectedVersion);
++            const first=await quickStatus(session,undefined,spec.catalogSession);assert.equal(first.version,expectedVersion);
+             if(binding==='source'){
+                 assert.equal(first.index_state,'unavailable');assert.equal(first.publication,null);
+                 // native read: observe absent imported compatibility authority exactly once; no retry.
+@@ -192,7 +192,7 @@
+             // still be superseded before submission, even on a warm channel.
+             // Measured reads below retain those refusals and use only the shared
+             // safe-retry contract; submitted status errors remain fatal.
+-            const warmup=await requestWithReadRetry(session,'read_file',{path:'session.rs',start_line:1,end_line:3},30000);
++            const warmup=await requestWithReadRetry(session,'read_file',{path:'session.rs',start_line:1,end_line:3},30000,undefined,spec.catalogSession);
+             assert.notEqual(warmup.isError,true,JSON.stringify(warmup));
+             assert.equal(JSON.parse(warmup.content[0].text).publication.token,first.publication.token,JSON.stringify(warmup));
+             for(let round=0;round<3;round++){
+@@ -205,8 +205,8 @@
+                 for(const workload of workloads){
+                     const replies=await Promise.allSettled(workload.map(([name,arguments_])=>requestWithReadRetry(session,name,arguments_,30000,reply=>{
+                         if(reply.isError!==true)return;
+-                        refusals.push({binding,round,tool:name,...readRetryReceipt(reply)});
+-                    })));
++                        refusals.push({binding,round,tool:name,...readRetryReceipt(reply,spec.catalogSession)});
++                    },spec.catalogSession)));
+                     for(const [index,reply]of replies.entries()){
+                         assert.equal(reply.status,'fulfilled',`${binding} round ${round} ${workload[index][0]}: ${reply.status==='rejected'?String(reply.reason):''}`);
+                         assert.notEqual(reply.value.isError,true,`${binding} round ${round} ${workload[index][0]}: ${JSON.stringify(reply.value)}`);
+--- a/packages/vscode/src/native.ts
++++ b/packages/vscode/src/native.ts
+@@ -4,6 +4,7 @@
+ import * as fs from 'node:fs/promises';
+ import * as path from 'node:path';
+ import { McpSessionError, McpStdioSession } from './mcpStdioSession';
++import { readRetryDelay } from './explorerEvidence';
+ import { ASSISTANCE_SERVER_NAME, ASSISTANCE_TOOLS } from './explorerContracts';
+ import { LaunchSpec, launchArgs, ServerEntry, UNIFIED_TOOLS } from './model';
+ import { requireNativeExecution } from './nativeGate';
+@@ -235,7 +236,11 @@
+     let stage='starting the launcher and waiting for the MCP handshake';
+     try {
+         report('Starting the launcher and waiting for the MCP handshake…');
+-        session = (await McpStdioSession.open({ command: entry?.command??spec.command, args: entry?[...entry.args]:launchArgs(spec), cwd: spec.service ? path.dirname(spec.command) : spec.root,
++        const selectedArgs=entry?[...entry.args]:launchArgs(spec);
++        const selectors=selectedArgs.flatMap((arg,index)=>arg==='--catalog-session'?[selectedArgs[index+1]]:[]);
++        let expectedScope:unknown;
++        if(selectors.length===1){try{expectedScope=JSON.parse(selectors[0]);}catch{/* No scoped retry without the original validated selector. */}}
++        session = (await McpStdioSession.open({ command: entry?.command??spec.command, args:selectedArgs, cwd: spec.service ? path.dirname(spec.command) : spec.root,
+             env: { AIRK_CLIENT: 'vscode' }, clientName: 'airk-extension-check', clientVersion }, remaining())).session;
+         const handshakeMs=Date.now()-startedAt;
+         stage='listing MCP tools';report(`MCP handshake completed in ${(handshakeMs/1000).toFixed(1)} seconds. Reading the tool list…`);
+@@ -244,10 +249,16 @@
+         const required = expectedTools>=26?UNIFIED_TOOLS.filter(name=>(expectedTools>=27||name!=='diagnostics')&&(expectedTools>=28||name!=='parse')&&(expectedTools>=UNIFIED_TOOLS.length||name!=='query_scope')):['airk_status', 'airk_symbols', 'airk_code_facts', 'airk_relationships', ...(expectedTools >= 15 ? ['airk_changes'] : []), ...(expectedTools >= 16 ? ['airk_help'] : [])];
+         if (tools.length !== expectedTools || !required.every(name => tools.includes(name))) { throw new Error(`AIRK MCP tool inventory differs from the expected ${expectedTools} tools.`); }
+         stage='reading index status';report(`${tools.length} MCP tools available. Reading index status…`);
+-        const status = await session.request('tools/call', { name: expectedTools>=26?'status':'airk_status', arguments: {} }, remaining());
++        let status;
++        while(true){
++            status=await session.request('tools/call',{name:expectedTools>=26?'status':'airk_status',arguments:{}},remaining());
++            const delay=readRetryDelay(status,expectedScope);
++            if(delay===undefined||Date.now()+delay>=deadline)break;
++            await new Promise(resolve=>setTimeout(resolve,delay));
++        }
+         if (status.isError) {
+             const message = status.content?.map((part: { text?: string }) => part.text ?? '').join('\n') ?? '';
+-            if (!message.includes('workspace is not indexed')) { throw new Error(`AIRK MCP status failed: ${message.slice(0, 300)}`); }
++            if (!message.includes('workspace is not indexed')) { throw Object.assign(new Error(`AIRK MCP status failed: ${message.slice(0, 300)}`),{nativeResponse:status}); }
+             return { tools, status: { state: 'not_indexed' }, handshakeMs };
+         }
+         if(expectedTools>=16){
+@@ -259,7 +270,9 @@
+         if(handshakeMs>10000)report(`AIRK responded, but its handshake took ${(handshakeMs/1000).toFixed(1)} seconds. An agent with a shorter startup deadline may time out.`);
+         return { tools, status, handshakeMs };
+     } catch (error) {
+-        throw new Error(`AIRK connection check failed while ${stage}: ${error instanceof Error?error.message:String(error)}`);
++        const detail=error as {nativeResponse?:unknown}|null;
++        throw Object.assign(new Error(`AIRK connection check failed while ${stage}: ${error instanceof Error?error.message:String(error)}`),
++            detail?.nativeResponse!==undefined?{nativeResponse:detail.nativeResponse}:{});
+     } finally { session?.close(); }
+ }
+ 
+--- a/packages/vscode/src/test/nativeReadRetryProcess.test.ts
++++ b/packages/vscode/src/test/nativeReadRetryProcess.test.ts
+@@ -40,8 +40,14 @@
+     for(const [reply,code] of [[busy,2],[submitted,1],[{isError:true,content:[]},1]] as const){
+         await fixture(async(directory,counter)=>{
+             const source=program(counter,`console.log(${JSON.stringify(JSON.stringify(reply))});console.error('original process failure');process.exitCode=${code};`);
+-            await assert.rejects(readNative(process.execPath,['-e',source],directory),error=>
+-                error instanceof NativeProcessError&&error.code===code&&error.stderr.includes('original process failure'));
++            await assert.rejects(readNative(process.execPath,['-e',source],directory),error=>{
++                assert.ok(error instanceof NativeProcessError);
++                assert.equal(error.code,code);assert.ok(error.stderr.includes('original process failure'));
++                const failure=error as NativeProcessError&{nativeStdout:string;nativeStderr:string;nativeResponse:unknown};
++                assert.equal(failure.nativeStdout,JSON.stringify(reply)+'\n');
++                assert.equal(failure.nativeStderr,'original process failure\n');
++                assert.deepEqual(failure.nativeResponse,reply);return true;
++            });
+             assert.equal(await fs.readFile(counter,'utf8'),'1');
+         });
+     }
+--- a/packages/vscode/src/test/explorerAssistanceNative.test.ts
++++ b/packages/vscode/src/test/explorerAssistanceNative.test.ts
+@@ -96,7 +96,7 @@
+             cwd:catalogSpec.root,clientName:'native-test',clientVersion:version})).session;
+         const evidenceCall=async(name:string,args={})=>{
+             phase=`catalog tool ${name}`;
+-            return body(await requestWithReadRetry(evidence!,name,args,120000,reply=>{lastRead={name,reply};}));
++            return body(await requestWithReadRetry(evidence!,name,args,120000,reply=>{lastRead={name,reply};},catalogSpec.catalogSession));
+         };
+         const assertGrantScope=(value:any,selected:typeof catalogSpec)=>{
+             const scope=value.scope_observation,grant=selected.catalogSession!;
+@@ -168,10 +168,10 @@
+                 cwd:selectedSpec.root,clientName:'native-test',clientVersion:version})).session;
+             try{
+                 phase=`selected evidence ${selectedSpec.name}`;
+-                const result=await requestWithReadRetry(selectedSession,'search',{query,mode:'lexical',response_mode:'full'},120000,reply=>{lastRead={query,reply};});
++                const result=await requestWithReadRetry(selectedSession,'search',{query,mode:'lexical',response_mode:'full'},120000,reply=>{lastRead={query,reply};},selectedSpec.catalogSession);
+                 const value=body(result);assert.ok(JSON.stringify(result).includes(file));
+                 assert.ok(!JSON.stringify(result).includes(foreignFile));assertGrantScope(value,selectedSpec);
+-                const foreign=body(await requestWithReadRetry(selectedSession,'search',{query:foreignQuery,mode:'lexical',response_mode:'full'},120000,reply=>{lastRead={query:foreignQuery,reply};}));
++                const foreign=body(await requestWithReadRetry(selectedSession,'search',{query:foreignQuery,mode:'lexical',response_mode:'full'},120000,reply=>{lastRead={query:foreignQuery,reply};},selectedSpec.catalogSession));
+                 assert.deepEqual(foreign.hits,[]);assertGrantScope(foreign,selectedSpec);
+             }finally{selectedSession.close();}
+         }
+--- a/packages/vscode/src/test/explorerNative.test.ts
++++ b/packages/vscode/src/test/explorerNative.test.ts
+@@ -57,7 +57,7 @@
+         assert.equal(await liveCheck(file, String(hits[0].citation.content_hash), false), 'changed_since_index');
+         await fixture.job(spec); await fixture.publishedStatus(spec);
+         await assert.rejects(client.call('airk_context', { path: 'session.ts', line: 1, before: 5, after: 5, revision: token, known_hash: hits[0].citation.content_hash }), /citation|index|revision/i);
+-    } finally {
++    } catch(error) {await fixture.retainFailure(error);throw error;} finally {
+         client?.dispose();
+         await fixture.dispose();
+     }
+--- a/packages/vscode/src/test/diagnosticsNative.test.ts
++++ b/packages/vscode/src/test/diagnosticsNative.test.ts
+@@ -63,5 +63,5 @@
+         assert.ok(Array.isArray(retained.hits));assert.equal(record(retained.hits[0]).text,original);
+         assert.equal(await fs.readFile(path.join(a.root,'original.rs'),'utf8'),original);
+         assert.equal(await fs.readFile(path.join(b.root,'other.rs'),'utf8'),'pub fn unrelated_probe() {}\n');
+-    }finally{await fixture.dispose();}
++    }catch(error){await fixture.retainFailure(error);throw error;}finally{await fixture.dispose();}
+ });
+--- a/packages/vscode/src/test/universalLauncher.test.ts
++++ b/packages/vscode/src/test/universalLauncher.test.ts
+@@ -65,7 +65,7 @@
+         await assert.rejects(probeMcp(universalCall), 'a pointer to a missing installation fails instead of guessing');
+         pointer(spec.service!.installDir);
+         assert.equal((await probeMcp(universalCall)).tools.length, UNIFIED_TOOLS.length, 'the next launch follows the rewritten pointer');
+-    } finally {
++    } catch(error) {await fixture.retainFailure(error);throw error;} finally {
+         // Closing a probe signals its child asynchronously. Windows may still
+         // hold the copied executable briefly; always drain the owned fixture,
+         // even when removing that executable fails.

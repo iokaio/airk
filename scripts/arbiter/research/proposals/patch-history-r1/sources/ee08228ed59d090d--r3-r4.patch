@@ -1,0 +1,261 @@
+--- r3/crates/airk-retrieval/src/arbiter/runtime/cuda/CONTRACT.md
++++ r4/crates/airk-retrieval/src/arbiter/runtime/cuda/CONTRACT.md
+@@ -26,7 +26,9 @@
+ 
+ Payload directories/files are opened no-follow with original ancestors pinned.
+ Actual held-handle DACL/owner checks precede execution; payloads are human-owned,
+-only the owner/SYSTEM/Administrators may receive access. Every DLL is held with
++foreign read/execute grants are allowed, while foreign write/delete/DAC/owner
++grants refuse. Actual owner/held-child integrity checks remain mandatory.
++Every DLL is held with
+ read sharing alone, stream-hashed before loading and rechecked afterward. Native
+ PE64 imports/delay-imports must exactly match the admitted manifest and resolve
+ only to those authenticated payloads or explicit System32 imports. Loading uses
+@@ -134,14 +136,25 @@
+ unknown work retains those exact buffers plus Session/device/lease. CPU score
+ keeps its original macro path.
+ 
+-prepare_fp32_probe_profile is a test-support-only data constructor. It clones
+-current native8192/N8 original c79/f8 Context metadata/assets, requires fresh
+-native source policies and structurally valid all-unsupported CAL, preserves
+-weights/graph/tokenizer/compiler/calibration/ABI and CPU4/16 host fit, clears all
+-qualification/targets/downloads, and frames a distinct private GPU manifest
+-including explicit phase probe bounds. It creates no EvaluationCatalog or
+-execution permit. Existing actual evaluation lease and native device binding
+-remain required, with no old CAL or CPU proof transferred.
++prepare_fp32_probe_profile is a test-support-only metadata constructor. It
++accepts pinned raw Rust-emitted RuntimeManifest bytes (bounded128KiB, validated,
++fits empty) and current native8192/N8 CPU original c79/f8 Context metadata.
++Manifest data is not a runtime/device capability; no CUDA operation or compute
++scope is needed to prepare it. The actual native evaluation lease/device/build
++must still bind inside the owning inference lane.
++
++The constructor authenticates the CPU calibration asset/current task binding,
++then constructs distinct /2 rules=[] plus complete four reasoned Unsupported
++classes. It returns PreparedFp32ProbeProfile with the new exact calibration
++bytes/name and updated profile asset/hash; callers retain/write them in fresh
++output and update the actual source map before EvaluationCatalog admission.
++Final native CAL/profile validation is mandatory and depends on Core's reviewed
++/2 all-Unsupported semantics; historical /1 behavior is unchanged. The profile
++keeps original weights/graph/tokenizer/compiler/ABI and CPU4/16 host fit, clears
++qualification/targets/downloads, and frames a distinct GPU manifest including
++actual runtime metadata pin and explicit probe bounds. Neither old CPU class
++rules nor any CAL/release qualification transfers. No evaluation/lease/device
++execution permit is created.
+ 
+ RuntimeManifest/1 exact UUID/driver-fit rows are the first A6000 scientific
+ proof scope only. Eventual user eligibility needs a separately reviewed native
+--- r3/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
++++ r4/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
+@@ -688,17 +688,74 @@
+ }
+ impl std::error::Error for RuntimeUnavailable {}
+ 
++/// New native metadata artifacts. The caller must retain/write these exact bytes
++/// and use the updated file map before constructing the actual EvaluationCatalog.
++#[cfg(feature = "test-support")]
++#[derive(Debug)]
++pub struct PreparedFp32ProbeProfile {
++    pub profile: Profile,
++    pub calibration_name: String,
++    pub calibration_bytes: Vec<u8>,
++}
++
++#[cfg(any(test, feature = "test-support"))]
++fn unavailable_classes() -> Vec<airk_core::arbiter::context_action::calibration::ClassDisposition> {
++    use airk_core::arbiter::context_action::calibration::{
++        ClassDisposition, ClassSupport, ContextActionClass,
++    };
++    [
++        ContextActionClass::Read,
++        ContextActionClass::Sufficient,
++        ContextActionClass::Clarify,
++        ContextActionClass::NoJustifiedRead,
++    ]
++    .into_iter()
++    .map(|action| ClassDisposition {
++        action,
++        support: ClassSupport::Unsupported {
++            reason: "No CUDA whole-card/class qualification; native raw-score probe only".into(),
++        },
++    })
++    .collect()
++}
++
++#[cfg(any(test, feature = "test-support"))]
++fn probe_runtime_identity(
++    runtime_manifest: &[u8],
++    runtime_manifest_sha256: Sha256Digest,
++) -> Result<Sha256Digest> {
++    // Metadata only: a parsed native manifest is not execution authority. The
++    // actual lease/device/approved build must still bind in the inference lane.
++    ensure!(
++        runtime_manifest.len() <= 128 << 10,
++        "runtime metadata byte cap"
++    );
++    ensure!(
++        Sha256Digest::from_bytes(Sha256::digest(runtime_manifest).into())
++            == runtime_manifest_sha256,
++        "native runtime metadata pin mismatch"
++    );
++    let runtime: manifest::RuntimeManifest = serde_json::from_slice(runtime_manifest)?;
++    runtime.validate()?;
++    ensure!(
++        runtime.fits.is_empty() && runtime.static_core_build != Sha256Digest::from_bytes([0; 32]),
++        "first probe requires unqualified native runtime metadata"
++    );
++    Ok(runtime.static_core_build)
++}
++
+ /// Data-only, unqualified first FP32 probe metadata. Does not mint evaluation,
+ /// device ownership, execution, fitted CAL or release authority.
+ #[cfg(feature = "test-support")]
+ pub fn prepare_fp32_probe_profile(
+     cpu: &Profile,
+     source: &dyn super::AssetSource,
+-    device: &CudaDevice,
++    runtime_manifest: &[u8],
++    runtime_manifest_sha256: Sha256Digest,
+     plan: DeviceCapacityPlan,
+-) -> Result<Profile> {
++) -> Result<PreparedFp32ProbeProfile> {
+     use airk_core::arbiter::{AssetRole, ModelChoice};
+-    crate::native_inference::require_service_compute()?;
++    let runtime_build = probe_runtime_identity(runtime_manifest, runtime_manifest_sha256)?;
+     cpu.validate()?;
+     super::validate_selected_policies(cpu)?;
+     ensure!(
+@@ -733,19 +790,22 @@
+         .filter(|a| a.role == AssetRole::Calibration)
+         .collect::<Vec<_>>();
+     ensure!(calibrations.len() == 1, "native raw calibration missing");
+-    let calibration =
++    let mut calibration =
+         airk_core::arbiter::context_action::calibration::JointCalibration::parse_and_validate(
+             &super::bytes(source, calibrations[0], 64 << 10)?,
+             cpu,
+             crate::arbiter::context_action::policy_digest()?,
+         )?;
+-    use airk_core::arbiter::context_action::calibration::ClassSupport;
+-    ensure!(
+-        calibration.class_support.as_ref().is_some_and(|rows| rows
+-            .iter()
+-            .all(|r| matches!(r.support, ClassSupport::Unsupported { .. }))),
+-        "GPU probe cannot transfer supported CPU class/CAL evidence"
+-    );
++    // Parse the exact native CPU input, then create new unavailable calibration
++    // bytes. Neither its CPU rules nor class qualification transfers to CUDA.
++    calibration.schema =
++        airk_core::arbiter::context_action::calibration::CALIBRATION_SCHEMA_V2.into();
++    calibration.rules.clear();
++    calibration.class_support = Some(unavailable_classes());
++    let mut calibration_bytes = serde_json::to_vec_pretty(&calibration)?;
++    calibration_bytes.push(b'\n');
++    let calibration_sha = Sha256Digest::from_bytes(Sha256::digest(&calibration_bytes).into());
++    let calibration_name = calibrations[0].name.clone();
+     let mut profile = cpu.clone();
+     let host_fit = profile.cpu_fit.take().context("native host fit required")?;
+     ensure!(
+@@ -757,10 +817,18 @@
+     profile.downloads.clear();
+     profile.qualified_targets.clear();
+     profile.qualification = None;
++    let asset = profile
++        .assets
++        .iter_mut()
++        .find(|a| a.role == AssetRole::Calibration)
++        .context("native calibration asset missing")?;
++    asset.bytes = calibration_bytes.len() as u64;
++    asset.sha256 = calibration_sha;
++    profile.calibration = calibration_sha;
+     profile.device_execution = Some(DeviceExecution {
+         schema: DEVICE_EXECUTION_SCHEMA.into(),
+         backend: GpuBackend::Cuda,
+-        runtime_build: device.runtime.runtime_build(),
++        runtime_build,
+         compatibility_policy: compatibility_policy_digest(),
+         provider_options: provider_options_digest(),
+         math_policy: math_policy_digest(),
+@@ -777,6 +845,7 @@
+     profile.manifest = Sha256Digest::from_bytes([0; 32]);
+     let canonical = serde_json::to_vec(&(
+         cpu.manifest,
++        runtime_manifest_sha256,
+         &profile,
+         plan.cold_peak_bytes,
+         plan.warm_extra_bytes,
+@@ -788,5 +857,14 @@
+     );
+     profile.validate()?;
+     super::validate_selected_policies(&profile)?;
+-    Ok(profile)
+-}
++    airk_core::arbiter::context_action::calibration::JointCalibration::parse_and_validate(
++        &calibration_bytes,
++        &profile,
++        crate::arbiter::context_action::policy_digest()?,
++    )?;
++    Ok(PreparedFp32ProbeProfile {
++        profile,
++        calibration_name,
++        calibration_bytes,
++    })
++}
+--- r3/crates/airk-retrieval/src/arbiter/runtime/cuda/manifest.rs
++++ r4/crates/airk-retrieval/src/arbiter/runtime/cuda/manifest.rs
+@@ -37,7 +37,7 @@
+     pub system_imports: BTreeSet<String>,
+     pub fits: Vec<VariantFit>,
+ }
+-#[cfg(any(test, all(windows, target_arch = "x86_64")))]
++#[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
+ fn name(value: &str) -> bool {
+     !value.is_empty()
+         && value.len() <= 128
+@@ -48,7 +48,7 @@
+         && !value.contains("..")
+ }
+ impl RuntimeManifest {
+-    #[cfg(any(test, all(windows, target_arch = "x86_64")))]
++    #[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
+     pub fn validate(&self) -> Result<()> {
+         ensure!(
+             self.schema == "airk.native.cuda-runtime-manifest/1" && self.ort_version == "1.30.0",
+--- r3/crates/airk-retrieval/src/arbiter/runtime/cuda/tests.rs
++++ r4/crates/airk-retrieval/src/arbiter/runtime/cuda/tests.rs
+@@ -174,3 +174,35 @@
+     assert!(same_native_lease(&a, &b));
+     assert!(!same_native_lease(&a, &c));
+ }
++
++#[test]
++fn native_probe_calibration_has_complete_literal_unavailable_dispositions() {
++    use airk_core::arbiter::context_action::calibration::{ClassSupport, ContextActionClass};
++    let rows = unavailable_classes();
++    assert_eq!(
++        rows.iter().map(|v| v.action).collect::<Vec<_>>(),
++        [
++            ContextActionClass::Read,
++            ContextActionClass::Sufficient,
++            ContextActionClass::Clarify,
++            ContextActionClass::NoJustifiedRead
++        ]
++    );
++    assert!(
++        rows.iter()
++            .all(|v| matches!(&v.support,ClassSupport::Unsupported{reason} if !reason.is_empty()))
++    );
++}
++
++#[test]
++fn native_probe_runtime_metadata_checks_exact_pin_and_original_byte_cap() -> Result<()> {
++    let value = manifest();
++    let raw = serde_json::to_vec(&value)?;
++    let pin = Sha256Digest::from_bytes(Sha256::digest(&raw).into());
++    assert_eq!(probe_runtime_identity(&raw, pin)?, value.static_core_build);
++    assert!(probe_runtime_identity(&raw, Sha256Digest::from_bytes([9; 32])).is_err());
++    let oversized = vec![b' '; (128 << 10) + 1];
++    let pin = Sha256Digest::from_bytes(Sha256::digest(&oversized).into());
++    assert!(probe_runtime_identity(&oversized, pin).is_err());
++    Ok(())
++}

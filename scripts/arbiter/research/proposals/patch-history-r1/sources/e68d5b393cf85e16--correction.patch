@@ -1,0 +1,332 @@
+diff --git a/crates/airk-store/src/current/postings.rs b/crates/airk-store/src/current/postings.rs
+--- a/crates/airk-store/src/current/postings.rs
++++ b/crates/airk-store/src/current/postings.rs
+@@ -432,7 +432,22 @@
+         prefix: &str,
+         after: Option<&str>,
+         limit: usize,
++        select: impl FnMut(&str) -> Result<bool>,
++    ) -> Result<PathPage> {
++        self.lookup_paths_filtered_checked(lookup, prefix, after, limit, select, || Ok(()))
++    }
++    /// Cooperative work checks run before every shard, candidate and final
++    /// artifact validation, including candidates rejected by scope or selection.
++    /// The checkpoint receives no indexed data and errors refuse the whole lookup.
++    /// Selection still runs only after existing read/policy authority.
++    pub fn lookup_paths_filtered_checked(
++        &self,
++        lookup: Lookup<'_>,
++        prefix: &str,
++        after: Option<&str>,
++        limit: usize,
+         mut select: impl FnMut(&str) -> Result<bool>,
++        mut checkpoint: impl FnMut() -> Result<()>,
+     ) -> Result<PathPage> {
+         ensure!(
+             prefix.len() <= 8192
+@@ -444,6 +459,7 @@
+         let mut candidates = BTreeSet::new();
+         let mut bytes = 0usize;
+         for shard in 0..=u8::MAX {
++            checkpoint()?;
+             let Some(encoded) =
+                 self.map_get(map::MapDomain::Posting, &identity(selector, shard))?
+             else {
+@@ -451,6 +467,7 @@
+             };
+             let posting = Posting::decode(&encoded, selector, shard)?;
+             for path in posting.paths {
++                checkpoint()?;
+                 if self.accepts_path(&path)
+                     && path.starts_with(prefix)
+                     && after.is_none_or(|after| path.as_str() > after)
+@@ -475,6 +492,7 @@
+             candidates.pop_last();
+         }
+         for path in &candidates {
++            checkpoint()?;
+             ensure!(
+                 self.artifact(path)?.is_some(),
+                 "current posting references absent artifact"
+diff --git a/crates/airk-store/src/current/postings_tests.rs b/crates/airk-store/src/current/postings_tests.rs
+--- a/crates/airk-store/src/current/postings_tests.rs
++++ b/crates/airk-store/src/current/postings_tests.rs
+@@ -1,6 +1,251 @@
+ // SPDX-License-Identifier: Apache-2.0
+ use super::*;
+ use crate::current::postings::Lookup;
++
++fn checked_lookup_fixture() -> Result<(Fixture, Vec<String>)> {
++    // Keep three actual artifacts in one shard so a check only between shards
++    // cannot satisfy the per-candidate cancellation regression.
++    let mut buckets = std::collections::BTreeMap::<u8, Vec<String>>::new();
++    let mut paths = None;
++    for n in 0..1024 {
++        let path = format!("checkpoint-{n}.txt");
++        let shard =
++            airk_core::identity::framed_digest(b"current-posting-path/1", &[path.as_bytes()])
++                .as_bytes()[0];
++        let bucket = buckets.entry(shard).or_default();
++        bucket.push(path);
++        if bucket.len() == 3 {
++            paths = Some(bucket.clone());
++            break;
++        }
++    }
++    let paths = paths.context("three fixture paths in one posting shard")?;
++    let fixture = Fixture::new()?;
++    let inputs = paths
++        .iter()
++        .map(|path| {
++            retained_input_with_facts(&fixture, path, "body", vec![fact("Budget", "heading")])
++        })
++        .collect::<Result<Vec<_>>>()?;
++    let writer = fixture.store.lock()?;
++    let mut current =
++        fixture
++            .store
++            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
++    let mut token = fixture.head.token()?;
++    for input in &inputs {
++        token = current
++            .commit_artifact(&token, &input.artifact.path, Some(input))?
++            .token;
++    }
++    drop(current);
++    drop(writer);
++    Ok((fixture, paths))
++}
++
++fn lookup_interrupted() -> anyhow::Error {
++    std::io::Error::new(
++        std::io::ErrorKind::Interrupted,
++        "posting checkpoint stopped",
++    )
++    .into()
++}
++
++#[test]
++fn checked_path_lookup_stops_rejected_candidates_and_preserves_scope() -> Result<()> {
++    let (fixture, paths) = checked_lookup_fixture()?;
++    let read = fixture.store.current_read(&fixture.scope)?;
++    let token = read.token()?;
++    let selected = std::cell::Cell::new(0usize);
++    let stopped = read
++        .lookup_paths_filtered_checked(
++            Lookup::Files,
++            "",
++            None,
++            1,
++            |_| {
++                selected.set(selected.get() + 1);
++                Ok(false)
++            },
++            || {
++                if selected.get() > 0 {
++                    Err(lookup_interrupted())
++                } else {
++                    Ok(())
++                }
++            },
++        )
++        .err()
++        .context("rejected candidates bypassed checkpoint")?;
++    assert_eq!(
++        stopped
++            .downcast_ref::<std::io::Error>()
++            .map(std::io::Error::kind),
++        Some(std::io::ErrorKind::Interrupted)
++    );
++    assert_eq!(
++        selected.get(),
++        1,
++        "must stop inside the shard before visiting its remaining candidates"
++    );
++    assert_eq!(read.token()?, token);
++    let ordinary = read.lookup_paths_filtered(Lookup::Files, "", None, 1, |_| Ok(true))?;
++    let checked =
++        read.lookup_paths_filtered_checked(Lookup::Files, "", None, 1, |_| Ok(true), || Ok(()))?;
++    assert_eq!(checked.paths, ordinary.paths);
++    assert_eq!(checked.next_after, ordinary.next_after);
++    read.attach_read_scope(std::sync::Arc::new(
++        airk_core::scoped_reads::CompiledReadScope {
++            fingerprint: Sha256Digest::from_bytes([93; 32]),
++            atoms: vec![airk_core::scoped_reads::CompiledPathAtom {
++                kind: airk_core::index_catalog::PathScope::Exact,
++                path: paths[0].clone(),
++            }],
++            source_atoms: vec![],
++            external_aliases: vec![],
++        },
++    ))?;
++    let mut observed = Vec::new();
++    let page = read.lookup_paths_filtered_checked(
++        Lookup::Files,
++        "",
++        None,
++        1,
++        |path| {
++            observed.push(path.to_owned());
++            Ok(false)
++        },
++        || Ok(()),
++    )?;
++    assert!(page.paths.is_empty());
++    assert_eq!(
++        observed,
++        [paths[0].clone()],
++        "selection must not observe paths outside existing authority"
++    );
++    let excluded = fixture.store.current_read(&fixture.scope)?;
++    excluded.attach_read_scope(std::sync::Arc::new(
++        airk_core::scoped_reads::CompiledReadScope {
++            fingerprint: Sha256Digest::from_bytes([94; 32]),
++            atoms: vec![airk_core::scoped_reads::CompiledPathAtom {
++                kind: airk_core::index_catalog::PathScope::Exact,
++                path: "unselected.txt".into(),
++            }],
++            source_atoms: vec![],
++            external_aliases: vec![],
++        },
++    ))?;
++    let checks = std::cell::Cell::new(0usize);
++    let selected = std::cell::Cell::new(0usize);
++    // A shard-only check would run at most 256 times and return false absence.
++    // Scope-rejected candidates must also participate in cooperative work checks.
++    let rejected_checkpoint = usize::from(u8::MAX) + 2;
++    let error = excluded
++        .lookup_paths_filtered_checked(
++            Lookup::Files,
++            "",
++            None,
++            1,
++            |_| {
++                selected.set(selected.get() + 1);
++                Ok(false)
++            },
++            || {
++                checks.set(checks.get() + 1);
++                if checks.get() == rejected_checkpoint {
++                    Err(lookup_interrupted())
++                } else {
++                    Ok(())
++                }
++            },
++        )
++        .err()
++        .context("scope-rejected lookup bypassed work checkpoint")?;
++    assert_eq!(
++        error
++            .downcast_ref::<std::io::Error>()
++            .map(std::io::Error::kind),
++        Some(std::io::ErrorKind::Interrupted)
++    );
++    assert_eq!(selected.get(), 0);
++    assert_eq!(checks.get(), rejected_checkpoint);
++    Ok(())
++}
++
++#[test]
++fn checked_path_lookup_checks_empty_and_final_validation() -> Result<()> {
++    let empty = Fixture::new()?;
++    let read = empty.store.current_read(&empty.scope)?;
++    let selected = std::cell::Cell::new(0usize);
++    let error = read
++        .lookup_paths_filtered_checked(
++            Lookup::Files,
++            "",
++            None,
++            1,
++            |_| {
++                selected.set(selected.get() + 1);
++                Ok(true)
++            },
++            || Err(lookup_interrupted()),
++        )
++        .err()
++        .context("already canceled empty lookup reported absence")?;
++    assert_eq!(
++        error
++            .downcast_ref::<std::io::Error>()
++            .map(std::io::Error::kind),
++        Some(std::io::ErrorKind::Interrupted)
++    );
++    assert_eq!(selected.get(), 0);
++    assert!(
++        read.lookup_paths(Lookup::Files, "", None, 1)?
++            .paths
++            .is_empty()
++    );
++    drop(read);
++    let (fixture, paths) = checked_lookup_fixture()?;
++    let read = fixture.store.current_read(&fixture.scope)?;
++    let selected = std::cell::Cell::new(0usize);
++    let checks = std::cell::Cell::new(0usize);
++    // The format authenticates all 256 shards and all three paths before
++    // validating returned artifacts. Cancellation must still propagate there.
++    let first_validation = usize::from(u8::MAX) + 1 + paths.len() + 1;
++    let error = read
++        .lookup_paths_filtered_checked(
++            Lookup::Files,
++            "",
++            None,
++            3,
++            |_| {
++                selected.set(selected.get() + 1);
++                Ok(true)
++            },
++            || {
++                checks.set(checks.get() + 1);
++                if checks.get() == first_validation {
++                    Err(lookup_interrupted())
++                } else {
++                    Ok(())
++                }
++            },
++        )
++        .err()
++        .context("final artifact validation ignored cancellation")?;
++    assert_eq!(
++        error
++            .downcast_ref::<std::io::Error>()
++            .map(std::io::Error::kind),
++        Some(std::io::ErrorKind::Interrupted)
++    );
++    assert_eq!(selected.get(), paths.len());
++    assert_eq!(checks.get(), first_validation);
++    assert_eq!(
++        read.lookup_paths(Lookup::Files, "", None, 8)?.paths.len(),
++        paths.len()
++    );
++    Ok(())
++}
+ 
+ fn fact(name: &str, kind: &str) -> airk_core::extraction::LocalFact {
+     airk_core::extraction::LocalFact {
+diff --git a/crates/airk-kernel/src/split.rs b/crates/airk-kernel/src/split.rs
+--- a/crates/airk-kernel/src/split.rs
++++ b/crates/airk-kernel/src/split.rs
+@@ -87,7 +87,7 @@
+                 Instant::now() < deadline && examined < limits.max_paths,
+                 "split remainder witness budget exhausted; nonempty state unknown"
+             );
+-            let page = read.lookup_paths_filtered(
++            let page = read.lookup_paths_filtered_checked(
+                 airk_store::current::postings::Lookup::Files,
+                 "",
+                 cursor.as_deref(),
+@@ -105,6 +105,14 @@
+                         .plan
+                         .remainder
+                         .allows_canonical(root.id, &source.relative_path))
++                },
++                || {
++                    crate::service_execution::checkpoint()?;
++                    ensure!(
++                        Instant::now() < deadline,
++                        "split remainder witness budget exhausted; nonempty state unknown"
++                    );
++                    Ok(())
+                 },
+             )?;
+             ensure!(

@@ -1,0 +1,37 @@
+--- a/packages/vscode/src/referenceRefresh.ts
++++ b/packages/vscode/src/referenceRefresh.ts
+@@ -86,7 +86,7 @@
+ export function validateRefreshJob(input:unknown,intent:ReferenceRefreshIntent):ObjectValue {
+     const job=catalogObject(input);if(job.id!==refreshJobId(intent)||job.project!==intent.reference_refresh.configure_project.project||job.kind!=='configure'||!['pending','running','succeeded','failed','canceled'].includes(String(job.state)))throw new Error('crossed_refresh_job');return job;
+ }
+-function reviewReason(input:unknown):ObjectValue {const review=catalogObject(input);exact(review,'reasons');const reasons=array(review.reasons,9);const known=['no_current_index','pending_recovery','configuration_changed','extractor_changed','incomplete_scan','directory_selection','control_input','dependency_input','unqualified_control_provenance'];if(reasons.some(reason=>!known.includes(String(reason)))||new Set(reasons).size!==reasons.length)throw new Error('invalid_refresh_review_reason');return review;}
++function reviewReason(input:unknown):ObjectValue {const review=catalogObject(input);exact(review,'reasons');const reasons=array(review.reasons,11);const known=['no_current_index','pending_recovery','configuration_changed','extractor_changed','incomplete_scan','directory_selection','control_input','dependency_input','unqualified_control_provenance','control_inputs_changed','control_context_changed'];if(reasons.some(reason=>!known.includes(String(reason)))||new Set(reasons).size!==reasons.length)throw new Error('invalid_refresh_review_reason');return review;}
+ export function validateRefreshRefusal(input:unknown,intent:ReferenceRefreshIntent):ObjectValue {
+     const value=catalogObject(input);catalogBound(value,REFRESH_NATIVE_BYTES);const expected=intent.reference_refresh.configure_project;
+     if(value.status!=='reference_refresh_review_required'||value.project!==expected.project||value.caller!==expected.caller||!isDeepStrictEqual(value.key,expected.key)||!isDeepStrictEqual(value.request,expected.request))throw new Error('crossed_refresh_review_refusal');reviewReason(value.review);return value;
+--- a/packages/vscode/src/test/referenceRefresh.test.ts
++++ b/packages/vscode/src/test/referenceRefresh.test.ts
+@@ -162,3 +162,23 @@
+         }
+     }
+ });
++
++
++test('typed control-input and control-context drift remain failed review-required observations without requery',async()=>{
++    for(const reason of ['control_inputs_changed','control_context_changed']){
++        const intent=fixture(),e=environment(intent),saved=await e.flow.reviewAndSubmit(intent,{capabilities:{reference_refresh_contract:1}}),native=receipt(intent);
++        const selected=intent.reference_refresh.configure_project.request.configuration.selection as Value;
++        (native.job as Value).state='failed';(native.job as Value).outcome={state:'failed',code:'refresh_scope_changed_review_required'};
++        native.result={schema:'airk.reference-refresh-review-required/1',selection_digest:refreshSelectionIdentity(selected),original_query_digest:selected.original_query_digest,review:{reasons:[reason]},publication_applied:false,requery_executed:false,future_native_refusal:{complete:true}};
++        e.setResponse(native);await e.flow.check(saved!);
++        assert.deepEqual(e.journal.list()[0].value.nativeRefreshReceipt,native);
++        await assert.rejects(e.flow.requery(saved!),/fresh_completed/);
++        assert.deepEqual(e.counts(),{mutationCalls:1,readCalls:2,queryCalls:0});
++        const unknown=structuredClone(native);((unknown.result as Value).review as Value).reasons=[reason+'_unknown'];
++        assert.throws(()=>validateRefreshReceipt(unknown,intent),/review_reason/);
++        const all=structuredClone(native);((all.result as Value).review as Value).reasons=['no_current_index','pending_recovery','configuration_changed','extractor_changed','incomplete_scan','directory_selection','control_input','dependency_input','unqualified_control_provenance','control_inputs_changed','control_context_changed'];
++        assert.deepEqual(validateRefreshReceipt(all,intent),all);
++        const duplicate=structuredClone(all);(((duplicate.result as Value).review as Value).reasons as string[]).push(reason);
++        assert.throws(()=>validateRefreshReceipt(duplicate,intent),/selection|review_reason/);
++    }
++});

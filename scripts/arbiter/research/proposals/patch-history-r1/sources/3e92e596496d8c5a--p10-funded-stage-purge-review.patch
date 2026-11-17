@@ -1,0 +1,166 @@
+--- a/crates/airk-store/src/quota/funding.rs
++++ b/crates/airk-store/src/quota/funding.rs
+@@ -1985,6 +1985,49 @@
+             .filter(|child| child.index_id == owner.index_id)
+             .collect())
+     }
++    /// Exact deferred staging inventory for a canceled participant. Recognition
++    /// is not deletion authority: only native disposed-current reconciliation
++    /// may remove these bytes or release their still-held capacity.
++    pub(crate) fn operation_staging_for_disposal(
++        &self,
++        owner: &FundingUse,
++    ) -> Result<std::collections::BTreeSet<PathBuf>> {
++        let record = self.observe_funding(owner.operation_id)?;
++        check_use(&record, owner)?;
++        ensure!(
++            owner.phase.purpose == SplitJobPurpose::DestinationCleanup
++                && owner.index_id == record.request.destination_index,
++            "staging disposal requires exact destination cleanup"
++        );
++        let registration = record
++            .request
++            .registration(owner.index_id)
++            .context("staging participant absent")?;
++        let mut paths = std::collections::BTreeSet::new();
++        for child in record
++            .children
++            .iter()
++            .filter(|child| child.index_id == owner.index_id)
++        {
++            if let FundingChildKind::Reservation { staging_name } = &child.kind {
++                ensure!(
++                    child.closed && child.phase == owner.phase,
++                    "funded staging still has an open or foreign capture"
++                );
++                paths.insert(staging_path(
++                    self,
++                    &registration.collection,
++                    &self.control_path().join("reservations").join(staging_name),
++                )?);
++            }
++        }
++        ensure!(
++            paths.len() <= MAX_CHILDREN,
++            "funded staging inventory exceeds bound"
++        );
++        Ok(paths)
++    }
++
+     /// Exact native claim/writer custody may close dead capture handles before
+     /// journal recovery. This NEVER removes staging, releases credit, changes
+     /// Current grants or declares Ready. Physical settlement still requires the
+--- a/crates/airk-store/src/service_collection_purge.rs
++++ b/crates/airk-store/src/service_collection_purge.rs
+@@ -65,6 +65,19 @@
+         if let Some(pointer) = &collection.owner.required_split {
+             super::split::validate_capsule_for_retirement(&directory, pointer, split_access)?;
+         }
++        // A dead funded capture's exact stage remains owned until the native
++        // payload-disposal checkpoint below. Recognize ONLY the admitted ledger
++        // paths; do not classify a prefix as safe or delete staging early.
++        let admitted_staging = if let Some(funding) = funding {
++            let permit =
++                split_access.context("funded staging disposal requires claimed cleanup access")?;
++            let store = FileStore::new(&directory)
++                .with_split_access(permit.clone())?
++                .with_operation_funding(funding.clone())?;
++            Quota::for_store(&store)?.operation_staging_for_disposal(funding)?
++        } else {
++            std::collections::BTreeSet::new()
++        };
+         let _usage = crate::usage::deletion_guard(&directory)?;
+         collection.sweep_metadata_scratch()?;
+         let incarnations = directory.join("incarnations");
+@@ -77,6 +90,13 @@
+                 .file_name()
+                 .and_then(|name| name.to_str())
+                 .context("invalid removal entry")?;
++            if admitted_staging.contains(&path) {
++                ensure!(
++                    plain(&path)?.is_dir(),
++                    "invalid exact funded staging directory"
++                );
++                continue;
++            }
+             if name.starts_with("split-state-") && retained_split {
+                 super::split::validate_retained_capsule_file(&path)?;
+                 continue;
+@@ -217,6 +237,16 @@
+             }
+             fs::remove_dir(&incarnations)?;
+         }
++        // Last-incarnation disposal normally removed these through canonical
++        // journal/quota reconciliation on the prior turn. Never report complete
++        // from a missing incarnation if its actual funded staging still exists.
++        for stage in &admitted_staging {
++            match fs::symlink_metadata(stage) {
++                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
++                Err(error) => return Err(error.into()),
++                Ok(_) => anyhow::bail!("admitted funded staging awaits native disposal settlement"),
++            }
++        }
+         let gates = directory.join(".current-gates");
+         if gates.try_exists()? {
+             let mut gate_files = Vec::new();
+--- a/crates/airk-cli/src/project_worker_split.rs
++++ b/crates/airk-cli/src/project_worker_split.rs
+@@ -804,8 +804,58 @@
+             std::fs::read(staging.join("owned-sentinel"))?,
+             b"preserved crash evidence"
+         );
++        // A same-prefix entry with no exact admitted child remains unowned.
++        // Preflight must preserve both it and all current recovery evidence.
++        let logical = staging.parent().context("crash stage collection absent")?;
++        let unknown = logical.join(format!(
++            ".quota-stage-r-funded-{}",
++            Sha256Digest::from_bytes([0; 32])
++        ));
++        assert_ne!(unknown, staging);
++        std::fs::create_dir(&unknown)?;
++        std::fs::write(
++            unknown.join("foreign-source"),
++            b"unadmitted entry remains unchanged",
++        )?;
++        let native_current = airk_store::service::collection::Collection::existing(
++            Path::new(&building.request.destination_registration.data_root),
++            &building.request.destination_registration.root,
++            &building.request.destination_registration.collection,
++        )?
++        .select_for_diagnostics()?
++        .directory()
++        .join("current.sqlite3");
++        assert!(native_current.is_file());
+         let observer =
+             Kernel::open_existing_service_observer(&building.request.destination_registration)?;
++        let error = execute(
++            &observer,
++            &mut fixture.registry,
++            &lease,
++            cleanup,
++            fixture.engine,
++            &fixture.control,
++        )
++        .err()
++        .context("unadmitted staging was accepted")?;
++        assert!(
++            format!("{error:#}").contains("unknown removal entry is preserved"),
++            "{error:#}"
++        );
++        assert!(
++            native_current.is_file(),
++            "unknown staging must refuse before payload deletion"
++        );
++        assert_eq!(
++            std::fs::read(unknown.join("foreign-source"))?,
++            b"unadmitted entry remains unchanged"
++        );
++        assert_eq!(
++            std::fs::read(staging.join("owned-sentinel"))?,
++            b"preserved crash evidence"
++        );
++        std::fs::remove_file(unknown.join("foreign-source"))?;
++        std::fs::remove_dir(&unknown)?;
+         let outcome = execute(
+             &observer,
+             &mut fixture.registry,

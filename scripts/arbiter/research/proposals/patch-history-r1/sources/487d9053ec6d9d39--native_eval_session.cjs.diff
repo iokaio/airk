@@ -1,0 +1,55 @@
+--- artifacts\advanced-split\models\selected-native-goal-driver-r1\source\native_eval_session.cjs
++++ artifacts\advanced-split\models\selected-native-goal-driver-r1\chunked-cal-r1\collector\native_eval_session.cjs
+@@ -8,7 +8,7 @@
+ const { spawn } = require('node:child_process');
+ const readline = require('node:readline');
+ 
+-const ROOT = path.resolve(__dirname, '..', '..', '..', '..', '..');
++const ROOT = path.resolve(__dirname, '..', '..', '..', '..', '..', '..');
+ const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+ const inside = (parent, child) => { const rel = path.relative(parent, child); return rel === '' || (!rel.startsWith('..'+path.sep) && rel !== '..' && !path.isAbsolute(rel)); };
+ function sameDirectory(left, right) {
+@@ -57,7 +57,7 @@
+     const identity = { ready_sha256: digest(readyRaw), bindings_sha256: digest(bindingsRaw),
+         service_instance: ready.health.instance, catalog_namespace: ready.health.catalog_clock.namespace,
+         index_id: config.index_id, image, input_seals: Object.fromEntries([...seals].map(([file, raw]) => [file, digest(raw)])) };
+-    const events = [];let poisoned = null, normalClose = false, launched = 0, child = null, childExit = null, session;
++    const events = [];let poisoned = null, normalClose = false, launched = 0, child = null, childExit = null, session, initialSelection;
+     function append(name, bytes) { fs.appendFileSync(path.join(directory, name), bytes); }
+     function verify() {
+         if (poisoned) throw Error('evaluation session permanently refused: '+poisoned);
+@@ -108,9 +108,24 @@
+         async initialize() {
+             verify();const selection = await session.scopeSelect(rows[0].window_scope_selection);verify();
+             if (session.hello?.serviceInstance !== ready.health.instance || selection.status !== 'scope') { poison('original_window_selection_refused');throw Error('original window selection refused'); }
++            initialSelection = selection;
+             const result = { kind: 'ready', identity, hello: session.hello, scope_result: selection,
+                 events: [...events], launch_count: launched, scope: 'Existing compiled I2 session and native window_route, original fixture only; no respawn or automatic busy retry.' };
+             fs.writeFileSync(path.join(directory, 'session-ready.json'), JSON.stringify(result, null, 2)+'\n');return result;
++        },
++        async refreshScope(request) {
++            verify();
++            if (!initialSelection || typeof request.after_question_id !== 'string' || !request.after_question_id || typeof request.id !== 'string') throw Error('completed-question boundary required');
++            const started = performance.now();
++            try {
++                // Existing genuine SDK/native W4 owner, same exact frozen object.
++                const selection = await session.scopeSelect(rows[0].window_scope_selection);verify();
++                if (selection.status !== 'scope' || selection.scope_identity !== initialSelection.scope_identity || selection.catalog_revision !== initialSelection.catalog_revision || session.hello?.serviceInstance !== ready.health.instance) throw Error('same frozen authority scope refresh refused');
++                const result = {kind:'scope_refreshed',id:request.id,after_question_id:request.after_question_id,
++                    identity,hello:session.hello,scope_result:selection,events:[...events],launch_count:launched,
++                    elapsed_seconds:(performance.now()-started)/1000,scope:'Explicit same native W4 selection between completed questions; fresh nonce/fingerprint is preserved, never normalized.'};
++                append('scope-management.jsonl',JSON.stringify(result)+'\n');return result;
++            } catch(error) {poison(error.code || 'scope_refresh_failed_no_retry');throw error;}
+         },
+         async invoke(request) {
+             verify();
+@@ -159,7 +174,8 @@
+             if (Buffer.byteLength(line) > 192*1024) throw Error('private invocation line exceeds bound');
+             const request = JSON.parse(line);
+             if (request.kind === 'close') { input.close();break; }
+-            send(await session.invoke(request));
++            if (request.kind === 'refresh_scope') send(await session.refreshScope(request));
++            else send(await session.invoke(request));
+         }
+     } catch (error) {
+         send({ kind: 'failed', code: error.code || error.message, sent: error.sent ?? null,

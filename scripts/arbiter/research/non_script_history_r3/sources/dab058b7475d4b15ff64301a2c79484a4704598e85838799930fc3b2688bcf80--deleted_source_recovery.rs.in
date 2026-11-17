@@ -1,0 +1,566 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Post-P14 acceptance regressions. Prepared inertly; not compiled or executed.
+//! Existing leaf deletion already passed on source 224ee433. These cases extend
+//! the native fixture to removed ancestors and missing storage; they do not
+//! assert that production currently poisons unrelated indexes.
+use super::*;
+
+async fn deletion_read_grant(
+    f: &Fixture,
+    project: usize,
+    index: usize,
+    nonce: u8,
+) -> Result<CombinedConnectRequest> {
+    let response = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::CatalogGrantDraft {
+            context_key: f.session.context_key,
+            selection: GrantDraftSelection {
+                key: policy_key(f, nonce).await?,
+                expected_catalog_revision: policy_revision(f)?,
+                project_ids: vec![f.projects[project]],
+                index_ids: Some(vec![f.indexes[index]]),
+            },
+        },
+    )
+    .await?;
+    let ControlResponse::CatalogGrantDraft { draft } = response else {
+        anyhow::bail!(
+            "dedicated deletion grant review refused: {}",
+            serde_json::to_string(&response)?
+        );
+    };
+    let CatalogOperation::CreateGrant { grant } = &draft.request.operation else {
+        anyhow::bail!("native grant operation missing");
+    };
+    let grant = grant.clone();
+    let response = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::CatalogApply {
+            request: draft.request,
+            preview_digest: draft.preview_digest,
+        },
+    )
+    .await?;
+    let ControlResponse::CatalogApplied { receipt, .. } = response else {
+        anyhow::bail!(
+            "dedicated deletion grant admission refused: {}",
+            serde_json::to_string(&response)?
+        );
+    };
+    let mut selected = f.session.clone();
+    selected.project_ids = vec![f.projects[project]];
+    selected.index_ids = Some(vec![f.indexes[index]]);
+    selected.grant_id = grant.id;
+    selected.expected_grant_revision = grant.revision;
+    selected.expected_catalog_revision = receipt.catalog_revision;
+    Ok(selected)
+}
+
+fn deletion_query() -> Value {
+    json!({"query":"boundaryneedle","mode":"lexical","limit":12,"max_bytes":8192,
+        "verification":"off","response_mode":"full"})
+}
+
+async fn healthy_deletion_read(f: &Fixture, mcp: &mut McpSession, id: u64) -> Result<Value> {
+    let query = deletion_query();
+    let cli = f.cli("airk_search", &query).await?;
+    let wire = mcp.call(id, "airk_search", query)?;
+    ensure!(
+        cli["isError"] != true && wire["result"]["isError"] != true,
+        "healthy selected member refused: CLI={cli}; MCP={wire}"
+    );
+    policy_parity(
+        "healthy index across unrelated source loss",
+        &cli,
+        &wire["result"],
+    )?;
+    let result = body(&cli)?;
+    let members = result["members"]
+        .as_array()
+        .context("healthy member inventory missing")?;
+    ensure!(
+        members.len() == 1 && members[0]["index_id"] == f.indexes[1].to_string(),
+        "healthy read broadened or crossed index scope: {result}"
+    );
+    let member = member_body(&result, &members[0])?;
+    ensure!(
+        member["hits"]
+            .as_array()
+            .is_some_and(|hits| !hits.is_empty()),
+        "healthy member evidence missing: {member}"
+    );
+    // Only the exact retained publication is compared across independent dated reads.
+    Ok(
+        result["publication_vector"]["members"][0]["publication"]["token"]
+            .as_str()
+            .context("healthy publication token missing")?
+            .into(),
+    )
+}
+
+async fn stop_deletion_service(f: &Fixture, service: &mut Option<OwnedProcess>) -> Result<()> {
+    let response = airk_cli::service_runtime::request(&f.control, ControlMethod::Shutdown).await?;
+    ensure!(
+        !matches!(response, ControlResponse::Failure { .. }),
+        "owned service shutdown refused: {}",
+        serde_json::to_string(&response)?
+    );
+    drop(service.take());
+    Ok(())
+}
+
+fn delete_owned_source_parent(f: &Fixture, data_lost: bool) -> Result<()> {
+    let owner = f.owner.path().canonicalize()?;
+    let root = Path::new(&f.registrations[2].root);
+    let removed = root.parent().context("nested source parent missing")?;
+    ensure!(
+        removed.starts_with(&owner)
+            && removed != owner
+            && !f.control.starts_with(removed)
+            && !f.candidate.starts_with(removed),
+        "deletion target escaped its isolated fixture"
+    );
+    ensure!(
+        Path::new(&f.registrations[2].data_root).starts_with(removed) == data_lost,
+        "fixture storage loss mode differs from planned deletion"
+    );
+    fs::remove_dir_all(removed)?;
+    ensure!(!root.exists(), "fixture did not remove source");
+    Ok(())
+}
+
+async fn deleted_ancestor_case(data_lost: bool, policy_bearing: bool) -> Result<()> {
+    // The existing fixture has three indexes. A=2 and B=1 are the two measured
+    // independent indexes; index 0 remains an untouched isolation control.
+    let mut f = Fixture::with_runtime_layout(true, 3, false, Some(data_lost))?;
+    let mut service = Some(f.start().await?);
+    let expected_policy = if policy_bearing {
+        let trim = policy_draft(&f, 141, trim_selector()).await?;
+        apply_policy(&f, &trim).await?;
+        Some(wait_policy(&f).await?)
+    } else {
+        None
+    };
+    let healthy_session = deletion_read_grant(&f, 0, 1, 142).await?;
+    let affected_session = deletion_read_grant(&f, 2, 2, 143).await?;
+    f.session = affected_session.clone();
+    let mut affected = McpSession::start(&f)?;
+    let warm = affected.call(10, "airk_search", deletion_query())?;
+    ensure!(
+        warm["result"]["isError"] != true,
+        "affected baseline failed: {warm}"
+    );
+    f.session = healthy_session.clone();
+    let mut healthy = McpSession::start(&f)?;
+    let baseline = healthy_deletion_read(&f, &mut healthy, 20).await?;
+
+    if data_lost {
+        // Windows may deny deleting an open SQLite file. Stop exact owned
+        // clients/owners first; do not weaken sharing or use ACL workarounds.
+        drop(affected);
+        drop(healthy);
+        stop_deletion_service(&f, &mut service).await?;
+        delete_owned_source_parent(&f, true)?;
+    } else {
+        delete_owned_source_parent(&f, false)?;
+        ensure!(
+            healthy_deletion_read(&f, &mut healthy, 30).await? == baseline,
+            "warm healthy publication changed after A ancestor removal"
+        );
+        drop(affected);
+        drop(healthy);
+        stop_deletion_service(&f, &mut service).await?;
+    }
+
+    // Cold startup must preserve B even when A cannot start an evidence worker.
+    service = Some(f.start().await?);
+    f.session = healthy_session.clone();
+    let mut healthy = McpSession::start(&f)?;
+    ensure!(
+        healthy_deletion_read(&f, &mut healthy, 40).await? == baseline,
+        "cold healthy publication changed after A loss"
+    );
+    if data_lost {
+        f.session = affected_session.clone();
+        let mut unavailable = McpSession::start(&f)?;
+        let reply = unavailable.request(
+            50,
+            "tools/call",
+            json!({"name":"airk_search","arguments":deletion_query()}),
+        )?;
+        ensure!(
+            reply.get("error").is_some() || reply["result"]["isError"] == true,
+            "missing-storage read unexpectedly produced evidence: {reply}"
+        );
+        drop(unavailable);
+        let registry = ServiceRegistry::open_saved(&f.control)?;
+        let budget = registry.recovery_budget(
+            &f.registrations[2].binding.to_string(),
+            airk_cli::runtime_pair::engine_identity_at(&f.candidate)?,
+        )?;
+        ensure!(
+            budget.failures <= 3,
+            "missing storage escaped its durable startup circuit: {budget:?}"
+        );
+        drop(registry);
+        f.session = healthy_session.clone();
+        ensure!(
+            healthy_deletion_read(&f, &mut healthy, 60).await? == baseline,
+            "healthy member failed after an actual missing-storage admission"
+        );
+    }
+
+    // A missing ancestor is not the existing positively confirmed missing leaf.
+    // Retire deliberately through the metadata owner, without inspecting A's
+    // missing Kernel state or manufacturing a worker completion.
+    let registration = f.registrations[2].clone();
+    ensure!(
+        ServiceRegistry::open_saved(&f.control)?.is_registered(registration.binding)?,
+        "unproven ancestor absence silently retired the index"
+    );
+    let retirement = policy_draft(&f, 144, SourceMutationSelection::RetireIndex).await?;
+    apply_policy(&f, &retirement).await?;
+    let evidence_method = ControlMethod::CatalogIndexRetirementEvidence {
+        index_id: f.indexes[2],
+    };
+    let native = airk_cli::service_runtime::request(&f.control, evidence_method.clone()).await?;
+    ensure!(
+        policy_rpc_cli(&f, evidence_method).await? == serde_json::to_value(&native)?,
+        "explicit retirement transport omitted native evidence"
+    );
+    let ControlResponse::CatalogIndexRetirementEvidence {
+        evidence: Some(evidence),
+        ..
+    } = native
+    else {
+        anyhow::bail!("exact native retirement evidence missing");
+    };
+    evidence.validate()?;
+    ensure!(
+        evidence.index.tombstone && evidence.index.backing == registration,
+        "retirement changed the selected backing"
+    );
+    let deadline = Instant::now() + Duration::from_secs(90);
+    loop {
+        let registry = ServiceRegistry::open_saved(&f.control)?;
+        let settled = registry.project_was_removed(registration.binding)?;
+        ensure!(
+            !registry.is_registered(registration.binding)?,
+            "retired source became registered again"
+        );
+        if settled {
+            break;
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "explicit absent-storage cleanup did not settle; policy={policy_bearing}; inspect owned receipts"
+        );
+        drop(registry);
+        // Continuously exercise B while A's asynchronous cleanup is observed.
+        ensure!(
+            healthy_deletion_read(&f, &mut healthy, 70).await? == baseline,
+            "healthy member became unusable during A cleanup"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let registry = ServiceRegistry::open_saved(&f.control)?;
+    ensure!(
+        !registry
+            .pending_project_removals(None, 32)?
+            .iter()
+            .any(|project| project.binding == registration.binding),
+        "completed absent-storage cleanup remained in the error-poll selection"
+    );
+    if let Some(expected) = expected_policy {
+        let current = registry
+            .catalog_policy_status(f.indexes[2])?
+            .context("absent storage erased permanent policy")?;
+        ensure!(
+            current.policy == expected.policy && current.job == expected.job,
+            "absent-storage cleanup changed policy/job lineage"
+        );
+    }
+    drop(registry);
+    let worker = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::Worker {
+            project: registration.binding,
+        },
+    )
+    .await?;
+    ensure!(
+        matches!(worker, ControlResponse::Worker { identity: None, .. }),
+        "retirement left or restarted A's evidence worker"
+    );
+    ensure!(
+        !Path::new(&registration.root).exists(),
+        "cleanup recreated the removed source ancestor"
+    );
+    if data_lost {
+        ensure!(
+            !Path::new(&registration.data_root).exists(),
+            "cleanup recreated removed storage to open its quota or capsule"
+        );
+    }
+    ensure!(
+        healthy_deletion_read(&f, &mut healthy, 80).await? == baseline,
+        "healthy final publication changed"
+    );
+    drop(healthy);
+    stop_deletion_service(&f, &mut service).await?;
+    service = Some(f.start().await?);
+    f.session = healthy_session;
+    let mut healthy = McpSession::start(&f)?;
+    ensure!(
+        healthy_deletion_read(&f, &mut healthy, 90).await? == baseline,
+        "healthy publication failed after retired-A cold restart"
+    );
+    let worker = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::Worker {
+            project: registration.binding,
+        },
+    )
+    .await?;
+    ensure!(
+        matches!(worker, ControlResponse::Worker { identity: None, .. }),
+        "retired missing source restarted after service restart"
+    );
+    drop(healthy);
+    stop_deletion_service(&f, &mut service).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn post_p14_removed_source_ancestor_keeps_healthy_cli_mcp_warm_and_cold() -> Result<()> {
+    deleted_ancestor_case(false, false).await
+}
+
+#[tokio::test]
+async fn post_p14_source_and_storage_loss_supports_explicit_retirement() -> Result<()> {
+    deleted_ancestor_case(true, false).await
+}
+
+#[tokio::test]
+async fn post_p14_policy_bearing_missing_storage_settles_without_losing_policy() -> Result<()> {
+    deleted_ancestor_case(true, true).await
+}
+
+// Uses the real native Index job, never a forged publication or watch event.
+#[cfg(feature = "embedding-worker")]
+#[tokio::test]
+async fn post_p14_individual_file_removal_keeps_healthy_index_and_reconciles_retained_paths()
+-> Result<()> {
+    let mut f = Fixture::new(true)?;
+    let mut service = Some(f.start().await?);
+    let healthy_session = deletion_read_grant(&f, 0, 1, 151).await?;
+    let affected_session = deletion_read_grant(&f, 2, 2, 152).await?;
+    f.session = healthy_session.clone();
+    let mut healthy = McpSession::start(&f)?;
+    let before = healthy_deletion_read(&f, &mut healthy, 100).await?;
+    let selected = Path::new(&f.registrations[2].root).join("api/policy.md");
+    let preserved = Path::new(&f.registrations[2].root).join("impl/policy.md");
+    let preserved_bytes = fs::read(&preserved)?;
+    fs::remove_file(&selected)?;
+    ensure!(
+        healthy_deletion_read(&f, &mut healthy, 101).await? == before,
+        "warm healthy member changed after A file removal"
+    );
+    fixture_job(&f, 2, airk_core::service::JobKind::Index).await?;
+    f.session = affected_session.clone();
+    let mut affected = McpSession::start(&f)?;
+    let args = json!({"prefix":"api/","limit":16,"max_bytes":8192,"response_mode":"full"});
+    let cli = f.cli("airk_list_files", &args).await?;
+    let wire = affected.call(102, "airk_list_files", args)?;
+    ensure!(
+        cli["isError"] != true && wire["result"]["isError"] != true,
+        "surviving A index refused after ordinary reconciliation: {cli}; {wire}"
+    );
+    policy_parity(
+        "removed-file native retained inventory",
+        &cli,
+        &wire["result"],
+    )?;
+    ensure!(
+        !serde_json::to_string(&body(&cli)?)?.contains("api/policy.md"),
+        "reconciled file inventory still contains removed path"
+    );
+    ensure!(
+        ServiceRegistry::open_saved(&f.control)?.is_registered(f.registrations[2].binding)?,
+        "a single missing file retired its whole index"
+    );
+    ensure!(
+        fs::read(&preserved)? == preserved_bytes && !selected.exists(),
+        "reconciliation changed surviving source bytes or recreated removed file"
+    );
+    drop(affected);
+    f.session = healthy_session.clone();
+    ensure!(
+        healthy_deletion_read(&f, &mut healthy, 103).await? == before,
+        "healthy member changed during A reconciliation"
+    );
+    drop(healthy);
+    stop_deletion_service(&f, &mut service).await?;
+    service = Some(f.start().await?);
+    let mut healthy = McpSession::start(&f)?;
+    ensure!(
+        healthy_deletion_read(&f, &mut healthy, 104).await? == before,
+        "healthy member changed after cold restart"
+    );
+    f.session = affected_session;
+    let retirement = policy_draft(&f, 153, SourceMutationSelection::RetireIndex).await?;
+    apply_policy(&f, &retirement).await?;
+    let deadline = Instant::now() + Duration::from_secs(90);
+    loop {
+        if ServiceRegistry::open_saved(&f.control)?
+            .project_was_removed(f.registrations[2].binding)?
+        {
+            break;
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "explicit A retirement did not settle"
+        );
+        f.session = healthy_session.clone();
+        ensure!(
+            healthy_deletion_read(&f, &mut healthy, 105).await? == before,
+            "healthy member changed during explicit A retirement"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    ensure!(
+        fs::read(&preserved)? == preserved_bytes,
+        "retirement removed surviving source"
+    );
+    drop(healthy);
+    stop_deletion_service(&f, &mut service).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn post_p14_missing_collection_settles_ordinary_credit_without_poisoning_healthy_shared_root()
+-> Result<()> {
+    let mut f = Fixture::with_shared_runtime()?;
+    let mut service = Some(f.start().await?);
+    let healthy_session = deletion_read_grant(&f, 0, 1, 161).await?;
+    f.session = healthy_session.clone();
+    let mut healthy = McpSession::start(&f)?;
+    let before = healthy_deletion_read(&f, &mut healthy, 110).await?;
+    drop(healthy);
+    stop_deletion_service(&f, &mut service).await?;
+    let registration = f.registrations[2].clone();
+    let data = Path::new(&registration.data_root);
+    ensure!(
+        data == Path::new(&f.registrations[1].data_root),
+        "fixture did not share quota root"
+    );
+    let grants = data.join(".quota-1.4/current-grants");
+    let inventory = |collection: &str| -> Result<Vec<(PathBuf, Vec<u8>)>> {
+        let mut rows = Vec::new();
+        for entry in fs::read_dir(&grants)? {
+            let path = entry?.path();
+            let bytes = fs::read(&path)?;
+            let body: Value = serde_json::from_slice(&bytes)?;
+            if body["scope"]["collection"] == collection {
+                rows.push((path, bytes));
+            }
+        }
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(rows)
+    };
+    let a_rows = inventory(&registration.collection)?;
+    ensure!(
+        !a_rows.is_empty(),
+        "fixture did not leave real native durable Current allowance; do not claim grant recovery without a paid native fixture"
+    );
+    let b_rows = inventory(&f.registrations[1].collection)?;
+    let quota = airk_store::quota::Quota::open_service(data)?;
+    let previous_policy = quota.policy()?;
+    let capacity = quota.status()?;
+    let mut constrained = previous_policy.clone();
+    constrained.root_bytes = capacity.used_bytes + capacity.reserved_bytes + 128;
+    quota.configure_if_current(constrained, Some(&previous_policy))?;
+    ensure!(
+        quota.reserve(&f.registrations[1].collection, 4096).is_err(),
+        "ordinary writer consumed unavailable prepaid allowance"
+    );
+    let logical = data.join("collections-1.4").join(&registration.collection);
+    let owner = f.owner.path().canonicalize()?;
+    ensure!(
+        logical.starts_with(&owner) && logical != data && !f.control.starts_with(&logical),
+        "selected collection deletion escaped fixture"
+    );
+    fs::remove_dir_all(&logical)?;
+    service = Some(f.start().await?);
+    let mut healthy = McpSession::start(&f)?;
+    ensure!(
+        healthy_deletion_read(&f, &mut healthy, 111).await? == before,
+        "cold shared-root healthy member changed after A storage loss"
+    );
+    let retirement = policy_draft(&f, 162, SourceMutationSelection::RetireIndex).await?;
+    apply_policy(&f, &retirement).await?;
+    let deadline = Instant::now() + Duration::from_secs(90);
+    loop {
+        let registry = ServiceRegistry::open_saved(&f.control)?;
+        if registry.project_was_removed(registration.binding)? {
+            ensure!(
+                !registry
+                    .pending_project_removals(None, 32)?
+                    .iter()
+                    .any(|p| p.binding == registration.binding),
+                "settled shared-root removal remained selected for cleanup"
+            );
+            break;
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "shared-root credit settlement did not finish"
+        );
+        drop(registry);
+        ensure!(
+            healthy_deletion_read(&f, &mut healthy, 112).await? == before,
+            "healthy B failed while exact A credit settled"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    ensure!(
+        inventory(&registration.collection)?.is_empty(),
+        "disposed A durable grants leaked"
+    );
+    ensure!(
+        inventory(&f.registrations[1].collection)? == b_rows,
+        "A cleanup changed B grant identity/bytes"
+    );
+    let paid_b = quota.reserve(&f.registrations[1].collection, 4096)?;
+    paid_b.charge(4096)?;
+    drop(paid_b);
+    ensure!(
+        !logical.exists(),
+        "cleanup recreated missing logical collection"
+    );
+    f.assert_sources_unchanged()?;
+    drop(healthy);
+    stop_deletion_service(&f, &mut service).await?;
+    service = Some(f.start().await?);
+    f.session = healthy_session;
+    let mut healthy = McpSession::start(&f)?;
+    ensure!(
+        healthy_deletion_read(&f, &mut healthy, 113).await? == before,
+        "healthy B failed after settled A restart"
+    );
+    let worker = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::Worker {
+            project: registration.binding,
+        },
+    )
+    .await?;
+    ensure!(
+        matches!(worker, ControlResponse::Worker { identity: None, .. }),
+        "retired A evidence worker restarted"
+    );
+    drop(healthy);
+    stop_deletion_service(&f, &mut service).await?;
+    Ok(())
+}

@@ -1,0 +1,30 @@
+--- crates\airk-service\src\service_runtime\arbiter\final_distribution\CONTRACT.md
++++ crates\airk-service\src\service_runtime\arbiter\final_distribution\CONTRACT.md
+@@ -200,3 +200,27 @@
+ parts after source/full/slice/destination verification. Public offline plans and
+ canonical publication contain no private source map/path. This private build
+ projection does not change a runtime, persisted installation or wire format.
++
++
++## Original singleton-set membership revocation
++
++The actual source-revoke case uses a separate fresh singleton fault set/index.
++An opt-in native configuration fixture emitter (`AIRK_SELECTED_MEMBERSHIP_REVOKE=1`)
++requires exactly one current native binding, readable project and membership;
++it emits the actual Core RemoveMembership operation and immutable before
++snapshot. It creates no new catalog API or source write authority. All fixture
++indexes require native set-create before W4 binding emission.
++
++The original SDK session must demonstrably open with that exact native W4
++binding, selecting the fault project/index through actual scopeSelect. The
++existing CLI library change retains both compact native ControlResponse lines:
++CatalogPreview followed by fenced CatalogApplied. Core operation identity,
++preview digest, source project/member revisions, actual service/namespace and
++fence lineage must agree. RemoveMembership has authority fencing but no worker
++drain; the index and documents remain live. Actual after-project detail must
++advance scope_revision, membership page must be empty and untruncated, and the
++fault index definition remains exactly unchanged. Retire is not accepted as a
++substitute. Strict original dispatch/mutation-completion/return ordering and
++actual delivery refusal, settlement and explicit subsequent stage disable/final
++charge release remain required. Canonical authority fields are never removed
++to make an unaffected-read comparison pass.

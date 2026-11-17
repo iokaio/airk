@@ -1,0 +1,11 @@
+# Read-only upstream input projections
+
+Archive claims require the frozen candidate hash/size and exact member bytes from a retained archive authenticated by its pinned lock or metadata. Catalog and authority JSON reject duplicate keys. Consumed metadata and archive buffers determine their pins; per-archive claims publish only after final validation. Sources remain private and are never extracted, copied or executed. Bounds are16MiB per source/metadata input,256MiB delta and1GiB archive; one archive buffer is held at a time.
+
+Browser claims require exact frozen source bytes, key-derived extension identity and the retained signed SHA256 tree hash. Signature verification accepts only RSA2048/65537 PKCS1 SHA256 and4096-byte tree blocks. The webstore key is pinned to an observed local Edge binary, not a fresh authenticated download or independent trust-root attestation. Consumed metadata is pinned and rechecked before claims publish. Final shared-evidence failure discards all browser claims.
+
+Failures remain explicit; unselected candidates have no disposition. Full path inventories and proof receipts stay in guarded private artifacts. A disposition establishes source provenance in the stated scope, not execution qualification or authorship of unrelated files.
+
+Observed private tool inputs require whole-file equality with the installed human system-skill file, a pinned fixture producer, and retained logs explicitly naming the exact private home. Generated literals require a unique actual writeFile anchor in a fixed reachable Git commit, whole-source reproduction by a string literal, and a retained receipt binding the fixture owner. No private fixture or third-party implementation is migrated; only the verifier is maintained. Missing or differing inputs remain errors.
+
+Registry crate projections reuse the same bounded archive/member reader. A catalog binds each archive SHA to exactly one package name/version/checksum in an exact reachable Git Cargo.lock blob. Commit, blob OID, raw SHA and length are checked; no working-tree or normalized lock substitution is allowed. Candidate files must match the frozen inventory and exact regular archive member. Missing or modified members remain errors; per-archive claims publish only after the pinned archive and lock proof succeed. No registry code is executed or extracted.

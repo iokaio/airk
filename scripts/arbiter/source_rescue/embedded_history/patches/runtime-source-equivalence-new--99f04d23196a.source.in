@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+
+#[cfg(feature = "gpu-cuda")]
+impl Scorer {
+    /// Native graph/final-placement plan, never a backend/completion permit.
+    pub fn attention_backend_plan(&self) -> Result<Option<serde_json::Value>> {
+        let Some(plan) = &self.fp16_attention else {
+            return Ok(None);
+        };
+        let placement = self
+            .device_placement()?
+            .context("G5 CUDA placement missing")?;
+        plan.require_placement(&placement)?;
+        Ok(Some(plan.observation()?))
+    }
+}

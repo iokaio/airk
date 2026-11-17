@@ -1,0 +1,49 @@
+--- retained-failed-R2-trainer
++++ prospective-R3-validator-only
+@@ -9,6 +9,7 @@
+ import time
+ import math
+ from train_output_paths import validate_training_output
++from native_token_admission_r3 import native_unit_admission
+ 
+ PROGRESS=None
+ PROGRESS_PATH=None
+@@ -66,6 +67,11 @@
+     from tokenizers import Tokenizer
+     owner.verify_torch_runtime(torch,args.execution_seal)
+     recipe_path=HERE/'recipe.json';recipe_raw=recipe_path.read_bytes();recipe=json.loads(recipe_raw)
++    witness_path=PREP/'native-token-admission-witness-r3.json'
++    witness_raw=sealed(witness_path,'0e67df90c5208baa18b3cbd2e4e56d699b110bb6134e468f4e725e52e885b4e0');witness=json.loads(witness_raw)
++    if release.get('token_admission_witness_sha256')!=sha(witness_raw) or witness.get('admission_source_sha256')!=sha((PREP/'native_token_admission_r3.py').read_bytes()):raise ValueError('reviewed tokenizer admission witness required')
++    expected_units={r['unit_id']:r for r in witness['unit_witnesses']};expected_queries={r['ordinal']:r for r in witness['query_witnesses']}
++    if witness.get('complete') is not True or len(expected_units)!=180 or len(expected_queries)!=99:raise ValueError('full180unit99query witness required')
+     master_raw=sealed(HERE/'master.private.json',recipe['master_sha256']);master=json.loads(master_raw)
+     units_raw=sealed(ROOT/'artifacts/advanced-split/models/native-parent-bag-units-r4/units.private.json',recipe['native_units_sha256']);native=json.loads(units_raw)
+     batches_raw=sealed(HERE/'epoch1-batches.private.json',recipe['epoch1_batches_sha256']);batches=json.loads(batches_raw)
+@@ -87,11 +93,14 @@
+             e=tokenizer.encode(row['original_row']['question'])
+             if not 2<=len(e.ids)<=256:raise ValueError('query would crop/change')
+             query_inputs[row['ordinal']]={'input_ids':e.ids,'attention_mask':e.attention_mask,'token_type_ids':e.type_ids}
++            query_witness={'ordinal':row['ordinal'],'token_count':len(e.ids),'encoding_sha256':sha(json.dumps(query_inputs[row['ordinal']],separators=(',',':')).encode())}
++            if query_witness!=expected_queries[row['ordinal']]:raise ValueError('original uncropped query witness differs')
+     used=set(i for batch in batches for i in batch['unit_ids'])
+     for identifier in used:
+-        unit=units[identifier];e=tokenizer.encode(unit['input']);t=unit['native_input_tensors']
+-        if unit['embedding_admission']!='embeddable' or e.ids!=t['input_ids'][0] or e.attention_mask!=t['attention_mask'][0] or e.type_ids!=t['token_type_ids'][0]:
+-            raise ValueError('native actual tokens differ from candidate encoder')
++        unit=units[identifier]
++        actual_witness={'unit_id':identifier,**native_unit_admission(tokenizer,unit['input'],unit['native_input_tensors'],unit['embedding_admission'])}
++        if actual_witness!=expected_units[identifier]:raise ValueError('whole sealed native tensor witness differs')
++    if used!=set(expected_units) or set(query_inputs)!=set(expected_queries):raise ValueError('complete frozen native/query witness census differs')
+     # All original data/token admissions precede output creation and encoder work.
+     global PROGRESS,PROGRESS_PATH
+     private_protocol=json.loads(sealed(PREP/'protocol.json','eb6f60be6af095c2c00ec091a0afb1668dc5e02af0cb5049a4b2a1540bcfaa2a'))
+@@ -99,7 +108,7 @@
+     output_admission=validate_training_output(private_anchor,args.output,[PREP,*[Path(path).parent for path in private_protocol['pins']]])
+     args.output.mkdir()
+     PROGRESS_PATH=args.output/'training-progress.json'
+-    PROGRESS={'schema':'airk.private-native-parent-bag-training-progress/1','complete':False,'rows':315,'eligible_rows':99,'expected_steps':13,'completed_steps':0,'losses':[],'phase':'before_model_construction','original_trainer_sha256':'5dc7398adbbc4d07c4099c26140163787b37ce9ebdb9c1aebef9d86d34a622f8','finite_guarded_trainer_sha256':sha(Path(__file__).read_bytes()),'primary_release_sha256':sha(release_raw),'recipe_sha256':sha(recipe_raw),'master_sha256':sha(master_raw),'native_units_sha256':sha(units_raw),'batches_sha256':sha(batches_raw),'fragment_positive_labels':False,'release_qualified':False,'output_admission':output_admission}
++    PROGRESS={'schema':'airk.private-native-parent-bag-training-progress/1','complete':False,'rows':315,'eligible_rows':99,'expected_steps':13,'completed_steps':0,'losses':[],'phase':'before_model_construction','original_trainer_sha256':'5dc7398adbbc4d07c4099c26140163787b37ce9ebdb9c1aebef9d86d34a622f8','finite_guarded_trainer_sha256':sha(Path(__file__).read_bytes()),'primary_release_sha256':sha(release_raw),'recipe_sha256':sha(recipe_raw),'master_sha256':sha(master_raw),'native_units_sha256':sha(units_raw),'batches_sha256':sha(batches_raw),'fragment_positive_labels':False,'release_qualified':False,'output_admission':output_admission,'token_admission_witness_sha256':sha(witness_raw)}
+     write_progress()
+     # Allocation cap is per device allocator; owned Job independently caps aggregate host.
+     torch.cuda.set_per_process_memory_fraction((4*1024**3)/torch.cuda.get_device_properties(0).total_memory)

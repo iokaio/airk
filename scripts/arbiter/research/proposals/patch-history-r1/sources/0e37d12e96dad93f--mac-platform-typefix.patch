@@ -1,0 +1,25 @@
+--- a/crates/airk-retrieval/src/onnx_macos.rs
++++ b/crates/airk-retrieval/src/onnx_macos.rs
+@@ -12,7 +12,7 @@
+     fn atexit(callback: extern "C" fn()) -> std::ffi::c_int;
+ }
+ 
+-pub(super) struct SessionLease;
++pub(crate) struct SessionLease;
+ impl SessionLease {
+     pub(super) fn acquire() -> Result<Self> {
+         USERS
+--- a/crates/airk-store/src/service/arbiter_assets/offline.rs
++++ b/crates/airk-store/src/service/arbiter_assets/offline.rs
+@@ -90,8 +90,9 @@
+             "Offline bundle filesystem observation failed"
+         );
+         let fs = unsafe { fs.assume_init() };
+-        ensure!(
+-            fs.f_flags & libc::MNT_LOCAL != 0,
++        let local_flag = u32::try_from(libc::MNT_LOCAL)?;
++        ensure!(
++            fs.f_flags & local_flag != 0,
+             "Offline bundle network filesystem refused"
+         );
+     }

@@ -1,0 +1,276 @@
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -14,8 +14,20 @@
+ accepted this unpublished local phase. The first wave refreshes one existing index
+ from eligible references and requires full-index metadata authority; partial
+ Project/path grants are unsupported. Evidence reads and source verification do
+-not start indexing. P13 ranking/diversity remains conditional; P14, deleted-source
+-recovery and the final local test installer remain pending.
++not start indexing.
++
++P13 review retained the current ranking and diversity behavior; no candidate
++change was adopted. P14 qualification is in progress on newer source `d4e48a53…`.
++The Windows workspace passed **2,624 tests** with **50 selection exclusions**;
++all **15** final Windows stages passed. The extension suite passed **776 tests
++with 19 skips**. Two scoped Neo cases passed, followed by successful `cargo clean`
++and target removal. Semantic-ready split destinations select and provision the
++paired bundled default before indexing, including a cold service with no installed
++default reference.
++
++Broader resource, installed-editor, real-corpus, Linux/container and signing
++outcomes remain pending. **P14 is not accepted.** Deleted-source recovery and the
++final local test installer follow P14. This working build remains unpublished.
+ 
+ See [refresh controls and limits](docs/source-verification.md#explicit-reference-refresh),
+ [retained profiles](docs/code-indexing-options.md),
+diff --git a/docs/README.md b/docs/README.md
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -14,8 +14,20 @@
+ accepted this unpublished local phase. The first wave refreshes one existing index
+ from eligible references and requires full-index metadata authority; partial
+ Project/path grants are unsupported. Evidence reads and source verification do
+-not start indexing. P13 ranking/diversity remains conditional; P14, deleted-source
+-recovery and the final local test installer remain pending.
++not start indexing.
++
++P13 review retained the current ranking and diversity behavior; no candidate
++change was adopted. P14 qualification is in progress on newer source `d4e48a53…`.
++The Windows workspace passed **2,624 tests** with **50 selection exclusions**;
++all **15** final Windows stages passed. The extension suite passed **776 tests
++with 19 skips**. Two scoped Neo cases passed, followed by successful `cargo clean`
++and target removal. Semantic-ready split destinations select and provision the
++paired bundled default before indexing, including a cold service with no installed
++default reference.
++
++Broader resource, installed-editor, real-corpus, Linux/container and signing
++outcomes remain pending. **P14 is not accepted.** Deleted-source recovery and the
++final local test installer follow P14. This working build remains unpublished.
+ 
+ | Current guide | Scope |
+ | --- | --- |
+diff --git a/docs/releases/release-1.8.8.md b/docs/releases/release-1.8.8.md
+--- a/docs/releases/release-1.8.8.md
++++ b/docs/releases/release-1.8.8.md
+@@ -14,8 +14,26 @@
+ accepted this unpublished local phase. The first wave refreshes one existing index
+ from eligible references and requires full-index metadata authority; partial
+ Project/path grants are unsupported. Evidence reads and source verification do
+-not start indexing. P13 ranking/diversity remains conditional; P14, deleted-source
+-recovery and the final local test installer remain pending.
++not start indexing.
++
++P13 review retained the current ranking and diversity behavior; no candidate
++change was adopted. P14 qualification is in progress on newer source `d4e48a53…`.
++The Windows workspace passed **2,624 tests** with **50 selection exclusions**;
++all **15** final Windows stages passed. The extension suite passed **776 tests
++with 19 skips**. Two scoped Neo cases passed, followed by successful `cargo clean`
++and target removal. Semantic-ready split destinations select and provision the
++paired bundled default before indexing, including a cold service with no installed
++default reference.
++
++Broader resource, installed-editor, real-corpus, Linux/container and signing
++outcomes remain pending. **P14 is not accepted.** Deleted-source recovery and the
++final local test installer follow P14. This working build remains unpublished.
++
++**P14 evidence scope:** source `d4e48a53…` is a fresh production candidate,
++including the cold-default model correction. Its 15 final Windows stages,
++2,624-case workspace suite and two scoped Neo cases passed. The P12 record below
++retains its original source and limits. Broader and installed/platform outcomes
++are pending; P14 is not accepted.
+ 
+ The [refresh guide](../source-verification.md#explicit-reference-refresh)
+ keeps native mutation review separate from read-only verification and MCP evidence.
+diff --git a/docs/releases/release-1.9.0.md b/docs/releases/release-1.9.0.md
+--- a/docs/releases/release-1.9.0.md
++++ b/docs/releases/release-1.9.0.md
+@@ -7,9 +7,14 @@
+ passed 39 focused Windows native tests, all 12 final release qualification
+ stages and 19 scoped Neo tests with successful cleanup. Primary review accepted
+ P12 for unpublished local development; installed-editor and final plan acceptance
+-remain separate. P13 remains
+-conditional; P14, deleted-source cleanup and the final local test installer
+-remain pending. Exact accepted and historical evidence is in the
++remain separate. P13 review retained current ranking and diversity; no candidate
++was adopted. P14 source `d4e48a53…` / 960 inputs passed all 15 final Windows stages,
++2,624 workspace tests (50 selection exclusions), the extension suite (776 passed,
++19 skipped) and two scoped Neo cases with successful cleanup. The candidate fixes
++cold bundled-default provisioning for semantic-ready split destinations.
++Broader resource, installed/editor, corpus, Linux/container and signing outcomes
++remain pending. **P14 is not accepted.** Deleted-source cleanup and the final local
++test installer follow P14. Exact accepted and historical evidence is in the
+ [working-build record](release-1.8.8.md) and [ledger](../research/implementation-v190.md).
+ 
+ P7 implements [combined Project reads](../combined-reads.md) with complete
+diff --git a/docs/research/implementation-v190.md b/docs/research/implementation-v190.md
+--- a/docs/research/implementation-v190.md
++++ b/docs/research/implementation-v190.md
+@@ -9,7 +9,19 @@
+ Progress below is observed local evidence; it does not establish publication or
+ cross-platform qualification.
+ 
+-**Current checkpoint, 6 November 2026:** P9, P10, P11a, P11b and P12 are accepted for
++**Current checkpoint, 6 November 2026 — P14 in progress:** P9–P12 remain
++accepted for unpublished local development; P12 is committed as `4cb4312`.
++P13 resolved through the authorized retain-current ranking/diversity decision;
++no candidate or quality gain is claimed. Current P14 source is `d4e48a53…` / 960
++native inputs and includes the cold-default semantic split correction below.
++Windows full Nextest passed **2,624/2,624**, with **50 selection exclusions**
++recorded separately. Strict workspace Clippy, all **15** final Windows stages
++and the extension suite (**776 passed, 19 skipped**) passed. Neo's two scoped
++false/true semantic-readiness cases passed; `cargo clean` exited zero and removed
++the exact target. Broader/resource and installed/platform work remains pending;
++**P14 is not accepted**, and deleted-source recovery remains an inert proposal.
++
++**Earlier P12 checkpoint, 6 November 2026 (historical):** P9, P10, P11a, P11b and P12 are accepted for
+ unpublished local development. P10 is committed as `c2584cb`, P11a as `f2bf2d2`
+ and P11b as `aa28425`. P12 passed primary local phase review: its focused
+ Windows native selection passed **39/39** on `4121692a…` / 960 inputs, strict
+@@ -66,8 +78,8 @@
+ | P11a | Accepted locally — `f2bf2d2` | Bounded actual per-file profile family reporting and complete transports |
+ | P11b | Accepted locally — `aa28425` | Explicit retained Lean/Rich migration, legacy continuity and paid split inheritance |
+ | P12 | Accepted locally | 39 focused Windows native tests; strict scoped Clippy; UI 776 passed/19 skipped; all 12 final Windows release stages and 19 scoped Neo tests passed; clean exit zero and target removed |
+-| P13a/P13b | Conditional decision: retain current ranking | Candidate remains inert; quality/resource, independent-label, native disclosure and scope gates are not established; no quality gain or candidate failure is claimed |
+-| P14 | Pending | Combined qualification, platform/fault/resource coverage and final candidate evidence |
++| P13a/P13b | Resolved: retain current ranking/diversity | Candidate remains inert; quality/resource, independent-label, native disclosure and scope gates are not established; no quality gain or candidate failure is claimed |
++| P14 | In progress — not accepted | Current D4e production candidate: 2,624 Windows tests, 15 final stages and two scoped Neo cases passed; broader/resource/installed/platform results pending |
+ 
+ **Additional maintainer request — 5 November 2026:** after P9–P14, reproduce and
+ fix deleted-source failure loops in the current release: individual indexed files
+@@ -5024,3 +5036,55 @@
+ or modify dependency/model/OCR adapters. Any later adoption requires a new
+ reviewed evidence-based decision. This P13 record is a separate checkpoint after
+ P12 acceptance; its authorized signed commit is a separate Git action.
++
++## P14 — qualification in progress, 6 November 2026
++
++Working version remains **1.8.8**. Current native source is
++`d4e48a534881ea910bcbadd182e8fb4f6a970c844df6ab1951d7b566cbcb2eeb`
++(**960** declared inputs). This is a new production source: Kernel's semantic-ready
++DestinationBuild path now uses the canonical bundled-model selection/provisioning
++owner before Current initialization and indexing. P12's accepted `4121692a…` pair
++is historical evidence and cannot qualify this production correction.
++
++The actual cold-default failure reached a native split child that could not prove
++semantic readiness. Source-only indexing had no installed default reference and
++correctly did not provision one implicitly. The correction selects the paired
++default through the existing claimed owner. It does not increase the 32-turn
++semantic bound or weaken ready/publication checks. The new fixture first proves
++that no default reference is installed. Earlier R1–R4 diagnostic attempts and their
++failed receipts retain their original outcomes; no later pass relabels them.
++
++Observed current-source evidence:
++
++- Full Windows Nextest: **2,624 passed**, **50 selection exclusions**; all four
++  previously excluded long workload cases were restored and passed.
++- Strict workspace all-target/all-feature Clippy passed. The final Windows
++  release qualification passed **15/15** stages, including actual semantic-ready
++  split, existing provider split, reference refresh and retention transport cases.
++- Full extension suite: **776 passed, 19 skipped** out of **795** tests.
++- Scoped Neo source batch: formatting plus **two actual integration cases** passed.
++  The semantic-ready destination used the bundled ARM default; the lexical case
++  retained its existing behavior. `cargo clean` exited **0**, timing reports were
++  retained and the target was absent afterward. This is not a full Mac workspace
++  or installed-editor/signing result.
++
++**Pending broader outcomes — replace only from collected actual receipts:**
++scale/resource, service/load, installed-native, upgrade, transformer/code/retrieval,
++storage/usage and ignored vector-performance campaigns remain under collection.
++The 10,000-file scale driver encountered supported `selection_busy` while polling;
++its read-retry harness correction is under review. This is not evidence of an
++index-capacity or production service defect, and no successful 10k outcome is claimed.
++Remaining campaigns may finish independently; collect their complete results before
++applying a correction or repeating a failed campaign.
++
++**Pending external/installed outcomes:** real-corpus comparisons, current VSIX and
++legacy/editor flows, Linux/container, additional installed platforms and signing
++remain unqualified. Docker's Linux amd64 engine is reachable but has no cached
++images; no Linux build/container pass is inferred. No publication or ordinary
++user installation is authorized by these local results.
++
++**Acceptance placeholder:** P14 is **in progress, not accepted**. Record final
++resource/platform outcomes and primary review here before changing that state.
++After P14, the separately reviewed deleted-source recovery proposal still needs
++application and actual Windows/Neo isolation, lease and retirement qualification.
++It is not included in this source and must precede the final local test installer.
+diff --git a/docs/research/plan-v190.md b/docs/research/plan-v190.md
+--- a/docs/research/plan-v190.md
++++ b/docs/research/plan-v190.md
+@@ -1,4 +1,10 @@
+ # AIRK 1.9.0 research assessment and delivery plan
++
++**Current implementation status, 6 November 2026:** P9–P12 are accepted locally.
++P13 review retained current ranking/diversity. P14 is in progress on the 1.8.8
++working candidate; broader and installed/platform results remain pending.
++This dated research plan keeps its proposed gates; the
++[implementation ledger](implementation-v190.md) owns actual evidence and acceptance.
+ 
+ **Assessment date:** 2 November 2026. **Baseline:** AIRK 1.8.7.
+ **Status:** recommended scope and implementation gates, not implemented behavior or
+diff --git a/docs/architecture.md b/docs/architecture.md
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -1,4 +1,14 @@
+ # Architecture
++
++P14's current **1.8.8 candidate** fixes cold semantic-ready split admission
++within the existing owners. A claimed DestinationBuild job that explicitly requires
++semantic readiness selects the paired bundled model through the shared-model owner
++before Current initialization and source indexing. Kernel retains the collection
++writer and funding context for the policy/publication work; the helper validates
++the installed shared object set against paired default metadata. Metadata-only
++binding does not provision assets. No new crate, database, scheduler or source
++write is introduced. Actual Windows and scoped Neo positive cases passed on
++`d4e48a53…`; broader qualification and P14 acceptance remain pending.
+ 
+ P12's accepted local **1.8.8 working build** adds explicitly reviewed reference refresh
+ through the existing native Configure job and collection publication owners.
+diff --git a/docs/index-splitting.md b/docs/index-splitting.md
+--- a/docs/index-splitting.md
++++ b/docs/index-splitting.md
+@@ -82,6 +82,18 @@
+ readiness is an explicit reviewed requirement, distinct from publication or
+ physical cleanup.
+ 
++### Cold semantic-ready destinations in the P14 candidate
++
++When the review requires semantic readiness, the destination selects the paired
++bundled default through the existing shared-model owner before initialization and
++indexing. This also handles a fresh service with no installed default reference.
++The resulting native job must prove the actual ready destination publication;
++helper availability or an empty continuation queue alone cannot establish readiness.
++The original index's custom model is not treated as an inherited destination model.
++The current Windows and scoped Neo cold-default cases passed on `d4e48a53…`.
++P14 broader and installed/platform qualification is still pending; this is not
++final P14 acceptance.
++
+ ## Cancellation and exact recovery
+ 
+ Before the original transfer fence, explicit Cancel preserves the original's
+diff --git a/packages/vscode/README.md b/packages/vscode/README.md
+--- a/packages/vscode/README.md
++++ b/packages/vscode/README.md
+@@ -14,8 +14,20 @@
+ accepted this unpublished local phase. The first wave refreshes one existing index
+ from eligible references and requires full-index metadata authority; partial
+ Project/path grants are unsupported. Evidence reads and source verification do
+-not start indexing. P13 ranking/diversity remains conditional; P14, deleted-source
+-recovery and the final local test installer remain pending.
++not start indexing.
++
++P13 review retained the current ranking and diversity behavior; no candidate
++change was adopted. P14 qualification is in progress on newer source `d4e48a53…`.
++The Windows workspace passed **2,624 tests** with **50 selection exclusions**;
++all **15** final Windows stages passed. The extension suite passed **776 tests
++with 19 skips**. Two scoped Neo cases passed, followed by successful `cargo clean`
++and target removal. Semantic-ready split destinations select and provision the
++paired bundled default before indexing, including a cold service with no installed
++default reference.
++
++Broader resource, installed-editor, real-corpus, Linux/container and signing
++outcomes remain pending. **P14 is not accepted.** Deleted-source recovery and the
++final local test installer follow P14. This working build remains unpublished.
+ 
+ The [refresh guide](https://github.com/iokaio/airk/blob/main/docs/source-verification.md#explicit-reference-refresh)
+ explains explicit review, exact receipts, memory-only refresh evidence and requery.

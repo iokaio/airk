@@ -1,0 +1,140 @@
+--- service-consumer-r3/download.rs.proposed
++++ service-consumer-r4/download.rs.proposed
+@@ -212,8 +212,9 @@
+     Ok((sender.send_request(request).await?, connection))
+ }
+ 
++#[cfg(test)]
+ pub(super) async fn consume<B>(
+-    mut body: B,
++    body: B,
+     part: &AssetPart,
+     writer: &mut AssetWriter,
+ ) -> std::result::Result<(), Failure>
+@@ -221,13 +222,30 @@
+     B: http_body::Body<Data = bytes::Bytes> + Unpin,
+     B::Error: std::error::Error + Send + Sync + 'static,
+ {
++    consume_checked(body, part, writer, || Ok(())).await
++}
++async fn consume_checked<B>(
++    mut body: B,
++    part: &AssetPart,
++    writer: &mut AssetWriter,
++    check: impl Fn() -> std::result::Result<(), Failure> + Send + Sync,
++) -> std::result::Result<(), Failure>
++where
++    B: http_body::Body<Data = bytes::Bytes> + Unpin,
++    B::Error: std::error::Error + Send + Sync + 'static,
++{
+     let mut bytes = 0_u64;
+     let mut hash = Sha256::new();
+-    while let Some(frame) = tokio::time::timeout(Duration::from_secs(30), body.frame())
+-        .await
+-        .context("Arbiter asset idle deadline")
+-        .map_err(Failure::Source)?
+-    {
++    loop {
++        check()?;
++        let Some(frame) = tokio::time::timeout(Duration::from_secs(30), body.frame())
++            .await
++            .context("Arbiter asset idle deadline")
++            .map_err(Failure::Source)?
++        else {
++            break;
++        };
++        check()?;
+         let frame = frame.map_err(|error| Failure::Source(anyhow::Error::new(error)))?;
+         let data = frame
+             .into_data()
+@@ -242,10 +260,12 @@
+             )));
+         }
+         hash.update(&data);
++        check()?;
+         writer
+             .write_all(&data)
+             .map_err(|error| Failure::Local(error.into()))?;
+     }
++    check()?;
+     if bytes != part.bytes
+         || airk_core::identity::Sha256Digest::from_bytes(hash.finalize().into()) != part.sha256
+     {
+@@ -253,6 +273,7 @@
+             "Arbiter part digest differs"
+         )));
+     }
++    check()?;
+     Ok(())
+ }
+ pub(super) async fn part(
+@@ -326,7 +347,7 @@
+                     "Arbiter part Content-Length differs"
+                 )));
+             }
+-            consume(response.into_body(), part, writer).await?;
++            consume_checked(response.into_body(), part, writer, || budget.admit(cancel)).await?;
+             drop(connection);
+             return Ok(());
+         }
+@@ -340,6 +361,29 @@
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++    struct CancelOnData {
++        cancel: CancellationToken,
++        sent: bool,
++    }
++    impl http_body::Body for CancelOnData {
++        type Data = bytes::Bytes;
++        type Error = std::convert::Infallible;
++        fn poll_frame(
++            self: std::pin::Pin<&mut Self>,
++            _: &mut std::task::Context<'_>,
++        ) -> std::task::Poll<Option<std::result::Result<http_body::Frame<Self::Data>, Self::Error>>>
++        {
++            let body = self.get_mut();
++            if body.sent {
++                return std::task::Poll::Ready(None);
++            }
++            body.sent = true;
++            body.cancel.cancel();
++            std::task::Poll::Ready(Some(Ok(http_body::Frame::data(bytes::Bytes::from_static(
++                b"hello",
++            )))))
++        }
++    }
+     #[test]
+     fn native_emitted_canonical_source_cases_enter_transport_without_invented_backups() -> Result<()>
+     {
+@@ -556,6 +600,30 @@
+             .await
+             .is_err()
+         );
++        let mut stopped = transaction
++            .asset(&profile.assets[3])?
++            .context("missing cancellation stage")?;
++        let cancel = CancellationToken::new();
++        let budget = PartBudget::new();
++        let result = consume_checked(
++            CancelOnData {
++                cancel: cancel.clone(),
++                sent: false,
++            },
++            &first,
++            &mut stopped,
++            || budget.admit(&cancel),
++        )
++        .await;
++        assert!(matches!(result, Err(Failure::Canceled)));
++        drop(stopped);
++        let untouched = root
++            .path()
++            .join("arbiter-v3/assets")
++            .join(profile.manifest.to_string())
++            .join("stage-1")
++            .join(&profile.assets[3].name);
++        assert_eq!(std::fs::metadata(untouched)?.len(), 0);
+         drop(transaction);
+         assert_eq!(store.phase(&profile)?, Some(Phase::Failed));
+         assert!(store.pin(&profile).is_err());

@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: Apache-2.0
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SourceFence {
+    pub namespace: airk_core::identity::Incarnation,
+    pub revision: u64,
+    pub project: ProjectBinding,
+    pub fencing_generation: u64,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CacheScope {
+    Pinned(airk_core::identity::Incarnation),
+    Source(SourceFence),
+}
+impl From<airk_core::identity::Incarnation> for CacheScope {
+    fn from(value: airk_core::identity::Incarnation) -> Self { Self::Pinned(value) }
+}
+pub(crate) fn source_scope_superseded() -> serde_json::Value {
+    let detail = serde_json::json!({"error":{"code":"direct_query_setup","reason":"busy",
+        "query_submitted":false,"retryable":true,"retry_after_ms":100,"fresh_brokerage_required":true}});
+    serde_json::json!({"content":[{"type":"text","text":detail.to_string()}],"isError":true})
+}

@@ -1,0 +1,71 @@
+--- r1/crates/airk-retrieval/src/arbiter/runtime/cuda/eligibility.rs
++++ r2/crates/airk-retrieval/src/arbiter/runtime/cuda/eligibility.rs
+@@ -93,6 +93,13 @@
+     },
+     Eligible(Arc<DeviceEligibility>),
+ }
++pub(super) fn initial_admission(manifest: &manifest::RuntimeDescriptor) -> AdmissionState {
++    if manifest.is_product() {
++        AdmissionState::Pending
++    } else {
++        AdmissionState::Scientific
++    }
++}
+ impl AdmissionState {
+     fn revoke(&mut self) {
+         if let Self::Eligible(w) = self {
+@@ -102,7 +109,7 @@
+             *self = Self::Pending;
+         }
+     }
+-    fn authorize(&self, digest: Sha256Digest) -> Result<()> {
++    pub(super) fn authorize(&self, digest: Sha256Digest) -> Result<()> {
+         match self {
+             Self::Scientific => Ok(()),
+             Self::Validating { thread, input } => {
+--- r1/crates/airk-retrieval/src/arbiter/runtime/cuda/tests.rs
++++ r2/crates/airk-retrieval/src/arbiter/runtime/cuda/tests.rs
+@@ -468,3 +468,24 @@
+     assert!(row.supports(&actual).is_err());
+     Ok(())
+ }
++
++#[test]
++fn qualified_scientific_route_preserves_scoring_while_product_requires_live_eligibility()
++-> Result<()> {
++    let legacy = manifest::RuntimeDescriptor::Scientific(manifest());
++    let scientific = eligibility::initial_admission(&legacy);
++    assert!(matches!(
++        scientific,
++        eligibility::AdmissionState::Scientific
++    ));
++    scientific.authorize(Sha256Digest::from_bytes([9; 32]))?;
++    let product = manifest::RuntimeDescriptor::Product(product_manifest());
++    let product = eligibility::initial_admission(&product);
++    assert!(matches!(product, eligibility::AdmissionState::Pending));
++    assert!(
++        product
++            .authorize(Sha256Digest::from_bytes([9; 32]))
++            .is_err()
++    );
++    Ok(())
++}
+--- r1/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
++++ r2/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
+@@ -634,6 +634,7 @@
+             );
+             (fit.evidence.clone(), fit.host_warm_extra_bytes)
+         };
++        let admission = eligibility::initial_admission(&device.runtime.manifest);
+         Ok(Self {
+             device,
+             plan,
+@@ -641,7 +642,7 @@
+             evidence: Some(evidence),
+             host_warm_extra_bytes: Some(host),
+             log: Arc::new(Mutex::new((Vec::new(), 0, false))),
+-            admission: Arc::new(Mutex::new(eligibility::AdmissionState::Pending)),
++            admission: Arc::new(Mutex::new(admission)),
+             session_alive: Arc::new(AtomicBool::new(true)),
+         })
+     }

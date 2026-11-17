@@ -1,0 +1,21 @@
+--- a/artifacts/advanced-split/models/selected-native-goal-driver-r1/native-cal-owned-r1/run_raw_reviewed.py
++++ b/artifacts/advanced-split/models/selected-native-goal-driver-r1/native-cal-owned-r1/run_raw_reviewed.py
+@@ -41,7 +41,17 @@
+ 
+ def capture_execution(path,digest,capture_pin,release_pin):
+     if sha(path)!=digest:raise ValueError('Actual owned CAL capture proof changed')
+-    value=json.loads(Path(path).read_bytes());owned=value.get('owned')or {}
++    value=json.loads(Path(path).read_bytes())
++    if value.get('schema')=='airk.private-selected-cal-chunk-aggregate-owned-execution/1':
++        proof=ROOT/'artifacts/advanced-split/models/selected-native-goal-driver-r1/chunked-cal-r1/proof/chunk_contract.py'
++        expected='0ae8754488361e4ef56a22cd67e5f4aad6eebe6c2684103a563bc3a19957062e'
++        if sha(proof)!=expected:raise ValueError('Frozen chunk proof owner changed')
++        spec=importlib.util.spec_from_file_location('selected_cal_chunk_proof',proof)
++        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
++        pins=module.validate_aggregate({'path':str(Path(path).resolve()),'sha256':digest},capture_pin,release_pin)
++        pins[str(proof.resolve())]=expected
++        return pins
++    owned=value.get('owned')or {}
+     if not(value.get('schema')=='airk.private-selected-cal-capture-owned-execution/1'and value.get('complete')is True
+            and value.get('qualification_granted')is False and value.get('post_input_drift')==[]
+            and value.get('capture',{}).get('sha256')==capture_pin['sha256']

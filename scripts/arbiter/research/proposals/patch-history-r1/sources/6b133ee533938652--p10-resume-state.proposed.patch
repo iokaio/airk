@@ -1,0 +1,27 @@
+--- a/crates/airk-store/src/service_catalog_split.rs
++++ b/crates/airk-store/src/service_catalog_split.rs
+@@ -2707,6 +2707,12 @@
+         "split finalization is frozen; use its exact finalization recovery"
+     );
+     require_unused_action_key(db, caller, key, None)?;
++    ensure!(
++        purpose == SplitJobPurpose::DestinationCleanup
++            || !matches!(old.receipt.state,
++                SplitRunState::CanceledBeforeFence { .. } | SplitRunState::Complete),
++        "only destination cleanup may continue a canceled split",
++    );
+     let ProjectConfiguration::SplitWork {
+         operation_id,
+         request_digest,
+@@ -2824,6 +2830,11 @@
+     next.jobs.push(reference);
+     if purpose == SplitJobPurpose::DestinationBuild {
+         next.stage = SplitStage::Building;
++    }
++    // Exact accepted work clears the attention latch for every runnable purpose,
++    // including a fresh retained-witness job and an original cleanup retry.
++    // Cancellation remains restrictive throughout destination-only cleanup.
++    if purpose != SplitJobPurpose::DestinationCleanup {
+         next.state = SplitRunState::Pending;
+     }
+     replace(db, &old, next)

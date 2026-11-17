@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: Apache-2.0
+/// Usage-report text that varies per run: the root binding's digest bytes
+/// and measured figures (`…Us: n`, `…Bytes: n`, `RSS: Some(n)`), at any JSON
+/// escape level.
+fn mask_measured_usage_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    'scan: while !rest.is_empty() {
+        for (marker, close) in [
+            ("root_binding", Some(']')),
+            ("latency_buckets", Some(']')),
+            ("Us: ", None),
+            ("Bytes: ", None),
+            ("RSS: Some(", None),
+        ] {
+            if let Some(after) = rest.strip_prefix(marker) {
+                out.push_str(marker);
+                match close {
+                    Some(end) => {
+                        // Skip the quote/escape run and `:[`, then the array body.
+                        let open = after.find('[').map_or(0, |at| at + 1);
+                        let body = after[open..].find(end).map_or(after.len(), |at| open + at);
+                        out.push_str(&after[..open]);
+                        out.push_str("<MASKED>");
+                        rest = &after[body..];
+                    }
+                    None => {
+                        let digits = after.bytes().take_while(u8::is_ascii_digit).count();
+                        if digits > 0 {
+                            out.push_str("<MASKED>");
+                        }
+                        rest = &after[digits..];
+                    }
+                }
+                continue 'scan;
+            }
+        }
+        // A Markdown table row's last cell (the measured column, e.g.
+        // "Returned bytes"), escaped or not.
+        if out.ends_with("| ") {
+            let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+            if digits > 0
+                && (rest[digits..].starts_with(" |\\n") || rest[digits..].starts_with(" |\n"))
+            {
+                out.push_str("<MASKED>");
+                rest = &rest[digits..];
+                continue 'scan;
+            }
+        }
+        let next = rest.chars().next().unwrap();
+        out.push(next);
+        rest = &rest[next.len_utf8()..];
+    }
+    out
+}

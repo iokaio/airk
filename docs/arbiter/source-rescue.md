@@ -1,11 +1,13 @@
 # Source rescue from ignored artifacts
 
-Status: reviewed source-capture checkpoint in progress, 17 November 2026.
-The full artifacts sweep is still running. All 104 previously reported access-denied
-directories are now readable after the user repaired their permissions; deeper
-coverage is still being checked. The scoped 10,356-candidate reconciliation has
-zero unresolved sources after fresh owner/hash checks. This document does not
-yet claim that all artifact code is rescued or committed.
+Status: source-capture checkpoint `c787da29` is committed; additional source
+families and broad reconciliation remain in progress, 17 November 2026.
+All 104 previously reported access-denied directories are readable after the user
+repaired their permissions. That observation does not close deeper inspection gaps.
+The scoped 10,356-candidate reconciliation has zero unresolved sources after fresh
+owner/hash checks. Broad primary/additional-format scans, generated JavaScript,
+embedded fields and upstream/reference proofs still require combined reconciliation.
+This document does not claim that all artifact code is rescued or committed.
 
 ## What is being retained
 
@@ -24,6 +26,12 @@ Source maps retain original path/hash and maintained destination/hash. Where a
 license header was absent, documented prefix-only transformations preserve the
 original body exactly. Unintegrated Rust and selected historical JavaScript are
 inert source templates. Original artifacts and their receipts remain unchanged.
+
+Operational history r2 preserves 2,413 original paths through 2,047 distinct new
+copies and seven aliases to existing owners. Eighteen build CMD wrappers are
+explicitly retained as historical generated copies; exact producer-parameter
+reconstruction remains a separate proof. Their preservation grants no execution,
+installation or publication authority.
 
 No model weights, training examples, corpus inputs, private indexed documents,
 credentials, generated libraries or live state are added. Upstream/corpus
@@ -58,7 +66,9 @@ it does not authorize running archived launchers unchanged.
 ## README catalogue
 
 Every README below describes a receiving component or historical source family.
-Paths are relative to the repository root.
+Paths are relative to the repository root. Links identify source owners and
+methods, not completed broad audit results. Historical patches and embedded source
+snapshots remain unexecuted; audit outcomes require their exact pinned receipts.
 
 | Folder documentation | Purpose/title |
 |---|---|
@@ -83,6 +93,10 @@ Paths are relative to the repository root.
 | [scripts/arbiter/analysis/historical_proposals/research_attribution/README.md](../../scripts/arbiter/analysis/historical_proposals/research_attribution/README.md) | Historical source proposals: research_attribution |
 | [scripts/arbiter/analysis/historical_proposals/research_attribution/research-attribution-r1/README.md](../../scripts/arbiter/analysis/historical_proposals/research_attribution/research-attribution-r1/README.md) | Historical source proposals: research_attribution\research-attribution-r1 |
 | [scripts/arbiter/analysis/historical_proposals/research_attribution/research-attribution-techqa-r2/README.md](../../scripts/arbiter/analysis/historical_proposals/research_attribution/research-attribution-techqa-r2/README.md) | Historical source proposals: research_attribution\research-attribution-techqa-r2 |
+| [scripts/arbiter/analysis/javascript_provenance/README.md](../../scripts/arbiter/analysis/javascript_provenance/README.md) | Generated JavaScript byte provenance; analysis remains separate from runtime qualification |
+| [scripts/arbiter/analysis/model_metadata_inputs/README.md](../../scripts/arbiter/analysis/model_metadata_inputs/README.md) | Four pinned reference-page families, with the Hotpot acquisition-receipt gap explicit |
+| [scripts/arbiter/analysis/non_script_review/README.md](../../scripts/arbiter/analysis/non_script_review/README.md) | Frozen native/client candidate classification and source-role evidence |
+| [scripts/arbiter/analysis/private_fixture_inputs/README.md](../../scripts/arbiter/analysis/private_fixture_inputs/README.md) | Metadata-only private benchmark provenance, current drift and explicit historical identity gaps |
 | [scripts/arbiter/analysis/public_source_admission/contextbench-current-blind-train-r1/README.md](../../scripts/arbiter/analysis/public_source_admission/contextbench-current-blind-train-r1/README.md) | ContextBench blind TRAIN source audit |
 | [scripts/arbiter/analysis/public_source_admission/cosqa-source-join-r1/qasper-train-focus512-proposal-r1/README.md](../../scripts/arbiter/analysis/public_source_admission/cosqa-source-join-r1/qasper-train-focus512-proposal-r1/README.md) | QASPER TRAIN Focus512 proposal |
 | [scripts/arbiter/analysis/public_source_admission/cosqa-source-join-r1/README.md](../../scripts/arbiter/analysis/public_source_admission/cosqa-source-join-r1/README.md) | CoSQA and CodeSearchNet source join |
@@ -92,8 +106,11 @@ Paths are relative to the repository root.
 | [scripts/arbiter/analysis/public_source_admission/split-clone-chronology-r1/README.md](../../scripts/arbiter/analysis/public_source_admission/split-clone-chronology-r1/README.md) | Split and clone chronology audit |
 | [scripts/arbiter/analysis/public_source_admission/techqa-original-publisher-archive-r2/README.md](../../scripts/arbiter/analysis/public_source_admission/techqa-original-publisher-archive-r2/README.md) | TechQA original publisher archive audits |
 | [scripts/arbiter/analysis/selected_model_rights/README.md](../../scripts/arbiter/analysis/selected_model_rights/README.md) | Selected model rights evidence tooling |
-| [scripts/arbiter/analysis/source_inventory/README.md](../../scripts/arbiter/analysis/source_inventory/README.md) | Artifact source inventory |
+| [scripts/arbiter/analysis/source_cleanup/README.md](../../scripts/arbiter/analysis/source_cleanup/README.md) | Committed-source duplicate removal planning and guarded per-file apply; data and receipts excluded |
+| [scripts/arbiter/analysis/source_inventory/README.md](../../scripts/arbiter/analysis/source_inventory/README.md) | Source/Git census, strict reconciliation, embedded indicators and byte/access audits |
+| [scripts/arbiter/analysis/upstream_ort/README.md](../../scripts/arbiter/analysis/upstream_ort/README.md) | ORT and dependency source identity against pinned inventories, Git trees and archives |
 | [scripts/arbiter/analysis/upstream_research/README.md](../../scripts/arbiter/analysis/upstream_research/README.md) | Upstream research source disposition |
+| [scripts/arbiter/analysis/upstream_tools/README.md](../../scripts/arbiter/analysis/upstream_tools/README.md) | Archive, browser and private-fixture provenance methods; no broad-completeness claim |
 | [scripts/arbiter/evaluation/independent_numeric/README.md](../../scripts/arbiter/evaluation/independent_numeric/README.md) | Independent numeric reference recipes |
 | [scripts/arbiter/evaluation/README.md](../../scripts/arbiter/evaluation/README.md) | Arbiter evaluation source |
 | [scripts/arbiter/evaluation/research_history/composed_orchestration/README.md](../../scripts/arbiter/evaluation/research_history/composed_orchestration/README.md) | Composed orchestration source history |
@@ -148,6 +165,9 @@ Paths are relative to the repository root.
 | [scripts/arbiter/export/minilm/support/README.md](../../scripts/arbiter/export/minilm/support/README.md) | MiniLM evaluation support |
 | [scripts/arbiter/export/minilm/visible-prefix-r1/README.md](../../scripts/arbiter/export/minilm/visible-prefix-r1/README.md) | MiniLM export: visible-prefix-r1 |
 | [scripts/arbiter/export/onnx_storage/README.md](../../scripts/arbiter/export/onnx_storage/README.md) | ONNX storage normalization |
+| [scripts/arbiter/export/qwen_assets/qwen3-challenger-assets-r1/README.md](../../scripts/arbiter/export/qwen_assets/qwen3-challenger-assets-r1/README.md) | qwen3-challenger-assets-r1 acquisition |
+| [scripts/arbiter/export/qwen_assets/qwen3-reranker06-assets-r1/README.md](../../scripts/arbiter/export/qwen_assets/qwen3-reranker06-assets-r1/README.md) | qwen3-reranker06-assets-r1 acquisition |
+| [scripts/arbiter/export/qwen_assets/README.md](../../scripts/arbiter/export/qwen_assets/README.md) | Qwen publisher asset acquisition |
 | [scripts/arbiter/export/qwen/qwen-tiny-export-r1/README.md](../../scripts/arbiter/export/qwen/qwen-tiny-export-r1/README.md) | Qwen recipes: qwen-tiny-export-r1 |
 | [scripts/arbiter/export/qwen/qwen-tiny-export-r2/README.md](../../scripts/arbiter/export/qwen/qwen-tiny-export-r2/README.md) | Qwen recipes: qwen-tiny-export-r2 |
 | [scripts/arbiter/export/qwen/qwen3-challengers-r1/context-fp32-readout-r1/README.md](../../scripts/arbiter/export/qwen/qwen3-challengers-r1/context-fp32-readout-r1/README.md) | Qwen recipes: qwen3-challengers-r1/context-fp32-readout-r1 |
@@ -167,17 +187,37 @@ Paths are relative to the repository root.
 | [scripts/arbiter/export/qwen/qwen3-reranker06-static-export-r1/unreleased-static128-predecessor/README.md](../../scripts/arbiter/export/qwen/qwen3-reranker06-static-export-r1/unreleased-static128-predecessor/README.md) | Qwen recipes: qwen3-reranker06-static-export-r1/unreleased-static128-predecessor |
 | [scripts/arbiter/export/qwen/qwen3-reranker06-weight8-r1/README.md](../../scripts/arbiter/export/qwen/qwen3-reranker06-weight8-r1/README.md) | Qwen recipes: qwen3-reranker06-weight8-r1 |
 | [scripts/arbiter/export/qwen/README.md](../../scripts/arbiter/export/qwen/README.md) | Qwen reference and export recipes |
-| [scripts/arbiter/export/qwen_assets/qwen3-challenger-assets-r1/README.md](../../scripts/arbiter/export/qwen_assets/qwen3-challenger-assets-r1/README.md) | qwen3-challenger-assets-r1 acquisition |
-| [scripts/arbiter/export/qwen_assets/qwen3-reranker06-assets-r1/README.md](../../scripts/arbiter/export/qwen_assets/qwen3-reranker06-assets-r1/README.md) | qwen3-reranker06-assets-r1 acquisition |
-| [scripts/arbiter/export/qwen_assets/README.md](../../scripts/arbiter/export/qwen_assets/README.md) | Qwen publisher asset acquisition |
 | [scripts/arbiter/export/README.md](../../scripts/arbiter/export/README.md) | Model export and reference implementations |
 | [scripts/arbiter/README.md](../../scripts/arbiter/README.md) | Arbiter research and artifact reproduction |
+| [scripts/arbiter/research/javascript_history_r1/fixtures/README.md](../../scripts/arbiter/research/javascript_history_r1/fixtures/README.md) | Historical synthetic editor fixture implementations with reversible source identities |
+| [scripts/arbiter/research/javascript_history_r1/README.md](../../scripts/arbiter/research/javascript_history_r1/README.md) | Historical editor drivers/tests and help-search JavaScript; inert source preservation |
+| [scripts/arbiter/research/javascript_history_r1/source_policy/README.md](../../scripts/arbiter/research/javascript_history_r1/source_policy/README.md) | Canonical historical source-policy module mapping |
+| [scripts/arbiter/research/javascript_history_r1/sources/README.md](../../scripts/arbiter/research/javascript_history_r1/sources/README.md) | Deduplicated JavaScript templates with reversible source identities and historical prerequisites |
+| [scripts/arbiter/research/non_script_history_r3/README.md](../../scripts/arbiter/research/non_script_history_r3/README.md) | Historical native/client drafts and pre-edit snapshots; inert source-only preservation |
+| [scripts/arbiter/research/non_script_history_r3/sources/README.md](../../scripts/arbiter/research/non_script_history_r3/sources/README.md) | Deduplicated Rust/TypeScript templates with exact inverse identities and restoration limits |
+| [scripts/arbiter/research/operational_history_r2/README.md](../../scripts/arbiter/research/operational_history_r2/README.md) | Build/test, installer, transfer and diagnostic drivers; historical generated CMD variants disclosed |
+| [scripts/arbiter/research/operational_history_r2/sources/README.md](../../scripts/arbiter/research/operational_history_r2/sources/README.md) | Versioned operational source copies, aliases and original-body identities |
+| [scripts/arbiter/research/ort_dependency_recovery_r1/notices/README.md](../../scripts/arbiter/research/ort_dependency_recovery_r1/notices/README.md) | Authenticated upstream license and attribution notices for recovery records |
+| [scripts/arbiter/research/ort_dependency_recovery_r1/README.md](../../scripts/arbiter/research/ort_dependency_recovery_r1/README.md) | Exact observed dependency deltas with pinned upstream bases and retained attribution |
+| [scripts/arbiter/research/ort_dependency_recovery_r1/records/README.md](../../scripts/arbiter/research/ort_dependency_recovery_r1/records/README.md) | Byte-range recovery records; no historical patch-application claim |
 | [scripts/arbiter/research/proposals/native-client-r1/README.md](../../scripts/arbiter/research/proposals/native-client-r1/README.md) | Native and client historical proposal source, r1 |
 | [scripts/arbiter/research/proposals/native-client-r1/sources/README.md](../../scripts/arbiter/research/proposals/native-client-r1/sources/README.md) | Preserved source templates |
+| [scripts/arbiter/research/proposals/patch-history-r1/README.md](../../scripts/arbiter/research/proposals/patch-history-r1/README.md) | Historical authored diffs and evidence-backed upstream dependency-patch exclusions |
+| [scripts/arbiter/research/proposals/patch-history-r1/sources/README.md](../../scripts/arbiter/research/proposals/patch-history-r1/sources/README.md) | Exact historical patch bytes and deduplicated owners |
 | [scripts/arbiter/research/proposals/README.md](../../scripts/arbiter/research/proposals/README.md) | Historical research proposals |
 | [scripts/arbiter/research/README.md](../../scripts/arbiter/research/README.md) | Historical research source owners |
 | [scripts/arbiter/research/source_rescue_r1/README.md](../../scripts/arbiter/research/source_rescue_r1/README.md) | Historical source rescue, revision 1 |
 | [scripts/arbiter/research/source_rescue_r1/sources/README.md](../../scripts/arbiter/research/source_rescue_r1/sources/README.md) | Retained authored source versions |
+| [scripts/arbiter/source_rescue/embedded_history/linux/README.md](../../scripts/arbiter/source_rescue/embedded_history/linux/README.md) | Historical source transport, user-space provisioning and ORT build ownership |
+| [scripts/arbiter/source_rescue/embedded_history/neo/README.md](../../scripts/arbiter/source_rescue/embedded_history/neo/README.md) | Historical macOS preflight, guarded transfers and process/evidence observation |
+| [scripts/arbiter/source_rescue/embedded_history/patches/README.md](../../scripts/arbiter/source_rescue/embedded_history/patches/README.md) | Recovered authored proposal patches and partial source fragments |
+| [scripts/arbiter/source_rescue/embedded_history/README.md](../../scripts/arbiter/source_rescue/embedded_history/README.md) | Decoded JSON source fields, exact container/pointer provenance and inspection gaps |
+| [scripts/arbiter/source_rescue/embedded_history/snapshots/README.md](../../scripts/arbiter/source_rescue/embedded_history/snapshots/README.md) | Native, CLI, Admin and Workbench preimages retained as unbuilt source templates |
+| [scripts/arbiter/source_rescue/embedded_history/supplemental/README.md](../../scripts/arbiter/source_rescue/embedded_history/supplemental/README.md) | Rejected composition hunks and a decoded historical Mac audit-token probe; exact container/field provenance |
+| [scripts/arbiter/source_rescue/embedded_history/validation/README.md](../../scripts/arbiter/source_rescue/embedded_history/validation/README.md) | Recovered local test and equivalence command bodies |
+| [scripts/arbiter/source_rescue/README.md](../../scripts/arbiter/source_rescue/README.md) | Authored source recovered from execution and proposal containers |
+| [scripts/arbiter/source_rescue/runbook_history/README.md](../../scripts/arbiter/source_rescue/runbook_history/README.md) | Historical Windows qualification/Help runbooks and exact handle-diagnostic source fragment |
+| [scripts/arbiter/source_rescue/text_history/README.md](../../scripts/arbiter/source_rescue/text_history/README.md) | Source fragments, transfer runbook and decoded probe recovered from text; historical outcomes retained |
 | [scripts/arbiter/training/focus_lora_r8/README.md](../../scripts/arbiter/training/focus_lora_r8/README.md) | Focus LoRA r8 |
 | [scripts/arbiter/training/focus_lora_r8/support/README.md](../../scripts/arbiter/training/focus_lora_r8/support/README.md) | Focus custody support |
 | [scripts/arbiter/training/history/a1-visible-prefix-training-execution-r1/README.md](../../scripts/arbiter/training/history/a1-visible-prefix-training-execution-r1/README.md) | Historical recipe source: a1-visible-prefix-training-execution-r1 |

@@ -1,0 +1,79 @@
+--- a/packages/vscode/src/referenceRefresh.ts
++++ b/packages/vscode/src/referenceRefresh.ts
+@@ -15,6 +15,12 @@
+ export interface ReferenceRefreshIntent {reference_refresh:{configure_project:ConfigurationIntent;original_query:ObjectValue|null;original_result:ObjectValue|null;evidence_retention:'memory_only'|'local_approved'}}
+ export function refreshCapability(value:unknown):boolean {try{return catalogObject(catalogObject(value).capabilities).reference_refresh_contract===1;}catch{return false;}}
+ export function refreshDigest(value:unknown):string{return createHash('sha256').update(JSON.stringify(value)).digest('hex');}
++const REFRESH_QUERY_TOOLS=['airk_search','airk_read_file','airk_list_files','airk_symbols','airk_references','airk_outline','airk_file_info','airk_imports','airk_code_facts','airk_document_facts','airk_changes','airk_context','airk_relationships'] as const;
++export function refreshQueryTool(input:unknown):typeof REFRESH_QUERY_TOOLS[number] {
++    const tool=REFRESH_QUERY_TOOLS.find(tool=>tool===input);
++    if(tool===undefined)throw new Error('invalid_refresh_original_query');
++    return tool;
++}
+ function exact(value:ObjectValue,names:string):void {if(Object.keys(value).sort().join(',')!==names.split(',').sort().join(','))throw new Error('invalid_refresh_fields');}
+ function array(value:unknown,max:number):unknown[] {if(!Array.isArray(value)||!value.length||value.length>max)throw new Error('invalid_refresh_selection');return value;}
+ function path(value:unknown):string {if(typeof value!=='string'||!value||Buffer.byteLength(value)>4096||/[\\:\u0000-\u001f\u007f]/.test(value)||value.split('/').some(v=>!v||v==='.'||v==='..'))throw new Error('invalid_refresh_path');return value;}
+@@ -74,7 +80,7 @@
+     const value=catalogObject(input);exact(value,'reference_refresh');const review=catalogObject(value.reference_refresh);exact(review,'configure_project,original_query,original_result,evidence_retention');if(!['memory_only','local_approved'].includes(String(review.evidence_retention)))throw new Error('invalid_refresh_evidence_retention');const configuration=catalogObject(review.configure_project);exact(configuration,'project,caller,key,request');catalogHex(configuration.project,64);catalogHex(configuration.caller,32);
+     const request=refreshConfiguration(configuration.request),selection=catalogObject(request.configuration.selection);if(request.prepare!==undefined)throw new Error('noncanonical_refresh_prepare_field');if(configuration.caller!==selection.caller||!isDeepStrictEqual(configuration.key,selection.key))throw new Error('crossed_refresh_request_key');
+     if(review.original_query===null||review.original_result===null){if(review.original_query!==null||review.original_result!==null||review.evidence_retention!=='memory_only')throw new Error('incomplete_refresh_original');return input as ReferenceRefreshIntent;}
+-    const query=catalogObject(review.original_query);catalogBound(query,REFRESH_QUERY_BYTES);exact(query,'tool,arguments');if(typeof query.tool!=='string'||!['airk_search','airk_read_file','airk_list_files','airk_symbols','airk_references','airk_outline','airk_file_info','airk_imports','airk_code_facts','airk_document_facts','airk_changes','airk_context','airk_relationships'].includes(query.tool))throw new Error('invalid_refresh_original_query');catalogObject(query.arguments);
++    const query=catalogObject(review.original_query);catalogBound(query,REFRESH_QUERY_BYTES);exact(query,'tool,arguments');refreshQueryTool(query.tool);catalogObject(query.arguments);
+     const result=catalogObject(review.original_result);catalogBound(result,REFRESH_NATIVE_BYTES);if(selection.original_query_digest!==refreshDigest(query)||selection.original_result_digest!==refreshDigest(result)||selection.original_evidence_selection_digest!==refreshDigest(selection.members))throw new Error('changed_refresh_original_evidence');
+     return input as ReferenceRefreshIntent;
+ }
+--- a/packages/vscode/src/test/referenceRefresh.test.ts
++++ b/packages/vscode/src/test/referenceRefresh.test.ts
+@@ -5,7 +5,7 @@
+ import {SPLIT_JOURNAL_BYTES} from '../indexingSplit';
+ import {IntentJournal,IntentStorage} from '../serviceIntents';
+ import {ServiceClient,ServiceError,ControlTransport} from '../serviceClient';
+-import {ReferenceRefreshIntent,ReferenceRefreshFlow,REFRESH_JOURNAL_BYTES,refreshDigest,refreshJobId,validateRefreshIntent,refreshExport,refreshCapability,refreshSelectionIdentity,refreshSelectionCanonicalJson,validateRefreshReceipt} from '../referenceRefresh';
++import {ReferenceRefreshIntent,ReferenceRefreshFlow,REFRESH_JOURNAL_BYTES,refreshDigest,refreshJobId,validateRefreshIntent,refreshExport,refreshCapability,refreshSelectionIdentity,refreshSelectionCanonicalJson,validateRefreshReceipt,refreshQueryTool} from '../referenceRefresh';
+ type Value=Record<string,unknown>;
+ class Memory implements IntentStorage {data=new Map<string,unknown>();keys(){return [...this.data.keys()];}get<T>(key:string){return this.data.get(key) as T|undefined;}async update(key:string,value:unknown){if(value===undefined)this.data.delete(key);else this.data.set(key,structuredClone(value));}}
+ const id=(byte:string)=>byte.repeat(32),hash=(byte:string)=>byte.repeat(64);
+@@ -182,3 +182,10 @@
+         assert.throws(()=>validateRefreshReceipt(duplicate,intent),/selection|review_reason/);
+     }
+ });
++
++
++test('refresh requery checks its existing read-only tool contract without string coercion or broader Workbench tools',()=>{
++    assert.equal(refreshQueryTool('airk_search'),'airk_search');
++    assert.equal(refreshQueryTool('airk_file_info'),'airk_file_info');
++    for(const input of ['configure_project','airk_parse','airk_status','airk_search ',{toString:()=> 'airk_search'},null])assert.throws(()=>refreshQueryTool(input),/invalid_refresh_original_query/);
++});
+--- a/packages/vscode/src/workbenchView.ts
++++ b/packages/vscode/src/workbenchView.ts
+@@ -1,6 +1,6 @@
+ // SPDX-License-Identifier: Apache-2.0
+ import {captureWorkbenchRefresh,sameRefreshAuthority,type ReferenceRefreshControl} from './workbenchReferenceRefresh';
+-import type {ReferenceRefreshFlow,RefreshFlowHost} from './referenceRefresh';
++import {refreshQueryTool,type ReferenceRefreshFlow,type RefreshFlowHost} from './referenceRefresh';
+ import {validateCombinedCatalogSession} from './catalogSession';
+ import {NativeMetadataProjectionCache} from './nativeMetadata';
+ import * as vscode from 'vscode';
+@@ -357,9 +357,10 @@
+             reconfirm:selection=>this.refreshControl().referenceRefreshReconfirm(selection,valid),
+             query:async(query,selection)=>{
+                 if(!valid())throw new Error('refresh_selection_changed');
++                const tool=refreshQueryTool(query.tool);
+                 const selected=validateCombinedCatalogSession(selection),client=new EvidenceClient({...spec,combinedSession:selected},this.host.version,{workbench:true,clientName:'airk-workbench',timeout:35000});
+                 this.refreshQueryClient=client;
+-                try{const response=await client.call(String(query.tool),structuredClone(object(query.arguments)),{timeout:35000,supersede:'workbench-refresh'}),raw=response.rawPayload??response.payload;
++                try{const response=await client.call(tool,structuredClone(object(query.arguments)),{timeout:35000,supersede:'workbench-refresh'}),raw=response.rawPayload??response.payload;
+                     if(!valid()){const error=new Error('refresh_late_reply_retained_as_historical_diagnostic') as Error&{nativeResponse?:Value};error.nativeResponse=raw;throw error;}
+                     return raw;
+                 }finally{if(this.refreshQueryClient===client)this.refreshQueryClient=undefined;client.dispose();}
+--- a/packages/vscode/scripts/build-explorer.cjs
++++ b/packages/vscode/scripts/build-explorer.cjs
+@@ -158,7 +158,7 @@
+         'src/native.ts', 'src/nativeGate.ts', 'src/cliInstall.ts', 'src/cliRemove.ts', 'src/serviceClient.ts', 'src/mcpStdioSession.ts', 'src/model.ts', 'src/explorerContracts.ts', 'src/explorerRoutes.ts',
+         // Shared inert validators and selector DTOs have only pure contract imports and no startup work;
+         // neither the Indexing controller nor any browser/UI module belongs in the standalone worker.
+-        'src/indexingCatalog.ts', 'src/indexingSplit.ts', 'src/catalogSession.ts',
++        'src/indexingCatalog.ts', 'src/indexingSplit.ts', 'src/catalogSession.ts', 'src/referenceRefresh.ts',
+         'src/agentMigration.ts', 'src/unifiedAgentConfig.ts', 'src/explorerAssistanceLaunch.ts', 'src/agentConfig.ts',
+         'src/explorerStrategies.ts', 'src/explorerFeatures.ts', 'src/explorerDrafts.ts', 'src/explorerAssistanceHost.ts', 'src/privateDirectory.ts',
+         /^node_modules\/jsonc-parser\//]);

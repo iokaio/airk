@@ -1,0 +1,108 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Explicit local runtime administration; never an evidence or MCP write route.
+use super::*;
+use airk_core::{catalog_upgrade_recovery::{UpgradeRetirementPreview, UpgradeRetirementReply,
+    UpgradeRetirementRequest}, identity::Sha256Digest, index_catalog::IndexId};
+use airk_store::service::registry::catalog::upgrade::{self, CatalogUpgrade};
+use std::io::Read;
+
+fn input<T: serde::de::DeserializeOwned>() -> Result<T> {
+    let mut bytes = Vec::new();
+    std::io::stdin().take(airk_core::service::MAX_FRAME_BYTES as u64 + 1).read_to_end(&mut bytes)?;
+    ensure!(bytes.len() <= airk_core::service::MAX_FRAME_BYTES, "legacy retirement input exceeds bound");
+    Ok(serde_json::from_slice(&bytes)?)
+}
+fn installer(root: &Path) -> Result<(PathBuf, Sha256Digest)> {
+    let identity = runtime_pair::engine_identity()?;
+    let control = layout::catalog_control(root, identity)?;
+    Ok((control, identity))
+}
+fn observation(root: &Path, request: &UpgradeRetirementRequest) -> Result<Option<UpgradeRetirementReply>> {
+    request.validate()?;
+    ensure!(request.caller == crate::local_ipc::caller_identity()?, "legacy retirement caller differs from authenticated native caller");
+    ensure!(runtime_pair::engine_identity()? == request.installer_identity,
+        "legacy retirement requires the originally admitted candidate");
+    let control = layout::saved_control(root)?;
+    let saved = upgrade::pending(&control)?.context("retained legacy upgrade journal unavailable")?;
+    ensure!(saved.plan.id == request.upgrade_id && saved.plan_digest == request.plan_digest
+        && saved.plan.installer_identity == request.installer_identity, "retirement plan differs");
+    layout::validate_catalog_control(&control, saved.plan.namespace)?;
+    let reply = upgrade::recovery::legacy_retirement_observation(&control, request)?;
+    if let Some(reply) = &reply { reply.validate()?; }
+    Ok(reply)
+}
+pub(super) fn candidates(root: &Path) -> Result<serde_json::Value> {
+    let _lock = existing_install_lock(root)?;
+    let (control, identity) = installer(root)?;
+    let saved = upgrade::pending(&control)?.context("no pending legacy upgrade")?;
+    ensure!(saved.plan.installer_identity == identity, "saved legacy installer differs");
+    let mut observations = Vec::new();
+    if let Some(journal) = &saved.retirement_recovery {
+        for authorization in &journal.authorizations {
+            observations.push(upgrade::recovery::legacy_retirement_observation(&control,
+                &authorization.preview.request)?.context("saved retirement observation unavailable")?);
+        }
+    }
+    let value = serde_json::json!({"schema":1,"plan":saved.plan,"saved_observations":observations});
+    ensure!(serde_json::to_vec(&value)?.len() <= airk_core::service::MAX_FRAME_BYTES,
+        "legacy candidate list exceeds reply budget");
+    Ok(value)
+}
+pub(super) fn review(root: &Path, index: IndexId) -> Result<UpgradeRetirementReply> {
+    let _lock = existing_install_lock(root)?;
+    let (control, identity) = installer(root)?;
+    let owner = CatalogUpgrade::resume_for_installer(&control, identity)?;
+    let request = owner.prepare_legacy_retirement_request(index, crate::local_ipc::caller_identity()?,
+        airk_kernel::service_broker::new_instance_id()?)?;
+    let preview = owner.preview_legacy_retirement(&request)?;
+    let reply = UpgradeRetirementReply::Review { review_digest: preview.identity()?, preview };
+    reply.validate()?;
+    Ok(reply)
+}
+pub(super) async fn authorize(root: &Path) -> Result<UpgradeRetirementReply> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Reviewed { preview: UpgradeRetirementPreview, review_digest: Sha256Digest }
+    let reviewed: Reviewed = input()?;
+    reviewed.preview.validate()?;
+    ensure!(reviewed.preview.identity()? == reviewed.review_digest, "legacy review changed");
+    let request = reviewed.preview.request;
+    ensure!(request.caller == crate::local_ipc::caller_identity()?, "legacy retirement caller differs from authenticated native caller");
+    let candidate;
+    {
+        let _lock = existing_install_lock(root)?;
+        let (control, identity) = installer(root)?;
+        ensure!(identity == request.installer_identity, "crossed retirement candidate");
+        let owner = CatalogUpgrade::resume_for_installer(&control, identity)?;
+        candidate = activation::legacy_retirement_candidate(root, &control, identity)?;
+        // Validate pending candidate BEFORE saving any authorization. Native Store
+        // then compares exact current preview, saved caller/key and all proofs.
+        owner.authorize_legacy_retirement(&request, reviewed.review_digest)?;
+    } // Release BOTH the catalog maintenance owner and installer lock before activation.
+    activate(root, &candidate).await?;
+    observation(root, &request)?.context("saved retirement outcome unavailable; check exact receipt")
+}
+pub(super) fn receipt(root: &Path) -> Result<serde_json::Value> {
+    let request: UpgradeRetirementRequest = input()?;
+    // Exact durable lookup only: no owner acquisition, source/data open, resume or replay.
+    Ok(serde_json::json!({"schema":1,"observation":observation(root, &request)?}))
+}
+pub(super) async fn resume(root: &Path) -> Result<UpgradeRetirementReply> {
+    let request: UpgradeRetirementRequest = input()?;
+    match observation(root, &request)? {
+        Some(UpgradeRetirementReply::Applied { .. }) => (),
+        Some(UpgradeRetirementReply::Authorized { .. }) => (),
+        _ => bail!("no exact accepted retirement to resume; authorization is never replayed"),
+    }
+    let candidate = {
+        let _lock = existing_install_lock(root)?;
+        let Some(pending) = activation::pending(root)? else {
+            return observation(root, &request)?.context("accepted retirement outcome unavailable");
+        };
+        let _ = pending;
+        let control = layout::saved_control(root)?;
+        activation::legacy_retirement_candidate(root, &control, request.installer_identity)?
+    };
+    activate(root, &candidate).await?;
+    observation(root, &request)?.context("accepted retirement outcome remains unavailable")
+}

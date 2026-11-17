@@ -1,0 +1,1768 @@
+--- /dev/null
++++ b/crates/airk-core/src/profile_families.rs
+@@ -0,0 +1,458 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Metadata-only family observations. These describe policy, never query counts
++//! or live-source equality. Filesystem and renderer observations belong to callers.
++use crate::{
++    extraction::{ExtractionProfile, IndexDetail},
++    identity::{RevisionToken, Sha256Digest},
++};
++use anyhow::{Result, ensure};
++use serde::{Deserialize, Serialize};
++use std::collections::BTreeMap;
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum Family {
++    SavedIdentity,
++    SavedText,
++    LexicalCandidates,
++    Vectors,
++    Declarations,
++    Imports,
++    WrittenCalls,
++    FrameworkStructure,
++    ManifestPackagesDependencies,
++    RequirementsDesignDecisions,
++    HeadingsSections,
++    StandaloneDatesBounds,
++    TablesRows,
++    MappedRegions,
++    DeclarationContinuity,
++    DocumentUnitContinuity,
++    ImportedAssertions,
++    OcrTextFacts,
++}
++impl Family {
++    pub const ALL: [Self; 18] = [
++        Self::SavedIdentity,
++        Self::SavedText,
++        Self::LexicalCandidates,
++        Self::Vectors,
++        Self::Declarations,
++        Self::Imports,
++        Self::WrittenCalls,
++        Self::FrameworkStructure,
++        Self::ManifestPackagesDependencies,
++        Self::RequirementsDesignDecisions,
++        Self::HeadingsSections,
++        Self::StandaloneDatesBounds,
++        Self::TablesRows,
++        Self::MappedRegions,
++        Self::DeclarationContinuity,
++        Self::DocumentUnitContinuity,
++        Self::ImportedAssertions,
++        Self::OcrTextFacts,
++    ];
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum Support {
++    Supported,
++    Unsupported,
++    Unknown,
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum Retention {
++    Retained,
++    Selected,
++    NotRetained,
++    Unknown,
++}
++
++/// Observe the actual renderer contract independently of the requested mode.
++/// A selected subset of fields is not an omitted family. Missing observations
++/// remain unknown, including the transport's historical absent-mode behavior.
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum ReplyInclusion {
++    Included,
++    Selected,
++    Omitted,
++    Unknown,
++}
++
++/// These are COLLECTION POLICY identities, never effective per-file profiles.
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct CollectionPolicyRevision {
++    pub detail: IndexDetail,
++    pub policy_digest: Sha256Digest,
++}
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum CollectionPolicyUnavailable {
++    SelectedScope,
++}
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
++pub enum CollectionPolicyObservation {
++    Known { revision: CollectionPolicyRevision },
++    Unavailable { reason: CollectionPolicyUnavailable },
++}
++impl From<CollectionPolicyRevision> for CollectionPolicyObservation {
++    fn from(revision: CollectionPolicyRevision) -> Self {
++        Self::Known { revision }
++    }
++}
++impl CollectionPolicyObservation {
++    pub fn known(self) -> Option<CollectionPolicyRevision> {
++        match self {
++            Self::Known { revision } => Some(revision),
++            Self::Unavailable { .. } => None,
++        }
++    }
++}
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct AppliedFileProfile {
++    pub adapter_id: String,
++    pub adapter_version: String,
++    pub effective_profile_digest: Sha256Digest,
++    pub legacy_detail: IndexDetail,
++    pub legacy_detail_was_absent: bool,
++}
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct FileRevision {
++    pub publication: RevisionToken,
++    pub path: String,
++    pub source_hash: Sha256Digest,
++}
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct FamilyObservation {
++    pub family: Family,
++    pub support: Support,
++    pub retention: Retention,
++    pub reply_inclusion: ReplyInclusion,
++}
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum ConfiguredFileProfileObservation {
++    UnknownSourceInputsMayBeRequired,
++}
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct ProfileFamilyReport {
++    pub schema: String,
++    pub basis: String,
++    pub file: FileRevision,
++    pub applied_file: AppliedFileProfile,
++    pub configured_collection_policy: CollectionPolicyObservation,
++    pub published_collection_policy: CollectionPolicyObservation,
++    pub pending_collection_reindex: Option<bool>,
++    pub configured_file_profile: ConfiguredFileProfileObservation,
++    pub retention_basis: String,
++    pub live_source_checked: bool,
++    pub families: Vec<FamilyObservation>,
++}
++fn retention(family: Family, detail: IndexDetail) -> Retention {
++    use Family::*;
++    use IndexDetail::*;
++    use Retention::*;
++    match family {
++        SavedIdentity | SavedText | LexicalCandidates => Retained,
++        Vectors | MappedRegions | ImportedAssertions | OcrTextFacts => Unknown,
++        DeclarationContinuity => match detail {
++            Essential | AgentLean => NotRetained,
++            Balanced | Detailed => Selected,
++        },
++        DocumentUnitContinuity => {
++            if detail == Detailed {
++                Selected
++            } else {
++                NotRetained
++            }
++        }
++        _ if detail == Essential => NotRetained,
++        ManifestPackagesDependencies | StandaloneDatesBounds if detail == AgentLean => NotRetained,
++        FrameworkStructure if detail == AgentLean => Selected,
++        _ => Retained,
++    }
++}
++
++/// Pure bounded metadata projection. Retention means policy eligibility, not
++/// observed presence/count/completeness. No callback or source reader is accepted.
++pub fn report(
++    file: FileRevision,
++    profile: &ExtractionProfile,
++    configured: CollectionPolicyObservation,
++    published: CollectionPolicyObservation,
++    support: &BTreeMap<Family, Support>,
++    reply: &BTreeMap<Family, ReplyInclusion>,
++) -> Result<ProfileFamilyReport> {
++    ensure!(
++        !file.path.is_empty() && file.path.len() <= 8192 && !file.path.contains('\0'),
++        "invalid family report file identity"
++    );
++    ensure!(
++        [&profile.adapter_id, &profile.adapter_version]
++            .into_iter()
++            .all(|value| !value.is_empty()
++                && value.len() <= 128
++                && value.bytes().all(|byte| byte.is_ascii_graphic())),
++        "invalid bounded adapter identity"
++    );
++    let detail = IndexDetail::from_profile(profile)?;
++    let value = ProfileFamilyReport {
++        schema: "airk.profile-families/1".into(),
++        basis: "metadata_only".into(),
++        file,
++        applied_file: AppliedFileProfile {
++            adapter_id: profile.adapter_id.clone(),
++            adapter_version: profile.adapter_version.clone(),
++            effective_profile_digest: profile.identity()?,
++            legacy_detail: detail,
++            legacy_detail_was_absent: !profile.options.contains_key("index_detail"),
++        },
++        configured_collection_policy: configured,
++        published_collection_policy: published,
++        pending_collection_reindex: configured
++            .known()
++            .zip(published.known())
++            .map(|(configured, published)| configured != published),
++        configured_file_profile: ConfiguredFileProfileObservation::UnknownSourceInputsMayBeRequired,
++        retention_basis: "policy_eligibility_not_record_presence_or_completeness".into(),
++        live_source_checked: false,
++        families: Family::ALL
++            .into_iter()
++            .map(|family| FamilyObservation {
++                family,
++                support: support.get(&family).copied().unwrap_or(Support::Unknown),
++                retention: retention(family, detail),
++                reply_inclusion: reply
++                    .get(&family)
++                    .copied()
++                    .unwrap_or(ReplyInclusion::Unknown),
++            })
++            .collect(),
++    };
++    ensure!(
++        serde_json::to_vec(&value)?.len() <= 32768,
++        "complete family report exceeds bound"
++    );
++    Ok(value)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::identity::Incarnation;
++    fn profile(detail: Option<IndexDetail>) -> ExtractionProfile {
++        ExtractionProfile {
++            contract_version: crate::extraction::EXTRACTION_CONTRACT_VERSION,
++            adapter_id: "fixture".into(),
++            adapter_version: "1".into(),
++            language: "text".into(),
++            dialect: None,
++            grammar_identity: None,
++            mapping_version: 1,
++            chunk_version: 1,
++            options: detail
++                .map(|detail| BTreeMap::from([("index_detail".into(), detail.as_str().into())]))
++                .unwrap_or_default(),
++            configuration_inputs: BTreeMap::new(),
++        }
++    }
++    fn file() -> FileRevision {
++        FileRevision {
++            publication: RevisionToken {
++                incarnation: Incarnation::from_bytes([1; 16]),
++                generation: 1,
++                revision: Sha256Digest::from_bytes([2; 32]),
++            },
++            path: "manifest.toml".into(),
++            source_hash: Sha256Digest::from_bytes([3; 32]),
++        }
++    }
++    fn row(value: &ProfileFamilyReport, family: Family) -> &FamilyObservation {
++        value
++            .families
++            .iter()
++            .find(|row| row.family == family)
++            .unwrap()
++    }
++    #[test]
++    fn all_legacy_details_keep_support_retention_and_actual_reply_independent() -> Result<()> {
++        for detail in [
++            IndexDetail::Essential,
++            IndexDetail::AgentLean,
++            IndexDetail::Balanced,
++            IndexDetail::Detailed,
++        ] {
++            for reply in [
++                None,
++                Some(ReplyInclusion::Selected),
++                Some(ReplyInclusion::Omitted),
++            ] {
++                let configured = CollectionPolicyRevision {
++                    detail: IndexDetail::Detailed,
++                    policy_digest: Sha256Digest::from_bytes([4; 32]),
++                };
++                let published = CollectionPolicyRevision {
++                    detail,
++                    policy_digest: Sha256Digest::from_bytes([5; 32]),
++                };
++                let mut replies = reply
++                    .map(|reply| BTreeMap::from([(Family::TablesRows, reply)]))
++                    .unwrap_or_default();
++                replies.insert(
++                    Family::ManifestPackagesDependencies,
++                    ReplyInclusion::Omitted,
++                );
++                let value = report(
++                    file(),
++                    &profile(Some(detail)),
++                    configured.into(),
++                    published.into(),
++                    &BTreeMap::from([
++                        (Family::TablesRows, Support::Supported),
++                        (Family::ManifestPackagesDependencies, Support::Supported),
++                    ]),
++                    &replies,
++                )?;
++                assert_eq!(value.families.len(), 18);
++                assert_eq!(
++                    value.applied_file.effective_profile_digest,
++                    profile(Some(detail)).identity()?
++                );
++                assert_eq!(
++                    value
++                        .configured_collection_policy
++                        .known()
++                        .unwrap()
++                        .policy_digest,
++                    configured.policy_digest
++                );
++                assert_eq!(value.pending_collection_reindex, Some(true));
++                assert_eq!(
++                    row(&value, Family::TablesRows).retention,
++                    if detail.retains_fact("table") {
++                        Retention::Retained
++                    } else {
++                        Retention::NotRetained
++                    }
++                );
++                assert_eq!(row(&value, Family::TablesRows).support, Support::Supported);
++                assert_eq!(
++                    row(&value, Family::TablesRows).reply_inclusion,
++                    reply.unwrap_or(ReplyInclusion::Unknown)
++                );
++                assert_eq!(
++                    row(&value, Family::ManifestPackagesDependencies).retention,
++                    if detail.retains_fact("package_dependency") {
++                        Retention::Retained
++                    } else {
++                        Retention::NotRetained
++                    }
++                );
++                assert_eq!(
++                    row(&value, Family::ManifestPackagesDependencies).support,
++                    Support::Supported
++                );
++                assert_eq!(
++                    row(&value, Family::ManifestPackagesDependencies).reply_inclusion,
++                    ReplyInclusion::Omitted
++                );
++                assert_eq!(
++                    row(&value, Family::StandaloneDatesBounds).retention,
++                    if detail.retains_fact("date") {
++                        Retention::Retained
++                    } else {
++                        Retention::NotRetained
++                    }
++                );
++                assert_eq!(
++                    row(&value, Family::DeclarationContinuity).retention,
++                    if detail.tracks_continuity() {
++                        Retention::Selected
++                    } else {
++                        Retention::NotRetained
++                    }
++                );
++                assert_eq!(
++                    row(&value, Family::DocumentUnitContinuity).retention,
++                    if detail == IndexDetail::Detailed {
++                        Retention::Selected
++                    } else {
++                        Retention::NotRetained
++                    }
++                );
++                for family in [
++                    Family::Vectors,
++                    Family::MappedRegions,
++                    Family::ImportedAssertions,
++                    Family::OcrTextFacts,
++                ] {
++                    assert_eq!(row(&value, family).support, Support::Unknown);
++                    assert_eq!(row(&value, family).retention, Retention::Unknown);
++                }
++            }
++        }
++        Ok(())
++    }
++    #[test]
++    fn missing_historical_detail_is_detailed_without_rewriting_profile_identity() -> Result<()> {
++        let profile = profile(None);
++        let policy = CollectionPolicyRevision {
++            detail: IndexDetail::AgentLean,
++            policy_digest: Sha256Digest::from_bytes([9; 32]),
++        };
++        let value = report(
++            file(),
++            &profile,
++            policy.into(),
++            policy.into(),
++            &BTreeMap::new(),
++            &BTreeMap::new(),
++        )?;
++        assert_eq!(value.applied_file.legacy_detail, IndexDetail::Detailed);
++        assert!(value.applied_file.legacy_detail_was_absent);
++        assert_eq!(
++            value.applied_file.effective_profile_digest,
++            profile.identity()?
++        );
++        assert_eq!(value.pending_collection_reindex, Some(false));
++        Ok(())
++    }
++    #[test]
++    fn unavailable_collection_policy_preserves_file_rows_without_inventing_pending_state()
++    -> Result<()> {
++        let profile = profile(Some(IndexDetail::AgentLean));
++        let unavailable = CollectionPolicyObservation::Unavailable {
++            reason: CollectionPolicyUnavailable::SelectedScope,
++        };
++        let known = CollectionPolicyRevision {
++            detail: IndexDetail::Detailed,
++            policy_digest: Sha256Digest::from_bytes([8; 32]),
++        };
++        let value = report(
++            file(),
++            &profile,
++            unavailable,
++            known.into(),
++            &BTreeMap::new(),
++            &BTreeMap::new(),
++        )?;
++        assert_eq!(value.pending_collection_reindex, None);
++        assert_eq!(value.configured_collection_policy, unavailable);
++        assert_eq!(
++            value.applied_file.effective_profile_digest,
++            profile.identity()?
++        );
++        assert_eq!(value.families.len(), 18);
++        Ok(())
++    }
++}
+--- a/crates/airk-core/src/lib.rs
++++ b/crates/airk-core/src/lib.rs
+@@ -33,6 +33,7 @@
+ pub mod mapped_binding;
+ pub mod model_objects;
+ pub mod native_reads;
++pub mod profile_families;
+ pub mod publication;
+ pub mod readiness;
+ pub mod references;
+--- a/crates/airk-kernel/src/lib.rs
++++ b/crates/airk-kernel/src/lib.rs
+@@ -21,6 +21,7 @@
+ mod execution;
+ pub mod extraction;
+ mod historical;
++mod profile_families;
+ pub use historical::{HistoryAvailability, HistoryAvailabilityRequest};
+ pub mod history_controls;
+ pub mod limits;
+@@ -186,6 +187,8 @@
+ 
+ #[derive(Serialize)]
+ pub struct FileInfo {
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub profile_families: Option<airk_core::profile_families::ProfileFamilyReport>,
+     pub publication: Option<airk_core::evidence::RevisionEnvelope>,
+     pub source: airk_store::roots::SourceLocation,
+     pub generation: u64,
+@@ -789,7 +792,18 @@
+     }
+ 
+     pub fn file_info(&self, path: &str) -> Result<FileInfo> {
+-        self.current_file_info(self.current_reader()?.as_ref(), path)
++        self.file_info_with_profile_families(path, false)
++    }
++    pub fn file_info_with_profile_families(
++        &self,
++        path: &str,
++        include_profile_families: bool,
++    ) -> Result<FileInfo> {
++        self.current_file_info_with_profile_families(
++            self.current_reader()?.as_ref(),
++            path,
++            include_profile_families,
++        )
+     }
+ 
+     pub fn relationships(
+--- a/crates/airk-kernel/src/current/runtime.rs
++++ b/crates/airk-kernel/src/current/runtime.rs
+@@ -511,6 +511,14 @@
+     }
+ 
+     pub(crate) fn current_file_info(&self, read: &CurrentRead, path: &str) -> Result<FileInfo> {
++        self.current_file_info_with_profile_families(read, path, false)
++    }
++    pub(crate) fn current_file_info_with_profile_families(
++        &self,
++        read: &CurrentRead,
++        path: &str,
++        include_profile_families: bool,
++    ) -> Result<FileInfo> {
+         let artifact = read.artifact(path)?.context("indexed file not found")?;
+         let retained = artifact
+             .retained
+@@ -537,7 +545,19 @@
+                     .indexed_lines
+             }
+         };
++        let profile_families = if include_profile_families {
++            Some(self.current_profile_families(
++                read,
++                path,
++                &artifact.content_hash,
++                profile,
++                &state.configuration,
++            )?)
++        } else {
++            None
++        };
+         Ok(FileInfo {
++            profile_families,
+             publication: Some(envelope(read)?),
+             source: airk_store::roots::source_location(
+                 &self.root_id(),
+--- a/crates/airk-kernel/src/current/conditional.rs
++++ b/crates/airk-kernel/src/current/conditional.rs
+@@ -139,6 +139,14 @@
+         path: &str,
+         options: &EvidenceReadOptions,
+     ) -> Result<ConditionalRead<FileInfo>> {
++        self.file_info_conditional_with_profile_families(path, options, false)
++    }
++    pub fn file_info_conditional_with_profile_families(
++        &self,
++        path: &str,
++        options: &EvidenceReadOptions,
++        include_profile_families: bool,
++    ) -> Result<ConditionalRead<FileInfo>> {
+         let pinned = self.current_reader()?;
+         let read = self.current_resolve(&pinned, path, options)?;
+         if read.resolved_path.is_none() {
+@@ -151,8 +159,19 @@
+             .resolved_path
+             .clone()
+             .context("resolved path missing")?;
+-        let payload = self.current_file_info(&pinned, &path)?;
+-        self.current_conditional(&pinned, read, options, "file_info/1", payload)
++        let payload =
++            self.current_file_info_with_profile_families(&pinned, &path, include_profile_families)?;
++        if include_profile_families {
++            self.current_conditional(
++                &pinned,
++                read,
++                options,
++                ("file_info/profile_families/1", true),
++                payload,
++            )
++        } else {
++            self.current_conditional(&pinned, read, options, "file_info/1", payload)
++        }
+     }
+ 
+     pub fn read_file_conditional(
+--- /dev/null
++++ b/crates/airk-kernel/src/profile_families.rs
+@@ -0,0 +1,368 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Per-file metadata projection; no source selection/extraction/producer executes.
++use crate::Kernel;
++use airk_core::{
++    extraction::ExtractionProfile,
++    profile_families::{
++        self, CollectionPolicyObservation, CollectionPolicyRevision, CollectionPolicyUnavailable,
++        Family, FileRevision, ProfileFamilyReport, ReplyInclusion, Support,
++    },
++};
++use airk_store::current::{CurrentRead, collection::CollectionConfiguration};
++use anyhow::Result;
++use std::collections::BTreeMap;
++impl Kernel {
++    pub(crate) fn current_profile_families(
++        &self,
++        read: &CurrentRead,
++        path: &str,
++        hash: &str,
++        profile: &ExtractionProfile,
++        configuration: &CollectionConfiguration,
++    ) -> Result<ProfileFamilyReport> {
++        let registry = airk_ingest::adapters::registry::AdapterRegistry::baseline();
++        // A permitted per-file report does not grant whole-index settings.
++        // Only this typed scope refusal becomes an unavailable observation;
++        // I/O/integrity/revocation errors retain their normal failure behavior.
++        let (configured, published) = match self.require_index_metadata(read) {
++            Ok(()) => {
++                let policy = match self.store.extraction_policy_bytes(&self.root_id())? {
++                    Some(bytes) => crate::extraction::ExtractionPolicy::parse(&bytes, &registry)?,
++                    None => crate::extraction::ExtractionPolicy {
++                        version: 3,
++                        detail: Some(configuration.index_detail),
++                        rules: vec![],
++                    },
++                };
++                (
++                    CollectionPolicyObservation::from(CollectionPolicyRevision {
++                        detail: policy.detail.unwrap_or_default(),
++                        policy_digest: crate::extraction::policy_digest(&policy)?,
++                    }),
++                    CollectionPolicyObservation::from(CollectionPolicyRevision {
++                        detail: configuration.index_detail,
++                        policy_digest: configuration.extraction_policy_digest,
++                    }),
++                )
++            }
++            Err(error) if error.is::<airk_core::scoped_reads::ScopeReadRefused>() => {
++                let unavailable = CollectionPolicyObservation::Unavailable {
++                    reason: CollectionPolicyUnavailable::SelectedScope,
++                };
++                (unavailable, unavailable)
++            }
++            Err(error) => return Err(error),
++        };
++        let mut support = BTreeMap::from([(Family::SavedIdentity, Support::Supported)]);
++        if let Some(descriptor) = registry
++            .get(&profile.adapter_id)
++            .filter(|descriptor| descriptor.profile.adapter_version == profile.adapter_version)
++        {
++            let observed = |value| {
++                if value {
++                    Support::Supported
++                } else {
++                    Support::Unsupported
++                }
++            };
++            support.insert(
++                Family::LexicalCandidates,
++                observed(descriptor.capabilities.lexical),
++            );
++            support.insert(
++                Family::Declarations,
++                observed(descriptor.capabilities.definitions),
++            );
++            support.insert(Family::Imports, observed(descriptor.capabilities.imports));
++            support.insert(
++                Family::WrittenCalls,
++                observed(descriptor.capabilities.call_candidates),
++            );
++        }
++        // FileInfo carries metadata/counts, never underlying facts/text/vectors.
++        // Final renderer identity projection is unobserved here; keep it unknown.
++        let reply = Family::ALL
++            .into_iter()
++            .filter(|family| *family != Family::SavedIdentity)
++            .map(|family| (family, ReplyInclusion::Omitted))
++            .collect();
++        profile_families::report(
++            FileRevision {
++                publication: crate::current::runtime::revision(read.token()?),
++                path: path.into(),
++                source_hash: hash.parse()?,
++            },
++            profile,
++            configured,
++            published,
++            &support,
++            &reply,
++        )
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use airk_core::{
++        evidence::{EvidenceReadOptions, EvidenceReadStatus},
++        extraction::IndexDetail,
++    };
++    use anyhow::Context;
++    #[test]
++    fn native_per_file_reports_preserve_applied_identity_after_config_change_and_source_loss()
++    -> Result<()> {
++        let temporary = tempfile::tempdir()?;
++        let base = temporary.path().canonicalize()?;
++        let root = base.join("source");
++        let data = base.join("data");
++        std::fs::create_dir(&root)?;
++        for (path, bytes) in [
++            ("code.rs", "pub fn retained() {}\n"),
++            (
++                "Cargo.toml",
++                "[package]\nname=\"fixture\"\nversion=\"0.1.0\"\n",
++            ),
++            (
++                "table.md",
++                "| key | value |\n| --- | --- |\n| one | two |\n",
++            ),
++            (
++                "requirements.md",
++                "# Requirements\nREQ-1: retained metadata must preserve identity.\n",
++            ),
++        ] {
++            std::fs::write(root.join(path), bytes)?;
++        }
++        let kernel = Kernel::open_service_collection(&root, Some(data), "families")?;
++        kernel.configure_vectors(false)?;
++        kernel.configure_index_detail(IndexDetail::AgentLean)?;
++        kernel.index_service_sources()?;
++        let pinned = kernel.current_reader()?;
++        let expected = pinned
++            .artifact("Cargo.toml")?
++            .context("manifest absent")?
++            .retained
++            .context("manifest retained metadata absent")?
++            .profile
++            .context("manifest profile absent")?
++            .identity()?;
++        let publication = crate::current::runtime::revision(pinned.token()?);
++        drop(pinned);
++        let legacy = kernel.file_info_conditional("Cargo.toml", &Default::default())?;
++        assert!(
++            serde_json::to_value(legacy.content.as_ref().unwrap())?
++                .get("profile_families")
++                .is_none()
++        );
++        let configured = kernel.configure_index_detail(IndexDetail::Detailed)?;
++        let quota = kernel.collection_quota()?;
++        let before = quota.status()?;
++        let mut profiles = std::collections::BTreeSet::new();
++        for path in ["code.rs", "Cargo.toml", "table.md", "requirements.md"] {
++            let info = kernel.file_info_with_profile_families(path, true)?;
++            let report = info.profile_families.context("opt-in report absent")?;
++            assert_eq!(report.file.publication, publication);
++            assert_eq!(report.applied_file.legacy_detail, IndexDetail::AgentLean);
++            assert_eq!(
++                report
++                    .configured_collection_policy
++                    .known()
++                    .unwrap()
++                    .policy_digest,
++                configured.digest
++            );
++            assert_eq!(
++                report.configured_collection_policy.known().unwrap().detail,
++                IndexDetail::Detailed
++            );
++            assert_eq!(report.pending_collection_reindex, Some(true));
++            assert_eq!(report.families.len(), 18);
++            assert!(!report.live_source_checked);
++            profiles.insert(report.applied_file.effective_profile_digest);
++        }
++        assert!(
++            profiles.len() >= 2,
++            "mixed adapters must retain independent file profiles"
++        );
++        let changed = kernel.file_info_conditional_with_profile_families(
++            "Cargo.toml",
++            &EvidenceReadOptions {
++                if_evidence: legacy.read.validator,
++                ..Default::default()
++            },
++            true,
++        )?;
++        assert_eq!(changed.read.status, EvidenceReadStatus::Content);
++        assert_eq!(
++            changed
++                .content
++                .as_ref()
++                .unwrap()
++                .profile_families
++                .as_ref()
++                .unwrap()
++                .applied_file
++                .effective_profile_digest,
++            expected
++        );
++        let unchanged = kernel.file_info_conditional_with_profile_families(
++            "Cargo.toml",
++            &EvidenceReadOptions {
++                if_evidence: changed.read.validator,
++                ..Default::default()
++            },
++            true,
++        )?;
++        assert_eq!(unchanged.read.status, EvidenceReadStatus::NotModified);
++        std::fs::rename(&root, base.join("unavailable-originals"))?;
++        let missing = kernel.file_info_conditional_with_profile_families(
++            "Cargo.toml",
++            &Default::default(),
++            true,
++        )?;
++        assert_eq!(
++            serde_json::to_value(missing.content)?,
++            serde_json::to_value(changed.content)?
++        );
++        let after = quota.status()?;
++        assert_eq!(before.used_bytes, after.used_bytes);
++        assert_eq!(before.reserved_bytes, after.reserved_bytes);
++        Ok(())
++    }
++
++    #[test]
++    fn authorized_partial_scope_report_skips_private_policy_bytes_and_keeps_file_identity()
++    -> Result<()> {
++        use airk_core::{
++            grant_provenance::GrantProvenance,
++            identity::{Incarnation, Sha256Digest},
++            index_catalog::*,
++            scoped_reads::{ScopeReadRefused, SourceDescriptor},
++        };
++        let temporary = tempfile::tempdir()?;
++        let base = temporary.path().canonicalize()?;
++        let root = base.join("source");
++        let data = base.join("data");
++        std::fs::create_dir_all(root.join("public"))?;
++        std::fs::write(root.join("public/one.rs"), "pub struct Authorized;\n")?;
++        std::fs::write(root.join("secret.rs"), "pub struct OutsideGrant;\n")?;
++        let kernel = Kernel::open_service_collection(&root, Some(data), "scoped-families")?;
++        kernel.configure_vectors(false)?;
++        kernel.index_service_sources()?;
++        let read = kernel.current_reader()?;
++        let token = crate::current::runtime::revision(read.token()?);
++        let artifact = read
++            .artifact("public/one.rs")?
++            .context("authorized artifact absent")?;
++        let expected = artifact
++            .retained
++            .as_ref()
++            .and_then(|value| value.profile.as_ref())
++            .context("profile absent")?
++            .identity()?;
++        let hash: Sha256Digest = artifact.content_hash.parse()?;
++        drop(read);
++        let project = QueryProjectId::from_identity(Incarnation::from_bytes([1; 16]));
++        let index = IndexId::from_identity(Incarnation::from_bytes([2; 16]));
++        let source = SourceRootId::from_identity(Incarnation::from_bytes([3; 16]));
++        let authority = crate::scoped_reads::ScopedReadAuthority {
++            schema: 1,
++            backing: airk_core::service::ProjectRegistration::new(
++                kernel.root_id(),
++                kernel.data_root.to_str().unwrap().into(),
++                kernel.collection.clone(),
++            )?
++            .binding,
++            index_id: index,
++            project_ids: vec![project],
++            provenance: GrantProvenance::UserReviewedProjectGrant,
++            grant: ReviewedGrant {
++                id: GrantId::from_identity(Incarnation::from_bytes([4; 16])),
++                host: Sha256Digest::from_bytes([5; 32]),
++                revision: CatalogRevision::INITIAL,
++                revoked: false,
++                memberships: vec![GrantedMembership {
++                    membership: Membership {
++                        project_id: project,
++                        index_id: index,
++                        revision: CatalogRevision::INITIAL,
++                        scope: vec![ScopeAtom {
++                            source_root_id: source,
++                            kind: PathScope::Exact,
++                            path: "public/one.rs".into(),
++                        }],
++                    },
++                    source_revision: CatalogRevision::INITIAL,
++                    policy_epoch: 0,
++                    policy_digest: None,
++                }],
++            },
++            sources: vec![SourceDescriptor {
++                source_root_id: source,
++                original_root: kernel.root_id(),
++            }],
++        };
++        let scoped = kernel.with_scoped_reads(authority)?;
++        // Any attempt to read private collection settings now fails, rather
++        // than returning plausible metadata. The permitted per-file path must
++        // never enter that branch under a partial Project grant.
++        std::fs::write(
++            kernel.store.directory().join("extraction-policy.json"),
++            b"malformed private policy metadata",
++        )?;
++        let full_error = kernel
++            .file_info_with_profile_families("public/one.rs", true)
++            .err()
++            .context("real private metadata error was downgraded")?;
++        assert!(!full_error.is::<ScopeReadRefused>());
++        std::fs::rename(&root, base.join("unavailable-originals"))?;
++        let options = EvidenceReadOptions {
++            revision: Some(token),
++            known_hash: Some(hash),
++            ..Default::default()
++        };
++        let basic = scoped.file_info_conditional("public/one.rs", &options)?;
++        let result = scoped.file_info_conditional_with_profile_families(
++            "public/one.rs",
++            &EvidenceReadOptions {
++                if_evidence: basic.read.validator,
++                ..options.clone()
++            },
++            true,
++        )?;
++        assert_eq!(result.read.status, EvidenceReadStatus::Content);
++        let report = result
++            .content
++            .as_ref()
++            .and_then(|value| value.profile_families.as_ref())
++            .context("authorized report suppressed")?;
++        let unavailable = CollectionPolicyObservation::Unavailable {
++            reason: CollectionPolicyUnavailable::SelectedScope,
++        };
++        assert_eq!(report.configured_collection_policy, unavailable);
++        assert_eq!(report.published_collection_policy, unavailable);
++        assert_eq!(report.pending_collection_reindex, None);
++        assert_eq!(report.applied_file.effective_profile_digest, expected);
++        assert_eq!(report.file.publication, token);
++        assert_eq!(report.file.source_hash, hash);
++        assert_eq!(report.file.path, "public/one.rs");
++        assert_eq!(report.families.len(), 18);
++        assert!(!report.live_source_checked);
++        let repeated = scoped.file_info_conditional_with_profile_families(
++            "public/one.rs",
++            &EvidenceReadOptions {
++                if_evidence: result.read.validator,
++                ..options
++            },
++            true,
++        )?;
++        assert_eq!(repeated.read.status, EvidenceReadStatus::NotModified);
++        let error = scoped
++            .file_info_with_profile_families("secret.rs", true)
++            .err()
++            .context("outside-grant file was reported")?;
++        assert!(error.is::<ScopeReadRefused>());
++        Ok(())
++    }
++}
+--- a/crates/airk-core/src/native_reads.rs
++++ b/crates/airk-core/src/native_reads.rs
+@@ -92,3 +92,10 @@
+     QuotaPolicy,
+     QuotaStatus,
+ }
++
++/// Shared input contract for the existing canonical FileInfo tool route. NativeRead
++/// remains the settings/admin channel; there is no parallel FileInfo endpoint.
++pub const FILE_INFO_PROFILE_FAMILIES_HELP: &str = "Include eighteen metadata-only effective profile family observations for this file. Collection policy is unavailable under partial Project scopes. Reporting adds no source reads or profile migration; existing verification remains independent.";
++pub fn file_info_profile_families_schema() -> serde_json::Value {
++    serde_json::json!({"type":"boolean","default":false,"description":FILE_INFO_PROFILE_FAMILIES_HELP})
++}
+--- a/crates/airk-mcp/src/lib.rs
++++ b/crates/airk-mcp/src/lib.rs
+@@ -304,9 +304,17 @@
+     8192
+ }
+ 
++fn file_info_profile_families_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
++    serde_json::from_value(airk_core::native_reads::file_info_profile_families_schema())
++        .expect("static file-info family input")
++}
++
+ #[derive(Deserialize, schemars::JsonSchema)]
+ #[serde(deny_unknown_fields)]
+ pub struct PathArgs {
++    #[serde(default)]
++    #[schemars(schema_with = "file_info_profile_families_schema")]
++    pub include_profile_families: bool,
+     #[serde(flatten)]
+     pub verification: response::VerificationArgs,
+     #[serde(flatten)]
+@@ -997,7 +1005,13 @@
+             UsageOperation::FileInfo,
+             args.response,
+             args.verification.controls(),
+-            move |kernel| kernel.file_info_conditional(&args.path, &args.evidence.options()?),
++            move |kernel| {
++                kernel.file_info_conditional_with_profile_families(
++                    &args.path,
++                    &args.evidence.options()?,
++                    args.include_profile_families,
++                )
++            },
+         )
+         .await
+     }
+@@ -1307,6 +1321,7 @@
+             "changes": {"observed_indexed_changes":false,"remembered_evidence_validation":true,"expired_baseline":"baseline_unavailable","selectors":64,"selector_bytes":32768,"max_payload_bytes":65536,"exact_revision_tokens":true,"live_source_verified":false,"symbol_continuity":"adapter-specific conservative coverage","document_continuity":"adapter-specific conservative coverage"},
+             "change_retention": {"generations":64,"age_seconds":86400,"max_records":10000,"max_bytes":16777216,"source_history":false,"validation_current":"index-current","coverage":"independent floors; whole publication groups expire under generation, age or budget pressure"},
+             "conditional_reads": {"tools":["airk_file_info","airk_read_file","airk_outline","airk_context"],"validator":"representation-specific if_evidence","follow_moves_default":false,"move_basis":"unique compatible exact content; not filesystem intent"},
++            "file_info_profile_families":{"input":"include_profile_families","default":false,"schema":"airk.profile-families/1","families":airk_core::profile_families::Family::ALL,"basis":"metadata_only","retention":"policy eligibility, not observed presence or completeness","collection_policy":"typed unavailable under partial Project scope","configured_file_profile":"unknown when fresh source/header selection would be required","live_source_checked":false},
+             "code": ["rust","python","javascript/jsx","typescript/tsx","go","java","c","cpp","csharp","ruby","php","bash","powershell","lua","swift","kotlin","sql"],
+             "structured": ["markdown","json","yaml","toml","html","css","xml","svg","csv","tsv","ini","dockerfile"],
+             "documents": ["UTF-8 text","text-layer PDF","DOCX main-body paragraphs/tables with original row locations","XLSX worksheet cells and row facts","PPTX slide text in presentation order"],
+--- a/crates/airk-cli/src/main.rs
++++ b/crates/airk-cli/src/main.rs
+@@ -446,6 +446,8 @@
+     },
+     /// Show what the index knows about one file: language, size, extraction method and parse status.
+     Info {
++        #[arg(long,help=airk_core::native_reads::FILE_INFO_PROFILE_FAMILIES_HELP)]
++        include_profile_families: bool,
+         #[command(flatten)]
+         verification: VerificationOptions,
+         #[command(flatten)]
+@@ -2132,9 +2134,16 @@
+         ),
+         Command::Info {
+             path,
++            include_profile_families,
+             evidence: options,
+             ..
+-        } => ("airk_file_info", evidence(json!({"path":path}), options)?),
++        } => {
++            let mut arguments = json!({"path":path});
++            if include_profile_families {
++                arguments["include_profile_families"] = json!(true);
++            }
++            ("airk_file_info", evidence(arguments, options)?)
++        }
+         Command::Outline {
+             cursor,
+             compact,
+@@ -2920,4 +2929,23 @@
+             "commands without help text: {missing:?}"
+         );
+     }
+-}
++
++    #[test]
++    fn info_family_flag_forwards_only_explicit_opt_in() -> Result<()> {
++        for enabled in [false, true] {
++            let mut arguments = vec!["airk", "info", "api/policy.md"];
++            if enabled {
++                arguments.push("--include-profile-families");
++            }
++            let cli = Cli::try_parse_from(arguments)?;
++            let (tool, args) = query(cli.command)?;
++            assert_eq!(tool, "airk_file_info");
++            if enabled {
++                assert_eq!(args["include_profile_families"], true);
++            } else {
++                assert!(args.get("include_profile_families").is_none());
++            }
++        }
++        Ok(())
++    }
++}
+--- a/crates/airk-kernel/src/workbench.rs
++++ b/crates/airk-kernel/src/workbench.rs
+@@ -1316,6 +1316,7 @@
+             "max_bytes",
+         ],
+         "file_info" => &[
++            "include_profile_families",
+             "if_evidence",
+             "artifact_id",
+             "follow_moves",
+@@ -1399,6 +1400,7 @@
+ 
+ fn argument_schema(key: &str) -> Value {
+     match key {
++        "include_profile_families" => airk_core::native_reads::file_info_profile_families_schema(),
+         "selection" | "situation" => {
+             airk_core::combined_reads::query_scope::schema()["properties"][key].clone()
+         }
+@@ -1592,6 +1594,7 @@
+         } else if matches!(
+             key.as_str(),
+             "include_count"
++                | "include_profile_families"
+                 | "include_files"
+                 | "compact"
+                 | "semantic"
+@@ -2879,9 +2882,15 @@
+                 max,
+                 &evidence,
+             )?)?,
+-            "file_info" => {
+-                serde_json::to_value(self.file_info_conditional(string(args, "path")?, &evidence)?)?
+-            }
++            "file_info" => serde_json::to_value(
++                self.file_info_conditional_with_profile_families(
++                    string(args, "path")?,
++                    &evidence,
++                    args.get("include_profile_families")
++                        .and_then(Value::as_bool)
++                        .unwrap_or(false),
++                )?,
++            )?,
+             "outline" => serde_json::to_value(self.outline_conditional_page(
+                 string(args, "path")?,
+                 limit,
+--- a/crates/airk-mcp/src/response.rs
++++ b/crates/airk-mcp/src/response.rs
+@@ -748,4 +748,21 @@
+         Session::default().display(&mut full, ResponseMode::Full, false);
+         assert_eq!(full, original);
+     }
+-}
++
++    #[test]
++    fn conditional_file_family_rows_and_unknown_fields_survive_display_modes() {
++        let report = serde_json::json!({"schema":"airk.profile-families/1","families":airk_core::profile_families::Family::ALL.map(|family|serde_json::json!({"family":family,"support":"unknown","retention":"selected","reply_inclusion":"omitted"})),"future_native_field":{"complete":true}});
++        for mode in [ResponseMode::Terse, ResponseMode::Full] {
++            for detail in [
++                None,
++                Some(airk_core::reply::ReplyDetail::Lean),
++                Some(airk_core::reply::ReplyDetail::Rich),
++            ] {
++                let mut value = serde_json::json!({"read":{"status":"content"},"content":{"path":"api/policy.md","profile_families":report}});
++                airk_core::reply::ReplyDetail::annotate(&mut value, detail);
++                Session::default().display(&mut value, mode, false);
++                assert_eq!(value["content"]["profile_families"], report);
++            }
++        }
++    }
++}
+--- a/crates/airk-cli/tests/combined_reads.rs
++++ b/crates/airk-cli/tests/combined_reads.rs
+@@ -2702,3 +2702,6 @@
+     }
+     Ok(())
+ }
++
++#[path = "combined_reads/profile_families.rs"]
++mod profile_families;
+--- /dev/null
++++ b/crates/airk-cli/tests/combined_reads/profile_families.rs
+@@ -0,0 +1,327 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Real scoped workers, native frontend, CLI call/console/info, and stdio MCP.
++use super::*;
++
++async fn cli_catalog(f: &Fixture) -> Result<Value> {
++    let mut command = Command::new(&f.candidate);
++    command
++        .arg("--combined-session")
++        .arg(serde_json::to_string(&f.session)?)
++        .arg("--service-runtime-dir")
++        .arg(&f.control)
++        .args(["tools", "list", "--json"]);
++    let output = tokio::task::spawn_blocking(move || read_retry::output(&mut command)).await??;
++    ensure!(
++        output.status.success(),
++        "native CLI catalog failed: {}",
++        String::from_utf8_lossy(&output.stderr)
++    );
++    Ok(serde_json::from_slice(&output.stdout)?)
++}
++async fn console(f: &Fixture, args: &Value) -> Result<Value> {
++    let input = f.owner.path().join("profile-families-console.in");
++    let stdout = f.owner.path().join("profile-families-console.out");
++    let stderr = f.owner.path().join("profile-families-console.err");
++    fs::write(&input, format!("call airk_file_info {args}\nexit\n"))?;
++    let mut command = Command::new(&f.candidate);
++    command
++        .arg("--combined-session")
++        .arg(serde_json::to_string(&f.session)?)
++        .arg("--service-runtime-dir")
++        .arg(&f.control)
++        .args(["tools", "shell"])
++        .stdin(fs::File::open(input)?)
++        .stdout(
++            fs::OpenOptions::new()
++                .create_new(true)
++                .write(true)
++                .open(&stdout)?,
++        )
++        .stderr(
++            fs::OpenOptions::new()
++                .create_new(true)
++                .write(true)
++                .open(&stderr)?,
++        );
++    let mut process = OwnedProcess::start(command)?;
++    let deadline = Instant::now() + Duration::from_secs(60);
++    loop {
++        if let Some(status) = process.child.try_wait()? {
++            ensure!(status.success(), "console failed");
++            break;
++        }
++        ensure!(Instant::now() < deadline, "native console timeout");
++        tokio::time::sleep(Duration::from_millis(25)).await;
++    }
++    drop(process);
++    ensure!(
++        fs::metadata(&stdout)?.len() <= 16 << 20 && fs::metadata(&stderr)?.len() <= 16 << 20,
++        "console diagnostics exceed bound"
++    );
++    ensure!(
++        fs::read(&stderr)?.is_empty(),
++        "console tool failed: {}",
++        fs::read_to_string(&stderr)?
++    );
++    let text = fs::read_to_string(stdout)?;
++    let offset = text.find("airk> {").context("console result absent")? + "airk> ".len();
++    serde_json::Deserializer::from_str(&text[offset..])
++        .into_iter::<Value>()
++        .next()
++        .context("console JSON result absent")?
++        .map_err(Into::into)
++}
++async fn convenience(f: &Fixture) -> Result<Value> {
++    let mut command = Command::new(&f.candidate);
++    command
++        .arg("--combined-session")
++        .arg(serde_json::to_string(&f.session)?)
++        .arg("--service-runtime-dir")
++        .arg(&f.control)
++        .arg("--project-ids")
++        .arg(f.projects[0].to_string())
++        .arg("--index-ids")
++        .arg(f.indexes[0].to_string())
++        .args([
++            "--member-availability",
++            "require",
++            "info",
++            "api/policy.md",
++            "--include-profile-families",
++            "--verification",
++            "off",
++            "--reply-detail",
++            "rich",
++        ])
++        .env("AIRK_MCP_RESPONSE_MODE", "full");
++    let output = tokio::task::spawn_blocking(move || read_retry::output(&mut command)).await??;
++    ensure!(
++        output.status.success(),
++        "native convenience info failed: {}",
++        String::from_utf8_lossy(&output.stderr)
++    );
++    Ok(serde_json::from_slice(&output.stdout)?)
++}
++
++#[tokio::test]
++async fn opted_file_family_report_keeps_full_native_cli_console_mcp_and_input_catalog_parity()
++-> Result<()> {
++    let mut f = Fixture::new(true)?;
++    f.session.project_ids = f.projects.clone();
++    let _service = f.start().await?;
++    let expected_schema = airk_core::native_reads::file_info_profile_families_schema();
++    let catalogue = cli_catalog(&f).await?;
++    let cli_info = catalogue["tools"]
++        .as_array()
++        .context("CLI tool catalog absent")?
++        .iter()
++        .find(|tool| tool["name"] == "airk_file_info")
++        .context("CLI FileInfo absent")?;
++    assert_eq!(
++        cli_info["inputSchema"]["properties"]["include_profile_families"],
++        expected_schema
++    );
++    assert_eq!(
++        airk_kernel::workbench::operation_catalog()["operations"]["file_info"]["properties"]["include_profile_families"],
++        expected_schema
++    );
++    let mut report_identity = None;
++    for mode in ["full", "terse"] {
++        for detail in [None, Some("lean"), Some("rich")] {
++            // Fresh response sessions avoid sharing omission observations across
++            // transports; actual payload/provenance/scope fields remain intact.
++            let backend =
++                airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
++            let mut mcp = McpSession::start(&f)?;
++            let catalog = mcp.request(2, "tools/list", json!({}))?;
++            let public = catalog["result"]["tools"]
++                .as_array()
++                .context("MCP tool catalog absent")?
++                .iter()
++                .find(|tool| tool["name"] == "file_info")
++                .context("MCP FileInfo absent")?;
++            let native = serde_json::to_value(
++                backend
++                    .catalog()
++                    .into_iter()
++                    .find(|tool| tool.name == "airk_file_info")
++                    .context("native FileInfo absent")?,
++            )?;
++            assert_eq!(
++                public["inputSchema"]["properties"]["include_profile_families"],
++                expected_schema
++            );
++            assert_eq!(
++                native["inputSchema"]["properties"]["include_profile_families"],
++                expected_schema
++            );
++            assert_eq!(cli_info["inputSchema"], native["inputSchema"]);
++            let native_keys = native["inputSchema"]["properties"]
++                .as_object()
++                .unwrap()
++                .keys()
++                .collect::<std::collections::BTreeSet<_>>();
++            let public_keys = public["inputSchema"]["properties"]
++                .as_object()
++                .unwrap()
++                .keys()
++                .collect::<std::collections::BTreeSet<_>>();
++            assert_eq!(
++                native_keys, public_keys,
++                "aliases must expose the same complete input inventory"
++            );
++            let mut arguments = json!({"path":"api/policy.md","include_profile_families":true,"project_ids":[f.projects[0]],"index_ids":[f.indexes[0]],"member_availability":"require","verification":"off","response_mode":mode});
++            if let Some(detail) = detail {
++                arguments["reply_detail"] = json!(detail);
++            }
++            let native = native_read(backend.as_ref(), "airk_file_info", &arguments).await?;
++            let cli = f.cli("airk_file_info", &arguments).await?;
++            let wire = mcp.call(3, "file_info", arguments.clone())?;
++            let native = body(&native)?;
++            let cli = body(&cli)?;
++            let wire = body(&wire["result"])?;
++            assert_parity("complete opted file-info CLI result", &native, &cli)?;
++            assert_parity("complete opted file-info MCP alias result", &native, &wire)?;
++            let member = native["members"]
++                .as_array()
++                .and_then(|members| members.first())
++                .context("positive selected member absent")?;
++            assert_eq!(member["outcome"], "complete");
++            assert_eq!(member["is_error"], false);
++            let result = member_body(&native, member)?;
++            let report = &result["content"]["profile_families"];
++            assert_eq!(
++                report["families"]
++                    .as_array()
++                    .context("family rows absent")?
++                    .len(),
++                18
++            );
++            assert_eq!(
++                report["configured_collection_policy"]["state"],
++                "unavailable"
++            );
++            assert_eq!(
++                report["configured_collection_policy"]["reason"],
++                "selected_scope"
++            );
++            assert_eq!(
++                report["published_collection_policy"]["state"],
++                "unavailable"
++            );
++            assert!(report["pending_collection_reindex"].is_null());
++            assert_eq!(
++                report["file"]["publication"],
++                result["content"]["publication"]["token"]
++            );
++            assert_eq!(report["file"]["path"], "api/policy.md");
++            assert_eq!(report["live_source_checked"], false);
++            if let Some(expected) = &report_identity {
++                assert_eq!(report, expected);
++            } else {
++                report_identity = Some(report.clone());
++            }
++            if mode == "full" && detail == Some("rich") {
++                let console = console(&f, &arguments).await?;
++                assert_parity(
++                    "complete actual tools console file-info",
++                    &native,
++                    &body(&console)?,
++                )?;
++                assert_parity(
++                    "complete convenience info family report",
++                    &native,
++                    &body(&convenience(&f).await?)?,
++                )?;
++            }
++            drop(mcp);
++            backend.close();
++            backend.shutdown().await?;
++        }
++    }
++    // Absent/false preserves the exact legacy conditional representation key.
++    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
++    let base_args = json!({"path":"api/policy.md","project_ids":[f.projects[0]],"index_ids":[f.indexes[0]],"member_availability":"require","verification":"off","response_mode":"full"});
++    let legacy = body(&native_read(backend.as_ref(), "airk_file_info", &base_args).await?)?;
++    let mut explicit_false = base_args.clone();
++    explicit_false["include_profile_families"] = json!(false);
++    let explicit_false =
++        body(&native_read(backend.as_ref(), "airk_file_info", &explicit_false).await?)?;
++    let legacy = member_body(&legacy, &legacy["members"][0])?;
++    let explicit_false = member_body(&explicit_false, &explicit_false["members"][0])?;
++    assert!(legacy["content"].get("profile_families").is_none());
++    assert!(explicit_false["content"].get("profile_families").is_none());
++    assert_eq!(
++        legacy["read"]["validator"],
++        explicit_false["read"]["validator"]
++    );
++    let mut conditional = base_args.clone();
++    conditional["include_profile_families"] = json!(true);
++    conditional["if_evidence"] = legacy["read"]["validator"].clone();
++    let mut conditional_mcp = McpSession::start(&f)?;
++    let native = body(&native_read(backend.as_ref(), "airk_file_info", &conditional).await?)?;
++    let cli = body(&f.cli("airk_file_info", &conditional).await?)?;
++    let wire = conditional_mcp.call(3, "file_info", conditional.clone())?;
++    assert_parity("opt-in conditional CLI representation", &native, &cli)?;
++    assert_parity(
++        "opt-in conditional MCP representation",
++        &native,
++        &body(&wire["result"])?,
++    )?;
++    let result = member_body(&native, &native["members"][0])?;
++    assert_eq!(
++        result["read"]["status"], "content",
++        "legacy validator suppressed the requested family representation"
++    );
++    conditional["if_evidence"] = result["read"]["validator"].clone();
++    let native = body(&native_read(backend.as_ref(), "airk_file_info", &conditional).await?)?;
++    let cli = body(&f.cli("airk_file_info", &conditional).await?)?;
++    let wire = conditional_mcp.call(4, "file_info", conditional)?;
++    assert_parity("unchanged conditional CLI representation", &native, &cli)?;
++    assert_parity(
++        "unchanged conditional MCP representation",
++        &native,
++        &body(&wire["result"])?,
++    )?;
++    let result = member_body(&native, &native["members"][0])?;
++    assert_eq!(result["read"]["status"], "not_modified");
++    drop(conditional_mcp);
++    backend.close();
++    backend.shutdown().await?;
++    // The full-root participant transports the known configured/published
++    // policy observations as well; selected-scope unknowns must not become a
++    // permanently reduced response contract for every native caller.
++    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
++    let mut mcp = McpSession::start(&f)?;
++    let full_args = json!({"path":"api/policy.md","include_profile_families":true,"project_ids":[f.projects[2]],"index_ids":[f.indexes[2]],"member_availability":"require","verification":"off","response_mode":"full","reply_detail":"rich"});
++    let native = body(&native_read(backend.as_ref(), "airk_file_info", &full_args).await?)?;
++    let cli = body(&f.cli("airk_file_info", &full_args).await?)?;
++    let wire = mcp.call(3, "file_info", full_args.clone())?;
++    assert_parity("known collection policy CLI FileInfo", &native, &cli)?;
++    assert_parity(
++        "known collection policy MCP FileInfo",
++        &native,
++        &body(&wire["result"])?,
++    )?;
++    let result = member_body(&native, &native["members"][0])?;
++    assert_eq!(
++        result["content"]["profile_families"]["configured_collection_policy"]["state"],
++        "known"
++    );
++    assert_eq!(
++        result["content"]["profile_families"]["published_collection_policy"]["state"],
++        "known"
++    );
++    let mut invalid = full_args;
++    invalid["include_profile_families"] = json!("true");
++    let refused = mcp.call(4, "file_info", invalid)?;
++    assert!(
++        refused.get("error").is_some() || refused["result"]["isError"] == true,
++        "nonboolean opt-in accepted: {refused}"
++    );
++    drop(mcp);
++    backend.close();
++    backend.shutdown().await?;
++    f.assert_sources_unchanged()?;
++    Ok(())
++}
+--- a/packages/vscode/src/workbenchContracts.ts
++++ b/packages/vscode/src/workbenchContracts.ts
+@@ -89,7 +89,7 @@
+     name:string;label:string;type:'string'|'integer'|'boolean'|'json';required:boolean;
+     values?:string[];description?:string;defaultValue?:string|number|boolean;minimum?:number;maximum?:number;minLength?:number;maxLength?:number;
+ }
+-const fieldLabels:Record<string,string>={project_ids:'Project IDs (JSON array)',index_ids:'Index subset (JSON array)',member_availability:'Member availability',path_prefix:'Path prefix',exclude_path_prefix:'Exclude path prefix',evidence_kind:'Evidence type',name_match:'Name matching',reply_detail:'Reply detail',verification:'Saved-source verification',verification_max_sources:'Maximum sources to check',verification_max_bytes:'Raw-source byte budget',verification_deadline_ms:'Verification deadline (ms)',compact:'Compact results',include_count:'Show count precision',include_files:'Summarize files',max_bytes:'Response byte budget'};
++const fieldLabels:Record<string,string>={project_ids:'Project IDs (JSON array)',index_ids:'Index subset (JSON array)',member_availability:'Member availability',path_prefix:'Path prefix',exclude_path_prefix:'Exclude path prefix',evidence_kind:'Evidence type',name_match:'Name matching',reply_detail:'Reply detail',verification:'Saved-source verification',verification_max_sources:'Maximum sources to check',verification_max_bytes:'Raw-source byte budget',verification_deadline_ms:'Verification deadline (ms)',compact:'Compact results',include_profile_families:'Include effective profile families',include_count:'Show count precision',include_files:'Summarize files',max_bytes:'Response byte budget'};
+ /** Resolve only bundled local schema alternatives; no remote schema loading. */
+ function fieldSchema(raw:unknown,root:Value,depth=0):Value {
+     const schema=object(raw);if(depth>4)return {};
+--- a/packages/vscode/src/workbenchRender.ts
++++ b/packages/vscode/src/workbenchRender.ts
+@@ -48,6 +48,7 @@
+     replyDetail?:'lean'|'rich';
+     guidance?:Value;
+     readGuidance?:Value;
++    profileFamilies?:Value;
+     recommendations?:Value;
+     sourceVerification?:Value;
+     execution?:Value;semanticReadiness?:Value;discoveryReadiness?:Value;readError?:Value;scopeObservation?:Value;
+@@ -120,6 +121,7 @@
+         reply_detail:['lean','rich'].includes(String(source.reply_detail))?source.reply_detail:undefined,
+         guidance:guidanceMetadata(source.guidance??evidence.guidance),
+         read_guidance:Object.keys(object(source.read_guidance)).length?source.read_guidance:undefined,
++        profile_families:Object.keys(object(source.profile_families)).length?source.profile_families:undefined,
+         recommendations:source.schema==='airk.recommendations/1'?source:undefined,
+         source_verification:nativeVerification(source.source_verification),
+         execution:source.execution??evidence.execution,
+@@ -150,6 +152,7 @@
+             ...(metadata.reply_detail==='lean'||metadata.reply_detail==='rich'?{replyDetail:metadata.reply_detail}:{}),
+             ...(metadata.guidance?{guidance:object(metadata.guidance)}:{}),
+             ...(metadata.read_guidance?{readGuidance:object(metadata.read_guidance)}:{}),
++            ...(metadata.profile_families?{profileFamilies:object(metadata.profile_families)}:{}),
+             ...(metadata.recommendations?{recommendations:object(metadata.recommendations)}:{}),
+             ...(metadata.source_verification?{sourceVerification:object(metadata.source_verification)}:{}),
+             ...(Object.keys(object(metadata.execution)).length?{execution:object(metadata.execution)}:{}),
+@@ -303,7 +306,7 @@
+         // These observations qualify the selected evidence's original request,
+         // not merely its saved bytes. Retain complete native objects, including
+         // unknown future fields, without deriving a fresh availability claim.
+-        for(const key of ['execution','semantic_readiness','discovery_readiness','error','requested_mode','publication','read_guidance','scope_observation']){
++        for(const key of ['execution','semantic_readiness','discovery_readiness','error','requested_mode','publication','read_guidance','profile_families','scope_observation']){
+             if(metadata[key]!==undefined)qualification[key]=metadata[key];
+         }
+         return Object.keys(qualification).length?[{step:report.id,tool:typeof report.tool==='string'?report.tool:'',scope:'original_source_request',...qualification}]:[];
+--- a/packages/vscode/src/workbenchWebview/main.tsx
++++ b/packages/vscode/src/workbenchWebview/main.tsx
+@@ -64,6 +64,7 @@
+         {(step.semanticReadiness||step.discoveryReadiness)&&<details><summary>Indexed coverage observations</summary><p class="note">These observations describe the retained index and are independent of this search's execution outcome.</p><pre>{canonical({...(step.semanticReadiness?{semantic_readiness:step.semanticReadiness}:{}),...(step.discoveryReadiness?{discovery_readiness:step.discoveryReadiness}:{})})}</pre></details>}
+         {step.replyDetail&&<p class="note">Reply detail: {step.replyDetail==='lean'?'Lean':'Rich'}</p>}
+         {step.readGuidance&&<details><summary>Guidance vocabulary and limits</summary><pre>{canonical(step.readGuidance)}</pre></details>}
++        {step.profileFamilies&&<details open><summary>Effective profile families (metadata only)</summary><p class="note">Support, retention eligibility and reply inclusion are separate observations. Unavailable collection settings and unknown pending state remain unknown. This report does not establish fact counts, completeness or live-source equality.</p><pre>{canonical(step.profileFamilies)}</pre></details>}
+         {step.recommendations&&<details open><summary>Recommendations and scope instructions</summary><pre>{canonical(step.recommendations)}</pre></details>}
+         {step.guidance&&<details open><summary>Evidence guidance</summary><ul>{(Array.isArray(step.guidance.observations)?step.guidance.observations:[]).map((raw,i)=>{const row=object(raw);return <li key={i}><strong>{String(row.reason).replaceAll('_',' ')} ({String(row.subject).replaceAll('_',' ')}): </strong>{String(row.message)} <small>Next read: {String(row.next_read).replaceAll('_',' ')}. Basis: {String(row.basis)}.</small></li>;})}</ul>{step.guidance.truncated===true&&<p class="note">Additional guidance was omitted. Original status and coverage remain in the full response.</p>}<p class="note">Suggestions do not run tools or change indexing. Keep the original authorized scope.</p></details>}
+         {!step.canFollow&&(step.definitions.length>0||step.suggestions.length>0)&&<p class="note">Re-run this investigation to enable follow-up actions from completed, publication-matched evidence.</p>}
+--- a/packages/vscode/src/test/workbenchClientLifetime.test.ts
++++ b/packages/vscode/src/test/workbenchClientLifetime.test.ts
+@@ -43,7 +43,7 @@
+         cancel():void{this.canceled++;}
+         dispose():void{this.disposed++;}
+     }
+-    const stub={EventEmitter:Emitter,ViewColumn:{Active:1},workspace:{
++    const stub={env:{clipboard:{writeText:async(value:string)=>{exports.push(Buffer.from(value));}}},EventEmitter:Emitter,ViewColumn:{Active:1},workspace:{
+         getConfiguration:()=>({get:(_key:string,fallback:unknown)=>fallback,inspect:()=>({globalValue:native})}),
+         onDidChangeConfiguration:configuration.event,fs:{writeFile:async(_uri:unknown,bytes:Uint8Array)=>{exports.push(Buffer.from(bytes));}},
+     },window:{showWarningMessage:()=>confirm(),showSaveDialog:async()=>({fsPath:'/fixture/export.json'})},commands:{executeCommand:async()=>undefined},
+@@ -748,3 +748,22 @@
+         }
+     }finally{await fs.rm(root,{recursive:true,force:true});}
+ });
++
++test('actual Workbench host forwards opt-in form plan and preserves complete report in copies and exports',async()=>{
++    const report={schema:'airk.profile-families/1',file:{path:'api/policy.md',publication:'one-head',source_hash:'ab'.repeat(32)},applied_file:{adapter_id:'markdown',effective_profile_digest:'cd'.repeat(32)},configured_collection_policy:{state:'unavailable',reason:'selected_scope'},published_collection_policy:{state:'unavailable',reason:'selected_scope'},pending_collection_reindex:null,
++        families:Array.from({length:18},(_,i)=>({family:`family-${i}`,support:'unknown',retention:'selected',reply_inclusion:'omitted'})),future_native_field:{complete:'keep-all-fields'}};
++    const envelope={status:'complete',executed:true,publication:'one-head',calls:1,steps:[{id:'info',tool:'file_info',status:'complete',result:{read:{status:'content'},content:{path:'api/policy.md',profile_families:report}}}],evidence:[]};
++    const f=fixture(true);
++    try{
++        f.respond(async tool=>({payload:tool==='airk_parse'?envelope:{}}));
++        await f.state.select(A);
++        await f.state.message({type:'run',input:'Inspect profile families',prepare:false,plan:{steps:[{id:'info',tool:'file_info',args:{path:'api/policy.md',include_profile_families:true}}]}});
++        const call=f.created.flatMap(client=>client.requests).find(call=>call.tool==='airk_parse'&&object(call.args.plan).steps);
++        assert.equal(object((object(call?.args.plan).steps as Value[])[0].args).include_profile_families,true);
++        const turn=f.state.session!.turns.at(-1)!;
++        assert.deepEqual(object(object((turn.envelope!.steps as Value[])[0].result).content).profile_families,report);
++        for(const type of ['copy','export'])for(const format of ['json','markdown'])await f.state.message({type,turn:turn.id,format});
++        assert.equal(f.exports.length,4);
++        for(const output of f.exports){assert.ok(output.includes('keep-all-fields'));assert.ok(output.includes('family-17'));assert.ok(output.includes('selected_scope'));}
++    }finally{f.provider.dispose();}
++});
+--- /dev/null
++++ b/packages/vscode/src/test/profileFamilies.test.ts
+@@ -0,0 +1,47 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Supplemental consumer checks; native transport producer parity is covered
++//! by airk-cli/tests/combined_reads/profile_families.rs, not inferred here.
++import {strict as assert} from 'node:assert';
++import {test} from 'node:test';
++import * as fs from 'node:fs/promises';
++import * as os from 'node:os';
++import * as path from 'node:path';
++import {object,toolFormArguments,toolFormFields,type WorkbenchTurn} from '../workbenchContracts';
++import {discoveryDetails,renderExport} from '../workbenchRender';
++import {newSession,SessionStore} from '../workbenchSessions';
++
++const families=['saved_identity','saved_text','lexical_candidates','vectors','declarations','imports','written_calls','framework_structure','manifest_packages_dependencies','requirements_design_decisions','headings_sections','standalone_dates_bounds','tables_rows','mapped_regions','declaration_continuity','document_unit_continuity','imported_assertions','ocr_text_facts'];
++function report(){return {schema:'airk.profile-families/1',basis:'metadata_only',file:{publication:'one-head',path:'src/a.rs',source_hash:'ab'.repeat(32)},applied_file:{adapter_id:'rust',adapter_version:'fixture',effective_profile_digest:'cd'.repeat(32),legacy_detail:'agent_lean'},configured_collection_policy:{state:'unavailable',reason:'selected_scope'},published_collection_policy:{state:'unavailable',reason:'selected_scope'},pending_collection_reindex:null,families:families.map(family=>({family,support:'unknown',retention:family==='manifest_packages_dependencies'?'not_retained':'selected',reply_inclusion:'omitted'})),future_native_field:{identity:'preserve opaque metadata'}};}
++function turn():WorkbenchTurn{return {id:'families',at:1,input:'/info src/a.rs --include-profile-families',format:'structured',request:{plan:{steps:[{id:'info',tool:'file_info',args:{path:'src/a.rs',include_profile_families:true}}]}},envelope:{status:'complete',executed:true,publication:'one-head',steps:[{id:'info',tool:'file_info',status:'complete',result:{read:{status:'content'},content:{path:'src/a.rs',profile_families:report()}}}],evidence:[{step:'info',text:'selected evidence',publication:'one-head',citation:{path:'src/a.rs',start_line:1,end_line:1,content_hash:'ab'.repeat(32)}}]}};}
++
++test('native-schema form keeps Default absent and explicit false/true typed',()=>{
++    const schema={type:'object',required:['path'],properties:{path:{type:'string'},include_profile_families:{type:'boolean',default:false,description:'Native metadata-only family report'}}};
++    const field=toolFormFields(schema).find(field=>field.name==='include_profile_families')!;
++    assert.equal(field.type,'boolean');assert.equal(field.required,false);assert.equal(field.defaultValue,false);
++    assert.deepEqual(toolFormArguments(schema,{path:'src/a.rs',include_profile_families:''}),{path:'src/a.rs'});
++    for(const choice of ['false','true'])assert.equal(toolFormArguments(schema,{path:'src/a.rs',include_profile_families:choice}).include_profile_families,choice==='true');
++    assert.throws(()=>toolFormArguments(schema,{path:'src/a.rs',include_profile_families:'yes'}));
++});
++test('structured details and full/selected JSON and Markdown preserve every family and unknown field',()=>{
++    const entry=turn(),session=newSession('ab'.repeat(32));session.turns=[entry];const original=structuredClone(entry.envelope);
++    assert.deepEqual(discoveryDetails(entry.envelope!)[0].profileFamilies,report());
++    for(const format of ['json','markdown'] as const)for(const selected of [undefined,['record-0']]){
++        const output=renderExport(session,format,entry.id,selected);
++        for(const family of families)assert.ok(output.includes(family));
++        assert.ok(output.includes('preserve opaque metadata'));assert.ok(output.includes('selected_scope'));assert.ok(output.includes('not_retained'));assert.ok(output.includes('omitted'));
++        if(format==='json'&&selected){const coverage=JSON.parse(output).turns[0].envelope.source_coverage;assert.deepEqual(coverage[0].profile_families,report());}
++    }
++    assert.deepEqual(entry.envelope,original);
++    const legacy=turn();delete object(object((legacy.envelope!.steps as Record<string,unknown>[])[0].result).content).profile_families;
++    assert.equal(discoveryDetails(legacy.envelope!)[0].profileFamilies,undefined);
++});
++test('actual session save/load preserves opt-in draft and full report without rebuilding it',async()=>{
++    const directory=await fs.mkdtemp(path.join(os.tmpdir(),'airk-family-session-'));
++    try{
++        const store=new SessionStore(directory),session=newSession('ab'.repeat(32));session.turns=[turn()];
++        session.formDraft={activeTool:'file_info',values:{file_info:{path:'src/a.rs',include_profile_families:'true'}},revision:1,scope:'',recipe:''};
++        await store.save(session,true);const restored=await store.load(session.project,session.id);
++        assert.deepEqual(restored.turns[0].envelope,session.turns[0].envelope);assert.deepEqual(restored.formDraft,session.formDraft);
++        for(const format of ['json','markdown'] as const)assert.ok(renderExport(restored,format).includes('preserve opaque metadata'));
++    }finally{await fs.rm(directory,{recursive:true,force:true});}
++});
+--- /dev/null
++++ b/docs/profile-family-reporting.md
+@@ -0,0 +1,101 @@
++# Per-file profile family reporting — P11a candidate
++
++This is the **unaccepted P11a candidate** in the unpublished 1.8.8 working build.
++It depends on sequential P10 acceptance. Implementation, native/CLI/MCP/Workbench
++parity and frozen qualification must pass before acceptance; the existence of
++this guide is not validation evidence. No new extraction profile is introduced.
++
++Opt in on the existing file-information read:
++
++```sh
++airk info src/example.rs --include-profile-families --verification off
++airk tools call airk_file_info --args '{"path":"src/example.rs","include_profile_families":true,"verification":"off"}'
++```
++
++MCP uses `include_profile_families: true` on `airk_file_info` or its public
++`file_info` alias. Workbench's File info form uses **Include effective profile
++families**: Default omits the input, No explicitly selects false, and Yes selects
++true. Default/false retain the old result shape and evidence validator. A report
++has its own conditional representation: a validator for old reduced FileInfo
++cannot suppress a newly requested report. Existing revision, hash, origin and
++follow-move checks still apply. Full/Terse response modes and Lean/Rich reply
++choices preserve the complete report;
++Rich does not recreate facts that were never retained.
++
++Reporting itself uses one authenticated current reader and the requested file's
++retained profile metadata. It does not reopen originals, rerun header selection,
++walk the corpus, extract content, load models or invoke producers. Existing
++[saved-source verification](source-verification.md) remains independent: the
++examples explicitly select Off to request metadata only. A family report is not
++a live-file equality, extraction-quality or completeness claim.
++
++## Independent identities and observations
++
++The report binds the exact file path, source hash and publication. Its applied
++file `effective_profile_digest` comes from that retained `ExtractionProfile`,
++including adapter ID/version and legacy detail. Configured/published collection
++`policy_digest` values have a different meaning and different identity framing.
++Saving a new collection policy does not reinterpret an old file profile.
++Configured effective per-file selection remains unknown when fresh source or
++header inputs would be required. Mixed indexes have no universal file adapter.
++
++Authorized partial Project scopes still receive the file report. Collection
++policy observations are explicitly `unavailable` with reason `selected_scope`;
++`pending_collection_reindex: null` means unknown, not false. Private policy bytes
++are not read in that branch. Real I/O/integrity failures retain normal errors.
++
++Each of the following eighteen families independently reports adapter support
++(`supported`, `unsupported`, `unknown`), retention eligibility (`retained`,
++`selected`, `not_retained`, `unknown`) and actual operation payload inclusion
++(`included`, `selected`, `omitted`, `unknown`):
++
++| Family | Qualification |
++| --- | --- |
++| Saved identity | Retained file/profile/native-source identity, not live equality |
++| Saved text | Eligibility does not promise complete extraction |
++| Lexical candidates | Written token candidates, not resolved references |
++| Vectors | Independent selection/model/pipeline metadata |
++| Declarations | Exact versioned adapter support |
++| Imports | Written imports, not universal resolution |
++| Written calls | Syntax candidates, not resolved call graphs |
++| Framework structure | Fine-family support can remain unknown |
++| Manifest packages/dependencies | Legacy Agent Lean omits native package kinds |
++| Requirements/design/decisions | Independent from standalone dates |
++| Headings/sections | Adapter and original-location limits remain |
++| Standalone dates/bounds | Legacy Agent Lean does not retain these kinds |
++| Tables/rows | Legacy Agent Lean retains eligible table kinds |
++| Mapped regions | Needs independent mapping metadata |
++| Declaration continuity | Legacy Balanced/Detailed policy remains distinct |
++| Document-unit continuity | Legacy Detailed eligibility differs from Balanced |
++| Imported assertions | Independent producer/build/source provenance |
++| OCR text/facts | Independent explicit OCR evidence and limitations |
++
++Zero matches cannot establish unsupported/not-retained status. Fine support
++without versioned registry evidence stays unknown; broad structural capability
++flags do not certify every family. FileInfo returns metadata/counts rather than
++the underlying facts/text/vectors, so those payload families are omitted even
++when eligible for retention. Saved-identity final renderer inclusion may remain
++unknown. A partial field selection is not a wholly omitted family.
++
++Missing historical profile detail keeps its existing Detailed meaning. Legacy
++Agent Lean, Balanced and Detailed profile IDs are preserved; Balanced declaration
++continuity is not Detailed document-unit continuity. OCR/model adapters and their
++dependencies, retained evidence and ranking remain unchanged.
++
++## Workbench details, copies and persistence
++
++Structured step details show the complete opaque native report, including unknown
++future fields. JSON/Markdown copies and exports preserve it; selected exports
++retain the qualifying metadata for their selected source steps and disclose the
++subset. Session restoration preserves the original envelope and opt-in form
++choice. Saved-result privacy settings may remove an entire result as documented;
++they do not silently rewrite family rows.
++
++Automatic Inspector/source-open/checker calls keep absent opt-in behavior. Use the
++Workbench File info form for this candidate report. Strategy conversion refuses
++unsupported native inputs and directs users to Save export rather than dropping
++the flag or reducing the result.
++
++These proposed checks supplement actual native transport tests; renderer mocks
++alone do not establish CLI/MCP/Workbench parity. Full qualification and manual
++acceptance remain pending in the [implementation ledger](research/implementation-v190.md).
+--- a/README.md
++++ b/README.md
+@@ -1,2 +1,4 @@
+ # AIRK: Local Search for Coding Agents
++
++P11a’s [per-file profile family reporting candidate](docs/profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P11a is **unaccepted**; sequential P10 acceptance and native/CLI/MCP/Workbench qualification remain prerequisites.
+ 
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -1,2 +1,4 @@
+ # AIRK documentation
++
++P11a’s [per-file profile family reporting candidate](profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P11a is **unaccepted**; sequential P10 acceptance and native/CLI/MCP/Workbench qualification remain prerequisites.
+ 
+--- a/packages/vscode/README.md
++++ b/packages/vscode/README.md
+@@ -1,2 +1,4 @@
+ # AIRK: Local Search for Coding Agents
++
++P11a’s [per-file profile family reporting candidate](https://github.com/iokaio/airk/blob/main/docs/profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P11a is **unaccepted**; sequential P10 acceptance and native/CLI/MCP/Workbench qualification remain prerequisites.
+ 
+--- a/docs/releases/release-1.8.8.md
++++ b/docs/releases/release-1.8.8.md
+@@ -1,2 +1,4 @@
+ # AIRK 1.8.8 manual-test working build
++
++P11a’s [per-file profile family reporting candidate](../profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P11a is **unaccepted**; sequential P10 acceptance and native/CLI/MCP/Workbench qualification remain prerequisites.
+ 
+--- a/docs/reply-detail.md
++++ b/docs/reply-detail.md
+@@ -94,3 +94,7 @@
+ P2b independently adds [evidence guidance](evidence-guidance.md) when existing
+ metadata reports a limitation or an empty query. That optional metadata can grow
+ a reply; it does not change P2a's projection defaults or legacy evidence encoding.
++
++## P11a candidate: explicit per-file family metadata
++
++The unaccepted [family-reporting candidate](profile-family-reporting.md) uses `include_profile_families` on existing FileInfo reads. Default/false retain the old representation and validator. Workbench’s schema-driven File info form offers an explicit choice; complete native report metadata survives structured details, JSON/Markdown copies/exports and session restore. Reporting adds no source reads or profile migration; existing verification remains independent. Full qualification and sequential phase acceptance remain pending.
+--- a/docs/workbench/implementation.md
++++ b/docs/workbench/implementation.md
+@@ -151,3 +151,7 @@
+ ![Workbench results](images/workbench-1.7.1-results.png)
+ 
+ The [CLI, MCP and Workbench parity audit](../read-interface-parity.md) maps all read operations and records complete-data, observation, budget and export contracts for 1.8.7.
++
++## P11a candidate: explicit per-file family metadata
++
++The unaccepted [family-reporting candidate](../profile-family-reporting.md) uses `include_profile_families` on existing FileInfo reads. Default/false retain the old representation and validator. Workbench’s schema-driven File info form offers an explicit choice; complete native report metadata survives structured details, JSON/Markdown copies/exports and session restore. Reporting adds no source reads or profile migration; existing verification remains independent. Full qualification and sequential phase acceptance remain pending.

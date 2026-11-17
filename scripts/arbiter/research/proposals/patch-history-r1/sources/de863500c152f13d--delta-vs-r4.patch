@@ -1,0 +1,179 @@
+--- r4/WORKER-CONTRACT.md
++++ r5/WORKER-CONTRACT.md
+@@ -10,7 +10,7 @@
+ 
+ General QASPER replay retains the original publisher instruction; only software code rows use the DEV-selected instruction. Both are native-emitted. Code comparisons use the identical selected instruction for original/adapted weights; replay is original human paragraph relevance, never complete evidence.
+ 
+-R2 actual-owned continuity: DEV selection consumes a pinned naturally successful SCORE receipt/start/plan/result. A pure immutable key binds checkpoint/model/runtime/data/fullsource/owner/baseimage/versions/commonenvironment/deviceidentity/host+GPUcaps across stages. Only mode, output-local caches, wall and selection/probe evidence vary; the selected instruction is verified separately. Probeâ†’train also preserves the selected instruction. Exactly85score list entries and unique IDs are required before mapping. R1 remains preserved; no oldrun is relabelled.
++R2 actual-owned continuity: DEV selection consumes a pinned naturally successful SCORE receipt/start/plan/result. A pure immutable key binds checkpoint/model/runtime/data/fullsource/owner/baseimage/versions/commonenvironment/deviceidentity/host+GPUcaps across stages. Only mode, output-local caches, wall and selection/probe evidence vary; the selected instruction is verified separately. ProbeÃ¢â€ â€™train also preserves the selected instruction. Exactly85score list entries and unique IDs are required before mapping. R1 remains preserved; no oldrun is relabelled.
+ 
+ R3 parent clock closure: after actual maintained owned settlement (including worker finally output retention), parent hashes final worker result, child log, actual plan and every consumed execution-source pin, preserving hash failures separately from the original owned result/failure. It constructs/validates the full receipt body, then samples the original clock LAST; at/after original wall cap is nonpass. Only final elapsed/disposition insertion, final execution.json serialization/write and terminal reporting are excluded. Hash exceptions/mismatches never erase original natural-nonzero versus unsettled evidence or create a pass. No clock renewal, replay, extra model run or process-control change.
+ 
+@@ -29,3 +29,22 @@
+ and every replay under publisher: a new F1 refusal stops, with no drop/refill.
+ All original labels/roles/rights/eligibility bytes and consumed reserved splits
+ remain unchanged. This adds no human judgments, terminal evidence or promotion.
++
++
++Operational source epoch /1 (Root decision, additive R5)
++
++The original reference plan and failed6f1 plan remain immutable. The SourceEpoch
++FilePin authorizes exactly8 named historical Root Rust/build-context seal changes
++from their inherited values to the source hashes emitted in authentic75aa CPU
++native-census build receipt (dbc89 nativegroup), with preserved actual census237d,
++CPUimage60b8 and ownedcensus8d2d. No arbitrary live rehash is authority. All13274
++operative seals remain: exactly8 values advance;13266 others remain byte-identical.
++New epoch/source provenance pins are added without dropping inherited entries.
++The epoch FilePin enters existing immutable_input_seals across SCORE/probe/train.
++Any other model/runtime/checkpoint/math/data/source drift refuses; all operative
++files remain checked before and after. This is not an alias, source bypass or
++transfer of old numeric/resource/CAL/promotion outcomes. F2 calls only reference
++windows_sid/verify_loaded_runtime, never native_documents/execute; the15 native
++context files came from original prepare_reference's metadata source manifest.
++Only the reviewed8 change; all other7context entries and training_execution.py
++stay untouched. Original files/failed receipts are not relabeled or mutated.
+--- r4/make_plan.py
++++ r5/make_plan.py
+@@ -3,11 +3,12 @@
+ from pathlib import Path
+ from focus_worker import digest,pinned
+ import worker_logic as logic
++import source_epoch
+ from workflow import continuity_key,load_owned
+ 
+ def pin(p):p=Path(p).resolve();return{'path':str(p),'bytes':p.stat().st_size,'sha256':digest(p)}
+ def main():
+-    p=argparse.ArgumentParser();p.add_argument('--native-census',type=Path,required=True);p.add_argument('--native-census-sha256',required=True);p.add_argument('--native-owned-receipt',type=Path,required=True);p.add_argument('--gpu-inventory',type=Path,required=True);p.add_argument('--mode',choices=['score','probe','train'],required=True);p.add_argument('--selection',type=Path);p.add_argument('--measured-probe',type=Path);p.add_argument('--log-dir',type=Path,required=True);p.add_argument('--output',type=Path,required=True);args=p.parse_args()
++    p=argparse.ArgumentParser();p.add_argument('--source-epoch',type=Path,required=True);p.add_argument('--source-epoch-sha256',required=True);p.add_argument('--native-census',type=Path,required=True);p.add_argument('--native-census-sha256',required=True);p.add_argument('--native-owned-receipt',type=Path,required=True);p.add_argument('--gpu-inventory',type=Path,required=True);p.add_argument('--mode',choices=['score','probe','train'],required=True);p.add_argument('--selection',type=Path);p.add_argument('--measured-probe',type=Path);p.add_argument('--log-dir',type=Path,required=True);p.add_argument('--output',type=Path,required=True);args=p.parse_args()
+     O=Path(__file__).resolve().parent;E=O.parent;root=E.parents[3];cohort=E/'f2-existing-pairs-closure-r1/all-original1955-roster.json';replay=E/'f2-existing-replay-candidates-r1/qasper-fixed45-draws.json';original=root/'artifacts/advanced-split/models/weights-v2/software-v2-independent-numeric-r1/plans-native-r2/focus-original_fp32.json';reference=json.loads(original.read_bytes())
+     identity_path=E/'candidate-overlay-preparation-r1/candidate_overlay.py'
+     import importlib.util
+@@ -15,6 +16,12 @@
+     if args.output.exists()or args.log_dir.exists()or not args.output.resolve().is_relative_to(E)or not args.log_dir.resolve().is_relative_to(E):raise ValueError('fresh approved plan/output roots required')
+     if digest(args.native_census)!=args.native_census_sha256:raise ValueError('exact actual native census required')
+     emission=json.loads(args.native_census.read_bytes());rows=logic.native_rows(emission,json.loads(cohort.read_bytes()),json.loads(replay.read_bytes()))
++    epoch_pin={'path':str(args.source_epoch.resolve()),'sha256':args.source_epoch_sha256};epoch=json.loads(pinned(epoch_pin).read_bytes())
++    held=json.loads(pinned(epoch['held_failed_plan']).read_bytes());original_parent=json.loads(pinned(epoch['original_reference_plan']).read_bytes())
++    for name in('native_build_receipt','native_census','native_image','native_owned_receipt','held_failed_execution'):pinned(epoch[name])
++    current_build=json.loads(pinned(epoch['native_build_receipt']).read_bytes())
++    operational_seals=source_epoch.advance(held,original_parent,epoch,current_build,emission)
++    if reference!=original_parent or args.native_census_sha256!=epoch['native_census']['sha256']:raise ValueError('immutable original reference/census parent differs')
+     # Root independently reviews the actual native child receipt and image. It
+     # remains bound in this future plan, never inferred from a success boolean.
+     native_receipt=pin(args.native_owned_receipt);gpu_document=json.loads(args.gpu_inventory.read_bytes());gpu=gpu_document.get('baseline_gpu',gpu_document.get('gpu',gpu_document))
+@@ -39,10 +46,15 @@
+     sources[str(identity_path)]=pin(identity_path)
+     owner_path=root/'artifacts/advanced-split/models/weights-v2/software-v2-independent-numeric-r1/reference_owned.py';reference_worker=root/'artifacts/advanced-split/models/weights-v2/software-v2-independent-numeric-r1/reference_worker.py'
+     for path in(owner_path,reference_worker,original,cohort,replay,args.native_census,args.native_owned_receipt,args.gpu_inventory):sources[str(path.resolve())]=pin(path)
+-    immutable_seals=dict(reference['input_seals']);immutable_seals.update({v['path']:v['sha256']for v in sources.values()if v['path']!=str(args.gpu_inventory.resolve())})
++    sources[str(args.source_epoch.resolve())]=pin(args.source_epoch)
++    for name in('held_failed_plan','held_failed_execution','original_reference_plan','native_build_receipt','native_image'):
++        item=epoch[name];sources[item['path']]=item
++    for value in sources.values():
++        if value['path']in operational_seals and operational_seals[value['path']]!=value['sha256']:raise ValueError('new source must not overwrite immutable inherited seal')
++    immutable_seals=dict(operational_seals);immutable_seals.update({v['path']:v['sha256']for v in sources.values()if v['path']!=str(args.gpu_inventory.resolve())})
+     if args.selection:sources[str(args.selection.resolve())]=pin(args.selection)
+     if args.measured_probe:sources[str(args.measured_probe.resolve())]=pin(args.measured_probe)
+-    seals=dict(reference['input_seals']);seals.update({v['path']:v['sha256']for v in sources.values()})
++    seals=dict(operational_seals);seals.update({v['path']:v['sha256']for v in sources.values()})
+     # Added worker/owner source identity is explicit, not a retag of old runs.
+     reference['input_seals']=seals
+     plan={'schema':'airk.private.F1-F2-owned-plan/1','mode':args.mode,'human_sid':identity['sid'],'repository_root':str(root),'native_census':pin(args.native_census),'native_owned_receipt':native_receipt,'cohort':pin(cohort),'replay':pin(replay),'selection':pin(args.selection)if args.selection else None,'selected_instruction':selected,'general_replay_instruction':'publisher','measured_probe':measured,'max_optimizer_steps':1 if args.mode=='probe'else 14,'gpu':gpu,'nvidia_smi':str(Path(os.environ.get('SystemRoot',r'C:\Windows'))/'System32/nvidia-smi.exe'),'log_dir':str(logdir),'worker_output':str(logdir/'worker'),'environment':environment,'versions':reference['versions'],'base_python':reference['base_python'],'reference_module':reference['reference_module'],'reference_worker':pin(reference_worker),'reference_plan':reference,'ownership_module':pin(owner_path),'human_identity_helper':pin(identity_path),'worker':pin(O/'focus_worker.py'),'execution_sources':sources,'input_seals':seals,'immutable_input_seals':immutable_seals,'limits':{'wall_seconds':wall,'host_committed_bytes':16*1024**3,'cuda_allocator_bytes':8*1024**3,'minimum_cuda_free_bytes':8*1024**3},'qualification':False,'promotion':False,'original_seed':1908,'optimizer':{'rank':16,'alpha':16,'lr':5e-5,'effective_batch':32,'microbatch':1,'epochs':1,'dropout':0}}
+--- r4/source_epoch.py
++++ r5/source_epoch.py
+@@ -0,0 +1,43 @@
++"""Closed eight-path historical source epoch; no live discovery or model imports."""
++import hashlib,json
++from pathlib import Path
++
++PATHS=frozenset(['Cargo.lock','crates/airk-core/src/arbiter/mod.rs',
++'crates/airk-core/src/arbiter/context_action.rs','crates/airk-core/src/arbiter/context_action/calibration.rs',
++'crates/airk-core/src/arbiter/focus.rs','crates/airk-retrieval/src/arbiter/compiler/focus.rs',
++'crates/airk-retrieval/src/arbiter/runtime/qualification.rs','crates/airk-retrieval/src/arbiter/runtime/qualification/regeneration.rs'])
++BUILD='75aa28c484e8121957f0ee590b0f8376233bf14bedc88dfef88bf1ec0ea5df36'
++GROUP='dbc89b3cca981d1c87c2340c8697ac65d7f6a844ece6f24bedad336857d3eace'
++CENSUS='237d7cd102961c80a6004f7fb0b1f1caa2631208829b36c83dc7b812a3be7d33'
++IMAGE='60b8d3e568054a5fa23007c616b2f6e582d1d5a2718a89484733a39941158665'
++OWNED='8d2d8428674f2a0b76674c3606575e82bcb9afea4e228c31ed9971a2362caf55'
++HELD='6f1cf1c880958c2f8c465495852e6f1bf82253533593081cd1b99ccff511f8f0'
++
++
++def closure_sha(values):
++    return hashlib.sha256(json.dumps(values,sort_keys=True,separators=(',',':')).encode()).hexdigest()
++
++
++def advance(held,original,epoch,build,emission):
++    if epoch['schema']!='airk.private.F1-operational-source-epoch/1':raise ValueError('unknown source epoch')
++    for key,expected in [('held_failed_plan',HELD),('native_build_receipt',BUILD),('native_census',CENSUS),('native_image',IMAGE),('native_owned_receipt',OWNED)]:
++        if epoch[key]['sha256']!=expected:raise ValueError('wrong authentic epoch parent: '+key)
++    if epoch['native_census']!=held['native_census']or epoch['native_owned_receipt']!=held['native_owned_receipt']:raise ValueError('census lineage changed')
++    if emission['native_image']['sha256']!=IMAGE:raise ValueError('actual census image changed')
++    if build.get('schema')!='airk-readiness-command/1'or build.get('status')!='completed'or build.get('passed')is not True or build.get('inputs_unchanged')is not True or build.get('exit_code')!=0 or build.get('changed_groups')!=[]or build['groups']['native']['sha256']!=GROUP:raise ValueError('authentic unchanged CPU census build required')
++    if held['reference_module']!=original['reference_module']or held['versions']!=original['versions']:raise ValueError('original reference math/runtime changed')
++    baseline=held['input_seals'];root=Path(held['repository_root']);mapping=epoch['changes']
++    if len(baseline)!=13274 or len(mapping)!=8 or {x['relative_path']for x in mapping}!=PATHS:raise ValueError('closed original13274/eight source paths required')
++    original_pin=held['execution_sources'].get(epoch['original_reference_plan']['path'])
++    if original_pin!=epoch['original_reference_plan']:raise ValueError('original reference plan provenance changed')
++    changed={str(root/x)for x in PATHS};unchanged={p:v for p,v in baseline.items()if p not in changed}
++    if len(unchanged)!=13266 or closure_sha(unchanged)!=epoch['unchanged13266_sha256']:raise ValueError('immutable13266 consumer closure changed')
++    for path,value in original['input_seals'].items():
++        if baseline.get(path)!=value:raise ValueError('original inherited reference seal changed')
++    result=dict(baseline)
++    for row in mapping:
++        path=str(root/row['relative_path']);expected=build['groups']['native']['files'][row['relative_path']]
++        if baseline.get(path)!=row['old_sha256']or row['new_sha256']!=expected or expected==row['old_sha256']:raise ValueError('epoch source must advance only authentic reviewed old/new pair')
++        result[path]=expected
++    if set(result)!=set(baseline)or sum(result[p]!=baseline[p]for p in baseline)!=8:raise ValueError('operative seal denominator changed')
++    return result
+--- r4/test_source_epoch.py
++++ r5/test_source_epoch.py
+@@ -0,0 +1,49 @@
++"""Independent literal closed-epoch controls. No filesystem model/runtime reads."""
++import copy,unittest
++from pathlib import Path
++import source_epoch as s
++
++LITERAL_PATHS=['Cargo.lock','crates/airk-core/src/arbiter/mod.rs','crates/airk-core/src/arbiter/context_action.rs','crates/airk-core/src/arbiter/context_action/calibration.rs','crates/airk-core/src/arbiter/focus.rs','crates/airk-retrieval/src/arbiter/compiler/focus.rs','crates/airk-retrieval/src/arbiter/runtime/qualification.rs','crates/airk-retrieval/src/arbiter/runtime/qualification/regeneration.rs']
++
++
++def fixture():
++    root=Path.cwd();H='1'*64;F='2'*64
++    base={str(root/name):H for name in LITERAL_PATHS}
++    base.update({f'unchanged-consumer-{i}':H for i in range(13266)})
++    original={'reference_module':{'sha256':H},'versions':{'torch':'literal'},'input_seals':dict(base)}
++    held={'repository_root':str(root),'input_seals':base,'reference_module':original['reference_module'],'versions':original['versions'],'native_census':{'path':'census','sha256':'237d7cd102961c80a6004f7fb0b1f1caa2631208829b36c83dc7b812a3be7d33'},'native_owned_receipt':{'path':'receipt','sha256':'8d2d8428674f2a0b76674c3606575e82bcb9afea4e228c31ed9971a2362caf55'},'execution_sources':{'original':{'path':'original','sha256':H}}}
++    epoch={'schema':'airk.private.F1-operational-source-epoch/1','held_failed_plan':{'sha256':'6f1cf1c880958c2f8c465495852e6f1bf82253533593081cd1b99ccff511f8f0'},'native_build_receipt':{'sha256':'75aa28c484e8121957f0ee590b0f8376233bf14bedc88dfef88bf1ec0ea5df36'},'native_census':dict(held['native_census']),'native_image':{'sha256':'60b8d3e568054a5fa23007c616b2f6e582d1d5a2718a89484733a39941158665'},'native_owned_receipt':dict(held['native_owned_receipt']),'original_reference_plan':dict(held['execution_sources']['original']),'changes':[{'relative_path':name,'old_sha256':H,'new_sha256':F}for name in LITERAL_PATHS],'unchanged13266_sha256':s.closure_sha({f'unchanged-consumer-{i}':H for i in range(13266)})}
++    build={'schema':'airk-readiness-command/1','status':'completed','passed':True,'inputs_unchanged':True,'exit_code':0,'changed_groups':[],'groups':{'native':{'sha256':'dbc89b3cca981d1c87c2340c8697ac65d7f6a844ece6f24bedad336857d3eace','files':{name:F for name in LITERAL_PATHS}}}}
++    emission={'native_image':{'sha256':'60b8d3e568054a5fa23007c616b2f6e582d1d5a2718a89484733a39941158665'}}
++    return held,original,epoch,build,emission
++
++
++class EpochControls(unittest.TestCase):
++    def test_exact8_advance_all13274_retained_and13266_identical(self):
++        args=fixture();before=copy.deepcopy(args);result=s.advance(*args)
++        self.assertEqual(len(result),13274);self.assertEqual(set(result),set(args[0]['input_seals']))
++        self.assertEqual(sum(result[p]!=args[0]['input_seals'][p]for p in result),8)
++        self.assertEqual(args,before)
++        for i in range(13266):self.assertEqual(result[f'unchanged-consumer-{i}'],'1'*64)
++    def test_missing_extra_duplicate_or_foreign_path_refuses(self):
++        for edit in [lambda e:e['changes'].pop(),lambda e:e['changes'].append(dict(e['changes'][0])),lambda e:e['changes'][0].update(relative_path='model.safetensors'),lambda e:e['changes'].__setitem__(0,dict(e['changes'][1]))]:
++            args=fixture();edit(args[2])
++            with self.assertRaises(ValueError):s.advance(*args)
++    def test_noncontext_runtime_checkpoint_math_and_data_drift_refuses(self):
++        for index in [0,1,100,13265]:
++            args=fixture();args[0]['input_seals'][f'unchanged-consumer-{index}']='3'*64
++            with self.assertRaisesRegex(ValueError,'immutable13266'):s.advance(*args)
++    def test_arbitrary_live_refresh_and_wrong_old_value_refuse(self):
++        for field in ['old_sha256','new_sha256']:
++            args=fixture();args[2]['changes'][0][field]='3'*64
++            with self.assertRaisesRegex(ValueError,'reviewed old/new'):s.advance(*args)
++    def test_build_source_epoch_and_failed_or_stale_build_refuse(self):
++        for edit in [lambda b:b.update(passed=False),lambda b:b.update(inputs_unchanged=False),lambda b:b.update(exit_code=1),lambda b:b.update(changed_groups=['native']),lambda b:b['groups']['native'].update(sha256='3'*64)]:
++            args=fixture();edit(args[3])
++            with self.assertRaises(ValueError):s.advance(*args)
++    def test_parent_reference_census_image_and_math_remain_bound(self):
++        for edit in [lambda a:a[2]['native_build_receipt'].update(sha256='3'*64),lambda a:a[2]['original_reference_plan'].update(sha256='3'*64),lambda a:a[4]['native_image'].update(sha256='3'*64),lambda a:a[0].update(reference_module={'sha256':'3'*64})]:
++            args=fixture();edit(args)
++            with self.assertRaises(ValueError):s.advance(*args)
++
++if __name__=='__main__':unittest.main(verbosity=2)

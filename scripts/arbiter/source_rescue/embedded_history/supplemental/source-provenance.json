@@ -1,0 +1,61 @@
+{
+  "schema": "airk.embedded-source-migration/1",
+  "files": [
+    {
+      "container": "artifacts/v190/p11b-composed-p11a-r2/overlap-resolutions.json",
+      "container_sha256": "ebfce23224a730c4d8d678221d87bfc9e11fdbc21e08439dab287740875fdfe8",
+      "container_bytes": 3575,
+      "json_pointer": "/rejected_hunks/0/text",
+      "decoded_sha256": "38751e30fe12979c45cf13b2162e98348ade667ff0199f592059b32cf9de5dc4",
+      "decoded_bytes": 819,
+      "destination": "scripts/arbiter/source_rescue/embedded_history/supplemental/rejected-hunk--38751e30fe12.patch",
+      "prefix": "",
+      "maintained_sha256": "38751e30fe12979c45cf13b2162e98348ade667ff0199f592059b32cf9de5dc4",
+      "maintained_bytes": 819,
+      "language": "patch",
+      "disposition": "extracted-source"
+    },
+    {
+      "container": "artifacts/v190/p11b-composed-p11a-r2/overlap-resolutions.json",
+      "container_sha256": "ebfce23224a730c4d8d678221d87bfc9e11fdbc21e08439dab287740875fdfe8",
+      "container_bytes": 3575,
+      "json_pointer": "/rejected_hunks/1/text",
+      "decoded_sha256": "744bbf03950037e39b625f5f99412ce7746fb6fc912af99b933ce326effb24bc",
+      "decoded_bytes": 1903,
+      "destination": "scripts/arbiter/source_rescue/embedded_history/supplemental/rejected-hunk--744bbf039500.patch",
+      "prefix": "",
+      "maintained_sha256": "744bbf03950037e39b625f5f99412ce7746fb6fc912af99b933ce326effb24bc",
+      "maintained_bytes": 1903,
+      "language": "patch",
+      "disposition": "extracted-source"
+    },
+    {
+      "container": "artifacts/v190/p11b-composed-p11a-r3/overlap-resolutions.json",
+      "container_sha256": "ebfce23224a730c4d8d678221d87bfc9e11fdbc21e08439dab287740875fdfe8",
+      "container_bytes": 3575,
+      "json_pointer": "/rejected_hunks/0/text",
+      "decoded_sha256": "38751e30fe12979c45cf13b2162e98348ade667ff0199f592059b32cf9de5dc4",
+      "decoded_bytes": 819,
+      "destination": "scripts/arbiter/source_rescue/embedded_history/supplemental/rejected-hunk--38751e30fe12.patch",
+      "prefix": "",
+      "maintained_sha256": "38751e30fe12979c45cf13b2162e98348ade667ff0199f592059b32cf9de5dc4",
+      "maintained_bytes": 819,
+      "language": "patch",
+      "disposition": "extracted-source"
+    },
+    {
+      "container": "artifacts/v190/p11b-composed-p11a-r3/overlap-resolutions.json",
+      "container_sha256": "ebfce23224a730c4d8d678221d87bfc9e11fdbc21e08439dab287740875fdfe8",
+      "container_bytes": 3575,
+      "json_pointer": "/rejected_hunks/1/text",
+      "decoded_sha256": "744bbf03950037e39b625f5f99412ce7746fb6fc912af99b933ce326effb24bc",
+      "decoded_bytes": 1903,
+      "destination": "scripts/arbiter/source_rescue/embedded_history/supplemental/rejected-hunk--744bbf039500.patch",
+      "prefix": "",
+      "maintained_sha256": "744bbf03950037e39b625f5f99412ce7746fb6fc912af99b933ce326effb24bc",
+      "maintained_bytes": 1903,
+      "language": "patch",
+      "disposition": "extracted-source"
+    }
+  ]
+}

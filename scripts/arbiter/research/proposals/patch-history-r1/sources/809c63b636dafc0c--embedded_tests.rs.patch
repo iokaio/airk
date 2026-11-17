@@ -1,0 +1,16 @@
+--- crates/airk-kernel/src/shared_models/embedded_tests.rs
++++ crates/airk-kernel/src/shared_models/embedded_tests.rs
+@@ -195,7 +195,12 @@
+                 name,
+                 ModelObjectRef {
+                     sha256: digest.parse()?,
+-                    bytes: 1,
++                    bytes: selected
++                        .assets
++                        .iter()
++                        .find(|asset| asset.name == name.filename())
++                        .context("known catalog asset absent")?
++                        .bytes,
+                 },
+             );
+         }

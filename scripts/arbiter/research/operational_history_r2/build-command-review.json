@@ -1,0 +1,1810 @@
+{
+  "schema": "airk.generated-build-command-review/1",
+  "status": "pending exact generation provenance; no closed disposition",
+  "files": [
+    {
+      "source": "artifacts/advanced-split/msvc-configure-owned-diagnostic-r1/configure.cmd",
+      "source_sha256": "c7e69200c48c2146be978d5269f07ebdfa9e7eb0c03507b1d5da6ff053a1149c",
+      "source_bytes": 896,
+      "provisional_copy": "scripts/arbiter/research/operational_history_r2/sources/c7e69200c48c2146be978d5269f07ebdfa9e7eb0c03507b1d5da6ff053a1149c--configure.cmd",
+      "candidate_generators": [
+        {
+          "source": "artifacts/advanced-split/msvc-configure-owned-diagnostic-r1/instrumented-run-windows-owned.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/a99b69624ac34ff4c319e6d04adc5b2ad368256d4a3b3dcc865b3f2b440b6c36--instrumented-run-windows-owned.py",
+          "sha256": "f019b40087d20c436185ae6183b436cceb0624398a822cd9e430b371c0633905"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/msvc-configure-owned-diagnostic-r2/configure.cmd",
+      "source_sha256": "8d1661d0100e0623244527613423c3f2407426ee011f07f1b3bcc2de4d95ce51",
+      "source_bytes": 978,
+      "provisional_copy": "scripts/arbiter/research/operational_history_r2/sources/8d1661d0100e0623244527613423c3f2407426ee011f07f1b3bcc2de4d95ce51--configure.cmd",
+      "candidate_generators": [
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-windows-static-ort.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/b483dc6677298885f962a090e291fca527ec550a21236daf05f141dc1e2a8fa0--run-windows-static-ort.py",
+          "sha256": "5e904ba1584d3de6a13ca076ba3bdce2cdd55660ce2ffb4444e36e269e4a0eff"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/msvc-configure-owned-diagnostic-r3/configure.cmd",
+      "source_sha256": "9c14bdd14fadbc85ce979e5e0f9c198b1e1862388cc096cd7168e9881fae8e9d",
+      "source_bytes": 1013,
+      "provisional_copy": "scripts/arbiter/research/operational_history_r2/sources/9c14bdd14fadbc85ce979e5e0f9c198b1e1862388cc096cd7168e9881fae8e9d--configure.cmd",
+      "candidate_generators": [
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-windows-static-ort.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/b483dc6677298885f962a090e291fca527ec550a21236daf05f141dc1e2a8fa0--run-windows-static-ort.py",
+          "sha256": "5e904ba1584d3de6a13ca076ba3bdce2cdd55660ce2ffb4444e36e269e4a0eff"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/msvc-configure-owner-context-r10/configure.cmd",
+      "source_sha256": "4ed16d1d2df0aa05e57ce20ad9ab90d64ca54b8acd306159c66280b094494323",
+      "source_bytes": 1043,
+      "provisional_copy": "scripts/arbiter/research/operational_history_r2/sources/4ed16d1d2df0aa05e57ce20ad9ab90d64ca54b8acd306159c66280b094494323--configure.cmd",
+      "candidate_generators": [
+        {
+          "source": "artifacts/advanced-split/msvc-configure-owner-context-r10/run.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/71db3ce1cecdc7d450029b0d6546df6bbb6f7d1f1228b33bb830ca4306ac3e00--run.py",
+          "sha256": "12c4627385650f3e86c09d0ee747c393ad4740e876fc2627ef6cad5cd69acb02"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/msvc-configure-owner-context-r4/configure.cmd",
+      "source_sha256": "fd1fece7d18ba22d901e31ab5638d08868b329d0d7b29de9033742cc00dd924a",
+      "source_bytes": 1007,
+      "provisional_copy": "scripts/arbiter/research/operational_history_r2/sources/fd1fece7d18ba22d901e31ab5638d08868b329d0d7b29de9033742cc00dd924a--configure.cmd",
+      "candidate_generators": [
+        {
+          "source": "artifacts/advanced-split/msvc-configure-owner-context-r4/run.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/7e09e0b40e69404b559fdeb4c729b9b2971402efade36b522c6236e1027b904b--run.py",
+          "sha256": "23baf8597d354a22924b5fac6156b06f338b7c54949fde96df51a3b12db164ad"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/msvc-configure-owner-context-r5/configure.cmd",
+      "source_sha256": "6b3b5a45a3e8d96bacab9346700e97cfc3513ea46f73848b96331131ae7a298f",
+      "source_bytes": 1049,
+      "provisional_copy": "scripts/arbiter/research/operational_history_r2/sources/6b3b5a45a3e8d96bacab9346700e97cfc3513ea46f73848b96331131ae7a298f--configure.cmd",
+      "candidate_generators": [
+        {
+          "source": "artifacts/advanced-split/msvc-configure-owner-context-r5/run.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/d663408e28b6e50fead2dfc7f1c4bf9e7b13589317f2923eb53cde77758889a9--run.py",
+          "sha256": "6103d2be9ddb8c27fe2f33ac3744527435b2c799a3083d6de6316db14b5bca9a"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/msvc-configure-owner-context-r6/configure.cmd",
+      "source_sha256": "a2abf9859368ae237f213db1d261bff618760e66939f714db626011fa29b38a8",
+      "source_bytes": 1041,
+      "provisional_copy": "scripts/arbiter/research/operational_history_r2/sources/a2abf9859368ae237f213db1d261bff618760e66939f714db626011fa29b38a8--configure.cmd",
+      "candidate_generators": [
+        {
+          "source": "artifacts/advanced-split/msvc-configure-owner-context-r6/run.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/7101e2758049658a0b2a9b91d1b30974a0f1ea4c5cf703c6537b48ca0e593fde--run.py",
+          "sha256": "bd752f453b4581a7f7d9a4d310ac14df430e6531adef95cd7ccd8b3c3cedad41"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/msvc-configure-owner-context-r7/coff-0.cmd",
+      "source_sha256": "41cbf6573c4568832a30c15854186259545d664e23fbea10e68cb517a5b35782",
+      "source_bytes": 829,
+      "provisional_copy": "scripts/arbiter/research/operational_history_r2/sources/41cbf6573c4568832a30c15854186259545d664e23fbea10e68cb517a5b35782--coff-0.cmd",
+      "candidate_generators": [
+        {
+          "source": "artifacts/advanced-split/msvc-configure-owner-context-r7/run.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/79e14c98e5d7a73146e3487ee07fa67e4022548bbc801d3d816693c884fdc6a2--run.py",
+          "sha256": "8adef66f0ab02b40b020a26ab5c7f71bee74d38e42a3336073d3cad190c7e8cf"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/msvc-configure-owner-context-r7/coff-1.cmd",
+      "source_sha256": "264ec0709d218b11cb09b037df7bc59d706378f91ee93ab2d4b0859ed122aecb",
+      "source_bytes": 421,
+      "provisional_copy": "scripts/arbiter/research/operational_history_r2/sources/264ec0709d218b11cb09b037df7bc59d706378f91ee93ab2d4b0859ed122aecb--coff-1.cmd",
+      "candidate_generators": [
+        {
+          "source": "artifacts/advanced-split/msvc-configure-owner-context-r7/run.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/79e14c98e5d7a73146e3487ee07fa67e4022548bbc801d3d816693c884fdc6a2--run.py",
+          "sha256": "8adef66f0ab02b40b020a26ab5c7f71bee74d38e42a3336073d3cad190c7e8cf"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/msvc-configure-owner-context-r7/configure.cmd",
+      "source_sha256": "ecf0d4991dd96d94d9c1a407061de1457d82ff7235fa9f758d948745247baa55",
+      "source_bytes": 1041,
+      "provisional_copy": "scripts/arbiter/research/operational_history_r2/sources/ecf0d4991dd96d94d9c1a407061de1457d82ff7235fa9f758d948745247baa55--configure.cmd",
+      "candidate_generators": [
+        {
+          "source": "artifacts/advanced-split/msvc-configure-owner-context-r7/run.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/79e14c98e5d7a73146e3487ee07fa67e4022548bbc801d3d816693c884fdc6a2--run.py",
+          "sha256": "8adef66f0ab02b40b020a26ab5c7f71bee74d38e42a3336073d3cad190c7e8cf"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/msvc-configure-owner-context-r8/configure.cmd",
+      "source_sha256": "b79ab20da97ff02e33d0bf659b23ceaab39eed682cb9f85d39ab60d10d4227c8",
+      "source_bytes": 1041,
+      "provisional_copy": "scripts/arbiter/research/operational_history_r2/sources/b79ab20da97ff02e33d0bf659b23ceaab39eed682cb9f85d39ab60d10d4227c8--configure.cmd",
+      "candidate_generators": [
+        {
+          "source": "artifacts/advanced-split/msvc-configure-owner-context-r8/run.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/27ba7f7d223d73d0eed1a3416a172849d18f079982f1af3dee0bbdf4cfb8d512--run.py",
+          "sha256": "3989e52fd6461e13e00c42dc6cb7e66ff3b4cd6bd07ac462f296198e8d5254c6"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/msvc-configure-owner-context-r8/embedded-0.cmd",
+      "source_sha256": "c692c0f98bc9cf9c2ed747fa54816fe9da1286ecdbda9bb4a1adce075cca7838",
+      "source_bytes": 840,
+      "provisional_copy": "scripts/arbiter/research/operational_history_r2/sources/c692c0f98bc9cf9c2ed747fa54816fe9da1286ecdbda9bb4a1adce075cca7838--embedded-0.cmd",
+      "candidate_generators": [
+        {
+          "source": "artifacts/advanced-split/msvc-configure-owner-context-r8/run.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/27ba7f7d223d73d0eed1a3416a172849d18f079982f1af3dee0bbdf4cfb8d512--run.py",
+          "sha256": "3989e52fd6461e13e00c42dc6cb7e66ff3b4cd6bd07ac462f296198e8d5254c6"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/msvc-configure-owner-context-r8/embedded-1.cmd",
+      "source_sha256": "f9d4e815b8b750455e3e7c6c9e196b99e23037d73bfef46c226f11a4bb0ee56f",
+      "source_bytes": 424,
+      "provisional_copy": "scripts/arbiter/research/operational_history_r2/sources/f9d4e815b8b750455e3e7c6c9e196b99e23037d73bfef46c226f11a4bb0ee56f--embedded-1.cmd",
+      "candidate_generators": [
+        {
+          "source": "artifacts/advanced-split/msvc-configure-owner-context-r8/run.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/27ba7f7d223d73d0eed1a3416a172849d18f079982f1af3dee0bbdf4cfb8d512--run.py",
+          "sha256": "3989e52fd6461e13e00c42dc6cb7e66ff3b4cd6bd07ac462f296198e8d5254c6"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/msvc-configure-owner-context-r8/empty-0.cmd",
+      "source_sha256": "e979915e788f2b146ee9127114cbf736777b152c996e447dcfb48e3738dfec79",
+      "source_bytes": 829,
+      "provisional_copy": "scripts/arbiter/research/operational_history_r2/sources/e979915e788f2b146ee9127114cbf736777b152c996e447dcfb48e3738dfec79--empty-0.cmd",
+      "candidate_generators": [
+        {
+          "source": "artifacts/advanced-split/msvc-configure-owner-context-r8/run.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/27ba7f7d223d73d0eed1a3416a172849d18f079982f1af3dee0bbdf4cfb8d512--run.py",
+          "sha256": "3989e52fd6461e13e00c42dc6cb7e66ff3b4cd6bd07ac462f296198e8d5254c6"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/advanced-split/msvc-configure-owner-context-r8/empty-1.cmd",
+      "source_sha256": "5079234a02d63e870fc9571a339fc61c32c2f75878a7184ec64a543989803d2d",
+      "source_bytes": 421,
+      "provisional_copy": "scripts/arbiter/research/operational_history_r2/sources/5079234a02d63e870fc9571a339fc61c32c2f75878a7184ec64a543989803d2d--empty-1.cmd",
+      "candidate_generators": [
+        {
+          "source": "artifacts/advanced-split/msvc-configure-owner-context-r8/run.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/27ba7f7d223d73d0eed1a3416a172849d18f079982f1af3dee0bbdf4cfb8d512--run.py",
+          "sha256": "3989e52fd6461e13e00c42dc6cb7e66ff3b4cd6bd07ac462f296198e8d5254c6"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/commands/link-supplement.cmd",
+      "source_sha256": "c23ce2392b704f57178d1e7e1b8a9501be1f1218915799e0ea7bc964cb6924cd",
+      "source_bytes": 537,
+      "provisional_copy": "scripts/arbiter/research/operational_history_r2/sources/c23ce2392b704f57178d1e7e1b8a9501be1f1218915799e0ea7bc964cb6924cd--link-supplement.cmd",
+      "candidate_generators": [
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-windows-static-ort.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/b483dc6677298885f962a090e291fca527ec550a21236daf05f141dc1e2a8fa0--run-windows-static-ort.py",
+          "sha256": "5e904ba1584d3de6a13ca076ba3bdce2cdd55660ce2ffb4444e36e269e4a0eff"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/windows-static-build.cmd",
+      "source_sha256": "dfc55a6bb589a8f3868610934a494f3b636dae125fef6532363d4cc1ea059e7d",
+      "source_bytes": 485,
+      "provisional_copy": "scripts/arbiter/research/operational_history_r2/sources/dfc55a6bb589a8f3868610934a494f3b636dae125fef6532363d4cc1ea059e7d--windows-static-build.cmd",
+      "candidate_generators": [
+        {
+          "source": "artifacts/local/one-airk-1.8.14/apply-reviewed-dependencies.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/92e5cfd408d907a575186e5993b0fa4814ff99f12d776fd8ecaa43e5e797f560--apply-reviewed-dependencies.py",
+          "sha256": "92e5cfd408d907a575186e5993b0fa4814ff99f12d776fd8ecaa43e5e797f560"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/audit-release-model-clients-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/5f48c2702fe30ce80be781ddd8a0b7abc8fcbfb1dda3ede222d2e8eecb1569b4--audit-release-model-clients-r1.py",
+          "sha256": "2a6abb49f45ed50574ba7f9affa7f09590a6f1d313cf7402ee54459ecd1ebf49"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/audit-release-model-clients-r2.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2d2c6b0e87336d41219059fd8cc89607ea0e3ec924ebae9ec21551cadb4d9134--audit-release-model-clients-r2.py",
+          "sha256": "cc8a3886b8fa857425ca054b22c51169aa7c535fd44813bafcb34027b87c0a05"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/check-retained-catalog-receipt.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/b4b256f496bee9aeb58769e1cc4074007c055efd558c509e767075e7efd3b115--check-retained-catalog-receipt.py",
+          "sha256": "cd8f43f44086c8f7a1750f3d713f92ad87e02e86f012b2c017369ac1857cabe4"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r32-neo/collect.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/64b460e2968415f4c2aecd97e520f37651d199609264f0551f425b3701e04299--collect.py",
+          "sha256": "64b460e2968415f4c2aecd97e520f37651d199609264f0551f425b3701e04299"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r32-neo/neo-scoped-owner.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/0a2d54256c473c4093d5eed92f67ecb787b5f41187b6298465d531464eb68b18--neo-scoped-owner.py",
+          "sha256": "0a2d54256c473c4093d5eed92f67ecb787b5f41187b6298465d531464eb68b18"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r32-neo/prepare-final-pins.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/f6f50edd55db445fe65cec713b7c2b52d9d01d0debb7c81efe507bf869fb3cd6--prepare-final-pins.py",
+          "sha256": "f6f50edd55db445fe65cec713b7c2b52d9d01d0debb7c81efe507bf869fb3cd6"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r32-neo/prepare-source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/080bd6a938742d46f49db6ad6f75521cf3e9a7c26199aaab08647e0b4eeebcda--prepare-source.py",
+          "sha256": "080bd6a938742d46f49db6ad6f75521cf3e9a7c26199aaab08647e0b4eeebcda"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r32-neo/test_preparation.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/e22df9224b13ab1b171ef8f3ebbff8cef18cbdfd18c80804aa06b8758ef73176--test_preparation.py",
+          "sha256": "e22df9224b13ab1b171ef8f3ebbff8cef18cbdfd18c80804aa06b8758ef73176"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r32-neo/transfer-and-launch.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/3efcaebeacfdb7512264f6a92a932187ef2e38aaedca0583dfad8e7ba679f097--transfer-and-launch.py",
+          "sha256": "3efcaebeacfdb7512264f6a92a932187ef2e38aaedca0583dfad8e7ba679f097"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r35-neo/collect.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/bcc93357ed4ee82a1a4b4531d887bbeb477f6904fe0132876338f5ac5ab15f25--collect.py",
+          "sha256": "bcc93357ed4ee82a1a4b4531d887bbeb477f6904fe0132876338f5ac5ab15f25"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r35-neo/neo-components-followup-r36.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/8046d49a2e2b4d5e64704abc006217f2f0f48cf83fdc83eff588c6e47ffe4dd7--neo-components-followup-r36.py",
+          "sha256": "8046d49a2e2b4d5e64704abc006217f2f0f48cf83fdc83eff588c6e47ffe4dd7"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r35-neo/neo-node-followup-r36.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/25c4385fcc6a36518ac6edc26b69f08b1eb7a88552aeb264a50e8db987cf7d59--neo-node-followup-r36.py",
+          "sha256": "25c4385fcc6a36518ac6edc26b69f08b1eb7a88552aeb264a50e8db987cf7d59"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r35-neo/neo-scoped-owner.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/542174b012e14077fab1c863cca8dde0c32eb1eabf04d5d1850b333fc981e4d2--neo-scoped-owner.py",
+          "sha256": "542174b012e14077fab1c863cca8dde0c32eb1eabf04d5d1850b333fc981e4d2"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r35-neo/prepare-final-pins.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/3f0612d6bc3e4c4cc75708004a5c6e70306b81967d874c973372751bb21bde1f--prepare-final-pins.py",
+          "sha256": "3f0612d6bc3e4c4cc75708004a5c6e70306b81967d874c973372751bb21bde1f"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r35-neo/prepare-source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/58bba9a60f17deed8cae1f4d5047fcfb738dc74e1a4829fd102fd459575a2972--prepare-source.py",
+          "sha256": "58bba9a60f17deed8cae1f4d5047fcfb738dc74e1a4829fd102fd459575a2972"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r35-neo/test_neo_components_followup_r36.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2c8d13774366467902130033115e4fd77e3e0d52f66abf8b28802c6b6ecfccee--test_neo_components_followup_r36.py",
+          "sha256": "2c8d13774366467902130033115e4fd77e3e0d52f66abf8b28802c6b6ecfccee"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r35-neo/test_preparation.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/b5ba655b3695888c0936a316e66e54c55e11836b5e1464f0382d6a4f89f0f154--test_preparation.py",
+          "sha256": "b5ba655b3695888c0936a316e66e54c55e11836b5e1464f0382d6a4f89f0f154"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r35-neo/transfer-and-launch.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/14821b7967af255d6b2df06ff7013aeab64ad7c2c83fd7bd3c93094b0a093adf--transfer-and-launch.py",
+          "sha256": "14821b7967af255d6b2df06ff7013aeab64ad7c2c83fd7bd3c93094b0a093adf"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r37-neo/collect.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/bcc93357ed4ee82a1a4b4531d887bbeb477f6904fe0132876338f5ac5ab15f25--collect.py",
+          "sha256": "bcc93357ed4ee82a1a4b4531d887bbeb477f6904fe0132876338f5ac5ab15f25"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r37-neo/neo-frozen-transfer-r35-r37-launch/restore-neo-source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/1d85ae4be319cb2aff4c8b75e56e78f77cbf1685f0ff9122e2732b88cfa7cc56--restore-neo-source.py",
+          "sha256": "1d85ae4be319cb2aff4c8b75e56e78f77cbf1685f0ff9122e2732b88cfa7cc56"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r37-neo/neo-scoped-owner.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/915d218bf6d8b33a6c536c1dac987870fab1013ea3db5ad277ed8c8a3df65978--neo-scoped-owner.py",
+          "sha256": "915d218bf6d8b33a6c536c1dac987870fab1013ea3db5ad277ed8c8a3df65978"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r37-neo/package-readable-review-r37/restore-neo-source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/1d85ae4be319cb2aff4c8b75e56e78f77cbf1685f0ff9122e2732b88cfa7cc56--restore-neo-source.py",
+          "sha256": "1d85ae4be319cb2aff4c8b75e56e78f77cbf1685f0ff9122e2732b88cfa7cc56"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r37-neo/prepare-final-pins.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/3f0612d6bc3e4c4cc75708004a5c6e70306b81967d874c973372751bb21bde1f--prepare-final-pins.py",
+          "sha256": "3f0612d6bc3e4c4cc75708004a5c6e70306b81967d874c973372751bb21bde1f"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r37-neo/prepare-source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/1d85ae4be319cb2aff4c8b75e56e78f77cbf1685f0ff9122e2732b88cfa7cc56--restore-neo-source.py",
+          "sha256": "1d85ae4be319cb2aff4c8b75e56e78f77cbf1685f0ff9122e2732b88cfa7cc56"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r37-neo/read-status.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/f66177058a040d1280f90a88f20646de92e1b8fa9c0f8502f41d4f01a80d3f35--read-status.py",
+          "sha256": "6d0132555ce07fc3c4a37ce4f96c84601eb7f1a5f9912dcd9385f8339395b7c5"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r37-neo/test_preparation.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/38694a643da76d86363d09433e159b97b5f2d66c1254011a0f24360444adafee--test_preparation.py",
+          "sha256": "38694a643da76d86363d09433e159b97b5f2d66c1254011a0f24360444adafee"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r37-neo/test_r37_plan.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/e0d8bb2ae42538e834d3e1f67fb0a315b851914112eed35612e5e3ab6b7db236--test_r37_plan.py",
+          "sha256": "e0d8bb2ae42538e834d3e1f67fb0a315b851914112eed35612e5e3ab6b7db236"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r37-neo/transfer-and-launch.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/086c0490d5e1099f67a4610ae1dcc8692facfe366a17460c26fbf080cea0e778--transfer-and-launch.py",
+          "sha256": "086c0490d5e1099f67a4610ae1dcc8692facfe366a17460c26fbf080cea0e778"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r38-neo/collect.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/48d1541988c964acf09abec6d4d607612cc5f7b67099001970c500a81159e41d--collect.py",
+          "sha256": "48d1541988c964acf09abec6d4d607612cc5f7b67099001970c500a81159e41d"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r38-neo/neo-scoped-owner.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/f6b788097b4a72dc4665942513d947dce6aeca0c3bb2e9a0970eebc045dde92c--neo-scoped-owner.py",
+          "sha256": "f6b788097b4a72dc4665942513d947dce6aeca0c3bb2e9a0970eebc045dde92c"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r38-neo/prepare-final-pins.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/33ef1ef8745e8c8ce7f7129f1deeb6e4c5f3fbf7eae1e1877d37b8c39ffe7c4a--prepare-final-pins.py",
+          "sha256": "33ef1ef8745e8c8ce7f7129f1deeb6e4c5f3fbf7eae1e1877d37b8c39ffe7c4a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r38-neo/prepare-source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/0061ec9fe8f6dc360e9007ea66eb990e4df92c2c1611a56e84c9230e75860f12--prepare-source.py",
+          "sha256": "0061ec9fe8f6dc360e9007ea66eb990e4df92c2c1611a56e84c9230e75860f12"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r38-neo/test_r38_plan.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/b44e8ec842c74126fda1667474b414298df6cee26e8110ac772f0c6a894de93c--test_r38_plan.py",
+          "sha256": "b44e8ec842c74126fda1667474b414298df6cee26e8110ac772f0c6a894de93c"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r38-neo/transfer-and-launch.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/20cd956bbac8f2f0071b79e1d1ebc2ac68645c999b488d54856790ea8307f330--transfer-and-launch.py",
+          "sha256": "20cd956bbac8f2f0071b79e1d1ebc2ac68645c999b488d54856790ea8307f330"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r39-neo/collect.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/1e4be7ec7dcc14ccd41a5922450b22fa6133f4553f6994c67f18b15ac8f18bba--collect.py",
+          "sha256": "1e4be7ec7dcc14ccd41a5922450b22fa6133f4553f6994c67f18b15ac8f18bba"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r39-neo/neo-scoped-owner.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/d5d8a2f20db01b7070caf602ec0ac407524951c5e7b3b8e8981822630caefb88--neo-scoped-owner.py",
+          "sha256": "d5d8a2f20db01b7070caf602ec0ac407524951c5e7b3b8e8981822630caefb88"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r39-neo/prepare-final-pins.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/33ef1ef8745e8c8ce7f7129f1deeb6e4c5f3fbf7eae1e1877d37b8c39ffe7c4a--prepare-final-pins.py",
+          "sha256": "33ef1ef8745e8c8ce7f7129f1deeb6e4c5f3fbf7eae1e1877d37b8c39ffe7c4a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r39-neo/prepare-source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/92d246be1bbab2c472c20971dc9321790f7266bddac1008d26afd2c2a552c0ac--prepare-source.py",
+          "sha256": "92d246be1bbab2c472c20971dc9321790f7266bddac1008d26afd2c2a552c0ac"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r39-neo/test_r39_plan.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/d6ca97600f3b53d7415dd82f0794d1791d968427fdbfaa8dff6e6bd39efcbc3a--test_r39_plan.py",
+          "sha256": "d6ca97600f3b53d7415dd82f0794d1791d968427fdbfaa8dff6e6bd39efcbc3a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r39-neo/transfer-and-launch.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/3dd1863e388484b39bb36ab37ca0fadc534b8eda58a980ee6123073d6e3b7c4f--transfer-and-launch.py",
+          "sha256": "3dd1863e388484b39bb36ab37ca0fadc534b8eda58a980ee6123073d6e3b7c4f"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/cleanup-retained-r6.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/303205d13c8f97407cec3adac239c167a7ecedf3e87b5b8f58466f06a3a4e026--cleanup-retained-r6.py",
+          "sha256": "47abef6f4d3640fb9ad3478203b59b74e4f36c5ba10386be4ab9785d9a2993cb"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/client-protocol-audit-r1/claude-native-acceptance.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/667d06e3fb7a99beda5a8c01d4889c1c76c2e2886705643e08a9060d2cb69c4b--claude-native-acceptance.py",
+          "sha256": "667d06e3fb7a99beda5a8c01d4889c1c76c2e2886705643e08a9060d2cb69c4b"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/client-protocol-audit-r1/code-user-trust.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/73f0f6613fe7804822eeae37607ffff8a7de1fb2eade89577c8cc2654fcaab49--code-user-trust.py",
+          "sha256": "73f0f6613fe7804822eeae37607ffff8a7de1fb2eade89577c8cc2654fcaab49"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/client-protocol-audit-r1/codex-native-acceptance.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/29fb5457770f12b297cda9e5f44409af2cd3211fe54dc43a9b69797f1ef7a558--codex-native-acceptance.py",
+          "sha256": "29fb5457770f12b297cda9e5f44409af2cd3211fe54dc43a9b69797f1ef7a558"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/client-protocol-audit-r1/diagnose-http-admission.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/b560516e97c66e66c8e5ea0cb5a310580cfbc186b26cae7c1895339446e43bd4--diagnose-http-admission.py",
+          "sha256": "b560516e97c66e66c8e5ea0cb5a310580cfbc186b26cae7c1895339446e43bd4"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/client-protocol-audit-r1/prepare-code-ca.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/9db2432e741e108c8179d1fd37d916486c372e18dbfe011b483e6241c6c0462d--prepare-code-ca.py",
+          "sha256": "9db2432e741e108c8179d1fd37d916486c372e18dbfe011b483e6241c6c0462d"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/client-protocol-audit-r1/run-code-ca-env-probe.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2bdd0c1e5f1693e69569ea248d4a2c0336a526bbded94baf2a88d460fe7a67ad--run-code-ca-env-probe.py",
+          "sha256": "2bdd0c1e5f1693e69569ea248d4a2c0336a526bbded94baf2a88d460fe7a67ad"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/client-protocol-audit-r1/run-code-r24.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/4d8bac7dd92b8f09b91ebc18265dea095c73156b56ce7f66a395e72b127190cf--run-code-r24.py",
+          "sha256": "4d8bac7dd92b8f09b91ebc18265dea095c73156b56ce7f66a395e72b127190cf"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/client-protocol-audit-r1/run-codex-r24.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/62908c22b855dded22c9a4a7b0757e755322716cbfb596af9e78dca21775e482--run-codex-r24.py",
+          "sha256": "62908c22b855dded22c9a4a7b0757e755322716cbfb596af9e78dca21775e482"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/client-protocol-audit-r1/stop-failed-code-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/3b494db113890994b253e5b67a6e3f8458670c2cd932982418ae528eb5d2eebe--stop-failed-code-r1.py",
+          "sha256": "3b494db113890994b253e5b67a6e3f8458670c2cd932982418ae528eb5d2eebe"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/client-protocol-audit-r1/test_code_user_trust.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/f5944d4e34139652a9e06b4a40409bbdbc3fc34ee80dbe05d38e7c995a6b676d--test_code_user_trust.py",
+          "sha256": "f5944d4e34139652a9e06b4a40409bbdbc3fc34ee80dbe05d38e7c995a6b676d"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/compiled-extension-inputs-r36.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/37a7b238b7821cd1f0bdab7ba343ca7db13745ff6a2aa95466a1c22e971a2d72--compiled-extension-inputs-r36.py",
+          "sha256": "37a7b238b7821cd1f0bdab7ba343ca7db13745ff6a2aa95466a1c22e971a2d72"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/compiled-extension-inputs-r38.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/bbfff5da11a143677f01216f6916471d71a38aa450522335c806dbd2bd97a784--compiled-extension-inputs-r38.py",
+          "sha256": "bbfff5da11a143677f01216f6916471d71a38aa450522335c806dbd2bd97a784"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/completion-d-t0-r2.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/074e051051209a5da04ca330bb771e6a547bf58faee7e6e204da02ec24b6e29f--completion-d-t0-r2.py",
+          "sha256": "5e291222fffcb3440b01a809fcf2ae603d714095b06ae6158ad24ef3b8433eba"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/completion-d-t0-r3.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/7e88c9c276a9d2a9887c5d7cb291663c2b2f2fac58b06b4b698193f3649e9d19--completion-d-t0-r3.py",
+          "sha256": "e8a9763205be96666a255ed93bc63e24fc7817e82d1d7449eeba026f95457ed2"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/completion-d-t0.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/c5b559b2b8b7cb06e3609b6d817536b730bf684d37dd62c5455968d01d3a4f3b--completion-d-t0.py",
+          "sha256": "264d4e5c6d7105c71d7029956d2ba0e285684b17482efee9507b25d6b48db837"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/completion-freeze-r27.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/be577f82737424dc7bbcc1c1dd6be4c699014811f6ed80a405ffccc6d36e8f2a--completion-freeze-r27.py",
+          "sha256": "be577f82737424dc7bbcc1c1dd6be4c699014811f6ed80a405ffccc6d36e8f2a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/completion-freeze-r30.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/1b7e9b37cebe79663fe978be3ef582e30b4f5fa4b7d30625832e0336f2d68f57--completion-freeze-r30.py",
+          "sha256": "1b7e9b37cebe79663fe978be3ef582e30b4f5fa4b7d30625832e0336f2d68f57"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/completion-freeze.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/c7ac1f5af6e24ba5f519eebb367852676ad0ee3d7a824c522c6c765a445ac8f9--completion-freeze.py",
+          "sha256": "c7ac1f5af6e24ba5f519eebb367852676ad0ee3d7a824c522c6c765a445ac8f9"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/completion-package-r26.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/64132ae99aa9b63704101fc77795dc6e6bf1a6996e7ea3d78535c7f946993e41--completion-package-r26.py",
+          "sha256": "64132ae99aa9b63704101fc77795dc6e6bf1a6996e7ea3d78535c7f946993e41"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/completion-test-only-gate.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/c4bd947a15dcdf7bf805d044e9031b73e6b7c148cf1d0304190c3684cb5c6fe0--completion-test-only-gate.py",
+          "sha256": "c4bd947a15dcdf7bf805d044e9031b73e6b7c148cf1d0304190c3684cb5c6fe0"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/dependency-review-proposal.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/80eccc3700671deaa1ab4ec2f68cf9c1b6bb8119ebb81c3cc31c4b967033c552--dependency-review-proposal.py",
+          "sha256": "80eccc3700671deaa1ab4ec2f68cf9c1b6bb8119ebb81c3cc31c4b967033c552"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/format-vet-store.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/3f96533ab966e77cb63020a254b8efc0774c037170c7f79c8f1b432a82a661a1--format-vet-store.py",
+          "sha256": "48521e760ac9626201d550766361c750e3dbd54a9c818b534433f22206a86ba6"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/historical-macos/neo-evidence/prepare-neo-fixtures.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/606a393a581abd7741f3b8b0701585c53296a62af1ae71abfcd7178f1715a5e4--prepare-neo-fixtures.py",
+          "sha256": "606a393a581abd7741f3b8b0701585c53296a62af1ae71abfcd7178f1715a5e4"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/historical-macos/prepare-neo-fixtures.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/192e163ef75e7bee0d019505f91116c0ac87f12e06bc66ee48230ab874426789--prepare-neo-fixtures.py",
+          "sha256": "192e163ef75e7bee0d019505f91116c0ac87f12e06bc66ee48230ab874426789"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/historical-macos/seal-neo-fixtures.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/0d691a54e1848d8cfa66aa6d2b1e8e8c26b1d669dbfb0288cfb6ccc2753567a4--seal-neo-fixtures.py",
+          "sha256": "aa1fd7aa0b3219b0ee818a2a2f3d0d5fda9396e11cdcc5a9159cd670ec1f93a5"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/historical-windows/prepare-windows-fixtures.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/d943525d8c81230e1d22c901a854984421be9ce7c2f20006bc362ffca30ec4d0--prepare-windows-fixtures.py",
+          "sha256": "d943525d8c81230e1d22c901a854984421be9ce7c2f20006bc362ffca30ec4d0"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/historical-windows/read-windows-fixtures.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/b1ac25adc15e69a8915a9961af01d013a25a297b9f40f122865fcd69ab65eab6--read-windows-fixtures.py",
+          "sha256": "b1ac25adc15e69a8915a9961af01d013a25a297b9f40f122865fcd69ab65eab6"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/historical-windows/verify-windows-artifacts.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/063ca810aa0a9c709a01865b337414db2e8c091c85d0af05827c367d54310909--verify-windows-artifacts.py",
+          "sha256": "063ca810aa0a9c709a01865b337414db2e8c091c85d0af05827c367d54310909"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/inspect-static-metadata.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/e7bdb4872126f593dcc082ed0c13c010226b12b706d1ef950a2587790976a00a--inspect-static-metadata.py",
+          "sha256": "0e2f66e984357bbb9edf59d9742254278df6c4fe759b14d3f4f1ebad40ae10e7"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/linux-container-qualification-r1/runner.source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/aac85c7678257a5bd311d549b3a779f9262359d8c7d0dab0b39dee7290838e01--runner.source.py",
+          "sha256": "aac85c7678257a5bd311d549b3a779f9262359d8c7d0dab0b39dee7290838e01"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/linux-container-qualification-r2/runner.source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/30e78e816412d9ecad283cd173d2844e374b0b3287115146613be498abc17d68--runner.source.py",
+          "sha256": "30e78e816412d9ecad283cd173d2844e374b0b3287115146613be498abc17d68"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/linux-container-qualification-r3/runner.source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/fb18556773b8628a992688e4c12554d11837e593da1e36ce1ca18298d346060a--runner.source.py",
+          "sha256": "fb18556773b8628a992688e4c12554d11837e593da1e36ce1ca18298d346060a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/linux-static-donor-r1/runner.source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/60ea7ec58e5790ef61c8d7835fe2394a6f539f8a7d34929216b879c499e7f134--runner.source.py",
+          "sha256": "60ea7ec58e5790ef61c8d7835fe2394a6f539f8a7d34929216b879c499e7f134"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/native_process_image_census.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2aa9cfe52bcd044c7f821b6299c49b7841a16e9f482ff12abe1f284dbdf259f5--native_process_image_census.py",
+          "sha256": "3a1da935b868e1a21c7dc773cb0bc4236ca3ac4691e5afca3d4e118bfa34efac"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/observe-linux-r3.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/56a25466cd1a7d11c63487249c7a5c1dda63de1f9f6691a3e0c5b8a6e8518aaa--observe-linux-r3.py",
+          "sha256": "56a25466cd1a7d11c63487249c7a5c1dda63de1f9f6691a3e0c5b8a6e8518aaa"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/prepare-ort-dependencies.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/6af93156d06caada48474b204b04c2443119b431774f85d01c018e478d383aa7--prepare-ort-dependencies.py",
+          "sha256": "721752b4e8ab385517a6ce9240c0de540bb74873d9512fe7f0cc0ea1017c2c36"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/probe-fixture-t1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/50f570dcad65847666e340e0d4c1d74a1828e7087f4f1606e881a97a78945876--probe-fixture-t1.py",
+          "sha256": "a0744938b9dea91432b872262b27642c4afb50c3455e8a20ae8c2480ab412ba8"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/read-r16-native-health-after-idle.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/cca5571a15c0cb0c5677ca93f61da516d6532779fb4ff45947d20ff9a27f3895--read-r16-native-health-after-idle.py",
+          "sha256": "351c3dce6fd574ca57bd926df29b243096ff62deb385018898a743461bb12db9"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/read-r16-native-health.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/67cedc7b3326cd5933d85130cd9b24cec1c074c68b0f3e8cd922f678b2cba2de--read-r16-native-health.py",
+          "sha256": "5f17531a722fd9eea448f4066f997ec34bfc50655578acf1cf7a94ada3452cf2"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/read-r17-after-idle.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/f51ea8f10637fbea1ab1df8036d1010edffc6eda6f5c805e14d0ab5632b91d05--read-r17-after-idle.py",
+          "sha256": "fae61b7a931e512395d1fc69667eeb6916de2a1b54454334a231fd78e216c301"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/read-r18-pending-restoration.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/ff5edba47444a6352afec8af6342d0e904e6ea0a63b2b14dd668e20a5061546d--read-r18-pending-restoration.py",
+          "sha256": "8aeb4cf41f9236805628e45d94a1951af4873f4ed1f1f3cc9d8946c1c6e00322"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/read-r19-continuation-delta.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2a8562c6386ea1b45b03cb2ea7224ddc37b52e05a24c594a8b0209caa6de780d--read-r19-continuation-delta.py",
+          "sha256": "47de6267a09a97e9e42aa46c5918fbef013578e5a3155b1fc90c88fe03cf9244"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/read-r19-pending-restoration.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/e5faa479c8b9654d6bbacd03aa88eadda1cdf5fb9de4ecdebe9b413ad3453399--read-r19-pending-restoration.py",
+          "sha256": "40c97dec53ea5ac0c98427e86a19d414e684545ac5285e5094008d54b91b4b55"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/recover-preserved-adoption-r8.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/0c687c38f419509d80ea8c35b45d659be1f01880691ae46f58f2ae9297037ff2--recover-preserved-adoption-r8.py",
+          "sha256": "79e52a7a9555e7659ac5cfb089f1bbf04ee09bcfd6ccab7f7844712eb4173c49"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/recover-preserved-r12.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/29989ef991cbc5b64cfe4e3629ce83289722a73aca0ff125e7c753feabf5964b--recover-preserved-r12.py",
+          "sha256": "56ef7beaec03c7d89f49313f673bc0e1756396b64cb481315e44d3340d494ecc"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-benchmark-idle-r2.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/a7c5437f43bf164f0f98f3c7aa1b5c8ea1f811c9b3ada8207254dde513d87d2f--run-benchmark-idle-r2.py",
+          "sha256": "a7c5437f43bf164f0f98f3c7aa1b5c8ea1f811c9b3ada8207254dde513d87d2f"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-editor-only-r16.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/22ed9d43be919538c56336b9db8d560b923bf6131afef8470970a6b96c1b2438--run-c8-editor-only-r16.py",
+          "sha256": "e3477ff06773385559f8321d8ac1c42e539a55cbf8b15d457418580e138c7835"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-editor-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/4fc4e6ce1047d9b2dfb040f9cae1e9d3e218a2af2876e06f359d34c73a9406dc--run-c8-editor-r1.py",
+          "sha256": "e4e51f1c258c788bbfbeae380a09542244d60ef94eeb8a00a0628d88573a5343"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-editor-r2.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/1f0ec24fe85f1152035c4331dde20fcc9b10658bbb38f550fe129183f7585d4e--run-c8-editor-r2.py",
+          "sha256": "bd94e42a41e491f8888700b9d836a167557ba8aa7bd8e6f21e84e34fdbac3e63"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-editor-r3.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/7248707ae103f6a567e2631b7bf1037d3ff9154d6b34d9c13441e69115e8007e--run-c8-editor-r3.py",
+          "sha256": "0a22c526abdb605874979d767cf81b21bed9a192a5993a8f76589638002b1e05"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-editor-r4.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2c679c0835f741c393c66032eb6715016450623cd22952c6e82a7ca65d2c1780--run-c8-editor-r4.py",
+          "sha256": "de5d335895a7f28ca995c33aba0ab4c61909e713c1c98e4db4bfd7990153c294"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-editor-r5.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/15aa328b08d18f793fb1624445b59942cafc9473a24bae7113367454b417df90--run-c8-editor-r5.py",
+          "sha256": "90ad5420cd0217d0d645273cd8a4aa15783da422097a1818e66b51743d50203a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-editor-r6.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/c6d13ddda284ab86f1f15897fc7febefbc0b25697c8a9cf7358b27c1321c88a5--run-c8-editor-r6.py",
+          "sha256": "00fdc0a1d7bbd12da2037c0e7bd71675384826a3b897e50f39c58c7bf1d9d75b"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-hot-update-r2.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/c754582d1e6a9aeb8864eb31ffcd58af60a605c32a7f14d9652dbbd8bd0ea9a9--run-c8-hot-update-r2.py",
+          "sha256": "264cd7f311d5c9bee9f54c3b287f7efe5944aacea66ede3f06991f0d4712de30"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-hot-update-r3.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/46ffa0863ede971699218f324b30b74eb7c7be44364bcbe71d3742c1d9176f33--run-c8-hot-update-r3.py",
+          "sha256": "0484d7d17f017d6ef9ad2da479ae95c3b6e84b5a27c878035af3eb2fd34b71a5"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-policy-r4.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/f8dbbf575a7fd8db911bfd064bfd8cb5a7edde41f7df45c3612e5b1468bdbf14--run-c8-installed-policy-r4.py",
+          "sha256": "5e91ba77704acb9238e1e23ed13377b79ae2ab69cd89c8cdf0ef59d6ee887a98"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-preflight-r16.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/aff82c6e6d14665c893db49f277ea15839f89e2e49675718078ffab604c06889--run-c8-installed-preflight-r16.py",
+          "sha256": "47f67b50cbe83aa90187cf6c688f9cc362a5986ced076340913d295dd0a54625"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/b4300dac9d6f180d5b9ea7caba67d0918030d61216f1f6a8f2bbb61359879ec8--run-c8-installed-r1.py",
+          "sha256": "bb7ba709c8e9d3d81184f9ad3cfc5522c50bb9ca89b38349bb11931d9cc13613"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r10.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/61c5739e3a0b593bc6697f0a6b299136627f8643dff18369e3a383a7b9280b68--run-c8-installed-r10.py",
+          "sha256": "7191b8fe19004ce61a552530d0b5e8c564846c72dfc8470ffc02b7e62721970d"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r11.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/9059b9aac975b97628cb61f10b3728782471b29db6787904080707d30731e950--run-c8-installed-r11.py",
+          "sha256": "1218a06704ec0d9e3cad89e955bb387bf54d3ec77754a03e8eb46da107728b7a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r12.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/0711d59a2287ef2ff6b79c688519c7992d94d1efe87658b31d6b47e66fd890f4--run-c8-installed-r12.py",
+          "sha256": "e9a70c5c9983b82f972a9923f03cefb7807640589646668a7af89326e3f715de"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r13.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2d426aad77dd7c16832f0c245c2b55427c23f584a31fc531f5104afbd686cf9a--run-c8-installed-r13.py",
+          "sha256": "03868f321e8c3aeade6cf6e899905735353dc2ba2712d690271b4671d6ee9af2"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r14.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/bfee8e74e0913bf123d0b9eec278b45fb6590f3933ba4fe85da11aab166ff91a--run-c8-installed-r14.py",
+          "sha256": "9bc9cc45e309218c55d83e2344b70bedca715b5b5ec9e4e5b6991344cfdf1346"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r15.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/f384be6d7c965b83280e978ba3956a4cdfac1e3b37cfbe5ef2fe6d61ba5cb5d7--run-c8-installed-r15.py",
+          "sha256": "536db4f51e1f9f83c6f5ede42ceadd9abb2332a53d8fe025f75e5615d5d93c8a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r16.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/363a02625cb43f0a4b5c322ed149807bd19fe71d0a4bfc4fa951060127b4514d--run-c8-installed-r16.py",
+          "sha256": "5f3eeb8914016c407b7c0cc9be5998aff88d41e0cff71fcc4ee17e1968d0de24"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r5.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/df4ccb11ea00834ff9e32ec37351097c80420b6c2a7378704388773bf8f08315--run-c8-installed-r5.py",
+          "sha256": "277931f848a6ae991bcbaadb5ccf73dd3ff9cfb786c1cf77ae8c1ea04e11c07e"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r6.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/c8b7e96089de64e53e200de681bc2718d0e8cc1bbfecf15091bfb947c554682a--run-c8-installed-r6.py",
+          "sha256": "c362e7145e29b2631f741aaaf0118a135b975f85b206e3ec21a33ddd11a1e72b"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r7.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/5da47b9226dc9252dea9d1168d8a9d27c5c4297ebbf3865094dd11ab109b0aa7--run-c8-installed-r7.py",
+          "sha256": "d09074162ed47c29b06bfe20a3cd78551ea152f38bf6dd256a5b48ecb210b8d2"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r8.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/73dd9b87bea2bbe6592a5102768afc16e68d5dfa6b4f98da6424de04245c4d45--run-c8-installed-r8.py",
+          "sha256": "6e5ebb70f6615ced783baccffc00f3a6817bb9dd47a13943af0ccbf625cc4453"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r9.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/4773db6bb55e318108830c056814391346f067ffb854fb9c907e90818990ba8e--run-c8-installed-r9.py",
+          "sha256": "be8100e2943503f3e9ec9bb91d95157ff63bed2d9ce0ba26202ffbba27d49e1a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-trace-r2.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/c41a24dfe8292a6cf8e167b767f67b32e32388718381015dfd5bd587fc4d9c8f--run-c8-installed-trace-r2.py",
+          "sha256": "feeae3748fc4b7185d5e44d479808945320c03cc8a145cad148e514bf80c99c4"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-trace-r3.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/bf5a65dccc3fc6473e51ba866056b802eb35ac44d9bebd55eb2c67d545c6b3d4--run-c8-installed-trace-r3.py",
+          "sha256": "66d6d480d992e6851178e8d7339cff463861dd606cf7ec146b347e8fcf8e635c"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-outer-retries-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/bbe27dded688de27f2168ec292f0acb62f135c5b940d86ffecc697865e51eeb4--run-c8-outer-retries-r1.py",
+          "sha256": "f30ec75d009de817020ede73cdce89a84fa3e514201e89d85f24157783effbfe"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r10.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2b71d18c369bb36b3af402356843b2fc51fcbfd8b3248906d555499494ed9f5d--run-c8-r10.py",
+          "sha256": "851ef504db1574465d7d5bd50702aced4bf704da3ef905d148089acfc713ea94"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r11.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/223b35abe68dc004cd963838e9f284834cf767d18cbf6d7a0b12fd2d29ed4d31--run-c8-r11.py",
+          "sha256": "8c5a0dc6d4a61e22a0a892362a1edd74937633fb1a66597582f97998bca36b5a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r12.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/8253465d813866d32d29094fa10fc814624f42115676498791afa63d707286fc--run-c8-r12.py",
+          "sha256": "894985afb637d3f4d121abfd126314785fc1e30c11ae1aca49f02c198d26de3d"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r13.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/9e446fd7d07a6420428b485c9383aad120c8e0d8ddecbcd4e41e86895496184e--run-c8-r13.py",
+          "sha256": "9aa3343db5b8ea46434c7724ee2fa44f257d5e149a8268b11024e9576f7d4ba6"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r14.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/7d7122ee050c71851bfaa6de38c1e49e365b1881ff5cbf848a689d1854b4f890--run-c8-r14.py",
+          "sha256": "404cdb88a837d12b2a40a7faed19c3932aa34bd8ce9c44aa0afca1fe0e097c50"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r3.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/1c39850b19ee9da0dbda24b5e96c8f2132c05611d0a646eaf2fa4816ef59cd06--run-c8-r3.py",
+          "sha256": "49806319100683ce171eddf3467528a7dddb35729ce0bb3804211dab80fe0225"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r4.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/64df0235368020865722b164a49674948622149db6bb73438c792da083b12b28--run-c8-r4.py",
+          "sha256": "5b2862cff06127b37f6f16fd00aa61daa780aa39b8e345139c5838c2dfb8a47d"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r5.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/9ebd69e47cb0c3366c7d05c523a44306258abb71f3606d38677a9dcaabe59316--run-c8-r5.py",
+          "sha256": "bfe2593dc7443fcf36f0cf61847aa97a5484d3605650b0a137066941e0b75bf9"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r6.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2aedb33cc21c82fae670ca4e7cfd7527743e187d23868d0da4d1595409a72ec5--run-c8-r6.py",
+          "sha256": "d1bb540863b926e1c76e98329629b2c3a1baf564d3b3ac30d96fd24566129852"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r7.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/421faeb5dcce5104e5173e27022a64893f9ceb493322dbfd8338e87277d1e545--run-c8-r7.py",
+          "sha256": "fd17d61b1116bc61470d67837d78e5a9c32976a1758da0d394b21c8550220d82"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r8.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/cecfb9136a0a78237eb9cdbc834ab1cc7db5b8e4ffc38478e09ae3947d7cdd7b--run-c8-r8.py",
+          "sha256": "ba4a783006b982cd20cedbf5c24eb1df9877176d179b38184a4f5a3b82ef6e47"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r9.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/30246bbbc2f8dd222b596fb65addd57764c7d6e16c95e472b072bf7b51a9d94f--run-c8-r9.py",
+          "sha256": "d0c9b190f1b47a25c6d16c9e84aeafe5d7ea4b0e9a84bebeba40f961c72cc487"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-index-access-retry-acceptance-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/8d8c1548867f7cebf55ef9bcb2020983b6c508651ed6400fd9dc736b3bed9fa8--run-index-access-retry-acceptance-r1.py",
+          "sha256": "1a0dd8b0a12e1a4bfc3c5e2dbeeb926ea7582c235a27117acd480139cb4a5524"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-index-access-retry-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/1d0bc91df0649b37d11e56da187043714409676cd96124e2b27c5c7a91100a49--run-index-access-retry-r1.py",
+          "sha256": "b6b2a038e1ed667d8f5b82724e6e67efed48b842f1f9c36b7887df502efc2169"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-index-access-retry-r2.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/e238a69d3a8119bb26894698f7b26751e62ce7cfc188e7462441fbd05b0e777d--run-index-access-retry-r2.py",
+          "sha256": "075c7013ca41f31ce800c518d179b1bc681384ee14636fa45cd7994254ce3ef8"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-index-access-retry-r3.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/05e06f9e5aae9705e53605367d211cb68b8f60c0e7a9bcae87b43bd92e4722cf--run-index-access-retry-r3.py",
+          "sha256": "f2e2b9ca91bfb5de9138879617c53a7143200eda4ab950eb11105dc2b099046d"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-index-access-retry-r4.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/0b218f01652961c873d593d6cb05988d444cedf05184592e42ac83f365dd0d65--run-index-access-retry-r4.py",
+          "sha256": "d84d10a329daf09c441d154d9b1e7c3760fb7db1ca1d03fd34b7f6172ea95cd5"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-linux-container-qualification-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/30e78e816412d9ecad283cd173d2844e374b0b3287115146613be498abc17d68--runner.source.py",
+          "sha256": "30e78e816412d9ecad283cd173d2844e374b0b3287115146613be498abc17d68"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-linux-container-qualification-r3.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/fb18556773b8628a992688e4c12554d11837e593da1e36ce1ca18298d346060a--runner.source.py",
+          "sha256": "fb18556773b8628a992688e4c12554d11837e593da1e36ce1ca18298d346060a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-linux-static-donor-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/04bd6400cebc3ba4341a85c836273cd1bc9f1059c0e8690bb7a89adce73c88f3--run-linux-static-donor-r1.py",
+          "sha256": "04bd6400cebc3ba4341a85c836273cd1bc9f1059c0e8690bb7a89adce73c88f3"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-qualification-gate.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/06d1c4c2ff33adf581f1ea60d832bf3d8163bb75ae401329e390ee35cf59c7cb--run-qualification-gate.py",
+          "sha256": "fad8e8fbfb4abe8b24eec2c294a6bf0f3c4a79bee25d12e0c8311173fa53c010"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-reconcile-c8-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/fb4d929960178f7b3c329c718a6a92652f61d7e432a6c49d56178b1984634558--run-reconcile-c8-r1.py",
+          "sha256": "11967d21c11bbf754256e8a951c9af510bed80f513f301247c19cc77314d3adc"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-windows-static-ort.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/b483dc6677298885f962a090e291fca527ec550a21236daf05f141dc1e2a8fa0--run-windows-static-ort.py",
+          "sha256": "5e904ba1584d3de6a13ca076ba3bdce2cdd55660ce2ffb4444e36e269e4a0eff"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/rustls-0.23.46-review/apply-reviewed.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/e03c58f9a4a0de4e9038e97fec8cda8a9226b856af09f699e4c1230f247a5b0a--apply-reviewed.py",
+          "sha256": "e03c58f9a4a0de4e9038e97fec8cda8a9226b856af09f699e4c1230f247a5b0a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/rustls-0.23.46-review/delta.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/7ef89fc22844921d32947bd45db79ca0dad520f7fc7f65eb03ddbee66cf5c770--delta.py",
+          "sha256": "7ef89fc22844921d32947bd45db79ca0dad520f7fc7f65eb03ddbee66cf5c770"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/rustls-0.23.46-review/fetch.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/96fd66aaff190fbf25da9534d2c8f31cb984e956eb66d83e95ab0a06e3d9c4de--fetch.py",
+          "sha256": "96fd66aaff190fbf25da9534d2c8f31cb984e956eb66d83e95ab0a06e3d9c4de"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/stop-reconcile-c8-failed-fixture-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/96d423222a7576fb3de1cbf49080679b29d217ab8f12decbba9ba8cb026e7b92--stop-reconcile-c8-failed-fixture-r1.py",
+          "sha256": "dd1c88b42628e72a247e7abbc661203c7700f4f2ff1500a5144db2fbdd945ea5"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/stop-recovered-r12.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/1ae5ee581694d1ed789bcd46a05664697c1d79efc8203610f17459defe59fc5f--stop-recovered-r12.py",
+          "sha256": "5f9104fd976b3a9e06906f0de334750861809e44dee6a6074ef12aba70a6c2cf"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/stop-restored-adoption-r8.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/cf1abc4fb69bdc9bc11bc1914795ec1fffc9c690371eba5c0116bb94dc6af24a--stop-restored-adoption-r8.py",
+          "sha256": "9274f50e2dfcd073b5d530eb1ca311d994dcc0ba6cddddb3d81e8085b4caf241"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/stop-resume-installed-r25-different-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/59da8ddc92a1154feef67cdf6bf8d33c6b3ad374d6f5a30e5ab455694e6f0ff9--stop-resume-installed-r25-different-r1.py",
+          "sha256": "c6a6aec9ce2d82a98488bd55c55830b701bcd6edd95ed3e4fbf25368bc936334"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/imagegen/scripts/image_gen.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/3666b807de3f0a1d0a4a767b886d612c0b8f71025c500bba6693d1c6995a0873--image_gen.py",
+          "sha256": "fc659f7e847ae17f5d12c2bc63d08eb55595e5d3a9fd8f2d4337fbe479bcddd9"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/imagegen/scripts/remove_chroma_key.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/fa2989807052b857bed08f7fee0caa2502b54c46afc0a6f28cd706c25f636630--remove_chroma_key.py",
+          "sha256": "3747519e769b503eee894425a5d0792658620fb8eeac5ecbd41b8e64a22a74f6"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/skill-creator/scripts/generate_openai_yaml.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/30c73f1ea7d47dbab2b231bb92c5bf9026f1ad14ba8e3b3a4a544092c4d24ebe--generate_openai_yaml.py",
+          "sha256": "d1036409a93e0f0d10320bbd56bcd9b6266385e176fd48fc659ebf41fb744476"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/skill-creator/scripts/init_skill.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/74dfa9361a93bee6932d6cbb332ed19ac26a27ba3800e69fb07ba7512c1025f9--init_skill.py",
+          "sha256": "7b13e11256f24e61f1620bbcda037afe7872f3a5778313fc1a42a104d786397e"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/skill-creator/scripts/quick_validate.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/6068513d924ed3559e186dfcdead7439129828dcf402167fd925c06dffbf2806--quick_validate.py",
+          "sha256": "587a9f5d860537758307e62dc033533b8de7caf7824221ee03ee46ff83291849"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/skill-installer/scripts/github_utils.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2f9702afb9f0da740181fa4a3214f663e460f80cd5cea2e7dcaab00ad269082e--github_utils.py",
+          "sha256": "c311bbd9ca34dc209faa5e4dc474122dd071a82dc818adaecff71ef4f59c691a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/skill-installer/scripts/install-skill-from-github.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/110cc7e4e395c2c9ba070d47db7d21be5164591c35015ae364fc9c9905b08de8--install-skill-from-github.py",
+          "sha256": "3b0c49eb0ed26fcb5672d141235d0ab445f4452a0e5174cb177ef31d7cff395e"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/skill-installer/scripts/list-skills.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2cd6eecbaf9be7c86e80a14d7042f95d6abb83b6baee5f17dd075fa7a71c83de--list-skills.py",
+          "sha256": "64b2979f930b7e9abd671a69527a1f79815c4f091800a773211923822374ff83"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/verify-debug-r4-reuse.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/0ee8e45935d5f41080aec420923136c826407b1be331772e39d72cbea6d68749--verify-debug-r4-reuse.py",
+          "sha256": "ee9965200468548c2cd72e1047f4649ab5e50cecfa724f4f197ec7f05e51bdbd"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/verify-fixture-artifacts.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/45811ee6950cbfa2e39596739b6a390156e7222fb2ce3846307d15a0bc623ab4--verify-fixture-artifacts.py",
+          "sha256": "24effff13506c5f9642a7544b329f5e2658de10fd97dbb36dcd06e27b5da13d9"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/verify-r39-vsix.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/e34198ced96e559d58854728bec43818cfba97e6cf1fd0635985f3dc6df1c05c--verify-r39-vsix.py",
+          "sha256": "9dd9d69e155a83e443dbd220cc5f6460ec09090dba4186d0f7768544c8eafb94"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/verify-runtime-reuse-r11-r14.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/ff4d55904fc60f7ea836f1bb3495cacbd09a067ee8a0195352fee99653ce7ce4--verify-runtime-reuse-r11-r14.py",
+          "sha256": "aa10861deec6da52998e735bfea777870abd47f05943c9e04236c4e7366f52da"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/verify-runtime-reuse-r11.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/903ce1b61aa3bfb033b850b84c5b0e8cac0743cec213f38d745526c5865ae909--verify-runtime-reuse-r11.py",
+          "sha256": "16823a0f1c0c70f0488992a34329b3680e108baa4c706b4063ec0b4d8b3c9ff2"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/windows-static-configure.cmd",
+      "source_sha256": "e69dd3472b91c6695b29c63f082b1269b554a6d2f122895098512bcbbb1b2d4e",
+      "source_bytes": 1421,
+      "provisional_copy": "scripts/arbiter/research/operational_history_r2/sources/e69dd3472b91c6695b29c63f082b1269b554a6d2f122895098512bcbbb1b2d4e--windows-static-configure.cmd",
+      "candidate_generators": [
+        {
+          "source": "artifacts/local/one-airk-1.8.14/apply-reviewed-dependencies.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/92e5cfd408d907a575186e5993b0fa4814ff99f12d776fd8ecaa43e5e797f560--apply-reviewed-dependencies.py",
+          "sha256": "92e5cfd408d907a575186e5993b0fa4814ff99f12d776fd8ecaa43e5e797f560"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/audit-release-model-clients-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/5f48c2702fe30ce80be781ddd8a0b7abc8fcbfb1dda3ede222d2e8eecb1569b4--audit-release-model-clients-r1.py",
+          "sha256": "2a6abb49f45ed50574ba7f9affa7f09590a6f1d313cf7402ee54459ecd1ebf49"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/audit-release-model-clients-r2.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2d2c6b0e87336d41219059fd8cc89607ea0e3ec924ebae9ec21551cadb4d9134--audit-release-model-clients-r2.py",
+          "sha256": "cc8a3886b8fa857425ca054b22c51169aa7c535fd44813bafcb34027b87c0a05"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/check-retained-catalog-receipt.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/b4b256f496bee9aeb58769e1cc4074007c055efd558c509e767075e7efd3b115--check-retained-catalog-receipt.py",
+          "sha256": "cd8f43f44086c8f7a1750f3d713f92ad87e02e86f012b2c017369ac1857cabe4"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r32-neo/collect.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/64b460e2968415f4c2aecd97e520f37651d199609264f0551f425b3701e04299--collect.py",
+          "sha256": "64b460e2968415f4c2aecd97e520f37651d199609264f0551f425b3701e04299"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r32-neo/neo-scoped-owner.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/0a2d54256c473c4093d5eed92f67ecb787b5f41187b6298465d531464eb68b18--neo-scoped-owner.py",
+          "sha256": "0a2d54256c473c4093d5eed92f67ecb787b5f41187b6298465d531464eb68b18"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r32-neo/prepare-final-pins.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/f6f50edd55db445fe65cec713b7c2b52d9d01d0debb7c81efe507bf869fb3cd6--prepare-final-pins.py",
+          "sha256": "f6f50edd55db445fe65cec713b7c2b52d9d01d0debb7c81efe507bf869fb3cd6"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r32-neo/prepare-source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/080bd6a938742d46f49db6ad6f75521cf3e9a7c26199aaab08647e0b4eeebcda--prepare-source.py",
+          "sha256": "080bd6a938742d46f49db6ad6f75521cf3e9a7c26199aaab08647e0b4eeebcda"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r32-neo/test_preparation.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/e22df9224b13ab1b171ef8f3ebbff8cef18cbdfd18c80804aa06b8758ef73176--test_preparation.py",
+          "sha256": "e22df9224b13ab1b171ef8f3ebbff8cef18cbdfd18c80804aa06b8758ef73176"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r32-neo/transfer-and-launch.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/3efcaebeacfdb7512264f6a92a932187ef2e38aaedca0583dfad8e7ba679f097--transfer-and-launch.py",
+          "sha256": "3efcaebeacfdb7512264f6a92a932187ef2e38aaedca0583dfad8e7ba679f097"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r35-neo/collect.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/bcc93357ed4ee82a1a4b4531d887bbeb477f6904fe0132876338f5ac5ab15f25--collect.py",
+          "sha256": "bcc93357ed4ee82a1a4b4531d887bbeb477f6904fe0132876338f5ac5ab15f25"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r35-neo/neo-components-followup-r36.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/8046d49a2e2b4d5e64704abc006217f2f0f48cf83fdc83eff588c6e47ffe4dd7--neo-components-followup-r36.py",
+          "sha256": "8046d49a2e2b4d5e64704abc006217f2f0f48cf83fdc83eff588c6e47ffe4dd7"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r35-neo/neo-node-followup-r36.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/25c4385fcc6a36518ac6edc26b69f08b1eb7a88552aeb264a50e8db987cf7d59--neo-node-followup-r36.py",
+          "sha256": "25c4385fcc6a36518ac6edc26b69f08b1eb7a88552aeb264a50e8db987cf7d59"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r35-neo/neo-scoped-owner.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/542174b012e14077fab1c863cca8dde0c32eb1eabf04d5d1850b333fc981e4d2--neo-scoped-owner.py",
+          "sha256": "542174b012e14077fab1c863cca8dde0c32eb1eabf04d5d1850b333fc981e4d2"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r35-neo/prepare-final-pins.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/3f0612d6bc3e4c4cc75708004a5c6e70306b81967d874c973372751bb21bde1f--prepare-final-pins.py",
+          "sha256": "3f0612d6bc3e4c4cc75708004a5c6e70306b81967d874c973372751bb21bde1f"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r35-neo/prepare-source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/58bba9a60f17deed8cae1f4d5047fcfb738dc74e1a4829fd102fd459575a2972--prepare-source.py",
+          "sha256": "58bba9a60f17deed8cae1f4d5047fcfb738dc74e1a4829fd102fd459575a2972"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r35-neo/test_neo_components_followup_r36.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2c8d13774366467902130033115e4fd77e3e0d52f66abf8b28802c6b6ecfccee--test_neo_components_followup_r36.py",
+          "sha256": "2c8d13774366467902130033115e4fd77e3e0d52f66abf8b28802c6b6ecfccee"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r35-neo/test_preparation.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/b5ba655b3695888c0936a316e66e54c55e11836b5e1464f0382d6a4f89f0f154--test_preparation.py",
+          "sha256": "b5ba655b3695888c0936a316e66e54c55e11836b5e1464f0382d6a4f89f0f154"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r35-neo/transfer-and-launch.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/14821b7967af255d6b2df06ff7013aeab64ad7c2c83fd7bd3c93094b0a093adf--transfer-and-launch.py",
+          "sha256": "14821b7967af255d6b2df06ff7013aeab64ad7c2c83fd7bd3c93094b0a093adf"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r37-neo/collect.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/bcc93357ed4ee82a1a4b4531d887bbeb477f6904fe0132876338f5ac5ab15f25--collect.py",
+          "sha256": "bcc93357ed4ee82a1a4b4531d887bbeb477f6904fe0132876338f5ac5ab15f25"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r37-neo/neo-frozen-transfer-r35-r37-launch/restore-neo-source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/1d85ae4be319cb2aff4c8b75e56e78f77cbf1685f0ff9122e2732b88cfa7cc56--restore-neo-source.py",
+          "sha256": "1d85ae4be319cb2aff4c8b75e56e78f77cbf1685f0ff9122e2732b88cfa7cc56"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r37-neo/neo-scoped-owner.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/915d218bf6d8b33a6c536c1dac987870fab1013ea3db5ad277ed8c8a3df65978--neo-scoped-owner.py",
+          "sha256": "915d218bf6d8b33a6c536c1dac987870fab1013ea3db5ad277ed8c8a3df65978"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r37-neo/package-readable-review-r37/restore-neo-source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/1d85ae4be319cb2aff4c8b75e56e78f77cbf1685f0ff9122e2732b88cfa7cc56--restore-neo-source.py",
+          "sha256": "1d85ae4be319cb2aff4c8b75e56e78f77cbf1685f0ff9122e2732b88cfa7cc56"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r37-neo/prepare-final-pins.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/3f0612d6bc3e4c4cc75708004a5c6e70306b81967d874c973372751bb21bde1f--prepare-final-pins.py",
+          "sha256": "3f0612d6bc3e4c4cc75708004a5c6e70306b81967d874c973372751bb21bde1f"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r37-neo/prepare-source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/1d85ae4be319cb2aff4c8b75e56e78f77cbf1685f0ff9122e2732b88cfa7cc56--restore-neo-source.py",
+          "sha256": "1d85ae4be319cb2aff4c8b75e56e78f77cbf1685f0ff9122e2732b88cfa7cc56"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r37-neo/read-status.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/f66177058a040d1280f90a88f20646de92e1b8fa9c0f8502f41d4f01a80d3f35--read-status.py",
+          "sha256": "6d0132555ce07fc3c4a37ce4f96c84601eb7f1a5f9912dcd9385f8339395b7c5"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r37-neo/test_preparation.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/38694a643da76d86363d09433e159b97b5f2d66c1254011a0f24360444adafee--test_preparation.py",
+          "sha256": "38694a643da76d86363d09433e159b97b5f2d66c1254011a0f24360444adafee"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r37-neo/test_r37_plan.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/e0d8bb2ae42538e834d3e1f67fb0a315b851914112eed35612e5e3ab6b7db236--test_r37_plan.py",
+          "sha256": "e0d8bb2ae42538e834d3e1f67fb0a315b851914112eed35612e5e3ab6b7db236"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r37-neo/transfer-and-launch.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/086c0490d5e1099f67a4610ae1dcc8692facfe366a17460c26fbf080cea0e778--transfer-and-launch.py",
+          "sha256": "086c0490d5e1099f67a4610ae1dcc8692facfe366a17460c26fbf080cea0e778"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r38-neo/collect.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/48d1541988c964acf09abec6d4d607612cc5f7b67099001970c500a81159e41d--collect.py",
+          "sha256": "48d1541988c964acf09abec6d4d607612cc5f7b67099001970c500a81159e41d"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r38-neo/neo-scoped-owner.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/f6b788097b4a72dc4665942513d947dce6aeca0c3bb2e9a0970eebc045dde92c--neo-scoped-owner.py",
+          "sha256": "f6b788097b4a72dc4665942513d947dce6aeca0c3bb2e9a0970eebc045dde92c"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r38-neo/prepare-final-pins.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/33ef1ef8745e8c8ce7f7129f1deeb6e4c5f3fbf7eae1e1877d37b8c39ffe7c4a--prepare-final-pins.py",
+          "sha256": "33ef1ef8745e8c8ce7f7129f1deeb6e4c5f3fbf7eae1e1877d37b8c39ffe7c4a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r38-neo/prepare-source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/0061ec9fe8f6dc360e9007ea66eb990e4df92c2c1611a56e84c9230e75860f12--prepare-source.py",
+          "sha256": "0061ec9fe8f6dc360e9007ea66eb990e4df92c2c1611a56e84c9230e75860f12"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r38-neo/test_r38_plan.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/b44e8ec842c74126fda1667474b414298df6cee26e8110ac772f0c6a894de93c--test_r38_plan.py",
+          "sha256": "b44e8ec842c74126fda1667474b414298df6cee26e8110ac772f0c6a894de93c"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r38-neo/transfer-and-launch.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/20cd956bbac8f2f0071b79e1d1ebc2ac68645c999b488d54856790ea8307f330--transfer-and-launch.py",
+          "sha256": "20cd956bbac8f2f0071b79e1d1ebc2ac68645c999b488d54856790ea8307f330"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r39-neo/collect.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/1e4be7ec7dcc14ccd41a5922450b22fa6133f4553f6994c67f18b15ac8f18bba--collect.py",
+          "sha256": "1e4be7ec7dcc14ccd41a5922450b22fa6133f4553f6994c67f18b15ac8f18bba"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r39-neo/neo-scoped-owner.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/d5d8a2f20db01b7070caf602ec0ac407524951c5e7b3b8e8981822630caefb88--neo-scoped-owner.py",
+          "sha256": "d5d8a2f20db01b7070caf602ec0ac407524951c5e7b3b8e8981822630caefb88"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r39-neo/prepare-final-pins.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/33ef1ef8745e8c8ce7f7129f1deeb6e4c5f3fbf7eae1e1877d37b8c39ffe7c4a--prepare-final-pins.py",
+          "sha256": "33ef1ef8745e8c8ce7f7129f1deeb6e4c5f3fbf7eae1e1877d37b8c39ffe7c4a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r39-neo/prepare-source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/92d246be1bbab2c472c20971dc9321790f7266bddac1008d26afd2c2a552c0ac--prepare-source.py",
+          "sha256": "92d246be1bbab2c472c20971dc9321790f7266bddac1008d26afd2c2a552c0ac"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r39-neo/test_r39_plan.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/d6ca97600f3b53d7415dd82f0794d1791d968427fdbfaa8dff6e6bd39efcbc3a--test_r39_plan.py",
+          "sha256": "d6ca97600f3b53d7415dd82f0794d1791d968427fdbfaa8dff6e6bd39efcbc3a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/clean-break-r39-neo/transfer-and-launch.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/3dd1863e388484b39bb36ab37ca0fadc534b8eda58a980ee6123073d6e3b7c4f--transfer-and-launch.py",
+          "sha256": "3dd1863e388484b39bb36ab37ca0fadc534b8eda58a980ee6123073d6e3b7c4f"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/cleanup-retained-r6.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/303205d13c8f97407cec3adac239c167a7ecedf3e87b5b8f58466f06a3a4e026--cleanup-retained-r6.py",
+          "sha256": "47abef6f4d3640fb9ad3478203b59b74e4f36c5ba10386be4ab9785d9a2993cb"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/client-protocol-audit-r1/claude-native-acceptance.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/667d06e3fb7a99beda5a8c01d4889c1c76c2e2886705643e08a9060d2cb69c4b--claude-native-acceptance.py",
+          "sha256": "667d06e3fb7a99beda5a8c01d4889c1c76c2e2886705643e08a9060d2cb69c4b"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/client-protocol-audit-r1/code-user-trust.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/73f0f6613fe7804822eeae37607ffff8a7de1fb2eade89577c8cc2654fcaab49--code-user-trust.py",
+          "sha256": "73f0f6613fe7804822eeae37607ffff8a7de1fb2eade89577c8cc2654fcaab49"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/client-protocol-audit-r1/codex-native-acceptance.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/29fb5457770f12b297cda9e5f44409af2cd3211fe54dc43a9b69797f1ef7a558--codex-native-acceptance.py",
+          "sha256": "29fb5457770f12b297cda9e5f44409af2cd3211fe54dc43a9b69797f1ef7a558"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/client-protocol-audit-r1/diagnose-http-admission.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/b560516e97c66e66c8e5ea0cb5a310580cfbc186b26cae7c1895339446e43bd4--diagnose-http-admission.py",
+          "sha256": "b560516e97c66e66c8e5ea0cb5a310580cfbc186b26cae7c1895339446e43bd4"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/client-protocol-audit-r1/prepare-code-ca.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/9db2432e741e108c8179d1fd37d916486c372e18dbfe011b483e6241c6c0462d--prepare-code-ca.py",
+          "sha256": "9db2432e741e108c8179d1fd37d916486c372e18dbfe011b483e6241c6c0462d"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/client-protocol-audit-r1/run-code-ca-env-probe.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2bdd0c1e5f1693e69569ea248d4a2c0336a526bbded94baf2a88d460fe7a67ad--run-code-ca-env-probe.py",
+          "sha256": "2bdd0c1e5f1693e69569ea248d4a2c0336a526bbded94baf2a88d460fe7a67ad"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/client-protocol-audit-r1/run-code-r24.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/4d8bac7dd92b8f09b91ebc18265dea095c73156b56ce7f66a395e72b127190cf--run-code-r24.py",
+          "sha256": "4d8bac7dd92b8f09b91ebc18265dea095c73156b56ce7f66a395e72b127190cf"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/client-protocol-audit-r1/run-codex-r24.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/62908c22b855dded22c9a4a7b0757e755322716cbfb596af9e78dca21775e482--run-codex-r24.py",
+          "sha256": "62908c22b855dded22c9a4a7b0757e755322716cbfb596af9e78dca21775e482"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/client-protocol-audit-r1/stop-failed-code-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/3b494db113890994b253e5b67a6e3f8458670c2cd932982418ae528eb5d2eebe--stop-failed-code-r1.py",
+          "sha256": "3b494db113890994b253e5b67a6e3f8458670c2cd932982418ae528eb5d2eebe"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/client-protocol-audit-r1/test_code_user_trust.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/f5944d4e34139652a9e06b4a40409bbdbc3fc34ee80dbe05d38e7c995a6b676d--test_code_user_trust.py",
+          "sha256": "f5944d4e34139652a9e06b4a40409bbdbc3fc34ee80dbe05d38e7c995a6b676d"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/compiled-extension-inputs-r36.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/37a7b238b7821cd1f0bdab7ba343ca7db13745ff6a2aa95466a1c22e971a2d72--compiled-extension-inputs-r36.py",
+          "sha256": "37a7b238b7821cd1f0bdab7ba343ca7db13745ff6a2aa95466a1c22e971a2d72"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/compiled-extension-inputs-r38.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/bbfff5da11a143677f01216f6916471d71a38aa450522335c806dbd2bd97a784--compiled-extension-inputs-r38.py",
+          "sha256": "bbfff5da11a143677f01216f6916471d71a38aa450522335c806dbd2bd97a784"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/completion-d-t0-r2.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/074e051051209a5da04ca330bb771e6a547bf58faee7e6e204da02ec24b6e29f--completion-d-t0-r2.py",
+          "sha256": "5e291222fffcb3440b01a809fcf2ae603d714095b06ae6158ad24ef3b8433eba"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/completion-d-t0-r3.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/7e88c9c276a9d2a9887c5d7cb291663c2b2f2fac58b06b4b698193f3649e9d19--completion-d-t0-r3.py",
+          "sha256": "e8a9763205be96666a255ed93bc63e24fc7817e82d1d7449eeba026f95457ed2"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/completion-d-t0.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/c5b559b2b8b7cb06e3609b6d817536b730bf684d37dd62c5455968d01d3a4f3b--completion-d-t0.py",
+          "sha256": "264d4e5c6d7105c71d7029956d2ba0e285684b17482efee9507b25d6b48db837"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/completion-freeze-r27.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/be577f82737424dc7bbcc1c1dd6be4c699014811f6ed80a405ffccc6d36e8f2a--completion-freeze-r27.py",
+          "sha256": "be577f82737424dc7bbcc1c1dd6be4c699014811f6ed80a405ffccc6d36e8f2a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/completion-freeze-r30.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/1b7e9b37cebe79663fe978be3ef582e30b4f5fa4b7d30625832e0336f2d68f57--completion-freeze-r30.py",
+          "sha256": "1b7e9b37cebe79663fe978be3ef582e30b4f5fa4b7d30625832e0336f2d68f57"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/completion-freeze.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/c7ac1f5af6e24ba5f519eebb367852676ad0ee3d7a824c522c6c765a445ac8f9--completion-freeze.py",
+          "sha256": "c7ac1f5af6e24ba5f519eebb367852676ad0ee3d7a824c522c6c765a445ac8f9"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/completion-package-r26.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/64132ae99aa9b63704101fc77795dc6e6bf1a6996e7ea3d78535c7f946993e41--completion-package-r26.py",
+          "sha256": "64132ae99aa9b63704101fc77795dc6e6bf1a6996e7ea3d78535c7f946993e41"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/completion-test-only-gate.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/c4bd947a15dcdf7bf805d044e9031b73e6b7c148cf1d0304190c3684cb5c6fe0--completion-test-only-gate.py",
+          "sha256": "c4bd947a15dcdf7bf805d044e9031b73e6b7c148cf1d0304190c3684cb5c6fe0"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/dependency-review-proposal.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/80eccc3700671deaa1ab4ec2f68cf9c1b6bb8119ebb81c3cc31c4b967033c552--dependency-review-proposal.py",
+          "sha256": "80eccc3700671deaa1ab4ec2f68cf9c1b6bb8119ebb81c3cc31c4b967033c552"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/format-vet-store.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/3f96533ab966e77cb63020a254b8efc0774c037170c7f79c8f1b432a82a661a1--format-vet-store.py",
+          "sha256": "48521e760ac9626201d550766361c750e3dbd54a9c818b534433f22206a86ba6"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/historical-macos/neo-evidence/prepare-neo-fixtures.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/606a393a581abd7741f3b8b0701585c53296a62af1ae71abfcd7178f1715a5e4--prepare-neo-fixtures.py",
+          "sha256": "606a393a581abd7741f3b8b0701585c53296a62af1ae71abfcd7178f1715a5e4"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/historical-macos/prepare-neo-fixtures.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/192e163ef75e7bee0d019505f91116c0ac87f12e06bc66ee48230ab874426789--prepare-neo-fixtures.py",
+          "sha256": "192e163ef75e7bee0d019505f91116c0ac87f12e06bc66ee48230ab874426789"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/historical-macos/seal-neo-fixtures.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/0d691a54e1848d8cfa66aa6d2b1e8e8c26b1d669dbfb0288cfb6ccc2753567a4--seal-neo-fixtures.py",
+          "sha256": "aa1fd7aa0b3219b0ee818a2a2f3d0d5fda9396e11cdcc5a9159cd670ec1f93a5"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/historical-windows/prepare-windows-fixtures.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/d943525d8c81230e1d22c901a854984421be9ce7c2f20006bc362ffca30ec4d0--prepare-windows-fixtures.py",
+          "sha256": "d943525d8c81230e1d22c901a854984421be9ce7c2f20006bc362ffca30ec4d0"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/historical-windows/read-windows-fixtures.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/b1ac25adc15e69a8915a9961af01d013a25a297b9f40f122865fcd69ab65eab6--read-windows-fixtures.py",
+          "sha256": "b1ac25adc15e69a8915a9961af01d013a25a297b9f40f122865fcd69ab65eab6"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/historical-windows/verify-windows-artifacts.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/063ca810aa0a9c709a01865b337414db2e8c091c85d0af05827c367d54310909--verify-windows-artifacts.py",
+          "sha256": "063ca810aa0a9c709a01865b337414db2e8c091c85d0af05827c367d54310909"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/inspect-static-metadata.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/e7bdb4872126f593dcc082ed0c13c010226b12b706d1ef950a2587790976a00a--inspect-static-metadata.py",
+          "sha256": "0e2f66e984357bbb9edf59d9742254278df6c4fe759b14d3f4f1ebad40ae10e7"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/linux-container-qualification-r1/runner.source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/aac85c7678257a5bd311d549b3a779f9262359d8c7d0dab0b39dee7290838e01--runner.source.py",
+          "sha256": "aac85c7678257a5bd311d549b3a779f9262359d8c7d0dab0b39dee7290838e01"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/linux-container-qualification-r2/runner.source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/30e78e816412d9ecad283cd173d2844e374b0b3287115146613be498abc17d68--runner.source.py",
+          "sha256": "30e78e816412d9ecad283cd173d2844e374b0b3287115146613be498abc17d68"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/linux-container-qualification-r3/runner.source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/fb18556773b8628a992688e4c12554d11837e593da1e36ce1ca18298d346060a--runner.source.py",
+          "sha256": "fb18556773b8628a992688e4c12554d11837e593da1e36ce1ca18298d346060a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/linux-static-donor-r1/runner.source.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/60ea7ec58e5790ef61c8d7835fe2394a6f539f8a7d34929216b879c499e7f134--runner.source.py",
+          "sha256": "60ea7ec58e5790ef61c8d7835fe2394a6f539f8a7d34929216b879c499e7f134"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/native_process_image_census.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2aa9cfe52bcd044c7f821b6299c49b7841a16e9f482ff12abe1f284dbdf259f5--native_process_image_census.py",
+          "sha256": "3a1da935b868e1a21c7dc773cb0bc4236ca3ac4691e5afca3d4e118bfa34efac"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/observe-linux-r3.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/56a25466cd1a7d11c63487249c7a5c1dda63de1f9f6691a3e0c5b8a6e8518aaa--observe-linux-r3.py",
+          "sha256": "56a25466cd1a7d11c63487249c7a5c1dda63de1f9f6691a3e0c5b8a6e8518aaa"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/prepare-ort-dependencies.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/6af93156d06caada48474b204b04c2443119b431774f85d01c018e478d383aa7--prepare-ort-dependencies.py",
+          "sha256": "721752b4e8ab385517a6ce9240c0de540bb74873d9512fe7f0cc0ea1017c2c36"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/probe-fixture-t1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/50f570dcad65847666e340e0d4c1d74a1828e7087f4f1606e881a97a78945876--probe-fixture-t1.py",
+          "sha256": "a0744938b9dea91432b872262b27642c4afb50c3455e8a20ae8c2480ab412ba8"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/read-r16-native-health-after-idle.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/cca5571a15c0cb0c5677ca93f61da516d6532779fb4ff45947d20ff9a27f3895--read-r16-native-health-after-idle.py",
+          "sha256": "351c3dce6fd574ca57bd926df29b243096ff62deb385018898a743461bb12db9"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/read-r16-native-health.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/67cedc7b3326cd5933d85130cd9b24cec1c074c68b0f3e8cd922f678b2cba2de--read-r16-native-health.py",
+          "sha256": "5f17531a722fd9eea448f4066f997ec34bfc50655578acf1cf7a94ada3452cf2"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/read-r17-after-idle.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/f51ea8f10637fbea1ab1df8036d1010edffc6eda6f5c805e14d0ab5632b91d05--read-r17-after-idle.py",
+          "sha256": "fae61b7a931e512395d1fc69667eeb6916de2a1b54454334a231fd78e216c301"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/read-r18-pending-restoration.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/ff5edba47444a6352afec8af6342d0e904e6ea0a63b2b14dd668e20a5061546d--read-r18-pending-restoration.py",
+          "sha256": "8aeb4cf41f9236805628e45d94a1951af4873f4ed1f1f3cc9d8946c1c6e00322"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/read-r19-continuation-delta.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2a8562c6386ea1b45b03cb2ea7224ddc37b52e05a24c594a8b0209caa6de780d--read-r19-continuation-delta.py",
+          "sha256": "47de6267a09a97e9e42aa46c5918fbef013578e5a3155b1fc90c88fe03cf9244"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/read-r19-pending-restoration.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/e5faa479c8b9654d6bbacd03aa88eadda1cdf5fb9de4ecdebe9b413ad3453399--read-r19-pending-restoration.py",
+          "sha256": "40c97dec53ea5ac0c98427e86a19d414e684545ac5285e5094008d54b91b4b55"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/recover-preserved-adoption-r8.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/0c687c38f419509d80ea8c35b45d659be1f01880691ae46f58f2ae9297037ff2--recover-preserved-adoption-r8.py",
+          "sha256": "79e52a7a9555e7659ac5cfb089f1bbf04ee09bcfd6ccab7f7844712eb4173c49"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/recover-preserved-r12.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/29989ef991cbc5b64cfe4e3629ce83289722a73aca0ff125e7c753feabf5964b--recover-preserved-r12.py",
+          "sha256": "56ef7beaec03c7d89f49313f673bc0e1756396b64cb481315e44d3340d494ecc"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-benchmark-idle-r2.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/a7c5437f43bf164f0f98f3c7aa1b5c8ea1f811c9b3ada8207254dde513d87d2f--run-benchmark-idle-r2.py",
+          "sha256": "a7c5437f43bf164f0f98f3c7aa1b5c8ea1f811c9b3ada8207254dde513d87d2f"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-editor-only-r16.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/22ed9d43be919538c56336b9db8d560b923bf6131afef8470970a6b96c1b2438--run-c8-editor-only-r16.py",
+          "sha256": "e3477ff06773385559f8321d8ac1c42e539a55cbf8b15d457418580e138c7835"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-editor-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/4fc4e6ce1047d9b2dfb040f9cae1e9d3e218a2af2876e06f359d34c73a9406dc--run-c8-editor-r1.py",
+          "sha256": "e4e51f1c258c788bbfbeae380a09542244d60ef94eeb8a00a0628d88573a5343"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-editor-r2.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/1f0ec24fe85f1152035c4331dde20fcc9b10658bbb38f550fe129183f7585d4e--run-c8-editor-r2.py",
+          "sha256": "bd94e42a41e491f8888700b9d836a167557ba8aa7bd8e6f21e84e34fdbac3e63"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-editor-r3.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/7248707ae103f6a567e2631b7bf1037d3ff9154d6b34d9c13441e69115e8007e--run-c8-editor-r3.py",
+          "sha256": "0a22c526abdb605874979d767cf81b21bed9a192a5993a8f76589638002b1e05"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-editor-r4.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2c679c0835f741c393c66032eb6715016450623cd22952c6e82a7ca65d2c1780--run-c8-editor-r4.py",
+          "sha256": "de5d335895a7f28ca995c33aba0ab4c61909e713c1c98e4db4bfd7990153c294"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-editor-r5.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/15aa328b08d18f793fb1624445b59942cafc9473a24bae7113367454b417df90--run-c8-editor-r5.py",
+          "sha256": "90ad5420cd0217d0d645273cd8a4aa15783da422097a1818e66b51743d50203a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-editor-r6.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/c6d13ddda284ab86f1f15897fc7febefbc0b25697c8a9cf7358b27c1321c88a5--run-c8-editor-r6.py",
+          "sha256": "00fdc0a1d7bbd12da2037c0e7bd71675384826a3b897e50f39c58c7bf1d9d75b"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-hot-update-r2.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/c754582d1e6a9aeb8864eb31ffcd58af60a605c32a7f14d9652dbbd8bd0ea9a9--run-c8-hot-update-r2.py",
+          "sha256": "264cd7f311d5c9bee9f54c3b287f7efe5944aacea66ede3f06991f0d4712de30"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-hot-update-r3.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/46ffa0863ede971699218f324b30b74eb7c7be44364bcbe71d3742c1d9176f33--run-c8-hot-update-r3.py",
+          "sha256": "0484d7d17f017d6ef9ad2da479ae95c3b6e84b5a27c878035af3eb2fd34b71a5"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-policy-r4.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/f8dbbf575a7fd8db911bfd064bfd8cb5a7edde41f7df45c3612e5b1468bdbf14--run-c8-installed-policy-r4.py",
+          "sha256": "5e91ba77704acb9238e1e23ed13377b79ae2ab69cd89c8cdf0ef59d6ee887a98"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-preflight-r16.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/aff82c6e6d14665c893db49f277ea15839f89e2e49675718078ffab604c06889--run-c8-installed-preflight-r16.py",
+          "sha256": "47f67b50cbe83aa90187cf6c688f9cc362a5986ced076340913d295dd0a54625"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/b4300dac9d6f180d5b9ea7caba67d0918030d61216f1f6a8f2bbb61359879ec8--run-c8-installed-r1.py",
+          "sha256": "bb7ba709c8e9d3d81184f9ad3cfc5522c50bb9ca89b38349bb11931d9cc13613"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r10.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/61c5739e3a0b593bc6697f0a6b299136627f8643dff18369e3a383a7b9280b68--run-c8-installed-r10.py",
+          "sha256": "7191b8fe19004ce61a552530d0b5e8c564846c72dfc8470ffc02b7e62721970d"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r11.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/9059b9aac975b97628cb61f10b3728782471b29db6787904080707d30731e950--run-c8-installed-r11.py",
+          "sha256": "1218a06704ec0d9e3cad89e955bb387bf54d3ec77754a03e8eb46da107728b7a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r12.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/0711d59a2287ef2ff6b79c688519c7992d94d1efe87658b31d6b47e66fd890f4--run-c8-installed-r12.py",
+          "sha256": "e9a70c5c9983b82f972a9923f03cefb7807640589646668a7af89326e3f715de"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r13.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2d426aad77dd7c16832f0c245c2b55427c23f584a31fc531f5104afbd686cf9a--run-c8-installed-r13.py",
+          "sha256": "03868f321e8c3aeade6cf6e899905735353dc2ba2712d690271b4671d6ee9af2"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r14.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/bfee8e74e0913bf123d0b9eec278b45fb6590f3933ba4fe85da11aab166ff91a--run-c8-installed-r14.py",
+          "sha256": "9bc9cc45e309218c55d83e2344b70bedca715b5b5ec9e4e5b6991344cfdf1346"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r15.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/f384be6d7c965b83280e978ba3956a4cdfac1e3b37cfbe5ef2fe6d61ba5cb5d7--run-c8-installed-r15.py",
+          "sha256": "536db4f51e1f9f83c6f5ede42ceadd9abb2332a53d8fe025f75e5615d5d93c8a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r16.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/363a02625cb43f0a4b5c322ed149807bd19fe71d0a4bfc4fa951060127b4514d--run-c8-installed-r16.py",
+          "sha256": "5f3eeb8914016c407b7c0cc9be5998aff88d41e0cff71fcc4ee17e1968d0de24"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r5.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/df4ccb11ea00834ff9e32ec37351097c80420b6c2a7378704388773bf8f08315--run-c8-installed-r5.py",
+          "sha256": "277931f848a6ae991bcbaadb5ccf73dd3ff9cfb786c1cf77ae8c1ea04e11c07e"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r6.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/c8b7e96089de64e53e200de681bc2718d0e8cc1bbfecf15091bfb947c554682a--run-c8-installed-r6.py",
+          "sha256": "c362e7145e29b2631f741aaaf0118a135b975f85b206e3ec21a33ddd11a1e72b"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r7.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/5da47b9226dc9252dea9d1168d8a9d27c5c4297ebbf3865094dd11ab109b0aa7--run-c8-installed-r7.py",
+          "sha256": "d09074162ed47c29b06bfe20a3cd78551ea152f38bf6dd256a5b48ecb210b8d2"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r8.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/73dd9b87bea2bbe6592a5102768afc16e68d5dfa6b4f98da6424de04245c4d45--run-c8-installed-r8.py",
+          "sha256": "6e5ebb70f6615ced783baccffc00f3a6817bb9dd47a13943af0ccbf625cc4453"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-r9.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/4773db6bb55e318108830c056814391346f067ffb854fb9c907e90818990ba8e--run-c8-installed-r9.py",
+          "sha256": "be8100e2943503f3e9ec9bb91d95157ff63bed2d9ce0ba26202ffbba27d49e1a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-trace-r2.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/c41a24dfe8292a6cf8e167b767f67b32e32388718381015dfd5bd587fc4d9c8f--run-c8-installed-trace-r2.py",
+          "sha256": "feeae3748fc4b7185d5e44d479808945320c03cc8a145cad148e514bf80c99c4"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-installed-trace-r3.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/bf5a65dccc3fc6473e51ba866056b802eb35ac44d9bebd55eb2c67d545c6b3d4--run-c8-installed-trace-r3.py",
+          "sha256": "66d6d480d992e6851178e8d7339cff463861dd606cf7ec146b347e8fcf8e635c"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-outer-retries-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/bbe27dded688de27f2168ec292f0acb62f135c5b940d86ffecc697865e51eeb4--run-c8-outer-retries-r1.py",
+          "sha256": "f30ec75d009de817020ede73cdce89a84fa3e514201e89d85f24157783effbfe"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r10.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2b71d18c369bb36b3af402356843b2fc51fcbfd8b3248906d555499494ed9f5d--run-c8-r10.py",
+          "sha256": "851ef504db1574465d7d5bd50702aced4bf704da3ef905d148089acfc713ea94"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r11.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/223b35abe68dc004cd963838e9f284834cf767d18cbf6d7a0b12fd2d29ed4d31--run-c8-r11.py",
+          "sha256": "8c5a0dc6d4a61e22a0a892362a1edd74937633fb1a66597582f97998bca36b5a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r12.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/8253465d813866d32d29094fa10fc814624f42115676498791afa63d707286fc--run-c8-r12.py",
+          "sha256": "894985afb637d3f4d121abfd126314785fc1e30c11ae1aca49f02c198d26de3d"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r13.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/9e446fd7d07a6420428b485c9383aad120c8e0d8ddecbcd4e41e86895496184e--run-c8-r13.py",
+          "sha256": "9aa3343db5b8ea46434c7724ee2fa44f257d5e149a8268b11024e9576f7d4ba6"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r14.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/7d7122ee050c71851bfaa6de38c1e49e365b1881ff5cbf848a689d1854b4f890--run-c8-r14.py",
+          "sha256": "404cdb88a837d12b2a40a7faed19c3932aa34bd8ce9c44aa0afca1fe0e097c50"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r3.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/1c39850b19ee9da0dbda24b5e96c8f2132c05611d0a646eaf2fa4816ef59cd06--run-c8-r3.py",
+          "sha256": "49806319100683ce171eddf3467528a7dddb35729ce0bb3804211dab80fe0225"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r4.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/64df0235368020865722b164a49674948622149db6bb73438c792da083b12b28--run-c8-r4.py",
+          "sha256": "5b2862cff06127b37f6f16fd00aa61daa780aa39b8e345139c5838c2dfb8a47d"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r5.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/9ebd69e47cb0c3366c7d05c523a44306258abb71f3606d38677a9dcaabe59316--run-c8-r5.py",
+          "sha256": "bfe2593dc7443fcf36f0cf61847aa97a5484d3605650b0a137066941e0b75bf9"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r6.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2aedb33cc21c82fae670ca4e7cfd7527743e187d23868d0da4d1595409a72ec5--run-c8-r6.py",
+          "sha256": "d1bb540863b926e1c76e98329629b2c3a1baf564d3b3ac30d96fd24566129852"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r7.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/421faeb5dcce5104e5173e27022a64893f9ceb493322dbfd8338e87277d1e545--run-c8-r7.py",
+          "sha256": "fd17d61b1116bc61470d67837d78e5a9c32976a1758da0d394b21c8550220d82"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r8.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/cecfb9136a0a78237eb9cdbc834ab1cc7db5b8e4ffc38478e09ae3947d7cdd7b--run-c8-r8.py",
+          "sha256": "ba4a783006b982cd20cedbf5c24eb1df9877176d179b38184a4f5a3b82ef6e47"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-c8-r9.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/30246bbbc2f8dd222b596fb65addd57764c7d6e16c95e472b072bf7b51a9d94f--run-c8-r9.py",
+          "sha256": "d0c9b190f1b47a25c6d16c9e84aeafe5d7ea4b0e9a84bebeba40f961c72cc487"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-index-access-retry-acceptance-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/8d8c1548867f7cebf55ef9bcb2020983b6c508651ed6400fd9dc736b3bed9fa8--run-index-access-retry-acceptance-r1.py",
+          "sha256": "1a0dd8b0a12e1a4bfc3c5e2dbeeb926ea7582c235a27117acd480139cb4a5524"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-index-access-retry-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/1d0bc91df0649b37d11e56da187043714409676cd96124e2b27c5c7a91100a49--run-index-access-retry-r1.py",
+          "sha256": "b6b2a038e1ed667d8f5b82724e6e67efed48b842f1f9c36b7887df502efc2169"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-index-access-retry-r2.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/e238a69d3a8119bb26894698f7b26751e62ce7cfc188e7462441fbd05b0e777d--run-index-access-retry-r2.py",
+          "sha256": "075c7013ca41f31ce800c518d179b1bc681384ee14636fa45cd7994254ce3ef8"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-index-access-retry-r3.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/05e06f9e5aae9705e53605367d211cb68b8f60c0e7a9bcae87b43bd92e4722cf--run-index-access-retry-r3.py",
+          "sha256": "f2e2b9ca91bfb5de9138879617c53a7143200eda4ab950eb11105dc2b099046d"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-index-access-retry-r4.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/0b218f01652961c873d593d6cb05988d444cedf05184592e42ac83f365dd0d65--run-index-access-retry-r4.py",
+          "sha256": "d84d10a329daf09c441d154d9b1e7c3760fb7db1ca1d03fd34b7f6172ea95cd5"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-linux-container-qualification-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/30e78e816412d9ecad283cd173d2844e374b0b3287115146613be498abc17d68--runner.source.py",
+          "sha256": "30e78e816412d9ecad283cd173d2844e374b0b3287115146613be498abc17d68"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-linux-container-qualification-r3.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/fb18556773b8628a992688e4c12554d11837e593da1e36ce1ca18298d346060a--runner.source.py",
+          "sha256": "fb18556773b8628a992688e4c12554d11837e593da1e36ce1ca18298d346060a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-linux-static-donor-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/04bd6400cebc3ba4341a85c836273cd1bc9f1059c0e8690bb7a89adce73c88f3--run-linux-static-donor-r1.py",
+          "sha256": "04bd6400cebc3ba4341a85c836273cd1bc9f1059c0e8690bb7a89adce73c88f3"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-qualification-gate.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/06d1c4c2ff33adf581f1ea60d832bf3d8163bb75ae401329e390ee35cf59c7cb--run-qualification-gate.py",
+          "sha256": "fad8e8fbfb4abe8b24eec2c294a6bf0f3c4a79bee25d12e0c8311173fa53c010"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-reconcile-c8-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/fb4d929960178f7b3c329c718a6a92652f61d7e432a6c49d56178b1984634558--run-reconcile-c8-r1.py",
+          "sha256": "11967d21c11bbf754256e8a951c9af510bed80f513f301247c19cc77314d3adc"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/run-windows-static-ort.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/b483dc6677298885f962a090e291fca527ec550a21236daf05f141dc1e2a8fa0--run-windows-static-ort.py",
+          "sha256": "5e904ba1584d3de6a13ca076ba3bdce2cdd55660ce2ffb4444e36e269e4a0eff"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/rustls-0.23.46-review/apply-reviewed.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/e03c58f9a4a0de4e9038e97fec8cda8a9226b856af09f699e4c1230f247a5b0a--apply-reviewed.py",
+          "sha256": "e03c58f9a4a0de4e9038e97fec8cda8a9226b856af09f699e4c1230f247a5b0a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/rustls-0.23.46-review/delta.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/7ef89fc22844921d32947bd45db79ca0dad520f7fc7f65eb03ddbee66cf5c770--delta.py",
+          "sha256": "7ef89fc22844921d32947bd45db79ca0dad520f7fc7f65eb03ddbee66cf5c770"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/rustls-0.23.46-review/fetch.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/96fd66aaff190fbf25da9534d2c8f31cb984e956eb66d83e95ab0a06e3d9c4de--fetch.py",
+          "sha256": "96fd66aaff190fbf25da9534d2c8f31cb984e956eb66d83e95ab0a06e3d9c4de"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/stop-reconcile-c8-failed-fixture-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/96d423222a7576fb3de1cbf49080679b29d217ab8f12decbba9ba8cb026e7b92--stop-reconcile-c8-failed-fixture-r1.py",
+          "sha256": "dd1c88b42628e72a247e7abbc661203c7700f4f2ff1500a5144db2fbdd945ea5"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/stop-recovered-r12.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/1ae5ee581694d1ed789bcd46a05664697c1d79efc8203610f17459defe59fc5f--stop-recovered-r12.py",
+          "sha256": "5f9104fd976b3a9e06906f0de334750861809e44dee6a6074ef12aba70a6c2cf"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/stop-restored-adoption-r8.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/cf1abc4fb69bdc9bc11bc1914795ec1fffc9c690371eba5c0116bb94dc6af24a--stop-restored-adoption-r8.py",
+          "sha256": "9274f50e2dfcd073b5d530eb1ca311d994dcc0ba6cddddb3d81e8085b4caf241"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/stop-resume-installed-r25-different-r1.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/59da8ddc92a1154feef67cdf6bf8d33c6b3ad374d6f5a30e5ab455694e6f0ff9--stop-resume-installed-r25-different-r1.py",
+          "sha256": "c6a6aec9ce2d82a98488bd55c55830b701bcd6edd95ed3e4fbf25368bc936334"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/imagegen/scripts/image_gen.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/3666b807de3f0a1d0a4a767b886d612c0b8f71025c500bba6693d1c6995a0873--image_gen.py",
+          "sha256": "fc659f7e847ae17f5d12c2bc63d08eb55595e5d3a9fd8f2d4337fbe479bcddd9"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/imagegen/scripts/remove_chroma_key.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/fa2989807052b857bed08f7fee0caa2502b54c46afc0a6f28cd706c25f636630--remove_chroma_key.py",
+          "sha256": "3747519e769b503eee894425a5d0792658620fb8eeac5ecbd41b8e64a22a74f6"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/skill-creator/scripts/generate_openai_yaml.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/30c73f1ea7d47dbab2b231bb92c5bf9026f1ad14ba8e3b3a4a544092c4d24ebe--generate_openai_yaml.py",
+          "sha256": "d1036409a93e0f0d10320bbd56bcd9b6266385e176fd48fc659ebf41fb744476"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/skill-creator/scripts/init_skill.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/74dfa9361a93bee6932d6cbb332ed19ac26a27ba3800e69fb07ba7512c1025f9--init_skill.py",
+          "sha256": "7b13e11256f24e61f1620bbcda037afe7872f3a5778313fc1a42a104d786397e"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/skill-creator/scripts/quick_validate.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/6068513d924ed3559e186dfcdead7439129828dcf402167fd925c06dffbf2806--quick_validate.py",
+          "sha256": "587a9f5d860537758307e62dc033533b8de7caf7824221ee03ee46ff83291849"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/skill-installer/scripts/github_utils.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2f9702afb9f0da740181fa4a3214f663e460f80cd5cea2e7dcaab00ad269082e--github_utils.py",
+          "sha256": "c311bbd9ca34dc209faa5e4dc474122dd071a82dc818adaecff71ef4f59c691a"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/skill-installer/scripts/install-skill-from-github.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/110cc7e4e395c2c9ba070d47db7d21be5164591c35015ae364fc9c9905b08de8--install-skill-from-github.py",
+          "sha256": "3b0c49eb0ed26fcb5672d141235d0ab445f4452a0e5174cb177ef31d7cff395e"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/user-private-fixtures-6c0f255fb113480ea4938e25f563cdf7/actual-codex-r24-1c26f27d6b05458ea130de784392ffdb/wrong-issuer-home/skills/.system/skill-installer/scripts/list-skills.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/2cd6eecbaf9be7c86e80a14d7042f95d6abb83b6baee5f17dd075fa7a71c83de--list-skills.py",
+          "sha256": "64b2979f930b7e9abd671a69527a1f79815c4f091800a773211923822374ff83"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/verify-debug-r4-reuse.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/0ee8e45935d5f41080aec420923136c826407b1be331772e39d72cbea6d68749--verify-debug-r4-reuse.py",
+          "sha256": "ee9965200468548c2cd72e1047f4649ab5e50cecfa724f4f197ec7f05e51bdbd"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/verify-fixture-artifacts.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/45811ee6950cbfa2e39596739b6a390156e7222fb2ce3846307d15a0bc623ab4--verify-fixture-artifacts.py",
+          "sha256": "24effff13506c5f9642a7544b329f5e2658de10fd97dbb36dcd06e27b5da13d9"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/verify-r39-vsix.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/e34198ced96e559d58854728bec43818cfba97e6cf1fd0635985f3dc6df1c05c--verify-r39-vsix.py",
+          "sha256": "9dd9d69e155a83e443dbd220cc5f6460ec09090dba4186d0f7768544c8eafb94"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/verify-runtime-reuse-r11-r14.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/ff4d55904fc60f7ea836f1bb3495cacbd09a067ee8a0195352fee99653ce7ce4--verify-runtime-reuse-r11-r14.py",
+          "sha256": "aa10861deec6da52998e735bfea777870abd47f05943c9e04236c4e7366f52da"
+        },
+        {
+          "source": "artifacts/local/one-airk-1.8.14/verify-runtime-reuse-r11.py",
+          "destination": "scripts/arbiter/research/operational_history_r2/sources/903ce1b61aa3bfb033b850b84c5b0e8cac0743cec213f38d745526c5865ae909--verify-runtime-reuse-r11.py",
+          "sha256": "16823a0f1c0c70f0488992a34329b3680e108baa4c706b4063ec0b4d8b3c9ff2"
+        }
+      ]
+    }
+  ]
+}

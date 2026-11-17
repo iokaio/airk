@@ -1,0 +1,486 @@
+--- r3/crates/airk-inference/src/inference_engine/pool/arbiter/CONTRACT.md
++++ r4/crates/airk-inference/src/inference_engine/pool/arbiter/CONTRACT.md
+@@ -565,3 +565,15 @@
+ cold requirement/headroom and full eligibility are checked. Failure describes
+ that selected device, not every GPU. Other adapters are not initialized. Native
+ same-model precision/CPU choices keep the original budget; no selector expands.
++
++Known-settled typed eligibility/load failure is also memoized synchronously by
++the serialized native lane before reply/dequeue. The bounded16 memo reuses the
++actual stable DeviceFaultKey; renewed management nonce, joint generation and
++wrapper epoch cannot clear it. Every actual retained target and every queued cold
++load is checked before native work. Product probe filters memoed variants. This
++fences populations queued before the asynchronous Service recorder runs. Only
++actual returned genuine faults under original live authority/cutoff and proven
++settlement are memoized; source/fixture/auth/deadline/cancel/unknown are not.
++Unknown custody/barrier is unchanged. Saturation fails closed without evicting
++a row. Only relevant typed configuration/catalog/source scope change prunes it.
++No new actor/lane/proof/clock or current-query replay is introduced.
+--- r3/crates/airk-inference/src/inference_engine/pool/arbiter.rs
++++ r4/crates/airk-inference/src/inference_engine/pool/arbiter.rs
+@@ -675,6 +675,7 @@
+         {
+             queue.eligibility.invalidate();
+         }
++        queue.eligibility.configure(&configuration);
+         queue.configuration = Some(configuration);
+         let current = queue.configuration.clone();
+         queue.warm.retain(|warm| {
+@@ -1058,7 +1059,7 @@
+                                 })();
+                                 if residents.values().any(|resident|!resident.scorer().device_settled()) {shared.unsettled.store(true,Ordering::Release);}
+                                 result
+-                            }else {device::probe(&ownership,&probe)};
++                            }else {device::probe(&ownership,&probe,&shared)};
+                             #[cfg(feature="gpu-cuda")]
+                             if airk_retrieval::arbiter::runtime::cuda::process_poisoned(){shared.unsettled.store(true,Ordering::Release);}
+                             if shared.unsettled.load(Ordering::Acquire) {
+--- r3/crates/airk-inference/src/inference_engine/pool/arbiter/device.rs
++++ r4/crates/airk-inference/src/inference_engine/pool/arbiter/device.rs
+@@ -42,6 +42,7 @@
+ pub(super) fn probe(
+     owner: &airk_kernel::inference_owner::NativeInferenceOwner,
+     probe: &Probe,
++    shared: &Arc<Shared>,
+ ) -> Result<DeviceProbe> {
+     ensure!(
+         owner.same_lease(&probe.lease),
+@@ -62,6 +63,7 @@
+     };
+     #[cfg(not(feature = "gpu-cuda"))]
+     {
++        let _ = shared;
+         for profile in runtime::catalog_profiles()?
+             .into_iter()
+             .filter(|p| p.model == probe.model.model() && p.device_execution.is_some())
+@@ -205,14 +207,24 @@
+                     });
+                     continue;
+                 }
++                let native = NativeDevice {
++                    device: device.clone(),
++                    _private: (),
++                };
++                if eligibility::require_memo_open(shared, profile.description(), &native).is_err() {
++                    live(probe)?;
++                    result.rejections.push(CandidateRejection {
++                        manifest: Some(profile.description().manifest),
++                        adapter_key: Some(adapter_key(uuid)),
++                        reason: SelectionReason::CircuitOpen,
++                    });
++                    continue;
++                }
+                 live(probe)?;
+                 result.candidates.push(BoundDeviceCandidate {
+                     profile,
+                     probe_only: false,
+-                    device: NativeDevice {
+-                        device: device.clone(),
+-                        _private: (),
+-                    },
++                    device: native,
+                     uuid,
+                     epoch: device.epoch(),
+                     host_warm_extra_bytes: extra,
+--- r3/crates/airk-inference/src/inference_engine/pool/arbiter/eligibility.rs
++++ r4/crates/airk-inference/src/inference_engine/pool/arbiter/eligibility.rs
+@@ -93,8 +93,72 @@
+             && self.charge.ptr_eq(&other.charge)
+     }
+ }
++#[derive(Clone, PartialEq, Eq)]
++struct MemoScope {
++    installation: Sha256Digest,
++    catalog: Incarnation,
++    revision: u64,
++    binding: airk_core::arbiter::device::DeviceCatalogBinding,
++}
++#[derive(Default)]
++struct FailureMemo {
++    scope: Option<MemoScope>,
++    keys: BTreeSet<device::DeviceFaultKey>,
++    saturated: bool,
++}
++impl FailureMemo {
++    fn configure(&mut self, configuration: &NativeConfiguration) {
++        let scope = match configuration {
++            NativeConfiguration::Device { document, .. } => Some(MemoScope {
++                installation: document.installation,
++                catalog: document.catalog,
++                revision: document.revision,
++                binding: document.device_catalog.clone(),
++            }),
++            NativeConfiguration::Legacy(_) => None,
++        };
++        if self.scope != scope {
++            self.keys.clear();
++            self.saturated = false;
++            self.scope = scope;
++        }
++    }
++    #[cfg(any(feature = "gpu-cuda", test))]
++    fn require_open(&self, key: &device::DeviceFaultKey) -> Result<()> {
++        ensure!(
++            !self.saturated,
++            "native eligibility failure memo capacity occupied"
++        );
++        ensure!(
++            !self.keys.contains(key),
++            "native eligibility circuit already open for this exact variant/device/source"
++        );
++        Ok(())
++    }
++    #[cfg(any(feature = "gpu-cuda", test))]
++    fn returned_failure(
++        &mut self,
++        key: device::DeviceFaultKey,
++        genuine: bool,
++        settled: bool,
++    ) -> Result<()> {
++        if !genuine || !settled {
++            return Ok(());
++        }
++        if self.keys.contains(&key) {
++            return Ok(());
++        }
++        if self.keys.len() >= 16 {
++            self.saturated = true;
++            anyhow::bail!("native eligibility failure memo capacity occupied");
++        }
++        self.keys.insert(key);
++        Ok(())
++    }
++}
+ #[derive(Default)]
+ pub(super) struct State {
++    failures: FailureMemo,
+     facts: Vec<ResidentFact>,
+     generation: u64,
+     requires: BTreeSet<Stage>,
+@@ -103,6 +167,9 @@
+     nonce: Option<Incarnation>,
+ }
+ impl State {
++    pub(super) fn configure(&mut self, configuration: &NativeConfiguration) {
++        self.failures.configure(configuration);
++    }
+     pub(super) fn invalidate(&mut self) {
+         for proof in self.proofs.values() {
+             proof.revoke();
+@@ -178,6 +245,9 @@
+     ) -> bool {
+         if !self.requires.contains(&stage) {
+             return true;
++        }
++        if self.failures.saturated {
++            return false;
+         }
+         #[cfg(feature = "gpu-cuda")]
+         {
+@@ -349,6 +419,15 @@
+                                 .is_some_and(|current| current.same_selection(&configuration)),
+                         "native eligibility scope changed before resident dispatch"
+                     );
++                    let NativeConfiguration::Device { document, .. } = &configuration else {
++                        anyhow::bail!("product eligibility needs current typed configuration");
++                    };
++                    let device = resident
++                        .native_device()
++                        .context("actual retained GPU device missing")?;
++                    let stable =
++                        device::circuit_key(resident.scorer().profile(), device, document)?;
++                    queue.eligibility.failures.require_open(&stable)?;
+                     queue.running_stage = Some(target);
+                 }
+                 shared.changed.notify_waiters();
+@@ -376,6 +455,20 @@
+                         .running_stage = None;
+                     shared.changed.notify_waiters();
+                 }
++                if let Err(error) = &returned {
++                    remember_native_failure(
++                        shared,
++                        resident.scorer().profile(),
++                        resident.native_device(),
++                        Some(&configuration),
++                        error,
++                        Some(original),
++                        Some(authority.as_ref()),
++                    )
++                    .map_err(|memo| {
++                        memo.context(format!("original resident eligibility refusal: {error:#}"))
++                    })?;
++                }
+                 let provider = returned?;
+                 ensure!(
+                     resident.scorer().device_settled(),
+@@ -427,6 +520,107 @@
+ #[cfg(test)]
+ mod tests;
+ 
++#[cfg(feature = "gpu-cuda")]
++pub(super) fn require_memo_open(
++    shared: &Arc<Shared>,
++    profile: &airk_core::arbiter::Profile,
++    device: &device::NativeDevice,
++) -> Result<()> {
++    let configuration = shared
++        .queue
++        .lock()
++        .map_err(|_| anyhow::anyhow!("native memo configuration unavailable"))?
++        .configuration
++        .clone()
++        .context("native memo configuration absent")?;
++    let NativeConfiguration::Device { document, .. } = &configuration else {
++        anyhow::bail!("product memo requires current typed configuration");
++    };
++    let key = device::circuit_key(profile, device, document)?;
++    shared
++        .queue
++        .lock()
++        .map_err(|_| anyhow::anyhow!("native eligibility memo unavailable"))?
++        .eligibility
++        .failures
++        .require_open(&key)
++}
++#[cfg(feature = "gpu-cuda")]
++fn require_retained_memo_open(
++    shared: &Arc<Shared>,
++    residents: &BTreeMap<Stage, device::GuardedResident>,
++    stage: Stage,
++) -> Result<()> {
++    let queue = shared
++        .queue
++        .lock()
++        .map_err(|_| anyhow::anyhow!("native retained memo unavailable"))?;
++    let configuration = queue
++        .configuration
++        .as_ref()
++        .context("native retained memo scope missing")?;
++    let required = residents
++        .iter()
++        .filter_map(|(stage, resident)| requires(resident.scorer()).then_some(*stage))
++        .collect();
++    for target in targets_for(configuration, stage, &required) {
++        let resident = residents
++            .get(&target)
++            .context("actual retained memo resident missing")?;
++        let NativeConfiguration::Device { document, .. } = configuration else {
++            anyhow::bail!("retained product memo needs current document");
++        };
++        let device = resident
++            .native_device()
++            .context("retained product memo device missing")?;
++        let key = device::circuit_key(resident.scorer().profile(), device, document)?;
++        queue.eligibility.failures.require_open(&key)?;
++    }
++    Ok(())
++}
++#[cfg(feature = "gpu-cuda")]
++#[allow(
++    clippy::too_many_arguments,
++    reason = "actual returned outcome and independent original authority/custody witnesses"
++)]
++fn remember_native_failure(
++    shared: &Arc<Shared>,
++    profile: &airk_core::arbiter::Profile,
++    device: Option<&device::NativeDevice>,
++    configuration: Option<&NativeConfiguration>,
++    error: &anyhow::Error,
++    deadline: Option<Instant>,
++    authority: Option<&(dyn Fn() -> bool + Send + Sync)>,
++) -> Result<()> {
++    let genuine = airk_retrieval::arbiter::runtime::cuda::is_device_eligibility_failure(error);
++    let settled = device.is_some_and(device::NativeDevice::settlement_observed)
++        && !shared.unsettled.load(Ordering::Acquire)
++        && !airk_retrieval::arbiter::runtime::cuda::process_poisoned();
++    if !genuine || !settled || device::warm_admission(deadline, authority, Instant::now).is_err() {
++        return Ok(());
++    }
++    let (Some(device), Some(NativeConfiguration::Device { document, .. })) =
++        (device, configuration)
++    else {
++        return Ok(());
++    };
++    let key = device::circuit_key(profile, device, document)?;
++    let mut queue = shared
++        .queue
++        .lock()
++        .map_err(|_| anyhow::anyhow!("native failure memo unavailable"))?;
++    if !queue.configuration.as_ref().is_some_and(|current| {
++        configuration.is_some_and(|expected| current.same_selection(expected))
++    }) {
++        return Ok(());
++    }
++    // Revocation only removes readiness. This does not claim GPU cleanup.
++    queue.eligibility.invalidate();
++    queue
++        .eligibility
++        .failures
++        .returned_failure(key, genuine, settled)
++}
+ /// Existing warm owner, factored so retained-session validation uses the same
+ /// real owner, original cutoff and custody as the newly loaded session.
+ pub(super) fn warm(
+@@ -436,14 +630,54 @@
+     residents: &mut BTreeMap<Stage, device::GuardedResident>,
+ ) -> Result<bool> {
+     let native_device = device::saved_device(&warm.profile);
+-    let loaded =
+-        if device::warm_admission(warm.deadline, warm.authority.as_deref(), Instant::now).is_ok() {
+-            Scorer::open(warm.profile, warm.source.as_ref())
+-        } else {
+-            Err(anyhow::anyhow!(
+-                "original native warm deadline expired before load"
+-            ))
+-        };
++    #[cfg(feature = "gpu-cuda")]
++    let description = warm.profile.description().clone();
++    #[cfg(feature = "gpu-cuda")]
++    let configuration = shared
++        .queue
++        .lock()
++        .map_err(|_| anyhow::anyhow!("native warm scope unavailable"))?
++        .configuration
++        .clone();
++    let admission = device::warm_admission(warm.deadline, warm.authority.as_deref(), Instant::now)
++        .and_then(|()| {
++            #[cfg(feature = "gpu-cuda")]
++            require_retained_memo_open(shared, residents, warm.stage)?;
++            #[cfg(feature = "gpu-cuda")]
++            if let Some(device) = native_device.as_ref() {
++                if warm.profile.description().device_execution.is_some()
++                    && requires_profile(&warm.profile)
++                {
++                    require_memo_open(shared, warm.profile.description(), device)?;
++                }
++            }
++            device::warm_admission(warm.deadline, warm.authority.as_deref(), Instant::now)
++        });
++    let loaded = match admission {
++        Ok(()) => Scorer::open(warm.profile, warm.source.as_ref()),
++        Err(error) => Err(error),
++    };
++    #[cfg(feature = "gpu-cuda")]
++    let loaded = match loaded {
++        Err(error) => {
++            let memo = remember_native_failure(
++                shared,
++                &description,
++                native_device.as_ref(),
++                configuration.as_ref(),
++                &error,
++                warm.deadline,
++                warm.authority.as_deref(),
++            );
++            Err(match memo {
++                Ok(()) => error,
++                Err(memo) => {
++                    error.context(format!("native warm failure memo also refused: {memo:#}"))
++                }
++            })
++        }
++        value => value,
++    };
+     if native_device
+         .as_ref()
+         .is_some_and(|device| !device.settlement_observed())
+@@ -589,3 +823,10 @@
+         required.iter().copied().collect()
+     }
+ }
++
++#[cfg(feature = "gpu-cuda")]
++fn requires_profile(profile: &ExecutionProfile) -> bool {
++    // Production admission has no evaluation bypass; explicit /1 evaluation
++    // owns its separate scientific route and must retain exact behavior.
++    !profile.evaluation() && profile.description().device_execution.is_some()
++}
+--- r3/crates/airk-inference/src/inference_engine/pool/arbiter/eligibility/tests.rs
++++ r4/crates/airk-inference/src/inference_engine/pool/arbiter/eligibility/tests.rs
+@@ -252,3 +252,85 @@
+     assert_eq!(candidates.get(), 0);
+     assert!(super::super::device::require_product_runtime(true).is_ok());
+ }
++
++fn fault_key(profile: u8) -> device::DeviceFaultKey {
++    device::DeviceFaultKey {
++        profile: Sha256Digest::from_bytes([profile; 32]),
++        execution_identity: "actual-injected-stable-identity".into(),
++        runtime_build: Sha256Digest::from_bytes([81; 32]),
++        adapter: [82; 16],
++        driver_api_version: 13000,
++        driver_image_sha256: Sha256Digest::from_bytes([83; 32]),
++        configuration_revision: 1,
++        device_catalog: Sha256Digest::from_bytes([3; 32]),
++        catalog_source: Sha256Digest::from_bytes([4; 32]),
++    }
++}
++#[test]
++fn queued_population_observes_native_failure_before_service_recorder_runs() -> Result<()> {
++    let key = fault_key(84);
++    let mut state = State::default();
++    state.configure(&configuration());
++    // B passed its Service precheck and queued while A owns the native lane.
++    state.failures.require_open(&key)?;
++    let service_recorder_calls = 0;
++    let mut native_calls = 1; // A has returned a genuine, settled failure.
++    state.failures.returned_failure(key.clone(), true, true)?;
++    // The serialized lane tests B before dispatch, without awaiting Service.
++    if state.failures.require_open(&key).is_ok() {
++        native_calls += 1;
++    }
++    assert_eq!(native_calls, 1);
++    assert_eq!(service_recorder_calls, 0);
++    // A new joint nonce or revoked proof never clears a stable native fault.
++    state.invalidate();
++    state.generation += 1;
++    state.configure(&configuration());
++    assert!(state.failures.require_open(&key).is_err());
++    Ok(())
++}
++#[test]
++fn native_failure_memo_never_converts_nonfault_or_unknown_work_into_fault() -> Result<()> {
++    let mut memo = FailureMemo::default();
++    let key = fault_key(85);
++    memo.returned_failure(key.clone(), false, true)?;
++    memo.returned_failure(key.clone(), true, false)?;
++    assert!(memo.keys.is_empty());
++    assert!(!memo.saturated);
++    memo.require_open(&key)?;
++    memo.returned_failure(key.clone(), true, true)?;
++    assert_eq!(memo.keys.len(), 1);
++    memo.returned_failure(key, true, true)?;
++    assert_eq!(memo.keys.len(), 1);
++    Ok(())
++}
++#[test]
++fn sixteen_native_faults_bound_memory_and_seventeenth_refuses_without_eviction() -> Result<()> {
++    let mut state = State::default();
++    let original = configuration();
++    state.configure(&original);
++    for n in 1..=16 {
++        state.failures.returned_failure(fault_key(n), true, true)?;
++    }
++    assert_eq!(state.failures.keys.len(), 16);
++    assert!(
++        state
++            .failures
++            .returned_failure(fault_key(17), true, true)
++            .is_err()
++    );
++    assert_eq!(state.failures.keys.len(), 16);
++    assert!(state.failures.require_open(&fault_key(18)).is_err());
++    state.invalidate();
++    state.configure(&original);
++    assert!(state.failures.require_open(&fault_key(18)).is_err());
++    let mut changed = original;
++    if let NativeConfiguration::Device { document, .. } = &mut changed {
++        document.revision = 2;
++    }
++    state.configure(&changed);
++    assert!(!state.failures.saturated);
++    assert!(state.failures.keys.is_empty());
++    state.failures.require_open(&fault_key(18))?;
++    Ok(())
++}

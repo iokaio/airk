@@ -1,0 +1,15 @@
+# ONNX Runtime source provenance projection
+
+This utility classifies observed ORT source and dependency copies against pinned upstream inventories, Git trees and ZIP members. It never executes or copies candidate code, downloads inputs, builds ORT, or qualifies a runtime.
+
+`python -S -B scripts/arbiter/analysis/upstream_ort/project.py --primary PATH --primary-sha256 SHA --extra PATH --extra-sha256 SHA --destination artifacts/.../fresh-root` emits JSON-line bundles on stdout. Destination only binds future receipt paths; the projector does not write them. Retain stdout through the checked human execution procedure, then use `materialize.ps1` with its exact SHA to create the private proof/disposition files. The source inventory and upstream evidence remain immutable inputs. Run `python -S -B scripts/arbiter/analysis/upstream_ort/tests.py` for focused controls.
+
+ORT 1.30 source copies use the maintained static lock and its exact source inventory. The older 1.22.1 checkout uses its separately retained build receipt and Git commit; Windows CRLF representation is explicit. Dependency sources are compared to members of archives pinned by their own version's lock/manifest. Modified, missing, generated build outputs and unsupported inputs remain unresolved. This is selected-source provenance, not a claim that every pruned directory or private input was inspected.
+
+An optional `--containers PATH --containers-sha256 SHA` accepts the pinned embedded-container request and only projects matching ORT source/dependency paths. Other document containers remain with their own owners. Run `pwsh -NoProfile -File scripts/arbiter/analysis/upstream_ort/materialize_tests.ps1` for three pure captured-byte controls.
+
+The materializer invocation is `pwsh -NoProfile -File scripts/arbiter/analysis/upstream_ort/materialize.ps1 -ExpectedSid HUMAN_SID -Bundle PRIVATE_BUNDLE -BundleSha256 SHA -Destination artifacts/.../fresh-root`. It captures and authenticates bounded bytes before parsing or creating output directories. Its index lists each private disposition map path and SHA for final reconciliation.
+
+`project_patches.py --index <projection-index.json> --index-sha256 <SHA256>` performs read-only dependency patch diagnostics. It captures authenticated upstream archives and patches, applies the strict pure `patch_replay.py` reader in memory, and compares live bytes. Its chosen ordered derivation does not prove historical command execution. Unsupported syntax and residual changes remain unresolved; no vendor source is written. Run `python -S -B scripts/arbiter/analysis/upstream_ort/test_patch_replay.py` for focused controls.
+
+`generated_roles.py --platform <residual.json> --platform-sha256 <SHA256> --component <roles.json> --component-sha256 <SHA256>` records positive generated-build roles from retained configure receipts and content markers or CMake templates. It does not reproduce historical output bytes or authorize whole-directory exclusions. Unsupported files remain explicit. Run `test_generated_roles.py` for bounded matcher controls.

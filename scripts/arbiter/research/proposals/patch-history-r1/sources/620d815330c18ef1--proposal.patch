@@ -1,0 +1,1340 @@
+--- a/crates/airk-inference/src/inference_engine/pool/arbiter/CONTRACT.md
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/CONTRACT.md
+@@ -577,3 +577,33 @@
+ Unknown custody/barrier is unchanged. Saturation fails closed without evicting
+ a row. Only relevant typed configuration/catalog/source scope change prunes it.
+ No new actor/lane/proof/clock or current-query replay is introduced.
++
++
++The metadata-only component request emitter optionally carries the native
++RuntimeAssemblyInput checkpointed_proof Core pin, omitted for historical input
++identity. AIRK_CUDA_CHECKPOINTED_PROOF and _SHA256 must be supplied together.
++The actual bounded native assembly owner delegates only this explicit branch
++to the shared strict checkpoint-composite verifier and retains all held
++source/proof/section/payload custody through original-deadline recheck. New
++checkpoint target-section receipts never independently count as full producer
++success; no timing/model/numeric/placement admission transfers.
++
++Optional custody_copies rows follow the Retrieval native owner. The request
++emitter reads only an exact AIRK_CUDA_METADATA_CUSTODY +_SHA256 native input;
++empty is omitted. Copied old metadata remains ancestry, never old protection
++or a failed-build success. Runtime payload/code authentication never aliases.
++The package projection selector emits only descriptive NN0 bytes; the builder
++must validate exact genuine native image/source/input/output and actual parent
++process-tree/Job settlement through the maintained execution owner.
++
++A separate optional historical_tool_copies list is emitted from exact native
++AIRK_CUDA_HISTORICAL_TOOL_CUSTODY +_SHA256 data. Only named frozen R12 CMake/
++Ninja evidence may stream a protected inert copy; no executable activation or
++generic DLL/runtime authentication redirects. The opaque projection never
++claims original tool-path protection or old failure promotion.
++
++The owning package selector additionally obtains the descriptor filename from
++Host::gpu_runtime::installed_paths and refuses any different supplied basename.
++This shares the actual installed loader owner without a new dependency or
++production filename literal. The lower descriptive/scientific accessor remains
++generic; no metadata roster can accidentally stage an unusable descriptor name.
+--- a/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification.rs
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification.rs
+@@ -15,6 +15,12 @@
+     Assembly {
+         schema: String,
+         assembly: RuntimeAssemblyInput,
++        deadline_ms: u64,
++    },
++    PackageProjection {
++        schema: String,
++        directory: PathBuf,
++        descriptor: ResourceFilePin,
+         deadline_ms: u64,
+     },
+     Prepare {
+@@ -238,10 +244,66 @@
+                 directory: PathBuf::from(text("AIRK_CUDA_RUNTIME_ROOT")?),
+                 producer_name: text("AIRK_CUDA_PRODUCER_NAME")?,
+                 producer_sha256: text("AIRK_CUDA_PRODUCER_SHA256")?.parse()?,
++                checkpointed_proof: match std::env::var_os("AIRK_CUDA_CHECKPOINTED_PROOF") {
++                    None => {
++                        ensure!(
++                            std::env::var_os("AIRK_CUDA_CHECKPOINTED_PROOF_SHA256").is_none(),
++                            "checkpoint proof hash requires explicit proof path"
++                        );
++                        None
++                    }
++                    Some(_) => Some(env_pin(
++                        "AIRK_CUDA_CHECKPOINTED_PROOF",
++                        "AIRK_CUDA_CHECKPOINTED_PROOF_SHA256",
++                    )?),
++                },
++                custody_copies: match std::env::var_os("AIRK_CUDA_METADATA_CUSTODY") {
++                    None => {
++                        ensure!(
++                            std::env::var_os("AIRK_CUDA_METADATA_CUSTODY_SHA256").is_none(),
++                            "custody hash requires explicit native custody input"
++                        );
++                        Vec::new()
++                    }
++                    Some(_) => cuda::decode_metadata_custody(&pinned(
++                        &env_pin(
++                            "AIRK_CUDA_METADATA_CUSTODY",
++                            "AIRK_CUDA_METADATA_CUSTODY_SHA256",
++                        )?,
++                        1 << 20,
++                    )?)?,
++                },
++                historical_tool_copies: match std::env::var_os("AIRK_CUDA_HISTORICAL_TOOL_CUSTODY")
++                {
++                    None => {
++                        ensure!(
++                            std::env::var_os("AIRK_CUDA_HISTORICAL_TOOL_CUSTODY_SHA256").is_none(),
++                            "historical custody hash requires native input"
++                        );
++                        Vec::new()
++                    }
++                    Some(_) => cuda::decode_historical_tool_custody(&pinned(
++                        &env_pin(
++                            "AIRK_CUDA_HISTORICAL_TOOL_CUSTODY",
++                            "AIRK_CUDA_HISTORICAL_TOOL_CUSTODY_SHA256",
++                        )?,
++                        1 << 20,
++                    )?)?,
++                },
+                 module_names: list("AIRK_CUDA_MODULE_NAMES")?,
+                 load_order: list("AIRK_CUDA_LOAD_ORDER")?,
+                 system_imports: list("AIRK_CUDA_SYSTEM_IMPORTS")?.into_iter().collect(),
+             },
++            deadline_ms: number("AIRK_CUDA_DEADLINE_MS")?,
++        }
++    } else if mode == "package_projection" {
++        Request::PackageProjection {
++            schema: SCHEMA.into(),
++            directory: PathBuf::from(text("AIRK_CUDA_RUNTIME_ROOT")?),
++            descriptor: env_pin(
++                "AIRK_CUDA_RUNTIME_MANIFEST",
++                "AIRK_CUDA_RUNTIME_MANIFEST_SHA256",
++            )?,
+             deadline_ms: number("AIRK_CUDA_DEADLINE_MS")?,
+         }
+     } else {
+@@ -616,3 +678,103 @@
+ 
+ #[cfg(test)]
+ mod tests;
++
++#[test]
++fn historical_assembly_request_omits_new_checkpoint_authority_and_requires_explicit_pin()
++-> Result<()> {
++    let assembly = RuntimeAssemblyInput {
++        directory: PathBuf::from("literal-root"),
++        producer_name: "producer.json".into(),
++        producer_sha256: Sha256Digest::from_bytes([1; 32]),
++        checkpointed_proof: None,
++        custody_copies: Vec::new(),
++        historical_tool_copies: Vec::new(),
++        module_names: vec![],
++        load_order: vec![],
++        system_imports: BTreeSet::new(),
++    };
++    let mut json = serde_json::to_value(&assembly)?;
++    assert!(json.get("checkpointed_proof").is_none());
++    json["checkpointed_proof"] =
++        serde_json::json!({"path":"literal-proof.json","sha256":Sha256Digest::from_bytes([2;32])});
++    let decoded: RuntimeAssemblyInput = serde_json::from_value(json.clone())?;
++    assert_eq!(
++        decoded.checkpointed_proof.unwrap().sha256,
++        Sha256Digest::from_bytes([2; 32])
++    );
++    json["checkpointed_proof"]["approved"] = serde_json::json!(true);
++    assert!(serde_json::from_value::<RuntimeAssemblyInput>(json).is_err());
++    Ok(())
++}
++
++#[test]
++#[ignore = "NN0: supplied genuine manifest/2+held public closure; package metadata only, no activation"]
++fn emit_cuda_runtime_package_projection_from_held_native_closure() -> Result<()> {
++    let started = Instant::now();
++    let (request, pin) = request()?;
++    let Request::PackageProjection {
++        schema,
++        directory,
++        descriptor,
++        deadline_ms,
++    } = request
++    else {
++        anyhow::bail!("package projection request required")
++    };
++    ensure!(
++        schema == SCHEMA && (1..=120000).contains(&deadline_ms),
++        "package projection schema/deadline differs"
++    );
++    let deadline = started + Duration::from_millis(deadline_ms);
++    require_installed_descriptor_name(Path::new(&descriptor.path))?;
++    let (_parent, control) = private_control()?;
++    let lease = Arc::new(airk_store::service::ServiceLease::acquire(&control)?);
++    let owner = airk_kernel::inference_owner::NativeInferenceOwner::admit(lease.clone())?;
++    let bytes = owner.run(|| -> Result<Vec<u8>> {
++        // SAFETY: this exact live lease and the actual owning compute scope are retained.
++        unsafe {
++            cuda::observe_runtime_package_projection(
++                lease.clone(),
++                &directory,
++                Path::new(&descriptor.path),
++                descriptor.sha256,
++                deadline,
++            )
++        }
++    })??;
++    ensure!(
++        Instant::now() < deadline,
++        "original metadata deadline exceeded"
++    );
++    let path = output()?;
++    let projection = write_new(&path, &bytes)?;
++    write_json(
++        &path.with_extension("receipt.json"),
++        &json!({"schema":"airk.private.cuda-runtime-package-projection-emission/1","input":pin,"descriptor":descriptor,"projection":projection,"pid":std::process::id(),"execution_user":airk_ipc::endpoint::current_user()?,"elapsed_us":started.elapsed().as_micros(),"model_requests_dispatched":false,"runtime_admission_dispatched":false,"forward_count_observed":null,"activation":false,"qualification":false,"scope":"actual held metadata projection only; parent process/Job custody is separate"}),
++    )?;
++    Ok(())
++}
++
++fn require_installed_descriptor_name(descriptor: &Path) -> Result<()> {
++    let (_, installed) = airk_host::gpu_runtime::installed_paths()?;
++    ensure!(
++        descriptor.file_name().is_some() && descriptor.file_name() == installed.file_name(),
++        "package descriptor basename differs from the actual native installed loader owner"
++    );
++    Ok(())
++}
++#[test]
++fn package_projection_selector_uses_installed_native_descriptor_filename() -> Result<()> {
++    // Filename contract only. No descriptor file or positive runtime proof exists.
++    let (_, installed) = airk_host::gpu_runtime::installed_paths()?;
++    assert_eq!(
++        installed.file_name(),
++        Some(std::ffi::OsStr::new("airk-cuda-runtime.json"))
++    );
++    require_installed_descriptor_name(&installed)?;
++    assert!(
++        require_installed_descriptor_name(&installed.with_file_name("other-runtime.json")).is_err()
++    );
++    assert!(require_installed_descriptor_name(Path::new("")).is_err());
++    Ok(())
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/CONTRACT.md
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/CONTRACT.md
+@@ -254,3 +254,113 @@
+ an ACL, ships raw producer records, or creates execution authority. The raw
+ checkpointed producer/composite schema is a separate pending strict bridge;
+ this implementation does not alias its status to the historical /1 producer.
++
++## Explicit checkpointed scientific build bridge
++
++The private RuntimeAssemblyInput adds an optional checkpointed_proof Core
++ResourceFilePin, default omitted so historical request bytes retain their
++shape. Without it the original producer status/provider branch remains exact.
++With it only the separately owned strict native validator accepts canonical
++proof airk.cuda-static-build-proof/2 and raw composite
++ airk.private.cuda-checkpointed-build/1 with
++PASS_CHECKPOINTED_PRODUCER_ONLY_UNQUALIFIED. The helper reopens the pinned
++actual sections/source/ancestry/custody/natural closure, returns only verified
++same-build provider rows and the actual raw-composite static identity. No
++status alias or generic new-success acceptance exists. The scientific manifest
++still has fits=[] and remains unapproved; no device/model proof transfers.
++
++The assembly owner retains its no-write/delete handles for payloads and the
++shared Source's exact raw/proof/section inputs through final recheck, under
++the same original metadata deadline. A staged raw composite may have a new
++pathname only when its bytes/size/SHA match the proof's original build_receipt.
++Private raw timing/custody receipts never become distributable public metadata.
++The ignored native request emitter accepts explicit
++AIRK_CUDA_CHECKPOINTED_PROOF + _SHA256 pins; no data-language DTO constructs
++the new field or invents canonical proof output hashes.
++
++The test-support observe_runtime_package_projection accessor accepts actual
++caller-pinned RuntimeManifest/2 bytes and the protected direct payload root.
++It parses the Rust owner, opens/holds/hashes all exact declared DLLs, compares
++actual PE import/delay-import metadata, validates the path-free public
++provenance and all exact legal Notice assets, then rechecks every held input
++under the same original metadata deadline. No ORT/CUDA initialization, driver
++load, provider/session creation, model request, activation or eligibility occurs.
++Scientific /1 descriptors refuse this distributable path. There is no fabricated
++positive descriptor/proof while the genuine completed build is unavailable.
++
++The opaque output schema airk.native.cuda-package-projection/1 contains the
++actual descriptor {name,bytes,sha256}, static_core_build, and sorted files rows
++{name,bytes,sha256} including that descriptor plus every DLL/public provenance/
++legal asset. qualification=false and activation=false are descriptive scope,
++never authority. A builder consumes the exact native projection and genuine
++owning image/source/input/output plus actual parent process/Job settlement
++proof; arbitrary matching JSON is insufficient. The ignored owning selector
++emits a separate NN0 input/output/PID/user receipt but cannot claim its parent's
++future process settlement. No Python RuntimeManifest DTO is introduced.
++
++## Pinned metadata custody copies
++
++Root-approved MetadataCustodyCopy is the Rust-owned test-support private row
++{original:Core ResourceFilePin,copy:Core ResourceFilePin,bytes:u64}. It preserves
++the exact original logical pin/path as ancestry. Source.read may consume a
++fresh protected human-owned byte-identical copy of bounded inert metadata,
++including script/source bytes treated only as pinned build metadata. Original
++and copy SHA must be equal/nonzero, actual copied size exact/nonzero<=16MiB,
++paths absolute/distinct/unique, and the actual held protected copy must rehash
++and retain the same named object. Duplicate destinations/physical copy objects,
++chains, unknown or mismatched requested pins and unused mapping rows refuse.
++Windows case/dot-path aliases do not create additional mapping identities.
++
++No Source.authenticate operation redirects, and no active executable/DLL/PE or
++runtime payload path is aliased. Direct actual payload custody remains its real
++held path/hash/PE proof. A protected metadata copy can be reopened directly or
++through its one exact original logical pin, but never represents protection of
++the old path, ownership adoption, a rewritten receipt or promotion of a failed
++attempt. Source final recheck verifies every consumed copy/held source and
++refuses any unused list entry under the original deadline. Existing ACLs and
++receipts remain untouched.
++
++The projection input and RuntimeAssemblyInput each add custody_copies, omitted
++when empty to preserve historical private serialization. The standalone native
++custody decoder owns airk.native.cuda-metadata-custody/1 {schema,copies}; the
++ignored request emitter accepts AIRK_CUDA_METADATA_CUSTODY +_SHA256 together.
++It consumes this opaque native input rather than adding data-language mirrors.
++Copies must already exist under the approved protected user C anchor; this
++native reader creates no copies or directories and never relaxes integrity.
++
++A shared checkpoint validator may call Source.recheck midway through public
++projection; that rehashes all files held so far under the original cutoff.
++Only the outer complete assembly/projection emission checks that every declared
++custody mapping has been consumed. This preserves strict final unused refusal
++without falsely rejecting valid mappings for later legal/source inputs.
++
++## Inert historical tool evidence
++
++Root additionally approved a distinct historical_tool_copies list of native
++HistoricalToolCustodyCopy {tool,original:Core ResourceFilePin,copy:Core
++ResourceFilePin,bytes}. It is omitted when empty. Only the exact frozen R12
++CMake (12,029,392 bytes, SHA3fe22eb02...) and Ninja (600,576 bytes,
++SHAedccb4c55...) original logical paths and tool roles admit aliases. Their
++original producer before/after seals and the maintained canonical proof remain
++authority for historical identity; current original path protection is never
++claimed. The actual protected copies are streamed/held/rehashed in metadata
++scope only. Source.authenticate_historical_tool is the sole typed consumer;
++its default is the original strict authenticate for direct protected tools.
++
++Source.read, generic authenticate and active executable/DLL/PE/runtime/aggregate
++operations refuse historical aliases, including after a typed use cached the
++copy. Wrong/unknown role, SHA, byte count, original path, duplicate/cross-class
++origin or destination, physical-copy alias, chain and unused mapping refuse.
++No copy is loaded or executed, no original receipt is rewritten and no ACL is
++changed. Exact known historical tool evidence is not executable authority.
++The existing build.ninja graph remains ordinary metadata, not the Ninja EXE.
++
++The standalone decoder owns airk.native.cuda-historical-tool-custody/1
++{schema,copies}; the ignored emitter accepts
++AIRK_CUDA_HISTORICAL_TOOL_CUSTODY +_SHA256 together. The generic historical
++callback is invoked only after named actual producer tool fields and canonical
++proof pins have been reconciled. Provider/runtime/aggregate paths retain direct
++strict authentication. Both metadata and historical consumed-list closures are
++checked only by the outer complete emission; intermediate shared rechecks
++rehash files held so far. Actual aliases are current custody, not old-path
++security or an upgrade of historical failed build outcomes.
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/custody/tests.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/custody/tests.rs
+@@ -0,0 +1,169 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Synthetic map decisions only; no protected files or successful build exists here.
++use super::*;
++fn row() -> MetadataCustodyCopy {
++    let root = std::env::temp_dir();
++    let sha = Sha256Digest::from_bytes([1; 32]);
++    MetadataCustodyCopy {
++        original: ResourceFilePin {
++            path: root.join("original.json").to_str().unwrap().into(),
++            sha256: sha,
++        },
++        copy: ResourceFilePin {
++            path: root.join("protected-copy.json").to_str().unwrap().into(),
++            sha256: sha,
++        },
++        bytes: 3,
++    }
++}
++#[test]
++fn custody_never_redirects_code_authentication_or_mismatched_original_pin() -> Result<()> {
++    let row = row();
++    let book = Custody::new(std::slice::from_ref(&row))?;
++    assert!(book.mapped(&row.original.path)?);
++    assert!(!book.mapped(&row.copy.path)?);
++    assert!(book.resolve(&row.original, false).is_err());
++    let mut wrong = row.original.clone();
++    wrong.sha256 = Sha256Digest::from_bytes([2; 32]);
++    assert!(book.resolve(&wrong, true).is_err());
++    assert_eq!(
++        book.resolve(&row.original, true)?,
++        (row.copy.clone(), Some(3))
++    );
++    assert!(book.recheck().is_err());
++    book.consumed(&row.original)?;
++    book.recheck()?;
++    Ok(())
++}
++#[test]
++fn custody_refuses_duplicate_unknown_unused_changed_and_chained_mappings() -> Result<()> {
++    let row = row();
++    assert!(Custody::new(&[row.clone(), row.clone()]).is_err());
++    let mut other = row.clone();
++    other.original.path.push_str(".other");
++    assert!(Custody::new(&[row.clone(), other]).is_err());
++    let mut other = row.clone();
++    other.original = row.copy.clone();
++    other.copy.path.push_str(".other");
++    assert!(Custody::new(&[row.clone(), other]).is_err());
++    let mut wrong = row.clone();
++    wrong.bytes = 0;
++    assert!(Custody::new(&[wrong]).is_err());
++    let mut wrong = row.clone();
++    wrong.copy.sha256 = Sha256Digest::from_bytes([2; 32]);
++    assert!(Custody::new(&[wrong]).is_err());
++    let book = Custody::new(&[row])?;
++    assert!(
++        book.consumed(&ResourceFilePin {
++            path: std::env::temp_dir()
++                .join("unknown.json")
++                .to_str()
++                .unwrap()
++                .into(),
++            sha256: Sha256Digest::from_bytes([1; 32])
++        })
++        .is_err()
++    );
++    assert!(book.recheck().is_err());
++    Ok(())
++}
++#[test]
++fn custody_decoder_rejects_unknown_schema_fields_and_relative_copy() {
++    assert!(decode_metadata_custody(br#"{"schema":"other","copies":[]}"#).is_err());
++    assert!(
++        decode_metadata_custody(
++            br#"{"schema":"airk.native.cuda-metadata-custody/1","copies":[],"approved":true}"#
++        )
++        .is_err()
++    );
++    let mut row = row();
++    row.copy.path = "relative.json".into();
++    assert!(Custody::new(&[row]).is_err());
++}
++
++#[cfg(windows)]
++#[test]
++fn custody_windows_case_aliases_do_not_create_distinct_originals() -> Result<()> {
++    let row = row();
++    let mut other = row.clone();
++    other.original.path = other.original.path.to_uppercase();
++    other.copy.path.push_str(".other");
++    assert!(Custody::new(&[row, other]).is_err());
++    Ok(())
++}
++
++#[cfg(windows)]
++fn tool_row() -> HistoricalToolCustodyCopy {
++    HistoricalToolCustodyCopy{tool:"ninja".into(),original:ResourceFilePin{path:r"D:\code\Github\airk\artifacts\advanced-split\ort130-x64-owned-r3\tools\ninja-build\ninja.exe".into(),sha256:"edccb4c55fe69db51ed8ae286594660cf8e646abead40ff3c39f28c636489653".parse().unwrap()},copy:ResourceFilePin{path:std::env::temp_dir().join("ninja-historical-evidence.bin").to_str().unwrap().into(),sha256:"edccb4c55fe69db51ed8ae286594660cf8e646abead40ff3c39f28c636489653".parse().unwrap()},bytes:600576}
++}
++#[cfg(windows)]
++#[test]
++fn historical_tool_mapping_requires_exact_sealed_role_and_consumed_evidence() -> Result<()> {
++    let row = tool_row();
++    let tools = HistoricalTools::new(std::slice::from_ref(&row))?;
++    assert!(tools.mapped(&row.original.path)?);
++    assert!(
++        tools
++            .resolve("runtime_dll", &row.original, row.bytes, 1 << 30)
++            .is_err()
++    );
++    assert!(
++        tools
++            .resolve("cmake", &row.original, row.bytes, 1 << 30)
++            .is_err()
++    );
++    assert!(
++        tools
++            .resolve("ninja", &row.original, row.bytes - 1, 1 << 30)
++            .is_err()
++    );
++    assert!(
++        tools
++            .resolve("ninja", &row.original, row.bytes, row.bytes - 1)
++            .is_err()
++    );
++    assert_eq!(
++        tools.resolve("ninja", &row.original, row.bytes, 1 << 30)?,
++        (row.copy.clone(), Some(600576))
++    );
++    assert!(tools.recheck().is_err());
++    tools.consumed(&row.original)?;
++    tools.recheck()?;
++    let metadata = MetadataCustodyCopy {
++        original: row.original.clone(),
++        copy: row.copy.clone(),
++        bytes: row.bytes,
++    };
++    assert!(validate_custody_compatibility(&[metadata], &[row.clone()]).is_err());
++    let mut wrong = row.clone();
++    wrong.tool = "compiler".into();
++    assert!(validate_historical_tool_custody(&[wrong]).is_err());
++    let mut wrong = row.clone();
++    wrong.original.sha256 = Sha256Digest::from_bytes([1; 32]);
++    assert!(validate_historical_tool_custody(&[wrong]).is_err());
++    let mut wrong = row;
++    wrong.bytes += 1;
++    assert!(validate_historical_tool_custody(&[wrong]).is_err());
++    Ok(())
++}
++#[test]
++fn unknown_historical_tool_class_never_grants_an_alias() {
++    let m = row();
++    let h = HistoricalToolCustodyCopy {
++        tool: "cuda_provider".into(),
++        original: m.original,
++        copy: m.copy,
++        bytes: m.bytes,
++    };
++    assert!(validate_historical_tool_custody(&[h]).is_err());
++    let tools = HistoricalTools::new(&[]).unwrap();
++    assert!(tools.resolve("unknown", &row().original, 3, 3).is_err());
++    assert!(!tools.mapped(&row().original.path).unwrap());
++    // This exact direct nonaliased path remains the original strict authenticator's duty.
++    assert_eq!(
++        tools.resolve("python", &row().original, 3, 3).unwrap(),
++        (row().original, None)
++    );
++    tools.recheck().unwrap();
++    assert!(tools.consumed(&row().original).is_err());
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/custody.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/custody.rs
+@@ -0,0 +1,274 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Inert metadata custody only. No code/PE/runtime activation aliases.
++use super::*;
++use airk_core::arbiter::resource_policy::ResourceFilePin;
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct MetadataCustodyCopy {
++    pub original: ResourceFilePin,
++    pub copy: ResourceFilePin,
++    pub bytes: u64,
++}
++#[derive(Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct Envelope {
++    schema: String,
++    copies: Vec<MetadataCustodyCopy>,
++}
++pub fn decode_metadata_custody(raw: &[u8]) -> Result<Vec<MetadataCustodyCopy>> {
++    ensure!(raw.len() <= 1 << 20, "metadata custody request cap");
++    let request: Envelope = serde_json::from_slice(raw)?;
++    ensure!(
++        request.schema == "airk.native.cuda-metadata-custody/1",
++        "unknown metadata custody input"
++    );
++    validate_metadata_custody(&request.copies)?;
++    Ok(request.copies)
++}
++fn key(path: &str) -> Result<String> {
++    for part in Path::new(path).components() {
++        match part {
++            std::path::Component::CurDir | std::path::Component::ParentDir => {
++                anyhow::bail!("metadata custody dot-path alias")
++            }
++            std::path::Component::Normal(n) => {
++                let n = n.to_str().context("metadata custody path not UTF8")?;
++                ensure!(
++                    !n.ends_with(['.', ' ']) && !n.contains(':'),
++                    "metadata custody path alias"
++                );
++            }
++            _ => {}
++        }
++    }
++    let normalized = Path::new(path).components().collect::<std::path::PathBuf>();
++    let normalized = normalized
++        .to_str()
++        .context("metadata custody normalized path not UTF8")?;
++    #[cfg(windows)]
++    {
++        Ok(normalized.replace('/', "\\").to_lowercase())
++    }
++    #[cfg(not(windows))]
++    {
++        Ok(normalized.into())
++    }
++}
++pub fn validate_metadata_custody(rows: &[MetadataCustodyCopy]) -> Result<()> {
++    validated(rows)?;
++    Ok(())
++}
++fn validated(rows: &[MetadataCustodyCopy]) -> Result<BTreeMap<String, MetadataCustodyCopy>> {
++    ensure!(rows.len() <= 512, "metadata custody mapping count cap");
++    let mut copies = BTreeMap::new();
++    let mut destinations = BTreeSet::new();
++    for row in rows {
++        row.original.validate()?;
++        row.copy.validate()?;
++        ensure!(
++            row.bytes > 0
++                && row.bytes <= 16 << 20
++                && row.original.sha256 != Sha256Digest::from_bytes([0; 32])
++                && row.original.sha256 == row.copy.sha256
++                && row.original.path != row.copy.path,
++            "metadata custody copy identity/byte bounds differ"
++        );
++        ensure!(
++            copies
++                .insert(key(&row.original.path)?, row.clone())
++                .is_none()
++                && destinations.insert(key(&row.copy.path)?),
++            "duplicate metadata original/copy path"
++        );
++    }
++    ensure!(
++        copies.keys().all(|p| !destinations.contains(p)),
++        "metadata custody cycles/chained aliases refuse"
++    );
++    Ok(copies)
++}
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
++pub(super) struct Custody {
++    copies: BTreeMap<String, MetadataCustodyCopy>,
++    used: std::cell::RefCell<BTreeSet<String>>,
++}
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
++impl Custody {
++    pub fn new(rows: &[MetadataCustodyCopy]) -> Result<Self> {
++        let copies = validated(rows)?;
++        Ok(Self {
++            copies,
++            used: std::cell::RefCell::new(BTreeSet::new()),
++        })
++    }
++    pub fn resolve(
++        &self,
++        pin: &ResourceFilePin,
++        metadata: bool,
++    ) -> Result<(ResourceFilePin, Option<u64>)> {
++        pin.validate()?;
++        if let Some(row) = self.copies.get(&key(&pin.path)?) {
++            ensure!(
++                metadata && &row.original == pin,
++                "unknown/mismatched metadata pin or forbidden code/authenticate redirect"
++            );
++            Ok((row.copy.clone(), Some(row.bytes)))
++        } else {
++            Ok((pin.clone(), None))
++        }
++    }
++    pub fn mapped(&self, path: &str) -> Result<bool> {
++        Ok(self.copies.contains_key(&key(path)?))
++    }
++    pub fn consumed(&self, pin: &ResourceFilePin) -> Result<()> {
++        let row = self
++            .copies
++            .get(&key(&pin.path)?)
++            .context("unknown metadata custody consumption")?;
++        ensure!(
++            &row.original == pin,
++            "metadata custody original pin changed"
++        );
++        self.used.borrow_mut().insert(key(&pin.path)?);
++        Ok(())
++    }
++    pub fn recheck(&self) -> Result<()> {
++        ensure!(
++            self.used.borrow().iter().eq(self.copies.keys()),
++            "unused/unknown metadata custody mapping"
++        );
++        Ok(())
++    }
++}
++#[cfg(test)]
++mod tests;
++
++/// Inert historical build-tool evidence only; never an executable activation alias.
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct HistoricalToolCustodyCopy {
++    pub tool: String,
++    pub original: ResourceFilePin,
++    pub copy: ResourceFilePin,
++    pub bytes: u64,
++}
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct HistoricalEnvelope {
++    schema: String,
++    copies: Vec<HistoricalToolCustodyCopy>,
++}
++pub fn decode_historical_tool_custody(raw: &[u8]) -> Result<Vec<HistoricalToolCustodyCopy>> {
++    ensure!(raw.len() <= 1 << 20, "historical tool evidence input cap");
++    let request: HistoricalEnvelope = serde_json::from_slice(raw)?;
++    ensure!(
++        request.schema == "airk.native.cuda-historical-tool-custody/1",
++        "unknown historical tool evidence input"
++    );
++    validate_historical_tool_custody(&request.copies)?;
++    Ok(request.copies)
++}
++fn historical_rows(rows: &[HistoricalToolCustodyCopy]) -> Result<Vec<MetadataCustodyCopy>> {
++    ensure!(rows.len() <= 2, "only two reviewed historical tool aliases");
++    let mut names = BTreeSet::new();
++    let mut result = Vec::new();
++    for row in rows {
++        let (path, bytes, sha) = match row.tool.as_str() {
++            "cmake" => (
++                r"D:\code\Github\airk\artifacts\advanced-split\ort130-x64-owned-r3\tools\cmake\bin\cmake.exe",
++                12029392,
++                "3fe22eb02e1c6184ec207366ed21a6f2f9c3828c1e9f3324546befadfb362be3",
++            ),
++            "ninja" => (
++                r"D:\code\Github\airk\artifacts\advanced-split\ort130-x64-owned-r3\tools\ninja-build\ninja.exe",
++                600576,
++                "edccb4c55fe69db51ed8ae286594660cf8e646abead40ff3c39f28c636489653",
++            ),
++            _ => anyhow::bail!("historical tool alias not reviewed"),
++        };
++        ensure!(
++            names.insert(row.tool.clone())
++                && row.original.path == path
++                && row.original.sha256.to_string() == sha
++                && row.bytes == bytes,
++            "historical tool alias differs from actual frozen R12 seal"
++        );
++        result.push(MetadataCustodyCopy {
++            original: row.original.clone(),
++            copy: row.copy.clone(),
++            bytes: row.bytes,
++        });
++    }
++    validated(&result)?;
++    Ok(result)
++}
++pub fn validate_historical_tool_custody(rows: &[HistoricalToolCustodyCopy]) -> Result<()> {
++    historical_rows(rows)?;
++    Ok(())
++}
++pub fn validate_custody_compatibility(
++    metadata: &[MetadataCustodyCopy],
++    historical: &[HistoricalToolCustodyCopy],
++) -> Result<()> {
++    let mut all = metadata.to_vec();
++    all.extend(historical_rows(historical)?);
++    validated(&all)?;
++    Ok(())
++}
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
++pub(super) struct HistoricalTools {
++    book: Custody,
++    rows: BTreeMap<String, HistoricalToolCustodyCopy>,
++}
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
++impl HistoricalTools {
++    pub fn new(rows: &[HistoricalToolCustodyCopy]) -> Result<Self> {
++        Ok(Self {
++            book: Custody::new(&historical_rows(rows)?)?,
++            rows: rows
++                .iter()
++                .map(|r| Ok((key(&r.original.path)?, r.clone())))
++                .collect::<Result<_>>()?,
++        })
++    }
++    pub fn mapped(&self, path: &str) -> Result<bool> {
++        self.book.mapped(path)
++    }
++    pub fn resolve(
++        &self,
++        tool: &str,
++        pin: &ResourceFilePin,
++        bytes: u64,
++        max: u64,
++    ) -> Result<(ResourceFilePin, Option<u64>)> {
++        ensure!(
++            matches!(
++                tool,
++                "cmake"
++                    | "ninja"
++                    | "python"
++                    | "compiler"
++                    | "patch"
++                    | "vcvars"
++                    | "archiver"
++                    | "nvcc"
++            ),
++            "unknown historical tool field"
++        );
++        if let Some(row) = self.rows.get(&key(&pin.path)?) {
++            ensure!(
++                row.tool == tool && row.bytes == bytes && bytes <= max,
++                "historical tool use/size differs from sealed role"
++            );
++            self.book.resolve(pin, true)
++        } else {
++            Ok((pin.clone(), None))
++        }
++    }
++    pub fn consumed(&self, pin: &ResourceFilePin) -> Result<()> {
++        self.book.consumed(pin)
++    }
++    pub fn recheck(&self) -> Result<()> {
++        self.book.recheck()
++    }
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/tests.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/tests.rs
+@@ -489,3 +489,29 @@
+     );
+     Ok(())
+ }
++
++#[cfg(feature = "test-support")]
++#[test]
++fn package_projection_refuses_unpinned_nonabsolute_and_aliased_descriptor_requests() {
++    let sha = Sha256Digest::from_bytes([1; 32]);
++    assert!(
++        package_request(
++            Path::new("relative"),
++            Path::new("relative/descriptor.json"),
++            sha
++        )
++        .is_err()
++    );
++    let absolute = std::env::current_dir().unwrap();
++    assert!(package_request(&absolute, &absolute.join("../descriptor.json"), sha).is_err());
++    assert!(package_request(&absolute, &absolute.join("nested/descriptor.json"), sha).is_err());
++    assert!(package_request(&absolute, &absolute.join("DESCRIPTOR.json"), sha).is_err());
++    assert!(
++        package_request(
++            &absolute,
++            &absolute.join("descriptor.json"),
++            Sha256Digest::from_bytes([0; 32])
++        )
++        .is_err()
++    );
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/windows/tests.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/windows/tests.rs
+@@ -0,0 +1,45 @@
++// SPDX-License-Identifier: Apache-2.0
++//! State/closure ordering only; no protected file or actual build proof is created.
++use super::*;
++#[test]
++fn intermediate_source_recheck_preserves_later_unread_mapping_until_outer_completion() -> Result<()>
++{
++    use super::super::provenance::projection::Source;
++    let root = std::env::temp_dir();
++    let sha = Sha256Digest::from_bytes([1; 32]);
++    let later = super::super::MetadataCustodyCopy {
++        original: airk_core::arbiter::resource_policy::ResourceFilePin {
++            path: root
++                .join("later-legal-original.txt")
++                .to_str()
++                .unwrap()
++                .into(),
++            sha256: sha,
++        },
++        copy: airk_core::arbiter::resource_policy::ResourceFilePin {
++            path: root
++                .join("later-legal-protected-copy.txt")
++                .to_str()
++                .unwrap()
++                .into(),
++            sha256: sha,
++        },
++        bytes: 3,
++    };
++    let source = ProjectionSource {
++        deadline: Instant::now() + std::time::Duration::from_secs(120),
++        files: std::cell::RefCell::new(BTreeMap::new()),
++        custody: super::super::custody::Custody::new(std::slice::from_ref(&later))?,
++        historical: super::super::custody::HistoricalTools::new(&[])?,
++    };
++    // Shared checkpoint helper may rehash its currently held files; later legal
++    // mappings have not been consumed. This failed in the original R1 source.
++    source.recheck()?;
++    assert!(source.custody.recheck().is_err());
++    // Pure consumption bookkeeping here proves order only, never file custody.
++    source.custody.consumed(&later.original)?;
++    source.recheck()?;
++    source.custody.recheck()?;
++    source.historical.recheck()?;
++    Ok(())
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/windows.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/windows.rs
+@@ -857,18 +857,66 @@
+         producer.sha == input.producer_sha256,
+         "actual reviewed producer receipt pin differs"
+     );
+-    let receipt: serde_json::Value = serde_json::from_slice(&read(&producer.file, 16 << 20)?)?;
+-    ensure!(
+-        receipt["status"] == "PASS_PRODUCER_ONLY_UNQUALIFIED",
+-        "producer is not naturally completed successful unqualified build"
+-    );
+-    let provider_rows = receipt["provider_dlls"]
+-        .as_array()
+-        .context("actual provider outputs missing")?;
+-    ensure!(
+-        provider_rows.len() == 2,
+-        "provider pair output must be exact"
+-    );
++    ensure!(
++        input.checkpointed_proof.is_some()
++            || (input.custody_copies.is_empty() && input.historical_tool_copies.is_empty()),
++        "custody mappings require explicit checkpoint branch"
++    );
++    super::custody::validate_custody_compatibility(
++        &input.custody_copies,
++        &input.historical_tool_copies,
++    )?;
++    let checkpoint_source = ProjectionSource {
++        deadline,
++        files: std::cell::RefCell::new(BTreeMap::new()),
++        custody: super::custody::Custody::new(&input.custody_copies)?,
++        historical: super::custody::HistoricalTools::new(&input.historical_tool_copies)?,
++    };
++    let checkpointed = if let Some(proof) = &input.checkpointed_proof {
++        let raw = airk_core::arbiter::resource_policy::ResourceFilePin {
++            path: input
++                .directory
++                .join(&input.producer_name)
++                .to_str()
++                .context("producer path is not UTF8")?
++                .into(),
++            sha256: input.producer_sha256,
++        };
++        let verified = super::provenance::projection::validate_checkpointed_producer(
++            &checkpoint_source,
++            &raw,
++            proof,
++        )?;
++        ensure!(
++            verified.static_core_build == input.producer_sha256,
++            "checkpointed raw composition differs from reviewed native static identity"
++        );
++        Some(verified)
++    } else {
++        None
++    };
++    // Historical schema/status remains exact and is never an alias for checkpointed success.
++    let receipt = if checkpointed.is_none() {
++        Some(serde_json::from_slice::<serde_json::Value>(&read(
++            &producer.file,
++            16 << 20,
++        )?)?)
++    } else {
++        None
++    };
++    let provider_rows = if let Some(receipt) = &receipt {
++        ensure!(
++            receipt["status"] == "PASS_PRODUCER_ONLY_UNQUALIFIED",
++            "producer is not naturally completed successful unqualified build"
++        );
++        let rows = receipt["provider_dlls"]
++            .as_array()
++            .context("actual provider outputs missing")?;
++        ensure!(rows.len() == 2, "provider pair output must be exact");
++        Some(rows)
++    } else {
++        None
++    };
+     let mut files = Vec::new();
+     let mut held = vec![producer];
+     for name in &input.module_names {
+@@ -880,15 +928,30 @@
+         let (imports, delay_imports) = super::pe::imports_file(&value.file, deadline)?;
+         if name.starts_with("onnxruntime_providers_") {
+             ensure!(
+-                provider_rows
+-                    .iter()
+-                    .filter(|v| v["path"]
+-                        .as_str()
+-                        .is_some_and(|p| p.rsplit('/').next() == Some(name.as_str()))
+-                        && v["sha256"].as_str() == Some(value.sha.to_string().as_str())
+-                        && v["bytes"].as_u64() == Some(value.bytes))
+-                    .count()
+-                    == 1,
++                if let Some(verified) = &checkpointed {
++                    verified
++                        .provider_dlls
++                        .iter()
++                        .filter(|v| {
++                            v.name == *name && v.sha256 == value.sha && v.bytes == value.bytes
++                        })
++                        .count()
++                        == 1
++                } else {
++                    provider_rows
++                        .as_ref()
++                        .context("legacy provider output rows missing")?
++                        .iter()
++                        .filter(|v| {
++                            v["path"]
++                                .as_str()
++                                .is_some_and(|p| p.rsplit('/').next() == Some(name.as_str()))
++                                && v["sha256"].as_str() == Some(value.sha.to_string().as_str())
++                                && v["bytes"].as_u64() == Some(value.bytes)
++                        })
++                        .count()
++                        == 1
++                },
+                 "provider DLL does not match actual same-build producer output"
+             );
+         }
+@@ -917,6 +980,9 @@
+     for file in &held {
+         file.recheck(deadline)?;
+     }
++    super::provenance::projection::Source::recheck(&checkpoint_source)?;
++    checkpoint_source.custody.recheck()?;
++    checkpoint_source.historical.recheck()?;
+     in_time(deadline)?;
+     Ok(serde_json::to_vec(&manifest)?)
+ }
+@@ -959,6 +1025,8 @@
+ struct ProjectionSource {
+     deadline: Instant,
+     files: std::cell::RefCell<BTreeMap<PathBuf, HeldFile>>,
++    custody: super::custody::Custody,
++    historical: super::custody::HistoricalTools,
+ }
+ #[cfg(feature = "test-support")]
+ impl ProjectionSource {
+@@ -966,15 +1034,31 @@
+         &self,
+         pin: &airk_core::arbiter::resource_policy::ResourceFilePin,
+         maximum: u64,
++        metadata: bool,
++        historical: Option<(&str, u64)>,
+     ) -> Result<()> {
+         pin.validate()?;
+         in_time(self.deadline)?;
+-        let path = Path::new(&pin.path);
++        let (actual, copy_bytes) = if let Some((tool, bytes)) = historical {
++            ensure!(
++                !self.custody.mapped(&pin.path)?,
++                "source-metadata alias cannot become historical tool evidence"
++            );
++            self.historical.resolve(tool, pin, bytes, maximum)?
++        } else {
++            ensure!(
++                !self.historical.mapped(&pin.path)?,
++                "historical tool evidence cannot redirect metadata/code/runtime/authenticate use"
++            );
++            self.custody.resolve(pin, metadata)?
++        };
++        let path = Path::new(&actual.path);
+         ensure!(
+             path.is_absolute(),
+             "projection source path must be absolute"
+         );
+-        if !self.files.borrow().contains_key(path) {
++        let logical = Path::new(&pin.path);
++        if !self.files.borrow().contains_key(logical) {
+             let parent =
+                 OpenedDirectory::open(path.parent().context("projection source parent missing")?)?;
+             // Immutable metadata/SDK inputs may be human-owned or OS trusted. Neither
+@@ -990,14 +1074,39 @@
+                 held.sha == pin.sha256 && held.bytes <= maximum,
+                 "actual pinned projection source differs"
+             );
+-            self.files.borrow_mut().insert(path.to_owned(), held);
++            if copy_bytes.is_some() {
++                for (other, value) in self.files.borrow().iter() {
++                    if other != logical && value.id == held.id {
++                        ensure!(
++                            !self.custody.mapped(
++                                other.to_str().context("logical metadata path not UTF8")?
++                            )? && !self.historical.mapped(
++                                other.to_str().context("logical metadata path not UTF8")?
++                            )?,
++                            "two metadata mappings alias one actual copy object"
++                        );
++                    }
++                }
++            }
++            self.files.borrow_mut().insert(logical.to_owned(), held);
+         }
+         let files = self.files.borrow();
+-        let held = files.get(path).context("projection custody missing")?;
++        let held = files.get(logical).context("projection custody missing")?;
+         ensure!(
+             held.sha == pin.sha256 && held.bytes <= maximum,
+             "projection pin changed"
+         );
++        if let Some(bytes) = copy_bytes {
++            ensure!(
++                held.bytes == bytes,
++                "protected metadata copy length differs"
++            );
++            if historical.is_some() {
++                self.historical.consumed(pin)?;
++            } else {
++                self.custody.consumed(pin)?;
++            }
++        }
+         held.recheck(self.deadline)
+     }
+ }
+@@ -1008,7 +1117,7 @@
+         pin: &airk_core::arbiter::resource_policy::ResourceFilePin,
+         maximum: u64,
+     ) -> Result<Vec<u8>> {
+-        self.hold(pin, maximum)?;
++        self.hold(pin, maximum, true, None)?;
+         let files = self.files.borrow();
+         let held = files
+             .get(Path::new(&pin.path))
+@@ -1023,7 +1132,7 @@
+         bytes: u64,
+         maximum: u64,
+     ) -> Result<()> {
+-        self.hold(pin, maximum)?;
++        self.hold(pin, maximum, false, None)?;
+         ensure!(
+             self.files
+                 .borrow()
+@@ -1035,7 +1144,28 @@
+         );
+         Ok(())
+     }
++    fn authenticate_historical_tool(
++        &self,
++        tool: &str,
++        pin: &airk_core::arbiter::resource_policy::ResourceFilePin,
++        bytes: u64,
++        maximum: u64,
++    ) -> Result<()> {
++        self.hold(pin, maximum, false, Some((tool, bytes)))?;
++        ensure!(
++            self.files
++                .borrow()
++                .get(Path::new(&pin.path))
++                .context("historical tool custody missing")?
++                .bytes
++                == bytes,
++            "historical tool evidence size changed"
++        );
++        Ok(())
++    }
+     fn recheck(&self) -> Result<()> {
++        // A shared validator may recheck midway through a larger projection.
++        // Full mapping consumption is required by the OUTER emission below.
+         for held in self.files.borrow().values() {
+             held.recheck(self.deadline)?;
+         }
+@@ -1045,13 +1175,130 @@
+ #[cfg(feature = "test-support")]
+ pub(super) fn project_public(raw: &[u8], deadline: Instant) -> Result<Vec<u8>> {
+     let input = super::provenance::projection::decode_input(raw)?;
++    super::custody::validate_custody_compatibility(
++        &input.custody_copies,
++        &input.historical_tool_copies,
++    )?;
+     let source = ProjectionSource {
+         deadline,
+         files: std::cell::RefCell::new(BTreeMap::new()),
++        custody: super::custody::Custody::new(&input.custody_copies)?,
++        historical: super::custody::HistoricalTools::new(&input.historical_tool_copies)?,
+     };
+     let prepared = super::provenance::projection::project(&source, input)?;
++    source.custody.recheck()?;
++    source.historical.recheck()?;
+     let bytes = serde_json::to_vec(&prepared)?;
+     ensure!(bytes.len() <= 16 << 20, "native projection output cap");
+     in_time(deadline)?;
+     Ok(bytes)
+ }
++
++/// No CUDA/ORT initialization, driver load or process-module mutation is performed.
++#[cfg(feature = "test-support")]
++pub(super) fn observe_package_projection(
++    root: &Path,
++    path: &Path,
++    expected: Sha256Digest,
++    deadline: Instant,
++) -> Result<Vec<u8>> {
++    let directory = OpenedDirectory::open(root)?;
++    security(directory.as_file(), true)?;
++    let descriptor = HeldFile::open(&directory, path, true, deadline)?;
++    ensure!(
++        descriptor.sha == expected,
++        "actual pinned package descriptor differs"
++    );
++    let parsed = manifest::RuntimeDescriptor::parse(&read(&descriptor.file, 128 << 10)?)?;
++    let manifest::RuntimeDescriptor::Product(value) = parsed else {
++        anyhow::bail!(
++            "product package projection requires exact runtime manifest/2; scientific sidecar is private"
++        )
++    };
++    let proof = HeldFile::open(
++        &directory,
++        &root.join(&value.provenance.name),
++        true,
++        deadline,
++    )?;
++    let public = super::provenance::validate(
++        &read(&proof.file, 1 << 20)?,
++        &value.provenance,
++        value.static_core_build,
++        &value.files,
++    )?;
++    let descriptor_row = super::provenance::PublicFile {
++        name: path
++            .file_name()
++            .and_then(OsStr::to_str)
++            .context("descriptor basename")?
++            .into(),
++        bytes: descriptor.bytes,
++        sha256: descriptor.sha,
++    };
++    let mut names = BTreeSet::from([descriptor_row.name.clone()]);
++    let mut rows = vec![descriptor_row.clone()];
++    let mut held = vec![descriptor, proof];
++    for file in &value.files {
++        ensure!(
++            names.insert(file.name.clone()),
++            "package payload aliases descriptor"
++        );
++        let actual = HeldFile::open(&directory, &root.join(&file.name), true, deadline)?;
++        ensure!(
++            actual.bytes == file.bytes && actual.sha == file.sha256,
++            "held package payload differs"
++        );
++        ensure!(
++            super::pe::imports_file(&actual.file, deadline)?
++                == (file.imports.clone(), file.delay_imports.clone()),
++            "actual package PE closure differs"
++        );
++        rows.push(super::provenance::PublicFile {
++            name: file.name.clone(),
++            bytes: actual.bytes,
++            sha256: actual.sha,
++        });
++        held.push(actual);
++    }
++    ensure!(
++        names.insert(value.provenance.name.clone()),
++        "package provenance name aliases another row"
++    );
++    rows.push(super::provenance::PublicFile {
++        name: value.provenance.name.clone(),
++        bytes: value.provenance.bytes,
++        sha256: value.provenance.sha256,
++    });
++    for file in public.legal_assets() {
++        ensure!(
++            names.insert(file.name.clone()),
++            "package legal asset aliases another row"
++        );
++        let actual = HeldFile::open(&directory, &root.join(&file.name), true, deadline)?;
++        ensure!(
++            actual.bytes == file.bytes && actual.sha == file.sha256,
++            "held package legal notice differs"
++        );
++        rows.push(super::provenance::PublicFile {
++            name: file.name,
++            bytes: actual.bytes,
++            sha256: actual.sha,
++        });
++        held.push(actual);
++    }
++    rows.sort_by(|a, b| a.name.cmp(&b.name));
++    for file in &held {
++        file.recheck(deadline)?;
++    }
++    in_time(deadline)?;
++    let raw = serde_json::to_vec(
++        &serde_json::json!({"schema":"airk.native.cuda-package-projection/1","descriptor":descriptor_row,"static_core_build":value.static_core_build,"files":rows,"scope":"metadata-only held package census; not activation, device eligibility or qualification","qualification":false,"activation":false}),
++    )?;
++    ensure!(raw.len() <= 1 << 20, "native package projection output cap");
++    in_time(deadline)?;
++    Ok(raw)
++}
++
++#[cfg(test)]
++mod tests;
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
+@@ -15,6 +15,14 @@
+         atomic::{AtomicBool, AtomicU64, Ordering},
+     },
+     time::Instant,
++};
++#[cfg(feature = "test-support")]
++mod custody;
++#[cfg(feature = "test-support")]
++pub use custody::{
++    HistoricalToolCustodyCopy, MetadataCustodyCopy, decode_historical_tool_custody,
++    decode_metadata_custody, validate_custody_compatibility, validate_historical_tool_custody,
++    validate_metadata_custody,
+ };
+ mod eligibility;
+ mod manifest;
+@@ -715,6 +723,12 @@
+     pub directory: std::path::PathBuf,
+     pub producer_name: String,
+     pub producer_sha256: Sha256Digest,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub checkpointed_proof: Option<airk_core::arbiter::resource_policy::ResourceFilePin>,
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub custody_copies: Vec<MetadataCustodyCopy>,
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub historical_tool_copies: Vec<HistoricalToolCustodyCopy>,
+     pub module_names: Vec<String>,
+     pub load_order: Vec<String>,
+     pub system_imports: BTreeSet<String>,
+@@ -1062,3 +1076,48 @@
+         anyhow::bail!("held public projection factory requires Windows x64")
+     }
+ }
++
++#[cfg(feature = "test-support")]
++fn package_request(root: &Path, descriptor: &Path, digest: Sha256Digest) -> Result<()> {
++    let name = descriptor
++        .file_name()
++        .and_then(std::ffi::OsStr::to_str)
++        .context("package descriptor basename missing")?;
++    ensure!(
++        root.is_absolute()
++            && descriptor.parent() == Some(root)
++            && digest != Sha256Digest::from_bytes([0; 32])
++            && name.len() <= 128
++            && !name.is_empty()
++            && name == name.to_ascii_lowercase()
++            && !name.contains("..")
++            && name
++                .bytes()
++                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.')),
++        "package descriptor must be pinned direct safe child"
++    );
++    Ok(())
++}
++/// Descriptive held native package projection only; no activation or execution permit.
++/// # Safety
++/// Caller retains its actual exclusive ServiceLease/compute scope throughout.
++#[cfg(feature = "test-support")]
++pub unsafe fn observe_runtime_package_projection(
++    _native_lease: Arc<dyn Send + Sync>,
++    root: &Path,
++    descriptor: &Path,
++    descriptor_sha256: Sha256Digest,
++    deadline: Instant,
++) -> Result<Vec<u8>> {
++    crate::native_inference::require_service_compute()?;
++    in_time(deadline)?;
++    package_request(root, descriptor, descriptor_sha256)?;
++    #[cfg(all(windows, target_arch = "x86_64"))]
++    {
++        windows::observe_package_projection(root, descriptor, descriptor_sha256, deadline)
++    }
++    #[cfg(not(all(windows, target_arch = "x86_64")))]
++    {
++        anyhow::bail!("native CUDA package projection requires Windows x64")
++    }
++}

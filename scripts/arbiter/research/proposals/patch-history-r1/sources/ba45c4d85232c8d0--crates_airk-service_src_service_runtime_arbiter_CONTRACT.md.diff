@@ -1,0 +1,35 @@
+--- crates\airk-service\src\service_runtime\arbiter\CONTRACT.md
++++ crates\airk-service\src\service_runtime\arbiter\CONTRACT.md
+@@ -321,3 +321,32 @@
+ cannot leave busy/pending state with no future owner. The event-gated regression
+ uses the real Store CAS and native pending selector without reading model bytes
+ or dispatching NN, and refuses a stale completion consuming that new intent.
++
++### Private evaluation warm completion wakeup
++
++The opt-in native test-support evaluation fixture may attach a bounded warm
++completion observer before service composition, using the same real lease and
++catalog gate. This is not a product event, persisted state, readiness authority,
++or a qualification claim. Absent the explicit fixture environment opt-in,
++existing Ready output and model behavior remain unchanged.
++
++After the original warm operation returns (including retained-resident and
++failed/drained paths), the observer snapshots actual configuration, lifecycle
++serial, accepted same-stage Configure marker and native active profile/revision.
++Only successful, uncanceled completion matching all those identities is Ready.
++Changed configuration/serial/intent is Superseded; other completion is Failed.
++The observer performs no filesystem I/O, awaited send, model call or admission
++change. A separate bounded writer flushes a journal outside ownership gates.
++Lost observations make final journal closure incomplete. Service settlement and
++all captured completions precede journal closure; no observer creates settlement.
++
++A future private caller installs a watcher on this journal's actual directory
++before scanning it, binds its native observer identity to original fixture Ready,
++and binds exact Configure configuration/stage/manifest and a pre-Configure journal
++sequence floor. Stale/foreign events never prove the new attempt. Failed or
++Superseded matching completion stops the attempt. A matching Ready only wakes a
++fresh canonical Status request, whose exact current selected/active profile,
++configuration revision and Ready state remain authoritative. The original warm
++deadline, whole phase deadline and 128-observation ceiling remain unchanged.
++No sleeps, scoring probes, failed-operation retries or registry-file readiness
++assumptions are introduced. Prior failed attempts remain failed.

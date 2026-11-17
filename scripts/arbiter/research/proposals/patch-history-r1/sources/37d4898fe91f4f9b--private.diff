@@ -1,0 +1,64 @@
+--- crates/airk-service/src/service_runtime/arbiter/joint_scoring/tests.rs
++++ crates/airk-service/src/service_runtime/arbiter/joint_scoring/tests.rs
+@@ -178,3 +178,61 @@
+     value.validate()?;
+     Ok(())
+ }
++
++#[test]
++#[ignore = "private retained-admission CPU profiling; requires explicit immutable input"]
++#[cfg(all(feature = "local-inference", feature = "test-support"))]
++fn profile_retained_post_observer_without_nn() -> Result<()> {
++    let input = std::path::PathBuf::from(
++        std::env::var_os("AIRK_PRIVATE_POST_OBSERVER_INPUT")
++            .context("explicit retained admission input required")?,
++    );
++    ensure!(input.is_absolute(), "profiling input must be absolute");
++    ensure!(
++        std::fs::metadata(&input)?.len() <= 1024 * 1024,
++        "retained admission exceeds profiling bound"
++    );
++    let raw = std::fs::read(&input)?;
++    let value: serde_json::Value = serde_json::from_slice(&raw)?;
++    ensure!(
++        value["schema"] == "airk.private-selected-Context-native-admission-observation/1",
++        "profiling requires the native admission record"
++    );
++    let request: NativeContextActionRequest = serde_json::from_value(value["request"].clone())?;
++    let profile: Profile = serde_json::from_value(value["actual_Context_profile"].clone())?;
++    let before = serde_json::to_vec(&request)?;
++    let policy = airk_retrieval::arbiter::context_action::policy_digest()?;
++    let began = Instant::now();
++    request.roster.validate(&request.records)?;
++    let roster_us = began.elapsed().as_micros();
++    let began = Instant::now();
++    let prompt = airk_retrieval::arbiter::context_action::prompt(&request)?;
++    let prompt_us = began.elapsed().as_micros();
++    let began = Instant::now();
++    let advice = captured_without_dispatch(&request, &profile, policy)?;
++    let advice_construct_us = began.elapsed().as_micros();
++    let began = Instant::now();
++    advice.validate()?;
++    let advice_validate_us = began.elapsed().as_micros();
++    let began = Instant::now();
++    let encoded = serde_json::to_vec(&advice)?;
++    let advice_encode_us = began.elapsed().as_micros();
++    ensure!(
++        before == serde_json::to_vec(&request)? && raw == std::fs::read(&input)?,
++        "retained admission inputs changed"
++    );
++    assert_eq!(advice.observed_input_tokens, Some(0));
++    assert_eq!(advice.work, Work::default());
++    assert!(matches!(advice.outcome, Outcome::Unavailable { .. }));
++    eprintln!(
++        "{}",
++        serde_json::json!({"schema":"airk.private-post-observer-cpu-profile/1",
++        "roster_validate_us":roster_us,"prompt_us":prompt_us,"advice_construct_us":advice_construct_us,
++        "advice_validate_us":advice_validate_us,"advice_encode_us":advice_encode_us,
++        "retained_request_bytes":before.len(),"prompt_state_bytes":prompt.state.len(),
++        "advice_bytes":encoded.len(),"record_count":request.records.len(),"card_count":request.roster.cards.len(),
++        "NN_invocations":0,"source_checks":0,"assets_read":0,
++        "scope":"Pure existing post-observer advice/validation CPU only; excludes actual metadata IPC, fallback reads, packet packing, verification and delivery. No live authority or result is recreated."})
++    );
++    Ok(())
++}

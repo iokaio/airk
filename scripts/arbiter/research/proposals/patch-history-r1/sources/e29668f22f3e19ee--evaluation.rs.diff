@@ -1,0 +1,10 @@
+--- crates/airk-service/src/service_runtime/arbiter/evaluation.rs
++++ crates/airk-service/src/service_runtime/arbiter/evaluation.rs
+@@ -90,6 +90,7 @@
+         self.owner.context.execution_observer = Some(observer);
+         self
+     }
++    #[cfg(test)]
+     pub(in crate::service_runtime) fn observe_warm(
+         self,
+         observer: super::warm_observer::Observer,

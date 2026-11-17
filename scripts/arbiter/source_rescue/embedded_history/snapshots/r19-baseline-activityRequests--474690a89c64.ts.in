@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: Apache-2.0
+// Activity's request/state procedures, relocated without changing acceptance.
+import type { CallResult } from './api';
+import { body, OPS, type Operation } from './operations';
+type Rec = Record<string, unknown>;
+const rec = (value: unknown): Rec | null =>
+  typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Rec) : null;
+const okValue = (result: CallResult): Rec | null => (result.kind === 'ok' ? rec(result.envelope.result) : null);
+export interface JobCallbacks {
+  runJob: (operation: Operation, body: unknown) => Promise<CallResult>;
+  runJobAction: (operation: Operation, body: unknown) => Promise<CallResult>;
+  setJobId: (id: string) => void;
+  setJobRecord: (record: Rec | null) => void;
+}
+export function createJobRequests(callbacks: JobCallbacks) {
+  const { runJob, runJobAction, setJobId, setJobRecord } = callbacks;
+  const openJob = async (id: string): Promise<void> => {
+    setJobId(id);
+    setJobRecord(null);
+    const value = okValue(await runJob(OPS.jobsGet, body.jobsGet(id)));
+    setJobRecord(rec(value?.job));
+  };
+  const jobChange = async (jobId: string, kind: 'retry' | 'cancel'): Promise<void> => {
+    const result = await runJobAction(
+      kind === 'retry' ? OPS.jobsRetry : OPS.jobsCancel,
+      kind === 'retry' ? body.jobsRetry(jobId) : body.jobsCancel(jobId),
+    );
+    const updated = rec(okValue(result)?.job);
+    if (updated !== null) setJobRecord(updated);
+  };
+  return { openJob, jobChange };
+}

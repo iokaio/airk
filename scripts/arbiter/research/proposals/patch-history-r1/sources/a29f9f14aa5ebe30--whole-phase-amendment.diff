@@ -1,0 +1,131 @@
+--- retained-r1/run_native.py
++++ whole-phase-r2/run_native.py
+@@ -14,8 +14,22 @@
+     module.verified_sources(packet,pins)
+     return module
+ 
++class PhaseDeadline:
++    """One original whole-phase deadline; injected clock is only a cheap test seam."""
++    def __init__(self, seconds=1800, clock=time.monotonic):
++        if seconds != 1800: raise ValueError("original1800second whole-phase cap required")
++        self.clock=clock;self.started=clock();self.deadline=self.started+seconds
++    def remaining(self):
++        remaining=self.deadline-self.clock()
++        if not 0 < remaining <= 1800: raise TimeoutError("original native whole-phase deadline expired or clock regressed")
++        return remaining
++    def elapsed(self):return self.clock()-self.started
++    def within(self):return 0 <= self.elapsed() < 1800
++
+ def main():
++    phase=PhaseDeadline()
+     p=argparse.ArgumentParser(description=__doc__);p.add_argument("--packet",type=Path,required=True);p.add_argument("--packet-sha256",required=True);p.add_argument("--stage",choices=["emit","numeric",*sorted(FAMILIES|CONTROLS)],required=True);p.add_argument("--execute-reviewed",action="store_true");a=p.parse_args()
++    phase.remaining()
+     if sha(a.packet)!=a.packet_sha256:raise ValueError("root-reviewed native packet changed")
+     packet=json.loads(a.packet.read_bytes());pins=dict(packet["pins"]);binary=Path(packet["binary"]["path"]);master=Path(packet["master"]);base=Path(packet["output"]);owner=ROOT/"tools/retrieval-train/training_execution.py"
+     environment={"OMP_NUM_THREADS":"2","MKL_NUM_THREADS":"2","OPENBLAS_NUM_THREADS":"2","AIRK_NATIVE_ENCODER_INPUT":str(master)}
+@@ -45,8 +59,11 @@
+     anchor_support.require_fresh(anchor)
+     environment["AIRK_PARENT_BAG_PRIVATE_BASE"]=str(anchor)
+     for name,pin in pins.items():
++        phase.remaining()
+         if sha(name)!=pin:raise ValueError("native input/compiler/artifact drift: "+name)
+-    listing=subprocess.run([str(binary),"--exact",selector,"--ignored","--list"],capture_output=True,text=True,timeout=10)
++        phase.remaining()
++    listing=subprocess.run([str(binary),"--exact",selector,"--ignored","--list"],capture_output=True,text=True,timeout=min(10,phase.remaining()))
++    phase.remaining()
+     if listing.returncode or listing.stdout.count(selector+": test")!=1:raise ValueError("exactly one compiled native selector required")
+     work=base/("execution-"+a.stage);output=work/"capture.json"
+     environment["AIRK_NATIVE_ENCODER_OUTPUT"]=str(output)
+@@ -59,32 +76,37 @@
+     work.mkdir(parents=True);(work/"stdin.txt").write_bytes(b"")
+     (work/"request.json").write_text(json.dumps({"argv":argv,"environment":environment,"pins":pins,"packet_sha256":a.packet_sha256,"limits":packet["limits"],"selector_list":listing.stdout},indent=2)+"\n")
+     try:
+-        anchor_before=anchor_support.create(packet,pins,anchor)
++        anchor_before=anchor_support.create(packet,pins,anchor,phase=phase)
++        phase.remaining()
+     except BaseException as error:
+-        (work/"execution.json").write_text(json.dumps({"complete":False,"native_started":False,
++        (work/"execution.json").write_text(json.dumps({"complete":False,"native_started":False,"phase_seconds":1800,"phase_expired":not phase.within(),"elapsed_seconds":phase.elapsed(),
+             "failure":{"type":type(error).__name__,"message":str(error)},"packet_sha256":a.packet_sha256,
+             "stage":a.stage,"release_qualified":False},indent=2)+"\n")
+         raise
+     (work/"anchor-before.json").write_text(json.dumps(anchor_before,indent=2)+"\n")
+-    spec=importlib.util.spec_from_file_location("_owned_parent_bag_native",owner);native=importlib.util.module_from_spec(spec);spec.loader.exec_module(native);env=dict(os.environ);env.update(environment);started=time.monotonic()
++    spec=importlib.util.spec_from_file_location("_owned_parent_bag_native",owner);native=importlib.util.module_from_spec(spec);spec.loader.exec_module(native);env=dict(os.environ);env.update(environment)
+     def suspended(api,job,info,deadline):
+-        anchor_support.require_same(anchor_before,anchor_support.observe(packet,pins,anchor))
++        anchor_support.require_same(anchor_before,anchor_support.observe(packet,pins,anchor,phase=phase))
++        phase.remaining()
+         members,active,total=native.job_snapshot(api,job)
+         if members!=[int(info.pid)] or active!=1 or total!=1:raise ValueError("one exact native process required")
+-        return {"members":members,"active":active,"total":total,"image":native.image_proof(api,info.process,packet["binary"])}
++        proof={"members":members,"active":active,"total":total,"image":native.image_proof(api,info.process,packet["binary"])}
++        phase.remaining()
++        return proof
+     owned=None;anchor_after=None;failure=None
+     try:
+         with (work/"stdout.log").open("xb") as log,(work/"stdin.txt").open("rb") as stdin:
+-            owned=native.run_windows_owned_training(argv,ROOT,log,1800,env,stdin,8589934592,before_resume=suspended)
++            owned=native.run_windows_owned_training(argv,ROOT,log,phase.remaining(),env,stdin,8589934592,before_resume=suspended)
+     except BaseException as error:
+         failure={"type":type(error).__name__,"message":str(error)}
+     try:
+-        anchor_after=anchor_support.observe(packet,pins,anchor)
++        anchor_after=anchor_support.observe(packet,pins,anchor,phase=phase)
+         anchor_support.require_same(anchor_before,anchor_after)
++        phase.remaining()
+     except BaseException as error:
+         failure={"native_error":failure,"anchor_error":{"type":type(error).__name__,"message":str(error)}}
+     if failure is not None:
+-        (work/"execution.json").write_text(json.dumps({"owned":owned,"complete":False,"failure":failure,
++        (work/"execution.json").write_text(json.dumps({"owned":owned,"complete":False,"phase_seconds":1800,"phase_expired":not phase.within(),"elapsed_seconds":phase.elapsed(),"failure":failure,
+             "native_completion_unknown":owned is None,"anchor_before":anchor_before,"anchor_after":anchor_after,
+             "packet_sha256":a.packet_sha256,"stage":a.stage,"release_qualified":False},indent=2)+"\n")
+         raise RuntimeError("native stage or actual private-anchor proof failed; retained evidence is not a pass")
+@@ -95,7 +117,12 @@
+         if a.stage=="numeric":complete=complete and len(capture.get("families",[]))==2 and all(len(r["cases"])==12 for r in capture["families"])
+         else:complete=complete and len(capture.get("records",[]))==64 and capture.get("quality_denominator")==20 and capture.get("alignment_refusals")==44
+     else:complete=complete and master.is_file()
+-    result={"owned":owned,"anchor_before":anchor_before,"anchor_after":anchor_after,"anchor_unchanged":anchor_before==anchor_after,"elapsed_seconds":time.monotonic()-started,"post_input_drift":drift,"complete":complete,"release_qualified":False,"stage":a.stage,"packet_sha256":a.packet_sha256,"master_sha256":sha(master) if master.is_file() else None,"capture_sha256":sha(output) if output.is_file() else None}
+-    (work/"execution.json").write_text(json.dumps(result,indent=2)+"\n");print(json.dumps(result))
++    complete=complete and phase.within()
++    result={"phase_seconds":1800,"phase_expired":not phase.within(),"owned":owned,"anchor_before":anchor_before,"anchor_after":anchor_after,"anchor_unchanged":anchor_before==anchor_after,"elapsed_seconds":phase.elapsed(),"post_input_drift":drift,"complete":complete,"release_qualified":False,"stage":a.stage,"packet_sha256":a.packet_sha256,"master_sha256":sha(master) if master.is_file() else None,"capture_sha256":sha(output) if output.is_file() else None}
++    (work/"execution.json").write_text(json.dumps(result,indent=2)+"\n")
++    if not phase.within():
++        complete=False;result.update(complete=False,phase_expired=True,elapsed_seconds=phase.elapsed())
++        (work/"execution.json").write_text(json.dumps(result,indent=2)+"\n")
++    print(json.dumps(result))
+     if not complete:raise SystemExit(1)
+ if __name__=="__main__":main()
+--- retained-r1/anchor_runtime.py
++++ whole-phase-r2/anchor_runtime.py
+@@ -45,7 +45,7 @@
+         raise ValueError("actual current-owner protected anchor proof refused")
+     return proof
+ 
+-def observe(packet, pins, path, create=False):
++def observe(packet, pins, path, create=False, phase=None):
+     powershell = verified_sources(packet, pins)
+     if os.name != "nt":
+         raise ValueError("this owned Windows native launcher requires Windows")
+@@ -53,15 +53,16 @@
+     argv = [str(powershell), "-NoProfile", "-NonInteractive", "-File", str(BRIDGE),
+             "-Mode", "Create" if create else "Observe", "-Anchor", str(path),
+             "-Producer", str(PRODUCER), "-Observer", str(OBSERVER)]
+-    actual = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True, check=True, timeout=30)
++    actual = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True, check=True, timeout=min(30,phase.remaining()) if phase is not None else 30)
++    if phase is not None:phase.remaining()
+     return validate_proof(json.loads(actual.stdout), path)
+ 
+ def require_same(before, after):
+     if before != after:
+         raise ValueError("private native anchor ownership/ACL/path changed")
+ 
+-def create(packet, pins, path):
+-    produced = observe(packet, pins, path, True)
+-    checked = observe(packet, pins, path)
++def create(packet, pins, path, phase=None):
++    produced = observe(packet, pins, path, True, phase=phase)
++    checked = observe(packet, pins, path, phase=phase)
+     require_same(produced, checked)
+     return checked

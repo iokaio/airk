@@ -1,0 +1,51 @@
+// SPDX-License-Identifier: Apache-2.0
+const vscode=require('vscode'),fs=require('node:fs/promises'),path=require('node:path'),assert=require('node:assert/strict');
+exports.activate=()=>{let reloading=false;void (async()=>{
+ const extension=vscode.extensions.getExtension('iokaio.airk');assert.ok(extension);assert.ok(extension.extensionPath.startsWith("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\extensions"));
+ const api=await extension.activate();let definitions=await api.getServerDefinitions();
+ if(false&&extension.packageJSON.version==="1.4.1"&&definitions.length===0){
+  const old=JSON.parse(await fs.readFile("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\baseline.json",'utf8'));
+  const spec={command:old.command,root:"D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\workspace",dataDir:old.args[8],collection:"project-57a4e8f004ae5fa36b909346",name:'retained',service:{installDir:old.args[3],project:old.args[12]}};
+  const probe=await require(path.join(extension.extensionPath,'out/native.js')).probeMcp(spec,16,'upgrade-preflight');
+  const observed=JSON.parse(probe.status.content[0].text),before=JSON.parse((JSON.parse(await fs.readFile("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\baseline-status.json",'utf8')))[0].result.result.content[0].text);
+  assert.equal(observed.runtime.service.version,null);assert.equal(observed.runtime.service.instance,before.runtime.service.instance);
+  for(const name of ['activation.json','launcher-repair.json'])assert.equal(await fs.access(path.join(old.args[3],name)).then(()=>true,()=>false),false);
+  await vscode.commands.executeCommand('notifications.showList');
+  await fs.writeFile("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\update-waiting.json",JSON.stringify(observed));
+  const deadline=Date.now()+45000;while(!await fs.access("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\clients-reconnected.json").then(()=>true,()=>false)){if(Date.now()>deadline)throw new Error('Retained clients were not disconnected');await new Promise(resolve=>setTimeout(resolve,100));}
+  await vscode.commands.executeCommand('airk.retryUpdate');definitions=await api.getServerDefinitions();
+ }
+ assert.equal(definitions.length,1);
+ const definition=definitions[0],files=["D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\workspace\\.codex\\config.toml","D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\workspace\\.mcp.json","D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\workspace\\.vscode\\mcp.json"],name="airk-project-57a4e8f004ae5fa36b909346";
+ if(null&&!await fs.access("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\baseline.json").then(()=>true,()=>false)){
+  assert.equal(extension.packageJSON.version,null);
+  await fs.writeFile("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\baseline.json",JSON.stringify({version:extension.packageJSON.version,command:definition.command,args:definition.args}));
+  const deadline=Date.now()+180000;
+  while(!await fs.access("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\upgrade-reload.json").then(()=>true,()=>false)){if(Date.now()>deadline)throw new Error('Upgrade did not finish installing');await new Promise(resolve=>setTimeout(resolve,100));}
+  reloading=true;await vscode.commands.executeCommand('workbench.action.reloadWindow');return;
+ }
+ assert.equal(extension.packageJSON.version,"1.4.1");
+ if(false){const old=JSON.parse(await fs.readFile("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\baseline.json",'utf8'));assert.equal(old.args[12],definition.args[12]);assert.equal(old.args[8],definition.args[8]);}
+ if(false){
+  const spec={command:definition.command,root:"D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\workspace",dataDir:definition.args[8],collection:"project-57a4e8f004ae5fa36b909346",name:'fixture',service:{installDir:definition.args[3],project:definition.args[12]}};
+  const live=await require(path.join(extension.extensionPath,'out/native.js')).probeMcp(spec,16,'upgrade-before-reconnect');
+  const status=JSON.parse(live.status.content[0].text);assert.equal(status.runtime.service.version,"1.4.1");
+  await fs.writeFile("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\new-runtime-active.json",JSON.stringify(status));
+  const deadline=Date.now()+45000;while(!await fs.access("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\clients-reconnected.json").then(()=>true,()=>false)){if(Date.now()>deadline)throw new Error('Retained clients were not disconnected');await new Promise(resolve=>setTimeout(resolve,100));}
+ }
+ const texts=await Promise.all(files.map(file=>fs.readFile(file,'utf8')));
+ for(const text of texts){assert.ok(text.includes('airk-launcher'));assert.ok(text.includes('--service-project'));assert.ok(text.includes("project-57a4e8f004ae5fa36b909346"));}
+ assert.ok(texts[0].includes('enabled = false'));assert.ok(texts[0].includes('AIRK_CLIENT = "fixture"'));
+ for(const index of [1,2]){const value=JSON.parse(texts[index]),servers=value[index===1?'mcpServers':'servers'];assert.equal(servers[name].disabled,true);assert.equal(servers[name].env.AIRK_CLIENT,'fixture');assert.equal(servers.other.command,'preserve-other');assert.equal(servers[name].command,definition.command);assert.deepEqual(servers[name].args,definition.args);}
+ await vscode.commands.executeCommand('airk.installCli');assert.deepEqual(await Promise.all(files.map(file=>fs.readFile(file,'utf8'))),texts);
+ await vscode.commands.executeCommand('notifications.showList');
+ await fs.writeFile("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\notification-ready.json",'{}');
+ const noticeDeadline=Date.now()+45000;
+ while(!await fs.access("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\notification-verified.json").then(()=>true,()=>false)){if(Date.now()>noticeDeadline)throw new Error('Installer notification was not verified');await new Promise(resolve=>setTimeout(resolve,100));}
+ const spec={command:definition.command,root:"D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\workspace",dataDir:definition.args[8],collection:"project-57a4e8f004ae5fa36b909346",name:'fixture',service:{installDir:definition.args[3],project:definition.args[12]}};
+ const probe=await require(path.join(extension.extensionPath,'out/native.js')).probeMcp(spec,16,'installer-acceptance');assert.ok(probe.tools.includes('airk_status'));
+ const observed=JSON.parse(probe.status.content[0].text);
+ for(const actual of [observed.runtime.mcp_frontend.process.version,observed.runtime.index_worker.process.version,observed.runtime.service.version])assert.equal(actual,"1.4.1");
+ assert.equal(observed.runtime.service.payload_sha256,"f8f9170471f1b82b4775c117b8d8748b54dd9842c736b521b443f4fa3e9a8d4b");
+ await fs.writeFile("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\result.json",JSON.stringify({passed:true,installed:true,version:extension.packageJSON.version,extensionPath:extension.extensionPath,files,command:definition.command,args:definition.args,tools:probe.tools,status:probe.status,policyPreserved:true,repairIdempotent:true,restartNotificationVerified:true,installProgressVerified:await fs.access("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\progress-verified.json").then(()=>true,()=>false)},null,2));
+ })().catch(error=>{if(reloading&&String(error)==='Canceled: Canceled')return;return fs.writeFile("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-9gJ0xS\\error.json",JSON.stringify({error:String(error),stack:error.stack}));}).finally(()=>{if(!reloading)return vscode.commands.executeCommand('workbench.action.quit');});};

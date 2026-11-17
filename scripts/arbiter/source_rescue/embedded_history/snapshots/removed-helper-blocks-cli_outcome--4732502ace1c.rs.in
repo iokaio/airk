@@ -1,0 +1,9 @@
+// SPDX-License-Identifier: Apache-2.0
+fn cli_outcome(output: Output) -> Outcome {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.stdout.is_empty() {
+        let line = stderr.lines().last().unwrap_or_default();
+        return Outcome::Failed(line.strip_prefix("Error: ").unwrap_or(line).to_owned());
+    }
+    Outcome::Envelope(comparable(serde_json::from_slice(&output.stdout).unwrap()))
+}

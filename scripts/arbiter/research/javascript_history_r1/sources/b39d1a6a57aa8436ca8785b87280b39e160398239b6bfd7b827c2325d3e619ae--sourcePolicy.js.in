@@ -1,0 +1,256 @@
+// SPDX-License-Identifier: Apache-2.0
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.validateSourcePolicy = validateSourcePolicy;
+exports.validatePolicyChange = validatePolicyChange;
+exports.validateNativePolicyConfiguration = validateNativePolicyConfiguration;
+exports.validatePolicyImpact = validatePolicyImpact;
+exports.validatePolicyStatus = validatePolicyStatus;
+exports.policyStatusLabels = policyStatusLabels;
+exports.validatePolicyChangePreview = validatePolicyChangePreview;
+// SPDX-License-Identifier: Apache-2.0
+/** Native source-policy wire checks. These values never establish source authority. */
+const indexingCatalog_1 = require("./indexingCatalog");
+const publications_1 = require("./publications");
+const POLICY_BYTES = 1024 * 1024;
+function exact(value, fields) {
+    if (Object.keys(value).sort().join(',') !== fields.split(',').sort().join(','))
+        throw new Error('invalid_source_policy_fields');
+}
+function denyId(value) {
+    if (typeof value !== 'string' || !/^deny_[0-9a-f]{32}$/.test(value))
+        throw new Error('invalid_source_policy_rule');
+    return value;
+}
+function rootPath(value) {
+    if (typeof value !== 'string' || !value || new TextEncoder().encode(value).length > 32768 || value.includes('\0') || !/^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(value))
+        throw new Error('invalid_source_policy_root');
+    return value;
+}
+/** Matches the existing Core format; unknown transport envelope fields stay with their caller. */
+function validateSourcePolicy(input) {
+    const policy = (0, indexingCatalog_1.catalogObject)(input);
+    (0, indexingCatalog_1.catalogBound)(policy, POLICY_BYTES);
+    exact(policy, 'schema,index_id,owner_binding,namespace,collection,epoch,roots,positive_includes,denies');
+    if (policy.schema !== 'airk.source-policy/1' || policy.namespace !== 'collections-1.4')
+        throw new Error('unsupported_source_policy');
+    (0, indexingCatalog_1.catalogId)(policy.index_id, 'idx_');
+    (0, indexingCatalog_1.catalogHex)(policy.owner_binding, 64);
+    (0, indexingCatalog_1.catalogRevision)(policy.epoch);
+    if (typeof policy.collection !== 'string' || !/^[a-zA-Z0-9._-]{1,128}$/.test(policy.collection) || ['.', '..'].includes(policy.collection))
+        throw new Error('invalid_source_policy_collection');
+    if (!Array.isArray(policy.roots) || !policy.roots.length || policy.roots.length > 17)
+        throw new Error('invalid_source_policy_roots');
+    const roots = new Set(), paths = new Set(), aliases = new Set();
+    for (const value of policy.roots) {
+        const root = (0, indexingCatalog_1.catalogObject)(value);
+        exact(root, 'id,canonical_path,aliases,owner');
+        const id = (0, indexingCatalog_1.catalogId)(root.id, 'src_'), path = rootPath(root.canonical_path);
+        if (roots.has(id) || paths.has(path) || typeof root.owner !== 'boolean' || !Array.isArray(root.aliases) || root.aliases.length > 16)
+            throw new Error('invalid_source_policy_roots');
+        roots.add(id);
+        paths.add(path);
+        for (const alias of root.aliases) {
+            if (typeof alias !== 'string' || !alias || new TextEncoder().encode(alias).length > 128 || /[\u0000-\u001f\u007f-\u009f]/.test(alias) || aliases.has(alias))
+                throw new Error('invalid_source_policy_alias');
+            aliases.add(alias);
+        }
+    }
+    if (policy.positive_includes !== null) {
+        const includes = (0, indexingCatalog_1.validateCatalogScope)(policy.positive_includes);
+        if (includes.some(atom => !roots.has(atom.source_root_id)))
+            throw new Error('unknown_source_policy_root');
+    }
+    if (!Array.isArray(policy.denies) || policy.denies.length > 128)
+        throw new Error('invalid_source_policy_denies');
+    const ids = new Set(), predicates = new Set();
+    for (const value of policy.denies) {
+        const deny = (0, indexingCatalog_1.catalogObject)(value);
+        exact(deny, `source_root_id,kind,path,rule_id,reason,created_epoch${deny.inherited_from === undefined ? '' : ',inherited_from'}`);
+        const atom = (0, indexingCatalog_1.validateCatalogScope)([{ source_root_id: deny.source_root_id, kind: deny.kind, path: deny.path }])[0];
+        const id = denyId(deny.rule_id), predicate = JSON.stringify([atom.source_root_id, atom.kind, atom.path]);
+        if (!roots.has(atom.source_root_id) || ids.has(id) || predicates.has(predicate) || !['trim', 'split_transfer'].includes(String(deny.reason)) || (0, indexingCatalog_1.catalogRevision)(deny.created_epoch) > Number(policy.epoch))
+            throw new Error('invalid_source_policy_deny');
+        ids.add(id);
+        predicates.add(predicate);
+        if (deny.inherited_from !== undefined) {
+            const inherited = (0, indexingCatalog_1.catalogObject)(deny.inherited_from);
+            exact(inherited, 'index_id,rule_id,epoch');
+            if ((0, indexingCatalog_1.catalogId)(inherited.index_id, 'idx_') === policy.index_id)
+                throw new Error('self_inherited_source_policy');
+            denyId(inherited.rule_id);
+            (0, indexingCatalog_1.catalogRevision)(inherited.epoch);
+        }
+    }
+    return policy;
+}
+function validatePolicyChange(input) {
+    const change = (0, indexingCatalog_1.catalogObject)(input);
+    if (change.operation === 'trim') {
+        exact(change, 'operation,rule_id,selector');
+        denyId(change.rule_id);
+        (0, indexingCatalog_1.validateCatalogScope)([change.selector]);
+    }
+    else if (change.operation === 'unblock') {
+        exact(change, 'operation,rule_id');
+        denyId(change.rule_id);
+    }
+    else
+        throw new Error('invalid_source_policy_change');
+    return change;
+}
+/** Internal native job carried by an immutable catalog draft, never a generic UI configuration intent. */
+function validateNativePolicyConfiguration(input) {
+    const request = (0, indexingCatalog_1.catalogObject)(input);
+    exact(request, `incarnation,settings,configuration${request.prepare === undefined ? '' : ',prepare'}`);
+    (0, indexingCatalog_1.catalogBound)(request, 16384);
+    (0, indexingCatalog_1.catalogHex)(request.incarnation);
+    (0, indexingCatalog_1.catalogHex)(request.settings, 64);
+    if (request.prepare !== undefined && request.prepare !== false)
+        throw new Error('native_concrete_policy_configuration_required');
+    const configuration = (0, indexingCatalog_1.catalogObject)(request.configuration);
+    exact(configuration, 'operation,policy,operation_id');
+    if (configuration.operation !== 'apply_source_policy')
+        throw new Error('native_source_policy_configuration_required');
+    (0, indexingCatalog_1.catalogHex)(configuration.operation_id);
+    return validateSourcePolicy(configuration.policy);
+}
+/** Bounded native administrative observations; null counts remain unknown. */
+function validatePolicyImpact(input) {
+    const impact = (0, indexingCatalog_1.catalogObject)(input);
+    (0, indexingCatalog_1.catalogBound)(impact, 49152);
+    exact(impact, 'affected_artifacts,affected_vectors,affected_facts,affected_relationships,counts_basis,affected_source_root_ids,affected_project_ids,other_covering_index_ids,overlap_basis');
+    for (const name of ['affected_artifacts', 'affected_vectors', 'affected_facts', 'affected_relationships']) {
+        const value = impact[name];
+        if (value !== null && (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0))
+            throw new Error('invalid_source_policy_impact_count');
+    }
+    for (const name of ['counts_basis', 'overlap_basis']) {
+        if (typeof impact[name] !== 'string' || !impact[name] || new TextEncoder().encode(String(impact[name])).length > 4096)
+            throw new Error('invalid_source_policy_impact_basis');
+    }
+    for (const [name, prefix, maximum] of [['affected_source_root_ids', 'src_', 17], ['affected_project_ids', 'prj_', 32], ['other_covering_index_ids', 'idx_', 32]]) {
+        const values = impact[name];
+        if (!Array.isArray(values) || values.length > maximum || new Set(values).size !== values.length)
+            throw new Error('invalid_source_policy_impact_selection');
+        values.forEach(value => (0, indexingCatalog_1.catalogId)(value, prefix));
+    }
+    return impact;
+}
+/** Null means no retained policy observation, never proof of completed cleanup. */
+function validatePolicyStatus(input, index, status = 'catalog_policy_status') {
+    const response = (0, indexingCatalog_1.catalogObject)(input);
+    (0, indexingCatalog_1.catalogBound)(response, 65536);
+    (0, indexingCatalog_1.catalogId)(index, 'idx_');
+    if (response.status !== status || response.index_id !== index)
+        throw new Error('crossed_source_policy_status');
+    if (response.snapshot === null) {
+        if (response.job !== null)
+            throw new Error('crossed_source_policy_job');
+        return response;
+    }
+    const snapshot = (0, indexingCatalog_1.catalogObject)(response.snapshot);
+    (0, indexingCatalog_1.catalogBound)(snapshot, 49152);
+    if (snapshot.schema !== 1)
+        throw new Error('unsupported_source_policy_snapshot');
+    (0, indexingCatalog_1.catalogHex)(snapshot.operation_id);
+    (0, indexingCatalog_1.catalogHex)(snapshot.job, 64);
+    const policy = validateSourcePolicy(snapshot.policy);
+    if (policy.index_id !== index)
+        throw new Error('crossed_source_policy_index');
+    const job = (0, indexingCatalog_1.catalogObject)(response.job);
+    (0, indexingCatalog_1.catalogHex)(job.id, 64);
+    (0, indexingCatalog_1.catalogHex)(job.project, 64);
+    if (job.id !== snapshot.job || job.project !== policy.owner_binding || job.kind !== 'configure' || !['pending', 'running', 'succeeded', 'failed', 'canceled'].includes(String(job.state)))
+        throw new Error('crossed_source_policy_job');
+    for (const name of ['fencing_generation', 'attempts']) {
+        if (typeof job[name] !== 'number' || !Number.isSafeInteger(job[name]) || Number(job[name]) < 0)
+            throw new Error('invalid_source_policy_job');
+    }
+    if (snapshot.last_error !== null && (typeof snapshot.last_error !== 'string' || new TextEncoder().encode(snapshot.last_error).length > 1024))
+        throw new Error('invalid_source_policy_error');
+    if (snapshot.application !== null) {
+        const application = (0, indexingCatalog_1.catalogObject)(snapshot.application);
+        (0, indexingCatalog_1.catalogHex)(application.policy_digest, 64);
+        (0, indexingCatalog_1.catalogHex)(application.operation_id);
+        if (typeof application.observed_unix_ms !== 'number' || !Number.isSafeInteger(application.observed_unix_ms) || application.observed_unix_ms < 1)
+            throw new Error('invalid_source_policy_observation_time');
+        if (application.operation_id !== snapshot.operation_id || typeof application.no_index !== 'boolean' || typeof application.physical_cleanup_pending !== 'boolean' || (application.removal_publication !== null) === application.no_index)
+            throw new Error('invalid_source_policy_application');
+        for (const name of ['removed_artifacts', 'reclaimed_files']) {
+            if (typeof application[name] !== 'number' || !Number.isSafeInteger(application[name]) || Number(application[name]) < 0)
+                throw new Error('invalid_source_policy_accounting');
+        }
+        if (application.reclaimed_bytes !== null && (typeof application.reclaimed_bytes !== 'number' || !Number.isSafeInteger(application.reclaimed_bytes) || application.reclaimed_bytes < 0))
+            throw new Error('invalid_source_policy_accounting');
+        if (application.cleanup_error !== undefined && (typeof application.cleanup_error !== 'string' || new TextEncoder().encode(application.cleanup_error).length > 1024 || application.physical_cleanup_pending !== true))
+            throw new Error('invalid_source_policy_cleanup_error');
+        if (!Array.isArray(application.retired_components) || application.retired_components.length > 2 || new Set(application.retired_components).size !== application.retired_components.length || application.retired_components.some(value => !['analysis', 'embedding_cache'].includes(String(value))))
+            throw new Error('invalid_source_policy_retired_components');
+        if (application.no_index && (application.removed_artifacts !== 0 || application.retired_components.length !== 0))
+            throw new Error('invalid_empty_source_policy_application');
+        if (application.removal_publication !== null) {
+            const observation = { authority: index, collection: String(policy.collection), publication: application.removal_publication };
+            if ((0, publications_1.comparePublication)(observation, observation) !== 'equal')
+                throw new Error('invalid_source_policy_publication');
+        }
+    }
+    return response;
+}
+/** Labels only recorded native states. Missing observations stay unknown. */
+function policyStatusLabels(response) {
+    if (response.snapshot === null)
+        return ['No permanent-policy observation returned. Removal and cleanup are unknown.'];
+    const snapshot = (0, indexingCatalog_1.catalogObject)(response.snapshot), policy = (0, indexingCatalog_1.catalogObject)(snapshot.policy);
+    const labels = [Array.isArray(policy.denies) && policy.denies.length ? 'Permanent exclusions active.' : 'No permanent exclusions in this policy.'];
+    if (snapshot.application === null)
+        labels.push('Removal from the current index pending.');
+    else {
+        const application = (0, indexingCatalog_1.catalogObject)(snapshot.application);
+        const stamp = new Date(Number(application.observed_unix_ms));
+        labels.push(`Removal and cleanup observation: ${Number.isNaN(stamp.getTime()) ? `${String(application.observed_unix_ms)} milliseconds since the Unix epoch` : stamp.toISOString()}.`);
+        labels.push(application.no_index ? 'No retained index required removal.' : 'Removed from the current index at the recorded publication.');
+        labels.push(application.physical_cleanup_pending ? 'Physical cleanup pending.' : 'Physical cleanup complete for this native operation.');
+        if (Array.isArray(application.retired_components) && application.retired_components.includes('analysis'))
+            labels.push('Imported analysis was retired for the entire index; it has not been regenerated.');
+        if (Array.isArray(application.retired_components) && application.retired_components.includes('embedding_cache'))
+            labels.push('The embedding cache was retired for the entire index.');
+        if (application.cleanup_error !== undefined)
+            labels.push(`Physical cleanup needs attention: ${String(application.cleanup_error)}`);
+    }
+    if (snapshot.last_error !== null)
+        labels.push('Native operation needs attention; exclusions remain active.');
+    return labels;
+}
+/** Retains the exact native preview. Native admission must recheck its own live digest. */
+function validatePolicyChangePreview(input, current) {
+    const preview = (0, indexingCatalog_1.catalogObject)(input);
+    exact(preview, 'before_digest,after_digest,before_epoch,after,change');
+    (0, indexingCatalog_1.catalogBound)(preview, POLICY_BYTES + 16384);
+    (0, indexingCatalog_1.catalogHex)(preview.before_digest, 64);
+    (0, indexingCatalog_1.catalogHex)(preview.after_digest, 64);
+    const after = validateSourcePolicy(preview.after), change = validatePolicyChange(preview.change);
+    if (Number(after.epoch) !== (0, indexingCatalog_1.catalogRevision)(preview.before_epoch) + 1)
+        throw new Error('invalid_source_policy_successor');
+    if (current !== undefined) {
+        const before = validateSourcePolicy(current);
+        if (before.epoch !== preview.before_epoch || !(0, indexingCatalog_1.sameCatalogValue)({ ...before, epoch: after.epoch, denies: after.denies }, after))
+            throw new Error('crossed_source_policy_binding');
+        const expected = structuredClone(before.denies);
+        if (change.operation === 'trim') {
+            const selector = (0, indexingCatalog_1.catalogObject)(change.selector);
+            if (expected.some(rule => rule.rule_id === change.rule_id || (0, indexingCatalog_1.sameCatalogValue)({ source_root_id: rule.source_root_id, kind: rule.kind, path: rule.path }, selector)))
+                throw new Error('duplicate_source_policy_trim');
+            expected.push({ ...selector, rule_id: change.rule_id, reason: 'trim', created_epoch: after.epoch });
+        }
+        else {
+            const at = expected.findIndex(rule => rule.rule_id === change.rule_id);
+            if (at < 0 || expected[at].reason !== 'trim')
+                throw new Error('invalid_source_policy_unblock');
+            expected.splice(at, 1);
+        }
+        if (!(0, indexingCatalog_1.sameCatalogValue)(expected, after.denies))
+            throw new Error('crossed_source_policy_successor');
+    }
+    return preview;
+}

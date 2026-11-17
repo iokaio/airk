@@ -1,0 +1,11 @@
+--- reviewed-six-phase-helper.py
++++ independent-completion-helper.py
+@@ -11,7 +11,7 @@
+  assert value['commit']!='dda749cbdf77b3e2106003ff10a683ec3aec3202', 'unchanged failed DDA input cannot replay'
+  seal=value.get('raw_c7');assert isinstance(seal,dict) and isinstance(seal.get('files'),int) and seal['files']>0
+  digest=seal.get('sha256');assert isinstance(digest,str) and len(digest)==64 and all(c in '0123456789abcdef' for c in digest)
+- assert [x['name'] for x in value.get('commands',[])]==['installer-clippy', 'legacy-process-tests', 'exact-cli-replacement', 'workspace-clippy', 'workspace-tests', 'doctests']
++ assert [x['name'] for x in value.get('commands',[])]==['workspace-clippy', 'workspace-tests', 'doctests']
+  return value
+ 
+ def read_config():

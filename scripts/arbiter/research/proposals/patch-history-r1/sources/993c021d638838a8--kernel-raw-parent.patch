@@ -1,0 +1,8 @@
+--- crates/airk-kernel/src/inference_owner/context_action_tests.rs
++++ crates/airk-kernel/src/inference_owner/context_action_tests.rs
+@@ -761,3 +761,5 @@
+     std::fs::write(output, serde_json::to_vec_pretty(&report(true, &results))?)?;
+     Ok(())
+ }
++
++mod selected;

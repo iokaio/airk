@@ -1,0 +1,48 @@
+--- scripts/tests/test_current_model_consumers.py
++++ scripts/tests/test_current_model_consumers.py
+@@ -23,6 +23,7 @@
+ 
+ POLICY, CLIENTS, ORACLE = load('int8-policy'), load('check-service-clients'), load('qualify-local-model')
+ NATIVE = json.loads((ROOT / 'fixtures/models/model-policy.json').read_bytes())['catalog']
++SMOKE_OBSERVATIONS = json.loads((ROOT / 'fixtures/models/native-smoke-observations.json').read_bytes())
+ 
+ 
+ def smoke(profile):
+@@ -71,12 +72,34 @@
+             fixture.assert_alive.assert_not_called()
+ 
+     def test_oracle_identity_matches_actual_r2_native_smoke_literal_and_key_order(self):
+-        # Native R2 airk-build.json emitted this identity for the approved default
+-        # u8-v2 profile. This is a retained native observation, not Python output.
++        # Retain this original test identity and actual historical R2 observation.
++        # Current admission and oracle/key-order comparison are separate below.
++        self.assertEqual(SMOKE_OBSERVATIONS['schema'], 'airk.retained-native-model-smoke-observations/1')
++        retained = SMOKE_OBSERVATIONS['historical_r2']
++        self.assertEqual(retained['build_receipt_sha256'], 'ed92c568dfc0b71a3093048005a077ab5b8b5349cb1406c7782c7a50fc903ba9')
++        self.assertEqual(retained['observation'], {
++            'dimensions': 384, 'engine': 'onnxruntime-cpu/1.30.0',
++            'legacy_identity': '3e97f788b02fb5a578dc106628ecc7e3791b576dd60ed334401018893f9d0784',
++            'pipeline_digest': '80aea601ebf0f8ec94d1df52bfb9a44df4bffbccc85dc4a22ec7522785efa065',
++            'profile': 'minilm-l6-v2-u8-v2', 'repeat_equal': True, 'schema': 1, 'source': 'embedded'})
++        with self.assertRaises(ValueError):
++            POLICY.approved_profile(retained['observation']['profile'])
++
++    def test_current_oracle_identity_matches_actual_r104_native_smoke_and_key_order(self):
++        # Exact Rust output from the successful R104 matched-pair smoke, not
++        # Python-computed expectations or a historical profile relabeled current.
++        retained = SMOKE_OBSERVATIONS['current_r104']
++        self.assertEqual(retained['build_receipt_sha256'], 'c4f989d9e703fa44eeaff2b57588e93d4df4d8f4786fefd4e1ac764b741e4078')
++        self.assertEqual(retained['observation'], {
++            'dimensions': 384, 'engine': 'onnxruntime-cpu/1.30.0',
++            'legacy_identity': 'fdd2d44dffa5715eecdb78546870009abf78f1abac0ee5cca9a6f6b2fea8b64c',
++            'pipeline_digest': 'cb2166f2f648aa44cb4ee87f6b58b1e5c8007720d24fa4426234b65058e2b638',
++            'profile': 'minilm-l6-v2-u8-v3', 'repeat_equal': True, 'schema': 1, 'source': 'embedded'})
+         catalog = POLICY.catalog()
+         profile = next(p for p in catalog['profiles'] if p['id'] == catalog['default_profile'])
+         manifest = profile['manifest']
+-        expected = '3e97f788b02fb5a578dc106628ecc7e3791b576dd60ed334401018893f9d0784'
++        self.assertEqual(profile['id'], retained['observation']['profile'])
++        expected = retained['observation']['legacy_identity']
+         self.assertEqual(ORACLE.expected_native_identity(profile['id'], manifest), expected)
+         reordered = dict(reversed(list(manifest.items())))
+         self.assertEqual(ORACLE.expected_native_identity(profile['id'], reordered), expected)

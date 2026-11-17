@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: Apache-2.0
+
+#[test]
+fn idempotent_active_registration_clearing_same_root_tombstone_advances_scope_revision() -> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let base = temporary.path().canonicalize()?;
+    let control = base.join("control");
+    let source = base.join("source");
+    let first_data = base.join("first-data");
+    let second_data = base.join("second-data");
+    for path in [&control, &source, &first_data, &second_data] { fs::create_dir(path)?; }
+    let mut registry = ServiceRegistry::open(&control, Incarnation::from_bytes([61;16]))?;
+    let first = ProjectRegistration::new(source.to_str().unwrap().into(), first_data.to_str().unwrap().into(), "first".into())?;
+    let second = ProjectRegistration::new(source.to_str().unwrap().into(), second_data.to_str().unwrap().into(), "second".into())?;
+    registry.register(&first)?;
+    registry.register(&second)?;
+    let epoch = registry.get(second.binding)?.fencing_generation;
+    // A real source disappearance may be processed for one collection before
+    // its sibling; retirement consumes that source child's fenced observation.
+    fs::remove_dir(&source)?;
+    assert!(registry.retire_missing_source(second.binding, epoch, 0)?);
+    assert!(registry.purge_removed_project_turn(second.binding)?);
+    assert!(registry.source_was_removed(&first.root)?);
+    let before = registry.observe_source_scope(&source, Some("second"))?;
+    assert!(matches!(before.resolution, SavedScopeResolution::Removed));
+    fs::create_dir(&source)?;
+    registry.register(&first)?;
+    let after = registry.observe_source_scope(&source, Some("second"))?;
+    assert!(matches!(after.resolution, SavedScopeResolution::Missing));
+    assert_eq!(after.namespace, before.namespace);
+    assert_eq!(after.revision, before.revision + 1,
+        "negative resolution changed without exactly one revision fence");
+    registry.register(&first)?;
+    assert_eq!(registry.observe_source_scope(&source, Some("second"))?.revision, after.revision,
+        "true idempotent registration must remain a no-op");
+    Ok(())
+}

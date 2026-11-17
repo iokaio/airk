@@ -1,0 +1,2878 @@
+diff --git a/crates/airk-cli/src/catalog_split_control.rs b/crates/airk-cli/src/catalog_split_control.rs
+--- a/crates/airk-cli/src/catalog_split_control.rs
++++ b/crates/airk-cli/src/catalog_split_control.rs
+@@ -213,6 +213,26 @@
+         &original.collection,
+     )?
+     .select()?;
++    // A new retained profile needs a reviewed private inheritance capsule. The
++    // existing legacy split protocol must not silently reset it to Agent Lean.
++    if let Some(bytes) = selected.store.extraction_policy_bytes(&original.root)? {
++        let configured: airk_kernel::extraction::ExtractionPolicy = serde_json::from_slice(&bytes)?;
++        ensure!(
++            configured.retained_profile.is_none(),
++            "split requires qualified native retained-profile inheritance; current legacy split protocol refused"
++        );
++    }
++    if let Some(scope) = selected
++        .store
++        .current_scope(&original.root, &original.collection)?
++    {
++        let read = selected.store.current_read(&scope)?;
++        ensure!(
++            read.collection_state()?
++                .is_none_or(|state| state.configuration.retained_profile.is_none()),
++            "split requires qualified native applied-profile inheritance; current legacy split protocol refused"
++        );
++    }
+     let settings = inspect_settings_digest(&selected.store, &original.root)?;
+     let incarnation = selected
+         .store
+@@ -307,6 +327,7 @@
+     let destination_quota =
+         Quota::review_service_funding_policy(Path::new(&destination.data_root))?;
+     let request = SplitRequest {
++        extraction_policy: None,
+         schema: 1,
+         required_policy_contract: SPLIT_CONTRACT,
+         caller,
+diff --git a/crates/airk-cli/src/service_configuration.rs b/crates/airk-cli/src/service_configuration.rs
+--- a/crates/airk-cli/src/service_configuration.rs
++++ b/crates/airk-cli/src/service_configuration.rs
+@@ -24,6 +24,9 @@
+     },
+     Detail {
+         level: IndexDetail,
++    },
++    RetainedProfile {
++        target: airk_core::retention::RetainedProfile,
+     },
+     VectorSelection {
+         policy: VectorSelectionPolicy,
+@@ -155,7 +158,8 @@
+                 request_id,
+                 usefulness,
+             },
+-            Self::InstallModel { .. }
++            Self::RetainedProfile { .. }
++            | Self::InstallModel { .. }
+             | Self::ImportUsage { .. }
+             | Self::ExtractionPolicy { .. }
+             | Self::ScanLimits { .. }
+@@ -199,6 +203,22 @@
+         "configuration inspection belongs to another project"
+     );
+     let configuration = match draft {
++        Draft::RetainedProfile { target } => {
++            let native = crate::service_runtime::administrative_read(
++                runtime,
++                project,
++                airk_core::native_reads::NativeRead::RetentionMigrationPreview { target },
++                airk_core::usage::ClientFamily::Unknown,
++            )
++            .await?;
++            let review: airk_core::retention::RetentionMigrationReview =
++                serde_json::from_value(native)?;
++            review.validate()?;
++            ensure!(review.target == target, "crossed retained migration target");
++            ProjectConfiguration::RetainedProfile {
++                review: Box::new(review),
++            }
++        }
+         Draft::InstallModel { directory } => {
+             // Preserve the user's original path until the native policy guard
+             // has checked both its spelling and resolved source location.
+diff --git a/crates/airk-cli/tests/combined_reads/retention.rs b/crates/airk-cli/tests/combined_reads/retention.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/airk-cli/tests/combined_reads/retention.rs
+@@ -0,0 +1,280 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Real helper/process retention migration. Tiny word vectors are not ONNX qualification.
++use super::*;
++use airk_core::{
++    graph_storage::GraphRecordReader,
++    retention::RetainedProfile,
++    usage::{IndexMetric, IndexSummary},
++};
++
++async fn configure(f: &Fixture, name: &str, draft: Value) -> Result<()> {
++    let file = f.owner.path().join(format!("retention-{name}.json"));
++    fs::write(&file, serde_json::to_vec(&draft)?)?;
++    let result = f
++        .native_cli(
++            2,
++            vec![
++                "configure".into(),
++                "--file".into(),
++                file.to_str().context("UTF8 draft")?.into(),
++            ],
++        )
++        .await?;
++    let response: ControlResponse = serde_json::from_value(result)?;
++    let ControlResponse::Job { job } = response else {
++        anyhow::bail!(
++            "native retention Configure did not acknowledge exact job: {}",
++            serde_json::to_string(&response)?
++        );
++    };
++    let actual = wait_fixture_job(f, job.id).await?;
++    ensure!(
++        matches!(
++            actual.outcome,
++            Some(airk_core::service::JobOutcome::Succeeded { .. })
++        ),
++        "native retention Configure failed: {actual:?}"
++    );
++    Ok(())
++}
++
++async fn counters(f: &Fixture) -> Result<IndexSummary> {
++    let mut cursor = None;
++    let mut assembled = Value::Null;
++    for _ in 0..8 {
++        let response = airk_cli::service_runtime::request(
++            &f.control,
++            ControlMethod::NativeRead {
++                project: f.registrations[2].binding,
++                usage_client: airk_core::usage::ClientFamily::Unknown,
++                request: airk_core::native_reads::NativeRead::UsageReport {
++                    days: 1,
++                    cursor,
++                    max_bytes: 20 << 10,
++                    format: airk_core::native_reads::ReportFormat::Json,
++                    price: None,
++                },
++            },
++        )
++        .await?;
++        let ControlResponse::NativeRead { result } = response else {
++            anyhow::bail!(
++                "native index counters refused: {}",
++                serde_json::to_string(&response)?
++            );
++        };
++        ensure!(
++            result.get("error").is_none(),
++            "native index usage error: {result}"
++        );
++        let page: airk_kernel::usage_page::Page = serde_json::from_value(result)?;
++        for record in page.items {
++            airk_kernel::usage_page::assemble(&mut assembled, record)?;
++        }
++        cursor = page.cursor;
++        if cursor.is_none() {
++            return Ok(serde_json::from_value(
++                assembled
++                    .pointer("/value/report/operations/index/index_work")
++                    .context("native index work counters absent")?
++                    .clone(),
++            )?);
++        }
++    }
++    anyhow::bail!("native index counter report exceeded explicit eight-page budget")
++}
++fn metric(summary: &IndexSummary, key: IndexMetric) -> Result<u128> {
++    let total = summary
++        .metrics
++        .get(&key)
++        .context("required model/vector counter absent, not zero")?;
++    ensure!(total.samples > 0, "model/vector counter has no samples");
++    Ok(total.value)
++}
++/// Capture only bounded authenticated native metadata, dropping every pin before migration.
++fn graph(f: &Fixture) -> Result<Value> {
++    let registration = &f.registrations[2];
++    let selected = airk_store::service::collection::Collection::existing(
++        Path::new(&registration.data_root),
++        &registration.root,
++        &registration.collection,
++    )?
++    .select()?;
++    let scope = selected
++        .store
++        .current_scope(&registration.root, &registration.collection)?
++        .context("actual current absent")?;
++    let read = selected.store.current_read(&scope)?;
++    let config = read
++        .collection_state()?
++        .context("native applied config absent")?
++        .configuration;
++    let graph = &read.head().graph_head;
++    ensure!(
++        graph.allocated_count <= 128 && graph.live_nodes > 0,
++        "fixture vector bound exceeded or not positive"
++    );
++    let mut vectors = Vec::new();
++    for id in 1..u32::try_from(graph.allocated_count)? {
++        let record = read.read(id)?;
++        if record.live {
++            let binding = read.vector_for_graph_id(id)?;
++            vectors.push(json!({"embedding_key":binding.embedding_key,"graph_id":binding.graph_id,"vector_and_adjacency_bytes":record.bytes}));
++        }
++    }
++    Ok(
++        json!({"model":config.model.context("enabled fixture lacks actual model objects")?,"vectors":vectors,"selection":config.vector_selection,"target":config.retained_profile}),
++    )
++}
++
++#[tokio::test]
++async fn actual_helper_retention_migration_rebinds_evidence_without_new_embedding_inputs()
++-> Result<()> {
++    let mut f = Fixture::with_helper()?;
++    f.session.project_ids = vec![f.projects[2]];
++    f.session.index_ids = Some(vec![f.indexes[2]]);
++    let registration = &f.registrations[2];
++    let setup = airk_kernel::Kernel::open_service_collection(
++        &registration.root,
++        Some(registration.data_root.clone().into()),
++        &registration.collection,
++    )?;
++    setup.configure_vectors(true)?;
++    setup.configure_usage(airk_core::usage::RecordingMode::AggregatesOnly)?;
++    drop(setup);
++    let sources = ["api", "impl", "private", "api-other"]
++        .map(|directory| {
++            let path = Path::new(&registration.root)
++                .join(directory)
++                .join("policy.md");
++            Ok::<_, anyhow::Error>((path.clone(), fs::read(path)?))
++        })
++        .into_iter()
++        .collect::<Result<Vec<_>>>()?;
++    let model = f.owner.path().join("retention-model");
++    fs::create_dir(&model)?;
++    fs::write(
++        model.join("vocabulary.json"),
++        br#"{"boundaryneedle":[1.0,0.0],"original":[0.0,1.0]}"#,
++    )?;
++    fs::write(
++        model.join("model.json"),
++        serde_json::to_vec(
++            &json!({"schema":1,"name":"original-retention-helper-fixture","license":"Apache-2.0","dimensions":2,"sha256":airk_cli::runtime_pair::digest_file(&model.join("vocabulary.json"))?}),
++        )?,
++    )?;
++    let _service = f.start().await?;
++    fixture_pause(&f, 2, false).await?;
++    fixture_install_model(&f, 2, &model).await?;
++    fixture_job(&f, 2, airk_core::service::JobKind::Index).await?;
++    fixture_job(&f, 2, airk_core::service::JobKind::Vectors).await?;
++    split::pause_quiescent_original(&f, 2).await?;
++    let helper =
++        airk_cli::service_runtime::request(&f.control, ControlMethod::EmbeddingStatus).await?;
++    ensure!(
++        matches!(
++            helper,
++            ControlResponse::EmbeddingStatus {
++                available: true,
++                process_id: Some(_),
++                worker: Some(_),
++                loads: 1..,
++                ..
++            }
++        ),
++        "actual helper was not observed: {}",
++        serde_json::to_string(&helper)?
++    );
++    let original = graph(&f)?;
++    let mut before = counters(&f).await?;
++    ensure!(
++        metric(&before, IndexMetric::EmbeddingInputs)? > 0,
++        "warm fixture did not record actual model input work"
++    );
++    for (name, target) in [
++        ("lean", RetainedProfile::Lean),
++        ("rich", RetainedProfile::Rich),
++    ] {
++        fixture_pause(&f, 2, false).await?;
++        configure(
++            &f,
++            name,
++            json!({"operation":"retained_profile","target":target}),
++        )
++        .await?;
++        // Existing real jobs, not synthetic completed results, finish source and retained semantic work.
++        fixture_job(&f, 2, airk_core::service::JobKind::Index).await?;
++        fixture_job(&f, 2, airk_core::service::JobKind::Vectors).await?;
++        split::pause_quiescent_original(&f, 2).await?;
++        let after = graph(&f)?;
++        ensure!(
++            after["model"] == original["model"] && after["selection"] == original["selection"],
++            "retention changed configured model/pipeline or vector eligibility"
++        );
++        ensure!(
++            after["vectors"] == original["vectors"],
++            "retention changed exact embedding keys/physical node IDs/vector data"
++        );
++        ensure!(
++            after["target"] == json!(target),
++            "native migration was not applied"
++        );
++        let usage = counters(&f).await?;
++        ensure!(
++            metric(&usage, IndexMetric::EmbeddingInputs)?
++                == metric(&before, IndexMetric::EmbeddingInputs)?
++                && metric(&usage, IndexMetric::EmbeddingCacheMisses)?
++                    == metric(&before, IndexMetric::EmbeddingCacheMisses)?,
++            "retention-only migration sent new inputs to model or lost exact cache identity"
++        );
++        ensure!(
++            metric(&usage, IndexMetric::VectorReusedInputs)?
++                > metric(&before, IndexMetric::VectorReusedInputs)?,
++            "migration did not demonstrate actual graph-input reuse"
++        );
++        before = usage;
++        let backend =
++            airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
++        let args = json!({"query":"boundaryneedle","mode":"vector","limit":8,"max_bytes":8192,"verification":"off","response_mode":"full"});
++        let native = native_read(backend.as_ref(), "airk_search", &args).await?;
++        ensure!(
++            native["isError"] != true,
++            "native migrated provider read failed: {native}"
++        );
++        let mut mcp = McpSession::start(&f)?;
++        let actual = mcp.call(10, "airk_search", args)?;
++        ensure!(
++            actual["result"]["isError"] != true,
++            "MCP migrated provider read failed: {actual}"
++        );
++        assert_parity(
++            "retention actual helper MCP",
++            &body(&native)?,
++            &body(&actual["result"])?,
++        )?;
++    }
++    // A repeated selected profile completes Configure but does not schedule source/model work.
++    fixture_pause(&f, 2, false).await?;
++    configure(
++        &f,
++        "rich-noop",
++        json!({"operation":"retained_profile","target":"rich"}),
++    )
++    .await?;
++    split::pause_quiescent_original(&f, 2).await?;
++    let noop = counters(&f).await?;
++    ensure!(
++        metric(&noop, IndexMetric::EmbeddingInputs)?
++            == metric(&before, IndexMetric::EmbeddingInputs)?
++            && metric(&noop, IndexMetric::VectorReusedInputs)?
++                == metric(&before, IndexMetric::VectorReusedInputs)?,
++        "no-op profile selection scheduled native index/model work"
++    );
++    for (path, bytes) in sources {
++        ensure!(
++            fs::read(path)? == bytes,
++            "retention migration modified source bytes"
++        );
++    }
++    Ok(())
++}
+diff --git a/crates/airk-cli/tests/combined_reads/split.rs b/crates/airk-cli/tests/combined_reads/split.rs
+--- a/crates/airk-cli/tests/combined_reads/split.rs
++++ b/crates/airk-cli/tests/combined_reads/split.rs
+@@ -449,7 +449,7 @@
+ }
+ 
+ #[cfg(feature = "embedding-worker")]
+-async fn pause_quiescent_original(f: &Fixture, index: usize) -> Result<()> {
++pub(super) async fn pause_quiescent_original(f: &Fixture, index: usize) -> Result<()> {
+     let project = f.registrations[index].binding;
+     let sql = Connection::open_with_flags(
+         f.control.join("service-1.4.sqlite3"),
+diff --git a/crates/airk-cli/tests/combined_reads.rs b/crates/airk-cli/tests/combined_reads.rs
+--- a/crates/airk-cli/tests/combined_reads.rs
++++ b/crates/airk-cli/tests/combined_reads.rs
+@@ -7,6 +7,9 @@
+ #[path = "combined_reads/permanent_trim.rs"]
+ mod permanent_trim;
+ 
++#[cfg(feature = "embedding-worker")]
++#[path = "combined_reads/retention.rs"]
++mod retention;
+ #[path = "combined_reads/split.rs"]
+ mod split;
+ 
+diff --git a/crates/airk-core/src/catalog_split.rs b/crates/airk-core/src/catalog_split.rs
+--- a/crates/airk-core/src/catalog_split.rs
++++ b/crates/airk-core/src/catalog_split.rs
+@@ -76,6 +76,8 @@
+ #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+ #[serde(deny_unknown_fields)]
+ pub struct SplitRequest {
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub extraction_policy: Option<crate::retention::SplitExtractionPolicyReference>,
+     pub schema: u32,
+     pub required_policy_contract: u32,
+     pub caller: Incarnation,
+@@ -112,6 +114,9 @@
+         self.original_registration.validate()?;
+         self.destination_registration.validate()?;
+         self.source_configuration.validate()?;
++        if let Some(reference) = &self.extraction_policy {
++            reference.validate()?;
++        }
+         label(&self.destination_name)?;
+         atoms(&self.selectors)?;
+         ensure!(
+diff --git a/crates/airk-core/src/extraction.rs b/crates/airk-core/src/extraction.rs
+--- a/crates/airk-core/src/extraction.rs
++++ b/crates/airk-core/src/extraction.rs
+@@ -79,14 +79,37 @@
+ }
+ #[derive(Clone, Debug, Serialize, Deserialize)]
+ pub struct IndexCoverage {
++    /// Historical level, or unchanged legacy fallback for unqualified file families.
+     pub level: IndexDetail,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub retained_profile: Option<crate::retention::RetainedProfile>,
+     pub note: String,
+ }
+ impl From<IndexDetail> for IndexCoverage {
+     fn from(level: IndexDetail) -> Self {
+         Self {
+             level,
++            retained_profile: None,
+             note: level.coverage().into(),
++        }
++    }
++}
++impl IndexCoverage {
++    pub fn with_retained_profile(
++        legacy_fallback: IndexDetail,
++        selection: Option<crate::retention::RetainedProfile>,
++    ) -> Self {
++        let Some(target) = selection else {
++            return legacy_fallback.into();
++        };
++        Self {
++            level: legacy_fallback,
++            retained_profile: Some(target),
++            note: format!(
++                "Versioned {} retention for qualified file families; unqualified files retain legacy {}. Retention is independent of reply projection and semantic inputs. Supported adapter output remains authoritative.",
++                target.as_str(),
++                legacy_fallback.as_str()
++            ),
+         }
+     }
+ }
+@@ -105,6 +128,13 @@
+         }
+     }
+     pub fn from_profile(profile: &ExtractionProfile) -> anyhow::Result<Self> {
++        anyhow::ensure!(
++            matches!(profile.contract_version, 1 | 2)
++                && ["retained_profile", "retained_family", "retention_algorithm"]
++                    .iter()
++                    .all(|key| !profile.options.contains_key(*key)),
++            "new retained profile requires explicit retention-aware consumer"
++        );
+         match profile.options.get("index_detail").map(String::as_str) {
+             None | Some("detailed") => Ok(Self::Detailed),
+             Some("essential") => Ok(Self::Essential),
+@@ -207,9 +237,13 @@
+ impl ExtractionProfile {
+     pub fn identity(&self) -> anyhow::Result<crate::identity::Sha256Digest> {
+         anyhow::ensure!(
+-            matches!(self.contract_version, 1 | EXTRACTION_CONTRACT_VERSION),
++            matches!(
++                self.contract_version,
++                1 | EXTRACTION_CONTRACT_VERSION | crate::retention::PROFILE_CONTRACT
++            ),
+             "unsupported profile contract"
+         );
++        crate::retention::AppliedRetention::from_profile(self)?;
+         let bytes = serde_json::to_vec(self)?;
+         anyhow::ensure!(
+             bytes.len() <= 131_072,
+diff --git a/crates/airk-core/src/lib.rs b/crates/airk-core/src/lib.rs
+--- a/crates/airk-core/src/lib.rs
++++ b/crates/airk-core/src/lib.rs
+@@ -37,6 +37,7 @@
+ pub mod readiness;
+ pub mod references;
+ pub mod reply;
++pub mod retention;
+ pub mod scoped_reads;
+ pub mod search_execution;
+ pub mod search_filters;
+diff --git a/crates/airk-core/src/native_reads.rs b/crates/airk-core/src/native_reads.rs
+--- a/crates/airk-core/src/native_reads.rs
++++ b/crates/airk-core/src/native_reads.rs
+@@ -57,6 +57,9 @@
+         cursor: Option<String>,
+         max_bytes: usize,
+     },
++    RetentionMigrationPreview {
++        target: crate::retention::RetainedProfile,
++    },
+     Settings {
+         view: SettingsView,
+         cursor: Option<String>,
+diff --git a/crates/airk-core/src/retention.rs b/crates/airk-core/src/retention.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/airk-core/src/retention.rs
+@@ -0,0 +1,446 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Versioned retained evidence, independent of reply projection and source selection.
++use crate::{
++    extraction::{ExtractionProfile, IndexDetail},
++    identity::{RevisionToken, Sha256Digest},
++};
++use anyhow::{Result, ensure};
++use serde::{Deserialize, Serialize};
++
++pub const PROFILE_CONTRACT: u32 = 3;
++pub const ALGORITHM: &str = "airk/file-aware-retention/1";
++const KEYS: [&str; 3] = ["retained_profile", "retained_family", "retention_algorithm"];
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum RetainedProfile {
++    Lean,
++    Rich,
++}
++impl RetainedProfile {
++    pub fn as_str(self) -> &'static str {
++        match self {
++            Self::Lean => "lean",
++            Self::Rich => "rich",
++        }
++    }
++    pub fn retains_fact(self, family: RetainedFamily, kind: &str) -> bool {
++        if self == Self::Rich {
++            return true;
++        }
++        match family {
++            RetainedFamily::Manifest => matches!(
++                kind,
++                "key"
++                    | "section"
++                    | "package_identity"
++                    | "package_dependency"
++                    | "package_script"
++                    | "workspace_member"
++                    | "workspace_configuration"
++                    | "project_configuration"
++                    | "build_system"
++                    | "tool_configuration"
++                    | "compiler_option"
++                    | "configuration_extends"
++                    | "project_reference"
++                    | "configuration_path"
++            ),
++            RetainedFamily::Code | RetainedFamily::Markdown | RetainedFamily::Docx => {
++                IndexDetail::AgentLean.retains_fact(kind)
++            }
++        }
++    }
++}
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum RetainedFamily {
++    Code,
++    Manifest,
++    Markdown,
++    Docx,
++}
++impl RetainedFamily {
++    pub fn as_str(self) -> &'static str {
++        match self {
++            Self::Code => "code",
++            Self::Manifest => "manifest",
++            Self::Markdown => "markdown",
++            Self::Docx => "docx",
++        }
++    }
++}
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
++pub enum AppliedRetention {
++    Legacy {
++        detail: IndexDetail,
++        index_detail_was_absent: bool,
++    },
++    Selected {
++        profile: RetainedProfile,
++        family: RetainedFamily,
++        algorithm: String,
++    },
++}
++impl AppliedRetention {
++    /// Missing historical index_detail remains Detailed; absence itself is retained.
++    pub fn from_profile(profile: &ExtractionProfile) -> Result<Self> {
++        if profile.contract_version != PROFILE_CONTRACT {
++            ensure!(
++                matches!(profile.contract_version, 1 | 2),
++                "unsupported legacy profile contract"
++            );
++            ensure!(
++                KEYS.iter().all(|key| !profile.options.contains_key(*key)),
++                "retention marker requires profile contract 3"
++            );
++            return Ok(Self::Legacy {
++                detail: IndexDetail::from_profile(profile)?,
++                index_detail_was_absent: !profile.options.contains_key("index_detail"),
++            });
++        }
++        ensure!(
++            !profile.options.contains_key("index_detail"),
++            "new retention conflicts with legacy detail"
++        );
++        ensure!(
++            profile.options.get(KEYS[2]).map(String::as_str) == Some(ALGORITHM),
++            "unsupported retention algorithm"
++        );
++        let selection = match profile.options.get(KEYS[0]).map(String::as_str) {
++            Some("lean") => RetainedProfile::Lean,
++            Some("rich") => RetainedProfile::Rich,
++            _ => anyhow::bail!("unsupported retained profile"),
++        };
++        let family = match profile.options.get(KEYS[1]).map(String::as_str) {
++            Some("code") => RetainedFamily::Code,
++            Some("manifest") => RetainedFamily::Manifest,
++            Some("markdown") => RetainedFamily::Markdown,
++            Some("docx") => RetainedFamily::Docx,
++            _ => anyhow::bail!("unsupported retained family"),
++        };
++        Ok(Self::Selected {
++            profile: selection,
++            family,
++            algorithm: ALGORITHM.into(),
++        })
++    }
++    /// Only a qualified owning adapter may choose family. This pure method confers no admission.
++    pub fn bind(
++        base: &ExtractionProfile,
++        selection: RetainedProfile,
++        family: RetainedFamily,
++    ) -> Result<ExtractionProfile> {
++        base.identity()?;
++        ensure!(
++            base.contract_version <= 2,
++            "expected unmodified producer profile"
++        );
++        let mut result = base.clone();
++        result.contract_version = PROFILE_CONTRACT;
++        result.options.remove("index_detail");
++        result
++            .options
++            .insert(KEYS[0].into(), selection.as_str().into());
++        result
++            .options
++            .insert(KEYS[1].into(), family.as_str().into());
++        result.options.insert(KEYS[2].into(), ALGORITHM.into());
++        result.identity()?;
++        Ok(result)
++    }
++    pub fn tracks_code_continuity(&self) -> bool {
++        match self {
++            Self::Legacy { detail, .. } => detail.tracks_continuity(),
++            Self::Selected { profile, .. } => *profile == RetainedProfile::Rich,
++        }
++    }
++    pub fn tracks_document_continuity(&self) -> bool {
++        match self {
++            Self::Legacy { detail, .. } => *detail == IndexDetail::Detailed,
++            Self::Selected { profile, .. } => *profile == RetainedProfile::Rich,
++        }
++    }
++}
++/// Eligibility only: the owning cache must still verify the retained object's hash and availability.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum ReuseEligibility {
++    SameEffectiveInput,
++    SourceChanged,
++    InterpretationChanged,
++    LegacyProfileMissing,
++}
++/// Absence is not Detailed and never grants reuse under a newly invented identity.
++/// Existing strict legacy hydration can separately derive demonstrable historical semantics.
++pub fn recorded_reuse_eligibility(
++    old_source: Sha256Digest,
++    new_source: Sha256Digest,
++    old: Option<&ExtractionProfile>,
++    new: &ExtractionProfile,
++) -> Result<ReuseEligibility> {
++    if old_source != new_source {
++        return Ok(ReuseEligibility::SourceChanged);
++    }
++    match old {
++        Some(old) => reuse_eligibility(old_source, new_source, old, new),
++        None => Ok(ReuseEligibility::LegacyProfileMissing),
++    }
++}
++pub fn reuse_eligibility(
++    old_source: Sha256Digest,
++    new_source: Sha256Digest,
++    old: &ExtractionProfile,
++    new: &ExtractionProfile,
++) -> Result<ReuseEligibility> {
++    if old_source != new_source {
++        return Ok(ReuseEligibility::SourceChanged);
++    }
++    Ok(if old.identity()? == new.identity()? {
++        ReuseEligibility::SameEffectiveInput
++    } else {
++        ReuseEligibility::InterpretationChanged
++    })
++}
++/// Prospective explicit review. Native saved-work authority and atomic publication remain owners.
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct RetentionMigrationReview {
++    pub schema: u32,
++    pub expected_publication: RevisionToken,
++    pub expected_applied_policy: Sha256Digest,
++    pub reviewed_configured_policy: Sha256Digest,
++    pub desired_policy: Sha256Digest,
++    pub target: RetainedProfile,
++}
++impl RetentionMigrationReview {
++    pub fn validate(&self) -> Result<()> {
++        ensure!(
++            self.schema == 1 && serde_json::to_vec(self)?.len() <= 4096,
++            "invalid retention migration review"
++        );
++        Ok(())
++    }
++    pub fn verify_current(
++        &self,
++        publication: &RevisionToken,
++        applied: Sha256Digest,
++        configured: Sha256Digest,
++    ) -> Result<()> {
++        self.validate()?;
++        ensure!(
++            &self.expected_publication == publication
++                && self.expected_applied_policy == applied
++                && self.reviewed_configured_policy == configured,
++            "retention migration review is stale"
++        );
++        Ok(())
++    }
++    pub fn identity(&self) -> Result<Sha256Digest> {
++        self.validate()?;
++        Ok(crate::identity::framed_digest(
++            b"airk/retention-migration-review/1",
++            &[&serde_json::to_vec(self)?],
++        ))
++    }
++    pub fn requires_publication(&self) -> bool {
++        self.expected_applied_policy != self.desired_policy
++    }
++}
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn legacy() -> ExtractionProfile {
++        ExtractionProfile {
++            contract_version: 2,
++            adapter_id: "rust".into(),
++            adapter_version: "fixture/1".into(),
++            language: "rust".into(),
++            dialect: None,
++            grammar_identity: None,
++            mapping_version: 1,
++            chunk_version: 1,
++            options: Default::default(),
++            configuration_inputs: Default::default(),
++        }
++    }
++    #[test]
++    fn legacy_missing_detail_keeps_exact_identity_and_detailed_meaning() -> Result<()> {
++        let p = legacy();
++        let bytes = serde_json::to_vec(&p)?;
++        let id = p.identity()?;
++        assert_eq!(
++            AppliedRetention::from_profile(&p)?,
++            AppliedRetention::Legacy {
++                detail: IndexDetail::Detailed,
++                index_detail_was_absent: true
++            }
++        );
++        assert_eq!(bytes, serde_json::to_vec(&p)?);
++        assert_eq!(id, p.identity()?);
++        let mut balanced = p;
++        balanced
++            .options
++            .insert("index_detail".into(), "balanced".into());
++        assert!(!AppliedRetention::from_profile(&balanced)?.tracks_document_continuity());
++        Ok(())
++    }
++    #[test]
++    fn new_selection_is_not_legacy_and_effective_identity_controls_reuse() -> Result<()> {
++        let p = legacy();
++        let lean = AppliedRetention::bind(&p, RetainedProfile::Lean, RetainedFamily::Code)?;
++        let rich = AppliedRetention::bind(&p, RetainedProfile::Rich, RetainedFamily::Code)?;
++        assert!(IndexDetail::from_profile(&lean).is_err());
++        let hash = Sha256Digest::from_bytes([1; 32]);
++        assert_eq!(
++            reuse_eligibility(hash, hash, &lean, &lean)?,
++            ReuseEligibility::SameEffectiveInput
++        );
++        assert_eq!(
++            recorded_reuse_eligibility(hash, hash, None, &lean)?,
++            ReuseEligibility::LegacyProfileMissing
++        );
++        assert_eq!(
++            reuse_eligibility(hash, hash, &lean, &rich)?,
++            ReuseEligibility::InterpretationChanged
++        );
++        assert_eq!(
++            reuse_eligibility(hash, Sha256Digest::from_bytes([2; 32]), &lean, &lean)?,
++            ReuseEligibility::SourceChanged
++        );
++        let mut disguised = lean.clone();
++        disguised.contract_version = 2;
++        assert!(disguised.identity().is_err());
++        assert!(IndexDetail::from_profile(&disguised).is_err());
++        let mut unknown = lean;
++        unknown
++            .options
++            .insert("retention_algorithm".into(), "future/99".into());
++        assert!(unknown.identity().is_err());
++        Ok(())
++    }
++    #[test]
++    fn migration_review_is_explicit_stale_checked_and_noop_does_not_require_republication()
++    -> Result<()> {
++        let publication: RevisionToken =
++            format!("airk-r1:{}:1:{}", "11".repeat(16), "22".repeat(32)).parse()?;
++        let applied = Sha256Digest::from_bytes([3; 32]);
++        let configured = Sha256Digest::from_bytes([4; 32]);
++        let review = RetentionMigrationReview {
++            schema: 1,
++            expected_publication: publication,
++            expected_applied_policy: applied,
++            reviewed_configured_policy: configured,
++            desired_policy: applied,
++            target: RetainedProfile::Lean,
++        };
++        review.verify_current(&publication, applied, configured)?;
++        assert!(!review.requires_publication());
++        assert!(
++            review
++                .verify_current(&publication, configured, configured)
++                .is_err()
++        );
++        assert!(
++            review
++                .verify_current(&publication, applied, applied)
++                .is_err()
++        );
++        let mut migrate = review;
++        migrate.desired_policy = configured;
++        assert!(migrate.requires_publication());
++        Ok(())
++    }
++    #[test]
++    fn manifest_core_is_new_and_rich_is_a_superset() {
++        for kind in [
++            "package_identity",
++            "package_dependency",
++            "package_script",
++            "workspace_configuration",
++            "project_reference",
++        ] {
++            assert!(!IndexDetail::AgentLean.retains_fact(kind));
++            assert!(RetainedProfile::Lean.retains_fact(RetainedFamily::Manifest, kind));
++            assert!(RetainedProfile::Rich.retains_fact(RetainedFamily::Manifest, kind));
++        }
++        assert!(!RetainedProfile::Lean.retains_fact(RetainedFamily::Markdown, "date"));
++        assert!(RetainedProfile::Lean.retains_fact(RetainedFamily::Markdown, "requirement"));
++    }
++}
++
++/// Configuration acceptance is distinct from applying the new published representation.
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct RetentionMigrationResult {
++    pub schema: u32,
++    pub review_digest: Sha256Digest,
++    pub target: RetainedProfile,
++    pub publication_before: RevisionToken,
++    pub applied_policy_before: Sha256Digest,
++    pub configured_policy: Sha256Digest,
++    pub policy_saved: bool,
++    pub source_pass_requested: bool,
++}
++impl RetentionMigrationResult {
++    pub fn for_review(review: &RetentionMigrationReview) -> Result<Self> {
++        Ok(Self {
++            schema: 1,
++            review_digest: review.identity()?,
++            target: review.target,
++            publication_before: review.expected_publication,
++            applied_policy_before: review.expected_applied_policy,
++            configured_policy: review.desired_policy,
++            policy_saved: review.reviewed_configured_policy != review.desired_policy,
++            source_pass_requested: review.requires_publication(),
++        })
++    }
++    pub fn validate_for(&self, review: &RetentionMigrationReview) -> Result<()> {
++        ensure!(
++            *self == Self::for_review(review)?,
++            "retention migration result differs from exact saved review"
++        );
++        Ok(())
++    }
++}
++
++/// Compact reviewed reference; never carries the private policy body on a public frame.
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct SplitExtractionPolicyReference {
++    pub schema: u32,
++    pub policy_body_digest: Sha256Digest,
++    pub configured_policy_digest: Sha256Digest,
++    pub encoded_bytes: u32,
++    pub retained_profile: RetainedProfile,
++    pub legacy_fallback_detail: IndexDetail,
++    pub required_extraction_contract: u32,
++}
++impl SplitExtractionPolicyReference {
++    pub fn validate(&self) -> Result<()> {
++        ensure!(
++            self.schema == 1
++                && self.required_extraction_contract == PROFILE_CONTRACT
++                && (1..=131_072).contains(&self.encoded_bytes),
++            "invalid split extraction policy reference"
++        );
++        Ok(())
++    }
++    pub fn validate_body(&self, canonical_stored_body: &[u8]) -> Result<()> {
++        self.validate()?;
++        ensure!(
++            canonical_stored_body.len() == self.encoded_bytes as usize
++                && crate::identity::framed_digest(
++                    b"airk/split-extraction-policy-body/1",
++                    &[canonical_stored_body]
++                ) == self.policy_body_digest,
++            "split extraction policy body differs"
++        );
++        Ok(())
++    }
++}
++
++/// Bounded metadata catalog, separate from legacy index_detail and reply projection.
++pub fn catalog() -> serde_json::Value {
++    serde_json::json!({"schema":1,"profiles":["lean","rich"],"profile_contract":PROFILE_CONTRACT,"policy_version":4,"algorithm":ALGORITHM,"requires_native_owned_collection":true,"existing_publication_required":true,"qualified_current_producers":["rust","project-manifest","markdown","instruction-markdown","docx"],"qualification":"complete exact current producer identity; other families/versions remain explicit legacy fallback","default_changed":false,"reply_independent":true,"semantic_pipeline_changed":false,"ocr":"unchanged explicit operations and provenance; no implicit setup"})
++}
+diff --git a/crates/airk-core/src/service_configuration.rs b/crates/airk-core/src/service_configuration.rs
+--- a/crates/airk-core/src/service_configuration.rs
++++ b/crates/airk-core/src/service_configuration.rs
+@@ -39,6 +39,9 @@
+     Detail {
+         level: IndexDetail,
+     },
++    RetainedProfile {
++        review: Box<crate::retention::RetentionMigrationReview>,
++    },
+     VectorSelection {
+         policy: VectorSelectionPolicy,
+     },
+@@ -127,6 +130,7 @@
+             | Self::QuotaPolicy { input, .. } => input.validate()?,
+             Self::UsageFeedback { request_id, .. } => crate::usage::validate_hex(request_id, 16)?,
+             Self::VectorSelection { policy } => policy.validate()?,
++            Self::RetainedProfile { review } => review.validate()?,
+             Self::AddRoot {
+                 alias: name,
+                 path: value,
+@@ -214,6 +218,9 @@
+             )
+     }
+     pub fn requests_source_pass(&self) -> bool {
++        if let Self::RetainedProfile { review } = self {
++            return review.requires_publication();
++        }
+         matches!(
+             self,
+             Self::BundledModel
+diff --git a/crates/airk-core/src/service_inspection.rs b/crates/airk-core/src/service_inspection.rs
+--- a/crates/airk-core/src/service_inspection.rs
++++ b/crates/airk-core/src/service_inspection.rs
+@@ -86,6 +86,10 @@
+     pub vectors_enabled: Option<bool>,
+     #[serde(default)]
+     pub index_detail: Option<crate::extraction::IndexDetail>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub configured_retained_profile: Option<crate::retention::RetainedProfile>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub published_retained_profile: Option<crate::retention::RetainedProfile>,
+     pub semantic: Option<SemanticSummary>,
+     pub discovery: Option<DiscoverySummary>,
+     pub failure: Option<InspectionFailure>,
+diff --git a/crates/airk-ingest/src/adapters/legacy.rs b/crates/airk-ingest/src/adapters/legacy.rs
+--- a/crates/airk-ingest/src/adapters/legacy.rs
++++ b/crates/airk-ingest/src/adapters/legacy.rs
+@@ -663,4 +663,23 @@
+         );
+         Ok(())
+     }
+-}
++    #[test]
++    fn missing_retained_profile_keeps_legacy_binding_and_cannot_be_relabeled_lean() -> Result<()> {
++        use airk_core::retention::{AppliedRetention, RetainedFamily, RetainedProfile};
++        let bytes = b"pub fn accepted() { observed(); }\n";
++        let artifact = extract("src/lib.rs", bytes)?;
++        assert!(artifact.retained.is_none());
++        let original = serde_json::to_vec(&artifact)?;
++        let profile = legacy_profile(&artifact)?;
++        let identity = profile.identity()?;
++        roundtrip(&artifact, bytes)?;
++        let next = AppliedRetention::bind(&profile, RetainedProfile::Lean, RetainedFamily::Code)?;
++        assert!(
++            convert_native_legacy(&artifact, bytes, &next).is_err(),
++            "migration must re-extract, never relabel hydrated legacy payload"
++        );
++        assert_eq!(serde_json::to_vec(&artifact)?, original);
++        assert_eq!(profile.identity()?, identity);
++        Ok(())
++    }
++}
+diff --git a/crates/airk-ingest/src/adapters/profile.rs b/crates/airk-ingest/src/adapters/profile.rs
+--- a/crates/airk-ingest/src/adapters/profile.rs
++++ b/crates/airk-ingest/src/adapters/profile.rs
+@@ -33,6 +33,10 @@
+ #[serde(deny_unknown_fields)]
+ pub struct ExtractionPolicy {
+     #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub retained_profile: Option<airk_core::retention::RetainedProfile>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub legacy_fallback_detail: Option<airk_core::extraction::IndexDetail>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub detail: Option<airk_core::extraction::IndexDetail>,
+     pub version: u32,
+     pub rules: Vec<SelectionRule>,
+@@ -62,6 +66,11 @@
+ }
+ 
+ impl ExtractionPolicy {
++    pub fn legacy_detail(&self) -> airk_core::extraction::IndexDetail {
++        self.legacy_fallback_detail
++            .or(self.detail)
++            .unwrap_or_default()
++    }
+     pub fn parse(bytes: &[u8], registry: &AdapterRegistry) -> anyhow::Result<Self> {
+         anyhow::ensure!(bytes.len() <= 131_072, "extraction policy exceeds 128 KiB");
+         let policy: Self = serde_json::from_slice(bytes)?;
+@@ -71,8 +80,13 @@
+ 
+     pub fn validate(&self, registry: &AdapterRegistry) -> anyhow::Result<()> {
+         anyhow::ensure!(
+-            matches!(self.version, 1..=3)
++            matches!(self.version, 1..=4)
+                 && (self.detail.is_none() || self.version == 3)
++                && (if self.version == 4 {
++                    self.retained_profile.is_some() && self.legacy_fallback_detail.is_some()
++                } else {
++                    self.retained_profile.is_none() && self.legacy_fallback_detail.is_none()
++                })
+                 && self.rules.len() <= 256,
+             "unsupported or oversized extraction policy"
+         );
+@@ -335,6 +349,8 @@
+     -> anyhow::Result<()> {
+         let registry = AdapterRegistry::baseline();
+         let mut policy = ExtractionPolicy {
++            retained_profile: None,
++            legacy_fallback_detail: None,
+             detail: None,
+             version: 2,
+             rules: vec![SelectionRule {
+@@ -405,6 +421,8 @@
+     -> anyhow::Result<()> {
+         let registry = AdapterRegistry::baseline();
+         let mut policy = ExtractionPolicy {
++            retained_profile: None,
++            legacy_fallback_detail: None,
+             detail: None,
+             version: 1,
+             rules: vec![],
+@@ -438,6 +456,8 @@
+     fn empty_scope_selects_root_headers_without_crossing_other_scopes() -> anyhow::Result<()> {
+         let registry = AdapterRegistry::baseline();
+         let policy = ExtractionPolicy {
++            retained_profile: None,
++            legacy_fallback_detail: None,
+             detail: None,
+             version: 1,
+             rules: vec![
+@@ -475,6 +495,8 @@
+     fn conflicts_traversal_and_case_are_explicit() -> anyhow::Result<()> {
+         let registry = AdapterRegistry::baseline();
+         let mut policy = ExtractionPolicy {
++            retained_profile: None,
++            legacy_fallback_detail: None,
+             detail: None,
+             version: 1,
+             rules: vec![],
+@@ -498,6 +520,8 @@
+     fn exact_and_longest_scope_win() -> anyhow::Result<()> {
+         let registry = AdapterRegistry::baseline();
+         let policy = ExtractionPolicy {
++            retained_profile: None,
++            legacy_fallback_detail: None,
+             detail: None,
+             version: 1,
+             rules: vec![
+@@ -542,4 +566,32 @@
+         );
+         Ok(())
+     }
+-}
++    #[test]
++    fn historical_policy_bytes_remain_exact_and_new_policy_requires_explicit_fallback()
++    -> anyhow::Result<()> {
++        let registry = AdapterRegistry::baseline();
++        for bytes in [
++            br#"{"version":1,"rules":[]}"#.as_slice(),
++            br#"{"detail":"balanced","version":3,"rules":[]}"#.as_slice(),
++        ] {
++            let policy = ExtractionPolicy::parse(bytes, &registry)?;
++            assert_eq!(serde_json::to_vec(&policy)?, bytes);
++            assert!(policy.retained_profile.is_none());
++            assert!(policy.legacy_fallback_detail.is_none());
++        }
++        let mut new = ExtractionPolicy {
++            retained_profile: Some(airk_core::retention::RetainedProfile::Lean),
++            legacy_fallback_detail: Some(airk_core::extraction::IndexDetail::AgentLean),
++            detail: None,
++            version: 4,
++            rules: vec![],
++        };
++        new.validate(&registry)?;
++        new.legacy_fallback_detail = None;
++        assert!(new.validate(&registry).is_err());
++        new.legacy_fallback_detail = Some(airk_core::extraction::IndexDetail::AgentLean);
++        new.detail = Some(airk_core::extraction::IndexDetail::Detailed);
++        assert!(new.validate(&registry).is_err());
++        Ok(())
++    }
++}
+diff --git a/crates/airk-ingest/src/adapters/registry.rs b/crates/airk-ingest/src/adapters/registry.rs
+--- a/crates/airk-ingest/src/adapters/registry.rs
++++ b/crates/airk-ingest/src/adapters/registry.rs
+@@ -717,6 +717,10 @@
+         profile: &ExtractionProfile,
+     ) -> anyhow::Result<()> {
+         profile.identity()?;
++        if profile.contract_version == airk_core::retention::PROFILE_CONTRACT {
++            crate::retention::producer_profile(path, profile)?;
++            return Ok(());
++        }
+         airk_core::extraction::IndexDetail::from_profile(profile)?;
+         let mut checked = profile.clone();
+         checked.options.remove("index_detail");
+diff --git a/crates/airk-ingest/src/composite.rs b/crates/airk-ingest/src/composite.rs
+--- a/crates/airk-ingest/src/composite.rs
++++ b/crates/airk-ingest/src/composite.rs
+@@ -373,6 +373,8 @@
+                 IndexDetail::Detailed,
+             ] {
+                 let policy = crate::adapters::profile::ExtractionPolicy {
++                    retained_profile: None,
++                    legacy_fallback_detail: None,
+                     version: 3,
+                     detail: Some(detail),
+                     rules: vec![],
+diff --git a/crates/airk-ingest/src/continuity/mod.rs b/crates/airk-ingest/src/continuity/mod.rs
+--- a/crates/airk-ingest/src/continuity/mod.rs
++++ b/crates/airk-ingest/src/continuity/mod.rs
+@@ -27,14 +27,20 @@
+     seeds: Option<&crate::semantic_projection::SemanticSeeds>,
+ ) -> anyhow::Result<()> {
+     use airk_core::continuity::*;
+-    use airk_core::extraction::IndexDetail;
+-    let detail = IndexDetail::from_profile(profile)?;
++    let retention = airk_core::retention::AppliedRetention::from_profile(profile)?;
+     payload.semantic_projection = match seeds {
+         Some(seeds) => crate::semantic_projection::capture_with_seeds(payload, seeds)?,
+         None => crate::semantic_projection::capture(payload)?,
+     };
+-    crate::detail::select(payload, detail)?;
+-    if !detail.tracks_continuity() {
++    match &retention {
++        airk_core::retention::AppliedRetention::Legacy { detail, .. } => {
++            crate::detail::select(payload, *detail)?
++        }
++        airk_core::retention::AppliedRetention::Selected { .. } => {
++            crate::retention::select_payload(payload, profile)?
++        }
++    }
++    if !retention.tracks_code_continuity() && !retention.tracks_document_continuity() {
+         for family in [ContinuityFamily::Code, ContinuityFamily::Documents] {
+             payload.continuity_coverage.insert(
+                 family,
+@@ -63,7 +69,7 @@
+     }
+     let mut budget = ContinuityBudget::default();
+     let code = code::describe(payload, profile, &mut budget)?;
+-    let documents = if detail == IndexDetail::Detailed {
++    let documents = if retention.tracks_document_continuity() {
+         documents::describe_with_prose_text(payload, profile, &mut budget, prose_text)?
+     } else {
+         ContinuityDraft::default()
+diff --git a/crates/airk-ingest/src/detail/tests.rs b/crates/airk-ingest/src/detail/tests.rs
+--- a/crates/airk-ingest/src/detail/tests.rs
++++ b/crates/airk-ingest/src/detail/tests.rs
+@@ -207,3 +207,37 @@
+         .retain(|node| node.id != LocalSyntaxId(90));
+     assert!(select(&mut payload, IndexDetail::Balanced).is_err());
+ }
++
++#[test]
++fn file_aware_manifest_core_preserves_fact_graph_and_rich_superset_without_changing_semantics()
++-> Result<()> {
++    use airk_core::retention::{RetainedFamily, RetainedProfile};
++    let mut original = fixture();
++    original.facts[0].kind = "package_identity".into();
++    original.facts[1].kind = "package_dependency".into();
++    original.facts[2].kind = "workspace_configuration".into();
++    original.facts[2].owner = Some(90);
++    let before_text = original.text.clone();
++    let before_projection = serde_json::to_vec(&original.semantic_projection)?;
++    let mut lean = original.clone();
++    select_retained(&mut lean, RetainedProfile::Lean, RetainedFamily::Manifest)?;
++    let mut rich = original.clone();
++    select_retained(&mut rich, RetainedProfile::Rich, RetainedFamily::Manifest)?;
++    assert_eq!(lean.facts.len(), 3);
++    assert_eq!(lean.facts[2].owner, Some(1));
++    assert_eq!(lean.relationships.len(), 2);
++    for fact in &lean.facts {
++        assert!(rich.facts.iter().any(|other| other.kind == fact.kind
++            && other.name == fact.name
++            && other.location == fact.location));
++    }
++    assert_eq!(lean.text, before_text);
++    assert_eq!(
++        serde_json::to_vec(&lean.semantic_projection)?,
++        before_projection
++    );
++    let mut historical = original;
++    select(&mut historical, IndexDetail::AgentLean)?;
++    assert!(historical.facts.is_empty());
++    Ok(())
++}
+diff --git a/crates/airk-ingest/src/detail.rs b/crates/airk-ingest/src/detail.rs
+--- a/crates/airk-ingest/src/detail.rs
++++ b/crates/airk-ingest/src/detail.rs
+@@ -7,8 +7,32 @@
+ use std::collections::{BTreeMap, BTreeSet};
+ 
+ pub(crate) fn select(payload: &mut ExtractionPayload, detail: IndexDetail) -> Result<()> {
+-    payload.facts.retain(|fact| detail.retains_fact(&fact.kind));
+-    if detail == IndexDetail::AgentLean {
++    select_with(
++        payload,
++        |kind| detail.retains_fact(kind),
++        detail == IndexDetail::AgentLean,
++    )
++}
++
++pub(crate) fn select_retained(
++    payload: &mut ExtractionPayload,
++    profile: airk_core::retention::RetainedProfile,
++    family: airk_core::retention::RetainedFamily,
++) -> Result<()> {
++    select_with(
++        payload,
++        |kind| profile.retains_fact(family, kind),
++        profile == airk_core::retention::RetainedProfile::Lean,
++    )
++}
++
++fn select_with(
++    payload: &mut ExtractionPayload,
++    retain: impl Fn(&str) -> bool,
++    omit_fingerprints: bool,
++) -> Result<()> {
++    payload.facts.retain(|fact| retain(&fact.kind));
++    if omit_fingerprints {
+         for fact in &mut payload.facts {
+             if let Some(code) = &mut fact.code {
+                 code.fingerprints = None;
+diff --git a/crates/airk-ingest/src/documents.rs b/crates/airk-ingest/src/documents.rs
+--- a/crates/airk-ingest/src/documents.rs
++++ b/crates/airk-ingest/src/documents.rs
+@@ -80,6 +80,8 @@
+ pub fn extract(path: &str, bytes: &[u8]) -> Result<Extracted> {
+     let registry = crate::adapters::registry::AdapterRegistry::baseline();
+     let policy = crate::adapters::profile::ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![],
+@@ -511,6 +513,8 @@
+         let text = "  # Café `API`\r\n\r\n### Requirements 2026-10-13\r\n\r\nREQ-1: The system must use 200 ms.\r\n\r\n## Sibling\r\n\r\n| ID | Value |\r\n|---|---|\r\n| X | 10 MiB |\r\n\r\n```text\r\n# Hidden\r\n```\r\n\r\nTail 界.\r\n";
+         for path in ["a.md", "a.txt", "AGENTS.md"] {
+             let base = crate::adapters::profile::ExtractionPolicy {
++                retained_profile: None,
++                legacy_fallback_detail: None,
+                 version: 3,
+                 detail: None,
+                 rules: vec![],
+diff --git a/crates/airk-ingest/src/extraction_jobs.rs b/crates/airk-ingest/src/extraction_jobs.rs
+--- a/crates/airk-ingest/src/extraction_jobs.rs
++++ b/crates/airk-ingest/src/extraction_jobs.rs
+@@ -61,14 +61,16 @@
+         // MAX_PAYLOAD_BYTES check, before any completed result can enter the pool.
+         return Ok(payload);
+     }
+-    let extracted = crate::documents::extract_selected(&input.path, &input.bytes, &input.profile)
++    let producer =
++        crate::retention::producer_profile(&input.path, &input.profile).map_err(Fatal)?;
++    let extracted = crate::documents::extract_selected(&input.path, &input.bytes, &producer)
+         .map_err(|error| {
+-        if error.is::<crate::pdf_worker::CapacityFailure>() {
+-            Fatal(error)
+-        } else {
+-            Skip(error)
+-        }
+-    })?;
++            if error.is::<crate::pdf_worker::CapacityFailure>() {
++                Fatal(error)
++            } else {
++                Skip(error)
++            }
++        })?;
+     let artifact = Artifact {
+         path: input.path.clone(),
+         content_hash: input.hash.to_string(),
+@@ -80,13 +82,27 @@
+         parse_status: extracted.parse_status,
+         retained: None,
+     };
+-    crate::continuity::prepare_native_with_seeds(
+-        &artifact,
+-        &input.bytes,
+-        &input.profile,
+-        extracted.semantic_seeds.as_ref(),
+-    )
+-    .map_err(Fatal)
++    if input.profile.contract_version == airk_core::retention::PROFILE_CONTRACT {
++        let mut payload =
++            crate::adapters::legacy::convert_native_legacy(&artifact, &input.bytes, &producer)
++                .map_err(Fatal)?;
++        crate::continuity::prepare_with_seeds(
++            &mut payload,
++            &input.profile,
++            None,
++            extracted.semantic_seeds.as_ref(),
++        )
++        .map_err(Fatal)?;
++        Ok(payload)
++    } else {
++        crate::continuity::prepare_native_with_seeds(
++            &artifact,
++            &input.bytes,
++            &input.profile,
++            extracted.semantic_seeds.as_ref(),
++        )
++        .map_err(Fatal)
++    }
+ }
+ 
+ pub(crate) fn bind(input: &CapturedExtraction, payload: &ExtractionPayload) -> Result<Artifact> {
+@@ -305,3 +321,27 @@
+         self.finish(completed, report, observation)
+     }
+ }
++
++#[cfg(test)]
++mod retained_profile_tests {
++    use super::*;
++    use airk_core::retention::{AppliedRetention, RetainedProfile};
++    use sha2::{Digest, Sha256};
++    #[test]
++    fn actual_manifest_extraction_preserves_new_lean_core_and_rich_superset() -> Result<()> {
++        let registry = crate::adapters::registry::AdapterRegistry::baseline();
++        for (path,bytes) in [("Cargo.toml",b"[package]\nname = \"selected\"\nversion = \"0.1.0\"\n[workspace]\nmembers = [\"crates/one\"]\n[dependencies]\nserde = \"1\"\n".as_slice()),("package.json",br#"{"name":"selected","version":"1","scripts":{"test":"actual"},"dependencies":{"one":"1"},"workspaces":["pkg/*"]}"#.as_slice())] {
++            let base=registry.effective_profile(path,"project-manifest")?;
++            let mut outputs=Vec::new();
++            for target in [RetainedProfile::Lean,RetainedProfile::Rich] {
++                let crate::retention::Selection::Qualified{retained,..}=crate::retention::select_profile(path,&base,target)? else {anyhow::bail!("manifest not qualified");};
++                let input=CapturedExtraction{path:path.into(),hash:Sha256Digest::from_bytes(Sha256::digest(bytes).into()),bytes:bytes.into(),profile:retained};
++                let output=prepare(&input).map_err(|failure|match failure{ExtractionFailure::Fatal(error)|ExtractionFailure::Skip(error)=>error})?;output.validate()?;
++                assert!(output.facts.iter().any(|fact|fact.kind=="package_identity"));assert!(output.facts.iter().any(|fact|fact.kind=="package_dependency"));assert!(matches!(AppliedRetention::from_profile(&input.profile)?,AppliedRetention::Selected{..}));outputs.push(output);
++            }
++            assert_eq!(serde_json::to_vec(&outputs[0].semantic_projection)?,serde_json::to_vec(&outputs[1].semantic_projection)?);
++            for fact in &outputs[0].facts {assert!(outputs[1].facts.iter().any(|other|other.kind==fact.kind&&other.name==fact.name&&other.location==fact.location));}
++        }
++        Ok(())
++    }
++}
+diff --git a/crates/airk-ingest/src/lib.rs b/crates/airk-ingest/src/lib.rs
+--- a/crates/airk-ingest/src/lib.rs
++++ b/crates/airk-ingest/src/lib.rs
+@@ -20,6 +20,7 @@
+ mod detail;
+ mod extraction_jobs;
+ mod extraction_pool;
++pub mod retention;
+ pub use extraction_pool::ExtractionExecution;
+ pub mod header_context;
+ mod host_components;
+@@ -439,6 +440,8 @@
+     mut emit: impl FnMut(&Artifact, &[u8]) -> Result<Artifact>,
+ ) -> Result<(Snapshot, IndexReport)> {
+     let policy = adapters::profile::ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![],
+@@ -930,7 +933,7 @@
+                     None => adapters::legacy::legacy_profile(old)?,
+                 };
+             }
+-            match policy.detail.unwrap_or_default() {
++            match policy.legacy_detail() {
+                 airk_core::extraction::IndexDetail::Detailed => {
+                     profile.options.remove("index_detail");
+                 }
+@@ -939,6 +942,12 @@
+                         .options
+                         .insert("index_detail".into(), detail.as_str().into());
+                 }
++            }
++            if let Some(target) = policy.retained_profile {
++                profile = match retention::select_profile(&path, &profile, target)? {
++                    retention::Selection::Qualified { retained, .. }
++                    | retention::Selection::LegacyFallback { retained, .. } => retained,
++                };
+             }
+             profile.identity()?;
+             if !selection.ambiguity.is_empty() {
+@@ -1680,6 +1689,8 @@
+         let (previous, _) = scan(root.path(), data.path(), &empty)?;
+         assert_eq!(previous.artifacts["header.h"].language, "c");
+         let policy = ExtractionPolicy {
++            retained_profile: None,
++            legacy_fallback_detail: None,
+             detail: None,
+             version: 1,
+             rules: vec![SelectionRule {
+@@ -1791,6 +1802,8 @@
+             .artifacts
+             .insert(artifact.path.clone(), artifact.clone());
+         let policy = adapters::profile::ExtractionPolicy {
++            retained_profile: None,
++            legacy_fallback_detail: None,
+             detail: None,
+             version: 1,
+             rules: vec![],
+diff --git a/crates/airk-ingest/src/retention.rs b/crates/airk-ingest/src/retention.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/airk-ingest/src/retention.rs
+@@ -0,0 +1,159 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Qualified first-wave file-aware retention; no source I/O, adapter execution or policy mutation.
++use airk_core::{
++    extraction::{ExtractionPayload, ExtractionProfile},
++    retention::{AppliedRetention, RetainedFamily, RetainedProfile},
++};
++use anyhow::{Result, ensure};
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum FallbackReason {
++    UnqualifiedAdapterOrEffectiveVersion,
++}
++#[derive(Clone, Debug)]
++pub enum Selection {
++    Qualified {
++        producer: ExtractionProfile,
++        retained: ExtractionProfile,
++    },
++    LegacyFallback {
++        retained: ExtractionProfile,
++        reason: FallbackReason,
++    },
++}
++/// Compare complete current producer identity, not only an adapter name/version.
++/// Header contexts/composites/other formats are unchanged legacy fallbacks in this first wave.
++pub fn select_profile(
++    path: &str,
++    base: &ExtractionProfile,
++    target: RetainedProfile,
++) -> Result<Selection> {
++    super::adapters::profile::validate_relative_path(path)?;
++    base.identity()?;
++    ensure!(
++        base.contract_version <= 2,
++        "new selection requires original producer identity"
++    );
++    let family = match base.adapter_id.as_str() {
++        "rust" => RetainedFamily::Code,
++        "project-manifest" => RetainedFamily::Manifest,
++        "markdown" | "instruction-markdown" => RetainedFamily::Markdown,
++        "docx" => RetainedFamily::Docx,
++        _ => {
++            return Ok(Selection::LegacyFallback {
++                retained: base.clone(),
++                reason: FallbackReason::UnqualifiedAdapterOrEffectiveVersion,
++            });
++        }
++    };
++    let registry = super::adapters::registry::AdapterRegistry::baseline();
++    let expected = registry.effective_profile(path, &base.adapter_id)?;
++    let mut producer = base.clone();
++    producer.options.remove("index_detail");
++    if producer != expected {
++        return Ok(Selection::LegacyFallback {
++            retained: base.clone(),
++            reason: FallbackReason::UnqualifiedAdapterOrEffectiveVersion,
++        });
++    }
++    let retained = AppliedRetention::bind(&producer, target, family)?;
++    Ok(Selection::Qualified { producer, retained })
++}
++/// Unwrap only an exact qualified retained profile for the full raw producer.
++pub fn producer_profile(path: &str, retained: &ExtractionProfile) -> Result<ExtractionProfile> {
++    retained.identity()?;
++    if retained.contract_version != airk_core::retention::PROFILE_CONTRACT {
++        return Ok(retained.clone());
++    }
++    let AppliedRetention::Selected {
++        profile: target, ..
++    } = AppliedRetention::from_profile(retained)?
++    else {
++        unreachable!()
++    };
++    let mut base = retained.clone();
++    base.contract_version = airk_core::extraction::EXTRACTION_CONTRACT_VERSION;
++    for key in ["retained_profile", "retained_family", "retention_algorithm"] {
++        base.options.remove(key);
++    }
++    let Selection::Qualified {
++        producer,
++        retained: expected,
++    } = select_profile(path, &base, target)?
++    else {
++        anyhow::bail!("retained producer is no longer qualified");
++    };
++    ensure!(
++        expected == *retained,
++        "retained family or producer identity differs"
++    );
++    Ok(producer)
++}
++/// Called after the existing semantic projection capture and before continuity/chunk construction.
++/// Keeps the same text, locations, provenance, parser diagnostics and semantic projection.
++/// The producer still constructs full raw facts in this foundation; early construction is separate.
++pub fn select_payload(payload: &mut ExtractionPayload, profile: &ExtractionProfile) -> Result<()> {
++    profile.identity()?;
++    let AppliedRetention::Selected {
++        profile: selection,
++        family,
++        ..
++    } = AppliedRetention::from_profile(profile)?
++    else {
++        anyhow::bail!("expected explicit new retained profile");
++    };
++    super::detail::select_retained(payload, selection, family)
++}
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn exact_effective_version_qualifies_and_unrelated_or_ocr_stays_legacy() -> Result<()> {
++        let registry = crate::adapters::registry::AdapterRegistry::baseline();
++        let base = registry.effective_profile("src/lib.rs", "rust")?;
++        let Selection::Qualified { producer, retained } =
++            select_profile("src/lib.rs", &base, RetainedProfile::Lean)?
++        else {
++            panic!("sampled rust not qualified");
++        };
++        assert_eq!(producer, base);
++        assert_ne!(retained.identity()?, base.identity()?);
++        let mut changed = base;
++        changed.mapping_version += 1;
++        assert!(matches!(
++            select_profile("src/lib.rs", &changed, RetainedProfile::Lean)?,
++            Selection::LegacyFallback { .. }
++        ));
++        let unsupported = registry.effective_profile("sheet.xlsx", "xlsx")?;
++        let Selection::LegacyFallback { retained, .. } =
++            select_profile("sheet.xlsx", &unsupported, RetainedProfile::Rich)?
++        else {
++            panic!("unqualified spreadsheet");
++        };
++        assert_eq!(retained, unsupported);
++        let mut ocr = unsupported;
++        ocr.adapter_id = "ocr".into();
++        assert!(
++            matches!(select_profile("scan.pdf",&ocr,RetainedProfile::Lean)?,Selection::LegacyFallback{retained,..} if retained==ocr)
++        );
++        Ok(())
++    }
++    #[test]
++    fn equivalent_effective_file_reuses_without_policy_or_path_salt() -> Result<()> {
++        let registry = crate::adapters::registry::AdapterRegistry::baseline();
++        let base = registry.effective_profile("src/a.rs", "rust")?;
++        let Selection::Qualified {
++            retained: first, ..
++        } = select_profile("src/a.rs", &base, RetainedProfile::Lean)?
++        else {
++            unreachable!()
++        };
++        let Selection::Qualified {
++            retained: second, ..
++        } = select_profile("src/b.rs", &base, RetainedProfile::Lean)?
++        else {
++            unreachable!()
++        };
++        assert_eq!(first.identity()?, second.identity()?);
++        Ok(())
++    }
++}
+diff --git a/crates/airk-ingest/src/semantic_projection.rs b/crates/airk-ingest/src/semantic_projection.rs
+--- a/crates/airk-ingest/src/semantic_projection.rs
++++ b/crates/airk-ingest/src/semantic_projection.rs
+@@ -465,6 +465,8 @@
+     fn extract(path: &str, text: &str, detail: IndexDetail) -> Result<ExtractionPayload> {
+         let registry = crate::adapters::registry::AdapterRegistry::baseline();
+         let policy = crate::adapters::profile::ExtractionPolicy {
++            retained_profile: None,
++            legacy_fallback_detail: None,
+             version: 3,
+             detail: Some(detail),
+             rules: vec![],
+diff --git a/crates/airk-ingest/tests/extraction_execution.rs b/crates/airk-ingest/tests/extraction_execution.rs
+--- a/crates/airk-ingest/tests/extraction_execution.rs
++++ b/crates/airk-ingest/tests/extraction_execution.rs
+@@ -20,6 +20,8 @@
+ 
+ fn policy(detail: IndexDetail) -> ExtractionPolicy {
+     ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         version: 3,
+         detail: Some(detail),
+         rules: vec![],
+diff --git a/crates/airk-ingest/tests/observations_v2.rs b/crates/airk-ingest/tests/observations_v2.rs
+--- a/crates/airk-ingest/tests/observations_v2.rs
++++ b/crates/airk-ingest/tests/observations_v2.rs
+@@ -28,6 +28,8 @@
+         roots,
+         limits,
+         &ExtractionPolicy {
++            retained_profile: None,
++            legacy_fallback_detail: None,
+             detail: None,
+             version: 1,
+             rules: vec![],
+@@ -199,6 +201,8 @@
+     let bytes = b"pub fn original_publication_fixture() -> u32 { 42 }\n";
+     fs::write(root.path().join("one.rs"), bytes)?;
+     let policy = ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![],
+diff --git a/crates/airk-kernel/src/continuity.rs b/crates/airk-kernel/src/continuity.rs
+--- a/crates/airk-kernel/src/continuity.rs
++++ b/crates/airk-kernel/src/continuity.rs
+@@ -31,7 +31,7 @@
+             minimal: None,
+             page: Default::default(),
+             outline: Vec::new(),
+-            indexing: state.configuration.index_detail.into(),
++            indexing: state.configuration.index_coverage(),
+             publication: Some(crate::current::runtime::envelope(&read)?),
+             generation: read.head().sequence,
+             collection: self.collection.clone(),
+diff --git a/crates/airk-kernel/src/current/indexing.rs b/crates/airk-kernel/src/current/indexing.rs
+--- a/crates/airk-kernel/src/current/indexing.rs
++++ b/crates/airk-kernel/src/current/indexing.rs
+@@ -401,11 +401,12 @@
+             .map(|objects| self.open_configured_model(objects))
+             .transpose()?;
+         let configuration = CollectionConfiguration {
++            retained_profile: policy.retained_profile,
+             source_policy_digest: self.source_policy_digest()?,
+             roots: self.configured_roots()?,
+             extractor_version: airk_core::EXTRACTOR_VERSION.into(),
+             extraction_policy_digest: crate::extraction::policy_digest(&policy)?,
+-            index_detail: policy.detail.unwrap_or_default(),
++            index_detail: policy.legacy_detail(),
+             vector_selection: self.vector_selection()?,
+             model: objects,
+         };
+@@ -722,11 +723,12 @@
+             .context(Stage("open_model"))?;
+         let model_load_us = u64::try_from(model_started.elapsed().as_micros()).unwrap_or(u64::MAX);
+         let configuration = CollectionConfiguration {
++            retained_profile: policy.retained_profile,
+             source_policy_digest: self.source_policy_digest()?,
+             roots: roots.clone(),
+             extractor_version: airk_core::EXTRACTOR_VERSION.into(),
+             extraction_policy_digest: crate::extraction::policy_digest(&policy)?,
+-            index_detail: policy.detail.unwrap_or_default(),
++            index_detail: policy.legacy_detail(),
+             vector_selection: selection.clone(),
+             model: objects.clone(),
+         };
+diff --git a/crates/airk-kernel/src/current/runtime.rs b/crates/airk-kernel/src/current/runtime.rs
+--- a/crates/airk-kernel/src/current/runtime.rs
++++ b/crates/airk-kernel/src/current/runtime.rs
+@@ -196,7 +196,7 @@
+             source_policy: self.source_policy_observation()?,
+             source_availability: self.service_source_observation(),
+             execution: self.execution_status()?,
+-            indexing: c.index_detail.into(),
++            indexing: c.index_coverage(),
+             freshness: self.changes_freshness(),
+             retention: crate::maintenance::RetentionObservation {
+                 policy: None,
+@@ -603,7 +603,7 @@
+             minimal: page.minimal,
+             page: page.page,
+             outline: page.outline,
+-            indexing: state.configuration.index_detail.into(),
++            indexing: state.configuration.index_coverage(),
+             publication: Some(envelope(read)?),
+             generation: read.head().sequence,
+             collection: page.collection,
+diff --git a/crates/airk-kernel/src/extraction.rs b/crates/airk-kernel/src/extraction.rs
+--- a/crates/airk-kernel/src/extraction.rs
++++ b/crates/airk-kernel/src/extraction.rs
+@@ -6,13 +6,17 @@
+     identity::{RevisionToken, Sha256Digest, framed_digest},
+ };
+ pub use airk_ingest::adapters::profile::ExtractionPolicy;
+-use anyhow::Result;
++use anyhow::{Context, Result};
+ use serde::Serialize;
+ 
+ #[derive(Serialize)]
+ pub struct ExtractionPolicyStatus {
+     pub policy: ExtractionPolicy,
+     pub configured_detail: airk_core::extraction::IndexDetail,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub configured_retained_profile: Option<airk_core::retention::RetainedProfile>,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub published_retained_profile: Option<airk_core::retention::RetainedProfile>,
+     pub published_detail: Option<airk_core::extraction::IndexDetail>,
+     pub digest: Sha256Digest,
+     pub origin: String,
+@@ -46,6 +50,8 @@
+         let policy = match &bytes {
+             Some(bytes) => ExtractionPolicy::parse(bytes, &registry)?,
+             None => ExtractionPolicy {
++                retained_profile: None,
++                legacy_fallback_detail: None,
+                 version: 3,
+                 detail: Some(
+                     self.applied_index_detail()?
+@@ -109,7 +115,11 @@
+             .map(|r| r.token().map(crate::current::runtime::revision))
+             .transpose()?;
+         Ok(ExtractionPolicyStatus {
+-            configured_detail: policy.detail.unwrap_or_default(),
++            configured_detail: policy.legacy_detail(),
++            configured_retained_profile: policy.retained_profile,
++            published_retained_profile: state
++                .as_ref()
++                .and_then(|s| s.configuration.retained_profile),
+             published_detail: state.as_ref().map(|s| s.configuration.index_detail),
+             policy,
+             digest,
+@@ -133,6 +143,8 @@
+         let writer = self.store.lock()?;
+         let mut policy = self.extraction_policy()?.policy;
+         policy.version = 3;
++        policy.retained_profile = None;
++        policy.legacy_fallback_detail = None;
+         policy.detail = Some(detail);
+         self.validate_extraction_policy(&policy)?;
+         let quota = self.collection_quota()?;
+@@ -148,6 +160,16 @@
+         &self,
+         policy: ExtractionPolicy,
+     ) -> Result<ExtractionPolicyStatus> {
++        if policy.version == 4 {
++            let existing = self.extraction_policy()?;
++            anyhow::ensure!(
++                existing.published_retained_profile == policy.retained_profile
++                    && existing.configured_retained_profile == policy.retained_profile
++                    && existing.policy.legacy_fallback_detail == policy.legacy_fallback_detail
++                    && policy.retained_profile.is_some(),
++                "changing retained profiles requires explicit reviewed native migration"
++            );
++        }
+         let writer = self.store.lock()?;
+         self.validate_extraction_policy(&policy)?;
+         let quota = self.collection_quota()?;
+@@ -160,3 +182,98 @@
+         self.extraction_policy_status(policy, "explicit")
+     }
+ }
++
++impl Kernel {
++    fn reviewed_retention_policy(
++        &self,
++        target: airk_core::retention::RetainedProfile,
++    ) -> Result<(ExtractionPolicyStatus, ExtractionPolicy)> {
++        self.require_unrestricted_read()?;
++        anyhow::ensure!(
++            self.service_collection.is_some(),
++            "retained migration requires native owned collection capability"
++        );
++        let status = self.extraction_policy()?;
++        let fallback = status
++            .published_detail
++            .context("publish a legacy baseline before reviewing retained migration")?;
++        let mut desired = status.policy.clone();
++        desired.version = 4;
++        desired.detail = None;
++        desired.retained_profile = Some(target);
++        desired.legacy_fallback_detail = Some(fallback);
++        desired.validate(&airk_ingest::adapters::registry::AdapterRegistry::baseline())?;
++        Ok((status, desired))
++    }
++    /// Bounded metadata-only review; no extraction, source I/O or mutation.
++    pub fn preview_retained_migration(
++        &self,
++        target: airk_core::retention::RetainedProfile,
++    ) -> Result<airk_core::retention::RetentionMigrationReview> {
++        let (status, desired) = self.reviewed_retention_policy(target)?;
++        let review = airk_core::retention::RetentionMigrationReview {
++            schema: 1,
++            expected_publication: status
++                .publication
++                .context("current publication is unavailable")?,
++            expected_applied_policy: status
++                .applied_digest
++                .context("applied extraction policy unavailable")?,
++            reviewed_configured_policy: status.digest,
++            desired_policy: policy_digest(&desired)?,
++            target,
++        };
++        review.validate()?;
++        Ok(review)
++    }
++    /// Executed under existing exact Configure admission. Source publication remains separate.
++    pub fn configure_retained_migration(
++        &self,
++        review: &airk_core::retention::RetentionMigrationReview,
++    ) -> Result<airk_core::retention::RetentionMigrationResult> {
++        anyhow::ensure!(
++            self.service_selection.is_none(),
++            "migration must run on the native unpinned owner; external selection pins remain authoritative"
++        );
++        let writer = self.store.lock()?;
++        let (status, desired) = self.reviewed_retention_policy(review.target)?;
++        review.verify_current(
++            &status
++                .publication
++                .context("current publication unavailable")?,
++            status
++                .applied_digest
++                .context("applied policy unavailable")?,
++            status.digest,
++        )?;
++        anyhow::ensure!(
++            policy_digest(&desired)? == review.desired_policy,
++            "reviewed target policy changed"
++        );
++        let result = airk_core::retention::RetentionMigrationResult::for_review(review)?;
++        // Restoring the already-applied choice can still require replacing a
++        // different pending desired policy. Publication work and policy save are distinct.
++        if status.digest == review.desired_policy && !result.source_pass_requested {
++            return Ok(result);
++        }
++        let quota = self.collection_quota()?;
++        self.service_collection
++            .as_ref()
++            .context("native collection missing")?
++            .require_extraction_contract(
++                &self.store,
++                &writer,
++                &quota,
++                airk_core::retention::PROFILE_CONTRACT,
++            )?;
++        if status.digest != review.desired_policy {
++            self.store.configure_extraction_policy_bytes(
++                &writer,
++                &quota,
++                &self.root_id(),
++                &serde_json::to_vec(&desired)?,
++            )?;
++        }
++        Ok(result)
++    }
++}
+diff --git a/crates/airk-kernel/src/lib.rs b/crates/airk-kernel/src/lib.rs
+--- a/crates/airk-kernel/src/lib.rs
++++ b/crates/airk-kernel/src/lib.rs
+@@ -802,7 +802,7 @@
+             .collection_state()?
+             .context("current configuration missing")?;
+         Ok(airk_core::RelationshipsResponse {
+-            indexing: configuration.configuration.index_detail.into(),
++            indexing: configuration.configuration.index_coverage(),
+             publication: Some(current::runtime::envelope(&read)?),
+             generation: read.head().sequence,
+             collection: self.collection.clone(),
+diff --git a/crates/airk-kernel/src/service_configuration.rs b/crates/airk-kernel/src/service_configuration.rs
+--- a/crates/airk-kernel/src/service_configuration.rs
++++ b/crates/airk-kernel/src/service_configuration.rs
+@@ -346,6 +346,9 @@
+                 result["source_pass_requested"] = json!(true);
+                 result["semantic_setup_requested"] = json!(*enabled);
+                 result
++            }
++            ProjectConfiguration::RetainedProfile { review } => {
++                serde_json::to_value(self.configure_retained_migration(review)?)?
+             }
+             ProjectConfiguration::Detail { level } => {
+                 self.configure_index_detail(*level)?;
+diff --git a/crates/airk-kernel/src/service_inspection.rs b/crates/airk-kernel/src/service_inspection.rs
+--- a/crates/airk-kernel/src/service_inspection.rs
++++ b/crates/airk-kernel/src/service_inspection.rs
+@@ -94,6 +94,8 @@
+         );
+         crate::service_execution::progress_verified(1);
+         let mut snapshot = InspectionSnapshot {
++            configured_retained_profile: None,
++            published_retained_profile: None,
+             project,
+             incarnation,
+             publication: None,
+@@ -130,10 +132,11 @@
+             snapshot.indexed_files = Some(status.files.try_into()?);
+             snapshot.indexed_vectors = Some(status.indexed_vectors.try_into()?);
+             snapshot.vectors_enabled = Some(status.vectors_enabled);
+-            snapshot.index_detail = selected
+-                .extraction_policy()
+-                .ok()
+-                .map(|policy| policy.configured_detail);
++            if let Ok(policy) = selected.extraction_policy() {
++                snapshot.index_detail = Some(policy.configured_detail);
++                snapshot.configured_retained_profile = policy.configured_retained_profile;
++                snapshot.published_retained_profile = policy.published_retained_profile;
++            }
+             snapshot.semantic = Some(SemanticSummary {
+                 state: status.semantic_readiness.state,
+                 selected_artifacts: status.semantic_readiness.selected_artifacts,
+diff --git a/crates/airk-kernel/tests/current_foundation/update.rs b/crates/airk-kernel/tests/current_foundation/update.rs
+--- a/crates/airk-kernel/tests/current_foundation/update.rs
++++ b/crates/airk-kernel/tests/current_foundation/update.rs
+@@ -7,6 +7,7 @@
+ 
+ fn configuration() -> airk_store::current::collection::CollectionConfiguration {
+     airk_store::current::collection::CollectionConfiguration {
++        retained_profile: None,
+         source_policy_digest: None,
+         roots: Default::default(),
+         extractor_version: "current-update-test/1".into(),
+diff --git a/crates/airk-kernel/tests/integration/acceptance_v2.rs b/crates/airk-kernel/tests/integration/acceptance_v2.rs
+--- a/crates/airk-kernel/tests/integration/acceptance_v2.rs
++++ b/crates/airk-kernel/tests/integration/acceptance_v2.rs
+@@ -42,6 +42,8 @@
+         }
+         ChangeCause::ExtractionOmitted => {
+             kernel.configure_extraction_policy(ExtractionPolicy {
++                retained_profile: None,
++                legacy_fallback_detail: None,
+                 detail: None,
+                 version: 1,
+                 rules: vec![SelectionRule {
+@@ -72,6 +74,8 @@
+         }
+         ChangeCause::ExtractionOmitted => {
+             kernel.configure_extraction_policy(ExtractionPolicy {
++                retained_profile: None,
++                legacy_fallback_detail: None,
+                 detail: None,
+                 version: 1,
+                 rules: vec![],
+diff --git a/crates/airk-kernel/tests/integration/components_v2.rs b/crates/airk-kernel/tests/integration/components_v2.rs
+--- a/crates/airk-kernel/tests/integration/components_v2.rs
++++ b/crates/airk-kernel/tests/integration/components_v2.rs
+@@ -87,6 +87,8 @@
+             .all(|fact| fact.citation.path == moved)
+     );
+     kernel.configure_extraction_policy(ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![SelectionRule {
+diff --git a/crates/airk-kernel/tests/integration/index_detail.rs b/crates/airk-kernel/tests/integration/index_detail.rs
+--- a/crates/airk-kernel/tests/integration/index_detail.rs
++++ b/crates/airk-kernel/tests/integration/index_detail.rs
+@@ -181,3 +181,195 @@
+     assert_eq!(kernel.maintain_current()?.removed_files, 0);
+     Ok(())
+ }
++
++#[test]
++fn explicit_native_retention_migration_keeps_old_publication_then_reuses_only_equal_effective_files()
++-> Result<()> {
++    use airk_core::retention::RetainedProfile;
++    let root = tempfile::tempdir()?;
++    let data = tempfile::tempdir()?;
++    let files = [
++        ("sample.rs", "pub fn retained() { called(); }\n"),
++        (
++            "Cargo.toml",
++            "[package]\nname = \"retained\"\nversion = \"0.1.0\"\n[dependencies]\nserde = \"1\"\n",
++        ),
++        (
++            "notes.md",
++            "# Requirements\n\nThe system must retain 200 ms and its date 2026-11-05.\n",
++        ),
++        ("fallback.txt", "The old text evidence stays unchanged.\n"),
++    ];
++    for (path, text) in files {
++        fs::write(root.path().join(path), text)?;
++    }
++    let kernel =
++        Kernel::open_service_collection(root.path(), Some(data.path().into()), "retained")?;
++    kernel.configure_vectors(false)?;
++    kernel.index()?;
++    let registration = airk_core::service::ProjectRegistration::new(
++        root.path().canonicalize()?.to_string_lossy().into_owned(),
++        data.path().canonicalize()?.to_string_lossy().into_owned(),
++        "retained".into(),
++    )?;
++    let collection = airk_store::service::collection::Collection::existing(
++        data.path(),
++        &registration.root,
++        "retained",
++    )?;
++    let store = collection.selected_store()?;
++    let before = store.current_test_catalog()?.unwrap();
++    let token = before.token;
++    let fallback_id = before.inventory.as_ref().unwrap().files["fallback.txt"]
++        .state
++        .profile_id;
++    drop(before);
++    let review = kernel.preview_retained_migration(RetainedProfile::Lean)?;
++    let configured = kernel.configure_retained_migration(&review)?;
++    assert!(configured.source_pass_requested);
++    let pending = kernel.extraction_policy()?;
++    assert_eq!(
++        pending.configured_retained_profile,
++        Some(RetainedProfile::Lean)
++    );
++    assert_eq!(pending.published_retained_profile, None);
++    assert!(pending.pending_reindex);
++    assert_eq!(pending.publication, Some(token));
++    let migrated = kernel.index()?;
++    assert_eq!(migrated.indexed, 3);
++    assert_eq!(migrated.reused, 1);
++    let status = kernel.extraction_policy()?;
++    assert_eq!(
++        status.published_retained_profile,
++        Some(RetainedProfile::Lean)
++    );
++    assert!(!status.pending_reindex);
++    let after = store.current_test_catalog()?.unwrap();
++    assert_eq!(
++        after.inventory.as_ref().unwrap().files["fallback.txt"]
++            .state
++            .profile_id,
++        fallback_id
++    );
++    let applied_refs = after
++        .snapshot
++        .artifacts
++        .iter()
++        .map(|(path, artifact)| (path.clone(), artifact.retained.clone()))
++        .collect::<std::collections::BTreeMap<_, _>>();
++    drop(after);
++    let retained_facts = kernel.facts(&facts())?;
++    assert!(
++        retained_facts
++            .facts
++            .iter()
++            .any(|fact| fact.kind == "package_dependency")
++    );
++    assert_eq!(
++        retained_facts.indexing.retained_profile,
++        Some(RetainedProfile::Lean)
++    );
++    let pending_rich = kernel.preview_retained_migration(RetainedProfile::Rich)?;
++    assert!(
++        kernel
++            .configure_retained_migration(&pending_rich)?
++            .source_pass_requested
++    );
++    let pending_choice = kernel.extraction_policy()?;
++    assert_eq!(
++        pending_choice.configured_retained_profile,
++        Some(RetainedProfile::Rich)
++    );
++    assert_eq!(
++        pending_choice.published_retained_profile,
++        Some(RetainedProfile::Lean)
++    );
++    let restore_lean = kernel.preview_retained_migration(RetainedProfile::Lean)?;
++    assert!(
++        !kernel
++            .configure_retained_migration(&restore_lean)?
++            .source_pass_requested
++    );
++    let restored = kernel.extraction_policy()?;
++    assert_eq!(
++        restored.configured_retained_profile,
++        Some(RetainedProfile::Lean)
++    );
++    assert_eq!(
++        restored.published_retained_profile,
++        Some(RetainedProfile::Lean)
++    );
++    assert!(
++        !restored.pending_reindex,
++        "no-op publication choice left another pending desired policy saved"
++    );
++    let noop = kernel.preview_retained_migration(RetainedProfile::Lean)?;
++    assert!(
++        !kernel
++            .configure_retained_migration(&noop)?
++            .source_pass_requested
++    );
++    let unchanged = kernel.index()?;
++    assert_eq!(unchanged.indexed, 0);
++    assert_eq!(unchanged.reused, 4);
++    let unchanged_snapshot = store.current_test_catalog()?.unwrap();
++    for (path, expected) in &applied_refs {
++        assert_eq!(
++            &unchanged_snapshot.snapshot.artifacts[path].retained, expected,
++            "no-op changed retained payload/profile/facts/semantic projection object"
++        );
++    }
++    drop(unchanged_snapshot);
++    let mut rules = kernel.extraction_policy()?.policy;
++    rules
++        .rules
++        .push(airk_ingest::adapters::profile::SelectionRule {
++            selector: airk_ingest::adapters::profile::RuleMatch::Exact {
++                path: "notes.md".into(),
++            },
++            case_sensitive: true,
++            adapter_id: "text".into(),
++        });
++    kernel.configure_extraction_policy(rules)?;
++    let overridden = kernel.index()?;
++    assert_eq!(overridden.indexed, 1);
++    assert_eq!(overridden.reused, 3);
++    let overridden_snapshot = store.current_test_catalog()?.unwrap();
++    for path in ["sample.rs", "Cargo.toml", "fallback.txt"] {
++        assert_eq!(
++            &overridden_snapshot.snapshot.artifacts[path].retained, &applied_refs[path],
++            "unrelated policy rule invalidated retained evidence"
++        );
++    }
++    let before_edit_refs = overridden_snapshot
++        .snapshot
++        .artifacts
++        .iter()
++        .map(|(path, artifact)| (path.clone(), artifact.retained.clone()))
++        .collect::<std::collections::BTreeMap<_, _>>();
++    drop(overridden_snapshot);
++    fs::write(
++        root.path().join("sample.rs"),
++        "pub fn changed() { called(); }\n",
++    )?;
++    let edited = kernel.index()?;
++    assert_eq!(edited.indexed, 1);
++    assert_eq!(edited.reused, 3);
++    let edited_snapshot = store.current_test_catalog()?.unwrap();
++    for path in ["notes.md", "Cargo.toml", "fallback.txt"] {
++        assert_eq!(
++            &edited_snapshot.snapshot.artifacts[path].retained, &before_edit_refs[path],
++            "one source edit invalidated unrelated payload/profile/projection"
++        );
++    }
++    drop(edited_snapshot);
++    assert!(!kernel.status()?.vectors_enabled);
++    assert!(
++        kernel.configure_retained_migration(&review).is_err(),
++        "old publication review must not become fresh retry authority"
++    );
++    for (path, text) in files.into_iter().filter(|(path, _)| *path != "sample.rs") {
++        assert_eq!(fs::read_to_string(root.path().join(path))?, text);
++    }
++    Ok(())
++}
+diff --git a/crates/airk-kernel/tests/integration/languages_a_v2.rs b/crates/airk-kernel/tests/integration/languages_a_v2.rs
+--- a/crates/airk-kernel/tests/integration/languages_a_v2.rs
++++ b/crates/airk-kernel/tests/integration/languages_a_v2.rs
+@@ -128,6 +128,8 @@
+         );
+     }
+     kernel.configure_extraction_policy(ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![SelectionRule {
+diff --git a/crates/airk-kernel/tests/integration/languages_b_data_v2.rs b/crates/airk-kernel/tests/integration/languages_b_data_v2.rs
+--- a/crates/airk-kernel/tests/integration/languages_b_data_v2.rs
++++ b/crates/airk-kernel/tests/integration/languages_b_data_v2.rs
+@@ -52,6 +52,8 @@
+         before.payload_digest
+     );
+     kernel.configure_extraction_policy(ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![SelectionRule {
+diff --git a/crates/airk-kernel/tests/integration/languages_b_first_v2.rs b/crates/airk-kernel/tests/integration/languages_b_first_v2.rs
+--- a/crates/airk-kernel/tests/integration/languages_b_first_v2.rs
++++ b/crates/airk-kernel/tests/integration/languages_b_first_v2.rs
+@@ -67,6 +67,8 @@
+         before.payload_digest
+     );
+     kernel.configure_extraction_policy(ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![SelectionRule {
+diff --git a/crates/airk-kernel/tests/integration/languages_b_functional_v2.rs b/crates/airk-kernel/tests/integration/languages_b_functional_v2.rs
+--- a/crates/airk-kernel/tests/integration/languages_b_functional_v2.rs
++++ b/crates/airk-kernel/tests/integration/languages_b_functional_v2.rs
+@@ -56,6 +56,8 @@
+         before.payload_digest
+     );
+     kernel.configure_extraction_policy(ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![SelectionRule {
+diff --git a/crates/airk-kernel/tests/integration/project_build_v2.rs b/crates/airk-kernel/tests/integration/project_build_v2.rs
+--- a/crates/airk-kernel/tests/integration/project_build_v2.rs
++++ b/crates/airk-kernel/tests/integration/project_build_v2.rs
+@@ -69,6 +69,8 @@
+     let warm = kernel.index()?;
+     assert_eq!((warm.indexed, warm.reused), (0, 2));
+     kernel.configure_extraction_policy(ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![SelectionRule {
+@@ -91,6 +93,8 @@
+         unchanged
+     );
+     kernel.configure_extraction_policy(ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![],
+diff --git a/crates/airk-kernel/tests/integration/prose_hosts_v2.rs b/crates/airk-kernel/tests/integration/prose_hosts_v2.rs
+--- a/crates/airk-kernel/tests/integration/prose_hosts_v2.rs
++++ b/crates/airk-kernel/tests/integration/prose_hosts_v2.rs
+@@ -87,6 +87,8 @@
+             .all(|fact| fact.citation.path == moved)
+     );
+     kernel.configure_extraction_policy(ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![SelectionRule {
+diff --git a/crates/airk-kernel/tests/integration/repository_syntax_v2.rs b/crates/airk-kernel/tests/integration/repository_syntax_v2.rs
+--- a/crates/airk-kernel/tests/integration/repository_syntax_v2.rs
++++ b/crates/airk-kernel/tests/integration/repository_syntax_v2.rs
+@@ -132,6 +132,8 @@
+     assert_eq!((warm.indexed, warm.reused), (0, 2));
+ 
+     kernel.configure_extraction_policy(ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![SelectionRule {
+@@ -152,6 +154,8 @@
+     assert_eq!(changed_files["unrelated.rs"].state, unrelated);
+     drop(changed);
+     kernel.configure_extraction_policy(ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![],
+diff --git a/crates/airk-kernel/tests/integration/scss_v2.rs b/crates/airk-kernel/tests/integration/scss_v2.rs
+--- a/crates/airk-kernel/tests/integration/scss_v2.rs
++++ b/crates/airk-kernel/tests/integration/scss_v2.rs
+@@ -73,6 +73,8 @@
+     let warm = kernel.index()?;
+     assert_eq!((warm.indexed, warm.reused), (0, 2));
+     kernel.configure_extraction_policy(ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![SelectionRule {
+@@ -100,6 +102,8 @@
+     );
+     drop(changed_catalog);
+     kernel.configure_extraction_policy(ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![],
+diff --git a/crates/airk-kernel/tests/integration/specialist_business_v2.rs b/crates/airk-kernel/tests/integration/specialist_business_v2.rs
+--- a/crates/airk-kernel/tests/integration/specialist_business_v2.rs
++++ b/crates/airk-kernel/tests/integration/specialist_business_v2.rs
+@@ -29,6 +29,8 @@
+     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
+     if let Some(profile) = profile {
+         kernel.configure_extraction_policy(ExtractionPolicy {
++            retained_profile: None,
++            legacy_fallback_detail: None,
+             detail: None,
+             version: 1,
+             rules: vec![SelectionRule {
+@@ -76,6 +78,8 @@
+         before.payload_digest
+     );
+     kernel.configure_extraction_policy(ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![SelectionRule {
+diff --git a/crates/airk-kernel/tests/integration/specialist_gpu_v2.rs b/crates/airk-kernel/tests/integration/specialist_gpu_v2.rs
+--- a/crates/airk-kernel/tests/integration/specialist_gpu_v2.rs
++++ b/crates/airk-kernel/tests/integration/specialist_gpu_v2.rs
+@@ -58,6 +58,8 @@
+         moved
+     );
+     kernel.configure_extraction_policy(ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![SelectionRule {
+@@ -123,6 +125,8 @@
+         root.path().join("original.frag"),
+     )?;
+     kernel.configure_extraction_policy(ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![SelectionRule {
+diff --git a/crates/airk-kernel/tests/integration/specialist_hardware_v2.rs b/crates/airk-kernel/tests/integration/specialist_hardware_v2.rs
+--- a/crates/airk-kernel/tests/integration/specialist_hardware_v2.rs
++++ b/crates/airk-kernel/tests/integration/specialist_hardware_v2.rs
+@@ -58,6 +58,8 @@
+         moved
+     );
+     kernel.configure_extraction_policy(ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![SelectionRule {
+@@ -130,6 +132,8 @@
+             .any(|fact| fact.name == "ledger")
+     );
+     kernel.configure_extraction_policy(ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![SelectionRule {
+diff --git a/crates/airk-kernel/tests/integration/specialist_vendor_v2.rs b/crates/airk-kernel/tests/integration/specialist_vendor_v2.rs
+--- a/crates/airk-kernel/tests/integration/specialist_vendor_v2.rs
++++ b/crates/airk-kernel/tests/integration/specialist_vendor_v2.rs
+@@ -20,6 +20,8 @@
+     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
+     if adapter == "tsql" {
+         kernel.configure_extraction_policy(ExtractionPolicy {
++            retained_profile: None,
++            legacy_fallback_detail: None,
+             detail: None,
+             version: 1,
+             rules: vec![SelectionRule {
+@@ -77,6 +79,8 @@
+         );
+     }
+     kernel.configure_extraction_policy(ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![SelectionRule {
+diff --git a/crates/airk-kernel/tests/integration/syntax_repairs_v2.rs b/crates/airk-kernel/tests/integration/syntax_repairs_v2.rs
+--- a/crates/airk-kernel/tests/integration/syntax_repairs_v2.rs
++++ b/crates/airk-kernel/tests/integration/syntax_repairs_v2.rs
+@@ -27,6 +27,8 @@
+     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
+     if let Some(adapter) = profile {
+         kernel.configure_extraction_policy(ExtractionPolicy {
++            retained_profile: None,
++            legacy_fallback_detail: None,
+             detail: None,
+             version: 1,
+             rules: vec![SelectionRule {
+@@ -116,6 +118,8 @@
+             .payload_digest
+     );
+     kernel.configure_extraction_policy(ExtractionPolicy {
++        retained_profile: None,
++        legacy_fallback_detail: None,
+         detail: None,
+         version: 1,
+         rules: vec![SelectionRule {
+diff --git a/crates/airk-kernel/tests/source_policy.rs b/crates/airk-kernel/tests/source_policy.rs
+--- a/crates/airk-kernel/tests/source_policy.rs
++++ b/crates/airk-kernel/tests/source_policy.rs
+@@ -616,6 +616,8 @@
+         )?;
+         kernel.configure_vectors(false)?;
+         kernel.configure_extraction_policy(ExtractionPolicy {
++            retained_profile: None,
++            legacy_fallback_detail: None,
+             version: 2,
+             detail: None,
+             rules: vec![SelectionRule {
+diff --git a/crates/airk-mcp/src/lib.rs b/crates/airk-mcp/src/lib.rs
+--- a/crates/airk-mcp/src/lib.rs
++++ b/crates/airk-mcp/src/lib.rs
+@@ -1302,6 +1302,7 @@
+             "adapters": adapters,
+             "read_guidance": airk_core::guidance::catalog(),
+             "source_verification_capability": airk_core::verification::catalog(),
++            "retained_profiles": airk_core::retention::catalog(),
+             "index_detail": {"new_collection_default":"agent_lean", "levels":["agent_lean","essential","balanced","detailed"], "labels":{"agent_lean":"Agent Lean","balanced":"Rich Structure","essential":"Search Only","detailed":"Detailed"}, "coverage":"Fact and relationship responses report their published indexing level and deliberate omissions. Configured changes apply only after a successful index. Optional provider imports preserve their source and producer binding."},
+             "history": {"supported":false,"exact_reads":[],"optional_retention":false,"search":false,"live_fallback":false,"checkpoints":false,"reason":"Source reads select one current index; retained change metadata does not enable old source reads"},
+             "changes": {"observed_indexed_changes":false,"remembered_evidence_validation":true,"expired_baseline":"baseline_unavailable","selectors":64,"selector_bytes":32768,"max_payload_bytes":65536,"exact_revision_tokens":true,"live_source_verified":false,"symbol_continuity":"adapter-specific conservative coverage","document_continuity":"adapter-specific conservative coverage"},
+diff --git a/crates/airk-mcp/src/local.rs b/crates/airk-mcp/src/local.rs
+--- a/crates/airk-mcp/src/local.rs
++++ b/crates/airk-mcp/src/local.rs
+@@ -337,6 +337,9 @@
+                                 max_bytes,
+                             )?)?)
+                         }
++                        NativeRead::RetentionMigrationPreview { target } => Ok(
++                            serde_json::to_value(kernel.preview_retained_migration(target)?)?,
++                        ),
+                         NativeRead::Settings {
+                             view,
+                             cursor,
+diff --git a/crates/airk-store/src/current/collection.rs b/crates/airk-store/src/current/collection.rs
+--- a/crates/airk-store/src/current/collection.rs
++++ b/crates/airk-store/src/current/collection.rs
+@@ -17,6 +17,7 @@
+     #[test]
+     fn only_policy_attestation_is_exempt_from_complete_retained_replacement() -> Result<()> {
+         let before = CollectionConfiguration {
++            retained_profile: None,
+             source_policy_digest: None,
+             roots: Default::default(),
+             extractor_version: "fixture/1".into(),
+@@ -50,6 +51,8 @@
+ #[serde(deny_unknown_fields)]
+ pub struct CollectionConfiguration {
+     #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub retained_profile: Option<airk_core::retention::RetainedProfile>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub source_policy_digest: Option<Sha256Digest>,
+     pub roots: BTreeMap<String, String>,
+     pub extractor_version: String,
+@@ -60,6 +63,12 @@
+ }
+ 
+ impl CollectionConfiguration {
++    pub fn index_coverage(&self) -> airk_core::extraction::IndexCoverage {
++        airk_core::extraction::IndexCoverage::with_retained_profile(
++            self.index_detail,
++            self.retained_profile,
++        )
++    }
+     /// A policy attestation fences native admission and changes no extractor,
+     /// source binding, model or retained representation. Every other serialized
+     /// field (including future additions) still requires complete replacement.
+@@ -266,15 +275,18 @@
+                     .as_ref()
+                     .and_then(|retained| retained.profile.as_ref())
+                     .context("current collection extraction profile missing")?;
+-                ensure!(
+-                    profile
+-                        .options
+-                        .get("index_detail")
+-                        .map(String::as_str)
+-                        .unwrap_or("detailed")
+-                        == state.configuration.index_detail.as_str(),
+-                    "current artifact detail differs from applied configuration"
+-                );
++                match airk_core::retention::AppliedRetention::from_profile(profile)? {
++                    airk_core::retention::AppliedRetention::Legacy { detail, .. } => ensure!(
++                        detail == state.configuration.index_detail,
++                        "current artifact legacy detail differs from applied fallback"
++                    ),
++                    airk_core::retention::AppliedRetention::Selected {
++                        profile: target, ..
++                    } => ensure!(
++                        state.configuration.retained_profile == Some(target),
++                        "current artifact retained profile differs from applied configuration"
++                    ),
++                }
+                 state
+                     .counts
+                     .update(next, &state.configuration.vector_selection, true)?;
+diff --git a/crates/airk-store/src/current/native_projection_tests.rs b/crates/airk-store/src/current/native_projection_tests.rs
+--- a/crates/airk-store/src/current/native_projection_tests.rs
++++ b/crates/airk-store/src/current/native_projection_tests.rs
+@@ -124,6 +124,7 @@
+     let connection = database::open_reader(&fixture.store.directory().join("current.sqlite3"))?;
+     let mut plan = map::MapPlan::new(&connection, &fixture.scope, base.artifact_root)?;
+     let configuration = collection::CollectionConfiguration {
++        retained_profile: None,
+         source_policy_digest: None,
+         roots: BTreeMap::from([("workspace".into(), fixture.scope.root.clone())]),
+         extractor_version: "projection-fixture".into(),
+diff --git a/crates/airk-store/src/service_catalog_split.rs b/crates/airk-store/src/service_catalog_split.rs
+--- a/crates/airk-store/src/service_catalog_split.rs
++++ b/crates/airk-store/src/service_catalog_split.rs
+@@ -46,7 +46,11 @@
+     let capsules = snapshot
+         .checked_mul((MAX_SPLIT_JOBS + 4) as u64)
+         .context("split capsule capacity overflow")?;
+-    let fixed = (MAX_PAGE_BYTES + 16384 + 16384 + 65536 + 2 * 16384) as u64;
++    let inherited = request
++        .extraction_policy
++        .as_ref()
++        .map_or(0, |reference| u64::from(reference.encoded_bytes));
++    let fixed = (MAX_PAGE_BYTES + 16384 + 16384 + 65536 + 2 * 16384) as u64 + inherited;
+     let required = capsules
+         .checked_add(fixed)
+         .context("split metadata capacity overflow")?;
+@@ -467,6 +471,10 @@
+             );
+             return Ok(saved);
+         }
++        ensure!(
++            request.extraction_policy.is_none(),
++            "split retained policy requires the exact native private inheritance admission owner"
++        );
+         let metadata = native_metadata_capacity(request, baseline, plan)?;
+         ensure!(
+             request.capacity.cleanup_allowance >= metadata.total,
+diff --git a/crates/airk-store/src/service_catalog_split_tests.rs b/crates/airk-store/src/service_catalog_split_tests.rs
+--- a/crates/airk-store/src/service_catalog_split_tests.rs
++++ b/crates/airk-store/src/service_catalog_split_tests.rs
+@@ -88,6 +88,7 @@
+         target.clone(),
+     )?;
+     let request = SplitRequest {
++        extraction_policy: None,
+         schema: 1,
+         required_policy_contract: SPLIT_CONTRACT,
+         caller,
+diff --git a/crates/airk-store/src/service_collection_tests.rs b/crates/airk-store/src/service_collection_tests.rs
+--- a/crates/airk-store/src/service_collection_tests.rs
++++ b/crates/airk-store/src/service_collection_tests.rs
+@@ -2279,6 +2279,7 @@
+     )?
+     .seal()?;
+     let configuration = collection::CollectionConfiguration {
++        retained_profile: None,
+         roots: Default::default(),
+         extractor_version: "projection-test/1".into(),
+         extraction_policy_digest: Sha256Digest::from_bytes([67; 32]),
+diff --git a/crates/airk-store/src/service_configuration.rs b/crates/airk-store/src/service_configuration.rs
+--- a/crates/airk-store/src/service_configuration.rs
++++ b/crates/airk-store/src/service_configuration.rs
+@@ -293,7 +293,16 @@
+         ensure!(unrecorded, "configuration result was already recorded");
+         write_result(&transaction, job, &bytes)?;
+         let work = work(&transaction, job)?.ok_or(JobError::UnknownJob)?;
+-        if work.request.configuration.requests_source_pass() {
++        let source_pass = match &work.request.configuration {
++            airk_core::service_configuration::ProjectConfiguration::RetainedProfile { review } => {
++                let observed: airk_core::retention::RetentionMigrationResult =
++                    serde_json::from_value(result.clone())?;
++                observed.validate_for(review)?;
++                observed.source_pass_requested
++            }
++            configuration => configuration.requests_source_pass(),
++        };
++        if source_pass {
+             super::background::set(
+                 &transaction,
+                 lease.binding,
+@@ -1119,4 +1128,61 @@
+         assert_eq!(std::fs::read(database)?, before);
+         Ok(())
+     }
++    #[test]
++    fn retained_migration_result_noop_avoids_source_queue_and_crossed_result_rolls_back()
++    -> Result<()> {
++        use airk_core::retention::{
++            RetainedProfile, RetentionMigrationResult, RetentionMigrationReview,
++        };
++        for requires_source in [false, true] {
++            let temporary = tempfile::tempdir()?;
++            let caller = Incarnation::from_bytes([1; 16]);
++            let mut registry = open(temporary.path(), caller)?;
++            let selected = project(temporary.path())?;
++            registry.register(&selected)?;
++            let applied = Sha256Digest::from_bytes([5; 32]);
++            let review = RetentionMigrationReview {
++                schema: 1,
++                expected_publication: format!("airk-r1:{}:1:{}", "11".repeat(16), "22".repeat(32))
++                    .parse()?,
++                expected_applied_policy: applied,
++                reviewed_configured_policy: applied,
++                desired_policy: if requires_source {
++                    Sha256Digest::from_bytes([6; 32])
++                } else {
++                    applied
++                },
++                target: RetainedProfile::Lean,
++            };
++            let mut configuration = request(false);
++            configuration.configuration = ProjectConfiguration::RetainedProfile {
++                review: Box::new(review.clone()),
++            };
++            let accepted_key = key(&mut registry, 1)?;
++            let job = registry.enqueue_configuration(
++                selected.binding,
++                caller,
++                &accepted_key,
++                &configuration,
++                Sha256Digest::from_bytes([4; 32]),
++            )?;
++            assert!(!registry.job_runs_while_paused(job.id)?);
++            let mut lease = ProjectLease::acquire(&registry.root, selected.binding)?;
++            registry.admit_worker(&mut lease)?;
++            registry.claim_job_id(&lease, job.id)?.unwrap();
++            let result = RetentionMigrationResult::for_review(&review)?;
++            let mut crossed = result.clone();
++            crossed.source_pass_requested = !crossed.source_pass_requested;
++            assert!(
++                registry
++                    .record_configuration_result(&lease, job.id, &serde_json::to_value(crossed)?)
++                    .is_err()
++            );
++            assert!(registry.configuration_result(job.id)?.is_none());
++            registry.record_configuration_result(&lease, job.id, &serde_json::to_value(result)?)?;
++            let queued:bool=registry.connection.query_row("SELECT COALESCE((SELECT source_pending FROM service_background WHERE project=?1),0)",[selected.binding.to_string()],|row|row.get(0))?;
++            assert_eq!(queued, requires_source);
++        }
++        Ok(())
++    }
+ }
+diff --git a/crates/airk-store/tests/usage.rs b/crates/airk-store/tests/usage.rs
+--- a/crates/airk-store/tests/usage.rs
++++ b/crates/airk-store/tests/usage.rs
+@@ -470,6 +470,7 @@
+         current.initialize_collection(
+             &token,
+             &CollectionConfiguration {
++                retained_profile: None,
+                 source_policy_digest: None,
+                 roots: Default::default(),
+                 extractor_version: "fixture".into(),
+diff --git a/docs/extraction-policy.md b/docs/extraction-policy.md
+--- a/docs/extraction-policy.md
++++ b/docs/extraction-policy.md
+@@ -109,3 +109,49 @@
+ **AIRK: Show Extraction Policy** displays collection/root/storage and native policy status. **AIRK: Configure Extraction Policy** selects a JSON file, captures a bounded private copy, validates it, and shows the current and proposed state. Saving requires confirmation and sends the same captured bytes even if the selected file changes while the preview is open. Temporary input is removed on completion, cancellation or failure.
+ 
+ After saving, the extension offers **Index now** for that collection. Declining leaves the policy pending until a later successful index. Both controls require workspace trust. They do not rewrite the selected file, workspace settings, agent configuration or tool approvals. See [VS Code extension](vscode-extension.md) for scheduling behavior.
++
++
++## Explicit versioned retained profiles
++
++The prospective P11b implementation introduces Lean and Rich as separate retained
++profiles under extraction-profile contract 3 and policy version 4. Existing
++`essential`, `agent_lean`, `balanced` (Rich Structure, legacy) and `detailed`
++settings retain their existing meanings and defaults. Reply projection remains
++independent. A missing historical profile is unknown; an existing historical
++profile without `index_detail` retains its original Detailed meaning.
++
++On a native owned index with a published baseline, prepare an explicit reviewed
++configuration draft such as `{"operation":"retained_profile","target":"lean"}`
++through the existing native configuration preparation/receipt path. Preparation
++returns the exact publication and configured/applied policy digests for review.
++Workbench offers the same review in Advanced settings. Saving the desired policy
++and publishing the new representation are separate outcomes. Pause, manual
++updates, watches, vector eligibility and model settings are preserved. The current
++publication remains available to the supported runtime if indexing fails or is
++canceled. An interrupted request must be reconciled by its exact saved receipt;
++unknown outcomes never authorize mutation replay. A known failed request requires
++current review before a new request.
++
++The first qualification wave covers the exact current Rust, manifest, Markdown,
++instruction Markdown and DOCX producers. Lean preserves supported package,
++dependency, script, workspace and configuration evidence in manifests; Rich keeps
++that core plus supported additions. Other versions/families keep their recorded
++legacy fallback. Unsupported output is not created by choosing Rich. OCR remains
++an explicit operation with unchanged adapters, dependencies, models and
++provenance. No parser CPU reduction is claimed by the initial full-producer path.
++
++Policy 4 stores the selected `retained_profile` and an explicit
++`legacy_fallback_detail`; its legacy `detail` field is absent. Existing policy
++versions retain their bytes and semantics. Adapter-rule edits may retain an
++already published new profile, while changing the profile requires native review.
++Per-file cache identity includes only effective producer inputs and the selected
++family algorithm, rather than the entire collection policy. A repeated applied
++choice queues no new source pass; restoring the applied choice over a different
++pending desired policy still saves that choice. Previously queued independent
++source work is preserved.
++
++These paragraphs describe an inert prospective patch, not an accepted release.
++Dual owner capability installation, initial empty-index choice, split inheritance,
++interruption/quota tests and actual native/CLI/MCP/Workbench qualification remain
++phase acceptance requirements. Development fixtures do not establish ONNX model
++costs or broad format qualification.
+diff --git a/packages/vscode/src/explorerContracts.ts b/packages/vscode/src/explorerContracts.ts
+--- a/packages/vscode/src/explorerContracts.ts
++++ b/packages/vscode/src/explorerContracts.ts
+@@ -373,7 +373,7 @@
+     readonly lifecycle: string;
+     readonly requests: readonly FactRow[];
+     readonly events: readonly string[];
+-    readonly configuration: { readonly detail?: string; readonly state?: string; readonly pending: boolean; readonly failure?: string; readonly vectorsEnabled?: boolean; readonly requestedVectors?: boolean; readonly requestedDetail?: string };
++    readonly configuration: { readonly detail?: string; readonly configuredRetention?: string; readonly publishedRetention?: string; readonly state?: string; readonly pending: boolean; readonly failure?: string; readonly vectorsEnabled?: boolean; readonly requestedVectors?: boolean; readonly requestedDetail?: string };
+     readonly storage: {
+         readonly root?: string;
+         readonly observedAt?: number;
+diff --git a/packages/vscode/src/explorerManagement.ts b/packages/vscode/src/explorerManagement.ts
+--- a/packages/vscode/src/explorerManagement.ts
++++ b/packages/vscode/src/explorerManagement.ts
+@@ -182,7 +182,7 @@
+             ? 'Source watching is unavailable: a configured root or directory is missing, unreadable or redirected. Remove a deleted project from Management › Projects.'
+             : watch.failure ?? watch.backend],
+             ['Pending source changes', typeof watch.requested_revision === 'number' && typeof watch.completed_revision === 'number' ? Math.max(0, watch.requested_revision - watch.completed_revision) : undefined],
+-            ['Last inspected revision', snapshot.publication], ['Source availability (cached)', snapshot.source_state], ['Discovery (cached)', discovery.state],
++            ['Configured retained profile',snapshot.configured_retained_profile],['Published retained profile',snapshot.published_retained_profile],['Legacy detail / fallback',snapshot.index_detail],['Last inspected revision', snapshot.publication], ['Source availability (cached)', snapshot.source_state], ['Discovery (cached)', discovery.state],
+             ['Indexed files (cached)', snapshot.indexed_files], ['Semantic coverage (cached)', semantic.state], ['Completed / selected semantic artifacts',
+                 semantic.selected_artifacts === undefined ? undefined : `${scalar(semantic.completed_artifacts)} / ${scalar(semantic.selected_artifacts)}`],
+             ['Inspection failure (cached)', snapshot.failure], ['Last configuration job', configuration.id], ['Configuration state (cached)', configuration.state],
+@@ -209,7 +209,7 @@
+                 ['Job result', obj(job.outcome).code ?? obj(job.outcome).state], ['Observed publication', snapshot.publication]]),
+             events: state.events.filter(event => event.project === binding).slice(-16).reverse().map(event =>
+                 `${scalar(event.kind)} · ${scalar(event.job_kind)}${event.code ? ` · ${scalar(event.code)}` : ''} · ${typeof event.observed_unix_ms === 'number' ? new Date(event.observed_unix_ms).toLocaleString() : 'time not observed'}`),
+-            configuration: { detail: typeof snapshot.index_detail === 'string' ? snapshot.index_detail : undefined, state: typeof configuration.state === 'string' ? configuration.state : undefined,
++            configuration: { detail: typeof snapshot.index_detail === 'string' ? snapshot.index_detail : undefined, configuredRetention:typeof snapshot.configured_retained_profile==='string'?snapshot.configured_retained_profile:undefined,publishedRetention:typeof snapshot.published_retained_profile==='string'?snapshot.published_retained_profile:undefined, state: typeof configuration.state === 'string' ? configuration.state : undefined,
+                 requestedVectors:typeof requested.vectors_enabled==='boolean'?requested.vectors_enabled:undefined,
+                 requestedDetail:typeof requested.detail==='string'?requested.detail:undefined,
+                 pending: configuration.state === 'pending' || configuration.state === 'running',
+diff --git a/packages/vscode/src/explorerWebview/manage.tsx b/packages/vscode/src/explorerWebview/manage.tsx
+--- a/packages/vscode/src/explorerWebview/manage.tsx
++++ b/packages/vscode/src/explorerWebview/manage.tsx
+@@ -237,7 +237,7 @@
+ function ProjectSettings({ entry, view, actions }: { entry: ManagedProject; view: ManagementView; actions: ReturnType<typeof useActions> }) {
+     const project = entry.summary.project, enabled = view.enabled.projectActions && !entry.configuration.pending && actions.busy === undefined;
+     const semantic = entry.configuration.requestedVectors ?? entry.configuration.vectorsEnabled;
+-    const detailNames: Record<string,string> = { agent_lean: 'Agent Lean', essential: 'Search Only', balanced: 'Rich Structure', detailed: 'Detailed' };
++    const detailNames: Record<string,string> = { agent_lean: 'Agent Lean', essential: 'Search Only', balanced: 'Rich Structure (legacy balanced)', detailed: 'Detailed' };
+     return <section class="card project-settings"><h3>Index settings</h3>
+         <label>Search mode <select aria-label="Search mode" value={semantic === undefined ? 'unknown' : semantic ? 'semantic' : 'text'} disabled={!enabled}
+             onChange={event => void actions.act((event.target as HTMLSelectElement).value === 'semantic' ? 'enableSemantic' : 'disableSemantic', { project })}>
+@@ -252,7 +252,8 @@
+             {entry.summary.watching === undefined && <option value="unknown" disabled>Not checked</option>}<option value="automatic">Automatic</option><option value="manual">Manual</option></select></label>
+         <p class="muted">Automatic watches saved files even after VS Code closes. Pause temporarily stops work and preserves this preference.</p>
+         <div class="inline-form"><span>Evidence detail: {detailNames[entry.configuration.detail ?? ''] ?? entry.configuration.detail ?? 'not checked'}</span><Act actions={actions} action="configureDetail" fields={{ project }} enabled={enabled} ghost>Change detail…</Act></div>
+-        <p class="muted">Evidence detail controls supported source structure, independently of semantic search.</p>
++        {(entry.configuration.configuredRetention||entry.configuration.publishedRetention)&&<p role="status">Configured retained profile: {entry.configuration.configuredRetention??'legacy'}. Published retained profile: {entry.configuration.publishedRetention??'legacy'}. Unqualified files keep the legacy fallback shown above.</p>}
++        <p class="muted">Evidence retention controls supported source structure, independently of replies and semantic search. Review a new Lean or Rich profile in Advanced settings.</p>
+         {entry.configuration.pending && <p role="status">Settings change {entry.configuration.state}. Current work finishes first; its outcome appears in Recent activity.</p>}
+     </section>;
+ }
+diff --git a/packages/vscode/src/serviceClient.ts b/packages/vscode/src/serviceClient.ts
+--- a/packages/vscode/src/serviceClient.ts
++++ b/packages/vscode/src/serviceClient.ts
+@@ -117,7 +117,7 @@
+     if(!['configuration,incarnation,settings','configuration,incarnation,prepare,settings'].includes(Object.keys(value).sort().join(','))||Buffer.byteLength(JSON.stringify(value))>16384)throw new ServiceError('invalid_project_configuration');
+     if(value.prepare!==undefined&&(typeof value.prepare!=='boolean'||value.prepare&&!['vectors','detail'].includes(String(operation))))throw new ServiceError('invalid_project_configuration');
+     identifier(value.incarnation,16);identifier(value.settings,32);
+-    const names:Record<string,string[]>={unregister:[],prepare_derived_cleanup:[],delete_derived:['preview'],bundled_model:[],vectors:['enabled'],detail:['level'],vector_selection:['policy'],
++    const names:Record<string,string[]>={unregister:[],prepare_derived_cleanup:[],delete_derived:['preview'],bundled_model:[],vectors:['enabled'],detail:['level'],retained_profile:['review'],vector_selection:['policy'],
+         add_root:['alias','path'],remove_root:['alias'],install_model:['directory','manifest_sha256'],usage:['mode'],
+         clear_usage:[],reset_scan_limits:[],usage_feedback:['request_id','usefulness'],import_usage:['input'],extraction_policy:['input'],scan_limits:['input'],quota_policy:['input','expected_policy_digest'],
+         calibrate:['tokenizer','baseline','returned','generation','content_kind','record']};
+@@ -125,6 +125,11 @@
+     const filePath=(input:unknown)=>{if(typeof input!=='string'||!path.isAbsolute(input)||input.length>4096||/[\u0000-\u001f\u007f]/.test(input))throw new ServiceError('invalid_configuration_path');};
+     if(operation==='vectors'&&typeof configuration.enabled!=='boolean')throw new ServiceError('invalid_project_configuration');
+     if(operation==='detail'&&!['essential','agent_lean','balanced','detailed'].includes(String(configuration.level)))throw new ServiceError('invalid_project_configuration');
++    if(operation==='retained_profile'){
++        const review=record(configuration.review);
++        if(Object.keys(review).sort().join(',')!=='desired_policy,expected_applied_policy,expected_publication,reviewed_configured_policy,schema,target'||review.schema!==1||!['lean','rich'].includes(String(review.target))||typeof review.expected_publication!=='string'||review.expected_publication.length>126||!/^airk-r1:[a-f0-9]{32}:(?:0|[1-9][0-9]*):[a-f0-9]{64}$/.test(review.expected_publication))throw new ServiceError('invalid_retained_migration_review');
++        for(const field of ['desired_policy','expected_applied_policy','reviewed_configured_policy'])identifier(review[field],32);
++    }
+     if(operation==='delete_derived')identifier(configuration.preview,32);
+     if(operation==='usage'&&!['disabled','aggregates_only','diagnostic_events'].includes(String(configuration.mode)))throw new ServiceError('invalid_project_configuration');
+     if(operation==='usage_feedback'){
+diff --git a/packages/vscode/src/serviceConsole.ts b/packages/vscode/src/serviceConsole.ts
+--- a/packages/vscode/src/serviceConsole.ts
++++ b/packages/vscode/src/serviceConsole.ts
+@@ -245,7 +245,8 @@
+         if(!common)return;
+         const selection=common.operation==='advanced'?await vscode.window.showQuickPick([
+             {label:'Vector search',operation:'vectors',description:'Enable or disable semantic indexing for this project'},
+-            {label:'Index detail',operation:'detail',description:'Choose evidence detail for the next source pass'},
++            {label:'Index detail',operation:'detail',description:'Choose legacy evidence detail for the next source pass'},
++            {label:'Review Lean or Rich retention',operation:'retained_profile',description:'Explicit file-aware migration; keeps unqualified formats and OCR unchanged'},
+             {label:'Vector eligibility',operation:'vector_selection',description:'Set bounded inclusion/exclusion policy JSON'},
+             {label:'Add source root',operation:'add_root',description:'Register an additional source directory under an alias'},
+             {label:'Remove source root',operation:'remove_root',description:'Remove a saved alias; source files are preserved'},
+@@ -266,11 +267,15 @@
+             const enabled=await vscode.window.showQuickPick([{label:'Enable semantic search',description:'Prepare the offline model, then index sources and build vectors',value:true},{label:'Turn off semantic search',description:'Use lexical evidence; sources and saved settings are retained',value:false}],{title:'AIRK vector search'});
+             return enabled?{operation,enabled:enabled.value}:undefined;
+         }
++        if(operation==='retained_profile'){
++            const choice=await vscode.window.showQuickPick([{label:'Lean',target:'lean',description:'Retain useful sampled code, manifest, Markdown and DOCX evidence'},{label:'Rich',target:'rich',description:'Retain Lean evidence plus supported structure and continuity'}],{title:'AIRK: review retained evidence migration',placeHolder:'Source publication changes separately; existing pause, updates and semantic settings are preserved'});
++            return choice?{operation,target:choice.target}:undefined;
++        }
+         if(operation==='detail'){
+             const level=await vscode.window.showQuickPick([
+                 {label:'Agent Lean',level:'agent_lean',description:'Selected code and document facts; default for new collections'},
+                 {label:'Search Only',level:'essential',description:'Text and citations; omits rich structured facts'},
+-                {label:'Rich Structure',level:'balanced',description:'Broader supported structure and declaration continuity; more retained data'},
++                {label:'Rich Structure (legacy balanced)',level:'balanced',description:'Broader supported structure and declaration continuity; more retained data'},
+                 {label:'Detailed',level:'detailed',description:'Advanced supported evidence and document-unit continuity; highest detail'},
+             ],{title:'AIRK evidence detail',placeHolder:'Choose for your purpose and source formats; vectors are configured separately'});
+             return level?{operation,level:level.level}:undefined;
+diff --git a/packages/vscode/src/serviceConsoleController.ts b/packages/vscode/src/serviceConsoleController.ts
+--- a/packages/vscode/src/serviceConsoleController.ts
++++ b/packages/vscode/src/serviceConsoleController.ts
+@@ -1167,6 +1167,11 @@
+                 }
+                 this.authorized();
+                 const request=await this.host.runtime.prepareConfiguration(this.binding,project,draft);this.authorized();
++                if(request.configuration.operation==='retained_profile'){
++                    const review=record(request.configuration.review);
++                    if(!await this.host.confirm(`Apply the reviewed ${String(review.target)} retained evidence profile to this index? The current publication stays available until a successful source pass. Unqualified formats and OCR keep their legacy evidence. Pause, manual updates, watches and semantic settings are preserved. Reviewed publication: ${String(review.expected_publication)}.`))return;
++                    this.authorized();
++                }
+                 if(request.configuration.operation==='unregister'){
+                     const registration=record(record(row.project).registration);
+                     if(!await this.host.confirm(`Unregister ${String(registration.collection)} from AIRK on ${this.host.authority}? Source: ${String(registration.root)}. Data: ${String(registration.data_root)}. This stops automatic work and new connections for this project; its owned worker will drain and existing clients may disconnect. Removal deletes its AIRK index data and saved settings. Source files are untouched. Only minimal removal history remains.`))return;
+diff --git a/packages/vscode/src/test/serviceConfiguration.test.ts b/packages/vscode/src/test/serviceConfiguration.test.ts
+--- a/packages/vscode/src/test/serviceConfiguration.test.ts
++++ b/packages/vscode/src/test/serviceConfiguration.test.ts
+@@ -19,3 +19,13 @@
+         assert.deepEqual(serviceRuntimeOptions(),{channel:'stable'});
+     }finally{loader._load=original;delete require.cache[require.resolve('../serviceConsole')];}
+ });
++
++test('retained migration forwards the complete native review without legacy aliases or deferred preparation',async()=>{
++    const {validateConfigurationRequest}=await import('../serviceClient');
++    const review={schema:1,expected_publication:`airk-r1:${'11'.repeat(16)}:7:${'22'.repeat(32)}`,expected_applied_policy:'33'.repeat(32),reviewed_configured_policy:'44'.repeat(32),desired_policy:'55'.repeat(32),target:'lean'};
++    const request={incarnation:'66'.repeat(16),settings:'77'.repeat(32),configuration:{operation:'retained_profile',review}};
++    assert.deepEqual(validateConfigurationRequest(request),request);
++    assert.throws(()=>validateConfigurationRequest({...request,prepare:true}),/configuration/);
++    assert.throws(()=>validateConfigurationRequest({...request,configuration:{...request.configuration,review:{...review,target:'agent_lean'}}}),/migration/);
++    assert.throws(()=>validateConfigurationRequest({...request,configuration:{...request.configuration,review:{...review,desired_policy:'crossed'}}}),/identity|identifier|hex/);
++});

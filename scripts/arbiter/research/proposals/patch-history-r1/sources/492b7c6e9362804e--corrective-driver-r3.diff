@@ -1,0 +1,36 @@
+--- D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\r154-composed-launch-preparation-r2\launch_route.py
++++ D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\r154-composed-launch-preparation-r3\launch_route.py
+@@ -30,7 +30,33 @@
+     value=json.loads(raw);need(value['whole_seconds']==1800 and value['r154_seconds']==360,'Original whole and Answer phases required')
+     return value,raw
+ 
++def verify_source_cohort(value):
++    # One pre-spawn metadata cohort: byte-equal copied corpora in different
++    # directories are different source identities and must never be substituted.
++    diagnostic_pin=value['r154_preparation'];scope_pin=value['source_scope_input']
++    need(sha(diagnostic_pin['path'])==diagnostic_pin['sha256'],'Diagnostic preparation SHA changed')
++    need(sha(scope_pin['path'])==scope_pin['sha256'],'Declared source scope SHA changed')
++    diagnostic=json.loads(Path(diagnostic_pin['path']).read_bytes())
++    scopes=json.loads(Path(scope_pin['path']).read_bytes())['source_roots']
++    root=Path(value['source_root']);diagnostic_root=Path(diagnostic['source_root'])
++    need(root.is_absolute() and root.is_dir() and root.samefile(diagnostic_root),
++        'Source cohort mismatch: card and frozen diagnostic source roots differ')
++    need(isinstance(scopes,list) and len(scopes)==1 and root.samefile(Path(scopes[0])),
++        'Source cohort mismatch: declared scope root differs from indexed diagnostic root')
++    fixture=Path(diagnostic_pin['path']).parent/'source-fixture'
++    canonical=root.resolve(strict=True);copied=diagnostic['copied_source_files']
++    need(len(copied)==753,'Frozen753-source copy cohort differs')
++    for row in copied:
++        path=Path(row['copy_path']);relative=Path(row['relative_path'])
++        need(not relative.is_absolute() and '..' not in relative.parts,
++            'Source cohort copy path escapes frozen fixture')
++        need(path.resolve(strict=True).is_relative_to(canonical) and path.samefile(fixture/relative),
++            'Source cohort mismatch: copied source belongs to another physical fixture')
++    return {'source_root':str(root),'diagnostic_root':str(diagnostic_root),'declared_scope_roots':scopes,
++        'copied_source_files':len(copied),'canonical_directory_identity_agrees':True}
++
+ def verify(value):
++    verify_source_cohort(value)  # Must refuse before every Popen, including outer-owner creation.
+     for path,expected in value['pins'].items(): need(sha(path)==expected,'Immutable input changed: '+path)
+     staging=json.loads(Path(value['staging_receipt']['path']).read_bytes())
+     guard=load(Path(value['staging_guard']), 'r154_copy_custody_guard')

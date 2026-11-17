@@ -1,0 +1,130 @@
+--- large/runner_large_profile_only.py
++++ dense/runner_dense_profile_only.py
+@@ -5,7 +5,7 @@
+ BASE=Path(__file__).resolve().parent
+ OUTPUT_PARENT=BASE.parents[1]
+ SID='S-1-5-21-3678370870-3858642417-826968105-1002'
+-SELECTOR='inference_engine::pool::arbiter::qualification::software_v2::attention_diagnostic::software_v2_large_attention_profiled_8192_diagnostic'
++SELECTOR='inference_engine::pool::arbiter::qualification::software_v2::attention_diagnostic::software_v2_large_dense_attention_profiled_8192_diagnostic'
+ from capacity import initial_free,RESERVATION,CONTAINMENT,GRAPH,WEIGHTS,FREE
+ from watch import make_watch
+ 
+@@ -50,7 +50,7 @@
+         value=body.get('actual_capacity',{}).get(key);need(type(value) is int and 0<value<=16<<30,'Original32/16 API smoke actual persistent peaks unavailable')
+ def frozen_plan(args,started):
+     path=pin({'path':args.plan,'sha256':args.plan_sha256});plan=json.loads(path.read_bytes())
+-    need(plan['schema']=='airk.private.large-profiled-native-plan/1' and plan['human_sid']==SID,'Exact private plan/human identity required')
++    need(plan['schema']=='airk.private.large-dense-profiled-native-plan/1' and plan['human_sid']==SID,'Exact private plan/human identity required')
+     expected={'outer_seconds':360,'native_operation_ms':120000,'resident_rss_bytes':RESERVATION,
+         'resident_committed_bytes':RESERVATION,'job_containment_bytes':CONTAINMENT,'optimized_graph_bytes':GRAPH,
+         'optimized_weights_bytes':WEIGHTS,'minimum_fresh_free_bytes':FREE,'sample_interval_ms':100}
+@@ -64,7 +64,7 @@
+     for value in [plan['native_input'],plan['image_packet'],plan['source_bridge'],plan['old_build'],plan['structural_proof'],plan['optimized_tiny_review'],plan['capacity_os_control']]:
+         need(plan['input_seals'].get(value['path'])==value['sha256'],'Actual gate/input omitted from seals');pin(value)
+     request=json.loads(pin(plan['native_input']).read_bytes());profile=json.loads(pin(request['profile']).read_bytes())
+-    need(profile['model']=='arbiter-context-qwen3-4b' and profile['manifest']==plan['profile'] and profile['memory_reservation_bytes']==RESERVATION and profile['max_tokens']==8192,'Exact new Large profile required')
++    need(profile['model']=='arbiter-context-qwen3-4b' and profile['manifest']==plan['profile'] and profile['memory_reservation_bytes']==RESERVATION and profile['max_tokens']==8192 and profile['profile_id']==plan['profile_id'],'Exact native-emitted Dense Large profile required')
+     need(profile['cpu_fit']==plan['cpu_fit'] and profile['cpu_fit']=={'minimum_physical_cores':16,'intra_threads':16,'inter_threads':1,'sequential':True,'spinning':False},'Original Large CPU16 fit differs')
+     need(profile.get('qualification') is None and not profile.get('qualified_targets') and not profile.get('downloads'),'Diagnostic must remain unqualified/private')
+     need(request['policy']['deadline_ms']==plan['limits']['native_operation_ms'] and request['policy']['shared_input_tokens']==8192,'Rust native policy differs')
+@@ -89,7 +89,7 @@
+     for name,sha in plan['required_native_sources'].items():need(build['groups']['native']['files'].get(name)==sha,'New image lacks exact reviewed diagnostic source: '+name)
+     proof=json.loads(pin(plan['structural_proof']).read_bytes())
+     graph_asset=next(a for a in profile['assets'] if a['name']=='model.onnx')
+-    need(proof['gqa_nodes']==36 and proof['source_sha256']=='f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94' and proof['original_initializers']==398 and proof['original_external_initializers']==326 and proof['original_scores_output_preserved_verbatim'] is True and proof['new_graph_sha256']==graph_asset['sha256'] and proof['original_initializers_and_external_ranges_preserved_verbatim'] is True and proof['all6inputs_scores_only'] is True and proof['custom_shape_gate_pending'] is False,'Actual new graph structural gate absent')
++    need(proof['attention_mode']=='large_explicit_mask_dense/1' and proof['causal_attribute']==0 and proof['global_flash_setting']=='0' and proof['original_bias_closure_sha256']=='8bf893388fce7d661bc12b012aa8fb35d25cf23c8c4d226209304f5622387f22' and proof['only_prior_graph_causal_attributes_changed'] is True and proof['gqa_nodes']==36 and proof['source_sha256']=='f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94' and proof['original_initializers']==398 and proof['original_external_initializers']==326 and proof['original_scores_output_preserved_verbatim'] is True and proof['new_graph_sha256']==graph_asset['sha256'] and proof['original_initializers_and_external_ranges_preserved_verbatim'] is True and proof['all6inputs_scores_only'] is True and proof['custom_shape_gate_pending'] is False,'Actual new graph structural gate absent')
+     need(graph_asset['sha256']!='f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94','Original failed graph cannot be retried as new candidate')
+     sys.path.insert(0,card['reference_root']);sys.path.insert(0,card['operation_root'])
+     worker=load(card['source_pins']['sid_reader']['path'],'compact_sid_reader')
+@@ -98,22 +98,25 @@
+     parent=load(card['source_pins']['reference_parent']['path'],'compact_reference_parent')
+     capacity_smoke(json.loads(pin(plan['capacity_os_control']).read_bytes()),card,parent)
+     need(len(plan['tiny_gates'])==2,'Both original tiny kernel populations required')
+-    for gate,tokens in zip(plan['tiny_gates'],[17,8192]):
+-        body=json.loads(pin(gate['body']).read_bytes());owner=json.loads(pin(gate['owner']).read_bytes())
+-        actual=owner.get('owned',owner.get('actual_owner_result'))
+-        need(owner['complete'] is True and parent.settled(actual),'Tiny kernel original process/Job/handle completion absent')
+-        command=owner.get('command',[]); exact=command.index('--exact') if '--exact' in command else -1
+-        expected_selector='inference_engine::pool::arbiter::qualification::software_v2::attention_diagnostic::software_v2_synthetic_large_gqa_allocation_t'+str(tokens)
+-        need(exact>=0 and exact+1<len(command) and command[exact+1]==expected_selector,'Actual Large tiny selector required; Compact tiny custody cannot transfer')
+-        need(actual['suspended_assignment']['image']['sha256']==image['sha256'] and actual['suspended_assignment']['execution_user_sid']==SID,'Tiny gate image/SID differs')
+-        need(body['tokens']==tokens and body['graph_outputs']==['context'] and body['model_weights_loaded'] is False and 0<=body['maximum_error']<=.0001,'Actual tiny kernel value/ABI proof absent')
+-        for key,field in [('profiling','profiling_path'),('optimized','optimized_graph_path')]:
+-            need(pin(gate[key]).samefile(unaliased(body[field])),'Actual tiny output pin differs')
+-        for value in gate.values():need(plan['input_seals'].get(value['path'])==value['sha256'],'Tiny gate byte proof omitted')
++    expected_masks=['explicit_causal_prefix_mean','zero_bias_full_mean_refuses_implicit_causal','explicit_causal_and_key_one_padding_mean']
++    for gate,tokens in zip(plan['tiny_gates'],[17,128]):
++        body=json.loads(pin(gate['body']).read_bytes());owned_body=json.loads(pin(gate['owner']).read_bytes());actual=owned_body.get('owned',owned_body.get('actual_owner_result'))
++        need(owned_body['complete'] is True and parent.settled(actual),'Dense tiny actual natural process/Job settlement absent')
++        command=owned_body.get('command',[]);exact=command.index('--exact') if '--exact' in command else -1
++        selector='inference_engine::pool::arbiter::qualification::software_v2::attention_diagnostic::software_v2_synthetic_large_dense_gqa_allocation_t'+str(tokens)
++        need(exact>=0 and command[exact+1]==selector,'Dense17/128 selectors required; no Flash8192 transfer')
++        need(actual['suspended_assignment']['image']['sha256']==image['sha256'] and actual['suspended_assignment']['execution_user_sid']==SID,'Dense tiny image/SID differs')
++        need(body['complete'] is True and body['attention_mode']=='explicit_mask_dense' and body['tokens']==tokens and len(body['controls'])==3,'All3 actual dense mask controls required')
++        need(len(gate['profiling'])==len(gate['optimized'])==3,'All3 actual mask output populations required')
++        for index,(control,mask) in enumerate(zip(body['controls'],expected_masks)):
++            need(control['tokens']==tokens and control['mask_control']==mask and control['attention_mode']=='explicit_mask_dense' and control['graph_outputs']==['context'] and control['model_weights_loaded'] is False and 0<=control['maximum_error']<=.0001,'Actual Dense tiny causal/full/hole value/ABI proof absent')
++            if index==2:need(control['masked_key_one_value_spike']==.25,'Padding-hole sensitivity witness absent')
++            for key,field in [('profiling','profiling_path'),('optimized','optimized_graph_path')]:need(pin(gate[key][index]).samefile(unaliased(control[field])),'Actual dense tiny output pin differs')
++        for value in [gate['body'],gate['owner'],*gate['profiling'],*gate['optimized']]:need(plan['input_seals'].get(value['path'])==value['sha256'],'Dense tiny actual proof omitted from seals')
+     reviewed=json.loads(pin(plan['optimized_tiny_review']).read_bytes())
+-    need(reviewed['schema']=='airk.private.reviewed-gqa-native-tiny-gates/1' and reviewed['complete'] is True and reviewed['native_image_sha256']==image['sha256'] and reviewed['flash_environment_value']=='0','Actual Root-reviewed tiny optimized-attribute gate absent')
+-    need(reviewed['tokens']==[17,8192] and reviewed['all_internal_allocated_outputs']==3 and reviewed['optimized_graphs_sha256']==[r['optimized']['sha256'] for r in plan['tiny_gates']],'Tiny optimized/allocated output population changed')
+-    output=Path(plan['output_root']);need(output.is_absolute() and output.parent.resolve(strict=True)==OUTPUT_PARENT.resolve() and re.fullmatch(r'large-native-profiled-execution-r[0-9]+',output.name) and not output.exists(),'Fresh approved private output root required')
++    need(reviewed['schema']=='airk.private.reviewed-gqa-native-dense-tiny-gates/1' and reviewed['complete'] is True and reviewed['native_image_sha256']==image['sha256'] and reviewed['flash_environment_value']=='0','Actual Root dense-only review absent')
++    need(reviewed['tokens']==[17,128] and reviewed['all_internal_allocated_outputs']==3 and reviewed['mask_controls']==expected_masks and reviewed['optimized_graphs_sha256']==[[v['sha256'] for v in gate['optimized']] for gate in plan['tiny_gates']],'Dense tiny reviewed populations changed')
++    output=Path(plan['output_root']);need(output.is_absolute() and output.parent.resolve(strict=True)==OUTPUT_PARENT.resolve() and re.fullmatch(r'dense-native-profiled-execution-r[0-9]+',output.name) and not output.exists(),'Fresh approved private output root required')
+     from security import observe
+     actual_security=observe(output.parent)
+     need(actual_security==card['approved_output_parent_security'] and actual_security['owner_sid']==SID,'Approved human output-parent owner/DACL changed')
+@@ -127,12 +130,13 @@
+         need('optimized_graph_path' not in value and 'external_path' not in value,'Profiling-only result claims an optimized artifact')
+ def no_optimized_outputs(root,observed_files=()):
+     need(not {'graph','weights'}.intersection(observed_files),'Optimized artifact observed during profiling-only load')
+-    for name in ['large-gqa-optimized.onnx','large-gqa-optimized.weights.bin']:
++    for name in ['large-dense-gqa-optimized.onnx','large-dense-gqa-optimized.weights.bin']:
+         try:(Path(root)/name).lstat()
+         except FileNotFoundError:continue
+         raise ValueError('Profiling-only optimized output must remain absent: '+name)
+ def native_result(body,plan,request,owned):
+-    need(body.get('kind')=='large_attention_diagnostic' and body.get('complete') is True and body.get('profiling_enabled') is True and body.get('diagnostic_measurement_identity')=='large-fp32-gqa-profiled/2','Diagnostic result missing/refused')
++    need(body.get('attention_mode')=='explicit_mask_dense','Actual Dense attention mode missing/refused')
++    need(body.get('kind')=='large_dense_attention_diagnostic' and body.get('complete') is True and body.get('profiling_enabled') is True and body.get('diagnostic_measurement_identity')=='large-fp32-explicit-mask-dense-profiled/1','Diagnostic result missing/refused')
+     profiling_only_result(body)
+     for key,value in [('model','arbiter-context-qwen3-4b'),('process_id',owned['owned_leader_pid']),('native_binary_sha256',owned['suspended_assignment']['image']['sha256']),('input_sha256',plan['native_input']['sha256']),('profile',plan['profile']),('execution_user',SID),('source_manifest',request['source_manifest']),('profile_source_sha256',request['profile']['sha256']),('resource_policy',request['policy']),('resource_policy_digest',request['policy_digest']),('cpu_fit',plan['cpu_fit'])]:
+         need(body.get(key)==value,'Native diagnostic identity differs: '+key)
+@@ -153,7 +157,7 @@
+     environment=dict(os.environ);environment.update({'TEMP':str(output/'temp'),'TMP':str(output/'temp'),'TMPDIR':str(output/'temp'),
+         'ORT_GQA_DISABLE_FLASH_ATTENTION':'0','AIRK_SOFTWARE_V2_NATIVE_INPUT':plan['native_input']['path'],
+         'AIRK_SOFTWARE_V2_NATIVE_INPUT_SHA256':plan['native_input']['sha256'],'AIRK_SOFTWARE_V2_NATIVE_OUTPUT':str(raw)})
+-    receipt={'schema':'airk.private.large-profiled-owned-execution/2','diagnostic_measurement_identity':'large-fp32-gqa-profiled/2','optimized_model_saving':False,'complete':False,'model_qualified':False,'human_quality_claim':False,
++    receipt={'schema':'airk.private.large-dense-profiled-owned-execution/1','diagnostic_measurement_identity':'large-fp32-explicit-mask-dense-profiled/1','optimized_model_saving':False,'complete':False,'model_qualified':False,'human_quality_claim':False,
+         'plan_sha256':args.plan_sha256,'command':argv,'limits':plan['limits'],'failure':None,'post_input_drift':[],
+         'original_phase_deadline':deadline,'selected_original_numeric_ordinals':[3],'original_numeric_fixture_rows':3,
+         'not_run_by_design':[1,2],'no_warmup':True,'no_automatic_retry':True,'no_other_processes_touched':True}
+@@ -192,7 +196,7 @@
+         for key in ['owned_cleanup','operation_watch','capacity_watch']:
+             if hasattr(error,key):receipt[key]=getattr(error,key)
+         if watch is not None:receipt['capacity_watch']=watch.capacity.proof()
+-        for path in [raw,journal,*sorted(output.glob('large-gqa-profile*.json'))]:
++        for path in [raw,journal,*sorted(output.glob('large-dense-gqa-profile*.json'))]:
+             if path.is_file() and path.stat().st_size<=GRAPH:receipt.setdefault('partial_outputs',[]).append({'path':str(path),'bytes':path.stat().st_size,'sha256':digest(path)})
+     finally:
+         if watch is not None:
+--- large/watch.py
++++ dense/watch.py
+@@ -13,12 +13,12 @@
+             super().inspect()
+             if self.process is not None:
+                 files={}
+-                names={'graph':'large-gqa-optimized.onnx','weights':'large-gqa-optimized.weights.bin',
++                names={'graph':'large-dense-gqa-optimized.onnx','weights':'large-dense-gqa-optimized.weights.bin',
+                     'body':'native-result.json','stdout':'stdout-stderr.log'}
+                 for key,name in names.items():
+                     value=self.reader.file(Path(root)/name)
+                     if value is not None:files[key]=value
+-                profiles=sorted(Path(root).glob('large-gqa-profile*.json'))
++                profiles=sorted(Path(root).glob('large-dense-gqa-profile*.json'))
+                 if len(profiles)>1:raise base.ObservationFailure('More than one original profiling output')
+                 for path in profiles:
+                     value=self.reader.file(path)

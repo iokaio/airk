@@ -1,0 +1,219 @@
+--- a/scripts/dev/receipt_runner.py
++++ b/scripts/dev/receipt_runner.py
+@@ -144,10 +144,91 @@
+ 
+ 
+ def is_test_command(command):
+-    words = [Path(word).name.lower().removesuffix(".exe") for word in command[:4]]
+-    joined = " ".join(command).lower()
+-    return ("nextest" in words or ("cargo" in words[:1] and "test" in words)
+-            or "--test" in command or "unittest" in joined)
++    """Recognize test execution, rather than a compilation target or argv text.
++
++    Classify the actual argv without executing or shell-parsing it. In particular,
++    Cargo build/check/clippy --test and --bench only select compilation targets.
++    """
++    if not command:
++        return False
++    program = str(command[0]).replace("\\", "/").rsplit("/", 1)[-1].lower().removesuffix(".exe")
++    args = list(command[1:])
++    if program == "env":
++        while args:
++            word = args.pop(0)
++            if word == "--":
++                return is_test_command(args)
++            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", word, re.DOTALL) or word in ("-i", "--ignore-environment"):
++                continue
++            if word in ("-u", "--unset", "-C", "--chdir"):
++                if not args:
++                    return False
++                args.pop(0)
++                continue
++            if word.startswith(("--unset=", "--chdir=")):
++                continue
++            # env -S is a shell-like string, not this argv's executable.
++            return False if word.startswith("-") else is_test_command([word, *args])
++        return False
++    if program == "cargo":
++        while args:
++            word = args.pop(0)
++            if word.startswith("+") or word in ("-v", "-vv", "-q", "--verbose", "--quiet", "--offline", "--locked", "--frozen"):
++                continue
++            if word in ("--color", "--config", "-Z", "-C"):
++                if not args:
++                    return False
++                args.pop(0)
++                continue
++            if word.startswith(("--color=", "--config=", "-Z", "-C")):
++                continue
++            if word == "test":
++                cargo_args = args[:args.index("--")] if "--" in args else args
++                return not any(flag in cargo_args for flag in ("--no-run", "--help", "-h", "--version", "-V")) and "--list" not in args
++            if word == "nextest":
++                return is_test_command(["cargo-nextest", *args])
++            return False
++        return False
++    if program in ("cargo-nextest", "nextest"):
++        if args[:1] == ["nextest"]:
++            args.pop(0)
++        return args[:1] == ["run"] and not any(flag in args for flag in ("--help", "-h", "--version", "-V", "--list"))
++    if re.fullmatch(r"python(?:[0-9]+(?:\.[0-9]+)*)?|py", program):
++        while args:
++            word = args.pop(0)
++            if word in ("-B", "-I", "-u", "-E", "-s", "-S", "-q") or (program == "py" and re.fullmatch(r"-3(?:\.[0-9]+)?", word)):
++                continue
++            if word in ("-W", "-X"):
++                if not args:
++                    return False
++                args.pop(0)
++                continue
++            if word.startswith(("-W", "-X")):
++                continue
++            if word == "-m":
++                return args[:1] == ["unittest"] and not any(flag in args[1:] for flag in ("--help", "-h"))
++            # Only the maintained environment wrapper transparently forwards argv.
++            path = Path(word) if Path(word).is_absolute() else ROOT / word
++            if path.resolve() == (ROOT / "scripts/static-runtime-environment.py").resolve() and "--" in args:
++                return is_test_command(args[args.index("--") + 1:])
++            return False
++        return False
++    if program == "node":
++        selected = False
++        while args:
++            word = args.pop(0)
++            if word in ("--help", "-h", "--version", "-v", "--eval", "-e", "--print", "-p", "--check", "-c"):
++                return False
++            if word == "--" or not word.startswith("-"):
++                return selected
++            if word == "--test":
++                selected = True
++            elif word in ("--import", "--require", "-r", "--loader", "--test-reporter", "--test-name-pattern", "--test-skip-pattern", "--test-concurrency", "--test-timeout", "--test-reporter-destination"):
++                if not args:
++                    return False
++                args.pop(0)
++        return selected
++    return False
+ 
+ 
+ def load_module(name, path):
+--- a/scripts/tests/test_receipt_runner.py
++++ b/scripts/tests/test_receipt_runner.py
+@@ -53,6 +53,47 @@
+         self.assertTrue(RUNNER.is_test_command(["node", "--test", "out/test/a.test.js"]))
+         self.assertTrue(RUNNER.is_test_command(["python", "-m", "unittest", "discover"]))
+         self.assertFalse(RUNNER.is_test_command(["python", "scripts/dev-check.py", "-p", "airk-core"]))
++
++    def test_cargo_compilation_target_selectors_are_not_test_execution(self):
++        observed = ["cargo", "clippy", "-p", "airk-cli", "--test", "admin_plane", "--all-features", "--locked", "--timings", "--", "-D", "warnings"]
++        self.assertFalse(RUNNER.is_test_command(observed))
++        for subcommand in ("clippy", "check", "build"):
++            for selector in ("--test", "--bench", "--tests", "--benches", "--all-targets"):
++                with self.subTest(subcommand=subcommand, selector=selector):
++                    self.assertFalse(RUNNER.is_test_command(["cargo", subcommand, selector, "unittest"]))
++        for command in (["cargo", "bench", "--bench", "test"], ["cargo", "run", "--", "--test"],
++                        ["cargo", "nextest", "list"], ["cargo", "test", "--no-run"],
++                        ["cargo", "test", "--", "--list"], ["cargo", "test", "--help"]):
++            with self.subTest(command=command):
++                self.assertFalse(RUNNER.is_test_command(command))
++
++    def test_runner_identity_and_global_options_preserve_real_test_execution(self):
++        for command in ([r"C:\tools\cargo.exe", "+1.98.0", "--color", "always", "--config=net.offline=true", "test", "--test", "admin_plane"],
++                        ["/home/human/.cargo/bin/cargo", "-Z", "unstable-options", "nextest", "run", "-E", "test(example)"],
++                        ["cargo-nextest", "nextest", "run"], ["nextest", "run"],
++                        ["python3.13", "-I", "-B", "-X", "utf8", "-m", "unittest", "discover"],
++                        ["py.exe", "-3.13", "-m", "unittest"],
++                        ["node", "--import", "bootstrap.mjs", "--test", "--test-reporter", "spec", "a.test.js"]):
++            with self.subTest(command=command):
++                self.assertTrue(RUNNER.is_test_command(command))
++
++    def test_env_prefix_and_maintained_wrapper_preserve_command_semantics(self):
++        prefix = ["/usr/bin/env", "-i", "--unset", "OLD", "--chdir=/source", "LABEL=unittest", "--"]
++        wrapper = ["python3.13", "-B", "scripts/static-runtime-environment.py", "--environment-file", "static.json", "--"]
++        for before in (prefix, wrapper, prefix + wrapper):
++            self.assertTrue(RUNNER.is_test_command([*before, "cargo", "test", "--test", "admin_plane"]))
++            self.assertFalse(RUNNER.is_test_command([*before, "cargo", "clippy", "--test", "admin_plane"]))
++        self.assertFalse(RUNNER.is_test_command(["env", "-S", "cargo test"]))
++        self.assertFalse(RUNNER.is_test_command(["env", "--unset"]))
++
++    def test_arguments_and_inline_code_do_not_impersonate_a_test_runner(self):
++        for command in (["python", "-c", "print('unittest')", "--test"],
++                        ["python", "scripts/dev-check.py", "--test", "unittest"],
++                        ["node", "script.js", "--test"], ["node", "--", "--test"],
++                        ["node", "--eval", "'--test'"], ["node", "--test", "--help"],
++                        ["python", "-m", "unittest", "--help"], [], ["echo", "cargo", "test"]):
++            with self.subTest(command=command):
++                self.assertFalse(RUNNER.is_test_command(command))
+ 
+     def test_rejects_bad_names_and_missing_commands(self):
+         for argv in (["Bad_Name", "echo"], ["ok-name"]):
+@@ -329,11 +370,12 @@
+             self.assertTrue((out / "plain-run-runner.py").is_file())
+ 
+     def test_empty_test_selection_fails(self):
+-        # A successful test command that reports zero selected tests (the trailing
+-        # "unittest" argument marks it as a test command).
+-        empty = (sys.executable, "-c", "print('Ran 0 tests in 0.001s')", "unittest")
+-        with tempfile.TemporaryDirectory() as temporary:
+-            out = Path(temporary)
++        with tempfile.TemporaryDirectory() as temporary:
++            out = Path(temporary)
++            empty_source = out / "empty-tests"
++            empty_source.mkdir()
++            # Real unittest discovery exercises the guard without synthetic markers.
++            empty = (sys.executable, "-B", "-m", "unittest", "discover", "-s", str(empty_source))
+             done = self.run_runner(out, "empty-selection", *empty)
+             self.assertEqual(done.returncode, 4, done.stdout + done.stderr)
+             self.assertEqual(json.loads((out / "empty-selection.json").read_text())["selected_tests"], 0)
+@@ -413,7 +455,7 @@
+             with self.subTest(command=command):
+                 self.assertFalse(RUNNER.cargo_timing_command(command, ROOT))
+ 
+-    def timing_receipt(self, command, *, banner=True, outside=False, stale=False):
++    def timing_receipt(self, command, *, banner=True, outside=False, stale=False, expected_status=0):
+         # A fake child creates this test's private artifacts and Cargo banner.
+         # The newest alias deliberately belongs to another owner. No Cargo runs.
+         class Child:
+@@ -444,10 +486,31 @@
+             with patch.object(RUNNER, "ROOT", ROOT), patch.object(RUNNER.subprocess, "Popen", side_effect=launch), \
+                     patch.object(RUNNER.time, "time", return_value=1000), contextlib.redirect_stdout(io.StringIO()):
+                 status = RUNNER.main(["--groups", "", "--out", str(out), "--target-dir", str(target), "timing-owner", *command])
+-            self.assertEqual(status, 0)
++            self.assertEqual(status, expected_status)
+             receipt = json.loads((out / "timing-owner.json").read_text(encoding="utf-8"))
+             copied = out / "timing-owner-cargo-timing.html"
+             return receipt, copied.read_bytes() if copied.exists() else None
++
++    def test_compile_target_receipt_passes_without_inventing_test_selections(self):
++        for subcommand in ("clippy", "check", "build"):
++            with self.subTest(subcommand=subcommand):
++                receipt, copied = self.timing_receipt(["cargo", subcommand, "-p", "airk-cli", "--test", "admin_plane", "--all-features", "--locked", "--timings", "--", "-D", "warnings"])
++                self.assertTrue(receipt["passed"])
++                self.assertEqual(receipt["exit_code"], 0)
++                self.assertEqual(receipt["runner_exit_code"], 0)
++                self.assertIsNone(receipt["selected_tests"])
++                self.assertEqual(copied, b"the command's actual saved Cargo report")
++
++    def test_real_test_command_without_selection_still_refuses_receipt(self):
++        for command in (["cargo", "test", "--test", "admin_plane", "--timings"],
++                        ["cargo", "nextest", "run", "--timings"], ["node", "--test", "a.test.js"],
++                        ["python", "-m", "unittest", "discover"]):
++            with self.subTest(command=command):
++                receipt, _ = self.timing_receipt(command, expected_status=4)
++                self.assertFalse(receipt["passed"])
++                self.assertEqual(receipt["exit_code"], 0)
++                self.assertEqual(receipt["runner_exit_code"], 4)
++                self.assertIsNone(receipt["selected_tests"])
+ 
+     def test_fresh_incidental_report_is_not_copied_for_python_or_node(self):
+         for command in ([sys.executable, "-c", "pass"], ["node", "a-script.cjs"]):
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -73,7 +73,7 @@
+ 
+ Structural steps ([simplification plan](docs/simplify-plan.md)) compare selected test identities and outcomes, never counts: `python scripts/dev/test_identities.py record --output <file> -- <cargo test selection>` records them per test binary, and `compare` reports added, removed and changed identities. `python scripts/dev/simplify_metrics.py` prints the plan's structural metrics; they are reported, never gates. The S5 boundary gates are enforced: `python scripts/dev/boundary_check.py` fails on an unreviewed `#[path]` mount, `include!` of Rust source or orphan file, a workspace crate edge outside the allowed list, or a module joining or merging a top-level module cycle. Its expectations live in `scripts/dev/boundary-exceptions.json`. A change there is a reviewed diff; `--write-baseline` regenerates it from the tree only for that review, keeping existing reasons. Leaving a cycle always passes, so shrink the baseline in the same change that untangles a module.
+ 
+-Two receipt helpers support the ledger. `python scripts/dev/receipt_runner.py --tier T0 <name> <command…>` runs one check and writes a receipt (consumed-input digests before and after, selected-test count, Cargo timings and nextest JUnit copies) to the ignored `artifacts/split/receipts/`; a test command that selects no tests fails. Before launching the child it flushes an immutable `<name>-start.json`, the exact runner source and a provisional `<name>.json` with `status: started` and `passed: false`. The start records the exact command, selected source/command/runtime hashes and timestamp; it remains evidence of an attempt if the runner is killed. A started receipt never qualifies a completed run, and the same name cannot be replayed over retained evidence. SIGINT/SIGBREAK or KeyboardInterrupt finalizes an interrupted, nonpassing receipt and returns 130; `exit_code` and `child` describe only the direct child actually observed, while `runner_exit_code` records the wrapper's disposition. A missing child exit or descendant settlement is never invented. Uncatchable termination can leave the provisional receipt; inspect retained processes and diagnostics before starting another Cargo owner. `python scripts/dev/cli_golden.py capture --binary <exe> --cases fixtures/cli-golden/cases.json --out <file>` records exit status, stdout and stderr for each reviewed case, with and without `AIRK_ERROR_FORMAT=json`, against owner-only fixture folders, normalizing machine paths and user names; `compare <expected> <actual> [--replace OLD=NEW]` checks a later capture against it.
++Two receipt helpers support the ledger. `python scripts/dev/receipt_runner.py --tier T0 <name> <command…>` runs one check and writes a receipt (consumed-input digests before and after, selected-test count, Cargo timings and nextest JUnit copies) to the ignored `artifacts/split/receipts/`; a recognized test execution command that selects no tests fails. Cargo `build`, `check` and `clippy` target selectors such as `--test` and `--bench` compile targets and do not claim runtime test selection. Before launching the child it flushes an immutable `<name>-start.json`, the exact runner source and a provisional `<name>.json` with `status: started` and `passed: false`. The start records the exact command, selected source/command/runtime hashes and timestamp; it remains evidence of an attempt if the runner is killed. A started receipt never qualifies a completed run, and the same name cannot be replayed over retained evidence. SIGINT/SIGBREAK or KeyboardInterrupt finalizes an interrupted, nonpassing receipt and returns 130; `exit_code` and `child` describe only the direct child actually observed, while `runner_exit_code` records the wrapper's disposition. A missing child exit or descendant settlement is never invented. Uncatchable termination can leave the provisional receipt; inspect retained processes and diagnostics before starting another Cargo owner. `python scripts/dev/cli_golden.py capture --binary <exe> --cases fixtures/cli-golden/cases.json --out <file>` records exit status, stdout and stderr for each reviewed case, with and without `AIRK_ERROR_FORMAT=json`, against owner-only fixture folders, normalizing machine paths and user names; `compare <expected> <actual> [--replace OLD=NEW]` checks a later capture against it.
+ 
+ Every helper invocation includes Cargo `--timings`. On the next necessary build or Clippy run, record the exact command, selected packages/features/targets, persistent target directory, incremental setting, elapsed time, result and timing-report location. Retain evidence outside the target before Neo cleanup. Use those observations to investigate cost; do not launch speculative benchmarks or broad builds just to compare workflow settings. A scoped pass proves only its selected configuration. Required workspace, lightweight component, in-process inference, applicable legacy-helper, runtime, packaging and release checks below remain in force.
+ 

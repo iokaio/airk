@@ -1,0 +1,65 @@
+--- a/crates/airk-cli/src/main.rs
++++ b/crates/airk-cli/src/main.rs
+@@ -373,7 +373,9 @@
+     /// lexical matches during helper outages; execution reports the served mode and
+     /// semantic incompleteness. Explicit vector/hybrid and saved RequireComplete refuse
+     /// helper outages. Hybrid can still serve lexical evidence during a pending index
+-    /// upgrade, with that separate limitation disclosed. --mode lexical uses AND terms.
++    /// upgrade, with that separate limitation disclosed. --mode lexical uses normalized
++    /// AND terms: punctuation and quotation marks separate terms; quotes do not enable
++    /// phrase matching. Lexical order is stable index identity, not relevance.
+     Search {
+         #[command(flatten)]
+         verification: VerificationOptions,
+--- a/packages/vscode/src/explorerWebview/search.tsx
++++ b/packages/vscode/src/explorerWebview/search.tsx
+@@ -89,6 +89,7 @@
+                 <label class="check"><input type="checkbox" checked={form.fullChunks} onChange={event => field('fullChunks', (event.target as HTMLInputElement).checked)} /> Full chunks</label>
+                 <button type="submit" disabled={busy || !canSearch}>{busy ? 'Searching…' : 'Search'}</button>
+             </form>
++            {form.mode === 'lexical' && <p class="muted">All normalized query terms must occur in a candidate chunk or its path. Punctuation and quotation marks separate terms; quotes do not enable phrase matching. Results follow stable index order, not relevance.</p>}
+             {form.mode === 'vector' && <p class="muted">Describe a concept or behavior in natural language. Semantic search ranks indexed passages by embedding similarity; the exact query words need not appear.</p>}
+             {vectorReason && <p class="muted">{vectorReason}</p>}
+             {status?.detailsObservedAt !== undefined && (status.vectorsEnabled !== undefined || status.localModelReady !== undefined) && <p class="muted">Saved policy details observed {ago(status.detailsObservedAt)}.</p>}
+--- a/packages/vscode/src/explorerHelp/search.md
++++ b/packages/vscode/src/explorerHelp/search.md
+@@ -12,7 +12,7 @@
+ 
+ ## Steps
+ 
+-1. Enter a query. For **Semantic (by meaning)**, describe the concept or behavior you want to find; exact words need not appear. **Lexical (all words)** requires all query words to appear.
++1. Enter a query. For **Semantic (by meaning)**, describe the concept or behavior you want to find; exact words need not appear. **Lexical (all words)** requires all normalized query terms to occur in a candidate chunk or its path. Punctuation and quotation marks separate terms; quotation marks do not enable phrase matching.
+ 2. Choose a mode. **Hybrid (lexical + semantic)** combines both approaches. **Collection policy** follows the project's saved policy; the result says which mode AIRK applied. Semantic search uses the native vector mode, including in saved recipes.
+ 3. Optionally set a path scope relative to the project, such as `src/auth/`.
+ 4. Choose **Search**. Use **Expand** for more indexed lines, **Inspect** for the file record, or **Open source** to open the file.
+@@ -21,7 +21,7 @@
+ 
+ ## Limits
+ 
+-- Lexical results are ordered by index identity, not relevance.
++- Lexical results are ordered by stable index identity, not relevance. A low limit can omit a literal-containing result even when other candidates contain the separate AND terms. Narrow the path scope or raise the limit. Snippets prefer the contiguous query spelling when it is already present in a selected chunk; this does not change matching or ranking.
+ - Semantic and hybrid results are similarity candidates, not proof of meaning. Enable vectors in Management to use these modes. Building, partial or failed semantic coverage can mean empty, unavailable or incomplete results; readiness appears alongside the results.
+ - "N returned · limit L · more may exist" means the limit cut the list; raise it or narrow the query.
+ - Open source requests a dated native saved-source check against the citation and current source policy, then observes unsaved editor state. A past match does not establish continued freshness. Workbench retains the complete source-open observation separately from the original query and offers JSON copy/export.
+--- a/docs/mcp.md
++++ b/docs/mcp.md
+@@ -151,7 +151,7 @@
+ 
+ Set `AIRK_MCP_RESPONSE_MODE=terse` on the MCP worker to omit repeated full readiness, freshness and indexing blocks from ordinary evidence replies. Terse replies retain a compact `coverage` state, exact `publication.token`, collection, citations, hashes, validators and truncation. `status` and `capabilities` remain detailed. Terse is the default; Full is available explicitly; a terse reply still does not verify live source bytes.
+ 
+-`search.mode` accepts `lexical` (explicit AND-term retrieval), `vector` (approximate similarity using an explicitly provisioned local word-vector or CPU ONNX model), or `hybrid` (bounded reciprocal-rank fusion of both branches from one pinned generation). Omitting `mode` uses the saved collection policy: partial hybrid by default, lexical while vectors are pending if selected, or an explicit unavailable result until vectors are complete if required. The panel's vector opt-out selects lexical and rejects explicit vector/hybrid requests. Search results and `status` disclose pending, partial, ready or failed semantic coverage against the exact current publication. Explicit vector requests never silently fall back to lexical evidence. These read-only tools do not start enrichment, download models or use cloud inference. `semantic: true` is a compatibility alias for vector and cannot be combined with an explicit mode. Similarity is not complete language understanding, answer generation, resolved references or a relevance guarantee.
++`search.mode` accepts `lexical` (explicit normalized AND-term retrieval; punctuation and quotes separate terms, so quotes do not enable phrase matching; lexical order follows stable index identity rather than relevance), `vector` (approximate similarity using an explicitly provisioned local word-vector or CPU ONNX model), or `hybrid` (bounded reciprocal-rank fusion of both branches from one pinned generation). Omitting `mode` uses the saved collection policy: partial hybrid by default, lexical while vectors are pending if selected, or an explicit unavailable result until vectors are complete if required. The panel's vector opt-out selects lexical and rejects explicit vector/hybrid requests. Search results and `status` disclose pending, partial, ready or failed semantic coverage against the exact current publication. Explicit vector requests never silently fall back to lexical evidence. These read-only tools do not start enrichment, download models or use cloud inference. `semantic: true` is a compatibility alias for vector and cannot be combined with an explicit mode. Similarity is not complete language understanding, answer generation, resolved references or a relevance guarantee.
+ 
+ Successful result objects can include an opaque `request_id` for optional local usefulness feedback. [Usage reporting](usage-reporting.md) defaults to content-free daily aggregates and measures the serialized tool-result envelope once per outer call. `AIRK_USAGE_MODE=disabled` opts out. Recording failures never change tool success/error results; reports, feedback and recording controls remain CLI/extension maintenance operations and add no MCP tools.
+ 
+--- a/docs/mcp-developer-guide.md
++++ b/docs/mcp-developer-guide.md
+@@ -184,7 +184,7 @@
+ 
+ **Inputs:** `query`; optional `mode`, `path_prefix`, `language`, `evidence_kind`, `exclude_path_prefix`, `limit`, `max_bytes`, `full_chunks` and response options. Language is an exact saved extraction label. Evidence kind is `code`, `document`, `configuration` or `unknown`, derived from indexed extraction metadata rather than a filename guess. Exclusion is one literal relative prefix for this query, not a change to indexing or authorization. Lexical terms are ANDed. Omitted mode follows saved collection policy; an explicit mode does not silently mean another mode.
+ 
+-**Result and limits:** Ranked hits, citations, exact publication and truncation/coverage information. Filter candidate discovery has its own finite work limit; a truncated roster is disclosed rather than reported as an exhaustive absence. Optional bounded `definitions` hints identify verified native declaration records from the same sealed read, with exact/unknown count precision and cited candidate pointers; imported assertions are excluded from this hint family. Their pointer list can be shorter than the qualified count; they do not change search ranking or lexical AND semantics. Focused snippets are the default; `full_chunks` changes returned text, not the indexed source. Hybrid results while semantic work is partial do not prove complete vector coverage. Prose, comments and scripts can rank alongside code; for a known type/function use definition lookup first.
++**Result and limits:** Ranked hits, citations, exact publication and truncation/coverage information. Filter candidate discovery has its own finite work limit; a truncated roster is disclosed rather than reported as an exhaustive absence. Optional bounded `definitions` hints identify verified native declaration records from the same sealed read, with exact/unknown count precision and cited candidate pointers; imported assertions are excluded from this hint family. Their pointer list can be shorter than the qualified count; they do not change search ranking or lexical AND semantics. Focused snippets are the default; `full_chunks` changes returned text, not the indexed source. Lexical matching requires normalized AND terms in a candidate chunk or path; punctuation and quotes separate terms, and quotes do not enable phrase matching. Lexical candidate order is stable index identity, not relevance. A contiguous original query spelling can guide excerpt focus inside an already selected chunk without changing matching, candidate order or limits. Hybrid results while semantic work is partial do not prove complete vector coverage. Prose, comments and scripts can rank alongside code; for a known type/function use definition lookup first.
+ 
+ ```json
+ {

@@ -1,0 +1,11 @@
+--- reference_parent.py
++++ reference_parent_no_site_r2.py
+@@ -135,7 +135,7 @@
+     for name in ('cuda-cache', 'torch-cache', 'hf-cache', 'pycache'):
+         (output / name).mkdir()
+     raw_path, log_path = output / 'torch-output.json', output / 'stdout-stderr.log'
+-    command = [str(base_python), '-B', '-X', 'pycache_prefix=' + str(output / 'pycache'), str(worker.pinned(plan['worker'])), '--plan', str(plan_path), '--plan-sha256', expected, '--output', str(raw_path)]
++    command = [str(base_python), '-B', '-S', '-X', 'pycache_prefix=' + str(output / 'pycache'), str(worker.pinned(plan['worker'])), '--plan', str(plan_path), '--plan-sha256', expected, '--output', str(raw_path)]
+     environment = dict(os.environ)
+     environment.update({'PYTHONDONTWRITEBYTECODE': '1', 'PYTHONPATH': plan['site_packages'], 'HF_HUB_OFFLINE': '1',
+         'TRANSFORMERS_OFFLINE': '1', 'HF_HUB_DISABLE_TELEMETRY': '1', 'CUBLAS_WORKSPACE_CONFIG': ':4096:8',

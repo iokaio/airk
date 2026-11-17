@@ -1,0 +1,592 @@
+diff --git a/packages/vscode/src/workbenchContracts.ts b/packages/vscode/src/workbenchContracts.ts
+index 4500a6b..b914a79 100644
+--- a/packages/vscode/src/workbenchContracts.ts
++++ b/packages/vscode/src/workbenchContracts.ts
+@@ -3,9 +3,40 @@
+ export type Value = Record<string, unknown>;
+ export const WORKBENCH_HELP_ROUTE='help?focus=engine-workbench';
+ export interface WorkbenchTurn { id: string; at: number; input: string; format: 'structured' | 'json' | 'markdown'; request?: Value; envelope?: Value; error?: string; trimmed?: boolean }
+-export interface WorkbenchSession { schema: 1; id: string; project: string; title: string; createdAt: number; updatedAt: number; revision: number; omitted: number; turns: WorkbenchTurn[] }
++export interface WorkbenchFormDraft { activeTool:string; values:Record<string,Record<string,string>>; revision:number; scope:string; recipe:string }
++export interface WorkbenchSession { schema: 1; id: string; project: string; title: string; createdAt: number; updatedAt: number; revision: number; omitted: number; turns: WorkbenchTurn[]; formDraft?:WorkbenchFormDraft }
++const FORM_TOOLS=['search','symbols','references','read_file','outline','list_files','file_info','imports','code_facts','document_facts','changes','context','relationships','status','diagnostics','capabilities','help'];
++const FORM_RECIPES=['','definition','documents','impact','tests','component','readiness'];
++const validFormText=(value:unknown,max=32768):value is string=>typeof value==='string'&&value.length<=max&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value);
++export const defaultWorkbenchFormDraft=():WorkbenchFormDraft=>({activeTool:'search',values:{},revision:0,scope:'',recipe:''});
++export function validWorkbenchToolFormValues(raw:unknown):raw is Record<string,string>{
++    if(!raw||typeof raw!=='object'||Array.isArray(raw)||![Object.prototype,null].includes(Object.getPrototypeOf(raw)))return false;
++    const entries=Object.entries(raw);
++    return entries.length<=32&&entries.every(([key,value])=>/^[a-z][a-z0-9_]{0,63}$/.test(key)&&!['constructor','prototype'].includes(key)&&validFormText(value));
++}
++/** Validate storage/message shape only. Incomplete form values stay inert until Run validates them. */
++export function normalizeWorkbenchFormDraft(raw:unknown):WorkbenchFormDraft|undefined{
++    if(raw===undefined)return defaultWorkbenchFormDraft();
++    if(!raw||typeof raw!=='object'||Array.isArray(raw))return;
++    const draft=raw as Record<string,unknown>,keys=Object.keys(draft);
++    if(keys.some(key=>!['activeTool','values','revision','scope','recipe'].includes(key))
++        ||typeof draft.activeTool!=='string'||!FORM_TOOLS.includes(draft.activeTool)
++        ||!Number.isSafeInteger(draft.revision)||Number(draft.revision)<0||Number(draft.revision)>2147483647
++        ||!draft.values||typeof draft.values!=='object'||Array.isArray(draft.values)||![Object.prototype,null].includes(Object.getPrototypeOf(draft.values))
++        ||Object.keys(draft.values).length>FORM_TOOLS.length)return;
++    const scope=draft.scope??'',recipe=draft.recipe??'';
++    if(!validFormText(scope,1024)||typeof recipe!=='string'||!FORM_RECIPES.includes(recipe))return;
++    const values:Record<string,Record<string,string>>={};
++    for(const [tool,fields]of Object.entries(draft.values)){
++        if(!FORM_TOOLS.includes(tool)||!validWorkbenchToolFormValues(fields))return;
++        values[tool]={...fields};
++    }
++    const normalized={activeTool:draft.activeTool,values,revision:Number(draft.revision),scope,recipe};
++    if(new TextEncoder().encode(JSON.stringify(normalized)).length>131072)return;
++    return normalized;
++}
+ export interface EvidenceCard { id: string; path: string; start: number; end: number; hash: string; text: string; location?: unknown; step: string; publication?: string }
+-export interface Continuation { id:string; tool:string; callsRemaining:number }
++export interface Continuation { id:string; tool:string; callsRemaining:number;requiredRecordBytes?:number }
+ export interface WorkbenchSessionSummary { id: string; title: string; updatedAt: number; turns: number }
+ export interface WorkbenchState {
+     projects: { id: string; name: string }[]; project?: string; session?: WorkbenchSession;
+@@ -13,20 +44,83 @@ export interface WorkbenchState {
+     cards: Record<string, EvidenceCard[]>; busy: boolean; notice?: string; save: string;
+     continuations?:Record<string,Continuation[]>;
+     status?: Value; persistence: boolean; operations?: Value;
++    sessionEpoch?:number;
+ }
+ /** Host-to-webview display updates. Full result ownership stays in the host. */
+ export type WorkbenchUpdate =
+     | {type:'state';state:WorkbenchState}
+     | {type:'status';sessionId:string|undefined;project:string|undefined;status:Value|undefined}
+-    | {type:'saved';sessionId:string;project:string;revision:number;recent:WorkbenchState['recent'];save:string};
++    | {type:'saved';sessionId:string;project:string;revision:number;recent:WorkbenchState['recent'];save:string}
++    | {type:'formDraft';sessionId:string;project:string;epoch:number;formDraft:WorkbenchFormDraft;save:string};
+ /** Shared actual webview consumer; delta fields cannot replace result bodies. */
+ export function applyWorkbenchUpdate(previous:WorkbenchState,message:WorkbenchUpdate):WorkbenchState {
+-    if(message.type==='state')return message.state;
++    if(message.type==='state'){
++        const next=message.state;
++        if(typeof previous.sessionEpoch==='number'&&typeof next.sessionEpoch==='number'&&next.sessionEpoch<previous.sessionEpoch)return previous;
++        if(previous.session?.id===next.session?.id&&previous.session?.project===next.session?.project
++            &&previous.sessionEpoch===next.sessionEpoch&&previous.session&&next.session){
++            const before=normalizeWorkbenchFormDraft(previous.session.formDraft),incoming=normalizeWorkbenchFormDraft(next.session.formDraft);
++            if(before&&incoming&&before.revision>incoming.revision)return {...next,session:{...next.session,formDraft:before}};
++        }
++        return next;
++    }
+     if(message.sessionId!==previous.session?.id||message.project!==previous.session?.project)return previous;
+     if(message.type==='status')return {...previous,status:message.status};
+     if(!previous.session)return previous;
++    if(message.type==='formDraft'){
++        const current=normalizeWorkbenchFormDraft(previous.session.formDraft),incoming=normalizeWorkbenchFormDraft(message.formDraft);
++        if(message.epoch!==previous.sessionEpoch||!incoming||current&&incoming.revision<current.revision)return previous;
++        return {...previous,session:{...previous.session,formDraft:incoming},save:message.save};
++    }
+     return {...previous,session:{...previous.session,revision:message.revision},recent:message.recent,save:message.save};
+ }
++export interface WorkbenchToolField {
++    name:string;label:string;type:'string'|'integer'|'boolean';required:boolean;
++    values?:string[];description?:string;minimum?:number;maximum?:number;minLength?:number;maxLength?:number;
++}
++const fieldLabels:Record<string,string>={path_prefix:'Path prefix',exclude_path_prefix:'Exclude path prefix',evidence_kind:'Evidence type',name_match:'Name matching',compact:'Compact results',include_count:'Show count precision',include_files:'Summarize files',max_bytes:'Response byte budget'};
++/** Resolve only bundled local schema alternatives; no remote schema loading. */
++function fieldSchema(raw:unknown,root:Value,depth=0):Value {
++    const schema=object(raw);if(depth>4)return {};
++    if(typeof schema.$ref==='string'&&schema.$ref.startsWith('#/$defs/')){
++        const name=schema.$ref.slice('#/$defs/'.length);return {...fieldSchema(object(root.$defs)[name],root,depth+1),...schema};
++    }
++    const variants=Array.isArray(schema.anyOf)?schema.anyOf:Array.isArray(schema.oneOf)?schema.oneOf:[];
++    const selected=variants.map(value=>fieldSchema(value,root,depth+1)).find(value=>value.type!=='null'&&(value.type!==undefined||Array.isArray(value.enum)));
++    return selected?{...schema,...selected}:schema;
++}
++/** Shared by the actual form and tests so optional booleans stay typed and absent by default. */
++export function toolFormFields(raw:unknown):WorkbenchToolField[]{
++    const schema=object(raw),required=Array.isArray(schema.required)?schema.required:[];
++    return Object.entries(object(schema.properties)).map(([name,value])=>{
++        const spec=fieldSchema(value,schema),types=Array.isArray(spec.type)?spec.type:[spec.type];
++        const type:WorkbenchToolField['type']=types.includes('boolean')?'boolean':types.includes('integer')?'integer':'string';
++        return {name,label:fieldLabels[name]??name.replaceAll('_',' '),type,required:required.includes(name),
++            ...(Array.isArray(spec.enum)?{values:spec.enum.filter(item=>['string','number','boolean'].includes(typeof item)).map(String)}:{}),
++            ...(typeof spec.description==='string'?{description:spec.description}:{}),
++            ...(typeof spec.minLength==='number'?{minLength:spec.minLength}:{}),...(typeof spec.maxLength==='number'?{maxLength:Math.min(32768,spec.maxLength)}:{}),
++            ...(typeof spec.minimum==='number'?{minimum:spec.minimum}:{}),...(typeof spec.maximum==='number'?{maximum:spec.maximum}:{})};
++    });
++}
++export function toolFormArguments(schema:unknown,values:Record<string,string>):Value {
++    const fields=toolFormFields(schema),known=new Set(fields.map(field=>field.name)),entries:Array<[string,unknown]>=[];
++    for(const [name,value]of Object.entries(values))if(value!==''&&!known.has(name))throw new Error('Choose a field from the current tool form.');
++    for(const field of fields){
++        const value=values[field.name]??'';
++        if(value===''){if(field.required)throw new Error(`${field.label} is required.`);continue;}
++        if(value.length>(field.maxLength??4096)||(field.minLength!==undefined&&value.length<field.minLength))throw new Error(`${field.label} is outside the allowed input length.`);
++        if(field.values&&!field.values.includes(value))throw new Error(`Choose a supported ${field.label}.`);
++        if(field.type==='boolean'){
++            if(value!=='true'&&value!=='false')throw new Error(`Choose Yes, No or Default for ${field.label}.`);
++            entries.push([field.name,value==='true']);
++        }else if(field.type==='integer'){
++            const number=Number(value);
++            if(!Number.isSafeInteger(number)||(field.minimum!==undefined&&number<field.minimum)||(field.maximum!==undefined&&number>field.maximum))throw new Error(`Enter an allowed whole number for ${field.label}.`);
++            entries.push([field.name,number]);
++        }else entries.push([field.name,value]);
++    }
++    return Object.fromEntries(entries);
++}
+ export type WorkbenchMessage =
+     | { type: 'ready' | 'stop' | 'new' | 'clear' | 'manage' | 'help' | 'refresh' | 'retrySave' | 'fork' | 'forms' }
+     | { type: 'project' | 'recent' | 'delete'; id: string }
+@@ -35,13 +129,24 @@ export type WorkbenchMessage =
+     | { type: 'rerun' | 'saveStrategy' | 'remember'; turn: string }
+     | { type: 'open' | 'context'; turn: string; card: string }
+     | { type:'continue'; turn:string; step:string }
++    | { type:'followTarget';turn:string;step:string;target:string }
++    | { type:'followDefinition';turn:string;step:string;name:string;path:string }
++    | { type:'formDraft';sessionId:string;project:string;epoch:number;revision:number;tool:string;values?:Record<string,string>;scope?:string;recipe?:string }
++    | { type:'resetForm';sessionId:string;project:string;epoch:number;revision:number;tool:string }
+     | { type: 'copy' | 'export'; turn?: string; format: 'json' | 'markdown'; cards?: string[] };
+ export const object = (v: unknown): Value => v && typeof v === 'object' && !Array.isArray(v) ? v as Value : {};
+ export function parseWorkbenchMessage(raw: unknown): WorkbenchMessage | undefined {
+     const v = object(raw), type = v.type;
+     const str = (k: string, max = 128) => typeof v[k] === 'string' && (v[k] as string).length <= max && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(v[k] as string);
+     const exact = (keys: string[]) => Object.keys(v).every(k => keys.includes(k));
+-    if (typeof type !== 'string' || JSON.stringify(raw).length > 40000) { return; }
++    if (typeof type !== 'string' || JSON.stringify(raw).length > (type==='formDraft'?132096:40000)) { return; }
++    const formFence=()=>str('sessionId')&&str('project',64)&&/^[0-9a-f]{64}$/.test(String(v.project))
++        &&Number.isSafeInteger(v.epoch)&&Number(v.epoch)>=0&&Number.isSafeInteger(v.revision)&&Number(v.revision)>0&&Number(v.revision)<=2147483647
++        &&typeof v.tool==='string'&&FORM_TOOLS.includes(v.tool);
++    if(type==='formDraft'&&exact(['type','sessionId','project','epoch','revision','tool','values','scope','recipe'])&&formFence()
++        &&(v.values===undefined||validWorkbenchToolFormValues(v.values))&&(v.scope===undefined||validFormText(v.scope,1024))
++        &&(v.recipe===undefined||typeof v.recipe==='string'&&FORM_RECIPES.includes(v.recipe))){return v as WorkbenchMessage;}
++    if(type==='resetForm'&&exact(['type','sessionId','project','epoch','revision','tool'])&&formFence()){return v as WorkbenchMessage;}
+     if (['ready','stop','new','clear','manage','help','refresh','retrySave','fork','forms'].includes(type) && exact(['type'])) { return v as WorkbenchMessage; }
+     if (['project','recent','delete'].includes(type) && exact(['type','id']) && str('id')) { return v as WorkbenchMessage; }
+     if (type === 'rename' && exact(['type','title']) && str('title',80)) { return v as WorkbenchMessage; }
+@@ -50,6 +155,8 @@ export function parseWorkbenchMessage(raw: unknown): WorkbenchMessage | undefine
+     if (['rerun','saveStrategy','remember'].includes(type) && exact(['type','turn']) && str('turn')) { return v as WorkbenchMessage; }
+     if (['open','context'].includes(type) && exact(['type','turn','card']) && str('turn') && str('card')) { return v as WorkbenchMessage; }
+     if(type==='continue'&&exact(['type','turn','step'])&&str('turn')&&str('step')){return v as WorkbenchMessage;}
++    if(type==='followTarget'&&exact(['type','turn','step','target'])&&str('turn')&&str('step')&&str('target',4096)){return v as WorkbenchMessage;}
++    if(type==='followDefinition'&&exact(['type','turn','step','name','path'])&&str('turn')&&str('step')&&str('name',1024)&&str('path',4096)){return v as WorkbenchMessage;}
+     if (['copy','export'].includes(type) && exact(['type','turn','format','cards']) && ['json','markdown'].includes(String(v.format)) && (v.turn === undefined || str('turn'))
+         && (v.cards === undefined || Array.isArray(v.cards) && v.cards.length <= 1000 && v.cards.every(id => typeof id === 'string' && id.length <= 128))) { return v as WorkbenchMessage; }
+ }
+diff --git a/packages/vscode/src/workbenchSessions.ts b/packages/vscode/src/workbenchSessions.ts
+index 39689f7..ccec2b5 100644
+--- a/packages/vscode/src/workbenchSessions.ts
++++ b/packages/vscode/src/workbenchSessions.ts
+@@ -2,12 +2,13 @@
+ import * as fs from 'node:fs/promises';
+ import * as path from 'node:path';
+ import { randomUUID } from 'node:crypto';
+-import { object, Value, WorkbenchSession, WorkbenchSessionSummary } from './workbenchContracts';
++import { defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, Value, WorkbenchSession, WorkbenchSessionSummary } from './workbenchContracts';
++import { assertPortablePlanInputs } from './workbenchStrategies';
+ 
+ const LIMIT = 4 * 1024 * 1024;
+ const validId = (id: string) => /^[a-f0-9-]{36}$/.test(id);
+ export function newSession(project: string): WorkbenchSession {
+-    return {schema:1,id:randomUUID(),project,title:'New session',createdAt:Date.now(),updatedAt:Date.now(),revision:0,omitted:0,turns:[]};
++    return {schema:1,id:randomUUID(),project,title:'New session',createdAt:Date.now(),updatedAt:Date.now(),revision:0,omitted:0,turns:[],formDraft:defaultWorkbenchFormDraft()};
+ }
+ export function trimSession(session: WorkbenchSession): void {
+     while (session.turns.length > 200) { session.turns.shift(); session.omitted++; }
+@@ -47,6 +48,9 @@ export class SessionStore {
+         if (session.schema!==1 || session.id!==id || session.project!==project || !Array.isArray(session.turns) || session.turns.length>200
+             || !Number.isSafeInteger(session.revision) || typeof session.title!=='string' || session.title.length>80
+             || session.turns.some(t=>typeof t.input!=='string'||t.input.length>4096||typeof t.id!=='string'|| !['structured','json','markdown'].includes(t.format))) {throw new Error('Unsupported or corrupt session.');}
++        const formDraft=normalizeWorkbenchFormDraft(session.formDraft);
++        if(!formDraft)throw new Error('Unsupported or corrupt session form choices.');
++        session.formDraft=formDraft;
+         return session;
+     }
+     private async lock<T>(project:string, action:(root:string)=>Promise<T>):Promise<T> {
+@@ -56,7 +60,10 @@ export class SessionStore {
+         try {return await action(root);} finally {await handle.close();await fs.unlink(file);}
+     }
+     async save(session:WorkbenchSession,persistResults=true):Promise<WorkbenchSessionSummary[]|undefined> {
+-        if (!session.turns.length) {return;}
++        const formDraft=normalizeWorkbenchFormDraft(session.formDraft);
++        if(!formDraft)throw new Error('Unsupported or oversized session form choices.');
++        session.formDraft=formDraft;
++        if (!session.turns.length&&formDraft.revision===0&&formDraft.activeTool==='search'&&formDraft.scope===''&&formDraft.recipe===''&&Object.keys(formDraft.values).length===0) {return;}
+         trimSession(session);
+         return this.lock(session.project,async root=>{
+             let current:WorkbenchSession|undefined;
+@@ -95,10 +102,20 @@ export class SessionStore {
+     async findShortcut(project:string,input:string,scope:string):Promise<Value|undefined>{
+         // Case and whitespace inside quoted paths/identifiers can change the query.
+         const normalize=(value:string)=>value.trim();
+-        return (await this.shortcuts(project)).find(entry=>normalize(entry.input)===normalize(input)&&entry.scope===scope)?.plan;
++        const plan=(await this.shortcuts(project)).find(entry=>normalize(entry.input)===normalize(input)&&entry.scope===scope)?.plan;
++        if(plan){
++            // Older saved shortcuts must pass the same portability boundary;
++            // loading them cannot bypass the checks used by Remember today.
++            assertPortablePlanInputs(plan);
++            if((Array.isArray(plan.steps)?plan.steps:[]).some(raw=>object(object(raw).args).symbol)){
++                throw new Error('A direct symbol ID cannot be remembered; bind symbol IDs from a fresh definition query.');
++            }
++        }
++        return plan;
+     }
+     async remember(project:string,input:string,plan:Value):Promise<void>{
+         if(!Array.isArray(plan.steps)||!plan.steps.length){throw new Error('Prepare an executable plan before remembering it.');}
++        assertPortablePlanInputs(plan);
+         const template=structuredClone(plan);delete template.digest;delete template.publication;delete template.collection;
+         for(const raw of Array.isArray(template.steps)?template.steps:[]){const args=object(object(raw).args);if(args.symbol){throw new Error('A direct symbol ID cannot be remembered; bind symbol IDs from a fresh definition query.');}for(const key of ['known_hash','revision','cursor']){delete args[key];}}
+         await this.lock(project,async root=>{
+diff --git a/packages/vscode/src/workbenchView.ts b/packages/vscode/src/workbenchView.ts
+index bf3be00..4522955 100644
+--- a/packages/vscode/src/workbenchView.ts
++++ b/packages/vscode/src/workbenchView.ts
+@@ -6,10 +6,10 @@ import type { ExplorerHost } from './explorerController';
+ import type { LaunchSpec } from './model';
+ import { EvidenceClient } from './explorerEvidence';
+ import { openSource, saveStudioInWorkspace } from './explorerWorkspaceIO';
+-import { strategyFromPlan } from './workbenchStrategies';
++import { assertOriginalPublicationForSymbolInputs, assertPortablePlanInputs, planForWorkbenchRerun, strategyFromPlan } from './workbenchStrategies';
+ import { newSession, SessionStore } from './workbenchSessions';
+-import { CurrentTurnProjections, continuations, evidenceCards, renderExport } from './workbenchRender';
+-import { object, parseWorkbenchMessage, Value, WorkbenchMessage, WorkbenchSession, WorkbenchState, WORKBENCH_HELP_ROUTE } from './workbenchContracts';
++import { CurrentTurnProjections, continuationCursor, continuationRequiredRecordBytes, continuations, discoveryFollowupPlan, evidenceCards, renderExport } from './workbenchRender';
++import { defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, parseWorkbenchMessage, Value, WorkbenchMessage, WorkbenchSession, WorkbenchState, WORKBENCH_HELP_ROUTE } from './workbenchContracts';
+ 
+ // Cold native setup (10 s) plus scalar observation (2 s), with transport slack.
+ export const STATUS_RESPONSE_TIMEOUT_MS=15000;
+@@ -35,6 +35,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
+     private client?:EvidenceClient;
+     private clientIdentity?:string;
+     private generation=0;
++    private sessionEpoch=0;
+     private session?:WorkbenchSession;
+     private sessions?:SessionStore;
+     private get store():SessionStore{return this.sessions??=new SessionStore(path.join(this.context.globalStorageUri.fsPath,'workbench'));}
+@@ -46,6 +47,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
+     private status?:Value;
+     private operations?:Value;
+     private saveQueue=Promise.resolve();
++    private readonly queuedFormSaves=new WeakSet<WorkbenchSession>();
+     private disposed=false;
+     private pendingInput?:string;
+     constructor(private readonly context:vscode.ExtensionContext, private readonly host:ExplorerHost){
+@@ -66,7 +68,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
+     private invalidateChangedClient():void{
+         const spec=this.selectedSpec();
+         if(!this.permitted()||(this.session&&!spec)||(this.client&&this.clientIdentity!==JSON.stringify(spec))){
+-            this.stop();this.releaseClient();this.status=undefined;this.operations=undefined;
++            this.sessionEpoch++;this.stop();this.releaseClient();this.status=undefined;this.operations=undefined;
+         }
+     }
+     resolveWebviewView(view:vscode.WebviewView):void{
+@@ -84,12 +86,15 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
+         void this.refresh().catch(error=>this.fail(error));
+     }
+     private state():WorkbenchState{
+-        return {projects:this.host.specs().flatMap(s=>s.service?[{id:s.service.project,name:s.name}]:[]),project:this.session?.project,session:this.session,recent:this.recent,
++        return {projects:this.host.specs().flatMap(s=>s.service?[{id:s.service.project,name:s.name}]:[]),project:this.session?.project,session:this.session,sessionEpoch:this.sessionEpoch,recent:this.recent,
+             ...this.display.project(this.session?.turns??[]),busy:this.busy,notice:this.notice,save:this.saving,status:this.status,persistence:this.persistence(),operations:this.operations};
+     }
+     private send():void{if(!this.disposed){void this.view?.webview.postMessage({type:'state',state:this.state()});}}
+     private sendStatus():void{if(!this.disposed){void this.view?.webview.postMessage({type:'status',sessionId:this.session?.id,project:this.session?.project,status:this.status});}}
+     private sendSaved(session:WorkbenchSession):void{if(!this.disposed&&this.session===session){void this.view?.webview.postMessage({type:'saved',sessionId:session.id,project:session.project,revision:session.revision,recent:this.recent,save:this.saving});}}
++    private sendFormDraft(session:WorkbenchSession):void{
++        if(!this.disposed&&this.session===session){void this.view?.webview.postMessage({type:'formDraft',sessionId:session.id,project:session.project,epoch:this.sessionEpoch,formDraft:session.formDraft??defaultWorkbenchFormDraft(),save:this.saving});}
++    }
+ 
+     private fail(error:unknown):void{this.notice=error instanceof Error?error.message:String(error);this.send();}
+     async refresh():Promise<void>{
+@@ -105,7 +110,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
+         const identity=JSON.stringify(spec);
+         this.stop();
+         if(this.client&&this.clientIdentity!==identity){this.releaseClient();}
+-        this.status=undefined;this.session=newSession(id);this.recent=[];this.notice=undefined;
++        this.sessionEpoch++;this.status=undefined;this.session=newSession(id);this.recent=[];this.notice=undefined;
+         const generation=this.generation,session=this.session;
+         const current=()=>generation===this.generation&&session===this.session&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity;
+         this.send();
+@@ -136,20 +141,28 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
+         const session=this.session,selected=session.project,generation=this.generation,identity=JSON.stringify(this.selectedSpec());
+         const choice=await vscode.window.showWarningMessage('Delete saved Workbench sessions for this project?',{modal:true},'Delete sessions');
+         if(choice==='Delete sessions'&&this.session===session&&generation===this.generation&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity){
+-            this.stop();const accepted=this.generation;
++            this.sessionEpoch++;this.stop();const accepted=this.generation;
+             // The already authorized deletion keeps its exact project even if a
+             // later selection supersedes it; it never restores that old selection.
+             await this.saveQueue;await this.store.remove(selected);
+             if(accepted===this.generation&&this.session===session&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity){if(this.selectedSpec()){await this.select(selected);}else{this.session=undefined;this.recent=[];this.status=undefined;this.send();}}
+         }
+     }
+-    private save(session:WorkbenchSession):void{
+-        if(!this.persistence()){this.saving='Session persistence off';this.send();return;}
+-        this.saving='Saving…';const captured=structuredClone(session),results=this.persistResults();
++    private save(session:WorkbenchSession,formOnly=false):void{
++        if(!this.persistence()){this.saving='Session persistence off';if(!formOnly)this.send();return;}
++        // Coalesce rapid inert input updates behind the same serialized writer.
++        // No timer, second owner or extra inventory/worker observation is added.
++        if(formOnly&&this.queuedFormSaves.has(session))return;
++        if(formOnly)this.queuedFormSaves.add(session);
++        this.saving='Saving…';const captured=formOnly?undefined:structuredClone(session),results=this.persistResults();
+         this.saveQueue=this.saveQueue.then(async()=>{
++            if(formOnly)this.queuedFormSaves.delete(session);
++            const writing=captured??structuredClone(session);
++            // A queued result snapshot must never roll newer form choices back.
++            writing.formDraft=structuredClone(session.formDraft??defaultWorkbenchFormDraft());
+             // Preserve revisions after earlier saves queued by the same window.
+-            captured.revision=session.revision;
+-            const recent=await this.store.save(captured,results);session.revision=captured.revision;
++            writing.revision=session.revision;
++            const recent=await this.store.save(writing,results);session.revision=writing.revision;
+             if(this.session!==session){return;}
+             const summaries=recent??(await this.store.list(session.project)).map(s=>({id:s.id,title:s.title,updatedAt:s.updatedAt,turns:s.turns.length}));
+             // Empty saves retain the list fallback; a new transcript can arrive during it.
+@@ -159,7 +172,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
+     }
+     private async loadRecent(id:string):Promise<void>{
+         const session=this.session;if(!session){return;}
+-        this.stop();const generation=this.generation,identity=JSON.stringify(this.selectedSpec());
++        this.sessionEpoch++;this.stop();const generation=this.generation,identity=JSON.stringify(this.selectedSpec());
+         const current=()=>generation===this.generation&&this.session===session&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity;
+         await this.saveQueue;if(!current()){return;}
+         let loaded:WorkbenchSession|undefined;
+@@ -170,7 +183,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
+     }
+     private async deleteRecent(id:string):Promise<void>{
+         const session=this.session;if(!session){return;}
+-        this.stop();const generation=this.generation,identity=JSON.stringify(this.selectedSpec());
++        this.sessionEpoch++;this.stop();const generation=this.generation,identity=JSON.stringify(this.selectedSpec());
+         // Deletion was explicitly accepted for this project/id. Finish that
+         // operation, but never redirect it or reset a superseding transcript.
+         await this.saveQueue;await this.store.remove(session.project,id);
+@@ -189,6 +202,9 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
+     }
+     private async run(input:string,prepare=false,recipe?:string,plan?:Value,pathPrefix?:string):Promise<void>{
+         this.authorized();if(!this.session){throw new Error('Choose a project first.');}
++        // Validate before electing a client or stopping an outstanding request.
++        // Form values stay saved, but literal IDs must retain their own fence.
++        if(plan)assertOriginalPublicationForSymbolInputs(plan);
+         this.stop();const session=this.session,client=this.evidence(),generation=this.generation;this.busy=true;this.notice=undefined;
+         const turn={id:randomUUID(),at:Date.now(),input:(input||`${recipe??'Plan'} evidence`).slice(0,4096),format:'structured' as const,request:undefined as Value|undefined,envelope:undefined as Value|undefined,error:undefined as string|undefined};
+         session.turns.push(turn);if(session.turns.length===1){session.title=turn.input.replaceAll('\n',' ').slice(0,80);}this.send();
+@@ -199,6 +215,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
+                 if(shortcut){plan=shortcut;remembered=true;}
+             }
+             if(generation!==this.generation||session!==this.session||client!==this.client||this.clientIdentity!==JSON.stringify(this.selectedSpec())||!this.permitted()){return;}
++            if(plan)assertOriginalPublicationForSymbolInputs(plan);
+             if(remembered){this.notice='Using an explicitly remembered plan; all steps are validated against current evidence.';}
+             const request:Value={schema:'airk.parse.request/1',mode:prepare?'prepare':'execute',...(pathPrefix?{path_prefix:pathPrefix}:{})};
+             if(plan){request.plan=plan;}else if(recipe){request.recipe={id:recipe,parameters:input.trim()?{name:input.trim()}:{}};}else{request.text=input;}
+@@ -223,12 +240,32 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
+             case 'manage':await vscode.commands.executeCommand('airk.explorer.open','manage/overview');break;
+             case 'forms':{const generation=this.generation;const reply=await this.evidence().call('airk_capabilities',{});if(generation===this.generation&&this.permitted()){this.operations=object(object(reply.payload.workbench).operations);this.send();}break;}
+             case 'retrySave':if(this.session){this.save(this.session);}break;
+-            case 'fork':if(this.session){this.stop();const fork={...structuredClone(this.session),id:randomUUID(),revision:0,title:`${this.session.title.slice(0,70)} (copy)`};this.session=fork;this.save(fork);this.send();}break;
++            case 'fork':if(this.session){this.sessionEpoch++;this.stop();const fork={...structuredClone(this.session),id:randomUUID(),revision:0,title:`${this.session.title.slice(0,70)} (copy)`,formDraft:defaultWorkbenchFormDraft()};this.session=fork;this.save(fork);this.send();}break;
++            case 'formDraft':case 'resetForm':{
++                const session=this.session,current=session&&normalizeWorkbenchFormDraft(session.formDraft);
++                if(!session||!current||!this.selectedSpec()||message.sessionId!==session.id||message.project!==session.project||message.epoch!==this.sessionEpoch
++                    ||!Number.isSafeInteger(message.revision)||message.revision<=current.revision)return;
++                if(message.type==='resetForm'&&message.tool!==current.activeTool)return;
++                const values={...current.values};
++                if(message.type==='resetForm')delete values[message.tool];
++                else if(message.values!==undefined)values[message.tool]={...message.values};
++                const next=normalizeWorkbenchFormDraft({...current,activeTool:message.tool,values,revision:message.revision,
++                    ...(message.type==='formDraft'&&message.scope!==undefined?{scope:message.scope}:{}),
++                    ...(message.type==='formDraft'&&message.recipe!==undefined?{recipe:message.recipe}:{})});
++                if(!next)throw new Error('Workbench form choices are invalid or exceed the saved-input limits.');
++                session.formDraft=next;session.updatedAt=Date.now();this.save(session,true);this.sendFormDraft(session);break;
++            }
+             case 'recent':await this.loadRecent(message.id);break;
+             case 'delete':await this.deleteRecent(message.id);break;
+             case 'rename':if(this.session){this.session.title=message.title;this.save(this.session);this.send();}break;
+             case 'run':await this.run(message.input,message.prepare,message.recipe,message.plan,message.pathPrefix);break;
+-            case 'rerun':{const turn=this.session?.turns.find(t=>t.id===message.turn);if(turn){const request=object(turn.request),plan=request.plan?structuredClone(object(request.plan)):undefined;if(plan){delete plan.digest;delete plan.publication;delete plan.catalog;delete plan.collection;for(const raw of Array.isArray(plan.steps)?plan.steps:[]){const args=object(object(raw).args);for(const key of ['known_hash','revision','cursor']){delete args[key];}}}await this.run(turn.input,false,typeof object(request.recipe).id==='string'?String(object(request.recipe).id):undefined,plan,typeof request.path_prefix==='string'?request.path_prefix:undefined);}break;}
++            case 'rerun':{const turn=this.session?.turns.find(t=>t.id===message.turn);if(turn){
++                // Parsed text can also have produced an exact native symbol ID;
++                // inspect its retained plan before discarding any revision fence.
++                assertPortablePlanInputs(object(object(turn.envelope).plan));
++                const request=object(turn.request),plan=request.plan?planForWorkbenchRerun(object(request.plan)):undefined;
++                await this.run(turn.input,false,typeof object(request.recipe).id==='string'?String(object(request.recipe).id):undefined,plan,typeof request.path_prefix==='string'?request.path_prefix:undefined);
++            }break;}
+             case 'saveStrategy':{
+                 const turn=this.session?.turns.find(t=>t.id===message.turn);if(!turn?.envelope){throw new Error('Collect or prepare evidence first.');}
+                 const generation=this.generation,spec=this.evidence().spec,document=strategyFromPlan(object(turn.envelope.plan),turn.input,turn.input);
+@@ -241,9 +278,21 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
+                 if(!envelope||!continuations(envelope).some(c=>c.id===message.step)){throw new Error('No bounded continuation remains for this result.');}
+                 const index=Number(message.step.slice(5)),report=object((envelope.steps as unknown[])[index]),result=object(report.result),prior=object(envelope.plan),budgets=object(prior.budgets);
+                 const remaining=Number(budgets.max_bytes??524288)-Number(envelope.payload_bytes??0);if(remaining<1024){throw new Error('The original evidence byte budget is exhausted; start a scoped new request.');}
+-                const plan={schema:'airk.parse.plan/1',publication:envelope.publication,collection:prior.collection,path_prefix:prior.path_prefix,budgets:{...budgets,calls:Number(budgets.calls??12)-Number(envelope.calls??0),max_bytes:remaining},steps:[{id:'continuation',tool:report.tool,args:{...object(report.arguments),cursor:result.cursor??object(result.content).cursor}}]};
++                const args:Value={...object(report.arguments),cursor:continuationCursor(result)},required=continuationRequiredRecordBytes(result);
++                if(required!==undefined&&required>Number(args.max_bytes??8192)){
++                    if(required>65536||required+512>remaining)throw new Error('The next record cannot fit the remaining evidence budget. Start a scoped request with a larger budget or read its source range.');
++                    args.max_bytes=required;
++                }
++                const plan={schema:'airk.parse.plan/1',publication:envelope.publication,collection:prior.collection,path_prefix:prior.path_prefix,budgets:{...budgets,calls:Number(budgets.calls??12)-Number(envelope.calls??0),max_bytes:remaining},steps:[{id:'continuation',tool:report.tool,args}]};
+                 await this.run(`Continue ${String(report.tool)} from ${turn!.input}`,false,undefined,plan);break;
+             }
++            case 'followTarget':case 'followDefinition':{
++                const turn=this.session?.turns.find(value=>value.id===message.turn);
++                if(!turn?.envelope)throw new Error('The discovery result is no longer retained.');
++                const target=message.type==='followTarget'?message.target:message.name;
++                const plan=discoveryFollowupPlan(turn.envelope,message.step,target,message.type==='followDefinition'?message.path:undefined);
++                await this.run(`${message.type==='followTarget'?'Call candidates for':'Definition of'} ${target}`,false,undefined,plan);break;
++            }
+             case 'open':case 'context':{
+                 const turn=this.session?.turns.find(t=>t.id===message.turn),card=turn&&evidenceCards(turn.envelope??{}).find(c=>c.id===message.card);
+                 if(!card){throw new Error('Evidence handle expired.');}
+@@ -273,7 +322,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
+     }
+     dispose():void{this.visibilityChanged.dispose();this.stop();this.disposed=true;this.display.clear();this.releaseClient();for(const sub of this.subscriptions){sub.dispose();}}
+     async removeProject(project:string):Promise<void>{
+-        if(this.session?.project===project){this.stop();this.releaseClient();this.session=undefined;this.status=undefined;}
++        if(this.session?.project===project){this.sessionEpoch++;this.stop();this.releaseClient();this.session=undefined;this.status=undefined;}
+         await this.saveQueue;await this.store.remove(project);this.send();
+     }
+     async focus(input?:string):Promise<void>{
+diff --git a/packages/vscode/src/workbenchWebview/main.tsx b/packages/vscode/src/workbenchWebview/main.tsx
+index 5ede659..2250090 100644
+--- a/packages/vscode/src/workbenchWebview/main.tsx
++++ b/packages/vscode/src/workbenchWebview/main.tsx
+@@ -1,22 +1,54 @@
+ // SPDX-License-Identifier: Apache-2.0
+ import { render } from 'preact';
+ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+-import { applyWorkbenchUpdate, object, parseWorkbenchMessage, WorkbenchMessage, WorkbenchState, WorkbenchTurn } from '../workbenchContracts';
+-import { canonical, markdown } from '../workbenchRender';
++import { applyWorkbenchUpdate, defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, parseWorkbenchMessage, toolFormArguments, toolFormFields, Value, WorkbenchFormDraft, WorkbenchMessage, WorkbenchState, WorkbenchTurn } from '../workbenchContracts';
++import { canonical, discoveryDetails, markdown } from '../workbenchRender';
+ import './style.css';
+ declare function acquireVsCodeApi(): { postMessage(message:WorkbenchMessage):void };
+ const vscode=acquireVsCodeApi(),send=(message:WorkbenchMessage)=>vscode.postMessage(message);
+-const COMMANDS=['/search','/symbols','/refs','/read','/outline','/files','/info','/imports','/facts','/changes --since','/status','/diagnostics','/capabilities','/context','/relationships','/help'];
++const COMMANDS=['/search','/symbols','/code-facts','/refs','/read','/outline','/files','/info','/imports','/facts','/changes --since','/status','/diagnostics','/capabilities','/context','/relationships','/help'];
+ const RECIPES=[['definition','Explore a definition'],['documents','Collect document evidence'],['impact','Find possible impact'],['tests','Find test mentions'],['component','Explore a component'],['readiness','Check retrieval readiness']];
+-function ToolForm({state,scope}:{state:WorkbenchState;scope:string}){
+-    const [tool,setTool]=useState('search'),[values,setValues]=useState<Record<string,string>>({});
+-    const schema=object(state.operations?.[tool]),properties=object(schema.properties),required=Array.isArray(schema.required)?schema.required.map(String):[];
+-    const submit=(execute:boolean)=>{const args=Object.fromEntries(Object.entries(values).filter(([,value])=>value!=='').map(([key,value])=>[key,object(properties[key]).type==='integer'?Number(value):value]));send({type:'run',input:`${tool} form`,prepare:!execute,pathPrefix:scope,plan:{steps:[{id:'form',tool,args}],path_prefix:scope}});};
+-    return <details class="tool-form" open><summary>Native tool form</summary><label>Operation<select value={tool} onChange={e=>{setTool(e.currentTarget.value);setValues({});}}>{Object.keys(state.operations??{}).map(name=><option value={name}>{name}</option>)}</select></label><form onSubmit={e=>{e.preventDefault();submit(false);}}>
+-        {Object.entries(properties).map(([key,raw])=>{const spec=object(raw);return <label>{key}{required.includes(key)?' *':''}{Array.isArray(spec.enum)?<select value={values[key]??''} onChange={e=>setValues({...values,[key]:e.currentTarget.value})}><option value="">Default</option>{spec.enum.map(value=><option value={String(value)}>{String(value)}</option>)}</select>:<input required={required.includes(key)} type={spec.type==='integer'?'number':'text'} min={typeof spec.minimum==='number'?spec.minimum:undefined} max={typeof spec.maximum==='number'?spec.maximum:undefined} maxLength={4096} value={values[key]??''} onInput={e=>setValues({...values,[key]:e.currentTarget.value})}/>}</label>;})}
++interface ToolFormProps {
++    state:WorkbenchState;issue:string;currentDraft:()=>WorkbenchFormDraft|undefined;
++    onSelect:(tool:string)=>void;onField:(tool:string,name:string,value:string)=>void;onReset:(tool:string)=>void;onIssue:(issue:string)=>void;
++}
++function ToolForm({state,issue,currentDraft,onSelect,onField,onReset,onIssue}:ToolFormProps){
++    const draft=normalizeWorkbenchFormDraft(state.session?.formDraft)??defaultWorkbenchFormDraft(),tool=draft.activeTool,values=draft.values[tool]??{};
++    const schema=object(state.operations?.[tool]),fields=toolFormFields(schema);
++    const submit=(execute:boolean)=>{try{const latest=currentDraft();if(!latest||latest.activeTool!==tool)throw new Error('Choose the tool form in the current session.');const args=toolFormArguments(schema,latest.values[tool]??{}),scope=latest.scope;send({type:'run',input:`${tool} form`,prepare:!execute,pathPrefix:scope,plan:{steps:[{id:'form',tool,args}],path_prefix:scope}});onIssue('');}catch(error){onIssue(error instanceof Error?error.message:'Review the form values.');}};
++    return <details class="tool-form" open><summary>Tool form</summary><div class="tool-form-toolbar"><label>Operation<select aria-label="Operation" value={tool} onChange={e=>onSelect(e.currentTarget.value)}>{Object.keys(state.operations??{}).map(name=><option value={name}>{name}</option>)}</select></label><button class="icon-button" type="button" title="Reset this tool form" aria-label="Reset this tool form" disabled={!state.session} onClick={()=>onReset(tool)}><Icon name="reset"/></button></div><form onSubmit={e=>{e.preventDefault();submit(false);}}>
++        {fields.map(field=><label key={field.name}>{field.label}{field.required?' *':''}
++            {field.type==='boolean'||field.values?<select aria-label={field.label} required={field.required} value={values[field.name]??''} onChange={e=>onField(tool,field.name,e.currentTarget.value)}><option value="">Default</option>{field.type==='boolean'?<><option value="true">Yes</option><option value="false">No</option></>:field.values?.map(value=><option value={value}>{value}</option>)}</select>
++                :<input aria-label={field.label} required={field.required} type={field.type==='integer'?'number':'text'} min={field.minimum} max={field.maximum} minLength={field.minLength} maxLength={field.maxLength??4096} value={values[field.name]??''} onInput={e=>onField(tool,field.name,e.currentTarget.value)}/>}
++            {field.description&&<small class="form-hint">{field.description}</small>}
++        </label>)}
++        {issue&&<p role="alert">{issue}</p>}
+         <button disabled={state.busy} type="submit">Prepare form</button><button disabled={state.busy} type="button" onClick={e=>{if(e.currentTarget.form?.reportValidity()){submit(true);}}}>Run form</button>
+     </form></details>;
+ }
++function countLabel(count:Value,unit:string):string {
++    const scope=typeof count.scope==='string'?count.scope.replaceAll('_',' '):'verified scope';
++    if(count.scope==='verified_lexical_candidates'&&count.complete===true&&typeof count.total_matches==='number')return `${count.total_matches} ${unit} in verified lexical candidates; whole-query total unknown`;
++    if(count.complete===true&&typeof count.total_matches==='number')return `${count.total_matches} ${unit} (${scope})`;
++    return `${typeof count.lower_bound==='number'?`At least ${count.lower_bound} verified ${unit}`:'Total unknown'} (${scope}; total unknown)`;
++}
++function DiscoveryDetails({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
++    const details=useMemo(()=>discoveryDetails(turn.envelope??{}),[turn.envelope]);
++    return <>{details.map(step=><section class="discovery-details" aria-label={`${step.tool} discovery details`} key={step.id}>
++        {!step.canFollow&&(step.definitions.length>0||step.suggestions.length>0)&&<p class="note">Re-run this investigation to enable follow-up actions from completed, publication-matched evidence.</p>}
++        {step.count&&<p class="counts">{countLabel(step.count,step.tool==='references'?(step.countUnit??'matching_lines').replaceAll('_',' '):'records')}</p>}
++        {step.coverage?.query_complete===false&&<p class="warning">Reference coverage is limited to verified lexical candidates. The whole-query total is unknown; identifier tokens split across indexed chunk boundaries can be missed.</p>}
++        {step.tool==='references'&&step.coverage===undefined&&<p class="warning">Textual candidate matches do not establish complete reference coverage; the whole-query total is unknown.</p>}
++        {step.coverage?.line_completeness==='includes_unverified_fragments'&&<p class="warning">Some extracted-text matches are fragments whose completeness as original source lines is unverified.</p>}
++        {step.incompleteReason&&<p class="warning">Discovery is incomplete: {step.incompleteReason.replaceAll('_',' ')}.</p>}
++        {step.more&&<p class="note">More scanning remains. Use Fetch next page when a continuation is available.</p>}
++        {step.requiredRecordBytes!==undefined&&<p class="note">The next complete record needs {step.requiredRecordBytes} bytes.{!step.more?' No continuation is available; use a scoped source read or inspect the reported coverage limit.':''}</p>}
++        {step.files.length>0&&<details><summary>Files in this page</summary><ul>{step.files.map(file=><li key={file.path}>{file.path}: {file.count} {(step.countUnit??'matching_lines').replaceAll('_',' ')}</li>)}</ul>{(step.filesTruncated||step.omittedFiles>0)&&<p class="warning">The file summary is incomplete. Inspect the full export and continuation coverage.</p>}</details>}
++        {step.files.length===0&&step.filesTruncated&&<p class="warning">The file summary is incomplete at this budget. Inspect the reported continuation and coverage.</p>}
++        {step.definitions.length>0&&<details open><summary>Definition pointers</summary><p class="note">Definitions are candidates from this same indexed publication. Only a bounded set of pointers is shown.</p>{step.definitions.map((hint,i)=><div key={i}><p>{String(hint.name??'Identifier')}: {countLabel(hint,'definition records')}</p>{(Array.isArray(hint.matches)?hint.matches:[]).map((raw,j)=>{const citation=object(object(raw).citation);return typeof hint.name==='string'&&typeof citation.path==='string'&&typeof object(raw).symbol_id==='string'&&String(object(raw).symbol_id).length>0?<button key={j} disabled={state.busy||!step.canFollow} onClick={()=>send({type:'followDefinition',turn:turn.id,step:step.id,name:String(hint.name),path:String(citation.path)})}>Inspect {hint.name} — {citation.path}</button>:null;})}</div>)}{step.omittedDefinitions>0&&<p class="note">Additional pointers remain in the full export.</p>}</details>}
++        {step.suggestions.length>0&&<details open><summary>Written method targets</summary><p class="note">Follow a target for textual call candidates. These are not compiler-resolved callers.</p>{step.suggestions.map((target,i)=><div key={i}><button disabled={state.busy||!step.canFollow} onClick={()=>send({type:'followTarget',turn:turn.id,step:step.id,target:target.target})}>Find callers of {target.target}</button>{target.path&&<small>{target.path}</small>}{target.coverage&&<p class="note">{target.coverage}</p>}</div>)}{step.omittedSuggestions>0&&<p class="note">Additional targets remain in the full export.</p>}</details>}
++    </section>)}</>;
++}
+ function SelectAll({count,checked,mixed,onChange}:{count:number;checked:boolean;mixed:boolean;onChange:(checked:boolean)=>void}){
+     const input=useRef<HTMLInputElement>(null);
+     useLayoutEffect(()=>{if(input.current){input.current.indeterminate=mixed;}},[mixed]);
+@@ -55,6 +87,7 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
+                 {Array.isArray(envelope.warnings)&&envelope.warnings.map(w=><p class="note">{String(w)}</p>)}
+                 {Array.isArray(envelope.completeness)&&envelope.completeness.length>0&&<p class="warning">Incomplete: {envelope.completeness.map(String).join('; ')}</p>}
+                 {format==='structured'?<>
++                    <DiscoveryDetails turn={turn} state={state}/>
+                     {cards.length>0&&<details class="result-tools"><summary>Filter and group evidence{filter?` · ${rows.length} matches`:''}</summary><label class="filter">Filter retained evidence<input value={filter} onInput={e=>setFilter(e.currentTarget.value)}/></label><button aria-pressed={group} onClick={()=>setGroup(!group)}>Group by file</button><p class="counts">Showing {Math.min(show,rows.length)} of {rows.length} matching retained records.</p></details>}
+                     {envelope.truncated===true&&<p class="warning">Upstream or output omissions reported.</p>}
+                     {cards.length>0&&selectionRow()}
+@@ -65,7 +98,7 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
+                     </div>)}
+                     {cards.length>0&&selectionRow()}
+                     {rows.length>show&&<button onClick={()=>setShow(show+20)}>Show 20 more retained records</button>}
+-                    {(state.continuations?.[turn.id]??[]).map(page=><button disabled={state.busy} onClick={()=>send({type:'continue',turn:turn.id,step:page.id})}>Fetch next {page.tool} page · {page.callsRemaining} calls remain</button>)}
++                    {(state.continuations?.[turn.id]??[]).map(page=><button disabled={state.busy} onClick={()=>send({type:'continue',turn:turn.id,step:page.id})}>Fetch next {page.tool} page · {page.callsRemaining} calls remain{page.requiredRecordBytes!==undefined?` · needs ${page.requiredRecordBytes} bytes`:''}</button>)}
+                     {!cards.length&&<pre>{canonical(envelope.steps??envelope)}</pre>}
+                 </>:<pre>{formatted}</pre>}
+                 <footer>{!selectionUi&&<button onClick={()=>send({type:'copy',turn:turn.id,format:format==='json'?'json':'markdown'})}>Copy {format==='json'?'JSON':'Markdown'}</button>}
+@@ -78,12 +111,36 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
+     </article>;
+ }
+ type Menu = 'history' | 'settings' | 'add';
+-function Icon({name}:{name:'plus'|'history'|'settings'|'new'|'send'|'stop'}){
+-    const paths={"plus":"M12 4v16M4 12h16","history":"M5 7 9 3h7l5 5v8l-5 5H8l-5-5M3 6v6h6M12 7v5l4 2","settings":"M3 6h18M3 12h18M3 18h18M7 3l3 3-3 3-3-3zM17 9l3 3-3 3-3-3zM9 15l3 3-3 3-3-3z","new":"M4 21V7l4-4h8l4 4v14zM9 12h6M12 9v6","send":"m6 5 7 7-7 7m7-14 7 7-7 7","stop":"M7 4h10l3 3v10l-3 3H7l-3-3V7z"};
++function Icon({name}:{name:'plus'|'history'|'settings'|'new'|'send'|'stop'|'reset'}){
++    const paths={"plus":"M12 4v16M4 12h16","history":"M5 7 9 3h7l5 5v8l-5 5H8l-5-5M3 6v6h6M12 7v5l4 2","settings":"M3 6h18M3 12h18M3 18h18M7 3l3 3-3 3-3-3zM17 9l3 3-3 3-3-3zM9 15l3 3-3 3-3-3z","new":"M4 21V7l4-4h8l4 4v14zM9 12h6M12 9v6","send":"m6 5 7 7-7 7m7-14 7 7-7 7","stop":"M7 4h10l3 3v10l-3 3H7l-3-3V7z","reset":"M4 11a8 8 0 1 1 2 7M4 5v6h6"};
+     return <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d={paths[name]}/><path class="icon-accent" d={name==='send'?'m17 9 3 3-3 3':'m19 3 2 2-2 2'}/></svg>;
+ }
+ function App(){
+-    const [state,setState]=useState<WorkbenchState>({projects:[],recent:[],cards:{},busy:false,save:'',persistence:true}),[input,setInput]=useState(''),[recipe,setRecipe]=useState(''),[menu,setMenu]=useState<Menu>(),[history,setHistory]=useState(-1),[scope,setScope]=useState(''),[title,setTitle]=useState('');
++    const [state,setState]=useState<WorkbenchState>({projects:[],recent:[],cards:{},busy:false,save:'',persistence:true}),[input,setInput]=useState(''),[menu,setMenu]=useState<Menu>(),[history,setHistory]=useState(-1),[title,setTitle]=useState(''),[formIssue,setFormIssue]=useState('');
++    const liveState=useRef(state);liveState.current=state;
++    const formDraft=normalizeWorkbenchFormDraft(state.session?.formDraft)??defaultWorkbenchFormDraft(),scope=formDraft.scope,recipe=formDraft.recipe;
++    const currentDraft=():WorkbenchFormDraft|undefined=>{
++        const current=liveState.current;
++        if(!current.session||!state.session||current.session.id!==state.session.id||current.project!==state.project||current.session.project!==current.project||current.sessionEpoch!==state.sessionEpoch||!Number.isSafeInteger(current.sessionEpoch))return;
++        return normalizeWorkbenchFormDraft(current.session.formDraft);
++    };
++    const changeForm=(patch:{tool?:string;field?:{name:string;value:string};scope?:string;recipe?:string},reset=false)=>{
++        const current=currentDraft(),owner=liveState.current;
++        if(!current||!owner.session||typeof owner.sessionEpoch!=='number'){setFormIssue('Choose the form in the current session.');return;}
++        const tool=patch.tool??current.activeTool;
++        if((patch.field||reset)&&tool!==current.activeTool){setFormIssue('The active form changed. Use its current controls.');return;}
++        const values={...current.values};
++        if(reset)delete values[tool];
++        else if(patch.field)values[tool]={...values[tool],[patch.field.name]:patch.field.value};
++        const nextDraft=normalizeWorkbenchFormDraft({...current,activeTool:tool,values,revision:current.revision+1,...(patch.scope!==undefined?{scope:patch.scope}:{}),...(patch.recipe!==undefined?{recipe:patch.recipe}:{})});
++        if(!nextDraft){setFormIssue('These form choices exceed the saved-input limits. Shorten a field or reset an unused form.');return;}
++        const fence={sessionId:owner.session.id,project:owner.session.project,epoch:owner.sessionEpoch,revision:nextDraft.revision,tool};
++        const message:WorkbenchMessage=reset?{type:'resetForm',...fence}:{type:'formDraft',...fence,...(patch.field?{values:nextDraft.values[tool]}:{}),...(patch.scope!==undefined?{scope:patch.scope}:{}),...(patch.recipe!==undefined?{recipe:patch.recipe}:{})};
++        if(!parseWorkbenchMessage(message)){setFormIssue('This form setting is outside the supported input limits.');return;}
++        const next={...owner,session:{...owner.session,formDraft:nextDraft}};
++        liveState.current=next;setState(next);setFormIssue('');send(message);
++    };
++    const setScope=(scope:string)=>changeForm({scope}),setRecipe=(recipe:string)=>changeForm({recipe});
+     const composer=useRef<HTMLTextAreaElement>(null),transcript=useRef<HTMLDivElement>(null),menuTrigger=useRef<string>(),openMenu=useRef<Menu>();
+     const latest=state.session?.turns.at(-1);
+     // Reveal each new request from its query, including when results arrive.
+@@ -97,13 +154,14 @@ function App(){
+     },[state.session?.id,latest?.id,!!latest?.envelope,latest?.error]);
+     openMenu.current=menu;
+     const toggle=(next:Menu,event:Event)=>{menuTrigger.current=(event.currentTarget as HTMLElement).getAttribute('aria-controls')??undefined;setMenu(menu===next?undefined:next);setTitle(state.session?.title??'');};
+-    useEffect(()=>{const listener=(event:MessageEvent)=>{if(['state','status','saved'].includes(event.data?.type)){setState(previous=>applyWorkbenchUpdate(previous,event.data));}else if(event.data?.type==='prefill'&&typeof event.data.input==='string'){setInput(event.data.input);composer.current?.focus();}};window.addEventListener('message',listener);send({type:'ready'});return()=>window.removeEventListener('message',listener);},[]);
++    useEffect(()=>{const listener=(event:MessageEvent)=>{if(['state','status','saved','formDraft'].includes(event.data?.type)){setState(previous=>{const next=applyWorkbenchUpdate(previous,event.data);liveState.current=next;return next;});}else if(event.data?.type==='prefill'&&typeof event.data.input==='string'){setInput(event.data.input);composer.current?.focus();}};window.addEventListener('message',listener);send({type:'ready'});return()=>window.removeEventListener('message',listener);},[]);
++    useEffect(()=>{setHistory(-1);setFormIssue('');},[state.session?.id]);
+     useEffect(()=>{const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'&&openMenu.current){setMenu(undefined);requestAnimationFrame(()=>{document.querySelector<HTMLButtonElement>(`button[aria-controls="${menuTrigger.current}"]`)?.focus();});}},outside=(event:PointerEvent)=>{if(!(event.target as Element).closest('.menu-anchor'))setMenu(undefined);};document.addEventListener('keydown',escape);document.addEventListener('pointerdown',outside);return()=>{document.removeEventListener('keydown',escape);document.removeEventListener('pointerdown',outside);};},[]);
+-    const run=(prepare=false)=>{if(!state.busy&&(input.trim()||recipe)){send({type:'run',input,prepare,pathPrefix:scope,...(recipe?{recipe}:{})});setInput('');setHistory(-1);setMenu(undefined);}};
+-    const action=(message:WorkbenchMessage)=>{send(message);setMenu(undefined);};
++    const run=(prepare=false)=>{const current=currentDraft();if(current&&!state.busy&&(input.trim()||current.recipe)){send({type:'run',input,prepare,pathPrefix:current.scope,...(current.recipe?{recipe:current.recipe}:{})});setInput('');setHistory(-1);setMenu(undefined);}};
++    const action=(message:WorkbenchMessage)=>{send(message);if(['new','clear','fork'].includes(message.type))setInput('');setMenu(undefined);};
+     return <main>
+         <header class="toolbar">
+-            <select class="project" aria-label="Project" title="Select project" value={state.project??''} onChange={e=>{action({type:'project',id:e.currentTarget.value});setRecipe('');setScope('');}}><option value="" disabled>Choose project</option>{state.projects.map(p=><option value={p.id}>{p.name}</option>)}</select>
++            <select class="project" aria-label="Project" title="Select project" value={state.project??''} onChange={e=>action({type:'project',id:e.currentTarget.value})}><option value="" disabled>Choose project</option>{state.projects.map(p=><option value={p.id}>{p.name}</option>)}</select>
+             <div class="menu-anchor"><button class="icon-button" title="Session history" aria-label="Session history" aria-expanded={menu==='history'} aria-controls="session-history" onClick={e=>toggle('history',e)}><Icon name="history"/></button>
+                 {menu==='history'&&<section class="popover" id="session-history" aria-label="Session history"><h2>History</h2>{!state.recent.length&&<p>No saved sessions yet.</p>}{state.recent.map(s=><div class="history-row"><button class="history-item" onClick={()=>action({type:'recent',id:s.id})}>{s.title}<small>{s.turns} turns · {new Date(s.updatedAt).toLocaleDateString()}</small></button><button class="icon-button" aria-label={`Delete ${s.title}`} title="Delete session" onClick={()=>action({type:'delete',id:s.id})}>×</button></div>)}</section>}
+             </div>
+@@ -122,7 +180,7 @@ function App(){
+                 if(e.key==='ArrowUp'&&!input&&state.session?.turns.length){e.preventDefault();const next=history<0?state.session.turns.length-1:Math.max(0,history-1);setHistory(next);setInput(state.session.turns[next].input);}
+             }}/>
+             <div class="compose-actions"><div class="menu-anchor add-anchor"><button class="icon-button add-button" title="Add scope, recipe or tool" aria-label="Add scope, recipe or tool" aria-expanded={menu==='add'} aria-controls="evidence-options" onClick={e=>toggle('add',e)}><Icon name="plus"/></button>
+-                {menu==='add'&&<section class="popover above" id="evidence-options" aria-label="Evidence options"><h2>Collect evidence</h2><label>Scope<input aria-label="Literal collection-relative path prefix" placeholder="Project root, or src/component/" value={scope} onInput={e=>setScope(e.currentTarget.value)}/></label><label>Recipe<select value={recipe} onChange={e=>setRecipe(e.currentTarget.value)}><option value="">Command or supported request</option>{RECIPES.map(([id,label])=><option value={id}>{label}</option>)}</select></label><button disabled={!state.project||state.busy||!input.trim()&&!recipe} onClick={()=>run(true)}>Prepare plan before running</button><button disabled={!state.project} onClick={()=>send({type:'forms'})}>Tool forms</button>{state.operations&&<ToolForm state={state} scope={scope}/>}<button onClick={()=>action({type:'help'})}>Commands and help</button></section>}
++                {menu==='add'&&<section class="popover above" id="evidence-options" aria-label="Evidence options"><h2>Collect evidence</h2><label>Scope<input aria-label="Literal collection-relative path prefix" placeholder="Project root, or src/component/" maxLength={1024} value={scope} onInput={e=>setScope(e.currentTarget.value)}/></label><label>Recipe<select aria-label="Recipe" value={recipe} onChange={e=>setRecipe(e.currentTarget.value)}><option value="">Command or supported request</option>{RECIPES.map(([id,label])=><option value={id}>{label}</option>)}</select></label><button disabled={!state.project||state.busy||!input.trim()&&!recipe} onClick={()=>run(true)}>Prepare plan before running</button><button disabled={!state.project} onClick={()=>send({type:'forms'})}>Tool forms</button>{state.operations&&<ToolForm state={state} issue={formIssue} currentDraft={currentDraft} onSelect={tool=>changeForm({tool})} onField={(tool,name,value)=>changeForm({tool,field:{name,value}})} onReset={tool=>changeForm({tool},true)} onIssue={setFormIssue}/>}<button onClick={()=>action({type:'help'})}>Commands and help</button></section>}
+             </div><small title={state.save||'Requests read the local index'}>Local index · Read-only (no generative AI used in AIRK Workbench)</small>{state.busy?<button class="icon-button send-button" aria-label="Stop collecting evidence" title="Stop" onClick={()=>send({type:'stop'})}><Icon name="stop"/></button>:<button class="icon-button send-button" aria-label="Run request" title="Run · Enter (Shift+Enter for a new line)" disabled={!state.project||!input.trim()&&!recipe} onClick={()=>run()}><Icon name="send"/></button>}</div>
+         </div><div class="sr-only" aria-live="polite">{state.busy?'Collecting evidence':'Ready'}</div>
+     </main>;

@@ -1,0 +1,1517 @@
+--- a/crates/airk-cli/src/project_worker.rs
++++ b/crates/airk-cli/src/project_worker.rs
+@@ -556,7 +556,7 @@
+     let work_status = Arc::new(Mutex::new(WorkState::default()));
+     let job_status = work_status.clone();
+     let freshness_kernel = kernel.clone();
+-    let jobs = tokio::task::spawn_blocking(move || -> Result<()> {
++    let jobs = tokio::task::spawn_blocking(move || -> Result<ServiceRegistry> {
+         while !job_closing.load(Ordering::Acquire) {
+             let allowance = match work_receiver.recv_timeout(Duration::from_millis(200)) {
+                 Ok(allowance) => allowance,
+@@ -1107,7 +1107,7 @@
+             job_busy.store(false, Ordering::Release);
+             job_activity.notify_one();
+         }
+-        Ok(())
++        Ok(registry)
+     });
+     let permits = Arc::new(Semaphore::new(64));
+     let mut connections = JoinSet::new();
+@@ -1187,10 +1187,13 @@
+     // completion; process/job ownership is still held through the native drain.
+     connections.abort_all();
+     while connections.join_next().await.is_some() {}
+-    jobs.await??;
++    let mut registry = jobs.await??;
+     let mut state = Arc::try_unwrap(state)
+         .map_err(|_| anyhow::anyhow!("project query handlers survived drain"))?;
+     state.tools.close().await?;
++    // Only the explicit positive capability API arms a session. Strict owners
++    // take the no-op path; never clear based solely on child exit or socket EOF.
++    freshness_kernel.settle_native_owner_after_owned_drain(&mut registry)?;
+     drop(lease);
+     Ok(())
+ }
+--- a/crates/airk-kernel/src/lib.rs
++++ b/crates/airk-kernel/src/lib.rs
+@@ -78,6 +78,11 @@
+     service_collection: Option<airk_store::service::collection::Collection>,
+     service_selection: Option<Arc<airk_store::service::collection::Selection>>,
+     service_freshness: Option<Arc<service_freshness::Cache>>,
++    native_owner: Arc<
++        std::sync::Mutex<
++            Option<airk_store::service::collection::integrity::native_owner::NativeOwnerSession>,
++        >,
++    >,
+ }
+ 
+ type ProgressObserver = Arc<dyn Fn(&airk_core::readiness::IndexProgress) + Send + Sync>;
+@@ -314,6 +319,7 @@
+             service_collection,
+             service_selection: None,
+             service_freshness: None,
++            native_owner: Arc::new(std::sync::Mutex::new(None)),
+         };
+         if recover {
+             kernel.recover_runtime_bootstrap()?;
+@@ -932,3 +938,43 @@
+         })
+     }
+ }
++
++impl Kernel {
++    /// Explicit owning admission only; no current query path invokes this API.
++    /// Future F14 cutover must separately prove exact relaxed component coverage.
++    pub fn arm_native_owner(
++        &self,
++        registry: &mut airk_store::service::registry::ServiceRegistry,
++        lease: Arc<airk_store::service::ProjectLease>,
++        bound: &airk_store::service::data_scope::BoundDataRoot,
++        identity: airk_core::service::WorkerIdentity,
++    ) -> Result<()> {
++        let mut slot = self
++            .native_owner
++            .lock()
++            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?;
++        ensure!(slot.is_none(), "native owner session already admitted");
++        let collection = self
++            .service_collection
++            .as_ref()
++            .context("native owner requires service collection")?;
++        *slot = Some(collection.arm_native_owner(registry, lease, bound, identity)?);
++        Ok(())
++    }
++    /// Owning CLI final-drain adapter only, after actual LocalTools shutdown.
++    /// Consumes once; any failure leaves durable Active and cannot be retried as clean.
++    pub fn settle_native_owner_after_owned_drain(
++        &self,
++        registry: &mut airk_store::service::registry::ServiceRegistry,
++    ) -> Result<()> {
++        let owner = self
++            .native_owner
++            .lock()
++            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?
++            .take();
++        if let Some(owner) = owner {
++            owner.settle_after_owned_drain(registry)?;
++        }
++        Ok(())
++    }
++}
+--- a/crates/airk-store/src/current/gate.rs
++++ b/crates/airk-store/src/current/gate.rs
+@@ -102,6 +102,35 @@
+             }
+         }
+     }
++    pub(crate) fn shared_existing(store: &FileStore) -> Result<Self> {
++        crate::managed_collection::validate_ancestors(store.directory())?;
++        let managed = store.managed_path()?;
++        ensure!(
++            managed.namespace == "collections-1.4",
++            "existing native gate requires service layout"
++        );
++        let lifecycle = Arc::new(crate::quota::existing_service_lifecycle_lease(
++            managed.root,
++        )?);
++        let parent = if managed.slot.is_some() {
++            managed.logical
++        } else {
++            managed.logical.parent().context("gate parent missing")?
++        };
++        let locks = parent.join(".current-gates");
++        let md = fs::symlink_metadata(&locks)?;
++        ensure!(
++            md.is_dir() && !md.file_type().is_symlink(),
++            "linked current gate directory"
++        );
++        let name = managed.slot.unwrap_or(managed.collection);
++        let file = crate::service::open_existing_ownership_file(&locks, name)?;
++        acquired(file.try_lock_shared(), CurrentGateContention::Applying)?;
++        Ok(Self {
++            file,
++            _lifecycle: Some(lifecycle),
++        })
++    }
+     pub(crate) fn shared(store: &FileStore) -> Result<Self> {
+         let lifecycle = store.lifecycle(false)?;
+         let file = open(store)?;
+--- a/crates/airk-store/src/current/journal.rs
++++ b/crates/airk-store/src/current/journal.rs
+@@ -2281,3 +2281,32 @@
+         })
+     }
+ }
++
++impl FileStore {
++    /// Bounded native-owner metadata only. Caller retains actual advisory and
++    /// manifest selection exclusion; no object/source/lexical decode occurs.
++    pub(crate) fn existing_settled_head(
++        &self,
++        guard: &crate::ExistingWriterExclusion,
++    ) -> Result<CurrentHead> {
++        ensure!(
++            guard.directory == self.directory().canonicalize()?,
++            "foreign resume exclusion"
++        );
++        let scope = super::database::owned_scope(self.directory())?;
++        let capacity = super::database::check_owner(self.directory(), &scope)?;
++        let path = self.directory().join("current.sqlite3");
++        crate::managed_collection::reject_file_aliases(&path, &std::fs::symlink_metadata(&path)?)?;
++        ensure!(
++            std::fs::metadata(&path)?.len() <= capacity,
++            "current database exceeds captured capacity"
++        );
++        let connection = super::database::open_reader(&path)?;
++        let (phase, head) = state(&connection, &scope)?;
++        ensure!(
++            phase == TransactionPhase::Ready && pending(&connection, &scope)?.is_none(),
++            "native publication requires explicit owning recovery"
++        );
++        Ok(head)
++    }
++}
+--- a/crates/airk-store/src/lib.rs
++++ b/crates/airk-store/src/lib.rs
+@@ -369,6 +369,44 @@
+         crate::current::gate::check_writer(self, writer)?;
+         writer.invalidate_census_before_mutation()
+     }
++    /// Existing persistent advisory only: no transient writer marker creation/removal.
++    pub(crate) fn existing_writer_exclusion(&self) -> Result<ExistingWriterExclusion> {
++        let managed = self.managed_path()?;
++        ensure!(
++            managed.namespace == "collections-1.4",
++            "native resume requires service layout"
++        );
++        managed_collection::validate_ancestors(&self.directory)?;
++        let lifecycle = quota::existing_service_lifecycle_lease(managed.root)?;
++        let logical = managed.logical;
++        let parent = logical
++            .parent()
++            .context("logical collection parent missing")?;
++        let locks = parent.join(".writer-locks");
++        ensure!(
++            fs::symlink_metadata(&locks)?.is_dir()
++                && !fs::symlink_metadata(&locks)?.file_type().is_symlink(),
++            "redirected writer lock directory"
++        );
++        let name = logical
++            .file_name()
++            .context("logical collection name missing")?
++            .to_str()
++            .context("non-UTF8 collection name")?;
++        let advisory = crate::service::acquire_existing_file(&locks, name)?;
++        // Healthy writers remove their transient marker. Never require it, and
++        // never repair a stale/legacy marker while observing a saved owner.
++        match fs::symlink_metadata(self.directory.join("writer.lock")) {
++            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
++            Err(e) => return Err(e.into()),
++            Ok(_) => anyhow::bail!("writer marker requires explicit owning recovery"),
++        }
++        Ok(ExistingWriterExclusion {
++            _advisory: advisory,
++            _lifecycle: lifecycle,
++            directory: self.directory.canonicalize()?,
++        })
++    }
+     pub fn lock(&self) -> Result<WriterLock> {
+         if self.managed_path().is_ok() {
+             managed_collection::validate_ancestors(&self.directory)?;
+@@ -454,6 +492,13 @@
+         };
+         Ok(guard)
+     }
++}
++
++/// Bounded-observation exclusion, deliberately not a mutation WriterLock.
++pub(crate) struct ExistingWriterExclusion {
++    _advisory: crate::service::OwnershipFile,
++    _lifecycle: File,
++    pub(crate) directory: PathBuf,
+ }
+ 
+ impl SnapshotStore for FileStore {
+--- a/crates/airk-store/src/private_storage.rs
++++ b/crates/airk-store/src/private_storage.rs
+@@ -265,3 +265,45 @@
+ pub(crate) fn test_foreign_readable_root(path: &std::path::Path) -> Result<()> {
+     windows::tests::foreign_readable_root(path)
+ }
++
++/// Native root/creation-boundary policy, distinct from strict per-object census.
++/// This handle proof never certifies unvisited descendants or historical bytes.
++pub(crate) struct NativePrivateBoundary<'a> {
++    file: &'a File,
++    evidence: Evidence,
++}
++impl NativePrivateBoundary<'_> {
++    pub(crate) fn identity(&self) -> [u64; 3] {
++        self.evidence.identity
++    }
++    pub(crate) fn recheck(&self) -> Result<bool> {
++        Ok(
++            matches!(native_platform(self.file,self.evidence.kind)?,Ok(current) if current==self.evidence),
++        )
++    }
++}
++pub(crate) fn native_boundary(
++    file: &File,
++    kind: Kind,
++) -> Result<Option<NativePrivateBoundary<'_>>> {
++    Ok(native_platform(file, kind)?
++        .ok()
++        .map(|evidence| NativePrivateBoundary { file, evidence }))
++}
++fn native_platform(file: &File, kind: Kind) -> Result<std::result::Result<Evidence, Unknown>> {
++    #[cfg(windows)]
++    {
++        windows::native_boundary(file, kind)
++    }
++    #[cfg(target_os = "linux")]
++    {
++        // Root mode0700/no-positive-ACL remains real boundary. Descendants are
++        // admitted by its native producer policy, not by exact leaf mode here.
++        platform(file, kind)
++    }
++    #[cfg(not(any(windows, target_os = "linux")))]
++    {
++        let _ = (file, kind);
++        Ok(Err(Unknown::UnsupportedPlatform))
++    }
++}
+--- a/crates/airk-store/src/private_storage_windows.rs
++++ b/crates/airk-store/src/private_storage_windows.rs
+@@ -79,6 +79,19 @@
+ }
+ 
+ pub(super) fn inspect(file: &File, kind: Kind) -> Result<std::result::Result<Evidence, Unknown>> {
++    inspect_policy(file, kind, false)
++}
++pub(super) fn native_boundary(
++    file: &File,
++    kind: Kind,
++) -> Result<std::result::Result<Evidence, Unknown>> {
++    inspect_policy(file, kind, true)
++}
++fn inspect_policy(
++    file: &File,
++    kind: Kind,
++    native: bool,
++) -> Result<std::result::Result<Evidence, Unknown>> {
+     use std::os::windows::io::{FromRawHandle, OwnedHandle};
+     let before = information(file)?;
+     let Some(volume) = local_volume(file) else {
+@@ -176,33 +189,84 @@
+     );
+     // Root must stop inheritance from a broader ancestor. Children are separately
+     // inspected; inheritance alone is never evidence of their actual descriptor.
+-    if kind == Kind::RootDirectory && control & 0x1000 == 0 {
++    if !native && kind == Kind::RootDirectory && control & 0x1000 == 0 {
+         return Ok(Err(Unknown::NotPrivate));
+     }
+-    if unsafe { (*dacl).AceCount } != 1 {
+-        return Ok(Err(Unknown::UnsupportedAcl));
+-    }
+-    let mut ace = std::ptr::null_mut();
+-    ensure!(
+-        unsafe { GetAce(dacl, 0, &mut ace) } != 0 && !ace.is_null(),
+-        "invalid private storage ACL"
+-    );
+-    let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+-    if header.AceType != 0
+-        || (header.AceSize as usize) < mem::size_of::<ACCESS_ALLOWED_ACE>()
+-        || header.AceFlags & 0x8 != 0
+-    {
+-        return Ok(Err(Unknown::UnsupportedAcl));
+-    }
+-    let allowed = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
+-    let allowed_sid = std::ptr::addr_of!(allowed.SidStart).cast_mut().cast();
+-    if unsafe { IsValidSid(allowed_sid) } == 0
+-        || 8usize + unsafe { GetLengthSid(allowed_sid) } as usize > header.AceSize as usize
+-        || unsafe { EqualSid(allowed_sid, sid) } == 0
+-        || allowed.Mask & 0x1f01ff != 0x1f01ff
+-        || (directory && header.AceFlags & 3 != 3)
+-    {
+-        return Ok(Err(Unknown::NotPrivate));
++    if native {
++        use windows_sys::Win32::Security::{
++            IsWellKnownSid, WinBuiltinAdministratorsSid, WinCreatorOwnerRightsSid,
++            WinLocalSystemSid,
++        };
++        let count = unsafe { (*dacl).AceCount };
++        if count == 0 || count > 16 {
++            return Ok(Err(Unknown::UnsupportedAcl));
++        }
++        let mut owner_grant = false;
++        for index in 0..u32::from(count) {
++            let mut ace = std::ptr::null_mut();
++            ensure!(
++                unsafe { GetAce(dacl, index, &mut ace) } != 0 && !ace.is_null(),
++                "invalid native boundary ACL"
++            );
++            let header = unsafe { &*ace.cast::<ACE_HEADER>() };
++            // Only straightforward propagating allow entries are supported.
++            // No inheritance-protection requirement: actual inherited descriptor
++            // is checked; producer creation preserves this safe policy.
++            if header.AceType != 0
++                || (header.AceSize as usize) < mem::size_of::<ACCESS_ALLOWED_ACE>()
++                || header.AceFlags & !0x13 != 0
++            {
++                return Ok(Err(Unknown::UnsupportedAcl));
++            }
++            let allowed = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
++            let principal = std::ptr::addr_of!(allowed.SidStart).cast_mut().cast();
++            if unsafe { IsValidSid(principal) } == 0
++                || 8usize + unsafe { GetLengthSid(principal) } as usize > header.AceSize as usize
++            {
++                return Ok(Err(Unknown::UnsupportedAcl));
++            }
++            // Owner has already been authenticated against current token above.
++            let is_owner = unsafe { EqualSid(principal, sid) } != 0
++                || unsafe { IsWellKnownSid(principal, WinCreatorOwnerRightsSid) } != 0;
++            let privileged = unsafe { IsWellKnownSid(principal, WinLocalSystemSid) } != 0
++                || unsafe { IsWellKnownSid(principal, WinBuiltinAdministratorsSid) } != 0;
++            if !(is_owner || privileged)
++                || allowed.Mask & 0x1f01ff != 0x1f01ff
++                || (directory && header.AceFlags & 3 != 3)
++            {
++                return Ok(Err(Unknown::NotPrivate));
++            }
++            owner_grant |= is_owner;
++        }
++        if !owner_grant {
++            return Ok(Err(Unknown::NotPrivate));
++        }
++    } else {
++        if unsafe { (*dacl).AceCount } != 1 {
++            return Ok(Err(Unknown::UnsupportedAcl));
++        }
++        let mut ace = std::ptr::null_mut();
++        ensure!(
++            unsafe { GetAce(dacl, 0, &mut ace) } != 0 && !ace.is_null(),
++            "invalid private storage ACL"
++        );
++        let header = unsafe { &*ace.cast::<ACE_HEADER>() };
++        if header.AceType != 0
++            || (header.AceSize as usize) < mem::size_of::<ACCESS_ALLOWED_ACE>()
++            || header.AceFlags & 0x8 != 0
++        {
++            return Ok(Err(Unknown::UnsupportedAcl));
++        }
++        let allowed = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
++        let allowed_sid = std::ptr::addr_of!(allowed.SidStart).cast_mut().cast();
++        if unsafe { IsValidSid(allowed_sid) } == 0
++            || 8usize + unsafe { GetLengthSid(allowed_sid) } as usize > header.AceSize as usize
++            || unsafe { EqualSid(allowed_sid, sid) } == 0
++            || allowed.Mask & 0x1f01ff != 0x1f01ff
++            || (directory && header.AceFlags & 3 != 3)
++        {
++            return Ok(Err(Unknown::NotPrivate));
++        }
+     }
+     // Hash only a bounded self-relative descriptor, never pointer-valued layout.
+     let length = unsafe { GetSecurityDescriptorLength(descriptor) } as usize;
+@@ -210,7 +274,11 @@
+         return Ok(Err(Unknown::UnsupportedAcl));
+     }
+     let mut security = Sha256::new();
+-    security.update(b"airk.private-object.windows.v1\0");
++    security.update(if native {
++        b"airk.native-boundary.windows.v1\0".as_slice()
++    } else {
++        b"airk.private-object.windows.v1\0".as_slice()
++    });
+     for unit in volume {
+         security.update(unit.to_le_bytes());
+     }
+--- a/crates/airk-store/src/quota.rs
++++ b/crates/airk-store/src/quota.rs
+@@ -252,6 +252,16 @@
+ 
+ pub(crate) fn service_lifecycle_lease(root: &Path, exclusive: bool) -> Result<File> {
+     acquire_lifecycle(root, exclusive, false, Namespace::Service.lifecycle())
++}
++
++/// Noncreating shared relocation exclusion for bounded native-owner observation.
++pub(crate) fn existing_service_lifecycle_lease(root: &Path) -> Result<File> {
++    ensure_current_root(root)?;
++    let file = crate::service::open_existing_ownership_file(root, Namespace::Service.lifecycle())?;
++    file.try_lock_shared()
++        .context("data root relocation in progress")?;
++    ensure_current_root(root)?;
++    Ok(file)
+ }
+ 
+ pub fn service_indexing_lifecycle_lease(root: &Path) -> Result<File> {
+--- a/crates/airk-store/src/service.rs
++++ b/crates/airk-store/src/service.rs
+@@ -37,35 +37,20 @@
+     name: &str,
+     timeout: std::time::Duration,
+ ) -> Result<OwnershipFile> {
+-    let path = root.join(name);
+-    if let Ok(metadata) = fs::symlink_metadata(&path) {
+-        ensure!(
+-            metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() == 0,
+-            "invalid service ownership file"
+-        );
+-    }
+-    let mut options = OpenOptions::new();
+-    options.read(true).write(true).create(true).truncate(false);
+-    #[cfg(unix)]
+-    {
+-        use std::os::unix::fs::OpenOptionsExt;
+-        options.custom_flags(libc::O_NOFOLLOW).mode(0o600);
+-    }
+-    #[cfg(windows)]
+-    {
+-        use std::os::windows::fs::OpenOptionsExt;
+-        options.custom_flags(0x00200000);
+-    }
+-    let file = options.open(&path)?;
+-    crate::managed_collection::reject_file_aliases(&path, &file.metadata()?)?;
+-    #[cfg(windows)]
+-    {
+-        use std::os::windows::fs::MetadataExt;
+-        ensure!(
+-            file.metadata()?.file_attributes() & 0x400 == 0,
+-            "redirected service ownership file"
+-        );
+-    }
++    acquire_file_mode(root, name, timeout, true)
++}
++
++pub(crate) fn acquire_existing_file(root: &Path, name: &str) -> Result<OwnershipFile> {
++    acquire_file_mode(root, name, std::time::Duration::ZERO, false)
++}
++
++fn acquire_file_mode(
++    root: &Path,
++    name: &str,
++    timeout: std::time::Duration,
++    create: bool,
++) -> Result<OwnershipFile> {
++    let file = open_ownership_file(root, name, create)?;
+     let started = std::time::Instant::now();
+     loop {
+         match file.try_lock() {
+@@ -84,6 +69,51 @@
+         }
+     }
+     Ok(OwnershipFile(file, AtomicBool::new(false)))
++}
++
++pub(crate) fn open_existing_ownership_file(root: &Path, name: &str) -> Result<File> {
++    open_ownership_file(root, name, false)
++}
++fn open_ownership_file(root: &Path, name: &str, create: bool) -> Result<File> {
++    let path = root.join(name);
++    if let Ok(metadata) = fs::symlink_metadata(&path) {
++        ensure!(
++            metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() == 0,
++            "invalid service ownership file"
++        );
++    }
++    let mut options = OpenOptions::new();
++    options
++        .read(true)
++        .write(true)
++        .create(create)
++        .truncate(false);
++    #[cfg(unix)]
++    {
++        use std::os::unix::fs::OpenOptionsExt;
++        options.custom_flags(libc::O_NOFOLLOW).mode(0o600);
++    }
++    #[cfg(windows)]
++    {
++        use std::os::windows::fs::OpenOptionsExt;
++        options.custom_flags(0x00200000);
++    }
++    let file = options.open(&path)?;
++    let opened = file.metadata()?;
++    ensure!(
++        opened.is_file() && opened.len() == 0,
++        "invalid opened service ownership file"
++    );
++    crate::managed_collection::reject_file_aliases(&path, &opened)?;
++    #[cfg(windows)]
++    {
++        use std::os::windows::fs::MetadataExt;
++        ensure!(
++            file.metadata()?.file_attributes() & 0x400 == 0,
++            "redirected service ownership file"
++        );
++    }
++    Ok(file)
+ }
+ 
+ pub struct ProjectLease {
+@@ -244,3 +274,25 @@
+         Ok(())
+     }
+ }
++
++#[cfg(test)]
++mod existing_owner_tests {
++    use super::*;
++    #[test]
++    fn existing_owner_never_creates_or_repairs_missing_or_malformed_leaf() -> Result<()> {
++        let root = tempfile::tempdir()?;
++        assert!(acquire_existing_file(root.path(), "manifest.lock").is_err());
++        assert_eq!(fs::read_dir(root.path())?.count(), 0);
++        fs::write(root.path().join("manifest.lock"), b"legacy")?;
++        assert!(acquire_existing_file(root.path(), "manifest.lock").is_err());
++        assert_eq!(fs::read(root.path().join("manifest.lock"))?, b"legacy");
++        fs::write(root.path().join("manifest.lock"), b"")?;
++        let held = acquire_existing_file(root.path(), "manifest.lock")?;
++        assert!(acquire_existing_file(root.path(), "manifest.lock").is_err());
++        drop(held);
++        drop(acquire_existing_file(root.path(), "manifest.lock")?);
++        assert_eq!(fs::read_dir(root.path())?.count(), 1);
++        assert_eq!(fs::metadata(root.path().join("manifest.lock"))?.len(), 0);
++        Ok(())
++    }
++}
+--- a/crates/airk-store/src/service_census_windows.rs
++++ b/crates/airk-store/src/service_census_windows.rs
+@@ -621,3 +621,70 @@
+         Ok(())
+     }
+ }
++
++/// Native creation-boundary root only; never enumerates or promotes a census.
++pub(crate) struct NativeRoot {
++    root: AbsoluteRoot,
++    path: PathBuf,
++    identity: [u64; 3],
++}
++impl NativeRoot {
++    pub(crate) fn begin(path: &Path) -> Result<Self> {
++        let root = absolute(path)?;
++        let proof = private_storage::native_boundary(&root.file, Kind::RootDirectory)?
++            .context("native Windows boundary policy unavailable")?;
++        let identity = proof.identity();
++        ensure!(
++            no_alternate_streams(&root.file)?,
++            "native root has unsupported streams"
++        );
++        Ok(Self {
++            root,
++            path: path.into(),
++            identity,
++        })
++    }
++    pub(crate) fn require_creation_chain(&self, boundary: [u64; 3]) -> Result<()> {
++        let mut found = false;
++        for file in self
++            .root
++            ._ancestors
++            .iter()
++            .chain(std::iter::once(&self.root.file))
++        {
++            let md = info(file)?;
++            let id = [
++                md.dwVolumeSerialNumber.into(),
++                md.nFileIndexHigh.into(),
++                md.nFileIndexLow.into(),
++            ];
++            if id == boundary {
++                found = true;
++            }
++            if found {
++                let proof = private_storage::native_boundary(file, Kind::RootDirectory)?
++                    .context("native creation ancestor has unsupported inherited grants")?;
++                ensure!(
++                    proof.identity()[0] == boundary[0] && proof.recheck()?,
++                    "native creation boundary changed"
++                );
++            }
++        }
++        ensure!(found, "native directory is outside actual private root");
++        Ok(())
++    }
++    pub(crate) fn identity(&self) -> Result<[u64; 3]> {
++        let current = absolute(&self.path)?;
++        let proof = private_storage::native_boundary(&self.root.file, Kind::RootDirectory)?
++            .context("native Windows boundary policy changed")?;
++        let fresh = private_storage::native_boundary(&current.file, Kind::RootDirectory)?
++            .context("native Windows boundary replaced")?;
++        ensure!(
++            proof.recheck()?
++                && proof.identity() == self.identity
++                && fresh.identity() == self.identity,
++            "native Windows root identity changed"
++        );
++        Ok(self.identity)
++    }
++}
+--- a/crates/airk-store/src/service_collection.rs
++++ b/crates/airk-store/src/service_collection.rs
+@@ -669,6 +669,18 @@
+         let gate = Gate::shared(&store)?;
+         Ok(Selection { store, _gate: gate })
+     }
++    pub(crate) fn select_existing_locked(&self) -> Result<ExistingSelection> {
++        let lock =
++            retry_manifest_lock(|| super::acquire_existing_file(&self.directory, "manifest.lock"))?;
++        let manifest = self.manifest()?;
++        let store = FileStore::new(self.slot(manifest.active));
++        let gate = Gate::shared_existing(&store)?;
++        Ok(ExistingSelection {
++            store,
++            _gate: gate,
++            _manifest: lock,
++        })
++    }
+     pub fn selected_store(&self) -> Result<FileStore> {
+         Ok(self.select()?.store)
+     }
+@@ -1008,3 +1020,10 @@
+     }
+     Ok(settings_id(&settings))
+ }
++
++/// Retains selection replacement exclusion through a short owning control commit.
++pub(crate) struct ExistingSelection {
++    pub(crate) store: FileStore,
++    _gate: Gate,
++    _manifest: super::OwnershipFile,
++}
+--- a/crates/airk-store/src/service_collection_census.rs
++++ b/crates/airk-store/src/service_collection_census.rs
+@@ -475,7 +475,7 @@
+     open_child(parent, name)
+ }
+ #[cfg(target_os = "linux")]
+-fn open_absolute(path: &Path) -> Result<File> {
++pub(super) fn open_absolute(path: &Path) -> Result<File> {
+     use std::path::Component;
+     ensure!(path.is_absolute(), "census root must be absolute");
+     let mut parent = File::open("/")?;
+--- a/crates/airk-store/src/service_collection_integrity.rs
++++ b/crates/airk-store/src/service_collection_integrity.rs
+@@ -2,6 +2,8 @@
+ //! Durable observations only. This module grants no relaxed read authority.
+ use super::*;
+ use crate::current::{CurrentHead, CurrentRead};
++#[path = "service_collection_native_owner.rs"]
++pub mod native_owner;
+ use crate::service::{ProjectLease, data_scope::BoundDataRoot, registry::ServiceRegistry};
+ 
+ #[path = "service_collection_census.rs"]
+--- /dev/null
++++ b/crates/airk-store/src/service_collection_native_owner.rs
+@@ -0,0 +1,340 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Bounded native lifecycle enrollment only; ordinary readers remain strict.
++use super::*;
++use crate::service::registry::{
++    IntegrityAuditState,
++    owner_session::{EnrollmentBasis, OwnerSession, POLICY, SessionState},
++};
++use airk_core::service::WorkerIdentity;
++
++#[cfg(windows)]
++struct RootPin(crate::service_census_windows::NativeRoot);
++#[cfg(target_os = "linux")]
++struct RootPin(File);
++#[cfg(not(any(windows, target_os = "linux")))]
++struct RootPin;
++impl RootPin {
++    fn open(path: &Path, private_boundary: bool) -> Result<Self> {
++        #[cfg(windows)]
++        {
++            let _ = private_boundary;
++            Ok(Self(crate::service_census_windows::NativeRoot::begin(
++                path,
++            )?))
++        }
++        #[cfg(target_os = "linux")]
++        {
++            let file = super::census::open_absolute(path)?;
++            if private_boundary {
++                let proof = crate::private_storage::native_boundary(
++                    &file,
++                    crate::private_storage::Kind::RootDirectory,
++                )?
++                .context("native root privacy is not established")?;
++                ensure!(proof.recheck()?, "native root boundary changed");
++            }
++            Ok(Self(file))
++        }
++        #[cfg(not(any(windows, target_os = "linux")))]
++        {
++            let _ = (path, private_boundary);
++            anyhow::bail!("native root evidence unavailable")
++        }
++    }
++    fn require_under(&self, boundary: [u64; 3]) -> Result<()> {
++        #[cfg(windows)]
++        {
++            self.0.require_creation_chain(boundary)
++        }
++        #[cfg(target_os = "linux")]
++        {
++            ensure!(
++                self.id()?[0] == boundary[0],
++                "native directory crosses filesystem"
++            );
++            Ok(())
++        }
++        #[cfg(not(any(windows, target_os = "linux")))]
++        {
++            let _ = boundary;
++            anyhow::bail!("native boundary unsupported")
++        }
++    }
++    fn id(&self) -> Result<[u64; 3]> {
++        #[cfg(windows)]
++        {
++            self.0.identity()
++        }
++        #[cfg(target_os = "linux")]
++        {
++            use std::os::unix::fs::MetadataExt;
++            let m = self.0.metadata()?;
++            Ok([m.dev(), m.ino(), 0])
++        }
++        #[cfg(not(any(windows, target_os = "linux")))]
++        {
++            anyhow::bail!("native root evidence unavailable")
++        }
++    }
++}
++fn digest(domain: &[u8], value: &impl Serialize) -> Result<Sha256Digest> {
++    Ok(airk_core::identity::framed_digest(
++        domain,
++        &[&serde_json::to_vec(value)?],
++    ))
++}
++/// Acquired before entering SQL: lifecycle->persistent writer->manifest->SQL.
++struct LockedPublication {
++    _selection: super::super::ExistingSelection,
++    _writer: crate::ExistingWriterExclusion,
++    root: RootPin,
++    selected: RootPin,
++    head: CurrentHead,
++}
++impl IntegrityOwner<'_> {
++    fn locked_native(&self) -> Result<LockedPublication> {
++        self.check()?;
++        let preliminary = self.collection.select_existing_locked()?;
++        let directory = preliminary.store.directory().canonicalize()?;
++        drop(preliminary);
++        let store = FileStore::new(&directory);
++        let writer = store.existing_writer_exclusion()?;
++        let selection = self.collection.select_existing_locked()?;
++        ensure!(
++            selection.store.directory().canonicalize()? == directory,
++            "native selection changed before resume"
++        );
++        let root = RootPin::open(Path::new(&self.collection.owner.data_root), true)?;
++        let selected = RootPin::open(&directory, false)?;
++        let root_id = root.id()?;
++        let selected_id = selected.id()?;
++        selected.require_under(root_id)?;
++        ensure!(
++            root_id[0] == selected_id[0],
++            "native selected directory crosses volume boundary"
++        );
++        let head = selection.store.existing_settled_head(&writer)?;
++        ensure!(
++            head.scope.root == self.collection.owner.root
++                && head.scope.collection == self.collection.owner.collection,
++            "foreign native selected scope"
++        );
++        self.native_no_damage(&head)?;
++        Ok(LockedPublication {
++            _selection: selection,
++            _writer: writer,
++            root,
++            selected,
++            head,
++        })
++    }
++    fn native_no_damage(&self, head: &CurrentHead) -> Result<()> {
++        let fence = self.check()?;
++        ensure!(
++            !self.bound.native_integrity_revoked(),
++            "native owner live integrity revoked"
++        );
++        if let Some(state) = self.load(fence.0)? {
++            ensure!(
++                state.known_damage.len() < MAX_DAMAGE
++                    && !state
++                        .known_damage
++                        .iter()
++                        .any(|d| d.incarnation == head.scope.incarnation),
++                "native collection has known damage"
++            );
++        }
++        let damage = self.registry.recorded_integrity_damage(self.lease)?;
++        ensure!(
++            damage.len() < MAX_DAMAGE
++                && !damage
++                    .iter()
++                    .any(|d| d.incarnation == head.scope.incarnation),
++            "native collection has durable known damage"
++        );
++        ensure!(
++            !matches!(
++                self.registry.integrity_audit_state(self.lease)?,
++                IntegrityAuditState::Unresolved { .. }
++            ),
++            "native collection audit is unresolved"
++        );
++        Ok(())
++    }
++}
++/// Owns exact native worker and supported root handles, never a census/read bypass.
++/// No instance is installed by normal strict worker construction.
++pub struct NativeOwnerSession {
++    collection: Collection,
++    bound: BoundDataRoot,
++    lease: std::sync::Arc<ProjectLease>,
++    identity: WorkerIdentity,
++    active: String,
++    _root: RootPin,
++}
++impl Collection {
++    /// Explicit positive capability admission. No source/object/FTS audit occurs;
++    /// absent legacy metadata is tagged Unknown under native current-user trust.
++    /// Native callers must provide their actual admitted lease and worker identity.
++    pub fn arm_native_owner(
++        &self,
++        registry: &mut ServiceRegistry,
++        lease: std::sync::Arc<ProjectLease>,
++        bound: &BoundDataRoot,
++        identity: WorkerIdentity,
++    ) -> Result<NativeOwnerSession> {
++        let owner = self.integrity_owner(registry, &lease, bound)?;
++        let fence = owner.check()?;
++        ensure!(
++            identity.service == fence.0
++                && identity.project == lease.identity().0
++                && identity.fencing_generation == fence.1,
++            "foreign native worker admission"
++        );
++        let locked = owner.locked_native()?;
++        let root = digest(b"native-root/1", &locked.root.id()?)?;
++        let selected = digest(b"native-selected/1", &locked.selected.id()?)?;
++        let token = locked.head.token()?;
++        let previous = registry.load_owner_session(&lease)?;
++        if let Some((_, old)) = &previous {
++            ensure!(
++                old.state == SessionState::Clean
++                    && old.policy == POLICY
++                    && old.root == root
++                    && old.selected == selected
++                    && old.head == token,
++                "native owner requires exceptional physical verification"
++            );
++        }
++        let next = OwnerSession {
++            version: 1,
++            namespace: fence.0,
++            project: identity.project,
++            worker: identity.worker,
++            epoch: fence.1,
++            nonce: identity.worker,
++            incarnation: token.incarnation,
++            root,
++            selected,
++            policy: POLICY,
++            head: token,
++            state: SessionState::Active,
++            basis: previous
++                .as_ref()
++                .map_or(EnrollmentBasis::LegacyMetadataUnknown, |(_, old)| {
++                    old.basis.clone()
++                }),
++        };
++        // All filesystem exclusion has already been acquired. Recheck exact
++        // live registration/bound state before the SQL-only conditional commit.
++        ensure!(
++            owner.check()? == fence,
++            "native owner changed during admission"
++        );
++        drop(owner);
++        registry.compare_owner_session(
++            &lease,
++            previous.as_ref().map(|(raw, _)| raw.as_str()),
++            &next,
++        )?;
++        let active = serde_json::to_string(&next)?;
++        let LockedPublication { root, .. } = locked;
++        Ok(NativeOwnerSession {
++            collection: self.clone(),
++            bound: bound.clone(),
++            lease,
++            identity,
++            active,
++            _root: root,
++        })
++    }
++}
++impl Collection {
++    /// Exceptional inherited Active/Clean mismatch resolution; declared physical
++    /// coverage must match the exact selected head. F13 must extend this proof
++    /// predicate before projection fields can ever use relaxed reads.
++    pub fn recover_native_owner(
++        &self,
++        registry: &mut ServiceRegistry,
++        lease: &ProjectLease,
++        bound: &BoundDataRoot,
++        identity: WorkerIdentity,
++        job: Sha256Digest,
++        proof: &super::verify::AuditCompletionProof,
++    ) -> Result<()> {
++        let owner = self.integrity_owner(registry, lease, bound)?;
++        let fence = owner.check()?;
++        ensure!(
++            identity.service == fence.0
++                && identity.project == lease.identity().0
++                && identity.fencing_generation == fence.1,
++            "foreign native recovery owner"
++        );
++        let locked = owner.locked_native()?;
++        ensure!(
++            proof.exact_head() == &locked.head,
++            "native recovery physical components changed"
++        );
++        let previous = registry
++            .load_owner_session(lease)?
++            .context("exceptional owner session missing")?;
++        let token = locked.head.token()?;
++        let next = OwnerSession {
++            version: 1,
++            namespace: fence.0,
++            project: identity.project,
++            worker: identity.worker,
++            epoch: fence.1,
++            nonce: identity.worker,
++            incarnation: token.incarnation,
++            root: digest(b"native-root/1", &locked.root.id()?)?,
++            selected: digest(b"native-selected/1", &locked.selected.id()?)?,
++            policy: POLICY,
++            head: token,
++            state: SessionState::Clean,
++            basis: EnrollmentBasis::PhysicalVerify,
++        };
++        ensure!(owner.check()? == fence, "native recovery owner changed");
++        drop(owner);
++        registry.compare_recovered_owner_session(lease, &previous.0, &next, job, proof)?;
++        drop(locked);
++        Ok(())
++    }
++}
++
++impl NativeOwnerSession {
++    /// Private owning adapter only. The worker calls this after jobs and actual
++    /// LocalTools admission shutdown succeed. This API is NOT a query receipt.
++    pub fn settle_after_owned_drain(self, registry: &mut ServiceRegistry) -> Result<()> {
++        let owner = self
++            .collection
++            .integrity_owner(registry, &self.lease, &self.bound)?;
++        let fence = owner.check()?;
++        ensure!(
++            fence == (self.identity.service, self.identity.fencing_generation),
++            "stale native drain epoch"
++        );
++        let locked = owner.locked_native()?;
++        let previous = registry
++            .load_owner_session(&self.lease)?
++            .context("native active session missing")?;
++        ensure!(
++            previous.0 == self.active && previous.1.state == SessionState::Active,
++            "foreign native session drain"
++        );
++        let mut clean = previous.1;
++        // Publications/rebuilds inside this exact Active owner are allowed.
++        // Bind final current selection/head instead of freezing initial head.
++        clean.root = digest(b"native-root/1", &locked.root.id()?)?;
++        clean.selected = digest(b"native-selected/1", &locked.selected.id()?)?;
++        clean.head = locked.head.token()?;
++        clean.incarnation = clean.head.incarnation;
++        clean.state = SessionState::Clean;
++        clean.basis = EnrollmentBasis::OwnedDrain;
++        ensure!(owner.check()? == fence, "native owner changed during drain");
++        drop(owner);
++        registry.compare_owner_session(&self.lease, Some(&self.active), &clean)?;
++        drop(locked);
++        Ok(())
++    }
++}
+--- a/crates/airk-store/src/service_collection_tests.rs
++++ b/crates/airk-store/src/service_collection_tests.rs
+@@ -1838,3 +1838,225 @@
+     assert!(registry.integrity_audit_veto(&lease)?.is_none());
+     Ok(())
+ }
++
++#[test]
++fn existing_native_selection_and_advisory_do_not_create_transient_writer_marker() -> Result<()> {
++    let (_temp, collection, _registry, _bound, _lease, store, _scope) = integrity_fixture()?;
++    assert!(!store.directory().join("writer.lock").exists());
++    let selected = collection.select_existing_locked()?;
++    let directory = selected.store.directory().canonicalize()?;
++    drop(selected);
++    let existing = store.existing_writer_exclusion()?;
++    assert_eq!(existing.directory, directory);
++    assert!(store.lock().is_err(), "real mutator must be excluded");
++    assert!(!store.directory().join("writer.lock").exists());
++    drop(existing);
++    drop(store.lock()?);
++    assert!(!store.directory().join("writer.lock").exists());
++    Ok(())
++}
++#[test]
++fn missing_existing_native_manifest_lock_is_not_repaired() -> Result<()> {
++    let (_temp, collection, _registry, _bound, _lease, _store, _scope) = integrity_fixture()?;
++    let path = collection.directory.join("manifest.lock");
++    fs::remove_file(&path)?;
++    assert!(collection.select_existing_locked().is_err());
++    assert!(!path.exists());
++    Ok(())
++}
++#[cfg(windows)]
++#[test]
++fn native_session_clean_reopen_and_inherited_active_are_distinct() -> Result<()> {
++    let (_temp, collection, mut registry, bound, lease, _store, _scope) = integrity_fixture()?;
++    let lease = std::sync::Arc::new(lease);
++    let identity = airk_core::service::WorkerIdentity {
++        service: registry.incarnation()?,
++        worker: Incarnation::from_bytes([103; 16]),
++        project: lease.identity().0,
++        fencing_generation: lease.identity().1.unwrap(),
++    };
++    let session = collection.arm_native_owner(&mut registry, lease.clone(), &bound, identity)?;
++    assert!(
++        collection
++            .arm_native_owner(&mut registry, lease.clone(), &bound, identity)
++            .is_err(),
++        "Active cannot be treated as clean absence"
++    );
++    session.settle_after_owned_drain(&mut registry)?;
++    let second = collection.arm_native_owner(&mut registry, lease.clone(), &bound, identity)?;
++    drop(second); // simulate unclean capability owner destruction, not clean settle.
++    assert!(
++        collection
++            .arm_native_owner(&mut registry, lease, &bound, identity)
++            .is_err()
++    );
++    Ok(())
++}
++
++#[cfg(windows)]
++#[test]
++fn native_unclean_session_requires_actual_exact_verify_complete_not_partial() -> Result<()> {
++    use crate::service::registry::AuditEvidence;
++    use airk_core::service::{JobKind, JobOutcome, RequestKey};
++    let (_temp, collection, mut registry, bound, lease, store, scope) = integrity_fixture()?;
++    let lease = std::sync::Arc::new(lease);
++    let identity = airk_core::service::WorkerIdentity {
++        service: registry.incarnation()?,
++        worker: Incarnation::from_bytes([104; 16]),
++        project: lease.identity().0,
++        fencing_generation: lease.identity().1.unwrap(),
++    };
++    drop(collection.arm_native_owner(&mut registry, lease.clone(), &bound, identity)?);
++    assert!(
++        collection
++            .arm_native_owner(&mut registry, lease.clone(), &bound, identity)
++            .is_err()
++    );
++    let (namespace, epoch) = registry.saved_request_epoch()?;
++    let job = registry.enqueue(
++        identity.project,
++        namespace,
++        &RequestKey {
++            namespace,
++            epoch,
++            nonce: Incarnation::from_bytes([105; 16]),
++        },
++        JobKind::Verify,
++    )?;
++    registry
++        .claim_job_id(&lease, job.id)?
++        .context("Verify not claimed")?;
++    let proof = {
++        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++        let read = store.current_read(&scope)?;
++        owner.anchor(&read)?;
++        drop(read);
++        let mut writer = store.lock()?;
++        let turn = owner.verify_turn(&mut writer, job.id, 32, 64 << 20, 200, || Ok(()))?;
++        turn.completed
++            .context("actual full physical completion missing")?
++    };
++    registry.complete_job_with_maintenance_and_audit_at(
++        &lease,
++        job.id,
++        JobOutcome::Succeeded {
++            revision: Some(proof.revision()?),
++        },
++        300,
++        None,
++        Some(AuditEvidence::Complete(&proof)),
++    )?;
++    collection.recover_native_owner(&mut registry, &lease, &bound, identity, job.id, &proof)?;
++    let owner = collection.arm_native_owner(&mut registry, lease, &bound, identity)?;
++    owner.settle_after_owned_drain(&mut registry)?;
++    Ok(())
++}
++#[cfg(windows)]
++#[test]
++fn native_failed_clean_commit_leaves_active_and_public_reset_cannot_erase_it() -> Result<()> {
++    let (_temp, collection, mut registry, bound, lease, _store, _scope) = integrity_fixture()?;
++    let lease = std::sync::Arc::new(lease);
++    let identity = airk_core::service::WorkerIdentity {
++        service: registry.incarnation()?,
++        worker: Incarnation::from_bytes([106; 16]),
++        project: lease.identity().0,
++        fencing_generation: lease.identity().1.unwrap(),
++    };
++    let owner = collection.arm_native_owner(&mut registry, lease.clone(), &bound, identity)?;
++    let control = bound.native_control_root();
++    let db = rusqlite::Connection::open(control.join("service-1.4.sqlite3"))?;
++    db.execute_batch("CREATE TRIGGER reject_owner_clean BEFORE UPDATE ON service_recovery_budget WHEN NEW.scope LIKE 'owner_session:%' BEGIN SELECT RAISE(ABORT,'owned fixture clean failure'); END")?;
++    assert!(owner.settle_after_owned_drain(&mut registry).is_err());
++    db.execute_batch("DROP TRIGGER reject_owner_clean")?;
++    assert!(
++        registry
++            .reset_recovery_budget(&format!("owner_session:{}", identity.project))
++            .is_err()
++    );
++    assert!(
++        collection
++            .arm_native_owner(&mut registry, lease, &bound, identity)
++            .is_err()
++    );
++    Ok(())
++}
++
++// Actual producer layout: no chmod, ACL rewrite or private-root test helper.
++fn native_default_boundary_fixture() -> Result<IntegrityFixture> {
++    use crate::service::{ProjectLease, data_scope, registry::ServiceRegistry};
++    let temporary = match std::env::var_os("AIRK_PRIVATE_CENSUS_BASE") {
++        Some(base) => tempfile::Builder::new()
++            .prefix("airk-native-default-")
++            .tempdir_in(base)?,
++        None => tempfile::tempdir()?,
++    };
++    let base = temporary.path().canonicalize()?;
++    let data = base.join("data");
++    let source = base.join("source");
++    let control = base.join("control");
++    fs::create_dir(&source)?;
++    fs::create_dir(&control)?;
++    let namespace = Incarnation::from_bytes([111; 16]);
++    let registration = airk_core::service::ProjectRegistration::new(
++        source.to_str().unwrap().into(),
++        data.to_str().unwrap().into(),
++        "native-default".into(),
++    )?;
++    let mut registry = ServiceRegistry::open(&control, namespace)?;
++    registry.register(&registration)?;
++    let bound = data_scope::bind(&data, &control, namespace)?;
++    let slot = Incarnation::from_bytes([112; 16]);
++    let collection =
++        Collection::initialize(&data, &registration.root, &registration.collection, slot)?;
++    let store = collection.selected_store()?;
++    initialize(&store, &registration.root, slot)?;
++    let scope = store
++        .current_owned_scope()?
++        .context("default native scope missing")?;
++    let mut lease = ProjectLease::acquire(&control, registration.binding)?;
++    registry.admit_worker(&mut lease)?;
++    Ok((temporary, collection, registry, bound, lease, store, scope))
++}
++fn assert_native_default_producer_boundary() -> Result<()> {
++    let (_temp, collection, mut registry, bound, lease, store, scope) =
++        native_default_boundary_fixture()?;
++    let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
++    {
++        let writer = store.lock()?;
++        let input = audit_retained_input(
++            &store,
++            &writer,
++            &quota,
++            &scope,
++            "default.txt",
++            "ordinary retained default layout",
++        )?;
++        let mut current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
++        let token = current.head()?.token()?;
++        current.commit_artifact(&token, "default.txt", Some(&input))?;
++    }
++    let lease = std::sync::Arc::new(lease);
++    let identity = airk_core::service::WorkerIdentity {
++        service: registry.incarnation()?,
++        worker: Incarnation::from_bytes([113; 16]),
++        project: lease.identity().0,
++        fencing_generation: lease.identity().1.unwrap(),
++    };
++    let owner = collection.arm_native_owner(&mut registry, lease.clone(), &bound, identity)?;
++    owner.settle_after_owned_drain(&mut registry)?;
++    collection
++        .arm_native_owner(&mut registry, lease, &bound, identity)?
++        .settle_after_owned_drain(&mut registry)?;
++    Ok(())
++}
++#[cfg(windows)]
++#[test]
++fn untouched_windows_bind_and_retained_producer_layout_qualifies_native_boundary() -> Result<()> {
++    assert_native_default_producer_boundary()
++}
++#[cfg(target_os = "linux")]
++#[test]
++#[ignore = "requires AIRK_PRIVATE_CENSUS_BASE under a real protected local user namespace, not shared /tmp"]
++fn untouched_linux_bind_and_retained_producer_layout_qualifies_native_boundary() -> Result<()> {
++    assert_native_default_producer_boundary()
++}
+--- a/crates/airk-store/src/service_collection_verify.rs
++++ b/crates/airk-store/src/service_collection_verify.rs
+@@ -83,6 +83,9 @@
+         job: &airk_core::service::JobRecord,
+     ) -> Result<bool> {
+         self.drained.matches(connection, job)
++    }
++    pub(crate) fn exact_head(&self) -> &CurrentHead {
++        &self.head
+     }
+     pub fn revision(&self) -> Result<airk_core::identity::RevisionToken> {
+         let token = self.head.token()?;
+--- a/crates/airk-store/src/service_data_relocation.rs
++++ b/crates/airk-store/src/service_data_relocation.rs
+@@ -284,6 +284,10 @@
+         replacements.insert(
+             format!("integrity:{}", existing.binding),
+             format!("integrity:{}", next.binding),
++        );
++        replacements.insert(
++            format!("owner_session:{}", existing.binding),
++            format!("owner_session:{}", next.binding),
+         );
+         replacements.insert(
+             format!("integrity_damage:{}", existing.binding),
+--- /dev/null
++++ b/crates/airk-store/src/service_owner_session.rs
+@@ -0,0 +1,190 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Private bounded native owner lifecycle state; not physical-audit evidence.
++use super::*;
++use serde::{Deserialize, Serialize};
++
++pub(crate) const POLICY: u32 = 1;
++const MAX: usize = 4096;
++#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub(crate) enum SessionState {
++    Clean,
++    Active,
++}
++#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub(crate) enum EnrollmentBasis {
++    LegacyMetadataUnknown,
++    OwnedDrain,
++    PhysicalVerify,
++}
++#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub(crate) struct OwnerSession {
++    pub version: u32,
++    pub namespace: Incarnation,
++    pub project: ProjectBinding,
++    pub worker: Incarnation,
++    pub epoch: u64,
++    pub nonce: Incarnation,
++    pub incarnation: Incarnation,
++    pub root: Sha256Digest,
++    pub selected: Sha256Digest,
++    pub policy: u32,
++    pub head: crate::current::CurrentToken,
++    pub state: SessionState,
++    pub basis: EnrollmentBasis,
++}
++fn scope(project: ProjectBinding) -> String {
++    format!("owner_session:{project}")
++}
++fn load(
++    connection: &Connection,
++    project: ProjectBinding,
++) -> Result<Option<(String, OwnerSession)>> {
++    let row: Option<String> = connection
++        .query_row(
++            "SELECT substr(engine,1,4097) FROM service_recovery_budget WHERE scope=?1",
++            [scope(project)],
++            |row| row.get(0),
++        )
++        .optional()?;
++    row.map(|bytes| {
++        ensure!(bytes.len() <= MAX, "owner session exceeds bounded encoding");
++        let state: OwnerSession = serde_json::from_str(&bytes)?;
++        ensure!(
++            state.version == 1
++                && state.policy == POLICY
++                && state.project == project
++                && state.epoch > 0,
++            "unsupported owner session"
++        );
++        ensure!(
++            state.head.incarnation == state.incarnation,
++            "owner session head differs from selected incarnation"
++        );
++        Ok((bytes, state))
++    })
++    .transpose()
++}
++impl ServiceRegistry {
++    pub(crate) fn load_owner_session(
++        &self,
++        lease: &ProjectLease,
++    ) -> Result<Option<(String, OwnerSession)>> {
++        jobs::worker_epoch(&self.connection, &self.root, lease)?;
++        let current = load(&self.connection, lease.identity().0)?;
++        if let Some((_, state)) = &current {
++            ensure!(
++                state.namespace == self.incarnation()?,
++                "foreign owner session namespace"
++            );
++        }
++        Ok(current)
++    }
++    pub(crate) fn compare_recovered_owner_session(
++        &mut self,
++        lease: &ProjectLease,
++        expected: &str,
++        next: &OwnerSession,
++        job: Sha256Digest,
++        proof: &crate::service::collection::integrity::verify::AuditCompletionProof,
++    ) -> Result<()> {
++        self.compare_owner_session_checked(lease, Some(expected), next, Some((job, proof)))
++    }
++
++    /// Caller holds noncreating writer + manifest/root proof. This transaction
++    /// performs SQL-only fencing, never filesystem lock acquisition.
++    pub(crate) fn compare_owner_session(
++        &mut self,
++        lease: &ProjectLease,
++        expected: Option<&str>,
++        next: &OwnerSession,
++    ) -> Result<()> {
++        self.compare_owner_session_checked(lease, expected, next, None)
++    }
++    fn compare_owner_session_checked(
++        &mut self,
++        lease: &ProjectLease,
++        expected: Option<&str>,
++        next: &OwnerSession,
++        audit: Option<(
++            Sha256Digest,
++            &crate::service::collection::integrity::verify::AuditCompletionProof,
++        )>,
++    ) -> Result<()> {
++        let encoded = serde_json::to_string(next)?;
++        ensure!(
++            encoded.len() <= MAX && next.version == 1 && next.policy == POLICY,
++            "unsupported owner session encoding"
++        );
++
++        let registration_state = self.registration_state;
++        let transaction = self
++            .connection
++            .transaction_with_behavior(TransactionBehavior::Immediate)?;
++        let epoch = jobs::worker_epoch(&transaction, &self.root, lease)?;
++        let namespace: String = transaction.query_row(
++            "SELECT incarnation FROM service_meta WHERE id=1",
++            [],
++            |row| row.get(0),
++        )?;
++        let namespace: Incarnation = namespace.parse()?;
++        if let Some((job, proof)) = audit {
++            let record = jobs::record(&transaction, job)?;
++            ensure!(
++                record.project == next.project
++                    && proof.matches(&transaction, &record)?
++                    && proof.exact_head().token()? == next.head,
++                "foreign or changed physical owner recovery proof"
++            );
++        }
++
++        ensure!(
++            next.namespace == namespace
++                && next.project == lease.identity().0
++                && next.epoch == epoch,
++            "foreign owner session writer"
++        );
++        let registered: bool = transaction.query_row(
++            if registration_state {
++                "SELECT EXISTS(SELECT 1 FROM projects WHERE binding=?1 AND registered=1)"
++            } else {
++                "SELECT EXISTS(SELECT 1 FROM projects WHERE binding=?1)"
++            },
++            [next.project.to_string()],
++            |row| row.get(0),
++        )?;
++        ensure!(registered, "native owner registration removed");
++        let observed = load(&transaction, next.project)?;
++        ensure!(
++            observed.as_ref().map(|(raw, _)| raw.as_str()) == expected,
++            "owner session changed during observation"
++        );
++        transaction.execute("INSERT INTO service_recovery_budget VALUES(?1,?2,0,0,0,1) ON CONFLICT(scope) DO UPDATE SET engine=excluded.engine,failures=0,started_ms=0,next_ms=0,suppressed=1",params![scope(next.project),encoded])?;
++        transaction.commit()?;
++        Ok(())
++    }
++}
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn owner_session_parser_refuses_oversize_unknown_and_partial_records() -> Result<()> {
++        let db = Connection::open_in_memory()?;
++        db.execute_batch("CREATE TABLE service_recovery_budget(scope TEXT PRIMARY KEY,engine TEXT,failures INTEGER,started_ms INTEGER,next_ms INTEGER,suppressed INTEGER)")?;
++        let project = ProjectBinding::from_bytes([7; 32]);
++        for bytes in [
++            "{}".to_owned(),
++            "x".repeat(MAX + 1),
++            "{\"version\":2}".to_owned(),
++        ] {
++            db.execute(
++                "INSERT OR REPLACE INTO service_recovery_budget VALUES(?1,?2,0,0,0,1)",
++                params![scope(project), bytes],
++            )?;
++            assert!(load(&db, project).is_err());
++        }
++        Ok(())
++    }
++}
+--- a/crates/airk-store/src/service_project_removal.rs
++++ b/crates/airk-store/src/service_project_removal.rs
+@@ -175,8 +175,8 @@
+             [project.to_string()],
+         )?;
+         tx.execute(
+-            "DELETE FROM service_recovery_budget WHERE scope=?1 OR scope=?2 OR scope=?3 OR scope=?4",
+-            params![format!("source:{project}"), format!("work:{project}"), format!("integrity:{project}"), format!("integrity_damage:{project}")],
++            "DELETE FROM service_recovery_budget WHERE scope=?1 OR scope=?2 OR scope=?3 OR scope=?4 OR scope=?5",
++            params![format!("source:{project}"), format!("work:{project}"), format!("integrity:{project}"), format!("integrity_damage:{project}"), format!("owner_session:{project}")],
+         )?;
+         tx.execute(
+             "INSERT OR REPLACE INTO service_removed_projects VALUES(?1,?2,?3)",
+--- a/crates/airk-store/src/service_registry.rs
++++ b/crates/airk-store/src/service_registry.rs
+@@ -46,6 +46,8 @@
+ mod integrity_guard;
+ #[path = "service_jobs.rs"]
+ mod jobs;
++#[path = "service_owner_session.rs"]
++pub(crate) mod owner_session;
+ pub use integrity_guard::{AuditDrainProof, AuditEvidence, IntegrityAuditState};
+ #[path = "service_progress.rs"]
+ mod progress;

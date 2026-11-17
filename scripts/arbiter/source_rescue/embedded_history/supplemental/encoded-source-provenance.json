@@ -1,0 +1,22 @@
+{
+  "schema": "airk.encoded-source-migration/1",
+  "files": [
+    {
+      "container": "artifacts/local/one-airk-1814/neo-audit-token-probe-1794106224/probe.json",
+      "container_sha256": "67c862ab4ab56f7f6ed890ae189aa86780c686293d78f940e0c4db782b81a2f7",
+      "container_bytes": 10558,
+      "json_pointer": "/stderr",
+      "decoded_sha256": "6d8e12cdc11d80ddf30d23534d16c56caaf5d618d8359eaf8ee06ba69c1a0274",
+      "decoded_bytes": 3512,
+      "destination": "scripts/arbiter/source_rescue/embedded_history/supplemental/neo-audit-token-probe--6d8e12cdc11d.py",
+      "prefix": "# SPDX-License-Identifier: Apache-2.0\n",
+      "maintained_sha256": "3a0485b3756c604e1964935eba9fe0f3aab57c3e6ae003cd4ed3a93e95281ddf",
+      "maintained_bytes": 3550,
+      "language": "python",
+      "disposition": "extracted-source",
+      "encoded_field_sha256": "2bca0b42be169308f365cc1c8ba725953249ad4e4312259f51abef78db2e4fa4",
+      "encoded_field_bytes": 10474,
+      "decode_method": "single-python-b64decode-literal/1"
+    }
+  ]
+}

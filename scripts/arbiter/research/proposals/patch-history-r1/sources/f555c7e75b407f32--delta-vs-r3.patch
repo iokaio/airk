@@ -1,0 +1,166 @@
+--- r3/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/CONTRACT.md
++++ r4/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/CONTRACT.md
+@@ -64,3 +64,13 @@
+ proof, not merely match a resealed plan hash. Regression inputs reseal all
+ unrelated source/proof references before targeting status/settlement failures;
+ intrinsic DLL/unsafe-option controls keep all unrelated roster fences valid.
++
++The test-support-only opaque native input is versioned
++airk.native.cuda-provenance-projection-input/1. Rust serializes/deserializes the
++actual Input/PayloadInput/NoticeInput owner types, rejecting unknown/duplicate
++fields, oversized requests/rosters, zero or unsafe pins and invalid payloads
++before source opening. decode_input is available only inside the native CUDA
++owner; the public native metadata bridge retains the actual lease/source custody
++and original deadline. This is no new user command, wire permit or runtime
++approval. Future input emission uses real observed producer pins; no placeholder
++actual hashes are supplied by this implementation.
+--- r3/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/tests.rs
++++ r4/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/tests.rs
+@@ -153,6 +153,7 @@
+     Ok((
+         m,
+         Input {
++            schema: "airk.native.cuda-provenance-projection-input/1".into(),
+             build_proof: build,
+             producer_receipt: receipt,
+             aggregate_proof,
+@@ -301,3 +302,26 @@
+     assert!(project(&Lost(source), input).is_err());
+     Ok(())
+ }
++
++#[test]
++fn opaque_native_projection_input_roundtrips_and_refuses_unknown_duplicate_or_zero_pins()
++-> Result<()> {
++    let (_, input) = fixture()?;
++    let raw = serde_json::to_vec(&input)?;
++    let decoded = decode_input(&raw)?;
++    assert_eq!(serde_json::to_vec(&decoded)?, raw);
++    let mut unknown = serde_json::to_value(&input)?;
++    unknown["available"] = json!(true);
++    assert!(decode_input(&serde_json::to_vec(&unknown)?).is_err());
++    let text = String::from_utf8(raw)?;
++    let duplicate = text.replacen(
++        "{",
++        "{\"schema\":\"airk.native.cuda-provenance-projection-input/1\",",
++        1,
++    );
++    assert!(decode_input(duplicate.as_bytes()).is_err());
++    let mut zero = serde_json::to_value(&input)?;
++    zero["build_proof"]["sha256"] = json!(Sha256Digest::from_bytes([0; 32]));
++    assert!(decode_input(&serde_json::to_vec(&zero)?).is_err());
++    Ok(())
++}
+--- r3/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection.rs
++++ r4/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection.rs
+@@ -13,10 +13,14 @@
+     /// Recheck every held source under the original caller deadline before return.
+     fn recheck(&self) -> Result<()>;
+ }
++#[derive(Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
+ pub(in crate::arbiter::runtime::cuda) struct PayloadInput {
+     pub file: manifest::RuntimeFile,
+     pub source: ResourceFilePin,
+ }
++#[derive(Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
+ pub(in crate::arbiter::runtime::cuda) struct NoticeInput {
+     pub component: String,
+     pub package_name: String,
+@@ -24,7 +28,10 @@
+     pub original_source_sha256: Sha256Digest,
+     pub bytes: u64,
+ }
++#[derive(Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
+ pub(in crate::arbiter::runtime::cuda) struct Input {
++    pub schema: String,
+     pub build_proof: ResourceFilePin,
+     pub producer_receipt: ResourceFilePin,
+     pub aggregate_proof: ResourceFilePin,
+@@ -41,6 +48,61 @@
+     pub payloads: Vec<PayloadInput>,
+     pub notices: Vec<NoticeInput>,
+ }
++const INPUT_SCHEMA: &str = "airk.native.cuda-provenance-projection-input/1";
++/// Opaque native metadata request only; it grants no runtime/device permit.
++pub(in crate::arbiter::runtime::cuda) fn decode_input(raw: &[u8]) -> Result<Input> {
++    ensure!(raw.len() <= 16 << 20, "projection request byte capacity");
++    strict::parse(raw)?; // Reject all duplicate object keys before typed decode.
++    let input: Input = serde_json::from_slice(raw)?;
++    ensure!(
++        input.schema == INPUT_SCHEMA
++            && (2..=64).contains(&input.payloads.len())
++            && (3..=512).contains(&input.notices.len()),
++        "unknown projection input scope"
++    );
++    for pin in [
++        &input.build_proof,
++        &input.producer_receipt,
++        &input.aggregate_proof,
++        &input.aggregate_receipt,
++        &input.source_lock,
++        &input.cpu_lock,
++        &input.cuda_inventory,
++        &input.cuda_version,
++        &input.cudnn_inventory,
++        &input.verifier,
++        &input.aggregate_archive,
++        &input.legal_inventory,
++        &input.legal_owner,
++    ] {
++        pin.validate()?;
++        ensure!(nonzero(pin.sha256), "zero projection pin");
++    }
++    for payload in &input.payloads {
++        payload.source.validate()?;
++        ensure!(
++            input_payload_valid(&payload.file)
++                && payload.source.sha256 == payload.file.sha256
++                && payload.file.imports.len() <= 256
++                && payload.file.delay_imports.len() <= 256,
++            "invalid projection payload input"
++        );
++    }
++    for notice in &input.notices {
++        notice.source.validate()?;
++        ensure!(
++            nonzero(notice.source.sha256)
++                && nonzero(notice.original_source_sha256)
++                && notice.bytes > 0
++                && notice.bytes <= 2 << 20
++                && token(&notice.component, 64)
++                && basename(&notice.package_name),
++            "invalid projection legal input"
++        );
++    }
++    Ok(input)
++}
++
+ #[derive(Serialize)]
+ pub(in crate::arbiter::runtime::cuda) struct Prepared {
+     pub provenance: Asset,
+@@ -182,7 +244,9 @@
+     input: Input,
+ ) -> Result<Prepared> {
+     ensure!(
+-        (2..=64).contains(&input.payloads.len()) && (3..=512).contains(&input.notices.len()),
++        input.schema == INPUT_SCHEMA
++            && (2..=64).contains(&input.payloads.len())
++            && (3..=512).contains(&input.notices.len()),
+         "projection input capacity"
+     );
+     let build = json(source, &input.build_proof)?;
+--- r3/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/tests.rs
++++ r4/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/tests.rs
+@@ -231,8 +231,7 @@
+         matching_native.push(forbidden_native);
+         let (raw, asset) = raw_asset(&changed).unwrap();
+         let error = validate(&raw, &asset, hash(12), &matching_native)
+-            .err()
+-            .expect("intrinsically forbidden DLL accepted");
++            .expect_err("intrinsically forbidden DLL accepted");
+         assert_eq!(
+             error.to_string(),
+             "unapproved/duplicate runtime payload",

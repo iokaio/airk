@@ -1,0 +1,892 @@
+--- a/README.md
++++ b/README.md
+@@ -7,6 +7,8 @@
+ Browser and editor share Overview, Search, Indexes, Activity, Agents, Service and Help. Editor evidence/review/strategy tools and Workbench remain available. Native Admin keeps credentials and request custody in the native owner; uncertain outcomes retain their original identity and never authorize automatic replay. Complete native evidence, provenance, continuations and errors remain available for inspection and export.
+ 
+ Bundled MiniLM retrieval and optional Arbiter answers have separate roles. The service installer includes MiniLM; optional Focus/Context weights are acquired separately through explicit provisioning when a verified public source is available. Arbiter is off by default and requires explicit immutable-index enrollment and a verified supported profile. Its implementation is not a claim of independent model, device, quality or platform qualification. `airkctl arbiter status` and actual tool schemas describe served capabilities. Product Help has one generated source catalog for the editor, browser and static site and remains available offline where bundled.
++
++Arbiter research credits include [CoSQA (Huang et al., 2021)](https://aclanthology.org/2021.acl-long.442/), [CodeSearchNet (Husain et al., 2019)](https://arxiv.org/abs/1909.09436), ContextBench, QASPER, HotpotQA and Requests contributors. The [Arbiter README](docs/arbiter/README.md) records full authors, separate code/data terms and historical versus candidate use; [research notices](third_party/research/ARBITER-RESEARCH-NOTICES.md) preserve original attribution in the installer legal bundle. No raw research corpus is bundled, and acknowledgement of a candidate dataset does not assert training admission or qualified models.
+ 
+ **Agents need no token (U110, 15 November 2026).** Coding agents connect to the service's `https://127.0.0.1:<port>/mcp` endpoint with no credential; any `Authorization` header is ignored, and any local process that can reach 127.0.0.1 can read every index. TLS issuer trust is still required. `airkctl agents connect --client claude|codex|vscode` (or Explorer **Agents** → **Connect**) writes only the endpoint URL and `X-AIRK-Response-Mode`; `airkctl agents repair` strips tokens and credential helpers from older entries. Each read names its scope (`index_ids`, `index_set_ids` or `workspace`); `list_scopes` lists indexes, index sets and the workspace defaults that an Explorer window's applied search scope stores (`airkctl scope default|defaults`). See [agent setup](docs/agent-integration.md). In the current source, `airkctl --output json agents manual --client codex --project "<absolute project folder>"` returns the exact target file, format and complete entry; replace `codex` with `claude` or `vscode` for those clients. Merge that entry into the named file while preserving other settings. Automatic editing can refuse a folder whose complete file and recovery copy cannot be protected. The source UI exposes the same entry under **Set up manually**; those UI changes still need sealed-asset and installed checks. Regenerate the entry after a service port change. Older notices below that mention agent tokens, credential helpers or open connections are historical.
+ 
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -358,6 +358,7 @@
+ 
+ ## Documentation catalog
+ 
++- [Arbiter research credits, data rights and shipped notices](arbiter/README.md)
+ - [Current Arbiter final implementation plan](arbiter/final-plan.md)
+ - [Current execution ledger and identified candidate artifacts](simplify/one-process-ledger.md)
+ - [Historical 1.9.0 source candidate and planned promotion record](releases/release-1.9.0.md)
+--- /dev/null
++++ b/docs/arbiter/README.md
+@@ -0,0 +1,56 @@
++# Arbiter research and attribution
++
++Arbiter is AIRK's optional local evidence/answer capability. See the
++[operator guide](user-guide.md), [implementation plan](final-plan.md) and
++[execution ledger](../simplify/one-process-ledger.md) for behavior and observed
++qualification. The selected publisher models, historical AIRK-trained candidates
++and proposed research datasets have separate identities. Attribution is not a
++claim of training admission, model quality, independent held-out evidence or
++release qualification.
++
++## Research credits and permitted-use boundaries
++
++| Source | Authors and citation | AIRK research scope and rights |
++| --- | --- | --- |
++| CoSQA / CoCLR | Junjie Huang, Duyu Tang, Linjun Shou, Ming Gong, Ke Xu, Daxin Jiang, Ming Zhou, and Nan Duan (2021), [*CoSQA: 20,000+ Web Queries for Code Search and Question Answering*](https://aclanthology.org/2021.acl-long.442/), ACL-IJCNLP, 5690–5700. Publisher: Beihang University, MSRA NLC and STCA NLP. | Candidate software-relevance source under rights/revision review; no training admission is asserted. The [publisher declaration](https://github.com/Jun-jie-Huang/CoCLR/blob/14ebcacf9e9bc3e7109102632bc63047876f27d2/README.md) assigns MIT to code and C-UDA to data. Preserve underlying-code provenance and notices. |
++| CodeSearchNet | Hamel Husain, Ho-Hsiang Wu, Tiferet Gazit, Miltiadis Allamanis, and Marc Brockschmidt (2019), [*CodeSearchNet Challenge: Evaluating the State of Semantic Code Search*](https://arxiv.org/abs/1909.09436). | Candidate code-search research/evaluation source; no new trained weights are asserted. The 99-query human judgments are evaluation-only; function/docstring pairs are mechanical supervision. [MIT covers tooling/docs; corpus code has separate licenses](https://github.com/github/CodeSearchNet/blob/106e827405c968597da938f6b373d30183918869/README.md#licenses), retained in language-specific `_licenses.pkl` metadata. |
++| ContextBench | Han Li, Letian Zhu, Bohan Zhang, Rili Feng, Jiaming Wang, Yue Pan, Earl T. Barr, Federica Sarro, Zhaoyang Chu, and He Ye (2026), [*ContextBench: A Benchmark for Context Retrieval in Coding Agents*](https://arxiv.org/abs/2602.05892v1). | Candidate TRAIN records used for source/rights audits only; no native admission, gradient update or neural scoring is asserted. [Apache-2.0 benchmark wrapper](https://github.com/EuniAI/ContextBench/tree/1436c28a8eb95496da4ea69ad458b9f8a8eb7d61) is separate from each underlying repository's own revision, license and notices. |
++| QASPER | Pradeep Dasigi, Kyle Lo, Iz Beltagy, Arman Cohan, Noah A. Smith, and Matt Gardner (2021), [*A Dataset of Information-Seeking Questions and Answers Anchored in Research Papers*](https://aclanthology.org/2021.naacl-main.365/), NAACL-HLT, 4599–4610. | Retained human research/evaluation evidence and historical MiniLM v2 TRAIN. [Dataset annotations are CC BY 4.0](https://huggingface.co/datasets/allenai/qasper/blob/fdc9d8214fbab5dd782958601db4d678e6934a54/README.md); underlying paper rights are reviewed separately. All 36 historical training-paper author/title/version credits and extraction changes remain in the full original notice. |
++| HotpotQA / Wikipedia | Zhilin Yang, Peng Qi, Saizheng Zhang, Yoshua Bengio, William W. Cohen, Ruslan Salakhutdinov, and Christopher D. Manning (2018), [*HotpotQA: A Dataset for Diverse, Explainable Multi-hop Question Answering*](https://aclanthology.org/D18-1259/), EMNLP, 2369–2380. | Evaluation only; excluded from historical MiniLM v2 weight updates/mining. [Dataset and processed Wikipedia: CC BY-SA 4.0](https://hotpotqa.github.io/). The [baseline tooling's Apache-2.0](https://github.com/hotpotqa/hotpot/blob/master/LICENSE.txt) is a separate code license. Preserve original article attribution and data terms. |
++| Requests 2.25.1 | Requests contributors; upstream NOTICE: Requests — Copyright 2019 Kenneth Reitz. [Source revision](https://github.com/psf/requests/tree/c2b307dbefe21177af03f9feb37181a89a799fcc). | Apache-2.0 source/docstrings supplied 218 historical TRAIN-only containing-function pairs; these are mechanical pairs, not human sufficiency labels. Complete original LICENSE/NOTICE are preserved in the historical full notice. |
++
++C-UDA 1.0 permits computational use, including model training, and does not
++restrict qualifying Results containing no more than a de minimis portion of the
++Data (§§2.2/5.5). Redistributed Data retains received credit and binds recipients
++to C-UDA (§3.1); the provider does not warrant underlying rights (§4.1). These
++terms are distinct from the CoCLR tooling's MIT license. The
++[full retained agreement](../../third_party/research/C-UDA-1.0.md) and
++[research notice](../../third_party/research/ARBITER-RESEARCH-NOTICES.md) provide
++source pins and context. Availability and a citation do not complete AIRK's
++rights, split, original-source revision, native alignment or human-label checks.
++See the [data audit](software-v2-data-audit.md).
++
++## Preserved notices and installer delivery
++
++The maintained [research attribution notice](../../third_party/research/ARBITER-RESEARCH-NOTICES.md)
++and [publisher legal provenance](../../third_party/research/provenance.json)
++retain CoCLR/CodeSearchNet MIT, ContextBench Apache-2.0 and C-UDA texts verbatim. The unchanged
++[historical MiniLM v2 training record](../../third_party/models/minilm-v2-TRAINING-NOTICES.md),
++[full license/36-paper/Requests notice](../../third_party/models/minilm-v2-LICENSE.txt),
++[provenance](../../third_party/models/minilm-v2-provenance.json) and
++[CC BY 4.0 legal text](../../third_party/models/CC-BY-4.0.txt) remain separately
++identified research records; they are not the license of the current selected
++original publisher graphs.
++
++The existing license-notices producer stages these exact pinned files in native
++runtime `notices/research/` and `notices/models/`. Windows installer staging
++preserves them under `notices/dependencies/research/` and
++`notices/dependencies/models/`; the complete installer payload inventory binds
++their bytes. Native packaging refuses missing or modified current research
++notices. Old candidate receipts retain their original notice inventory; changed
++legal payloads require fresh packaging and qualification.
++
++No raw dataset, questions/answers, source snippets, labels, private fixtures or
++indexed user files are bundled as research notices. Source authors, annotators
++and publishers do not endorse AIRK. Dataset terms do not relicense AIRK, and
++AIRK's Apache-2.0 license does not relicense those datasets or their source works.
+--- a/THIRD_PARTY_NOTICES.md
++++ b/THIRD_PARTY_NOTICES.md
+@@ -4,7 +4,9 @@
+ 
+ Runtime/build dependencies are resolved by [Cargo.lock](Cargo.lock). Important direct families include Serde, Clap, Tokio, the official MCP Rust SDK, Tree-sitter/native grammars, Ignore, SHA-2, Tempfile, Quick-XML, Zip, PDF-Extract, CSV, Pulldown-Cmark and Regex. The exact catalog uses Rusqlite with bundled SQLite, pinned as described below; SCIP 0.10.0 and Protobuf 3.7.2 provide official format bindings, and URL normalizes project file URIs. Lexical retrieval uses FTS5 in the same bundled SQLite engine. Vector retrieval uses Microsoft's MIT-licensed DiskANN 0.59.0; AIRK supplies its own portable disk provider. Tantivy and dependencies used exclusively by its adapter are removed from the 1.3.0 dependency graph. Each dependency retains its own license terms. No external code-graph engine is bundled. AIRK 1.6.0 introduced two INT8 exports of the sentence-transformers/all-MiniLM-L6-v2 ONNX weights and tokenizer at revision `10dbd2f06a8baf40ad285b037edda610c1b9a57c`, under the model publisher's Apache-2.0 declaration. Those original v1 identities remain in [the historical catalog](crates/airk-retrieval/src/model_catalog_v1.json), with the original license retained in [third_party/models/minilm-LICENSE.txt](third_party/models/minilm-LICENSE.txt).
+ 
+-The current 1.9 candidate catalog uses distinct AIRK-trained mixed INT8 v2 exports of that base model, with the unchanged tokenizer. The [training record](third_party/models/minilm-v2-TRAINING-NOTICES.md), [complete license and notices](third_party/models/minilm-v2-LICENSE.txt) and [exact source provenance](third_party/models/minilm-v2-provenance.json) retain QASPER annotation attribution, all 36 independently licensed CC BY 4.0 training-paper credits, Requests 2.25.1 Apache-2.0 LICENSE/NOTICE, and AIRK's training, extraction and quantization changes. Generated model notices include these companion records and the [CC BY 4.0 text](third_party/models/CC-BY-4.0.txt). Raw training/evaluation data is excluded from distributions. Model, platform and release qualification remain separate from this provenance record. Custom models require their own recorded license and digest.
++The current catalog selects original publisher MiniLM graphs under the current ORT provider; see [the exact catalog](crates/airk-retrieval/src/model_catalog.json). The earlier AIRK-trained MiniLM v2 experiments remain historical candidates. Their [training record](third_party/models/minilm-v2-TRAINING-NOTICES.md), [complete original license and notices](third_party/models/minilm-v2-LICENSE.txt), [source provenance](third_party/models/minilm-v2-provenance.json) and [CC BY 4.0 text](third_party/models/CC-BY-4.0.txt) preserve QASPER annotation credits, all 36 independently licensed training-paper credits, original Requests 2.25.1 LICENSE/NOTICE and AIRK's historical changes. Those records do not establish that current selected weights were AIRK-trained or qualified.
++
++The maintained [Arbiter research attribution](third_party/research/ARBITER-RESEARCH-NOTICES.md) credits CoSQA/CoCLR, CodeSearchNet, ContextBench, QASPER, HotpotQA/Wikipedia and Requests, with separate tooling and data terms. CoSQA, CodeSearchNet and ContextBench are potential research sources under admission review; this acknowledgement does not assert new training. `license-notices.py` stages the research notice, verbatim pinned publisher terms and unchanged historical training companions under runtime `notices/research/` and `notices/models/`. Windows installer layouts preserve the same files under `notices/dependencies/`. No raw training/evaluation data is bundled. Source rights, native admission, model and release qualification remain separate.
+ 
+ Rusqlite and libsqlite3-sys use upstream commit [`2a71e35d94b2a02f7dd4a0c4cfd59c339370e747`](https://github.com/rusqlite/rusqlite/commit/2a71e35d94b2a02f7dd4a0c4cfd59c339370e747), whose package versions are 0.40.1 and 0.38.1, with SQLite 3.53.3. The registry 0.40.2/0.38.2 pair bundles SQLite 3.53.2 and lacks the [extended-local-path Windows WAL locking fix](https://github.com/sqlite/sqlite/commit/2429af2e0ce2e4c643786f8d2533f79d974e3270). This exact source pin retains upstream MIT license texts and SQLite's public-domain notice; no upstream source is copied into AIRK. Replace the pin only with a bundle containing that fix and rerun the canonical long-path concurrency regression.
+ 
+--- a/installers/CONTRACT.md
++++ b/installers/CONTRACT.md
+@@ -70,3 +70,21 @@
+ Successful original-operation wrapper reconciliation is separately labeled and
+ does not establish interrupted-recovery acceptance. Mock/pure driver tests do
+ not qualify a Mac artifact, installed service, model or platform outcome.
++
++
++## Research attribution legal closure
++
++From source version 1.8.207, the maintained license-notices producer also stages
++its pinned research attribution and verbatim publisher rights texts, plus the
++unchanged historical QASPER/36-paper/Requests training companions. Native C7
++packaging requires their exact bytes under `notices/research/` and
++`notices/models/`; a resealed outer inventory cannot authorize missing or changed
++legal text. Historical version fixtures retain their original legal roster.
++
++Windows staging copies that verified notice tree into
++`notices/dependencies/`, includes every file in the existing payload inventory,
++and the Inno recursive notice rule places the same bytes. No raw datasets,
++training examples or private fixtures enter the notice bundle. Research credits
++are not public-model/training admission, endorsement or model qualification.
++This is legal attribution; filesystem owners/ACLs are unchanged. Changed legal
++payloads require fresh artifact packaging/qualification before delivery.
+--- a/scripts/license-notices.py
++++ b/scripts/license-notices.py
+@@ -1,5 +1,5 @@
+ # SPDX-License-Identifier: Apache-2.0
+-"""Create a third-party license bundle from the locked Cargo graph, not local corpora."""
++"""Create pinned dependency, model and research notices; never local corpora."""
+ import argparse
+ import hashlib
+ import json
+@@ -11,6 +11,21 @@
+ 
+ MODEL_COMPANIONS = {
+     'minilm-LICENSE.txt': ('LICENSE', 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30'),
++}
++
++
++# Maintained legal texts only. This is not a Cargo dependency/data inventory.
++RESEARCH_COMPANIONS = {
++    'third_party/research/ARBITER-RESEARCH-NOTICES.md': ('research/ARBITER-RESEARCH-NOTICES.md', '6653556938d87782d1ffa6f0051aaff63f7e11c2f12a93092c2ddd643df5ab9b'),
++    'third_party/research/CoCLR-MIT-LICENSE.txt': ('research/CoCLR-MIT-LICENSE.txt', '5f1ce9c03c594b38df127d923515ae50c5999076e376f01cb94d1b369c54d243'),
++    'third_party/research/C-UDA-1.0.md': ('research/C-UDA-1.0.md', '69aeb2c407f2ffce7f31c3aba0f1eeffac248009ec2070fcd989586ac8229c82'),
++    'third_party/research/CodeSearchNet-MIT-LICENSE.txt': ('research/CodeSearchNet-MIT-LICENSE.txt', '5ba1fd8a344040f2698ed3234aeb8f4b3e85211aa54a37048021f3eb0043be22'),
++    'third_party/research/provenance.json': ('research/provenance.json', '71af118045869138893e3d4fc94212152f2bc57db3a08c8e6c74ec6d9743b7b7'),
++    'third_party/models/minilm-v2-TRAINING-NOTICES.md': ('models/minilm-v2-TRAINING-NOTICES.md', '2daba18214e777ecb68e1154c26eb9d50c9f8ef25895e4dcc8af3d9d1275e4be'),
++    'third_party/models/minilm-v2-LICENSE.txt': ('models/minilm-v2-LICENSE.txt', '9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd'),
++    'third_party/models/minilm-v2-provenance.json': ('models/minilm-v2-provenance.json', '6f6a29bff30ef64212b0c6fc56095d94df3184856e488023820d995fbb68da81'),
++    'third_party/models/CC-BY-4.0.txt': ('models/CC-BY-4.0.txt', '9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411'),
++    'third_party/research/ContextBench-Apache-2.0-LICENSE.txt': ('research/ContextBench-Apache-2.0-LICENSE.txt', 'c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4'),
+ }
+ 
+ 
+@@ -38,6 +53,30 @@
+         (destination / name).write_bytes(content)
+     (destination / 'provenance.json').write_bytes(catalog_bytes)
+     return catalog
++
++
++
++def stage_research_notices(root, output):
++    """Authenticate all maintained research/legal bytes before staging any."""
++    verified = {}
++    for source_name, (destination, expected) in RESEARCH_COMPANIONS.items():
++        source = root / source_name
++        if source.is_symlink() or not source.is_file():
++            raise ValueError('Missing regular research notice: ' + source_name)
++        content = source.read_bytes()
++        if hashlib.sha256(content).hexdigest() != expected:
++            raise ValueError('Research notice digest mismatch: ' + source_name)
++        verified[destination] = content
++    for name, content in verified.items():
++        destination = output / name
++        destination.parent.mkdir(parents=True, exist_ok=True)
++        destination.write_bytes(content)
++    return research_notice_inventory()
++
++
++def research_notice_inventory():
++    """Exact current runtime legal paths; separate from generated Cargo rows."""
++    return {'notices/' + name: digest for name, digest in RESEARCH_COMPANIONS.values()}
+ 
+ 
+ def declaration_provenance(source, record):
+@@ -155,6 +194,7 @@
+                 unresolved.append(package["name"] + " " + package["version"])
+                 print("Release review needed for license declaration without separate text: " + package["name"])
+     stage_model_notices(Path('.'), args.output)
++    stage_research_notices(Path('.'), args.output)
+     (args.output / "inventory.json").write_text(json.dumps(inventory, indent=2) + "\n", encoding="utf-8")
+     bom = software_bill_of_materials(metadata)
+     runtime = json.loads(Path("crates/airk-retrieval/src/ort_runtime_catalog.json").read_text(encoding="utf-8"))
+--- a/scripts/package-native.py
++++ b/scripts/package-native.py
+@@ -170,6 +170,14 @@
+         for name, digest in model_files.items():
+             if files.get(name) != digest:
+                 raise ValueError("Pinned model notice differs or is missing: " + name)
++    if tuple(int(part) for part in version.split(".")) >= (1, 8, 207):
++        # Research attribution is a pinned legal closure, not a Cargo package
++        # or a grant to redistribute raw datasets. Old fixtures keep old rosters.
++        research = builder.load_script("license-notices").research_notice_inventory()
++        required.update(research)
++        for name, digest in research.items():
++            if files.get(name) != digest:
++                raise ValueError("Pinned research notice differs or is missing: " + name)
+     if not required.issubset(files):
+         raise ValueError("Runtime pair legal/notice inventory is incomplete")
+     allowed = set(required)
+--- a/scripts/tests/test_package_native.py
++++ b/scripts/tests/test_package_native.py
+@@ -355,6 +355,8 @@
+                     (notice_root / name).write_bytes(content)
+                 (notice_root / "provenance.json").write_bytes(
+                     (package.ROOT / "crates/airk-retrieval/src/model_catalog.json").read_bytes())
++                builder = package.runtime_builder()
++                builder.load_script("license-notices").stage_research_notices(package.ROOT, root / "notices")
+                 seal_split(root, pair, build)
+                 files, _ = package.validate_runtime(root, "1.9.0", target, self.source)
+                 self.assertEqual({name.removeprefix("notices/all-MiniLM-L6-v2/") for name in files
+--- /dev/null
++++ b/scripts/tests/test_research_notices.py
+@@ -0,0 +1,207 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Actual research legal bytes must survive generator/runtime/installer staging.
++
++Small fictional image fixtures prove legal closure only; no native installation,
++model training, source-rights admission or artifact qualification is asserted.
++"""
++import hashlib
++import importlib.util
++import json
++import os
++from pathlib import Path
++import shutil
++import sys
++import tempfile
++import unittest
++from unittest.mock import patch
++
++ROOT = Path(__file__).resolve().parents[2]
++
++
++def load(path, name):
++    spec = importlib.util.spec_from_file_location(name, ROOT / path)
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module
++
++
++LEGAL = load("scripts/license-notices.py", "research_legal")
++FIXTURES = load("scripts/tests/test_package_native.py", "research_pair_fixtures")
++LOCAL = load("scripts/build-local-service-installer.py", "research_local_installer")
++PACKAGE = FIXTURES.package
++EXPECTED = {
++    'research/ARBITER-RESEARCH-NOTICES.md': '6653556938d87782d1ffa6f0051aaff63f7e11c2f12a93092c2ddd643df5ab9b',
++    'research/CoCLR-MIT-LICENSE.txt': '5f1ce9c03c594b38df127d923515ae50c5999076e376f01cb94d1b369c54d243',
++    'research/C-UDA-1.0.md': '69aeb2c407f2ffce7f31c3aba0f1eeffac248009ec2070fcd989586ac8229c82',
++    'research/CodeSearchNet-MIT-LICENSE.txt': '5ba1fd8a344040f2698ed3234aeb8f4b3e85211aa54a37048021f3eb0043be22',
++    'research/ContextBench-Apache-2.0-LICENSE.txt': 'c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4',
++    'research/provenance.json': '71af118045869138893e3d4fc94212152f2bc57db3a08c8e6c74ec6d9743b7b7',
++    'models/minilm-v2-TRAINING-NOTICES.md': '2daba18214e777ecb68e1154c26eb9d50c9f8ef25895e4dcc8af3d9d1275e4be',
++    'models/minilm-v2-LICENSE.txt': '9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd',
++    'models/minilm-v2-provenance.json': '6f6a29bff30ef64212b0c6fc56095d94df3184856e488023820d995fbb68da81',
++    'models/CC-BY-4.0.txt': '9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411',
++}
++
++
++class ResearchNoticeContracts(unittest.TestCase):
++    def fixture_source(self, root):
++        for name in EXPECTED:
++            source = ROOT / "third_party" / name
++            target = root / "third_party" / name
++            target.parent.mkdir(parents=True, exist_ok=True)
++            shutil.copyfile(source, target)
++
++    def runtime(self, root, *, version="1.8.207", research=True):
++        root.mkdir()
++        target = "x86_64-pc-windows-msvc"
++        source = {"sha256":"1" * 64,"files":4}
++        pair, build = FIXTURES.split_runtime(root, target, source, version=version)
++        LEGAL.stage_model_notices(ROOT, root / "notices")
++        if research:
++            LEGAL.stage_research_notices(ROOT, root / "notices")
++        FIXTURES.seal_split(root, pair, build)
++        return source, pair, build
++
++    def test_complete_independent_roster_preserves_every_legal_byte_and_original_credit(self):
++        with tempfile.TemporaryDirectory() as temporary:
++            output = Path(temporary) / "notices"
++            LEGAL.stage_research_notices(ROOT, output)
++            actual = {p.relative_to(output).as_posix():hashlib.sha256(p.read_bytes()).hexdigest()
++                      for p in output.rglob("*") if p.is_file()}
++            self.assertEqual(actual, EXPECTED)
++            for name in EXPECTED:
++                self.assertEqual((output / name).read_bytes(), (ROOT / "third_party" / name).read_bytes())
++            original = (output / "models/minilm-v2-LICENSE.txt").read_bytes()
++            self.assertIn(b"Copyright 2019 Kenneth Reitz", original)
++            provenance = json.loads((output / "models/minilm-v2-provenance.json").read_bytes())
++            self.assertEqual(len(provenance["qasper"]["training_papers"]), 36)
++            self.assertEqual(hashlib.sha256((output / "research/CoCLR-MIT-LICENSE.txt").read_bytes()).hexdigest(),
++                             "5f1ce9c03c594b38df127d923515ae50c5999076e376f01cb94d1b369c54d243")
++            self.assertEqual(hashlib.sha256((output / "research/C-UDA-1.0.md").read_bytes()).hexdigest(),
++                             "69aeb2c407f2ffce7f31c3aba0f1eeffac248009ec2070fcd989586ac8229c82")
++
++    def test_mutated_legal_sources_refuse_before_any_research_output(self):
++        for name in EXPECTED:
++            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
++                root = Path(temporary)
++                self.fixture_source(root / "source")
++                source = root / "source/third_party" / name
++                with source.open("ab") as changed:
++                    changed.write(b"altered")
++                with self.assertRaisesRegex(ValueError, "Research notice digest mismatch"):
++                    LEGAL.stage_research_notices(root / "source", root / "output")
++                self.assertFalse((root / "output").exists())
++
++    def test_missing_legal_sources_refuse_before_any_research_output(self):
++        for name in EXPECTED:
++            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
++                root = Path(temporary)
++                self.fixture_source(root / "source")
++                (root / "source/third_party" / name).unlink()
++                with self.assertRaisesRegex(ValueError, "Missing regular research notice"):
++                    LEGAL.stage_research_notices(root / "source", root / "output")
++                self.assertFalse((root / "output").exists())
++
++    def test_unreviewed_source_files_are_not_added_to_research_bundle(self):
++        with tempfile.TemporaryDirectory() as temporary:
++            root = Path(temporary)
++            self.fixture_source(root / "source")
++            (root / "source/third_party/research/raw-training-data.json").write_text("must not ship")
++            LEGAL.stage_research_notices(root / "source", root / "output")
++            self.assertEqual({p.relative_to(root / "output").as_posix()
++                              for p in (root / "output").rglob("*") if p.is_file()}, set(EXPECTED))
++
++    def test_actual_generator_main_includes_research_separately_from_cargo_rows(self):
++        with tempfile.TemporaryDirectory() as temporary:
++            output = Path(temporary) / "notices"
++            previous = Path.cwd()
++            try:
++                os.chdir(ROOT)
++                with patch.object(sys, "argv", ["license-notices.py", "--output", str(output), "--release"]), \
++                     patch.object(LEGAL.subprocess, "check_output", return_value=json.dumps({"workspace_members":[],"packages":[],"resolve":{"nodes":[]}})) as cargo:
++                    LEGAL.main()
++                cargo.assert_called_once()
++            finally:
++                os.chdir(previous)
++            self.assertEqual(json.loads((output / "inventory.json").read_text()), [])
++            self.assertEqual({name:hashlib.sha256((output / name).read_bytes()).hexdigest() for name in EXPECTED}, EXPECTED)
++
++    def test_current_runtime_cannot_reseal_missing_or_mutated_research_notices(self):
++        with tempfile.TemporaryDirectory() as temporary:
++            root = Path(temporary) / "runtime"
++            source, pair, build = self.runtime(root)
++            PACKAGE.validate_runtime(root, "1.8.207", "x86_64-pc-windows-msvc", source)
++            for name in EXPECTED:
++                path = root / "notices" / name
++                original = path.read_bytes()
++                for replacement in (None, original + b"altered"):
++                    with self.subTest(name=name,missing=replacement is None):
++                        if replacement is None:
++                            path.unlink()
++                        else:
++                            path.write_bytes(replacement)
++                        FIXTURES.seal_split(root, pair, build)
++                        with self.assertRaisesRegex(ValueError,"Pinned research notice"):
++                            PACKAGE.validate_runtime(root,"1.8.207","x86_64-pc-windows-msvc",source)
++                        path.write_bytes(original)
++                FIXTURES.seal_split(root, pair, build)
++
++    def test_extra_research_payload_is_refused_even_with_a_resealed_outer_inventory(self):
++        with tempfile.TemporaryDirectory() as temporary:
++            root = Path(temporary) / "runtime"
++            source, pair, build = self.runtime(root)
++            (root / "notices/research/unreviewed.json").write_text("must refuse")
++            FIXTURES.seal_split(root,pair,build)
++            with self.assertRaisesRegex(ValueError,"Unexpected runtime payload"):
++                PACKAGE.validate_runtime(root,"1.8.207","x86_64-pc-windows-msvc",source)
++
++    def test_historical_runtime_retains_its_original_legal_roster(self):
++        with tempfile.TemporaryDirectory() as temporary:
++            root = Path(temporary) / "runtime"
++            source, _, _ = self.runtime(root,version="1.8.206",research=False)
++            PACKAGE.validate_runtime(root,"1.8.206","x86_64-pc-windows-msvc",source)
++            self.assertFalse((root / "notices/research").exists())
++
++    def test_real_installer_staging_preserves_legal_closure_and_payload_hashes(self):
++        with tempfile.TemporaryDirectory() as temporary:
++            folder = Path(temporary)
++            runtime = folder / "runtime"
++            source, _, _ = self.runtime(runtime)
++            files, images = PACKAGE.validate_runtime(runtime,"1.8.207","x86_64-pc-windows-msvc",source)
++            archive = folder / "fixture.zip"
++            PACKAGE.write_archive(runtime,archive,files,images)
++            PACKAGE.verify_archive(archive,files,images)
++            layout = folder / "layout"
++            with patch.object(LOCAL,"admin_digests",return_value={}):
++                inventory = LOCAL.stage(layout,runtime / "airk.exe",runtime / "airkctl.exe","1.8.207",
++                                        LOCAL.windows_signing(),verified_notices=runtime / "notices")
++            for name, digest in EXPECTED.items():
++                installed = "notices/dependencies/" + name
++                self.assertEqual((layout / installed).read_bytes(),(runtime / "notices" / name).read_bytes())
++                self.assertEqual(inventory["files"][installed]["sha256"],digest)
++            inno = (ROOT / "installers/windows/airk-service.iss").read_text(encoding="utf-8")
++            self.assertIn('Source: "{#AirkPayload}\\notices\\*";',inno)
++            self.assertIn('Flags: ignoreversion recursesubdirs createallsubdirs;',inno)
++
++    def test_readmes_and_shipped_notice_credit_real_authors_without_new_training_claim(self):
++        base = (ROOT / "README.md").read_text(encoding="utf-8")
++        arbiter = (ROOT / "docs/arbiter/README.md").read_text(encoding="utf-8")
++        notice = (ROOT / "third_party/research/ARBITER-RESEARCH-NOTICES.md").read_text(encoding="utf-8")
++        for name in ["CoSQA","CodeSearchNet","ContextBench","QASPER","HotpotQA","Requests"]:
++            self.assertIn(name,base)
++            self.assertIn(name,arbiter)
++            self.assertIn(name,notice)
++        for author in ["Junjie Huang","Ho-Hsiang Wu","Pradeep Dasigi","Zhilin Yang","Kenneth Reitz","Earl T. Barr"]:
++            self.assertIn(author,arbiter)
++            self.assertIn(author,notice)
++        for text in [arbiter,notice]:
++            self.assertIn("evaluation-only",text.lower().replace("evaluation only","evaluation-only"))
++            self.assertIn("C-UDA",text)
++            self.assertIn("CC BY-SA 4.0",text)
++            self.assertIn("no raw",text.lower())
++        self.assertIn("no training admission is asserted",arbiter)
++        self.assertIn("no new trained weights are asserted",arbiter)
++
++
++if __name__ == "__main__":
++    unittest.main()
+--- /dev/null
++++ b/third_party/research/ARBITER-RESEARCH-NOTICES.md
+@@ -0,0 +1,104 @@
++# Arbiter research attribution and data notices
++
++AIRK credits the researchers, annotators and source authors below. These notices
++cover research and evaluation provenance, including historical experiments and
++candidate inputs under review. They do not assert that a candidate dataset was
++admitted for training, that the selected publisher weights were trained by AIRK,
++or that a model passed quality, platform or release qualification. Attribution
++does not imply endorsement by any author, institution or publisher.
++
++No raw research dataset, source corpus, questions, answers, annotations, training
++pairs, private fixtures or indexed user files are included in this notice bundle.
++Original model licenses and exact model provenance remain separate. AIRK's own
++Apache-2.0 license does not replace any data or source-work license.
++
++## CoSQA and CoCLR — candidate research source
++
++Junjie Huang, Duyu Tang, Linjun Shou, Ming Gong, Ke Xu, Daxin Jiang, Ming Zhou,
++and Nan Duan. 2021. *CoSQA: 20,000+ Web Queries for Code Search and Question
++Answering*. ACL-IJCNLP, pages 5690–5700. [Paper and citation](https://aclanthology.org/2021.acl-long.442/).
++The publisher credits Beihang University, Microsoft Research Asia's NLC group
++and Microsoft STC Asia's NLP group.
++
++The [pinned publisher declaration](https://github.com/Jun-jie-Huang/CoCLR/blob/14ebcacf9e9bc3e7109102632bc63047876f27d2/README.md)
++assigns **MIT to its code** and **Computational Use of Data Agreement (C-UDA)
++to its dataset**. The [unaltered CoCLR MIT text](CoCLR-MIT-LICENSE.txt) retains
++Copyright (c) 2021 Jun-jie-Huang. The [unaltered C-UDA 1.0 terms](C-UDA-1.0.md)
++permit computational use; redistribution of Data retains received credit and
++binds recipients to C-UDA. Sections 2.2/5.5 place no restrictions on qualifying
++Results, including trained models containing no more than a de minimis portion
++of the Data. Section 4.1 does not warrant underlying rights. A repository MIT
++license is not a blanket MIT grant over the query/code dataset. Exact source
++revision, underlying-code rights, splits and native alignment remain admission
++requirements. This acknowledgement makes no new-training claim for CoSQA.
++
++## CodeSearchNet — candidate research and evaluation source
++
++Hamel Husain, Ho-Hsiang Wu, Tiferet Gazit, Miltiadis Allamanis, and Marc
++Brockschmidt. 2019. *CodeSearchNet Challenge: Evaluating the State of Semantic
++Code Search*. [Paper](https://arxiv.org/abs/1909.09436).
++
++The [pinned repository](https://github.com/github/CodeSearchNet/tree/106e827405c968597da938f6b373d30183918869)
++releases tooling/documentation under MIT; [its unaltered license](CodeSearchNet-MIT-LICENSE.txt)
++retains Copyright (c) 2019 GitHub. Corpus source-code licenses are recorded in
++per-language `_licenses.pkl` files and require source-level review. The
++publisher's 99-query human relevance annotations are for evaluation only;
++mechanical function/docstring training pairs are a different population. Do not
++convert those evaluation judgments into training labels. No CodeSearchNet
++training admission or new trained AIRK weights are asserted here.
++
++## ContextBench — candidate source-audit input
++
++Han Li, Letian Zhu, Bohan Zhang, Rili Feng, Jiaming Wang, Yue Pan, Earl T. Barr,
++Federica Sarro, Zhaoyang Chu, and He Ye. 2026. *ContextBench: A Benchmark for
++Context Retrieval in Coding Agents*. [Paper](https://arxiv.org/abs/2602.05892v1).
++Publisher research groups include Nanjing University and University College London.
++
++The [pinned benchmark repository](https://github.com/EuniAI/ContextBench/tree/1436c28a8eb95496da4ea69ad458b9f8a8eb7d61)
++has an [unaltered Apache-2.0 license](ContextBench-Apache-2.0-LICENSE.txt).
++Underlying issue/repository source keeps its own revision, license and notices;
++the wrapper is not a blanket Apache grant over those sources. AIRK inspected
++publisher TRAIN records for source/rights alignment only. Candidate source
++matches are not native admission, model training or neural scoring. No benchmark
++records, issue text or repository code are bundled here.
++
++## QASPER and underlying research papers — retained research provenance
++
++Pradeep Dasigi, Kyle Lo, Iz Beltagy, Arman Cohan, Noah A. Smith, and Matt Gardner.
++2021. *A Dataset of Information-Seeking Questions and Answers Anchored in Research
++Papers*. NAACL-HLT, pages 4599–4610. [Paper](https://aclanthology.org/2021.naacl-main.365/),
++[dataset](https://allenai.org/data/qasper), [pinned metadata](https://huggingface.co/datasets/allenai/qasper/blob/fdc9d8214fbab5dd782958601db4d678e6934a54/README.md).
++QASPER annotations are CC BY 4.0; each underlying paper's rights remain separate.
++
++The historical AIRK MiniLM v2 experiment used approved QASPER TRAIN examples.
++[Its unchanged full notice](../models/minilm-v2-LICENSE.txt) preserves all 36
++training-paper author/title/version credits, their CC BY 4.0 terms and extraction
++changes. [Training provenance](../models/minilm-v2-TRAINING-NOTICES.md),
++[exact provenance records](../models/minilm-v2-provenance.json) and the
++[official CC BY 4.0 text](../models/CC-BY-4.0.txt) accompany this research notice.
++Those historical trained candidates are distinct from the current selected
++original publisher graphs. No raw paper or annotation records are bundled.
++
++## HotpotQA and Wikipedia — evaluation only
++
++Zhilin Yang, Peng Qi, Saizheng Zhang, Yoshua Bengio, William W. Cohen, Ruslan
++Salakhutdinov, and Christopher D. Manning. 2018. *HotpotQA: A Dataset for Diverse,
++Explainable Multi-hop Question Answering*. EMNLP, pages 2369–2380.
++[Paper](https://aclanthology.org/D18-1259/), [publisher and data terms](https://hotpotqa.github.io/).
++The dataset and processed Wikipedia are CC BY-SA 4.0. The baseline repository's
++Apache-2.0 code license does not replace those data terms. AIRK's retained
++HotpotQA/Wikipedia material is evaluation-only; it did not feed the historical
++MiniLM v2 training or distractor mining. No raw dataset or Wikipedia text is
++bundled. Underlying article rights, attribution and adaptations must be checked and
++retained with private source records; redistribution requires separate compliance.
++
++## Requests source and documentation — historical TRAIN-only pairs
++
++Requests contributors; upstream retained notice: **Requests — Copyright 2019
++Kenneth Reitz**. Requests 2.25.1, revision
++[`c2b307dbefe21177af03f9feb37181a89a799fcc`](https://github.com/psf/requests/tree/c2b307dbefe21177af03f9feb37181a89a799fcc),
++Apache-2.0. Historical AIRK MiniLM v2 research paired 218 original docstrings with
++their containing functions mechanically; those pairs are not independent human
++relevance or sufficiency judgments. The complete original Requests LICENSE and
++NOTICE are preserved inside the [unchanged historical full notice](../models/minilm-v2-LICENSE.txt).
++No Requests implementation source is bundled in this research notice.
+--- /dev/null
++++ b/third_party/research/CoCLR-MIT-LICENSE.txt
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2021 Jun-jie-Huang
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+--- /dev/null
++++ b/third_party/research/C-UDA-1.0.md
+@@ -0,0 +1,47 @@
++# Computational Use of Data Agreement v1.0
++
++This is the Computational Use of Data Agreement, Version 1.0 (the “C-UDA”). Capitalized terms are defined in Section 5. Data Provider and you agree as follows:
++
++1. **Provision of the Data**
++
++    1.1. You may use, modify, and distribute the Data made available to you by the Data Provider under this C-UDA for Computational Use if you follow the C-UDA's terms.
++
++    1.2. Data Provider will not sue you or any Downstream Recipient for any claim arising out of the use, modification, or distribution of the Data provided you meet the terms of the C-UDA.
++
++    1.3 This C-UDA does not restrict your use, modification, or distribution of any portions of the Data that are in the public domain or that may be used, modified, or distributed under any other legal exception or limitation.
++
++2. **Restrictions**
++
++    2.1  You agree that you will use the Data solely for Computational Use.
++
++	  2.2 The C-UDA does not impose any restriction with respect to the use, modification, or distribution of Results.
++
++3.	**Redistribution of Data**
++
++    3.1. You may redistribute the Data, so long as:
++
++      3.1.1. You include with any Data you redistribute all credit or attribution information that you received with the Data, and your terms require any Downstream Recipient to do the same; and
++
++      3.1.2. You bind each recipient to whom you redistribute the Data to the terms of the C-UDA.
++
++4.	**No Warranty, Limitation of Liability**
++
++    4.1. Data Provider does not represent or warrant that it has any rights whatsoever in the Data.
++
++    4.2. THE DATA IS PROVIDED ON AN “AS IS” BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED INCLUDING, WITHOUT LIMITATION, ANY WARRANTIES OR CONDITIONS OF TITLE, NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
++
++    4.3. NEITHER DATA PROVIDER NOR ANY UPSTREAM DATA PROVIDER SHALL HAVE ANY LIABILITY FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING WITHOUT LIMITATION LOST PROFITS), HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE DATA OR RESULTS, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
++
++5.	**Definitions**
++
++    5.1. “Computational Use” means activities necessary to enable the use of Data (alone or along with other material) for analysis by a computer.
++
++    5.2.“Data” means the material you receive under the C-UDA in modified or unmodified form, but not including Results.
++
++    5.3. “Data Provider” means the source from which you receive the Data and with whom you enter into the C-UDA.
++
++    5.4. “Downstream Recipient” means any person or persons who receives the Data directly or indirectly from you in accordance with the C-UDA.
++
++    5.5. “Result” means anything that you develop or improve from your use of Data that does not include more than a de minimis portion of the Data on which the use is based. Results may include de minimis portions of the Data necessary to report on or explain use that has been conducted with the Data, such as figures in scientific papers, but do not include more. Artificial intelligence models trained on Data (and which do not include more than a de minimis portion of Data) are Results.
++
++    5.6. “Upstream Data Providers” means the source or sources from which the Data Provider directly or indirectly received, under the terms of the C-UDA, material that is included in the Data.
+--- /dev/null
++++ b/third_party/research/CodeSearchNet-MIT-LICENSE.txt
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2019 GitHub
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+--- /dev/null
++++ b/third_party/research/ContextBench-Apache-2.0-LICENSE.txt
+@@ -0,0 +1,201 @@
++                                 Apache License
++                           Version 2.0, January 2004
++                        http://www.apache.org/licenses/
++
++   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
++
++   1. Definitions.
++
++      "License" shall mean the terms and conditions for use, reproduction,
++      and distribution as defined by Sections 1 through 9 of this document.
++
++      "Licensor" shall mean the copyright owner or entity authorized by
++      the copyright owner that is granting the License.
++
++      "Legal Entity" shall mean the union of the acting entity and all
++      other entities that control, are controlled by, or are under common
++      control with that entity. For the purposes of this definition,
++      "control" means (i) the power, direct or indirect, to cause the
++      direction or management of such entity, whether by contract or
++      otherwise, or (ii) ownership of fifty percent (50%) or more of the
++      outstanding shares, or (iii) beneficial ownership of such entity.
++
++      "You" (or "Your") shall mean an individual or Legal Entity
++      exercising permissions granted by this License.
++
++      "Source" form shall mean the preferred form for making modifications,
++      including but not limited to software source code, documentation
++      source, and configuration files.
++
++      "Object" form shall mean any form resulting from mechanical
++      transformation or translation of a Source form, including but
++      not limited to compiled object code, generated documentation,
++      and conversions to other media types.
++
++      "Work" shall mean the work of authorship, whether in Source or
++      Object form, made available under the License, as indicated by a
++      copyright notice that is included in or attached to the work
++      (an example is provided in the Appendix below).
++
++      "Derivative Works" shall mean any work, whether in Source or Object
++      form, that is based on (or derived from) the Work and for which the
++      editorial revisions, annotations, elaborations, or other modifications
++      represent, as a whole, an original work of authorship. For the purposes
++      of this License, Derivative Works shall not include works that remain
++      separable from, or merely link (or bind by name) to the interfaces of,
++      the Work and Derivative Works thereof.
++
++      "Contribution" shall mean any work of authorship, including
++      the original version of the Work and any modifications or additions
++      to that Work or Derivative Works thereof, that is intentionally
++      submitted to Licensor for inclusion in the Work by the copyright owner
++      or by an individual or Legal Entity authorized to submit on behalf of
++      the copyright owner. For the purposes of this definition, "submitted"
++      means any form of electronic, verbal, or written communication sent
++      to the Licensor or its representatives, including but not limited to
++      communication on electronic mailing lists, source code control systems,
++      and issue tracking systems that are managed by, or on behalf of, the
++      Licensor for the purpose of discussing and improving the Work, but
++      excluding communication that is conspicuously marked or otherwise
++      designated in writing by the copyright owner as "Not a Contribution."
++
++      "Contributor" shall mean Licensor and any individual or Legal Entity
++      on behalf of whom a Contribution has been received by Licensor and
++      subsequently incorporated within the Work.
++
++   2. Grant of Copyright License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      copyright license to reproduce, prepare Derivative Works of,
++      publicly display, publicly perform, sublicense, and distribute the
++      Work and such Derivative Works in Source or Object form.
++
++   3. Grant of Patent License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      (except as stated in this section) patent license to make, have made,
++      use, offer to sell, sell, import, and otherwise transfer the Work,
++      where such license applies only to those patent claims licensable
++      by such Contributor that are necessarily infringed by their
++      Contribution(s) alone or by combination of their Contribution(s)
++      with the Work to which such Contribution(s) was submitted. If You
++      institute patent litigation against any entity (including a
++      cross-claim or counterclaim in a lawsuit) alleging that the Work
++      or a Contribution incorporated within the Work constitutes direct
++      or contributory patent infringement, then any patent licenses
++      granted to You under this License for that Work shall terminate
++      as of the date such litigation is filed.
++
++   4. Redistribution. You may reproduce and distribute copies of the
++      Work or Derivative Works thereof in any medium, with or without
++      modifications, and in Source or Object form, provided that You
++      meet the following conditions:
++
++      (a) You must give any other recipients of the Work or
++          Derivative Works a copy of this License; and
++
++      (b) You must cause any modified files to carry prominent notices
++          stating that You changed the files; and
++
++      (c) You must retain, in the Source form of any Derivative Works
++          that You distribute, all copyright, patent, trademark, and
++          attribution notices from the Source form of the Work,
++          excluding those notices that do not pertain to any part of
++          the Derivative Works; and
++
++      (d) If the Work includes a "NOTICE" text file as part of its
++          distribution, then any Derivative Works that You distribute must
++          include a readable copy of the attribution notices contained
++          within such NOTICE file, excluding those notices that do not
++          pertain to any part of the Derivative Works, in at least one
++          of the following places: within a NOTICE text file distributed
++          as part of the Derivative Works; within the Source form or
++          documentation, if provided along with the Derivative Works; or,
++          within a display generated by the Derivative Works, if and
++          wherever such third-party notices normally appear. The contents
++          of the NOTICE file are for informational purposes only and
++          do not modify the License. You may add Your own attribution
++          notices within Derivative Works that You distribute, alongside
++          or as an addendum to the NOTICE text from the Work, provided
++          that such additional attribution notices cannot be construed
++          as modifying the License.
++
++      You may add Your own copyright statement to Your modifications and
++      may provide additional or different license terms and conditions
++      for use, reproduction, or distribution of Your modifications, or
++      for any such Derivative Works as a whole, provided Your use,
++      reproduction, and distribution of the Work otherwise complies with
++      the conditions stated in this License.
++
++   5. Submission of Contributions. Unless You explicitly state otherwise,
++      any Contribution intentionally submitted for inclusion in the Work
++      by You to the Licensor shall be under the terms and conditions of
++      this License, without any additional terms or conditions.
++      Notwithstanding the above, nothing herein shall supersede or modify
++      the terms of any separate license agreement you may have executed
++      with Licensor regarding such Contributions.
++
++   6. Trademarks. This License does not grant permission to use the trade
++      names, trademarks, service marks, or product names of the Licensor,
++      except as required for reasonable and customary use in describing the
++      origin of the Work and reproducing the content of the NOTICE file.
++
++   7. Disclaimer of Warranty. Unless required by applicable law or
++      agreed to in writing, Licensor provides the Work (and each
++      Contributor provides its Contributions) on an "AS IS" BASIS,
++      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
++      implied, including, without limitation, any warranties or conditions
++      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
++      PARTICULAR PURPOSE. You are solely responsible for determining the
++      appropriateness of using or redistributing the Work and assume any
++      risks associated with Your exercise of permissions under this License.
++
++   8. Limitation of Liability. In no event and under no legal theory,
++      whether in tort (including negligence), contract, or otherwise,
++      unless required by applicable law (such as deliberate and grossly
++      negligent acts) or agreed to in writing, shall any Contributor be
++      liable to You for damages, including any direct, indirect, special,
++      incidental, or consequential damages of any character arising as a
++      result of this License or out of the use or inability to use the
++      Work (including but not limited to damages for loss of goodwill,
++      work stoppage, computer failure or malfunction, or any and all
++      other commercial damages or losses), even if such Contributor
++      has been advised of the possibility of such damages.
++
++   9. Accepting Warranty or Additional Liability. While redistributing
++      the Work or Derivative Works thereof, You may choose to offer,
++      and charge a fee for, acceptance of support, warranty, indemnity,
++      or other liability obligations and/or rights consistent with this
++      License. However, in accepting such obligations, You may act only
++      on Your own behalf and on Your sole responsibility, not on behalf
++      of any other Contributor, and only if You agree to indemnify,
++      defend, and hold each Contributor harmless for any liability
++      incurred by, or claims asserted against, such Contributor by reason
++      of your accepting any such warranty or additional liability.
++
++   END OF TERMS AND CONDITIONS
++
++   APPENDIX: How to apply the Apache License to your work.
++
++      To apply the Apache License to your work, attach the following
++      boilerplate notice, with the fields enclosed by brackets "[]"
++      replaced with your own identifying information. (Don't include
++      the brackets!)  The text should be enclosed in the appropriate
++      comment syntax for the file format. We also recommend that a
++      file or class name and description of purpose be included on the
++      same "printed page" as the copyright notice for easier
++      identification within third-party archives.
++
++   Copyright [yyyy] [name of copyright owner]
++
++   Licensed under the Apache License, Version 2.0 (the "License");
++   you may not use this file except in compliance with the License.
++   You may obtain a copy of the License at
++
++       http://www.apache.org/licenses/LICENSE-2.0
++
++   Unless required by applicable law or agreed to in writing, software
++   distributed under the License is distributed on an "AS IS" BASIS,
++   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++   See the License for the specific language governing permissions and
++   limitations under the License.
+--- /dev/null
++++ b/third_party/research/provenance.json
+@@ -0,0 +1,55 @@
++{
++  "purpose": "Research attribution/legal source pins only; no raw data, model admission or qualification",
++  "publisher_texts": [
++    {
++      "file": "CoCLR-MIT-LICENSE.txt",
++      "source_url": "https://raw.githubusercontent.com/Jun-jie-Huang/CoCLR/14ebcacf9e9bc3e7109102632bc63047876f27d2/LICENSE",
++      "sha256": "5f1ce9c03c594b38df127d923515ae50c5999076e376f01cb94d1b369c54d243",
++      "git_blob": "7e8ee061eb9b771aa90999e20a822f634baaeb0f"
++    },
++    {
++      "file": "CodeSearchNet-MIT-LICENSE.txt",
++      "source_url": "https://raw.githubusercontent.com/github/CodeSearchNet/106e827405c968597da938f6b373d30183918869/LICENSE",
++      "sha256": "5ba1fd8a344040f2698ed3234aeb8f4b3e85211aa54a37048021f3eb0043be22",
++      "git_blob": "331b241b3611ddfc3f124d52624c8fc2098b8142"
++    },
++    {
++      "file": "C-UDA-1.0.md",
++      "source_url": "https://raw.githubusercontent.com/microsoft/Computational-Use-of-Data-Agreement/a28ca06f6f8ecac0b5856ca6179ac49e55f00104/C-UDA-1.0.md",
++      "sha256": "69aeb2c407f2ffce7f31c3aba0f1eeffac248009ec2070fcd989586ac8229c82",
++      "git_blob": "23b90859ccbe34422e046c96facecf8b4925337c"
++    },
++    {
++      "file": "ContextBench-Apache-2.0-LICENSE.txt",
++      "source_url": "https://raw.githubusercontent.com/EuniAI/ContextBench/1436c28a8eb95496da4ea69ad458b9f8a8eb7d61/LICENSE",
++      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
++    }
++  ],
++  "dataset_declarations": {
++    "CoSQA": "https://github.com/Jun-jie-Huang/CoCLR/blob/14ebcacf9e9bc3e7109102632bc63047876f27d2/README.md",
++    "CodeSearchNet": "https://github.com/github/CodeSearchNet/blob/106e827405c968597da938f6b373d30183918869/README.md",
++    "QASPER": "https://huggingface.co/datasets/allenai/qasper/blob/fdc9d8214fbab5dd782958601db4d678e6934a54/README.md",
++    "HotpotQA": "https://hotpotqa.github.io/",
++    "ContextBench": "https://github.com/EuniAI/ContextBench/blob/1436c28a8eb95496da4ea69ad458b9f8a8eb7d61/README.md"
++  },
++  "agreement_text_license": "C-UDA agreement text publisher repository is CC0-1.0; this does not make a C-UDA dataset CC0",
++  "agreement_repository_license_url": "https://github.com/microsoft/Computational-Use-of-Data-Agreement/blob/a28ca06f6f8ecac0b5856ca6179ac49e55f00104/LICENSE",
++  "historical_training_companions": [
++    {
++      "source": "third_party/models/minilm-v2-TRAINING-NOTICES.md",
++      "sha256": "2daba18214e777ecb68e1154c26eb9d50c9f8ef25895e4dcc8af3d9d1275e4be"
++    },
++    {
++      "source": "third_party/models/minilm-v2-LICENSE.txt",
++      "sha256": "9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd"
++    },
++    {
++      "source": "third_party/models/minilm-v2-provenance.json",
++      "sha256": "6f6a29bff30ef64212b0c6fc56095d94df3184856e488023820d995fbb68da81"
++    },
++    {
++      "source": "third_party/models/CC-BY-4.0.txt",
++      "sha256": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411"
++    }
++  ]
++}

@@ -1,0 +1,46 @@
+--- service-consumer-r2/download.rs.proposed
++++ service-consumer-r3/download.rs.proposed
+@@ -55,6 +55,12 @@
+         } else {
+             Ok(())
+         }
++    }
++    fn admit(&self, cancel: &CancellationToken) -> std::result::Result<(), Failure> {
++        if cancel.is_cancelled() {
++            return Err(Failure::Canceled);
++        }
++        self.live()
+     }
+     fn redirect(&mut self) -> Result<()> {
+         ensure!(self.redirects < 4, "Arbiter original part redirect limit");
+@@ -262,12 +268,12 @@
+         .context("Arbiter complete source ordinal absent")
+         .map_err(Failure::Local)?;
+     approved(original, true).map_err(Failure::Local)?;
+-    budget.live()?;
++    budget.admit(cancel)?;
+     let deadline = budget.deadline;
+     let work = async {
+         let mut url = original.to_owned();
+         loop {
+-            budget.live()?;
++            budget.admit(cancel)?;
+             let (response, connection) =
+                 tokio::time::timeout(Duration::from_secs(30), response(&url))
+                     .await
+@@ -402,6 +408,15 @@
+     async fn part_deadline_and_redirect_budget_are_never_reset_for_backup() -> Result<()> {
+         let mut budget = PartBudget::new();
+         let original = budget.deadline;
++        let cancel = CancellationToken::new();
++        budget.admit(&cancel)?;
++        let already_canceled = CancellationToken::new();
++        already_canceled.cancel();
++        assert!(matches!(
++            budget.admit(&already_canceled),
++            Err(Failure::Canceled)
++        ));
++        assert_eq!(budget.deadline, original);
+         for _ in 0..4 {
+             budget.redirect()?;
+         }

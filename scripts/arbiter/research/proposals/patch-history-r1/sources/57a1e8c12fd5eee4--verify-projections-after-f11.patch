@@ -1,0 +1,2172 @@
+--- a/crates/airk-cli/src/project_worker.rs
++++ b/crates/airk-cli/src/project_worker.rs
+@@ -693,12 +693,12 @@
+                             loop {
+                                 airk_kernel::service_execution::checkpoint()?;
+                                 let turn = kernel.verify_service_turn(&registry, &job_lease, &job_storage, job.id)?;
+-                                if turn.blocked_large {
++                                if turn.blocked_large||(turn.work_complete()&&!turn.projection_coverage_complete()){
+                                     audit_drain=turn.drained;
+                                     return Ok(JobOutcome::Failed{code:"integrity_coverage_incomplete".into()});
+                                 }
+                                 ensure!(!turn.progress.requires_repair(), "retained verification has unresolved observations; repair required");
+-                                if turn.progress.complete() { break; }
++                                if turn.work_complete() { break; }
+                                 // Existing job admission/cancellation owns this work;
+                                 // no parallel scheduler or query-time audit is added.
+                                 std::thread::yield_now();
+--- a/crates/airk-store/src/service_collection_tests.rs
++++ b/crates/airk-store/src/service_collection_tests.rs
+@@ -143,12 +143,16 @@
+     let store = collection.selected_store()?;
+     let token = initialize(&store, source_text, slot)?;
+     // F10 receipt follows physical relocation without promoting its audit basis.
+-    let mut integrity_lease = crate::service::ProjectLease::acquire(&control, registration.binding)?;
++    let mut integrity_lease =
++        crate::service::ProjectLease::acquire(&control, registration.binding)?;
+     registry.admit_worker(&mut integrity_lease)?;
+     let integrity_bound = data_scope::bind(&data, &control, namespace)?;
+-    let integrity_scope = store.current_owned_scope()?.context("initial scope missing")?;
++    let integrity_scope = store
++        .current_owned_scope()?
++        .context("initial scope missing")?;
+     let integrity_read = store.current_read(&integrity_scope)?;
+-    collection.integrity_owner(&registry, &integrity_lease, &integrity_bound)?
++    collection
++        .integrity_owner(&registry, &integrity_lease, &integrity_bound)?
+         .record_damage(&integrity_read, token.digest, 700)?;
+     let integrity_before = fs::read(collection.directory.join("integrity-observation.json"))?;
+     drop(integrity_read);
+@@ -200,15 +204,22 @@
+         job.id
+     );
+     let collection = Collection::initialize(&destination, source_text, "fixture", slot)?;
+-    assert_eq!(fs::read(collection.directory.join("integrity-observation.json"))?, integrity_before);
++    assert_eq!(
++        fs::read(collection.directory.join("integrity-observation.json"))?,
++        integrity_before
++    );
+     let mut resumed_registry = ServiceRegistry::open_saved(&control)?;
+     let mut resumed_lease = crate::service::ProjectLease::acquire(&control, migrated.binding)?;
+     resumed_registry.admit_worker(&mut resumed_lease)?;
+     let resumed_bound = data_scope::bind(&destination, &control, namespace)?;
+     let resumed_store = collection.selected_store()?;
+-    let resumed_scope = resumed_store.current_owned_scope()?.context("relocated scope missing")?;
++    let resumed_scope = resumed_store
++        .current_owned_scope()?
++        .context("relocated scope missing")?;
+     let resumed_read = resumed_store.current_read(&resumed_scope)?;
+-    let resumed_state = collection.integrity_owner(&resumed_registry, &resumed_lease, &resumed_bound)?.anchor(&resumed_read)?;
++    let resumed_state = collection
++        .integrity_owner(&resumed_registry, &resumed_lease, &resumed_bound)?
++        .anchor(&resumed_read)?;
+     assert_eq!(resumed_state.known_damage.len(), 1);
+     assert_eq!(resumed_state.known_damage[0].component, token.digest);
+     drop(resumed_read);
+@@ -528,28 +539,39 @@
+ 
+ #[test]
+ fn integrity_anchor_is_unknown_and_damage_survives_worker_restart() -> Result<()> {
++    use super::integrity::{PhysicalAudit, PrivacyEligibility, PublicationBasis};
+     use crate::service::{ProjectLease, data_scope, registry::ServiceRegistry};
+     use airk_core::service::ProjectRegistration;
+-    use super::integrity::{PublicationBasis, PhysicalAudit, PrivacyEligibility};
+     let temporary = tempfile::tempdir()?;
+     let base = temporary.path().canonicalize()?;
+     let (data, source, control) = (base.join("data"), base.join("source"), base.join("control"));
+-    for path in [&data, &source, &control] { fs::create_dir(path)?; }
++    for path in [&data, &source, &control] {
++        fs::create_dir(path)?;
++    }
+     let namespace = Incarnation::from_bytes([21; 16]);
+     let slot = Incarnation::from_bytes([22; 16]);
+-    let registration = ProjectRegistration::new(source.to_str().unwrap().into(),
+-        data.to_str().unwrap().into(), "fixture".into())?;
++    let registration = ProjectRegistration::new(
++        source.to_str().unwrap().into(),
++        data.to_str().unwrap().into(),
++        "fixture".into(),
++    )?;
+     let mut registry = ServiceRegistry::open(&control, namespace)?;
+     registry.register(&registration)?;
+     let bound = data_scope::bind(&data, &control, namespace)?;
+     let collection = Collection::initialize(&data, &registration.root, "fixture", slot)?;
+     let store = collection.selected_store()?;
+     let token = initialize(&store, &registration.root, slot)?;
+-    let scope = store.current_owned_scope()?.context("fixture scope missing")?;
++    let scope = store
++        .current_owned_scope()?
++        .context("fixture scope missing")?;
+     let read = store.current_read(&scope)?;
+     let mut lease = ProjectLease::acquire(&control, registration.binding)?;
+     // Exclusion without registry admission is insufficient.
+-    assert!(collection.integrity_owner(&registry, &lease, &bound).is_err());
++    assert!(
++        collection
++            .integrity_owner(&registry, &lease, &bound)
++            .is_err()
++    );
+     registry.admit_worker(&mut lease)?;
+     {
+         let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+@@ -557,7 +579,10 @@
+         assert_eq!(anchor.head.token()?, token);
+         assert_eq!(anchor.basis, PublicationBasis::RetainedHeadMetadataAnchor);
+         assert_eq!(anchor.physical_audit, PhysicalAudit::Unknown);
+-        assert_eq!(anchor.privacy, PrivacyEligibility::PlatformEvidenceUnavailable);
++        assert_eq!(
++            anchor.privacy,
++            PrivacyEligibility::PlatformEvidenceUnavailable
++        );
+         let damaged = owner.record_damage(&read, token.digest, 123)?;
+         assert_eq!(damaged.known_damage.len(), 1);
+         assert_eq!(owner.anchor(&read)?.known_damage, damaged.known_damage);
+@@ -570,7 +595,11 @@
+     let state = owner.anchor(&read)?;
+     assert_eq!(state.known_damage.len(), 1);
+     assert_eq!(state.known_damage[0].component, token.digest);
+-    assert_eq!(read.token()?, token, "metadata foundation must not alter strict reads");
++    assert_eq!(
++        read.token()?,
++        token,
++        "metadata foundation must not alter strict reads"
++    );
+     Ok(())
+ }
+ 
+@@ -580,45 +609,79 @@
+     use airk_core::service::ProjectRegistration;
+     let temporary = tempfile::tempdir()?;
+     let base = temporary.path().canonicalize()?;
+-    let (data, source, control, other) = (base.join("data"), base.join("source"), base.join("control"), base.join("other"));
+-    for path in [&data, &source, &control, &other] { fs::create_dir(path)?; }
++    let (data, source, control, other) = (
++        base.join("data"),
++        base.join("source"),
++        base.join("control"),
++        base.join("other"),
++    );
++    for path in [&data, &source, &control, &other] {
++        fs::create_dir(path)?;
++    }
+     let namespace = Incarnation::from_bytes([31; 16]);
+-    let registration = ProjectRegistration::new(source.to_str().unwrap().into(),
+-        data.to_str().unwrap().into(), "fixture".into())?;
++    let registration = ProjectRegistration::new(
++        source.to_str().unwrap().into(),
++        data.to_str().unwrap().into(),
++        "fixture".into(),
++    )?;
+     let mut registry = ServiceRegistry::open(&control, namespace)?;
+     registry.register(&registration)?;
+     let bound = data_scope::bind(&data, &control, namespace)?;
+-    let collection = Collection::initialize(&data, &registration.root, "fixture", Incarnation::from_bytes([32;16]))?;
++    let collection = Collection::initialize(
++        &data,
++        &registration.root,
++        "fixture",
++        Incarnation::from_bytes([32; 16]),
++    )?;
+     let mut foreign = ProjectLease::acquire(&other, registration.binding)?;
+     assert!(registry.admit_worker(&mut foreign).is_err());
+-    assert!(collection.integrity_owner(&registry, &foreign, &bound).is_err());
+-    Ok(())
+-}
+-
+-type IntegrityFixture = (tempfile::TempDir, Collection,
+-    crate::service::registry::ServiceRegistry, crate::service::data_scope::BoundDataRoot,
+-    crate::service::ProjectLease, FileStore, crate::current::CurrentScope);
++    assert!(
++        collection
++            .integrity_owner(&registry, &foreign, &bound)
++            .is_err()
++    );
++    Ok(())
++}
++
++type IntegrityFixture = (
++    tempfile::TempDir,
++    Collection,
++    crate::service::registry::ServiceRegistry,
++    crate::service::data_scope::BoundDataRoot,
++    crate::service::ProjectLease,
++    FileStore,
++    crate::current::CurrentScope,
++);
+ fn integrity_fixture() -> Result<IntegrityFixture> {
+     use crate::service::{ProjectLease, data_scope, registry::ServiceRegistry};
+     use airk_core::service::ProjectRegistration;
+     let temporary = match std::env::var_os("AIRK_PRIVATE_CENSUS_BASE") {
+-        Some(base) => tempfile::Builder::new().prefix("airk-census-fixture-").tempdir_in(base)?,
++        Some(base) => tempfile::Builder::new()
++            .prefix("airk-census-fixture-")
++            .tempdir_in(base)?,
+         None => tempfile::tempdir()?,
+     };
+     let base = temporary.path().canonicalize()?;
+     let (data, source, control) = (base.join("data"), base.join("source"), base.join("control"));
+-    for path in [&data, &source, &control] { fs::create_dir(path)?; }
+-    let namespace = Incarnation::from_bytes([51;16]);
+-    let registration = ProjectRegistration::new(source.to_str().unwrap().into(),
+-        data.to_str().unwrap().into(), "fixture".into())?;
++    for path in [&data, &source, &control] {
++        fs::create_dir(path)?;
++    }
++    let namespace = Incarnation::from_bytes([51; 16]);
++    let registration = ProjectRegistration::new(
++        source.to_str().unwrap().into(),
++        data.to_str().unwrap().into(),
++        "fixture".into(),
++    )?;
+     let mut registry = ServiceRegistry::open(&control, namespace)?;
+     registry.register(&registration)?;
+     let bound = data_scope::bind(&data, &control, namespace)?;
+-    let slot = Incarnation::from_bytes([52;16]);
++    let slot = Incarnation::from_bytes([52; 16]);
+     let collection = Collection::initialize(&data, &registration.root, "fixture", slot)?;
+     let store = collection.selected_store()?;
+     initialize(&store, &registration.root, slot)?;
+-    let scope = store.current_owned_scope()?.context("fixture scope missing")?;
++    let scope = store
++        .current_owned_scope()?
++        .context("fixture scope missing")?;
+     let mut lease = ProjectLease::acquire(&control, registration.binding)?;
+     registry.admit_worker(&mut lease)?;
+     Ok((temporary, collection, registry, bound, lease, store, scope))
+@@ -632,8 +695,8 @@
+     let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+     owner.record_damage(&read, token.digest, 100)?;
+     drop(read);
+-    let next = Incarnation::from_bytes([53;16]);
+-    let mut replacement = collection.begin_replacement(next, Sha256Digest::from_bytes([54;32]))?;
++    let next = Incarnation::from_bytes([53; 16]);
++    let mut replacement = collection.begin_replacement(next, Sha256Digest::from_bytes([54; 32]))?;
+     initialize(&replacement.store(), &scope.root, next)?;
+     replacement.commit(Some(token), settings_digest(&old, &scope.root)?)?;
+     drop(replacement);
+@@ -643,7 +706,9 @@
+     assert!(owner.anchor(&retired).is_err());
+     drop(retired);
+     let selected = collection.selected_store()?;
+-    let new_scope = selected.current_owned_scope()?.context("replacement scope missing")?;
++    let new_scope = selected
++        .current_owned_scope()?
++        .context("replacement scope missing")?;
+     let read = selected.current_read(&new_scope)?;
+     let state = owner.anchor(&read)?;
+     assert_eq!(state.head.scope.incarnation, next);
+@@ -661,12 +726,17 @@
+     let state = owner.record_damage(&read, read.token()?.digest, 200)?;
+     drop(read);
+     let receipt = fs::read(collection.directory.join("integrity-observation.json"))?;
+-    let replacement = collection.begin_replacement(Incarnation::from_bytes([55;16]),
+-        Sha256Digest::from_bytes([56;32]))?;
++    let replacement = collection.begin_replacement(
++        Incarnation::from_bytes([55; 16]),
++        Sha256Digest::from_bytes([56; 32]),
++    )?;
+     // Simulate a process dying after durable replacement intent / slot creation.
+     drop(replacement);
+     collection.recover_abandoned_replacement()?;
+-    assert_eq!(fs::read(collection.directory.join("integrity-observation.json"))?, receipt);
++    assert_eq!(
++        fs::read(collection.directory.join("integrity-observation.json"))?,
++        receipt
++    );
+     let read = store.current_read(&scope)?;
+     assert_eq!(owner.anchor(&read)?.known_damage, state.known_damage);
+     Ok(())
+@@ -681,7 +751,9 @@
+     let path = collection.directory.join("integrity-observation.json");
+     let before = fs::read(&path)?;
+     let owned = collection.directory.join(".service-metadata-owned-crash");
+-    let unknown = collection.directory.join(".service-metadata-unrelated-crash");
++    let unknown = collection
++        .directory
++        .join(".service-metadata-unrelated-crash");
+     fs::write(&owned, &before)?;
+     fs::write(&unknown, b"preserve unrelated partial bytes")?;
+     collection.recover_abandoned_replacement()?;
+@@ -709,9 +781,12 @@
+     let original = quota.policy()?;
+     let status = quota.status()?;
+     let mut full = original.clone();
+-    full.root_bytes = status.used_bytes.checked_add(status.reserved_bytes).context("quota overflow")?;
++    full.root_bytes = status
++        .used_bytes
++        .checked_add(status.reserved_bytes)
++        .context("quota overflow")?;
+     quota.configure(full)?;
+-    let refused = owner.record_damage(&read, Sha256Digest::from_bytes([98;32]), 601);
++    let refused = owner.record_damage(&read, Sha256Digest::from_bytes([98; 32]), 601);
+     quota.configure(original)?;
+     assert!(refused.is_err());
+     assert_eq!(fs::read(&path)?, before);
+@@ -731,15 +806,30 @@
+     // epochs and namespace replacement independently of caller cached objects.
+     let db = rusqlite::Connection::open(temporary.path().join("control/service-1.4.sqlite3"))?;
+     let binding = lease.identity().0.to_string();
+-    db.execute("UPDATE projects SET epoch=epoch+1 WHERE binding=?1", [&binding])?;
++    db.execute(
++        "UPDATE projects SET epoch=epoch+1 WHERE binding=?1",
++        [&binding],
++    )?;
+     assert!(owner.anchor(&read).is_err());
+-    db.execute("UPDATE projects SET epoch=epoch-1,registered=0,paused=1 WHERE binding=?1", [&binding])?;
++    db.execute(
++        "UPDATE projects SET epoch=epoch-1,registered=0,paused=1 WHERE binding=?1",
++        [&binding],
++    )?;
+     assert!(owner.anchor(&read).is_err());
+     // Re-registration alone does not recreate a matching admitted generation.
+-    db.execute("UPDATE projects SET registered=1,paused=0,epoch=epoch+1 WHERE binding=?1", [&binding])?;
++    db.execute(
++        "UPDATE projects SET registered=1,paused=0,epoch=epoch+1 WHERE binding=?1",
++        [&binding],
++    )?;
+     assert!(owner.anchor(&read).is_err());
+-    db.execute("UPDATE projects SET epoch=epoch-1 WHERE binding=?1", [&binding])?;
+-    db.execute("UPDATE service_meta SET incarnation=?1 WHERE id=1", [Incarnation::from_bytes([59;16]).to_string()])?;
++    db.execute(
++        "UPDATE projects SET epoch=epoch-1 WHERE binding=?1",
++        [&binding],
++    )?;
++    db.execute(
++        "UPDATE service_meta SET incarnation=?1 WHERE id=1",
++        [Incarnation::from_bytes([59; 16]).to_string()],
++    )?;
+     assert!(owner.anchor(&read).is_err());
+     assert_eq!(fs::read(path)?, before);
+     Ok(())
+@@ -753,20 +843,26 @@
+     owner.record_damage(&read, read.token()?.digest, 950)?;
+     let path = collection.directory.join("integrity-observation.json");
+     let mut imported: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+-    imported["owner"] = serde_json::to_value(Sha256Digest::from_bytes([60;32]))?;
++    imported["owner"] = serde_json::to_value(Sha256Digest::from_bytes([60; 32]))?;
+     // Keep canonical typed serialization so rejection is binding, not encoding.
+     let typed: super::integrity::IntegrityObservation = serde_json::from_value(imported)?;
+     let copied = serde_json::to_vec(&typed)?;
+     fs::write(&path, &copied)?;
+     assert!(owner.anchor(&read).is_err());
+     assert_eq!(fs::read(path)?, copied);
+-    assert!(read.token().is_ok(), "observation receipt must not gate strict evidence reads");
++    assert!(
++        read.token().is_ok(),
++        "observation receipt must not gate strict evidence reads"
++    );
+     Ok(())
+ }
+ 
+ #[test]
+ fn integrity_real_applying_replay_preserves_damage_and_refuses_unsafe_wal() -> Result<()> {
+-    use crate::current::{graph::{GraphOverlay, GraphOverlayLimits}, TransactionPhase};
++    use crate::current::{
++        TransactionPhase,
++        graph::{GraphOverlay, GraphOverlayLimits},
++    };
+     use airk_core::graph_storage::{GraphRecord, GraphRecordOverlay, PreparedGraphDelta};
+     let (_temporary, collection, registry, bound, lease, store, scope) = integrity_fixture()?;
+     let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+@@ -778,11 +874,30 @@
+     let receipt = fs::read(&receipt_path)?;
+     let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
+     let reservation = quota.reserve(&scope.collection, 4 << 20)?;
+-    let overlay = GraphOverlay::new(&reservation, store.current_read(&scope)?,
+-        GraphOverlayLimits { maximum_bytes: 1 << 20, ..Default::default() })?;
+-    overlay.append(0, GraphRecord { embedding_key: None, live: false, bytes: vec![0;16] })?;
+-    overlay.append(1, GraphRecord { embedding_key: Some(Sha256Digest::from_bytes([61;32])),
+-        live: true, bytes: vec![7;16] })?;
++    let overlay = GraphOverlay::new(
++        &reservation,
++        store.current_read(&scope)?,
++        GraphOverlayLimits {
++            maximum_bytes: 1 << 20,
++            ..Default::default()
++        },
++    )?;
++    overlay.append(
++        0,
++        GraphRecord {
++            embedding_key: None,
++            live: false,
++            bytes: vec![0; 16],
++        },
++    )?;
++    overlay.append(
++        1,
++        GraphRecord {
++            embedding_key: Some(Sha256Digest::from_bytes([61; 32])),
++            live: true,
++            bytes: vec![7; 16],
++        },
++    )?;
+     let sealed = overlay.seal()?;
+     let mut target = base.clone();
+     target.sequence += 1;
+@@ -796,7 +911,11 @@
+     assert_eq!(current.phase()?, TransactionPhase::Applying);
+     // Wrong external commit identity fails before publication and cannot clear
+     // either the existing receipt or the authenticated base publication.
+-    assert!(current.commit(&pending, Sha256Digest::from_bytes([62;32])).is_err());
++    assert!(
++        current
++            .commit(&pending, Sha256Digest::from_bytes([62; 32]))
++            .is_err()
++    );
+     assert_eq!(fs::read(&receipt_path)?, receipt);
+     assert_eq!(owner.anchor(&old)?.head.token()?, token);
+     drop(current);
+@@ -826,8 +945,14 @@
+     assert_eq!(recovered.token()?, pending.target.token()?);
+     let state = owner.anchor(&recovered)?;
+     assert_eq!(state.head.token()?, pending.target.token()?);
+-    assert_eq!(state.physical_audit, super::integrity::PhysicalAudit::Unknown);
+-    assert_eq!(state.basis, super::integrity::PublicationBasis::RetainedHeadMetadataAnchor);
++    assert_eq!(
++        state.physical_audit,
++        super::integrity::PhysicalAudit::Unknown
++    );
++    assert_eq!(
++        state.basis,
++        super::integrity::PublicationBasis::RetainedHeadMetadataAnchor
++    );
+     assert_eq!(state.known_damage.len(), 1);
+     assert_eq!(state.known_damage[0].component, token.digest);
+     Ok(())
+@@ -839,14 +964,27 @@
+ fn integrity_census_resumes_bounded_pages_and_requires_complete_live_owner() -> Result<()> {
+     use super::integrity::census::{CensusOutcome, CensusUnknown};
+     use std::os::unix::fs::PermissionsExt;
+-    ensure!(std::env::var_os("AIRK_PRIVATE_CENSUS_BASE").is_some(), "explicit private census qualification base required");
++    ensure!(
++        std::env::var_os("AIRK_PRIVATE_CENSUS_BASE").is_some(),
++        "explicit private census qualification base required"
++    );
+     let (_temporary, collection, registry, bound, lease, store, scope) = integrity_fixture()?;
+     // Fixture-only security preparation. Production census never rewrites mode/ACL.
+     fn restrict(path: &Path) -> Result<()> {
+         let metadata = fs::symlink_metadata(path)?;
+-        ensure!(!metadata.file_type().is_symlink(), "unexpected fixture link");
+-        fs::set_permissions(path, fs::Permissions::from_mode(if metadata.is_dir() {0o700} else {0o600}))?;
+-        if metadata.is_dir() { for entry in fs::read_dir(path)? { restrict(&entry?.path())?; } }
++        ensure!(
++            !metadata.file_type().is_symlink(),
++            "unexpected fixture link"
++        );
++        fs::set_permissions(
++            path,
++            fs::Permissions::from_mode(if metadata.is_dir() { 0o700 } else { 0o600 }),
++        )?;
++        if metadata.is_dir() {
++            for entry in fs::read_dir(path)? {
++                restrict(&entry?.path())?;
++            }
++        }
+         Ok(())
+     }
+     restrict(store.directory())?;
+@@ -856,14 +994,20 @@
+     let mut census = owner.begin_census(&read, &mut writer)?;
+     assert!(matches!(census.step(1)?, CensusOutcome::Pending { .. }));
+     super::integrity::census::test_invalidate(&census)?;
+-    assert_eq!(census.step(1)?, CensusOutcome::Ineligible(CensusUnknown::NamespaceChanged));
++    assert_eq!(
++        census.step(1)?,
++        CensusOutcome::Ineligible(CensusUnknown::NamespaceChanged)
++    );
+     drop(census);
+     let mut census = owner.begin_census(&read, &mut writer)?;
+     let mut ended = false;
+     for _ in 0..100_100 {
+         match census.step(1)? {
+             CensusOutcome::Pending { .. } => (),
+-            CensusOutcome::Observed { .. } => { ended = true; break; },
++            CensusOutcome::Observed { .. } => {
++                ended = true;
++                break;
++            }
+             other => anyhow::bail!("private fixture did not establish census evidence: {other:?}"),
+         }
+     }
+@@ -871,8 +1015,14 @@
+     let proof = census.into_owner_private()?;
+     proof.check()?;
+     let observed = proof.record()?;
+-    assert!(matches!(observed.privacy, super::integrity::PrivacyEligibility::OwnerCensus { version: 1, .. }));
+-    assert_eq!(observed.physical_audit, super::integrity::PhysicalAudit::Unknown);
++    assert!(matches!(
++        observed.privacy,
++        super::integrity::PrivacyEligibility::OwnerCensus { version: 1, .. }
++    ));
++    assert_eq!(
++        observed.physical_audit,
++        super::integrity::PhysicalAudit::Unknown
++    );
+     Ok(())
+ }
+ 
+@@ -886,28 +1036,44 @@
+     let root = fs::File::open(temporary.path())?;
+     fs::create_dir(temporary.path().join("real"))?;
+     symlink("real", temporary.path().join("redirect"))?;
+-    assert!(super::integrity::census::test_open_child(&root, std::ffi::OsStr::new("redirect")).is_err());
++    assert!(
++        super::integrity::census::test_open_child(&root, std::ffi::OsStr::new("redirect")).is_err()
++    );
+     assert!(super::integrity::census::test_open_child(&root, std::ffi::OsStr::new("real")).is_ok());
+     Ok(())
+ }
+ 
+ #[test]
+-fn integrity_actual_current_writer_and_resource_producers_invalidate_same_owner_epoch() -> Result<()> {
++fn integrity_actual_current_writer_and_resource_producers_invalidate_same_owner_epoch() -> Result<()>
++{
+     let (_temporary, collection, _registry, _bound, _lease, store, scope) = integrity_fixture()?;
+     let writer = store.lock()?;
+     let initial = writer.census_mutation_epoch();
+-    assert!(store.lock().is_err(), "actual OS writer ownership must exclude another writer");
++    assert!(
++        store.lock().is_err(),
++        "actual OS writer ownership must exclude another writer"
++    );
+     let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
+     let current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
+-    assert!(writer.census_mutation_epoch() > initial, "real current writer must invalidate before WAL/SQLite effects");
++    assert!(
++        writer.census_mutation_epoch() > initial,
++        "real current writer must invalidate before WAL/SQLite effects"
++    );
+     drop(current);
+     let before_resource = writer.census_mutation_epoch();
+     let reservation = quota.reserve(&scope.collection, 1 << 20)?;
+-    let reference = store.retain_current_resource_owned(&writer, b"owned resource fixture", &reservation)?;
++    let reference =
++        store.retain_current_resource_owned(&writer, b"owned resource fixture", &reservation)?;
+     assert!(writer.census_mutation_epoch() > before_resource);
+-    assert_eq!(store.read_current_resource(&reference)?, b"owned resource fixture");
+-    let other = FileStore::new(collection.slot(Incarnation::from_bytes([63;16])));
+-    assert!(other.lock().is_err(), "different physical slots share the logical collection writer lock");
++    assert_eq!(
++        store.read_current_resource(&reference)?,
++        b"owned resource fixture"
++    );
++    let other = FileStore::new(collection.slot(Incarnation::from_bytes([63; 16])));
++    assert!(
++        other.lock().is_err(),
++        "different physical slots share the logical collection writer lock"
++    );
+     Ok(())
+ }
+ 
+@@ -916,14 +1082,26 @@
+     let (_temporary, collection, registry, bound, lease, store, scope) = integrity_fixture()?;
+     let read = store.current_read(&scope)?;
+     let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+-    for n in 0u8..32 { owner.record_damage(&read, Sha256Digest::from_bytes([n;32]), 400 + u64::from(n))?; }
++    for n in 0u8..32 {
++        owner.record_damage(&read, Sha256Digest::from_bytes([n; 32]), 400 + u64::from(n))?;
++    }
+     let path = collection.directory.join("integrity-observation.json");
+     let before = fs::read(&path)?;
+-    assert!(owner.record_damage(&read, Sha256Digest::from_bytes([99;32]), 500).is_err());
++    assert!(
++        owner
++            .record_damage(&read, Sha256Digest::from_bytes([99; 32]), 500)
++            .is_err()
++    );
+     assert_eq!(fs::read(&path)?, before);
+     assert_eq!(owner.anchor(&read)?.known_damage.len(), 32);
+     // Duplicate detection at capacity still preserves the first observation.
+-    assert_eq!(owner.record_damage(&read, Sha256Digest::from_bytes([1;32]), 999)?.known_damage[1].observed_unix_ms, 401);
++    assert_eq!(
++        owner
++            .record_damage(&read, Sha256Digest::from_bytes([1; 32]), 999)?
++            .known_damage[1]
++            .observed_unix_ms,
++        401
++    );
+     Ok(())
+ }
+ 
+@@ -931,29 +1109,58 @@
+ fn integrity_sidecar_does_not_strand_owned_purge_or_certify_full_reset() -> Result<()> {
+     let (_temporary, collection, registry, bound, lease, store, scope) = integrity_fixture()?;
+     let registration = registry.get(lease.identity().0)?.registration;
+-    fs::write(Path::new(&registration.root).join("source-must-stay.txt"), b"original source")?;
++    fs::write(
++        Path::new(&registration.root).join("source-must-stay.txt"),
++        b"original source",
++    )?;
+     let read = store.current_read(&scope)?;
+-    collection.integrity_owner(&registry, &lease, &bound)?.record_damage(&read, read.token()?.digest, 800)?;
++    collection
++        .integrity_owner(&registry, &lease, &bound)?
++        .record_damage(&read, read.token()?.digest, 800)?;
+     drop(read);
+     // Exercise the actual owned deletion adapter. Request/registration transition
+     // is covered by existing unregistration tests, not synthesized here.
+     let mut complete = false;
+     for _ in 0..8 {
+-        if Collection::purge_removed_turn(&registration, &lease)? { complete = true; break; }
++        if Collection::purge_removed_turn(&registration, &lease)? {
++            complete = true;
++            break;
++        }
+     }
+     assert!(complete, "new metadata name stranded owning removal");
+     assert!(!collection.directory.exists());
+-    assert_eq!(fs::read(Path::new(&registration.root).join("source-must-stay.txt"))?, b"original source");
+-    let reset_slot = Incarnation::from_bytes([57;16]);
+-    let reset = Collection::initialize(Path::new(&registration.data_root), &registration.root, "fixture", reset_slot)?;
++    assert_eq!(
++        fs::read(Path::new(&registration.root).join("source-must-stay.txt"))?,
++        b"original source"
++    );
++    let reset_slot = Incarnation::from_bytes([57; 16]);
++    let reset = Collection::initialize(
++        Path::new(&registration.data_root),
++        &registration.root,
++        "fixture",
++        reset_slot,
++    )?;
+     let reset_store = reset.selected_store()?;
+     initialize(&reset_store, &registration.root, reset_slot)?;
+-    let reset_scope = reset_store.current_owned_scope()?.context("reset scope missing")?;
++    let reset_scope = reset_store
++        .current_owned_scope()?
++        .context("reset scope missing")?;
+     let read = reset_store.current_read(&reset_scope)?;
+-    let state = reset.integrity_owner(&registry, &lease, &bound)?.anchor(&read)?;
+-    assert!(state.known_damage.is_empty(), "only explicit full derived-state destruction removes old receipt");
+-    assert_eq!(state.physical_audit, super::integrity::PhysicalAudit::Unknown);
+-    assert_eq!(state.basis, super::integrity::PublicationBasis::RetainedHeadMetadataAnchor);
++    let state = reset
++        .integrity_owner(&registry, &lease, &bound)?
++        .anchor(&read)?;
++    assert!(
++        state.known_damage.is_empty(),
++        "only explicit full derived-state destruction removes old receipt"
++    );
++    assert_eq!(
++        state.physical_audit,
++        super::integrity::PhysicalAudit::Unknown
++    );
++    assert_eq!(
++        state.basis,
++        super::integrity::PublicationBasis::RetainedHeadMetadataAnchor
++    );
+     assert_eq!(state.head.scope.incarnation, reset_slot);
+     Ok(())
+ }
+@@ -962,27 +1169,45 @@
+ fn verify_continuation_survives_worker_restart_without_refreshing_audit_age() -> Result<()> {
+     use crate::service::{ProjectLease, data_scope, registry::ServiceRegistry};
+     use airk_core::service::{JobKind, JobOutcome, ProjectRegistration, RequestKey};
+-    fn claim(registry: &mut ServiceRegistry, lease: &ProjectLease, nonce: u8) -> Result<Sha256Digest> {
++    fn claim(
++        registry: &mut ServiceRegistry,
++        lease: &ProjectLease,
++        nonce: u8,
++    ) -> Result<Sha256Digest> {
+         let (namespace, epoch) = registry.request_epoch()?;
+-        let key = RequestKey { namespace, epoch, nonce: Incarnation::from_bytes([nonce;16]) };
++        let key = RequestKey {
++            namespace,
++            epoch,
++            nonce: Incarnation::from_bytes([nonce; 16]),
++        };
+         let job = registry.enqueue(lease.identity().0, namespace, &key, JobKind::Verify)?;
+-        Ok(registry.claim_job_id(lease, job.id)?.context("Verify not claimed")?.id)
++        Ok(registry
++            .claim_job_id(lease, job.id)?
++            .context("Verify not claimed")?
++            .id)
+     }
+     let temporary = tempfile::tempdir()?;
+     let base = temporary.path().canonicalize()?;
+     let (data, source, control) = (base.join("data"), base.join("source"), base.join("control"));
+-    for path in [&data, &source, &control] { fs::create_dir(path)?; }
++    for path in [&data, &source, &control] {
++        fs::create_dir(path)?;
++    }
+     let namespace = Incarnation::from_bytes([81; 16]);
+     let slot = Incarnation::from_bytes([82; 16]);
+-    let registration = ProjectRegistration::new(source.to_str().unwrap().into(),
+-        data.to_str().unwrap().into(), "fixture".into())?;
++    let registration = ProjectRegistration::new(
++        source.to_str().unwrap().into(),
++        data.to_str().unwrap().into(),
++        "fixture".into(),
++    )?;
+     let mut registry = ServiceRegistry::open(&control, namespace)?;
+     registry.register(&registration)?;
+     let bound = data_scope::bind(&data, &control, namespace)?;
+     let collection = Collection::initialize(&data, &registration.root, "fixture", slot)?;
+     let store = collection.selected_store()?;
+     initialize(&store, &registration.root, slot)?;
+-    let scope = store.current_owned_scope()?.context("fixture scope missing")?;
++    let scope = store
++        .current_owned_scope()?
++        .context("fixture scope missing")?;
+     let read = store.current_read(&scope)?;
+     let mut lease = ProjectLease::acquire(&control, registration.binding)?;
+     registry.admit_worker(&mut lease)?;
+@@ -992,8 +1217,19 @@
+         owner.anchor(&read)?;
+         drop(read);
+         let mut writer = store.lock()?;
+-        assert!(owner.verify_turn(&mut writer, Sha256Digest::from_bytes([99;32]), 1, 1 << 20, 99, || Ok(())).is_err(),
+-            "physical work needs an exact durable job admission");
++        assert!(
++            owner
++                .verify_turn(
++                    &mut writer,
++                    Sha256Digest::from_bytes([99; 32]),
++                    1,
++                    1 << 20,
++                    99,
++                    || Ok(())
++                )
++                .is_err(),
++            "physical work needs an exact durable job admission"
++        );
+         let first = owner.verify_turn(&mut writer, job, 1, 1 << 20, 100, || Ok(()))?;
+         assert!(first.progress.complete());
+         assert!(!first.blocked_large);
+@@ -1003,20 +1239,37 @@
+     let mut lease = ProjectLease::acquire(&control, registration.binding)?;
+     registry.admit_worker(&mut lease)?;
+     registry.recover_jobs(&lease)?;
+-    assert_eq!(registry.claim_job_id(&lease, job)?.context("recovered Verify not claimed")?.id, job);
++    assert_eq!(
++        registry
++            .claim_job_id(&lease, job)?
++            .context("recovered Verify not claimed")?
++            .id,
++        job
++    );
+     {
+         let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+         let mut writer = store.lock()?;
+         let resumed = owner.verify_turn(&mut writer, job, 1, 1 << 20, 200, || Ok(()))?;
+         assert!(resumed.progress.complete());
+         let after = serde_json::to_value(&resumed.progress)?;
+-        assert_eq!(before["lexical_observed_unix_ms"], after["lexical_observed_unix_ms"]);
++        assert_eq!(
++            before["lexical_observed_unix_ms"],
++            after["lexical_observed_unix_ms"]
++        );
+         assert_eq!(before["through_unix_ms"], after["through_unix_ms"]);
+         assert_eq!(after["lexical_observed_unix_ms"], 100);
+         let read = store.current_read(&scope)?;
+         let anchor = owner.anchor(&read)?;
+-        assert_eq!(anchor.physical_audit, super::integrity::PhysicalAudit::Unknown);
+-        assert!(anchor.verify.context("saved Verify progress missing")?.complete());
++        assert_eq!(
++            anchor.physical_audit,
++            super::integrity::PhysicalAudit::Unknown
++        );
++        assert!(
++            anchor
++                .verify
++                .context("saved Verify progress missing")?
++                .complete()
++        );
+     }
+     registry.complete_job(&lease, job, JobOutcome::Succeeded { revision: None })?;
+     assert!(registry.integrity_audit_veto(&lease)?.is_none());
+@@ -1025,56 +1278,507 @@
+         let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+         let mut writer = store.lock()?;
+         let fresh = owner.verify_turn(&mut writer, fresh_job, 1, 1 << 20, 300, || Ok(()))?;
+-        assert_eq!(serde_json::to_value(&fresh.progress)?["lexical_observed_unix_ms"], 300,
+-            "new explicit Verify job must not silently reuse prior completed audit");
++        assert_eq!(
++            serde_json::to_value(&fresh.progress)?["lexical_observed_unix_ms"],
++            300,
++            "new explicit Verify job must not silently reuse prior completed audit"
++        );
+     }
+     registry.complete_job(&lease, fresh_job, JobOutcome::Succeeded { revision: None })?;
+     let canceled_job = claim(&mut registry, &lease, 85)?;
+-    let drained={
++    let drained = {
+         let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+         let mut writer = store.lock()?;
+         let checkpoints = std::cell::Cell::new(0);
+-        let canceled = owner.verify_turn(&mut writer, canceled_job, 1, 1 << 20, 400, || {
+-            checkpoints.set(checkpoints.get() + 1);
+-            anyhow::ensure!(checkpoints.get() != 3, "injected job cancellation after lexical component");
+-            Ok(())
+-        }).err().context("audit should have canceled")?;
+-        crate::service::registry::AuditDrainProof::from_error(&canceled).context("drained cancellation proof missing")?
+-    };
+-    registry.complete_job_with_maintenance_and_audit_at(&lease,canceled_job,JobOutcome::Canceled,401,None,Some(&drained))?;
+-    assert!(registry.integrity_audit_veto(&lease)?.is_none(),"safely drained partial audit must not poison normal restart");
++        let canceled = owner
++            .verify_turn(&mut writer, canceled_job, 1, 1 << 20, 400, || {
++                checkpoints.set(checkpoints.get() + 1);
++                anyhow::ensure!(
++                    checkpoints.get() != 3,
++                    "injected job cancellation after lexical component"
++                );
++                Ok(())
++            })
++            .err()
++            .context("audit should have canceled")?;
++        crate::service::registry::AuditDrainProof::from_error(&canceled)
++            .context("drained cancellation proof missing")?
++    };
++    registry.complete_job_with_maintenance_and_audit_at(
++        &lease,
++        canceled_job,
++        JobOutcome::Canceled,
++        401,
++        None,
++        Some(&drained),
++    )?;
++    assert!(
++        registry.integrity_audit_veto(&lease)?.is_none(),
++        "safely drained partial audit must not poison normal restart"
++    );
+     drop(lease);
+-    let mut lease=ProjectLease::acquire(&control,registration.binding)?;
++    let mut lease = ProjectLease::acquire(&control, registration.binding)?;
+     registry.admit_worker(&mut lease)?;
+-    assert_eq!(registry.integrity_audit_state(&lease)?,crate::service::registry::IntegrityAuditState::Clear);
+-    let owner=collection.integrity_owner(&registry,&lease,&bound)?;
+-    let read=store.current_read(&scope)?;
+-    let anchor=owner.anchor(&read)?;
+-    assert_eq!(anchor.physical_audit,super::integrity::PhysicalAudit::Unknown);
+-    let partial=serde_json::to_value(anchor.verify.context("partial audit missing")?)?;
+-    assert_eq!(partial["lexical_observed_unix_ms"],400);
+-    assert_eq!(partial["objects_complete"],false,"cancel did not certify unvisited retained objects");
+-    let incomplete_job=claim(&mut registry,&lease,86)?;
+-    let clean_turn={
+-        let owner=collection.integrity_owner(&registry,&lease,&bound)?;
+-        let mut writer=store.lock()?;
+-        owner.verify_turn(&mut writer,incomplete_job,1,1<<20,500,||Ok(()))?
+-    };
+-    registry.complete_job_with_maintenance_and_audit_at(&lease,incomplete_job,
+-        JobOutcome::Failed{code:"integrity_coverage_incomplete".into()},501,None,clean_turn.drained.as_ref())?;
+-    assert!(registry.integrity_audit_veto(&lease)?.is_none(),
+-        "cleanly settled incomplete coverage is not known damage");
+-    let failed_job=claim(&mut registry,&lease,87)?;
+-    registry.complete_job(&lease,failed_job,JobOutcome::Failed{code:"unresolved_audit".into()})?;
+-    let replacement_job=claim(&mut registry,&lease,88)?;
+-    let replacement_turn={
+-        let owner=collection.integrity_owner(&registry,&lease,&bound)?;
+-        let mut writer=store.lock()?;
+-        owner.verify_turn(&mut writer,replacement_job,1,1<<20,600,||Ok(()))?
+-    };
+-    registry.complete_job_with_maintenance_and_audit_at(&lease,replacement_job,
+-        JobOutcome::Failed{code:"integrity_coverage_incomplete".into()},601,None,replacement_turn.drained.as_ref())?;
+-    assert_eq!(registry.integrity_audit_veto(&lease)?,Some(replacement_job),
+-        "partial drain cannot heal an inherited unresolved audit");
+-    Ok(())
+-}
++    assert_eq!(
++        registry.integrity_audit_state(&lease)?,
++        crate::service::registry::IntegrityAuditState::Clear
++    );
++    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++    let read = store.current_read(&scope)?;
++    let anchor = owner.anchor(&read)?;
++    assert_eq!(
++        anchor.physical_audit,
++        super::integrity::PhysicalAudit::Unknown
++    );
++    let partial = serde_json::to_value(anchor.verify.context("partial audit missing")?)?;
++    assert_eq!(partial["lexical_observed_unix_ms"], 400);
++    assert_eq!(
++        partial["objects_complete"], false,
++        "cancel did not certify unvisited retained objects"
++    );
++    let incomplete_job = claim(&mut registry, &lease, 86)?;
++    let clean_turn = {
++        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++        let mut writer = store.lock()?;
++        owner.verify_turn(&mut writer, incomplete_job, 1, 1 << 20, 500, || Ok(()))?
++    };
++    registry.complete_job_with_maintenance_and_audit_at(
++        &lease,
++        incomplete_job,
++        JobOutcome::Failed {
++            code: "integrity_coverage_incomplete".into(),
++        },
++        501,
++        None,
++        clean_turn.drained.as_ref(),
++    )?;
++    assert!(
++        registry.integrity_audit_veto(&lease)?.is_none(),
++        "cleanly settled incomplete coverage is not known damage"
++    );
++    let failed_job = claim(&mut registry, &lease, 87)?;
++    registry.complete_job(
++        &lease,
++        failed_job,
++        JobOutcome::Failed {
++            code: "unresolved_audit".into(),
++        },
++    )?;
++    let replacement_job = claim(&mut registry, &lease, 88)?;
++    let replacement_turn = {
++        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++        let mut writer = store.lock()?;
++        owner.verify_turn(&mut writer, replacement_job, 1, 1 << 20, 600, || Ok(()))?
++    };
++    registry.complete_job_with_maintenance_and_audit_at(
++        &lease,
++        replacement_job,
++        JobOutcome::Failed {
++            code: "integrity_coverage_incomplete".into(),
++        },
++        601,
++        None,
++        replacement_turn.drained.as_ref(),
++    )?;
++    assert_eq!(
++        registry.integrity_audit_veto(&lease)?,
++        Some(replacement_job),
++        "partial drain cannot heal an inherited unresolved audit"
++    );
++    Ok(())
++}
++
++#[test]
++fn verify_projection_coverage_is_separate_dated_and_failed_source_does_not_advance() -> Result<()> {
++    use airk_core::service::{JobKind, JobOutcome, RequestKey};
++    fn claim(
++        registry: &mut crate::service::registry::ServiceRegistry,
++        lease: &crate::service::ProjectLease,
++        nonce: u8,
++    ) -> Result<Sha256Digest> {
++        let (namespace, epoch) = registry.request_epoch()?;
++        let job = registry.enqueue(
++            lease.identity().0,
++            namespace,
++            &RequestKey {
++                namespace,
++                epoch,
++                nonce: Incarnation::from_bytes([nonce; 16]),
++            },
++            JobKind::Verify,
++        )?;
++        Ok(registry
++            .claim_job_id(lease, job.id)?
++            .context("Verify not claimed")?
++            .id)
++    }
++    let (_temporary, collection, mut registry, bound, lease, store, scope) = integrity_fixture()?;
++    let compact = projection_fixture_artifact(&store, &scope, Vec::new())?;
++    let quota = Quota::open_service(store.managed_path()?.root)?;
++    let writer = store.lock()?;
++    let mut current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
++    let token = current.head()?.token()?;
++    current.commit_artifact(
++        &token,
++        "one.txt",
++        Some(&crate::current::CapturedInput::new(compact.clone())),
++    )?;
++    drop(current);
++    drop(writer);
++    {
++        let read = store.current_read(&scope)?;
++        collection
++            .integrity_owner(&registry, &lease, &bound)?
++            .anchor(&read)?;
++    }
++    let job = claim(&mut registry, &lease, 111)?;
++    let first = {
++        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++        let mut writer = store.lock()?;
++        owner.verify_turn(&mut writer, job, 1, 1 << 20, 101, || Ok(()))?
++    };
++    assert!(first.progress.complete());
++    assert!(first.work_complete());
++    let coverage = first
++        .progress
++        .projection_coverage()
++        .context("projection coverage absent")?;
++    assert_eq!(coverage.scalars.missing_files, 1);
++    assert_eq!(coverage.scalars.checked_files, 0);
++    assert_eq!(coverage.scalars.first_observed_unix_ms, None);
++    assert_eq!(coverage.native_facts.missing_files, 1);
++    assert_eq!(coverage.native_facts.checked_files, 0);
++    assert_eq!(coverage.native_facts.first_observed_unix_ms, None);
++    assert!(
++        !coverage.complete_coverage(),
++        "legacy scalar absence became qualified coverage"
++    );
++    let resumed = {
++        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++        let mut writer = store.lock()?;
++        owner.verify_turn(&mut writer, job, 1, 1 << 20, 202, || Ok(()))?
++    };
++    assert_eq!(
++        serde_json::to_value(first.progress.projection_coverage())?,
++        serde_json::to_value(resumed.progress.projection_coverage())?
++    );
++    registry.complete_job_with_maintenance_and_audit_at(
++        &lease,
++        job,
++        JobOutcome::Failed {
++            code: "integrity_coverage_incomplete".into(),
++        },
++        203,
++        None,
++        resumed.drained.as_ref(),
++    )?;
++    assert!(
++        registry.integrity_audit_veto(&lease)?.is_none(),
++        "clean missing coverage poisoned a healthy owner"
++    );
++    let failed_job = claim(&mut registry, &lease, 112)?;
++    let source = store
++        .directory()
++        .join("objects/sources")
++        .join(&compact.content_hash);
++    let held = source.with_extension("held");
++    fs::rename(&source, &held)?;
++    {
++        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++        let mut writer = store.lock()?;
++        assert!(
++            owner
++                .verify_turn(&mut writer, failed_job, 1, 1 << 20, 303, || Ok(()))
++                .is_err()
++        );
++    }
++    fs::rename(held, source)?;
++    assert_eq!(registry.integrity_audit_veto(&lease)?, Some(failed_job));
++    let read = store.current_read(&scope)?;
++    let saved = collection
++        .integrity_owner(&registry, &lease, &bound)?
++        .anchor(&read)?
++        .verify
++        .context("failed progress missing")?;
++    assert!(saved.requires_repair());
++    let coverage = saved.projection_coverage().unwrap();
++    assert_eq!(coverage.visited_files, 0);
++    assert_eq!(coverage.after, None);
++    assert_eq!(coverage.native_facts.first_observed_unix_ms, None);
++    Ok(())
++}
++
++fn projection_fixture_artifact(
++    store: &crate::FileStore,
++    scope: &crate::current::CurrentScope,
++    facts: Vec<airk_core::extraction::LocalFact>,
++) -> Result<airk_core::Artifact> {
++    use airk_core::extraction::{ExtractionPayload, ExtractionProfile, LocalChunk, LocalSpan};
++    use sha2::{Digest, Sha256};
++    let profile = ExtractionProfile {
++        contract_version: 1,
++        adapter_id: "text".into(),
++        adapter_version: "projection-test/1".into(),
++        language: "text".into(),
++        dialect: None,
++        grammar_identity: None,
++        mapping_version: 1,
++        chunk_version: 3,
++        options: Default::default(),
++        configuration_inputs: Default::default(),
++    };
++    let payload = ExtractionPayload {
++        semantic_projection: Default::default(),
++        continuity_coverage: Default::default(),
++        contract_version: 1,
++        extraction_method: "utf8".into(),
++        parse_status: "plain".into(),
++        provenance: Vec::new(),
++        text: "body".into(),
++        facts,
++        syntax_identities: Vec::new(),
++        chunks: vec![LocalChunk {
++            span: LocalSpan { start: 0, end: 4 },
++            start_line: 1,
++            end_line: 1,
++            location: airk_core::DocumentLocation::Lines { start: 1, end: 1 },
++            region: None,
++        }],
++        regions: Vec::new(),
++        relationships: Vec::new(),
++        continuity: Vec::new(),
++        diagnostics: Vec::new(),
++        partial: false,
++    };
++    let artifact = airk_core::binding::bind_payload(
++        &payload,
++        &profile,
++        airk_core::binding::ArtifactBinding {
++            path: "one.txt",
++            source_hash: Sha256Digest::from_bytes(Sha256::digest(b"body").into()),
++            source_bytes: 4,
++        },
++    )?;
++    let quota = Quota::open_service(store.managed_path()?.root)?;
++    let reservation = quota.reserve(&scope.collection, 1 << 20)?;
++    let compact = store.retain_payload_with_budget(
++        &artifact,
++        &payload,
++        &profile,
++        Some(b"body"),
++        Some(&reservation),
++    )?;
++    Ok(compact)
++}
++
++fn projection_fixture_inventory(
++    scope: &CurrentScope,
++    input: &crate::current::CapturedInput,
++    sequence: u64,
++) -> Result<airk_core::publication::InventoryFile> {
++    use sha2::{Digest, Sha256};
++    let artifact = &input.artifact;
++    let retained = artifact.retained.as_ref().unwrap();
++    let digest = Sha256::digest(artifact.path.as_bytes());
++    let mut id = [0; 16];
++    id.copy_from_slice(&digest[..16]);
++    Ok(airk_core::publication::InventoryFile {
++        continuity: Vec::new(),
++        continuity_coverage: Default::default(),
++        state: airk_core::changes::FileState {
++            artifact_id: airk_core::identity::ArtifactId::from_bytes(id),
++            stamps: airk_core::changes::FileStamps {
++                first_generation: 1,
++                path_generation: sequence,
++                content_generation: sequence,
++                evidence_generation: sequence,
++            },
++            source_hash: artifact.content_hash.parse()?,
++            profile_id: retained.profile.as_ref().unwrap().identity()?,
++            payload_digest: retained.object.parse()?,
++            evidence_digest: Sha256Digest::from_bytes([49; 32]),
++            root: scope.root.clone(),
++            path: artifact.path.clone(),
++        },
++        source_bytes: artifact.bytes,
++        payload_bytes: retained.object_bytes,
++        extracted_bytes: retained.extracted_bytes,
++        chunks: retained.chunks,
++        indexed_lines: 1,
++        facts: retained.facts,
++        raw_source: true,
++        language: artifact.language.clone(),
++        extraction_method: artifact.extraction_method.clone(),
++        parse_status: artifact.parse_status.clone(),
++    })
++}
++
++fn publish_projection_fixture(
++    store: &crate::FileStore,
++    quota: &Quota,
++    scope: &CurrentScope,
++    artifact: airk_core::Artifact,
++) -> Result<()> {
++    use crate::current::{ArtifactChange, CapturedInput, collection, graph, metadata, postings};
++    let input = CapturedInput::new(artifact);
++    let read = store.current_read(scope)?;
++    let base = read.head().clone();
++    let reservation = quota.reserve(&scope.collection, 16 << 20)?;
++    let full = store.load_retained(&input.artifact)?;
++    let file = projection_fixture_inventory(scope, &input, base.sequence + 1)?;
++    let reference = store.retain_current_metadata_with_facts_encoded(
++        &input.artifact.path,
++        &file,
++        &full,
++        &reservation,
++        airk_core::compression::CompressionMode::Off,
++    )?;
++    let sealed = graph::GraphOverlay::new(
++        &reservation,
++        read.clone(),
++        graph::GraphOverlayLimits {
++            maximum_bytes: 1 << 20,
++            ..Default::default()
++        },
++    )?
++    .seal()?;
++    let (changes, target) = read.with_connection(|connection| {
++        let mut plan = map::MapPlan::new(connection, scope, base.artifact_root)?;
++        let mut collection = collection::CollectionPlan::load(&plan, scope, None)?;
++        collection.update(None, Some(&input.artifact))?;
++        let mut postings = postings::PostingChanges::new(base.sequence == 0);
++        postings.update(&mut plan, scope, store, None, Some(&input))?;
++        let first = map::MapChange::new(
++            scope,
++            map::MapDomain::Artifact,
++            input.artifact.path.as_bytes(),
++            Some(input.bytes()?),
++        )?;
++        plan.put(first.key(), first.value())?;
++        let mut changes = vec![first];
++        changes.extend(metadata::prepare(
++            store,
++            scope,
++            &mut plan,
++            &[ArtifactChange::Upsert(Box::new(input.clone()))],
++            &[reference],
++            base.sequence + 1,
++        )?);
++        changes.extend(postings.finish(&mut plan, scope)?);
++        changes.extend(collection.finish(&mut plan, scope)?);
++        changes.sort_by_key(map::MapChange::key);
++        let mut target = base.clone();
++        target.sequence += 1;
++        target.artifact_root = plan.root()?;
++        Ok((changes, target))
++    })?;
++    drop(read);
++    let lock = store.lock()?;
++    let mut writer = store.current_write(&lock, quota, scope, 8 << 20)?;
++    let pending =
++        writer.prepare_mapped(&base.token()?, target, &sealed, &[input], None, &changes)?;
++    writer.mark_applying(&pending)?;
++    writer.commit(&pending, pending.target.lexical_commit)?;
++    Ok(())
++}
++
++#[test]
++fn verify_projected_leaf_resume_preserves_logical_certificate_through_canceled_turn() -> Result<()>
++{
++    use airk_core::service::{JobKind, RequestKey};
++    let (_temporary, collection, mut registry, bound, lease, store, scope) = integrity_fixture()?;
++    let facts = (0..600)
++        .map(|id| airk_core::extraction::LocalFact {
++            id,
++            owner: None,
++            kind: "heading".into(),
++            name: "SameName".into(),
++            span: airk_core::extraction::LocalSpan { start: 0, end: 4 },
++            syntax_kind: "heading".into(),
++            start_line: 1,
++            end_line: 1,
++            location: airk_core::DocumentLocation::Lines { start: 1, end: 1 },
++            document: None,
++            code: None,
++            region: None,
++            attributes: Default::default(),
++        })
++        .collect();
++    let compact = projection_fixture_artifact(&store, &scope, facts)?;
++    let quota = Quota::open_service(store.managed_path()?.root)?;
++    publish_projection_fixture(&store, &quota, &scope, compact.clone())?;
++    let budget = {
++        let read = store.current_read(&scope)?;
++        let native = read
++            .native_fact_projection(&store, "one.txt")?
++            .context("projection absent")?;
++        assert!(native.header().pages.len() >= 3);
++        let bytes = read.projection_certification_bytes("one.txt")?
++            + native.header().pages[0].resource.bytes as u64;
++        collection
++            .integrity_owner(&registry, &lease, &bound)?
++            .anchor(&read)?;
++        bytes
++    };
++    let (namespace, epoch) = registry.request_epoch()?;
++    let queued = registry.enqueue(
++        lease.identity().0,
++        namespace,
++        &RequestKey {
++            namespace,
++            epoch,
++            nonce: Incarnation::from_bytes([113; 16]),
++        },
++        JobKind::Verify,
++    )?;
++    let job = registry
++        .claim_job_id(&lease, queued.id)?
++        .context("Verify not claimed")?
++        .id;
++    let first = {
++        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++        let mut writer = store.lock()?;
++        owner.verify_turn(&mut writer, job, 1, budget, 100, || Ok(()))?
++    };
++    let first_coverage = first.progress.projection_coverage().unwrap();
++    let saved = serde_json::to_value(first_coverage)?;
++    assert_eq!(saved["pending"]["next_page"], 1);
++    assert_eq!(saved["pending"]["logical_certified_unix_ms"], 100);
++    assert_eq!(first_coverage.native_facts.checked_files, 0);
++    let logical_bytes = first_coverage.logical_certification_bytes;
++    // A fresh owner reopens persisted progress. Cancellation is an actual Verify
++    // checkpoint, rather than synthetic progress or a fabricated drain receipt.
++    let canceled = {
++        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++        let mut writer = store.lock()?;
++        owner
++            .verify_turn(&mut writer, job, 1, 1 << 20, 200, || {
++                anyhow::bail!("injected canceled Verify turn")
++            })
++            .err()
++            .context("turn did not cancel")?
++    };
++    assert!(crate::service::registry::AuditDrainProof::from_error(&canceled).is_some());
++    let source = store
++        .directory()
++        .join("objects/sources")
++        .join(&compact.content_hash);
++    let held = source.with_extension("held");
++    fs::rename(&source, &held)?;
++    let resumed_result = {
++        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++        let mut writer = store.lock()?;
++        owner.verify_turn(&mut writer, job, 1, 1 << 20, 300, || Ok(()))
++    };
++    fs::rename(held, source)?;
++    let resumed = resumed_result?;
++    let coverage = resumed.progress.projection_coverage().unwrap();
++    assert!(resumed.work_complete());
++    assert!(resumed.projection_coverage_complete());
++    assert_eq!(coverage.logical_certification_bytes, logical_bytes);
++    assert_eq!(coverage.scalars.first_observed_unix_ms, Some(100));
++    assert_eq!(coverage.native_facts.first_observed_unix_ms, Some(100));
++    assert_eq!(coverage.native_facts.through_unix_ms, Some(300));
++    assert!(serde_json::to_value(coverage)?.get("pending").is_none());
++    Ok(())
++}
+--- a/crates/airk-store/src/service_collection_verify.rs
++++ b/crates/airk-store/src/service_collection_verify.rs
+@@ -2,6 +2,160 @@
+ //! Off-query dated observations. No method in this module authorizes a query.
+ use super::*;
+ use crate::current::postings::Lookup;
++
++#[derive(Clone, Debug, Default, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct ProjectionComponentCoverage {
++    pub checked_files: u64,
++    pub missing_files: u64,
++    pub first_observed_unix_ms: Option<u64>,
++    pub through_unix_ms: Option<u64>,
++}
++impl ProjectionComponentCoverage {
++    fn observe(&mut self, available: bool, now: u64) -> Result<()> {
++        if available {
++            self.checked_files = self
++                .checked_files
++                .checked_add(1)
++                .context("projection coverage overflow")?;
++            self.first_observed_unix_ms.get_or_insert(now);
++            self.through_unix_ms = Some(now);
++        } else {
++            self.missing_files = self
++                .missing_files
++                .checked_add(1)
++                .context("missing projection coverage overflow")?;
++        }
++        Ok(())
++    }
++}
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct ProjectionPendingFile {
++    path: String,
++    scalars: bool,
++    logical_certified_unix_ms: u64,
++    certificate: crate::current::native_projection::NativeProducerCertificate,
++    next_page: usize,
++    #[serde(default)]
++    physical_first_unix_ms: Option<u64>,
++    #[serde(default)]
++    physical_through_unix_ms: Option<u64>,
++}
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct ProjectionOversized {
++    pub component: Sha256Digest,
++    pub required_bytes: u64,
++    pub admitted_bytes: u64,
++    pub observed_unix_ms: u64,
++}
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct ProjectionAuditProgress {
++    pub artifact_root: Sha256Digest,
++    pub started_unix_ms: u64,
++    pub after: Option<String>,
++    pub visited_files: u64,
++    pub scalars: ProjectionComponentCoverage,
++    pub native_facts: ProjectionComponentCoverage,
++    pub exhausted: bool,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pending: Option<ProjectionPendingFile>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub first_oversized: Option<ProjectionOversized>,
++    #[serde(default)]
++    pub logical_certification_bytes: u64,
++    #[serde(default)]
++    pub leaf_checked_pages: u64,
++    #[serde(default)]
++    pub leaf_checked_bytes: u64,
++    #[serde(default)]
++    pub manifest_loads: u64,
++}
++impl ProjectionAuditProgress {
++    fn new(root: Sha256Digest, now: u64) -> Self {
++        Self {
++            artifact_root: root,
++            started_unix_ms: now,
++            after: None,
++            visited_files: 0,
++            scalars: Default::default(),
++            native_facts: Default::default(),
++            exhausted: false,
++            pending: None,
++            first_oversized: None,
++            logical_certification_bytes: 0,
++            leaf_checked_pages: 0,
++            leaf_checked_bytes: 0,
++            manifest_loads: 0,
++        }
++    }
++    fn record(
++        &mut self,
++        path: &str,
++        scalars: bool,
++        native: bool,
++        logical_now: u64,
++        physical_now: u64,
++    ) -> Result<()> {
++        self.scalars.observe(scalars, logical_now)?;
++        self.native_facts.observe(native, physical_now)?;
++        self.visited_files = self
++            .visited_files
++            .checked_add(1)
++            .context("projection visited count overflow")?;
++        self.after = Some(path.into());
++        Ok(())
++    }
++    fn validate(&self) -> Result<()> {
++        ensure!(
++            self.after
++                .as_ref()
++                .is_none_or(|path| !path.is_empty() && path.len() <= 8192 && !path.contains('\0')),
++            "invalid projection audit continuation"
++        );
++        if let Some(pending) = &self.pending {
++            ensure!(
++                !self.exhausted
++                    && !pending.path.is_empty()
++                    && pending.path.len() <= 8192
++                    && !pending.path.contains('\0')
++                    && self
++                        .after
++                        .as_ref()
++                        .is_none_or(|after| pending.path.as_str() > after.as_str())
++                    && pending.certificate.version == 1
++                    && pending.certificate.facts <= 10_000
++                    && pending.certificate.pages <= 10_000
++                    && pending.next_page <= pending.certificate.pages,
++                "invalid pending projection audit"
++            );
++        }
++        for component in [&self.scalars, &self.native_facts] {
++            ensure!(
++                component.checked_files.checked_add(component.missing_files)
++                    == Some(self.visited_files)
++                    && ((component.checked_files == 0
++                        && component.first_observed_unix_ms.is_none()
++                        && component.through_unix_ms.is_none())
++                        || (component.checked_files > 0
++                            && component.first_observed_unix_ms.is_some()
++                            && component.through_unix_ms.is_some())),
++                "invalid projection audit coverage counters"
++            );
++        }
++        Ok(())
++    }
++    /// Historical component coverage only, never private-root/query authority.
++    pub fn complete_coverage(&self) -> bool {
++        self.exhausted
++            && self.scalars.missing_files == 0
++            && self.native_facts.missing_files == 0
++            && self.scalars.checked_files == self.visited_files
++            && self.native_facts.checked_files == self.visited_files
++    }
++}
+ 
+ #[derive(Clone, Debug, Serialize, Deserialize)]
+ #[serde(deny_unknown_fields)]
+@@ -21,17 +175,34 @@
+     /// Includes uncertain I/O; not a declaration of physical corruption.
+     /// Never automatically cleared by a later successful observation.
+     unresolved: bool,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    projections: Option<ProjectionAuditProgress>,
+ }
+ impl VerifyProgress {
+-    pub fn requires_repair(&self) -> bool { self.unresolved }
++    pub fn requires_repair(&self) -> bool {
++        self.unresolved
++    }
+     fn reconcile(old: Option<Self>, job: Sha256Digest, head: &CurrentHead, now: u64) -> Self {
+         let unresolved = old.as_ref().is_some_and(|old| old.unresolved);
+-        let Some(mut old) = old.filter(|old| old.version == 1 && old.job == job && old.scope == head.scope) else {
+-            return Self { version: 1, job, scope: head.scope.clone(),
+-                artifact_root: head.artifact_root, lexical_commit: head.lexical_commit,
+-                lexical_observed_unix_ms: None, started_unix_ms: now, through_unix_ms: now,
+-                after: None, checked_files: 0, checked_bytes: 0,
+-                objects_complete: false, unresolved };
++        let Some(mut old) =
++            old.filter(|old| old.version == 1 && old.job == job && old.scope == head.scope)
++        else {
++            return Self {
++                version: 1,
++                job,
++                scope: head.scope.clone(),
++                artifact_root: head.artifact_root,
++                lexical_commit: head.lexical_commit,
++                lexical_observed_unix_ms: None,
++                started_unix_ms: now,
++                through_unix_ms: now,
++                after: None,
++                checked_files: 0,
++                checked_bytes: 0,
++                objects_complete: false,
++                unresolved,
++                projections: Some(ProjectionAuditProgress::new(head.artifact_root, now)),
++            };
+         };
+         // Metadata/semantic/graph-only publication need not discard unrelated
+         // observed object work. These are authenticated component identities.
+@@ -47,7 +218,17 @@
+             old.lexical_commit = head.lexical_commit;
+             old.lexical_observed_unix_ms = None;
+         }
++        if old
++            .projections
++            .as_ref()
++            .is_none_or(|projection| projection.artifact_root != head.artifact_root)
++        {
++            old.projections = Some(ProjectionAuditProgress::new(head.artifact_root, now));
++        }
+         old
++    }
++    pub fn projection_coverage(&self) -> Option<&ProjectionAuditProgress> {
++        self.projections.as_ref()
+     }
+     pub fn complete(&self) -> bool {
+         self.objects_complete && self.lexical_observed_unix_ms.is_some() && !self.unresolved
+@@ -57,30 +238,152 @@
+ pub struct VerifyTurn {
+     pub progress: VerifyProgress,
+     pub blocked_large: bool,
++    pub required_bytes: Option<u64>,
++    pub admitted_bytes: u64,
+     pub drained: Option<crate::service::registry::AuditDrainProof>,
+ }
++impl VerifyTurn {
++    // A completed campaign can honestly report unavailable projection coverage.
++    // Historical VerifyProgress::complete retains its original component meaning.
++    pub fn work_complete(&self) -> bool {
++        self.progress.objects_complete
++            && self.progress.lexical_observed_unix_ms.is_some()
++            && self
++                .progress
++                .projections
++                .as_ref()
++                .is_some_and(|projection| projection.exhausted)
++    }
++    pub fn projection_coverage_complete(&self) -> bool {
++        self.progress
++            .projections
++            .as_ref()
++            .is_some_and(ProjectionAuditProgress::complete_coverage)
++    }
++}
++fn audit_pending_projection(
++    progress: &mut ProjectionAuditProgress,
++    native: &crate::current::native_projection::NativeFactRead<'_>,
++    used: &mut u64,
++    maximum: u64,
++    pages: &mut usize,
++    now: u64,
++    mut checkpoint: impl FnMut() -> Result<()>,
++) -> Result<Option<u64>> {
++    let pending = progress
++        .pending
++        .as_mut()
++        .context("pending projection audit missing")?;
++    native.check_certificate(&pending.certificate)?;
++    while pending.next_page < pending.certificate.pages && *pages < 128 {
++        checkpoint()?;
++        let size = native.header().pages[pending.next_page].resource.bytes as u64;
++        if used.saturating_add(size) > maximum {
++            let required = (native.manifest_bytes() as u64)
++                .checked_add(size)
++                .context("projection audit size overflow")?;
++            return Ok((required > maximum).then_some(required));
++        }
++        native.page(pending.next_page)?;
++        pending.next_page += 1;
++        *pages += 1;
++        *used += size;
++        pending.physical_first_unix_ms.get_or_insert(now);
++        pending.physical_through_unix_ms = Some(now);
++        progress.leaf_checked_pages = progress
++            .leaf_checked_pages
++            .checked_add(1)
++            .context("projection page count overflow")?;
++        progress.leaf_checked_bytes = progress
++            .leaf_checked_bytes
++            .checked_add(size)
++            .context("projection physical byte overflow")?;
++        checkpoint()?;
++    }
++    if pending.next_page == pending.certificate.pages {
++        let completed = progress
++            .pending
++            .take()
++            .context("completed projection missing")?;
++        progress.record(
++            &completed.path,
++            completed.scalars,
++            true,
++            completed.logical_certified_unix_ms,
++            completed.physical_first_unix_ms.unwrap_or(now),
++        )?;
++        progress.native_facts.through_unix_ms =
++            Some(completed.physical_through_unix_ms.unwrap_or(now));
++    }
++    Ok(None)
++}
++fn record_projection_oversized(
++    progress: &mut ProjectionAuditProgress,
++    path: &str,
++    required: u64,
++    admitted: u64,
++    now: u64,
++) {
++    if progress.first_oversized.is_none() {
++        progress.first_oversized = Some(ProjectionOversized {
++            component: airk_core::identity::framed_digest(
++                b"projection-audit-component/1",
++                &[path.as_bytes()],
++            ),
++            required_bytes: required,
++            admitted_bytes: admitted,
++            observed_unix_ms: now,
++        });
++    }
++}
++
+ impl IntegrityOwner<'_> {
+     /// One optional legacy lexical component and one bounded retained-object page.
+     /// Acquire the existing writer before entry, release it between turns. No
+     /// CurrentRead, transaction, writer or object lease survives this call.
+     /// `checkpoint` is the existing service job cancellation/admission hook.
+-    pub fn verify_turn(&self, writer: &mut crate::WriterLock, job: Sha256Digest, max_files: usize,
+-        max_bytes: u64, now: u64, checkpoint: impl Fn() -> Result<()>) -> Result<VerifyTurn> {
+-        ensure!((1..=128).contains(&max_files) && (1..=512 << 20).contains(&max_bytes),
+-            "invalid off-query verification bounds");
+-        if let Err(error)=checkpoint() {
+-            return Err(match crate::service::registry::AuditDrainProof::new(self.registry,self.lease,self.bound,job) {
+-                Ok(proof)=>error.context(proof),Err(_)=>error,
+-            });
++    pub fn verify_turn(
++        &self,
++        writer: &mut crate::WriterLock,
++        job: Sha256Digest,
++        max_files: usize,
++        max_bytes: u64,
++        now: u64,
++        checkpoint: impl Fn() -> Result<()>,
++    ) -> Result<VerifyTurn> {
++        ensure!(
++            (1..=128).contains(&max_files) && (1..=512 << 20).contains(&max_bytes),
++            "invalid off-query verification bounds"
++        );
++        if let Err(error) = checkpoint() {
++            return Err(
++                match crate::service::registry::AuditDrainProof::new(
++                    self.registry,
++                    self.lease,
++                    self.bound,
++                    job,
++                ) {
++                    Ok(proof) => error.context(proof),
++                    Err(_) => error,
++                },
++            );
+         }
+         let fence = self.check()?;
+-        ensure!(self.registry.integrity_audit_veto(self.lease)? == Some(job),
+-            "Verify requires its durably admitted audit veto");
++        ensure!(
++            self.registry.integrity_audit_veto(self.lease)? == Some(job),
++            "Verify requires its durably admitted audit veto"
++        );
+         let selected = self.collection.select()?;
+-        crate::maintenance::check_writer(&selected.store, writer,
+-            &Quota::open_service(Path::new(&self.collection.owner.data_root))?)?;
++        crate::maintenance::check_writer(
++            &selected.store,
++            writer,
++            &Quota::open_service(Path::new(&self.collection.owner.data_root))?,
++        )?;
+         let generation = writer.census_mutation_epoch();
+-        let scope = selected.store.current_owned_scope()?.context("verification scope missing")?;
++        let scope = selected
++            .store
++            .current_owned_scope()?
++            .context("verification scope missing")?;
+         let read = selected.store.current_read(&scope)?;
+         let head = read.head().clone();
+         let mut observation = {
+@@ -90,24 +393,44 @@
+         let old = observation.as_mut().and_then(|value| value.verify.take());
+         if let Some(saved) = &old {
+             saved.scope.validate()?;
+-            ensure!(saved.version == 1 && saved.after.as_ref().is_none_or(|path| !path.is_empty()
+-                && path.len() <= 8192 && !path.contains('\0')),
+-                "unsupported or malformed Verify continuation");
++            if let Some(projection) = &saved.projections {
++                projection.validate()?;
++            }
++            ensure!(
++                saved.version == 1
++                    && saved.after.as_ref().is_none_or(|path| !path.is_empty()
++                        && path.len() <= 8192
++                        && !path.contains('\0')),
++                "unsupported or malformed Verify continuation"
++            );
+         }
+         let mut progress = VerifyProgress::reconcile(old, job, &head, now);
+-        if observation.as_ref().is_some_and(|value| value.known_damage.len() >= MAX_DAMAGE
+-            || value.known_damage.iter().any(|damage| damage.incarnation == head.scope.incarnation)) {
++        if observation.as_ref().is_some_and(|value| {
++            value.known_damage.len() >= MAX_DAMAGE
++                || value
++                    .known_damage
++                    .iter()
++                    .any(|damage| damage.incarnation == head.scope.incarnation)
++        }) {
+             progress.unresolved = true;
+         }
+-        let recorded=self.registry.recorded_integrity_damage(self.lease)?;
+-        if recorded.len()>=MAX_DAMAGE || recorded.iter().any(|damage|damage.incarnation==head.scope.incarnation) {
+-            progress.unresolved=true;
++        let recorded = self.registry.recorded_integrity_damage(self.lease)?;
++        if recorded.len() >= MAX_DAMAGE
++            || recorded
++                .iter()
++                .any(|damage| damage.incarnation == head.scope.incarnation)
++        {
++            progress.unresolved = true;
+         }
+         let mut blocked_large = false;
++        let mut required_bytes = None;
+         let mut interrupted = false;
+         let mut check = || match checkpoint() {
+             Ok(()) => Ok(()),
+-            Err(error) => { interrupted = true; Err(error) }
++            Err(error) => {
++                interrupted = true;
++                Err(error)
++            }
+         };
+         let work = (|| -> Result<()> {
+             if progress.lexical_observed_unix_ms.is_none() {
+@@ -118,28 +441,256 @@
+                 progress.lexical_observed_unix_ms = Some(now);
+             }
+             check()?;
+-            if progress.objects_complete { return Ok(()); }
+-            let page = read.lookup_paths(Lookup::Files, "", progress.after.as_deref(), max_files + 1)?;
+-            let mut bytes = 0u64;
+-            let mut visited = 0usize;
++            let mut used = 0u64;
++            let mut leaf_pages = 0usize;
++            // A fresh CurrentRead reauthenticates the immutable manifest once;
++            // only the fixed-size logical certificate/cursor survived the turn.
++            if let Some(pending) = progress
++                .projections
++                .as_ref()
++                .and_then(|projection| projection.pending.as_ref())
++                .cloned()
++            {
++                let manifest = read
++                    .native_fact_manifest_bytes(&pending.path)?
++                    .context("pending native projection disappeared")?
++                    as u64;
++                if manifest > max_bytes {
++                    blocked_large = true;
++                    required_bytes = Some(manifest);
++                    record_projection_oversized(
++                        progress
++                            .projections
++                            .as_mut()
++                            .context("projection progress missing")?,
++                        &pending.path,
++                        manifest,
++                        max_bytes,
++                        now,
++                    );
++                    return Ok(());
++                }
++                let native = read
++                    .native_fact_projection(&selected.store, &pending.path)?
++                    .context("pending native projection disappeared")?;
++                used = manifest;
++                let projection = progress
++                    .projections
++                    .as_mut()
++                    .context("projection progress missing")?;
++                projection.manifest_loads = projection
++                    .manifest_loads
++                    .checked_add(1)
++                    .context("projection manifest count overflow")?;
++                if let Some(required) = audit_pending_projection(
++                    projection,
++                    &native,
++                    &mut used,
++                    max_bytes,
++                    &mut leaf_pages,
++                    now,
++                    &mut check,
++                )? {
++                    blocked_large = true;
++                    required_bytes = Some(required);
++                    record_projection_oversized(
++                        projection,
++                        &pending.path,
++                        required,
++                        max_bytes,
++                        now,
++                    );
++                    return Ok(());
++                }
++                if projection.pending.is_some() {
++                    return Ok(());
++                }
++            }
++            let projection = progress
++                .projections
++                .as_ref()
++                .context("projection progress missing")?;
++            if progress.objects_complete && projection.exhausted {
++                return Ok(());
++            }
++            let cursor = match (progress.objects_complete, projection.exhausted) {
++                (true, false) => projection.after.clone(),
++                (false, true) => progress.after.clone(),
++                (false, false) => std::cmp::min(progress.after.clone(), projection.after.clone()),
++                (true, true) => return Ok(()),
++            };
++            let page = read.lookup_paths(Lookup::Files, "", cursor.as_deref(), max_files + 1)?;
++            let mut scanned = 0usize;
++            let mut historical_observed = false;
+             for path in page.paths.iter().take(max_files) {
+                 check()?;
+-                let artifact = read.artifact(path)?.context("verification artifact missing")?;
+-                let reference = artifact.retained.as_ref().context("verification retained reference missing")?;
+-                let size = (artifact.bytes as u64).checked_add(reference.object_bytes as u64)
++                let historical = !progress.objects_complete
++                    && progress.after.as_ref().is_none_or(|after| path > after);
++                let projection_needed = {
++                    let projection = progress
++                        .projections
++                        .as_ref()
++                        .context("projection progress missing")?;
++                    !projection.exhausted
++                        && projection.after.as_ref().is_none_or(|after| path > after)
++                };
++                if !historical && !projection_needed {
++                    scanned += 1;
++                    continue;
++                }
++                let artifact = read
++                    .artifact(path)?
++                    .context("verification artifact missing")?;
++                let retained = artifact
++                    .retained
++                    .as_ref()
++                    .context("verification extraction missing")?;
++                let object_size = (artifact.bytes as u64)
++                    .checked_add(retained.object_bytes as u64)
+                     .context("verification byte overflow")?;
+-                if size > max_bytes { blocked_large = true; break; }
+-                if bytes.saturating_add(size) > max_bytes { break; }
+-                selected.store.verify_retained_source(&artifact)?;
+-                selected.store.load_retained_bounded(&artifact, max_bytes)?;
+-                bytes += size;
+-                progress.checked_files = progress.checked_files.checked_add(1).context("verification count overflow")?;
+-                progress.checked_bytes = progress.checked_bytes.checked_add(size).context("verification size overflow")?;
+-                progress.after = Some(path.clone());
+-                visited += 1;
+-            }
+-            progress.objects_complete = visited == page.paths.len() && page.next_after.is_none();
+-            progress.through_unix_ms = now;
++                let required = if projection_needed {
++                    read.projection_certification_bytes(path)?
++                } else {
++                    object_size
++                };
++                if required > max_bytes {
++                    blocked_large = true;
++                    required_bytes = Some(required);
++                    record_projection_oversized(
++                        progress
++                            .projections
++                            .as_mut()
++                            .context("projection progress missing")?,
++                        path,
++                        required,
++                        max_bytes,
++                        now,
++                    );
++                    break;
++                }
++                if used.saturating_add(required) > max_bytes {
++                    break;
++                }
++                if projection_needed {
++                    let native = read.native_fact_projection(&selected.store, path)?;
++                    let certified = read.certify_file_projections_with_native(
++                        &selected.store,
++                        path,
++                        native.as_ref(),
++                    )?;
++                    used += required;
++                    let projection = progress
++                        .projections
++                        .as_mut()
++                        .context("projection progress missing")?;
++                    projection.logical_certification_bytes = projection
++                        .logical_certification_bytes
++                        .checked_add(required)
++                        .context("projection logical byte overflow")?;
++                    if native.is_some() {
++                        projection.manifest_loads = projection
++                            .manifest_loads
++                            .checked_add(1)
++                            .context("projection manifest count overflow")?;
++                    }
++                    if let Some(certificate) = certified.native {
++                        projection.pending = Some(ProjectionPendingFile {
++                            path: path.clone(),
++                            scalars: certified.scalars,
++                            logical_certified_unix_ms: now,
++                            certificate,
++                            next_page: 0,
++                            physical_first_unix_ms: None,
++                            physical_through_unix_ms: None,
++                        });
++                    } else {
++                        projection.record(path, certified.scalars, false, now, now)?;
++                    }
++                    // The source/extraction checks above are also the historical
++                    // object audit; do not reread them for this same file.
++                    if historical {
++                        progress.checked_files = progress
++                            .checked_files
++                            .checked_add(1)
++                            .context("verification count overflow")?;
++                        progress.checked_bytes = progress
++                            .checked_bytes
++                            .checked_add(object_size)
++                            .context("verification size overflow")?;
++                        progress.after = Some(path.clone());
++                        progress.through_unix_ms = now;
++                        historical_observed = true;
++                    }
++                    let projection = progress
++                        .projections
++                        .as_mut()
++                        .context("projection progress missing")?;
++                    if projection.pending.is_some() {
++                        if let Some(required) = audit_pending_projection(
++                            projection,
++                            native
++                                .as_ref()
++                                .context("native certification reader missing")?,
++                            &mut used,
++                            max_bytes,
++                            &mut leaf_pages,
++                            now,
++                            &mut check,
++                        )? {
++                            blocked_large = true;
++                            required_bytes = Some(required);
++                            record_projection_oversized(projection, path, required, max_bytes, now);
++                            break;
++                        }
++                        if projection.pending.is_some() {
++                            break;
++                        }
++                    }
++                } else {
++                    selected.store.verify_retained_source_deep(&artifact)?;
++                    selected.store.load_retained_bounded(&artifact, max_bytes)?;
++                    used += object_size;
++                    progress.checked_files = progress
++                        .checked_files
++                        .checked_add(1)
++                        .context("verification count overflow")?;
++                    progress.checked_bytes = progress
++                        .checked_bytes
++                        .checked_add(object_size)
++                        .context("verification size overflow")?;
++                    progress.after = Some(path.clone());
++                    progress.through_unix_ms = now;
++                    historical_observed = true;
++                }
++                scanned += 1;
++                check()?;
++                if leaf_pages == 128 {
++                    break;
++                }
++            }
++            if historical_observed {
++                progress.through_unix_ms = now;
++            }
++            if scanned == page.paths.len() && page.next_after.is_none() {
++                let last = page.paths.last();
++                if !progress.objects_complete
++                    && last.is_none_or(|path| progress.after.as_ref() == Some(path))
++                {
++                    progress.objects_complete = true;
++                    if page.paths.is_empty() && progress.checked_files == 0 {
++                        progress.through_unix_ms = now;
++                    }
++                }
++                let projection = progress
++                    .projections
++                    .as_mut()
++                    .context("projection progress missing")?;
++                if projection.pending.is_none()
++                    && last.is_none_or(|path| projection.after.as_ref() == Some(path))
++                {
++                    projection.exhausted = true;
++                }
++            }
+             Ok(())
+         })();
+         // Partial successes precede the failing object; retain them, but never
+@@ -151,28 +702,49 @@
+         drop(read);
+         let persistence = (|| -> Result<()> {
+             let _lock = manifest_lock(&self.collection.directory)?;
+-            ensure!(self.check()? == fence && writer.census_mutation_epoch() == generation,
+-                "verification owner changed");
+-            ensure!(self.registry.integrity_audit_veto(self.lease)? == Some(job),
+-                "verification audit admission changed");
++            ensure!(
++                self.check()? == fence && writer.census_mutation_epoch() == generation,
++                "verification owner changed"
++            );
++            ensure!(
++                self.registry.integrity_audit_veto(self.lease)? == Some(job),
++                "verification audit admission changed"
++            );
+             let manifest = self.collection.manifest()?;
+             let current = FileStore::new(self.collection.slot(manifest.active));
+             let check = current.current_read(&scope)?;
+-            ensure!(check.token()? == head.token()?, "verification publication changed");
++            ensure!(
++                check.token()? == head.token()?,
++                "verification publication changed"
++            );
+             drop(check);
+             // Reload to preserve concurrent sticky damage; never overwrite an
+             // old saved observation with the earlier in-memory copy.
+-            let mut state = self.load(fence.0)?.context("anchor required before Verify")?;
+-            let recorded=self.registry.recorded_integrity_damage(self.lease)?;
+-            let known=state.known_damage.len() >= MAX_DAMAGE || state.known_damage.iter()
+-                .any(|damage| damage.incarnation == head.scope.incarnation)
+-                ||recorded.len()>=MAX_DAMAGE||recorded.iter().any(|damage|damage.incarnation==head.scope.incarnation);
++            let mut state = self
++                .load(fence.0)?
++                .context("anchor required before Verify")?;
++            let recorded = self.registry.recorded_integrity_damage(self.lease)?;
++            let known = state.known_damage.len() >= MAX_DAMAGE
++                || state
++                    .known_damage
++                    .iter()
++                    .any(|damage| damage.incarnation == head.scope.incarnation)
++                || recorded.len() >= MAX_DAMAGE
++                || recorded
++                    .iter()
++                    .any(|damage| damage.incarnation == head.scope.incarnation);
+             if known {
+                 progress.unresolved = true;
+-            } else if work.is_ok() && progress.objects_complete && progress.lexical_observed_unix_ms.is_some() {
+-                // Resolves only uncertain/interrupted physical work after its
+-                // actual complete recheck; never clears either sticky damage list.
+-                progress.unresolved=false;
++            } else if work.is_ok()
++                && progress.objects_complete
++                && progress.lexical_observed_unix_ms.is_some()
++                && progress
++                    .projections
++                    .as_ref()
++                    .is_some_and(ProjectionAuditProgress::complete_coverage)
++            {
++                // A partial new component cannot heal an earlier unresolved audit.
++                progress.unresolved = false;
+             }
+             state.verify = Some(progress.clone());
+             state.head = head;
+@@ -180,20 +752,45 @@
+             write(self.collection, RECEIPT, &state)?;
+             Ok(())
+         })();
+-        if persistence.is_err() {self.bound.revoke_native_integrity();}
++        if persistence.is_err() {
++            self.bound.revoke_native_integrity();
++        }
+         match (work, persistence) {
+-            (Err(primary), Err(persist)) => return Err(primary.context(format!(
+-                "Verify progress persistence also failed: {persist:#}"))),
+-            (Err(primary), Ok(())) if interrupted => return Err(match
+-                crate::service::registry::AuditDrainProof::new(self.registry,self.lease,self.bound,job) {
+-                    Ok(proof)=>primary.context(proof),Err(_)=>primary,
+-                }),
++            (Err(primary), Err(persist)) => {
++                return Err(primary.context(format!(
++                    "Verify progress persistence also failed: {persist:#}"
++                )));
++            }
++            (Err(primary), Ok(())) if interrupted => {
++                return Err(
++                    match crate::service::registry::AuditDrainProof::new(
++                        self.registry,
++                        self.lease,
++                        self.bound,
++                        job,
++                    ) {
++                        Ok(proof) => primary.context(proof),
++                        Err(_) => primary,
++                    },
++                );
++            }
+             (Err(primary), Ok(())) => return Err(primary),
+             (Ok(()), Err(persist)) => return Err(persist),
+             (Ok(()), Ok(())) => {}
+         }
+-        let drained=crate::service::registry::AuditDrainProof::new(self.registry,self.lease,self.bound,job).ok();
+-        Ok(VerifyTurn { progress, blocked_large, drained })
+-    }
+-}
+-
++        let drained = crate::service::registry::AuditDrainProof::new(
++            self.registry,
++            self.lease,
++            self.bound,
++            job,
++        )
++        .ok();
++        Ok(VerifyTurn {
++            progress,
++            blocked_large,
++            required_bytes,
++            admitted_bytes: max_bytes,
++            drained,
++        })
++    }
++}

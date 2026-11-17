@@ -1,0 +1,45 @@
+--- a/crates/airk-retrieval/src/arbiter/runtime/dense_synthetic_tests.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/dense_synthetic_tests.rs
+@@ -0,0 +1,42 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Independent literal controls; no session, provider, graph, or model execution.
++use super::*;
++
++#[test]
++fn dense_bias_controls_preserve_causality_and_padding_but_distinguish_causal_zero() {
++    use SyntheticDenseMask::*;
++    assert!(!CausalPrefix.masks(0, 0));
++    assert!(CausalPrefix.masks(0, 16));
++    assert!(!Unmasked.masks(0, 16));
++    assert!(CausalWithMaskedKeyOne.masks(2, 1));
++    assert!(!CausalWithMaskedKeyOne.masks(2, 0));
++    assert!(!CausalWithMaskedKeyOne.masks(2, 2));
++    assert!(CausalWithMaskedKeyOne.masks(2, 3));
++    assert_eq!(CausalPrefix.time_component(17, 0), 0.);
++    assert_eq!(CausalPrefix.time_component(17, 2), 1. / 8192.);
++    assert_eq!(Unmasked.time_component(17, 0), 8. / 8192.);
++    assert_eq!(Unmasked.time_component(128, 0), 63.5 / 8192.);
++    assert_eq!(CausalWithMaskedKeyOne.time_component(17, 0), 0.);
++    assert_eq!(CausalWithMaskedKeyOne.time_component(17, 1), 0.);
++    assert_eq!(CausalWithMaskedKeyOne.time_component(17, 2), 1. / 8192.);
++    // Allowed keys are literally [0,2,3], mean5/3; key1 is excluded.
++    assert_eq!(
++        CausalWithMaskedKeyOne.time_component(17, 3),
++        (5f32 / 3.) / 8192.
++    );
++    // A hidden causal1 kernel cannot pass the zero-bias full-mean control.
++    assert!((Unmasked.time_component(17, 0) - CausalPrefix.time_component(17, 0)).abs() > 0.0001);
++    assert!((Unmasked.time_component(128, 0) - CausalPrefix.time_component(128, 0)).abs() > 0.0001);
++}
++#[test]
++fn dense_tiny_bounds_do_not_transfer_flash8192_or_compact_authority() -> Result<()> {
++    synthetic_control_bounds(ModelChoice::ContextQwenLarge, 17, 1024, true)?;
++    synthetic_control_bounds(ModelChoice::ContextQwenLarge, 128, 1024, true)?;
++    assert!(synthetic_control_bounds(ModelChoice::ContextQwenLarge, 8192, 1024, true).is_err());
++    assert!(synthetic_control_bounds(ModelChoice::ContextQwenCompact, 17, 1024, true).is_err());
++    assert!(synthetic_control_bounds(ModelChoice::ContextQwenLarge, 128, 65537, true).is_err());
++    assert!(synthetic_control_bounds(ModelChoice::ContextQwenLarge, 128, 1024, false).is_err());
++    synthetic_control_bounds(ModelChoice::ContextQwenLarge, 8192, 1024, false)?;
++    synthetic_control_bounds(ModelChoice::ContextQwenCompact, 8192, 1024, false)?;
++    Ok(())
++}

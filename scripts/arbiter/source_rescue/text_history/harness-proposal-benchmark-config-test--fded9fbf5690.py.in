@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+    def test_owned_modern_configuration_has_exact_scope_control_and_no_launch_args(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            binary, cli, control = root / "airk", root / "airkctl", root / "control"
+            binary.write_bytes(b"approved-main"); cli.write_bytes(b"approved-cli"); control.mkdir()
+            (root / "airk-runtime.json").write_text(json.dumps({"version": "1.8.207"}))
+            selected = {"index_id": "idx_fixture", "namespace": "native"}
+            service = SimpleNamespace(single_image=True, binary=binary, cli=cli, control=control,
+                projects={"owned": {"root": str(root)}}, scopes={"owned": selected},
+                enroll_http=mock.Mock(side_effect=AssertionError("U110 enrolls no read credentials")),
+                arguments=mock.Mock(side_effect=AssertionError("Modern config must not acquire a stdio launch")))
+            result = INVESTIGATION.owned_configuration(service, "owned", root)
+            self.assertEqual(result["schema"], 3); self.assertEqual(result["transport"], "https")
+            self.assertEqual(result["command"], str(cli))
+            self.assertEqual(result["launcher_sha256"], INVESTIGATION.digest_bytes(cli.read_bytes()))
+            self.assertEqual(result["args"], [])
+            self.assertEqual(result["control"], str(control)); self.assertEqual(result["source_root"], str(root))
+            self.assertEqual(result["scope"], {"index_ids": ["idx_fixture"]})
+            service.enroll_http.assert_not_called()
+            self.assertNotIn("connections_file", result)
+            self.assertEqual(list(control.iterdir()), [])
+            result["scope"]["index_ids"][0] = "changed"
+            self.assertEqual(selected["index_id"], "idx_fixture")
+            service.single_image = False; service.cli = None
+            service.arguments = lambda _: ["--root", str(root)]
+            (root / "airk-runtime.json").write_text(json.dumps({"version": "1.8.12"}))
+            legacy = INVESTIGATION.owned_configuration(service, "owned", root)
+            self.assertEqual(legacy["args"], ["--root", str(root), "mcp"])
+            self.assertNotIn("transport", legacy)
+

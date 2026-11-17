@@ -1,0 +1,24 @@
+--- crates/airk-mcp/src/focus_handler_tests.rs
++++ crates/airk-mcp/src/focus_handler_tests.rs
+@@ -570,8 +570,10 @@
+         owner.clone(),
+     )?)
+     .await?;
+-    // An ordinary call really reaches the same SDK handler successfully.
+-    payload(tools.call("airk_status".into(), Default::default()).await?)?;
++    // Bundled Help is permitted by this exact reviewed scope. Global Status
++    // is intentionally denied (see scoped_observation_tests), not a fixture
++    // authority that an original attempt may replace.
++    payload(tools.call("airk_help".into(), Default::default()).await?)?;
+     let fixtures: Value = serde_json::from_slice(include_bytes!(
+         "../../../fixtures/split/arbiter/focus_only_allowance_cases.json"
+     ))?;
+@@ -587,7 +589,7 @@
+         .with_wire_attempt(wire)?
+         .with_context_partition(allowance)?;
+         assert!(context.captured_transport_attempt().is_some());
+-        for tool in ["airk_status", "status"] {
++        for tool in ["airk_status", "status", "airk_help", "help"] {
+             let error = tools
+                 .call_with_read_context(tool.into(), Default::default(), context.clone())
+                 .await

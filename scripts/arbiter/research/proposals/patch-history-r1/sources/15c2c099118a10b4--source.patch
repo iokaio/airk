@@ -1,0 +1,1530 @@
+--- crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/checkpoint/tests.rs
++++ crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/checkpoint/tests.rs
+@@ -0,0 +1,332 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Literal synthetic build metadata: never an actual producer or qualification.
++use super::*;
++use serde_json::json;
++#[derive(Default)]
++struct Memory {
++    files: BTreeMap<String, Vec<u8>>,
++}
++impl Memory {
++    fn bytes(&mut self, name: &str, raw: Vec<u8>) -> FilePin {
++        let path = std::env::temp_dir()
++            .join("airk-checkpoint-metadata-synthetic")
++            .join(name)
++            .to_string_lossy()
++            .into_owned();
++        let sha256 = Sha256Digest::from_bytes(Sha256::digest(&raw).into());
++        let bytes = raw.len() as u64;
++        self.files.insert(path.clone(), raw);
++        FilePin {
++            path,
++            bytes,
++            sha256,
++        }
++    }
++    fn json(&mut self, name: &str, v: Value) -> FilePin {
++        self.bytes(name, serde_json::to_vec(&v).unwrap())
++    }
++}
++impl Source for Memory {
++    fn read(&self, p: &ResourceFilePin, max: u64) -> Result<Vec<u8>> {
++        let raw = self.files.get(&p.path).context("synthetic source absent")?;
++        ensure!(raw.len() as u64 <= max, "synthetic read cap");
++        Ok(raw.clone())
++    }
++    fn authenticate(&self, p: &ResourceFilePin, n: u64, max: u64) -> Result<()> {
++        let raw = self.read(p, max)?;
++        ensure!(
++            raw.len() as u64 == n
++                && Sha256Digest::from_bytes(Sha256::digest(&raw).into()) == p.sha256,
++            "synthetic authenticate differs"
++        );
++        Ok(())
++    }
++    fn recheck(&self) -> Result<()> {
++        Ok(())
++    }
++}
++fn fixture() -> Result<(Memory, ResourceFilePin, ResourceFilePin, Authority)> {
++    let mut m = Memory::default();
++    let root = std::env::temp_dir().join("airk-checkpoint-metadata-synthetic");
++    let first_runner = m.bytes("first.py", b"synthetic first runner".to_vec());
++    let next_runner = m.bytes("next.py", b"synthetic next runner".to_vec());
++    let first_input = m.bytes("first-input", b"synthetic first input".to_vec());
++    let next_input = m.bytes("next-input", b"synthetic next input".to_vec());
++    let composer = m.bytes("composer.py", b"synthetic composer".to_vec());
++    let composer_input = m.bytes("composer-input", b"synthetic composer input".to_vec());
++    let ninja = m.bytes("b/Release/build.ninja", b"synthetic Ninja graph".to_vec());
++    let source_inventory = m.json(
++        "source.json",
++        json!([{"path":"synthetic-source","sha256":"ab"}]),
++    );
++    let frontend = m.json("frontend-source-files.json", json!(["synthetic frontend"]));
++    let cuda = m.json("cuda-toolkit-inputs.json", json!(["synthetic CUDA"]));
++    let inputs = m.json(
++        "frozen-input-closure.json",
++        json!(["synthetic frozen inputs"]),
++    );
++    let mut tools = serde_json::Map::new();
++    let mut tool_pins = Vec::new();
++    for name in ["compiler", "cmake", "ninja", "python", "patch", "vcvars"] {
++        let p = m.bytes(name, format!("synthetic {name}").into_bytes());
++        let mut value = serde_json::to_value(&p)?;
++        if name == "cmake" {
++            value["version"] = json!("3.31.6");
++        }
++        tools.insert(name.into(), value);
++        tool_pins.push(p);
++    }
++    tools.insert("msvc_toolset".into(), json!("14.44.35207"));
++    let tools = Value::Object(tools);
++    let corrected = Sha256Digest::from_bytes([23; 32]);
++    let target_hash = Sha256Digest::from_bytes([24; 32]);
++    let preflight = json!({"ninja_sha256":ninja.sha256,"final_capi_source_sha256":corrected});
++    let policy = json!({"one_static_core":true,"optional_shared_cuda_provider":true,"runtime_version":"1.30.0"});
++    let configure = json!(["synthetic-cmake", "-Donnxruntime_USE_CUDA=ON"]);
++    let failed=m.json("failed.json",json!({"schema":"airk.private.cuda-runtime-continuation/2","status":"FAILED_PRESERVED_NO_RETRY","commands":[{"exit_code":77,"timed_out":true,"owned_descendants_settled":true,"owned_job_forced_termination":true,"owned_job_final_active_processes":0}],"toolchain":tools,"configure_argv":configure,"configured_preflight":preflight,"policy":policy,"original_start_utc":"2026-11-17T05:27:32Z"}));
++    let initial_log = m.bytes("ninja-before-log", b"initial log".to_vec());
++    let initial_deps = m.bytes("ninja-before-deps", b"initial deps".to_vec());
++    let warm = m.json("warm0", json!(["initial synthetic warm output"]));
++    let plan=m.json("plan",json!({"schema":"airk.private.cuda-checkpointed-build-plan/1","actual_build_root":root,"previous_failed_R12":failed,"current_source_inventory":source_inventory,"configured_preflight":preflight,"sections":[{"id":"flash-remainder","targets":["onnxruntime_providers_cuda_flash_attention"],"parallel":2,"fixed_original_seconds":10800,"argv":["cmake","--build","build","--target","onnxruntime_providers_cuda_flash_attention","--parallel","2"]},{"id":"llm-remainder","targets":["onnxruntime_providers_cuda_llm"],"parallel":2,"fixed_original_seconds":10800,"argv":["cmake","--build","build","--target","onnxruntime_providers_cuda_llm","--parallel","2"]},{"id":"final-provider-all-closure","targets":["all","re2"],"parallel":2,"fixed_original_seconds":10800,"argv":["cmake","--build","build","--target","all","re2","--parallel","2"]}]}));
++    let plan_value = plan.json(&m)?;
++    let manifest=m.json("source-manifest",json!({"schema":"airk.private.cuda-materialized-source/1","actual_build_root":root,"corrected_capi_sha256":corrected,"source_inventory_sha256":source_inventory.sha256,"frontend_inventory_sha256":frontend.sha256,"cuda_inventory_sha256":cuda.sha256,"frozen_original_inputs_sha256":inputs.sha256,"tools":tools,"configured_preflight":preflight,"configure_argv":configure,"policy":policy,"failed_r12_sha256":failed.sha256}));
++    let mut section_rows = Vec::new();
++    let mut prior: Option<FilePin> = None;
++    let mut prior_warm = warm.clone();
++    let mut prior_log = initial_log;
++    let mut prior_deps = initial_deps;
++    for (i, id) in [
++        "flash-remainder",
++        "llm-remainder",
++        "final-provider-all-closure",
++    ]
++    .iter()
++    .enumerate()
++    {
++        let after_log = m.bytes(
++            &format!("ninja-after-log{i}"),
++            format!("log{i}").into_bytes(),
++        );
++        let after_deps = m.bytes(
++            &format!("ninja-after-deps{i}"),
++            format!("deps{i}").into_bytes(),
++        );
++        let after_warm = m.json(
++            &format!("warm{}", i + 1),
++            json!([format!("synthetic warm {}", i + 1)]),
++        );
++        let custody = NinjaCustody {
++            before_log: prior_log.clone(),
++            before_deps: prior_deps.clone(),
++            after_log: after_log.clone(),
++            after_deps: after_deps.clone(),
++        };
++        let hour = 9 + i;
++        let start = format!("2026-11-17T{hour:02}:00:00Z");
++        let end = format!("2026-11-17T{hour:02}:00:10Z");
++        let cutoff = format!("2026-11-17T{:02}:00:00Z", hour + 3);
++        let mut v = json!({"schema":"airk.private.cuda-checkpoint-section/1","status":"PASS_TARGET_SECTION_ONLY_UNQUALIFIED","qualification":false,"cold_build_qualified":false,"section_id":id,"section_index":i,"plan":plan,"runner":if i==0{&first_runner}else{&next_runner},"input_contract":if i==0{&first_input}else{&next_input},"predecessor":prior,"failed_ancestry":[{"path":failed.path,"bytes":failed.bytes,"sha256":failed.sha256,"status":"FAILED_PRESERVED_NO_RETRY","scope":"synthetic original failure remains failed","never_relabelled":true}],"native_argv":plan_value["sections"][i]["argv"],"original_command_argv":["cmd.exe","/c","synthetic"],"warm_checkpoint_before":prior_warm,"warm_checkpoint_after":after_warm,"source_manifest_before":manifest,"source_manifest_after":manifest,"ninja_log_before":prior_log,"ninja_deps_before":prior_deps,"ninja_log_after":after_log,"ninja_deps_after":after_deps,"started_utc":start,"completed_utc":end,"absolute_cutoff_utc":cutoff,"global_campaign_cutoff_utc":"2026-11-19T05:29:42Z","original_section_seconds":10800,"elapsed_seconds":10,"observed_monotonic_seconds":100000+i*20000,"converted_monotonic_deadline":110800+i*20000,"command":{"exit_code":0,"timed_out":false,"log_oversized":false,"owned_descendants_settled":true,"owned_job_forced_termination":false,"owned_job_final_active_processes":0,"owned_job_final_member_pids":[],"actual_tree_result":{"schema":"airk.private.process-tree-result/1","exit_code":0,"wait":"Start-Process-Wait-process-and-descendants","command_pid":41,"wrapper_pid":42,"start_utc":start,"finished_utc":end}}});
++        if i == 0 {
++            v["flash_outputs_completed"] = json!(48);
++        } else {
++            v["target_outputs_completed"] = json!(if i == 1 { 43 } else { 128 });
++        }
++        let receipt = m.json(&format!("section{i}"), v);
++        section_rows.push(Section {
++            section_id: (*id).into(),
++            section_index: i as u64,
++            receipt: receipt.clone(),
++            ninja_state_custody: custody,
++        });
++        prior = Some(receipt);
++        prior_log = after_log;
++        prior_deps = after_deps;
++        prior_warm = after_warm;
++    }
++    let mut dlls = Vec::new();
++    for name in [
++        "onnxruntime_providers_shared.dll",
++        "onnxruntime_providers_cuda.dll",
++    ] {
++        let file = m.bytes(
++            &format!("b/Release/{name}"),
++            format!("synthetic {name}").into_bytes(),
++        );
++        dlls.push(Output {
++            path: format!("b/Release/{name}"),
++            bytes: file.bytes,
++            sha256: file.sha256,
++        });
++    }
++    let libraries = vec![Output {
++        path: "b/Release/onnxruntime_session.lib".into(),
++        bytes: 999,
++        sha256: Sha256Digest::from_bytes([31; 32]),
++    }];
++    let raw=m.json("composite",json!({"schema":"airk.private.cuda-checkpointed-build/1","status":"PASS_CHECKPOINTED_PRODUCER_ONLY_UNQUALIFIED","mode":"checkpointed-warm","qualification":false,"cold_build_qualified":false,"plan":plan,"producer_source":composer,"input_contract":composer_input,"original_failed_build":failed,"failed_ancestry":[failed],"warm_baseline":warm,"warm_final":prior_warm,"sections":section_rows,"source_manifest":manifest,"actual_build_root":root,"source_inventory_sha256":source_inventory.sha256,"frontend_inventory_sha256":frontend.sha256,"cuda_inventory_sha256":cuda.sha256,"frozen_original_inputs_sha256":inputs.sha256,"ninja_sha256":ninja.sha256,"target_closure_sha256":target_hash,"configure_argv":configure,"configured_preflight":preflight,"toolchain":tools,"policy":policy,"libraries":libraries,"provider_dlls":dlls,"original_attempt_started_utc":"2026-11-17T05:27:32Z","completed_utc":"2026-11-17T11:00:11Z","global_campaign_cutoff_utc":"2026-11-19T05:29:42Z","total_active_section_seconds":30,"wall_since_first_attempt_seconds":19959,"output_policy":{"owner":"synthetic-only"},"metadata_composition_seconds":1}));
++    let proof=m.json("proof",json!({"schema":"airk.cuda-static-build-proof/2","target":"x86_64-pc-windows-msvc","ort_version":"1.30.0","build_receipt":raw,"producer_source":composer,"approved_plan_sha256":plan.sha256,"original_failed_R12":failed,"failed_ancestry":[failed],"sections":section_rows,"source_manifest":manifest,"source_inventory_sha256":source_inventory.sha256,"frontend_inventory_sha256":frontend.sha256,"cuda_inventory_sha256":cuda.sha256,"frozen_input_closure_sha256":inputs.sha256,"ninja":ninja,"static_target_closure":{"sha256":target_hash,"count":96},"libraries":libraries,"provider_dlls":dlls,"toolchain_pins":tool_pins,"qualification":false,"activation_pins_available":false}));
++    let authority = Authority {
++        plan: plan.sha256,
++        failed: failed.sha256,
++        failed_ancestry: vec![failed.sha256],
++        first_runner: first_runner.sha256,
++        first_input: first_input.sha256,
++        next_runner: next_runner.sha256,
++        next_input: next_input.sha256,
++        composer: composer.sha256,
++        composer_input: composer_input.sha256,
++    };
++    Ok((m, raw.resource()?, proof.resource()?, authority))
++}
++fn reseal(m: &mut Memory, raw: Value, mut proof: Value) -> (ResourceFilePin, ResourceFilePin) {
++    let rp = m.json("mutated-composite", raw);
++    proof["build_receipt"] = serde_json::to_value(&rp).unwrap();
++    let bp = m.json("mutated-proof", proof);
++    (rp.resource().unwrap(), bp.resource().unwrap())
++}
++fn refuse(error: anyhow::Error, expected: &str) {
++    assert!(
++        format!("{error:#}").contains(expected),
++        "unexpected refusal: {error:#}"
++    );
++}
++#[test]
++fn synthetic_ordered_checkpoint_returns_only_descriptive_provider_rows() -> Result<()> {
++    let (m, r, p, a) = fixture()?;
++    let v = validate_with_authority(&m, &r, &p, &a)?;
++    assert_eq!(v.static_core_build, r.sha256);
++    assert_eq!(
++        v.provider_dlls
++            .iter()
++            .map(|x| x.name.as_str())
++            .collect::<Vec<_>>(),
++        [
++            "onnxruntime_providers_shared.dll",
++            "onnxruntime_providers_cuda.dll"
++        ]
++    );
++    assert!(!v.history.cold_build_qualified);
++    assert!(!v.history.qualification);
++    assert_eq!(v.history.failed_ancestry, [a.failed]);
++    Ok(())
++}
++#[test]
++fn resealed_failed_or_cold_composite_is_not_a_status_alias() -> Result<()> {
++    for (key, value) in [
++        ("status", json!("PASS_PRODUCER_ONLY_UNQUALIFIED")),
++        ("cold_build_qualified", json!(true)),
++        ("mode", json!("cold")),
++    ] {
++        let (mut m, r, p, a) = fixture()?;
++        let mut raw = json(&m, &r)?;
++        raw[key] = value;
++        let proof = json(&m, &p)?;
++        let (r, p) = reseal(&mut m, raw, proof);
++        refuse(
++            validate_with_authority(&m, &r, &p, &a)
++                .err()
++                .context("expected refusal")?,
++            "exact checkpoint producer/proof form",
++        );
++    }
++    Ok(())
++}
++#[test]
++fn resealed_missing_or_reordered_sections_refuse() -> Result<()> {
++    for missing in [true, false] {
++        let (mut m, r, p, a) = fixture()?;
++        let mut raw = json(&m, &r)?;
++        let mut proof = json(&m, &p)?;
++        if missing {
++            raw["sections"].as_array_mut().unwrap().pop();
++        } else {
++            raw["sections"].as_array_mut().unwrap().swap(0, 1);
++        }
++        proof["sections"] = raw["sections"].clone();
++        let (r, p) = reseal(&mut m, raw, proof);
++        let error = validate_with_authority(&m, &r, &p, &a)
++            .err()
++            .context("expected refusal")?;
++        refuse(
++            error,
++            if missing {
++                "exact ordered three sections"
++            } else {
++                "section ordering"
++            },
++        );
++    }
++    Ok(())
++}
++#[test]
++fn tree_job_force_and_missing_whole_tree_are_independent_refusals() {
++    let base = json!({"exit_code":0,"timed_out":false,"log_oversized":false,"owned_descendants_settled":true,"owned_job_forced_termination":false,"owned_job_final_active_processes":0,"owned_job_final_member_pids":[],"actual_tree_result":{"schema":"airk.private.process-tree-result/1","exit_code":0,"wait":"Start-Process-Wait-process-and-descendants","command_pid":41,"wrapper_pid":42}});
++    assert!(natural(&base).is_ok());
++    for (key, value) in [
++        ("owned_job_forced_termination", json!(true)),
++        ("owned_job_final_active_processes", json!(1)),
++        ("owned_descendants_settled", json!(false)),
++        ("actual_tree_result", Value::Null),
++    ] {
++        let mut bad = base.clone();
++        bad[key] = value;
++        refuse(natural(&bad).unwrap_err(), "whole tree/Job");
++    }
++}
++#[test]
++fn original_cutoff_does_not_renew_and_fractional_utc_is_preserved() -> Result<()> {
++    let (m, r, _, _) = fixture()?;
++    let raw = json(&m, &r)?;
++    let mut v = pin(&raw["sections"][0]["receipt"])?.json(&m)?;
++    assert!(clocks(&v).is_ok());
++    v["absolute_cutoff_utc"] = json!("2026-11-17T12:00:01Z");
++    refuse(clocks(&v).unwrap_err(), "original section/campaign cutoff");
++    assert_eq!(
++        utc("2026-11-17T09:00:00.0000001Z")? - utc("2026-11-17T09:00:00Z")?,
++        100
++    );
++    for invalid in [
++        "2026-11-17T09:00:00+01:00",
++        "2026-11-31T00:00:00Z",
++        "2026-11-17T09:00:00.1234567890Z",
++    ] {
++        assert!(utc(invalid).is_err());
++    }
++    Ok(())
++}
++#[test]
++fn immutable_ninja_copy_must_equal_original_bytes_without_old_live_path_read() -> Result<()> {
++    let (mut m, r, _, _) = fixture()?;
++    let raw = json(&m, &r)?;
++    let row: Section = typed(&raw["sections"][0])?;
++    let mut v = row.receipt.json(&m)?;
++    let old = pin(&v["ninja_log_before"])?;
++    let copy = m.bytes("independent-before-copy", m.files[&old.path].clone());
++    let mut copied = row.clone();
++    copied.ninja_state_custody.before_log = copy;
++    v["ninja_log_before"]["path"] = json!(root_absent());
++    assert!(custody(&m, &v, &copied, 0, None).is_ok());
++    copied.ninja_state_custody.before_log.bytes += 1;
++    refuse(
++        custody(&m, &v, &copied, 0, None).unwrap_err(),
++        "immutable Ninja bytes differ",
++    );
++    Ok(())
++}
++fn root_absent() -> String {
++    std::env::temp_dir()
++        .join("old-legitimately-mutated-ninja-not-reopened")
++        .to_string_lossy()
++        .into_owned()
++}
++#[test]
++fn canonical_proof_float_unknown_and_duplicate_keys_refuse() -> Result<()> {
++    let (mut m, r, p, a) = fixture()?;
++    let mut proof = json(&m, &p)?;
++    proof["unknown"] = json!(true);
++    let p = m.json("unknown-proof", proof).resource()?;
++    assert!(validate_with_authority(&m, &r, &p, &a).is_err());
++    assert!(strict::parse(br#"{"schema":"a","schema":"b"}"#).is_err());
++    assert!(canonical_sha(&json!({"elapsed_seconds":1.5})).is_err());
++    Ok(())
++}
+--- crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/checkpoint.rs
++++ crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/checkpoint.rs
+@@ -0,0 +1,815 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Exact metadata bridge for the reviewed warm checkpoint composition.
++use super::*;
++const PLAN: &str = "6bee6b8b95a01fea28adf04117260d12503012ea8120ae225afa232b6589df97";
++const FAILED: &str = "3a4c18932dbafbcc719cb77b30f616372b220cc315a1acdba82df24a9734c026";
++const FIRST_RUNNER: &str = "b382a216d1a46a1245b6fc3f78289e9abb61a027eed5f86699713c0b4db0d619";
++const FIRST_INPUT: &str = "68a5f3109e3ad78a5453a966fd1d00db4217096536f7b7f7253ef309d9a396eb";
++const NEXT_RUNNER: &str = "797c6d2e1a97865f5a8b95adf4d68ad0d91e4cfcf72f8f43d0329a2bba352b1b";
++const NEXT_INPUT: &str = "c118835f41e95820fed5645c7de59606f583ff403a32f13422d5bb6120168c55";
++pub(super) const SOURCE_LOCK: &str =
++    "549be258fd21be030f994f6da7f74146a9e9edd3bb611bee83305d9a4deade6d";
++const IDS: [&str; 3] = [
++    "flash-remainder",
++    "llm-remainder",
++    "final-provider-all-closure",
++];
++const MAX_METADATA: u64 = 16 << 20;
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct FilePin {
++    path: String,
++    bytes: u64,
++    sha256: Sha256Digest,
++}
++impl FilePin {
++    fn resource(&self) -> Result<ResourceFilePin> {
++        let p = ResourceFilePin {
++            path: self.path.clone(),
++            sha256: self.sha256,
++        };
++        p.validate()?;
++        ensure!(
++            self.bytes > 0 && self.bytes <= 2u64 << 30 && nonzero(self.sha256),
++            "invalid checkpoint pin"
++        );
++        Ok(p)
++    }
++    fn read(&self, source: &dyn Source) -> Result<Vec<u8>> {
++        ensure!(self.bytes <= MAX_METADATA, "checkpoint metadata capacity");
++        let b = super::read(source, &self.resource()?, MAX_METADATA)?;
++        ensure!(
++            b.len() as u64 == self.bytes,
++            "checkpoint metadata length differs"
++        );
++        Ok(b)
++    }
++    fn json(&self, source: &dyn Source) -> Result<Value> {
++        strict::parse(&self.read(source)?)
++    }
++}
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct NinjaCustody {
++    before_log: FilePin,
++    before_deps: FilePin,
++    after_log: FilePin,
++    after_deps: FilePin,
++}
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct Section {
++    section_id: String,
++    section_index: u64,
++    receipt: FilePin,
++    ninja_state_custody: NinjaCustody,
++}
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct Output {
++    path: String,
++    bytes: u64,
++    sha256: Sha256Digest,
++}
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct TargetClosure {
++    sha256: Sha256Digest,
++    count: u64,
++}
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct Proof {
++    schema: String,
++    target: String,
++    ort_version: String,
++    build_receipt: FilePin,
++    producer_source: FilePin,
++    approved_plan_sha256: Sha256Digest,
++    #[serde(rename = "original_failed_R12")]
++    original_failed_r12: FilePin,
++    failed_ancestry: Vec<FilePin>,
++    sections: Vec<Section>,
++    source_manifest: FilePin,
++    source_inventory_sha256: Sha256Digest,
++    frontend_inventory_sha256: Sha256Digest,
++    cuda_inventory_sha256: Sha256Digest,
++    frozen_input_closure_sha256: Sha256Digest,
++    ninja: FilePin,
++    static_target_closure: TargetClosure,
++    libraries: Vec<Output>,
++    provider_dlls: Vec<Output>,
++    toolchain_pins: Vec<FilePin>,
++    qualification: bool,
++    activation_pins_available: bool,
++}
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct Composite {
++    schema: String,
++    status: String,
++    mode: String,
++    qualification: bool,
++    cold_build_qualified: bool,
++    plan: FilePin,
++    producer_source: FilePin,
++    input_contract: FilePin,
++    original_failed_build: FilePin,
++    failed_ancestry: Vec<FilePin>,
++    warm_baseline: FilePin,
++    warm_final: FilePin,
++    sections: Vec<Section>,
++    source_manifest: FilePin,
++    actual_build_root: String,
++    source_inventory_sha256: Sha256Digest,
++    frontend_inventory_sha256: Sha256Digest,
++    cuda_inventory_sha256: Sha256Digest,
++    frozen_original_inputs_sha256: Sha256Digest,
++    ninja_sha256: Sha256Digest,
++    target_closure_sha256: Sha256Digest,
++    configure_argv: Vec<String>,
++    configured_preflight: Value,
++    toolchain: Value,
++    policy: Value,
++    libraries: Vec<Output>,
++    provider_dlls: Vec<Output>,
++    original_attempt_started_utc: String,
++    completed_utc: String,
++    global_campaign_cutoff_utc: String,
++    total_active_section_seconds: f64,
++    wall_since_first_attempt_seconds: f64,
++    output_policy: Value,
++    metadata_composition_seconds: f64,
++}
++pub(in crate::arbiter::runtime::cuda) struct CheckpointedProducer {
++    pub static_core_build: Sha256Digest,
++    pub provider_dlls: Vec<PublicFile>,
++    pub(super) history: CheckpointHistory,
++    pub(super) corrected_source: Sha256Digest,
++    pub(super) producer: Value,
++    pub(super) build: Value,
++}
++fn typed<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T> {
++    Ok(serde_json::from_value(value.clone())?)
++}
++fn pin(value: &Value) -> Result<FilePin> {
++    let p: FilePin = typed(value)?;
++    p.resource()?;
++    Ok(p)
++}
++fn finite(value: &Value) -> Result<f64> {
++    let n = value.as_f64().context("checkpoint timing missing")?;
++    ensure!(n.is_finite() && n >= 0.0, "invalid checkpoint timing");
++    Ok(n)
++}
++// Strict bounded RFC3339 UTC, preserving fractional seconds rather than discarding them.
++fn utc(value: &str) -> Result<i128> {
++    let v = value
++        .strip_suffix("+00:00")
++        .or_else(|| value.strip_suffix('Z'))
++        .context("checkpoint UTC offset refused")?;
++    ensure!(
++        v.len() >= 19
++            && v.len() <= 29
++            && v.as_bytes()[4] == b'-'
++            && v.as_bytes()[7] == b'-'
++            && v.as_bytes()[10] == b'T'
++            && v.as_bytes()[13] == b':'
++            && v.as_bytes()[16] == b':',
++        "checkpoint UTC shape refused"
++    );
++    fn number(v: &str) -> Result<u32> {
++        ensure!(
++            v.bytes().all(|x| x.is_ascii_digit()),
++            "checkpoint UTC digit refused"
++        );
++        Ok(v.parse()?)
++    }
++    ensure!(v.is_ascii(), "checkpoint UTC not ASCII");
++    let year = number(&v[0..4])?;
++    let month = number(&v[5..7])?;
++    let day = number(&v[8..10])?;
++    let hour = number(&v[11..13])?;
++    let minute = number(&v[14..16])?;
++    let second = number(&v[17..19])?;
++    ensure!(
++        (2000..=2100).contains(&year)
++            && (1..=12).contains(&month)
++            && hour < 24
++            && minute < 60
++            && second < 60,
++        "checkpoint UTC range refused"
++    );
++    let leap = |y: u32| y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400));
++    let months = [
++        31,
++        if leap(year) { 29 } else { 28 },
++        31,
++        30,
++        31,
++        30,
++        31,
++        31,
++        30,
++        31,
++        30,
++        31,
++    ];
++    ensure!(
++        day > 0 && day <= months[month as usize - 1],
++        "checkpoint UTC day refused"
++    );
++    let mut days: i128 = (2000..year).map(|y| if leap(y) { 366 } else { 365 }).sum();
++    days += months[..month as usize - 1]
++        .iter()
++        .map(|x| i128::from(*x))
++        .sum::<i128>()
++        + i128::from(day)
++        - 1;
++    let fractional = if v.len() == 19 {
++        0
++    } else {
++        ensure!(
++            v.as_bytes()[19] == b'.' && v.len() > 20,
++            "checkpoint fractional UTC refused"
++        );
++        let f = &v[20..];
++        i128::from(number(f)?) * 10i128.pow(9 - f.len() as u32)
++    };
++    Ok(
++        (days * 86400 + i128::from(hour) * 3600 + i128::from(minute) * 60 + i128::from(second))
++            * 1_000_000_000
++            + fractional,
++    )
++}
++fn natural(command: &Value) -> Result<()> {
++    let tree = &command["actual_tree_result"];
++    ensure!(
++        successful(command)
++            && command["owned_job_final_active_processes"] == 0
++            && command["owned_job_final_member_pids"] == serde_json::json!([])
++            && tree["schema"] == "airk.private.process-tree-result/1"
++            && tree["exit_code"] == 0
++            && tree["wait"] == "Start-Process-Wait-process-and-descendants"
++            && tree["command_pid"].as_u64().is_some_and(|x| x > 0)
++            && tree["wrapper_pid"].as_u64().is_some_and(|x| x > 0),
++        "checkpoint original whole tree/Job not naturally settled"
++    );
++    Ok(())
++}
++fn clocks(v: &Value) -> Result<(i128, i128, f64)> {
++    let text = |key: &str| -> Result<&str> { v[key].as_str().context("checkpoint clock missing") };
++    let started = utc(text("started_utc")?)?;
++    let finished = utc(text("completed_utc")?)?;
++    let cutoff = utc(text("absolute_cutoff_utc")?)?;
++    let campaign = utc(text("global_campaign_cutoff_utc")?)?;
++    let fixed = utc("2026-11-19T05:29:42Z")?;
++    let elapsed = finite(&v["elapsed_seconds"])?;
++    let observed = finite(&v["observed_monotonic_seconds"])?;
++    let converted = finite(&v["converted_monotonic_deadline"])?;
++    ensure!(
++        v["original_section_seconds"] == 10800
++            && campaign == fixed
++            && cutoff == (started + 10_800_000_000_000).min(campaign)
++            && started <= finished
++            && finished <= cutoff
++            && elapsed <= 10800.0
++            && elapsed <= (cutoff - started) as f64 / 1e9
++            && converted > observed
++            && converted - observed <= 10800.0,
++        "checkpoint original section/campaign cutoff refused"
++    );
++    let tree = &v["command"]["actual_tree_result"];
++    let tree_start = utc(tree["start_utc"]
++        .as_str()
++        .context("actual tree start absent")?)?;
++    let tree_end = utc(tree["finished_utc"]
++        .as_str()
++        .context("actual tree finish absent")?)?;
++    ensure!(
++        started <= tree_start && tree_start <= tree_end && tree_end <= finished,
++        "checkpoint actual tree outside original phase"
++    );
++    Ok((started, finished, elapsed))
++}
++fn output_rows(rows: &[Output], providers: bool) -> Result<Vec<PublicFile>> {
++    ensure!(
++        !rows.is_empty() && rows.len() <= 128,
++        "checkpoint output capacity"
++    );
++    let mut seen = BTreeSet::new();
++    let mut result = Vec::new();
++    for r in rows {
++        ensure!(
++            !r.path.is_empty()
++                && r.path.len() <= 512
++                && !r.path.contains('\\')
++                && !r.path.starts_with('/')
++                && !r.path.contains(':')
++                && r.path
++                    .split('/')
++                    .all(|x| !x.is_empty() && x != "." && x != "..")
++                && r.bytes > 0
++                && r.bytes <= 2u64 << 30
++                && nonzero(r.sha256)
++                && seen.insert(r.path.to_ascii_lowercase()),
++            "unsafe checkpoint output path/identity"
++        );
++        let name = r
++            .path
++            .rsplit('/')
++            .next()
++            .context("output basename absent")?
++            .to_ascii_lowercase();
++        if providers {
++            ensure!(
++                matches!(
++                    name.as_str(),
++                    "onnxruntime_providers_shared.dll" | "onnxruntime_providers_cuda.dll"
++                ),
++                "checkpoint unexpected provider DLL"
++            );
++        } else {
++            ensure!(name.ends_with(".lib"), "checkpoint static library expected");
++        }
++        result.push(PublicFile {
++            name,
++            bytes: r.bytes,
++            sha256: r.sha256,
++        });
++    }
++    if providers {
++        ensure!(
++            result.len() == 2 && result[0].name != result[1].name,
++            "checkpoint exact provider pair required"
++        );
++    }
++    Ok(result)
++}
++fn same_bytes(a: &FilePin, b: &FilePin) -> bool {
++    a.bytes == b.bytes && a.sha256 == b.sha256
++}
++fn custody(
++    source: &dyn Source,
++    v: &Value,
++    row: &Section,
++    index: usize,
++    prior: Option<&Section>,
++) -> Result<()> {
++    let c = &row.ninja_state_custody;
++    for (key, copy) in [
++        ("ninja_log_before", &c.before_log),
++        ("ninja_deps_before", &c.before_deps),
++        ("ninja_log_after", &c.after_log),
++        ("ninja_deps_after", &c.after_deps),
++    ] {
++        let original = pin(&v[key])?;
++        ensure!(
++            same_bytes(&original, copy),
++            "checkpoint immutable Ninja bytes differ"
++        );
++        if index > 0 {
++            ensure!(
++                original == *copy,
++                "checkpoint successor Ninja custody path differs"
++            );
++        }
++        copy.read(source)?;
++    }
++    if let Some(p) = prior {
++        ensure!(
++            same_bytes(&p.ninja_state_custody.after_log, &c.before_log)
++                && same_bytes(&p.ninja_state_custody.after_deps, &c.before_deps),
++            "checkpoint Ninja continuity differs"
++        );
++    }
++    Ok(())
++}
++/// Shared by scientific assembly and the distributable projector. No capability is returned.
++struct Authority {
++    plan: Sha256Digest,
++    failed: Sha256Digest,
++    failed_ancestry: Vec<Sha256Digest>,
++    first_runner: Sha256Digest,
++    first_input: Sha256Digest,
++    next_runner: Sha256Digest,
++    next_input: Sha256Digest,
++    composer: Sha256Digest,
++    composer_input: Sha256Digest,
++}
++pub(in crate::arbiter::runtime::cuda) fn validate_checkpointed_producer(
++    source: &dyn Source,
++    raw_composite: &ResourceFilePin,
++    verified_proof: &ResourceFilePin,
++) -> Result<CheckpointedProducer> {
++    let authority = Authority {
++        plan: PLAN.parse()?,
++        failed: FAILED.parse()?,
++        failed_ancestry: [
++            "451852dda5ca840c58a84cec7e5352600a185d8a1cd6d72f2ecf059b01e3b1c4",
++            "1c46afdfaf67626d08045e9744d941f40a88208ca33234ef8a72b9b2aa6fee1d",
++            "cfec05100c3be0857f27e5fa928ca594d9ca8929e1e637d5f16a00ef79560c95",
++            "8cd15ca9c79394a41e9234fdabbacd3abbfc0ce73978b11fade7b5c775321c6e",
++            "213cbb2a8b98ec2bb560dcd923225e69d62d66c74c44ce1cf66db3fee3eba9a7",
++            "b6f4035cfff70ef53c713ab762cd926875b3fc5993004c1c75b67c30797fc4df",
++            FAILED,
++        ]
++        .iter()
++        .map(|x| x.parse())
++        .collect::<Result<_, _>>()?,
++        first_runner: FIRST_RUNNER.parse()?,
++        first_input: FIRST_INPUT.parse()?,
++        next_runner: NEXT_RUNNER.parse()?,
++        next_input: NEXT_INPUT.parse()?,
++        composer: "096a69ca0500b240f5f0b54a9951decee26cff917be707702fb76861a3ee5199".parse()?,
++        composer_input: "e610c60b7dc684a84e43d962888bf2a4ebf5bde165cad379bbba43b9191824ba"
++            .parse()?,
++    };
++    validate_with_authority(source, raw_composite, verified_proof, &authority)
++}
++fn validate_with_authority(
++    source: &dyn Source,
++    raw_composite: &ResourceFilePin,
++    verified_proof: &ResourceFilePin,
++    authority: &Authority,
++) -> Result<CheckpointedProducer> {
++    let raw = super::json(source, raw_composite)?;
++    let verified = super::json(source, verified_proof)?;
++    // The strict duplicate-key pass has already covered all nested objects.
++    canonical_sha(&verified)?;
++    let b: Proof = typed(&verified)?;
++    let p: Composite = typed(&raw)?;
++    ensure!(
++        b.schema == "airk.cuda-static-build-proof/2"
++            && b.target == "x86_64-pc-windows-msvc"
++            && b.ort_version == "1.30.0"
++            && !b.qualification
++            && !b.activation_pins_available
++            && p.schema == "airk.private.cuda-checkpointed-build/1"
++            && p.status == "PASS_CHECKPOINTED_PRODUCER_ONLY_UNQUALIFIED"
++            && p.mode == "checkpointed-warm"
++            && !p.qualification
++            && !p.cold_build_qualified,
++        "exact checkpoint producer/proof form required"
++    );
++    ensure!(
++        b.build_receipt.sha256 == raw_composite.sha256
++            && b.build_receipt.bytes
++                == super::read(source, raw_composite, MAX_METADATA)?.len() as u64
++            && b.producer_source == p.producer_source
++            && b.approved_plan_sha256 == authority.plan
++            && p.plan.sha256 == b.approved_plan_sha256
++            && b.original_failed_r12 == p.original_failed_build
++            && p.original_failed_build.sha256 == authority.failed
++            && b.failed_ancestry == p.failed_ancestry
++            && b.sections == p.sections
++            && b.source_manifest == p.source_manifest
++            && b.source_inventory_sha256 == p.source_inventory_sha256
++            && b.frontend_inventory_sha256 == p.frontend_inventory_sha256
++            && b.cuda_inventory_sha256 == p.cuda_inventory_sha256
++            && b.frozen_input_closure_sha256 == p.frozen_original_inputs_sha256
++            && b.static_target_closure.sha256 == p.target_closure_sha256
++            && b.static_target_closure.count == 96
++            && b.libraries == p.libraries
++            && b.provider_dlls == p.provider_dlls,
++        "checkpoint proof/composite closure differs"
++    );
++    let plan = p.plan.json(source)?;
++    ensure!(
++        plan["schema"] == "airk.private.cuda-checkpointed-build-plan/1"
++            && plan["actual_build_root"] == p.actual_build_root
++            && pin(&plan["previous_failed_R12"])? == p.original_failed_build
++            && plan["configured_preflight"] == p.configured_preflight
++            && sha(&plan["configured_preflight"]["ninja_sha256"])? == p.ninja_sha256
++            && b.ninja.sha256 == p.ninja_sha256,
++        "checkpoint approved plan/source identity differs"
++    );
++    ensure!(
++        p.producer_source.sha256 == authority.composer
++            && p.input_contract.sha256 == authority.composer_input,
++        "checkpoint composer/input is not reviewed authority"
++    );
++    p.producer_source.read(source)?;
++    p.input_contract.read(source)?;
++    let failed = p.original_failed_build.json(source)?;
++    let last = rows(&failed["commands"])?
++        .last()
++        .context("R12 failed command absent")?;
++    ensure!(
++        failed["schema"] == "airk.private.cuda-runtime-continuation/2"
++            && failed["status"] == "FAILED_PRESERVED_NO_RETRY"
++            && last["exit_code"] == 77
++            && last["timed_out"] == true
++            && last["owned_descendants_settled"] == true
++            && last["owned_job_forced_termination"] == true
++            && last["owned_job_final_active_processes"] == 0
++            && failed["toolchain"] == p.toolchain
++            && failed["configure_argv"] == serde_json::to_value(&p.configure_argv)?
++            && failed["configured_preflight"] == p.configured_preflight
++            && failed["policy"] == p.policy,
++        "original R12 failure/identity was not preserved"
++    );
++    ensure!(
++        p.failed_ancestry
++            .iter()
++            .map(|x| x.sha256)
++            .collect::<Vec<_>>()
++            == authority.failed_ancestry
++            && p.failed_ancestry.contains(&p.original_failed_build),
++        "checkpoint failed ancestry missing"
++    );
++    let mut failures = BTreeSet::new();
++    for f in &p.failed_ancestry {
++        ensure!(
++            failures.insert(f.sha256),
++            "duplicate checkpoint failed ancestor"
++        );
++        let v = f.json(source)?;
++        ensure!(
++            v["status"] == "FAILED_PRESERVED_NO_RETRY" || v["status"] == "FAILED",
++            "checkpoint ancestor relabelled"
++        );
++    }
++    let manifest = p.source_manifest.json(source)?;
++    ensure!(
++        manifest["schema"] == "airk.private.cuda-materialized-source/1"
++            && manifest["actual_build_root"] == p.actual_build_root
++            && sha(&manifest["source_inventory_sha256"])? == p.source_inventory_sha256
++            && sha(&manifest["frontend_inventory_sha256"])? == p.frontend_inventory_sha256
++            && sha(&manifest["cuda_inventory_sha256"])? == p.cuda_inventory_sha256
++            && sha(&manifest["frozen_original_inputs_sha256"])? == p.frozen_original_inputs_sha256
++            && manifest["tools"] == p.toolchain
++            && manifest["configured_preflight"] == p.configured_preflight
++            && manifest["configure_argv"] == serde_json::to_value(&p.configure_argv)?
++            && manifest["policy"] == p.policy
++            && sha(&manifest["failed_r12_sha256"])? == p.original_failed_build.sha256,
++        "checkpoint materialized source manifest differs"
++    );
++    ensure!(
++        b.toolchain_pins.len() >= 6 && b.toolchain_pins.len() <= 16,
++        "checkpoint tool capacity"
++    );
++    let toolrows = p
++        .toolchain
++        .as_object()
++        .context("checkpoint toolchain missing")?;
++    let mut actual_tools = BTreeSet::new();
++    for tool in toolrows.values().filter(|x| x.is_object()) {
++        let t = FilePin {
++            path: tool["path"].as_str().context("tool path missing")?.into(),
++            bytes: size(&tool["bytes"])?,
++            sha256: sha(&tool["sha256"])?,
++        };
++        t.resource()?;
++        ensure!(
++            b.toolchain_pins.contains(&t) && actual_tools.insert(t.sha256),
++            "checkpoint actual tool pin absent/duplicate"
++        );
++        source.authenticate(&t.resource()?, t.bytes, 1u64 << 30)?;
++    }
++    ensure!(
++        actual_tools.len() == b.toolchain_pins.len(),
++        "checkpoint extra tool pin"
++    );
++    b.ninja.read(source)?;
++    let source_inventory = pin(&plan["current_source_inventory"])?;
++    ensure!(
++        source_inventory.sha256 == p.source_inventory_sha256,
++        "checkpoint source inventory pin differs"
++    );
++    source_inventory.read(source)?;
++    for (name, hash) in [
++        ("frontend-source-files.json", p.frontend_inventory_sha256),
++        ("cuda-toolkit-inputs.json", p.cuda_inventory_sha256),
++        ("frozen-input-closure.json", p.frozen_original_inputs_sha256),
++    ] {
++        super::read(
++            source,
++            &ResourceFilePin {
++                path: format!(
++                    "{}/{}",
++                    p.actual_build_root.trim_end_matches(['/', '\\']),
++                    name
++                ),
++                sha256: hash,
++            },
++            MAX_METADATA,
++        )?;
++    }
++    ensure!(
++        manifest["corrected_capi_sha256"]
++            == plan["configured_preflight"]["final_capi_source_sha256"],
++        "checkpoint corrected source identity differs"
++    );
++    ensure!(
++        p.sections.len() == 3 && rows(&plan["sections"])?.len() == 3,
++        "checkpoint exact ordered three sections required"
++    );
++    let mut history = Vec::new();
++    let mut elapsed = 0.0;
++    let mut previous_end = None;
++    let mut previous_receipt = None;
++    let mut previous_warm = None;
++    for (index, row) in p.sections.iter().enumerate() {
++        ensure!(
++            row.section_index == index as u64 && row.section_id == IDS[index],
++            "checkpoint section ordering refused"
++        );
++        let v = row.receipt.json(source)?;
++        ensure!(
++            v["schema"] == "airk.private.cuda-checkpoint-section/1"
++                && v["status"] == "PASS_TARGET_SECTION_ONLY_UNQUALIFIED"
++                && v["qualification"] == false
++                && v["cold_build_qualified"] == false
++                && v["section_id"] == IDS[index]
++                && v["section_index"] == index as u64
++                && pin(&v["plan"])? == p.plan,
++            "checkpoint actual successful section required"
++        );
++        let runner = pin(&v["runner"])?;
++        let input = pin(&v["input_contract"])?;
++        ensure!(
++            runner.sha256
++                == if index == 0 {
++                    authority.first_runner
++                } else {
++                    authority.next_runner
++                }
++                && input.sha256
++                    == if index == 0 {
++                        authority.first_input
++                    } else {
++                        authority.next_input
++                    },
++            "checkpoint runner/input is not reviewed authority"
++        );
++        runner.read(source)?;
++        input.read(source)?;
++        let ancestors = rows(&v["failed_ancestry"])?;
++        ensure!(
++            ancestors.len() == p.failed_ancestry.len(),
++            "checkpoint section failed ancestry missing"
++        );
++        for (declared, expected) in ancestors.iter().zip(&p.failed_ancestry) {
++            let held = FilePin {
++                path: declared["path"]
++                    .as_str()
++                    .context("ancestor path absent")?
++                    .into(),
++                bytes: size(&declared["bytes"])?,
++                sha256: sha(&declared["sha256"])?,
++            };
++            ensure!(
++                held == *expected
++                    && declared["status"] == "FAILED_PRESERVED_NO_RETRY"
++                    && declared["never_relabelled"] == true
++                    && declared["scope"]
++                        .as_str()
++                        .is_some_and(|x| !x.is_empty() && x.len() <= 512),
++                "checkpoint section failed ancestor changed"
++            );
++        }
++        let expected = &plan["sections"][index];
++        ensure!(
++            v["native_argv"] == expected["argv"]
++                && expected["id"] == IDS[index]
++                && expected["parallel"] == 2
++                && expected["fixed_original_seconds"] == 10800,
++            "checkpoint native target/parallel changed"
++        );
++        ensure!(
++            rows(&v["original_command_argv"])?.len() >= 2,
++            "checkpoint actual original command absent"
++        );
++        natural(&v["command"])?;
++        let (started, finished, seconds) = clocks(&v)?;
++        ensure!(
++            previous_end.is_none_or(|end| end <= started),
++            "checkpoint sections overlap or reorder"
++        );
++        if let Some(prior) = previous_receipt.as_ref() {
++            ensure!(
++                pin(&v["predecessor"])? == *prior,
++                "checkpoint predecessor differs"
++            );
++        } else {
++            ensure!(
++                v["predecessor"].is_null(),
++                "first checkpoint predecessor must be null"
++            );
++        }
++        let before = pin(&v["warm_checkpoint_before"])?;
++        let after = pin(&v["warm_checkpoint_after"])?;
++        ensure!(
++            previous_warm
++                .as_ref()
++                .map_or(before == p.warm_baseline, |prior| prior == &before),
++            "checkpoint warm continuity differs"
++        );
++        before.read(source)?;
++        after.read(source)?;
++        ensure!(
++            pin(&v["source_manifest_before"])?.json(source)? == manifest
++                && pin(&v["source_manifest_after"])?.json(source)? == manifest,
++            "checkpoint section source/config changed"
++        );
++        custody(
++            source,
++            &v,
++            row,
++            index,
++            index.checked_sub(1).map(|i| &p.sections[i]),
++        )?;
++        if index == 0 {
++            ensure!(
++                v["flash_outputs_completed"] == 48,
++                "checkpoint Flash48 closure missing"
++            );
++        }
++        if index == 1 {
++            ensure!(
++                v["target_outputs_completed"] == 43,
++                "checkpoint LLM43 closure missing"
++            );
++        }
++        if index == 2 {
++            ensure!(
++                v["target_outputs_completed"]
++                    .as_u64()
++                    .is_some_and(|x| x >= 96),
++                "checkpoint final target closure missing"
++            );
++        }
++        previous_end = Some(finished);
++        previous_receipt = Some(row.receipt.clone());
++        previous_warm = Some(after);
++        elapsed += seconds;
++        history.push(CheckpointSectionHistory {
++            section_id: row.section_id.clone(),
++            section_index: row.section_index,
++            receipt_sha256: row.receipt.sha256,
++        });
++    }
++    ensure!(
++        previous_warm.as_ref() == Some(&p.warm_final),
++        "checkpoint final warm identity differs"
++    );
++    let first = utc(&p.original_attempt_started_utc)?;
++    let complete = utc(&p.completed_utc)?;
++    let campaign = utc(&p.global_campaign_cutoff_utc)?;
++    ensure!(
++        first
++            == utc(failed["original_start_utc"]
++                .as_str()
++                .context("original attempt start absent")?)?
++            && campaign == utc("2026-11-19T05:29:42Z")?
++            && first <= previous_end.context("last section absent")?
++            && previous_end.is_some_and(|end| end <= complete)
++            && complete <= campaign
++            && p.total_active_section_seconds.is_finite()
++            && p.wall_since_first_attempt_seconds.is_finite()
++            && p.metadata_composition_seconds.is_finite()
++            && (0.0..=300.0).contains(&p.metadata_composition_seconds)
++            && p.output_policy.as_object().is_some_and(|x| !x.is_empty())
++            && p.total_active_section_seconds >= elapsed
++            && p.total_active_section_seconds <= 32400.0
++            && p.wall_since_first_attempt_seconds >= elapsed
++            && p.wall_since_first_attempt_seconds <= (campaign - first) as f64 / 1e9,
++        "checkpoint composition timing refused"
++    );
++    output_rows(&p.libraries, false)?;
++    let provider_dlls = output_rows(&p.provider_dlls, true)?;
++    for r in &p.provider_dlls {
++        let path = format!(
++            "{}/{}",
++            p.actual_build_root.trim_end_matches(['/', '\\']),
++            r.path
++        );
++        source.authenticate(
++            &ResourceFilePin {
++                path,
++                sha256: r.sha256,
++            },
++            r.bytes,
++            2u64 << 30,
++        )?;
++    }
++    source.recheck()?;
++    Ok(CheckpointedProducer {
++        static_core_build: raw_composite.sha256,
++        provider_dlls,
++        corrected_source: sha(&manifest["corrected_capi_sha256"])?,
++        history: CheckpointHistory {
++            mode: "checkpointed-warm".into(),
++            cold_build_qualified: false,
++            qualification: false,
++            approved_plan_sha256: b.approved_plan_sha256,
++            failed_ancestry: p.failed_ancestry.iter().map(|x| x.sha256).collect(),
++            sections: history,
++        },
++        producer: raw,
++        build: verified,
++    })
++}
++#[cfg(test)]
++mod tests;
+--- crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/tests.rs
++++ crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/tests.rs
+@@ -169,6 +169,7 @@
+             legal_owner,
+             payloads,
+             notices,
++            custody_copies: Vec::new(),
+         },
+     ))
+ }
+@@ -325,3 +326,16 @@
+     assert!(decode_input(&serde_json::to_vec(&zero)?).is_err());
+     Ok(())
+ }
++
++#[test]
++fn legacy_projection_input_omits_empty_custody_and_rejects_unknown_copy_fields() -> Result<()> {
++    let (_, input) = fixture()?;
++    let raw = serde_json::to_vec(&input)?;
++    assert!(!String::from_utf8_lossy(&raw).contains("custody_copies"));
++    let decoded = decode_input(&raw)?;
++    assert!(decoded.custody_copies.is_empty());
++    let mut bad: Value = serde_json::from_slice(&raw)?;
++    bad["custody_copies"] = json!([{"original":{"path":input.build_proof.path,"sha256":input.build_proof.sha256},"copy":{"path":input.build_proof.path,"sha256":input.build_proof.sha256},"bytes":1,"unknown":true}]);
++    assert!(decode_input(&serde_json::to_vec(&bad)?).is_err());
++    Ok(())
++}
+--- crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection.rs
++++ crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection.rs
+@@ -3,7 +3,9 @@
+ use super::*;
+ use airk_core::arbiter::resource_policy::ResourceFilePin;
+ use serde_json::Value;
++mod checkpoint;
+ mod strict;
++pub(in crate::arbiter::runtime::cuda) use checkpoint::validate_checkpointed_producer;
+ 
+ pub(in crate::arbiter::runtime::cuda) trait Source {
+     /// The actual native caller retains no-follow/owner/held-object custody.
+@@ -47,6 +49,8 @@
+     pub legal_owner: ResourceFilePin,
+     pub payloads: Vec<PayloadInput>,
+     pub notices: Vec<NoticeInput>,
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub custody_copies: Vec<super::super::MetadataCustodyCopy>,
+ }
+ const INPUT_SCHEMA: &str = "airk.native.cuda-provenance-projection-input/1";
+ /// Opaque native metadata request only; it grants no runtime/device permit.
+@@ -54,6 +58,7 @@
+     ensure!(raw.len() <= 16 << 20, "projection request byte capacity");
+     strict::parse(raw)?; // Reject all duplicate object keys before typed decode.
+     let input: Input = serde_json::from_slice(raw)?;
++    super::super::validate_metadata_custody(&input.custody_copies)?;
+     ensure!(
+         input.schema == INPUT_SCHEMA
+             && (2..=64).contains(&input.payloads.len())
+@@ -249,6 +254,7 @@
+             && (3..=512).contains(&input.notices.len()),
+         "projection input capacity"
+     );
++    super::super::validate_metadata_custody(&input.custody_copies)?;
+     let build = json(source, &input.build_proof)?;
+     let producer = json(source, &input.producer_receipt)?;
+     let aggregate = json(source, &input.aggregate_proof)?;
+@@ -265,20 +271,29 @@
+         rows(&legal_inventory)?.len() == input.notices.len(),
+         "exact legal owner roster required"
+     );
+-    ensure!(
+-        build["schema"] == "airk.cuda-static-build-proof/1"
+-            && build["target"] == "x86_64-pc-windows-msvc"
+-            && build["ort_version"] == "1.30.0"
+-            && build["qualification"] == false
+-            && sha(&build["build_receipt"]["sha256"])? == input.producer_receipt.sha256
+-            && producer["status"] == "PASS_PRODUCER_ONLY_UNQUALIFIED",
+-        "successful same-build producer proof required"
+-    );
+-    let commands = rows(&producer["commands"])?;
+-    ensure!(
+-        !commands.is_empty() && commands.len() <= 16 && commands.iter().all(successful),
+-        "producer did not naturally settle successfully"
+-    );
++    let checkpointed = if build["schema"] == "airk.cuda-static-build-proof/2" {
++        Some(validate_checkpointed_producer(
++            source,
++            &input.producer_receipt,
++            &input.build_proof,
++        )?)
++    } else {
++        ensure!(
++            build["schema"] == "airk.cuda-static-build-proof/1"
++                && build["target"] == "x86_64-pc-windows-msvc"
++                && build["ort_version"] == "1.30.0"
++                && build["qualification"] == false
++                && sha(&build["build_receipt"]["sha256"])? == input.producer_receipt.sha256
++                && producer["status"] == "PASS_PRODUCER_ONLY_UNQUALIFIED",
++            "successful same-build producer proof required"
++        );
++        let commands = rows(&producer["commands"])?;
++        ensure!(
++            !commands.is_empty() && commands.len() <= 16 && commands.iter().all(successful),
++            "producer did not naturally settle successfully"
++        );
++        None
++    };
+     ensure!(
+         producer["policy"]["one_static_core"] == true
+             && producer["policy"]["optional_shared_cuda_provider"] == true
+@@ -295,7 +310,7 @@
+         "matching naturally settled static aggregate required"
+     );
+     ensure!(
+-        build["toolchain"] == producer["toolchain"]
++        (checkpointed.is_some() || build["toolchain"] == producer["toolchain"])
+             && build["provider_dlls"] == producer["provider_dlls"]
+             && aggregate["output"] == command["output"]
+             && sha(&aggregate["plan_sha256"])? == canonical_sha(&command["plan"])?
+@@ -314,10 +329,15 @@
+         size(&aggregate["output"]["bytes"])?,
+         2u64 << 30,
+     )?;
+-    let original_lock = build
+-        .get("ancestry")
+-        .and_then(|a| a.get("original_r8_lock"))
+-        .unwrap_or(&build["producer_lock_sha256"]);
++    let checkpoint_lock = serde_json::Value::String(checkpoint::SOURCE_LOCK.into());
++    let original_lock = if checkpointed.is_some() {
++        &checkpoint_lock
++    } else {
++        build
++            .get("ancestry")
++            .and_then(|a| a.get("original_r8_lock"))
++            .unwrap_or(&build["producer_lock_sha256"])
++    };
+     ensure!(
+         sha(original_lock)? == input.source_lock.sha256
+             && lock["ort_version"] == "1.30.0"
+@@ -325,6 +345,14 @@
+             && lock["upstream_commit"] == cpu["upstream_commit"],
+         "source lock ancestry differs"
+     );
++    if let Some(validated) = &checkpointed {
++        ensure!(
++            validated.static_core_build == input.producer_receipt.sha256
++                && validated.build == build
++                && validated.producer == producer,
++            "shared checkpoint interpretation differs"
++        );
++    }
+     let mut components = vec![Component {
+         name: "onnxruntime".into(),
+         version: Some("1.30.0".into()),
+@@ -343,6 +371,15 @@
+             sha(&lock["final_placement"]["patch_sha256"])?,
+         ],
+     }];
++    if let Some(validated) = &checkpointed {
++        components[0]
++            .source_changes
++            .push(validated.corrected_source);
++        ensure!(
++            validated.provider_dlls.len() == 2,
++            "shared checkpoint provider roster differs"
++        );
++    }
+     if let Some(change) = producer.get("changed_source_after_sha256") {
+         components[0].source_changes.push(sha(change)?);
+     }
+@@ -404,9 +441,9 @@
+     }
+     let mut tools = Vec::new();
+     for name in ["compiler", "cmake", "ninja", "python", "patch", "vcvars"] {
+-        let t = &build["toolchain"][name];
++        let t = &producer["toolchain"][name];
+         let version = if name == "compiler" {
+-            Some(text(&build["toolchain"]["msvc_toolset"])?)
++            Some(text(&producer["toolchain"]["msvc_toolset"])?)
+         } else {
+             t.get("version").map(text).transpose()?
+         };
+@@ -535,8 +572,16 @@
+         target: "x86_64-pc-windows-msvc".into(),
+         ort_version: "1.30.0".into(),
+         static_core_build: input.producer_receipt.sha256,
+-        producer_script_sha256: sha(&build["producer_script_sha256"])?,
+-        producer_lock_sha256: sha(&build["producer_lock_sha256"])?,
++        producer_script_sha256: if checkpointed.is_some() {
++            sha(&build["producer_source"]["sha256"])?
++        } else {
++            sha(&build["producer_script_sha256"])?
++        },
++        producer_lock_sha256: if checkpointed.is_some() {
++            input.source_lock.sha256
++        } else {
++            sha(&build["producer_lock_sha256"])?
++        },
+         verifier_sha256: input.verifier.sha256,
+         build_proof_sha256: input.build_proof.sha256,
+         legal_inventory_sha256: input.legal_inventory.sha256,
+@@ -544,10 +589,15 @@
+         configure_argv_sha256: Sha256Digest::from_bytes(
+             Sha256::digest(serde_json::to_vec(&producer["configure_argv"])?).into(),
+         ),
+-        historical_failed_parent: producer
+-            .get("parent_failed_receipt")
+-            .map(|v| sha(&v["sha256"]))
+-            .transpose()?,
++        checkpoint_history: checkpointed.as_ref().map(|v| v.history.clone()),
++        historical_failed_parent: if checkpointed.is_some() {
++            Some(sha(&producer["original_failed_build"]["sha256"])?)
++        } else {
++            producer
++                .get("parent_failed_receipt")
++                .map(|v| sha(&v["sha256"]))
++                .transpose()?
++        },
+         aggregate: Aggregate {
+             file: PublicFile {
+                 name: "onnxruntime.lib".into(),
+--- crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/tests.rs
++++ crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/tests.rs
+@@ -104,6 +104,7 @@
+             configure_argv_sha256: hash(17),
+             legal_inventory_sha256: hash(18),
+             legal_owner_sha256: hash(19),
++            checkpoint_history: None,
+             historical_failed_parent: Some(hash(20)),
+             aggregate: Aggregate {
+                 file: PublicFile {
+@@ -305,3 +306,67 @@
+     changed.options.push(changed.options[0].clone());
+     assert!(!accepts(&changed, &native));
+ }
++
++#[test]
++fn legacy_public_bytes_omit_checkpoint_history() -> Result<()> {
++    let (value, native) = fixture();
++    let raw = serde_json::to_vec(&value)?;
++    assert!(!String::from_utf8_lossy(&raw).contains("checkpoint_history"));
++    validate_description(&value, value.static_core_build, &native)?;
++    Ok(())
++}
++#[test]
++fn public_checkpoint_history_is_path_free_descriptive_and_strict() -> Result<()> {
++    let (mut value, native) = fixture();
++    let failed: Sha256Digest =
++        "3a4c18932dbafbcc719cb77b30f616372b220cc315a1acdba82df24a9734c026".parse()?;
++    value.historical_failed_parent = Some(failed);
++    value.checkpoint_history = Some(CheckpointHistory {
++        mode: "checkpointed-warm".into(),
++        cold_build_qualified: false,
++        qualification: false,
++        approved_plan_sha256: "6bee6b8b95a01fea28adf04117260d12503012ea8120ae225afa232b6589df97"
++            .parse()?,
++        failed_ancestry: vec![failed],
++        sections: vec![
++            CheckpointSectionHistory {
++                section_id: "flash-remainder".into(),
++                section_index: 0,
++                receipt_sha256: hash(31),
++            },
++            CheckpointSectionHistory {
++                section_id: "llm-remainder".into(),
++                section_index: 1,
++                receipt_sha256: hash(32),
++            },
++            CheckpointSectionHistory {
++                section_id: "final-provider-all-closure".into(),
++                section_index: 2,
++                receipt_sha256: hash(33),
++            },
++        ],
++    });
++    validate_description(&value, value.static_core_build, &native)?;
++    let raw = serde_json::to_vec(&value)?;
++    let decoded: PublicRuntimeProvenance = serde_json::from_slice(&raw)?;
++    assert_eq!(serde_json::to_vec(&decoded)?, raw);
++    value
++        .checkpoint_history
++        .as_mut()
++        .unwrap()
++        .cold_build_qualified = true;
++    assert!(validate_description(&value, value.static_core_build, &native).is_err());
++    value
++        .checkpoint_history
++        .as_mut()
++        .unwrap()
++        .cold_build_qualified = false;
++    value
++        .checkpoint_history
++        .as_mut()
++        .unwrap()
++        .sections
++        .swap(0, 1);
++    assert!(validate_description(&value, value.static_core_build, &native).is_err());
++    Ok(())
++}
+--- crates/airk-retrieval/src/arbiter/runtime/cuda/provenance.rs
++++ crates/airk-retrieval/src/arbiter/runtime/cuda/provenance.rs
+@@ -70,6 +70,23 @@
+ }
+ #[derive(Clone, Debug, Serialize, Deserialize)]
+ #[serde(deny_unknown_fields)]
++pub(super) struct CheckpointSectionHistory {
++    pub section_id: String,
++    pub section_index: u64,
++    pub receipt_sha256: Sha256Digest,
++}
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub(super) struct CheckpointHistory {
++    pub mode: String,
++    pub cold_build_qualified: bool,
++    pub qualification: bool,
++    pub approved_plan_sha256: Sha256Digest,
++    pub failed_ancestry: Vec<Sha256Digest>,
++    pub sections: Vec<CheckpointSectionHistory>,
++}
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
+ pub(super) struct PublicRuntimeProvenance {
+     pub schema: String,
+     pub target: String,
+@@ -83,6 +100,8 @@
+     pub legal_inventory_sha256: Sha256Digest,
+     pub legal_owner_sha256: Sha256Digest,
+     pub historical_failed_parent: Option<Sha256Digest>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub checkpoint_history: Option<CheckpointHistory>,
+     pub aggregate: Aggregate,
+     pub components: Vec<Component>,
+     pub tools: Vec<Tool>,
+@@ -188,6 +207,44 @@
+             && value.historical_failed_parent.is_none_or(nonzero),
+         "missing public build/source identity"
+     );
++    if let Some(history) = &value.checkpoint_history {
++        ensure!(
++            history.mode == "checkpointed-warm"
++                && !history.cold_build_qualified
++                && !history.qualification
++                && history.approved_plan_sha256.to_string()
++                    == "6bee6b8b95a01fea28adf04117260d12503012ea8120ae225afa232b6589df97"
++                && !history.failed_ancestry.is_empty()
++                && history.failed_ancestry.len() <= 32
++                && history.failed_ancestry.iter().copied().all(nonzero)
++                && history
++                    .failed_ancestry
++                    .iter()
++                    .copied()
++                    .collect::<BTreeSet<_>>()
++                    .len()
++                    == history.failed_ancestry.len()
++                && history.failed_ancestry.iter().any(|x| x.to_string()
++                    == "3a4c18932dbafbcc719cb77b30f616372b220cc315a1acdba82df24a9734c026")
++                && value.historical_failed_parent.is_some_and(|x| x.to_string()
++                    == "3a4c18932dbafbcc719cb77b30f616372b220cc315a1acdba82df24a9734c026")
++                && history.sections.len() == 3,
++            "invalid public checkpoint history"
++        );
++        for (index, row) in history.sections.iter().enumerate() {
++            ensure!(
++                row.section_index == index as u64
++                    && row.section_id
++                        == [
++                            "flash-remainder",
++                            "llm-remainder",
++                            "final-provider-all-closure"
++                        ][index]
++                    && nonzero(row.receipt_sha256),
++                "public checkpoint section identity differs"
++            );
++        }
++    }
+     ensure!(
+         value.aggregate.file.name == "onnxruntime.lib"
+             && value.aggregate.file.bytes > 65_536

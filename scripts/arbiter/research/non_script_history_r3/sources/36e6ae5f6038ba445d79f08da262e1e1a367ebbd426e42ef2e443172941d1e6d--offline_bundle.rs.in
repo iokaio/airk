@@ -1,0 +1,250 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Read-only native bundle inputs. Compiled Profile owns every accepted byte.
+use super::*;
+#[cfg(windows)]
+use airk_process::directory::{ObjectIdentity, OpenedDirectory};
+#[cfg(unix)]
+type ObjectIdentity = (u64, u64);
+#[cfg(unix)]
+struct OpenedDirectory(SetupDirectory);
+#[cfg(unix)]
+impl OpenedDirectory {
+    fn open(path: &std::path::Path) -> Result<Self> {
+        ensure!(path.is_absolute(), "Offline source must be absolute");
+        let mut directory = SetupDirectory::open_canonical(std::path::Path::new("/"))?;
+        for component in path.components() {
+            match component {
+                std::path::Component::RootDir => {},
+                std::path::Component::Normal(name) => directory = directory.open_dir(name)?,
+                _ => anyhow::bail!("Offline source path component refused"),
+            }
+        }
+        Ok(Self(directory))
+    }
+    fn as_file(&self) -> &File { &self.0.file }
+    fn identity(&self) -> Result<ObjectIdentity> { self.0.identity() }
+    fn open_file(&self, name: &OsStr) -> Result<File> { self.0.open_file(name, SetupFileMode::Read) }
+    fn require_default_stream(&self, _: &OsStr, _: &File) -> Result<()> { Ok(()) }
+}
+fn source_identity(file: &File) -> Result<ObjectIdentity> {
+    #[cfg(windows)] { Ok(airk_process::directory::identity(file)?) }
+    #[cfg(unix)] { file_identity(file) }
+}
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
+
+struct SourceFile {
+    asset: Asset,
+    file: File,
+    identity: ObjectIdentity,
+}
+pub struct OfflineBundle {
+    original: PathBuf,
+    directory: OpenedDirectory,
+    files: Vec<SourceFile>,
+}
+fn local(file: &File) -> Result<()> {
+    #[cfg(windows)]
+    ensure!(
+        crate::private_storage::same_volume(file, file),
+        "Offline bundle requires a positively identified local fixed volume"
+    );
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        let mut fs = std::mem::MaybeUninit::<libc::statfs>::uninit();
+        // SAFETY: this retained file owns the fd; statfs writes one output.
+        ensure!(
+            unsafe { libc::fstatfs(file.as_raw_fd(), fs.as_mut_ptr()) } == 0,
+            "Offline bundle filesystem observation failed"
+        );
+        let fs = unsafe { fs.assume_init() };
+        ensure!(
+            [0xef53, 0x58465342, 0x9123683e, 0x01021994].contains(&i128::from(fs.f_type)),
+            "Offline bundle filesystem is not a supported local filesystem"
+        );
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::fd::AsRawFd;
+        let mut fs = std::mem::MaybeUninit::<libc::statfs>::uninit();
+        // SAFETY: this retained file owns the fd; statfs writes one output.
+        ensure!(
+            unsafe { libc::fstatfs(file.as_raw_fd(), fs.as_mut_ptr()) } == 0,
+            "Offline bundle filesystem observation failed"
+        );
+        let fs = unsafe { fs.assume_init() };
+        ensure!(
+            fs.f_flags & libc::MNT_LOCAL != 0,
+            "Offline bundle network filesystem refused"
+        );
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    {
+        let _ = file;
+        anyhow::bail!("Offline bundle local filesystem observation is unsupported");
+    }
+    Ok(())
+}
+fn source_hash(file: &mut File, asset: &Asset, check: &impl Fn() -> Result<()>) -> Result<()> {
+    check()?;
+    ensure!(
+        file.metadata()?.len() == asset.bytes,
+        "Offline source length differs"
+    );
+    file.seek(SeekFrom::Start(0))?;
+    let mut remaining = asset.bytes;
+    let mut buffer = [0u8; 65536];
+    let mut hash = Sha256::new();
+    while remaining > 0 {
+        check()?;
+        let size = usize::try_from(remaining.min(buffer.len() as u64))?;
+        let got = file.read(&mut buffer[..size])?;
+        ensure!(got > 0, "Offline source shortened");
+        hash.update(&buffer[..got]);
+        remaining -= got as u64;
+    }
+    let mut extra = [0u8; 1];
+    ensure!(
+        file.read(&mut extra)? == 0
+            && file.metadata()?.len() == asset.bytes
+            && Sha256Digest::from_bytes(hash.finalize().into()) == asset.sha256,
+        "Offline source complete digest differs"
+    );
+    check()
+}
+impl OfflineBundle {
+    /// Only the private native service import uses a caller path. The caller
+    /// must authenticate the actual compiled qualified execution capability.
+    pub fn open(
+        profile: &Profile,
+        original: &Path,
+        check: impl Fn() -> Result<()>,
+    ) -> Result<Self> {
+        checked_profile(profile)?;
+        check()?;
+        let directory = OpenedDirectory::open(original)?;
+        local(directory.as_file())?;
+        let mut bundle = Self {
+            original: original.to_owned(),
+            directory,
+            files: Vec::new(),
+        };
+        bundle.census(profile)?;
+        for asset in &profile.assets {
+            check()?;
+            let mut file = bundle.directory.open_file(OsStr::new(&asset.name))?;
+            bundle
+                .directory
+                .require_default_stream(OsStr::new(&asset.name), &file)?;
+            local(&file)?;
+            let identity = source_identity(&file)?;
+            source_hash(&mut file, asset, &check)?;
+            bundle.files.push(SourceFile {
+                asset: asset.clone(),
+                file,
+                identity,
+            });
+        }
+        bundle.recheck(profile, &check)?;
+        Ok(bundle)
+    }
+    fn census(&self, profile: &Profile) -> Result<()> {
+        let expected: BTreeSet<_> = profile
+            .assets
+            .iter()
+            .map(|asset| std::ffi::OsString::from(&asset.name))
+            .collect();
+        let mut actual = BTreeSet::new();
+        for entry in std::fs::read_dir(&self.original)? {
+            let entry = entry?;
+            ensure!(
+                actual.len() < 128
+                    && entry.file_type()?.is_file()
+                    && actual.insert(entry.file_name()),
+                "Offline source has an unknown or nonregular entry"
+            );
+        }
+        ensure!(
+            actual == expected,
+            "Offline source must contain exactly the compiled asset closure"
+        );
+        Ok(())
+    }
+    fn recheck(&self, profile: &Profile, check: &impl Fn() -> Result<()>) -> Result<()> {
+        check()?;
+        let current = OpenedDirectory::open(&self.original)?;
+        ensure!(
+            current.identity()? == self.directory.identity()?,
+            "Offline source directory identity changed"
+        );
+        local(current.as_file())?;
+        self.census(profile)?;
+        for source in &self.files {
+            check()?;
+            let current = self.directory.open_file(OsStr::new(&source.asset.name))?;
+            self.directory
+                .require_default_stream(OsStr::new(&source.asset.name), &current)?;
+            ensure!(
+                source_identity(&current)? == source.identity
+                    && source_identity(&source.file)? == source.identity
+                    && source.file.metadata()?.len() == source.asset.bytes,
+                "Offline source file identity changed"
+            );
+        }
+        check()
+    }
+    /// Publishes only through the ordinary Store transaction and original
+    /// custody/recovery protocol. This method never writes to a source handle.
+    pub fn import(
+        mut self,
+        store: &Arc<AssetStore>,
+        profile: &Profile,
+        revision: u64,
+        check: impl Fn() -> Result<()>,
+    ) -> Result<()> {
+        ensure!(
+            self.files.len() == profile.assets.len()
+                && self
+                    .files
+                    .iter()
+                    .zip(&profile.assets)
+                    .all(|(source, asset)| &source.asset == asset),
+            "Offline source profile changed"
+        );
+        self.recheck(profile, &check)?;
+        let transaction = store.begin(profile, revision)?;
+        let result = (|| {
+            let mut buffer = [0u8; 65536];
+            for source in &mut self.files {
+                check()?;
+                if let Some(mut writer) = transaction.asset(&source.asset)? {
+                    source.file.seek(SeekFrom::Start(0))?;
+                    let mut remaining = source.asset.bytes;
+                    while remaining > 0 {
+                        check()?;
+                        let count = usize::try_from(remaining.min(buffer.len() as u64))?;
+                        let got = source.file.read(&mut buffer[..count])?;
+                        ensure!(got > 0, "Offline source shortened during copy");
+                        writer.write_all(&buffer[..got])?;
+                        remaining -= got as u64;
+                    }
+                    transaction.publish(writer)?;
+                }
+                // Even an already-cached destination does not silently accept
+                // a source bundle that changed after initial verification.
+                source_hash(&mut source.file, &source.asset, &check)?;
+            }
+            self.recheck(profile, &check)
+        })();
+        if let Err(error) = result {
+            if check().is_err() {
+                transaction.cancel()?;
+            }
+            return Err(error);
+        }
+        transaction.finish()
+    }
+}

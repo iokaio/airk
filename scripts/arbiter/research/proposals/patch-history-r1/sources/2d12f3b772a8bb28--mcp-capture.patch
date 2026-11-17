@@ -1,0 +1,187 @@
+--- crates/airk-mcp/src/context_action_capture_tests.rs
++++ crates/airk-mcp/src/context_action_capture_tests.rs
+@@ -12,7 +12,8 @@
+ };
+ use airk_kernel::arbiter::NativeController;
+ use anyhow::{Context, Result, ensure};
+-use serde::Deserialize;
++use serde::{Deserialize, Serialize};
++use sha2::{Digest, Sha256};
+ use serde_json::{Map, Value, json};
+ use std::{
+     cell::RefCell,
+@@ -22,7 +23,7 @@
+     time::{Duration, Instant},
+ };
+ 
+-#[derive(Deserialize)]
++#[derive(Deserialize, Serialize)]
+ #[serde(deny_unknown_fields)]
+ struct Input {
+     schema: String,
+@@ -31,7 +32,7 @@
+     data_root: PathBuf,
+     questions: Vec<Question>,
+ }
+-#[derive(Deserialize)]
++#[derive(Deserialize, Serialize)]
+ #[serde(deny_unknown_fields)]
+ struct Question {
+     id: String,
+@@ -174,6 +175,14 @@
+ #[test]
+ #[ignore = "explicit private TRAIN/CAL canonical capture; no optional NN, DEV or FINAL"]
+ fn capture_publisher_context_action_native_requests_and_counterfactuals() -> Result<()> {
++    capture(false)
++}
++#[test]
++#[ignore = "selected generic-Read CAL native capture; Root-reviewed new source closure required"]
++fn capture_selected_context_generic_read_cal_requests_and_counterfactuals() -> Result<()> {
++    capture(true)
++}
++fn capture(selected: bool) -> Result<()> {
+     let input_bytes = std::fs::read(path_env("AIRK_CONTEXT_ACTION_CAPTURE_INPUT")?)?;
+     let input_digest = framed_digest(
+         b"airk.context-action.publisher-source-input/1",
+@@ -185,11 +194,16 @@
+     );
+     let input: Input = serde_json::from_slice(&input_bytes)?;
+     ensure!(
+-        input.schema == "airk.arbiter.context-action.publisher-sources/1"
+-            && input.facts_sha256.to_string()
+-                == "115f9baacef8d9cac1c9602447a854a11787ed759e2f61897eb01009ae6d4254"
+-            && !input.questions.is_empty()
+-            && input.questions.len() <= 126,
++        if selected {
++            input.schema == "airk.arbiter.context-action.selected-cal-sources/1"
++                && input.facts_sha256 == std::env::var("AIRK_SELECTED_CONTEXT_CORPUS_SHA256")?.parse()?
++                && input.questions.len() == 100
++                && input.questions.iter().all(|question| question.split == "calibration")
++        } else {
++            input.schema == "airk.arbiter.context-action.publisher-sources/1"
++                && input.facts_sha256.to_string() == "115f9baacef8d9cac1c9602447a854a11787ed759e2f61897eb01009ae6d4254"
++                && !input.questions.is_empty() && input.questions.len() <= 126
++        },
+         "foreign publisher input"
+     );
+     let mode = std::env::var("AIRK_CONTEXT_ACTION_CAPTURE_MODE")?;
+@@ -228,11 +242,16 @@
+             source_root.is_absolute(),
+             "absolute publisher source root required"
+         );
+-        let source_before = std::fs::read(source_root.join("source.txt"))?;
+-        let source_digest = framed_digest(
+-            b"airk.context-action.publisher-source-bytes/1",
+-            &[&source_before],
+-        );
++        let source_before = if selected {
++            selected_source_snapshot(&source_root)?
++        } else {
++            vec![("source.txt".to_owned(), std::fs::read(source_root.join("source.txt"))?)]
++        };
++        let source_digest = if selected {
++            framed_digest(b"airk.selected-context.global-source-bytes/1", &[&serde_json::to_vec(&source_before)?])
++        } else {
++            framed_digest(b"airk.context-action.publisher-source-bytes/1", &[&source_before[0].1])
++        };
+         let base = if let Some(base) = bases.get(&source_root) {
+             Kernel::clone(base)
+         } else {
+@@ -341,7 +360,11 @@
+             Ok((packet,outcomes))
+         })??;
+         ensure!(
+-            source_before == std::fs::read(source_root.join("source.txt"))?,
++            source_before == if selected {
++                selected_source_snapshot(&source_root)?
++            } else {
++                vec![("source.txt".to_owned(), std::fs::read(source_root.join("source.txt"))?)]
++            },
+             "publisher source changed during capture"
+         );
+         let captured = capture
+@@ -356,9 +379,9 @@
+         rows.push(json!({"id":question.id,"split":question.split,"source_group":question.source_group,
+             "source":question.source,"source_framed_digest":source_digest,"status":status,
+             "request":captured.first(),"canonical_packet":packet,"counterfactual_choices":counterfactuals}));
+-        let document = json!({"schema":"airk.arbiter.context-action.publisher-capture/1","complete":false,
++        let document = json!({"schema":if selected {"airk.arbiter.context-action.selected-cal-capture/1"}else{"airk.arbiter.context-action.publisher-capture/1"},"complete":false,
+             "facts_sha256":input.facts_sha256,"prepared_input_digest":input_digest,"task_policy":input.task_policy,
+-            "read_population":mode,"nn_invocations":0,"fixture_scope_and_clock":true,
++            "read_population":mode,"nn_invocations":0,"optional_Context_NN_invocations":0,"encoder_NN_used":mode=="hybrid","fixture_scope_and_clock":true,
+             "counterfactual_scope":"Only up to five actually offered reads; independent before-state forks, not a learned trajectory. Capture stops before canonical fallback consumes more calls.",
+             "limits":"Canonical native fixture-source semantics only; no live service authority, optional-model admission, task qualification or SDK/installed transport claim.","rows":rows});
+         std::fs::write(&output, serde_json::to_vec_pretty(&document)?)?;
+@@ -368,3 +391,72 @@
+     std::fs::write(output, serde_json::to_vec_pretty(&final_document)?)?;
+     Ok(())
+ }
++
++
++fn selected_sha(bytes: &[u8]) -> Sha256Digest {
++    Sha256Digest::from_bytes(Sha256::digest(bytes).into())
++}
++fn selected_source_snapshot(root: &std::path::Path) -> Result<Vec<(String, Vec<u8>)>> {
++    ensure!(root.is_absolute(), "selected source root must be absolute");
++    let mut result = Vec::new();
++    for entry in std::fs::read_dir(root)? {
++        let entry = entry?;
++        let metadata = std::fs::symlink_metadata(entry.path())?;
++        ensure!(metadata.is_file() && !metadata.file_type().is_symlink(), "selected source must contain regular flat original files");
++        #[cfg(windows)]
++        {
++            use std::os::windows::fs::MetadataExt;
++            ensure!(metadata.file_attributes() & 1024 == 0, "selected source reparse point");
++        }
++        let name = entry.file_name().into_string().map_err(|_|anyhow::anyhow!("non-UTF8 selected source name"))?;
++        result.push((name,std::fs::read(entry.path())?));
++    }
++    result.sort_by(|left,right| left.0.cmp(&right.0));
++    ensure!(result.len() >= 30, "selected source document floor");
++    Ok(result)
++}
++#[test]
++#[ignore = "Root-reviewed selected CAL100 corpus/source preparation; no NN or confirmation inputs"]
++fn prepare_selected_context_generic_read_global_cal_capture_input() -> Result<()> {
++    let corpus_raw = std::fs::read(path_env("AIRK_SELECTED_CONTEXT_CORPUS")?)?;
++    let corpus_sha = selected_sha(&corpus_raw);
++    ensure!(corpus_sha == std::env::var("AIRK_SELECTED_CONTEXT_CORPUS_SHA256")?.parse()?, "selected CAL corpus drift");
++    let corpus: Value = serde_json::from_slice(&corpus_raw)?;
++    ensure!(corpus["experiment_partition"] == "CAL" && corpus["tasks"].as_array().is_some_and(|tasks|tasks.len()==100), "CAL100 only; no confirmation");
++    let fixture = path_env("AIRK_SELECTED_CONTEXT_SOURCE_FIXTURE")?;
++    let manifest_raw = std::fs::read(fixture.join("manifest.private.json"))?;
++    let manifest_sha = selected_sha(&manifest_raw);
++    ensure!(manifest_sha == std::env::var("AIRK_SELECTED_CONTEXT_SOURCE_MANIFEST_SHA256")?.parse()?, "selected native source manifest drift");
++    let manifest: Value = serde_json::from_slice(&manifest_raw)?;
++    ensure!(manifest["experiment_partition"] == "CAL" && manifest["corpus_sha256"] == corpus_sha.to_string(), "selected source lineage mismatch");
++    let source_root = fixture.join("sources/hotpot");
++    let snapshot = selected_source_snapshot(&source_root)?;
++    let files = manifest["files"].as_array().context("native source files missing")?;
++    ensure!(files.len()==snapshot.len(), "selected source roster mismatch");
++    for (name, bytes) in &snapshot {
++        let relative = format!("sources/hotpot/{name}");
++        let rows:Vec<_> = files.iter().filter(|row|row["file"]==relative).collect();
++        ensure!(rows.len()==1 && rows[0]["sha256"]==selected_sha(bytes).to_string() && rows[0]["bytes"]==bytes.len(), "selected source bytes mismatch");
++    }
++    let mut seen = BTreeSet::new();
++    let mut questions=Vec::new();
++    for task in corpus["tasks"].as_array().context("CAL tasks missing")? {
++        let id=task["id"].as_str().context("CAL id missing")?.to_owned();
++        ensure!(seen.insert(id.clone()) && task["experiment_partition"]=="CAL" && task["dataset"]=="HotpotQA", "foreign selected CAL task");
++        questions.push(Question{id,question:task["question"].as_str().context("CAL question missing")?.to_owned(),split:"calibration".into(),
++            source_group:task["source_component"].as_str().context("CAL source component missing")?.to_owned(),
++            source:json!({"source_root":source_root,"source_manifest_sha256":manifest_sha})});
++    }
++    let native_ids:BTreeSet<_>=manifest["calibration_ids"].as_array().context("native CAL ids missing")?.iter().map(|id|id.as_str().map(str::to_owned).context("native CAL id type")).collect::<Result<_>>()?;
++    ensure!(seen==native_ids,"native CAL IDs differ");
++    let input=Input{schema:"airk.arbiter.context-action.selected-cal-sources/1".into(),facts_sha256:corpus_sha,
++        task_policy:std::env::var("AIRK_SELECTED_CONTEXT_TASK_POLICY")?.parse()?,data_root:path_env("AIRK_CONTEXT_ACTION_DATA_ROOT")?,questions};
++    let bytes=serde_json::to_vec_pretty(&input)?;
++    let output=path_env("AIRK_CONTEXT_ACTION_CAPTURE_INPUT")?;
++    use std::io::Write;
++    let mut file=std::fs::OpenOptions::new().write(true).create_new(true).open(output)?;
++    file.write_all(&bytes)?;file.sync_all()?;
++    println!("{}",json!({"questions":100,"source_documents":snapshot.len(),"input_sha256":selected_sha(&bytes),
++        "input_framed_digest":framed_digest(b"airk.context-action.publisher-source-input/1", &[&bytes]),"optional_NN_invocations":0}));
++    Ok(())
++}

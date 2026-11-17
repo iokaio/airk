@@ -1,0 +1,86 @@
+--- a/docs/research/implementation-v190.md
++++ b/docs/research/implementation-v190.md
+@@ -5024,3 +5024,59 @@
+ or modify dependency/model/OCR adapters. Any later adoption requires a new
+ reviewed evidence-based decision. This P13 record is a separate checkpoint after
+ P12 acceptance; its authorized signed commit is a separate Git action.
++
++
++### P14 — semantic destination cold-reference correction, 6 November 2026
++
++This entry supplements the inert initial P14 qualification framework; it does
++not accept P14 or replace the earlier P12 records. The initial P14 attempt failed
++at Clippy because a new test diagnostic required Debug for ControlResponse.
++After the diagnostic-only correction, semantic-ready split attempts R2–R4
++failed. Their failed receipts remain evidence. The final bounded private failure
++export identified the native qualifier's actual error: destination semantic
++readiness was incomplete, without an underlying filesystem/model error.
++
++The production cause was a missing **installed default-model reference**.
++Source-only indexing deliberately calls `configured_model_objects(false)` and
++does not provision a default model implicitly. Binding shared-model metadata
++alone therefore yielded no configured model in the fresh destination. Its
++publication had Disabled semantics and no retained enrichment work; all 32
++bounded enrichment turns returned without making it Ready. Extending timeouts,
++changing source fairness or weakening the readiness proof would not fix that
++missing input.
++
++The narrow correction uses the existing canonical bundled-model selection owner
++for a claimed **semantic-ready DestinationBuild**, before Current initialization
++and indexing. The helper installs or reuses its paired default assets/reference;
++the selected descriptor is validated against paired metadata and persisted using
++the destination's actual owned, prepaid quota context. Shared model assets keep
++the existing service model owner's separate quota and lifetime. Lexical-only
++split, original custom-model choice, source contents, ranking/OCR dependencies
++and the 32-turn readiness bound are unchanged. A model/setup failure remains a
++failed job, not a fabricated readiness receipt.
++
++The regression explicitly verifies that `ServiceModelFiles::default_reference`
++is absent before accepting the semantic-ready split. It then requires a real
++ready destination publication, exact saved model descriptor, actual vectors and
++complete native/CLI/MCP observations. This is a **cold installed-reference**
++precondition, not a cold OS-cache or absent global asset-bytes claim. Helper
++presence/aggregate loads do not establish extra destination forward counts or
++model-cost deltas.
++
++The corrected-source debug semantic R2 case passed **1/1**, with a **39.64-second**
++test runtime (**45.513 seconds** including the command), and strict full-workspace
++all-target/all-feature Clippy passed in **2.551 seconds**. Both receipts retain
++source
++`d4e48a534881ea910bcbadd182e8fb4f6a970c844df6ab1951d7b566cbcb2eeb`
++(**960 inputs**). These are root-owned observed results, not independent reruns
++by the reviewer. The combined canonical fix received a separate static review;
++the reviewer disclosed authorship of the earlier test/diagnostic portions.
++
++This is now a production delta, so the prior compiled-source `4121692a…` runtime
++and its external-test-only class seal cannot qualify the fix. A fresh matched
++optimized producer, source-bound Neo testing with unconditional `cargo clean`,
++the cumulative suite and selected installed/resource/platform gates remain
++separate requirements. No full-suite pass, optimized result, new Neo result,
++default ONNX quality/cost, physical power-loss or installed-editor outcome is
++claimed by this entry. P14, subsequent missing-source cleanup and the final local
++installer remain incomplete until their actual evidence is collected/reviewed.
+--- a/docs/releases/release-1.8.8.md
++++ b/docs/releases/release-1.8.8.md
+@@ -124,3 +124,21 @@
+ imported paths, one partial path and 319 baseline exemptions. Offline checks
+ remain explicitly limited and do not check npm advisories; see the
+ [setup and policy limits](../dependency-advisories.md).
++
++
++## P14 semantic-ready split correction under qualification
++
++The semantic-ready destination build now selects/provisions the paired bundled
++model through the existing native model owner before source indexing. Source-only
++indexing itself still does not install models. The regression starts without an
++installed default-model reference and requires actual ready destination vectors,
++its exact saved descriptor and complete native/CLI/MCP observations. Lexical-only
++split and the original collection's model choice are unchanged. This is a
++cold-reference condition, not a cold OS-cache or default-model cost measurement.
++
++The corrected matched-debug case and strict workspace Clippy passed on
++`d4e48a53…` / 960 inputs. The [dated P14 correction](../research/implementation-v190.md#p14--semantic-destination-cold-reference-correction-6-november-2026)
++retains the earlier failures and exact limits. Because production changed, a
++fresh optimized producer and final source-bound cumulative/Mac/installed/resource
++qualification remain required. The preceding P12 runtime is not relabeled to
++cover this fix. This record does not accept P14 or publish the working build.

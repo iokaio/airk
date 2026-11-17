@@ -1,0 +1,510 @@
+--- a/crates/airk-store/src/quota.rs
++++ b/crates/airk-store/src/quota.rs
+@@ -458,6 +458,9 @@
+         self.lock_before(None)
+     }
+     fn lock_before(&self, deadline: Option<Instant>) -> Result<LedgerLock> {
++        self.lock_selected(deadline, false)
++    }
++    fn lock_selected(&self, deadline: Option<Instant>, fail_fast: bool) -> Result<LedgerLock> {
+         within_deadline(deadline)?;
+         ensure_current_root(&self.root)?;
+         let lifecycle = Arc::new(acquire_lifecycle(
+@@ -477,7 +480,7 @@
+             .create(true)
+             .truncate(false)
+             .open(path)?;
+-        admission::acquire(&file, deadline)?;
++        if fail_fast { file.try_lock()?; } else { admission::acquire(&file, deadline)?; }
+         for entry in fs::read_dir(self.control_path())? {
+             within_deadline(deadline)?;
+             let entry = entry?;
+@@ -488,7 +491,7 @@
+                     entry.file_type()?.is_file(),
+                     "invalid abandoned quota policy state"
+                 );
+-                if deadline.is_none() {
++                if deadline.is_none() && !fail_fast {
+                     fs::remove_file(entry.path())?;
+                 }
+             } else {
+@@ -676,9 +679,24 @@
+             crate::validate_collection(collection)?;
+         }
+         ensure!(bytes > 0, "quota reservation must be positive");
+-        let _lock = self.lock_before(deadline)?;
++        let lock = self.lock_before(deadline)?;
++        self.reserve_locked(collection, bytes, deadline, available, deadline.is_none(), lock)
++    }
++    /// Optional caller has admitted this exact attempt. Lock contention is
++    /// fail-fast; accepted bounded inventory is not an accounting wait interval.
++    /// No recovery or ordinary caller deadline policy is changed.
++    pub(crate) fn try_reserve_without_wait(&self, collection: &str, bytes: u64) -> Result<Reservation> {
++        crate::validate_collection(collection)?;
++        ensure!(bytes > 0, "quota reservation must be positive");
++        let lock = self.lock_selected(None, true)?;
++        self.reserve_locked(collection, bytes, None, false, false, lock)
++    }
++    fn reserve_locked(&self, collection: &str, bytes: u64, deadline: Option<Instant>,
++        available: bool, recover: bool, _lock: LedgerLock) -> Result<Reservation> {
++        #[cfg(test)]
++        if !recover && deadline.is_none() { OPTIONAL_INVENTORY_HOOK.with(|hook| { if let Some(run)=hook.get() { run(); } }); }
+         let policy = self.read_policy()?;
+-        let records = if deadline.is_some() {
++        let records = if !recover {
+             self.records_without_recovery(deadline)?
+         } else {
+             self.live_records()?
+@@ -1926,3 +1944,13 @@
+ #[cfg(test)]
+ #[path = "quota/namespaces_tests.rs"]
+ mod namespaces_tests;
++
++#[cfg(test)]
++thread_local! { static OPTIONAL_INVENTORY_HOOK: std::cell::Cell<Option<fn()>> = const { std::cell::Cell::new(None) }; }
++#[cfg(test)]
++pub(crate) fn with_optional_inventory_hook<T>(hook: fn(), work: impl FnOnce()->T)->T {
++    struct Restore(Option<fn()>);
++    impl Drop for Restore { fn drop(&mut self) { OPTIONAL_INVENTORY_HOOK.with(|hook|hook.set(self.0)); } }
++    let _restore=Restore(OPTIONAL_INVENTORY_HOOK.with(|slot|slot.replace(Some(hook))));
++    work()
++}
+--- a/crates/airk-store/src/usage.rs
++++ b/crates/airk-store/src/usage.rs
+@@ -19,12 +19,13 @@
+ const MAX_BUCKET_BYTES: usize = 65_536;
+ const CONTENTION_BUDGET: Duration = Duration::from_secs(2);
+ 
+-/// Request-owned cumulative admission allowance. Paused query time is excluded.
+-/// Neither the allowance nor its active interval is cloned/refilled.
++/// Request-owned cumulative contention-wait allowance. Computation is excluded.
++/// No allowance is cloned/refilled; accepted operations settle normally.
+ pub struct AccountingBudget {
+-    remaining: Duration,
+-    active: Option<Instant>,
++    remaining: std::sync::Mutex<Duration>,
+     cancelled: AccountingCancellation,
++    #[cfg(test)]
++    wait_clock: Option<std::sync::Arc<dyn Fn(&'static str,bool)->Instant+Send+Sync>>,
+ }
+ #[derive(Clone, Default)]
+ pub struct AccountingCancellation {
+@@ -45,28 +46,32 @@
+         Self::with_cancellation(allowance, AccountingCancellation::default())
+     }
+     pub fn with_cancellation(allowance: Duration, cancelled: AccountingCancellation) -> Self {
+-        Self { remaining: allowance, active: Some(Instant::now()), cancelled }
++        Self { remaining: std::sync::Mutex::new(allowance), cancelled,
++            #[cfg(test)] wait_clock: None }
+     }
+     pub fn cancellation(&self) -> AccountingCancellation { self.cancelled.clone() }
+-    pub fn pause(&mut self) { self.pause_at(Instant::now()); }
+-    fn pause_at(&mut self, now: Instant) {
+-        if let Some(started) = self.active.take() {
+-            self.remaining = self.remaining.saturating_sub(now.saturating_duration_since(started));
+-        }
+-    }
+-    pub fn resume(&mut self) { if self.active.is_none() { self.active = Some(Instant::now()); } }
+     fn remaining(&self) -> Result<Duration> {
+         ensure!(!self.cancelled.is_cancelled(), "usage accounting cancelled");
+-        let started = self.active.context("usage accounting budget is paused")?;
+-        let left = self.remaining.saturating_sub(started.elapsed());
++        let left = *self.remaining.lock().unwrap_or_else(|error| error.into_inner());
+         ensure!(!left.is_zero(), "usage accounting admission budget exhausted");
+         Ok(left)
+     }
+-    fn window(&self) -> Result<(Instant, Duration)> {
+-        self.remaining()?;
+-        Ok((self.active.expect("active budget checked"), self.remaining))
+-    }
+     fn check(&self) -> Result<()> { self.remaining().map(|_| ()) }
++    fn charge_wait(&self, elapsed: Duration) {
++        let mut left = self.remaining.lock().unwrap_or_else(|error| error.into_inner());
++        *left = left.saturating_sub(elapsed);
++    }
++    fn wait_now(&self, stage: &'static str, finished: bool) -> Instant {
++        #[cfg(test)] if let Some(clock)=&self.wait_clock { return clock(stage,finished); }
++        let _=(stage,finished); Instant::now()
++    }
++    fn blocked<T>(&self, stage: &'static str, work: impl FnOnce() -> T) -> T {
++        struct Charge<'a>(&'a AccountingBudget, &'static str, Instant);
++        impl Drop for Charge<'_> { fn drop(&mut self) { self.0.charge_wait(self.0.wait_now(self.1,true).saturating_duration_since(self.2)); } }
++        let _charge = Charge(self, stage, self.wait_now(stage,false));
++        work()
++    }
++
+ }
+ 
+ pub fn unix_ms() -> u64 {
+@@ -152,6 +157,13 @@
+ 
+ fn lock_before(path: PathBuf, started: Instant, budget: Duration,
+     check: &dyn Fn() -> Result<()>, poll_cancellation: bool) -> Result<UsageLock> {
++    lock_inner(path, started, budget, check, poll_cancellation, None)
++}
++fn lock_accounted(path: PathBuf, accounting: &AccountingBudget) -> Result<UsageLock> {
++    lock_inner(path, Instant::now(), accounting.remaining()?, &|| accounting.check(), true, Some(accounting))
++}
++fn lock_inner(path: PathBuf, started: Instant, budget: Duration,
++    check: &dyn Fn() -> Result<()>, poll_cancellation: bool, accounting: Option<&AccountingBudget>) -> Result<UsageLock> {
+     check()?;
+     // Polling the OS lock alone lets a busy thread repeatedly overtake sleepers.
+     // Queue local callers before contending with other processes. Both waits use
+@@ -159,7 +171,9 @@
+     let turn = if budget.is_zero() {
+         None
+     } else {
+-        Some(wait::acquire_checked(&path, started, budget, check, poll_cancellation)?)
++        Some(if accounting.is_some() {
++            wait::acquire_accounted(&path, started, budget, check, poll_cancellation, accounting)?
++        } else { wait::acquire_checked(&path, started, budget, check, poll_cancellation)? })
+     };
+     check()?;
+     if let Ok(metadata) = fs::symlink_metadata(&path) {
+@@ -177,10 +191,12 @@
+         check()?;
+         match file.try_lock() {
+             Ok(()) => break,
+-            Err(std::fs::TryLockError::WouldBlock) if started.elapsed() < budget => {
+-                std::thread::sleep(
+-                    Duration::from_millis(2).min(budget.saturating_sub(started.elapsed())),
+-                );
++            Err(std::fs::TryLockError::WouldBlock) if accounting.is_some() || started.elapsed() < budget => {
++                let left = match accounting { Some(value) => value.remaining()?,
++                    None => budget.saturating_sub(started.elapsed()) };
++                ensure!(!left.is_zero(), "usage state is busy; observation may be dropped");
++                let sleep = || std::thread::sleep(Duration::from_millis(2).min(left));
++                if let Some(value) = accounting { value.blocked("os",sleep); } else { sleep(); }
+             }
+             Err(error) => {
+                 return Err(anyhow::Error::from(error)
+@@ -234,22 +250,24 @@
+         let collection = store.collection_id()?;
+         let quota = crate::quota::Quota::for_store(&store)?;
+         let started = Instant::now();
++        #[cfg(test)] let started=QUOTA_RETRY_START.with(|value|value.get().unwrap_or(started));
+         let reservation = loop {
+             match admitted_quota_attempt(admission,
+                 CONTENTION_BUDGET.saturating_sub(started.elapsed()),
+-                |remaining| quota.try_reserve(collection, bytes, remaining)) {
++                |remaining| if admission.is_some() { quota.try_reserve_without_wait(collection, bytes) } else { quota.try_reserve(collection, bytes, remaining) }) {
+                 Ok(reservation) => break reservation,
+                 Err(error)
+                     if matches!(
+                         error.downcast_ref::<std::fs::TryLockError>(),
+                         Some(std::fs::TryLockError::WouldBlock)
+-                    ) && started.elapsed() < CONTENTION_BUDGET =>
++                    ) && (admission.is_some() || started.elapsed() < CONTENTION_BUDGET) =>
+                 {
+                     let remaining = match admission {
+                         Some(budget) => budget.remaining()?,
+                         None => CONTENTION_BUDGET.saturating_sub(started.elapsed()),
+                     };
+-                    std::thread::sleep(Duration::from_millis(2).min(remaining));
++                    let sleep = || std::thread::sleep(Duration::from_millis(2).min(remaining));
++                    if let Some(budget) = admission { budget.blocked("quota",sleep); } else { sleep(); }
+                 }
+                 Err(error) => return Err(error),
+             }
+@@ -461,8 +479,7 @@
+         }
+         validate_policy(policy)?;
+         let _guard = if let Some(budget) = admission {
+-            let (started, allowance) = budget.window()?;
+-            lock_before(directory.join("usage.lock"), started, allowance, &|| budget.check(), true)?
++            lock_accounted(directory.join("usage.lock"), budget)?
+         } else { operation_guard(directory)? };
+         managed(directory)?;
+         crate::validate_collection(&scope.collection)?;
+@@ -501,8 +518,7 @@
+             .context("invalid collection directory")?;
+         let _quota = if !directory.join("usage.sqlite3").exists() {
+             Some(if let Some(budget) = admission {
+-                let (started, allowance) = budget.window()?;
+-                lock_before(root.join("usage-quota.lock"), started, allowance, &|| budget.check(), true)?
++                lock_accounted(root.join("usage-quota.lock"), budget)?
+             } else { lock_with_budget(root.join("usage-quota.lock"), CONTENTION_BUDGET)? })
+         } else {
+             None
+@@ -606,8 +622,7 @@
+             "usage observation scope mismatch"
+         );
+         let _guard = if let Some(budget) = admission {
+-            let (started, allowance) = budget.window()?;
+-            lock_before(self.directory.join("usage.lock"), started, allowance, &|| budget.check(), true)?
++            lock_accounted(self.directory.join("usage.lock"), budget)?
+         } else { operation_guard(&self.directory)? };
+         managed(&self.directory)?;
+         let current_policy = policy(&self.directory)?;
+@@ -1119,6 +1134,22 @@
+             anyhow::bail!("cancelled owner must not invoke another quota attempt")
+         }).is_err());
+         drop(reservation);
++        Ok(())
++    }
++
++    #[test]
++    fn uncontended_accepted_quota_inventory_over_ten_ms_preserves_record_coverage() -> Result<()> {
++        let (_owner,directory,scope)=setup()?;
++        let store=UsageStore::open(&directory,&scope,&UsagePolicy::default())?.unwrap();
++        let event=observation(&scope,80);
++        let budget=AccountingBudget::new(Duration::from_millis(10));
++        let started=Instant::now();
++        crate::quota::with_optional_inventory_hook(||std::thread::sleep(Duration::from_millis(20)),
++            ||store.record_budgeted(&event,&budget))?;
++        assert!(started.elapsed()>=Duration::from_millis(20));
++        assert_eq!(budget.remaining()?,Duration::from_millis(10),"accepted inventory is not lock waiting");
++        let saved=UsageStore::read(&directory,&scope,0,unix_ms()+DAY_MS)?;
++        assert_eq!(saved.lifetime.context("record missing after slow uncontended inventory")?.calls,1);
+         Ok(())
+     }
+ 
+@@ -1254,18 +1285,74 @@
+     }
+ 
+     #[test]
+-    fn paused_query_interval_does_not_refill_or_consume_accounting_allowance() -> Result<()> {
+-        let started = Instant::now();
+-        let mut budget = AccountingBudget::new(Duration::from_millis(10));
+-        budget.active = Some(started);
+-        budget.pause_at(started + Duration::from_millis(4));
+-        assert_eq!(budget.remaining, Duration::from_millis(6));
+-        assert!(budget.window().is_err(), "paused budget cannot admit store work");
+-        budget.active = Some(started + Duration::from_secs(100));
+-        budget.pause_at(started + Duration::from_secs(100) + Duration::from_millis(3));
+-        assert_eq!(budget.remaining, Duration::from_millis(3));
+-        budget.pause_at(started + Duration::from_secs(200));
+-        assert_eq!(budget.remaining, Duration::from_millis(3), "pause is idempotent");
++    fn real_fifo_os_and_quota_stages_share_wait_allowance_without_wall_refill()->Result<()> {
++        use std::sync::{Arc,atomic::{AtomicU64,AtomicU8,Ordering}};
++        let (root,directory,scope)=setup()?;
++        let store=UsageStore::open_best_effort(&directory,&scope,&UsagePolicy::default())?.unwrap();
++        let UsageLock{_file: held_file,_turn: held_turn}=operation_guard(&directory)?;
++        let quota=OpenOptions::new().read(true).write(true).open(root.path().join(".quota-1.2/ledger.lock"))?;
++        quota.lock()?;
++        let ticks=Arc::new(AtomicU64::new(0));let seen=Arc::new(AtomicU8::new(0));
++        let (entered,stages)=std::sync::mpsc::channel();
++        let origin=Instant::now();let clock_ticks=ticks.clone();
++        let mut budget=AccountingBudget::new(Duration::from_millis(10));
++        budget.wait_clock=Some(Arc::new(move|stage,finished|{
++            let now=origin+Duration::from_millis(clock_ticks.load(Ordering::SeqCst));
++            if !finished {
++                let bit=match stage{"fifo"=>1,"os"=>2,"quota"=>4,_=>unreachable!()};
++                if seen.fetch_or(bit,Ordering::SeqCst)&bit==0 {entered.send(stage).unwrap();}
++            } now
++        }));
++        let event=observation(&scope,79);
++        std::thread::scope(|threads|->Result<()> {
++            let (done,finished)=std::sync::mpsc::channel();
++            struct CancelOnExit(AccountingCancellation);
++            impl Drop for CancelOnExit {fn drop(&mut self){self.0.cancel();}}
++            let _cancel=CancelOnExit(budget.cancellation());
++            let worker=threads.spawn(||{
++                // An old legacy 2 s wall guard must not suppress this next real
++                // quota retry when the shared wait allowance still remains.
++                QUOTA_RETRY_START.with(|value|value.set(Some(Instant::now()-Duration::from_secs(3))));
++                let result=store.record_budgeted(&event,&budget);
++                let _=done.send(());result
++            });
++            assert_eq!(stages.recv_timeout(Duration::from_secs(5))?,"fifo");
++            ticks.store(4,Ordering::SeqCst);drop(held_turn);
++            assert_eq!(stages.recv_timeout(Duration::from_secs(5))?,"os");
++            assert_eq!(budget.remaining()?,Duration::from_millis(6));
++            ticks.store(8,Ordering::SeqCst);held_file.unlock()?;
++            assert_eq!(stages.recv_timeout(Duration::from_secs(5))?,"quota");
++            assert_eq!(budget.remaining()?,Duration::from_millis(2));
++            ticks.store(10,Ordering::SeqCst);
++            if let Err(timeout)=finished.recv_timeout(Duration::from_secs(5)) {
++                budget.cancellation().cancel();
++                let _=quota.unlock();
++                let primary=anyhow::Error::new(timeout).context("staged recorder did not finish after allowance exhaustion");
++                return match worker.join(){Ok(_)=>Err(primary),Err(_)=>Err(primary.context("staged worker also panicked during drain"))};
++            }
++            assert!(worker.join().expect("staged recorder panicked").is_err());
++            assert_eq!(*budget.remaining.lock().unwrap(),Duration::ZERO);
++            Ok(())
++        })?;
++        assert!(budget.check().is_err());drop(quota);drop(held_file);
++        let before=UsageStore::read(&directory,&scope,0,unix_ms()+DAY_MS)?;
++        assert!(before.lifetime.is_none_or(|report|report.calls==0));
++        store.record(&event)?;store.record(&event)?;
++        let after=UsageStore::read(&directory,&scope,0,unix_ms()+DAY_MS)?;
++        assert_eq!(after.lifetime.context("ordinary retry missing")?.calls,1);
++        Ok(())
++    }
++
++    #[test]
++    fn only_actual_waits_consume_one_shared_allowance() -> Result<()> {
++        let budget=AccountingBudget::new(Duration::from_millis(10));
++        budget.charge_wait(Duration::from_millis(4));
++        std::thread::sleep(Duration::from_millis(20));
++        assert_eq!(budget.remaining()?,Duration::from_millis(6));
++        budget.charge_wait(Duration::from_millis(4));
++        assert_eq!(budget.remaining()?,Duration::from_millis(2));
++        budget.charge_wait(Duration::from_millis(2));
++        assert!(budget.check().is_err());
+         Ok(())
+     }
+ 
+@@ -1286,7 +1373,7 @@
+     fn cancellation_cannot_revoke_an_already_held_write_guard() -> Result<()> {
+         let directory = tempfile::tempdir()?;
+         let budget = AccountingBudget::new(Duration::from_secs(1));
+-        let (started, allowance) = budget.window()?;
++        let (started, allowance) = (Instant::now(), budget.remaining()?);
+         let path = directory.path().join("usage.lock");
+         let guard = lock_before(path.clone(), started, allowance, &|| budget.check(), true)?;
+         budget.cancellation().cancel();
+@@ -1296,3 +1383,6 @@
+         Ok(())
+     }
+ }
++
++#[cfg(test)]
++thread_local! { static QUOTA_RETRY_START: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) }; }
+--- a/crates/airk-store/src/usage/wait.rs
++++ b/crates/airk-store/src/usage/wait.rs
+@@ -26,6 +26,11 @@
+ 
+ pub(super) fn acquire_checked(path: &Path, started: Instant, budget: Duration,
+     check: &dyn Fn() -> Result<()>, poll_cancellation: bool) -> Result<Turn> {
++    acquire_accounted(path, started, budget, check, poll_cancellation, None)
++}
++pub(super) fn acquire_accounted(path: &Path, started: Instant, budget: Duration,
++    check: &dyn Fn() -> Result<()>, poll_cancellation: bool,
++    accounting: Option<&super::AccountingBudget>) -> Result<Turn> {
+     check()?;
+     let queue = {
+         let mut queues = QUEUES
+@@ -45,7 +50,7 @@
+             queue
+         }
+     };
+-    Turn::enqueue(queue)?.wait_checked(started, budget, check, poll_cancellation)
++    Turn::enqueue(queue)?.wait_accounted(started, budget, check, poll_cancellation, accounting)
+ }
+ 
+ impl Turn {
+@@ -69,8 +74,14 @@
+     fn wait(self, started: Instant, budget: Duration) -> Result<Self> {
+         self.wait_checked(started, budget, &|| Ok(()), false)
+     }
++    #[cfg(test)]
+     fn wait_checked(self, started: Instant, budget: Duration,
+         check: &dyn Fn() -> Result<()>, poll_cancellation: bool) -> Result<Self> {
++        self.wait_accounted(started, budget, check, poll_cancellation, None)
++    }
++    fn wait_accounted(self, started: Instant, budget: Duration,
++        check: &dyn Fn() -> Result<()>, poll_cancellation: bool,
++        accounting: Option<&super::AccountingBudget>) -> Result<Self> {
+         {
+             let mut order = self
+                 .queue
+@@ -82,18 +93,19 @@
+                 .is_some_and(|token| Arc::ptr_eq(token, &self.token))
+             {
+                 if let Err(error) = check() { drop(order); return Err(error); }
+-                let remaining = budget.saturating_sub(started.elapsed());
++                let remaining = match accounting {
++                    Some(value) => match value.remaining() { Ok(left) => left, Err(error) => { drop(order); return Err(error); } },
++                    None => budget.saturating_sub(started.elapsed()) };
+                 if remaining.is_zero() {
+                     // Unlock before dropping the ticket; its removal wakes successors.
+                     drop(order);
+                     return Err(anyhow::Error::from(std::fs::TryLockError::WouldBlock)
+                         .context("usage state is busy; observation may be dropped"));
+                 }
+-                (order, _) = self
+-                    .queue
+-                    .changed
++                let waiting = || self.queue.changed
+                     .wait_timeout(order, if poll_cancellation { remaining.min(Duration::from_millis(2)) } else { remaining })
+                     .unwrap_or_else(|error| error.into_inner());
++                (order, _) = match accounting { Some(value) => value.blocked("fifo",waiting), None => waiting() };
+             }
+         }
+         check()?;
+--- a/crates/airk-kernel/src/usage.rs
++++ b/crates/airk-kernel/src/usage.rs
+@@ -210,7 +210,7 @@
+         } else {
+             None
+         };
+-        let mut span = RequestSpan {
++        let span = RequestSpan {
+             accounting,
+             started,
+             operation,
+@@ -227,7 +227,6 @@
+                 None
+             },
+         };
+-        span.accounting.pause();
+         span
+     }
+ 
+@@ -235,7 +234,7 @@
+     /// Recording failure is observable locally but never changes the tool result.
+     pub fn finish_usage(
+         &self,
+-        mut span: RequestSpan,
++        span: RequestSpan,
+         logical: Option<&Value>,
+         bytes: usize,
+         failed: bool,
+@@ -244,7 +243,6 @@
+         if !span.enabled {
+             return;
+         }
+-        span.accounting.resume();
+         let resources = span.resources.map(crate::resources::ResourceSpan::finish);
+         let result = (|| -> Result<()> {
+             let mut store = span.store;
+@@ -410,6 +408,8 @@
+         generation: Option<u64>,
+         representation: ResponseRepresentation,
+     ) -> std::result::Result<(ContextBaseline, ContentKind), BaselineUnavailable> {
++        #[cfg(test)]
++        BASELINE_DELAY.with(|delay| { if let Some(duration)=delay.take() { std::thread::sleep(duration); } });
+         use BaselineUnavailable as Missing;
+         let mut sources = BTreeSet::new();
+         fn citations<'a>(value: &'a Value, sources: &mut BTreeSet<(&'a str, &'a str)>) {
+@@ -1227,6 +1227,31 @@
+     }
+ 
+     #[test]
++    fn slow_uncontended_default_baseline_preserves_record_and_comparison_coverage()->Result<()> {
++        let root=tempfile::tempdir()?;
++        std::fs::write(root.path().join("memo.txt"),"original baseline context\n".repeat(80))?;
++        let kernel=crate::Kernel::open(root.path(),None)?;
++        kernel.configure_vectors(false)?;kernel.index()?;
++        let response=kernel.read_file("memo.txt",1,1,100)?;
++        let logical=serde_json::to_value(&response)?;
++        let expected=kernel.usage_baseline(&logical,Some(response.generation),ResponseRepresentation::LogicalResultJson);
++        assert!(expected.is_ok());
++        let span=kernel.usage_span(UsageOperation::ReadFile,ClientFamily::Codex);
++        assert!(span.enabled&&span.store.is_some(),"actual default admission must create a recorder");
++        let started=Instant::now();
++        BASELINE_DELAY.with(|delay|delay.set(Some(std::time::Duration::from_millis(20))));
++        kernel.finish_usage(span,Some(&logical),400,false,ResponseRepresentation::LogicalResultJson);
++        assert!(started.elapsed()>=std::time::Duration::from_millis(20));
++        let report=kernel.usage_report(30)?;
++        assert_eq!(report.report.eligible_evidence_calls,1,"uncontended computation dropped the event");
++        assert_eq!(report.report.missing_baseline_calls,0);
++        assert_eq!(report.report.mismatched_baseline_calls,0);
++        assert!(report.report.baseline_unavailable.is_empty());
++        assert_eq!(report.lifetime.context("lifetime event missing")?.calls,1);
++        Ok(())
++    }
++
++    #[test]
+     fn comparison_expires_after_current_publication() -> Result<()> {
+         let root = tempfile::tempdir()?;
+         std::fs::write(
+@@ -1487,3 +1512,6 @@
+         Ok(())
+     }
+ }
++
++#[cfg(test)]
++thread_local! { static BASELINE_DELAY: std::cell::Cell<Option<std::time::Duration>> = const { std::cell::Cell::new(None) }; }

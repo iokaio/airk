@@ -1,0 +1,164 @@
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/manifest.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/manifest.rs
+@@ -1,5 +1,6 @@
+ // SPDX-License-Identifier: Apache-2.0
+ use super::*;
++#[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
+ #[derive(Clone, Debug, Serialize, Deserialize)]
+ #[serde(deny_unknown_fields)]
+ pub(super) struct RuntimeFile {
+@@ -23,6 +24,7 @@
+     pub driver_api_version: i32,
+     pub driver_image_sha256: Sha256Digest,
+ }
++#[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
+ #[derive(Clone, Debug, Serialize, Deserialize)]
+ #[serde(deny_unknown_fields)]
+ pub(super) struct RuntimeManifest {
+@@ -107,6 +109,7 @@
+     Ok(())
+ }
+ 
++#[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
+ impl RuntimeManifest {
+     #[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
+     pub fn validate(&self) -> Result<()> {
+@@ -227,6 +230,7 @@
+         Ok(())
+     }
+ }
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
+ #[derive(Clone, Debug, Serialize, Deserialize)]
+ #[serde(deny_unknown_fields)]
+ pub(super) struct ProductRuntimeManifest {
+@@ -239,8 +243,8 @@
+     pub system_imports: BTreeSet<String>,
+     pub requirements: Vec<VariantRequirement>,
+ }
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
+ impl ProductRuntimeManifest {
+-    #[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
+     pub fn validate(&self) -> Result<()> {
+         use airk_core::arbiter::AssetRole;
+         ensure!(
+@@ -307,13 +311,17 @@
+         Ok(())
+     }
+ }
++// Unsupported production targets cannot construct a native runtime descriptor.
++// Keep its read type for shared eligibility APIs without inventing runtime values.
+ #[derive(Clone, Debug)]
+ pub(super) enum RuntimeDescriptor {
++    #[cfg(any(test, all(windows, target_arch = "x86_64")))]
+     Scientific(RuntimeManifest),
++    #[cfg(any(test, all(windows, target_arch = "x86_64")))]
+     Product(ProductRuntimeManifest),
+ }
+ impl RuntimeDescriptor {
+-    #[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
++    #[cfg(any(test, all(windows, target_arch = "x86_64")))]
+     pub fn parse(raw: &[u8]) -> Result<Self> {
+         ensure!(raw.len() <= 128 << 10, "runtime descriptor byte cap");
+         let head: serde_json::Value = serde_json::from_slice(raw)?;
+@@ -332,9 +340,16 @@
+         }
+     }
+     pub fn build(&self) -> Sha256Digest {
+-        match self {
+-            Self::Scientific(v) => v.static_core_build,
+-            Self::Product(v) => v.static_core_build,
++        #[cfg(not(any(test, all(windows, target_arch = "x86_64"))))]
++        {
++            match *self {}
++        }
++        #[cfg(any(test, all(windows, target_arch = "x86_64")))]
++        {
++            match self {
++                Self::Scientific(v) => v.static_core_build,
++                Self::Product(v) => v.static_core_build,
++            }
+         }
+     }
+     #[cfg(all(windows, target_arch = "x86_64"))]
+@@ -359,35 +374,57 @@
+         }
+     }
+     pub fn is_product(&self) -> bool {
+-        matches!(self, Self::Product(_))
++        #[cfg(not(any(test, all(windows, target_arch = "x86_64"))))]
++        {
++            match *self {}
++        }
++        #[cfg(any(test, all(windows, target_arch = "x86_64")))]
++        {
++            matches!(self, Self::Product(_))
++        }
+     }
+     pub fn fits(&self) -> Result<&[VariantFit]> {
+-        match self {
+-            Self::Scientific(v) => Ok(&v.fits),
+-            Self::Product(_) => anyhow::bail!("product requirements cannot be scientific fits"),
++        #[cfg(not(any(test, all(windows, target_arch = "x86_64"))))]
++        {
++            match *self {}
++        }
++        #[cfg(any(test, all(windows, target_arch = "x86_64")))]
++        {
++            match self {
++                Self::Scientific(v) => Ok(&v.fits),
++                Self::Product(_) => anyhow::bail!("product requirements cannot be scientific fits"),
++            }
+         }
+     }
+     pub fn requirement(&self, profile: &Profile) -> Result<&VariantRequirement> {
+-        let Self::Product(v) = self else {
+-            anyhow::bail!("scientific reference fit cannot grant product eligibility")
+-        };
+-        let identity = profile.device_execution_identity()?;
+-        let row = v
+-            .requirements
+-            .iter()
+-            .find(|r| r.manifest == profile.manifest && r.execution_identity == identity)
+-            .context("product variant has no compiled conservative requirements")?;
+-        ensure!(
+-            row.target == super::super::current_target()
+-                && row.host_warm_extra_limit_bytes <= profile.memory_reservation_bytes
+-                && profile.assets.iter().any(|a| a == &row.acceptance_fixture),
+-            "product host/fixture/target requirements differ from profile"
+-        );
+-        ensure!(
+-            matches!(&profile.device_execution.as_ref().context("CPU product profile")?.memory,DeviceMemory::Dedicated{required_peak_bytes,headroom_bytes} if *required_peak_bytes==row.cold_peak_limit_bytes&&*headroom_bytes==row.headroom_bytes),
+-            "product conservative bounds differ from immutable profile"
+-        );
+-        Ok(row)
++        #[cfg(not(any(test, all(windows, target_arch = "x86_64"))))]
++        {
++            let _ = profile;
++            match *self {}
++        }
++        #[cfg(any(test, all(windows, target_arch = "x86_64")))]
++        {
++            let Self::Product(v) = self else {
++                anyhow::bail!("scientific reference fit cannot grant product eligibility")
++            };
++            let identity = profile.device_execution_identity()?;
++            let row = v
++                .requirements
++                .iter()
++                .find(|r| r.manifest == profile.manifest && r.execution_identity == identity)
++                .context("product variant has no compiled conservative requirements")?;
++            ensure!(
++                row.target == super::super::current_target()
++                    && row.host_warm_extra_limit_bytes <= profile.memory_reservation_bytes
++                    && profile.assets.iter().any(|a| a == &row.acceptance_fixture),
++                "product host/fixture/target requirements differ from profile"
++            );
++            ensure!(
++                matches!(&profile.device_execution.as_ref().context("CPU product profile")?.memory,DeviceMemory::Dedicated{required_peak_bytes,headroom_bytes} if *required_peak_bytes==row.cold_peak_limit_bytes&&*headroom_bytes==row.headroom_bytes),
++                "product conservative bounds differ from immutable profile"
++            );
++            Ok(row)
++        }
+     }
+     #[cfg(any(test, all(windows, target_arch = "x86_64")))]
+     pub fn approved(raw: &[u8]) -> Result<(Self, Sha256Digest)> {

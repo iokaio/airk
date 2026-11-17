@@ -1,0 +1,891 @@
+diff --git a/crates/airk-cli/src/project_worker_admission.rs b/crates/airk-cli/src/project_worker_admission.rs
+new file mode 100644
+index 0000000..56a8a74
+--- /dev/null
++++ b/crates/airk-cli/src/project_worker_admission.rs
+@@ -0,0 +1,311 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Bounded waiting before the existing broker accepts any query work.
++use airk_core::service::AdmissionError;
++use std::{future::Future, sync::Arc};
++use tokio::sync::{Mutex, Notify, Semaphore};
++
++pub(super) struct QueryAdmission {
++    waiting: Arc<Semaphore>,
++    turn: Mutex<()>,
++    changed: Notify,
++    closed: std::sync::atomic::AtomicBool,
++}
++impl Default for QueryAdmission {
++    fn default() -> Self {
++        Self {
++            waiting: Arc::new(Semaphore::new(128)),
++            turn: Mutex::new(()),
++            changed: Notify::new(),
++            closed: std::sync::atomic::AtomicBool::new(false),
++        }
++    }
++}
++impl QueryAdmission {
++    pub(super) fn close(&self) {
++        self.closed
++            .store(true, std::sync::atomic::Ordering::Release);
++        self.waiting.close();
++        self.changed.notify_waiters();
++    }
++    pub(super) fn completed(&self) {
++        self.changed.notify_waiters();
++    }
++    pub(super) async fn while_open<T>(
++        &self,
++        peer: &mut (impl tokio::io::AsyncRead + Unpin),
++        expires: tokio::time::Instant,
++        attempt: impl FnMut() -> Result<T, AdmissionError>,
++    ) -> anyhow::Result<Option<Result<T, AdmissionError>>> {
++        use tokio::io::AsyncReadExt;
++        let mut unexpected = [0; 1];
++        tokio::select! {
++            biased;
++            received = peer.read(&mut unexpected) => {
++                anyhow::ensure!(received? == 0, "native query pipelined before admission completed");
++                Ok(None)
++            }
++            result = self.admit(expires, attempt) => Ok(Some(result)),
++        }
++    }
++    pub(super) async fn admit<T>(
++        &self,
++        expires: tokio::time::Instant,
++        mut attempt: impl FnMut() -> Result<T, AdmissionError>,
++    ) -> Result<T, AdmissionError> {
++        let waiting = self.waiting.clone().try_acquire_owned().map_err(|error| {
++            if error == tokio::sync::TryAcquireError::Closed {
++                AdmissionError::Draining
++            } else {
++                AdmissionError::Busy
++            }
++        })?;
++        // One FIFO waiter retries broker admission; other bounded handlers keep
++        // no broker lock. No accepted query is re-executed by this queue.
++        let admission = async {
++            let _turn = self.turn.lock().await;
++            loop {
++                // Enable before inspecting capacity to avoid losing a finish
++                // notification between a Busy observation and awaiting it.
++                let changed = self.changed.notified();
++                tokio::pin!(changed);
++                changed.as_mut().enable();
++                if self.closed.load(std::sync::atomic::Ordering::Acquire) {
++                    return Err(AdmissionError::Draining);
++                }
++                if tokio::time::Instant::now() >= expires {
++                    return Err(AdmissionError::Busy);
++                }
++                match attempt() {
++                    Err(AdmissionError::Busy) => changed.await,
++                    result => return result,
++                }
++            }
++        };
++        let result = before(expires, admission).await;
++        drop(waiting);
++        result
++    }
++}
++
++async fn before<T>(
++    expires: tokio::time::Instant,
++    admission: impl Future<Output = Result<T, AdmissionError>>,
++) -> Result<T, AdmissionError> {
++    tokio::time::timeout_at(expires, admission)
++        .await
++        .unwrap_or(Err(AdmissionError::Busy))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
++
++    fn poll_pending<T>(future: std::pin::Pin<&mut impl Future<Output = T>>) {
++        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
++        assert!(future.poll(&mut context).is_pending());
++    }
++
++    #[tokio::test]
++    async fn released_capacity_admits_one_attempt_without_replaying_execution() {
++        let queue = QueryAdmission::default();
++        let ready = AtomicBool::new(false);
++        let attempts = AtomicUsize::new(0);
++        let call = queue.admit(
++            tokio::time::Instant::now() + std::time::Duration::from_secs(1),
++            || {
++                attempts.fetch_add(1, Ordering::SeqCst);
++                if ready.load(Ordering::SeqCst) {
++                    Ok(17)
++                } else {
++                    Err(AdmissionError::Busy)
++                }
++            },
++        );
++        tokio::pin!(call);
++        poll_pending(call.as_mut());
++        assert_eq!(attempts.load(Ordering::SeqCst), 1);
++        ready.store(true, Ordering::SeqCst);
++        queue.completed();
++        assert_eq!(call.await.unwrap(), 17);
++        assert_eq!(attempts.load(Ordering::SeqCst), 2);
++        assert_eq!(queue.waiting.available_permits(), 128);
++    }
++
++    #[tokio::test]
++    async fn pending_cap_cancel_close_and_expiry_never_accept_work() {
++        let queue = QueryAdmission::default();
++        let expires = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
++        let mut held: Vec<_> = (0..128)
++            .map(|_| Box::pin(queue.admit(expires, || Err::<(), _>(AdmissionError::Busy))))
++            .collect();
++        for call in &mut held {
++            poll_pending(call.as_mut());
++        }
++        let accepted = AtomicUsize::new(0);
++        assert_eq!(
++            queue
++                .admit(expires, || {
++                    accepted.fetch_add(1, Ordering::SeqCst);
++                    Ok(())
++                })
++                .await,
++            Err(AdmissionError::Busy)
++        );
++        drop(held.pop());
++        assert_eq!(queue.waiting.available_permits(), 1);
++        assert_eq!(
++            queue
++                .admit(tokio::time::Instant::now(), || {
++                    accepted.fetch_add(1, Ordering::SeqCst);
++                    Ok(())
++                })
++                .await,
++            Err(AdmissionError::Busy)
++        );
++        queue.close();
++        for call in held {
++            assert_eq!(call.await, Err(AdmissionError::Draining));
++        }
++        assert_eq!(accepted.load(Ordering::SeqCst), 0);
++    }
++
++    #[tokio::test]
++    async fn queued_turn_revalidates_and_never_retries_permanent_refusals() {
++        let queue = QueryAdmission::default();
++        let stale = AtomicBool::new(false);
++        let expires = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
++        let mut first = Box::pin(queue.admit(expires, || Err::<(), _>(AdmissionError::Busy)));
++        poll_pending(first.as_mut());
++        let mut second = Box::pin(queue.admit(expires, || {
++            Err::<(), _>(if stale.load(Ordering::SeqCst) {
++                AdmissionError::Expired
++            } else {
++                AdmissionError::Busy
++            })
++        }));
++        poll_pending(second.as_mut());
++        stale.store(true, Ordering::SeqCst);
++        drop(first);
++        assert_eq!(second.await, Err(AdmissionError::Expired));
++        let open = QueryAdmission::default();
++        let attempts = AtomicUsize::new(0);
++        assert_eq!(
++            open.admit(expires, || {
++                attempts.fetch_add(1, Ordering::SeqCst);
++                Err::<(), _>(AdmissionError::Expired)
++            })
++            .await,
++            Err(AdmissionError::Expired)
++        );
++        assert_eq!(attempts.load(Ordering::SeqCst), 1);
++    }
++
++    #[tokio::test]
++    async fn actual_peer_eof_retires_unsubmitted_wait_without_acceptance() {
++        use tokio::io::AsyncWriteExt;
++        let queue = QueryAdmission::default();
++        let (mut client, mut server) = tokio::io::duplex(8);
++        let attempts = AtomicUsize::new(0);
++        let mut pending = Box::pin(queue.while_open(
++            &mut server,
++            tokio::time::Instant::now() + std::time::Duration::from_secs(1),
++            || {
++                attempts.fetch_add(1, Ordering::SeqCst);
++                Err::<(), _>(AdmissionError::Busy)
++            },
++        ));
++        poll_pending(pending.as_mut());
++        assert_eq!(queue.waiting.available_permits(), 127);
++        client.shutdown().await.unwrap();
++        assert!(pending.await.unwrap().is_none());
++        assert_eq!(attempts.load(Ordering::SeqCst), 1);
++        assert_eq!(queue.waiting.available_permits(), 128);
++    }
++
++    #[tokio::test]
++    async fn actual_broker_capacity_is_rechecked_and_expired_sessions_never_admit()
++    -> anyhow::Result<()> {
++        use airk_core::{
++            identity::Incarnation,
++            service::{QueryAllowance, WorkerIdentity},
++        };
++        use airk_kernel::service_broker::{Broker, BrokerLimits};
++        let identity = WorkerIdentity {
++            service: Incarnation::from_bytes([71; 16]),
++            worker: Incarnation::from_bytes([72; 16]),
++            project: "ab".repeat(32).parse()?,
++            fencing_generation: 1,
++        };
++        let caller = Incarnation::from_bytes([73; 16]);
++        let now = std::time::Instant::now();
++        let broker = std::sync::Mutex::new(Broker::new(identity.service, BrokerLimits::default())?);
++        let (first, second, held) = {
++            let mut policy = broker.lock().unwrap();
++            policy.register(
++                identity,
++                QueryAllowance {
++                    concurrent_queries: 1,
++                    response_bytes: 1024,
++                },
++                now,
++                std::time::Duration::from_secs(300),
++            )?;
++            let first_grant =
++                policy.issue(identity, caller, now, std::time::Duration::from_secs(5))?;
++            let first = policy.redeem(
++                &first_grant,
++                identity,
++                caller,
++                now,
++                std::time::Duration::from_secs(60),
++            )?;
++            let second_grant =
++                policy.issue(identity, caller, now, std::time::Duration::from_secs(5))?;
++            let second = policy.redeem(
++                &second_grant,
++                identity,
++                caller,
++                now,
++                std::time::Duration::from_secs(60),
++            )?;
++            let held = policy.begin_query(identity, first, 1024, now)?;
++            (first, second, held)
++        };
++        let queue = QueryAdmission::default();
++        let observed = std::cell::Cell::new(now);
++        let expires = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
++        let mut pending = Box::pin(queue.admit(expires, || {
++            broker
++                .lock()
++                .unwrap()
++                .begin_query(identity, second, 1024, observed.get())
++        }));
++        poll_pending(pending.as_mut());
++        assert_eq!(broker.lock().unwrap().status(now).active_queries, 1);
++        broker.lock().unwrap().finish_query(identity, held)?;
++        queue.completed();
++        let admitted = pending.await?;
++        assert_eq!(broker.lock().unwrap().status(now).active_queries, 1);
++        assert_ne!(
++            held, admitted,
++            "admission creates one new query identity, not a replay"
++        );
++        let mut expired = Box::pin(queue.admit(expires, || {
++            broker
++                .lock()
++                .unwrap()
++                .begin_query(identity, first, 1024, observed.get())
++        }));
++        poll_pending(expired.as_mut());
++        observed.set(now + std::time::Duration::from_secs(61));
++        broker.lock().unwrap().finish_query(identity, admitted)?;
++        queue.completed();
++        assert_eq!(expired.await, Err(AdmissionError::Expired));
++        assert_eq!(
++            broker.lock().unwrap().status(observed.get()).active_queries,
++            0
++        );
++        Ok(())
++    }
++}
+diff --git a/crates/airk-cli/src/service_resource_policy.rs b/crates/airk-cli/src/service_resource_policy.rs
+index feba069..9970023 100644
+--- a/crates/airk-cli/src/service_resource_policy.rs
++++ b/crates/airk-cli/src/service_resource_policy.rs
+@@ -27,6 +27,13 @@ fn check(path: &Path) -> Result<()> {
+     }
+     Ok(())
+ }
++/// Reads only bounded service-owned scalar metadata; never opens a collection.
++pub(crate) fn query_concurrency(root: &Path) -> usize {
++    load(root).map_or(
++        airk_core::service_resources::DEFAULT_QUERY_CONCURRENCY,
++        |c| c.query_concurrency,
++    )
++}
+ pub fn load(root: &Path) -> Result<ResourceConfiguration> {
+     let path = root.join("resources-1.4.json");
+     check(&path)?;
+@@ -69,17 +76,33 @@ mod tests {
+         let root = directory.path().join("runtime");
+         crate::local_ipc::prepare_root(&root)?;
+         assert!(load(&root)?.memory_bytes.is_none());
++        assert_eq!(load(&root)?.query_concurrency, 16);
+         let first = ResourceConfiguration {
+             memory_bytes: Some(2 << 30),
+             ..Default::default()
+         };
+         save(&root, &first)?;
+         let second = ResourceConfiguration {
++            query_concurrency: 64,
+             extraction_threads: Some(3),
+             ..Default::default()
+         };
+         save(&root, &second)?;
+         assert_eq!(load(&root)?.extraction_threads, Some(3));
++        assert_eq!(load(&root)?.query_concurrency, 64);
++        for query_concurrency in [0, 2, 5, 63, 66] {
++            assert!(
++                save(
++                    &root,
++                    &ResourceConfiguration {
++                        query_concurrency,
++                        ..Default::default()
++                    }
++                )
++                .is_err()
++            );
++            assert_eq!(load(&root)?.query_concurrency, 64);
++        }
+         assert!(
+             save(
+                 &root,
+diff --git a/crates/airk-cli/src/status_observation.rs b/crates/airk-cli/src/status_observation.rs
+index 5e4c136..b636538 100644
+--- a/crates/airk-cli/src/status_observation.rs
++++ b/crates/airk-cli/src/status_observation.rs
+@@ -29,6 +29,7 @@ struct Key {
+     args: serde_json::Value,
+ }
+ struct Snapshot {
++    authority: u64,
+     options: serde_json::Value,
+     scope: CacheScope,
+     epoch: u64,
+@@ -63,6 +64,7 @@ pub(super) struct RequestTicket {
+     pub(super) authority: u64,
+     pub(super) scalar_epoch: u64,
+     pub(super) receipt: airk_mcp::response::StatusReceipt,
++    initial_authority: bool,
+     project: ProjectBinding,
+     expires: Option<Instant>,
+ }
+@@ -84,6 +86,7 @@ impl std::fmt::Display for RetiredRequest {
+ impl std::error::Error for RetiredRequest {}
+ pub(crate) struct StatusOwner {
+     closed: AtomicBool,
++    closed_notification: tokio::sync::Notify,
+     epoch: AtomicU64,
+     state: tokio::sync::Mutex<State>,
+     scope: Mutex<Option<CacheScope>>,
+@@ -97,6 +100,7 @@ impl Default for StatusOwner {
+     fn default() -> Self {
+         Self {
+             closed: AtomicBool::new(false),
++            closed_notification: tokio::sync::Notify::new(),
+             epoch: AtomicU64::new(0),
+             state: Default::default(),
+             scope: Mutex::new(None),
+@@ -206,6 +210,7 @@ impl StatusOwner {
+             authority: authority.generation,
+             scalar_epoch: self.epoch.load(Ordering::Acquire),
+             receipt: self.receipt(),
++            initial_authority: authority.known.is_none(),
+             project,
+             expires,
+         }
+@@ -215,6 +220,37 @@ impl StatusOwner {
+             && ticket.expires.is_none_or(|until| Instant::now() < until)
+             && *self.scope.lock().unwrap_or_else(|e| e.into_inner()) == ticket.scope
+     }
++    pub(super) fn after_evidence_wait(&self, ticket: RequestTicket) -> Result<RequestTicket> {
++        let scope = self.scope.lock().unwrap_or_else(|e| e.into_inner());
++        let authority = self.authority.lock().unwrap_or_else(|e| e.into_inner());
++        if self.closed.load(Ordering::Acquire)
++            || ticket.expires.is_some_and(|until| Instant::now() >= until)
++            || *scope != ticket.scope
++        {
++            return Err(RetiredRequest.into());
++        }
++        if authority.generation == ticket.authority {
++            return Ok(ticket);
++        }
++        // Simultaneous cold calls can capture tickets before the first grant
++        // establishes ANY worker authority. They may join exactly that first
++        // binding after the shared evidence setup completes. A previously known
++        // worker, a second replacement, changed scope or expired ticket cannot
++        // be promoted by waiting on this mutex.
++        if ticket.initial_authority
++            && ticket.authority.checked_add(1) == Some(authority.generation)
++            && authority.known.is_some()
++        {
++            return Ok(RequestTicket {
++                authority: authority.generation,
++                scalar_epoch: self.epoch.load(Ordering::Acquire),
++                receipt: self.receipt(),
++                initial_authority: false,
++                ..ticket
++            });
++        }
++        Err(RetiredRequest.into())
++    }
+     pub(super) fn ticket_current(&self, ticket: &RequestTicket) -> bool {
+         let scope = self.scope.lock().unwrap_or_else(|e| e.into_inner());
+         let authority = self.authority.lock().unwrap_or_else(|e| e.into_inner());
+@@ -310,6 +346,7 @@ impl StatusOwner {
+                 authority: authority.generation,
+                 scalar_epoch: self.epoch.load(Ordering::Acquire),
+                 receipt: Default::default(),
++                initial_authority: false,
+                 project: ticket.project,
+                 expires: ticket.expires,
+             })
+@@ -330,8 +367,17 @@ impl StatusOwner {
+     }
+     pub(crate) fn close(&self) {
+         self.closed.store(true, Ordering::Release);
++        self.closed_notification.notify_waiters();
+         self.invalidate();
+     }
++    pub(super) async fn when_closed(&self) {
++        let notified = self.closed_notification.notified();
++        tokio::pin!(notified);
++        notified.as_mut().enable();
++        if !self.closed.load(Ordering::Acquire) {
++            notified.await;
++        }
++    }
+     pub(crate) fn invalidate(&self) {
+         if self
+             .epoch
+@@ -481,8 +527,9 @@ impl StatusOwner {
+     ) -> Result<serde_json::Value> {
+         ensure!(!self.closed.load(Ordering::Acquire), "status owner closed");
+         let current = self.scope.lock().unwrap_or_else(|e| e.into_inner());
++        let authority = self.authority.lock().unwrap_or_else(|e| e.into_inner());
+         if *current != Some(snapshot.scope)
+-            || self.epoch.load(Ordering::Acquire) != snapshot.epoch
++            || authority.generation != snapshot.authority
+             || source_expires.is_some_and(|until| Instant::now() >= until)
+             || snapshot.cached.as_ref().is_some_and(|cached| {
+                 Instant::now().saturating_duration_since(cached.captured) >= Duration::from_secs(5)
+@@ -494,14 +541,38 @@ impl StatusOwner {
+                 source_scope_superseded()
+             });
+         }
+-        // Only a live caller observing a completed reply advances this frontend
+-        // receipt. Background completion after caller timeout never acknowledges it.
+-        self.observed_receipt(snapshot.receipt);
+-        Ok(snapshot
++        let superseded = self.epoch.load(Ordering::Acquire) != snapshot.epoch;
++        if superseded && (!snapshot.submitted || hit) {
++            return Ok(source_scope_superseded());
++        }
++        let result = snapshot
+             .cached
+             .as_ref()
+             .and_then(|cached| cached.reply(snapshot.scope, Instant::now(), hit))
+-            .unwrap_or_else(|| snapshot.result.clone()))
++            .unwrap_or_else(|| snapshot.result.clone());
++        if superseded {
++            // A scalar invalidation does not invalidate this completed query's
++            // evidence. Keep its original publication/age without acknowledging
++            // an obsolete receipt or repopulating the current cache.
++            if result["isError"] == true {
++                return Ok(result);
++            }
++            let mut body: serde_json::Value = serde_json::from_str(
++                result["content"][0]["text"]
++                    .as_str()
++                    .context("status observation body missing")?,
++            )?;
++            body["status_observation"] = serde_json::json!({
++                "superseded": true,
++                "reason": "scalar_invalidation",
++                "message": "Status changed during this observation; the returned snapshot retains its original publication and observation time."
++            });
++            return Ok(airk_mcp::unified::success(body));
++        }
++        // Only a live caller observing a completed reply advances this frontend
++        // receipt. Background completion after caller timeout never acknowledges it.
++        self.observed_receipt(snapshot.receipt);
++        Ok(result)
+     }
+     pub(crate) async fn status(
+         self: &Arc<Self>,
+@@ -659,6 +730,7 @@ impl StatusOwner {
+         };
+         if source.is_none() && !self.install_pinned_scope(before, scope) {
+             return Ok(Snapshot {
++                authority: ticket.authority,
+                 options: request_args,
+                 scope,
+                 epoch: self.epoch.load(Ordering::Acquire),
+@@ -671,6 +743,7 @@ impl StatusOwner {
+         }
+         if *self.scope.lock().unwrap_or_else(|e| e.into_inner()) != Some(scope) {
+             return Ok(Snapshot {
++                authority: ticket.authority,
+                 options: request_args,
+                 scope,
+                 epoch: self.epoch.load(Ordering::Acquire),
+@@ -692,6 +765,7 @@ impl StatusOwner {
+         ensure!(!self.closed.load(Ordering::Acquire), "status owner closed");
+         if expires.is_some_and(|until| Instant::now() >= until) {
+             return Ok(Snapshot {
++                authority: ticket.authority,
+                 options: request_args,
+                 scope,
+                 epoch,
+@@ -719,6 +793,7 @@ impl StatusOwner {
+             })
+         {
+             return Ok(Snapshot {
++                authority: ticket.authority,
+                 options: request_args,
+                 scope,
+                 epoch,
+@@ -736,10 +811,10 @@ impl StatusOwner {
+         }
+         let mut channel = self.connection.lock().await;
+         if expires.is_some_and(|until| Instant::now() >= until)
+-            || self.epoch.load(Ordering::Acquire) != epoch
+             || *self.scope.lock().unwrap_or_else(|e| e.into_inner()) != Some(scope)
+         {
+             return Ok(Snapshot {
++                authority: ticket.authority,
+                 options: request_args,
+                 scope,
+                 epoch,
+@@ -777,6 +852,7 @@ impl StatusOwner {
+                     "index_error":{"code":"index_worker_unavailable","message":"No index query was submitted. Call diagnostics for service and queued-job diagnosis."}}),
+                         );
+                         return Ok(Snapshot {
++                            authority: ticket.authority,
+                             options: request_args,
+                             scope,
+                             epoch,
+@@ -792,6 +868,7 @@ impl StatusOwner {
+         };
+         if expires.is_some_and(|until| Instant::now() >= until) {
+             return Ok(Snapshot {
++                authority: ticket.authority,
+                 options: request_args,
+                 scope,
+                 epoch,
+@@ -804,14 +881,16 @@ impl StatusOwner {
+         }
+         self.accepting()?;
+         ticket = self.authenticated_worker(ticket, connection.identity)?;
+-        epoch = ticket.scalar_epoch;
+-        if self.epoch.load(Ordering::Acquire) != epoch
+-            || *self.scope.lock().unwrap_or_else(|e| e.into_inner()) != Some(scope)
+-        {
++        // Evidence completion may invalidate scalar state while setup waits.
++        // Begin this new observation at the current scalar epoch; scope and
++        // authenticated worker authority remain independently fenced.
++        epoch = self.epoch.load(Ordering::Acquire);
++        if *self.scope.lock().unwrap_or_else(|e| e.into_inner()) != Some(scope) {
+             if self.transport_reusable(&ticket, Some(scope), &connection) {
+                 *channel = Some((scope, connection));
+             }
+             return Ok(Snapshot {
++                authority: ticket.authority,
+                 options: request_args,
+                 scope,
+                 epoch,
+@@ -830,6 +909,7 @@ impl StatusOwner {
+             *channel = Some((scope, connection));
+         }
+         let snapshot = Snapshot {
++            authority: ticket.authority,
+             options: request_args.clone(),
+             scope,
+             epoch,
+@@ -847,6 +927,7 @@ impl StatusOwner {
+         {
+             // Immutable logical observation only: no stream/read/transaction retained.
+             let saved = Snapshot {
++                authority: ticket.authority,
+                 options: request_args,
+                 scope,
+                 epoch,
+@@ -870,6 +951,11 @@ impl StatusOwner {
+         self.set_scope(cached.scope);
+         let epoch = self.epoch.load(Ordering::Acquire);
+         *self.cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(Snapshot {
++            authority: self
++                .authority
++                .lock()
++                .unwrap_or_else(|e| e.into_inner())
++                .generation,
+             options: serde_json::json!({}),
+             scope: cached.scope,
+             epoch,
+@@ -916,6 +1002,58 @@ fn superseded() -> serde_json::Value {
+ #[cfg(test)]
+ mod ownership_tests {
+     use super::*;
++
++    #[test]
++    fn unbound_waiters_join_only_the_first_matching_authority() -> Result<()> {
++        use airk_core::{identity::Incarnation, service::WorkerIdentity};
++        let owner = StatusOwner::default();
++        let scope = SourceFence {
++            namespace: Incarnation::from_bytes([131; 16]),
++            revision: 1,
++            project: "ab".repeat(32).parse()?,
++            fencing_generation: 1,
++        };
++        owner.source_scope(scope);
++        let cold = owner.request_ticket(scope.project, None);
++        let first = WorkerIdentity {
++            service: Incarnation::from_bytes([132; 16]),
++            worker: Incarnation::from_bytes([133; 16]),
++            project: scope.project,
++            fencing_generation: 1,
++        };
++        owner.authenticated_worker(cold, first)?;
++        let joined = owner.after_evidence_wait(cold)?;
++        assert!(owner.ticket_current(&joined));
++        assert!(!joined.initial_authority);
++        let known = owner.request_ticket(scope.project, None);
++        let replacement = WorkerIdentity {
++            worker: Incarnation::from_bytes([134; 16]),
++            fencing_generation: 2,
++            ..first
++        };
++        owner.authenticated_worker(known, replacement)?;
++        assert!(
++            owner.after_evidence_wait(cold).is_err(),
++            "two bindings cannot promote an unbound waiter"
++        );
++        assert!(
++            owner.after_evidence_wait(known).is_err(),
++            "known authority replacement must retire the queued request"
++        );
++        let expired = owner.request_ticket(scope.project, Some(Instant::now()));
++        assert!(owner.after_evidence_wait(expired).is_err());
++        let changed = owner.request_ticket(scope.project, None);
++        owner.source_scope(SourceFence {
++            revision: 2,
++            ..scope
++        });
++        assert!(owner.after_evidence_wait(changed).is_err());
++        let closed = owner.request_ticket(scope.project, None);
++        owner.close();
++        assert!(owner.after_evidence_wait(closed).is_err());
++        Ok(())
++    }
++
+     #[tokio::test]
+     async fn source_and_pinned_cached_status_report_actual_reuse_and_original_age() -> Result<()> {
+         use airk_core::service::ProjectRegistration;
+@@ -1039,6 +1177,7 @@ mod ownership_tests {
+         };
+         owner.source_scope(fence);
+         let scope = CacheScope::Source(fence);
++        let authority = owner.authority.lock().unwrap().generation;
+         let epoch = owner.epoch.load(Ordering::Acquire);
+         let key = Key {
+             project,
+@@ -1053,6 +1192,7 @@ mod ownership_tests {
+                     .call("airk_status".into(), Default::default())
+                     .await?;
+                 Ok(Snapshot {
++                    authority,
+                     options: serde_json::json!({}),
+                     scope,
+                     epoch,
+@@ -1174,10 +1314,12 @@ mod ownership_tests {
+             }
+         }
+         assert!(matches!(*owner.state.lock().await, State::Idle));
++        let authority = owner.authority.lock().unwrap().generation;
+         let epoch = owner.epoch.load(Ordering::Acquire);
+         let result = owner
+             .observe(key, None, move |_| async move {
+                 Ok(Snapshot {
++                    authority,
+                     options: serde_json::json!({}),
+                     scope: CacheScope::Source(fence),
+                     epoch,
+@@ -1271,7 +1413,7 @@ mod ownership_tests {
+         Ok(())
+     }
+     #[test]
+-    fn same_head_invalidation_rejects_old_snapshot_without_receipt_ack() -> Result<()> {
++    fn same_head_invalidation_returns_snapshot_note_without_receipt_ack() -> Result<()> {
+         let owner = StatusOwner::default();
+         let fence = SourceFence {
+             namespace: airk_core::identity::Incarnation::from_bytes([93; 16]),
+@@ -1280,22 +1422,57 @@ mod ownership_tests {
+             fencing_generation: 1,
+         };
+         owner.source_scope(fence);
++        let result = airk_mcp::unified::success(serde_json::json!({
++            "index_state": "available", "publication": {"token": "original-query"}
++        }));
++        let mut cached = CachedStatus::new(CacheScope::Source(fence), &result).unwrap();
++        cached.observed_unix_ms = 123;
++        let receipt = serde_json::from_value(serde_json::json!({"freshness":"cd".repeat(32)}))?;
++        let authority = owner.authority.lock().unwrap().generation;
+         let snapshot = Snapshot {
++            authority,
+             options: serde_json::json!({}),
+             scope: CacheScope::Source(fence),
+             epoch: owner.epoch.load(Ordering::Acquire),
+-            result: serde_json::Value::Null,
+-            cached: None,
++            result,
++            cached: Some(cached),
+             submitted: true,
+             reused: false,
+-            receipt: Default::default(),
++            receipt,
+         };
+         owner.invalidate(); // model/work/pause may change while publication stays identical
+         let reply = owner.reply(&snapshot, None, false)?;
+         let detail: serde_json::Value =
+             serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
+-        assert_eq!(detail["error"]["code"], "status_observation_superseded");
+-        assert_eq!(detail["error"]["query_submitted"], true);
++        assert_eq!(reply["isError"], false);
++        assert_eq!(reply["structuredContent"], detail);
++        assert_eq!(detail["status_observation"]["superseded"], true);
++        assert_eq!(
++            detail["status_observation"]["reason"],
++            "scalar_invalidation"
++        );
++        assert_eq!(detail["publication"]["token"], "original-query");
++        assert_eq!(detail["observed_unix_ms"], 123);
++        assert_eq!(detail["cached"], false);
++        assert_eq!(owner.receipt(), Default::default());
++        assert!(owner.cache_empty());
++        // An invalidated cached hit cannot masquerade as a fresh observation.
++        assert_eq!(owner.reply(&snapshot, None, true)?["isError"], true);
++        // Worker replacement and expired source grants remain hard failures.
++        owner.authority.lock().unwrap().generation += 1;
++        assert_eq!(owner.reply(&snapshot, None, false)?["isError"], true);
++        owner.authority.lock().unwrap().generation = snapshot.authority;
++        assert_eq!(
++            owner.reply(&snapshot, Some(Instant::now()), false)?["isError"],
++            true
++        );
++        owner.source_scope(SourceFence {
++            revision: 8,
++            ..fence
++        });
++        assert_eq!(owner.reply(&snapshot, None, false)?["isError"], true);
++        owner.close();
++        assert!(owner.reply(&snapshot, None, false).is_err());
+         Ok(())
+     }
+ }
+diff --git a/crates/airk-core/src/service_resources.rs b/crates/airk-core/src/service_resources.rs
+index e2e0b40..82a8e24 100644
+--- a/crates/airk-core/src/service_resources.rs
++++ b/crates/airk-core/src/service_resources.rs
+@@ -7,6 +7,20 @@ use crate::{
+ use anyhow::{Result, ensure};
+ use serde::{Deserialize, Serialize};
+ 
++pub const DEFAULT_QUERY_CONCURRENCY: usize = 16;
++pub const MAX_QUERY_CONCURRENCY: usize = 64;
++pub const QUERY_CONCURRENCY_CHOICES: [usize; 5] = [4, 8, 16, 32, 64];
++pub const fn default_query_concurrency() -> usize {
++    DEFAULT_QUERY_CONCURRENCY
++}
++pub fn validate_query_concurrency(value: usize) -> Result<()> {
++    ensure!(
++        QUERY_CONCURRENCY_CHOICES.contains(&value),
++        "concurrent evidence requests must be 4, 8, 16, 32 or 64"
++    );
++    Ok(())
++}
++
+ /// Observed native scheduling/execution exclusion, never inferred work progress.
+ #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+ #[serde(rename_all = "snake_case")]
+@@ -46,17 +60,32 @@ pub enum ResourcePreset {
+     Throughput,
+ }
+ 
+-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
++#[derive(Clone, Debug, Serialize, Deserialize)]
+ #[serde(deny_unknown_fields)]
+ pub struct ResourceConfiguration {
++    #[serde(default = "default_query_concurrency")]
++    pub query_concurrency: usize,
+     pub preset: ResourcePreset,
+     pub extraction_threads: Option<u16>,
+     pub inference_threads: Option<u16>,
+     pub memory_bytes: Option<u64>,
+     pub background_io_bytes_per_second: Option<u64>,
+ }
++impl Default for ResourceConfiguration {
++    fn default() -> Self {
++        Self {
++            query_concurrency: DEFAULT_QUERY_CONCURRENCY,
++            preset: Default::default(),
++            extraction_threads: None,
++            inference_threads: None,
++            memory_bytes: None,
++            background_io_bytes_per_second: None,
++        }
++    }
++}
+ impl ResourceConfiguration {
+     pub fn validate(&self) -> Result<()> {
++        validate_query_concurrency(self.query_concurrency)?;
+         ensure!(
+             self.extraction_threads
+                 .is_none_or(|threads| (1..=64).contains(&threads))
+@@ -129,3 +158,30 @@ pub struct ResourceSnapshot {
+     pub running_jobs: usize,
+     pub waiting_projects: usize,
+ }
++
++#[cfg(test)]
++mod concurrency_tests {
++    use super::*;
++    #[test]
++    fn saved_legacy_policy_defaults_to_sixteen_and_only_listed_values_are_valid() {
++        let mut legacy = serde_json::to_value(ResourceConfiguration::default()).unwrap();
++        legacy.as_object_mut().unwrap().remove("query_concurrency");
++        assert_eq!(
++            serde_json::from_value::<ResourceConfiguration>(legacy)
++                .unwrap()
++                .query_concurrency,
++            16
++        );
++        for value in 0..=66 {
++            let configuration = ResourceConfiguration {
++                query_concurrency: value,
++                ..Default::default()
++            };
++            assert_eq!(
++                configuration.validate().is_ok(),
++                QUERY_CONCURRENCY_CHOICES.contains(&value),
++                "{value}"
++            );
++        }
++    }
++}

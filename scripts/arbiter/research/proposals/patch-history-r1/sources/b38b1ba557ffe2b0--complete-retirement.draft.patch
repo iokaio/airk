@@ -1,0 +1,449 @@
+--- a/crates/airk-cli/src/runtime_upgrade_stop_macos.rs
++++ b/crates/airk-cli/src/runtime_upgrade_stop_macos.rs
+@@ -30,6 +30,42 @@
+     missing_process_error && dead_task_name
+ }
+ 
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++enum ProcessObservation {
++    ExpectedImage,
++    PendingUnknownPath,
++    Retired,
++}
++
++// Every observation remains bound to the original captured process identity.
++// Only a proven retired task permits success; an unavailable path is never an
++// invitation to signal, replay a mutation or start another deadline.
++fn wait_for_retirement(
++    deadline: std::time::Instant,
++    mut observe: impl FnMut() -> Result<ProcessObservation>,
++    mut now: impl FnMut() -> std::time::Instant,
++    mut sleep: impl FnMut(std::time::Duration),
++) -> Result<()> {
++    let mut last_observation = None;
++    loop {
++        ensure!(
++            now() < deadline,
++            "exact Mac predecessor retirement deadline expired; activation remains pending; last_observation={last_observation:?}"
++        );
++        let observation = observe()?;
++        last_observation = Some(observation);
++        let observed_at = now();
++        ensure!(
++            observed_at < deadline,
++            "exact Mac predecessor retirement deadline expired; activation remains pending; last_observation={last_observation:?}"
++        );
++        if observation == ProcessObservation::Retired {
++            return Ok(());
++        }
++        sleep((deadline - observed_at).min(std::time::Duration::from_millis(20)));
++    }
++}
++
+ #[cfg(target_os = "macos")]
+ mod native {
+     use super::*;
+@@ -38,7 +74,7 @@
+         ffi::{CStr, c_int, c_void},
+         path::{Path, PathBuf},
+         sync::OnceLock,
+-        time::{Duration, Instant},
++        time::Instant,
+     };
+ 
+     type Signal = unsafe extern "C" fn(*const AuditToken, c_int) -> c_int;
+@@ -89,17 +125,46 @@
+             unsafe { mach_port_deallocate(mach_task_self_, self.name) };
+         }
+     }
++    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
++    enum TaskNameState {
++        Alive,
++        Dead,
++    }
++
+     impl Owner {
+-        fn task_name_is_dead(&self) -> bool {
++        fn failure_context(&self, phase: &str) -> String {
++            format!(
++                "Mac predecessor phase={phase} pid={} audit_token={:?} expected_image={}",
++                self.token.0[5],
++                self.token,
++                self.expected.display()
++            )
++        }
++
++        fn task_name_state(&self) -> Result<TaskNameState> {
+             let mut kind = 0;
+-            // SAFETY: inspect only our retained task-name right. Unknown or
+-            // failed observations cannot establish retirement.
++            // SAFETY: inspect only our retained task-name right. A failed or
++            // unsupported right observation remains an error, never exit proof.
+             let status = unsafe { mach_port_type(mach_task_self_, self.name, &mut kind) };
++            ensure!(status == 0, "Mac task-name type unavailable ({status})");
+             const MACH_PORT_TYPE_DEAD_NAME: u32 = 1 << 20;
+-            status == 0 && kind & MACH_PORT_TYPE_DEAD_NAME != 0
+-        }
+-
+-        fn path(&self) -> Result<Option<PathBuf>> {
++            const MACH_PORT_TYPE_SEND: u32 = 1 << 16;
++            if kind & MACH_PORT_TYPE_DEAD_NAME != 0 {
++                return Ok(TaskNameState::Dead);
++            }
++            ensure!(
++                kind & MACH_PORT_TYPE_SEND != 0,
++                "Mac task-name right is not a live send right ({kind})"
++            );
++            Ok(TaskNameState::Alive)
++        }
++
++        fn observe(&self, phase: &str) -> Result<ProcessObservation> {
++            self.observe_inner()
++                .with_context(|| self.failure_context(phase))
++        }
++
++        fn observe_inner(&self) -> Result<ProcessObservation> {
+             let mut buffer = [0u8; 4096];
+             // SAFETY: token is captured from our retained task-name port; this
+             // API atomically compares PID/idversion before reading its path.
+@@ -113,13 +178,19 @@
+             };
+             if count == 0 {
+                 let error = std::io::Error::last_os_error();
+-                if path_failure_proves_retirement(
+-                    error.raw_os_error() == Some(libc::ESRCH),
+-                    self.task_name_is_dead(),
+-                ) {
+-                    return Ok(None);
++                // Permission, I/O and unsupported lookup failures are not a
++                // transient retirement state and must not enter the wait loop.
++                if error.raw_os_error() != Some(libc::ESRCH) {
++                    return Err(error).context("Mac captured process path unavailable");
+                 }
+-                return Err(error).context("Mac captured process path unavailable");
++                let state = self.task_name_state()?;
++                return Ok(
++                    if path_failure_proves_retirement(true, state == TaskNameState::Dead) {
++                        ProcessObservation::Retired
++                    } else {
++                        ProcessObservation::PendingUnknownPath
++                    },
++                );
+             }
+             ensure!(
+                 count > 0 && (count as usize) < buffer.len(),
+@@ -133,23 +204,30 @@
+                 path.canonicalize()? == self.expected,
+                 "Mac captured process image changed"
+             );
+-            Ok(Some(path))
++            Ok(ProcessObservation::ExpectedImage)
+         }
+     }
+ 
+     pub(in super::super) fn capture(pid: u32, expected: &Path) -> Result<Option<Owner>> {
+         ensure!(
+             pid != 0 && pid != std::process::id() && pid <= c_int::MAX as u32,
+-            "installer cannot capture itself or an invalid Mac PID"
+-        );
+-        let expected = expected.canonicalize()?;
+-        let signal = signal_api()?;
++            "Mac predecessor phase=capture pid={pid} expected_image={}: installer cannot capture itself or an invalid PID",
++            expected.display()
++        );
++        let expected = expected.canonicalize().with_context(|| format!("Mac predecessor phase=capture pid={pid} expected_image={}: canonical path unavailable", expected.display()))?;
++        let signal = signal_api().with_context(|| {
++            format!(
++                "Mac predecessor phase=capture pid={pid} expected_image={}",
++                expected.display()
++            )
++        })?;
+         let mut name = 0;
+         // SAFETY: read-only task-name capability, not task_for_pid/control.
+         let status = unsafe { task_name_for_pid(mach_task_self_, pid as c_int, &mut name) };
+         ensure!(
+             status == 0 && name != 0,
+-            "Mac process task-name capture unavailable ({status}); no numeric PID signal attempted"
++            "Mac predecessor phase=capture pid={pid} expected_image={}: task-name capture unavailable ({status}); no numeric PID signal attempted",
++            expected.display()
+         );
+         let mut owner = Owner {
+             name,
+@@ -169,19 +247,30 @@
+         };
+         ensure!(
+             status == 0 && words == TOKEN_WORDS,
+-            "Mac process audit-token capture unavailable ({status})"
++            "Mac predecessor phase=capture pid={pid} expected_image={}: audit-token capture unavailable ({status})",
++            owner.expected.display()
+         );
+         // SAFETY: actual native user identity, independent of environment.
+-        validate_token(owner.token, pid, unsafe { libc::geteuid() })?;
+-        if owner.path()?.is_none() {
+-            return Ok(None);
+-        }
+-        Ok(Some(owner))
++        validate_token(owner.token, pid, unsafe { libc::geteuid() })
++            .with_context(|| owner.failure_context("capture"))?;
++        match owner.observe("capture")? {
++            ProcessObservation::Retired => Ok(None),
++            ProcessObservation::ExpectedImage => Ok(Some(owner)),
++            ProcessObservation::PendingUnknownPath => bail!(
++                "{}: captured executable path unresolved; capture refused; no signal attempted",
++                owner.failure_context("capture")
++            ),
++        }
+     }
+ 
+     pub(in super::super) fn terminate(owner: &Owner) -> Result<()> {
+-        if owner.path()?.is_none() {
+-            return Ok(());
++        match owner.observe("terminate")? {
++            ProcessObservation::Retired => return Ok(()),
++            ProcessObservation::ExpectedImage => {}
++            ProcessObservation::PendingUnknownPath => bail!(
++                "{}: captured executable path unresolved; no signal attempted",
++                owner.failure_context("terminate")
++            ),
+         }
+         // SAFETY: the kernel compares the original audit PID/idversion as one
+         // operation. A PID reused after this path check cannot be signaled.
+@@ -190,27 +279,26 @@
+             return Ok(());
+         }
+         bail!(
+-            "cannot stop exact Mac predecessor: {}",
++            "{}: cannot stop exact Mac predecessor: {}",
++            owner.failure_context("terminate"),
+             std::io::Error::from_raw_os_error(status)
+         );
+     }
+ 
+     pub(in super::super) fn wait(owner: &Owner, deadline: Instant) -> Result<()> {
+-        loop {
+-            if owner.path()?.is_none() {
+-                return Ok(());
+-            }
+-            ensure!(
+-                Instant::now() < deadline,
+-                "exact Mac predecessor did not exit; activation remains pending"
+-            );
+-            std::thread::sleep(Duration::from_millis(20));
+-        }
++        wait_for_retirement(
++            deadline,
++            || owner.observe("wait"),
++            Instant::now,
++            std::thread::sleep,
++        )
++        .with_context(|| owner.failure_context("wait"))
+     }
+ 
+     #[cfg(test)]
+     mod tests {
+         use super::*;
++        use std::time::Duration;
+ 
+         #[test]
+         fn retained_task_name_distinguishes_live_child_from_proven_exit() -> Result<()> {
+@@ -223,8 +311,10 @@
+                 }
+             }
+             let mut child = Child(child);
++            let expected = Path::new("/bin/sleep").canonicalize()?;
+             let mut name = 0;
+-            // SAFETY: capture only the owned child's read-only task-name right.
++            // SAFETY: read-only capability for this exact owned child. The wait
++            // regression must not require the optional hard-signal API.
+             let status =
+                 unsafe { task_name_for_pid(mach_task_self_, child.0.id() as c_int, &mut name) };
+             ensure!(
+@@ -234,23 +324,42 @@
+             unsafe extern "C" fn unused_signal(_: *const AuditToken, _: c_int) -> c_int {
+                 libc::EINVAL
+             }
+-            let owner = Owner {
++            let mut owner = Owner {
+                 name,
+                 token: AuditToken([0; 8]),
+-                expected: PathBuf::new(),
++                expected,
+                 signal: unused_signal,
+             };
+-            assert!(!owner.task_name_is_dead());
++            let mut words = TOKEN_WORDS;
++            // SAFETY: token is read from the original retained task-name right.
++            let status = unsafe {
++                task_info(
++                    name,
++                    TASK_AUDIT_TOKEN,
++                    owner.token.0.as_mut_ptr(),
++                    &mut words,
++                )
++            };
++            ensure!(
++                status == 0 && words == TOKEN_WORDS,
++                "owned child audit-token capture failed"
++            );
++            validate_token(owner.token, child.0.id(), unsafe { libc::geteuid() })?;
++            assert_eq!(owner.task_name_state()?, TaskNameState::Alive);
++            assert_eq!(
++                owner.observe("test_before_exit")?,
++                ProcessObservation::ExpectedImage
++            );
+             child.0.kill()?;
++            // Observe retirement through the original right before reaping the
++            // child. child.wait() must not hide the missing-path/dead-name race.
++            wait(&owner, Instant::now() + Duration::from_secs(5))?;
++            assert_eq!(owner.task_name_state()?, TaskNameState::Dead);
++            assert_eq!(
++                owner.observe("test_after_exit")?,
++                ProcessObservation::Retired
++            );
+             child.0.wait()?;
+-            let deadline = Instant::now() + Duration::from_secs(5);
+-            while !owner.task_name_is_dead() && Instant::now() < deadline {
+-                std::thread::sleep(Duration::from_millis(10));
+-            }
+-            assert!(
+-                owner.task_name_is_dead(),
+-                "owned child retirement was not observed"
+-            );
+             Ok(())
+         }
+     }
+@@ -283,4 +392,134 @@
+         }
+         Ok(())
+     }
++
++    #[test]
++    fn missing_path_waits_for_proven_death_with_original_deadline() -> Result<()> {
++        use std::{
++            cell::{Cell, RefCell},
++            collections::VecDeque,
++            time::{Duration, Instant},
++        };
++        let epoch = Instant::now();
++        let elapsed = Cell::new(Duration::ZERO);
++        let sleeps = RefCell::new(Vec::new());
++        let mut observations = VecDeque::from([
++            ProcessObservation::ExpectedImage,
++            ProcessObservation::PendingUnknownPath,
++            ProcessObservation::PendingUnknownPath,
++            ProcessObservation::Retired,
++        ]);
++        wait_for_retirement(
++            epoch + Duration::from_millis(100),
++            || Ok(observations.pop_front().expect("must stop at proven death")),
++            || epoch + elapsed.get(),
++            |delay| {
++                sleeps.borrow_mut().push(delay);
++                elapsed.set(elapsed.get() + delay);
++            },
++        )?;
++        assert!(observations.is_empty());
++        assert_eq!(*sleeps.borrow(), vec![Duration::from_millis(20); 3]);
++        assert_eq!(elapsed.get(), Duration::from_millis(60));
++        Ok(())
++    }
++
++    #[test]
++    fn persistent_missing_path_never_renews_deadline_or_claims_retirement() {
++        use std::{
++            cell::{Cell, RefCell},
++            time::{Duration, Instant},
++        };
++        let epoch = Instant::now();
++        let elapsed = Cell::new(Duration::ZERO);
++        let calls = Cell::new(0);
++        let sleeps = RefCell::new(Vec::new());
++        let error = wait_for_retirement(
++            epoch + Duration::from_millis(45),
++            || {
++                calls.set(calls.get() + 1);
++                Ok(ProcessObservation::PendingUnknownPath)
++            },
++            || epoch + elapsed.get(),
++            |delay| {
++                sleeps.borrow_mut().push(delay);
++                elapsed.set(elapsed.get() + delay);
++            },
++        )
++        .unwrap_err();
++        assert_eq!(calls.get(), 3);
++        assert_eq!(
++            *sleeps.borrow(),
++            vec![
++                Duration::from_millis(20),
++                Duration::from_millis(20),
++                Duration::from_millis(5)
++            ]
++        );
++        assert_eq!(elapsed.get(), Duration::from_millis(45));
++        assert!(error.to_string().contains("deadline expired"));
++        assert!(error.to_string().contains("PendingUnknownPath"));
++    }
++
++    #[test]
++    fn retirement_wait_does_not_retry_permission_image_or_right_errors() {
++        use std::{
++            cell::Cell,
++            time::{Duration, Instant},
++        };
++        for refusal in [
++            "permission denied",
++            "Mac captured process image changed",
++            "Mac task-name type unavailable",
++        ] {
++            let epoch = Instant::now();
++            let calls = Cell::new(0);
++            let error = wait_for_retirement(
++                epoch + Duration::from_secs(1),
++                || {
++                    calls.set(calls.get() + 1);
++                    Err(anyhow::anyhow!(refusal))
++                },
++                || epoch,
++                |_| panic!("hard failures cannot enter retirement polling"),
++            )
++            .unwrap_err();
++            assert_eq!(calls.get(), 1);
++            assert_eq!(error.to_string(), refusal);
++        }
++    }
++
++    #[test]
++    fn expired_retirement_deadline_does_not_start_an_observation() {
++        let deadline = std::time::Instant::now();
++        let error = wait_for_retirement(
++            deadline,
++            || panic!("expired deadline cannot start another observation"),
++            || deadline,
++            |_| panic!("expired deadline cannot sleep"),
++        )
++        .unwrap_err();
++        assert!(error.to_string().contains("deadline expired"));
++    }
++
++    #[test]
++    fn retirement_observed_after_original_deadline_is_not_success() {
++        use std::{
++            cell::Cell,
++            time::{Duration, Instant},
++        };
++        let epoch = Instant::now();
++        let elapsed = Cell::new(Duration::ZERO);
++        let error = wait_for_retirement(
++            epoch + Duration::from_millis(10),
++            || {
++                elapsed.set(Duration::from_millis(11));
++                Ok(ProcessObservation::Retired)
++            },
++            || epoch + elapsed.get(),
++            |_| panic!("expired observation cannot sleep"),
++        )
++        .unwrap_err();
++        assert!(error.to_string().contains("deadline expired"));
++    }
+ }

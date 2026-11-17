@@ -1,0 +1,97 @@
+--- compact/transformer.py
++++ large/transformer.py
+@@ -1,10 +1,10 @@
+-"""Guarded Compact-only protobuf attention rewrite. Default is read-only inspection.
++"""Guarded Large-only protobuf attention rewrite. Default is read-only inspection.
+ No Torch/model load/ORT session is used. Root must review --execute-graph-only.
+ """
+ import argparse,copy,hashlib,heapq,json,os,struct,sys,time
+ from pathlib import Path
+-SOURCE_SHA='c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4'
+-NS='/airk_compact_gqa/'
++SOURCE_SHA='f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94'
++NS='/airk_large_gqa/'
+ 
+ def need(ok,message):
+     if not ok:raise ValueError(message)
+@@ -48,7 +48,7 @@
+     initial={x.name:x.SerializeToString(deterministic=True) for x in graph.initializer}
+     need(len(initial)==len(graph.initializer),'Duplicate original initializer')
+     h=onnx.helper;T=onnx.TensorProto
+-    small=[h.make_tensor(NS+'qshape',T.INT64,[3],[0,0,2048]),h.make_tensor(NS+'kshape',T.INT64,[3],[0,0,1024]),
++    small=[h.make_tensor(NS+'qshape',T.INT64,[3],[0,0,4096]),h.make_tensor(NS+'kshape',T.INT64,[3],[0,0,1024]),
+         h.make_tensor(NS+'axis1',T.INT64,[1],[1]),h.make_tensor(NS+'one',T.INT64,[1],[1])]
+     added=[h.make_node('Shape',['attention_mask'],[NS+'mask_shape'],name=NS+'shape'),
+         h.make_node('Gather',[NS+'mask_shape',NS+'axis1'],[NS+'total64'],axis=0,name=NS+'physical_T'),
+@@ -56,7 +56,7 @@
+         h.make_node('Cast',[NS+'total64'],[NS+'total32'],to=T.INT32,name=NS+'total32'),
+         h.make_node('Cast',[NS+'seqlen64'],[NS+'seqlen32'],to=T.INT32,name=NS+'seqlen32')]
+     removed_sinks=set();scales=[]
+-    for index in range(28):
++    for index in range(36):
+         prefix=f'/scorer/layers.{index}/self_attn/';name=NS+str(index)+'/'
+         qk=nodes[prefix+'MatMul'];mul=nodes[prefix+'Mul_8'];masked=nodes[prefix+'Add_2'];softmax=nodes[prefix+'Softmax'];av=nodes[prefix+'MatMul_1'];sink=nodes[prefix+'Reshape_7']
+         need(qk.op_type=='MatMul' and mul.op_type=='Mul' and mul.input[0]==qk.output[0],'Original post-QK scale chain differs')
+@@ -79,7 +79,7 @@
+             h.make_node('GroupQueryAttention',[name+'q_bth',name+'k_bth',prefix+'v_proj/MatMul_output_0','','',
+                 NS+'seqlen32',NS+'total32','','','','/scorer/Where_output_0'],
+                 [sink.output[0],name+'present_k',name+'present_v'],domain='com.microsoft',
+-                num_heads=16,kv_num_heads=8,causal=1,local_window_size=-1,scale=scale,do_rotary=0,softcap=0.,smooth_softmax=0,name=name+'GQA')])
++                num_heads=32,kv_num_heads=8,causal=1,local_window_size=-1,scale=scale,do_rotary=0,softcap=0.,smooth_softmax=0,name=name+'GQA')])
+         removed_sinks.add(sink.name)
+     need(len(set(scales))==1,'Per-layer original scale differs')
+     known={i.name for i in graph.input}|set(initial)|{i.name for i in small}
+@@ -92,9 +92,9 @@
+     consumers={}
+     for n in original.graph.node:
+         for value in n.input:consumers.setdefault(value,[]).append(n)
+-    removed_names={n.name for n in removed};axis_constants=[];per_layer=[0]*28
++    removed_names={n.name for n in removed};axis_constants=[];per_layer=[0]*36
+     for node in removed:
+-        if not any(node.name.startswith(f'/scorer/layers.{i}/self_attn/') for i in range(28)):
++        if not any(node.name.startswith(f'/scorer/layers.{i}/self_attn/') for i in range(36)):
+             constant=None
+             if len(node.attribute)==1 and node.attribute[0].name=='value':
+                 tensor=node.attribute[0].t
+@@ -104,7 +104,7 @@
+                 [{'name':n.name,'op':n.op_type,'inputs':list(n.input)} for n in users],removed_names)
+             axis_constants.append(node.name);per_layer[layer]+=1
+         need(not any(part in node.name for part in ['/q_proj/','/k_proj/','/v_proj/','/o_proj/','/q_norm/','/k_norm/']),'Rewrite removed original projection or Q/K norm')
+-    need(len(axis_constants)==336 and per_layer==[12]*28,'Exact source-pinned336 attention-axis constants/12 per layer required')
++    need(len(axis_constants)==432 and per_layer==[12]*36,'Exact source-pinned432 attention-axis constants/12 per layer required')
+     del graph.node[:];graph.node.extend(selected);graph.initializer.extend(small)
+     if not any(x.domain=='com.microsoft' for x in model.opset_import):model.opset_import.append(h.make_opsetid('com.microsoft',1))
+     original_nodes={n.name:n.SerializeToString(deterministic=True) for n in original.graph.node}
+@@ -112,17 +112,19 @@
+         if not node.name.startswith(NS):need(node.SerializeToString(deterministic=True)==original_nodes[node.name],'An original retained node changed')
+     now={x.name:x.SerializeToString(deterministic=True) for x in graph.initializer}
+     need(all(now.get(name)==value for name,value in initial.items()),'An original initializer/external-range changed')
+-    need(sum(n.op_type=='GroupQueryAttention' for n in graph.node)==28,'Incomplete GQA fusion')
++    need(sum(n.op_type=='GroupQueryAttention' for n in graph.node)==36,'Incomplete GQA fusion')
+     need(sum(n.op_type=='Softmax' for n in graph.node)==0,'Unfused attention softmax retained')
+-    need(sum(n.op_type=='MatMul' for n in graph.node)==197,'Original projections/rotary MatMul census differs')
++    need(sum(n.op_type=='MatMul' for n in graph.node)==253,'Original projections/rotary MatMul census differs')
+     need([x.SerializeToString(deterministic=True) for x in graph.input]==[x.SerializeToString(deterministic=True) for x in original.graph.input],'Input ABI changed')
+     need([x.SerializeToString(deterministic=True) for x in graph.output]==[x.SerializeToString(deterministic=True) for x in original.graph.output],'Output/cache ABI changed')
+     live={o for n in graph.node for o in n.output}|known
+     valid_vi=[x for x in graph.value_info if x.name in live];del graph.value_info[:];graph.value_info.extend(valid_vi)
+-    return model,{'gqa_nodes':28,'removed_global_axis_constants':axis_constants,'axis_constants_per_layer':per_layer,'removed_original_nodes':[n.name for n in removed],'original_scale_float32_bits':scales[0],
++    return model,{'gqa_nodes':36,'removed_global_axis_constants':axis_constants,'axis_constants_per_layer':per_layer,'removed_original_nodes':[n.name for n in removed],'original_scale_float32_bits':scales[0],
+         'original_initializers':len(initial),'new_small_shape_initializers':len(small),'original_nodes_preserved_verbatim':True,
+         'original_initializers_and_external_ranges_preserved_verbatim':True,'all6inputs_scores_only':True,
+-        'cache_outputs_internal_only':True,'actual_allocations_unproven_until_native_profile':True}
++        'cache_outputs_internal_only':True,'actual_allocations_unproven_until_native_profile':True,
++        'original_external_initializers':sum(v.data_location==onnx.TensorProto.EXTERNAL for v in original.graph.initializer),
++        'original_scores_output_preserved_verbatim':True}
+ 
+ def main():
+     start=time.monotonic();p=argparse.ArgumentParser(description=__doc__)
+@@ -130,7 +132,7 @@
+     p.add_argument('--python-site',required=True);p.add_argument('--output');p.add_argument('--execute-graph-only',action='store_true')
+     p.add_argument('--cpu-shape-source');p.add_argument('--cpu-shape-source-sha256')
+     p.add_argument('--execution-plan');p.add_argument('--execution-plan-sha256')
+-    a=p.parse_args();raw=Path(a.source).read_bytes();need(digest(raw)==a.source_sha256==SOURCE_SHA,'Only exact reviewed original Compact graph admitted')
++    a=p.parse_args();raw=Path(a.source).read_bytes();need(digest(raw)==a.source_sha256==SOURCE_SHA,'Only exact reviewed original Large graph admitted')
+     sys.path.insert(0,str(Path(a.python_site).resolve(strict=True)));import onnx
+     model=onnx.ModelProto();model.ParseFromString(raw)
+     if not a.execute_graph_only:

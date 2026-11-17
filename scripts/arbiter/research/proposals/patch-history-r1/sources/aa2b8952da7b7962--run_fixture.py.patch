@@ -1,0 +1,110 @@
+--- artifacts\advanced-split\stage-service-preparation-r1\cal-execution-r102\run_fixture.py
++++ artifacts\advanced-split\stage-service-preparation-r1\cal-execution-r102\run_fixture.py
+@@ -22,10 +22,10 @@
+     except OSError:
+         return False
+ 
+-def closure_matches(ready, closed, work, input_digest, image_digest):
++def closure_matches(ready, closed, work, input_digest, image_digest, *, control_root=None, prior_instance=None):
+     if not isinstance(ready, dict) or not isinstance(closed, dict):
+         return False
+-    control = str(Path(work) / 'control')
++    control = control_root if control_root is not None else str(Path(work) / 'control')
+     return (ready.get('schema') == 'airk.private-arbiter-fixture/1'
+             and ready.get('inputs_sha256') == input_digest
+             and same_control_path(ready.get('control_root'), control)
+@@ -34,8 +34,43 @@
+             and same_control_path(closed.get('control_root'), control)
+             and closed.get('instance') == ready.get('health', {}).get('instance')
+             and ready.get('health', {}).get('instance') is not None
++            and (prior_instance is None or ready['health']['instance'] != prior_instance)
+             and closed.get('shutdown_completed') is True
+             and closed.get('service_lease_reacquired') is True)
++
++def restart_inputs(packet):
++    descriptor=packet.get('restart')
++    explicit=packet.get('existing_control_root')
++    if descriptor is None:
++        if explicit is not None:raise ValueError('existing control requires explicit pinned restart descriptor')
++        return None
++    if not isinstance(explicit,str) or not Path(explicit).is_absolute() or not Path(explicit).is_dir():
++        raise ValueError('restart requires explicit existing absolute control root')
++    verify(descriptor)
++    request=json.loads(Path(descriptor['path']).read_bytes())
++    if set(request)!={'ready','closed','status'}:raise ValueError('restart descriptor must bind only original Ready, closed and Status')
++    refs=[descriptor];values={}
++    for key,row in request.items():
++        if set(row)!={'path','sha256'} or not Path(row['path']).is_absolute():raise ValueError('native restart descriptor reference differs')
++        actual=pin(row['path'])
++        if actual['sha256']!=row['sha256']:raise ValueError('original restart evidence changed')
++        refs.append(actual);values[key]=json.loads(Path(row['path']).read_bytes())
++    ready,closed,status=(values[key] for key in ('ready','closed','status'))
++    old_work=Path(request['ready']['path']).parent
++    if (Path(request['ready']['path']).name!='ready.json'
++        or not same_control_path(request['closed']['path'],str(old_work/'closed.json'))
++        or not same_control_path(explicit,str(old_work/'control'))
++        or same_control_path(packet['work'],str(old_work))):
++        raise ValueError('restart must preserve original control and use fresh metadata work')
++    if (ready.get('evaluation') is not True or ready.get('release_qualified') is not False
++        or closed.get('evaluation') is not True or closed.get('release_qualified') is not False
++        or not closure_matches(ready,closed,str(old_work),packet['inputs']['sha256'],ready.get('health',{}).get('executable_sha256'),control_root=explicit)
++        or status.get('schema')!='airk.arbiter.status/2' or status.get('initialization') is not None
++        or status.get('configuration',{}).get('catalog')!=ready.get('health',{}).get('catalog_clock',{}).get('namespace')
++        or any(status.get(stage,{}).get('queued')!=0 or status.get(stage,{}).get('running')!=0 for stage in ('focus','context'))):
++        raise ValueError('genuine prior closure/current idle status and owner identity required')
++    return {'control_root':explicit,'prior_instance':ready['health']['instance'],'refs':refs,'descriptor':descriptor}
++
+ 
+ def main():
+     parser = argparse.ArgumentParser()
+@@ -66,6 +101,7 @@
+     pipeline = semantic['object_plan']['pipeline_digest']
+     if not isinstance(pipeline, str) or len(pipeline) != 64:
+         raise ValueError('native plan pipeline digest missing')
++    restart = restart_inputs(packet)
+     if Path(packet['work']).exists():
+         raise ValueError('fixture work already exists')
+     output = Path(args.output)
+@@ -90,6 +126,11 @@
+         'AIRK_NATIVE_WARM_OBSERVER': 'true' if packet.get('native_warm_observer') else 'false',
+         'AIRK_SELECTED_CONTEXT_MINILM_PIPELINE': pipeline,
+     })
++    environment.pop('AIRK_ARBITER_EVALUATION_RESTART',None)
++    environment.pop('AIRK_ARBITER_EVALUATION_RESTART_SHA256',None)
++    if restart:
++        environment.update({'AIRK_ARBITER_EVALUATION_RESTART':restart['descriptor']['path'],
++                            'AIRK_ARBITER_EVALUATION_RESTART_SHA256':restart['descriptor']['sha256']})
+     remaining = packet['owner_seconds'] - (time.monotonic() - started_monotonic)
+     if remaining <= 0:
+         raise TimeoutError('original fixture owner phase exhausted before suspended launch')
+@@ -103,7 +144,10 @@
+     for row in packet['staged_metadata']:
+         if pin(row['path']) != row:
+             drift.append(row['path'])
+-    closed_path = Path(packet['work']) / 'closed.json'
++    if restart:
++        for reference in restart['refs']:
++            if pin(reference['path'])!=reference:drift.append(reference['path'])
++    closed_path = Path(packet['work']) / 'closed.json' 
+     closed = json.loads(closed_path.read_text(encoding='utf-8')) if closed_path.exists() else None
+     ready_path = Path(packet['work']) / 'ready.json'
+     ready = json.loads(ready_path.read_text(encoding='utf-8')) if ready_path.exists() else None
+@@ -128,7 +172,9 @@
+     phase_expired = time.monotonic() - started_monotonic >= packet['owner_seconds']
+     complete = bool(owner.successful(result) and warm_valid and not phase_expired and not drift
+                     and closure_matches(ready, closed, packet['work'],
+-                                        packet['inputs']['sha256'], snapshot_pin['sha256']))
++                                        packet['inputs']['sha256'], snapshot_pin['sha256'],
++                                        control_root=restart['control_root'] if restart else None,
++                                        prior_instance=restart['prior_instance'] if restart else None))
+     receipt = {'schema': 'airk.private-selected-cal-fixture-owned-execution/1',
+                'complete': complete, 'release_qualified': False,
+                'packet': pin(args.packet), 'decision': pin(args.decision),
+@@ -136,6 +182,7 @@
+                'started_unix': started, 'finished_unix': time.time(),
+                'owned': result, 'post_input_drift': drift,
+                'whole_phase_expired': phase_expired, 'native_warm_closure': warm_closure,
++               'same_owner_restart': restart,
+                'ready': pin(ready_path) if ready else None,
+                'closed': pin(closed_path) if closed else None}
+     (output / 'execution.json').write_text(json.dumps(receipt, indent=2) + '\n', encoding='utf-8')

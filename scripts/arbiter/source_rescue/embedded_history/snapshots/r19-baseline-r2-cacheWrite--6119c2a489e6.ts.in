@@ -1,0 +1,2 @@
+// SPDX-License-Identifier: Apache-2.0
+if (loaded !== null) lastGood.current = { id: props.id, detail: loaded };

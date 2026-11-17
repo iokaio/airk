@@ -1,0 +1,107 @@
+--- a/crates/airk-core/src/arbiter/device.rs
++++ b/crates/airk-core/src/arbiter/device.rs
+@@ -1,5 +1,5 @@
+ // SPDX-License-Identifier: Apache-2.0
+-//! D08 PRIVATE PROPOSAL. Pure decisions, never native admission or qualification authority.
++//! Device requirements and deterministic selection data; never native execution authority.
+ use super::*;
+ use crate::identity::framed_digest;
+ use anyhow::Context;
+--- a/crates/airk-store/src/service/arbiter/device.rs
++++ b/crates/airk-store/src/service/arbiter/device.rs
+@@ -339,6 +339,7 @@
+                     current == expected,
+                     "current config4 already advanced; migration refuses overwrite"
+                 );
++                check()?;
+                 return Ok(current);
+             }
+         };
+@@ -436,7 +437,10 @@
+             Ok(_) => {
+                 let (document, _, _) = self.read(&directory)?;
+                 return match document {
+-                    StoredConfiguration::Device(value) => Ok(value),
++                    StoredConfiguration::Device(value) => {
++                        check()?;
++                        Ok(value)
++                    }
+                     StoredConfiguration::Legacy(_) => anyhow::bail!(
+                         "valid config3 requires native migration, not disabled initialization"
+                     ),
+--- a/crates/airk-store/src/service/arbiter/device/tests.rs
++++ b/crates/airk-store/src/service/arbiter/device/tests.rs
+@@ -589,3 +589,73 @@
+     assert_eq!(reloaded, current);
+     Ok(())
+ }
++
++#[test]
++fn idempotent_migration_rechecks_liveness_after_all_retained_reads() -> Result<()> {
++    use std::cell::Cell;
++    let (root, store) = fixture()?;
++    let old = enabled(&store)?;
++    let raw = old.canonical_bytes()?;
++    let profile = profile()?;
++    store.device(binding()).migrate_checked(
++        old.revision,
++        digest(&raw),
++        |pin| (pin == profile.manifest).then_some(&profile),
++        || Ok(()),
++    )?;
++    let before = std::fs::read(root.path().join(DIRECTORY).join(CONFIGURATION))?;
++    let checks = Cell::new(0u32);
++    let revoke = || {
++        checks.set(checks.get() + 1);
++        if checks.get() == 3 {
++            anyhow::bail!("original authority revoked after idempotent retained reads");
++        }
++        Ok(())
++    };
++    assert!(
++        store
++            .device(binding())
++            .migrate_checked(
++                old.revision,
++                digest(&raw),
++                |pin| (pin == profile.manifest).then_some(&profile),
++                revoke
++            )
++            .is_err()
++    );
++    assert_eq!(checks.get(), 3);
++    assert_eq!(
++        std::fs::read(root.path().join(DIRECTORY).join(CONFIGURATION))?,
++        before
++    );
++    Ok(())
++}
++#[test]
++fn already_initialized_device_read_rechecks_liveness_before_success() -> Result<()> {
++    use std::cell::Cell;
++    let (root, store) = fixture()?;
++    store
++        .device(binding())
++        .initialize_checked(None, || Ok(()))?;
++    let before = std::fs::read(root.path().join(DIRECTORY).join(CONFIGURATION))?;
++    let checks = Cell::new(0u32);
++    let revoke = || {
++        checks.set(checks.get() + 1);
++        if checks.get() == 2 {
++            anyhow::bail!("original authority revoked after existing configuration read");
++        }
++        Ok(())
++    };
++    assert!(
++        store
++            .device(binding())
++            .initialize_checked(None, revoke)
++            .is_err()
++    );
++    assert_eq!(checks.get(), 2);
++    assert_eq!(
++        std::fs::read(root.path().join(DIRECTORY).join(CONFIGURATION))?,
++        before
++    );
++    Ok(())
++}

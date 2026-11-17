@@ -1,0 +1,21 @@
+--- a/crates/airk-service/src/service_runtime/arbiter/evaluation.rs
++++ b/crates/airk-service/src/service_runtime/arbiter/evaluation.rs
+@@ -6,6 +6,9 @@
+     fs::File,
+     io::{Read, Seek, SeekFrom, Write},
+ };
++
++#[cfg(test)]
++type FixtureDescriptorSource<'a> = &'a mut (dyn FnMut(&Asset) -> Result<File> + 'a);
+ 
+ /// Native test-support observation only. The sink is attached before exact
+ /// same-lease/same-gate fixture composition; no wire value attaches it.
+@@ -203,7 +206,7 @@
+     pub(in crate::service_runtime) fn actual_acquisition_fixture(
+         &self,
+         manifest: Sha256Digest,
+-        source: Option<&mut dyn FnMut(&Asset) -> Result<File>>,
++        source: Option<FixtureDescriptorSource<'_>>,
+     ) -> Result<super::lifecycle::acquisition_fixture::AcquisitionFixture> {
+         let execution = self.owner.context.execution_profile(manifest)?;
+         ensure!(

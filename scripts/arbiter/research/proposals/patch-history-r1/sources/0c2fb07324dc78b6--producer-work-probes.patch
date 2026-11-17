@@ -1,0 +1,996 @@
+--- a/crates/airk-kernel/src/current/enrichment.rs
++++ b/crates/airk-kernel/src/current/enrichment.rs
+@@ -169,17 +169,50 @@
+     }
+ 
+     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
+-        self.validate()?;
+-        Ok(serde_json::to_vec(self)?)
++        airk_store::current::work_probe::measure(
++            airk_store::current::work_probe::Metric::QueueEncode,
++            || {
++                airk_store::current::work_probe::add(
++                    airk_store::current::work_probe::Metric::QueueEncode,
++                    self.pending.len() as u64,
++                    0,
++                );
++
++                self.validate()?;
++                let bytes = serde_json::to_vec(self)?;
++                airk_store::current::work_probe::add(
++                    airk_store::current::work_probe::Metric::QueueEncode,
++                    0,
++                    bytes.len() as u64,
++                );
++                Ok(bytes)
++            },
++        )
+     }
+ 
+     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+-        let work: Self = serde_json::from_slice(bytes)?;
+-        ensure!(
+-            work.canonical_bytes()? == bytes,
+-            "noncanonical semantic work"
+-        );
+-        Ok(work)
++        airk_store::current::work_probe::measure(
++            airk_store::current::work_probe::Metric::QueueDecode,
++            || {
++                airk_store::current::work_probe::add(
++                    airk_store::current::work_probe::Metric::QueueDecode,
++                    0,
++                    bytes.len() as u64,
++                );
++
++                let work: Self = serde_json::from_slice(bytes)?;
++                ensure!(
++                    work.canonical_bytes()? == bytes,
++                    "noncanonical semantic work"
++                );
++                airk_store::current::work_probe::add(
++                    airk_store::current::work_probe::Metric::QueueDecode,
++                    work.pending.len() as u64,
++                    0,
++                );
++                Ok(work)
++            },
++        )
+     }
+ 
+     pub fn resource_change(
+@@ -967,35 +1000,44 @@
+                     && state.configuration.vector_selection.digest()? == work.selection_digest,
+                 "pending semantic work differs from current configuration"
+             );
+-            let batch_len = work.pending.len().min(32);
+-            // Keep the durable manifest path-sorted for canonical validation,
+-            // while selecting recent edits and useful repository context first.
+-            let mut selected: Vec<_> = work
+-                .pending
+-                .iter()
+-                .map(|pending| {
+-                    (
+-                        !recent.contains(pending.path.as_str()),
+-                        airk_ingest::priority::agent_path_priority(&pending.path),
+-                        pending,
+-                    )
+-                })
+-                .collect();
+-            if selected.len() > batch_len {
+-                selected.select_nth_unstable_by(batch_len, |left, right| {
+-                    (left.0, left.1, &left.2.path).cmp(&(right.0, right.1, &right.2.path))
+-                });
+-            }
+-            selected.truncate(batch_len);
+-            selected.sort_unstable_by(|left, right| {
+-                (left.0, left.1, &left.2.path).cmp(&(right.0, right.1, &right.2.path))
+-            });
+-            let mut selected: Vec<_> = selected
+-                .into_iter()
+-                .map(|(_, _, pending)| pending.clone())
+-                .collect();
+-            // Publication validates a canonical path order within each batch.
+-            selected.sort_unstable_by(|left, right| left.path.cmp(&right.path));
++            let selected = airk_store::current::work_probe::measure(
++                airk_store::current::work_probe::Metric::QueueSelect,
++                || {
++                    airk_store::current::work_probe::add(
++                        airk_store::current::work_probe::Metric::QueueSelect,
++                        work.pending.len() as u64,
++                        0,
++                    );
++                    let batch_len = work.pending.len().min(32);
++                    // Keep the durable manifest path-sorted for canonical validation,
++                    // while selecting recent edits and useful repository context first.
++                    let mut selected: Vec<_> = work
++                        .pending
++                        .iter()
++                        .map(|pending| {
++                            (
++                                !recent.contains(pending.path.as_str()),
++                                airk_ingest::priority::agent_path_priority(&pending.path),
++                                pending,
++                            )
++                        })
++                        .collect();
++                    if selected.len() > batch_len {
++                        selected.select_nth_unstable_by(batch_len, |left, right| {
++                            (left.0, left.1, &left.2.path).cmp(&(right.0, right.1, &right.2.path))
++                        });
++                    }
++                    selected.truncate(batch_len);
++                    let mut selected: Vec<_> = selected
++                        .into_iter()
++                        .map(|(_, _, pending)| pending.clone())
++                        .collect();
++                    // Publication validates a canonical path order within each batch.
++                    selected.sort_unstable_by(|left, right| left.path.cmp(&right.path));
++                    Ok(selected)
++                },
++            )?;
++            let batch_len = selected.len();
+             self.emit_progress(airk_core::readiness::IndexProgress {
+                 collection: String::new(),
+                 phase: "enrichment_started",
+@@ -1042,8 +1084,19 @@
+                 .iter()
+                 .map(|pending| pending.path.as_str())
+                 .collect();
+-            work.pending
+-                .retain(|pending| !selected_paths.contains(pending.path.as_str()));
++            airk_store::current::work_probe::measure(
++                airk_store::current::work_probe::Metric::QueueRetain,
++                || {
++                    airk_store::current::work_probe::add(
++                        airk_store::current::work_probe::Metric::QueueRetain,
++                        work.pending.len() as u64,
++                        0,
++                    );
++                    work.pending
++                        .retain(|pending| !selected_paths.contains(pending.path.as_str()));
++                    Ok(())
++                },
++            )?;
+             work.completed_artifacts += batch_len as u64;
+             work.failure = None;
+             let result = CurrentUpdater {
+--- a/crates/airk-kernel/src/current/indexing/tests.rs
++++ b/crates/airk-kernel/src/current/indexing/tests.rs
+@@ -1457,3 +1457,54 @@
+     assert!(kernel.status_summary().is_ok());
+     Ok(())
+ }
++
++#[test]
++fn semantic_probe_observes_actual_queue_turns_without_changing_publication_work() -> Result<()> {
++    use airk_store::current::work_probe::{Metric, observe};
++    let root = model_data_directory()?;
++    let data = model_data_directory()?;
++    write_static_test_model(&data.path().join("models/local"))?;
++    for index in 0..65 {
++        std::fs::write(
++            root.path().join(format!("file_{index:02}.txt")),
++            "authenticate original\n",
++        )?;
++    }
++    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
++    kernel.scheduled_index(false, false)?;
++    let before = kernel.status()?;
++    assert_eq!(before.semantic_readiness.completed_artifacts, 0);
++    let (result, probe) = observe(|| kernel.resume_current_enrichment_batches(3));
++    result?;
++    let after = kernel.status()?;
++    assert_eq!(after.files, before.files);
++    assert_eq!(after.chunks, before.chunks);
++    assert_eq!(after.semantic_readiness.completed_artifacts, 65);
++    assert_eq!(probe.get(Metric::SemanticUpdate).calls, 3);
++    assert_eq!(probe.get(Metric::QueueSelect).calls, 3);
++    assert_eq!(probe.get(Metric::QueueSelect).items, 65 + 33 + 1);
++    assert_eq!(probe.get(Metric::QueueRetain).items, 65 + 33 + 1);
++    assert_eq!(probe.get(Metric::PublicationCommit).calls, 3);
++    assert_eq!(probe.get(Metric::PublicationCommit).failures, 0);
++    assert!(probe.get(Metric::QueueDecode).bytes > 0);
++    assert!(probe.get(Metric::QueueEncode).bytes > 0);
++    assert!(probe.get(Metric::ResourceRead).bytes > 0);
++    let read = kernel.current_reader()?;
++    assert!(
++        enrichment::read_work(&read, &kernel.store)?
++            .unwrap()
++            .pending
++            .is_empty()
++    );
++    for index in 0..65 {
++        assert_eq!(
++            std::fs::read(root.path().join(format!("file_{index:02}.txt")))?,
++            b"authenticate original\n"
++        );
++    }
++    // This rollback fixture does not qualify service-WAL FTS captures or ONNX.
++    // Native qualification must print only these bounded counters plus existing
++    // cache/inference statistics, never source paths or model request payloads.
++    eprintln!("semantic_probe={probe:?}");
++    Ok(())
++}
+--- a/crates/airk-kernel/src/current/update.rs
++++ b/crates/airk-kernel/src/current/update.rs
+@@ -248,7 +248,19 @@
+         let vectors = if texts.is_empty() {
+             Vec::new()
+         } else {
+-            semantic.model.embed_batch(&texts, &mut semantic.cache)?
++            airk_store::current::work_probe::measure(
++                airk_store::current::work_probe::Metric::EmbeddingBatch,
++                || {
++                    if airk_store::current::work_probe::enabled() {
++                        airk_store::current::work_probe::add(
++                            airk_store::current::work_probe::Metric::EmbeddingBatch,
++                            texts.len() as u64,
++                            texts.iter().map(|text| text.len() as u64).sum(),
++                        );
++                    }
++                    semantic.model.embed_batch(&texts, &mut semantic.cache)
++                },
++            )?
+         };
+         ensure!(
+             vectors.len() == missing.len(),
+@@ -408,20 +420,25 @@
+         semantic: SemanticUpdate<'_>,
+         work: &mut super::enrichment::SemanticWork,
+     ) -> Result<CurrentUpdateResult> {
+-        ensure!(
+-            semantic.cache.bypass == work.force_recompute
+-                && semantic.objects.pipeline_digest == work.pipeline_digest
+-                && semantic.selection.digest()? == work.selection_digest,
+-            "semantic turn differs from its authenticated work policy"
+-        );
+-        self.apply_resources_observed(
+-            &[],
+-            Some(semantic),
+-            &[],
+-            None,
+-            Some(inputs),
+-            Some(work),
+-            &mut |_| {},
++        airk_store::current::work_probe::measure(
++            airk_store::current::work_probe::Metric::SemanticUpdate,
++            || {
++                ensure!(
++                    semantic.cache.bypass == work.force_recompute
++                        && semantic.objects.pipeline_digest == work.pipeline_digest
++                        && semantic.selection.digest()? == work.selection_digest,
++                    "semantic turn differs from its authenticated work policy"
++                );
++                self.apply_resources_observed(
++                    &[],
++                    Some(semantic),
++                    &[],
++                    None,
++                    Some(inputs),
++                    Some(work),
++                    &mut |_| {},
++                )
++            },
+         )
+     }
+ 
+--- a/crates/airk-store/src/current/journal.rs
++++ b/crates/airk-store/src/current/journal.rs
+@@ -1459,19 +1459,24 @@
+         metadata: &[super::metadata::FileMetadataRef],
+         resources: &[super::resources::ResourceChange],
+     ) -> Result<(PendingTransaction, super::lexical::LexicalWork)> {
+-        let prepared = self.prepare_fts(expected, update.artifacts)?;
+-        let pending = self.prepare_artifacts_inner(
+-            expected,
+-            target,
+-            graph_delta,
+-            update,
+-            model,
+-            &prepared.manifest,
+-            metadata,
+-            resources,
+-            Some(&prepared.updates),
+-        )?;
+-        Ok((pending, prepared.work))
++        crate::current::work_probe::measure(
++            crate::current::work_probe::Metric::PublicationPrepare,
++            || {
++                let prepared = self.prepare_fts(expected, update.artifacts)?;
++                let pending = self.prepare_artifacts_inner(
++                    expected,
++                    target,
++                    graph_delta,
++                    update,
++                    model,
++                    &prepared.manifest,
++                    metadata,
++                    resources,
++                    Some(&prepared.updates),
++                )?;
++                Ok((pending, prepared.work))
++            },
++        )
+     }
+ 
+     #[allow(clippy::too_many_arguments)]
+@@ -2071,38 +2076,45 @@
+     }
+ 
+     pub fn mark_applying(&mut self, pending: &PendingTransaction) -> Result<()> {
+-        ensure!(
+-            self.pending()?.as_ref() == Some(pending),
+-            "pending transaction changed"
+-        );
+-        let already_applying = self.phase()? == TransactionPhase::Applying;
+-        self.visit_captured(pending, &mut |_| Ok(()))?;
+-        visit_pending_map(self.connection()?, pending, &mut |_, _| Ok(()))?;
+-        if let Some(bytes) = pending_lexical(self.connection()?, pending)?
+-            && is_fts_manifest(&bytes)?
+-        {
+-            let manifest =
+-                super::lexical::LexicalManifest::decode(&bytes, pending.target.lexical_commit)?;
+-            fts::captured(self.connection()?, &manifest)?;
+-        }
+-        let mut grant = self.grant(pending)?;
+-        let connection = self
+-            .connection
+-            .as_mut()
+-            .context("current database missing")?;
+-        let allowance = database::allowance(connection, self.capacity)?;
+-        grant.resize(self.writer, allowance)?;
+-        crate::capacity::require_growth(self.quota.root(), allowance)?;
+-        if already_applying {
+-            return Ok(());
+-        }
+-        let transaction = connection.transaction()?;
+-        transaction.execute(
++        crate::current::work_probe::measure(
++            crate::current::work_probe::Metric::PublicationApply,
++            || {
++                ensure!(
++                    self.pending()?.as_ref() == Some(pending),
++                    "pending transaction changed"
++                );
++                let already_applying = self.phase()? == TransactionPhase::Applying;
++                self.visit_captured(pending, &mut |_| Ok(()))?;
++                visit_pending_map(self.connection()?, pending, &mut |_, _| Ok(()))?;
++                if let Some(bytes) = pending_lexical(self.connection()?, pending)?
++                    && is_fts_manifest(&bytes)?
++                {
++                    let manifest = super::lexical::LexicalManifest::decode(
++                        &bytes,
++                        pending.target.lexical_commit,
++                    )?;
++                    fts::captured(self.connection()?, &manifest)?;
++                }
++                let mut grant = self.grant(pending)?;
++                let connection = self
++                    .connection
++                    .as_mut()
++                    .context("current database missing")?;
++                let allowance = database::allowance(connection, self.capacity)?;
++                grant.resize(self.writer, allowance)?;
++                crate::capacity::require_growth(self.quota.root(), allowance)?;
++                if already_applying {
++                    return Ok(());
++                }
++                let transaction = connection.transaction()?;
++                transaction.execute(
+             "UPDATE OR ROLLBACK current_state SET phase='applying' WHERE id=1 AND phase='prepared'",
+             [],
+         )?;
+-        transaction.commit()?;
+-        Ok(())
++                transaction.commit()?;
++                Ok(())
++            },
++        )
+     }
+ 
+     /// External components have already been durably synced to this exact target.
+@@ -2112,91 +2124,112 @@
+         pending: &PendingTransaction,
+         lexical_commit: Sha256Digest,
+     ) -> Result<CurrentCommit> {
+-        ensure!(
+-            self.pending()?.as_ref() == Some(pending)
+-                && self.phase()? == TransactionPhase::Applying,
+-            "current transaction is not applying"
+-        );
+-        ensure!(
+-            lexical_commit == pending.target.lexical_commit,
+-            "external lexical commit does not match captured target"
+-        );
+-        let fts_base = if let Some(bytes) = self.pending_lexical_manifest(pending)?
+-            && is_fts_manifest(&bytes)?
+-        {
+-            Some(self.lexical_snapshot()?)
+-        } else {
+-            None
+-        };
+-        let mut grant = self.grant(pending)?;
+-        let connection = self
+-            .connection
+-            .as_mut()
+-            .context("current database missing")?;
+-        let allowance = database::allowance(connection, self.capacity)?;
+-        if allowance > grant.capacity() {
+-            grant.resize(self.writer, allowance)?;
+-        }
+-        crate::capacity::require_growth(self.quota.root(), allowance)?;
+-        let transaction = connection.transaction()?;
+-        let lexical_manifest = pending_lexical(&transaction, pending)?;
+-        let mut replayed_lexical = None;
+-        graph::apply(&transaction, pending.id, &pending.graph)?;
+-        // Start from the authenticated committed base, not an empty map.
+-        let mut map_root = state(&transaction, &self.scope)?.1.artifact_root;
+-        visit_pending_map(&transaction, pending, &mut |key, value| {
+-            map_root = map::put(&transaction, &self.scope, map_root, key, value)?;
+-            Ok(())
+-        })?;
+-        ensure!(
+-            map_root == pending.target.artifact_root,
+-            "replayed current map root differs from prepared target"
+-        );
+-        if let Some(bytes) = lexical_manifest {
+-            if is_fts_manifest(&bytes)? {
+-                replayed_lexical = Some(std::sync::Arc::new(fts::replay(
+-                    &transaction,
+-                    &self.store,
+-                    &bytes,
+-                    pending.target.lexical_commit,
+-                    fts_base
+-                        .as_deref()
+-                        .context("FTS5 base verification missing")?,
+-                )?));
+-            }
+-            transaction.execute(
++        crate::current::work_probe::measure(
++            crate::current::work_probe::Metric::PublicationCommit,
++            || {
++                crate::current::work_probe::add(
++                    crate::current::work_probe::Metric::JournalMaps,
++                    pending.map_count,
++                    pending.map_bytes,
++                );
++                crate::current::work_probe::add(
++                    crate::current::work_probe::Metric::JournalInputs,
++                    pending.inputs_count,
++                    pending.object_bytes,
++                );
++                crate::current::work_probe::add(
++                    crate::current::work_probe::Metric::JournalMetadata,
++                    0,
++                    pending.metadata_bytes,
++                );
++                ensure!(
++                    self.pending()?.as_ref() == Some(pending)
++                        && self.phase()? == TransactionPhase::Applying,
++                    "current transaction is not applying"
++                );
++                ensure!(
++                    lexical_commit == pending.target.lexical_commit,
++                    "external lexical commit does not match captured target"
++                );
++                let fts_base = if let Some(bytes) = self.pending_lexical_manifest(pending)?
++                    && is_fts_manifest(&bytes)?
++                {
++                    Some(self.lexical_snapshot()?)
++                } else {
++                    None
++                };
++                let mut grant = self.grant(pending)?;
++                let connection = self
++                    .connection
++                    .as_mut()
++                    .context("current database missing")?;
++                let allowance = database::allowance(connection, self.capacity)?;
++                if allowance > grant.capacity() {
++                    grant.resize(self.writer, allowance)?;
++                }
++                crate::capacity::require_growth(self.quota.root(), allowance)?;
++                let transaction = connection.transaction()?;
++                let lexical_manifest = pending_lexical(&transaction, pending)?;
++                let mut replayed_lexical = None;
++                graph::apply(&transaction, pending.id, &pending.graph)?;
++                // Start from the authenticated committed base, not an empty map.
++                let mut map_root = state(&transaction, &self.scope)?.1.artifact_root;
++                visit_pending_map(&transaction, pending, &mut |key, value| {
++                    map_root = map::put(&transaction, &self.scope, map_root, key, value)?;
++                    Ok(())
++                })?;
++                ensure!(
++                    map_root == pending.target.artifact_root,
++                    "replayed current map root differs from prepared target"
++                );
++                if let Some(bytes) = lexical_manifest {
++                    if is_fts_manifest(&bytes)? {
++                        replayed_lexical = Some(std::sync::Arc::new(fts::replay(
++                            &transaction,
++                            &self.store,
++                            &bytes,
++                            pending.target.lexical_commit,
++                            fts_base
++                                .as_deref()
++                                .context("FTS5 base verification missing")?,
++                        )?));
++                    }
++                    transaction.execute(
+                 "INSERT INTO current_lexical_manifest(id,content) VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET content=excluded.content",
+                 [bytes],
+             )?;
+-        }
+-        graph::cleanup(&transaction, pending.id)?;
+-        transaction.execute("DELETE FROM current_pending_inputs", [])?;
+-        transaction.execute("DELETE FROM current_pending_map", [])?;
+-        transaction.execute("DELETE FROM current_pending_lexical", [])?;
+-        transaction.execute("DELETE FROM current_pending_fts", [])?;
+-        transaction.execute("DELETE FROM current_pending WHERE id=1", [])?;
+-        transaction.execute(
+-            "UPDATE OR ROLLBACK current_state SET phase='ready',head=?1 WHERE id=1",
+-            [pending.target.canonical_bytes()?],
+-        )?;
+-        transaction.commit()?;
+-        if let Some(snapshot) = replayed_lexical {
+-            self.lexical_committed = true;
+-            super::lexical::cache::remember(
+-                &self.store.directory().join("current.sqlite3"),
+-                pending.target.lexical_commit,
+-                snapshot.clone(),
+-            );
+-            *self.lexical_base.borrow_mut() = Some((pending.target.lexical_commit, snapshot));
+-        }
+-        let maintenance_error = grant
+-            .release(self.writer)
+-            .err()
+-            .map(|error| format!("{error:#}"));
+-        Ok(CurrentCommit {
+-            token: pending.target.token()?,
+-            maintenance_error,
+-        })
++                }
++                graph::cleanup(&transaction, pending.id)?;
++                transaction.execute("DELETE FROM current_pending_inputs", [])?;
++                transaction.execute("DELETE FROM current_pending_map", [])?;
++                transaction.execute("DELETE FROM current_pending_lexical", [])?;
++                transaction.execute("DELETE FROM current_pending_fts", [])?;
++                transaction.execute("DELETE FROM current_pending WHERE id=1", [])?;
++                transaction.execute(
++                    "UPDATE OR ROLLBACK current_state SET phase='ready',head=?1 WHERE id=1",
++                    [pending.target.canonical_bytes()?],
++                )?;
++                transaction.commit()?;
++                if let Some(snapshot) = replayed_lexical {
++                    self.lexical_committed = true;
++                    super::lexical::cache::remember(
++                        &self.store.directory().join("current.sqlite3"),
++                        pending.target.lexical_commit,
++                        snapshot.clone(),
++                    );
++                    *self.lexical_base.borrow_mut() =
++                        Some((pending.target.lexical_commit, snapshot));
++                }
++                let maintenance_error = grant
++                    .release(self.writer)
++                    .err()
++                    .map(|error| format!("{error:#}"));
++                Ok(CurrentCommit {
++                    token: pending.target.token()?,
++                    maintenance_error,
++                })
++            },
++        )
+     }
+ 
+     pub fn abort_prepared(&mut self, pending: &PendingTransaction) -> Result<()> {
+--- a/crates/airk-store/src/current/lexical/seal.rs
++++ b/crates/airk-store/src/current/lexical/seal.rs
+@@ -82,39 +82,54 @@
+             .saturating_add(4096)
+     }
+     pub(crate) fn capture(connection: &Connection) -> Result<Self> {
+-        let mut result = Self {
+-            buckets: BTreeMap::new(),
+-            auxiliary: Vec::new(),
+-        };
+-        for (table, sql) in ROW_TABLES.iter().enumerate() {
+-            let mut statement = connection.prepare(&format!("{sql} ORDER BY id"))?;
+-            let columns = statement.column_count();
+-            let mut rows = statement.query([])?;
+-            let mut current = None;
+-            let mut hash = Sha256::new();
+-            let mut bytes = 0;
+-            while let Some(row) = rows.next()? {
+-                let bucket = row.get::<_, i64>(0)? >> 8;
+-                if current != Some(bucket) {
+-                    if let Some(old) = current {
+-                        result.buckets.insert((table, old), finish(hash, bytes));
++        crate::current::work_probe::measure(
++            crate::current::work_probe::Metric::FullFtsCapture,
++            || {
++                let mut result = Self {
++                    buckets: BTreeMap::new(),
++                    auxiliary: Vec::new(),
++                };
++                for (table, sql) in ROW_TABLES.iter().enumerate() {
++                    let mut statement = connection.prepare(&format!("{sql} ORDER BY id"))?;
++                    let columns = statement.column_count();
++                    let mut rows = statement.query([])?;
++                    let mut current = None;
++                    let mut hash = Sha256::new();
++                    let mut bytes = 0;
++                    while let Some(row) = rows.next()? {
++                        let bucket = row.get::<_, i64>(0)? >> 8;
++                        if current != Some(bucket) {
++                            if let Some(old) = current {
++                                result.buckets.insert((table, old), finish(hash, bytes));
++                            }
++                            ensure!(
++                                result.buckets.len() < MAX_BUCKETS,
++                                "FTS5 seal bucket bound exceeded"
++                            );
++                            current = Some(bucket);
++                            hash = Sha256::new();
++                            bytes = 0;
++                        }
++                        let before = bytes;
++                        add_row(&mut hash, &mut bytes, row, columns)?;
++                        crate::current::work_probe::add(
++                            if table == 0 {
++                                crate::current::work_probe::Metric::FullFtsDocs
++                            } else {
++                                crate::current::work_probe::Metric::FullFtsShadow
++                            },
++                            1,
++                            bytes - before,
++                        );
+                     }
+-                    ensure!(
+-                        result.buckets.len() < MAX_BUCKETS,
+-                        "FTS5 seal bucket bound exceeded"
+-                    );
+-                    current = Some(bucket);
+-                    hash = Sha256::new();
+-                    bytes = 0;
++                    if let Some(bucket) = current {
++                        result.buckets.insert((table, bucket), finish(hash, bytes));
++                    }
+                 }
+-                add_row(&mut hash, &mut bytes, row, columns)?;
+-            }
+-            if let Some(bucket) = current {
+-                result.buckets.insert((table, bucket), finish(hash, bytes));
+-            }
+-        }
+-        result.capture_auxiliary(connection)?;
+-        Ok(result)
++                result.capture_auxiliary(connection)?;
++                Ok(result)
++            },
++        )
+     }
+     fn capture_auxiliary(&mut self, connection: &Connection) -> Result<()> {
+         self.auxiliary.clear();
+@@ -125,7 +140,13 @@
+             let mut hash = Sha256::new();
+             let mut bytes = 0;
+             while let Some(row) = rows.next()? {
++                let before = bytes;
+                 add_row(&mut hash, &mut bytes, row, columns)?;
++                crate::current::work_probe::add(
++                    crate::current::work_probe::Metric::FullFtsAux,
++                    1,
++                    bytes - before,
++                );
+             }
+             self.auxiliary.push(finish(hash, bytes));
+         }
+--- a/crates/airk-store/src/current/mod.rs
++++ b/crates/airk-store/src/current/mod.rs
+@@ -26,6 +26,8 @@
+ mod wal_budget;
+ #[cfg(test)]
+ mod wal_budget_spike;
++#[doc(hidden)]
++pub mod work_probe;
+ 
+ pub use database::{DATABASE_VERSION, PAGE_BYTES, journal_bound};
+ pub use gate::CurrentGateContention;
+--- a/crates/airk-store/src/current/resources.rs
++++ b/crates/airk-store/src/current/resources.rs
+@@ -38,63 +38,86 @@
+         bytes: &[u8],
+         reservation: &Reservation,
+     ) -> Result<ResourceReference> {
+-        ensure!(
+-            bytes.len() <= MAX_RESOURCE_BYTES,
+-            "current resource exceeds byte budget"
+-        );
+-        let reference = ResourceReference {
+-            digest: framed_digest(b"current-resource/1", &[bytes]),
+-            bytes: bytes.len(),
+-        };
+-        let directory = self.directory().join("current-resources");
+-        if !directory.try_exists()? {
+-            std::fs::create_dir(&directory)?;
+-        }
+-        let metadata = std::fs::symlink_metadata(&directory)?;
+-        ensure!(
+-            metadata.is_dir() && !metadata.file_type().is_symlink(),
+-            "linked current resource directory"
+-        );
+-        let path = directory.join(format!("{}.json", reference.digest));
+-        if !path.try_exists()? {
+-            reservation.charge(bytes.len() as u64)?;
+-            let mut temporary = tempfile::NamedTempFile::new_in(reservation.staging_directory()?)?;
+-            temporary.write_all(bytes)?;
+-            crate::durability::persist_synced(temporary, &path)?;
+-        }
+-        self.read_current_resource(&reference)?;
+-        Ok(reference)
++        crate::current::work_probe::measure(
++            crate::current::work_probe::Metric::ResourceWrite,
++            || {
++                crate::current::work_probe::add(
++                    crate::current::work_probe::Metric::ResourceWrite,
++                    1,
++                    bytes.len() as u64,
++                );
++
++                ensure!(
++                    bytes.len() <= MAX_RESOURCE_BYTES,
++                    "current resource exceeds byte budget"
++                );
++                let reference = ResourceReference {
++                    digest: framed_digest(b"current-resource/1", &[bytes]),
++                    bytes: bytes.len(),
++                };
++                let directory = self.directory().join("current-resources");
++                if !directory.try_exists()? {
++                    std::fs::create_dir(&directory)?;
++                }
++                let metadata = std::fs::symlink_metadata(&directory)?;
++                ensure!(
++                    metadata.is_dir() && !metadata.file_type().is_symlink(),
++                    "linked current resource directory"
++                );
++                let path = directory.join(format!("{}.json", reference.digest));
++                if !path.try_exists()? {
++                    reservation.charge(bytes.len() as u64)?;
++                    let mut temporary =
++                        tempfile::NamedTempFile::new_in(reservation.staging_directory()?)?;
++                    temporary.write_all(bytes)?;
++                    crate::durability::persist_synced(temporary, &path)?;
++                }
++                self.read_current_resource(&reference)?;
++                Ok(reference)
++            },
++        )
+     }
+ 
+     pub fn read_current_resource(&self, reference: &ResourceReference) -> Result<Vec<u8>> {
+-        ensure!(
+-            reference.bytes <= MAX_RESOURCE_BYTES,
+-            "current resource exceeds byte budget"
+-        );
+-        let directory = self.directory().join("current-resources");
+-        let metadata = std::fs::symlink_metadata(&directory)?;
+-        ensure!(
+-            metadata.is_dir() && !metadata.file_type().is_symlink(),
+-            "linked current resource directory"
+-        );
+-        let path = directory.join(format!("{}.json", reference.digest));
+-        let metadata = std::fs::symlink_metadata(&path)?;
+-        ensure!(
+-            metadata.is_file()
+-                && !metadata.file_type().is_symlink()
+-                && metadata.len() == reference.bytes as u64,
+-            "invalid current resource size or ownership"
+-        );
+-        let mut bytes = Vec::new();
+-        std::fs::File::open(path)?
+-            .take(reference.bytes as u64 + 1)
+-            .read_to_end(&mut bytes)?;
+-        ensure!(
+-            bytes.len() == reference.bytes
+-                && framed_digest(b"current-resource/1", &[&bytes]) == reference.digest,
+-            "current resource digest mismatch"
+-        );
+-        Ok(bytes)
++        crate::current::work_probe::measure(
++            crate::current::work_probe::Metric::ResourceRead,
++            || {
++                crate::current::work_probe::add(
++                    crate::current::work_probe::Metric::ResourceRead,
++                    1,
++                    reference.bytes as u64,
++                );
++
++                ensure!(
++                    reference.bytes <= MAX_RESOURCE_BYTES,
++                    "current resource exceeds byte budget"
++                );
++                let directory = self.directory().join("current-resources");
++                let metadata = std::fs::symlink_metadata(&directory)?;
++                ensure!(
++                    metadata.is_dir() && !metadata.file_type().is_symlink(),
++                    "linked current resource directory"
++                );
++                let path = directory.join(format!("{}.json", reference.digest));
++                let metadata = std::fs::symlink_metadata(&path)?;
++                ensure!(
++                    metadata.is_file()
++                        && !metadata.file_type().is_symlink()
++                        && metadata.len() == reference.bytes as u64,
++                    "invalid current resource size or ownership"
++                );
++                let mut bytes = Vec::new();
++                std::fs::File::open(path)?
++                    .take(reference.bytes as u64 + 1)
++                    .read_to_end(&mut bytes)?;
++                ensure!(
++                    bytes.len() == reference.bytes
++                        && framed_digest(b"current-resource/1", &[&bytes]) == reference.digest,
++                    "current resource digest mismatch"
++                );
++                Ok(bytes)
++            },
++        )
+     }
+ }
+ 
+--- /dev/null
++++ b/crates/airk-store/src/current/work_probe.rs
+@@ -0,0 +1,150 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Optional synchronous producer accounting. No paths, source text or identities.
++//! The scope is deliberately !Send: enter it on the owning blocking producer,
++//! never across an async suspension or to infer child-thread CPU/inference work.
++use std::{cell::RefCell, rc::Rc, time::Instant};
++
++#[derive(Clone, Copy, Debug)]
++#[repr(usize)]
++pub enum Metric {
++    QueueDecode,
++    QueueEncode,
++    QueueSelect,
++    QueueRetain,
++    SemanticUpdate,
++    FullFtsCapture,
++    FullFtsDocs,
++    FullFtsShadow,
++    FullFtsAux,
++    PublicationPrepare,
++    PublicationApply,
++    PublicationCommit,
++    ResourceRead,
++    ResourceWrite,
++    EmbeddingBatch,
++    JournalMaps,
++    JournalInputs,
++    JournalMetadata,
++}
++const METRICS: usize = 18;
++#[derive(Clone, Copy, Debug, Default)]
++pub struct Work {
++    pub calls: u64,
++    pub failures: u64,
++    pub elapsed_ns: u64,
++    pub items: u64,
++    pub bytes: u64,
++    pub saturated: bool,
++}
++#[derive(Clone, Debug, Default)]
++pub struct Snapshot {
++    pub work: [Work; METRICS],
++}
++impl Snapshot {
++    pub fn get(&self, metric: Metric) -> Work {
++        self.work[metric as usize]
++    }
++}
++thread_local! {
++    static ACTIVE: RefCell<Option<Rc<RefCell<Snapshot>>>> = const { RefCell::new(None) };
++}
++struct Scope(Option<Rc<RefCell<Snapshot>>>);
++impl Drop for Scope {
++    fn drop(&mut self) {
++        ACTIVE.with(|active| *active.borrow_mut() = self.0.take());
++    }
++}
++/// Observe one actual synchronous producer entry point, preserving its result.
++/// Nested scopes isolate their work and restore the outer owner even on panic.
++/// No observer, I/O or extra validation runs inside the measured operation.
++pub fn observe<T>(operation: impl FnOnce() -> T) -> (T, Snapshot) {
++    let state = Rc::new(RefCell::new(Snapshot::default()));
++    let previous = ACTIVE.with(|active| active.replace(Some(state.clone())));
++    let scope = Scope(previous);
++    let result = operation();
++    drop(scope);
++    let snapshot = state.borrow().clone();
++    (result, snapshot)
++}
++#[doc(hidden)]
++pub fn enabled() -> bool {
++    ACTIVE.with(|active| active.borrow().is_some())
++}
++fn increment(target: &mut u64, value: u64, saturated: &mut bool) {
++    match target.checked_add(value) {
++        Some(total) => *target = total,
++        None => {
++            *target = u64::MAX;
++            *saturated = true;
++        }
++    }
++}
++pub fn add(metric: Metric, items: u64, bytes: u64) {
++    ACTIVE.with(|active| {
++        if let Some(state) = active.borrow().as_ref() {
++            let mut state = state.borrow_mut();
++            let work = &mut state.work[metric as usize];
++            increment(&mut work.items, items, &mut work.saturated);
++            increment(&mut work.bytes, bytes, &mut work.saturated);
++        }
++    });
++}
++#[doc(hidden)]
++pub fn measure<T>(
++    metric: Metric,
++    operation: impl FnOnce() -> anyhow::Result<T>,
++) -> anyhow::Result<T> {
++    let state = ACTIVE.with(|active| active.borrow().clone());
++    let Some(state) = state else {
++        return operation();
++    };
++    let started = Instant::now();
++    let result = operation();
++    let mut state = state.borrow_mut();
++    let work = &mut state.work[metric as usize];
++    increment(&mut work.calls, 1, &mut work.saturated);
++    increment(
++        &mut work.failures,
++        u64::from(result.is_err()),
++        &mut work.saturated,
++    );
++    let elapsed = started.elapsed().as_nanos();
++    if elapsed > u64::MAX as u128 {
++        work.saturated = true;
++    }
++    increment(
++        &mut work.elapsed_ns,
++        elapsed.min(u64::MAX as u128) as u64,
++        &mut work.saturated,
++    );
++    result
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn failed_actual_operation_keeps_error_and_nested_scope_isolation() {
++        let (error, outer) = observe(|| {
++            let (inner, snapshot) = observe(|| {
++                measure(Metric::ResourceRead, || {
++                    add(Metric::ResourceRead, 1, 7);
++                    Err::<(), _>(
++                        std::io::Error::new(std::io::ErrorKind::PermissionDenied, "fixture").into(),
++                    )
++                })
++            });
++            assert_eq!(snapshot.get(Metric::ResourceRead).failures, 1);
++            assert_eq!(snapshot.get(Metric::ResourceRead).bytes, 7);
++            inner
++        });
++        let error = error.unwrap_err();
++        assert_eq!(
++            error.downcast_ref::<std::io::Error>().unwrap().kind(),
++            std::io::ErrorKind::PermissionDenied
++        );
++        assert_eq!(outer.get(Metric::ResourceRead).calls, 0);
++        let (_, fresh) = observe(|| ());
++        assert_eq!(fresh.get(Metric::ResourceRead).calls, 0);
++    }
++}

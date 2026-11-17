@@ -1,0 +1,557 @@
+--- R1/crates/airk-service/src/service_runtime/arbiter/CONTRACT.md
++++ R3/crates/airk-service/src/service_runtime/arbiter/CONTRACT.md
+@@ -631,3 +631,18 @@
+ 
+ 
+ Diagnostics additionally requires positive physical current4 binding observations before/after each strict read (canonical raw SHA, revision and native catalog binding), repeated around the complete stage snapshot. Management load() synthesized disabled defaults are never accepted as physical current4. Both stages also require equal read-only Shared selection/residency stamps before/after: actual generation, cached document, selected manifests/reasons, ready and intent maps, eligibility and cached/native epoch/poison state. Changed selection/eligibility yields unavailable. This does not claim atomic unrelated download or work-progress counters. No CUDA probe is permitted.
++
++Delivery captures local eligibility only for stages named by the existing exact
++expected result bindings. A known-settled failed GPU refresh cannot block an
++unrelated admitted CPU result. The same GPU result still requires its current
++proof. Operation-wide unknown settlement, generation and native epoch/poison
++fences remain unchanged; no replay, renewed cutoff or relaxed input is allowed.
++
++Retained reaccept and cold warm use the same actual returned typed-fault recorder.
++Only known-settled genuine faults under current original authority create a
++stable circuit for the actual failed resident, including another retained stage.
++All actual retained GPU targets are checked for open circuits before reaccept
++or cold native work, after any replaced self has really drained. Explicit Cpu
++is exempt from GPU self-check. No unchanged failed retained roster is replayed
++by recovering an unrelated stage. Generic production probe refuses scientific
++RuntimeManifest/1 before context/candidates; only explicit evaluation may use /1.
+--- R1/crates/airk-inference/src/inference_engine/pool/arbiter.rs
++++ R3/crates/airk-inference/src/inference_engine/pool/arbiter.rs
+@@ -438,6 +438,21 @@
+         self.0.wake.notify_one();
+         self.0.changed.notify_waiters();
+         Ok(receive)
++    }
++    /// Native observation only; false alone is never a completion permit.
++    /// Fault recording additionally requires an actual returned typed outcome.
++    pub fn unknown_device_work(&self) -> bool {
++        if self.0.unsettled.load(Ordering::Acquire) {
++            return true;
++        }
++        #[cfg(feature = "gpu-cuda")]
++        {
++            airk_retrieval::arbiter::runtime::cuda::process_poisoned()
++        }
++        #[cfg(not(feature = "gpu-cuda"))]
++        {
++            false
++        }
+     }
+     pub fn resident_eligibilities(&self) -> Result<BTreeMap<Stage, ResidentEligibility>> {
+         let queue = self
+--- R1/crates/airk-inference/src/inference_engine/pool/arbiter/device.rs
++++ R3/crates/airk-inference/src/inference_engine/pool/arbiter/device.rs
+@@ -107,8 +107,9 @@
+             }
+         };
+         // Product discovery observes metadata only. It chooses ONE supported
+-        // adapter before retaining a context; /1 scientific discovery is exact.
+-        let discovered = if runtime.is_product() {
++        // adapter before retaining a context; /1 uses explicit evaluation above.
++        require_product_runtime(runtime.is_product())?;
++        let discovered = {
+             runtime.discover_adapters(probe.deadline).map(|values| {
+                 values
+                     .into_iter()
+@@ -125,13 +126,6 @@
+                     .min_by_key(|(rank, _)| *rank)
+                     .map(|(_, uuid)| uuid)
+                     .into_iter()
+-                    .collect::<Vec<_>>()
+-            })
+-        } else {
+-            runtime.adapters(probe.deadline).map(|values| {
+-                values
+-                    .into_iter()
+-                    .map(|observed| observed.uuid)
+                     .collect::<Vec<_>>()
+             })
+         };
+@@ -219,7 +213,7 @@
+                         device: device.clone(),
+                         _private: (),
+                     },
+-                    uuid: uuid,
++                    uuid,
+                     epoch: device.epoch(),
+                     host_warm_extra_bytes: extra,
+                 });
+@@ -634,3 +628,12 @@
+     (major == 8 && minor == 6 && dedicated && physical > 0 && ordinal >= 0)
+         .then_some((std::cmp::Reverse(physical), ordinal))
+ }
++
++#[cfg(any(feature = "gpu-cuda", test))]
++pub(super) fn require_product_runtime(product: bool) -> Result<()> {
++    ensure!(
++        product,
++        "scientific RuntimeManifest/1 cannot create a production GPU candidate"
++    );
++    Ok(())
++}
+--- R1/crates/airk-inference/src/inference_engine/pool/arbiter/eligibility/tests.rs
++++ R3/crates/airk-inference/src/inference_engine/pool/arbiter/eligibility/tests.rs
+@@ -242,3 +242,13 @@
+         None
+     );
+ }
++
++#[test]
++fn production_probe_refuses_scientific_runtime_before_any_candidate_or_context() {
++    let candidates = Cell::new(0);
++    let scientific = super::super::device::require_product_runtime(false)
++        .map(|()| candidates.set(candidates.get() + 1));
++    assert!(scientific.is_err());
++    assert_eq!(candidates.get(), 0);
++    assert!(super::super::device::require_product_runtime(true).is_ok());
++}
+--- R1/crates/airk-service/src/service_runtime/arbiter/device_management.rs
++++ R3/crates/airk-service/src/service_runtime/arbiter/device_management.rs
+@@ -1307,6 +1307,119 @@
+                 self.fault_notifier(handle, profile, cancel)?;
+                 self.current(Some(cancel))
+             })
++    }
++    fn require_open_retained_population(
++        &self,
++        handle: &Handle,
++        cancel: &CancellationToken,
++    ) -> Result<()> {
++        self.current(Some(cancel))?;
++        if self.document.stage(self.stage).device_policy == DevicePolicy::Cpu {
++            return Ok(());
++        }
++        let actual = [Stage::Focus, Stage::Context]
++            .into_iter()
++            .map(|stage| {
++                handle
++                    .observation_for(stage)
++                    .map(|value| (stage, value.active_profile))
++            })
++            .collect::<Result<Vec<_>>>()?;
++        let state = self
++            .devices
++            .state
++            .lock()
++            .map_err(|_| anyhow::anyhow!("retained GPU circuit observation unavailable"))?;
++        ensure!(
++            state.document.as_ref() == Some(&self.document),
++            "retained population source/configuration changed"
++        );
++        let targets = retained_gpu_targets(
++            actual,
++            state.selected.iter().map(|(stage, profile)| {
++                (*stage, profile.manifest, profile.device_execution.is_some())
++            }),
++        );
++        for (stage, manifest) in targets {
++            let profile = state
++                .selected
++                .get(&stage)
++                .filter(|profile| profile.manifest == manifest)
++                .context("retained GPU selection changed")?;
++            let (device, epoch) = state
++                .devices
++                .get(&stage)
++                .context("retained GPU device observation missing")?;
++            ensure!(
++                !device.poisoned() && device.epoch() == *epoch,
++                "retained GPU settlement/epoch unknown"
++            );
++            let key = airk_inference::inference_engine::pool::arbiter::circuit_key(
++                profile,
++                device,
++                &self.document,
++            )?;
++            ensure!(
++                !state.circuits.contains(&key),
++                "an actual retained GPU eligibility circuit is open; recover that affected stage explicitly before reaccepting this population"
++            );
++        }
++        Ok(())
++    }
++    fn record_prework_fault(
++        &self,
++        handle: &Handle,
++        current: Sha256Digest,
++        error: &anyhow::Error,
++        cancel: &CancellationToken,
++    ) -> Result<Option<Sha256Digest>> {
++        let failed = recordable_fault_profile(
++            prework_device_failure(error),
++            handle.unknown_device_work(),
++            airk_inference::inference_engine::pool::arbiter::eligibility_failure_profile(error),
++            current,
++        );
++        let Some(failed) = failed else {
++            return Ok(None);
++        };
++        if self.current(Some(cancel)).is_err() {
++            return Ok(None);
++        }
++        let mut state = self
++            .devices
++            .state
++            .lock()
++            .map_err(|_| anyhow::anyhow!("native fault recorder unavailable"))?;
++        ensure!(
++            state.document.as_ref() == Some(&self.document),
++            "fault source/configuration changed"
++        );
++        let profile = state
++            .selected
++            .values()
++            .find(|description| description.manifest == failed)
++            .context("actual failed native resident is no longer selected")?;
++        let stage = profile
++            .declared_stage()
++            .context("failed native stage absent")?;
++        let (device, epoch) = state
++            .devices
++            .get(&stage)
++            .context("actual failed device is absent")?;
++        if device.poisoned() || device.epoch() != *epoch {
++            return Ok(None);
++        }
++        let key = airk_inference::inference_engine::pool::arbiter::circuit_key(
++            profile,
++            device,
++            &self.document,
++        )?;
++        ensure!(
++            state.circuits.contains(&key) || state.circuits.len() < 16,
++            "native fault circuit capacity occupied"
++        );
++        state.circuits.insert(key);
++        Ok(Some(failed))
+     }
+     fn fault_notifier(
+         &self,
+@@ -1868,6 +1981,7 @@
+                         .get(&self.stage)
+                         .is_some_and(ResidentEligibility::current)
+                 {
++                    self.require_open_retained_population(&handle, cancel)?;
+                     let resident = handle.resident(profile.manifest)?;
+                     let receive = handle.reaccept_device(
+                         self.lease.clone(),
+@@ -1876,9 +1990,22 @@
+                         self.deadline,
+                         probe_live.clone(),
+                     )?;
+-                    tokio::time::timeout_at(tokio::time::Instant::from_std(self.deadline), receive)
+-                        .await
+-                        .context("original retained eligibility cutoff exhausted")???;
++                    let returned = tokio::time::timeout_at(
++                        tokio::time::Instant::from_std(self.deadline),
++                        receive,
++                    )
++                    .await
++                    .context("original retained eligibility cutoff exhausted")?
++                    .context("retained eligibility owner closed without an observed outcome")?;
++                    if let Err(error) = returned {
++                        self.record_prework_fault(&handle, profile.manifest, &error, cancel)
++                            .map_err(|guard| {
++                                guard.context(format!(
++                                    "original retained eligibility refusal: {error:#}"
++                                ))
++                            })?;
++                        return Err(error.context("retained local eligibility failed; original management attempt stops without replay"));
++                    }
+                     self.current(Some(cancel))?;
+                 }
+                 self.finish_resident_activation(&handle, &profile, cancel)?;
+@@ -1897,6 +2024,7 @@
+                 self.drain(&handle, old).await?;
+             }
+             self.current(Some(cancel))?;
++            self.require_open_retained_population(&handle, cancel)?;
+             let reservation = if cold_probe_charge
+                 .as_ref()
+                 .is_some_and(|charge| charge.bytes() >= profile.memory_reservation_bytes)
+@@ -2028,72 +2156,15 @@
+                     self.current(Some(cancel))?;
+                     // Source/input/cancellation/deadline/owner errors are not device
+                     // faults and cannot be relabeled as a fallback authorization.
+-                    if !prework_device_failure(&error) {
+-                        return Err(
+-                            error.context("non-device warm failure; automatic fallback refused")
+-                        );
+-                    }
+-                    if let Some(failed) =
+-                        airk_inference::inference_engine::pool::arbiter::eligibility_failure_profile(
+-                            &error,
+-                        )
+-                        && failed != profile.manifest
+-                    {
+-                        let mut state = self.devices.state.lock().map_err(|_| {
+-                            anyhow::anyhow!("retained eligibility circuit unavailable")
++                    let recorded = self
++                        .record_prework_fault(&handle, profile.manifest, &error, cancel)
++                        .map_err(|guard| {
++                            guard.context(format!("original native warm refusal: {error:#}"))
+                         })?;
+-                        ensure!(
+-                            state.document.as_ref() == Some(&self.document),
+-                            "retained eligibility source/configuration changed"
+-                        );
+-                        let failed_profile = state
+-                            .selected
+-                            .values()
+-                            .find(|description| description.manifest == failed)
+-                            .context("actual failed eligibility profile is no longer selected")?;
+-                        let failed_stage = failed_profile
+-                            .declared_stage()
+-                            .context("failed eligibility stage absent")?;
+-                        let (failed_device, epoch) = state
+-                            .devices
+-                            .get(&failed_stage)
+-                            .context("actual failed eligibility device absent")?;
+-                        ensure!(
+-                            !failed_device.poisoned() && failed_device.epoch() == *epoch,
+-                            "failed retained device settlement/epoch unknown"
+-                        );
+-                        let key = airk_inference::inference_engine::pool::arbiter::circuit_key(
+-                            failed_profile,
+-                            failed_device,
+-                            &self.document,
+-                        )?;
+-                        ensure!(
+-                            state.circuits.contains(&key) || state.circuits.len() < 16,
+-                            "retained fault circuit capacity occupied"
+-                        );
+-                        state.circuits.insert(key);
+-                        return Err(error.context("a retained GPU resident failed local eligibility; the current candidate is not declared unfit and the original management attempt stops"));
+-                    }
+-                    if let Some(device) = &candidate.device {
+-                        let key = airk_inference::inference_engine::pool::arbiter::circuit_key(
+-                            &profile,
+-                            device,
+-                            &self.document,
+-                        )?;
+-                        let mut state = self
+-                            .devices
+-                            .state
+-                            .lock()
+-                            .map_err(|_| anyhow::anyhow!("device fault circuit unavailable"))?;
+-                        ensure!(
+-                            state.document.as_ref() == Some(&self.document),
+-                            "source/configuration changed before fault circuit commit"
+-                        );
+-                        ensure!(
+-                            state.circuits.contains(&key) || state.circuits.len() < 16,
+-                            "device fault circuit capacity occupied"
+-                        );
+-                        state.circuits.insert(key);
++                    match recorded {
++                        Some(failed) if failed==profile.manifest=>{},
++                        Some(_)=>return Err(error.context("a retained GPU resident failed eligibility; current candidate is not declared unfit and the original attempt stops")),
++                        None=>return Err(error.context("unsettled or non-device warm failure; automatic fallback and fault circuit refused")),
+                     }
+                     rejections.push(CandidateRejection {
+                         manifest: Some(profile.manifest),
+@@ -2191,7 +2262,8 @@
+             "native selected variant changed before commit"
+         );
+         for binding in expected {
+-            if let NativeConfiguration::Device { selected, .. } = &self.policy
++            if binding.profile.is_some()
++                && let NativeConfiguration::Device { selected, .. } = &self.policy
+                 && selected
+                     .get(&binding.stage)
+                     .is_some_and(|profile| profile.device_execution.is_some())
+@@ -2215,7 +2287,10 @@
+ }
+ #[cfg(feature = "local-inference")]
+ impl StageOwner {
+-    pub(super) fn device_delivery(&self) -> Result<Option<Delivery>> {
++    pub(super) fn device_delivery(
++        &self,
++        expected: &[airk_core::combined_context::ContextDeliveryBinding],
++    ) -> Result<Option<Delivery>> {
+         let policy = self.read_configuration()?;
+         let NativeConfiguration::Device { ref document, .. } = policy else {
+             return Ok(None);
+@@ -2235,7 +2310,13 @@
+             .generation
+             .load(std::sync::atomic::Ordering::Acquire);
+         let devices = state.devices.values().cloned().collect();
+-        let eligibilities = state.eligibilities.clone();
++        let eligibilities = expected_eligibilities(
++            &state.eligibilities,
++            expected
++                .iter()
++                .map(|binding| (binding.stage, binding.profile)),
++            ResidentEligibility::profile,
++        );
+         drop(state);
+         let delivery = Delivery {
+             binding,
+@@ -2496,3 +2577,49 @@
+     let _ = error;
+     SelectionReason::ProviderInitializationFailed
+ }
++
++#[cfg(feature = "local-inference")]
++fn expected_eligibilities<T: Clone>(
++    all: &BTreeMap<Stage, T>,
++    expected: impl IntoIterator<Item = (Stage, Option<Sha256Digest>)>,
++    profile: impl Fn(&T) -> Sha256Digest,
++) -> BTreeMap<Stage, T> {
++    let bindings = expected
++        .into_iter()
++        .filter_map(|(stage, id)| id.map(|id| (stage, id)))
++        .collect::<std::collections::BTreeSet<_>>();
++    all.iter()
++        .filter(|(stage, proof)| bindings.contains(&(**stage, profile(proof))))
++        .map(|(stage, proof)| (*stage, proof.clone()))
++        .collect()
++}
++
++#[cfg(feature = "local-inference")]
++fn recordable_fault_profile(
++    genuine: bool,
++    unknown: bool,
++    failed: Option<Sha256Digest>,
++    current: Sha256Digest,
++) -> Option<Sha256Digest> {
++    (genuine && !unknown).then_some(failed.unwrap_or(current))
++}
++
++#[cfg(feature = "local-inference")]
++fn retained_gpu_targets(
++    active: impl IntoIterator<Item = (Stage, Option<Sha256Digest>)>,
++    selected: impl IntoIterator<Item = (Stage, Sha256Digest, bool)>,
++) -> Vec<(Stage, Sha256Digest)> {
++    let selected = selected
++        .into_iter()
++        .filter(|(_, _, gpu)| *gpu)
++        .map(|(stage, profile, _)| (stage, profile))
++        .collect::<BTreeMap<_, _>>();
++    active
++        .into_iter()
++        .filter_map(|(stage, profile)| {
++            profile
++                .filter(|profile| selected.get(&stage) == Some(profile))
++                .map(|profile| (stage, profile))
++        })
++        .collect()
++}
+--- R1/crates/airk-service/src/service_runtime/arbiter/device_management/tests.rs
++++ R3/crates/airk-service/src/service_runtime/arbiter/device_management/tests.rs
+@@ -456,3 +456,100 @@
+     )));
+     Ok(())
+ }
++
++#[cfg(feature = "local-inference")]
++#[test]
++fn delivery_ignores_unrelated_stale_gpu_proof_but_rejects_the_same_expected_gpu_and_mixed_roster() {
++    // Data-only stand-ins test the exact capture filter; no GPU proof is minted.
++    let gpu = Sha256Digest::from_bytes([91; 32]);
++    let cpu = Sha256Digest::from_bytes([92; 32]);
++    let stale = BTreeMap::from([(Stage::Context, (gpu, false))]);
++    let cpu_only = expected_eligibilities(&stale, [(Stage::Focus, Some(cpu))], |proof| proof.0);
++    assert!(cpu_only.is_empty());
++    assert!(cpu_only.values().all(|proof| proof.1));
++    let same_gpu = expected_eligibilities(&stale, [(Stage::Context, Some(gpu))], |proof| proof.0);
++    assert_eq!(same_gpu, BTreeMap::from([(Stage::Context, (gpu, false))]));
++    assert!(!same_gpu.values().all(|proof| proof.1));
++    let mixed = expected_eligibilities(
++        &stale,
++        [(Stage::Focus, Some(cpu)), (Stage::Context, Some(gpu))],
++        |proof| proof.0,
++    );
++    assert!(!mixed.values().all(|proof| proof.1));
++    assert!(
++        expected_eligibilities(&stale, [(Stage::Context, None)], |proof| proof.0).is_empty(),
++        "unenrolled index cannot inherit a global GPU requirement"
++    );
++    assert!(
++        expected_eligibilities(&stale, [(Stage::Context, Some(cpu))], |proof| proof.0).is_empty(),
++        "another profile is not the expected proof"
++    );
++}
++#[cfg(feature = "local-inference")]
++#[test]
++fn retained_and_cold_fault_attribution_share_typed_settled_rules_and_preserve_actual_resident() {
++    let own = Sha256Digest::from_bytes([93; 32]);
++    let other = Sha256Digest::from_bytes([94; 32]);
++    assert_eq!(recordable_fault_profile(true, false, None, own), Some(own));
++    assert_eq!(
++        recordable_fault_profile(true, false, Some(other), own),
++        Some(other)
++    );
++    assert_eq!(recordable_fault_profile(true, true, Some(other), own), None);
++    assert_eq!(
++        recordable_fault_profile(false, false, Some(other), own),
++        None
++    );
++    assert!(!prework_device_failure(&anyhow::anyhow!(
++        "source authority revoked"
++    )));
++    assert!(!prework_device_failure(&anyhow::anyhow!(
++        "original management deadline expired"
++    )));
++}
++
++#[cfg(feature = "local-inference")]
++#[test]
++fn retained_population_precheck_includes_other_failed_gpu_and_excludes_drained_self_or_cpu() {
++    let failed = Sha256Digest::from_bytes([95; 32]);
++    let current = Sha256Digest::from_bytes([96; 32]);
++    let targets = retained_gpu_targets(
++        [(Stage::Focus, Some(failed)), (Stage::Context, None)],
++        [
++            (Stage::Focus, failed, true),
++            (Stage::Context, current, true),
++        ],
++    );
++    assert_eq!(
++        targets,
++        [(Stage::Focus, failed)],
++        "recovering Context cannot omit the actual retained failed Focus"
++    );
++    let circuits = std::collections::BTreeSet::from([failed]);
++    assert!(
++        !targets
++            .iter()
++            .all(|(_, profile)| !circuits.contains(profile))
++    );
++    let after_self_drain = retained_gpu_targets(
++        [(Stage::Focus, None), (Stage::Context, Some(current))],
++        [
++            (Stage::Focus, failed, true),
++            (Stage::Context, current, true),
++        ],
++    );
++    assert_eq!(after_self_drain, [(Stage::Context, current)]);
++    assert!(
++        after_self_drain
++            .iter()
++            .all(|(_, profile)| !circuits.contains(profile)),
++        "old drained self selection cannot prevent its replacement"
++    );
++    assert!(
++        retained_gpu_targets(
++            [(Stage::Focus, Some(failed))],
++            [(Stage::Focus, failed, false)]
++        )
++        .is_empty()
++    );
++}
+--- R1/crates/airk-service/src/service_runtime/arbiter/policy_delivery.rs
++++ R3/crates/airk-service/src/service_runtime/arbiter/policy_delivery.rs
+@@ -176,7 +176,7 @@
+                 .as_ref()
+                 .context("native policy owner unavailable")?
+                 .context
+-                .device_delivery()?
++                .device_delivery(expected)?
+         };
+         Ok(Arc::new(PolicyDelivery {
+             #[cfg(feature = "local-inference")]

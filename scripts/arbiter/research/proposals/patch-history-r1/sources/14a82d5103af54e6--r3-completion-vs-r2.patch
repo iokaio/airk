@@ -1,0 +1,66 @@
+--- r2/r154_diagnostic.py
++++ r3/r154_diagnostic.py
+@@ -52,6 +52,20 @@
+     observed=clock();report['elapsed_seconds']=observed-started
+     report['original_phase_expired']=observed>=cutoff
+     return report['original_phase_expired']
++
++def capture_complete(report,failed):
++    proof=report.get('fresh_service_process_settlement')
++    return (failed is None and report.get('fresh_call_validated') is True
++        and report.get('canonical_call_attempts')==1
++        and report.get('prepared_sources_and_inputs_unchanged') is True
++        and report.get('original_phase_expired') is False
++        and report.get('native_service_shutdown',{}).get('full_response',{}).get('status')=='stopping'
++        and isinstance(proof,dict) and proof.get('exit_observed') is True
++        and type(proof.get('exit_code')) is int and proof['exit_code']==0
++        and proof.get('handle_closed') is True
++        and isinstance(report.get('native_closure'),dict)
++        and bool(report['native_closure'].get('sha256'))
++        and set(report.get('native_journals',{}))=={'composed-observer','warm-completions'})
+ 
+ def preparation(expected, frozen=None):
+     raw=(BASE/'preparation.json').read_bytes()
+@@ -267,6 +281,7 @@
+             if failed is None: failed = error
+         final_observation(report,started,cutoff)
+         if report['original_phase_expired'] and failed is None:failed=TimeoutError('Original whole diagnostic phase expired after final retention')
++        report['complete']=capture_complete(report,failed)
+         # Session/helper exit is retained separately; never equate it with
+         # cancellation, dispatch drain, lease release or native service exit.
+         write(output / 'diagnostic.json', report)
+--- r2/launch_owned.py
++++ r3/launch_owned.py
+@@ -66,7 +66,7 @@
+         diagnostic.require(natural(owned),'Actual diagnostic subprocess/descendant ownership did not naturally settle')
+         raw=(root/'worker/diagnostic.json').read_bytes();child=json.loads(raw)
+         report['diagnostic']={'path':str(root/'worker/diagnostic.json'),'sha256':hashlib.sha256(raw).hexdigest()}
+-        diagnostic.require(child.get('canonical_call_attempts')==1 and child.get('fresh_call_validated') is True
++        diagnostic.require(child.get('complete') is True and child.get('canonical_call_attempts')==1 and child.get('fresh_call_validated') is True
+             and child.get('prepared_sources_and_inputs_unchanged') is True
+             and child.get('original_phase_expired') is False
+             and child.get('native_service_shutdown',{}).get('full_response',{}).get('status')=='stopping',
+--- r2/test_r154_controls.py
++++ r3/test_r154_controls.py
+@@ -71,6 +71,21 @@
+                 self.assertTrue(result['validated']);self.assertEqual(seen,[125])
+                 self.assertEqual(arguments,before);self.assertEqual(arguments['budget']['deadline_ms'],120000)
+                 with self.assertRaises(ValueError):client.call('answer',arguments,125,prepared_delivery=True)
++    def test_complete_requires_validated_call_inputs_and_actual_native_settlement(self):
++        report={'fresh_call_validated':True,'canonical_call_attempts':1,
++            'prepared_sources_and_inputs_unchanged':True,'original_phase_expired':False,
++            'native_service_shutdown':{'full_response':{'status':'stopping'}},
++            'fresh_service_process_settlement':{'exit_observed':True,'exit_code':0,'handle_closed':True},
++            'native_closure':{'sha256':'synthetic-only'},
++            'native_journals':{'composed-observer':{},'warm-completions':{}}}
++        self.assertTrue(diagnostic.capture_complete(report,None))
++        self.assertFalse(diagnostic.capture_complete(report,ValueError('actual retained failure')))
++        for field,value in [('fresh_call_validated',False),('prepared_sources_and_inputs_unchanged',False),
++            ('original_phase_expired',True),('canonical_call_attempts',2),('native_closure',{}),
++            ('native_journals',{}),('fresh_service_process_settlement',{'exit_observed':False}),
++            ('fresh_service_process_settlement',{'exit_observed':True,'exit_code':77,'handle_closed':True}),
++            ('native_service_shutdown',{'full_response':{'status':'unknown'}})]:
++            with self.subTest(field=field):self.assertFalse(diagnostic.capture_complete(dict(report,**{field:value}),None))
+     def test_real_owner_failure_flags_cannot_claim_natural_cleanup(self):
+         proof={'exit_code':0,'timed_out':False,'log_oversized':False,'owned_descendants_settled':True,
+             'owned_job_forced_termination':False,'owned_job_final_active_processes':0,

@@ -1,0 +1,461 @@
+--- /dev/null
++++ b/private-gpu-producer-r2/CONTRACT.md
+@@ -0,0 +1,9 @@
++# Proposed Windows CUDA runtime producer contract
++
++New GPU producer only; existing CPU recipe/source/receipts remain untouched. One static ORT1.30.0 core at upstream f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7, plus same-build optional shared providers. New source identity frames exact original source inventory, reviewed loader/offline patches, original16dependency archives and transformed frontend source; no CPU qualification or release authority.
++
++Preparation must reuse canonical CPU-owner path/archive/hash/tool/owned-process functions without changing CPU globals or pretending the GPU source matches the original CPU verify_build result. Copy/extract original verified source into fresh protected same-human output. Apply exact reviewed source changes only after before-SHA matching; require exact after-SHAs and full final source census. All16dependency archives are available offline and pinned SHA256 plus upstream deps.txt SHA1. CMake FetchContent declarations refuse nonlocal/missing URLs. Frontend is explicitly pre-extracted with only its authenticated9-byte .claude/skills symlink omitted; never follow/create it. Retain raw archive/full census and exclusion record. The original upstream dynamic-loading patch fails against its declared1.27 source; retain its original hash and exact failed context as history, do not run it. Apply the pinned upstream ARM64 compatibility patch and the explicit reviewed rebased Windows shim patch (validate full before/after bytes). The Windows imported-module-only helper: driver/cudart handles may be referenced only after authenticated native preloading, without environment override or a fresh lookup. Non-Windows behavior remains out of scope and unchanged. CUTLASS's own reviewed upstream patch remains part of CMake's local-archive population.
++
++The new owner prepares fresh inputs and exact configure/build cards; actual configure/build requires Root-reviewed frozen script/lock, explicit --execute-build and single ownership. Both stages share one monotonic wall budget <=10800seconds, use existing canonical suspended-owned-job runner and retain first failure/actual settlement. No automatic retry/resume or old output overwrite. Exactsource/toolkit/dependency/dev inputs are rechecked after stages. A failure leaves build state/logs/partial receipt. Static libraries and provider DLLs are only producer outputs, not admitted payloads. No Cargo environment/publication/qualification is emitted by this new owner yet; subsequent GPU aggregate/runtime/package consumers require the new producer proof rather than CPU acceptance bypasses.
++
++Before model work: actual image imports must establish no eager CUDA/provider dependency in service, no second ORT core and inference-free CLI; runtime auth/protected layout/loaded-module checks and narrowed DLL policy must exist; CPU-without-GPU-deps refusal controls and tiny native provider placement must pass. Strict FP32/TF32off uses unchanged unfused graph and native tensors. Neither this script nor its build receipt calls a model or signs a qualification decision. Retain full NVIDIA/ORT/CUTLASS/frontend/third-party notices; proprietary runtimes stay independently licensed. Actual archivedcuDNN LICENSE takes precedence over mutable metadata copies.
+--- /dev/null
++++ b/private-gpu-producer-r2/provision_cuda_runtime.py
+@@ -0,0 +1,177 @@
++"""Campaign-private CUDA static-core producer. No Cargo/model/install/publication.
++Reviewed --execute-build only. Existing CPU recipe and receipts are never changed.
++"""
++import argparse,hashlib,importlib.util,json,os,re,shutil,stat,subprocess,sys,time,zipfile
++from pathlib import Path
++ROOT=Path('D:/code/Github/airk')
++HERE=Path(__file__).resolve().parent
++BASE=HERE.parent
++INPUT=Path('C:/Users/tdotn/AppData/Local/airk-final-exec-20261116T052942Z/gpu-runtime-inputs-r1')
++PARENT=INPUT.parent
++CPU=ROOT/'artifacts/advanced-split/ort130-x64-owned-r5'
++CUDA=Path('C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.8')
++SID='S-1-5-21-3678370870-3858642417-826968105-1002'
++LOCK=HERE/'cuda-runtime-producer-lock.json'
++
++def digest(p):
++ h=hashlib.sha256()
++ with Path(p).open('rb') as f:
++  for b in iter(lambda:f.read(4*1024*1024),b''):h.update(b)
++ return h.hexdigest()
++
++def write(p,value):
++ p.parent.mkdir(parents=True,exist_ok=True)
++ with p.open('x',encoding='utf8') as f:json.dump(value,f,indent=2);f.write('\n')
++
++def cpu_owner(lock):
++ if digest(ROOT/'scripts/provision-static-onnx-runtime.py')!=lock['cpu_owner_sha256'] or digest(ROOT/'scripts/static-onnx-runtime-lock.json')!=lock['cpu_lock_sha256']:raise ValueError('canonical CPU owner drift')
++ spec=importlib.util.spec_from_file_location('airk_cpu_owner',ROOT/'scripts/provision-static-onnx-runtime.py');o=importlib.util.module_from_spec(spec);spec.loader.exec_module(o);o.validate_lock();return o
++
++def identity_and_parent(o,destination):
++ # The caller additionally verifies active logged-in human before this process.
++ result=subprocess.run(['C:/Windows/System32/whoami.exe','/user','/fo','csv','/nh'],check=True,capture_output=True,text=True,timeout=15)
++ if SID not in result.stdout:raise ValueError('execution SID differs from reviewed human')
++ o.plain(PARENT);o.plain(destination)
++ if destination.parent!=PARENT or destination.exists():raise ValueError('fresh direct child of approved protected parent required')
++ # Absolute constant parent enters fixed PowerShell code, never caller-built shell text.
++ script="$a=Get-Acl -LiteralPath 'C:/Users/tdotn/AppData/Local/airk-final-exec-20261116T052942Z'; @{owner=$a.Owner;sddl=$a.Sddl}|ConvertTo-Json -Compress"
++ r=subprocess.run(['pwsh','-NoProfile','-Command',script],check=True,capture_output=True,text=True,timeout=15);policy=json.loads(r.stdout)
++ if policy['owner']!=('TYAI'+chr(92)+'tdotn'):raise ValueError('protected parent owner differs')
++ # Exact reviewed policy, not a vague owner-only check. No ACL is changed.
++ expected='O:'+SID+'G:'+SID+'D:AI(A;OICIID;0x1200a9;;;S-1-5-21-3678370870-3858642417-826968105-1011)(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;'+SID+')'
++ if policy['sddl']!=expected:raise ValueError('protected output-parent access policy drift')
++ return policy
++
++def gpu_command(o,dest,tools,frontend):
++ cmd=o.configure_argv(dest,'x86_64-pc-windows-msvc',tools)
++ if cmd.count('-Donnxruntime_USE_CUDA=OFF')!=1:raise ValueError('CPU configure contract drift')
++ cmd[cmd.index('-Donnxruntime_USE_CUDA=OFF')]='-Donnxruntime_USE_CUDA=ON'
++ cmd += ['-Donnxruntime_BUILD_CUDA_EP_AS_PLUGIN=OFF','-DCMAKE_CUDA_ARCHITECTURES=86','-DCMAKE_CUDA_COMPILER='+str(CUDA/'bin/nvcc.exe'),'-Donnxruntime_CUDA_HOME='+str(CUDA),'-DCUDAToolkit_ROOT='+str(CUDA),'-Donnxruntime_CUDNN_HOME='+str(INPUT/'cudnn-dev'),'-DCUDNN_PATH='+str(INPUT/'cudnn-dev'),'-DFETCHCONTENT_SOURCE_DIR_CUDNN_FRONTEND='+str(frontend),'-DFETCHCONTENT_UPDATES_DISCONNECTED=ON','-Donnxruntime_NVCC_THREADS=2','-Donnxruntime_USE_FLASH_ATTENTION=OFF','-Donnxruntime_USE_MEMORY_EFFICIENT_ATTENTION=OFF','-Donnxruntime_USE_TRT_FUSED_ATTENTION=OFF','-Donnxruntime_USE_LEAN_ATTENTION=OFF','-Donnxruntime_USE_FP4_QMOE=OFF','-Donnxruntime_USE_FP8_QMOE=OFF','-Donnxruntime_USE_FPA_INTB_GEMM=OFF','-Donnxruntime_USE_CUDA_NHWC_OPS=OFF','-Donnxruntime_CUDA_MINIMAL=OFF']
++ return cmd
++
++def safe_frontend(o,archive,output,lock):
++ if output.exists():raise ValueError('fresh frontend source required')
++ row=next(r for r in lock['dependencies'] if r['name']=='cudnn_frontend');o.verify_file(archive,row)
++ entries=[];seen=set();expanded=0;skipped=[]
++ with zipfile.ZipFile(archive) as z:
++  for i in z.infolist():
++   parts=o.relative_name(i.filename.rstrip('/')).parts
++   if parts[0]!='cudnn-frontend-1.27.0':raise ValueError('foreign frontend root')
++   rel='/'.join(parts[1:]);expanded+=i.file_size
++   if i.filename.casefold() in seen or i.flag_bits&1:raise ValueError('duplicate/encrypted frontend member')
++   seen.add(i.filename.casefold());mode=(i.external_attr>>16)&0o170000
++   if mode==stat.S_IFLNK:
++    b=z.read(i);ex=lock['excluded_link']
++    if rel!=ex['path'] or len(b)!=ex['bytes'] or hashlib.sha256(b).hexdigest()!=ex['target_sha256']:raise ValueError('unreviewed frontend link')
++    skipped.append(rel);continue
++   if mode not in (0,stat.S_IFREG,stat.S_IFDIR):raise ValueError('frontend special member')
++   entries.append((i,rel))
++  if len(z.infolist())!=row['entries'] or expanded!=row['expanded_bytes'] or skipped!=['.claude/skills']:raise ValueError('frontend expansion census differs')
++  output.mkdir(parents=True)
++  for i,rel in entries:
++   if not rel:continue
++   p=o.child(output,rel)
++   if i.is_dir():p.mkdir(parents=True,exist_ok=True);continue
++   p.parent.mkdir(parents=True,exist_ok=True)
++   with z.open(i) as f,p.open('xb') as g:shutil.copyfileobj(f,g,1024*1024)
++   o.plain(p,regular=True)
++ return {'excluded_inert_link':skipped,'raw_archive':row,'files_before_patches':o.source_inventory(output)}
++
++def main():
++ ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('--destination',type=Path,required=True);ap.add_argument('--approved-script-sha256',required=True);ap.add_argument('--approved-lock-sha256',required=True);ap.add_argument('--execute-build',action='store_true');ap.add_argument('--timeout-seconds',type=int,default=10800);a=ap.parse_args()
++ if digest(Path(__file__))!=a.approved_script_sha256 or digest(LOCK)!=a.approved_lock_sha256:raise ValueError('reviewed producer/lock bytes differ')
++ if not a.execute_build:raise ValueError('no mutation/build without reviewed --execute-build')
++ if os.name!='nt' or not 1<=a.timeout_seconds<=10800:raise ValueError('Windows and bounded shared wall limit required')
++ lock=json.loads(LOCK.read_text(encoding='utf8'));o=cpu_owner(lock);dest=Path(os.path.abspath(a.destination));policy=identity_and_parent(o,dest)
++ if shutil.disk_usage(PARENT).free<40*1024**3:raise ValueError('GPU producer needs40GiB free storage')
++ o.verify_source(CPU,'x86_64-pc-windows-msvc');cudnn=json.loads((INPUT/'extraction.json').read_text(encoding='utf8'))
++ if digest(INPUT/'extraction.json')!=lock['cudnn']['extraction_receipt_sha256']:raise ValueError('cuDNN extraction receipt changed')
++ for r in cudnn['files']:o.verify_file(o.child(INPUT/'cudnn-dev',r['path']),r)
++ for r in lock['dependencies']:
++  o.verify_file(INPUT/'cuda-source-dependencies'/(r['name']+'.zip'),r)
++  with (INPUT/'cuda-source-dependencies'/(r['name']+'.zip')).open('rb') as f:
++   if o.stream_digest(f,'sha1').hexdigest()!=r['upstream_sha1']:raise ValueError('upstream CUDA dependency SHA1 differs')
++ if digest(BASE/'ort-windows-loader-proposal-r2.patch')!=lock['loader_patch_sha256'] or digest(HERE/'offline-helper.patch')!=lock['offline_helper']['patch_sha256'] or digest(HERE/'frontend-authenticated-imports.patch')!=lock['frontend_final']['patch_sha256']:raise ValueError('reviewed input patch drift')
++ dest.mkdir();write(dest/'owner.json',{'schema':'airk.private.cuda-runtime-producer/1','sid':SID,'cpu_source_owner':str(CPU),'script_sha256':a.approved_script_sha256,'lock_sha256':a.approved_lock_sha256,'output_parent_policy':policy,'qualification':False})
++ start=time.monotonic();deadline=start+a.timeout_seconds;receipt={'status':'RUNNING','commands':[],'policy':{'one_static_core':True,'optional_shared_cuda_provider':True,'runtime_version':'1.30.0','SM':86,'cpu_qualification_transferred':False},'source_inputs':[]}
++ try:
++  # Canonical extraction verifies complete original source census; never copy a warm build tree.
++  o.verify_file(CPU/'downloads/source.tar.gz',o.LOCK['source']);o.extract_source(CPU/'downloads/source.tar.gz',dest,o.LOCK['source'])
++  for r in o.selected_dependencies('x86_64-pc-windows-msvc')+lock['dependencies']:
++   source=CPU/'downloads'/(r['name']+'.zip') if r['name'] not in ('cutlass','cudnn_frontend') else INPUT/'cuda-source-dependencies'/(r['name']+'.zip')
++   o.verify_file(source,r);target=o.child(dest/'source/mirror',o.mirror_relative(r));target.parent.mkdir(parents=True,exist_ok=True)
++   with source.open('rb') as f,target.open('xb') as g:shutil.copyfileobj(f,g,1024*1024)
++   o.verify_file(target,r);receipt['source_inputs'].append({'name':r['name'],'bytes':r['bytes'],'sha256':r['sha256']})
++  # Hash complete toolkit build inputs to prevent ambient CUDA/NVCC selection or drift.
++  cuda_rows=[]
++  for name in ('bin','include','lib','nvvm'):
++   for r in o.source_inventory(CUDA/name):cuda_rows.append({'path':name+'/'+r['path'],'bytes':r['bytes'],'sha256':r['sha256']})
++  write(dest/'cuda-toolkit-inputs.json',cuda_rows)
++  if json.loads((CUDA/'version.json').read_text())['cuda']['version']!='12.8.1':raise ValueError('CUDA toolkit version differs')
++  tools_args=argparse.Namespace(vs_root=Path('C:/Program Files/Microsoft Visual Studio/2022/Community'),cmake=Path('D:/code/Github/airk/artifacts/advanced-split/ort130-x64-owned-r3/tools/cmake/bin/cmake.exe'),ninja=Path('D:/code/Github/airk/artifacts/advanced-split/ort130-x64-owned-r3/tools/ninja-build/ninja.exe'),patch=Path('C:/Program Files/Git/usr/bin/patch.exe'),msvc_toolset='14.44.35207',windows_sdk='10.0.26100.0')
++  tools=o.toolchain(tools_args,dest,'x86_64-pc-windows-msvc');receipt['toolchain']=tools
++  environment=dict(os.environ)
++  forbidden={'CC','CXX','CFLAGS','CXXFLAGS','CPPFLAGS','LDFLAGS','CUDAFLAGS','CUDACXX','CUDAHOSTCXX','CUDAARCHS','NVCC_PREPEND_FLAGS','NVCC_APPEND_FLAGS','CL','_CL_','LINK','LIB','LIBPATH','INCLUDE','PYTHONPATH','PYTHONHOME','CUDNN_FRONTEND_CUDART_LIB_NAME'}
++  for key in list(environment):
++   if key.upper() in forbidden or key.upper().startswith(('CMAKE_','ORT_','CUDNN_','CUDA_')):environment.pop(key)
++  private_temp=dest/'temp';private_temp.mkdir()
++  environment.update(PATH='C:/Windows/System32;C:/Windows;'+str(Path(sys.executable).parent)+';'+str(CUDA/'bin'),TEMP=str(private_temp),TMP=str(private_temp),TMPDIR=str(private_temp),PYTHONNOUSERSITE='1',CUDA_CACHE_PATH=str(dest/'cuda-cache'))
++  def run(argv,cwd,stage,wrapped=False):
++   remaining=int(deadline-time.monotonic())
++   if remaining<=0:raise ValueError('original GPU producer wall budget exhausted')
++   if wrapped:argv=o.windows_command(argv,tools,dest,stage)
++   result=o.run_owned(argv,cwd,dest/'logs'/(stage+'.log'),remaining,environment);receipt['commands'].append(result)
++   if not o.successful(result):raise ValueError('owned GPU producer stage failed: '+stage)
++  pinned_patches={
++   str((BASE/'ort-windows-loader-proposal-r2.patch').absolute()):lock['loader_patch_sha256'],
++   str((HERE/'offline-helper.patch').absolute()):lock['offline_helper']['patch_sha256'],
++   str((HERE/'frontend-authenticated-imports.patch').absolute()):lock['frontend_final']['patch_sha256'],
++   str((dest/'source/cmake/patches/cudnn_frontend/cudnn_frontend_win_arm64_compat.patch').absolute()):lock['frontend_upstream_arm64']['patch_sha256']}
++  def patch(path,cwd,name):
++   o.plain(path,regular=True);expected=pinned_patches[str(path.absolute())]
++   target=dest/'patch-inputs'/(name+'.patch');target.parent.mkdir(exist_ok=True)
++   with path.open('rb') as f,target.open('xb') as g:shutil.copyfileobj(f,g,1024*1024)
++   if digest(target)!=expected:raise ValueError('protected patch input snapshot differs')
++   run([tools['patch']['path'],'--batch','--forward','--fuzz=0','--binary','--ignore-whitespace','-p1','--input='+str(target.absolute())],cwd,name)
++  patch(BASE/'ort-windows-loader-proposal-r2.patch',dest/'source','loader-patch')
++  patch(HERE/'offline-helper.patch',dest/'source','offline-patch')
++  for r in lock['loader_files']:
++   if digest(dest/'source'/r['path'])!=r['proposed_sha256']:raise ValueError('loader output source differs')
++  if digest(dest/'source'/lock['offline_helper']['path'])!=lock['offline_helper']['after_sha256']:raise ValueError('offline helper output differs')
++  frontend=dest/'frontend';frontend_proof=safe_frontend(o,INPUT/'cuda-source-dependencies/cudnn_frontend.zip',frontend,lock);write(dest/'frontend-source-before.json',frontend_proof)
++  patch(dest/'source/cmake/patches/cudnn_frontend/cudnn_frontend_win_arm64_compat.patch',frontend,'frontend-arm64')
++  patch(HERE/'frontend-authenticated-imports.patch',frontend,'frontend-auth-imports')
++  for key in ('frontend_upstream_arm64','frontend_final'):
++   r=lock[key]
++   if digest(frontend/r['path'])!=r['after_sha256']:raise ValueError('exact frontend transformed source differs')
++  source_rows=o.source_inventory(dest/'source',exclude_mirror=True);frontend_rows=o.source_inventory(frontend);write(dest/'gpu-source-files.json',source_rows);write(dest/'frontend-source-files.json',frontend_rows)
++  # Fail cheaply on frontend/header/toolkit ABI incompatibility before full CMake/native build.
++  syntax=dest/'frontend-header-probe.cc'
++  syntax.write_text('#include <cudnn_frontend.h>\nstatic_assert(CUDNN_MAJOR == 9 && CUDNN_MINOR == 10 && CUDNN_PATCHLEVEL == 2);\n',encoding='utf8')
++  syntax_command=[tools['compiler']['path'],'/nologo','/Zs','/std:c++17','/EHsc','/MD','/DNV_CUDNN_FRONTEND_USE_DYNAMIC_LOADING','/I'+str(frontend/'include'),'/I'+str(frontend/'include/cudnn_frontend/thirdparty'),'/I'+str(CUDA/'include'),'/I'+str(INPUT/'cudnn-dev/include'),str(syntax)]
++  receipt['header_probe_source_sha256']=digest(syntax);receipt['header_probe_argv']=syntax_command;run(syntax_command,dest,'frontend-header-probe',True)
++  command=gpu_command(o,dest,tools,frontend);receipt['configure_argv']=command;run(command,dest,'configure',True)
++  o.verify_cmake_cache(dest/'b/Release/CMakeCache.txt',command)
++  build=[tools['cmake']['path'],'--build',str(dest/'b/Release'),'--config','Release','--target','all','re2','--parallel','2'];receipt['build_argv']=build;run(build,dest,'build',True)
++  if o.source_inventory(dest/'source',exclude_mirror=True)!=source_rows or o.source_inventory(frontend)!=frontend_rows:raise ValueError('compiled source drift')
++  for r in cuda_rows:o.verify_file(o.child(CUDA,r['path']),r)
++  for r in cudnn['files']:o.verify_file(o.child(INPUT/'cudnn-dev',r['path']),r)
++  libraries=[]
++  for p in sorted((dest/'b').rglob('*.lib')):
++   o.plain(p,regular=True)
++   with p.open('rb') as f:
++    if f.read(8)!=b'!<arch>\n':raise ValueError('invalid archive/import library output')
++   libraries.append({'path':p.relative_to(dest).as_posix(),'bytes':p.stat().st_size,'sha256':digest(p)})
++  dlls=[]
++  for name in ('onnxruntime_providers_shared.dll','onnxruntime_providers_cuda.dll'):
++   found=list((dest/'b').rglob(name))
++   if len(found)!=1:raise ValueError('exact same-build provider output missing/ambiguous')
++   p=o.plain(found[0],regular=True);dlls.append({'path':p.relative_to(dest).as_posix(),'bytes':p.stat().st_size,'sha256':digest(p)})
++  if list((dest/'b').rglob('onnxruntime.dll')):raise ValueError('second dynamic ORT core output refused')
++  if digest(Path(__file__))!=a.approved_script_sha256 or digest(LOCK)!=a.approved_lock_sha256:raise ValueError('producer or lock changed during build')
++  receipt.update(status='PASS_PRODUCER_ONLY_UNQUALIFIED',libraries=libraries,provider_dlls=dlls,source_inventory_sha256=digest(dest/'gpu-source-files.json'),frontend_inventory_sha256=digest(dest/'frontend-source-files.json'),cuda_inventory_sha256=digest(dest/'cuda-toolkit-inputs.json'))
++ except BaseException as e:
++  receipt.update(status='FAILED_PRESERVED_NO_RETRY',error=type(e).__name__+': '+str(e));raise
++ finally:
++  receipt['elapsed_seconds']=time.monotonic()-start;write(dest/'gpu-build-receipt.json',receipt);print(json.dumps({'status':receipt['status'],'destination':str(dest),'elapsed_seconds':receipt['elapsed_seconds']}),flush=True)
++if __name__=='__main__':main()
+--- /dev/null
++++ b/private-gpu-producer-r2/cuda-runtime-producer-lock.json
+@@ -0,0 +1,81 @@
++{
++  "schema": "airk.private.cuda-runtime-producer-lock/1",
++  "target": "x86_64-pc-windows-msvc",
++  "upstream_commit": "f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7",
++  "ort_version": "1.30.0",
++  "cpu_owner_sha256": "a1772271cfc3e585de903a7e80021b54f97da823a485e48621a60dcee564c044",
++  "cpu_lock_sha256": "d9deff076321020cb15f1cadee6b2270d8098e4518aece7b4ef48b03fd998947",
++  "loader_patch_sha256": "a747d940c7f540dc9b20612cd39f4b235609d4520fd1361e37f800cd478e064d",
++  "loader_files": [
++    {
++      "path": "onnxruntime/core/platform/windows/env.cc",
++      "before_sha256": "39a86497a24d8d836d0470afe76728db477a84c894ab47202c1f096cc5b82af8",
++      "proposed_sha256": "2d3249b4ab640616375dbaff45f513f94d1e426e84f27a708dd645a5f2a0db4f"
++    },
++    {
++      "path": "onnxruntime/core/providers/cuda/cudnn_loader.cc",
++      "before_sha256": "041554e7d74f599982563fb9119b26d63f3507899d8e3253399308f599847124",
++      "proposed_sha256": "663582043d68c6a3cb2ce5e841f111dd6b06832c8f02392cdaa097151f1f206f"
++    },
++    {
++      "path": "onnxruntime/core/providers/cuda/cufft_loader.cc",
++      "before_sha256": "cc815da353e6a0f99f9f6a05cb6cb4f8f5574732b827c1fd80af0e56529040fe",
++      "proposed_sha256": "9d139928cf9a5256e9c4654ec2f7a35dae1a94638004574f8551126ae0682a0d"
++    }
++  ],
++  "offline_helper": {
++    "path": "cmake/external/helper_functions.cmake",
++    "before_sha256": "ae5cc8332e93737d92301a3f70cfa5c2fdb529d6a366d403932853f4bb640fa7",
++    "after_sha256": "cb4f914e0b03653c352299f3668615915ce812b162993838a799a49e1f8f37bb",
++    "patch_sha256": "5f3a2cf57c21d9e7fcc33a426507de6e35fc30b1ead104ecb24cb51a19c379da"
++  },
++  "frontend_upstream_arm64": {
++    "patch_sha256": "57696b39abff7a9612ffdcb03c036e9424fbe13675aec353f542f47bd9572321",
++    "path": "include/cudnn_frontend_Tensor.h",
++    "before_sha256": "9876db5db0f89d4ed0a99afe8bea7128a3c526d08d6ff59d361e8db3dd8cee1f",
++    "after_sha256": "29d738aa58270fe99451a2ff5c4f2e503dc95987e6d45c43cb510b201625abc1"
++  },
++  "upstream_dynamic_patch_not_applied": {
++    "sha256": "e47f03b432bb91f632c91d52f52ad572d212a8bc581fc979829edf9fec4170ad",
++    "reason": "hunk3 skips new1.27 user-override block; replaced by exact rebased Windows imported-module policy; no fuzzy application"
++  },
++  "frontend_final": {
++    "path": "include/cudnn_frontend_shim.h",
++    "before_sha256": "ddaca0914107d628cc6c8b0fa0b6dd86d241f65cafd7b602140d2b5ccf184d62",
++    "after_sha256": "107cb2fbec586ce0a7f9ff274a502c1540ccd5733115542977aebb67fb75ed73",
++    "patch_sha256": "64184c036be6bbc9ac62919d1bb76dfb923526c973e7c5e38c90af9860d710c1"
++  },
++  "excluded_link": {
++    "path": ".claude/skills",
++    "bytes": 9,
++    "target_sha256": "c1aefaccb300698f4b7ae764e1fa857f93c0609ba47b078e4806d926f289c23b"
++  },
++  "dependencies": [
++    {
++      "name": "cutlass",
++      "version": "v4.7.0",
++      "url": "https://github.com/NVIDIA/cutlass/archive/refs/tags/v4.7.0.zip",
++      "bytes": 52581352,
++      "sha256": "e88f72932f830ee40cb46d398319336e4e9f6dfc235de4b7844be712cf4e6ab4",
++      "upstream_sha1": "51d4f1ba4b9977b94606e23bbc307463a6741383",
++      "expanded_bytes": 167854298,
++      "entries": 8377
++    },
++    {
++      "name": "cudnn_frontend",
++      "version": "v1.27.0",
++      "url": "https://github.com/NVIDIA/cudnn-frontend/archive/refs/tags/v1.27.0.zip",
++      "bytes": 9842175,
++      "sha256": "0190120bfc8b1f8288c19beffa5a21af643650d6f65e8bad89ab5d7ed74f4273",
++      "upstream_sha1": "1e4c9a464d3437e388ab0163f3be068dba783c08",
++      "expanded_bytes": 27629196,
++      "entries": 1198
++    }
++  ],
++  "cudnn": {
++    "bytes": 683336095,
++    "sha256": "c1a4567d822ebda7373fa1f19255dff4942302de741f830160b6c7d1fb31af23",
++    "extraction_receipt_sha256": "09b1b5b88d60a8ca3882bd4be8b047bd9ed76ff5d9814eb64a1b7c184225485c",
++    "archive_license_sha256": "295a1b7118d3417f5d6a943e5f87b59e2a0631fb277129c3b15dee6248adc7cf"
++  }
++}
+--- /dev/null
++++ b/private-gpu-producer-r2/offline-helper.patch
+@@ -0,0 +1,13 @@
++--- a/cmake/external/helper_functions.cmake
+++++ b/cmake/external/helper_functions.cmake
++@@ -5,6 +5,10 @@
++ 
++ function(onnxruntime_fetchcontent_declare contentName)
++     cmake_parse_arguments(PARSE_ARGV 1 ARG "" "URL;SOURCE_SUBDIR" "")
+++    # AIRK GPU producer: every archive must already be in its authenticated offline mirror.
+++    if(NOT IS_ABSOLUTE "${ARG_URL}" OR NOT EXISTS "${ARG_URL}")
+++      message(FATAL_ERROR "AIRK GPU offline dependency is missing or nonlocal: ${contentName}")
+++    endif()
++     message(STATUS "Fetch ${contentName} from ${ARG_URL}")
++     FetchContent_Declare(${ARGV})
++     string(TOLOWER ${contentName} contentNameLower)
+--- /dev/null
++++ b/private-gpu-producer-r2/frontend-authenticated-imports.patch
+@@ -0,0 +1,59 @@
++--- a/include/cudnn_frontend_shim.h
+++++ b/include/cudnn_frontend_shim.h
++@@ -68,6 +68,15 @@
++ 
++ inline HMODULE
++ load_cuda_so() {
+++#ifdef _WIN32
+++    // AIRK: native owner authenticated and preloaded this exact imported module.
+++    // Reference it without searching PATH/CWD or honoring a library-name override.
+++    HMODULE handle = nullptr;
+++    if (!GetModuleHandleExW(0, L"nvcuda.dll", &handle)) {
+++        throw std::runtime_error("AIRK authenticated CUDA import is not preloaded");
+++    }
+++    return handle;
+++#else
++     // Clear any existing error
++     dlerror();
++ 
++@@ -80,10 +89,20 @@
++     }
++ 
++     return handle;
+++#endif
++ }
++ 
++ inline HMODULE
++ load_cudart_so() {
+++#ifdef _WIN32
+++    // AIRK: native owner authenticated and preloaded this exact imported module.
+++    // Reference it without searching PATH/CWD or honoring a library-name override.
+++    HMODULE handle = nullptr;
+++    if (!GetModuleHandleExW(0, L"cudart64_12.dll", &handle)) {
+++        throw std::runtime_error("AIRK authenticated CUDA import is not preloaded");
+++    }
+++    return handle;
+++#else
++     // Clear any existing error
++     dlerror();
++ 
++@@ -143,6 +162,7 @@
++     }
++ 
++     return lib_handle;
+++#endif
++ }
++ 
++ inline void *
++@@ -212,9 +232,9 @@
++ #if defined NV_CUDNN_FRONTEND_USE_DYNAMIC_LOADING
++ 
++ #define NV_FE_CALL_TO_CUDA(function_name, cuda_symbol, ...) \
++-    return reinterpret_cast<decltype(function_name) *>(get_cuda_symbol(CudaLibrary::CUDART, #cuda_symbol))(__VA_ARGS__);
+++    return cuda_symbol(__VA_ARGS__);
++ #define NV_FE_CALL_TO_CU(function_name, cuda_symbol, ...) \
++-    return reinterpret_cast<decltype(function_name) *>(get_cuda_symbol(CudaLibrary::CUDA, #cuda_symbol))(__VA_ARGS__);
+++    return cuda_symbol(__VA_ARGS__);
++ 
++ #else
++ 
+--- /dev/null
++++ b/private-gpu-producer-r2/test_provision_cuda_runtime.py
+@@ -0,0 +1,44 @@
++"""Cheap producer controls only. No build/valid DLL/provider/model calls."""
++import hashlib,importlib.util,json,stat,tempfile,unittest,zipfile
++from pathlib import Path
++from types import SimpleNamespace
++HERE=Path(__file__).resolve().parent
++s=importlib.util.spec_from_file_location('gpu_producer',HERE/'provision_cuda_runtime.py');g=importlib.util.module_from_spec(s);s.loader.exec_module(g)
++s=importlib.util.spec_from_file_location('cpu',g.ROOT/'scripts/provision-static-onnx-runtime.py');cpu=importlib.util.module_from_spec(s);s.loader.exec_module(cpu)
++class ProducerControls(unittest.TestCase):
++ def test_fp32_single_core_exact_toolchain_flags(self):
++  stub=SimpleNamespace(configure_argv=lambda *a:['cmake','-Donnxruntime_USE_CUDA=OFF','-Donnxruntime_BUILD_SHARED_LIB=OFF','-Donnxruntime_DISABLE_CONTRIB_OPS=OFF'])
++  c=g.gpu_command(stub,Path('C:/owned'),{},Path('C:/owned/frontend'))
++  for expected in ['-Donnxruntime_USE_CUDA=ON','-Donnxruntime_BUILD_SHARED_LIB=OFF','-Donnxruntime_BUILD_CUDA_EP_AS_PLUGIN=OFF','-DCMAKE_CUDA_ARCHITECTURES=86','-Donnxruntime_USE_FLASH_ATTENTION=OFF','-Donnxruntime_USE_MEMORY_EFFICIENT_ATTENTION=OFF','-Donnxruntime_USE_TRT_FUSED_ATTENTION=OFF','-Donnxruntime_CUDA_MINIMAL=OFF']:
++   self.assertIn(expected,c)
++  self.assertTrue(any(v.startswith('-DCMAKE_CUDA_COMPILER=') and v.replace(chr(92),'/').endswith('bin/nvcc.exe') for v in c));self.assertNotIn('-Donnxruntime_USE_CUDA=OFF',c)
++ def test_cpu_recipe_contract_drift_refused(self):
++  with self.assertRaises(ValueError):g.gpu_command(SimpleNamespace(configure_argv=lambda *a:['cmake']),Path('C:/owned'),{},Path('C:/owned/frontend'))
++ def fixture(self,root,extra=None):
++  arc=root/'source.zip';rows=[('cudnn-frontend-1.27.0/include/test.h',b'fixture header\n',stat.S_IFREG|0o644),('cudnn-frontend-1.27.0/.claude/skills',b'../skills',stat.S_IFLNK|0o777)]
++  if extra:rows.append(extra)
++  with zipfile.ZipFile(arc,'w') as z:
++   for name,data,mode in rows:
++    info=zipfile.ZipInfo(name);info.create_system=3;info.external_attr=mode<<16;z.writestr(info,data)
++  lock={'dependencies':[{'name':'cudnn_frontend','bytes':arc.stat().st_size,'sha256':g.digest(arc),'entries':len(rows),'expanded_bytes':sum(len(r[1]) for r in rows)}],'excluded_link':{'path':'.claude/skills','bytes':9,'target_sha256':hashlib.sha256(b'../skills').hexdigest()}}
++  return arc,lock
++ def test_exact_nonbuild_link_exclusion_no_materialized_alias(self):
++  with tempfile.TemporaryDirectory(dir=HERE) as t:
++   root=Path(t);arc,lock=self.fixture(root);dst=root/'out';r=g.safe_frontend(cpu,arc,dst,lock)
++   self.assertEqual(r['excluded_inert_link'],['.claude/skills']);self.assertEqual((dst/'include/test.h').read_bytes(),b'fixture header\n');self.assertFalse((dst/'.claude/skills').exists())
++ def test_extra_link_fails_before_materialization(self):
++  with tempfile.TemporaryDirectory(dir=HERE) as t:
++   root=Path(t);arc,lock=self.fixture(root,('cudnn-frontend-1.27.0/include/evil',b'../../outside',stat.S_IFLNK|0o777));dst=root/'out'
++   with self.assertRaises(ValueError):g.safe_frontend(cpu,arc,dst,lock)
++   self.assertFalse(dst.exists())
++ def test_traversal_fails_before_materialization(self):
++  with tempfile.TemporaryDirectory(dir=HERE) as t:
++   root=Path(t);arc,lock=self.fixture(root,('cudnn-frontend-1.27.0/../outside',b'bad',stat.S_IFREG|0o644));dst=root/'out'
++   with self.assertRaises(ValueError):g.safe_frontend(cpu,arc,dst,lock)
++   self.assertFalse(dst.exists())
++ def test_archive_hash_drift_refused(self):
++  with tempfile.TemporaryDirectory(dir=HERE) as t:
++   root=Path(t);arc,lock=self.fixture(root);arc.write_bytes(arc.read_bytes()+b'drift');dst=root/'out'
++   with self.assertRaises(ValueError):g.safe_frontend(cpu,arc,dst,lock)
++   self.assertFalse(dst.exists())
++if __name__=='__main__':unittest.main()
+--- /dev/null
++++ b/private-gpu-producer-r2/build-card-r2.json
+@@ -0,0 +1,43 @@
++{
++  "status": "PRIVATE_PREPARED_UNEXECUTED_ROOT_REVIEW_REQUIRED",
++  "script_sha256": "21ee4e0c710badeb6485646f7f39893704dc48a18626e9ab61647c4a07157acf",
++  "lock_sha256": "2f301916e6c79555b9aeb311cd5316b0b725e7ff4cf2d9d24fc6386aab86f44d",
++  "command": [
++    "C:/Users/tdotn/AppData/Local/Programs/Python/Python313/python.exe",
++    "-S",
++    "-B",
++    "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\gpu-runtime-strategy-proposal-r1\\gpu-provision-owner-proposal-r2\\provision_cuda_runtime.py",
++    "--destination",
++    "C:/Users/tdotn/AppData/Local/airk-final-exec-20261116T052942Z/gpu-runtime-build-r1",
++    "--approved-script-sha256",
++    "21ee4e0c710badeb6485646f7f39893704dc48a18626e9ab61647c4a07157acf",
++    "--approved-lock-sha256",
++    "2f301916e6c79555b9aeb311cd5316b0b725e7ff4cf2d9d24fc6386aab86f44d",
++    "--execute-build",
++    "--timeout-seconds",
++    "10800"
++  ],
++  "before_execution": [
++    "Root primary and independent source review",
++    "Root sole Cargo/build coordination; do not contend with platform batches",
++    "launch script as currenthuman under original owned outer10800s observer as well as script perstagebudget; preserve firstfailure",
++    "fresh protected output absent, samehuman input/output custody; no ACL changes",
++    "no qualification/published catalog/package consumption until actual native newGPU owner/aggregate/runtime proof accepted"
++  ],
++  "scope": "CPU/F32 CUDA operator build only; Flash/memory-efficient/TRTfused/lean/FP4/FP8/FpAIntB branches explicitlyOFF; no graph/weight/precision conversions; no model/Cargo/install",
++  "remaining_native_consumer_work": [
++    "GPU-specific staticaggregate/cargo-env/buildowner validation (existing CPUvalidator must continue refusingnewGPUproof)",
++    "authenticated optionalDLLmanifest+loader policy and residentmodule reconciliation",
++    "strict native session provider placement/TF32off, independent numeric17/128 then8192,resources20, CPUabsence/fallback/productgates"
++  ],
++  "actual_inputs": {
++    "root": "C:\\Users\\tdotn\\AppData\\Local\\airk-final-exec-20261116T052942Z\\gpu-runtime-inputs-r1",
++    "archive_acquisition_sha256": "c3b655f8f12798fc8f7fd046cbf24e2324b479a5d246c7b4c1e5b733d1e6c070",
++    "archive_preflight_sha256": "40461c627d5b8a46db2048fa611c3149a9283669749de0721b8b7022b01abf9d",
++    "extraction_sha256": "09b1b5b88d60a8ca3882bd4be8b047bd9ed76ff5d9814eb64a1b7c184225485c",
++    "dependency_freeze_sha256": "441b8eb8fb90efafa742ec5ceed03c63c053eabf63b54756367ef9d910bd684f",
++    "cuda_notice_inventory_sha256": "b0ab371c4eb927ef896ab77d688c770bf7bd6fc80dfb833752afedfd6d1f0fec",
++    "license_difference_typographic_only_under_explicit_substitution": true
++  },
++  "rights": "Use exact archived cuDNN LICENSE295a1... and toolkit originalnotices; DLLdistribution onlyunder NVIDIAconditions, devheaders/libsnotpayload; no bundleddriver/globalinstall/Torchlicence inference; no modelrightsapproval"
++}
+--- /dev/null
++++ b/private-gpu-producer-r2/README.md
+@@ -0,0 +1,11 @@
++# GPU producer R2 review handoff
++
++Actual: the approved two OS negative controls passed once (0.070465s), with no valid module loaded. cuDNN683336095-byte official archive passed SHA/preflight in49.525s; safe extraction of8DLL/7headers/16importlibs+LICENSE passed8.182s. Cutlass4.7.0 and frontend1.27.0 source archives match the existing upstream SHA1 and now have retained SHA256/inert censuses/notices. Originals and new protected output ACLs are preserved. No C++/Cargo/model/install/GPUprovider execution has occurred.
++
++Active new producer is provision_cuda_runtime.py plus cuda-runtime-producer-lock.json, CONTRACT.md, offline-helper.patch and frontend-authenticated-imports.patch in this R2 folder; it also consumes the unchanged approved loader R2 patch one level above. Histories before-self-review/failed-r1 are inactive and retained. Private records/scripts are not a new public native wire protocol or qualification proof. Existing CPU files/receipts remain unmodified.
++
++The unmodified upstream frontend dynamic-loader patch does not apply to declared1.27 source (its third hunk predates the environment-override block). R1 preparation failed before a build; R2 explicitly rebases the Windows helpers to reference only authenticated preloaded nvcuda/cudart12 modules and retains the original nonWindows bodies. It keeps upstream direct-call CUDA macros and separately applies the exact upstream ARM64 compatibility patch. It does not run fuzzy patching or downgrade a dependency. One inert .claude/skills link is recorded/omitted; no link is extracted or followed.
++
++Six Python helper/refusal controls pass on the frozen producer. An initial5/6 result was a test-only Windows path separator expectation; failure/source are retained. Current controls cover exact F32 single-core configure decisions, CPUrecipe drift, permitted nonbuild-link omission, unexpected-link refusal, traversal refusal and archive-hash drift. They do not establish C++ compilation, frontend/cuDNN ABI compatibility, final static linking or any GPU/model outcome. The producer's first /Zs header syntax stage is before full configure/build, so that compatibility failure stops cheaply.
++
++build-card-r2.json provides a concrete unexecuted command and actual inputs. Root must review the producer and patches before execution. The eventual aggregate/runtime/build/package consumers still need a new GPU proof owner; do not pass this receipt through existing CPU-only verify_build or infer native model qualification. Use original FP32 unfused Compact/Large graphs and TF32off only. No F16/BF16/mixed/Flash graph work is in scope. Missing GPU dependencies must preserve MiniLM CPU and separately qualified same-slot CPU fallback; Large currently has no qualified CPU fallback.

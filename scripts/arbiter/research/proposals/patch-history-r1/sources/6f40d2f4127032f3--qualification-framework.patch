@@ -1,0 +1,101 @@
+--- a/docs/research/implementation-v190.md
++++ b/docs/research/implementation-v190.md
+@@ -67,7 +67,7 @@
+ | P11b | Accepted locally — `aa28425` | Explicit retained Lean/Rich migration, legacy continuity and paid split inheritance |
+ | P12 | Accepted locally | 39 focused Windows native tests; strict scoped Clippy; UI 776 passed/19 skipped; all 12 final Windows release stages and 19 scoped Neo tests passed; clean exit zero and target removed |
+ | P13a/P13b | Conditional decision: retain current ranking | Candidate remains inert; quality/resource, independent-label, native disclosure and scope gates are not established; no quality gain or candidate failure is claimed |
+-| P14 | Pending | Combined qualification, platform/fault/resource coverage and final candidate evidence |
++| P14 | Qualification in progress; not accepted | Initial core attempt failed at semantic-fixture Clippy; full suites, actual semantic execution, selected Neo/installed/resource evidence and final review remain pending |
+ 
+ **Additional maintainer request — 5 November 2026:** after P9–P14, reproduce and
+ fix deleted-source failure loops in the current release: individual indexed files
+@@ -5024,3 +5024,69 @@
+ or modify dependency/model/OCR adapters. Any later adoption requires a new
+ reviewed evidence-based decision. This P13 record is a separate checkpoint after
+ P12 acceptance; its authorized signed commit is a separate Git action.
++
++
++### P14 — cumulative qualification in progress, 6 November 2026
++
++P12 is accepted at `4cb4312480be4c33fe70dc48f58e4877cce05c31`.
++P13's separate conditional decision at `e2d65ed` retains current ranking; neither
++research candidate is enabled. P14 is **not accepted**. The working version
++remains unpublished **1.8.8**, with final manual/installer acceptance separate.
++The requested missing-file/folder isolation and retirement cleanup follows P14;
++it is not implemented or qualified by the P14 entry.
++
++**Identity boundary.** The adopted matched Windows runtime remains the original
++P12 producer, compiled from
++`4121692a2cc0272358023f5362ae886eeed4fd06203cea7af23bbfc5f4be86b9`
++(**960 inputs**), with its original build/install/runtime manifests and notices.
++Its main SHA-256 is
++`1e41d1bf497eb8b092491629160e0d988cdd15c675417603a1fb30844e4543e1`;
++helper SHA-256 is
++`bc873940a807c772deaf0b678ca878a769d8a99023a54eb5b78a1e9f102750a1`.
++The initial P14 test source is
++`c1ae4724452d99b2b415a926e8e7fde41e13552f230f6fb435c5b133524ad2df`
++(**960 inputs**). Its sole native-inventory difference is the external
++`combined_reads/split.rs` test. The reviewed test-only class seal
++`2e41336b625530865582567cb2ee9f88082e4be43cf91e053ad45c7a1027868b`
++records those distinct identities. This is runtime adoption with a classified
++external-test delta, not a fresh producer or a relabeled runtime source. Any
++subsequent test correction requires a new current-test identity and class seal.
++
++**Initial attempt remains failed evidence.** `p14-core-r1` passed formatting and
++pinned Nextest version preflight, then workspace Clippy exited **101**. The new
++semantic fixture formatted an optional `ControlResponse` with `Debug`, which the
++wire type does not implement. No semantic fixture, full Nextest suite or doctest
++pass is claimed for this attempt. The failure must be corrected narrowly and
++its original receipt retained; no production Debug contract is implied.
++
++The pending semantic-ready split fixture must prove actual paid destination
++vectors, its accepted publication, reviewed model descriptor and complete
++native/CLI/MCP observations. Aggregate helper loads do not measure additional
++destination forwards or total model cost. Its presence in source or successful
++compilation alone is not execution evidence.
++
++| Qualification owner | Current evidence boundary | Required completion record |
++| --- | --- | --- |
++| Windows core | Initial attempt failed at workspace Clippy; later stages unexecuted in that attempt | Exact corrected source/class seal; workspace warning-denied Clippy, semantic case, full all-feature Nextest with all four restored routine campaigns and serial doctests; actual pass/fail/skip and ignored counts, logs and JUnit |
++| Preceding P12 runtime | Accepted same-production 12-stage evidence, 39 focused cases and UI 776 passed/19 skipped remain historical P12 evidence | Explicit adoption only where the final source classification permits; no claim those were rerun by P14 |
++| Scoped Neo | P12's exact compiled-source 19 tests/10 commands and clean-zero/target-removed proof are historical, not a P14 result | Final selected P14 source/archive/plan and command counts, OS custody/native/helper outcomes, source/report retention and unconditional `cargo clean` result plus target absence |
++| Installed native and upgrade | No new P14 pass recorded | Existing five-repeat smokes, isolated predecessor upgrade, exact managed roots/process ownership and source/payload identities; distinguish fixture/native installation from editor activation |
++| Resources and scale | P11b fixture observations and P12 unchanged 84 latency gates remain their original scoped evidence | Selected existing load cohorts/rounds, representative and ten-thousand synthetic scale, read-only real corpora and explicit ignored vector-performance cases; record actual sample sizes, CPU/RSS/storage availability and unchanged thresholds |
++| Consumers and packaging | Earlier canonical transport and UI results remain dated | Final source-bound full equivalent reads, extension/Assistance tests, build/package/version/provenance/repository/license/advisory checks; installed VSIX multi-window activation remains separate |
++| Platform/distribution | Linux/container, Intel, signing/notarization/channel, clean-machine, external coding-agent and installed editor paths not established by Windows fixtures | Actual required environments/credentials and immutable producer/channel verification, or explicit unknown/refusal and narrowed claims; no inferred passes |
++
++The approved command map reuses existing owners and freezes the original corpus,
++models, latency thresholds and private fixture roots. Nextest does not silently
++run ignored tests; required ignored resource cases need their explicit owning
++commands. Heavy campaigns run serially without a competing compiler or replay.
++Unavailable metrics are unknown, not zero; logical retained/quota bytes are not
++physical allocation or process peak RSS. No default ONNX quality, physical power
++loss, signed-copy/editor success or complete cross-platform claim follows from
++unit tests or a runtime build. OCR adapters and dependencies remain unchanged.
++
++The final entry must replace this current-status framework only after collecting
++all selected results, documenting honest remaining platform limits and completing
++primary review of the combined diff and evidence. It must retain this failed
++attempt and all earlier P12 historical failures. A signed phase commit, later
++missing-source fix, final local installer and any separately authorized release
++publication remain separate actions.
+--- a/docs/releases/release-1.8.8.md
++++ b/docs/releases/release-1.8.8.md
+@@ -124,3 +124,17 @@
+ imported paths, one partial path and 319 baseline exemptions. Offline checks
+ remain explicitly limited and do not check npm advisories; see the
+ [setup and policy limits](../dependency-advisories.md).
++
++
++## P14 cumulative qualification in progress
++
++The accepted P12 checkpoint and P13 retain-current decision remain unchanged.
++P14's external semantic-ready split test is under qualification; no new semantic,
++full-workspace, Neo, installed-editor or resource campaign pass is claimed yet.
++The original P12 runtime/source identity remains separate from P14 test-source
++identities and their reviewed class seals. The initial P14 Clippy attempt failed
++on a test diagnostic requiring Debug for ControlResponse; its failed receipt is
++retained. The [P14 ledger](../research/implementation-v190.md#p14--cumulative-qualification-in-progress-6-november-2026)
++records exact producer/test identities, required owners and platform unknowns.
++The build remains unpublished 1.8.8. P14 acceptance, missing-source cleanup,
++final local installer/manual testing and release publication are separate gates.

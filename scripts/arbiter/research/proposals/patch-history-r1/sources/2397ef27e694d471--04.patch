@@ -1,0 +1,450 @@
+diff --git a/crates/airk-mcp/src/lib.rs b/crates/airk-mcp/src/lib.rs
+--- a/crates/airk-mcp/src/lib.rs
++++ b/crates/airk-mcp/src/lib.rs
+@@ -172,8 +172,10 @@
+     #[serde(default)]
+     pub include_suggestions: bool,
+     #[serde(default = "default_limit")]
++    #[schemars(range(min = 1, max = 100))]
+     pub limit: usize,
+     #[serde(default = "default_budget")]
++    #[schemars(range(min = 1, max = 65536))]
+     pub max_bytes: usize,
+     pub cursor: Option<String>,
+ }
+@@ -191,7 +193,7 @@
+     pub verification: response::VerificationArgs,
+     #[serde(flatten)]
+     pub response: ResponseArgs,
+-    /// Default hybrid retrieval; explicit lexical uses AND terms.
++    /// Default hybrid retrieval; lexical normalizes punctuation/quotes into AND terms, not phrase matching.
+     pub query: String,
+     /// Omit for the saved collection policy; pending vectors are disclosed in the response.
+     pub mode: Option<SearchMode>,
+@@ -207,8 +209,10 @@
+     /// Optional literal collection-relative prefix to exclude; does not change source authorization.
+     pub exclude_path_prefix: Option<String>,
+     #[serde(default = "default_limit")]
++    #[schemars(range(min = 1, max = 100))]
+     pub limit: usize,
+     #[serde(default = "default_budget")]
++    #[schemars(range(min = 1, max = 65536))]
+     pub max_bytes: usize,
+     /// Return complete indexed chunks instead of focused snippets.
+     pub full_chunks: Option<bool>,
+@@ -276,6 +280,7 @@
+     /// Last indexed line, 1-based and inclusive; keep extracted documents within one page/block/slide.
+     pub end_line: usize,
+     #[serde(default = "default_budget")]
++    #[schemars(range(min = 1, max = 65536))]
+     pub max_bytes: usize,
+ }
+ 
+@@ -292,8 +297,10 @@
+     #[serde(default)]
+     pub prefix: String,
+     #[serde(default = "default_limit")]
++    #[schemars(range(min = 1, max = 100))]
+     pub limit: usize,
+     #[serde(default = "default_budget")]
++    #[schemars(range(min = 1, max = 65536))]
+     pub max_bytes: usize,
+ }
+ 
+@@ -341,8 +348,10 @@
+     /// Exact collection-relative indexed file path, not a prefix or glob.
+     pub path: String,
+     #[serde(default = "default_limit")]
++    #[schemars(range(min = 1, max = 100))]
+     pub limit: usize,
+     #[serde(default = "default_budget")]
++    #[schemars(range(min = 1, max = 65536))]
+     pub max_bytes: usize,
+ }
+ 
+@@ -372,8 +381,10 @@
+     /// Optional indexed language/profile label; obtain the label from airk_file_info.
+     pub language: Option<String>,
+     #[serde(default = "default_limit")]
++    #[schemars(range(min = 1, max = 100))]
+     pub limit: usize,
+     #[serde(default = "default_budget")]
++    #[schemars(range(min = 1, max = 65536))]
+     pub max_bytes: usize,
+ }
+ 
+@@ -418,8 +429,10 @@
+     /// Exact category: requirement, date, architecture, design, feature, decision, acceptance, section, table, table_row, table_cell, key or element.
+     pub kind: Option<String>,
+     #[serde(default = "default_limit")]
++    #[schemars(range(min = 1, max = 100))]
+     pub limit: usize,
+     #[serde(default = "default_budget")]
++    #[schemars(range(min = 1, max = 65536))]
+     pub max_bytes: usize,
+ }
+ 
+@@ -451,8 +464,10 @@
+     #[serde(default)]
+     pub include_count: bool,
+     #[serde(default = "default_limit")]
++    #[schemars(range(min = 1, max = 100))]
+     pub limit: usize,
+     #[serde(default = "default_budget")]
++    #[schemars(range(min = 1, max = 65536))]
+     pub max_bytes: usize,
+ }
+ 
+@@ -488,14 +503,26 @@
+     /// 1-based indexed line from AIRK evidence; extracted document lines are not page/slide numbers.
+     pub line: usize,
+     #[serde(default = "default_radius")]
++    #[schemars(schema_with = "context_radius_schema")]
+     pub before: usize,
+     #[serde(default = "default_radius")]
++    #[schemars(schema_with = "context_radius_schema")]
+     pub after: usize,
+     #[serde(default = "default_budget")]
++    #[schemars(range(min = 1, max = 65536))]
+     pub max_bytes: usize,
+ }
++fn context_radius_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
++    serde_json::from_value(serde_json::json!({
++        "type":"integer","minimum":0,"maximum":airk_core::native_reads::CONTEXT_RADIUS_MAX
++    })).expect("static native context radius schema")
++}
++fn relationship_direction_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
++    serde_json::from_value(serde_json::json!({"type":"string","enum":["incoming","outgoing"]}))
++        .expect("static relationship direction schema")
++}
+ fn default_radius() -> usize {
+-    5
++    airk_core::native_reads::CONTEXT_RADIUS_DEFAULT
+ }
+ 
+ #[derive(Deserialize, schemars::JsonSchema)]
+@@ -526,8 +553,10 @@
+     /// Exact indexed file path; takes precedence over path_prefix.
+     pub path: Option<String>,
+     #[serde(default = "default_limit")]
++    #[schemars(range(min = 1, max = 100))]
+     pub limit: usize,
+     #[serde(default = "default_budget")]
++    #[schemars(range(min = 1, max = 65536))]
+     pub max_bytes: usize,
+ }
+ 
+@@ -542,6 +571,7 @@
+     pub symbol: String,
+     /// incoming for callers/implementation candidates; outgoing for dependencies/containment. Defaults incoming.
+     #[serde(default = "default_direction")]
++    #[schemars(schema_with = "relationship_direction_schema")]
+     pub direction: String,
+     /// Exact edge kind: call, contains, import, inherits, reference, implements, type_definition, definition or a framework category.
+     pub kind: Option<String>,
+@@ -549,10 +579,13 @@
+     pub path_prefix: String,
+     /// 1..3 graph hops; candidate impact is incomplete and references are not calls.
+     #[serde(default = "default_hops")]
++    #[schemars(range(min = 1, max = 3))]
+     pub hops: usize,
+     #[serde(default = "default_limit")]
++    #[schemars(range(min = 1, max = 100))]
+     pub limit: usize,
+     #[serde(default = "default_budget")]
++    #[schemars(range(min = 1, max = 65536))]
+     pub max_bytes: usize,
+ }
+ 
+@@ -814,7 +847,7 @@
+ 
+     #[tool(
+         name = "airk_search",
+-        description = "Find concepts, code or documents; prose/comments and source can rank together. For a named type/function, prefer airk_symbols first, scoped airk_references for textual uses, then bounded airk_read_file; search supplements that investigation. Scope by literal path_prefix, exact indexed language, metadata-based evidence_kind or exclude_path_prefix; documents alone do not prove application behavior. Omitted mode retains saved hybrid/vector policy; explicit lexical uses AND terms. Eligible Default search can return lexical evidence during a helper outage; execution records served mode and semantic incompleteness. Explicit vector/hybrid and saved RequireComplete refuse helper outages. Vector/hybrid need the indexed local model. semantic=true aliases vector. Bounded native-definition pointers may accompany identifiers without changing ranking. Focused cited snippets are default; full_chunks requests whole indexed chunks. Read guidance for returned limitations; empty matches alone establish no cause. Check readiness/truncation and use response_mode=full for provenance audits.",
++        description = "Find concepts, code or documents; prose/comments and source can rank together. For a named type/function, prefer airk_symbols first, scoped airk_references for textual uses, then bounded airk_read_file; search supplements that investigation. Scope by literal path_prefix, exact indexed language, metadata-based evidence_kind or exclude_path_prefix; documents alone do not prove application behavior. Omitted mode retains saved hybrid/vector policy; explicit lexical normalizes punctuation and quotes into AND terms; quotes do not enable phrase matching. Lexical candidates use stable-id order, not relevance ranking. Eligible Default search can return lexical evidence during a helper outage; execution records served mode and semantic incompleteness. Explicit vector/hybrid and saved RequireComplete refuse helper outages. Vector/hybrid need the indexed local model. semantic=true aliases vector. Bounded native-definition pointers may accompany identifiers without changing ranking. Focused cited snippets are default; full_chunks requests whole indexed chunks. Read guidance for returned limitations; empty matches alone establish no cause. Check readiness/truncation and use response_mode=full for provenance audits.",
+         annotations(
+             read_only_hint = true,
+             destructive_hint = false,
+@@ -1290,7 +1323,7 @@
+ 
+     #[tool(
+         name = "airk_capabilities",
+-        description = "Check native formats, explicitly provisioned local model/OCR/code-provider adapters and their limits before planning exploration. Works before indexing. Reports available capabilities, not whether optional providers or this collection are ready. read_guidance lists bounded reason/action vocabulary; its suggestions execute no tools. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
++        description = "Check native formats, explicitly provisioned local model/OCR/code-provider adapters and their limits before planning exploration. Works before indexing. Reports available capabilities, not whether optional providers or this collection are ready. Terse replies summarize Workbench operation schemas; response_mode=full includes them. read_guidance lists bounded reason/action vocabulary; its suggestions execute no tools. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+         annotations(
+             read_only_hint = true,
+             destructive_hint = false,
+diff --git a/crates/airk-core/src/native_reads.rs b/crates/airk-core/src/native_reads.rs
+--- a/crates/airk-core/src/native_reads.rs
++++ b/crates/airk-core/src/native_reads.rs
+@@ -1,5 +1,9 @@
+ // SPDX-License-Identifier: Apache-2.0
+ //! Canonical native read requests shared by native transports and MCP adapters.
++/// Maximum neighboring indexed lines accepted by every native context read.
++pub const CONTEXT_RADIUS_MAX: usize = 100;
++/// Neighboring indexed lines used when a context radius is omitted.
++pub const CONTEXT_RADIUS_DEFAULT: usize = 5;
+ /// Native read capabilities are separate from the fixed MCP tool inventory.
+ #[derive(Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+ #[serde(rename_all = "snake_case")]
+diff --git a/crates/airk-kernel/src/lib.rs b/crates/airk-kernel/src/lib.rs
+--- a/crates/airk-kernel/src/lib.rs
++++ b/crates/airk-kernel/src/lib.rs
+@@ -985,7 +985,8 @@
+         max_bytes: usize,
+     ) -> Result<SearchResponse> {
+         ensure!(
+-            before <= 100 && after <= 100,
++            before <= airk_core::native_reads::CONTEXT_RADIUS_MAX
++                && after <= airk_core::native_reads::CONTEXT_RADIUS_MAX,
+             "context radius must be 0..100"
+         );
+         let read = self.current_reader()?;
+diff --git a/crates/airk-kernel/src/conditional.rs b/crates/airk-kernel/src/conditional.rs
+--- a/crates/airk-kernel/src/conditional.rs
++++ b/crates/airk-kernel/src/conditional.rs
+@@ -138,7 +138,8 @@
+     ) -> Result<ConditionalRead<SearchResponse>> {
+         validate_budget(1, max_bytes)?;
+         ensure!(
+-            before <= 100 && after <= 100,
++            before <= airk_core::native_reads::CONTEXT_RADIUS_MAX
++                && after <= airk_core::native_reads::CONTEXT_RADIUS_MAX,
+             "context radius must be 0..100"
+         );
+         ensure!(line > 0, "line is outside indexed source");
+diff --git a/crates/airk-kernel/src/current/conditional.rs b/crates/airk-kernel/src/current/conditional.rs
+--- a/crates/airk-kernel/src/current/conditional.rs
++++ b/crates/airk-kernel/src/current/conditional.rs
+@@ -222,7 +222,8 @@
+     ) -> Result<ConditionalRead<SearchResponse>> {
+         airk_core::validate_budget(1, max_bytes)?;
+         ensure!(
+-            before <= 100 && after <= 100 && line > 0,
++            before <= airk_core::native_reads::CONTEXT_RADIUS_MAX
++                && after <= airk_core::native_reads::CONTEXT_RADIUS_MAX && line > 0,
+             "invalid context bounds"
+         );
+         let pinned = self.current_reader()?;
+diff --git a/crates/airk-kernel/src/workbench.rs b/crates/airk-kernel/src/workbench.rs
+--- a/crates/airk-kernel/src/workbench.rs
++++ b/crates/airk-kernel/src/workbench.rs
+@@ -119,7 +119,7 @@
+     match key {
+         "limit" => 100,
+         "hops" => 3,
+-        "before" | "after" => 40,
++        "before" | "after" => airk_core::native_reads::CONTEXT_RADIUS_MAX as u64,
+         "line" | "start_line" | "end_line" => u64::from(u32::MAX),
+         _ => 65536,
+     }
+@@ -1424,9 +1424,12 @@
+             values.push(Value::Null);
+             json!({"type":["string","null"],"enum":values,"description":"Lean/Rich projection of available evidence; independent of retention. Omit to preserve Workbench defaults. Conflicting compact flags reject. Search full_chunks is independent."})
+         }
+-        "limit" | "max_bytes" | "start_line" | "end_line" | "line" | "before" | "after"
+-        | "hops" => {
+-            json!({"type":"integer","minimum":if matches!(key,"before"|"after"){0}else{1},"maximum":numeric_max(key)})
++        "before" | "after" => json!({
++            "type":"integer","minimum":0,"maximum":airk_core::native_reads::CONTEXT_RADIUS_MAX,
++            "default":airk_core::native_reads::CONTEXT_RADIUS_DEFAULT
++        }),
++        "limit" | "max_bytes" | "start_line" | "end_line" | "line" | "hops" => {
++            json!({"type":"integer","minimum":1,"maximum":numeric_max(key)})
+         }
+         "compact" | "full_chunks" => json!({"type":["boolean","null"]}),
+         "include_count"
+@@ -2901,8 +2904,8 @@
+             "context" => serde_json::to_value(self.context_conditional(
+                 string(args, "path")?,
+                 number(args, "line", 1),
+-                number(args, "before", 3).min(40),
+-                number(args, "after", 3).min(40),
++                number(args, "before", airk_core::native_reads::CONTEXT_RADIUS_DEFAULT),
++                number(args, "after", airk_core::native_reads::CONTEXT_RADIUS_DEFAULT),
+                 max,
+                 &evidence,
+             )?)?,
+diff --git a/crates/airk-cli/src/main.rs b/crates/airk-cli/src/main.rs
+--- a/crates/airk-cli/src/main.rs
++++ b/crates/airk-cli/src/main.rs
+@@ -568,9 +568,9 @@
+         evidence: EvidenceOptions,
+         path: String,
+         line: usize,
+-        #[arg(long, default_value_t = 5)]
++        #[arg(long, default_value_t = airk_core::native_reads::CONTEXT_RADIUS_DEFAULT)]
+         before: usize,
+-        #[arg(long, default_value_t = 5)]
++        #[arg(long, default_value_t = airk_core::native_reads::CONTEXT_RADIUS_DEFAULT)]
+         after: usize,
+         #[arg(long, default_value_t = 8192)]
+         max_bytes: usize,
+diff --git a/crates/airk-mcp/src/help/topics.rs b/crates/airk-mcp/src/help/topics.rs
+--- a/crates/airk-mcp/src/help/topics.rs
++++ b/crates/airk-mcp/src/help/topics.rs
+@@ -132,7 +132,7 @@
+     Topic {
+         id: "search",
+         title: "Lexical, vector and hybrid search",
+-        text: r#"Lexical search uses AND terms and indexed text. Vector search is approximate similarity using a provisioned local model. Hybrid combines lexical and vector candidates from one pinned generation. Omitting mode follows the saved collection search policy; explicit vector requests do not silently become lexical results.
++        text: r#"Lexical search normalizes punctuation and quotes into AND terms over indexed text; quotes do not enable phrase matching. Lexical candidates use stable-id order, not relevance ranking. Vector search is approximate similarity using a provisioned local model. Hybrid combines lexical and vector candidates from one pinned generation. Omitting mode follows the saved collection search policy; explicit vector requests do not silently become lexical results.
+ Use airk_search mode=lexical for exact terminology. Use vector or hybrid for conceptual questions when vectors are available. path_prefix is a literal collection-relative prefix, not a glob. limit and max_bytes bound returned evidence; check truncation before drawing broad conclusions.
+ Pending, partial, ready or failed semantic readiness is reported separately from lexical/discovery availability. Vector similarity does not resolve references or prove an answer. Querying does not download models or start enrichment.
+ Ask tool=airk_search for the current argument schema and command=search for native CLI flags."#,
+diff --git a/crates/airk-mcp/src/optimization_tests.rs b/crates/airk-mcp/src/optimization_tests.rs
+--- a/crates/airk-mcp/src/optimization_tests.rs
++++ b/crates/airk-mcp/src/optimization_tests.rs
+@@ -237,3 +237,152 @@
+     );
+     Ok(())
+ }
++
++#[test]
++fn native_public_and_workbench_catalogs_share_evidence_limits() {
++    let native = local::tools();
++    let public = unified::tools();
++    let workbench = airk_kernel::workbench::operation_catalog();
++    for tool in ["changes", "search", "read_file", "list_files", "outline", "symbols", "imports", "document_facts", "references", "context", "code_facts", "relationships"] {
++        let native_name = format!("airk_{tool}");
++        for catalog in [&native, &public] {
++            let selected = catalog.iter().find(|entry| entry.name == tool || entry.name == native_name).unwrap();
++            let schema = serde_json::to_value(&selected.input_schema).unwrap();
++            for (field, maximum) in [("limit", 100), ("max_bytes", 65536)] {
++                if schema["properties"].get(field).is_none() { continue; }
++                assert_eq!(schema["properties"][field]["minimum"], 1, "{tool}.{field}");
++                assert_eq!(schema["properties"][field]["maximum"], maximum, "{tool}.{field}");
++                assert_eq!(workbench["operations"][tool]["properties"][field]["maximum"], maximum, "Workbench {tool}.{field}");
++            }
++            if tool == "context" {
++                for field in ["before", "after"] {
++                    assert_eq!(schema["properties"][field]["minimum"], 0);
++                    assert_eq!(schema["properties"][field]["maximum"], airk_core::native_reads::CONTEXT_RADIUS_MAX);
++                    assert_eq!(schema["properties"][field]["maximum"], workbench["operations"][tool]["properties"][field]["maximum"]);
++                    assert_eq!(schema["properties"][field]["default"], airk_core::native_reads::CONTEXT_RADIUS_DEFAULT);
++                    assert_eq!(schema["properties"][field]["default"], workbench["operations"][tool]["properties"][field]["default"]);
++                }
++            }
++            if tool == "relationships" {
++                assert_eq!(schema["properties"]["hops"]["minimum"], 1);
++                assert_eq!(schema["properties"]["hops"]["maximum"], 3);
++                assert_eq!(schema["properties"]["direction"]["enum"], json!(["incoming", "outgoing"]));
++                assert_eq!(schema["properties"]["direction"]["enum"], workbench["operations"][tool]["properties"]["direction"]["enum"]);
++            }
++        }
++    }
++    // Help and parse keep their independent documented payload contracts.
++    let help = public.iter().find(|entry| entry.name == "help").unwrap();
++    let description = serde_json::to_value(&help.input_schema).unwrap()["properties"]["max_bytes"]["description"].clone();
++    assert!(description.as_str().unwrap().contains("4096..32768"));
++}
++
++#[tokio::test]
++async fn context_radius_100_reaches_workbench_and_native_handlers_without_clipping() -> anyhow::Result<()> {
++    let root = tempfile::tempdir()?;
++    let state = tempfile::tempdir()?;
++    let text = (1..=240).map(|line| format!("line-{line:03}\n")).collect::<String>();
++    std::fs::write(root.path().join("lines.txt"), text)?;
++    let kernel = Kernel::open(root.path(), Some(state.path().into()))?;
++    kernel.configure_vectors(false)?;
++    kernel.index()?;
++    let server = AirkServer::new(kernel.clone());
++    fn stable(value: &mut Value) {
++        match value {
++            Value::Object(fields) => {
++                // Native transport identities and observation time are not evidence.
++                fields.remove("request_id");
++                fields.remove("observed_unix_ms");
++                for value in fields.values_mut() { stable(value); }
++            }
++            Value::Array(values) => values.iter_mut().for_each(stable),
++            _ => {}
++        }
++    }
++    for selected_radius in [None, Some(0), Some(40), Some(airk_core::native_reads::CONTEXT_RADIUS_MAX)] {
++        let radius = selected_radius.unwrap_or(airk_core::native_reads::CONTEXT_RADIUS_DEFAULT);
++        let mut arguments = json!({"path":"lines.txt","line":120,"max_bytes":65536,"verification":"off"});
++        if let Some(radius) = selected_radius {
++            arguments["before"] = json!(radius); arguments["after"] = json!(radius);
++        }
++        let run = kernel.evidence_plan(serde_json::from_value(json!({
++            "schema":"airk.parse.request/1","mode":"execute","verification":"off",
++            "plan":{"steps":[{"id":"context","tool":"context","args":arguments}]}
++        }))?)?;
++        assert_eq!(run.status, "complete", "{run:?}");
++        assert_eq!(run.steps[0].status, "complete");
++        let expected = run.steps[0].result.clone().unwrap();
++        let mut args = run.steps[0].arguments.clone();
++        args["revision"] = json!(run.plan.publication);
++        args["response_mode"] = json!("full");
++        args["include_status"] = json!(true);
++        let mut actual = response_body(server.context(Parameters(serde_json::from_value(args)?)).await)?;
++        // Reuse the transport decorator for its additional readiness observations;
++        // every canonical Workbench field remains in the full comparison.
++        let mut expected = response_body(server.execute_verified_response(
++            UsageOperation::Context,
++            ResponseArgs { response_mode: Some(response::ResponseMode::Full), include_status: true, reply_detail: None },
++            airk_core::verification::VerificationControls::off(),
++            move |_| Ok(expected),
++        ).await)?;
++        stable(&mut actual); stable(&mut expected);
++        assert_eq!(actual, expected, "radius={radius}");
++        let encoded = serde_json::to_string(&actual)?;
++        assert!(encoded.contains(&format!("line-{:03}", 120 - radius)));
++        assert!(encoded.contains(&format!("line-{:03}", 120 + radius)));
++    }
++    let invalid = airk_core::native_reads::CONTEXT_RADIUS_MAX + 1;
++    assert!(kernel.evidence_plan(serde_json::from_value(json!({
++        "schema":"airk.parse.request/1","mode":"execute","plan":{"steps":[{"id":"context","tool":"context","args":{
++            "path":"lines.txt","line":120,"before":invalid,"after":0
++        }}]}
++    }))?).is_err());
++    let refused = server.context(Parameters(serde_json::from_value(json!({
++        "path":"lines.txt","line":120,"before":invalid,"after":0,"verification":"off"
++    }))?)).await;
++    assert!(refused.is_error.unwrap_or(false));
++    Ok(())
++}
++
++#[tokio::test]
++async fn annotated_evidence_budgets_reject_out_of_range_inputs_without_clamping() -> anyhow::Result<()> {
++    let root = tempfile::tempdir()?;
++    let state = tempfile::tempdir()?;
++    std::fs::write(root.path().join("one.rs"), "pub struct Queue;\nfn leaf() {}\nfn entry() { leaf(); }\n")?;
++    let kernel = Kernel::open(root.path(), Some(state.path().into()))?;
++    kernel.configure_vectors(false)?; kernel.index()?;
++    let catalog = local::tools();
++    let mut tools = local::LocalTools::new(kernel.clone()).await?;
++    for (tool, arguments) in [
++        ("search", json!({"query":"Queue","mode":"lexical"})),
++        ("changes", json!({"selectors":[{"kind":"path","path":"one.rs"}]})),
++        ("read_file", json!({"path":"one.rs","start_line":1,"end_line":1})),
++        ("list_files", json!({})),
++        ("outline", json!({"path":"one.rs"})),
++        ("symbols", json!({"name":"Queue"})),
++        ("imports", json!({"name":"Queue"})),
++        ("code_facts", json!({"name":"Queue"})),
++        ("document_facts", json!({"name":"Queue"})),
++        ("references", json!({"name":"Queue"})),
++        ("context", json!({"path":"one.rs","line":1})),
++        ("relationships", json!({"symbol":"leaf","direction":"incoming"})),
++    ] {
++        let name = format!("airk_{tool}");
++        let schema = serde_json::to_value(&catalog.iter().find(|entry| entry.name == name).unwrap().input_schema)?;
++        for (field, invalid) in [("limit", 0), ("limit", 101), ("max_bytes", 0), ("max_bytes", 65537)] {
++            if schema["properties"].get(field).is_none() { continue; }
++            let mut arguments = arguments.clone();
++            arguments[field] = json!(invalid); arguments["verification"] = json!("off");
++            let result = tools.call(name.clone(), arguments.as_object().unwrap().clone()).await?;
++            assert!(result.is_error.unwrap_or(false), "{tool}.{field}={invalid} was accepted: {result:?}");
++            let text = &result.content[0].as_text().unwrap().text;
++            assert!(text.contains(field), "{tool}.{field}={invalid}: {text}");
++            assert!(kernel.evidence_plan(serde_json::from_value(json!({
++                "schema":"airk.parse.request/1","mode":"execute",
++                "plan":{"steps":[{"id":"invalid","tool":tool,"args":arguments}]}
++            }))?).is_err(), "Workbench {tool}.{field}={invalid} was accepted");
++        }
++    }
++    tools.close().await?;
++    Ok(())
++}

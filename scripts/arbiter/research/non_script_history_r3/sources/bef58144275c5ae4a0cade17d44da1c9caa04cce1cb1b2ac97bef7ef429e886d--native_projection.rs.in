@@ -1,0 +1,121 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Publication-owned native fact pages in the existing authenticated map/journal.
+//! Imported assertions and public query cutover are deliberately separate.
+use super::{CurrentRead,CurrentScope,map::{self,MapDomain}};
+use airk_core::{Artifact,Fact,identity::Sha256Digest};
+use anyhow::{Context,Result,ensure};
+use serde::{Serialize,Deserialize};
+const ROWS:usize=32;
+const MAX_PAGES:usize=16;
+const MAX_BYTES:usize=256*1024;
+pub(crate) const TRANSACTION_BYTES:usize=4*1024*1024;
+#[derive(Clone,Debug,Serialize,Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeFactHeader {
+    pub version:u32,pub path:String,pub source:Sha256Digest,pub payload:Sha256Digest,
+    pub profile:Sha256Digest,pub facts:usize,pub pages:usize,
+    /// False means bounded projection unavailable, never zero facts.
+    pub supported:bool,
+}
+#[derive(Clone,Debug,Serialize,Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeFactRow{pub ordinal:usize,pub fact:Fact}
+#[derive(Clone,Debug,Serialize,Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeFactPage{pub version:u32,pub path:String,pub page:usize,pub rows:Vec<NativeFactRow>}
+fn identity(path:&str,page:usize)->Result<Vec<u8>>{Ok(serde_json::to_vec(&(path,page))?)}
+fn header(artifact:&Artifact)->Result<NativeFactHeader>{
+    let retained=artifact.retained.as_ref().context("native projection extraction missing")?;
+    Ok(NativeFactHeader{version:1,path:artifact.path.clone(),source:artifact.content_hash.parse()?,
+        payload:retained.object.parse()?,profile:retained.profile.as_ref().context("native projection profile missing")?.identity()?,
+        facts:retained.facts,pages:0,supported:false})
+}
+fn decode_header(bytes:&[u8],path:&str)->Result<NativeFactHeader>{
+    let value:NativeFactHeader=serde_json::from_slice(bytes)?;
+    ensure!(value.version==1&&value.path==path&&value.pages<=MAX_PAGES
+        &&(value.supported||value.pages==0)&&serde_json::to_vec(&value)?==bytes,"invalid native projection header");
+    ensure!(!value.supported||value.pages==value.facts.div_ceil(ROWS),"native projection count mismatch");
+    Ok(value)
+}
+fn build(artifact:&Artifact,remaining:usize)->Result<(NativeFactHeader,Vec<Vec<u8>>)> {
+    let mut result=header(artifact)?;
+    ensure!(artifact.facts.len()==result.facts,"native projection retained count mismatch");
+    if result.facts>ROWS*MAX_PAGES{return Ok((result,Vec::new()));}
+    let mut order=(0..artifact.facts.len()).collect::<Vec<_>>();
+    order.sort_by(|left,right|{
+        let a=&artifact.facts[*left];let b=&artifact.facts[*right];
+        (a.start_line,&a.kind,&a.name,left).cmp(&(b.start_line,&b.kind,&b.name,right))
+    });
+    let mut encoded=Vec::new();let mut bytes=0usize;
+    for (page,ordinals) in order.chunks(ROWS).enumerate(){
+        let value=NativeFactPage{version:1,path:artifact.path.clone(),page,
+            rows:ordinals.iter().map(|ordinal|NativeFactRow{ordinal:*ordinal,fact:artifact.facts[*ordinal].clone()}).collect()};
+        let value=serde_json::to_vec(&value)?;
+        bytes=bytes.checked_add(value.len()).context("native projection byte overflow")?;
+        if value.len()>map::MAX_VALUE_BYTES||bytes>MAX_BYTES.min(remaining){return Ok((result,Vec::new()));}
+        encoded.push(value);
+    }
+    result.supported=true;result.pages=encoded.len();Ok((result,encoded))
+}
+/// Called only from metadata preparation inside the existing writer MapPlan.
+/// Result afterimages participate in the ordinary pending journal and retention.
+pub(crate) fn prepare(scope:&CurrentScope,plan:&mut map::MapPlan<'_>,path:&str,
+    artifact:Option<&Artifact>,remaining:&mut usize)->Result<Vec<map::MapChange>>{
+    let key=map::key(scope,MapDomain::NativeFactHeader,path.as_bytes())?;
+    let old=plan.get(key)?.map(|bytes|decode_header(&bytes,path)).transpose()?;
+    let prepared=artifact.map(|artifact|build(artifact,*remaining)).transpose()?;
+    let new_pages=prepared.as_ref().map_or(0,|(_,pages)|pages.len());
+    let mut changes=Vec::new();
+    for page in 0..old.as_ref().map_or(0,|header|header.pages).max(new_pages){
+        let value=prepared.as_ref().and_then(|(_,pages)|pages.get(page)).cloned();
+        let change=map::MapChange::new(scope,MapDomain::NativeFactPage,&identity(path,page)?,value)?;
+        plan.put(change.key(),change.value())?;changes.push(change);
+    }
+    let value=prepared.as_ref().map(|(header,_)|serde_json::to_vec(header)).transpose()?;
+    let change=map::MapChange::new(scope,MapDomain::NativeFactHeader,path.as_bytes(),value)?;
+    plan.put(change.key(),change.value())?;changes.push(change);
+    if let Some((_,pages))=prepared{*remaining=remaining.saturating_sub(pages.iter().map(Vec::len).sum());}
+    Ok(changes)
+}
+impl CurrentRead{
+    pub fn native_fact_header(&self,path:&str)->Result<Option<NativeFactHeader>>{
+        let Some(bytes)=self.map_get(MapDomain::NativeFactHeader,path.as_bytes())? else{return Ok(None);};
+        let value=decode_header(&bytes,path)?;
+        let artifact=self.artifact(path)?.context("native projection artifact missing")?;
+        let expected=header(&artifact)?;
+        ensure!(value.source==expected.source&&value.payload==expected.payload&&value.profile==expected.profile&&value.facts==expected.facts,
+            "native projection source/profile binding mismatch");
+        Ok(Some(value))
+    }
+    /// Selected page only, preserving original native ordinals. None means legacy
+    /// or unsupported projection and requires the existing strict fallback.
+    pub fn native_fact_page(&self,path:&str,page:usize)->Result<Option<NativeFactPage>>{
+        let Some(header)=self.native_fact_header(path)?.filter(|header|header.supported) else{return Ok(None);};
+        ensure!(page<header.pages,"native projection page out of range");
+        let bytes=self.map_get(MapDomain::NativeFactPage,&identity(path,page)?)?.context("native projection page missing")?;
+        let value:NativeFactPage=serde_json::from_slice(&bytes)?;
+        ensure!(value.version==1&&value.path==path&&value.page==page&&value.rows.len()==(header.facts-page*ROWS).min(ROWS)
+            &&value.rows.iter().all(|row|row.ordinal<header.facts&&row.fact.start_line>0&&row.fact.end_line>=row.fact.start_line)
+            &&value.rows.iter().map(|row|row.ordinal).collect::<std::collections::BTreeSet<_>>().len()==value.rows.len()
+            &&value.rows.windows(2).all(|rows|{
+                let a=&rows[0];let b=&rows[1];
+                (a.fact.start_line,&a.fact.kind,&a.fact.name,a.ordinal)<(b.fact.start_line,&b.fact.kind,&b.fact.name,b.ordinal)
+            })&&serde_json::to_vec(&value)?==bytes,"invalid native projection page");
+        Ok(Some(value))
+    }
+    /// Exact physical producer parity; no audit/eligibility receipt is invented.
+    /// False is incomplete legacy/unsupported coverage, not successful auditing.
+    pub fn audit_native_fact_projection(&self,store:&crate::FileStore,path:&str)->Result<bool>{
+        let Some(actual)=self.native_fact_header(path)? else{return Ok(false);};
+        if !actual.supported{return Ok(false);}
+        let compact=self.artifact(path)?.context("native projection artifact missing")?;
+        let artifact=store.load_retained(&compact)?;store.verify_retained_source(&compact)?;
+        let (expected,pages)=build(&artifact,MAX_BYTES)?;
+        ensure!(serde_json::to_vec(&actual)?==serde_json::to_vec(&expected)?,"native projection producer header mismatch");
+        for (number,bytes) in pages.iter().enumerate(){
+            let selected=self.native_fact_page(path,number)?.context("native projection unavailable during audit")?;
+            ensure!(serde_json::to_vec(&selected)?==*bytes,"native projection producer rows mismatch");
+        }
+        Ok(true)
+    }
+}

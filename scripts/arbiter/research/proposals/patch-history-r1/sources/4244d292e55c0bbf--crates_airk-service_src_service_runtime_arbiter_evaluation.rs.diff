@@ -1,0 +1,17 @@
+--- crates\airk-service\src\service_runtime\arbiter\evaluation.rs
++++ crates\airk-service\src\service_runtime\arbiter\evaluation.rs
+@@ -89,6 +89,14 @@
+         self.owner.focus.execution_observer = Some(observer.clone());
+         self.owner.context.execution_observer = Some(observer);
+         self
++    }
++    pub(in crate::service_runtime) fn observe_warm(
++        self,
++        observer: super::warm_observer::Observer,
++    ) -> Result<Self> {
++        super::lifecycle::observe_warm(&self.owner.focus.lifecycle, observer.clone())?;
++        super::lifecycle::observe_warm(&self.owner.context.lifecycle, observer)?;
++        Ok(self)
+     }
+     pub fn configuration(&self) -> Result<EvaluationResult<Configuration>> {
+         Ok(EvaluationResult::new(self.owner.configuration()?))

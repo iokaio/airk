@@ -1,0 +1,11 @@
+--- a/scripts/tests/test_native_package_adapter.py
++++ b/scripts/tests/test_native_package_adapter.py
+@@ -122,7 +122,7 @@
+   value={'schema':'airk.native.cuda-package-projection/1','descriptor':next(row for row in rows if row['name']=='airk-cuda-runtime.json'),'static_core_build':'9'*64,'files':rows,'scope':'literal native-shaped descriptive fixture','activation':False,'qualification':False}
+   projection=root/'projection.json';execution=root/'execution.json';execution.write_bytes(b'inert injected custody receipt')
+   plan={'runtime_root':str(runtime),'runtime_files':pins,'descriptor':n.pin(runtime/'airk-cuda-runtime.json')}
+-  owner=SimpleNamespace(pin=n.pin,regular=n.regular,read=n.read,verify_execution=lambda *a,**kw:(plan,{}))
++  owner=SimpleNamespace(pin=n.pin,regular=n.regular,read=n.read,digest=n.digest,verify_execution=lambda *a,**kw:(plan,{}))
+   handoff={'activation_pins_available':False,'gpu_build':{'schema':'airk.cuda-static-build-proof/2','build_receipt':{'sha256':'9'*64}}}
+   return payload,value,projection,execution,plan,owner,handoff
+  def consume(self,value,projection,execution,owner,handoff):

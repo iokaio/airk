@@ -1,0 +1,43 @@
+--- scripts\provision-static-onnx-runtime.py::run_windows_owned
++++ private/windows_job_8g.py::run_windows_owned
+@@ -1,4 +1,4 @@
+-def run_windows_owned(argv, cwd, output, timeout, environment):
++def run_windows_owned(argv, cwd, output, timeout, environment, *, absolute_deadline=None):
+     """Drain actual owned members within one five-second cleanup deadline.
+ 
+     Leader exit alone is not job settlement. Retain native member handles for
+@@ -8,6 +8,9 @@
+     """
+     from ctypes import wintypes as w
+     import msvcrt
++
++    if absolute_deadline is not None and (type(absolute_deadline) not in (int, float) or not math.isfinite(absolute_deadline) or absolute_deadline <= 0):
++        raise ValueError("Invalid original absolute job deadline")
+ 
+     class Startup(ctypes.Structure):
+         _fields_ = [("cb", w.DWORD), ("reserved", w.LPWSTR), ("desktop", w.LPWSTR),
+@@ -66,7 +69,8 @@
+     observed_members = {}
+     try:
+         limits = ExtendedLimits()
+-        limits.basic.flags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
++        limits.basic.flags = 0x2000 | 0x200  # KILL_ON_JOB_CLOSE | JOB_MEMORY
++        limits.job_memory = 8 << 30  # Original whole-transport committed-memory ceiling.
+         checked(api.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)))
+         # Inherit exactly the output and null-input handles, not the runner's
+         # account/token/pipe handles. Parent is never assigned to this job.
+@@ -100,10 +104,14 @@
+             # the interval between creation and native job assignment.
+             checked(api.AssignProcessToJobObject(job, info.process))
+             assigned = True
++            if absolute_deadline is not None and time.monotonic() >= absolute_deadline:
++                raise TimeoutError("Original job phase expired before child resume")
+             if api.ResumeThread(info.thread) == 0xFFFFFFFF:
+                 raise ctypes.WinError(ctypes.get_last_error())
+             resumed = True
+         end = time.monotonic() + timeout
++        if absolute_deadline is not None:
++            end = min(end, absolute_deadline)
+         timed_out = oversized = False
+         while True:
+             waited = api.WaitForSingleObject(info.process, 50)

@@ -1,0 +1,84 @@
+--- crates/airk-service/src/service_runtime/evaluation_fixture_tests.rs
++++ crates/airk-service/src/service_runtime/evaluation_fixture_tests.rs
+@@ -108,8 +108,8 @@
+     );
+     let inputs: Vec<Input> = serde_json::from_slice(&raw)?;
+     ensure!(
+-        inputs.len() == 4,
+-        "private fixture requires exactly the four reviewed model choices"
++        inputs.len() == 3,
++        "private fixture requires exactly the three selected stage profiles"
+     );
+     let mut models = BTreeSet::new();
+     let mut manifests = BTreeSet::new();
+@@ -170,10 +170,9 @@
+     ensure!(
+         models
+             == BTreeSet::from([
+-                ModelChoice::SmallIntern,
+-                ModelChoice::SmallStrands,
+-                ModelChoice::LargeIntern,
+-                ModelChoice::LargeKev
++                ModelChoice::FocusQwenReranker06B,
++                ModelChoice::ContextQwenCompact,
++                ModelChoice::ContextQwenLarge
+             ]),
+         "private model roster differs"
+     );
+@@ -362,7 +361,10 @@
+             })?;
+         }
+         ensure!(
+-            !owner.configuration()?.result().enabled,
++            {
++                let configuration = owner.configuration()?;
++                !configuration.result().focus.enabled && !configuration.result().context.enabled
++            },
+             "private fixture must start disabled"
+         );
+         seeded
+@@ -1181,6 +1183,11 @@
+         "private catalog changed during publication observation"
+     );
+     let selected: Sha256Digest = std::env::var("AIRK_ARBITER_EVALUATION_PROFILE")?.parse()?;
++    let stage = match std::env::var("AIRK_ARBITER_EVALUATION_STAGE")?.as_str() {
++        "focus" => airk_core::arbiter::Stage::Focus,
++        "context" => airk_core::arbiter::Stage::Context,
++        _ => bail!("private stage must be explicit focus/context"),
++    };
+     let (profile_index, binding) = ready
+         .profiles
+         .iter()
+@@ -1199,7 +1206,9 @@
+     );
+     let profile: Profile = serde_json::from_slice(&profile_bytes)?;
+     ensure!(
+-        profile.qualification.is_none() && profile.manifest == selected,
++        profile.qualification.is_none()
++            && profile.manifest == selected
++            && profile.model.stage() == Some(stage),
+         "private profile identity changed"
+     );
+     let enabled = match std::env::var("AIRK_ARBITER_EVALUATION_ENABLED")?.as_str() {
+@@ -1228,6 +1237,7 @@
+     );
+     let request = ManagementRequest::Configure {
+         expected_revision: status.configuration.revision,
++        stage,
+         enabled,
+         selected_profile: Some(selected),
+         indexes: bindings
+@@ -1247,7 +1257,12 @@
+     write(
+         &work,
+         &format!("{prefix}.receipt.json"),
+-        &serde_json::json!({"schema":"airk.private-arbiter-configure-instance/1","evaluation":true,"release_qualified":false,"ready_sha256":sha(&ready_bytes),"profile":selected,"profile_sha256":binding.profile_sha256,"expected_revision":status.configuration.revision,"context_next_read_eligible":profile.tasks.contains(&Task::ContextNextRead)&&profile.task_policies.get(&Task::ContextNextRead)==Some(&airk_retrieval::arbiter::tasks::policy_digest()?),"request":request,"actual_status":status,"actual_health":observation}),
++        &serde_json::json!({"schema":"airk.private-arbiter-configure-instance/1","evaluation":true,"release_qualified":false,"ready_sha256":sha(&ready_bytes),"profile":selected,"profile_sha256":binding.profile_sha256,"expected_revision":status.configuration.revision,"stage":stage,"task_policy_current":match stage {
++            airk_core::arbiter::Stage::Context => profile.tasks.contains(&Task::ContextAction)
++                && profile.task_policies.get(&Task::ContextAction)==Some(&airk_retrieval::arbiter::context_action::policy_digest()?),
++            airk_core::arbiter::Stage::Focus => profile.tasks.contains(&Task::FocusRank)
++                && profile.task_policies.get(&Task::FocusRank)==Some(&airk_retrieval::arbiter::compiler::focus::policy_digest()?),
++        },"request":request,"actual_status":status,"actual_health":observation}),
+     )?;
+     Ok(())
+ }

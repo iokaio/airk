@@ -1,0 +1,3 @@
+# Inert historical source bodies
+
+These files preserve reviewed AIRK native and client source variants by original SHA256. Rust, TypeScript and TSX use .in suffixes to keep them outside all module/build graphs. source-map.json in the parent folder identifies each original path, implementation role, exact original and retained bytes, and any first-line SPDX-only prefix. Multiple historical aliases share one body. No code here is executed, imported or qualified; some variants are failed, incomplete, pre-edit, malformed or uncompiled preparations. See the parent README for family purposes and restoration constraints.

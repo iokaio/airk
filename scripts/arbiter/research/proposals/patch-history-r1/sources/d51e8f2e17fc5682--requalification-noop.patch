@@ -1,0 +1,18 @@
+--- a/crates/airk-kernel/src/current/indexing.rs
++++ b/crates/airk-kernel/src/current/indexing.rs
+@@ -1085,7 +1085,14 @@
+                 .resource_reference(airk_core::source_control::CONTROL_BASELINE_RESOURCE)?
+                 .map(|reference| self.store.read_current_resource(&reference))
+                 .transpose()?;
+-            (prior.as_deref() != Some(bytes.as_slice())).then_some(bytes)
++            // Equal capture bytes alone cannot certify an unbound historical
++            // witness or one preserved across an older writer's publication.
++            // Equality includes the binding; only the exact current qualified
++            // witness may keep the ordinary selected no-op path.
++            let unchanged_qualified = prior.as_deref() == Some(bytes.as_slice())
++                && baseline
++                    .matches_publication(read.head().scope.incarnation, read.head().sequence);
++            (!unchanged_qualified).then_some(bytes)
+         } else {
+             None
+         };

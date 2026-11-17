@@ -1,0 +1,529 @@
+--- r1/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification.rs
++++ r2/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification.rs
+@@ -269,6 +269,23 @@
+                         &env_pin(
+                             "AIRK_CUDA_METADATA_CUSTODY",
+                             "AIRK_CUDA_METADATA_CUSTODY_SHA256",
++                        )?,
++                        1 << 20,
++                    )?)?,
++                },
++                historical_tool_copies: match std::env::var_os("AIRK_CUDA_HISTORICAL_TOOL_CUSTODY")
++                {
++                    None => {
++                        ensure!(
++                            std::env::var_os("AIRK_CUDA_HISTORICAL_TOOL_CUSTODY_SHA256").is_none(),
++                            "historical custody hash requires native input"
++                        );
++                        Vec::new()
++                    }
++                    Some(_) => cuda::decode_historical_tool_custody(&pinned(
++                        &env_pin(
++                            "AIRK_CUDA_HISTORICAL_TOOL_CUSTODY",
++                            "AIRK_CUDA_HISTORICAL_TOOL_CUSTODY_SHA256",
+                         )?,
+                         1 << 20,
+                     )?)?,
+@@ -671,6 +688,7 @@
+         producer_sha256: Sha256Digest::from_bytes([1; 32]),
+         checkpointed_proof: None,
+         custody_copies: Vec::new(),
++        historical_tool_copies: Vec::new(),
+         module_names: vec![],
+         load_order: vec![],
+         system_imports: BTreeSet::new(),
+--- r1/crates/airk-retrieval/src/arbiter/runtime/cuda/CONTRACT.md
++++ r2/crates/airk-retrieval/src/arbiter/runtime/cuda/CONTRACT.md
+@@ -327,3 +327,40 @@
+ It consumes this opaque native input rather than adding data-language mirrors.
+ Copies must already exist under the approved protected user C anchor; this
+ native reader creates no copies or directories and never relaxes integrity.
++
++A shared checkpoint validator may call Source.recheck midway through public
++projection; that rehashes all files held so far under the original cutoff.
++Only the outer complete assembly/projection emission checks that every declared
++custody mapping has been consumed. This preserves strict final unused refusal
++without falsely rejecting valid mappings for later legal/source inputs.
++
++## Inert historical tool evidence
++
++Root additionally approved a distinct historical_tool_copies list of native
++HistoricalToolCustodyCopy {tool,original:Core ResourceFilePin,copy:Core
++ResourceFilePin,bytes}. It is omitted when empty. Only the exact frozen R12
++CMake (12,029,392 bytes, SHA3fe22eb02...) and Ninja (600,576 bytes,
++SHAedccb4c55...) original logical paths and tool roles admit aliases. Their
++original producer before/after seals and the maintained canonical proof remain
++authority for historical identity; current original path protection is never
++claimed. The actual protected copies are streamed/held/rehashed in metadata
++scope only. Source.authenticate_historical_tool is the sole typed consumer;
++its default is the original strict authenticate for direct protected tools.
++
++Source.read, generic authenticate and active executable/DLL/PE/runtime/aggregate
++operations refuse historical aliases, including after a typed use cached the
++copy. Wrong/unknown role, SHA, byte count, original path, duplicate/cross-class
++origin or destination, physical-copy alias, chain and unused mapping refuse.
++No copy is loaded or executed, no original receipt is rewritten and no ACL is
++changed. Exact known historical tool evidence is not executable authority.
++The existing build.ninja graph remains ordinary metadata, not the Ninja EXE.
++
++The standalone decoder owns airk.native.cuda-historical-tool-custody/1
++{schema,copies}; the ignored emitter accepts
++AIRK_CUDA_HISTORICAL_TOOL_CUSTODY +_SHA256 together. The generic historical
++callback is invoked only after named actual producer tool fields and canonical
++proof pins have been reconciled. Provider/runtime/aggregate paths retain direct
++strict authentication. Both metadata and historical consumed-list closures are
++checked only by the outer complete emission; intermediate shared rechecks
++rehash files held so far. Actual aliases are current custody, not old-path
++security or an upgrade of historical failed build outcomes.
+--- r1/crates/airk-retrieval/src/arbiter/runtime/cuda/custody/tests.rs
++++ r2/crates/airk-retrieval/src/arbiter/runtime/cuda/custody/tests.rs
+@@ -91,3 +91,79 @@
+     assert!(Custody::new(&[row, other]).is_err());
+     Ok(())
+ }
++
++#[cfg(windows)]
++fn tool_row() -> HistoricalToolCustodyCopy {
++    HistoricalToolCustodyCopy{tool:"ninja".into(),original:ResourceFilePin{path:r"D:\code\Github\airk\artifacts\advanced-split\ort130-x64-owned-r3\tools\ninja-build\ninja.exe".into(),sha256:"edccb4c55fe69db51ed8ae286594660cf8e646abead40ff3c39f28c636489653".parse().unwrap()},copy:ResourceFilePin{path:std::env::temp_dir().join("ninja-historical-evidence.bin").to_str().unwrap().into(),sha256:"edccb4c55fe69db51ed8ae286594660cf8e646abead40ff3c39f28c636489653".parse().unwrap()},bytes:600576}
++}
++#[cfg(windows)]
++#[test]
++fn historical_tool_mapping_requires_exact_sealed_role_and_consumed_evidence() -> Result<()> {
++    let row = tool_row();
++    let tools = HistoricalTools::new(std::slice::from_ref(&row))?;
++    assert!(tools.mapped(&row.original.path)?);
++    assert!(
++        tools
++            .resolve("runtime_dll", &row.original, row.bytes, 1 << 30)
++            .is_err()
++    );
++    assert!(
++        tools
++            .resolve("cmake", &row.original, row.bytes, 1 << 30)
++            .is_err()
++    );
++    assert!(
++        tools
++            .resolve("ninja", &row.original, row.bytes - 1, 1 << 30)
++            .is_err()
++    );
++    assert!(
++        tools
++            .resolve("ninja", &row.original, row.bytes, row.bytes - 1)
++            .is_err()
++    );
++    assert_eq!(
++        tools.resolve("ninja", &row.original, row.bytes, 1 << 30)?,
++        (row.copy.clone(), Some(600576))
++    );
++    assert!(tools.recheck().is_err());
++    tools.consumed(&row.original)?;
++    tools.recheck()?;
++    let metadata = MetadataCustodyCopy {
++        original: row.original.clone(),
++        copy: row.copy.clone(),
++        bytes: row.bytes,
++    };
++    assert!(validate_custody_compatibility(&[metadata], &[row.clone()]).is_err());
++    let mut wrong = row.clone();
++    wrong.tool = "compiler".into();
++    assert!(validate_historical_tool_custody(&[wrong]).is_err());
++    let mut wrong = row.clone();
++    wrong.original.sha256 = Sha256Digest::from_bytes([1; 32]);
++    assert!(validate_historical_tool_custody(&[wrong]).is_err());
++    let mut wrong = row;
++    wrong.bytes += 1;
++    assert!(validate_historical_tool_custody(&[wrong]).is_err());
++    Ok(())
++}
++#[test]
++fn unknown_historical_tool_class_never_grants_an_alias() {
++    let m = row();
++    let h = HistoricalToolCustodyCopy {
++        tool: "cuda_provider".into(),
++        original: m.original,
++        copy: m.copy,
++        bytes: m.bytes,
++    };
++    assert!(validate_historical_tool_custody(&[h]).is_err());
++    let tools = HistoricalTools::new(&[]).unwrap();
++    assert!(tools.resolve("unknown", &row().original, 3, 3).is_err());
++    assert!(!tools.mapped(&row().original.path).unwrap());
++    // This exact direct nonaliased path remains the original strict authenticator's duty.
++    assert_eq!(
++        tools.resolve("python", &row().original, 3, 3).unwrap(),
++        (row().original, None)
++    );
++    tools.recheck().unwrap();
++    assert!(tools.consumed(&row().original).is_err());
++}
+--- r1/crates/airk-retrieval/src/arbiter/runtime/cuda/custody.rs
++++ r2/crates/airk-retrieval/src/arbiter/runtime/cuda/custody.rs
+@@ -142,3 +142,133 @@
+ }
+ #[cfg(test)]
+ mod tests;
++
++/// Inert historical build-tool evidence only; never an executable activation alias.
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct HistoricalToolCustodyCopy {
++    pub tool: String,
++    pub original: ResourceFilePin,
++    pub copy: ResourceFilePin,
++    pub bytes: u64,
++}
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct HistoricalEnvelope {
++    schema: String,
++    copies: Vec<HistoricalToolCustodyCopy>,
++}
++pub fn decode_historical_tool_custody(raw: &[u8]) -> Result<Vec<HistoricalToolCustodyCopy>> {
++    ensure!(raw.len() <= 1 << 20, "historical tool evidence input cap");
++    let request: HistoricalEnvelope = serde_json::from_slice(raw)?;
++    ensure!(
++        request.schema == "airk.native.cuda-historical-tool-custody/1",
++        "unknown historical tool evidence input"
++    );
++    validate_historical_tool_custody(&request.copies)?;
++    Ok(request.copies)
++}
++fn historical_rows(rows: &[HistoricalToolCustodyCopy]) -> Result<Vec<MetadataCustodyCopy>> {
++    ensure!(rows.len() <= 2, "only two reviewed historical tool aliases");
++    let mut names = BTreeSet::new();
++    let mut result = Vec::new();
++    for row in rows {
++        let (path, bytes, sha) = match row.tool.as_str() {
++            "cmake" => (
++                r"D:\code\Github\airk\artifacts\advanced-split\ort130-x64-owned-r3\tools\cmake\bin\cmake.exe",
++                12029392,
++                "3fe22eb02e1c6184ec207366ed21a6f2f9c3828c1e9f3324546befadfb362be3",
++            ),
++            "ninja" => (
++                r"D:\code\Github\airk\artifacts\advanced-split\ort130-x64-owned-r3\tools\ninja-build\ninja.exe",
++                600576,
++                "edccb4c55fe69db51ed8ae286594660cf8e646abead40ff3c39f28c636489653",
++            ),
++            _ => anyhow::bail!("historical tool alias not reviewed"),
++        };
++        ensure!(
++            names.insert(row.tool.clone())
++                && row.original.path == path
++                && row.original.sha256.to_string() == sha
++                && row.bytes == bytes,
++            "historical tool alias differs from actual frozen R12 seal"
++        );
++        result.push(MetadataCustodyCopy {
++            original: row.original.clone(),
++            copy: row.copy.clone(),
++            bytes: row.bytes,
++        });
++    }
++    validated(&result)?;
++    Ok(result)
++}
++pub fn validate_historical_tool_custody(rows: &[HistoricalToolCustodyCopy]) -> Result<()> {
++    historical_rows(rows)?;
++    Ok(())
++}
++pub fn validate_custody_compatibility(
++    metadata: &[MetadataCustodyCopy],
++    historical: &[HistoricalToolCustodyCopy],
++) -> Result<()> {
++    let mut all = metadata.to_vec();
++    all.extend(historical_rows(historical)?);
++    validated(&all)?;
++    Ok(())
++}
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
++pub(super) struct HistoricalTools {
++    book: Custody,
++    rows: BTreeMap<String, HistoricalToolCustodyCopy>,
++}
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
++impl HistoricalTools {
++    pub fn new(rows: &[HistoricalToolCustodyCopy]) -> Result<Self> {
++        Ok(Self {
++            book: Custody::new(&historical_rows(rows)?)?,
++            rows: rows
++                .iter()
++                .map(|r| Ok((key(&r.original.path)?, r.clone())))
++                .collect::<Result<_>>()?,
++        })
++    }
++    pub fn mapped(&self, path: &str) -> Result<bool> {
++        self.book.mapped(path)
++    }
++    pub fn resolve(
++        &self,
++        tool: &str,
++        pin: &ResourceFilePin,
++        bytes: u64,
++        max: u64,
++    ) -> Result<(ResourceFilePin, Option<u64>)> {
++        ensure!(
++            matches!(
++                tool,
++                "cmake"
++                    | "ninja"
++                    | "python"
++                    | "compiler"
++                    | "patch"
++                    | "vcvars"
++                    | "archiver"
++                    | "nvcc"
++            ),
++            "unknown historical tool field"
++        );
++        if let Some(row) = self.rows.get(&key(&pin.path)?) {
++            ensure!(
++                row.tool == tool && row.bytes == bytes && bytes <= max,
++                "historical tool use/size differs from sealed role"
++            );
++            self.book.resolve(pin, true)
++        } else {
++            Ok((pin.clone(), None))
++        }
++    }
++    pub fn consumed(&self, pin: &ResourceFilePin) -> Result<()> {
++        self.book.consumed(pin)
++    }
++    pub fn recheck(&self) -> Result<()> {
++        self.book.recheck()
++    }
++}
+--- r1/crates/airk-retrieval/src/arbiter/runtime/cuda/windows/tests.rs
++++ r2/crates/airk-retrieval/src/arbiter/runtime/cuda/windows/tests.rs
+@@ -0,0 +1,45 @@
++// SPDX-License-Identifier: Apache-2.0
++//! State/closure ordering only; no protected file or actual build proof is created.
++use super::*;
++#[test]
++fn intermediate_source_recheck_preserves_later_unread_mapping_until_outer_completion() -> Result<()>
++{
++    use super::super::provenance::projection::Source;
++    let root = std::env::temp_dir();
++    let sha = Sha256Digest::from_bytes([1; 32]);
++    let later = super::super::MetadataCustodyCopy {
++        original: airk_core::arbiter::resource_policy::ResourceFilePin {
++            path: root
++                .join("later-legal-original.txt")
++                .to_str()
++                .unwrap()
++                .into(),
++            sha256: sha,
++        },
++        copy: airk_core::arbiter::resource_policy::ResourceFilePin {
++            path: root
++                .join("later-legal-protected-copy.txt")
++                .to_str()
++                .unwrap()
++                .into(),
++            sha256: sha,
++        },
++        bytes: 3,
++    };
++    let source = ProjectionSource {
++        deadline: Instant::now() + std::time::Duration::from_secs(120),
++        files: std::cell::RefCell::new(BTreeMap::new()),
++        custody: super::super::custody::Custody::new(std::slice::from_ref(&later))?,
++        historical: super::super::custody::HistoricalTools::new(&[])?,
++    };
++    // Shared checkpoint helper may rehash its currently held files; later legal
++    // mappings have not been consumed. This failed in the original R1 source.
++    source.recheck()?;
++    assert!(source.custody.recheck().is_err());
++    // Pure consumption bookkeeping here proves order only, never file custody.
++    source.custody.consumed(&later.original)?;
++    source.recheck()?;
++    source.custody.recheck()?;
++    source.historical.recheck()?;
++    Ok(())
++}
+--- r1/crates/airk-retrieval/src/arbiter/runtime/cuda/windows.rs
++++ r2/crates/airk-retrieval/src/arbiter/runtime/cuda/windows.rs
+@@ -858,13 +858,19 @@
+         "actual reviewed producer receipt pin differs"
+     );
+     ensure!(
+-        input.checkpointed_proof.is_some() || input.custody_copies.is_empty(),
++        input.checkpointed_proof.is_some()
++            || (input.custody_copies.is_empty() && input.historical_tool_copies.is_empty()),
+         "custody mappings require explicit checkpoint branch"
+     );
++    super::custody::validate_custody_compatibility(
++        &input.custody_copies,
++        &input.historical_tool_copies,
++    )?;
+     let checkpoint_source = ProjectionSource {
+         deadline,
+         files: std::cell::RefCell::new(BTreeMap::new()),
+         custody: super::custody::Custody::new(&input.custody_copies)?,
++        historical: super::custody::HistoricalTools::new(&input.historical_tool_copies)?,
+     };
+     let checkpointed = if let Some(proof) = &input.checkpointed_proof {
+         let raw = airk_core::arbiter::resource_policy::ResourceFilePin {
+@@ -975,6 +981,8 @@
+         file.recheck(deadline)?;
+     }
+     super::provenance::projection::Source::recheck(&checkpoint_source)?;
++    checkpoint_source.custody.recheck()?;
++    checkpoint_source.historical.recheck()?;
+     in_time(deadline)?;
+     Ok(serde_json::to_vec(&manifest)?)
+ }
+@@ -1018,6 +1026,7 @@
+     deadline: Instant,
+     files: std::cell::RefCell<BTreeMap<PathBuf, HeldFile>>,
+     custody: super::custody::Custody,
++    historical: super::custody::HistoricalTools,
+ }
+ #[cfg(feature = "test-support")]
+ impl ProjectionSource {
+@@ -1026,10 +1035,23 @@
+         pin: &airk_core::arbiter::resource_policy::ResourceFilePin,
+         maximum: u64,
+         metadata: bool,
++        historical: Option<(&str, u64)>,
+     ) -> Result<()> {
+         pin.validate()?;
+         in_time(self.deadline)?;
+-        let (actual, copy_bytes) = self.custody.resolve(pin, metadata)?;
++        let (actual, copy_bytes) = if let Some((tool, bytes)) = historical {
++            ensure!(
++                !self.custody.mapped(&pin.path)?,
++                "source-metadata alias cannot become historical tool evidence"
++            );
++            self.historical.resolve(tool, pin, bytes, maximum)?
++        } else {
++            ensure!(
++                !self.historical.mapped(&pin.path)?,
++                "historical tool evidence cannot redirect metadata/code/runtime/authenticate use"
++            );
++            self.custody.resolve(pin, metadata)?
++        };
+         let path = Path::new(&actual.path);
+         ensure!(
+             path.is_absolute(),
+@@ -1058,6 +1080,8 @@
+                         ensure!(
+                             !self.custody.mapped(
+                                 other.to_str().context("logical metadata path not UTF8")?
++                            )? && !self.historical.mapped(
++                                other.to_str().context("logical metadata path not UTF8")?
+                             )?,
+                             "two metadata mappings alias one actual copy object"
+                         );
+@@ -1077,7 +1101,11 @@
+                 held.bytes == bytes,
+                 "protected metadata copy length differs"
+             );
+-            self.custody.consumed(pin)?;
++            if historical.is_some() {
++                self.historical.consumed(pin)?;
++            } else {
++                self.custody.consumed(pin)?;
++            }
+         }
+         held.recheck(self.deadline)
+     }
+@@ -1089,7 +1117,7 @@
+         pin: &airk_core::arbiter::resource_policy::ResourceFilePin,
+         maximum: u64,
+     ) -> Result<Vec<u8>> {
+-        self.hold(pin, maximum, true)?;
++        self.hold(pin, maximum, true, None)?;
+         let files = self.files.borrow();
+         let held = files
+             .get(Path::new(&pin.path))
+@@ -1104,7 +1132,7 @@
+         bytes: u64,
+         maximum: u64,
+     ) -> Result<()> {
+-        self.hold(pin, maximum, false)?;
++        self.hold(pin, maximum, false, None)?;
+         ensure!(
+             self.files
+                 .borrow()
+@@ -1116,8 +1144,28 @@
+         );
+         Ok(())
+     }
++    fn authenticate_historical_tool(
++        &self,
++        tool: &str,
++        pin: &airk_core::arbiter::resource_policy::ResourceFilePin,
++        bytes: u64,
++        maximum: u64,
++    ) -> Result<()> {
++        self.hold(pin, maximum, false, Some((tool, bytes)))?;
++        ensure!(
++            self.files
++                .borrow()
++                .get(Path::new(&pin.path))
++                .context("historical tool custody missing")?
++                .bytes
++                == bytes,
++            "historical tool evidence size changed"
++        );
++        Ok(())
++    }
+     fn recheck(&self) -> Result<()> {
+-        self.custody.recheck()?;
++        // A shared validator may recheck midway through a larger projection.
++        // Full mapping consumption is required by the OUTER emission below.
+         for held in self.files.borrow().values() {
+             held.recheck(self.deadline)?;
+         }
+@@ -1127,12 +1175,19 @@
+ #[cfg(feature = "test-support")]
+ pub(super) fn project_public(raw: &[u8], deadline: Instant) -> Result<Vec<u8>> {
+     let input = super::provenance::projection::decode_input(raw)?;
++    super::custody::validate_custody_compatibility(
++        &input.custody_copies,
++        &input.historical_tool_copies,
++    )?;
+     let source = ProjectionSource {
+         deadline,
+         files: std::cell::RefCell::new(BTreeMap::new()),
+         custody: super::custody::Custody::new(&input.custody_copies)?,
++        historical: super::custody::HistoricalTools::new(&input.historical_tool_copies)?,
+     };
+     let prepared = super::provenance::projection::project(&source, input)?;
++    source.custody.recheck()?;
++    source.historical.recheck()?;
+     let bytes = serde_json::to_vec(&prepared)?;
+     ensure!(bytes.len() <= 16 << 20, "native projection output cap");
+     in_time(deadline)?;
+@@ -1244,3 +1299,6 @@
+     in_time(deadline)?;
+     Ok(raw)
+ }
++
++#[cfg(test)]
++mod tests;
+--- r1/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
++++ r2/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
+@@ -19,7 +19,11 @@
+ #[cfg(feature = "test-support")]
+ mod custody;
+ #[cfg(feature = "test-support")]
+-pub use custody::{MetadataCustodyCopy, decode_metadata_custody, validate_metadata_custody};
++pub use custody::{
++    HistoricalToolCustodyCopy, MetadataCustodyCopy, decode_historical_tool_custody,
++    decode_metadata_custody, validate_custody_compatibility, validate_historical_tool_custody,
++    validate_metadata_custody,
++};
+ mod eligibility;
+ mod manifest;
+ mod numeric;
+@@ -723,6 +727,8 @@
+     pub checkpointed_proof: Option<airk_core::arbiter::resource_policy::ResourceFilePin>,
+     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+     pub custody_copies: Vec<MetadataCustodyCopy>,
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub historical_tool_copies: Vec<HistoricalToolCustodyCopy>,
+     pub module_names: Vec<String>,
+     pub load_order: Vec<String>,
+     pub system_imports: BTreeSet<String>,

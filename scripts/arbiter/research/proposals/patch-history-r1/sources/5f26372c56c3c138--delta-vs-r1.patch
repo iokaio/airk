@@ -1,0 +1,22 @@
+--- r1/crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition/CONTRACT.md
++++ r2/crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition/CONTRACT.md
+@@ -39,7 +39,7 @@
+ runtime literal remain unchanged. No CPU-as-GPU label or old proof transfer.
+ 
+ The row binds exact legacy runtime source d2879546ba9e949fdd8b135a244923de2adb781e8598539cc33f4d7d6f0794eb
+-to reviewed proposed runtime hook source4b616c21cb39a4dcebe73a8f86b76363bc6eb0472b58e8ca7fe9535b7a6c6289.
++to reviewed proposed runtime hook source9e539508f52e403368124ee38f91085f4b318f87fcffe45f898728cf9c0db49d.
+ The native module rehashes its compiled runtime source; mismatches refuse. Source
+ review, combined compilation and native controls remain pending; none is claimed
+ from private preparation. Future runtime/source changes need a new exact row,
+--- r1/crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition.rs
++++ r2/crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition.rs
+@@ -15,7 +15,7 @@
+     "d2879546ba9e949fdd8b135a244923de2adb781e8598539cc33f4d7d6f0794eb";
+ // Exact runtime owner hook bytes. A different build source requires a new reviewed row.
+ const CURRENT_RUNTIME_SOURCE: Option<&str> =
+-    Some("4b616c21cb39a4dcebe73a8f86b76363bc6eb0472b58e8ca7fe9535b7a6c6289");
++    Some("9e539508f52e403368124ee38f91085f4b318f87fcffe45f898728cf9c0db49d");
+ const LEGACY_CORE: &str = "ddd9dbc76ae2c7e92c3b57b58a9443161fb045bbc175596f57bb41c9b1b5bbe6";
+ const CURRENT_CORE: &str = "77fa25e4623f32e568a7163553cf7531cd4425dbb157ea2b67fef7940998c57f";
+ const CURRENT_TASK: &str = "5add2b52410e5c891aac185c130535ea59451034e51835a4ceee6f9bba1944ee";

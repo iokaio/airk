@@ -1,0 +1,44 @@
+--- before
++++ generated
+@@ -5052,29 +5052,29 @@
+       --candidate-sha256 <CANDIDATE_SHA256>
+           Install-inventory SHA-256 of the runtime about to be installed
+ 
++      --data-dir <DATA_DIR>
++
++
++      --collection <COLLECTION>
++          [default: default]
++
+       --reinstall
+           Explicit install: matching builds also require a complete uninstall
+ 
+       --operation-id <OPERATION_ID>
+           Stable identity of this installation attempt; replay never resets its successor
+ 
++      --service-install-dir <SERVICE_INSTALL_DIR>
++
++
++      --catalog-session <CATALOG_SESSION>
++          Explicit reviewed single-index session JSON; preferences alone grant no access
++
+       --generation-id <GENERATION_ID>
+           Host installation generation consumed by this explicit installation
+ 
+-      --data-dir <DATA_DIR>
+-
+-
+       --apply
+           Apply cleanup; required replacements need --reinstall --operation-id
+-
+-      --collection <COLLECTION>
+-          [default: default]
+-
+-      --service-install-dir <SERVICE_INSTALL_DIR>
+-
+-
+-      --catalog-session <CATALOG_SESSION>
+-          Explicit reviewed single-index session JSON; preferences alone grant no access
+ 
+       --combined-session <COMBINED_SESSION>
+           Frozen reviewed multi-Project session JSON; indexes are executed once each

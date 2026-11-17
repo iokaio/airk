@@ -1,0 +1,224 @@
+--- README.md
++++ README.md
+@@ -8,7 +8,7 @@
+ 
+ Bundled MiniLM retrieval and optional Arbiter answers have separate roles. The service installer includes MiniLM; optional Focus/Context weights are acquired separately through explicit provisioning when a verified public source is available. Arbiter is off by default and requires explicit immutable-index enrollment and a verified supported profile. Its implementation is not a claim of independent model, device, quality or platform qualification. `airkctl arbiter status` and actual tool schemas describe served capabilities. Product Help has one generated source catalog for the editor, browser and static site and remains available offline where bundled.
+ 
+-Arbiter research credits include [CoSQA (Huang et al., 2021)](https://aclanthology.org/2021.acl-long.442/), [CodeSearchNet (Husain et al., 2019)](https://arxiv.org/abs/1909.09436), ContextBench, QASPER, HotpotQA and Requests contributors. The [Arbiter README](docs/arbiter/README.md) records full authors, separate code/data terms and historical versus candidate use; [research notices](third_party/research/ARBITER-RESEARCH-NOTICES.md) preserve original attribution in the installer legal bundle. No raw research corpus is bundled, and acknowledgement of a candidate dataset does not assert training admission or qualified models.
++Arbiter research credits include [CoSQA (Huang et al., 2021)](https://aclanthology.org/2021.acl-long.442/), [CodeSearchNet (Husain et al., 2019)](https://arxiv.org/abs/1909.09436), ContextBench, [TechQA (Castelli et al., 2020)](https://aclanthology.org/2020.acl-main.117/), QASPER, HotpotQA and Requests contributors. The [Arbiter README](docs/arbiter/README.md) records full authors, separate code/data terms and historical versus candidate use; [research notices](third_party/research/ARBITER-RESEARCH-NOTICES.md) preserve original attribution in the installer legal bundle. No raw research corpus is bundled, and acknowledgement of a candidate dataset does not assert training admission or qualified models.
+ 
+ **Agents need no token (U110, 15 November 2026).** Coding agents connect to the service's `https://127.0.0.1:<port>/mcp` endpoint with no credential; any `Authorization` header is ignored, and any local process that can reach 127.0.0.1 can read every index. TLS issuer trust is still required. `airkctl agents connect --client claude|codex|vscode` (or Explorer **Agents** → **Connect**) writes only the endpoint URL and `X-AIRK-Response-Mode`; `airkctl agents repair` strips tokens and credential helpers from older entries. Each read names its scope (`index_ids`, `index_set_ids` or `workspace`); `list_scopes` lists indexes, index sets and the workspace defaults that an Explorer window's applied search scope stores (`airkctl scope default|defaults`). See [agent setup](docs/agent-integration.md). In the current source, `airkctl --output json agents manual --client codex --project "<absolute project folder>"` returns the exact target file, format and complete entry; replace `codex` with `claude` or `vscode` for those clients. Merge that entry into the named file while preserving other settings. Automatic editing can refuse a folder whose complete file and recovery copy cannot be protected. The source UI exposes the same entry under **Set up manually**; those UI changes still need sealed-asset and installed checks. Regenerate the entry after a service port change. Older notices below that mention agent tokens, credential helpers or open connections are historical.
+ 
+--- docs/arbiter/README.md
++++ docs/arbiter/README.md
+@@ -15,9 +15,18 @@
+ | CoSQA / CoCLR | Junjie Huang, Duyu Tang, Linjun Shou, Ming Gong, Ke Xu, Daxin Jiang, Ming Zhou, and Nan Duan (2021), [*CoSQA: 20,000+ Web Queries for Code Search and Question Answering*](https://aclanthology.org/2021.acl-long.442/), ACL-IJCNLP, 5690–5700. Publisher: Beihang University, MSRA NLC and STCA NLP. | Candidate software-relevance source under rights/revision review; no training admission is asserted. The [publisher declaration](https://github.com/Jun-jie-Huang/CoCLR/blob/14ebcacf9e9bc3e7109102632bc63047876f27d2/README.md) assigns MIT to code and C-UDA to data. Preserve underlying-code provenance and notices. |
+ | CodeSearchNet | Hamel Husain, Ho-Hsiang Wu, Tiferet Gazit, Miltiadis Allamanis, and Marc Brockschmidt (2019), [*CodeSearchNet Challenge: Evaluating the State of Semantic Code Search*](https://arxiv.org/abs/1909.09436). | Candidate code-search research/evaluation source; no new trained weights are asserted. The 99-query human judgments are evaluation-only; function/docstring pairs are mechanical supervision. [MIT covers tooling/docs; corpus code has separate licenses](https://github.com/github/CodeSearchNet/blob/106e827405c968597da938f6b373d30183918869/README.md#licenses), retained in language-specific `_licenses.pkl` metadata. |
+ | ContextBench | Han Li, Letian Zhu, Bohan Zhang, Rili Feng, Jiaming Wang, Yue Pan, Earl T. Barr, Federica Sarro, Zhaoyang Chu, and He Ye (2026), [*ContextBench: A Benchmark for Context Retrieval in Coding Agents*](https://arxiv.org/abs/2602.05892v1). | Candidate TRAIN records used for source/rights audits only; no native admission, gradient update or neural scoring is asserted. [Apache-2.0 benchmark wrapper](https://github.com/EuniAI/ContextBench/tree/1436c28a8eb95496da4ea69ad458b9f8a8eb7d61) is separate from each underlying repository's own revision, license and notices. |
++| TechQA | Vittorio Castelli et al. (2020), [*The TechQA Dataset*](https://aclanthology.org/2020.acl-main.117/), ACL, 1269–1278; full authors below. | Original IBM publisher TRAIN source/split/rights audit only; no native admission, training or neural scoring. The original QA dataset and Technote corpus use CDLA-Permissive-1.0; NVIDIA/PrimeQA wrapper metadata does not replace that grant. No raw corpus is bundled. |
+ | QASPER | Pradeep Dasigi, Kyle Lo, Iz Beltagy, Arman Cohan, Noah A. Smith, and Matt Gardner (2021), [*A Dataset of Information-Seeking Questions and Answers Anchored in Research Papers*](https://aclanthology.org/2021.naacl-main.365/), NAACL-HLT, 4599–4610. | Retained human research/evaluation evidence and historical MiniLM v2 TRAIN. [Dataset annotations are CC BY 4.0](https://huggingface.co/datasets/allenai/qasper/blob/fdc9d8214fbab5dd782958601db4d678e6934a54/README.md); underlying paper rights are reviewed separately. All 36 historical training-paper author/title/version credits and extraction changes remain in the full original notice. |
+ | HotpotQA / Wikipedia | Zhilin Yang, Peng Qi, Saizheng Zhang, Yoshua Bengio, William W. Cohen, Ruslan Salakhutdinov, and Christopher D. Manning (2018), [*HotpotQA: A Dataset for Diverse, Explainable Multi-hop Question Answering*](https://aclanthology.org/D18-1259/), EMNLP, 2369–2380. | Evaluation only; excluded from historical MiniLM v2 weight updates/mining. [Dataset and processed Wikipedia: CC BY-SA 4.0](https://hotpotqa.github.io/). The [baseline tooling's Apache-2.0](https://github.com/hotpotqa/hotpot/blob/master/LICENSE.txt) is a separate code license. Preserve original article attribution and data terms. |
+ | Requests 2.25.1 | Requests contributors; upstream NOTICE: Requests — Copyright 2019 Kenneth Reitz. [Source revision](https://github.com/psf/requests/tree/c2b307dbefe21177af03f9feb37181a89a799fcc). | Apache-2.0 source/docstrings supplied 218 historical TRAIN-only containing-function pairs; these are mechanical pairs, not human sufficiency labels. Complete original LICENSE/NOTICE are preserved in the historical full notice. |
++
++TechQA's canonical paper authors are Vittorio Castelli, Rishav Chakravarti, Saswati Dana, Anthony Ferritto, Radu Florian, Martin Franz, Dinesh Garg, Dinesh Khandelwal, Scott McCarley, Michael McCawley, Mohamed Nasr, Lin Pan, Cezar Pendus, John Pitrelli, Saurabh Pujar, Salim Roukos, Andrzej Sakrajda, Avi Sil, Rosario Uceda-Sosa, Todd Ward, and Rong Zhang. Original publisher
++credits are IBM Research AI, IBM Watson, and IBM Finance and Operations. The
++[verbatim original full CDLA-Permissive-1.0 terms](../../third_party/research/TechQA-CDLA-Permissive-1.0.pdf)
++cover the original data and corpus. [Official terms](https://cdla.dev/permissive-1-0/)
++permit Use (§2), leave qualifying Results unrestricted (§3.4, definition §1.10),
++and retain separate publication/credit conditions for Data (§3.1). This is a
++candidate source audit, not data redistribution or an admitted training cohort.
+ 
+ C-UDA 1.0 permits computational use, including model training, and does not
+ restrict qualifying Results containing no more than a de minimis portion of the
+@@ -34,7 +43,7 @@
+ 
+ The maintained [research attribution notice](../../third_party/research/ARBITER-RESEARCH-NOTICES.md)
+ and [publisher legal provenance](../../third_party/research/provenance.json)
+-retain CoCLR/CodeSearchNet MIT, ContextBench Apache-2.0 and C-UDA texts verbatim. The unchanged
++retain CoCLR/CodeSearchNet MIT, ContextBench Apache-2.0, C-UDA and the original TechQA CDLA-Permissive-1.0 terms verbatim. The unchanged
+ [historical MiniLM v2 training record](../../third_party/models/minilm-v2-TRAINING-NOTICES.md),
+ [full license/36-paper/Requests notice](../../third_party/models/minilm-v2-LICENSE.txt),
+ [provenance](../../third_party/models/minilm-v2-provenance.json) and
+--- THIRD_PARTY_NOTICES.md
++++ THIRD_PARTY_NOTICES.md
+@@ -6,7 +6,7 @@
+ 
+ The current catalog selects original publisher MiniLM graphs under the current ORT provider; see [the exact catalog](crates/airk-retrieval/src/model_catalog.json). The earlier AIRK-trained MiniLM v2 experiments remain historical candidates. Their [training record](third_party/models/minilm-v2-TRAINING-NOTICES.md), [complete original license and notices](third_party/models/minilm-v2-LICENSE.txt), [source provenance](third_party/models/minilm-v2-provenance.json) and [CC BY 4.0 text](third_party/models/CC-BY-4.0.txt) preserve QASPER annotation credits, all 36 independently licensed training-paper credits, original Requests 2.25.1 LICENSE/NOTICE and AIRK's historical changes. Those records do not establish that current selected weights were AIRK-trained or qualified.
+ 
+-The maintained [Arbiter research attribution](third_party/research/ARBITER-RESEARCH-NOTICES.md) credits CoSQA/CoCLR, CodeSearchNet, ContextBench, QASPER, HotpotQA/Wikipedia and Requests, with separate tooling and data terms. CoSQA, CodeSearchNet and ContextBench are potential research sources under admission review; this acknowledgement does not assert new training. `license-notices.py` stages the research notice, verbatim pinned publisher terms and unchanged historical training companions under runtime `notices/research/` and `notices/models/`. Windows installer layouts preserve the same files under `notices/dependencies/`. No raw training/evaluation data is bundled. Source rights, native admission, model and release qualification remain separate.
++The maintained [Arbiter research attribution](third_party/research/ARBITER-RESEARCH-NOTICES.md) credits CoSQA/CoCLR, CodeSearchNet, ContextBench, TechQA, QASPER, HotpotQA/Wikipedia and Requests, with separate tooling and data terms. CoSQA, CodeSearchNet, ContextBench and TechQA are potential research sources under admission review; this acknowledgement does not assert new training. `license-notices.py` stages the research notice, verbatim pinned publisher terms and unchanged historical training companions under runtime `notices/research/` and `notices/models/`. Windows installer layouts preserve the same files under `notices/dependencies/`. No raw training/evaluation data is bundled. Source rights, native admission, model and release qualification remain separate.
+ 
+ Rusqlite and libsqlite3-sys use upstream commit [`2a71e35d94b2a02f7dd4a0c4cfd59c339370e747`](https://github.com/rusqlite/rusqlite/commit/2a71e35d94b2a02f7dd4a0c4cfd59c339370e747), whose package versions are 0.40.1 and 0.38.1, with SQLite 3.53.3. The registry 0.40.2/0.38.2 pair bundles SQLite 3.53.2 and lacks the [extended-local-path Windows WAL locking fix](https://github.com/sqlite/sqlite/commit/2429af2e0ce2e4c643786f8d2533f79d974e3270). This exact source pin retains upstream MIT license texts and SQLite's public-domain notice; no upstream source is copied into AIRK. Replace the pin only with a bundle containing that fix and rerun the canonical long-path concurrency regression.
+ 
+--- installers/CONTRACT.md
++++ installers/CONTRACT.md
+@@ -75,7 +75,8 @@
+ ## Research attribution legal closure
+ 
+ From source version 1.8.207, the maintained license-notices producer also stages
+-its pinned research attribution and verbatim publisher rights texts, plus the
++its pinned research attribution and verbatim publisher rights texts (including
++the original TechQA CDLA-Permissive-1.0 license PDF), plus the
+ unchanged historical QASPER/36-paper/Requests training companions. Native C7
+ packaging requires their exact bytes under `notices/research/` and
+ `notices/models/`; a resealed outer inventory cannot authorize missing or changed
+--- third_party/research/ARBITER-RESEARCH-NOTICES.md
++++ third_party/research/ARBITER-RESEARCH-NOTICES.md
+@@ -62,6 +62,30 @@
+ matches are not native admission, model training or neural scoring. No benchmark
+ records, issue text or repository code are bundled here.
+ 
++## TechQA — original IBM dataset/corpus candidate audit
++
++Vittorio Castelli, Rishav Chakravarti, Saswati Dana, Anthony Ferritto, Radu Florian, Martin Franz, Dinesh Garg, Dinesh Khandelwal, Scott McCarley, Michael McCawley, Mohamed Nasr, Lin Pan, Cezar Pendus, John Pitrelli, Saurabh Pujar, Salim Roukos, Andrzej Sakrajda, Avi Sil, Rosario Uceda-Sosa, Todd Ward, and Rong Zhang. 2020. *The TechQA Dataset*. ACL, pages 1269–1278.
++[Paper and canonical citation](https://aclanthology.org/2020.acl-main.117/),
++DOI 10.18653/v1/2020.acl-main.117. The original dataset creators are IBM Research
++AI, IBM Watson, and IBM Finance and Operations; source questions came from IBM
++Developer/DeveloperWorks forums with accepted answers in IBM Technotes.
++
++AIRK audited original publisher TRAIN source/split/rights lineage only. This is
++not native admission, model training or neural scoring. NVIDIA's transformed
++records and the PrimeQA archive mirror retain their own provenance; an
++Apache-2.0 wrapper declaration does not replace the original data license.
++
++The original archive README licenses both the question/answer dataset and the
++separate Technote corpus under **CDLA-Permissive-1.0**. The
++[complete original license PDF](TechQA-CDLA-Permissive-1.0.pdf) is retained
++verbatim; [official terms](https://cdla.dev/permissive-1-0/) define the grant.
++Section 2 permits Use; §3.4 imposes no obligations/restrictions on qualifying
++Results, with the de-minimis limit in §1.10. Publication of Data remains subject
++to §3.1, including agreement access, change notices and retained provider credit.
++This legal notice redistributes no TechQA questions, answers or Technote corpus.
++[Legal provenance](provenance.json) pins the original publisher archive,
++README declaration and PDF, separately from transformed wrapper metadata.
++
+ ## QASPER and underlying research papers — retained research provenance
+ 
+ Pradeep Dasigi, Kyle Lo, Iz Beltagy, Arman Cohan, Noah A. Smith, and Matt Gardner.
+--- third_party/research/provenance.json
++++ third_party/research/provenance.json
+@@ -23,6 +23,14 @@
+       "file": "ContextBench-Apache-2.0-LICENSE.txt",
+       "source_url": "https://raw.githubusercontent.com/EuniAI/ContextBench/1436c28a8eb95496da4ea69ad458b9f8a8eb7d61/LICENSE",
+       "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
++    },
++    {
++      "file": "TechQA-CDLA-Permissive-1.0.pdf",
++      "source_url": "https://huggingface.co/datasets/PrimeQA/TechQA/resolve/60437bc79ab217679682217598a3693cab78365b/TechQA.tar.gz",
++      "archive_member": "TechQA/CDLA-Permissive-v1.0.pdf",
++      "sha256": "e12775d6b5bfdba0bb33fd691dab386f0c7573853fdc4785c40b39739f120d5f",
++      "bytes": 92209,
++      "authoritative_terms": "https://cdla.dev/permissive-1-0/"
+     }
+   ],
+   "dataset_declarations": {
+@@ -30,7 +38,8 @@
+     "CodeSearchNet": "https://github.com/github/CodeSearchNet/blob/106e827405c968597da938f6b373d30183918869/README.md",
+     "QASPER": "https://huggingface.co/datasets/allenai/qasper/blob/fdc9d8214fbab5dd782958601db4d678e6934a54/README.md",
+     "HotpotQA": "https://hotpotqa.github.io/",
+-    "ContextBench": "https://github.com/EuniAI/ContextBench/blob/1436c28a8eb95496da4ea69ad458b9f8a8eb7d61/README.md"
++    "ContextBench": "https://github.com/EuniAI/ContextBench/blob/1436c28a8eb95496da4ea69ad458b9f8a8eb7d61/README.md",
++    "TechQA": "https://aclanthology.org/2020.acl-main.117/"
+   },
+   "agreement_text_license": "C-UDA agreement text publisher repository is CC0-1.0; this does not make a C-UDA dataset CC0",
+   "agreement_repository_license_url": "https://github.com/microsoft/Computational-Use-of-Data-Agreement/blob/a28ca06f6f8ecac0b5856ca6179ac49e55f00104/LICENSE",
+@@ -51,5 +60,24 @@
+       "source": "third_party/models/CC-BY-4.0.txt",
+       "sha256": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411"
+     }
+-  ]
++  ],
++  "original_techqa": {
++    "publisher": "IBM original TechQA question/answer dataset and Technote corpus",
++    "dataset_license": "CDLA-Permissive-1.0",
++    "archive": {
++      "url": "https://huggingface.co/datasets/PrimeQA/TechQA/resolve/60437bc79ab217679682217598a3693cab78365b/TechQA.tar.gz",
++      "sha256": "6b094ef9a69718f727ce8d7e15c4d961e51032cefaa952e0d6af9d176d7ba118",
++      "bytes": 2959973525
++    },
++    "original_readme": {
++      "sha256": "c5a58ed7f2780fb2c4f2e06f8933ec4afbd06b5f29f6797c7857f3812f824060",
++      "bytes": 5997,
++      "declaration": "Original QA dataset and separately released Technote corpus both use CDLA-Permissive-1.0"
++    },
++    "paper": "https://aclanthology.org/2020.acl-main.117/",
++    "official_terms": "https://cdla.dev/permissive-1-0/",
++    "use": "Original TRAIN source/split/rights candidate audit; no native admission, model training or neural scoring asserted",
++    "wrapper_metadata_is_original_license": false,
++    "raw_data_bundled": false
++  }
+ }
+--- scripts/license-notices.py
++++ scripts/license-notices.py
+@@ -16,16 +16,17 @@
+ 
+ # Maintained legal texts only. This is not a Cargo dependency/data inventory.
+ RESEARCH_COMPANIONS = {
+-    'third_party/research/ARBITER-RESEARCH-NOTICES.md': ('research/ARBITER-RESEARCH-NOTICES.md', '6653556938d87782d1ffa6f0051aaff63f7e11c2f12a93092c2ddd643df5ab9b'),
++    'third_party/research/ARBITER-RESEARCH-NOTICES.md': ('research/ARBITER-RESEARCH-NOTICES.md', '5fdfc53e09b8d11306371ddb1697481a4a8060dc6008aa0b22e3d5beb39956e3'),
+     'third_party/research/CoCLR-MIT-LICENSE.txt': ('research/CoCLR-MIT-LICENSE.txt', '5f1ce9c03c594b38df127d923515ae50c5999076e376f01cb94d1b369c54d243'),
+     'third_party/research/C-UDA-1.0.md': ('research/C-UDA-1.0.md', '69aeb2c407f2ffce7f31c3aba0f1eeffac248009ec2070fcd989586ac8229c82'),
+     'third_party/research/CodeSearchNet-MIT-LICENSE.txt': ('research/CodeSearchNet-MIT-LICENSE.txt', '5ba1fd8a344040f2698ed3234aeb8f4b3e85211aa54a37048021f3eb0043be22'),
+-    'third_party/research/provenance.json': ('research/provenance.json', '71af118045869138893e3d4fc94212152f2bc57db3a08c8e6c74ec6d9743b7b7'),
++    'third_party/research/provenance.json': ('research/provenance.json', 'c01b711abf5d647ced19b516ace19ed83a53a0897d8c215963b9368ea8e7b56c'),
+     'third_party/models/minilm-v2-TRAINING-NOTICES.md': ('models/minilm-v2-TRAINING-NOTICES.md', '2daba18214e777ecb68e1154c26eb9d50c9f8ef25895e4dcc8af3d9d1275e4be'),
+     'third_party/models/minilm-v2-LICENSE.txt': ('models/minilm-v2-LICENSE.txt', '9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd'),
+     'third_party/models/minilm-v2-provenance.json': ('models/minilm-v2-provenance.json', '6f6a29bff30ef64212b0c6fc56095d94df3184856e488023820d995fbb68da81'),
+     'third_party/models/CC-BY-4.0.txt': ('models/CC-BY-4.0.txt', '9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411'),
+     'third_party/research/ContextBench-Apache-2.0-LICENSE.txt': ('research/ContextBench-Apache-2.0-LICENSE.txt', 'c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4'),
++    'third_party/research/TechQA-CDLA-Permissive-1.0.pdf': ('research/TechQA-CDLA-Permissive-1.0.pdf', 'e12775d6b5bfdba0bb33fd691dab386f0c7573853fdc4785c40b39739f120d5f'),
+ }
+ 
+ 
+--- scripts/tests/test_research_notices.py
++++ scripts/tests/test_research_notices.py
+@@ -30,12 +30,13 @@
+ LOCAL = load("scripts/build-local-service-installer.py", "research_local_installer")
+ PACKAGE = FIXTURES.package
+ EXPECTED = {
+-    'research/ARBITER-RESEARCH-NOTICES.md': '6653556938d87782d1ffa6f0051aaff63f7e11c2f12a93092c2ddd643df5ab9b',
++    'research/ARBITER-RESEARCH-NOTICES.md': '5fdfc53e09b8d11306371ddb1697481a4a8060dc6008aa0b22e3d5beb39956e3',
+     'research/CoCLR-MIT-LICENSE.txt': '5f1ce9c03c594b38df127d923515ae50c5999076e376f01cb94d1b369c54d243',
+     'research/C-UDA-1.0.md': '69aeb2c407f2ffce7f31c3aba0f1eeffac248009ec2070fcd989586ac8229c82',
+     'research/CodeSearchNet-MIT-LICENSE.txt': '5ba1fd8a344040f2698ed3234aeb8f4b3e85211aa54a37048021f3eb0043be22',
+     'research/ContextBench-Apache-2.0-LICENSE.txt': 'c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4',
+-    'research/provenance.json': '71af118045869138893e3d4fc94212152f2bc57db3a08c8e6c74ec6d9743b7b7',
++    'research/TechQA-CDLA-Permissive-1.0.pdf': 'e12775d6b5bfdba0bb33fd691dab386f0c7573853fdc4785c40b39739f120d5f',
++    'research/provenance.json': 'c01b711abf5d647ced19b516ace19ed83a53a0897d8c215963b9368ea8e7b56c',
+     'models/minilm-v2-TRAINING-NOTICES.md': '2daba18214e777ecb68e1154c26eb9d50c9f8ef25895e4dcc8af3d9d1275e4be',
+     'models/minilm-v2-LICENSE.txt': '9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd',
+     'models/minilm-v2-provenance.json': '6f6a29bff30ef64212b0c6fc56095d94df3184856e488023820d995fbb68da81',
+@@ -187,7 +188,7 @@
+         base = (ROOT / "README.md").read_text(encoding="utf-8")
+         arbiter = (ROOT / "docs/arbiter/README.md").read_text(encoding="utf-8")
+         notice = (ROOT / "third_party/research/ARBITER-RESEARCH-NOTICES.md").read_text(encoding="utf-8")
+-        for name in ["CoSQA","CodeSearchNet","ContextBench","QASPER","HotpotQA","Requests"]:
++        for name in ["CoSQA","CodeSearchNet","ContextBench","TechQA","QASPER","HotpotQA","Requests"]:
+             self.assertIn(name,base)
+             self.assertIn(name,arbiter)
+             self.assertIn(name,notice)
+@@ -203,5 +204,24 @@
+         self.assertIn("no new trained weights are asserted",arbiter)
+ 
+ 
++    def test_techqa_original_dataset_terms_and_provenance_are_not_wrapper_metadata(self):
++        original = (ROOT / "third_party/research/TechQA-CDLA-Permissive-1.0.pdf").read_bytes()
++        self.assertTrue(original.startswith(b"%PDF-"))
++        self.assertEqual(len(original),92209)
++        self.assertEqual(hashlib.sha256(original).hexdigest(),"e12775d6b5bfdba0bb33fd691dab386f0c7573853fdc4785c40b39739f120d5f")
++        provenance = json.loads((ROOT / "third_party/research/provenance.json").read_bytes())["original_techqa"]
++        self.assertEqual(provenance["dataset_license"],"CDLA-Permissive-1.0")
++        self.assertEqual(provenance["archive"]["sha256"],"6b094ef9a69718f727ce8d7e15c4d961e51032cefaa952e0d6af9d176d7ba118")
++        self.assertEqual(provenance["original_readme"]["sha256"],"c5a58ed7f2780fb2c4f2e06f8933ec4afbd06b5f29f6797c7857f3812f824060")
++        self.assertFalse(provenance["wrapper_metadata_is_original_license"])
++        self.assertFalse(provenance["raw_data_bundled"])
++        for name in ["docs/arbiter/README.md","third_party/research/ARBITER-RESEARCH-NOTICES.md"]:
++            text = (ROOT / name).read_text(encoding="utf-8")
++            for author in ["Vittorio Castelli","Rishav Chakravarti","Mohamed Nasr","Rosario Uceda-Sosa","Rong Zhang"]:
++                self.assertIn(author,text)
++            self.assertIn("CDLA-Permissive-1.0",text)
++            self.assertIn("wrapper",text)
++
++
+ if __name__ == "__main__":
+     unittest.main()

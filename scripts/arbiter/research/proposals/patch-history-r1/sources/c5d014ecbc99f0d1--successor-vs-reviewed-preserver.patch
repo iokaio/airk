@@ -1,0 +1,53 @@
+--- reviewed/preserve_cuda_checkpoint_images.py
++++ successor/preserve_first_fp32_images.py
+@@ -3,9 +3,9 @@
+ import argparse,datetime,hashlib,json,os,shutil,subprocess
+ R=Path('D:/code/Github/airk');E=R/'artifacts/v190/final-plan/exec-20261116T052942Z'
+ O=R/'artifacts/advanced-split/models/actual-composed-service-r2/final-plan-current-policy-preparation-20261116T085632Z/current-orchestration'
+-B=O/'gpu-native-checkpoint-images-r1';RECEIPT=E/'gpu-native-checkpoint-image-metadata-r1.json';LOG=E/'gpu-native-checkpoint-image-metadata-r1.log'
++B=O/'gpu-first-fp32-approved-images-r1';RECEIPT=E/'gpu-first-fp32-approved-image-metadata-r1.json';LOG=E/'gpu-first-fp32-approved-image-metadata-r1.log'
+ C=Path('C:/Users/tdotn/AppData/Local/airk-final-exec-20261116T052942Z');ENV=C/'gpu-checkpointed-static-environment-r1.json';ARCHIVE=C/'cu8/gpu-aggregate/onnxruntime.lib'
+-SID='S-1-5-21-3678370870-3858642417-826968105-1002';COMMIT='18cf7f0ecc92e0489f9a5a4d035b756d59f7cf11'
++SID='S-1-5-21-3678370870-3858642417-826968105-1002';COMMIT='c02be86aed4b49b85b36cf92017097e6c930966f'
+ ENV_SHA='a348c538e349e8311841654ddce2365c229fb5972670f0b33cd0c71a3c882ef2';ARCHIVE_SHA='042c970193bf3d2fc7c80f53b055f74130c653d561f7735142fc01b01cebac00';ARCHIVE_BYTES=899807276
+ ARGV=['test','-p','airk-retrieval','-p','airk-inference','--lib','--all-features','--locked','--no-run','--message-format=json','--timings']
+ def require(ok,message):
+@@ -43,13 +43,20 @@
+ 
+ def write(p,v):
+  with Path(p).open('x',encoding='utf-8') as f:json.dump(v,f,indent=2);f.write('\n')
++def compile_context(path,expected):
++ if path is None and expected is None:return None
++ require(path is not None and expected is not None and len(expected)==64 and set(expected)<=set('0123456789abcdef'),'explicit compile-context path/SHA pair required')
++ result=pin(path);require(result['bytes']<=16<<20 and result['sha256']==expected,'actual caller-pinned compile context differs')
++ return result
++
+ def main():
+- ap=argparse.ArgumentParser();ap.add_argument('--receipt-sha256',required=True);ap.add_argument('--native-group',required=True);ap.add_argument('--approved-script-sha256',required=True);ap.add_argument('--output',type=Path,required=True);a=ap.parse_args()
++ ap=argparse.ArgumentParser();ap.add_argument('--receipt-sha256',required=True);ap.add_argument('--native-group',required=True);ap.add_argument('--approved-script-sha256',required=True);ap.add_argument('--output',type=Path,required=True);ap.add_argument('--compile-input-context',type=Path);ap.add_argument('--compile-input-context-sha256');a=ap.parse_args()
+  require(sha(__file__)==a.approved_script_sha256,'reviewed exact preserver source required')
+  require(all(len(x)==64 and set(x)<=set('0123456789abcdef') for x in [a.receipt_sha256,a.native_group]),'explicit actual receipt/source-group SHAs required')
+  who=subprocess.check_output(['C:/Windows/System32/whoami.exe','/user','/fo','csv','/nh'],text=True);logged=subprocess.check_output(['C:/Windows/System32/quser.exe'],text=True);require(SID in who and any('tdotn' in x.lower() and x.lstrip().startswith('>') for x in logged.splitlines()),'actual same-human SID/session required')
+  require(subprocess.check_output(['git','rev-parse','HEAD'],cwd=R,text=True).strip()==COMMIT,'exact current source commit required');require(a.output==B and B.is_absolute() and not B.exists() and B.parent.is_dir() and B.parent.resolve()==B.parent,'exact fresh preservation output required')
+  parent_policy=policy(B.parent);private_owner(parent_policy)
++ context=compile_context(a.compile_input_context,a.compile_input_context_sha256)
+  rp=pin(RECEIPT);lp=pin(LOG);ep=pin(ENV);archive=pin(ARCHIVE)
+  require(rp['sha256']==a.receipt_sha256 and ep['sha256']==ENV_SHA and archive['sha256']==ARCHIVE_SHA and archive['bytes']==ARCHIVE_BYTES,'actual build/static environment/archive pins differ')
+  v=json.loads(RECEIPT.read_bytes());require(v.get('schema')=='airk-readiness-command/1' and v.get('status')=='completed' and v.get('passed') is True and v.get('exit_code')==v.get('runner_exit_code')==0,'actual completed successful native Cargo receipt required')
+@@ -61,6 +68,7 @@
+  for package,row in selected:
+   p=regular(row['executable']);require(p.resolve().is_relative_to(Path(v['target_directory']).resolve()) and 0<p.stat().st_size<=4<<30,'native artifact outside actual target/bounds');pe(p);owners[str(p)]=policy(p);require(owners[str(p)]['owner_sid']==SID,'foreign native image owner refused');sources[str(p)]=pin(p)
+  def reopen():
++  require(compile_context(a.compile_input_context,a.compile_input_context_sha256)==context,'caller compile-context drift')
+   require(pin(RECEIPT)==rp and pin(LOG)==lp and pin(ENV)==ep and pin(ARCHIVE)==archive,'build/static input drift');require(policy(B.parent)==parent_policy,'preservation parent policy drift');require(subprocess.check_output(['git','rev-parse','HEAD'],cwd=R,text=True).strip()==COMMIT,'source commit drift')
+   for path,row in sources.items():require(pin(path)==row and policy(path)==owners[path],'original native bytes/owner/ACL drift')
+  reopen();B.mkdir();private_owner(policy(B));images=B/'images';images.mkdir();private_owner(policy(images));result=[];bindings=[];outcome={'status':'RUNNING','source_commit':COMMIT,'native_group':a.native_group,'native_model_request_dispatched':False}
+@@ -72,7 +80,7 @@
+    image={'binary_id':package,'path':str(target),'bytes':target_pin['bytes'],'sha256':target_pin['sha256'],'original_path':str(original),'original_file_owner_sid':SID,'preserved_file_owner_sid':SID};result.append(image);bindings.append({'materialized_image':image,'actual_cargo_artifact':row,'pe':machine,'original_owner_policy':owners[str(original)],'preserved_owner_policy':target_policy,'source_file_identity_before':before,'source_file_identity_after':file_id(original),'preserved_file_identity':file_id(target),'source_stat_unchanged':True,'independent_file_ids':True,'source_and_dest_nlink1':True})
+   reopen()
+   inventory={'schema':'airk.preserved-native-test-images/1','utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'source_commit':COMMIT,'native_group':a.native_group,'actual_build_receipt':{'path':str(RECEIPT),'sha256':rp['sha256']},'images':result,'source_dirty':bool(subprocess.check_output(['git','status','--porcelain','--untracked-files=no'],cwd=R,text=True)),'reviewed_delta':'Actual current CUDA-linked no-run CargoJSON; original failed builds and CPU evidence remain historical. No qualification transferred.','scope':'Exact two GPU-featured lib-test PE64 artifacts and independent byte copies only; no testcase, GPU, model, signing, installation or activation run.'}
+-  name=B/'native-test-images-cuda-checkpoint-r1.json';write(name,inventory);write(B/'source-owners.json',[{'path':path,**value} for path,value in owners.items()]);write(B/'cargo-image-bindings.json',{'schema':'airk.private-current-image-preservation-binding/1','inventory':pin(name),'build_receipt':rp,'cargo_json':lp,'actual_static_ORT_rows':ort,'cuda_static_environment':ep,'actual_static_archive':archive,'images':bindings,'preserver_source':pin(Path(__file__).resolve()),'creation_policy':'Exact fresh private human-owned parent inheritance; no existing owner/ACL changes.','testcases_listed_or_run':False,'native_model_request_dispatched':False,'artifact_or_target_approval':'pending explicit Root review; none invented'});outcome.update(status='PASS_IMAGE_PRESERVATION_ONLY_UNQUALIFIED',inventory=pin(name))
++  name=B/'native-test-images-first-fp32-approved-r1.json';write(name,inventory);write(B/'source-owners.json',[{'path':path,**value} for path,value in owners.items()]);write(B/'cargo-image-bindings.json',{'schema':'airk.private-current-image-preservation-binding/1','inventory':pin(name),'build_receipt':rp,'cargo_json':lp,'actual_static_ORT_rows':ort,'cuda_static_environment':ep,'actual_static_archive':archive,'caller_compile_input_context':context,'images':bindings,'preserver_source':pin(Path(__file__).resolve()),'creation_policy':'Exact fresh private human-owned parent inheritance; no existing owner/ACL changes.','testcases_listed_or_run':False,'native_model_request_dispatched':False,'artifact_or_target_approval':'pending explicit Root review; none invented'});outcome.update(status='PASS_IMAGE_PRESERVATION_ONLY_UNQUALIFIED',inventory=pin(name))
+  except BaseException as exc:outcome.update(status='FAILED_PRESERVED_NO_RETRY',error=type(exc).__name__+': '+str(exc));raise
+  finally:write(B/'preservation-result.json',outcome)
+  print(json.dumps(outcome))

@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: Apache-2.0
+const vscode=require('vscode'),fs=require('node:fs/promises'),path=require('node:path'),assert=require('node:assert/strict'),crypto=require('node:crypto');
+const result="D:\\code\\Github\\airk\\artifacts\\installed-explorer-preflight\\run-VhsafJ\\result.json",installedRoot="D:\\code\\Github\\airk\\artifacts\\installed-explorer-preflight\\run-VhsafJ\\extensions\\iokaio.airk-1.8.21",evidence={"schema":"airk-installed-explorer-preflight/1","status":"running","native_service_exercised":false,"profile":"D:\\code\\Github\\airk\\artifacts\\installed-explorer-preflight\\run-VhsafJ\\profile","vsix":{"path":"D:\\code\\Github\\airk\\artifacts\\one-process\\final-extension\\publish\\airk-1.8.21-win32-x64.vsix","sha256":"6c21ee28a560ecff0a5a904998ffe5fbf0e462c15f80f5640d43372c0672c863","version":"1.8.21"},"harness_sha256":"8e172be036c597f1e6eaf3e80a9c9b6b31d54f78a3820955fe6721da5f235b65","run":"D:\\code\\Github\\airk\\artifacts\\installed-explorer-preflight\\run-VhsafJ","install":{"pid":16820,"code":0,"signal":null,"timed_out":false,"elapsed_ms":4913,"close_observed":true},"installed_root":"D:\\code\\Github\\airk\\artifacts\\installed-explorer-preflight\\run-VhsafJ\\extensions\\iokaio.airk-1.8.21"};
+const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+async function until(get,label){const deadline=Date.now()+40000;while(Date.now()<deadline){const value=await get();if(value)return value;await pause(100);}throw Error('Timed out: '+label);}
+const tabs=()=>vscode.window.tabGroups.all.flatMap(group=>group.tabs).filter(tab=>tab.input instanceof vscode.TabInputWebview&&tab.input.viewType.endsWith('airk.explorer'));
+exports.run=async()=>{try{
+assert.equal(vscode.workspace.isTrusted,true);assert.equal(vscode.workspace.getConfiguration('airk').inspect('runtime.nativeExecution').globalValue,false);
+const extension=await until(()=>vscode.extensions.getExtension('iokaio.airk'),'installed product discovery');
+assert.equal(path.resolve(extension.extensionPath),path.resolve(installedRoot));
+assert.equal(extension.packageJSON.version,evidence.vsix.version);const installedManifest=JSON.parse(await fs.readFile(path.join(installedRoot,'package.json'),'utf8'));assert.ok(installedManifest.__metadata,'VS Code rewrites actual installed manifests on disk');
+const api=await extension.activate();await api.whenReady();assert.deepEqual(await api.getServerDefinitions(),[]);
+await vscode.commands.executeCommand('airk.explorer.open','indexing/library');await until(()=>tabs().length===1,'actual product Explorer');
+await Promise.all(Array.from({length:12},()=>vscode.commands.executeCommand('airk.explorer.open','indexing/library')));assert.equal(tabs().length,1);
+assert.equal(await vscode.window.tabGroups.close(tabs(),true),true);await until(()=>tabs().length===0,'closed Explorer');await pause(750);assert.equal(tabs().length,0);
+await vscode.commands.executeCommand('airk.explorer.open','indexing/library');await until(()=>tabs().length===1,'reopened product Explorer');const initialTab=tabs()[0],extensionHostPid=process.pid;
+const inventoryPath=path.join(installedRoot,'airk-update.json'),inventory=JSON.parse(await fs.readFile(inventoryPath,'utf8')),manifestBefore=inventory.package_manifest;
+const css=path.join(installedRoot,'out','explorerWebview.css');await fs.appendFile(css,'\n/* fictional installed Explorer replacement preflight */\n');
+inventory.files['out/explorerWebview.css']=crypto.createHash('sha256').update(await fs.readFile(css)).digest('hex');await fs.writeFile(inventoryPath,JSON.stringify(inventory));
+await until(()=>tabs().length===1&&tabs()[0]!==initialTab,'same-version product/controller/UI handoff');await api.whenReady();assert.deepEqual(await api.getServerDefinitions(),[]);
+assert.equal(vscode.workspace.getConfiguration('airk').inspect('runtime.nativeExecution').globalValue,false);
+assert.equal(process.pid,extensionHostPid);assert.equal(JSON.parse(await fs.readFile(inventoryPath,'utf8')).package_manifest,manifestBefore);
+await Promise.all(Array.from({length:12},()=>vscode.commands.executeCommand('airk.explorer.open','indexing/library')));assert.equal(tabs().length,1);
+await vscode.window.tabGroups.close(tabs(),true);await until(()=>tabs().length===0,'replacement Explorer closes');await pause(750);assert.equal(tabs().length,0);
+await vscode.commands.executeCommand('airk.explorer.open','indexing/library');await until(()=>tabs().length===1,'replacement Explorer reopens');assert.deepEqual(await api.getServerDefinitions(),[]);
+Object.assign(evidence,{status:'passed',production_controller_graph:true,actual_vsix_installation:true,same_version_css_replacement:true,installed_metadata_rewrite:!!installedManifest.__metadata,original_api_forwarded:true,singleton:true,closed_stays_closed:true,reopen:true,extension_host_pid:extensionHostPid,window_reloaded:false,scope:'Installed production activation, Explorer tabs and UI asset handoff with native execution disabled; native runtime/process qualification is separate.'});
+await fs.writeFile(result,JSON.stringify(evidence,null,2));
+}catch(error){Object.assign(evidence,{status:'failed',error:String(error),stack:error.stack});await fs.writeFile(result,JSON.stringify(evidence,null,2));throw error;}};

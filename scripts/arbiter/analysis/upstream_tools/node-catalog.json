@@ -1,0 +1,28 @@
+{
+  "schema": "airk.upstream-tool-archives/1",
+  "archives": [
+    {
+      "name": "node-24.15.0-win-x64",
+      "format": "zip",
+      "roots": [
+        "artifacts/tools/node-v24.15.0-win-x64"
+      ],
+      "archive_prefix": "node-v24.15.0-win-x64/",
+      "archive": {
+        "path": "artifacts/tools/node-v24.15.0-win-x64.zip",
+        "sha256": "cc5149eabd53779ce1e7bdc5401643622d0c7e6800ade18928a767e940bb0e62",
+        "bytes": 36465163
+      },
+      "authority": {
+        "path": "artifacts/tools/node-v24.15.0-win-x64.receipt.json",
+        "sha256": "1f937994fd2cdb12fe0540b488f98d9b10eb869e1ebed8bf1e89b37732ed31b4",
+        "bytes": 595
+      },
+      "authority_selector": [
+        "archive_sha256"
+      ],
+      "repository": "https://nodejs.org/dist/v24.15.0/",
+      "revision": "v24.15.0"
+    }
+  ]
+}

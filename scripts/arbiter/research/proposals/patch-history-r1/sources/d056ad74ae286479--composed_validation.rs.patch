@@ -1,0 +1,346 @@
+--- crates/airk-service/src/service_runtime/arbiter/final_distribution/composed_validation.rs
++++ crates/airk-service/src/service_runtime/arbiter/final_distribution/composed_validation.rs
+@@ -1360,6 +1360,274 @@
+     );
+     Ok(observation)
+ }
++
++fn parse_control_lines(raw: &[u8]) -> Result<Vec<airk_core::service::ControlResponse>> {
++    let mut frames = Vec::new();
++    for line in std::str::from_utf8(raw)?
++        .lines()
++        .filter(|line| !line.trim().is_empty())
++    {
++        ensure!(
++            frames.len() < 2,
++            "unexpected additional native control frame"
++        );
++        frames.push(serde_json::from_str(line)?);
++    }
++    ensure!(!frames.is_empty(), "native control frame absent");
++    Ok(frames)
++}
++fn control_frames(reference: &Value) -> Result<Vec<airk_core::service::ControlResponse>> {
++    let observation = json_artifact(reference)?;
++    ensure!(
++        observation["schema"] == "airk.private.composed-observation/1"
++            && observation["request"]["kind"] == "native_command"
++            && observation["result"]["returncode"] == 0,
++        "actual successful native control observation absent"
++    );
++    let path = PathBuf::from(
++        reference["path"]
++            .as_str()
++            .context("native observation path")?,
++    );
++    let stdout = path
++        .parent()
++        .context("native observation parent")?
++        .join(format!("{:03}-stdout.bin", integer(&observation, "step")?));
++    let raw = pinned(&PinnedFile {
++        bytes: fs::symlink_metadata(&stdout)?.len(),
++        path: stdout,
++        sha256: serde_json::from_value(observation["result"]["stdout_sha256"].clone())?,
++    })?;
++    parse_control_lines(&raw)
++}
++fn singleton_fault_session(
++    observations: &Value,
++    plan: &Value,
++    before: &Value,
++    snapshot: &Value,
++    index: airk_core::index_catalog::IndexId,
++) -> Result<()> {
++    let call = original_observation(&observations["original_call"], plan)?;
++    let id = &call["request"]["request"]["id"];
++    let starts = array(plan, "steps")?
++        .iter()
++        .filter(|step| {
++            step["kind"] == "controller"
++                && step["request"]["kind"] == "start"
++                && &step["request"]["id"] == id
++        })
++        .collect::<Vec<_>>();
++    ensure!(
++        starts.len() == 1,
++        "original fault request start absent/ambiguous"
++    );
++    let open = original_observation(&observations["original_open"], plan)?;
++    ensure!(
++        open["request"]["kind"] == "controller"
++            && open["request"]["request"]["kind"] == "open"
++            && open["request"]["request"]["id"] == starts[0]["request"]["session"]
++            && open["result"]["ok"] == true
++            && open["result"]["value"]["kind"] == "ready"
++            && open["result"]["value"]["launch_count"] == 1
++            && open["result"]["value"]["scope_result"]["status"] == "scope",
++        "actual original singleton-set I2 open/selection absent"
++    );
++    let config = &open["request"]["request"]["config"];
++    ensure!(
++        config["bindings_sha256"] == observations["before_binding"]["sha256"]
++            && config["index_bindings"] == observations["before_binding"]["path"]
++            && config["index_id"] == serde_json::to_value(index)?
++            && open["result"]["value"]["identity"]["bindings_sha256"] == config["bindings_sha256"]
++            && open["result"]["value"]["identity"]["index_id"] == config["index_id"]
++            && open["result"]["value"]["identity"]["service_instance"] == snapshot["instance"]
++            && before["instance"] == snapshot["instance"],
++        "original fault session did not use exact native singleton membership snapshot"
++    );
++    Ok(())
++}
++fn membership_revocation(observations: &Value, plan: &Value, dispatch: &Record) -> Result<()> {
++    use airk_core::{
++        catalog_management::{CatalogItem, CatalogOperation},
++        index_catalog::{IndexDefinition, Membership, QueryProject},
++        service::ControlResponse,
++    };
++    let before = json_artifact(&observations["before_binding"])?;
++    let snapshot = json_artifact(&observations["before_membership"])?;
++    ensure!(
++        before["schema"] == "airk.private-arbiter-index-bindings/1"
++            && snapshot["schema"] == "airk.private-composed-membership-before/1"
++            && snapshot["evaluation"] == true
++            && snapshot["release_qualified"] == false
++            && snapshot["namespace"] == serde_json::to_value(dispatch.binding.scope.catalog)?
++            && before["namespace"] == snapshot["namespace"]
++            && before["catalog_revision"] == snapshot["catalog_revision"],
++        "original singleton membership namespace/revision differs"
++    );
++    let index: IndexDefinition = serde_json::from_value(snapshot["index"].clone())?;
++    let project: QueryProject = serde_json::from_value(snapshot["project"].clone())?;
++    let membership: Membership = serde_json::from_value(snapshot["membership"].clone())?;
++    index.validate()?;
++    project.validate()?;
++    membership.validate()?;
++    let selection: airk_core::service::WindowScopeSelection =
++        serde_json::from_value(snapshot["window_scope_selection"].clone())?;
++    ensure!(
++        index.id == dispatch.binding.scope.index_id
++            && !index.tombstone
++            && membership.index_id == index.id
++            && membership.project_id == project.id
++            && selection.namespace == dispatch.binding.scope.catalog
++            && selection.index_ids == vec![index.id]
++            && selection.project_ids == vec![project.id]
++            && serde_json::to_value(selection.expected_catalog_revision)?
++                == snapshot["catalog_revision"],
++        "membership proof did not bind original fault index/project"
++    );
++    let index_value = serde_json::to_value(index.id)?;
++    let original = array(&before, "bindings")?
++        .iter()
++        .filter(|row| row["index_id"] == index_value)
++        .collect::<Vec<_>>();
++    ensure!(
++        original.len() == 1
++            && original[0]["definition"] == snapshot["index"]
++            && original[0]["window_scope_selection"] == snapshot["window_scope_selection"],
++        "original W4 binding/snapshot differs"
++    );
++    singleton_fault_session(observations, plan, &before, &snapshot, index.id)?;
++    let operation = CatalogOperation::RemoveMembership {
++        project_id: project.id,
++        index_id: index.id,
++        expected_scope_revision: project.scope_revision,
++        expected_membership_revision: membership.revision,
++    };
++    ensure!(
++        serde_json::to_value(&operation)? == snapshot["operation"]
++            && operation.requires_authority_fence()
++            && !operation.requires_worker_drain(),
++        "source mutation is not exact no-worker-wait membership revocation"
++    );
++    for (key, command, flag, target) in [
++        ("after_project", "show", "--set", project.id.to_string()),
++        ("after_memberships", "list", "--set", project.id.to_string()),
++        ("after_index", "show", "--index", index.id.to_string()),
++    ] {
++        let observation = original_observation(&observations[key], plan)?;
++        let argv = array(&observation["request"], "argv")?;
++        ensure!(
++            argv.windows(2)
++                .any(|pair| pair[0] == "library" && pair[1] == command)
++                && argv
++                    .windows(2)
++                    .any(|pair| pair[0] == flag && pair[1] == target),
++            "actual post-revoke native command targets foreign entity"
++        );
++        if key == "after_memberships" {
++            ensure!(
++                argv.windows(2)
++                    .any(|pair| pair[0] == "--kind" && pair[1] == "memberships")
++                    && argv.iter().any(|arg| arg == "--all"),
++                "post-revoke membership observation filtered/truncated"
++            );
++        }
++    }
++    let mut frames = control_frames(&observations["revoke_call"])?;
++    ensure!(
++        frames.len() == 2,
++        "membership change must retain preview AND applied native frames"
++    );
++    let applied = frames.pop().context("applied frame absent")?;
++    let ControlResponse::CatalogPreview {
++        preview,
++        preview_digest,
++    } = frames.pop().context("preview frame absent")?
++    else {
++        anyhow::bail!("first native membership frame is not CatalogPreview")
++    };
++    let ControlResponse::CatalogApplied {
++        receipt,
++        fenced_receipt: Some(fenced),
++    } = applied
++    else {
++        anyhow::bail!("membership mutation lacks actual fenced CatalogApplied")
++    };
++    fenced.validate()?;
++    ensure!(
++        preview.operation == operation
++            && preview.identity()? == preview_digest
++            && preview.authority_fence_required
++            && !preview.file_data_changes
++            && preview.catalog_revision == selection.expected_catalog_revision
++            && preview.next_revision == preview.catalog_revision.next()?
++            && preview.request_digest == receipt.request_digest
++            && receipt == fenced.metadata
++            && fenced.preview_digest == preview_digest
++            && fenced.request.operation == operation
++            && fenced.request.expected_catalog_revision == preview.catalog_revision
++            && fenced.request.key.namespace == dispatch.binding.scope.catalog
++            && serde_json::to_value(fenced.proof.service)? == snapshot["instance"]
++            && receipt.catalog_revision == preview.next_revision
++            && fenced.proof.worker_obligation.is_none()
++            && fenced.proof.worker_confirmations.is_empty(),
++        "actual membership preview/apply/fence lineage differs"
++    );
++    let project_frame = control_frames(&observations["after_project"])?;
++    let [
++        ControlResponse::CatalogDetail {
++            detail: project_after,
++            ..
++        },
++    ] = project_frame.as_slice()
++    else {
++        anyhow::bail!("actual post-revoke project detail absent")
++    };
++    let Some(CatalogItem::Project(actual_project)) = &project_after.item else {
++        anyhow::bail!("fault set was deleted instead of membership revoked")
++    };
++    let mut expected_project = project.clone();
++    expected_project.scope_revision = project.scope_revision.next()?;
++    if project.default_indexes.contains(&index.id) {
++        expected_project.defaults_revision = project.defaults_revision.next()?;
++        expected_project
++            .default_indexes
++            .retain(|id| *id != index.id);
++    }
++    ensure!(
++        actual_project == &expected_project
++            && project_after.namespace == dispatch.binding.scope.catalog
++            && project_after.revision == receipt.catalog_revision,
++        "actual fault project scope/revision differs after removal"
++    );
++    let membership_frame = control_frames(&observations["after_memberships"])?;
++    let [ControlResponse::CatalogPage { page, .. }] = membership_frame.as_slice() else {
++        anyhow::bail!("actual post-revoke membership page absent")
++    };
++    ensure!(
++        page.namespace == dispatch.binding.scope.catalog
++            && page.revision == receipt.catalog_revision
++            && page.items.is_empty()
++            && page.continuation.is_none(),
++        "fault membership still present or observation truncated"
++    );
++    let index_frame = control_frames(&observations["after_index"])?;
++    let [
++        ControlResponse::CatalogDetail {
++            detail: index_after,
++            ..
++        },
++    ] = index_frame.as_slice()
++    else {
++        anyhow::bail!("actual post-revoke fault index detail absent")
++    };
++    ensure!(
++        index_after.namespace == dispatch.binding.scope.catalog
++            && index_after.revision == receipt.catalog_revision
++            && index_after.item == Some(CatalogItem::Index(index)),
++        "membership revoke retired/changed the actual source index"
++    );
++    Ok(())
++}
++
+ fn race_case(observations: &Value, plan: &Value, cancel: bool) -> Result<()> {
+     let events = journal(&observations["journal"])?;
+     let dispatch = trigger(observations, &events)?;
+@@ -1400,34 +1668,7 @@
+             "actual native source revocation failed"
+         );
+         mutation_interval(&revoke, dispatch, result)?;
+-        let before = json_artifact(&observations["before_binding"])?;
+-        let after = json_artifact(&observations["after_binding"])?;
+-        ensure!(
+-            before["schema"] == "airk.private-arbiter-index-bindings/1"
+-                && after["schema"] == before["schema"]
+-                && before["instance"] == after["instance"]
+-                && before["namespace"] == after["namespace"],
+-            "native source namespace changed"
+-        );
+-        ensure!(
+-            before["namespace"] == serde_json::to_value(dispatch.binding.scope.catalog)?,
+-            "revoked binding is not original dispatch namespace"
+-        );
+-        let index = serde_json::to_value(dispatch.binding.scope.index_id)?;
+-        let original = array(&before, "bindings")?
+-            .iter()
+-            .filter(|row| row["index_id"] == index)
+-            .collect::<Vec<_>>();
+-        let current = array(&after, "bindings")?
+-            .iter()
+-            .filter(|row| row["index_id"] == index)
+-            .collect::<Vec<_>>();
+-        ensure!(
+-            original.len() == 1
+-                && current.len() <= 1
+-                && current.first().is_none_or(|row| *row != original[0]),
+-            "original scoring source authority did not change; unrelated source mutation is insufficient"
+-        );
++        membership_revocation(observations, plan, dispatch)?;
+     }
+     refused_original(&observations["original_call"])?;
+     let disable = core_configuration(&observations["disable_call"])?;
+@@ -1893,6 +2134,32 @@
+         assert!(settled_released(&invalid, &invalid[0]).is_err());
+         Ok(())
+     }
++
++    #[test]
++    fn native_membership_cli_preserves_two_typed_control_frames_and_refuses_partial_or_extra()
++    -> Result<()> {
++        let raw = br#"{"status":"failure","code":"preview-control"}
++{"status":"failure","code":"applied-control"}
++"#;
++        ensure!(
++            parse_control_lines(raw)?.len() == 2,
++            "actual compact two-line framing changed"
++        );
++        ensure!(
++            parse_control_lines(br#"{"status":"#).is_err(),
++            "partial native frame accepted"
++        );
++        let mut extra = raw.to_vec();
++        extra.extend_from_slice(
++            br#"{"status":"failure","code":"extra"}
++"#,
++        );
++        ensure!(
++            parse_control_lines(&extra).is_err(),
++            "extra native control frame ignored"
++        );
++        Ok(())
++    }
+     #[test]
+     fn source_revoke_race_cannot_borrow_another_forward_or_refresh_deadline() -> Result<()> {
+         let original = events()?;

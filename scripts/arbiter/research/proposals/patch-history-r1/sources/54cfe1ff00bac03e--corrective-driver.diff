@@ -1,0 +1,71 @@
+--- D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\r154-composed-launch-preparation-r1\launch_route.py
++++ D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\r154-composed-launch-preparation-r2\launch_route.py
+@@ -101,14 +101,25 @@
+             self.report['original_service_before']=dict(self.handle.proof);self.retain()
+             ready_path=Path(self.value['work'])/'ready.json'
+             while not ready_path.exists():self.wait_event(watch,startup_cutoff)
+-            raw=ready_path.read_bytes();self.ready=json.loads(raw);self.report['full_ready']=self.ready
+-            need(self.ready['schema']=='airk.private-arbiter-fixture/1' and self.ready['evaluation'] is True
+-                and self.ready['release_qualified'] is False,'Actual private Ready required')
+-            need(self.ready['health']['process_id']==self.service.pid
+-                and self.ready['health']['executable_sha256']==image['sha256'],'Actual Ready differs from retained original Service')
+-            need(self.ready['inputs_sha256']==self.value['evaluation_inputs']['sha256'],'Actual Ready uses different staged profiles')
+-            self.control=Path(self.ready['control_root']);self.retain()
++            self.observe_ready(startup_cutoff)
+         finally:watch.close()
++    def observe_ready(self,cutoff):
++        from private_record_reader import read_observed
++        path=Path(self.value['work'])/'ready.json'
++        raw,proof=read_observed(path,min(cutoff,self.cutoff))
++        candidate=json.loads(raw);self.report['ready_read_observation']=proof
++        need(candidate.get('schema')=='airk.private-arbiter-fixture/1' and candidate.get('evaluation') is True
++            and candidate.get('release_qualified') is False,'Actual private Ready required')
++        health=candidate.get('health',{});image=self.value['service_image']
++        need(health.get('process_id')==self.service.pid and health.get('executable_sha256')==image['sha256']
++            and health.get('user')==SID and health.get('instance'),'Actual Ready differs from retained original PID/SID/image')
++        need(self.handle.proof['execution_user_sid']==SID and self.handle.proof['image']['sha256']==image['sha256'],
++            'Original retained process image/SID proof differs')
++        need(candidate.get('inputs_sha256')==self.value['evaluation_inputs']['sha256'],'Actual Ready uses different staged profiles')
++        control=Path(candidate['control_root'])
++        need(control.samefile(Path(self.value['work'])/'control'),'Actual Ready names a different control directory')
++        # Only a fully authenticated actual record becomes cleanup/control authority.
++        self.ready=candidate;self.control=control;self.report['full_ready']=candidate;self.retain()
+     def setup(self,clients):
+         route=self
+         class Attached(clients.Fixture):
+@@ -126,7 +137,7 @@
+                         need(job['state']==expected,'Native maintenance job failed: '+json.dumps(job));return job
+                     remaining(route.cutoff)
+         fixture=Attached.__new__(Attached);fixture.control=self.control;fixture.projects={};fixture.scopes={}
+-        data=Path(self.value['stage_root'])/'index-data';data.mkdir(exist_ok=False)
++        data=Path(self.value['index_data']);data.mkdir(exist_ok=False)
+         fixture.register('r154',Path(self.value['source_root']),data)
+         write(self.root/'native-registration-and-selection.json',{'registration':fixture.projects['r154'],'selection':fixture.scopes['r154']})
+         for command in ('index','setup-model','index'):
+@@ -212,8 +223,14 @@
+         need(result.get('complete') is True,'Original360s observer phase failed; no retry')
+     def cleanup(self):
+         if self.service is not None and self.handle is not None:
++            if not self.delegated_stop and self.service.poll() is None and self.ready is None:
++                # Recover only genuine actual Ready under the existing cleanup observation bound.
++                # Never guess ControlRoot, synthesize Health or adopt a replacement process.
++                recovered_cutoff=min(self.cutoff,time.monotonic()+120)
++                self.observe_ready(recovered_cutoff)
++                self.report['cleanup_recovered_actual_ready']=True;self.retain()
+             if not self.delegated_stop and self.service.poll() is None and self.ready is not None:
+-                cutoff=min(self.cutoff,time.monotonic()+120)
++                cutoff=locals().get('recovered_cutoff',min(self.cutoff,time.monotonic()+120))
+                 health=json.loads(self.cli('--service-runtime-dir',self.control,'service','health',label='cleanup-health',timeout=remaining(cutoff)).stdout)
+                 self.report['full_cleanup_health']=health;self.retain()
+                 observed=health.get('observation',{})
+@@ -260,7 +277,9 @@
+         route.start(custody,reference_worker.windows_sid,changes);route.setup(clients);route.start_controller()
+         route.warm('focus',value['focus_manifest'],composed);route.warm('context',value['context_manifest'],composed)
+         route.finish_controller();route.diagnostic();route.report['complete']=True
+-    except BaseException as error:route.report['first_failure']={'type':type(error).__name__,'message':str(error)}
++    except BaseException as error:
++        route.report['first_failure']={'type':type(error).__name__,'message':str(error)}
++        route.retain()  # First failure is durable BEFORE any possibly blocking cleanup observation.
+     finally:
+         try:route.cleanup()
+         except BaseException as error:

@@ -1,0 +1,224 @@
+--- a/scripts/check-runtime-legacy-retirement.py
++++ b/scripts/check-runtime-legacy-retirement.py
+@@ -155,14 +155,61 @@
+         receipt["status"] = "failed"
+ 
+ 
++def bounded_differences(left, right, limit=32):
++    """Diagnostic only: never changes the actual full parity comparison."""
++    entries = []
++    truncated = False
++    def shown(value):
++        text = json.dumps(value, ensure_ascii=False, sort_keys=True)
++        return {"type": type(value).__name__, "json_preview": text[:256],
++            "truncated": len(text) > 256,
++            "json_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()}
++    def visit(a, b, pointer):
++        nonlocal truncated
++        if len(entries) >= limit:
++            truncated = True
++            return
++        if type(a) is not type(b):
++            entries.append({"pointer": pointer, "cli": shown(a), "mcp": shown(b)})
++        elif isinstance(a, dict):
++            for key in sorted(a.keys() | b.keys()):
++                path = pointer + "/" + key.replace("~", "~0").replace("/", "~1")
++                if key not in a or key not in b:
++                    if len(entries) >= limit:
++                        truncated = True
++                        return
++                    entries.append({"pointer": path, "present_in": "cli" if key in a else "mcp",
++                        "value": shown(a[key] if key in a else b[key])})
++                else:
++                    visit(a[key], b[key], path)
++        elif isinstance(a, list):
++            if len(a) != len(b):
++                entries.append({"pointer": pointer, "cli_length": len(a), "mcp_length": len(b)})
++            for index, (x, y) in enumerate(zip(a, b)):
++                visit(x, y, pointer + "/" + str(index))
++        elif a != b:
++            entries.append({"pointer": pointer, "cli": shown(a), "mcp": shown(b)})
++    assert isinstance(limit, int) and 1 <= limit <= 64
++    visit(left, right, "")
++    return {"difference_limit": limit, "differences_shown": len(entries),
++        "truncated": truncated, "entries": entries}
++
++
+ class Mcp:
+     """One exact owned stdio child, bounded lines/queue/wait; never a PID lookup."""
+     def __init__(self, fixture, binary, project):
+         self.fixture = fixture
+-        self.log = (fixture.root / f"mcp-{uuid.uuid4().hex}.stderr").open("wb")
+-        self.child = subprocess.Popen([str(binary), *fixture.project_args(project), "mcp"],
+-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log,
+-            env=fixture.environment, creationflags=fixture.flags)
++        identity = uuid.uuid4().hex
++        self.log = (fixture.root / f"mcp-{identity}.stderr").open("xb")
++        self.trace = (fixture.root / f"mcp-{identity}-wire.jsonl").open("x", encoding="utf-8")
++        try:
++            self.child = subprocess.Popen([str(binary), *fixture.project_args(project), "mcp"],
++                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log,
++                env=fixture.environment, creationflags=fixture.flags)
++        except BaseException:
++            self.trace.close()
++            self.log.close()
++            raise
+         self.lines = queue.Queue(maxsize=8)
+         self.counter = 0
+         def receive():
+@@ -200,10 +247,17 @@
+ 
+     def call(self, method, params):
+         self.counter += 1
+-        self.write({"jsonrpc": "2.0", "id": self.counter, "method": method, "params": params})
++        request = {"jsonrpc": "2.0", "id": self.counter, "method": method, "params": params}
++        self.trace.write(json.dumps({"request": request}, ensure_ascii=False) + "\n")
++        self.trace.flush()
++        self.write(request)
+         line = self.lines.get(timeout=60)
+         if line is None or isinstance(line, Exception):
+             raise AssertionError(f"Owned MCP reader failed: {line}")
++        # Exact raw bytes survive malformed/error replies and every subsequent
++        # assertion. The unchanged reader frame bound still applies.
++        self.trace.write(json.dumps({"response_bytes_hex": line.hex()}) + "\n")
++        self.trace.flush()
+         reply = json.loads(line)
+         assert reply.get("id") == self.counter and "error" not in reply, reply
+         return reply["result"]
+@@ -219,6 +273,7 @@
+         finally:
+             self.child.stdout.close()
+             self.log.close()
++            self.trace.close()
+ 
+ 
+ class Fixture:
+@@ -345,14 +400,26 @@
+         assert len(payloads) == 1, "Query binary differs from actual old/new payload seals"
+         payload = payloads[0]["manifest_sha256"]
+         args = search_arguments(payload, self.old_seal["manifest_sha256"], self.new_seal["manifest_sha256"])
++        observation = uuid.uuid4().hex
++        retained = {}
++        def retain(suffix, value):
++            path = self.root / f"search-{observation}-{suffix}.json"
++            with path.open("x", encoding="utf-8") as stream:
++                json.dump(value, stream, indent=2)
++                stream.write("\n")
++            retained[suffix] = {"path": str(path), "sha256": sha(path)}
++        attempts = {"cli": 0, "mcp": 0}
+         def read(_):
+             result = self.command(binary, *self.project_args(project), "tools", "call", "airk_search",
+                 "--args", json.dumps(args), check=False)
++            envelope = json.loads(result.stdout)
++            attempts["cli"] += 1
++            retain(f"cli-attempt-{attempts['cli']}", envelope)
+             assert result.returncode in (0, 1)
+-            envelope = json.loads(result.stdout)
+             assert result.returncode == 0 or self.clients.read_retry_delay(envelope) is not None, envelope
+             return envelope
+         cli, _ = self.clients.read_envelope(read, time.monotonic() + 60)
++        retain("cli", cli)
+         success_flag(cli)
+         body = self.clients.tool_value(cli)
+         assert body["collection"] == project["collection"]
+@@ -364,8 +431,13 @@
+         assert "legacyhealthyneedle" in hit["text"] and hit["truncated"] is False
+         mcp = Mcp(self, binary, project)
+         try:
+-            wire, _ = self.clients.read_envelope(lambda _: mcp.call("tools/call",
+-                {"name": "search", "arguments": args}), time.monotonic() + 60)
++            def read_mcp(_):
++                envelope = mcp.call("tools/call", {"name": "search", "arguments": args})
++                attempts["mcp"] += 1
++                retain(f"mcp-attempt-{attempts['mcp']}", envelope)
++                return envelope
++            wire, _ = self.clients.read_envelope(read_mcp, time.monotonic() + 60)
++            retain("mcp", wire)
+         finally:
+             mcp.close()
+         success_flag(wire)
+@@ -380,12 +452,17 @@
+             if isinstance(value, list):
+                 return [stable(v) for v in value]
+             return value
+-        assert stable(body) == stable(other), "Complete CLI/MCP legacy-body mismatch"
+-        observation = uuid.uuid4().hex
+-        for suffix, value in (("cli", cli), ("mcp", wire)):
+-            with (self.root / f"search-{observation}-{suffix}.json").open("x", encoding="utf-8") as stream:
+-                json.dump(value, stream, indent=2)
+-                stream.write("\n")
++        diagnostic = {"schema": "airk.legacy-read-parity-diagnostic/1",
++            "complete_retained_replies": retained,
++            "raw_body_differences": bounded_differences(body, other),
++            "existing_parity_projection_differences": bounded_differences(stable(body), stable(other)),
++            "comparison_unchanged": True,
++            "no_cause_inferred": True}
++        assert len(json.dumps(diagnostic).encode("utf-8")) <= MAX_FRAME
++        retain("comparison", diagnostic)
++        assert stable(body) == stable(other), (
++            "Complete CLI/MCP legacy-body mismatch; complete replies and bounded structural diff: "
++            + retained["comparison"]["path"])
+         # Explicit retained-data projection across versions: preserve ALL literal
+         # hit/citation/text/location/truncation fields plus the exact publication.
+         # Newly disclosed execution/readiness/version metadata is not projected.
+--- a/scripts/tests/test_runtime_legacy_retirement.py
++++ b/scripts/tests/test_runtime_legacy_retirement.py
+@@ -75,5 +75,58 @@
+         self.assertEqual(passed['final_quiescence']['selected_manifest_sha256'],'old exact identity')
+ 
+ 
++    def test_structural_diagnostic_retains_real_freshness_fields_and_type_differences(self):
++        diff=h.bounded_differences({'freshness':{'state':'pending'},'flag':True},
++            {'freshness':{'state':'idle'},'flag':1})
++        self.assertEqual([entry['pointer'] for entry in diff['entries']],['/flag','/freshness/state'])
++        self.assertFalse(diff['truncated'])
++
++    def test_structural_diagnostic_bounds_output_without_changing_values(self):
++        left={str(i):'a'*1000 for i in range(100)};right={str(i):'b'*1000 for i in range(100)}
++        diff=h.bounded_differences(left,right,limit=3)
++        self.assertEqual(diff['differences_shown'],3);self.assertTrue(diff['truncated'])
++        self.assertTrue(all(entry['cli']['truncated'] for entry in diff['entries']))
++        self.assertEqual(left['0'],'a'*1000);self.assertEqual(right['0'],'b'*1000)
++
++    def test_complete_replies_survive_failed_parity_before_any_failure_summary(self):
++        from types import SimpleNamespace
++        from unittest.mock import patch
++        with tempfile.TemporaryDirectory() as temporary:
++            root=Path(temporary).resolve();source=root/'source';source.mkdir()
++            (source/'README.md').write_bytes(b'legacyhealthyneedle original fictional bytes\n')
++            binary=root/'old.exe';binary.write_bytes(b'inert unit bytes, never executed')
++            project={'root':str(source),'data_root':str(root/'data'),'collection':'legacy-b','binding':'a'*64}
++            body={'collection':'legacy-b','generation':1,'truncated':False,
++                'hits':[{'text':'legacyhealthyneedle','truncated':False,'citation':{
++                    'path':'README.md','content_hash':h.sha(source/'README.md')}}],
++                'publication':{'token':'literal-fixture-publication'},'freshness':{'state':'pending'}}
++            other=json.loads(json.dumps(body));other['freshness']['state']='idle'
++            envelope=lambda value:{'content':[{'type':'text','text':json.dumps(value)}],'isError':False}
++            class Clients:
++                @staticmethod
++                def read_envelope(read,_deadline):return read(None),[]
++                @staticmethod
++                def tool_value(value):return json.loads(value['content'][0]['text'])
++                @staticmethod
++                def read_retry_delay(_value):return None
++            class Mcp:
++                def __init__(self,*_args):pass
++                def call(self,*_args):return envelope(other)
++                def close(self):pass
++            fixture=object.__new__(h.Fixture);fixture.root=root;fixture.control=root/'control'
++            fixture.old_seal={'files':{'airk.exe':h.sha(binary)},'manifest_sha256':'1'*64}
++            fixture.new_seal={'files':{'airk.exe':'2'*64},'manifest_sha256':'3'*64}
++            fixture.clients=Clients()
++            fixture.command=lambda *_args,**_kwargs:SimpleNamespace(returncode=0,stdout=json.dumps(envelope(body)))
++            with patch.object(h,'Mcp',Mcp):
++                with self.assertRaisesRegex(AssertionError,'Complete CLI/MCP legacy-body mismatch'):
++                    fixture.query(binary,project)
++            cli=list(root.glob('search-*-cli.json'));mcp=list(root.glob('search-*-mcp.json'))
++            self.assertEqual(len(cli),1);self.assertEqual(len(mcp),1)
++            self.assertEqual(Clients.tool_value(json.loads(cli[0].read_text())),body)
++            self.assertEqual(Clients.tool_value(json.loads(mcp[0].read_text())),other)
++            report=json.loads(next(root.glob('search-*-comparison.json')).read_text())
++            self.assertEqual(report['existing_parity_projection_differences']['entries'][0]['pointer'],'/freshness/state')
++
+ if __name__=='__main__':
+     unittest.main()

@@ -1,0 +1,69 @@
+--- a/crates/airk-cli/tests/catalog_upgrade.rs
++++ b/crates/airk-cli/tests/catalog_upgrade.rs
+@@ -22,7 +22,19 @@
+     time::{Duration, Instant},
+ };
+ 
+-fn fixture() -> Result<tempfile::TempDir> {
++// TempDir owns cleanup; only a newly created child is a native control root.
++// Do not repair permissions on existing caller/shared/user directories.
++struct PrivateFixture {
++    _owner: tempfile::TempDir,
++    control: PathBuf,
++}
++impl PrivateFixture {
++    fn path(&self) -> &Path {
++        &self.control
++    }
++}
++
++fn fixture() -> Result<PrivateFixture> {
+     let root = private_fixture()?;
+     seed_registration(
+         root.path(),
+@@ -35,12 +47,22 @@
+     )?;
+     Ok(root)
+ }
+-fn private_fixture() -> Result<tempfile::TempDir> {
+-    Ok(match std::env::var_os("AIRK_PRIVATE_CENSUS_BASE") {
++fn private_fixture() -> Result<PrivateFixture> {
++    let owner = match std::env::var_os("AIRK_PRIVATE_CENSUS_BASE") {
+         Some(base) => tempfile::Builder::new()
+             .prefix("airk-catalog-upgrade-")
+             .tempdir_in(base)?,
+         None => tempfile::tempdir()?,
++    };
++    let control = owner.path().join("native-control");
++    ensure!(
++        !control.exists(),
++        "native fixture control child already exists"
++    );
++    airk_cli::local_ipc::prepare_root(&control)?;
++    Ok(PrivateFixture {
++        _owner: owner,
++        control,
+     })
+ }
+ fn seed_registration(root: &Path, source: String, data: String) -> Result<()> {
+@@ -114,7 +136,8 @@
+     let control = owner.path().join("control");
+     let source = owner.path().join("source");
+     let data = owner.path().join("data");
+-    for path in [&control, &source, &data] {
++    airk_cli::local_ipc::prepare_root(&control)?;
++    for path in [&source, &data] {
+         fs::create_dir(path)?;
+     }
+     let source = source.canonicalize()?;
+@@ -406,6 +429,10 @@
+     let binary = candidate();
+     for crossed in [false, true] {
+         let root = fixture()?;
++        // Validate the same existing native owner boundary as serve before
++        // testing upgrade/payload refusal; an ACL setup error must not mask it.
++        airk_cli::local_ipc::prepare_root(root.path())
++            .context("catalog fixture must satisfy native owner-only control admission")?;
+         let owner = CatalogUpgrade::acquire(root.path())?;
+         let identity = if crossed {
+             Sha256Digest::from_bytes([3; 32])

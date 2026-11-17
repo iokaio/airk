@@ -1,0 +1,2785 @@
+--- a/crates/airk-cli/src/lib.rs
++++ b/crates/airk-cli/src/lib.rs
+@@ -19,6 +19,7 @@
+ pub mod embedding_pool_protocol;
+ pub mod local_ipc;
+ mod native_admin_connections;
++mod reference_refresh_control;
+ /// Leaf Windows file-ACL check shared with the Explorer Assistance forwarder,
+ /// which must not depend on service or IPC protocol code.
+ #[cfg(windows)]
+--- a/crates/airk-cli/src/project_worker.rs
++++ b/crates/airk-cli/src/project_worker.rs
+@@ -668,6 +668,7 @@
+     )?;
+     // A staged participant starts as an unprivileged metadata observer. Only
+     // its actually claimed native job can attach a private split permit later.
++    let refresh_pending = registry.pending_reference_refresh(init.project)?;
+     let split_observer = registry
+         .catalog_active_split_for_binding(init.project)?
+         .map(|_| Kernel::open_existing_service_observer(&registration))
+@@ -681,6 +682,8 @@
+             .is_some_and(|observer| observer.require_unrestricted_read().is_err());
+     let kernel = if split_write_fenced {
+         split_observer.context("staged participant observer missing")?
++    } else if refresh_pending {
++        Kernel::open_existing_service_observer(&registration)?
+     } else {
+         Kernel::open_service_collection_for_diagnostics(
+             Path::new(&registration.root),
+@@ -710,7 +713,7 @@
+         kernel.service_rebuild_receipt()?
+     };
+     registry.recover_jobs_with_rebuild_receipt(&lease, receipt.as_ref())?;
+-    if !split_write_fenced {
++    if !split_write_fenced && !refresh_pending {
+         source_configuration::recover(&kernel, &mut registry, &lease, init.engine)?;
+     }
+     // A crash after the accepted Configure result settles but before catalog
+@@ -750,6 +753,7 @@
+     // Recovery is durable desired work, admitted by the service rather than an
+     // unaccounted startup replay. Failed recovery leaves the owner reachable.
+     if !split_write_fenced
++        && !refresh_pending
+         && kernel.service_recovery_required().unwrap_or(false)
+         && !registry.source_failure_blocked(init.project)?
+     {
+@@ -883,6 +887,7 @@
+                             .iter()
+                             .any(|reference| reference.job == job.id)
+                     });
++                let refresh_job=registry.configuration_work(job.id)?.is_some_and(|work|matches!(work.request.configuration,airk_core::service_configuration::ProjectConfiguration::RefreshReferences {..}));
+                 let mut automatic_settled = false;
+                 let mut verify_admission = None;
+                 let mut completed_maintenance = None;
+@@ -931,6 +936,9 @@
+                                 registry.record_configuration_result(&job_lease, job.id, &result)?;
+                                 source_completion = Some(prepared);
+                                 return Ok(JobOutcome::Succeeded { revision: None });
++                            }
++                            if matches!(work.request.configuration,airk_core::service_configuration::ProjectConfiguration::RefreshReferences {..}) {
++                                return crate::reference_refresh_control::execute(&kernel,&mut registry,&job_lease,job.id);
+                             }
+                             if work.request.prepare {
+                                 work.request.validate()?;
+@@ -1523,7 +1531,7 @@
+                         {
+                             registry.catalog_record_policy_job(policy.index_id, operation_id)?;
+                         }
+-                        if !split_job {
++                        if !split_job && !refresh_job {
+                             let _ = reconcile_semantic_setup(
+                                 &kernel,
+                                 &mut registry,
+--- /dev/null
++++ b/crates/airk-cli/src/reference_refresh_control.rs
+@@ -0,0 +1,188 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Native-only refresh admission and existing Configure-job completion.
++use airk_core::{
++    catalog_management::{CatalogEntity, CatalogItem},
++    catalog_refresh::{RefreshMode, RefreshSelection},
++    identity::Incarnation,
++    service::{JobOutcome, JobRecord, ProjectBinding, RequestKey, ScopedConnectRequest},
++    service_configuration::{ConfigurationRequest, ProjectConfiguration},
++};
++use airk_store::service::{ProjectLease, registry::ServiceRegistry};
++use anyhow::{Context, Result, ensure};
++
++fn selected(request: &ConfigurationRequest) -> Result<&RefreshSelection> {
++    request.validate()?;
++    ensure!(!request.prepare, "refresh never defers native preparation");
++    let ProjectConfiguration::RefreshReferences { selection } = &request.configuration else {
++        anyhow::bail!("native refresh selection missing");
++    };
++    ensure!(
++        selection.members.len() == 1,
++        "native refresh currently admits one exact selected member"
++    );
++    Ok(selection)
++}
++
++/// Reuse canonical authenticated host/grant/catalog/backing construction.
++/// This creates no grant, default preference, bearer credential or worker.
++fn qualify(
++    registry: &mut ServiceRegistry,
++    project: ProjectBinding,
++    request: &ConfigurationRequest,
++) -> Result<airk_kernel::Kernel> {
++    let selection = selected(request)?;
++    let member = &selection.members[0];
++    let scoped = ScopedConnectRequest {
++        schema: 1,
++        context_key: selection.selection.context_key,
++        namespace: selection.selection.namespace,
++        expected_catalog_revision: selection.selection.expected_catalog_revision,
++        grant_id: selection.selection.grant_id,
++        expected_grant_revision: selection.selection.expected_grant_revision,
++        index_id: member.index_id,
++        project_ids: selection.selection.project_ids.clone(),
++    };
++    let native = crate::catalog_coordinator::native_scoped_selection(registry, &scoped)?;
++    ensure!(
++        native.backing == project,
++        "refresh target differs from selected native backing"
++    );
++    let authority = crate::catalog_authority::build_catalog_read_authority(registry, &native)?;
++    let detail = registry.catalog_detail(
++        &CatalogEntity::Index {
++            id: member.index_id,
++        },
++        Some(scoped.expected_catalog_revision),
++    )?;
++    let Some(CatalogItem::Index(index)) = detail.item else {
++        anyhow::bail!("refresh index unavailable")
++    };
++    ensure!(index.backing.binding == project, "refresh backing changed");
++    let kernel = airk_kernel::Kernel::open_existing_service_observer(&index.backing)?;
++    let scoped_kernel = kernel.with_scoped_reads(authority.clone())?;
++    // Partial grants cannot authorize a broader fallback. Root/alias/profile
++    // metadata is read only after canonical full-index metadata admission.
++    scoped_kernel.qualify_reference_refresh(selection, &authority.sources)?;
++    kernel.validate_service_configuration(project, request)?;
++    let observed = kernel.inspect_service(project)?;
++    ensure!(
++        observed.source_state == airk_core::service_inspection::SourceState::Available
++            && observed.recovery_required == Some(false),
++        "refresh sources/recovery are not ready; preserve publication and review again"
++    );
++    Ok(kernel)
++}
++
++pub(crate) fn admit(
++    registry: &mut ServiceRegistry,
++    project: ProjectBinding,
++    caller: Incarnation,
++    key: &RequestKey,
++    request: &ConfigurationRequest,
++) -> Result<JobRecord> {
++    let selection = selected(request)?;
++    ensure!(
++        selection.caller == caller && selection.key == *key,
++        "refresh exact caller/key binding changed"
++    );
++    // Exact already-accepted work remains a dated receipt after later catalog
++    // changes. Store compares the complete immutable request before returning.
++    if registry.request_receipt(caller, key)?.0.is_none() {
++        qualify(registry, project, request)?;
++    }
++    registry.enqueue_native_reference_refresh(
++        project,
++        caller,
++        key,
++        request,
++        crate::runtime_pair::engine_identity()?,
++    )
++}
++
++/// Exact saved acknowledgment, independent of current/superseding grants,
++/// settings and engine. Missing/pruned evidence is unknown, never replay leave.
++pub(crate) fn receipt(
++    registry: &ServiceRegistry,
++    caller: Incarnation,
++    key: &RequestKey,
++) -> Result<airk_core::service::ControlResponse> {
++    let (job, expired) = registry.request_receipt(caller, key)?;
++    let (configuration, result) = if let Some(job) = &job {
++        let work = registry.configuration_work(job.id)?;
++        if let Some(work) = &work {
++            let selection = selected(&work.request)?;
++            ensure!(
++                selection.caller == caller && selection.key == *key,
++                "saved refresh receipt belongs to a different intent"
++            );
++        }
++        ensure!(
++            job.kind == airk_core::service::JobKind::Configure,
++            "saved key is not a refresh configuration job"
++        );
++        let result = if work.is_some() {
++            registry.configuration_result(job.id)?
++        } else {
++            None
++        };
++        (work, result)
++    } else {
++        (None, None)
++    };
++    Ok(
++        airk_core::service::ControlResponse::ReferenceRefreshReceipt {
++            job,
++            configuration,
++            result,
++            expired,
++        },
++    )
++}
++
++pub(crate) fn execute(
++    kernel: &airk_kernel::Kernel,
++    registry: &mut ServiceRegistry,
++    lease: &ProjectLease,
++    job: airk_core::identity::Sha256Digest,
++) -> Result<JobOutcome> {
++    let project = registry.job(job)?.project;
++    let work = registry
++        .configuration_work(job)?
++        .context("accepted refresh work missing")?;
++    ensure!(
++        work.engine == crate::runtime_pair::engine_identity()?,
++        "refresh engine changed; new review required"
++    );
++    let selection = selected(&work.request)?;
++    // A queued operation rechecks current grant/context/backing before its
++    // first effect; a changed grant does not silently expand permission.
++    qualify(registry, project, &work.request)?;
++    let before = selection.members[0].original_publication;
++
++    let report = kernel.refresh_service_references(project, &work.request)?;
++    let updated = kernel.refresh_service_snapshot()?;
++    let after = updated.status_summary()?;
++    let publication: airk_core::identity::RevisionToken =
++        serde_json::from_value(after["publication"]["token"].clone())?;
++    // Complete native output is saved or the job remains failed/unknown. Never
++    // truncate to fit the result slot or attach new hashes to original snippets.
++    let result = serde_json::json!({"schema":"airk.reference-refresh-result/1",
++        "selection_digest":selection.identity()?,"original_query_digest":selection.original_query_digest,
++        "effective_mode":selection.mode,"effective_scope":if selection.mode==RefreshMode::SelectedOnly {"selected_sources"} else {"whole_index_explicitly_reviewed"},
++        "before_publication":before,"after_publication":publication,
++        "report":report,"status":after,"requery_executed":false});
++    airk_core::index_catalog::encoded_size(
++        &result,
++        airk_core::service_configuration::MAX_CONFIGURATION_BYTES,
++    )?;
++    registry.record_configuration_result(lease, job, &result)?;
++    let state = after["semantic_readiness"]["state"].as_str();
++    registry.set_background_pending(
++        lease,
++        airk_core::service::JobKind::Vectors,
++        matches!(state, Some("pending" | "partial")),
++    )?;
++    Ok(JobOutcome::Succeeded {
++        revision: Some(publication),
++    })
++}
+--- a/crates/airk-cli/src/service_management.rs
++++ b/crates/airk-cli/src/service_management.rs
+@@ -363,6 +363,7 @@
+             | ControlMethod::Job { .. }
+             | ControlMethod::RequestReceipt { .. }
+             | ControlMethod::ConfigurationResult { .. }
++            | ControlMethod::ReferenceRefreshReceipt { .. }
+             | ControlMethod::Plan { .. }
+             | ControlMethod::PlanItems { .. }
+             | ControlMethod::Projects { .. }
+@@ -945,6 +946,9 @@
+         } => ControlResponse::Events {
+             page: registry.events(project, cursor.as_ref(), limit)?,
+         },
++        ControlMethod::ReferenceRefreshReceipt { caller, key } => {
++            crate::reference_refresh_control::receipt(registry, caller, &key)?
++        }
+         ControlMethod::ConfigurationResult { id } => ControlResponse::Configuration {
+             job: registry.job(id)?,
+             result: registry.configuration_result(id)?,
+@@ -955,13 +959,20 @@
+             key,
+             request,
+         } => ControlResponse::Job {
+-            job: registry.enqueue_configuration(
+-                project,
+-                caller,
+-                &key,
+-                &request,
+-                crate::runtime_pair::engine_identity()?,
+-            )?,
++            job: if matches!(
++                request.configuration,
++                airk_core::service_configuration::ProjectConfiguration::RefreshReferences { .. }
++            ) {
++                crate::reference_refresh_control::admit(registry, project, caller, &key, &request)?
++            } else {
++                registry.enqueue_configuration(
++                    project,
++                    caller,
++                    &key,
++                    &request,
++                    crate::runtime_pair::engine_identity()?,
++                )?
++            },
+         },
+         ControlMethod::Enqueue {
+             project,
+--- /dev/null
++++ b/crates/airk-core/src/catalog_refresh.rs
+@@ -0,0 +1,296 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Inert refresh intent. Native review, current grants and durable admission are
++//! independently required; copied evidence never grants mutation authority.
++use crate::{
++    identity::{Incarnation, RevisionToken, Sha256Digest, framed_digest},
++    index_catalog::{IndexId, SourceRootId, encoded_size, relative_path, unique_bounded},
++    service::{CombinedConnectRequest, RequestKey},
++};
++use anyhow::{Result, ensure};
++use serde::{Deserialize, Serialize};
++use std::collections::BTreeSet;
++
++pub const MAX_REFRESH_MEMBERS: usize = 8;
++pub const MAX_REFRESH_SOURCES: usize = 64;
++// Leave configuration envelope space below MAX_CONFIGURATION_BYTES=16384.
++// Admission still measures the complete containing ConfigurationWork/Request.
++pub const MAX_REFRESH_SELECTION_BYTES: usize = 12 << 10;
++
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct RefreshSource {
++    pub source_root_id: SourceRootId,
++    pub source_relative_path: String,
++    /// Reviewed original locator; matched to canonical native descriptor before admission.
++    pub canonical_root: String,
++    pub indexed_hash: Sha256Digest,
++}
++
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct RefreshMember {
++    pub index_id: IndexId,
++    pub original_publication: RevisionToken,
++    pub sources: Vec<RefreshSource>,
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum RefreshMode {
++    SelectedOnly,
++    /// Explicit broader intent only. The native preview must independently
++    /// disclose its exact scope/cost and prove the current grant covers it.
++    FullReconcileReviewed,
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum RefreshFallbackReason {
++    NoCurrentIndex,
++    PendingRecovery,
++    ConfigurationChanged,
++    ExtractorChanged,
++    IncompleteScan,
++    DirectorySelection,
++    ControlInput,
++    DependencyInput,
++    UnqualifiedControlProvenance,
++}
++
++/// The actual worker must produce this typed refusal before starting broader
++/// discovery/capture/publication if a selected-only review has become unsafe.
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct RefreshReviewRequired {
++    pub reasons: Vec<RefreshFallbackReason>,
++}
++impl std::fmt::Display for RefreshReviewRequired {
++    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        out.write_str("refresh_scope_changed_review_required")
++    }
++}
++impl std::error::Error for RefreshReviewRequired {}
++
++pub fn require_reviewed_refresh_mode(
++    mode: RefreshMode,
++    reasons: &[RefreshFallbackReason],
++) -> Result<()> {
++    unique_bounded(reasons, 9)?;
++    if mode == RefreshMode::SelectedOnly && !reasons.is_empty() {
++        return Err(RefreshReviewRequired {
++            reasons: reasons.to_vec(),
++        }
++        .into());
++    }
++    Ok(())
++}
++
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct RefreshSelection {
++    pub schema: u32,
++    pub caller: Incarnation,
++    pub key: RequestKey,
++    pub original_result_digest: Sha256Digest,
++    pub original_evidence_selection_digest: Sha256Digest,
++    /// Binds the complete saved canonical query, including verification and
++    /// semantic policy. The client retains that query; no source text in IPC.
++    pub original_query_digest: Sha256Digest,
++    pub selection: CombinedConnectRequest,
++    pub mode: RefreshMode,
++    /// Explicit refreshed subset; the original result may have other members.
++    pub members: Vec<RefreshMember>,
++}
++impl RefreshSelection {
++    pub fn validate(&self) -> Result<()> {
++        ensure!(self.schema == 1, "unsupported refresh selection schema");
++        self.selection.validate()?;
++        ensure!(
++            self.key.namespace == self.selection.namespace && self.key.epoch > 0,
++            "refresh key namespace/epoch does not match reviewed selection"
++        );
++        ensure!(!self.members.is_empty(), "empty selected refresh");
++        let selected = self.selection.index_ids.as_ref().ok_or_else(|| {
++            anyhow::anyhow!("refresh requires explicit original member index identities")
++        })?;
++        unique_bounded(
++            &self
++                .members
++                .iter()
++                .map(|member| member.index_id)
++                .collect::<Vec<_>>(),
++            MAX_REFRESH_MEMBERS,
++        )?;
++        let mut total = 0usize;
++        for member in &self.members {
++            ensure!(
++                selected.contains(&member.index_id),
++                "foreign refresh member"
++            );
++            ensure!(
++                member.original_publication.generation > 0,
++                "refresh requires an indexed publication"
++            );
++            ensure!(
++                !member.sources.is_empty(),
++                "refresh member has no selected sources"
++            );
++            total = total
++                .checked_add(member.sources.len())
++                .ok_or_else(|| anyhow::anyhow!("refresh source count overflow"))?;
++            ensure!(
++                total <= MAX_REFRESH_SOURCES,
++                "refresh source count exceeds review budget"
++            );
++            let mut paths = BTreeSet::new();
++            for source in &member.sources {
++                relative_path(&source.source_relative_path, false)?;
++                ensure!(
++                    source.canonical_root.len() <= 32768
++                        && std::path::Path::new(&source.canonical_root).is_absolute()
++                        && !source.canonical_root.chars().any(char::is_control),
++                    "invalid reviewed source root locator"
++                );
++                ensure!(
++                    !source.source_relative_path.chars().any(char::is_control),
++                    "control character in refresh source path"
++                );
++                ensure!(
++                    paths.insert((source.source_root_id, &source.source_relative_path)),
++                    "duplicate refresh source binding"
++                );
++            }
++        }
++        encoded_size(self, MAX_REFRESH_SELECTION_BYTES)?;
++        Ok(())
++    }
++    pub fn identity(&self) -> Result<Sha256Digest> {
++        self.validate()?;
++        Ok(framed_digest(
++            b"airk/catalog-refresh-selection/1",
++            &[&serde_json::to_vec(self)?],
++        ))
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::index_catalog::{CatalogRevision, GrantId, QueryProjectId};
++    fn selection() -> RefreshSelection {
++        let incarnation = Incarnation::from_bytes([1; 16]);
++        let digest = Sha256Digest::from_bytes([2; 32]);
++        let index = IndexId::from_identity(incarnation);
++        RefreshSelection {
++            schema: 1,
++            caller: incarnation,
++            key: RequestKey {
++                namespace: incarnation,
++                epoch: 1,
++                nonce: incarnation,
++            },
++            original_result_digest: digest,
++            original_evidence_selection_digest: digest,
++            original_query_digest: digest,
++            selection: CombinedConnectRequest {
++                schema: 1,
++                context_key: digest,
++                namespace: incarnation,
++                expected_catalog_revision: CatalogRevision::INITIAL,
++                grant_id: GrantId::from_identity(incarnation),
++                expected_grant_revision: CatalogRevision::INITIAL,
++                project_ids: vec![QueryProjectId::from_identity(incarnation)],
++                index_ids: Some(vec![index]),
++            },
++            mode: RefreshMode::SelectedOnly,
++            members: vec![RefreshMember {
++                index_id: index,
++                original_publication: RevisionToken {
++                    incarnation,
++                    generation: 1,
++                    revision: digest,
++                },
++                sources: vec![RefreshSource {
++                    source_root_id: SourceRootId::from_identity(incarnation),
++                    source_relative_path: "api/policy.md".into(),
++                    canonical_root: std::env::temp_dir().to_string_lossy().into_owned(),
++                    indexed_hash: digest,
++                }],
++            }],
++        }
++    }
++    #[test]
++    fn refresh_digest_binds_original_query_evidence_grant_member_and_mode() -> Result<()> {
++        let original = selection();
++        let digest = original.identity()?;
++        let mut changed = original.clone();
++        changed.original_query_digest = Sha256Digest::from_bytes([3; 32]);
++        assert_ne!(digest, changed.identity()?);
++        changed = original.clone();
++        changed.selection.context_key = Sha256Digest::from_bytes([3; 32]);
++        assert_ne!(digest, changed.identity()?);
++        changed = original.clone();
++        changed.members[0].sources[0].indexed_hash = Sha256Digest::from_bytes([3; 32]);
++        assert_ne!(digest, changed.identity()?);
++        changed = original;
++        changed.mode = RefreshMode::FullReconcileReviewed;
++        assert_ne!(digest, changed.identity()?);
++        Ok(())
++    }
++    #[test]
++    fn refresh_rejects_foreign_duplicate_traversal_and_unbounded_selections() {
++        let mut changed = selection();
++        changed.members[0].index_id = IndexId::from_identity(Incarnation::from_bytes([9; 16]));
++        assert!(changed.validate().is_err());
++        changed = selection();
++        let duplicate = changed.members[0].sources[0].clone();
++        changed.members[0].sources.push(duplicate);
++        assert!(changed.validate().is_err());
++        changed = selection();
++        changed.members[0].sources[0].source_relative_path = "../outside".into();
++        assert!(changed.validate().is_err());
++        changed = selection();
++        changed.selection.index_ids = None;
++        assert!(changed.validate().is_err());
++        changed = selection();
++        changed.members[0].sources = (0..65)
++            .map(|n| RefreshSource {
++                source_root_id: SourceRootId::from_identity(Incarnation::from_bytes([1; 16])),
++                source_relative_path: format!("api/{n}.md"),
++                canonical_root: std::env::temp_dir().to_string_lossy().into_owned(),
++                indexed_hash: Sha256Digest::from_bytes([2; 32]),
++            })
++            .collect();
++        assert!(changed.validate().is_err());
++        changed = selection();
++        changed.members[0].sources = (0..4)
++            .map(|n| RefreshSource {
++                source_root_id: SourceRootId::from_identity(Incarnation::from_bytes([1; 16])),
++                source_relative_path: format!("{n}{}", "a".repeat(4095)),
++                canonical_root: std::env::temp_dir().to_string_lossy().into_owned(),
++                indexed_hash: Sha256Digest::from_bytes([2; 32]),
++            })
++            .collect();
++        // Individually valid paths/count; complete serialized request exceeds
++        // its byte cap. Admission must refuse rather than trim the selection.
++        assert!(changed.validate().is_err());
++    }
++    #[test]
++    fn selected_only_refuses_fallback_without_silently_escalating() -> Result<()> {
++        let reasons = [
++            RefreshFallbackReason::ConfigurationChanged,
++            RefreshFallbackReason::PendingRecovery,
++        ];
++        let error = require_reviewed_refresh_mode(RefreshMode::SelectedOnly, &reasons).unwrap_err();
++        assert_eq!(
++            error
++                .downcast_ref::<RefreshReviewRequired>()
++                .unwrap()
++                .reasons,
++            reasons
++        );
++        require_reviewed_refresh_mode(RefreshMode::FullReconcileReviewed, &reasons)?;
++        assert!(require_reviewed_refresh_mode(RefreshMode::SelectedOnly, &[]).is_ok());
++        Ok(())
++    }
++}
+--- a/crates/airk-core/src/lib.rs
++++ b/crates/airk-core/src/lib.rs
+@@ -8,6 +8,7 @@
+ pub mod catalog_host;
+ pub mod catalog_management;
+ pub mod catalog_policy;
++pub mod catalog_refresh;
+ pub mod catalog_setup;
+ pub mod catalog_source_change;
+ pub mod catalog_source_draft;
+@@ -50,6 +51,7 @@
+ pub mod service_progress;
+ pub mod service_resources;
+ pub mod service_watch;
++pub mod source_control;
+ pub mod source_observations;
+ pub mod source_policy;
+ pub mod usage;
+--- a/crates/airk-core/src/service.rs
++++ b/crates/airk-core/src/service.rs
+@@ -323,6 +323,11 @@
+     },
+     ConfigurationResult {
+         id: Sha256Digest,
++    },
++    /// Complete exact-key historical refresh proof; never starts or retries work.
++    ReferenceRefreshReceipt {
++        caller: Incarnation,
++        key: RequestKey,
+     },
+     Enqueue {
+         project: ProjectBinding,
+@@ -461,6 +466,12 @@
+ #[derive(Serialize, Deserialize)]
+ #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+ pub enum ControlResponse {
++    ReferenceRefreshReceipt {
++        job: Option<JobRecord>,
++        configuration: Option<crate::service_configuration::ConfigurationWork>,
++        result: Option<serde_json::Value>,
++        expired: bool,
++    },
+     CombinedDeliveryValidated {
+         receipt: CombinedDeliveryReceipt,
+     },
+--- a/crates/airk-core/src/service_configuration.rs
++++ b/crates/airk-core/src/service_configuration.rs
+@@ -28,6 +28,11 @@
+ #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+ pub enum ProjectConfiguration {
+     Unregister,
++    /// Existing authenticated native management only; generic Store admission
++    /// rejects this variant. No evidence/MCP read can construct accepted work.
++    RefreshReferences {
++        selection: Box<crate::catalog_refresh::RefreshSelection>,
++    },
+     PrepareDerivedCleanup,
+     DeleteDerived {
+         preview: Sha256Digest,
+@@ -121,6 +126,7 @@
+ impl ProjectConfiguration {
+     pub fn validate(&self) -> Result<()> {
+         match self {
++            Self::RefreshReferences { selection } => selection.validate()?,
+             Self::ImportUsage { input }
+             | Self::ExtractionPolicy { input }
+             | Self::ScanLimits { input }
+--- /dev/null
++++ b/crates/airk-core/src/source_control.rs
+@@ -0,0 +1,79 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Bounded retained control witnesses, never an authorization credential.
++use crate::identity::{Sha256Digest, framed_digest};
++use anyhow::{Result, ensure};
++use serde::{Deserialize, Serialize};
++use std::collections::BTreeMap;
++
++pub const MAX_CONTROL_INPUTS: usize = 4096;
++pub const MAX_CONTROL_INPUT_BYTES: u64 = 1 << 20;
++pub const MAX_CONTROL_BASELINE_BYTES: usize = 1 << 20;
++pub const CONTROL_BASELINE_RESOURCE: &str = "source-controls/1";
++
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
++pub enum ControlInputState {
++    File { sha256: Sha256Digest, bytes: u64 },
++    Absent,
++    Directory,
++}
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct SourceControlBaseline {
++    pub schema: u32,
++    /// Complete serialized CollectionConfiguration digest, including future
++    /// P11 retained-profile fields, roots, permanent policy and model identity.
++    pub configuration: Sha256Digest,
++    /// Complete native configuration-input identity captured for this scan.
++    pub settings: Sha256Digest,
++    /// Eligibility implementation version + canonical source roots + actual
++    /// computed global control locators/CWD/home, not caller-selected values.
++    pub contexts: BTreeMap<String, Sha256Digest>,
++    pub inputs: BTreeMap<String, ControlInputState>,
++}
++impl SourceControlBaseline {
++    pub fn validate(&self) -> Result<()> {
++        ensure!(
++            self.schema == 1 && !self.contexts.is_empty() && self.contexts.len() <= 17,
++            "unsupported source control baseline"
++        );
++        ensure!(
++            self.inputs.len() <= MAX_CONTROL_INPUTS,
++            "source control entry budget exceeded"
++        );
++        let mut bytes = 0u64;
++        for (path, state) in &self.inputs {
++            ensure!(
++                !path.is_empty() && path.len() <= 32768 && !path.chars().any(char::is_control),
++                "invalid retained control locator"
++            );
++            if let ControlInputState::File {
++                bytes: captured, ..
++            } = state
++            {
++                bytes = bytes
++                    .checked_add(*captured)
++                    .ok_or_else(|| anyhow::anyhow!("source control byte overflow"))?;
++                ensure!(
++                    bytes <= MAX_CONTROL_INPUT_BYTES,
++                    "source control byte budget exceeded"
++                );
++            }
++        }
++        for root in self.contexts.keys() {
++            ensure!(
++                !root.is_empty() && root.len() <= 32768 && !root.chars().any(char::is_control),
++                "invalid retained control context locator"
++            );
++        }
++        crate::index_catalog::encoded_size(self, MAX_CONTROL_BASELINE_BYTES)?;
++        Ok(())
++    }
++    pub fn identity(&self) -> Result<Sha256Digest> {
++        self.validate()?;
++        Ok(framed_digest(
++            b"airk/source-controls/1",
++            &[&serde_json::to_vec(self)?],
++        ))
++    }
++}
+--- /dev/null
++++ b/crates/airk-ingest/src/control_snapshot.rs
+@@ -0,0 +1,398 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Actual matcher-input ledger. Only a completed scanner may seal it; JSON
++//! baseline bytes become trusted only through an authenticated Current resource.
++use airk_core::{
++    identity::Sha256Digest,
++    source_control::{
++        ControlInputState, MAX_CONTROL_INPUT_BYTES, MAX_CONTROL_INPUTS, SourceControlBaseline,
++    },
++};
++use anyhow::{Result, ensure};
++use sha2::{Digest, Sha256};
++use std::{collections::BTreeMap, path::Path, sync::Mutex};
++
++#[derive(Default)]
++struct State {
++    contexts: BTreeMap<String, Sha256Digest>,
++    inputs: BTreeMap<String, ControlInputState>,
++    bytes: u64,
++    descriptor_bytes: usize,
++    failed: bool,
++}
++/// One actual scan, shared across root/alias matchers and header-input capture.
++/// Failure latches for the entire scan. A fresh scan creates a fresh ledger.
++pub struct ControlSnapshot {
++    state: Mutex<State>,
++    expected: Option<SourceControlBaseline>,
++}
++impl ControlSnapshot {
++    pub fn capture() -> Self {
++        Self {
++            state: Mutex::new(State::default()),
++            expected: None,
++        }
++    }
++    pub fn revalidate(expected: SourceControlBaseline) -> Result<Self> {
++        expected.validate()?;
++        Ok(Self {
++            state: Mutex::new(State::default()),
++            expected: Some(expected),
++        })
++    }
++    /// Re-read exactly the authenticated dependency set before selected work
++    /// and again before publication. No directory enumeration or document read.
++    pub fn revalidate_inputs(&self) -> Result<()> {
++        let outcome = self.revalidate_inputs_once();
++        if outcome.is_err() {
++            self.state
++                .lock()
++                .map_err(|_| anyhow::anyhow!("control snapshot unavailable"))?
++                .failed = true;
++        }
++        outcome
++    }
++    fn revalidate_inputs_once(&self) -> Result<()> {
++        let expected = self
++            .expected
++            .as_ref()
++            .ok_or_else(|| anyhow::anyhow!("control revalidation has no authenticated baseline"))?;
++        for root in expected.contexts.keys() {
++            self.record_environment(Path::new(root))?;
++        }
++        for (path, value) in &expected.inputs {
++            let path = Path::new(path);
++            qualify_locator(path, matches!(value, ControlInputState::Directory))?;
++            match value {
++                ControlInputState::File { .. } => {
++                    let bytes = crate::read_protected_path(path, 64 << 10, false)?;
++                    self.file(path, &bytes)?;
++                }
++                ControlInputState::Absent => {
++                    ensure!(
++                        matches!(std::fs::symlink_metadata(path), Err(error) if error.kind()==std::io::ErrorKind::NotFound),
++                        "control absence changed"
++                    );
++                    self.absent_qualified(path)?;
++                }
++                ControlInputState::Directory => {
++                    let metadata = std::fs::symlink_metadata(path)?;
++                    ensure!(
++                        metadata.is_dir() && !metadata.file_type().is_symlink(),
++                        "control directory changed"
++                    );
++                    #[cfg(windows)]
++                    {
++                        use std::os::windows::fs::MetadataExt;
++                        ensure!(
++                            metadata.file_attributes() & 0x400 == 0,
++                            "control directory redirected"
++                        );
++                    }
++                    self.directory_qualified(path)?;
++                }
++            }
++        }
++        Ok(())
++    }
++    /// This is computed by the same owner that actually selects global files.
++    /// Hashing these locators does not itself prove their content or authority.
++    pub(crate) fn record_environment(&self, root: &Path) -> Result<()> {
++        #[allow(deprecated)]
++        let home = std::env::home_dir();
++        let mut fields = vec![
++            Some(root.to_path_buf()),
++            Some(std::env::current_dir()?),
++            home,
++        ];
++        for name in ["GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "XDG_CONFIG_HOME"] {
++            fields.push(std::env::var_os(name).map(std::path::PathBuf::from));
++        }
++        let fields: Vec<Option<&str>> = fields
++            .iter()
++            .map(|path| {
++                path.as_ref()
++                    .map(|path| {
++                        path.to_str()
++                            .ok_or_else(|| anyhow::anyhow!("non-UTF8 control context"))
++                    })
++                    .transpose()
++            })
++            .collect::<Result<_>>()?;
++        let digest = airk_core::identity::framed_digest(
++            b"airk/protected-control-environment/1",
++            &[&serde_json::to_vec(&fields)?],
++        );
++        self.context(
++            root.to_str()
++                .ok_or_else(|| anyhow::anyhow!("non-UTF8 root context"))?,
++            digest,
++        )
++    }
++    fn record(&self, path: &Path, value: ControlInputState) -> Result<()> {
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| anyhow::anyhow!("control snapshot unavailable"))?;
++        ensure!(
++            !state.failed,
++            "control snapshot already refused; fresh review required"
++        );
++        let outcome = (|| -> Result<()> {
++            let path = path
++                .to_str()
++                .ok_or_else(|| anyhow::anyhow!("non-UTF8 control locator"))?;
++            ensure!(
++                path.len() <= 32768 && !path.chars().any(char::is_control),
++                "control locator exceeds bound"
++            );
++            if let Some(expected) = &self.expected {
++                ensure!(
++                    expected.inputs.get(path) == Some(&value),
++                    "control input changed or was not in the authenticated baseline"
++                );
++            }
++            if let Some(prior) = state.inputs.get(path) {
++                ensure!(*prior == value, "control input changed within snapshot");
++                return Ok(());
++            }
++            ensure!(
++                state.inputs.len() < MAX_CONTROL_INPUTS,
++                "control snapshot entry budget exceeded"
++            );
++            let captured = match value {
++                ControlInputState::File { bytes, .. } => bytes,
++                _ => 0,
++            };
++            let next = state
++                .bytes
++                .checked_add(captured)
++                .ok_or_else(|| anyhow::anyhow!("control snapshot byte overflow"))?;
++            ensure!(
++                next <= MAX_CONTROL_INPUT_BYTES,
++                "control snapshot byte budget exceeded"
++            );
++            let descriptor = serde_json::to_vec(&(path, &value))?
++                .len()
++                .checked_add(2)
++                .ok_or_else(|| anyhow::anyhow!("control descriptor overflow"))?;
++            let descriptor_total = state
++                .descriptor_bytes
++                .checked_add(descriptor)
++                .ok_or_else(|| anyhow::anyhow!("control descriptor overflow"))?;
++            ensure!(
++                descriptor_total
++                    <= airk_core::source_control::MAX_CONTROL_BASELINE_BYTES.saturating_sub(512),
++                "control descriptor budget exceeded"
++            );
++            state.bytes = next;
++            state.descriptor_bytes = descriptor_total;
++            state.inputs.insert(path.into(), value);
++            Ok(())
++        })();
++        if outcome.is_err() {
++            state.failed = true;
++        }
++        outcome
++    }
++    /// Call only with bytes returned by the existing protected reader and used
++    /// by the actual matcher/header selector. Never re-open them just to record.
++    pub(crate) fn file(&self, path: &Path, bytes: &[u8]) -> Result<()> {
++        self.record(
++            path,
++            ControlInputState::File {
++                sha256: Sha256Digest::from_bytes(Sha256::digest(bytes).into()),
++                bytes: bytes.len() as u64,
++            },
++        )
++    }
++    /// Caller first qualifies the missing locator with the existing native
++    /// no-follow/name-boundary reader. NotFound alone is not this proof.
++    pub(crate) fn absent_qualified(&self, path: &Path) -> Result<()> {
++        let outcome = (|| -> Result<()> {
++            qualify_locator(path, false)?;
++            ensure!(
++                crate::source_read::missing_protected_path(path)?,
++                "control absence changed or unqualified"
++            );
++            self.record(path, ControlInputState::Absent)
++        })();
++        if outcome.is_err() {
++            self.state
++                .lock()
++                .map_err(|_| anyhow::anyhow!("control snapshot unavailable"))?
++                .failed = true;
++        }
++        outcome
++    }
++    /// Used for an actual qualified .git directory marker, not directory
++    /// inventory identity; the relevant info/exclude is recorded separately.
++    pub(crate) fn directory_qualified(&self, path: &Path) -> Result<()> {
++        self.record(path, ControlInputState::Directory)
++    }
++    pub(crate) fn context(&self, root: &str, digest: Sha256Digest) -> Result<()> {
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| anyhow::anyhow!("control snapshot unavailable"))?;
++        ensure!(!state.failed, "control snapshot already refused");
++        let outcome = (|| -> Result<()> {
++            ensure!(
++                !root.is_empty() && root.len() <= 32768 && !root.chars().any(char::is_control),
++                "control context locator exceeds bound"
++            );
++            if let Some(expected) = &self.expected {
++                ensure!(
++                    expected.contexts.get(root) == Some(&digest),
++                    "control locator/environment context changed"
++                );
++            }
++            if let Some(prior) = state.contexts.get(root) {
++                ensure!(*prior == digest, "control context changed within scan");
++            } else {
++                ensure!(
++                    state.contexts.len() < 17,
++                    "control context root budget exceeded"
++                );
++                let descriptor = serde_json::to_vec(&(root, digest))?
++                    .len()
++                    .checked_add(2)
++                    .ok_or_else(|| anyhow::anyhow!("control context descriptor overflow"))?;
++                let descriptor_total = state
++                    .descriptor_bytes
++                    .checked_add(descriptor)
++                    .ok_or_else(|| anyhow::anyhow!("control context descriptor overflow"))?;
++                ensure!(
++                    descriptor_total
++                        <= airk_core::source_control::MAX_CONTROL_BASELINE_BYTES
++                            .saturating_sub(512),
++                    "control descriptor budget exceeded"
++                );
++                state.descriptor_bytes = descriptor_total;
++                state.contexts.insert(root.into(), digest);
++            }
++            Ok(())
++        })();
++        if outcome.is_err() {
++            state.failed = true;
++        }
++        outcome
++    }
++    /// Scanner calls only after successful COMPLETE discovery and extraction.
++    /// Ordinary/untracked or failed/progressive partial scans never call this.
++    pub fn seal_complete(
++        &self,
++        configuration: Sha256Digest,
++        settings: Sha256Digest,
++    ) -> Result<SourceControlBaseline> {
++        let state = self
++            .state
++            .lock()
++            .map_err(|_| anyhow::anyhow!("control snapshot unavailable"))?;
++        ensure!(!state.failed, "cannot seal refused control snapshot");
++        let baseline = SourceControlBaseline {
++            schema: 1,
++            configuration,
++            settings,
++            contexts: state.contexts.clone(),
++            inputs: state.inputs.clone(),
++        };
++        baseline.validate()?;
++        if let Some(expected) = &self.expected {
++            ensure!(
++                baseline == *expected,
++                "control revalidation did not account for every saved input/context"
++            );
++        }
++        Ok(baseline)
++    }
++}
++
++/// Qualify every existing ancestor without following a redirect. Missing
++/// suffixes are allowed only as an absence observation, rechecked before commit.
++pub(crate) fn qualify_locator(path: &Path, directory: bool) -> Result<()> {
++    ensure!(path.is_absolute(), "control locator is not absolute");
++    let anchor = path
++        .ancestors()
++        .last()
++        .ok_or_else(|| anyhow::anyhow!("control locator has no root"))?;
++    let relative = path
++        .strip_prefix(anchor)?
++        .to_str()
++        .ok_or_else(|| anyhow::anyhow!("non-UTF8 control locator"))?
++        .replace('\\', "/");
++    crate::native_name_boundary::qualify(anchor, &relative, directory)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn actual_changed_capture_latches_and_requires_fresh_snapshot() -> Result<()> {
++        let directory = tempfile::tempdir()?;
++        let path = directory.path().join(".airkignore");
++        std::fs::write(&path, b"first\n")?;
++        let captured = crate::source_read::read(directory.path(), &path, 65536, 65537)?;
++        let snapshot = ControlSnapshot::capture();
++        snapshot.context("root", Sha256Digest::from_bytes([1; 32]))?;
++        snapshot.file(&path, &captured)?;
++        let baseline = snapshot.seal_complete(
++            Sha256Digest::from_bytes([2; 32]),
++            Sha256Digest::from_bytes([3; 32]),
++        )?;
++        std::fs::write(&path, b"second\n")?;
++        let changed = crate::source_read::read(directory.path(), &path, 65536, 65537)?;
++        let recheck = ControlSnapshot::revalidate(baseline)?;
++        assert!(recheck.file(&path, &changed).is_err());
++        std::fs::write(&path, b"first\n")?;
++        assert!(
++            recheck.file(&path, &captured).is_err(),
++            "failure must remain latched after restoration"
++        );
++        let fresh = ControlSnapshot::capture();
++        fresh.context("root", Sha256Digest::from_bytes([1; 32]))?;
++        fresh.file(&path, &captured)?;
++        assert!(
++            fresh
++                .seal_complete(
++                    Sha256Digest::from_bytes([2; 32]),
++                    Sha256Digest::from_bytes([3; 32])
++                )
++                .is_ok()
++        );
++        Ok(())
++    }
++    #[test]
++    fn complete_revalidation_requires_absence_context_and_every_control() -> Result<()> {
++        let directory = tempfile::tempdir()?;
++        let absent = directory.path().join("absent");
++        let original = ControlSnapshot::capture();
++        original.context("root", Sha256Digest::from_bytes([1; 32]))?;
++        original.file(Path::new("present"), b"rules")?;
++        original.absent_qualified(&absent)?;
++        let baseline = original.seal_complete(
++            Sha256Digest::from_bytes([2; 32]),
++            Sha256Digest::from_bytes([3; 32]),
++        )?;
++        let current = ControlSnapshot::revalidate(baseline.clone())?;
++        current.context("root", Sha256Digest::from_bytes([1; 32]))?;
++        current.file(Path::new("present"), b"rules")?;
++        assert!(
++            current
++                .seal_complete(baseline.configuration, baseline.settings)
++                .is_err(),
++            "missing absent probe is not complete"
++        );
++        current.absent_qualified(&absent)?;
++        assert_eq!(
++            current.seal_complete(baseline.configuration, baseline.settings)?,
++            baseline
++        );
++        assert!(current.file(Path::new("new-control"), b"rules").is_err());
++        assert!(
++            current
++                .seal_complete(baseline.configuration, baseline.settings)
++                .is_err()
++        );
++        Ok(())
++    }
++}
+--- a/crates/airk-ingest/src/lib.rs
++++ b/crates/airk-ingest/src/lib.rs
+@@ -21,6 +21,7 @@
+ mod extraction_jobs;
+ mod extraction_pool;
+ pub use extraction_pool::ExtractionExecution;
++pub mod control_snapshot;
+ pub mod header_context;
+ mod host_components;
+ mod host_html;
+@@ -727,6 +728,52 @@
+     )
+ }
+ 
++/// Native reviewed refresh only. All actual ignore inputs use protected capture;
++/// absent/unsupported policy/configuration refuses qualification before scanning.
++#[allow(clippy::too_many_arguments)]
++pub fn scan_payloads_with_optional_control_snapshot(
++    root: &Path,
++    data_dir: &Path,
++    previous: &Snapshot,
++    roots: &BTreeMap<String, String>,
++    limits: ScanLimits,
++    policy: &adapters::profile::ExtractionPolicy,
++    full_reindex: bool,
++    execution: ExtractionExecution,
++    paths: Option<&std::collections::BTreeSet<String>>,
++    source_policy: Option<&airk_core::source_policy::SourcePolicy>,
++    controls: Option<std::sync::Arc<control_snapshot::ControlSnapshot>>,
++    lookup: impl FnMut(observations::ReuseRequest<'_>) -> Result<Option<observations::VerifiedReuse>>,
++    emit: impl FnMut(
++        &airk_core::extraction::ExtractionProfile,
++        &Artifact,
++        &[u8],
++        Option<&airk_core::extraction::ExtractionPayload>,
++    ) -> Result<Artifact>,
++) -> Result<(Snapshot, IndexReport, observations::ScanObservation)> {
++    ensure!(
++        controls.is_none() || policy.declared_configurations().is_empty(),
++        "tracked refresh requires reviewed full fallback for declared extraction dependencies"
++    );
++    limits.validate()?;
++    execution.validate()?;
++    scan_observed_profiled_controlled(
++        root,
++        data_dir,
++        previous,
++        roots,
++        limits,
++        policy,
++        full_reindex,
++        execution,
++        paths,
++        source_policy,
++        controls,
++        lookup,
++        emit,
++    )
++}
++
+ #[allow(clippy::too_many_arguments)]
+ fn scan_observed_profiled(
+     root: &Path,
+@@ -739,6 +786,44 @@
+     execution: ExtractionExecution,
+     paths: Option<&std::collections::BTreeSet<String>>,
+     source_policy: Option<&airk_core::source_policy::SourcePolicy>,
++    lookup: impl FnMut(observations::ReuseRequest<'_>) -> Result<Option<observations::VerifiedReuse>>,
++    emit: impl FnMut(
++        &airk_core::extraction::ExtractionProfile,
++        &Artifact,
++        &[u8],
++        Option<&airk_core::extraction::ExtractionPayload>,
++    ) -> Result<Artifact>,
++) -> Result<(Snapshot, IndexReport, observations::ScanObservation)> {
++    scan_observed_profiled_controlled(
++        root,
++        data_dir,
++        previous,
++        roots,
++        limits,
++        policy,
++        full_reindex,
++        execution,
++        paths,
++        source_policy,
++        None,
++        lookup,
++        emit,
++    )
++}
++
++#[allow(clippy::too_many_arguments)]
++fn scan_observed_profiled_controlled(
++    root: &Path,
++    data_dir: &Path,
++    previous: &Snapshot,
++    roots: &BTreeMap<String, String>,
++    limits: ScanLimits,
++    policy: &adapters::profile::ExtractionPolicy,
++    full_reindex: bool,
++    execution: ExtractionExecution,
++    paths: Option<&std::collections::BTreeSet<String>>,
++    source_policy: Option<&airk_core::source_policy::SourcePolicy>,
++    controls: Option<std::sync::Arc<control_snapshot::ControlSnapshot>>,
+     mut lookup: impl FnMut(
+         observations::ReuseRequest<'_>,
+     ) -> Result<Option<observations::VerifiedReuse>>,
+@@ -815,8 +900,14 @@
+                     .map(str::to_owned)
+                     .collect()
+             });
+-            discovery_selected_with_policy(source, &data_dir, selected, source_policy.cloned())
+-                .map(move |entry| (prefix, source, entry))
++            discovery_selected_with_controls(
++                source,
++                &data_dir,
++                selected,
++                source_policy.cloned(),
++                controls.clone(),
++            )
++            .map(move |entry| (prefix, source, entry))
+         });
+     let scanned = (|| -> Result<()> {
+         for (prefix, source, entry) in walker {
+@@ -1329,6 +1420,16 @@
+     selected: Option<Vec<String>>,
+     policy: Option<airk_core::source_policy::SourcePolicy>,
+ ) -> impl Iterator<Item = Result<ignore::DirEntry>> {
++    discovery_selected_with_controls(root, data_dir, selected, policy, None)
++}
++
++fn discovery_selected_with_controls(
++    root: &Path,
++    data_dir: &Path,
++    selected: Option<Vec<String>>,
++    policy: Option<airk_core::source_policy::SourcePolicy>,
++    controls: Option<std::sync::Arc<control_snapshot::ControlSnapshot>>,
++) -> impl Iterator<Item = Result<ignore::DirEntry>> {
+     let data_dir = data_dir.to_path_buf();
+     let ordering_root = root.to_path_buf();
+     let credential_root = root.to_path_buf();
+@@ -1351,7 +1452,7 @@
+     let root_blocked = matches!(initial, Ok(false));
+     let failure = std::sync::Arc::new(std::sync::Mutex::new(initial.err()));
+     let filter_failure = failure.clone();
+-    let restricted = policy.as_ref().is_some_and(permanent_policy::restricts);
++    let restricted = controls.is_some() || policy.as_ref().is_some_and(permanent_policy::restricts);
+     let protected = if restricted
+         && !root_blocked
+         && failure
+@@ -1359,7 +1460,13 @@
+             .unwrap_or_else(std::sync::PoisonError::into_inner)
+             .is_none()
+     {
+-        match policy_ignore::ProtectedIgnore::new(root, policy.as_ref().unwrap()) {
++        let captured = match controls {
++            Some(controls) => {
++                policy_ignore::ProtectedIgnore::tracked(root, policy.as_ref(), controls)
++            }
++            None => policy_ignore::ProtectedIgnore::new(root, policy.as_ref().unwrap()),
++        };
++        match captured {
+             Ok(matcher) => Some(std::sync::Mutex::new(matcher)),
+             Err(error) => {
+                 *failure
+--- a/crates/airk-ingest/src/policy_ignore.rs
++++ b/crates/airk-ingest/src/policy_ignore.rs
+@@ -28,12 +28,13 @@
+ 
+ pub(crate) struct ProtectedIgnore {
+     root: PathBuf,
+-    policy: SourcePolicy,
++    policy: Option<SourcePolicy>,
+     charged: usize,
+     directories: BTreeMap<PathBuf, [Gitignore; 4]>,
+     failure: Option<&'static str>,
+     global: Gitignore,
+     root_blocked: bool,
++    controls: Option<std::sync::Arc<crate::control_snapshot::ControlSnapshot>>,
+ }
+ 
+ impl ProtectedIgnore {
+@@ -45,27 +46,55 @@
+         Ok(selected)
+     }
+ 
++    pub(crate) fn tracked(
++        root: &Path,
++        policy: Option<&SourcePolicy>,
++        controls: std::sync::Arc<crate::control_snapshot::ControlSnapshot>,
++    ) -> Result<Self> {
++        let mut selected = Self::local_with_controls(root, policy, Some(controls))?;
++        if !selected.root_blocked {
++            selected.global = selected.global_rules()?;
++        }
++        Ok(selected)
++    }
+     fn local(root: &Path, policy: &SourcePolicy) -> Result<Self> {
++        Self::local_with_controls(root, Some(policy), None)
++    }
++    fn local_with_controls(
++        root: &Path,
++        policy: Option<&SourcePolicy>,
++        controls: Option<std::sync::Arc<crate::control_snapshot::ControlSnapshot>>,
++    ) -> Result<Self> {
+         let root = root.to_path_buf();
+         let mut selected = Self {
+             global: Gitignore::empty(),
+             root,
+-            policy: policy.clone(),
++            policy: policy.cloned(),
+             charged: 0,
+             directories: BTreeMap::new(),
+             failure: None,
+             root_blocked: false,
++            controls,
+         };
++        if let Some(controls) = &selected.controls {
++            controls.record_environment(&selected.root)?;
++        }
+         let root_text = selected
+             .root
+             .to_str()
+             .ok_or_else(|| refused("ignore_control_locator"))?;
+-        selected.root_blocked =
+-            !crate::permanent_policy::allows_checked(policy, root_text, "", true)?;
++        selected.root_blocked = policy
++            .map(|policy| crate::permanent_policy::allows_checked(policy, root_text, "", true))
++            .transpose()?
++            .is_some_and(|allowed| !allowed);
+         if selected.root_blocked {
+             return Ok(selected);
+         }
+-        crate::permanent_policy::qualify_discovery_directory(policy, root_text, "")?;
++        if let Some(policy) = policy {
++            crate::permanent_policy::qualify_discovery_directory(policy, root_text, "")?;
++        } else {
++            crate::native_name_boundary::qualify(&selected.root, "", true)?;
++        }
+         // The explicit walk root has its own controls even when no child is
+         // eligible. Ancestor controls retain their existing precedence.
+         let ancestors = selected
+@@ -86,9 +115,17 @@
+ 
+     fn capture(&mut self, path: &Path) -> Result<Option<String>> {
+         let path = std::path::absolute(path).map_err(|_| refused("ignore_control_locator"))?;
++        if self.controls.is_some() {
++            crate::control_snapshot::qualify_locator(&path, false)?;
++        }
+         let metadata = match fs::symlink_metadata(&path) {
+             Ok(value) => value,
+-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
++            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
++                if let Some(controls) = &self.controls {
++                    controls.absent_qualified(&path)?;
++                }
++                return Ok(None);
++            }
+             Err(_) => return Err(refused("ignore_control_metadata")),
+         };
+         ensure!(
+@@ -104,7 +141,15 @@
+             );
+         }
+         ensure!(
+-            crate::permanent_policy::allows_absolute_control_input_checked(&self.policy, &path)?,
++            self.policy
++                .as_ref()
++                .map(
++                    |policy| crate::permanent_policy::allows_absolute_control_input_checked(
++                        policy, &path
++                    )
++                )
++                .transpose()?
++                .unwrap_or(true),
+             refused("excluded_ignore_control")
+         );
+         let length =
+@@ -131,6 +176,9 @@
+             bytes.len() <= MAX_FILE_BYTES,
+             refused("ignore_control_budget")
+         );
++        if let Some(controls) = &self.controls {
++            controls.file(&path, &bytes)?;
++        }
+         String::from_utf8(bytes)
+             .map(Some)
+             .map_err(|_| refused("ignore_control_encoding"))
+@@ -186,6 +234,9 @@
+         // Worktree/commondir indirection needs a separately qualified protected
+         // resolver. Never let the dependency follow an unreviewed control path.
+         let git = path.join(".git");
++        if self.controls.is_some() {
++            crate::control_snapshot::qualify_locator(&git, true)?;
++        }
+         match fs::symlink_metadata(&git) {
+             Ok(metadata) => {
+                 ensure!(
+@@ -200,6 +251,9 @@
+                         refused("ignore_control_git_reference")
+                     );
+                 }
++                if let Some(controls) = &self.controls {
++                    controls.directory_qualified(&git)?;
++                }
+                 ensure!(
+                     !git.join("commondir")
+                         .try_exists()
+@@ -207,8 +261,21 @@
+                     refused("ignore_control_git_reference")
+                 );
+             }
+-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
++            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
++                if let Some(controls) = &self.controls {
++                    controls.absent_qualified(&git)?;
++                }
++            }
+             Err(_) => return Err(refused("ignore_control_metadata")),
++        }
++        if let Some(controls) = self.controls.clone() {
++            let commondir = git.join("commondir");
++            crate::control_snapshot::qualify_locator(&commondir, false)?;
++            ensure!(
++                matches!(fs::symlink_metadata(&commondir),Err(error) if error.kind()==std::io::ErrorKind::NotFound),
++                refused("ignore_control_git_reference")
++            );
++            controls.absent_qualified(&commondir)?;
+         }
+         let rules = [
+             self.compile(path, &path.join(".airkignore"))?,
+--- a/crates/airk-ingest/src/source_read.rs
++++ b/crates/airk-ingest/src/source_read.rs
+@@ -256,6 +256,32 @@
+         "administrative input exceeds byte limit"
+     );
+     Ok(bytes)
++}
++
++/// Observe absence through the same no-follow pinned traversal as source
++/// capture. Permission/type/redirect errors are uncertainty, never absence.
++/// Does not enumerate directories or read bytes from an existing file.
++pub(crate) fn missing_protected_path(path: &Path) -> Result<bool> {
++    ensure!(
++        path.is_absolute(),
++        "protected missing locator must be absolute"
++    );
++    let root = path
++        .ancestors()
++        .last()
++        .context("protected missing locator has no root")?;
++    let relative = path.strip_prefix(root)?;
++    match open(root, relative) {
++        Ok(_) => Ok(false),
++        Err(error)
++            if error
++                .downcast_ref::<std::io::Error>()
++                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
++        {
++            Ok(true)
++        }
++        Err(error) => Err(error),
++    }
+ }
+ 
+ pub(crate) fn read(root: &Path, path: &Path, limit: usize, remaining: usize) -> Result<Vec<u8>> {
+--- a/crates/airk-kernel/src/current/indexing.rs
++++ b/crates/airk-kernel/src/current/indexing.rs
+@@ -484,7 +484,7 @@
+         full: bool,
+         defer_completion: bool,
+     ) -> Result<airk_ingest::IndexReport> {
+-        self.index_current_selected(full, defer_completion, None)
++        self.index_current_selected(full, defer_completion, None, None)
+     }
+ 
+     /// Refresh saved logical paths; untouched bindings retain their indexed revision.
+@@ -511,7 +511,27 @@
+                 Ok(path)
+             })
+             .collect::<Result<std::collections::BTreeSet<_>>>()?;
+-        self.index_current_selected(false, defer_completion, Some(&paths))
++        self.index_current_selected(false, defer_completion, Some(&paths), None)
++    }
++
++    pub(crate) fn index_current_reviewed_refresh(
++        &self,
++        project: airk_core::service::ProjectBinding,
++        request: &airk_core::service_configuration::ConfigurationRequest,
++    ) -> Result<airk_ingest::IndexReport> {
++        // Legacy control provenance requires explicit full reconciliation.
++        // Selected execution is never silently widened through this adapter.
++        self.index_current_selected(false, true, None, Some((project, request)))
++    }
++
++    pub(crate) fn index_current_reviewed_refresh_paths(
++        &self,
++        project: airk_core::service::ProjectBinding,
++        request: &airk_core::service_configuration::ConfigurationRequest,
++        paths: &std::collections::BTreeSet<String>,
++    ) -> Result<airk_ingest::IndexReport> {
++        ensure!(!paths.is_empty(), "empty reviewed source subset");
++        self.index_current_selected(false, true, Some(paths), Some((project, request)))
+     }
+ 
+     fn index_current_selected(
+@@ -519,6 +539,10 @@
+         full: bool,
+         defer_completion: bool,
+         paths: Option<&std::collections::BTreeSet<String>>,
++        reviewed: Option<(
++            airk_core::service::ProjectBinding,
++            &airk_core::service_configuration::ConfigurationRequest,
++        )>,
+     ) -> Result<airk_ingest::IndexReport> {
+         let mut repaired_retained_artifacts = 0;
+         match self.index_current_once(
+@@ -526,6 +550,7 @@
+             defer_completion,
+             &mut repaired_retained_artifacts,
+             paths,
++            reviewed,
+         ) {
+             Ok(report) => Ok(report),
+             Err(error)
+@@ -533,6 +558,9 @@
+                     .downcast_ref::<airk_store::blobs::MissingRetainedObject>()
+                     .is_some() =>
+             {
++                if reviewed.is_some() {
++                    return Err(error.context("reviewed refresh stopped; retained-object repair requires a separate new review"));
++                }
+                 // The failed attempt has released its capture guard, writer and
+                 // reservations. Never replace captured inputs in a durable journal
+                 // with live source bytes, even if the live path still exists.
+@@ -550,7 +578,7 @@
+                         "automatic retained-object repair could not verify an idle index: {admission:#}"
+                     ))),
+                 }
+-                let mut report = self.index_current_once(full, defer_completion, &mut repaired_retained_artifacts, paths).context(
++                let mut report = self.index_current_once(full, defer_completion, &mut repaired_retained_artifacts, paths, reviewed).context(
+                     "automatic retained-object repair failed after one fresh scan; indexing stopped without further retries; run AIRK: Diagnose & Repair to inspect the remaining failure"
+                 )?;
+                 report.retained_repair_retries = 1;
+@@ -629,6 +657,10 @@
+         defer_completion: bool,
+         repaired_retained_artifacts: &mut usize,
+         paths: Option<&std::collections::BTreeSet<String>>,
++        reviewed: Option<(
++            airk_core::service::ProjectBinding,
++            &airk_core::service_configuration::ConfigurationRequest,
++        )>,
+     ) -> Result<airk_ingest::IndexReport> {
+         use crate::diagnostics::IndexFailureStage as Stage;
+         self.source_policy_for_work()?;
+@@ -636,6 +668,14 @@
+             .context(Stage("source_access"))?;
+         let execution_lease =
+             crate::execution::acquire(&self.data_root).context(Stage("execution_admission"))?;
++        let (reviewed_writer, reviewed_controls) = if let Some((project, request)) = reviewed {
++            ensure!(!full, "reviewed refresh cannot silently rebuild");
++            let writer = self.store.lock().context(Stage("writer_admission"))?;
++            let controls = self.require_refresh_base_before_recovery(project, request)?;
++            (Some(writer), controls)
++        } else {
++            (None, None)
++        };
+         if full {
+             self.prepare_full_rebuild()
+                 .context(Stage("rebuild_admission"))?;
+@@ -646,8 +686,10 @@
+             phase: "scan_started",
+             ..Default::default()
+         });
+-        self.recover_runtime_bootstrap()
+-            .context(Stage("bootstrap"))?;
++        if reviewed.is_none() {
++            self.recover_runtime_bootstrap()
++                .context(Stage("bootstrap"))?;
++        }
+         let mut execution = if self.service_collection.is_some() {
+             crate::limits::execution_from_grant(&execution_lease.plan)
+                 .context(Stage("extraction_admission"))?
+@@ -664,11 +706,16 @@
+             .validate()
+             .context(Stage("extraction_admission"))?;
+         // Recovery takes its own writer lock, before this scan owns one.
+-        if let Some(scope) = self.current_scope().context(Stage("current_scope"))? {
+-            super::recover_current(&self.store, &self.collection_quota()?, &scope)
+-                .context(Stage("recover_current"))?;
+-        }
+-        let writer = self.store.lock().context(Stage("writer_admission"))?;
++        if reviewed.is_none() {
++            if let Some(scope) = self.current_scope().context(Stage("current_scope"))? {
++                super::recover_current(&self.store, &self.collection_quota()?, &scope)
++                    .context(Stage("recover_current"))?;
++            }
++        }
++        let writer = match reviewed_writer {
++            Some(writer) => writer,
++            None => self.store.lock().context(Stage("writer_admission"))?,
++        };
+         let quota = self.collection_quota().context(Stage("quota_open"))?;
+         ensure!(
+             !self.root.starts_with(quota.root()),
+@@ -784,11 +831,38 @@
+                             .unwrap_or(false)
+                 })
+         });
++        if let Some((_, request)) = reviewed {
++            let airk_core::service_configuration::ProjectConfiguration::RefreshReferences {
++                selection,
++            } = &request.configuration
++            else {
++                unreachable!()
++            };
++            if selection.mode == airk_core::catalog_refresh::RefreshMode::SelectedOnly {
++                ensure!(
++                    paths.is_some(),
++                    airk_core::catalog_refresh::RefreshReviewRequired {
++                        reasons: vec![
++                            airk_core::catalog_refresh::RefreshFallbackReason::DependencyInput
++                        ]
++                    }
++                );
++                ensure!(
++                    !configuration_changed,
++                    airk_core::catalog_refresh::RefreshReviewRequired {
++                        reasons: vec![
++                            airk_core::catalog_refresh::RefreshFallbackReason::ConfigurationChanged
++                        ]
++                    }
++                );
++            }
++        }
+         // A newly initialized (or format-rebuilt) empty index needs the same
+         // bounded first publications as a collection with no current store.
+         // A full scan of an empty base cannot mix old and rebuilt evidence.
+         // Populated full/configuration rebuilds retain their atomic boundary.
+         let progressive_enabled = defer_completion
++            && reviewed.is_none()
+             && paths.is_none()
+             && (previous.artifacts.is_empty() || (!full && !configuration_changed));
+         let publish_scan_start = progressive_enabled
+@@ -883,7 +957,7 @@
+         }
+         let permanent_policy = self.source_policy_for_work()?;
+         let scan_started = std::time::Instant::now();
+-        let scan_result = airk_ingest::scan_payloads_with_execution_source_policy(
++        let scan_result = airk_ingest::scan_payloads_with_optional_control_snapshot(
+             &self.root,
+             &self.data_root,
+             &previous,
+@@ -894,6 +968,7 @@
+             execution.execution,
+             paths,
+             permanent_policy.as_deref(),
++            reviewed_controls.clone(),
+             |request| {
+                 let same = previous
+                     .artifacts
+@@ -990,6 +1065,28 @@
+                 );
+             }
+         };
++        let refreshed_baseline = if let Some(controls) = &reviewed_controls {
++            if paths.is_some() {
++                controls.revalidate_inputs()?;
++            }
++            let (_, request) = reviewed.context("tracked refresh lost native request")?;
++            let baseline = controls.seal_complete(
++                airk_core::identity::framed_digest(
++                    b"airk/refresh-applied-configuration/1",
++                    &[&serde_json::to_vec(&configuration)?],
++                ),
++                request.settings,
++            )?;
++            let bytes = serde_json::to_vec(&baseline)?;
++            let read = self.current_reader()?;
++            let prior = read
++                .resource_reference(airk_core::source_control::CONTROL_BASELINE_RESOURCE)?
++                .map(|reference| self.store.read_current_resource(&reference))
++                .transpose()?;
++            (prior.as_deref() != Some(bytes.as_slice())).then_some(bytes)
++        } else {
++            None
++        };
+         report.repaired_retained_artifacts = *repaired_retained_artifacts;
+         report.path_scoped = paths.is_some();
+         if let Some(progressive) = progressive.as_mut()
+@@ -1114,6 +1211,7 @@
+             .as_ref()
+             .is_some_and(|work| work.failure.is_some());
+         if !changes.is_empty()
++            || refreshed_baseline.is_some()
+             || configuration_changed
+             || analysis_expired
+             || retry_failed_semantic
+@@ -1167,6 +1265,28 @@
+             ];
+             if let Some(work) = &final_scan_work {
+                 resources.push(work.resource_change(&self.store, &writer, &reservation)?);
++            }
++            // Publish attestation only after successful complete capture or
++            // exact saved-control revalidation. Ordinary changes invalidate it.
++            if reviewed_controls.is_some() {
++                if let Some(bytes) = &refreshed_baseline {
++                    resources.push(airk_store::current::resources::ResourceChange {
++                        key: airk_core::source_control::CONTROL_BASELINE_RESOURCE.into(),
++                        reference: Some(self.store.retain_current_resource_owned(
++                            &writer,
++                            bytes,
++                            &reservation,
++                        )?),
++                    });
++                } else {
++                    let read = self.current_reader()?;
++                    resources.push(airk_store::current::resources::ResourceChange {
++                        key: airk_core::source_control::CONTROL_BASELINE_RESOURCE.into(),
++                        reference: read.resource_reference(
++                            airk_core::source_control::CONTROL_BASELINE_RESOURCE,
++                        )?,
++                    });
++                }
+             }
+             let result = CurrentUpdater {
+                 store: &self.store,
+--- a/crates/airk-kernel/src/current/update.rs
++++ b/crates/airk-kernel/src/current/update.rs
+@@ -436,6 +436,18 @@
+         mut semantic_work: Option<&mut super::enrichment::SemanticWork>,
+         observer: &mut dyn FnMut(CurrentUpdateStage),
+     ) -> Result<CurrentUpdateResult> {
++        let mut tracked_resources = resources.to_vec();
++        if (!changes.is_empty() || self.configuration.is_some())
++            && !tracked_resources
++                .iter()
++                .any(|change| change.key == airk_core::source_control::CONTROL_BASELINE_RESOURCE)
++        {
++            tracked_resources.push(airk_store::current::resources::ResourceChange {
++                key: airk_core::source_control::CONTROL_BASELINE_RESOURCE.into(),
++                reference: None,
++            });
++        }
++        let resources = tracked_resources.as_slice();
+         crate::service_execution::progress_phase(airk_core::service_progress::WorkPhase::Preparing);
+         ensure!(
+             (!changes.is_empty()
+--- a/crates/airk-kernel/src/lib.rs
++++ b/crates/airk-kernel/src/lib.rs
+@@ -44,6 +44,7 @@
+ pub mod service_inspection;
+ pub mod service_projects;
+ mod service_publication;
++mod service_reference_refresh;
+ pub mod service_resource_observations;
+ pub mod service_resources;
+ mod shared_models;
+--- a/crates/airk-kernel/src/service_configuration.rs
++++ b/crates/airk-kernel/src/service_configuration.rs
+@@ -319,6 +319,9 @@
+             _ => (),
+         }
+         let result = match &request.configuration {
++            ProjectConfiguration::RefreshReferences { .. } => {
++                anyhow::bail!("reference refresh requires its exact native worker owner")
++            }
+             ProjectConfiguration::SplitWork { .. } => {
+                 anyhow::bail!("split work requires its exact native operation owner")
+             }
+--- /dev/null
++++ b/crates/airk-kernel/src/service_reference_refresh.rs
+@@ -0,0 +1,538 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Explicit native refresh, separate from evidence verification and requery.
++use crate::Kernel;
++use airk_core::{
++    catalog_refresh::{
++        RefreshFallbackReason, RefreshMode, RefreshReviewRequired, RefreshSelection,
++    },
++    identity::RevisionToken,
++    scoped_reads::SourceDescriptor,
++    service::ProjectBinding,
++    service_configuration::{ConfigurationRequest, ProjectConfiguration},
++};
++use anyhow::{Context, Result, ensure};
++
++impl Kernel {
++    /// Read-only qualification under an independently authenticated read scope.
++    /// Legacy metadata contains no prior ignore/control provenance. Such an
++    /// index can only use an explicit, separately reviewed whole-index fallback.
++    pub fn qualify_reference_refresh(
++        &self,
++        selection: &RefreshSelection,
++        sources: &[SourceDescriptor],
++    ) -> Result<RevisionToken> {
++        selection.validate()?;
++        ensure!(
++            selection.members.len() == 1,
++            "refresh currently admits one explicitly selected member per saved operation"
++        );
++        let read = self.current_reader()?;
++        self.require_index_metadata(&read)?;
++        let configured = self.configured_roots()?;
++        self.require_configured_index_metadata(&read, &configured)?;
++        let publication = crate::current::runtime::revision(read.token()?);
++        ensure!(
++            publication == selection.members[0].original_publication,
++            "refresh original publication changed; new review required"
++        );
++        let state = read
++            .collection_state()?
++            .context("refresh collection metadata absent")?;
++        if selection.mode == RefreshMode::SelectedOnly {
++            self.reference_refresh_baseline(&read)?;
++        }
++        for source in &selection.members[0].sources {
++            let descriptor = sources
++                .iter()
++                .find(|entry| entry.source_root_id == source.source_root_id)
++                .context("refresh source root is outside the authenticated selection")?;
++            let path = if descriptor.original_root == self.root_id() {
++                source.source_relative_path.clone()
++            } else {
++                let alias = state
++                    .configuration
++                    .roots
++                    .iter()
++                    .find(|(_, root)| **root == descriptor.original_root)
++                    .map(|(alias, _)| alias)
++                    .context("refresh source alias changed")?;
++                format!("@{alias}/{}", source.source_relative_path)
++            };
++            let location = airk_store::roots::source_location(
++                &self.root_id(),
++                &state.configuration.roots,
++                &path,
++            )?;
++            ensure!(
++                location.root == descriptor.original_root
++                    && source.canonical_root == descriptor.original_root
++                    && location.relative_path == source.source_relative_path,
++                "refresh source alias namespace is ambiguous"
++            );
++            let artifact = read
++                .artifact(&path)?
++                .context("refresh original source is not retained in the selected publication")?;
++            ensure!(
++                artifact.content_hash == source.indexed_hash.to_string(),
++                "refresh original source hash changed; new review required"
++            );
++        }
++        read.token()?;
++        Ok(publication)
++    }
++
++    /// Called only by the existing admitted native Configure worker, after the
++    /// same current host/grant/backing checks used at acceptance. This starts no
++    /// nested scheduler and never requests an extra watcher-wide source pass.
++    pub fn refresh_service_references(
++        &self,
++        project: ProjectBinding,
++        request: &ConfigurationRequest,
++    ) -> Result<airk_ingest::IndexReport> {
++        ensure!(
++            self.is_service_collection(),
++            "refresh requires its native project owner"
++        );
++        let ProjectConfiguration::RefreshReferences { selection } = &request.configuration else {
++            anyhow::bail!("refresh configuration missing");
++        };
++        selection.validate()?;
++        ensure!(
++            selection.members.len() == 1,
++            "refresh requires one exact native member"
++        );
++        if selection.mode == RefreshMode::SelectedOnly {
++            // Selected locators have already been translated and bound at native
++            // admission. Re-derive from the authenticated applied alias map.
++            let read = self.current_reader()?;
++            let state = read
++                .collection_state()?
++                .context("refresh collection metadata absent")?;
++            let policy = self.source_policy_for_work()?;
++            let mut paths = std::collections::BTreeSet::new();
++            for source in &selection.members[0].sources {
++                let root = policy.as_ref().and_then(|policy| {
++                    policy
++                        .roots
++                        .iter()
++                        .find(|root| root.id == source.source_root_id)
++                });
++                // Canonical native admission supplies source-root identity. For
++                // policy-less legacy roots use the exact original descriptor
++                // path sealed into the new operation by that admission.
++                let native = source.canonical_root.as_str();
++                if let Some(root) = root {
++                    ensure!(root.canonical_path == native, "refresh source root rebound");
++                }
++                let path = if native == self.root_id() {
++                    source.source_relative_path.clone()
++                } else {
++                    let alias = state
++                        .configuration
++                        .roots
++                        .iter()
++                        .find(|(_, root)| root.as_str() == native)
++                        .map(|(alias, _)| alias)
++                        .context("refresh alias removed")?;
++                    format!("@{alias}/{}", source.source_relative_path)
++                };
++                let baseline = self.reference_refresh_baseline(&read)?;
++                let absolute = std::path::Path::new(native).join(&source.source_relative_path);
++                ensure!(
++                    !baseline
++                        .inputs
++                        .contains_key(absolute.to_str().context("non-UTF8 selected locator")?),
++                    RefreshReviewRequired {
++                        reasons: vec![RefreshFallbackReason::ControlInput]
++                    }
++                );
++                paths.insert(path);
++            }
++            drop(read);
++            self.validate_service_configuration(project, request)?;
++            return crate::service_execution::with_database_admission(|| {
++                self.observe_service_index(airk_core::usage::UsageOperation::Index, || {
++                    self.index_current_reviewed_refresh_paths(project, request, &paths)
++                })
++            });
++        }
++        self.validate_service_configuration(project, request)?;
++        crate::service_execution::with_database_admission(|| {
++            self.observe_service_index(airk_core::usage::UsageOperation::Index, || {
++                self.index_current_reviewed_refresh(project, request)
++            })
++        })
++    }
++
++    /// Must run while the existing collection writer is held and BEFORE any
++    /// bootstrap/journal recovery, model capture or source discovery. It returns
++    /// no authority; the caller retains the real writer through publication.
++    pub(crate) fn require_refresh_base_before_recovery(
++        &self,
++        project: ProjectBinding,
++        request: &ConfigurationRequest,
++    ) -> Result<Option<std::sync::Arc<airk_ingest::control_snapshot::ControlSnapshot>>> {
++        let ProjectConfiguration::RefreshReferences { selection } = &request.configuration else {
++            anyhow::bail!("refresh base guard lacks exact request");
++        };
++        ensure!(
++            self.store.runtime_bootstrap()?.is_none(),
++            RefreshReviewRequired {
++                reasons: vec![RefreshFallbackReason::PendingRecovery]
++            }
++        );
++        let read = self.current_reader()?;
++        ensure!(
++            !read.has_prepared_update()?,
++            RefreshReviewRequired {
++                reasons: vec![RefreshFallbackReason::PendingRecovery]
++            }
++        );
++        ensure!(
++            crate::current::runtime::revision(read.token()?)
++                == selection.members[0].original_publication,
++            "refresh original publication changed; new review required"
++        );
++        let controls = if selection.mode == RefreshMode::SelectedOnly {
++            let baseline = self.reference_refresh_baseline(&read)?;
++            ensure!(
++                baseline.settings == request.settings,
++                RefreshReviewRequired {
++                    reasons: vec![RefreshFallbackReason::ConfigurationChanged]
++                }
++            );
++            let snapshot = std::sync::Arc::new(
++                airk_ingest::control_snapshot::ControlSnapshot::revalidate(baseline)?,
++            );
++            snapshot.revalidate_inputs()?;
++            Some(snapshot)
++        } else if self
++            .rebuild_extraction_policy()?
++            .policy
++            .declared_configurations()
++            .is_empty()
++        {
++            Some(std::sync::Arc::new(
++                airk_ingest::control_snapshot::ControlSnapshot::capture(),
++            ))
++        } else {
++            None
++        };
++        drop(read);
++        self.validate_service_configuration(project, request)?;
++        let observed = self.inspect_service(project)?;
++        ensure!(
++            observed.recovery_required == Some(false),
++            RefreshReviewRequired {
++                reasons: vec![RefreshFallbackReason::PendingRecovery]
++            }
++        );
++        Ok(controls)
++    }
++    fn reference_refresh_baseline(
++        &self,
++        read: &airk_store::current::CurrentRead,
++    ) -> Result<airk_core::source_control::SourceControlBaseline> {
++        let missing = || RefreshReviewRequired {
++            reasons: vec![RefreshFallbackReason::UnqualifiedControlProvenance],
++        };
++        let reference = read
++            .resource_reference(airk_core::source_control::CONTROL_BASELINE_RESOURCE)?
++            .ok_or_else(missing)?;
++        ensure!(
++            reference.bytes <= airk_core::source_control::MAX_CONTROL_BASELINE_BYTES,
++            missing()
++        );
++        let bytes = self.store.read_current_resource(&reference)?;
++        let baseline: airk_core::source_control::SourceControlBaseline =
++            serde_json::from_slice(&bytes)?;
++        baseline.validate()?;
++        ensure!(
++            serde_json::to_vec(&baseline)? == bytes,
++            "noncanonical retained control baseline"
++        );
++        let state = read
++            .collection_state()?
++            .context("refresh collection metadata absent")?;
++        ensure!(
++            baseline.configuration
++                == airk_core::identity::framed_digest(
++                    b"airk/refresh-applied-configuration/1",
++                    &[&serde_json::to_vec(&state.configuration)?]
++                ),
++            RefreshReviewRequired {
++                reasons: vec![RefreshFallbackReason::ConfigurationChanged]
++            }
++        );
++        let policy = self.rebuild_extraction_policy()?.policy;
++        // Local mutable model directories lack a small immutable configuration
++        // identity. They require explicit full review, never selected capture.
++        ensure!(
++            !self.vectors_enabled()? || self.store.shared_model_runtime().is_some(),
++            RefreshReviewRequired {
++                reasons: vec![RefreshFallbackReason::ExtractorChanged]
++            }
++        );
++        ensure!(
++            serde_json::to_vec(&self.configured_model_objects(false)?)?
++                == serde_json::to_vec(&state.configuration.model)?,
++            RefreshReviewRequired {
++                reasons: vec![RefreshFallbackReason::ConfigurationChanged]
++            }
++        );
++        ensure!(
++            policy.declared_configurations().is_empty()
++                && crate::extraction::policy_digest(&policy)?
++                    == state.configuration.extraction_policy_digest
++                && state.configuration.extractor_version == airk_core::EXTRACTOR_VERSION
++                && state.configuration.roots == self.configured_roots()?
++                && state.configuration.source_policy_digest == self.source_policy_digest()?
++                && serde_json::to_vec(&state.configuration.vector_selection)?
++                    == serde_json::to_vec(&self.vector_selection()?)?,
++            RefreshReviewRequired {
++                reasons: vec![RefreshFallbackReason::ConfigurationChanged]
++            }
++        );
++        Ok(baseline)
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use airk_core::{
++        catalog_refresh::{RefreshMember, RefreshSource},
++        identity::{Incarnation, Sha256Digest},
++        index_catalog::{CatalogRevision, GrantId, IndexId, QueryProjectId, SourceRootId},
++        service::{CombinedConnectRequest, RequestKey},
++    };
++    use sha2::Digest;
++    fn request(
++        kernel: &Kernel,
++        project: ProjectBinding,
++        mode: RefreshMode,
++    ) -> Result<ConfigurationRequest> {
++        let observed = kernel.inspect_service(project)?;
++        let file = kernel.file_info("one.txt")?;
++        let id = Incarnation::from_bytes([1; 16]);
++        let hash = Sha256Digest::from_bytes([2; 32]);
++        let index = IndexId::from_identity(id);
++        let key = RequestKey {
++            namespace: id,
++            epoch: 1,
++            nonce: id,
++        };
++        Ok(ConfigurationRequest {
++            prepare: false,
++            incarnation: observed.incarnation,
++            settings: observed.settings_digest.context("settings absent")?,
++            configuration: ProjectConfiguration::RefreshReferences {
++                selection: Box::new(RefreshSelection {
++                    schema: 1,
++                    caller: id,
++                    key,
++                    original_result_digest: hash,
++                    original_query_digest: hash,
++                    original_evidence_selection_digest: hash,
++                    mode,
++                    selection: CombinedConnectRequest {
++                        schema: 1,
++                        context_key: hash,
++                        namespace: id,
++                        expected_catalog_revision: CatalogRevision::INITIAL,
++                        grant_id: GrantId::from_identity(id),
++                        expected_grant_revision: CatalogRevision::INITIAL,
++                        project_ids: vec![QueryProjectId::from_identity(id)],
++                        index_ids: Some(vec![index]),
++                    },
++                    members: vec![RefreshMember {
++                        index_id: index,
++                        original_publication: file.publication.context("publication absent")?.token,
++                        sources: vec![RefreshSource {
++                            source_root_id: SourceRootId::from_identity(id),
++                            source_relative_path: "one.txt".into(),
++                            canonical_root: kernel.root_id(),
++                            indexed_hash: file.content_hash.parse()?,
++                        }],
++                    }],
++                }),
++            },
++        })
++    }
++    #[test]
++    fn reviewed_full_fallback_updates_both_files_and_refuses_old_publication_reexecution()
++    -> Result<()> {
++        let source = crate::unlinked_tempdir()?;
++        let data = crate::unlinked_tempdir()?;
++        std::fs::write(source.path().join("one.txt"), b"one old")?;
++        std::fs::write(source.path().join("two.txt"), b"two old")?;
++        let kernel =
++            Kernel::open_service_collection(source.path(), Some(data.path().into()), "refresh")?;
++        kernel.configure_vectors(false)?;
++        kernel.index_service_sources()?;
++        let project =
++            crate::service_projects::registration(source.path(), data.path(), "refresh")?.binding;
++        let selected = request(&kernel, project, RefreshMode::SelectedOnly)?;
++        let token = kernel.current_reader()?.token()?;
++        assert!(
++            kernel
++                .refresh_service_references(project, &selected)
++                .unwrap_err()
++                .is::<RefreshReviewRequired>()
++        );
++        assert_eq!(
++            kernel.current_reader()?.token()?,
++            token,
++            "unknown controls must never silently widen"
++        );
++        let full = request(&kernel, project, RefreshMode::FullReconcileReviewed)?;
++        std::fs::write(source.path().join("one.txt"), b"one current")?;
++        std::fs::write(source.path().join("two.txt"), b"two current")?;
++        kernel.refresh_service_references(project, &full)?;
++        assert_ne!(kernel.current_reader()?.token()?, token);
++        for (path, bytes) in [
++            ("one.txt", b"one current".as_slice()),
++            ("two.txt", b"two current".as_slice()),
++        ] {
++            assert_eq!(
++                kernel.file_info(path)?.content_hash,
++                airk_core::identity::Sha256Digest::from_bytes(sha2::Sha256::digest(bytes).into())
++                    .to_string()
++            );
++            assert_eq!(std::fs::read(source.path().join(path))?, bytes);
++        }
++        let after = kernel.current_reader()?.token()?;
++        assert!(
++            kernel.refresh_service_references(project, &full).is_err(),
++            "old accepted intent is not permission for a second pass"
++        );
++        assert_eq!(kernel.current_reader()?.token()?, after);
++        Ok(())
++    }
++    #[test]
++    fn qualified_selected_refresh_preserves_unselected_payload_and_changed_controls_refuse_before_publish()
++    -> Result<()> {
++        let source = crate::unlinked_tempdir()?;
++        let data = crate::unlinked_tempdir()?;
++        std::fs::write(source.path().join("one.txt"), b"one baseline")?;
++        std::fs::write(source.path().join("two.txt"), b"two baseline")?;
++        let kernel = Kernel::open_service_collection(
++            source.path(),
++            Some(data.path().into()),
++            "refresh-selected",
++        )?;
++        kernel.configure_vectors(false)?;
++        kernel.index_service_sources()?;
++        let project =
++            crate::service_projects::registration(source.path(), data.path(), "refresh-selected")?
++                .binding;
++        // Legacy ordinary scans cannot be retroactively certified. The user
++        // first reviews a full pass which records actual matcher inputs.
++        let full = request(&kernel, project, RefreshMode::FullReconcileReviewed)?;
++        kernel.refresh_service_references(project, &full)?;
++        let before = kernel.current_reader()?;
++        assert!(
++            before
++                .resource_reference(airk_core::source_control::CONTROL_BASELINE_RESOURCE)?
++                .is_some()
++        );
++        let untouched = serde_json::to_value(
++            before
++                .artifact("two.txt")?
++                .context("second artifact absent")?,
++        )?;
++        drop(before);
++        let selected = request(&kernel, project, RefreshMode::SelectedOnly)?;
++        std::fs::write(source.path().join("one.txt"), b"one selected change")?;
++        std::fs::write(source.path().join("two.txt"), b"two unselected change")?;
++        let report = kernel.refresh_service_references(project, &selected)?;
++        assert!(report.path_scoped);
++        let after = kernel.current_reader()?;
++        assert_eq!(
++            serde_json::to_value(
++                after
++                    .artifact("two.txt")?
++                    .context("second artifact absent")?
++            )?,
++            untouched,
++            "unselected retained payload/profile must remain exact"
++        );
++        assert_eq!(
++            kernel.file_info("one.txt")?.content_hash,
++            Sha256Digest::from_bytes(sha2::Sha256::digest(b"one selected change").into())
++                .to_string()
++        );
++        assert_eq!(
++            std::fs::read(source.path().join("two.txt"))?,
++            b"two unselected change"
++        );
++        let publication = after.token()?;
++        drop(after);
++        let stale_controls = request(&kernel, project, RefreshMode::SelectedOnly)?;
++        std::fs::write(source.path().join(".airkignore"), b"*.never\n")?;
++        std::fs::write(source.path().join("one.txt"), b"must stay unpublished")?;
++        assert!(
++            kernel
++                .refresh_service_references(project, &stale_controls)
++                .is_err()
++        );
++        assert_eq!(
++            kernel.current_reader()?.token()?,
++            publication,
++            "changed absent control must refuse without publication"
++        );
++        let full = request(&kernel, project, RefreshMode::FullReconcileReviewed)?;
++        kernel.refresh_service_references(project, &full)?;
++        let new_selected = request(&kernel, project, RefreshMode::SelectedOnly)?;
++        std::fs::write(
++            source.path().join("one.txt"),
++            b"fresh qualification succeeds",
++        )?;
++        kernel.refresh_service_references(project, &new_selected)?;
++        assert_eq!(
++            kernel.file_info("one.txt")?.content_hash,
++            Sha256Digest::from_bytes(sha2::Sha256::digest(b"fresh qualification succeeds").into())
++                .to_string()
++        );
++        Ok(())
++    }
++    #[test]
++    fn pending_runtime_bootstrap_is_refused_before_recovery_or_publication() -> Result<()> {
++        let source = crate::unlinked_tempdir()?;
++        let data = crate::unlinked_tempdir()?;
++        std::fs::write(source.path().join("one.txt"), b"original")?;
++        let kernel = Kernel::open_service_collection(
++            source.path(),
++            Some(data.path().into()),
++            "refresh-pending",
++        )?;
++        kernel.configure_vectors(false)?;
++        kernel.index_service_sources()?;
++        let project =
++            crate::service_projects::registration(source.path(), data.path(), "refresh-pending")?
++                .binding;
++        let request = request(&kernel, project, RefreshMode::FullReconcileReviewed)?;
++        let token = kernel.current_reader()?.token()?;
++        let held = b"intentionally opaque pending bootstrap; do not parse or replay";
++        {
++            let writer = kernel.store.lock()?;
++            kernel.store.write_runtime_bootstrap(&writer, held)?;
++        }
++        std::fs::write(source.path().join("one.txt"), b"unpublished edit")?;
++        assert!(
++            kernel
++                .refresh_service_references(project, &request)
++                .is_err()
++        );
++        assert_eq!(
++            kernel.store.runtime_bootstrap()?.as_deref(),
++            Some(held.as_slice())
++        );
++        assert_eq!(kernel.current_reader()?.token()?, token);
++        assert_eq!(
++            std::fs::read(source.path().join("one.txt"))?,
++            b"unpublished edit"
++        );
++        Ok(())
++    }
++}
+--- a/crates/airk-store/src/current/resources.rs
++++ b/crates/airk-store/src/current/resources.rs
+@@ -22,13 +22,14 @@
+ }
+ 
+ pub const MAX_RESOURCE_BYTES: usize = 256 << 20;
+-pub const KEYS: [&str; 6] = [
++pub const KEYS: [&str; 7] = [
+     "analysis",
+     "analysis-projection",
+     "embedding-cache",
+     "semantic-work",
+     "semantic-policy",
+     "scan-work",
++    "source-controls/1",
+ ];
+ 
+ #[derive(Clone, Debug, Serialize, Deserialize)]
+--- a/crates/airk-store/src/service_catalog.rs
++++ b/crates/airk-store/src/service_catalog.rs
+@@ -462,6 +462,79 @@
+     Ok(())
+ }
+ 
++/// Atomic counterpart of the native adapter's OS-host/full-scope review.
++/// No source I/O and no authority is minted. The native adapter separately
++/// authenticates the host; this binds its grant/backing/revision to insertion.
++pub(super) fn require_refresh_admission(
++    db: &Connection,
++    project: airk_core::identity::Sha256Digest,
++    selection: &airk_core::catalog_refresh::RefreshSelection,
++) -> Result<()> {
++    selection.validate()?;
++    let current = state(db)?;
++    ensure!(
++        current.activated
++            && current.authority_contract == 1
++            && current.namespace == selection.selection.namespace
++            && current.revision == selection.selection.expected_catalog_revision,
++        "refresh catalog changed before admission"
++    );
++    ensure!(
++        selection.members.len() == 1,
++        "refresh requires one exact member"
++    );
++    let index = operations::index_record(db, selection.members[0].index_id)?;
++    ensure!(
++        !index.tombstone
++            && index.backing.binding == project
++            && index.source_import == airk_core::index_catalog::SourceImportState::Complete,
++        "refresh index backing is not active and complete"
++    );
++    let grant = operations::read_persisted_grant(db, selection.selection.grant_id)?;
++    grant.validate()?;
++    ensure!(
++        !grant.grant.revoked
++            && grant.grant.revision == selection.selection.expected_grant_revision
++            && grant.provenance.kind()
++                == airk_core::grant_provenance::GrantProvenanceKind::UserReviewedProjectGrant,
++        "refresh reviewed grant changed"
++    );
++    let resolved = selection.selection.selection().resolve(&grant.grant)?;
++    let member = resolved
++        .member(index.id)
++        .ok_or_else(|| anyhow::anyhow!("refresh member not in current grant"))?;
++    ensure!(
++        member
++            .memberships
++            .iter()
++            .all(|frozen| frozen.source_revision == index.source_revision
++                && frozen.policy_epoch
++                    == index.policy.as_ref().map_or(0, |policy| policy.epoch.get())
++                && frozen.policy_digest == index.policy.as_ref().map(|policy| policy.digest)),
++        "refresh source/policy binding changed"
++    );
++    let mut statement = db.prepare(
++        "SELECT id FROM index_sources WHERE index_id=?1 AND enabled=1 ORDER BY id LIMIT 18",
++    )?;
++    let roots = statement
++        .query_map([index.id.to_string()], |row| row.get::<_, String>(0))?
++        .collect::<Result<Vec<_>, _>>()?;
++    ensure!(
++        !roots.is_empty() && roots.len() <= 17,
++        "refresh source inventory unavailable"
++    );
++    for root in roots {
++        let root: airk_core::index_catalog::SourceRootId = root.parse()?;
++        ensure!(
++            member.scope.iter().any(|atom| atom.source_root_id == root
++                && atom.kind == airk_core::index_catalog::PathScope::Subtree
++                && atom.path.is_empty()),
++            "explicit full refresh requires whole-index authority; partial scope cannot widen"
++        );
++    }
++    Ok(())
++}
++
+ impl ServiceRegistry {
+     /// Administrative metadata only. Does not activate, import, grant or index.
+     pub fn catalog_state(&self) -> Result<Option<CatalogState>> {
+--- a/crates/airk-store/src/service_configuration.rs
++++ b/crates/airk-store/src/service_configuration.rs
+@@ -163,11 +163,74 @@
+         length <= MAX_CONFIGURATION_BYTES,
+         ConfigurationResultCorrupt("recorded length exceeds budget")
+     );
+-    Ok(Some(
+-        serde_json::from_slice(&bytes[8..8 + length])
+-            .context(ConfigurationResultCorrupt("invalid recorded JSON"))?,
+-    ))
++    let value = serde_json::from_slice(&bytes[8..8 + length])
++        .context(ConfigurationResultCorrupt("invalid recorded JSON"))?;
++    validate_refresh_result(connection, job, &value)?;
++    Ok(Some(value))
+ }
++fn validate_refresh_result(
++    connection: &Connection,
++    job: Sha256Digest,
++    value: &serde_json::Value,
++) -> Result<()> {
++    let Some(saved) = work(connection, job)? else {
++        return Ok(());
++    };
++    let airk_core::service_configuration::ProjectConfiguration::RefreshReferences { selection } =
++        &saved.request.configuration
++    else {
++        return Ok(());
++    };
++    let record = super::jobs::record(connection, job)?;
++    ensure!(
++        job == airk_core::catalog_source_change::source_job_id(
++            record.project,
++            selection.caller,
++            &selection.key
++        )?,
++        ConfigurationResultCorrupt("refresh job lineage changed")
++    );
++    ensure!(
++        selection.members.len() == 1
++            && value["schema"] == "airk.reference-refresh-result/1"
++            && value["selection_digest"] == serde_json::to_value(selection.identity()?)?
++            && value["original_query_digest"]
++                == serde_json::to_value(selection.original_query_digest)?
++            && value["effective_mode"] == serde_json::to_value(selection.mode)?
++            && value["effective_scope"]
++                == if selection.mode == airk_core::catalog_refresh::RefreshMode::SelectedOnly {
++                    "selected_sources"
++                } else {
++                    "whole_index_explicitly_reviewed"
++                }
++            && value["requery_executed"] == false,
++        ConfigurationResultCorrupt("refresh receipt intent changed")
++    );
++    let before: airk_core::identity::RevisionToken =
++        serde_json::from_value(value["before_publication"].clone()).context(
++            ConfigurationResultCorrupt("refresh original publication missing"),
++        )?;
++    let after: airk_core::identity::RevisionToken =
++        serde_json::from_value(value["after_publication"].clone()).context(
++            ConfigurationResultCorrupt("refresh resulting publication missing"),
++        )?;
++    ensure!(
++        before == selection.members[0].original_publication,
++        ConfigurationResultCorrupt("refresh original publication changed")
++    );
++    before
++        .validate_against(&after)
++        .context(ConfigurationResultCorrupt(
++            "refresh publication scope/order changed",
++        ))?;
++    ensure!(
++        value["status"]["publication"]["token"] == serde_json::to_value(after)?
++            && value["report"]["generation"].as_u64() == Some(after.generation),
++        ConfigurationResultCorrupt("refresh report/status publication mismatch")
++    );
++    Ok(())
++}
++
+ pub(super) fn recover_results(
+     connection: &Connection,
+     lease: &crate::service::ProjectLease,
+@@ -285,6 +348,7 @@
+             JobError::StaleWorker
+         );
+         super::catalog::source_change::validate_configuration_result(&transaction, job, result)?;
++        validate_refresh_result(&transaction, job, result)?;
+         let unrecorded: bool = transaction.query_row(
+             "SELECT substr(result,1,8)=zeroblob(8) FROM service_configuration WHERE job=?1",
+             [job.to_string()],
+@@ -347,6 +411,86 @@
+             base.join("data").to_str().unwrap().into(),
+             "configuration".into(),
+         )
++    }
++    #[test]
++    fn generic_configuration_cannot_admit_refresh_or_consume_unrelated_work() -> Result<()> {
++        use airk_core::{
++            catalog_refresh::{RefreshMember, RefreshMode, RefreshSelection, RefreshSource},
++            identity::RevisionToken,
++            index_catalog::{CatalogRevision, GrantId, IndexId, QueryProjectId, SourceRootId},
++            service::CombinedConnectRequest,
++        };
++        let temporary = tempfile::tempdir()?;
++        let caller = Incarnation::from_bytes([1; 16]);
++        let mut registry = open(temporary.path(), caller)?;
++        let selected = project(temporary.path())?;
++        registry.register(&selected)?;
++        let other = ProjectRegistration::new(
++            selected.root.clone(),
++            selected.data_root.clone(),
++            "refresh-unrelated".into(),
++        )?;
++        registry.register(&other)?;
++        let other_key = key(&mut registry, 41)?;
++        let other_job = registry.enqueue(other.binding, caller, &other_key, JobKind::Index)?;
++        let key = key(&mut registry, 42)?;
++        let id = Incarnation::from_bytes([7; 16]);
++        let hash = Sha256Digest::from_bytes([8; 32]);
++        let index = IndexId::from_identity(id);
++        let mut request = request(false);
++        request.configuration = ProjectConfiguration::RefreshReferences {
++            selection: Box::new(RefreshSelection {
++                schema: 1,
++                caller,
++                key: key.clone(),
++                original_result_digest: hash,
++                original_evidence_selection_digest: hash,
++                original_query_digest: hash,
++                mode: RefreshMode::SelectedOnly,
++                selection: CombinedConnectRequest {
++                    schema: 1,
++                    context_key: hash,
++                    namespace: key.namespace,
++                    expected_catalog_revision: CatalogRevision::INITIAL,
++                    grant_id: GrantId::from_identity(id),
++                    expected_grant_revision: CatalogRevision::INITIAL,
++                    project_ids: vec![QueryProjectId::from_identity(id)],
++                    index_ids: Some(vec![index]),
++                },
++                members: vec![RefreshMember {
++                    index_id: index,
++                    original_publication: RevisionToken {
++                        incarnation: id,
++                        generation: 1,
++                        revision: hash,
++                    },
++                    sources: vec![RefreshSource {
++                        source_root_id: SourceRootId::from_identity(id),
++                        source_relative_path: "one.txt".into(),
++                        canonical_root: selected.root.clone(),
++                        indexed_hash: hash,
++                    }],
++                }],
++            }),
++        };
++        request.validate()?;
++        assert!(
++            registry
++                .enqueue_configuration(selected.binding, caller, &key, &request, hash)
++                .is_err()
++        );
++        assert!(registry.request_receipt(caller, &key)?.0.is_none());
++        assert!(!registry.pending_reference_refresh(selected.binding)?);
++        assert!(registry.next_pending_job(selected.binding)?.is_none());
++        assert_eq!(registry.job(other_job.id)?.state, JobState::Pending);
++        assert_eq!(
++            registry
++                .next_pending_job(other.binding)?
++                .context("unrelated job missing")?
++                .id,
++            other_job.id
++        );
++        Ok(())
+     }
+     #[test]
+     fn unregister_is_atomic_preserves_other_projects_and_old_request_replay_cannot_unregister_a_reregistration()
+--- a/crates/airk-store/src/service_jobs.rs
++++ b/crates/airk-store/src/service_jobs.rs
+@@ -117,7 +117,8 @@
+             "SELECT EXISTS(SELECT 1 FROM service_jobs j JOIN projects p ON p.binding=j.project
+           WHERE j.project=?1 AND p.registered=1 AND j.state='pending'
+           AND (p.paused=0 OR {RUN_WHILE_PAUSED}) AND {}
+-          AND EXISTS(SELECT 1 FROM service_job_source source WHERE source.job=j.id)
++          AND (EXISTS(SELECT 1 FROM service_job_source source WHERE source.job=j.id)
++            OR EXISTS(SELECT 1 FROM service_configuration c WHERE c.job=j.id AND json_extract(CAST(c.payload AS TEXT),'$.request.configuration.operation')='refresh_references'))
+           AND NOT EXISTS(SELECT 1 FROM service_job_cancellation canceled WHERE canceled.job=j.id))
+           OR EXISTS(SELECT 1 FROM service_background b JOIN projects p ON p.binding=b.project
+             WHERE b.project=?1 AND b.source_pending=1 AND p.registered=1 AND p.paused=0)",
+@@ -131,6 +132,7 @@
+ #[derive(Default)]
+ struct EnqueueOptions {
+     explicit: bool,
++    native_refresh: bool,
+     configuration: Option<Box<airk_core::service_configuration::ConfigurationWork>>,
+     background_revision: Option<(u64, u64)>,
+     audit_revision: Option<(u64, u64)>,
+@@ -494,6 +496,7 @@
+             !self.configuration_work(id)?.is_some_and(|work| matches!(
+                 work.request.configuration,
+                 airk_core::service_configuration::ProjectConfiguration::SplitWork { .. }
++                    | airk_core::service_configuration::ProjectConfiguration::RefreshReferences {..}
+             )),
+             "split work requires exact saved-operation recovery"
+         );
+@@ -522,6 +525,7 @@
+             !matches!(
+                 request.configuration,
+                 airk_core::service_configuration::ProjectConfiguration::SplitWork { .. }
++                    | airk_core::service_configuration::ProjectConfiguration::RefreshReferences { .. }
+             ),
+             "split work requires its exact admitted lifecycle"
+         );
+@@ -542,6 +546,45 @@
+         )
+     }
+ 
++    /// Authenticated native adapter must establish current OS host/grant and
++    /// exact backing before this call. This method creates no such authority;
++    /// its transaction preserves the adapter's observed catalog fence.
++    pub fn enqueue_native_reference_refresh(
++        &mut self,
++        project: ProjectBinding,
++        caller: Incarnation,
++        key: &RequestKey,
++        request: &airk_core::service_configuration::ConfigurationRequest,
++        engine: Sha256Digest,
++    ) -> Result<JobRecord> {
++        request.validate()?;
++        let airk_core::service_configuration::ProjectConfiguration::RefreshReferences { selection } =
++            &request.configuration
++        else {
++            anyhow::bail!("native reference refresh request missing");
++        };
++        ensure!(
++            !request.prepare && selection.caller == caller && selection.key == *key,
++            "refresh exact caller/key/request binding changed"
++        );
++        self.enqueue_impl(
++            project,
++            caller,
++            key,
++            JobKind::Configure,
++            EnqueueOptions {
++                native_refresh: true,
++                configuration: Some(Box::new(
++                    airk_core::service_configuration::ConfigurationWork {
++                        engine,
++                        request: request.clone(),
++                    },
++                )),
++                ..Default::default()
++            },
++        )
++    }
++
+     fn enqueue_impl(
+         &mut self,
+         project: ProjectBinding,
+@@ -552,6 +595,7 @@
+     ) -> Result<JobRecord> {
+         let EnqueueOptions {
+             explicit,
++            native_refresh,
+             configuration,
+             background_revision,
+             audit_revision,
+@@ -567,6 +611,16 @@
+         ensure!(
+             plan.is_some() || !matches!(kind, JobKind::PlanInspect | JobKind::Repair),
+             airk_core::service_maintenance::PlanError::InvalidTransition
++        );
++        let is_refresh = configuration.as_ref().is_some_and(|work| {
++            matches!(
++                work.request.configuration,
++                airk_core::service_configuration::ProjectConfiguration::RefreshReferences { .. }
++            )
++        });
++        ensure!(
++            is_refresh == native_refresh,
++            "refresh requires the authenticated native admission adapter"
+         );
+         let epoch = i64::try_from(key.epoch).map_err(|_| JobError::KeyExpired)?;
+         // Accepted keys remain readable even when every queue slot is occupied.
+@@ -642,6 +696,18 @@
+                 &work.request,
+             )?;
+         }
++        if native_refresh {
++            let work = configuration
++                .as_ref()
++                .context("native refresh work missing")?;
++            let airk_core::service_configuration::ProjectConfiguration::RefreshReferences {
++                selection,
++            } = &work.request.configuration
++            else {
++                unreachable!()
++            };
++            super::catalog::require_refresh_admission(&transaction, project, selection)?;
++        }
+         let (namespace, current): (String, i64) = transaction.query_row(
+             "SELECT incarnation,request_epoch FROM service_meta WHERE id=1",
+             [],
+@@ -1019,6 +1085,9 @@
+                 ..Default::default()
+             },
+         )
++    }
++    pub fn pending_reference_refresh(&self, project: ProjectBinding) -> Result<bool> {
++        Ok(self.connection.query_row("SELECT EXISTS(SELECT 1 FROM service_jobs j JOIN service_configuration c ON c.job=j.id WHERE j.project=?1 AND j.state IN('pending','running') AND json_extract(CAST(c.payload AS TEXT),'$.request.configuration.operation')='refresh_references')",[project.to_string()],|row|row.get(0))?)
+     }
+     pub fn job(&self, id: Sha256Digest) -> Result<JobRecord> {
+         record(&self.connection, id)

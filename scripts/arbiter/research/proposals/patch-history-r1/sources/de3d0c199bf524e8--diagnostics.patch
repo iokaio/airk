@@ -1,0 +1,109 @@
+--- a/scripts/editor-ui.cjs
++++ b/scripts/editor-ui.cjs
+@@ -22,6 +22,15 @@
+     await actions.open();
+     await actions.choose(request.index,'Choose an index for administration');
+     return actions.observe();
++}
++// Keep the first and three most recent distinct bounded DOM observations.
++function retainUiDiagnostic(samples,value){
++    let observed;
++    try{const bytes=Buffer.byteLength(JSON.stringify(value));observed=bytes<=65536?structuredClone(value):{observation_unavailable:'DOM snapshot exceeded64KiB',observed_bytes:bytes,truncated:true};}
++    catch(error){observed={observation_unavailable:String(error).slice(0,4096)};}
++    if(samples.length&&JSON.stringify(samples.at(-1).value)===JSON.stringify(observed))return;
++    if(samples.length===4)samples.splice(1,1);
++    samples.push({observed_unix_ms:Date.now(),value:observed});
+ }
+ const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+ async function until(action,label,timeout=180000){const end=Date.now()+timeout;while(Date.now()<end){const value=await action();if(value)return value;await delay(120);}throw new Error(`Editor UI timeout: ${label}`);}
+@@ -43,7 +52,7 @@
+ }
+ async function editorUi(port,deadline=Date.now()+600000){
+     const clients=new Map();
+-    let reads=0,dispatches=0;const dispatchLog=[];
++    let reads=0,dispatches=0;const dispatchLog=[],pickerDiagnostics=[];
+     const budget=max=>{const left=Math.min(max,deadline-Date.now());if(left<=0)throw new Error('Shared editor scenario deadline exhausted');return left;};
+     const boundedUntil=(action,label,timeout=180000)=>pollUntil(action,label,budget(timeout));
+     const until=boundedUntil;
+@@ -75,11 +84,29 @@
+     const explorerPredicate="!!document.querySelector('.airk-explorer')",workbenchPredicate='!!document.querySelector(".monaco-workbench")';
+     const clickButton=label=>`(()=>{const b=[...document.querySelectorAll('button')].find(n=>n.textContent.trim()===${JSON.stringify(label)});if(!b||b.disabled)return false;b.click();return true;})()`;
+     async function quickPick(label,title){
++        const diagnostic={title,label,samples:[],views:[]};
++        if(pickerDiagnostics.length===8)pickerDiagnostics.splice(1,1);
++        pickerDiagnostics.push(diagnostic);
++        const body="({title:document.title,visibility:document.visibilityState,text:document.body.innerText.slice(0,16384),text_truncated:document.body.innerText.length>16384})";
++        let sampledViews=false,sampledError=false;
+         const row=await until(async()=>{
+-            const result=await workbench(`(()=>{const widget=document.querySelector('.quick-input-widget');if(!widget||!widget.getBoundingClientRect().height||!widget.innerText.includes(${JSON.stringify(title)}))return;
+-                const rows=[...widget.querySelectorAll('.monaco-list-row')].filter(row=>row.getBoundingClientRect().height&&row.innerText.includes(${JSON.stringify(label)}));
+-                if(rows.length!==1)return;const r=rows[0].getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+-            return result?.value?result:undefined;
++            const result=await workbench(`(()=>{const visible=n=>!!n.getBoundingClientRect().height,clip=(n,max)=>({text:n.innerText.slice(0,max),truncated:n.innerText.length>max});
++                const all=[...document.querySelectorAll('.quick-input-widget')],widget=all[0];
++                const rows=widget&&visible(widget)&&widget.innerText.includes(${JSON.stringify(title)})?[...widget.querySelectorAll('.monaco-list-row')].filter(row=>visible(row)&&row.innerText.includes(${JSON.stringify(label)})):[];
++                const r=rows.length===1?rows[0].getBoundingClientRect():null;
++                const notices=[...document.querySelectorAll('.notifications-toasts .notification-list-item,.notifications-center .notification-list-item')].filter(visible),dialogs=[...document.querySelectorAll('.monaco-dialog-box')].filter(visible);
++                return {coordinates:r?{x:r.x+r.width/2,y:r.y+r.height/2}:null,diagnostic:{title:document.title,body:clip(document.body,8192),widget_count:all.length,widgets_truncated:all.length>8,widgets:all.slice(0,8).map(w=>{const rows=[...w.querySelectorAll('.monaco-list-row')].filter(visible);return {visible:visible(w),title:w.querySelector('.quick-input-title')?.innerText??null,text:clip(w,4096),row_count:rows.length,rows_truncated:rows.length>16,rows:rows.slice(0,16).map(n=>({text:clip(n,256),focused:n.classList.contains('focused'),aria_label:n.getAttribute('aria-label')}))};}),notification_count:notices.length,notifications_truncated:notices.length>8,notifications:notices.slice(0,8).map(n=>clip(n,1024)),dialog_count:dialogs.length,dialogs_truncated:dialogs.length>4,dialogs:dialogs.slice(0,4).map(n=>clip(n,2048))}};})()`);
++            if(result?.value?.diagnostic){
++                retainUiDiagnostic(diagnostic.samples,result.value.diagnostic);
++                if(!result.value.coordinates&&(!sampledViews||(!sampledError&&result.value.diagnostic.notification_count>0))){
++                    const reason=sampledViews?'visible notification after picker nonmatch':'first picker nonmatch';sampledViews=true;sampledError=result.value.diagnostic.notification_count>0;
++                    for(const [name,predicate]of [['usage',"document.visibilityState==='visible'&&!!document.querySelector('[data-usage]')"],['explorer',"!!document.querySelector('.airk-explorer')"]]){
++                        try{const value=(await document(predicate,body))?.value;diagnostic.views.push({name,reason,value:value??null});}
++                        catch(error){diagnostic.views.push({name,reason,observation_unavailable:String(error).slice(0,4096)});}
++                    }
++                }
++            }
++            return result?.value?.coordinates?{...result,value:result.value.coordinates}:undefined;
+         },`quick pick ${title}: ${label}`);
+         await row.client.call('Input.dispatchMouseEvent',{type:'mousePressed',...row.value,button:'left',clickCount:1});
+         await row.client.call('Input.dispatchMouseEvent',{type:'mouseReleased',...row.value,button:'left',clickCount:1});
+@@ -217,6 +244,6 @@
+             return rows.length===1&&['succeeded','failed','stale','skipped','canceled'].includes(rows[0].cells[1].textContent)?{phase:rows[0].cells[1].textContent,receipt:rows[0].innerText}:false;})()`))?.value,'native repair final receipt');
+         if(result.phase!=='succeeded')throw new Error(`Native editor repair failed: ${result.receipt}`);
+     }
+-    return {dispatch,dispatchReceipts:()=>structuredClone(dispatchLog),document,workbench,service,quickPick,confirm,indexing,catalog,click,approveRepair,responseMode,until,close(){for(const client of clients.values())client.close();}};
+-}
+-module.exports={editorUi,until,formFillExpressions,privateEditorEnvironment,openUsageAdministration};
++    return {dispatch,dispatchReceipts:()=>structuredClone(dispatchLog),diagnostics:()=>({picker:structuredClone(pickerDiagnostics),reads,dispatches}),document,workbench,service,quickPick,confirm,indexing,catalog,click,approveRepair,responseMode,until,close(){for(const client of clients.values())client.close();}};
++}
++module.exports={editorUi,until,formFillExpressions,privateEditorEnvironment,openUsageAdministration,retainUiDiagnostic};
+--- a/scripts/check-native-editor.cjs
++++ b/scripts/check-native-editor.cjs
+@@ -301,7 +301,7 @@
+                 const page=await ui.workbench('document.title');const image=await page.client.call('Page.captureScreenshot',{format:'png'});
+                 await fs.writeFile(path.join(folder,`${role}-workbench.png`),Buffer.from(image.data,'base64'));
+             }
+-        }finally{for(const [role,ui]of Object.entries(uis)){await fs.writeFile(path.join(folder,role+'-ui-dispatch-receipts.json'),JSON.stringify(ui.dispatchReceipts(),null,2));ui.close();}await fs.writeFile(path.join(folder,'capture-complete.json'),'{}');}
++        }finally{for(const [role,ui]of Object.entries(uis)){await fs.writeFile(path.join(folder,role+'-ui-dispatch-receipts.json'),JSON.stringify(ui.dispatchReceipts(),null,2));try{await fs.writeFile(path.join(folder,role+'-ui-diagnostics.json'),JSON.stringify(ui.diagnostics(),null,2));}catch(error){console.error('Private UI diagnostic retention failed:',String(error));}ui.close();}await fs.writeFile(path.join(folder,'capture-complete.json'),'{}');}
+         await exited;if(failure)throw failure;
+         const sourcePreservation=[];
+         for(const [name,original]of Object.entries(originalSources)){
+--- a/scripts/tests/editor-ui.test.cjs
++++ b/scripts/tests/editor-ui.test.cjs
+@@ -1,6 +1,6 @@
+ // SPDX-License-Identifier: Apache-2.0
+ const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),path=require('node:path');
+-const {formFillExpressions,privateEditorEnvironment,openUsageAdministration}=require('../editor-ui.cjs');
++const {formFillExpressions,privateEditorEnvironment,openUsageAdministration,retainUiDiagnostic}=require('../editor-ui.cjs');
+ const label='Optional index subset from this grant (1–32 IDs; blank includes all permitted members)';
+ function fixture(specs){
+     const writes=[],events=[];
+@@ -76,3 +76,16 @@
+     await assert.rejects(openUsageAdministration(exactUsage,{open:async()=>opens++,choose:async()=>picks++,observe:async()=>{observes++;throw failure;}}),error=>error===failure);
+     assert.deepEqual([opens,picks,observes],[1,1,1]);
+ });
++
++test('bounded UI diagnostics preserve first and latest distinct observations without changing raw snapshots',()=>{
++    const samples=[],first={widgets:[{visible:false,rows:[]}],notifications:[]};retainUiDiagnostic(samples,first);
++    for(let i=0;i<8;i++)retainUiDiagnostic(samples,{widgets:[{title:'actual picker',rows:[{text:'idx_'+i}]}]});
++    assert.equal(samples.length,4);assert.deepEqual(samples[0].value,first);assert.equal(samples.at(-1).value.widgets[0].rows[0].text,'idx_7');
++    const count=samples.length;retainUiDiagnostic(samples,structuredClone(samples.at(-1).value));assert.equal(samples.length,count);
++    samples[0].value.widgets[0].visible=true;assert.equal(first.widgets[0].visible,false,'Retained evidence is an independent raw snapshot');
++});
++test('oversized DOM diagnostic explicitly discloses unavailable observation within the fixed bound',()=>{
++    const samples=[];retainUiDiagnostic(samples,{text:'x'.repeat(65537)});
++    assert.equal(samples[0].value.truncated,true);assert.ok(samples[0].value.observed_bytes>65536);assert.match(samples[0].value.observation_unavailable,/64KiB/);
++    assert.ok(Buffer.byteLength(JSON.stringify(samples))<1024);
++});

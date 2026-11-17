@@ -1,0 +1,212 @@
+--- a/scripts/check-runtime-legacy-retirement.py
++++ b/scripts/check-runtime-legacy-retirement.py
+@@ -1,5 +1,5 @@
+ # SPDX-License-Identifier: Apache-2.0
+-"""INERT proposal: real installed-extension 1.8.7 to reviewed legacy retirement.
++"""Exercise real installed-extension 1.8.7 to reviewed legacy retirement.
+ 
+ Run only after P14 acceptance and after the recovery owners/adapters are built.
+ Every invocation creates its own two-index installation. No production state is
+@@ -114,6 +114,45 @@
+ def success_flag(envelope):
+     assert isinstance(envelope, dict)
+     assert "isError" not in envelope or envelope["isError"] is False, envelope
++
++
++def search_arguments(payload, old_payload, new_payload):
++    # The actual sealed 1.8.7 parser rejects verification. These common inputs
++    # retain identical lexical read semantics; only the new parser accepts Off.
++    assert payload in (old_payload, new_payload) and old_payload != new_payload
++    args = {"query": "legacyhealthyneedle", "mode": "lexical", "limit": 4,
++        "response_mode": "full"}
++    if payload == new_payload:
++        args["verification"] = "off"
++    return args
++
++
++def selected_payload(root, install, old_payload, new_payload):
++    selection_path = contained(root, install / "selected.json")
++    assert selection_path.stat().st_size <= MAX_FRAME
++    selected = json.loads(selection_path.read_text(encoding="utf-8"))
++    identity = selected["active"]
++    expected = [item for item in (old_payload, new_payload)
++        if item["manifest_sha256"] == identity]
++    assert len(expected) == 1, "Selected runtime is outside the two actual sealed payloads"
++    assert isinstance(identity, str) and len(identity) == 64 and all(c in "0123456789abcdef" for c in identity)
++    directory = contained(root, install / "runtimes" / identity)
++    assert seal(directory) == expected[0], "Selected installed payload changed"
++    binary = contained(root, directory / "airk.exe")
++    assert sha(binary) == expected[0]["files"]["airk.exe"]
++    return binary, selected
++
++
++def finish_owner(fixture, receipt):
++    receipt["actual_host_readonly_parity"] = fixture.host_parity_receipts
++    receipt["fixture_retained"] = True
++    try:
++        # Selection may still be OLD after a failed pre-upgrade assertion. Never
++        # guess from the intended candidate or start/abort/activate during teardown.
++        receipt["final_quiescence"] = fixture.drain()
++    except Exception as error:
++        receipt["stop_error"] = repr(error)
++        receipt["status"] = "failed"
+ 
+ 
+ class Mcp:
+@@ -251,15 +290,23 @@
+             args += ["--expected-active", old]
+         return self.command(binary, *args, check=False)
+ 
+-    def drain(self, binary):
++    def drain(self, binary=None):
+         # Do not use lifecycle Stop: that persists a separate startup prohibition.
+         # First request ordinary shutdown, then wait using EXISTING advisory files.
+-        health = self.invoke(binary, "service", "health", "--runtime-dir", self.control)
+-        selected = json.loads((self.install / "selected.json").read_text(encoding="utf-8"))
+-        assert health["status"] == "health" and health["observation"]["runtime_sha256"] == selected["active"]
+-        assert health["observation"]["executable_sha256"] == sha(binary)
+-        reply = self.invoke(binary, "service", "shutdown", "--runtime-dir", self.control)
+-        assert reply["status"] == "stopping", reply
++        selected_binary, selected = selected_payload(self.root, self.install, self.old_seal, self.new_seal)
++        if binary is not None:
++            assert sha(binary) == sha(selected_binary), "Requested drain binary differs from actual selected owner"
++        binary = selected_binary
++        observed = self.command(binary, "service", "health", "--runtime-dir", self.control, check=False)
++        health = None
++        if observed.returncode == 0:
++            health = json.loads(observed.stdout)
++            assert health["status"] == "health" and health["observation"]["runtime_sha256"] == selected["active"]
++            assert health["observation"]["executable_sha256"] == sha(binary)
++            reply = self.invoke(binary, "service", "shutdown", "--runtime-dir", self.control)
++            assert reply["status"] == "stopping", reply
++        # Unavailable health does not imply absence. Existing owner files and the
++        # final native all-role proof remain mandatory; never restart for a receipt.
+         names = ["instance-1.4.lock", "embedding-1.4.lock", "source-watch-1.4.lock"]
+         names += [f"worker-1.4-{p['binding']}.lock" for p in self.projects.values()]
+         deadline = time.monotonic() + 60
+@@ -284,12 +331,20 @@
+         # One successful owning native call is the final all-role proof, including
+         # the native embedding-pool census. This edits only this fixture launcher.
+         proof = self.invoke(binary, "runtime", "repair-launcher", "--install-dir", self.install)
+-        assert proof["launcher_repaired"] is True
+-        return proof
++        assert proof == {"launcher_repaired": True, "runtime": selected["active"]}
++        assert json.loads((self.install / "selected.json").read_text(encoding="utf-8")) == selected
++        selected_after, _ = selected_payload(self.root, self.install, self.old_seal, self.new_seal)
++        assert selected_after.samefile(binary)
++        return {"selected_manifest_sha256": selected["active"], "binary": str(binary),
++            "authenticated_health": health, "health_exit_code": observed.returncode,
++            "native_all_role_proof": proof}
+ 
+     def query(self, binary, project):
+-        args = {"query": "legacyhealthyneedle", "mode": "lexical", "limit": 4,
+-            "verification": "off", "response_mode": "full"}
++        digest = sha(binary)
++        payloads = [item for item in (self.old_seal, self.new_seal) if item["files"]["airk.exe"] == digest]
++        assert len(payloads) == 1, "Query binary differs from actual old/new payload seals"
++        payload = payloads[0]["manifest_sha256"]
++        args = search_arguments(payload, self.old_seal["manifest_sha256"], self.new_seal["manifest_sha256"])
+         def read(_):
+             result = self.command(binary, *self.project_args(project), "tools", "call", "airk_search",
+                 "--args", json.dumps(args), check=False)
+@@ -558,15 +613,9 @@
+         receipt["primary_error"] = repr(error)
+     finally:
+         if fixture is not None:
+-            receipt["actual_host_readonly_parity"] = fixture.host_parity_receipts
+-            # Retain even successful synthetic fixtures: ordinary physical cleanup
+-            # is a separate owner proof, not implied by logical Applied.
+-            receipt["fixture_retained"] = True
+-            try:
+-                receipt["final_quiescence"] = fixture.drain(fixture.new / "airk.exe")
+-            except Exception as error:
+-                receipt["stop_error"] = repr(error)
+-                receipt["status"] = "failed"
++            # Retain even successful fixtures; quiescence is separate from physical
++            # cleanup and from the scenario's original primary result.
++            finish_owner(fixture, receipt)
+         try:
+             output_stream.write(json.dumps(receipt, indent=2) + "\n")
+             output_stream.flush()
+--- /dev/null
++++ b/scripts/tests/test_runtime_legacy_retirement.py
+@@ -0,0 +1,79 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Pure argument/selection/provenance/teardown contracts; no native execution."""
++import hashlib
++import importlib.util
++import json
++from pathlib import Path
++import shutil
++import tempfile
++import unittest
++
++SCRIPT=Path(__file__).resolve().parents[1]/'check-runtime-legacy-retirement.py'
++spec=importlib.util.spec_from_file_location('legacy_retirement_under_test',SCRIPT)
++h=importlib.util.module_from_spec(spec);spec.loader.exec_module(h)
++
++
++class LegacyRetirementHarnessTests(unittest.TestCase):
++    def test_old_new_search_arguments_preserve_shared_work_without_unsupported_field(self):
++        old,new='1'*64,'2'*64
++        before=h.search_arguments(old,old,new);after=h.search_arguments(new,old,new)
++        self.assertNotIn('verification',before)
++        self.assertEqual(after.pop('verification'),'off')
++        self.assertEqual(before,after)
++        self.assertEqual(before,{'query':'legacyhealthyneedle','mode':'lexical','limit':4,'response_mode':'full'})
++
++    def test_unknown_query_payload_never_guesses_old_or_new_contract(self):
++        with self.assertRaises(AssertionError):h.search_arguments('3'*64,'1'*64,'2'*64)
++
++    def payloads(self,root):
++        install=root/'install';(install/'runtimes').mkdir(parents=True)
++        seals=[]
++        for label,version in [('old','1.8.7'),('new','1.8.8')]:
++            directory=root/label;directory.mkdir()
++            raw=(label+' inert unit-test bytes; never executed').encode()
++            (directory/'airk.exe').write_bytes(raw)
++            manifest={'schema':1,'os':'windows','arch':'x86_64','version':version,
++                'files':{'airk.exe':hashlib.sha256(raw).hexdigest()}}
++            (directory/'airk-install.json').write_text(json.dumps(manifest))
++            seal=h.seal(directory);shutil.copytree(directory,install/'runtimes'/seal['manifest_sha256'])
++            seals.append(seal)
++        return install,seals
++
++    def test_selected_owner_resolves_exact_installed_old_or_new_bytes(self):
++        with tempfile.TemporaryDirectory() as temporary:
++            root=Path(temporary).resolve();install,seals=self.payloads(root)
++            for seal in seals:
++                selected={'active':seal['manifest_sha256'],'rollback':None}
++                (install/'selected.json').write_text(json.dumps(selected))
++                binary,observed=h.selected_payload(root,install,*seals)
++                self.assertEqual(observed,selected)
++                self.assertEqual(binary,install/'runtimes'/seal['manifest_sha256']/'airk.exe')
++                self.assertEqual(h.sha(binary),seal['files']['airk.exe'])
++
++    def test_selected_owner_refuses_unrelated_identity_or_tampered_installed_main(self):
++        with tempfile.TemporaryDirectory() as temporary:
++            root=Path(temporary).resolve();install,seals=self.payloads(root)
++            (install/'selected.json').write_text(json.dumps({'active':'3'*64}))
++            with self.assertRaises(AssertionError):h.selected_payload(root,install,*seals)
++            old=seals[0];(install/'selected.json').write_text(json.dumps({'active':old['manifest_sha256']}))
++            (install/'runtimes'/old['manifest_sha256']/'airk.exe').write_bytes(b'tampered inert bytes')
++            with self.assertRaises(AssertionError):h.selected_payload(root,install,*seals)
++
++    def test_finally_uses_selected_owner_without_candidate_argument_and_preserves_primary(self):
++        class FailedOwner:
++            host_parity_receipts=[]
++            def drain(self):raise RuntimeError('selected old quiescence failed')
++        receipt={'status':'failed','primary_error':'original old-parser refusal'}
++        h.finish_owner(FailedOwner(),receipt)
++        self.assertEqual(receipt['primary_error'],'original old-parser refusal')
++        self.assertIn('selected old quiescence failed',receipt['stop_error'])
++        self.assertEqual(receipt['status'],'failed')
++        class StoppedOwner(FailedOwner):
++            def drain(self):return {'selected_manifest_sha256':'old exact identity'}
++        passed={'status':'passed'};h.finish_owner(StoppedOwner(),passed)
++        self.assertEqual(passed['status'],'passed')
++        self.assertEqual(passed['final_quiescence']['selected_manifest_sha256'],'old exact identity')
++
++
++if __name__=='__main__':
++    unittest.main()

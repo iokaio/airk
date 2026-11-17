@@ -1,0 +1,68 @@
+--- a/crates/airk-store/src/private_storage.rs
++++ b/crates/airk-store/src/private_storage.rs
+@@ -1,6 +1,7 @@
+ // SPDX-License-Identifier: Apache-2.0
+ //! Positive handle evidence only; never grants cached/relaxed read authority.
+ use anyhow::Result;
++#[cfg(any(target_os = "linux", windows))]
+ use sha2::{Digest, Sha256};
+ use std::fs::File;
+ 
+@@ -74,7 +75,7 @@
+     }
+     let filesystem = unsafe { filesystem.assume_init() };
+     // Narrow supported local Linux filesystems; network/FUSE/unknown stays Unknown.
+-    if ![0xef53, 0x58465342, 0x9123683e, 0x01021994].contains(&(filesystem.f_type as u64)) {
++    if ![0xef53, 0x58465342, 0x9123683e, 0x01021994].contains(&i128::from(filesystem.f_type)) {
+         return Ok(Err(Unknown::UnsupportedFilesystem));
+     }
+     let directory = kind != Kind::File;
+--- a/crates/airk-store/src/service_collection_census.rs
++++ b/crates/airk-store/src/service_collection_census.rs
+@@ -36,6 +36,7 @@
+     scope: crate::current::CurrentScope,
+     token: CurrentToken,
+     root: PathBuf,
++    #[cfg(any(target_os = "linux", windows))]
+     root_identity: [u64; 3],
+     writer: &'a mut crate::WriterLock,
+     observed_generation: u64,
+@@ -113,6 +114,7 @@
+             selected.store.current_owned_scope()?.as_ref() == Some(&read.head().scope),
+             "census selection changed"
+         );
++        #[cfg(any(target_os = "linux", windows))]
+         let token = read.token()?;
+         let root = selected.store.directory().to_path_buf();
+         crate::maintenance::check_writer(
+@@ -120,19 +122,20 @@
+             writer,
+             &Quota::open_service(Path::new(&self.collection.owner.data_root))?,
+         )?;
++        #[cfg(any(target_os = "linux", windows))]
+         let observed_generation = writer.census_mutation_epoch();
+         #[cfg(target_os = "linux")]
+         {
+             let file = open_absolute(&root)?;
+             let Some(identity) = private_identity(&file, true)? else {
+-                return Ok(Census::ineligible(
++                return Census::ineligible(
+                     self,
+                     fence,
+                     read,
+                     root,
+                     writer,
+                     CensusUnknown::ObjectEvidence,
+-                )?);
++                );
+             };
+             let entries = entries(&file)?;
+             let root_pin = file.try_clone()?;
+@@ -208,6 +211,7 @@
+             scope: read.head().scope.clone(),
+             token: read.token()?,
+             root,
++            #[cfg(target_os = "linux")]
+             root_identity: [0; 3],
+             writer,
+             observed_generation,

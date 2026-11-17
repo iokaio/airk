@@ -1,0 +1,7 @@
+// SPDX-License-Identifier: Apache-2.0
+{
+    setJobId(id);
+    setJobRecord(null);
+    const value = okValue(await runJob(OPS.jobsGet, body.jobsGet(id)));
+    setJobRecord(rec(value?.job));
+  }

@@ -1,0 +1,18 @@
+diff a/artifacts/v190/p11b-composed-p11a-r2/tree/crates/airk-ingest/src/adapters/registry.rs b/artifacts/v190/p11b-composed-p11a-r2/tree/crates/airk-ingest/src/adapters/registry.rs	(rejected hunks)
+@@ -745,6 +745,16 @@
+         );
+         Ok(())
+     }
++    /// Pure exact effective producer qualification for metadata reports. Unknown
++    /// historical versions/options stay unknown; no adapter/source input executes.
++    pub fn effective_capabilities(
++        &self,
++        path: &str,
++        profile: &ExtractionProfile,
++    ) -> Option<&AdapterCapabilities> {
++        self.validate_effective_profile(path, profile).ok()?;
++        Some(&self.get(&profile.adapter_id)?.capabilities)
++    }
+     pub fn descriptors(&self) -> impl Iterator<Item = &AdapterDescriptor> {
+         self.entries.values()
+     }

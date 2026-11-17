@@ -1,0 +1,1072 @@
+--- r2/crates/airk-retrieval/src/arbiter/runtime/cuda/CONTRACT.md
++++ r3/crates/airk-retrieval/src/arbiter/runtime/cuda/CONTRACT.md
+@@ -102,3 +102,51 @@
+ This preserves CPU --all-features linking without any CUDA build/dependencies.
+ The compiled producer/static-build pins and authenticated closure are still
+ mandatory: a version string or an available export alone grants no GPU runtime.
++
++## R3 review corrections and first proof scope
++
++Runtime code/data payloads use integrity protection, not confidentiality:
++owner remains the human, effective foreign write/append/delete/delete-child/
++WRITE_DAC/WRITE_OWNER/GENERIC_WRITE/ALL refuse, but foreign RX is supported.
++INHERIT_ONLY ACEs do not apply to the current object; each actual child file's
++own descriptor is checked. INHERITED without INHERIT_ONLY still applies. This
++changes no service/store/data directory privacy rule and edits no ACL.
++
++One active actual lease+manifest maps to one CudaRuntime and one adapter broker;
++re-entry returns the same Arc. Another live lease refuses instead of creating
++an independent book over the same free VRAM. Context restoration has an owning
++RAII guard: push failure never pops, success owns exactly one pop even on panic.
++Wrong/failed pop globally poisons before teardown and retains the exact primary
++context/service lease; it never calls release under an unknown thread stack.
++
++All newly mapped images, including arbitrary helper/renamed-core basenames,
++must match explicit authenticated closure file path+identity. A snapshot of
++pre-existing trusted process mappings is separate; its address/name/path/ID
++must stay exact when reused. No prefix heuristic authorizes a new image. Any
++unlisted driver/system transitive image refuses for explicit subsequent review,
++not an automatic PATH/System32/DriverStore wildcard. GPU closure file custody
++is held; unrelated pre-existing baseline images are observed, not permanently
++locked by this module.
++
++GPU transfers own the actual input Values and RunOptions/preallocated host
++score Value in a ManuallyDrop guard through native return and real sync. On
++error/panic the same guard synchronizes before dropping any transfer backing;
++unknown work retains those exact buffers plus Session/device/lease. CPU score
++keeps its original macro path.
++
++prepare_fp32_probe_profile is a test-support-only data constructor. It clones
++current native8192/N8 original c79/f8 Context metadata/assets, requires fresh
++native source policies and structurally valid all-unsupported CAL, preserves
++weights/graph/tokenizer/compiler/calibration/ABI and CPU4/16 host fit, clears all
++qualification/targets/downloads, and frames a distinct private GPU manifest
++including explicit phase probe bounds. It creates no EvaluationCatalog or
++execution permit. Existing actual evaluation lease and native device binding
++remain required, with no old CAL or CPU proof transferred.
++
++RuntimeManifest/1 exact UUID/driver-fit rows are the first A6000 scientific
++proof scope only. Eventual user eligibility needs a separately reviewed native
++compatibility-policy/per-user observation bridge; reference UUID is evidence,
++not a universal product requirement. No other GPU/driver is qualified here.
++Likewise the current producer sidecar is private fixture provenance. Do not ship
++raw private build paths/log records; a Rust-owned public projection + approved
++package contract is still required before distributable activation.
+--- r2/crates/airk-retrieval/src/arbiter/runtime.rs
++++ r3/crates/airk-retrieval/src/arbiter/runtime.rs
+@@ -783,26 +783,18 @@
+             .lock()
+             .map_err(|_| anyhow::anyhow!("Arbiter native session poisoned"))?;
+         #[cfg(feature = "gpu-cuda")]
+-        let work = match &self.profile.gpu {
+-            Some(binding) => Some(binding.device.reserve_warm_work(
+-                binding.plan.warm_extra_bytes(),
+-                binding.plan.headroom_bytes(),
++        if let Some(binding) = &self.profile.gpu {
++            return cuda::score_gpu(
++                &mut session,
++                binding,
++                input,
+                 deadline.context("original GPU score deadline required")?,
+-            )?),
+-            None => None,
+-        };
++                focus,
++            );
++        }
+         let output_name = if focus { "logits" } else { "scores" };
+-        let selected = OutputSelector::no_default().with(output_name);
+-        #[cfg(feature = "gpu-cuda")]
+-        let selected = if self.profile.gpu.is_some() {
+-            selected.preallocate(
+-                output_name,
+-                Tensor::from_array(([1, candidates], vec![0.0_f32; candidates]))?,
+-            )
+-        } else {
+-            selected
+-        };
+-        let options = RunOptions::new()?.with_outputs(selected);
++        let options =
++            RunOptions::new()?.with_outputs(OutputSelector::no_default().with(output_name));
+         let outputs = if focus { session.run_with_options(ort::inputs![
+             "input_ids" => Tensor::from_array(([1,tokens],input.input_ids.clone()))?,
+             "attention_mask" => Tensor::from_array(([1,tokens],input.attention_mask.clone()))?,
+@@ -814,25 +806,7 @@
+             "decision_positions" => Tensor::from_array(([1],vec![input.decision_position]))?,
+             "candidate_positions" => Tensor::from_array(([1,candidates],input.candidate_positions.clone()))?,
+             "option_mask" => Tensor::from_array(([1,candidates],input.option_mask.clone()))?,
+-        ],&options) }.map_err(|error|{
+-            #[cfg(feature="gpu-cuda")] if self.profile.gpu.is_some(){return cuda::run_failure(error);}
+-            anyhow::Error::from(error)
+-        }).context("Arbiter full trained readout execution failed");
+-        #[cfg(feature = "gpu-cuda")]
+-        let settlement = match work {
+-            Some(claim) => claim.settle(),
+-            None => Ok(()),
+-        };
+-        #[cfg(feature = "gpu-cuda")]
+-        let outputs = match (outputs, settlement) {
+-            (Ok(v), Ok(())) => v,
+-            (Err(e), Ok(())) | (Ok(_), Err(e)) => return Err(e),
+-            (Err(e), Err(wait)) => {
+-                return Err(e.context(format!("GPU settlement also failed: {wait:#}")));
+-            }
+-        };
+-        #[cfg(not(feature = "gpu-cuda"))]
+-        let outputs = outputs?;
++        ],&options) }.context("Arbiter full trained readout execution failed")?;
+         let (shape, scores) = outputs[output_name].try_extract_tensor::<f32>()?;
+         ensure!(
+             shape.as_ref() == [1, candidates as i64]
+--- r2/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
++++ r3/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
+@@ -17,9 +17,17 @@
+     time::Instant,
+ };
+ mod manifest;
++mod run;
++pub(super) use run::score as score_gpu;
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
++mod context;
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
++mod modules;
+ #[cfg(any(test, all(windows, target_arch = "x86_64")))]
+ mod pe;
+ mod placement;
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
++mod security;
+ pub use manifest::{compatibility_policy_digest, math_policy_digest, provider_options_digest};
+ pub use placement::{PlacedNode, PlacementObservation, PlacementRefusal};
+ #[cfg(test)]
+@@ -119,6 +127,14 @@
+     }
+ }
+ /// No Deserialize, no public field constructor. Host retains the actual service lease.
++#[cfg(all(windows, target_arch = "x86_64"))]
++static RUNTIME_OWNER: Mutex<Weak<CudaRuntime>> = Mutex::new(Weak::new());
++
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
++fn same_native_lease(a: &Arc<dyn Send + Sync>, b: &Arc<dyn Send + Sync>) -> bool {
++    Arc::ptr_eq(a, b)
++}
++
+ pub struct CudaRuntime {
+     #[cfg(all(windows, target_arch = "x86_64"))]
+     loaded: &'static windows::LoadedRuntime,
+@@ -141,15 +157,32 @@
+         in_time(deadline)?;
+         #[cfg(all(windows, target_arch = "x86_64"))]
+         {
++            let mut owner = RUNTIME_OWNER
++                .lock()
++                .map_err(|_| anyhow::anyhow!("native CUDA owner cache poisoned"))?;
++            let existing = owner.upgrade();
++            if let Some(actual) = &existing {
++                ensure!(
++                    same_native_lease(&actual._native_lease, &lease),
++                    "CUDA runtime already belongs to another native service lease"
++                );
++            }
+             let (loaded, manifest, identity) = windows::admit(root, manifest_path, deadline)?;
++            if let Some(actual) = existing {
++                ensure!(actual.identity == identity, "CUDA owner manifest changed");
++                return Ok(actual);
++            }
++
+             in_time(deadline)?;
+-            Ok(Arc::new(Self {
++            let actual = Arc::new(Self {
+                 loaded,
+                 manifest,
+                 identity,
+                 _native_lease: lease,
+                 devices: Mutex::new(BTreeMap::new()),
+-            }))
++            });
++            *owner = Arc::downgrade(&actual);
++            Ok(actual)
+         }
+         #[cfg(not(all(windows, target_arch = "x86_64")))]
+         {
+@@ -654,3 +687,106 @@
+     }
+ }
+ impl std::error::Error for RuntimeUnavailable {}
++
++/// Data-only, unqualified first FP32 probe metadata. Does not mint evaluation,
++/// device ownership, execution, fitted CAL or release authority.
++#[cfg(feature = "test-support")]
++pub fn prepare_fp32_probe_profile(
++    cpu: &Profile,
++    source: &dyn super::AssetSource,
++    device: &CudaDevice,
++    plan: DeviceCapacityPlan,
++) -> Result<Profile> {
++    use airk_core::arbiter::{AssetRole, ModelChoice};
++    crate::native_inference::require_service_compute()?;
++    cpu.validate()?;
++    super::validate_selected_policies(cpu)?;
++    ensure!(
++        cpu.device_execution.is_none() && cpu.max_tokens == 8192 && cpu.max_candidates == 8,
++        "probe requires current native8192/N8 CPU description"
++    );
++    let (name, graph, threads) = match cpu.model {
++        ModelChoice::ContextQwenCompact => (
++            "private-cuda-fp32-context-compact-probe-v1",
++            "c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4",
++            4,
++        ),
++        ModelChoice::ContextQwenLarge => (
++            "private-cuda-fp32-context-large-probe-v1",
++            "f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94",
++            16,
++        ),
++        _ => anyhow::bail!("first FP32 probe is original unfused Context only"),
++    };
++    let models = cpu
++        .assets
++        .iter()
++        .filter(|a| a.role == AssetRole::Model)
++        .collect::<Vec<_>>();
++    ensure!(
++        models.len() == 1 && models[0].sha256 == graph.parse()?,
++        "probe cannot replace original FP32 graph"
++    );
++    let calibrations = cpu
++        .assets
++        .iter()
++        .filter(|a| a.role == AssetRole::Calibration)
++        .collect::<Vec<_>>();
++    ensure!(calibrations.len() == 1, "native raw calibration missing");
++    let calibration =
++        airk_core::arbiter::context_action::calibration::JointCalibration::parse_and_validate(
++            &super::bytes(source, calibrations[0], 64 << 10)?,
++            cpu,
++            crate::arbiter::context_action::policy_digest()?,
++        )?;
++    use airk_core::arbiter::context_action::calibration::ClassSupport;
++    ensure!(
++        calibration.class_support.as_ref().is_some_and(|rows| rows
++            .iter()
++            .all(|r| matches!(r.support, ClassSupport::Unsupported { .. }))),
++        "GPU probe cannot transfer supported CPU class/CAL evidence"
++    );
++    let mut profile = cpu.clone();
++    let host_fit = profile.cpu_fit.take().context("native host fit required")?;
++    ensure!(
++        host_fit.intra_threads == threads && host_fit.minimum_physical_cores == threads,
++        "original selected host CPU tier changed"
++    );
++    profile.profile_id = name.into();
++    profile.runtime = GpuBackend::Cuda.runtime().into();
++    profile.downloads.clear();
++    profile.qualified_targets.clear();
++    profile.qualification = None;
++    profile.device_execution = Some(DeviceExecution {
++        schema: DEVICE_EXECUTION_SCHEMA.into(),
++        backend: GpuBackend::Cuda,
++        runtime_build: device.runtime.runtime_build(),
++        compatibility_policy: compatibility_policy_digest(),
++        provider_options: provider_options_digest(),
++        math_policy: math_policy_digest(),
++        precision: DevicePrecision::Float32,
++        tf32: false,
++        placement: PlacementPolicy::StrictGpu,
++        graph: models[0].sha256,
++        host_fit,
++        memory: DeviceMemory::Dedicated {
++            required_peak_bytes: plan.cold_peak_bytes,
++            headroom_bytes: plan.headroom_bytes,
++        },
++    });
++    profile.manifest = Sha256Digest::from_bytes([0; 32]);
++    let canonical = serde_json::to_vec(&(
++        cpu.manifest,
++        &profile,
++        plan.cold_peak_bytes,
++        plan.warm_extra_bytes,
++        plan.headroom_bytes,
++    ))?;
++    profile.manifest = airk_core::identity::framed_digest(
++        b"airk.private.cuda-fp32-probe-profile/1",
++        &[&canonical],
++    );
++    profile.validate()?;
++    super::validate_selected_policies(&profile)?;
++    Ok(profile)
++}
+--- /dev/null
++++ r3/crates/airk-retrieval/src/arbiter/runtime/cuda/context.rs
+@@ -0,0 +1,122 @@
++// SPDX-License-Identifier: Apache-2.0
++//! A successful native push always owns exactly one restoration attempt.
++use super::*;
++pub(super) trait Stack {
++    fn push(&self, handle: usize) -> Result<()>;
++    fn pop(&self) -> Result<usize>;
++    fn poison_and_retain(&self);
++}
++struct Restore<'a, T: Stack> {
++    stack: &'a T,
++    expected: usize,
++    attempted: bool,
++}
++impl<T: Stack> Restore<'_, T> {
++    fn finish(&mut self) -> Result<()> {
++        self.attempted = true;
++        let result = self.stack.pop().and_then(|actual| {
++            ensure!(actual == self.expected, "native CUDA context stack changed");
++            Ok(())
++        });
++        if result.is_err() {
++            self.stack.poison_and_retain();
++        }
++        result
++    }
++}
++impl<T: Stack> Drop for Restore<'_, T> {
++    fn drop(&mut self) {
++        if !self.attempted {
++            let _ = self.finish();
++        }
++    }
++}
++pub(super) fn run<T: Stack, V>(
++    stack: &T,
++    handle: usize,
++    call: impl FnOnce() -> Result<V>,
++) -> Result<V> {
++    stack.push(handle)?;
++    let mut restore = Restore {
++        stack,
++        expected: handle,
++        attempted: false,
++    };
++    let result = call();
++    let restored = restore.finish();
++    match (result, restored) {
++        (Ok(v), Ok(())) => Ok(v),
++        (Err(e), Ok(())) | (Ok(_), Err(e)) => Err(e),
++        (Err(e), Err(r)) => Err(e.context(format!("context restoration also failed: {r:#}"))),
++    }
++}
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::cell::Cell;
++    struct Injected {
++        push_ok: bool,
++        pop: Option<usize>,
++        pops: Cell<usize>,
++        retained: Cell<bool>,
++    }
++    impl Stack for Injected {
++        fn push(&self, _: usize) -> Result<()> {
++            ensure!(self.push_ok, "push failed");
++            Ok(())
++        }
++        fn pop(&self) -> Result<usize> {
++            self.pops.set(self.pops.get() + 1);
++            self.pop.context("pop failed")
++        }
++        fn poison_and_retain(&self) {
++            self.retained.set(true);
++        }
++    }
++    #[test]
++    fn failed_push_never_pops_and_call_error_restores_once() {
++        let x = Injected {
++            push_ok: false,
++            pop: Some(7),
++            pops: Cell::new(0),
++            retained: Cell::new(false),
++        };
++        assert!(run(&x, 7, || Ok(())).is_err());
++        assert_eq!(x.pops.get(), 0);
++        let x = Injected { push_ok: true, ..x };
++        assert!(run(&x, 7, || -> Result<()> { anyhow::bail!("original") }).is_err());
++        assert_eq!(x.pops.get(), 1);
++        assert!(!x.retained.get());
++    }
++    #[test]
++    fn restore_error_wrong_handle_and_panic_preserve_exactly_one_attempt() {
++        for pop in [None, Some(8)] {
++            let x = Injected {
++                push_ok: true,
++                pop,
++                pops: Cell::new(0),
++                retained: Cell::new(false),
++            };
++            let e = run(&x, 7, || -> Result<()> { anyhow::bail!("first failure") }).unwrap_err();
++            assert!(e.to_string().contains("first failure"));
++            assert!(x.retained.get());
++            assert_eq!(x.pops.get(), 1);
++        }
++        let x = Injected {
++            push_ok: true,
++            pop: Some(7),
++            pops: Cell::new(0),
++            retained: Cell::new(false),
++        };
++        assert!(
++            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(
++                &x,
++                7,
++                || -> Result<()> { panic!("original panic") }
++            )))
++            .is_err()
++        );
++        assert_eq!(x.pops.get(), 1);
++        assert!(!x.retained.get());
++    }
++}
+--- /dev/null
++++ r3/crates/airk-retrieval/src/arbiter/runtime/cuda/modules.rs
+@@ -0,0 +1,65 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Full new-mapping classification; basename prefixes never authorize a new image.
++use airk_process::directory::ObjectIdentity;
++#[derive(Clone, Debug)]
++pub(super) struct ModuleIdentity {
++    pub address: usize,
++    pub name: String,
++    pub path: String,
++    pub id: ObjectIdentity,
++}
++pub(super) fn allowed(
++    current: &ModuleIdentity,
++    baseline: &[ModuleIdentity],
++    approved: &[ModuleIdentity],
++) -> bool {
++    approved
++        .iter()
++        .any(|v| v.name == current.name && v.path == current.path && v.id == current.id)
++        || baseline.iter().any(|v| {
++            v.address == current.address
++                && v.name == current.name
++                && v.path == current.path
++                && v.id == current.id
++        })
++}
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn row(address: usize, name: &str, path: &str, inode: u64) -> ModuleIdentity {
++        ModuleIdentity {
++            address,
++            name: name.into(),
++            path: path.into(),
++            id: ObjectIdentity::Unix { device: 1, inode },
++        }
++    }
++    #[test]
++    fn unlisted_new_names_paths_and_known_name_wrong_identity_refuse() {
++        let old = row(1, "existing.dll", "system/existing.dll", 1);
++        let good = row(0, "cuda.dll", "app/cuda.dll", 2);
++        assert!(allowed(
++            &old,
++            std::slice::from_ref(&old),
++            std::slice::from_ref(&good)
++        ));
++        assert!(allowed(
++            &row(2, "cuda.dll", "app/cuda.dll", 2),
++            std::slice::from_ref(&old),
++            std::slice::from_ref(&good)
++        ));
++        for bad in [
++            row(3, "helper.dll", "app/helper.dll", 3),
++            row(3, "renamed-core.dll", "outside/renamed-core.dll", 4),
++            row(3, "cuda.dll", "outside/cuda.dll", 2),
++            row(3, "cuda.dll", "app/cuda.dll", 9),
++            row(8, "existing.dll", "system/existing.dll", 1),
++        ] {
++            assert!(!allowed(
++                &bad,
++                std::slice::from_ref(&old),
++                std::slice::from_ref(&good)
++            ));
++        }
++    }
++}
+--- /dev/null
++++ r3/crates/airk-retrieval/src/arbiter/runtime/cuda/run.rs
+@@ -0,0 +1,152 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Actual transfer buffers survive native run errors until observed GPU settlement.
++use super::*;
++use ort::{
++    session::{
++        Session,
++        run_options::{HasSelectedOutputs, OutputSelector, RunOptions},
++    },
++    value::{DynValue, Tensor},
++};
++use std::{
++    cell::{Cell, RefCell},
++    mem::ManuallyDrop,
++};
++struct Transfers {
++    inputs: ManuallyDrop<Vec<(&'static str, DynValue)>>,
++    options: ManuallyDrop<RunOptions<HasSelectedOutputs>>,
++    claim: RefCell<Option<DeviceReservation>>,
++    device: Arc<CudaDevice>,
++    settled: Cell<bool>,
++}
++impl Transfers {
++    fn finish(&self) -> Result<()> {
++        let Some(claim) = self.claim.borrow_mut().take() else {
++            ensure!(
++                self.settled.get(),
++                "GPU transfer settlement remains unknown"
++            );
++            return Ok(());
++        };
++        let result = claim.settle();
++        self.settled.set(!self.device.poisoned());
++        result
++    }
++}
++impl Drop for Transfers {
++    fn drop(&mut self) {
++        let _ = self.finish();
++        if self.settled.get() {
++            // SAFETY: inputs and host preallocated output are released only
++            // after the exact native context has really synchronized.
++            unsafe {
++                ManuallyDrop::drop(&mut self.inputs);
++                ManuallyDrop::drop(&mut self.options);
++            }
++        } else {
++            std::mem::forget(self.device.clone());
++        }
++    }
++}
++pub(super) fn score(
++    session: &mut Session,
++    binding: &Binding,
++    input: &super::super::CompiledInput,
++    deadline: Instant,
++    focus: bool,
++) -> Result<Vec<f32>> {
++    in_time(deadline)?;
++    let tokens = input.input_ids.len();
++    let candidates = input.candidate_positions.len();
++    let output_name = if focus { "logits" } else { "scores" };
++    let mut inputs: Vec<(&'static str, DynValue)> = vec![
++        (
++            "input_ids",
++            Tensor::from_array(([1, tokens], input.input_ids.clone()))?.into_dyn(),
++        ),
++        (
++            "attention_mask",
++            Tensor::from_array(([1, tokens], input.attention_mask.clone()))?.into_dyn(),
++        ),
++        (
++            "position_ids",
++            Tensor::from_array(([1, tokens], input.position_ids.clone()))?.into_dyn(),
++        ),
++    ];
++    if !focus {
++        inputs.extend([
++            (
++                "decision_positions",
++                Tensor::from_array(([1], vec![input.decision_position]))?.into_dyn(),
++            ),
++            (
++                "candidate_positions",
++                Tensor::from_array(([1, candidates], input.candidate_positions.clone()))?
++                    .into_dyn(),
++            ),
++            (
++                "option_mask",
++                Tensor::from_array(([1, candidates], input.option_mask.clone()))?.into_dyn(),
++            ),
++        ]);
++    }
++    // This actual Value stays owned in RunOptions through success, error and
++    // panic cleanup. SessionOutputs only clones its backing in pinned ort rc10.
++    let options = RunOptions::new()?.with_outputs(
++        OutputSelector::no_default().with(output_name).preallocate(
++            output_name,
++            Tensor::from_array(([1, candidates], vec![0.0_f32; candidates]))?,
++        ),
++    );
++    let claim = binding.device.reserve_warm_work(
++        binding.plan.warm_extra_bytes(),
++        binding.plan.headroom_bytes(),
++        deadline,
++    )?;
++    let transfers = Transfers {
++        inputs: ManuallyDrop::new(inputs),
++        options: ManuallyDrop::new(options),
++        claim: RefCell::new(Some(claim)),
++        device: binding.device.clone(),
++        settled: Cell::new(false),
++    };
++    let borrowed = transfers
++        .inputs
++        .iter()
++        .map(|(name, value)| (*name, value))
++        .collect::<Vec<_>>();
++    let result = session
++        .run_with_options(borrowed, &transfers.options)
++        .map_err(run_failure)
++        .context("Arbiter full trained GPU readout execution failed");
++    let settlement = transfers.finish();
++    if !transfers.settled.get() {
++        let error = match result {
++            Ok(outputs) => {
++                std::mem::forget(outputs);
++                settlement
++                    .err()
++                    .unwrap_or_else(|| native_fault("GPU settlement unknown".into()))
++            }
++            Err(error) => error.context(format!(
++                "GPU settlement also failed: {}",
++                settlement.err().map(|e| e.to_string()).unwrap_or_default()
++            )),
++        };
++        return Err(error);
++    }
++    let outputs = match (result, settlement) {
++        (Ok(v), Ok(())) => v,
++        (Err(e), Ok(())) | (Ok(_), Err(e)) => return Err(e),
++        (Err(e), Err(wait)) => {
++            return Err(e.context(format!("GPU settlement also failed: {wait:#}")));
++        }
++    };
++    let (shape, scores) = outputs[output_name].try_extract_tensor::<f32>()?;
++    ensure!(
++        shape.as_ref() == [1, candidates as i64] && scores.iter().all(|s| s.is_finite()),
++        "Arbiter GPU score shape/finite contract changed"
++    );
++    in_time(deadline)?;
++    Ok(scores.to_vec())
++}
+--- /dev/null
++++ r3/crates/airk-retrieval/src/arbiter/runtime/cuda/security.rs
+@@ -0,0 +1,64 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Effective current-object ACL decisions; inheritance alone grants nothing here.
++use super::*;
++pub(super) fn trusted(sid: &str) -> bool {
++    matches!(
++        sid,
++        "S-1-5-18"
++            | "S-1-5-32-544"
++            | "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
++    )
++}
++pub(super) fn effective_allow(header: [u8; 4]) -> Result<bool> {
++    if header[1] & 0x08 != 0 {
++        return Ok(false);
++    } // INHERIT_ONLY, not INHERITED(0x10).
++    if header[0] == 1 {
++        return Ok(false);
++    } // DENY never grants current-object access.
++    ensure!(
++        header[0] == 0 && u16::from_le_bytes([header[2], header[3]]) >= 20,
++        "unsupported effective GPU custody ACE"
++    );
++    Ok(true)
++}
++pub(super) fn grant(private: bool, user: &str, who: &str, mask: u32) -> Result<()> {
++    ensure!(
++        (private && who == user) || trusted(who) || mask & 0x500d0156 == 0,
++        "effective GPU custody grant permits foreign access/write"
++    );
++    Ok(())
++}
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn creator_owner_raw_inherit_only_does_not_grant_current_object() {
++        let ace = [
++            0u8, 0x0b, 20, 0, 0, 0, 0, 0x10, 1, 1, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0,
++        ];
++        assert!(!effective_allow(ace[..4].try_into().unwrap()).unwrap());
++        let mut applied = ace;
++        applied[1] = 3;
++        assert!(effective_allow(applied[..4].try_into().unwrap()).unwrap());
++        assert!(
++            grant(
++                false,
++                "S-1-5-21-1",
++                "S-1-3-0",
++                u32::from_le_bytes(applied[4..8].try_into().unwrap())
++            )
++            .is_err()
++        );
++    }
++    #[test]
++    fn inherited_effective_foreign_write_is_not_ignored_or_child_authorized() {
++        assert!(effective_allow([0, 0x10, 20, 0]).unwrap());
++        assert!(grant(false, "u", "foreign", 0x10000000).is_err());
++        assert!(grant(false, "u", "foreign", 0x1200a9).is_ok());
++        assert!(grant(true, "u", "foreign", 0x1200a9).is_ok());
++        assert!(grant(true, "u", "foreign", 0x40000000).is_err());
++        assert!(effective_allow([5, 0, 20, 0]).is_err());
++        assert!(!effective_allow([5, 8, 20, 0]).unwrap());
++    }
++}
+--- r2/crates/airk-retrieval/src/arbiter/runtime/cuda/tests.rs
++++ r3/crates/airk-retrieval/src/arbiter/runtime/cuda/tests.rs
+@@ -165,3 +165,12 @@
+         &anyhow::Error::new(RuntimeUnavailable::new("literal unavailable"))
+     ));
+ }
++
++#[test]
++fn native_broker_lease_identity_is_actual_arc_not_equal_payload() {
++    let a: Arc<dyn Send + Sync> = Arc::new(String::from("same"));
++    let b = a.clone();
++    let c: Arc<dyn Send + Sync> = Arc::new(String::from("same"));
++    assert!(same_native_lease(&a, &b));
++    assert!(!same_native_lease(&a, &c));
++}
+--- r2/crates/airk-retrieval/src/arbiter/runtime/cuda/windows.rs
++++ r3/crates/airk-retrieval/src/arbiter/runtime/cuda/windows.rs
+@@ -19,11 +19,7 @@
+     Security::{Authorization::*, *},
+     Storage::FileSystem::*,
+     System::{
+-        LibraryLoader::*,
+-        ProcessStatus::*,
+-        SystemInformation::GetSystemDirectoryW,
+-        SystemServices::{ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE},
+-        Threading::*,
++        LibraryLoader::*, ProcessStatus::*, SystemInformation::GetSystemDirectoryW, Threading::*,
+     },
+ };
+ fn wide(path: &Path) -> Vec<u16> {
+@@ -101,16 +97,11 @@
+     let _owned = Allocation(descriptor);
+     let user = current_user()?;
+     let owner = sid(owner)?;
+-    let trusted = |s: &str| {
+-        s == "S-1-5-18"
+-            || s == "S-1-5-32-544"
+-            || s == "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+-    };
+     ensure!(
+         if private {
+             owner == user
+         } else {
+-            trusted(&owner)
++            super::security::trusted(&owner)
+         },
+         "GPU payload/system owner mismatch"
+     );
+@@ -120,27 +111,13 @@
+         win(unsafe { GetAce(acl, i, &mut ace) })?;
+         ensure!(!ace.is_null(), "missing native ACE");
+         let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+-        if header.AceType == ACCESS_DENIED_ACE_TYPE as u8 {
++        let size = header.AceSize.to_le_bytes();
++        if !super::security::effective_allow([header.AceType, header.AceFlags, size[0], size[1]])? {
+             continue;
+         }
+-        ensure!(
+-            header.AceType == ACCESS_ALLOWED_ACE_TYPE as u8
+-                && usize::from(header.AceSize) >= std::mem::size_of::<ACCESS_ALLOWED_ACE>(),
+-            "unsupported GPU custody ACE"
+-        );
+         let allow = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
+         let who = sid(std::ptr::addr_of!(allow.SidStart).cast_mut().cast())?;
+-        if private {
+-            ensure!(
+-                who == user || trusted(&who),
+-                "GPU payload grants foreign access"
+-            );
+-        } else {
+-            ensure!(
+-                trusted(&who) || allow.Mask & 0x500d0156 == 0,
+-                "system GPU dependency grants foreign writes"
+-            );
+-        }
++        super::security::grant(private, &user, &who, allow.Mask)?;
+     }
+     Ok(())
+ }
+@@ -277,52 +254,118 @@
+         .iter()
+         .any(|p| name.starts_with(p))
+ }
+-fn reconcile(files: &[HeldFile]) -> Result<()> {
+-    let mut modules = vec![std::ptr::null_mut(); 4096];
++struct Baseline {
++    rows: Vec<super::modules::ModuleIdentity>,
++}
++fn final_path(file: &File) -> Result<String> {
++    let mut bytes = vec![0u16; 32768];
++    let count = unsafe {
++        GetFinalPathNameByHandleW(
++            file.as_raw_handle(),
++            bytes.as_mut_ptr(),
++            bytes.len() as u32,
++            0,
++        )
++    };
++    ensure!(
++        count > 0 && (count as usize) < bytes.len(),
++        "mapped image final path unavailable"
++    );
++    Ok(String::from_utf16(&bytes[..count as usize])?.to_ascii_lowercase())
++}
++fn mapped_images() -> Result<Baseline> {
++    let mut handles = vec![std::ptr::null_mut(); 4096];
+     let mut needed = 0;
+     win(unsafe {
+         K32EnumProcessModules(
+             GetCurrentProcess(),
+-            modules.as_mut_ptr(),
+-            (modules.len() * std::mem::size_of::<HMODULE>()) as u32,
++            handles.as_mut_ptr(),
++            (handles.len() * std::mem::size_of::<HMODULE>()) as u32,
+             &mut needed,
+         )
+     })?;
+     ensure!(
+-        needed as usize <= modules.len() * std::mem::size_of::<HMODULE>(),
++        (needed as usize) <= handles.len() * std::mem::size_of::<HMODULE>(),
+         "loaded module inventory exceeds bound"
+     );
+-    for module in modules
++    let mut rows = Vec::new();
++    for handle in handles
+         .into_iter()
+         .take(needed as usize / std::mem::size_of::<HMODULE>())
+     {
+-        let path = module_path(module)?;
++        let path = module_path(handle)?;
+         let name = path
+             .file_name()
+             .and_then(OsStr::to_str)
+             .context("module basename unavailable")?
+             .to_ascii_lowercase();
+-        if let Some(held) = files.iter().find(|f| {
++        let file = OpenOptions::new()
++            .read(true)
++            .share_mode(FILE_SHARE_READ)
++            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
++            .open(&path)?;
++        ensure!(
++            file.metadata()?.is_file()
++                && file.metadata()?.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0,
++            "redirected mapped image refused"
++        );
++        rows.push(super::modules::ModuleIdentity {
++            address: handle as usize,
++            name,
++            path: final_path(&file)?,
++            id: airk_process::directory::identity(&file)?,
++        });
++    }
++    Ok(Baseline { rows })
++}
++fn approved_images(files: &[HeldFile]) -> Result<Vec<super::modules::ModuleIdentity>> {
++    files
++        .iter()
++        .filter(|f| {
+             f.path
+-                .file_name()
++                .extension()
+                 .and_then(OsStr::to_str)
+-                .is_some_and(|n| n.eq_ignore_ascii_case(&name))
+-        }) {
+-            let named = OpenOptions::new()
+-                .read(true)
+-                .share_mode(FILE_SHARE_READ)
+-                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+-                .open(&path)?;
+-            ensure!(
+-                airk_process::directory::identity(&named)? == held.id,
+-                "loaded CUDA dependency differs from held file"
+-            );
+-        } else {
+-            ensure!(
+-                !gpu_name(&name),
+-                "unapproved preloaded CUDA/ORT core module: {name}"
+-            );
+-        }
++                .is_some_and(|v| v.eq_ignore_ascii_case("dll"))
++        })
++        .map(|f| {
++            Ok(super::modules::ModuleIdentity {
++                address: 0,
++                name: f
++                    .path
++                    .file_name()
++                    .and_then(OsStr::to_str)
++                    .context("payload basename missing")?
++                    .to_ascii_lowercase(),
++                path: final_path(&f.file)?,
++                id: f.id,
++            })
++        })
++        .collect()
++}
++fn initial_baseline(files: &[HeldFile]) -> Result<Baseline> {
++    let baseline = mapped_images()?;
++    let approved = approved_images(files)?;
++    for row in &baseline.rows {
++        ensure!(
++            !gpu_name(&row.name)
++                || approved
++                    .iter()
++                    .any(|v| v.name == row.name && v.path == row.path && v.id == row.id),
++            "unapproved existing GPU/core module"
++        );
++    }
++    Ok(baseline)
++}
++fn reconcile(files: &[HeldFile], baseline: &Baseline) -> Result<()> {
++    let current = mapped_images()?;
++    let approved = approved_images(files)?;
++    for row in &current.rows {
++        ensure!(
++            super::modules::allowed(row, &baseline.rows, &approved),
++            "new/unapproved mapped image {} at {}",
++            row.name,
++            row.path
++        );
+     }
+     Ok(())
+ }
+@@ -435,6 +478,7 @@
+ }
+ pub(super) struct PrimaryContext {
+     _native_lease: Option<Arc<dyn Send + Sync>>,
++    uncertain: AtomicBool,
+     handle: usize,
+     ordinal: i32,
+     device: i32,
+@@ -442,7 +486,9 @@
+ }
+ impl Drop for PrimaryContext {
+     fn drop(&mut self) {
+-        if unsafe { (self.driver.release)(self.device) } != 0 {
++        if self.uncertain.load(Ordering::Acquire)
++            || unsafe { (self.driver.release)(self.device) } != 0
++        {
+             FAILED.store(true, Ordering::Release);
+             if let Some(lease) = self._native_lease.take() {
+                 std::mem::forget(lease);
+@@ -450,28 +496,29 @@
+         }
+     }
+ }
++impl super::context::Stack for PrimaryContext {
++    fn push(&self, handle: usize) -> Result<()> {
++        cuda(unsafe { (self.driver.push)(handle as ContextHandle) })
++    }
++    fn pop(&self) -> Result<usize> {
++        let mut previous = std::ptr::null_mut();
++        cuda(unsafe { (self.driver.pop)(&mut previous) })?;
++        Ok(previous as usize)
++    }
++    fn poison_and_retain(&self) {
++        self.uncertain.store(true, Ordering::Release);
++        FAILED.store(true, Ordering::Release);
++    }
++}
+ impl PrimaryContext {
+     fn with_current<T>(&self, call: impl FnOnce() -> Result<T>) -> Result<T> {
+-        cuda(unsafe { (self.driver.push)(self.handle as ContextHandle) })?;
+-        let result = call();
+-        let mut previous = std::ptr::null_mut();
+-        let restored = cuda(unsafe { (self.driver.pop)(&mut previous) }).and_then(|()| {
+-            ensure!(
+-                previous as usize == self.handle,
+-                "native CUDA context stack changed"
+-            );
+-            Ok(())
+-        });
+-        match (result, restored) {
+-            (Ok(v), Ok(())) => Ok(v),
+-            (Err(e), Ok(())) | (Ok(_), Err(e)) => Err(e),
+-            (Err(e), Err(r)) => Err(e.context(format!("context restoration also failed: {r:#}"))),
+-        }
++        super::context::run(self, self.handle, call)
+     }
+ }
+ pub(super) struct LoadedRuntime {
+     collector: super::placement::Collector,
+     files: Vec<HeldFile>,
++    baseline: Baseline,
+     _modules: Vec<usize>,
+     driver: Driver,
+     identity: Sha256Digest,
+@@ -590,7 +637,7 @@
+             deadline,
+         )?);
+     }
+-    reconcile(&files)?;
++    let baseline = initial_baseline(&files)?;
+     win(unsafe {
+         SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32)
+     })?;
+@@ -600,11 +647,11 @@
+         started: true,
+     };
+     attempt.modules.push(load(&system_path.join("nvcuda.dll"))?);
+-    reconcile(attempt.files.as_ref().unwrap())?;
++    reconcile(attempt.files.as_ref().unwrap(), &baseline)?;
+     for name in &manifest.load_order {
+         in_time(deadline)?;
+         attempt.modules.push(load(&root.join(name))?);
+-        reconcile(attempt.files.as_ref().unwrap())?;
++        reconcile(attempt.files.as_ref().unwrap(), &baseline)?;
+     }
+     let driver = unsafe { Driver::from(attempt.modules[0])? };
+     cuda(unsafe { (driver.init)(0) })?;
+@@ -618,6 +665,7 @@
+         .set(LoadedRuntime {
+             collector,
+             files,
++            baseline,
+             _modules: modules,
+             driver,
+             identity,
+@@ -628,7 +676,7 @@
+ }
+ impl LoadedRuntime {
+     fn recheck(&self, deadline: Instant) -> Result<()> {
+-        reconcile(&self.files)?;
++        reconcile(&self.files, &self.baseline)?;
+         for file in &self.files {
+             file.recheck(deadline)?;
+         }
+@@ -646,6 +694,7 @@
+         ensure!(!context.is_null(), "native CUDA primary context missing");
+         Ok(PrimaryContext {
+             _native_lease: Some(lease),
++            uncertain: AtomicBool::new(false),
+             handle: context as usize,
+             ordinal,
+             device,
+@@ -683,12 +732,12 @@
+         deadline: Instant,
+     ) -> Result<AdapterObservation> {
+         in_time(deadline)?;
+-        reconcile(&self.files)?;
++        reconcile(&self.files, &self.baseline)?;
+         ensure!(ordinal == context.ordinal, "CUDA context/ordinal mismatch");
+         context.with_current(||{let(mut uuid,mut major,mut minor,mut driver,mut total,mut free,mut actual_total)=([0;16],0,0,0,0usize,0usize,0usize);cuda(unsafe{(self.driver.uuid)(&mut uuid,context.device)})?;cuda(unsafe{(self.driver.cc)(&mut major,&mut minor,context.device)})?;cuda(unsafe{(self.driver.version)(&mut driver)})?;cuda(unsafe{(self.driver.total)(&mut total,context.device)})?;cuda(unsafe{(self.driver.memory)(&mut free,&mut actual_total)})?;ensure!(uuid!=[0;16]&&total>0&&actual_total>0&&actual_total<=total&&free<=actual_total&&driver>=12080,"invalid/unsupported actual CUDA device observation");in_time(deadline)?;Ok(AdapterObservation{uuid,ordinal,compute_major:major,compute_minor:minor,driver_api_version:driver,driver_image_sha256:self.files.iter().find(|f|f.path.file_name().and_then(OsStr::to_str).is_some_and(|n|n.eq_ignore_ascii_case("nvcuda.dll"))).context("held driver identity missing")?.sha,physical_total_bytes:total as u64,total_bytes:actual_total as u64,free_bytes:free as u64,epoch:0})})
+     }
+     pub fn synchronize(&self, context: &PrimaryContext) -> Result<()> {
+-        reconcile(&self.files)?;
++        reconcile(&self.files, &self.baseline)?;
+         context.with_current(|| cuda(unsafe { (self.driver.sync)() }))
+     }
+ }
+@@ -781,7 +830,7 @@
+ 
+ impl LoadedRuntime {
+     pub fn placement(&self, session: &ort::session::Session) -> Result<PlacementObservation> {
+-        reconcile(&self.files)?;
++        reconcile(&self.files, &self.baseline)?;
+         // SAFETY: exact same statically linked ORT owner; live Session is held
+         // under its native Mutex for this bounded synchronous observation.
+         Ok(unsafe { super::placement::observe(self.collector, session) })

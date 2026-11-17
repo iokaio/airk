@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: Apache-2.0
+
+/// Bounded owner namespace observation, with zero directory enumeration. The
+/// protected private data root may have normally inherited private descendants.
+pub(crate) fn owner_namespace(data: &Path, selected: &Path) -> Result<([u64;3],[u64;3])> {
+    let root = absolute(data)?;
+    let Observation::Private(proof) = private_storage::inspect(&root.file,Kind::RootDirectory)? else {
+        anyhow::bail!("native data root lacks positive private evidence")
+    };
+    ensure!(no_alternate_streams(&root.file)?, "unsupported data-root streams");
+    let root_identity = proof.identity();
+    let mut parent = root.file.try_clone()?;
+    let mut ancestors = Vec::new();
+    let mut seen = BTreeSet::new();
+    seen.insert(root_identity);
+    for (count, component) in selected.strip_prefix(data)?.components().enumerate() {
+        ensure!(count < 64, "native namespace ancestry exceeds bound");
+        let Component::Normal(name) = component else { anyhow::bail!("native namespace path is not root-relative") };
+        let child = relative(&parent,&name.encode_wide().collect::<Vec<_>>())?;
+        let Observation::Private(child_proof) = private_storage::inspect(&child,Kind::Directory)? else {
+            anyhow::bail!("native selected ancestry lacks inherited private evidence")
+        };
+        ensure!(private_storage::same_volume(&root.file,&child) && no_alternate_streams(&child)?,
+            "native selected ancestry crosses a volume or unsupported stream");
+        ensure!(seen.insert(child_proof.identity()), "native namespace repeats physical identity");
+        ancestors.push(parent); parent = child;
+    }
+    let Observation::Private(selected_proof) = private_storage::inspect(&parent,Kind::Directory)? else {
+        anyhow::bail!("native selected directory lost privacy evidence")
+    };
+    let selected_identity = selected_proof.identity();
+    let current = absolute(data)?;
+    ensure!(proof.recheck()?.is_ok() && proof.check_current(&current.file)?,
+        "native data root changed during namespace observation");
+    Ok((root_identity,selected_identity))
+}

@@ -1,0 +1,260 @@
+--- r2/scripts/cuda-provider-staging.py
++++ r3/scripts/cuda-provider-staging.py
+@@ -0,0 +1,31 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Private provider-only staging; incomplete/unapproved until native full closure."""
++from pathlib import Path
++import hashlib,importlib.util,json,shutil
++
++def load(name):
++ p=Path(__file__).with_name(name+'.py');s=importlib.util.spec_from_file_location(name.replace('-','_'),p);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);return m
++
++def stage_providers(destination,build,aggregate,output,continuation,proposal,receipt_sha,repo_root):
++ runtime=load('cuda-static-runtime');owner=load('cuda-static-continuation-r12');core=runtime.load(Path(repo_root)/'scripts/provision-static-onnx-runtime.py','cpu_owner_private_stage')
++ # Refuse all mutation until both genuine completed producer and aggregate reopen.
++ observed=owner.verify_continuation(destination,continuation,proposal,receipt_sha,repo_root);actual_aggregate=load('cuda-static-aggregate').verify_aggregate(Path(destination),observed,core)
++ if observed!=build or actual_aggregate!=aggregate:raise ValueError('actual producer/aggregate changed before staging')
++ recipe=runtime.load(Path(proposal)/'continue_cuda_runtime.py','r12_stage_helpers');request=core.read_json(Path(proposal)/'continuation-request.json');r8=runtime.load(request['recipe']['path'],'r8_stage_policy');lock=core.read_json(request['recipe_lock']['path']);output=core.plain(output)
++ if output!=r8.PARENT/'gpu-provider-stage-r12':raise ValueError('exact fresh protected provider stage required')
++ guard=dict(lock);guard['build_path']={'fresh_child':output.name};policy=r8.identity_and_parent(core,output,guard);output.mkdir()
++ receipt={'schema':'airk.private.gpu-provider-stage/1','status':'RUNNING','qualification':False,'complete_cuda_runtime':False,'producer_proof_sha256':runtime.canonical(build),'aggregate_proof_sha256':runtime.canonical(aggregate),'output_policy':policy,'files':[]}
++ try:
++  sources=[(core.child(destination,row['path']),Path(row['path']).name,row) for row in build['provider_dlls']]
++  sources.append((Path(build['build_receipt']['path']),'gpu-build-continuation-receipt.json',build['build_receipt']))
++  if sorted(name for _,name,_ in sources)!=['gpu-build-continuation-receipt.json','onnxruntime_providers_cuda.dll','onnxruntime_providers_shared.dll']:raise ValueError('exact pair/private receipt roster differs')
++  for source,name,row in sources:
++   core.verify_file(core.plain(source,regular=True),row);target=output/name
++   with source.open('rb') as src,target.open('xb') as dst:shutil.copyfileobj(src,dst,1024*1024)
++   core.verify_file(core.plain(target,regular=True),row);receipt['files'].append({'path':name,'bytes':target.stat().st_size,'sha256':core.digest(target)})
++  if owner.verify_continuation(destination,continuation,proposal,receipt_sha,repo_root)!=build:raise ValueError('actual producer drifted during staging')
++  receipt['status']='PASS_PRIVATE_PROVIDER_COPY_ONLY_INCOMPLETE_UNAPPROVED'
++ except BaseException as exc:receipt.update(status='FAILED_PRESERVED_NO_RETRY',error=type(exc).__name__+': '+str(exc));raise
++ finally:
++  with (output/'staging-receipt.json').open('xb') as f:f.write((json.dumps(receipt,indent=2)+'\n').encode())
++ return receipt
+--- r2/scripts/cuda-runtime-environment.py
++++ r3/scripts/cuda-runtime-environment.py
+@@ -17,7 +17,7 @@
+  path=core.plain(path,regular=True)
+  if core.digest(path)!=expected_handoff_sha256:raise runtime.GpuProofUnavailable('reviewed GPU environment pin differs')
+  value=core.read_json(path)
+- if set(value)!={'schema','request','build','aggregate','environment','activation_pins_available'} or value['schema'] not in ('airk.cuda-static-environment/1','airk.cuda-static-environment/2') or value['activation_pins_available'] is not False:raise runtime.GpuProofUnavailable('GPU environment format/activation claim differs')
++ if set(value)!={'schema','request','build','aggregate','environment','activation_pins_available'} or value['schema'] not in ('airk.cuda-static-environment/1','airk.cuda-static-environment/2','airk.cuda-static-environment/3') or value['activation_pins_available'] is not False:raise runtime.GpuProofUnavailable('GPU environment format/activation claim differs')
+  request=value['request']
+  destination=core.plain(request['destination'])
+  if value['schema']=='airk.cuda-static-environment/1':
+@@ -25,7 +25,7 @@
+   build=runtime.verify_build(destination,request['producer_file'],request['lock_file'],request['receipt_sha256'],repo_root)
+  else:
+   if set(request)!={'destination','continuation_root','continuation_proposal','receipt_sha256'}:raise runtime.GpuProofUnavailable('exact continuation handoff request fields differ')
+-  owner=_load('cuda-static-continuation');build=owner.verify_continuation(destination,request['continuation_root'],request['continuation_proposal'],request['receipt_sha256'],repo_root)
++  owner=_load('cuda-static-continuation-r12' if value['schema']=='airk.cuda-static-environment/3' else 'cuda-static-continuation');build=owner.verify_continuation(destination,request['continuation_root'],request['continuation_proposal'],request['receipt_sha256'],repo_root)
+  aggregate=aggregate_owner.verify_aggregate(destination,build,core)
+  expected=environment(destination,build,aggregate)
+  if value['build']!=build or value['aggregate']!=aggregate or value['environment']!=expected or set(expected)!=STATIC_KEYS:raise runtime.GpuProofUnavailable('GPU static handoff no longer matches actual build/aggregate')
+@@ -36,3 +36,6 @@
+ 
+ def continuation_handoff_value(destination,continuation,proposal,receipt_sha256,build,aggregate):
+  return {'schema':'airk.cuda-static-environment/2','request':{'destination':str(destination),'continuation_root':str(continuation),'continuation_proposal':str(proposal),'receipt_sha256':receipt_sha256},'build':build,'aggregate':aggregate,'environment':environment(destination,build,aggregate),'activation_pins_available':False}
++
++def r12_handoff_value(destination,continuation,proposal,receipt_sha256,build,aggregate):
++ value=continuation_handoff_value(destination,continuation,proposal,receipt_sha256,build,aggregate);value['schema']='airk.cuda-static-environment/3';return value
+--- r2/scripts/cuda-static-aggregate.py
++++ r3/scripts/cuda-static-aggregate.py
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: Apache-2.0
+ """GPU-only genuine static aggregate plan/verification; CPU owner unchanged."""
+ from pathlib import Path
+-import importlib.util,json,os,time
++import importlib.util,json,os,time,datetime
+ ROOT=Path(__file__).resolve().parents[1]
+ FINAL_EXPORT='airk_ort_collect_final_placement_v1'
+ MAX_ARCHIVE=2*1024**3
+@@ -13,7 +13,9 @@
+  runtime=module('cuda-static-runtime');archive=module('cuda-static-archive');destination=core.plain(destination)
+  ninja=core.plain(destination/'b/Release/build.ninja',regular=True);core.verify_file(ninja,build['ninja'])
+  roots=['onnxruntime_'+name+'.lib' for name in core.STATIC_COMPONENTS]+['_deps/re2-build/re2.lib','_deps/pytorch_cpuinfo-build/cpuinfo.lib']
+- graph=archive.runtime_closure(ninja.read_text(encoding='utf8'),roots);recorded={r['path']:r for r in build['libraries']};rows=[];exports=set()
++ graph=archive.runtime_closure(ninja.read_text(encoding='utf8'),roots)
++ if build.get('ancestry',{}).get('receipt_schema')=='airk.private.cuda-runtime-continuation/2' and len(graph['static_inputs'])!=96:raise ValueError('exact observed R12 static target closure must contain96 archives')
++ recorded={r['path']:r for r in build['libraries']};rows=[];exports=set()
+  for relative in graph['static_inputs']:
+   p=core.child(destination,'b/Release/'+relative);key=p.relative_to(destination).as_posix()
+   if key not in recorded:raise ValueError('Ninja-selected archive absent from actual producer output census')
+@@ -47,7 +49,11 @@
+  selected=plan(destination,build,core);req=request(destination,build,selected,core)
+  if receipt.get('status')!='PASS_GPU_AGGREGATE_ONLY_UNQUALIFIED' or receipt.get('plan')!=selected or not core.successful(receipt.get('command',{})):raise ValueError('actual GPU aggregate command/provenance missing')
+  expected_command=[str(Path(os.environ.get('SystemRoot','C:/Windows'))/'System32/cmd.exe'),'/d','/c',str(destination/'commands/gpu-aggregate.cmd')]
+- if receipt.get('command',{}).get('argv')!=expected_command:raise ValueError('GPU aggregate actual owned command differs')
++ if build.get('ancestry',{}).get('receipt_schema')=='airk.private.cuda-runtime-continuation/2':
++  if receipt.get('execution_mode')!='r12-complete-owned-tree' or receipt.get('elapsed_seconds',301)>300:raise ValueError('actual bounded R12 aggregate tree proof missing')
++  bridge=module('cuda-static-continuation-r12');proposal=Path(build['ancestry']['r12_proposal']);child=runtime.load(proposal/'continue_cuda_runtime.py','r12_aggregate_tree_helper');cutoff=datetime.datetime.fromisoformat(receipt['observed_utc'])+datetime.timedelta(seconds=300)
++  bridge.verify_tree_command(core,child,proposal,destination,destination,'gpu-aggregate',req['argv'],build['toolchain'],receipt['command'],receipt,cutoff)
++ elif receipt.get('command',{}).get('argv')!=expected_command:raise ValueError('GPU aggregate actual owned command differs')
+  if receipt.get('argv')!=req['argv'] or receipt.get('tool')!=req['tool']:raise ValueError('GPU aggregate tool/argument drift')
+  if core.plain(req['response'],regular=True).read_bytes()!=req['text'].encode() or receipt.get('response_sha256')!=core.digest(req['response']):raise ValueError('GPU aggregate exact input response bytes differ')
+  row=receipt['output'];core.verify_file(core.plain(req['output'],regular=True),row);observed=archive.inspect_archive(req['output'])
+@@ -62,12 +68,20 @@
+  selected=plan(destination,build,core);req=request(destination,build,selected,core);(destination/'gpu-aggregate').mkdir();req['response'].write_bytes(req['text'].encode())
+  receipt={'schema':'airk.cuda-static-aggregate-receipt/1','status':'RUNNING','plan':selected,'tool':req['tool'],'argv':req['argv'],'response_sha256':core.digest(req['response'])};core.write_json(destination/'gpu-static-aggregate-attempt.json',receipt);start=time.monotonic()
+  try:
+-  actual=core.windows_command(req['argv'],build['toolchain'],destination,'gpu-aggregate');receipt['command']=core.run_owned(actual,destination,destination/'logs/gpu-aggregate.log',300)
++  actual=core.windows_command(req['argv'],build['toolchain'],destination,'gpu-aggregate')
++  if build.get('ancestry',{}).get('receipt_schema')=='airk.private.cuda-runtime-continuation/2':
++   proposal=Path(build['ancestry']['r12_proposal']);runtime=module('cuda-static-runtime');env_owner=runtime.load(proposal/'producer_environment.py','exact_r12_aggregate_environment');recipe=runtime.load(proposal/'continue_cuda_runtime.py','exact_r12_aggregate_helper');source_request=core.read_json(proposal/'continuation-request.json');r8=runtime.load(source_request['recipe']['path'],'r8_aggregate_input');environment=env_owner.producer_environment(destination/'gpu-aggregate',r8.CUDA);tree=runtime.load(proposal/'process_tree.py','r12_aggregate_tree')
++   receipt['execution_mode']='r12-complete-owned-tree';receipt['observed_utc']=datetime.datetime.now(datetime.timezone.utc).isoformat();receipt['environment_policy_source_sha256']=core.digest(proposal/'environment-source.json')
++   remaining=300-(time.monotonic()-start)
++   if remaining<=0:raise TimeoutError('aggregate original300s operation exhausted before archive tool')
++   receipt['command']=tree.run_tree(core,actual,destination,destination,'gpu-aggregate',remaining,environment)
++  else:receipt['command']=core.run_owned(actual,destination,destination/'logs/gpu-aggregate.log',300)
+   if not core.successful(receipt['command']):raise ValueError('GPU aggregate command failed/unsettled')
+   if plan(destination,build,core)!=selected:raise ValueError('GPU build inputs changed during aggregation')
+   archive=module('cuda-static-archive');core.plain(req['output'],regular=True);receipt['output']={'path':req['output'].relative_to(destination).as_posix(),'bytes':req['output'].stat().st_size,'sha256':core.digest(req['output'])};receipt['coff']=archive.inspect_archive(req['output'])
+   archive.verify_member_closure([r['coff'] for r in selected['inputs']],receipt['coff'])
+   if receipt['coff']['kind']!='static' or FINAL_EXPORT not in receipt['coff']['export_directives']:raise ValueError('aggregate core lacks genuine static objects/export')
++  if build.get('ancestry',{}).get('receipt_schema')=='airk.private.cuda-runtime-continuation/2' and time.monotonic()-start>=300:raise TimeoutError('aggregate operation expired during final object proof')
+   receipt['status']='PASS_GPU_AGGREGATE_ONLY_UNQUALIFIED'
+  except BaseException as e:
+   receipt.update(status='FAILED_PRESERVED_NO_RETRY',error=type(e).__name__+': '+str(e));raise
+--- r2/scripts/cuda-static-continuation-r12.py
++++ r3/scripts/cuda-static-continuation-r12.py
+@@ -0,0 +1,111 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Separate exact R12 /2 continuation proof; original R8/CPU owners unchanged."""
++from pathlib import Path
++import copy,datetime,importlib.util,os,subprocess,re
++R12_SCRIPT='c4a4cf3f06f9cc645af67d70200add6236c6f9f7a1e8d4d46a3f65d2604c517f'
++ENVIRONMENT='d22c0fa24228309040a6a59dbdd6fbf2296408de354a7fb6d2925225a9f22259'
++DIAGNOSTICS='e52cac836fb6d01d5630474f498732a41c37a614784db34a39a203e8ab3c8834'
++REQUEST='816a866cd757d4642cdd729e12e53fe1552ee9ea4ec22be4a7e5823d1843cd57'
++BASELINE='504285d4158092583465a919f8a42be4f7144696c1cfe72888ca6f1d89dbfebe'
++WALL='0b86c7f034fd949e36523bc6adece4263e4212533edf494bf19b0d08c19d6088'
++R8_SCRIPT='c2f9c3e305106469d6a58699eaa36ec2afed7a6cd4be63275498fd78af2d3f4a'
++R8_LOCK='549be258fd21be030f994f6da7f74146a9e9edd3bb611bee83305d9a4deade6d'
++AFTER='7acabdbefcd7ee3936305ff150fc2369c3d341b6838e10113435ebab03378ab8'
++
++def module(name):
++ p=Path(__file__).with_name(name+'.py');s=importlib.util.spec_from_file_location(name.replace('-','_'),p);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);return m
++
++def canonical_command_bytes(argv,tools,continuation,stage):
++ runtime=module('cuda-static-runtime')
++ values=[*argv,tools['vcvars']['path'],tools['windows_sdk'],tools['msvc_toolset'],str(continuation)]
++ if any(re.search(r'[\x00-\x1f"%!?^&|<>]',v) for v in values):raise runtime.GpuProofUnavailable('unsafe original command path')
++ text=('@echo off\r\ncall "'+tools['vcvars']['path']+'" '+tools['windows_sdk']+' -vcvars_ver='+tools['msvc_toolset']+' > "'+str(continuation/'logs'/(stage+'-toolchain.log'))+'" 2>&1\r\nif errorlevel 1 exit /b %errorlevel%\r\n'+subprocess.list2cmdline(argv)+'\r\nexit /b %errorlevel%\r\n')
++ return text.encode()
++
++def verify_tree_command(o,child,proposal,continuation,cwd,stage,argv,tools,command,value,cutoff):
++ runtime=module('cuda-static-runtime');script=o.plain(continuation/'commands'/(stage+'.cmd'),regular=True)
++ if script.read_bytes()!=canonical_command_bytes(argv,tools,continuation,stage):raise runtime.GpuProofUnavailable('actual canonical command bytes differ')
++ original=[str(Path(os.environ.get('SystemRoot','C:/Windows'))/'System32/cmd.exe'),'/d','/c',str(script)]
++ owner=runtime.load(proposal/'process_tree.py','exact_r12_tree_contract');request=owner.command_request(original,cwd,continuation,stage);request_path=o.plain(continuation/(stage+'-tree-request.json'),regular=True)
++ if o.read_json(request_path)!=request:raise runtime.GpuProofUnavailable('actual tree request differs from exact original command')
++ expected=[str(owner.POWERSHELL),'-NoLogo','-NoProfile','-NonInteractive','-File',str(proposal/'wait_process_tree.ps1'),'-Request',str(request_path)]
++ if command.get('argv')!=expected or command.get('tree_request')!=str(request_path) or os.path.normcase(command.get('log',''))!=os.path.normcase(str(continuation/'logs'/(stage+'.log'))) or not o.successful(command):raise runtime.GpuProofUnavailable('actual natural complete command tree missing')
++ started=o.read_json(o.plain(request['started'],regular=True));result=o.read_json(o.plain(request['result'],regular=True))
++ if result!=command.get('actual_tree_result') or result.get('schema')!='airk.private.process-tree-result/1' or result.get('exit_code')!=0 or result.get('wait')!='Start-Process-Wait-process-and-descendants' or result.get('powershell')!='7.6.10' or result.get('command_pid')!=started.get('pid') or result.get('wrapper_pid')!=started.get('wrapper_pid') or not isinstance(result.get('command_pid'),int) or result['command_pid']<=0 or result.get('wrapper_pid')==result.get('command_pid'):raise runtime.GpuProofUnavailable('actual original command/tree identity differs')
++ first=datetime.datetime.fromisoformat(result['start_utc']);last=datetime.datetime.fromisoformat(result['finished_utc']);observed=datetime.datetime.fromisoformat(value['observed_utc'])
++ if first.utcoffset()!=datetime.timedelta(0) or last.utcoffset()!=datetime.timedelta(0) or not observed<=first<=last<=cutoff:raise runtime.GpuProofUnavailable('actual tree completion outside original absolute operation cutoff')
++ for name in ['stdout','stderr']:o.plain(request[name],regular=True)
++ return {'request_sha256':o.digest(request_path),'result_sha256':o.digest(request['result']),'command_sha256':o.digest(script)}
++
++def require_original_input_prefix(old_closure,closure):
++ if len(old_closure)!=44 or closure[:44]!=old_closure:raise ValueError('original44 frozen inputs not retained exactly')
++
++def require_r12_header(value):
++ runtime=module('cuda-static-runtime')
++ if value.get('schema')!='airk.private.cuda-runtime-continuation/2' or value.get('status')!='PASS_PRODUCER_ONLY_UNQUALIFIED' or value.get('request_sha256')!=REQUEST or value.get('baseline_sha256')!=BASELINE or value.get('wall_origin_sha256')!=WALL or value.get('continuation_script_sha256')!=R12_SCRIPT:raise runtime.GpuProofUnavailable('actual reviewed R12 PASS unavailable')
++
++def verify_continuation(destination,continuation,proposal,expected_receipt_sha256,repo_root):
++ runtime=module('cuda-static-runtime');o=runtime.load(Path(repo_root)/'scripts/provision-static-onnx-runtime.py','cpu_owner_r12_verifier')
++ destination=o.plain(destination);continuation=o.plain(continuation);proposal=o.plain(proposal)
++ pins={'continue_cuda_runtime.py':R12_SCRIPT,'continuation-request.json':REQUEST,'continuation-baseline.json':BASELINE,'wall-origin.json':WALL,'input-pins.json':ENVIRONMENT,'diagnostic-evidence.json':DIAGNOSTICS}
++ for name,sha in pins.items():
++  if o.digest(o.plain(proposal/name,regular=True))!=sha:raise runtime.GpuProofUnavailable('R12 reviewed source/input bridge differs')
++ req=o.read_json(proposal/'continuation-request.json');baseline=o.read_json(proposal/'continuation-baseline.json');wall=o.read_json(proposal/'wall-origin.json')
++ if destination!=Path(req['destination']) or continuation!=destination.parent/'cu8-continuation-r12':raise runtime.GpuProofUnavailable('R12 exact build/continuation roots differ')
++ if not (continuation/'gpu-build-continuation-receipt.json').is_file():raise runtime.GpuProofUnavailable('genuine completed R12 producer receipt unavailable')
++ raw=o.plain(continuation/'gpu-build-continuation-receipt.json',regular=True)
++ if o.digest(raw)!=expected_receipt_sha256:raise runtime.GpuProofUnavailable('actual successful continuation receipt pin differs')
++ value=o.read_json(raw)
++ require_r12_header(value)
++ for name in ['recipe','recipe_lock','before','after','patch','syntax_card','syntax_response','parent_receipt','parent_failed_log','parent_source_inventory']:o.verify_file(o.plain(req[name]['path'],regular=True),req[name])
++ if req['recipe']['sha256']!=R8_SCRIPT or req['recipe_lock']['sha256']!=R8_LOCK or req['after']['sha256']!=AFTER:raise runtime.GpuProofUnavailable('R12 ancestry source bridge differs')
++ recipe=runtime.load(req['recipe']['path'],'exact_r8_for_r12');lock=o.read_json(req['recipe_lock']['path']);recipe.cpu_owner(lock)
++ child=runtime.load(proposal/'continue_cuda_runtime.py','exact_r12_verifier_helpers');parent=o.read_json(req['parent_receipt']['path']);child.verify_parent(parent,o)
++ for key in ['parent_failed_receipt','parent_failed_log','parent_source_inventory']:
++  parent_key={'parent_failed_receipt':'parent_receipt','parent_failed_log':'parent_failed_log','parent_source_inventory':'parent_source_inventory'}[key]
++  if value.get(key)!=req[parent_key]:raise runtime.GpuProofUnavailable('exact original failed ancestry pin differs')
++ if value.get('policy')!=parent.get('policy') or value.get('toolchain')!=parent.get('toolchain') or value.get('frozen_parent_metadata')!=baseline or value.get('configure_argv')!=parent.get('configure_argv') or not value.get('original_source_preserved') or not value.get('source_applied'):raise runtime.GpuProofUnavailable('R12 changed unrelated build policy/ancestry')
++ for item in o.read_json(proposal/'input-pins.json'):o.verify_file(o.plain(item['path'],regular=True),item)
++ for item in baseline:o.verify_file(o.plain(item['path'],regular=True),item)
++ for original,name in [('before','onnxruntime_c_api.cc.before'),('parent_receipt','parent-failed-receipt.json'),('parent_source_inventory','parent-gpu-source-files.json')]:o.verify_file(o.plain(continuation/name,regular=True),req[original])
++ tools=parent['toolchain']
++ for name in ['compiler','cmake','ninja','patch','python','vcvars']:o.verify_file(o.plain(tools[name]['path'],regular=True),tools[name])
++ diagnostic_pin=value.get('diagnostic_evidence',{});o.verify_file(o.plain(proposal/'diagnostic-evidence.json',regular=True),diagnostic_pin)
++ if diagnostic_pin.get('sha256')!=DIAGNOSTICS or value.get('syntax_qualification') is not False or value.get('environment_input_sha256')!=ENVIRONMENT:raise runtime.GpuProofUnavailable('exact R12 diagnostic/environment bridge differs')
++ diagnostics=o.read_json(proposal/'diagnostic-evidence.json');facts=child.verify_diagnostics(diagnostics,o,AFTER,REQUEST)
++ if value.get('syntax_diagnostics')!=facts or facts.get('syntax_qualified') is not False:raise runtime.GpuProofUnavailable('failed diagnostics relabelled or changed')
++ before=o.read_json(req['parent_source_inventory']['path']);expected=child.changed_rows(before,req['before']['sha256'],AFTER,req['after']['bytes'])
++ if o.source_inventory(destination/'source',exclude_mirror=True)!=expected or o.read_json(continuation/'gpu-source-files.json')!=expected or o.digest(continuation/'gpu-source-files.json')!=value.get('source_inventory_sha256'):raise runtime.GpuProofUnavailable('R12 complete source delta differs')
++ frontend=o.read_json(destination/'frontend-source-files.json');cuda=o.read_json(destination/'cuda-toolkit-inputs.json')
++ if o.source_inventory(destination/'frontend')!=frontend or o.digest(destination/'frontend-source-files.json')!=value.get('frontend_inventory_sha256') or o.digest(destination/'cuda-toolkit-inputs.json')!=value.get('cuda_inventory_sha256'):raise runtime.GpuProofUnavailable('R12 frontend/CUDA census differs')
++ for item in cuda:o.verify_file(o.child(recipe.CUDA,item['path']),item)
++ cudnn=o.read_json(recipe.INPUT/'extraction.json')
++ if o.digest(recipe.INPUT/'extraction.json')!=lock['cudnn']['extraction_receipt_sha256']:raise runtime.GpuProofUnavailable('official cuDNN pin differs')
++ for item in cudnn['files']:o.verify_file(o.child(recipe.INPUT/'cudnn-dev',item['path']),item)
++ mirrors=[{'path':o.mirror_relative(item),'bytes':item['bytes'],'sha256':item['sha256']} for item in o.LOCK['dependencies']+lock['dependencies']];recipe.verify_mirror_closure(o,destination/'source/mirror',mirrors)
++ closure=o.read_json(continuation/'frozen-input-closure.json');recipe.verify_input_closure(o,closure)
++ if len(closure)!=value.get('reopened_frozen_input_count') or o.digest(continuation/'frozen-input-closure.json')!=value.get('frozen_input_closure_sha256'):raise runtime.GpuProofUnavailable('new continuation input closure differs')
++ old_closure=o.read_json(destination/'frozen-input-closure.json')
++ require_original_input_prefix(old_closure,closure)
++ expected_inputs=old_closure+[child.row(o.plain(proposal/name,regular=True)) for name in ['continuation-request.json','continuation-baseline.json','wall-origin.json','continue_cuda_runtime.py','onnxruntime_c_api.cc.before','onnxruntime_c_api.cc','initialized-public-api.patch','syntax-card.json','capi-syntax.rsp','producer_environment.py','environment-source.json','input-pins.json','process_tree.py','wait_process_tree.ps1','CONTRACT.md','diagnostic-evidence.json']]+[{k:item[k] for k in ['path','bytes','sha256']} for item in diagnostics['syntax_runs']]+[diagnostics['tree_witness']]
++ if closure!=expected_inputs:raise runtime.GpuProofUnavailable('exact continuation input roster differs')
++ o.verify_file(o.plain(wall['start_file']['path'],regular=True),wall['start_file']);origin=o.read_json(wall['start_file']['path']);started=datetime.datetime.fromisoformat(origin['started_utc']);observed=datetime.datetime.fromisoformat(value['observed_utc']);cutoff=started+datetime.timedelta(seconds=10800)
++ active=parent['elapsed_seconds']+facts['elapsed_seconds'];remaining=child.wall_remaining(started,observed,active)
++ if origin.get('outer_timeout_seconds')!=10800 or value.get('original_absolute_cutoff_utc')!=cutoff.isoformat() or wall['absolute_cutoff_utc']!=cutoff.isoformat() or value.get('remaining_seconds_at_start')!=remaining or value.get('consumed_seconds_at_start')!=10800-remaining or value.get('wall_gap_charged') is not True or value.get('original_budget_seconds')!=10800 or value.get('diagnostic_elapsed_seconds')!=facts['elapsed_seconds'] or value.get('converted_monotonic_deadline')!=value.get('observed_monotonic_seconds',0)+remaining or value.get('elapsed_seconds',10801)>remaining:raise runtime.GpuProofUnavailable('original shared wall budget not preserved')
++ newlock=copy.deepcopy(lock);newlock['final_placement']['after_sha256']=AFTER;preflight=recipe.configured_build_preflight(o,destination,parent['configure_argv'],newlock)
++ if {k:v for k,v in preflight.items() if k!='final_capi_source_sha256'}!={k:v for k,v in parent['configured_preflight'].items() if k!='final_capi_source_sha256'}:raise runtime.GpuProofUnavailable('unreviewed configured build delta')
++ if value.get('configured_preflight')!=preflight:raise runtime.GpuProofUnavailable('actual corrected CAPI target/configuration differs')
++ commands=value.get('commands',[])
++ if len(commands)!=2 or any(not o.successful(c) for c in commands):raise runtime.GpuProofUnavailable('actual settled continuation build commands missing')
++ for (stage,targets),command in zip([('core-session-build-r12',['onnxruntime_session']),('build-r12',['all','re2'])],commands):
++  argv=[tools['cmake']['path'],'--build',str(destination/'b/Release'),'--config','Release','--target',*targets,'--parallel','2']
++  if value.get(stage+'_argv')!=argv:raise runtime.GpuProofUnavailable('recorded original stage argv differs')
++  verify_tree_command(o,child,proposal,continuation,destination,stage,argv,tools,command,value,cutoff)
++ libraries=[{'path':q.relative_to(destination).as_posix(),'bytes':q.stat().st_size,'sha256':o.digest(o.plain(q,regular=True))} for q in sorted((destination/'b').rglob('*.lib'))]
++ if value.get('libraries')!=libraries:raise runtime.GpuProofUnavailable('actual continuation library census differs')
++ pair=value.get('provider_dlls',[])
++ if sorted(Path(item['path']).name for item in pair)!=['onnxruntime_providers_cuda.dll','onnxruntime_providers_shared.dll']:raise runtime.GpuProofUnavailable('same-build provider pair missing')
++ for item in pair:o.verify_file(o.child(destination,item['path']),item)
++ if list((destination/'b').rglob('onnxruntime.dll')):raise runtime.GpuProofUnavailable('second dynamic core refused')
++ ninja=destination/'b/Release/build.ninja'
++ return {'schema':'airk.cuda-static-build-proof/1','target':runtime.TARGET,'ort_version':runtime.VERSION,'producer_script_sha256':R12_SCRIPT,'producer_lock_sha256':REQUEST,'build_receipt':child.row(raw),'source_inventory_sha256':value['source_inventory_sha256'],'frontend_inventory_sha256':value['frontend_inventory_sha256'],'cuda_inventory_sha256':value['cuda_inventory_sha256'],'frozen_input_closure_sha256':value['frozen_input_closure_sha256'],'ninja':child.row(ninja),'libraries':libraries,'provider_dlls':pair,'recorded_compiler':tools['compiler'],'toolchain':tools,'qualification':False,'activation_pins_available':False,'ancestry':{'receipt_schema':'airk.private.cuda-runtime-continuation/2','r12_proposal':str(proposal),'original_failed_receipt':req['parent_receipt'],'original_r8_script':R8_SCRIPT,'original_r8_lock':R8_LOCK,'corrected_capi_sha256':AFTER,'baseline_sha256':BASELINE,'wall_origin_sha256':WALL,'diagnostic_evidence':diagnostic_pin,'syntax_qualified':False,'failed_diagnostic_receipts':diagnostics['syntax_runs'],'actual_tree_witness':diagnostics['tree_witness'],'environment_input_sha256':ENVIRONMENT}}
+--- r2/scripts/provision-cuda-static.py
++++ r3/scripts/provision-cuda-static.py
+@@ -10,8 +10,11 @@
+  p=Path(__file__).with_name(name+'.py');s=importlib.util.spec_from_file_location(name.replace('-','_'),p);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);return m
+ 
+ def main():
+- ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('--repo-root',type=Path,default=Path(__file__).resolve().parents[1]);ap.add_argument('--destination',type=Path,required=True);ap.add_argument('--producer-file',type=Path);ap.add_argument('--lock-file',type=Path);ap.add_argument('--continuation-root',type=Path);ap.add_argument('--continuation-proposal',type=Path);ap.add_argument('--receipt-sha256',required=True);ap.add_argument('--aggregate',action='store_true');ap.add_argument('--write-environment',type=Path);a=ap.parse_args();runtime=load('cuda-static-runtime');aggregate=load('cuda-static-aggregate');env=load('cuda-runtime-environment');o=runtime.load(a.repo_root/'scripts/provision-static-onnx-runtime.py','cpu_acquisition_owner');destination=o.plain(a.destination)
+- if a.continuation_root is not None or a.continuation_proposal is not None:
++ ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('--repo-root',type=Path,default=Path(__file__).resolve().parents[1]);ap.add_argument('--destination',type=Path,required=True);ap.add_argument('--producer-file',type=Path);ap.add_argument('--lock-file',type=Path);ap.add_argument('--continuation-root',type=Path);ap.add_argument('--continuation-proposal',type=Path);ap.add_argument('--r12-continuation-root',type=Path);ap.add_argument('--r12-proposal',type=Path);ap.add_argument('--stage-providers',type=Path);ap.add_argument('--receipt-sha256',required=True);ap.add_argument('--aggregate',action='store_true');ap.add_argument('--write-environment',type=Path);a=ap.parse_args();runtime=load('cuda-static-runtime');aggregate=load('cuda-static-aggregate');env=load('cuda-runtime-environment');o=runtime.load(a.repo_root/'scripts/provision-static-onnx-runtime.py','cpu_acquisition_owner');destination=o.plain(a.destination)
++ if a.r12_continuation_root is not None or a.r12_proposal is not None:
++  if a.r12_continuation_root is None or a.r12_proposal is None or any(x is not None for x in [a.continuation_root,a.continuation_proposal,a.producer_file,a.lock_file]):raise ValueError('explicit complete R12 mode required')
++  build=load('cuda-static-continuation-r12').verify_continuation(destination,a.r12_continuation_root,a.r12_proposal,a.receipt_sha256,a.repo_root)
++ elif a.continuation_root is not None or a.continuation_proposal is not None:
+   if a.continuation_root is None or a.continuation_proposal is None or a.producer_file is not None or a.lock_file is not None:raise ValueError('explicit complete continuation mode required')
+   build=load('cuda-static-continuation').verify_continuation(destination,a.continuation_root,a.continuation_proposal,a.receipt_sha256,a.repo_root)
+  else:
+@@ -21,7 +24,10 @@
+   if (destination/'gpu-static-aggregate-receipt.json').exists():proof=aggregate.verify_aggregate(destination,build,o)
+   else:proof=aggregate.aggregate(destination,build,o)
+  else:proof=aggregate.verify_aggregate(destination,build,o)
+- result=env.continuation_handoff_value(destination,a.continuation_root,a.continuation_proposal,a.receipt_sha256,build,proof) if a.continuation_root is not None else env.handoff_value(destination,a.producer_file,a.lock_file,a.receipt_sha256,build,proof)
++ result=env.r12_handoff_value(destination,a.r12_continuation_root,a.r12_proposal,a.receipt_sha256,build,proof) if a.r12_continuation_root is not None else env.continuation_handoff_value(destination,a.continuation_root,a.continuation_proposal,a.receipt_sha256,build,proof) if a.continuation_root is not None else env.handoff_value(destination,a.producer_file,a.lock_file,a.receipt_sha256,build,proof)
++ if a.stage_providers:
++  if a.r12_continuation_root is None:raise ValueError('provider staging only enabled for exact R12 proof')
++  load('cuda-provider-staging').stage_providers(destination,build,proof,a.stage_providers,a.r12_continuation_root,a.r12_proposal,a.receipt_sha256,a.repo_root)
+  if a.write_environment:
+   target=o.plain(a.write_environment)
+   if target.exists():raise ValueError('existing GPU environment retained; no overwrite')

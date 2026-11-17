@@ -1,0 +1,49 @@
+--- a/packages/vscode/src/indexingSplit.ts
++++ b/packages/vscode/src/indexingSplit.ts
+@@ -23,10 +23,22 @@
+     const old=catalogObject(previous.receipt),next=catalogObject(current.receipt);
+     if(Number(next.revision)<Number(old.revision)||phase(next)<phase(old)||Number(next.catalog_revision)<Number(old.catalog_revision)||old.capacity_receipt!==null&&old.capacity_receipt!==next.capacity_receipt||!sameCatalogValue(array(next.jobs,16).slice(0,array(old.jobs,16).length),old.jobs))throw new Error('split_current_state_regressed');
+     if(next.revision===old.revision&&(!sameCatalogValue(next,old)||current.receipt_digest!==previous.receipt_digest))throw new Error('split_same_revision_changed');
+-    for(const field of ['destination_storage','destination_publication','destination_validation','remainder_witness','original_fence','remainder_publication','membership_receipt','cleanup_receipt','cancellation_cleanup_receipt','physical_cleanup_authorization'])if(old[field]!==null&&!sameCatalogValue(old[field],next[field]))throw new Error('split_current_proof_changed');
++    for(const field of ['destination_storage','destination_publication','destination_validation','original_fence','remainder_publication','membership_receipt','cleanup_receipt','cancellation_cleanup_receipt','physical_cleanup_authorization'])if(old[field]!==null&&!sameCatalogValue(old[field],next[field]))throw new Error('split_current_proof_changed');
++    if(old.remainder_witness!==null&&!sameCatalogValue(old.remainder_witness,next.remainder_witness)&&!isRetainedWitnessRefresh(old,next))throw new Error('split_current_proof_changed');
+     for(const field of ['funding_receipts','funding_release_receipts','terminal_publication_slots'])for(const [root,digest]of Object.entries(catalogObject(old[field])))if(catalogObject(next[field])[root]!==digest)throw new Error('split_current_funding_changed');
+     if(previous.finalization!=null){const before=catalogObject(previous.finalization),after=catalogObject(current.finalization);if(Number(after.revision)<Number(before.revision)||before.terminal_receipt_digest!==after.terminal_receipt_digest||before.terminal_receipt_revision!==after.terminal_receipt_revision||!sameCatalogValue(before.slots,after.slots)||before.revision===after.revision&&!sameCatalogValue(before,after)||array(before.funding_acknowledged??[],2).some(digest=>!array(after.funding_acknowledged??[],2).includes(digest)))throw new Error('split_finalization_regressed');}
+ 
++}
++/** A live pre-fence witness may be refreshed only by a later retained original witness job.
++ * Reads may skip enqueue/completion/fence observations; the new job can already exist in old.jobs.
++ * Native status remains authority for job success and proof authenticity. */
++function isRetainedWitnessRefresh(old:CatalogObject,next:CatalogObject):boolean {
++    if(phase(old)!==3||phase(next)<3||catalogObject(next.state).state==='canceled_before_fence'||next.remainder_witness==null)return false;
++    const before=catalogObject(old.remainder_witness),after=catalogObject(next.remainder_witness),jobs=array(next.jobs,16).map(catalogObject);
++    const latest=jobs.map((job,index)=>({job,index})).filter(({job})=>job.purpose==='original_witness').pop();
++    if(!latest||after.job!==latest.job.job||after.job===before.job)return false;
++    if(before.job!=null){const previous=jobs.findIndex(job=>job.purpose==='original_witness'&&job.job===before.job);if(previous<0||previous>=latest.index)return false;}
++    return true;
+ }
+ function exact(value:CatalogObject,fields:string):void {if(Object.keys(value).sort().join(',')!==fields.split(',').sort().join(','))throw new Error('invalid_split_input_fields');}
+ function flag(value:unknown):void {if(typeof value!=='boolean')throw new Error('invalid_split_boolean');}
+--- a/packages/vscode/src/test/indexingSplit.test.ts
++++ b/packages/vscode/src/test/indexingSplit.test.ts
+@@ -159,3 +159,20 @@
+     const ack={request:intent.catalog_split_recover.request,request_digest:'a3'.repeat(32),outcome:{outcome:'already_complete',receipt_digest:reviewed.receipt_digest},future_padding:''};ack.future_padding='y'.repeat(16384-bytes(ack));assert.equal(bytes(ack),16384);validateSplitRecoveryReceipt(ack,intent);
+     ack.future_padding+='y';assert.throws(()=>validateSplitRecoveryReceipt(ack,intent),/bound|oversize|budget/);
+ });
++
++test('pre-fence retained witness refresh accepts completed current job across skipped observations and rejects crossed lineage',()=>{
++    const f=splitFixture(),before=splitAtStage(f.snapshot,'destination_validated',4),receipt=catalogObject(before.receipt);
++    const proof=catalogObject(catalogObject(splitAtStage(f.snapshot,'original_fenced')).receipt).remainder_witness as Record<string,unknown>;
++    const job=(id:string,purpose='original_witness')=>({purpose,caller:'a1'.repeat(16),key:{namespace:f.namespace,epoch:7,nonce:id.repeat(16)},job:id.repeat(32),backing:catalogObject(catalogObject(before.request).original_registration).binding,engine_identity:'a2'.repeat(32),configuration_digest:'a3'.repeat(32)});
++    receipt.jobs=[job('b1'),job('b2')];receipt.remainder_witness={...proof,job:'b1'.repeat(32)};
++    const refreshed=structuredClone(before),next=catalogObject(refreshed.receipt);next.revision=5;next.previous_receipt_digest=before.receipt_digest;refreshed.receipt_digest='b3'.repeat(32);next.remainder_witness={...proof,job:'b2'.repeat(32),expected_hash:'b4'.repeat(32),observed_from_unix_ms:3,observed_to_unix_ms:4};
++    // The fresh job was already pending/running in the last observation; no new history entry is required here.
++    validateSplitContinuity(before,refreshed);
++    const enqueueSkipped=structuredClone(before);catalogObject(enqueueSkipped.receipt).jobs=[job('b1')];validateSplitContinuity(enqueueSkipped,refreshed);
++    const fenceSkipped=splitAtStage(refreshed,'original_fenced',6);catalogObject(fenceSkipped.receipt).remainder_witness=structuredClone(next.remainder_witness);validateSplitContinuity(before,fenceSkipped);
++    for(const id of ['b1','ff']){const crossed=structuredClone(refreshed);catalogObject(catalogObject(crossed.receipt).remainder_witness).job=id.repeat(32);assert.throws(()=>validateSplitContinuity(before,crossed),/proof/);}
++    const stale=structuredClone(before);catalogObject(stale.receipt).remainder_witness={...proof,job:'b2'.repeat(32)};const backwards=structuredClone(refreshed);catalogObject(catalogObject(backwards.receipt).remainder_witness).job='b1'.repeat(32);assert.throws(()=>validateSplitContinuity(stale,backwards),/proof/);
++    const nonWitness=structuredClone(refreshed);catalogObject(nonWitness.receipt).jobs=[job('b1'),job('b2','original_cleanup')];assert.throws(()=>validateSplitContinuity(before,nonWitness),/proof|history/);
++    const crossedSource=structuredClone(refreshed);catalogObject(catalogObject(crossedSource.receipt).remainder_witness).before_policy_digest='ff'.repeat(32);assert.throws(()=>validateSplitContinuity(before,crossedSource),/witness/);
++    const afterFence=splitAtStage(before,'original_fenced',5);catalogObject(afterFence.receipt).remainder_witness=structuredClone(receipt.remainder_witness);const illegal=splitAtStage(refreshed,'original_fenced',6);catalogObject(illegal.receipt).remainder_witness=structuredClone(next.remainder_witness);assert.throws(()=>validateSplitContinuity(afterFence,illegal),/proof/);
++});

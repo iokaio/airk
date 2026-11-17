@@ -76,6 +76,23 @@ def source_hashes(path, object_format, max_bytes=MAX_SOURCE_BYTES):
     return result
 
 
+def evidence_hashes(path, object_format, max_bytes=4 << 30):
+    """Stream pinned archives/proofs; never decode or accumulate their payload."""
+    before=path.lstat()
+    if alias(before) or not stat.S_ISREG(before.st_mode) or before.st_size>max_bytes:
+        raise ValueError('evidence must be regular non-reparse and within explicit4GiB cap')
+    digest=hashlib.sha256();count=0
+    with path.open('rb') as stream:
+        if stamp(os.fstat(stream.fileno()))!=stamp(before):raise ValueError('evidence changed before open')
+        while chunk:=stream.read(1 << 20):
+            count+=len(chunk)
+            if count>before.st_size or count>max_bytes:raise ValueError('evidence grew during hashing')
+            digest.update(chunk)
+        if stamp(os.fstat(stream.fileno()))!=stamp(before):raise ValueError('evidence changed during hashing')
+    if count!=before.st_size or stamp(path.lstat())!=stamp(before):raise ValueError('evidence changed after hashing')
+    return {'source_sha256':digest.hexdigest(),'bytes':count}
+
+
 def normalized_blob(data, object_format):
     if b'\0' in data or b'\r\n' not in data:
         return None
@@ -175,9 +192,82 @@ def verify_migration_row(row, repo, object_format, observe=source_hashes):
     for field, observed in [('original_bytes', source_pin['bytes']), ('maintained_bytes', target_pin['bytes'])]:
         if field in row and (type(row[field]) is not int or row[field] != observed):
             raise ValueError('migration declared byte count differs')
+    changes=row.get('transformations',row.get('changes',[]))
+    requested_range=row.get('disposition')=='reviewed-diagnostic-byte-range' or (isinstance(changes,list) and any(isinstance(c,dict) and (str(c.get('kind','')).startswith('byte-range') or 'extracted_sha256' in c or 'offset' in c) for c in changes))
+    if requested_range:
+        if not isinstance(changes,list) or len(changes)!=2 or not all(isinstance(c,dict) for c in changes):
+            raise ValueError('range migration requires exactly extraction then SPDX prefix')
+        extraction,prefix=changes
+        if set(extraction)!={'kind','offset','bytes','extracted_sha256'} or extraction['kind']!='byte-range-extraction' or set(prefix)!={'kind','prefix'} or prefix['kind']!='spdx-prefix' or prefix['prefix']!='# SPDX-License-Identifier: Apache-2.0\n':
+            raise ValueError('unsupported range migration transformation')
+        offset=extraction['offset'];length=extraction['bytes'];digest=extraction['extracted_sha256']
+        if type(offset) is not int or type(length) is not int or offset<0 or length<=0 or offset+length>source_pin['bytes'] or not isinstance(digest,str) or re.fullmatch('[0-9a-f]{64}',digest) is None:
+            raise ValueError('range migration bounds/digest invalid')
+        if 'bytes' in row and (type(row['bytes']) is not int or row['bytes']!=source_pin['bytes']):raise ValueError('range container declared size differs')
+        raw=original.read_bytes()
+        if len(raw)!=source_pin['bytes'] or hashlib.sha256(raw).hexdigest()!=source_pin['source_sha256']:raise ValueError('range container changed during read')
+        extracted=raw[offset:offset+length];expected=prefix['prefix'].encode('utf-8')+extracted
+        if hashlib.sha256(extracted).hexdigest()!=digest or hashlib.sha256(expected).hexdigest()!=target_pin['source_sha256'] or len(expected)!=target_pin['bytes']:
+            raise ValueError('range slice or maintained prefix/body inverse differs')
+        return {'declared_source':row['source'],'original_sha256':digest,'range_source':True,
+                'container_sha256':source_pin['source_sha256'],'container_bytes':source_pin['bytes'],'offset':offset,'extracted_bytes':length,
+                'maintained':{'path':row['destination'],'sha256':target_pin['source_sha256'],'bytes':target_pin['bytes']},'declared_changes':changes}
     return {'declared_source': row['source'], 'original_sha256': row['original_sha256'],
             'maintained': {'path': row['destination'], 'sha256': target_pin['source_sha256'], 'bytes': target_pin['bytes']},
             'declared_changes': row.get('transformations', row.get('changes', []))}
+
+
+def verify_embedded_row(row, repo, object_format, encoded=False):
+    container=checked_relative(repo,row['container'],'artifacts/')
+    container_format=row.get('container_format','json')
+    pointer=row['json_pointer']
+    if container_format=='utf8-text':
+        if not encoded or pointer!='':raise ValueError('text encoded container requires empty pointer')
+        identity=source_hashes(container,object_format)
+        raw=container.read_bytes()
+        if hashlib.sha256(raw).hexdigest()!=identity['source_sha256'] or len(raw)!=identity['bytes']:
+            raise ValueError('text container changed during read')
+        value=raw.decode('utf-8',errors='strict')
+    elif container_format=='json':
+        value,identity=verified_json(container,object_format)
+        if not isinstance(pointer,str) or not pointer.startswith('/'):
+            raise ValueError('embedded JSON pointer must identify a field')
+        for token in pointer[1:].split('/'):
+            if re.search(r'~(?![01])',token):raise ValueError('invalid JSON pointer escape')
+            key=token.replace('~1','/').replace('~0','~')
+            if isinstance(value,list):
+                if re.fullmatch('0|[1-9][0-9]*',key) is None:raise ValueError('invalid JSON pointer index')
+                value=value[int(key)]
+            elif isinstance(value,dict):value=value[key]
+            else:raise ValueError('JSON pointer traverses noncontainer')
+    else:raise ValueError('unsupported encoded container format')
+    if identity['source_sha256']!=row['container_sha256'] or identity['bytes']!=row['container_bytes']:
+        raise ValueError('embedded container pin differs')
+    if not isinstance(value,str):raise ValueError('embedded code field is not text')
+    decoded=value.encode('utf-8')
+    if encoded:
+        import base64
+        if row.get('decode_method')!='single-python-b64decode-literal/1' or hashlib.sha256(decoded).hexdigest()!=row.get('encoded_field_sha256') or len(decoded)!=row.get('encoded_field_bytes'):
+            raise ValueError('encoded source field or method differs')
+        matches=re.findall(r"b64decode\('([A-Za-z0-9+/=]+)'\)",value)
+        if len(matches)!=1 or value.count('b64decode(')!=1:raise ValueError('encoded source requires exactly one supported literal')
+        decoded=base64.b64decode(matches[0],validate=True)
+        decoded.decode('utf-8',errors='strict')
+    if hashlib.sha256(decoded).hexdigest()!=row['decoded_sha256'] or len(decoded)!=row['decoded_bytes']:
+        raise ValueError('decoded embedded source differs')
+    destination=row['destination']
+    prefix_root=next((p for p in ['scripts/','crates/','packages/','tools/'] if isinstance(destination,str) and destination.startswith(p)),None)
+    if prefix_root is None:raise ValueError('embedded target outside maintained source roots')
+    target=checked_relative(repo,destination,prefix_root)
+    observed=source_hashes(target,object_format)
+    prefix=row.get('prefix','')
+    if not isinstance(prefix,str):raise ValueError('embedded prefix must be explicit text')
+    expected=prefix.encode('utf-8')+decoded
+    if observed['source_sha256']!=row['maintained_sha256'] or observed['bytes']!=row['maintained_bytes'] or hashlib.sha256(expected).hexdigest()!=observed['source_sha256'] or len(expected)!=observed['bytes']:
+        raise ValueError('embedded maintained target is not declared prefix plus exact decoded body')
+    return {'declared_source':row['container'],'json_pointer':pointer,'original_sha256':row['decoded_sha256'],
+            'container_sha256':row['container_sha256'],'maintained':{'path':row['destination'],'sha256':observed['source_sha256'],'bytes':observed['bytes']},
+            'declared_changes':['explicit prefix only'],'embedded_source':True}
 
 
 def migration_index(repo, object_format, tracked_names, blobs, errors):
@@ -194,12 +284,12 @@ def migration_index(repo, object_format, tracked_names, blobs, errors):
             except OSError as error:
                 traversal_error(error)
         dirs[:] = keep
-        for name in sorted(set(files) & {'source-map.json', 'source-provenance.json'}):
+        for name in sorted(set(files) & {'source-map.json', 'source-provenance.json', 'encoded-source-provenance.json'}):
             path = Path(directory)/name
             relative = path.relative_to(repo).as_posix()
             try:
                 value, identity = verified_json(path, object_format)
-                if value.get('schema') not in ['airk.research-source-migration/1', 'airk.source-relocation/1'] or not isinstance(value.get('files'), list):
+                if value.get('schema') not in ['airk.research-source-migration/1', 'airk.source-relocation/1', 'airk.embedded-source-migration/1', 'airk.encoded-source-migration/1'] or not isinstance(value.get('files'), list):
                     raise ValueError('unsupported declared migration map')
                 document = {'path': relative, 'sha256': identity['source_sha256'], 'bytes': identity['bytes'],
                             'git_tracked': relative in tracked_names, 'committed_blob': identity['git_blob_oid'] in blobs,
@@ -207,11 +297,11 @@ def migration_index(repo, object_format, tracked_names, blobs, errors):
                 documents.append(document)
                 for row in value['files']:
                     try:
-                        verified = verify_migration_row(row, repo, object_format)
+                        verified = verify_embedded_row(row,repo,object_format,encoded=value['schema']=='airk.encoded-source-migration/1') if value['schema'] in ['airk.embedded-source-migration/1','airk.encoded-source-migration/1'] else verify_migration_row(row, repo, object_format)
                         verified['map'] = {'path': relative, 'sha256': identity['source_sha256']}
                         result[verified['original_sha256']].append(verified)
                         document['verified_rows'] += 1
-                    except (OSError, ValueError, KeyError, TypeError) as error:
+                    except (OSError, ValueError, KeyError, TypeError, IndexError) as error:
                         record_error(errors, relative, 'migration_row', error)
             except (OSError, ValueError, KeyError, TypeError) as error:
                 record_error(errors, relative, 'migration_map', error)

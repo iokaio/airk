@@ -1,0 +1,1014 @@
+--- a/crates/airk-inference/src/inference_engine/pool/arbiter/CONTRACT.md
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/CONTRACT.md
+@@ -418,3 +418,51 @@
+ structural proof alone cannot authorize inference or claim resource/p95 gates.
+ Original failed Large120s evidence stays failed. Full20-warm qualification is
+ separate from this one diagnostic forward.
++
++## Private Large explicit-mask dense attention proposal
++
++This additive test-support proposal keeps the ordinary Scorer/open_configured
++builder and scoring body byte-identical. No provider, runtime, crate, public DTO,
++wire shape, persisted format, qualification source or production fork is added.
++Global ORT_GQA_DISABLE_FLASH_ATTENTION stays literal0; Compact's causal1 path,
++prior Large flash controls, profile identities and failures remain historical.
++
++The candidate graph uses the existing CPU GQA causal0 branch, preserving the
++full original additive causal AND padding bias. Its exact native regeneration
++proof/profile/source/asset closure is a separate Retrieval-owned gate. The new
++full diagnostic requires modelLarge AND profile_id
++private-large-fp32-explicit-mask-dense-diagnostic-v1. An old flash descriptor
++cannot be called Dense, and the Dense descriptor cannot use the old flash
++measurement identity. Native numeric/source/file admission remains unchanged.
++
++New tiny Dense controls are only17/128 under the existing8GiB/120s toy owner,
++CPU16/Q32/KV8/head128/context4096. Each size runs three separate sessions and
++retains a separate actual profile/optimized tiny graph for each: (1) explicit
++causal prefix mean; (2) zero-bias full mean independent of query position,
++which MUST refuse a causal1 kernel; (3) explicit causal bias with key1 masked
++and key0 always valid, checking the exact mean of allowed keys. Values contain
++nonzero head/dimension and time sentinels. Only the padding-hole control adds
++a literal+0.25 value spike at key1: correct masking excludes it without changing
++the required mean, while ignoring that padding yields error above0.0001 for
++every affected query at17/128. Other control vectors and all model math remain
++unchanged; zero tensors cannot satisfy them.
++Only tiny graphs may be saved optimized. Every session requires exactly one
++CPU GQA event, positive native duration and all3 exact output allocations.
++These tests have no learned weights, selected-model or full8192 authority.
++The older FlashTiny8192 result, including failure, never certifies Dense8192.
++
++The separate ignored full Dense8192/N8 diagnostic retains original all-live
++native tensors and independent original-publisher FP32 arrays. It keeps actual
++CPU16, inter1/sequential/no-spin,40GiB RSS/native reservation, original120s
++load/score Journal deadlines, raw<=.001/mass<=.05/exactargmax, input/source
++postchecks and36 unique CPU GQA events. Exact outputs are [1,T,4096] plus
++[1,8,T,128] twice, totaling T*6144*4bytes per node. Full-model optimized saving
++stays forbidden. Distinct receipt kind large_dense_attention_diagnostic and
++measurement large-fp32-explicit-mask-dense-profiled/1 never relabel an old run.
++
++Tiny tests and structural shape support do not establish full-model dense
++correctness, memory or latency. Full original Dense8192 must actually execute
++and pass its own unchanged gates; unsupported shapes or OOM/timeouts stay
++refusals. Structural all1..8192 preservation belongs to the independently
++validated native graph/source chain, not inferred interpolation of tiny results.
++No task/data/training/CAL/release qualification is granted by this proposal.--- a/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/attention_diagnostic.rs
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/attention_diagnostic.rs
+@@ -117,7 +117,52 @@
+     Ok(selected)
+ }
+ 
++const DENSE_PROFILE_ID: &str = "private-large-fp32-explicit-mask-dense-diagnostic-v1";
++
++fn diagnostic_attention_identity(
++    model: ModelChoice,
++    profile_id: &str,
++    dense: bool,
++) -> Result<(&'static str, &'static str, &'static str)> {
++    if dense {
++        ensure!(
++            model == ModelChoice::ContextQwenLarge && profile_id == DENSE_PROFILE_ID,
++            "source-bound Large explicit-mask dense profile required; flash authority cannot transfer"
++        );
++        return Ok((
++            "large-dense",
++            "large_dense_attention_diagnostic",
++            "large-fp32-explicit-mask-dense-profiled/1",
++        ));
++    }
++    ensure!(
++        profile_id != DENSE_PROFILE_ID,
++        "dense profile cannot be relabeled as a flash diagnostic"
++    );
++    match model {
++        ModelChoice::ContextQwenCompact => Ok((
++            "compact",
++            "compact_attention_diagnostic",
++            "compact-fp32-gqa-profiled/2",
++        )),
++        ModelChoice::ContextQwenLarge => Ok((
++            "large",
++            "large_attention_diagnostic",
++            "large-fp32-gqa-profiled/2",
++        )),
++        _ => anyhow::bail!("selected Context diagnostic required"),
++    }
++}
++#[test]
++#[ignore = "explicit new Large DENSE graph/current source/proof pins and exclusive40GiB/120s native window; ONE full8192/N8 diagnostic"]
++fn software_v2_large_dense_attention_profiled_8192_diagnostic() -> Result<()> {
++    attention_profiled_diagnostic_with_mode(ModelChoice::ContextQwenLarge, true)
++}
++
+ fn attention_profiled_diagnostic(expected_model: ModelChoice) -> Result<()> {
++    attention_profiled_diagnostic_with_mode(expected_model, false)
++}
++fn attention_profiled_diagnostic_with_mode(expected_model: ModelChoice, dense: bool) -> Result<()> {
+     let (input, profile, files, input_hash) = inputs()?;
+     let selected = selected_diagnostic_profile(
+         profile.model,
+@@ -126,19 +171,8 @@
+         profile.cpu_fit.as_ref(),
+         expected_model,
+     )?;
+-    let (label, kind, measurement) = match expected_model {
+-        ModelChoice::ContextQwenCompact => (
+-            "compact",
+-            "compact_attention_diagnostic",
+-            "compact-fp32-gqa-profiled/2",
+-        ),
+-        ModelChoice::ContextQwenLarge => (
+-            "large",
+-            "large_attention_diagnostic",
+-            "large-fp32-gqa-profiled/2",
+-        ),
+-        _ => anyhow::bail!("selected Context diagnostic required"),
+-    };
++    let (label, kind, measurement) =
++        diagnostic_attention_identity(expected_model, &profile.profile_id, dense)?;
+     ensure!(
+         std::env::var("ORT_GQA_DISABLE_FLASH_ATTENTION").as_deref() == Ok("0"),
+         "explicit frozen native GQA flash policy required"
+@@ -184,6 +218,9 @@
+         "optimized_save":{"enabled":false,"scope":"ordinary production initializer retention; profiling events only; no full-model optimized snapshot"},
+         "operation_journal":output.with_extension("operations.jsonl"),"rows":[],
+         "reference_scope":"original-publisher numeric diagnostic only; old same-artifact custody is NOT new-graph proof"});
++    if dense {
++        receipt["attention_mode"] = json!("explicit_mask_dense");
++    }
+     flush(&mut file, &receipt)?;
+     let mut operations = operation::Journal::create(
+         &output,
+@@ -475,3 +512,130 @@
+     );
+     Ok(())
+ }
++
++fn tiny_dense_profile(tokens: usize) -> Result<()> {
++    use airk_retrieval::arbiter::runtime::{SyntheticDenseMask, synthetic_large_dense_gqa_profile};
++    ensure!(
++        matches!(tokens, 17 | 128),
++        "dense tiny control is bounded17/128, never full8192 qualification"
++    );
++    ensure!(
++        std::env::var("ORT_GQA_DISABLE_FLASH_ATTENTION").as_deref() == Ok("0"),
++        "global frozen flash0 policy remains unchanged; graph causal0 selects dense attention"
++    );
++    let graph_pin = ResourceFilePin {
++        path: std::env::var("AIRK_GQA_TINY_GRAPH")?,
++        sha256: serde_json::from_value(json!(std::env::var("AIRK_GQA_TINY_GRAPH_SHA256")?))?,
++    };
++    let graph = pinned(&graph_pin, 65536)?;
++    let output = PathBuf::from(std::env::var("AIRK_GQA_TINY_OUTPUT")?);
++    let parent = output.parent().context("dense tiny output parent")?;
++    let mut file = OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .open(&output)?;
++    let mut receipt = json!({"kind":"large_dense_synthetic_attention_diagnostic","complete":false,
++        "attention_mode":"explicit_mask_dense","tokens":tokens,"model_weights_loaded":false,
++        "qualification_granted":false,"controls":[],"graph":graph_pin,
++        "scope":"three actual bounded CPU dense-kernel controls only; no full8192, model or task qualification"});
++    flush(&mut file, &receipt)?;
++    let (_parent, control) = private_control()?;
++    let owner = airk_kernel::inference_owner::NativeInferenceOwner::admit(Arc::new(
++        airk_store::service::ServiceLease::acquire(&control)?,
++    ))?;
++    let result = owner
++        .run(|| -> Result<()> {
++            for (label, mask) in [
++                ("causal-prefix", SyntheticDenseMask::CausalPrefix),
++                ("unmasked-full-mean", SyntheticDenseMask::Unmasked),
++                (
++                    "causal-padding-hole",
++                    SyntheticDenseMask::CausalWithMaskedKeyOne,
++                ),
++            ] {
++                let prefix = parent.join(format!("synthetic-large-dense-gqa-{tokens}-{label}"));
++                let optimized = parent.join(format!(
++                    "synthetic-large-dense-gqa-{tokens}-{label}-optimized.onnx"
++                ));
++                ensure!(
++                    !optimized.exists(),
++                    "fresh synthetic dense optimized graph required"
++                );
++                let actual =
++                    synthetic_large_dense_gqa_profile(&graph, tokens, &prefix, &optimized, mask)?;
++                // Each distinct profiling session contains exactly ONE actual CPU kernel.
++                // A zero-bias control fails a causal1 graph even when the causal-prefix control passes.
++                receipt["controls"]
++                    .as_array_mut()
++                    .context("dense control rows absent")?
++                    .push(actual.clone());
++                flush(&mut file, &receipt)?;
++                let profiling = actual["profiling_path"]
++                    .as_str()
++                    .context("actual dense profile output absent")?;
++                allocated_gqa_profile_for_model(
++                    &std::fs::read(profiling)?,
++                    tokens,
++                    1,
++                    ModelChoice::ContextQwenLarge,
++                )?;
++            }
++            ensure!(
++                pinned(&graph_pin, 65536)? == graph,
++                "dense tiny input graph changed"
++            );
++            Ok(())
++        })
++        .and_then(std::convert::identity);
++    receipt["complete"] = json!(result.is_ok());
++    if let Err(error) = &result {
++        receipt["error"] = json!(format!("{error:#}"));
++    }
++    flush(&mut file, &receipt)?;
++    result
++}
++#[test]
++#[ignore = "explicit dense causal0 tiny graph/pins/output and owned8GiB/120s CPU16 window; no model weights"]
++fn software_v2_synthetic_large_dense_gqa_allocation_t17() -> Result<()> {
++    tiny_dense_profile(17)
++}
++#[test]
++#[ignore = "explicit dense causal0 tiny graph/pins/output and owned8GiB/120s CPU16 window; no model weights"]
++fn software_v2_synthetic_large_dense_gqa_allocation_t128() -> Result<()> {
++    tiny_dense_profile(128)
++}
++
++#[test]
++fn dense_diagnostic_refuses_flash_profile_and_compact_or_historical_identity() -> Result<()> {
++    let actual =
++        diagnostic_attention_identity(ModelChoice::ContextQwenLarge, DENSE_PROFILE_ID, true)?;
++    assert_eq!(
++        actual,
++        (
++            "large-dense",
++            "large_dense_attention_diagnostic",
++            "large-fp32-explicit-mask-dense-profiled/1"
++        )
++    );
++    assert!(
++        diagnostic_attention_identity(ModelChoice::ContextQwenCompact, DENSE_PROFILE_ID, true)
++            .is_err()
++    );
++    assert!(
++        diagnostic_attention_identity(ModelChoice::ContextQwenLarge, "old-flash-profile", true)
++            .is_err()
++    );
++    assert!(
++        diagnostic_attention_identity(ModelChoice::ContextQwenLarge, DENSE_PROFILE_ID, false)
++            .is_err()
++    );
++    assert_eq!(
++        diagnostic_attention_identity(ModelChoice::ContextQwenCompact, "old-compact", false)?.2,
++        "compact-fp32-gqa-profiled/2"
++    );
++    assert_eq!(
++        diagnostic_attention_identity(ModelChoice::ContextQwenLarge, "old-large", false)?.2,
++        "large-fp32-gqa-profiled/2"
++    );
++    Ok(())
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime.rs
+@@ -751,14 +751,100 @@
+     profiling_prefix: &std::path::Path,
+     optimized_model: &std::path::Path,
+ ) -> Result<serde_json::Value> {
++    synthetic_gqa_profile_with_bias(
++        model,
++        graph,
++        tokens,
++        profiling_prefix,
++        optimized_model,
++        None,
++    )
++}
++
++#[cfg(any(test, feature = "test-support"))]
++const SYNTHETIC_PADDING_VALUE_SPIKE: f32 = 0.25;
++
++/// Test-support values only; this enum has no serialization or public protocol.
++#[cfg(any(test, feature = "test-support"))]
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum SyntheticDenseMask {
++    CausalPrefix,
++    Unmasked,
++    CausalWithMaskedKeyOne,
++}
++#[cfg(any(test, feature = "test-support"))]
++impl SyntheticDenseMask {
++    fn masks(self, query: usize, key: usize) -> bool {
++        match self {
++            Self::CausalPrefix => key > query,
++            Self::Unmasked => false,
++            Self::CausalWithMaskedKeyOne => key > query || key == 1,
++        }
++    }
++    fn time_component(self, tokens: usize, query: usize) -> f32 {
++        match self {
++            Self::CausalPrefix => query as f32 / 16384.,
++            Self::Unmasked => (tokens - 1) as f32 / 16384.,
++            Self::CausalWithMaskedKeyOne if query < 2 => 0.,
++            Self::CausalWithMaskedKeyOne => {
++                ((query * (query + 1) / 2 - 1) as f32 / query as f32) / 8192.
++            }
++        }
++    }
++}
++#[cfg(any(test, feature = "test-support"))]
++fn synthetic_control_bounds(
++    model: ModelChoice,
++    tokens: usize,
++    graph_bytes: usize,
++    dense: bool,
++) -> Result<()> {
++    ensure!(graph_bytes <= 65536, "bounded synthetic graph required");
++    if dense {
++        ensure!(
++            model == ModelChoice::ContextQwenLarge && matches!(tokens, 17 | 128),
++            "Large explicit-mask dense tiny controls require17/128 only"
++        );
++    } else {
++        ensure!(
++            matches!(tokens, 17 | 8192),
++            "original synthetic GQA17/8192 control required"
++        );
++    }
++    Ok(())
++}
++/// Separate bounded dense-kernel controls; historical flash controls remain distinct.
++#[cfg(any(test, feature = "test-support"))]
++pub fn synthetic_large_dense_gqa_profile(
++    graph: &[u8],
++    tokens: usize,
++    profiling_prefix: &std::path::Path,
++    optimized_model: &std::path::Path,
++    mask: SyntheticDenseMask,
++) -> Result<serde_json::Value> {
++    synthetic_gqa_profile_with_bias(
++        ModelChoice::ContextQwenLarge,
++        graph,
++        tokens,
++        profiling_prefix,
++        optimized_model,
++        Some(mask),
++    )
++}
++#[cfg(any(test, feature = "test-support"))]
++fn synthetic_gqa_profile_with_bias(
++    model: ModelChoice,
++    graph: &[u8],
++    tokens: usize,
++    profiling_prefix: &std::path::Path,
++    optimized_model: &std::path::Path,
++    dense_mask: Option<SyntheticDenseMask>,
++) -> Result<serde_json::Value> {
+     let selected = selected_gqa_model(model)?;
+     let kv_width = selected.kv_heads * selected.head_size;
+     let query_group = selected.query_heads / selected.kv_heads;
+     crate::native_inference::require_service_compute()?;
+-    ensure!(
+-        matches!(tokens, 17 | 8192) && graph.len() <= 65536,
+-        "bounded synthetic GQA control required"
+-    );
++    synthetic_control_bounds(model, tokens, graph.len(), dense_mask.is_some())?;
+     ensure!(
+         airk_process::cpu_fit::usable_physical_cores()
+             .context("usable physical-core observation unavailable")?
+@@ -814,10 +900,28 @@
+             }
+         }
+     }
++    if dense_mask == Some(SyntheticDenseMask::CausalWithMaskedKeyOne) {
++        // If padding bias is ignored, this isolated masked value causes error well
++        // above the unchanged0.0001 tolerance even at the largest toy width128.
++        // Correct masking excludes it, leaving the independent expected mean unchanged.
++        for value in &mut v[kv_width..2 * kv_width] {
++            *value += SYNTHETIC_PADDING_VALUE_SPIKE;
++        }
++    }
+     let mut bias = vec![0f32; tokens * tokens];
+-    for t in 0..tokens {
+-        for future in t + 1..tokens {
+-            bias[t * tokens + future] = f32::MIN;
++    if let Some(mask) = dense_mask {
++        for query in 0..tokens {
++            for key in 0..tokens {
++                if mask.masks(query, key) {
++                    bias[query * tokens + key] = f32::MIN;
++                }
++            }
++        }
++    } else {
++        for t in 0..tokens {
++            for future in t + 1..tokens {
++                bias[t * tokens + future] = f32::MIN;
++            }
+         }
+     }
+     let options = RunOptions::new()?.with_outputs(OutputSelector::no_default().with("context"));
+@@ -843,7 +947,7 @@
+             for d in 0..selected.head_size {
+                 let expected = ((h / query_group) * selected.head_size + d) as f32
+                     / kv_width as f32
+-                    + t as f32 / 16384.;
++                    + dense_mask.map_or(t as f32 / 16384., |mask| mask.time_component(tokens, t));
+                 let value = actual[t * selected.query_width + h * selected.head_size + d];
+                 ensure!(value.is_finite(), "nonfinite synthetic GQA value");
+                 maximum_error = maximum_error.max((value - expected).abs());
+@@ -856,10 +960,24 @@
+         maximum_error <= 0.0001,
+         "synthetic causal/GQA value check refused"
+     );
+-    Ok(
+-        serde_json::json!({"tokens":tokens,"profiling_path":profiling,
++    let mut result = serde_json::json!({"tokens":tokens,"profiling_path":profiling,
+         "optimized_graph_path":optimized_model,"maximum_error":maximum_error,
+         "graph_outputs":["context"],"model_weights_loaded":false,
+-        "scope":"actual synthetic CPU GQA kernel only; no model/task qualification"}),
+-    )
+-}
++        "scope":"actual synthetic CPU GQA kernel only; no model/task qualification"});
++    if let Some(mask) = dense_mask {
++        result["attention_mode"] = serde_json::json!("explicit_mask_dense");
++        if mask == SyntheticDenseMask::CausalWithMaskedKeyOne {
++            result["masked_key_one_value_spike"] = serde_json::json!(SYNTHETIC_PADDING_VALUE_SPIKE);
++        }
++        result["mask_control"] = serde_json::json!(match mask {
++            SyntheticDenseMask::CausalPrefix => "explicit_causal_prefix_mean",
++            SyntheticDenseMask::Unmasked => "zero_bias_full_mean_refuses_implicit_causal",
++            SyntheticDenseMask::CausalWithMaskedKeyOne =>
++                "explicit_causal_and_key_one_padding_mean",
++        });
++    }
++    Ok(result)
++}
++
++#[cfg(test)]
++mod dense_synthetic_tests;
+--- /dev/null
++++ b/crates/airk-retrieval/src/arbiter/runtime/dense_synthetic_tests.rs
+@@ -0,0 +1,55 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Independent literal controls; no session, provider, graph, or model execution.
++use super::*;
++
++#[test]
++fn dense_bias_controls_preserve_causality_and_padding_but_distinguish_causal_zero() {
++    use SyntheticDenseMask::*;
++    assert!(!CausalPrefix.masks(0, 0));
++    assert!(CausalPrefix.masks(0, 16));
++    assert!(!Unmasked.masks(0, 16));
++    assert!(CausalWithMaskedKeyOne.masks(2, 1));
++    assert!(!CausalWithMaskedKeyOne.masks(2, 0));
++    assert!(!CausalWithMaskedKeyOne.masks(2, 2));
++    assert!(CausalWithMaskedKeyOne.masks(2, 3));
++    assert_eq!(CausalPrefix.time_component(17, 0), 0.);
++    assert_eq!(CausalPrefix.time_component(17, 2), 1. / 8192.);
++    assert_eq!(Unmasked.time_component(17, 0), 8. / 8192.);
++    assert_eq!(Unmasked.time_component(128, 0), 63.5 / 8192.);
++    assert_eq!(CausalWithMaskedKeyOne.time_component(17, 0), 0.);
++    assert_eq!(CausalWithMaskedKeyOne.time_component(17, 1), 0.);
++    assert_eq!(CausalWithMaskedKeyOne.time_component(17, 2), 1. / 8192.);
++    // Allowed keys are literally [0,2,3], mean5/3; key1 is excluded.
++    assert_eq!(
++        CausalWithMaskedKeyOne.time_component(17, 3),
++        (5f32 / 3.) / 8192.
++    );
++    // A hidden causal1 kernel cannot pass the zero-bias full-mean control.
++    assert!((Unmasked.time_component(17, 0) - CausalPrefix.time_component(17, 0)).abs() > 0.0001);
++    assert!((Unmasked.time_component(128, 0) - CausalPrefix.time_component(128, 0)).abs() > 0.0001);
++}
++#[test]
++fn dense_tiny_bounds_do_not_transfer_flash8192_or_compact_authority() -> Result<()> {
++    synthetic_control_bounds(ModelChoice::ContextQwenLarge, 17, 1024, true)?;
++    synthetic_control_bounds(ModelChoice::ContextQwenLarge, 128, 1024, true)?;
++    assert!(synthetic_control_bounds(ModelChoice::ContextQwenLarge, 8192, 1024, true).is_err());
++    assert!(synthetic_control_bounds(ModelChoice::ContextQwenCompact, 17, 1024, true).is_err());
++    assert!(synthetic_control_bounds(ModelChoice::ContextQwenLarge, 128, 65537, true).is_err());
++    assert!(synthetic_control_bounds(ModelChoice::ContextQwenLarge, 128, 1024, false).is_err());
++    synthetic_control_bounds(ModelChoice::ContextQwenLarge, 8192, 1024, false)?;
++    synthetic_control_bounds(ModelChoice::ContextQwenCompact, 8192, 1024, false)?;
++    Ok(())
++}
++
++#[test]
++fn dense_padding_value_spike_refuses_ignored_hole_above_unchanged_tolerance() {
++    assert_eq!(SYNTHETIC_PADDING_VALUE_SPIKE, 0.25);
++    for tokens in [17usize, 128] {
++        for query in 1..tokens {
++            let ignored_hole =
++                query as f32 / 16384. + SYNTHETIC_PADDING_VALUE_SPIKE / (query + 1) as f32;
++            let required = SyntheticDenseMask::CausalWithMaskedKeyOne.time_component(tokens, query);
++            assert!((ignored_hole - required).abs() > 0.0001);
++        }
++    }
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime/qualification/CONTRACT.md
++++ b/crates/airk-retrieval/src/arbiter/runtime/qualification/CONTRACT.md
+@@ -147,3 +147,52 @@
+ or LargeQ32/4096/CPU16 with sharedKV8/head128 and private caches. Other models
+ refuse. This changes no ordinary scorer constructor, public input/output ABI,
+ production provider selection, native operation deadline or memory policy.
++
++
++## Private Large explicit-mask dense candidate (/2)
++
++Step12 adds exactly one private override variant, large_dense_graph, mutually
++exclusive with compact_graph and large_graph. The /1 path admits none. Existing
++/2 Compact and Large flash inputs, IDs and proof rules remain unchanged. The
++new value contains candidate and prior, each the existing four ResourceFilePins.
++Rust independently reauthenticates the exact existing Large graph e4cd63d2...,
++shape proof6a9cc23d... and naturally settled creator2dcad613..., and requires
++identical original8192 baseline pins. A candidate identical to the prior flash
++graph or original f8ba5d3e... graph refuses. The candidate has a distinct private
++profile ID private-large-fp32-explicit-mask-dense-diagnostic-v1, graph SHA,
++manifest, calibration and creator/proof identity; nothing is retagged.
++
++The reviewed producer accepts only exact e4cd63d2... source and f8ba5d3e...
++original ancestry. It changes only the36 Large GroupQueryAttention causal
++attributes1→0. Reverting them must recover the entire prior ModelProto bytes.
++All original tensor/external ranges, projections/QKnorm/rotary/readout nodes,
++six inputs and scores-only public ABI, Q32/KV8/head128/context4096 and exact
++float32 scale f304b53d remain unchanged. The full original causal+padding bias
++/scorer/Where_output_0 remains input10 on every GQA node. Its complete original
++29-entry closure must remain byte-identical with SHA
++8bf893388fce7d661bc12b012aa8fb35d25cf23c8c4d226209304f5622387f22.
++Rust dense proof admission binds these facts and new owner schema
++ airk.private.large-dense-graph-owner/1. The source manifest pins the entire
++nested prior/candidate closure even when the report's graph_override displays
++only the candidate. The exact native Source/build receipts remain mandatory.
++
++Pinned CPU ORT1.30 selects ApplyAttention for causal0 even with unchanged
++global ORT_GQA_DISABLE_FLASH_ATTENTION=0. With no past/window and the retained
++original full bias, that path computes full physical-row Softmax(scale·QK+B)
++thenV, the original unfused expression for every1<=T<=8192. This is operator/
++mathematical equivalence, not bitwise or numerical acceptance. It is not a
++FP64 accumulation claim. The existing dense allocator uses one FP32[1,32,T,T]
++workspace (8GiB at8192); actual fit must remain within the originalCPU16/40GiB
++and120s boundaries. No production Scorer constructor or shared format/digest
++policy changes. Compact keeps its original flash configuration. No sink/debug
++output, artificial dependency, added weight or padding-coverage trick is used.
++
++Before full execution, new dense-only17/128 native tiny populations must prove
++explicit causal bias, zero-bias full attention (which rejects hidden causal1)
++and an actual padding-hole effect in separate sessions. Historical flash8192
++tiny results are not dense evidence. The full8192/N8 path must independently
++retain36 actual allocated CPU GQA events, original full tensors and independent
++FP32 arrays, raw<=.001/mass<=.05/unchanged argmax, real process/Job settlement,
++memory/time and source custody. The failed flash numerical run stays failed.
++No promotion, terminal labels, model-training acceptance, public source URL,
++release authority or scope/limit waiver is created by this private proposal.
+--- a/crates/airk-retrieval/src/arbiter/runtime/qualification/regeneration.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/qualification/regeneration.rs
+@@ -27,6 +27,8 @@
+     compact_graph: Option<compact_graph::Input>,
+     #[serde(default)]
+     large_graph: Option<compact_graph::Input>,
++    #[serde(default)]
++    large_dense_graph: Option<compact_graph::DenseInput>,
+ }
+ #[derive(Deserialize)]
+ #[serde(deny_unknown_fields)]
+@@ -34,9 +36,9 @@
+     schema: String,
+     profiles: Vec<Profile>,
+ }
++#[cfg(test)]
+ fn graph_request_scope(schema: &str, compact: bool, large: bool) -> bool {
+-    (schema == "airk.private.context-metadata-regeneration/1" && !compact && !large)
+-        || (schema == "airk.private.context-metadata-regeneration/2" && (compact ^ large))
++    graph_request_scope_dense(schema, compact, large, false)
+ }
+ 
+ #[test]
+@@ -64,6 +66,50 @@
+         ("unknown", false, true),
+     ] {
+         assert!(!graph_request_scope(schema, compact, large));
++    }
++}
++
++fn graph_request_scope_dense(schema: &str, compact: bool, large: bool, dense: bool) -> bool {
++    (schema == "airk.private.context-metadata-regeneration/1" && !compact && !large && !dense)
++        || (schema == "airk.private.context-metadata-regeneration/2"
++            && usize::from(compact) + usize::from(large) + usize::from(dense) == 1)
++}
++#[test]
++fn graph_request_scope_dense_refuses_mixed_and_legacy_dense() {
++    assert!(graph_request_scope_dense(
++        "airk.private.context-metadata-regeneration/2",
++        false,
++        false,
++        true
++    ));
++    for (schema, compact, large, dense) in [
++        (
++            "airk.private.context-metadata-regeneration/1",
++            false,
++            false,
++            true,
++        ),
++        (
++            "airk.private.context-metadata-regeneration/2",
++            true,
++            false,
++            true,
++        ),
++        (
++            "airk.private.context-metadata-regeneration/2",
++            false,
++            true,
++            true,
++        ),
++        (
++            "airk.private.context-metadata-regeneration/2",
++            true,
++            true,
++            true,
++        ),
++        ("unknown", false, false, true),
++    ] {
++        assert!(!graph_request_scope_dense(schema, compact, large, dense));
+     }
+ }
+ 
+@@ -280,17 +326,25 @@
+     };
+     let input: Input = serde_json::from_slice(&pinned_metadata(&request_pin, 1 << 20)?)?;
+     ensure!(
+-        graph_request_scope(
++        graph_request_scope_dense(
+             &input.schema,
+             input.compact_graph.is_some(),
+-            input.large_graph.is_some()
++            input.large_graph.is_some(),
++            input.large_dense_graph.is_some()
+         ) && input.output.is_absolute()
+             && !input.output.exists()
+             && input.asset_root.is_absolute(),
+         "fresh private metadata-regeneration scope required"
+     );
+-    let graph = input.compact_graph.as_ref().or(input.large_graph.as_ref());
+-    let graph_model = if input.large_graph.is_some() {
++    let graph = input
++        .compact_graph
++        .as_ref()
++        .or(input.large_graph.as_ref())
++        .or(input
++            .large_dense_graph
++            .as_ref()
++            .map(|value| &value.candidate));
++    let graph_model = if input.large_graph.is_some() || input.large_dense_graph.is_some() {
+         ModelChoice::ContextQwenLarge
+     } else {
+         ModelChoice::ContextQwenCompact
+@@ -385,13 +439,17 @@
+                     path: originals.join(&asset.name),
+                 })
+                 .collect();
+-            if let Some(graph) = graph {
++            if let Some(dense) = &input.large_dense_graph {
++                compact_graph::apply_dense(dense, &mut source_assets)?;
++            } else if let Some(graph) = graph {
+                 compact_graph::apply(graph, &mut source_assets, graph_model)?;
+             }
+             let mut prepared = prepare_with_limits(
+                 ProfileInput {
+                     model: old.model,
+-                    profile_id: if graph.is_some() {
++                    profile_id: if input.large_dense_graph.is_some() {
++                        compact_graph::dense_profile_id().into()
++                    } else if graph.is_some() {
+                         compact_graph::profile_id(graph_model)?.into()
+                     } else {
+                         format!("private-final-policy-v2-{model_name}")
+@@ -436,7 +494,9 @@
+                     &policy,
+                 )?;
+             }
+-            if let Some(graph) = graph {
++            if let Some(dense) = &input.large_dense_graph {
++                compact_graph::validate_prepared_dense(dense, &prepared)?;
++            } else if let Some(graph) = graph {
+                 compact_graph::validate_prepared(graph, &prepared)?;
+             }
+             ensure!(
+--- a/crates/airk-retrieval/src/arbiter/runtime/qualification/regeneration/compact_graph.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/qualification/regeneration/compact_graph.rs
+@@ -9,6 +9,13 @@
+     pub shape_proof: ResourceFilePin,
+     pub owned_creation: ResourceFilePin,
+     pub baseline_input: ResourceFilePin,
++}
++
++#[derive(serde::Deserialize, serde::Serialize)]
++#[serde(deny_unknown_fields)]
++pub(super) struct DenseInput {
++    pub candidate: Input,
++    pub prior: Input,
+ }
+ 
+ struct Family {
+@@ -54,7 +61,49 @@
+ }
+ 
+ fn graph_evidence(proof: &Value, owner: &Value, input: &Input, model: ModelChoice) -> Result<()> {
+-    let selected = family(model)?;
++    graph_evidence_mode(proof, owner, input, model, false)
++}
++fn selected_family(model: ModelChoice, dense: bool) -> Result<Family> {
++    let mut selected = family(model)?;
++    if dense {
++        ensure!(
++            model == ModelChoice::ContextQwenLarge,
++            "dense candidate is Large only"
++        );
++        selected.profile_id = "private-large-fp32-explicit-mask-dense-diagnostic-v1";
++        selected.owner_schema = "airk.private.large-dense-graph-owner/1";
++    }
++    Ok(selected)
++}
++pub(super) fn dense_profile_id() -> &'static str {
++    "private-large-fp32-explicit-mask-dense-diagnostic-v1"
++}
++fn graph_evidence_mode(
++    proof: &Value,
++    owner: &Value,
++    input: &Input,
++    model: ModelChoice,
++    dense: bool,
++) -> Result<()> {
++    let selected = selected_family(model, dense)?;
++    if dense {
++        ensure!(
++            proof["attention_mode"] == "large_explicit_mask_dense/1"
++                && proof["causal_attribute"] == 0
++                && proof["global_flash_setting"] == "0"
++                && proof["rewrite_input_sha256"]
++                    == "e4cd63d26c1e5b8bbfd28c65cb04f5ab3946f57e5511d2cd09e125cdf46c4aca"
++                && proof["prior_shape_proof_sha256"]
++                    == "6a9cc23d3d9172fab09fe370207361830f33003ec61bded61f7d3adddc41e42b"
++                && proof["only_prior_graph_causal_attributes_changed"] == true
++                && proof["original_bias_name"] == "/scorer/Where_output_0"
++                && proof["original_bias_closure_sha256"]
++                    == "8bf893388fce7d661bc12b012aa8fb35d25cf23c8c4d226209304f5622387f22"
++                && proof["original_bias_closure_entries"] == 29
++                && proof["original_bias_preserved_verbatim"] == true,
++            "exact original explicit-mask dense source/mode proof required"
++        );
++    }
+     ensure!(
+         proof["new_graph_sha256"] == json!(input.graph.sha256)
+             && proof["source_sha256"] == selected.source
+@@ -166,12 +215,20 @@
+     Ok((request, profile))
+ }
+ pub(super) fn apply(input: &Input, assets: &mut [AssetInput], model: ModelChoice) -> Result<()> {
+-    let selected = family(model)?;
++    apply_mode(input, assets, model, false)
++}
++fn apply_mode(
++    input: &Input,
++    assets: &mut [AssetInput],
++    model: ModelChoice,
++    dense: bool,
++) -> Result<()> {
++    let selected = selected_family(model, dense)?;
+     let (request, old) = baseline(input, model)?;
+     let graph = pinned_metadata(&input.graph, 64 << 20)?;
+     let proof: Value = serde_json::from_slice(&pinned_metadata(&input.shape_proof, 1 << 20)?)?;
+     let owner: Value = serde_json::from_slice(&pinned_metadata(&input.owned_creation, 1 << 20)?)?;
+-    graph_evidence(&proof, &owner, input, model)?;
++    graph_evidence_mode(&proof, &owner, input, model, dense)?;
+     ensure!(
+         proof["bytes"] == graph.len() && owner["graph"]["bytes"] == graph.len(),
+         "actual graph length differs"
+@@ -201,7 +258,10 @@
+     Ok(())
+ }
+ pub(super) fn validate_prepared(input: &Input, prepared: &PreparedProfile) -> Result<()> {
+-    let selected = family(prepared.profile.model)?;
++    validate_prepared_mode(input, prepared, false)
++}
++fn validate_prepared_mode(input: &Input, prepared: &PreparedProfile, dense: bool) -> Result<()> {
++    let selected = selected_family(prepared.profile.model, dense)?;
+     let (request, old) = baseline(input, prepared.profile.model)?;
+     let new = &prepared.profile;
+     ensure!(
+@@ -439,3 +499,214 @@
+     assert!(family(ModelChoice::FocusQwenReranker06B).is_err());
+     Ok(())
+ }
++
++fn dense_source_identity(input: &DenseInput) -> Result<()> {
++    ensure!(
++        input.prior.graph.sha256.to_string()
++            == "e4cd63d26c1e5b8bbfd28c65cb04f5ab3946f57e5511d2cd09e125cdf46c4aca"
++            && input.prior.shape_proof.sha256.to_string()
++                == "6a9cc23d3d9172fab09fe370207361830f33003ec61bded61f7d3adddc41e42b"
++            && input.prior.owned_creation.sha256.to_string()
++                == "2dcad61358578701be588d20b56787c0e169835d5329a5c760bdd662db2f857a"
++            && input.candidate.graph.sha256 != input.prior.graph.sha256
++            && input.candidate.graph.sha256.to_string()
++                != "f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94"
++            && input.candidate.baseline_input.path == input.prior.baseline_input.path
++            && input.candidate.baseline_input.sha256 == input.prior.baseline_input.sha256,
++        "dense prior actual graph/creator/baseline closure differs"
++    );
++    Ok(())
++}
++fn dense_prior(input: &DenseInput) -> Result<()> {
++    dense_source_identity(input)?;
++    let bytes = pinned_metadata(&input.prior.graph, 64 << 20)?;
++    let proof: Value =
++        serde_json::from_slice(&pinned_metadata(&input.prior.shape_proof, 1 << 20)?)?;
++    let owner: Value =
++        serde_json::from_slice(&pinned_metadata(&input.prior.owned_creation, 1 << 20)?)?;
++    graph_evidence(&proof, &owner, &input.prior, ModelChoice::ContextQwenLarge)?;
++    ensure!(proof["bytes"] == bytes.len(), "prior graph bytes changed");
++    baseline(&input.prior, ModelChoice::ContextQwenLarge)?;
++    Ok(())
++}
++pub(super) fn apply_dense(input: &DenseInput, assets: &mut [AssetInput]) -> Result<()> {
++    dense_prior(input)?;
++    apply_mode(
++        &input.candidate,
++        assets,
++        ModelChoice::ContextQwenLarge,
++        true,
++    )
++}
++pub(super) fn validate_prepared_dense(
++    input: &DenseInput,
++    prepared: &PreparedProfile,
++) -> Result<()> {
++    dense_prior(input)?;
++    validate_prepared_mode(&input.candidate, prepared, true)
++}
++
++#[test]
++fn large_dense_proof_refuses_wrong_mode_mask_source_and_flash_identity() -> Result<()> {
++    let input = Input {
++        graph: ResourceFilePin {
++            path: "C:/private/model.onnx".into(),
++            sha256: Sha256Digest::from_bytes([1; 32]),
++        },
++        shape_proof: ResourceFilePin {
++            path: "C:/private/proof.json".into(),
++            sha256: Sha256Digest::from_bytes([2; 32]),
++        },
++        owned_creation: ResourceFilePin {
++            path: "C:/private/owner.json".into(),
++            sha256: Sha256Digest::from_bytes([3; 32]),
++        },
++        baseline_input: ResourceFilePin {
++            path: "C:/private/input.json".into(),
++            sha256: Sha256Digest::from_bytes([4; 32]),
++        },
++    };
++    let cases = [(1,1),(17,3),(128,8),(8192,8)].into_iter().map(|(t,n)| json!({
++        "tokens":t,"options":n,"all36_resolved":true,
++        "external_weight_value_policy":{"external_required_values_refused":0},
++        "witnesses":(0..36).map(|_|json!({"context":[1,t,4096],
++            "cache_shapes_resolved_by_pinned_cpu_compute":[[1,8,t,128],[1,8,t,128]]})).collect::<Vec<_>>()
++    })).collect::<Vec<_>>();
++    let proof = json!({"new_graph_sha256":input.graph.sha256,
++        "source_sha256":"f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94",
++        "gqa_nodes":36,"original_scale_float32_bits":"f304b53d","original_initializers":398,
++        "original_external_initializers":326,"original_scores_output_preserved_verbatim":true,
++        "attention_mode":"large_explicit_mask_dense/1","causal_attribute":0,"global_flash_setting":"0",
++        "rewrite_input_sha256":"e4cd63d26c1e5b8bbfd28c65cb04f5ab3946f57e5511d2cd09e125cdf46c4aca",
++        "prior_shape_proof_sha256":"6a9cc23d3d9172fab09fe370207361830f33003ec61bded61f7d3adddc41e42b",
++        "only_prior_graph_causal_attributes_changed":true,"original_bias_name":"/scorer/Where_output_0",
++        "original_bias_closure_sha256":"8bf893388fce7d661bc12b012aa8fb35d25cf23c8c4d226209304f5622387f22",
++        "original_bias_closure_entries":29,"original_bias_preserved_verbatim":true,
++        "original_nodes_preserved_verbatim":true,"original_initializers_and_external_ranges_preserved_verbatim":true,
++        "all6inputs_scores_only":true,"cache_outputs_internal_only":true,"model_forward":false,
++        "custom_shape_gate_pending":false,"native_kernel_gate_pending":true,
++        "onnx_checker":"original and candidate; real original external-data context; custom kernel ownership separate",
++        "custom_shape_witnesses":cases});
++    let owner = json!({"schema":"airk.private.large-dense-graph-owner/1","complete":true,"failure":null,
++        "graph_only":true,"model_forward":false,"original_phase_expired":false,"post_input_drift":[],
++        "graph":{"path":input.graph.path,"sha256":input.graph.sha256},
++        "shape_proof":{"path":input.shape_proof.path,"sha256":input.shape_proof.sha256},
++        "owned":{"exit_code":0,"timed_out":false,"log_oversized":false,"owned_descendants_settled":true,
++            "owned_job_forced_termination":false,"owned_job_final_active_processes":0,
++            "owned_job_final_member_pids":[],"parent_assigned_to_job":false,"child_assigned_before_resume":true}});
++    graph_evidence_mode(&proof, &owner, &input, ModelChoice::ContextQwenLarge, true)?;
++    assert!(graph_evidence(&proof, &owner, &input, ModelChoice::ContextQwenLarge).is_err());
++    assert!(selected_family(ModelChoice::ContextQwenCompact, true).is_err());
++    for (path, value) in [
++        (
++            "/source_sha256",
++            json!("c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4"),
++        ),
++        ("/gqa_nodes", json!(28)),
++        ("/causal_attribute", json!(1)),
++        ("/global_flash_setting", json!("1")),
++        ("/attention_mode", json!("flash")),
++        ("/original_bias_name", json!("other")),
++        ("/original_bias_closure_sha256", json!("changed")),
++        ("/original_bias_preserved_verbatim", json!(false)),
++        ("/only_prior_graph_causal_attributes_changed", json!(false)),
++        ("/original_external_initializers", json!(254)),
++        ("/original_scores_output_preserved_verbatim", json!(false)),
++        ("/original_initializers", json!(310)),
++        ("/custom_shape_witnesses", json!([])),
++        ("/custom_shape_witnesses/3/tokens", json!(2048)),
++        (
++            "/custom_shape_witnesses/3/witnesses/0/context",
++            json!([1, 2048, 2048]),
++        ),
++        (
++            "/custom_shape_witnesses/3/external_weight_value_policy/external_required_values_refused",
++            json!(1),
++        ),
++        ("/all6inputs_scores_only", json!(false)),
++        ("/model_forward", json!(true)),
++    ] {
++        let mut changed = proof.clone();
++        *changed
++            .pointer_mut(path)
++            .context("literal proof mutation")? = value;
++        assert!(
++            graph_evidence_mode(
++                &changed,
++                &owner,
++                &input,
++                ModelChoice::ContextQwenLarge,
++                true
++            )
++            .is_err()
++        );
++    }
++    for (path, value) in [
++        ("/complete", json!(false)),
++        ("/owned/exit_code", json!(1)),
++        ("/owned/owned_job_forced_termination", json!(true)),
++        ("/owned/owned_job_final_member_pids", json!([1])),
++        ("/graph/sha256", json!(Sha256Digest::from_bytes([9; 32]))),
++        ("/post_input_drift", json!(["changed"])),
++    ] {
++        let mut changed = owner.clone();
++        *changed
++            .pointer_mut(path)
++            .context("literal owner mutation")? = value;
++        assert!(
++            graph_evidence_mode(
++                &proof,
++                &changed,
++                &input,
++                ModelChoice::ContextQwenLarge,
++                true
++            )
++            .is_err()
++        );
++    }
++    Ok(())
++}
++
++#[test]
++fn dense_source_identity_refuses_retagged_flash_or_changed_prior() -> Result<()> {
++    fn source(graph: Sha256Digest) -> Input {
++        Input {
++            graph: ResourceFilePin {
++                path: "C:/private/graph".into(),
++                sha256: graph,
++            },
++            shape_proof: ResourceFilePin {
++                path: "C:/private/proof".into(),
++                sha256: "6a9cc23d3d9172fab09fe370207361830f33003ec61bded61f7d3adddc41e42b"
++                    .parse()
++                    .unwrap(),
++            },
++            owned_creation: ResourceFilePin {
++                path: "C:/private/creator".into(),
++                sha256: "2dcad61358578701be588d20b56787c0e169835d5329a5c760bdd662db2f857a"
++                    .parse()
++                    .unwrap(),
++            },
++            baseline_input: ResourceFilePin {
++                path: "C:/private/baseline".into(),
++                sha256: Sha256Digest::from_bytes([4; 32]),
++            },
++        }
++    }
++    let prior: Sha256Digest =
++        "e4cd63d26c1e5b8bbfd28c65cb04f5ab3946f57e5511d2cd09e125cdf46c4aca".parse()?;
++    let mut input = DenseInput {
++        candidate: source(Sha256Digest::from_bytes([5; 32])),
++        prior: source(prior),
++    };
++    dense_source_identity(&input)?;
++    input.candidate.graph.sha256 = prior;
++    assert!(dense_source_identity(&input).is_err());
++    input.candidate.graph.sha256 = Sha256Digest::from_bytes([5; 32]);
++    input.candidate.baseline_input.path = "C:/different".into();
++    assert!(dense_source_identity(&input).is_err());
++    input.candidate.baseline_input.path = "C:/private/baseline".into();
++    input.prior.owned_creation.sha256 = Sha256Digest::from_bytes([9; 32]);
++    assert!(dense_source_identity(&input).is_err());
++    Ok(())
++}

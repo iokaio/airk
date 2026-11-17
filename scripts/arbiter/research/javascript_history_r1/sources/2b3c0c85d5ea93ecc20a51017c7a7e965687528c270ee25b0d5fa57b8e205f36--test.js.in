@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: Apache-2.0
+const vscode=require('vscode'),fs=require('node:fs/promises'),path=require('node:path'),assert=require('node:assert/strict'),crypto=require('node:crypto');
+const run="D:\\code\\Github\\airk\\artifacts\\editor-update-preflight\\run-aY9GCw",extensions="D:\\code\\Github\\airk\\artifacts\\editor-update-preflight\\run-aY9GCw\\extensions",candidate="D:\\code\\Github\\airk\\artifacts\\editor-update-preflight\\run-aY9GCw\\candidate",result="D:\\code\\Github\\airk\\artifacts\\editor-update-preflight\\run-aY9GCw\\result.json";
+const pause=ms=>new Promise(r=>setTimeout(r,ms));
+async function until(get,label){const deadline=Date.now()+30000;while(Date.now()<deadline){const value=await get();if(value)return value;await pause(100);}throw Error('Timed out: '+label);}
+const tabs=()=>vscode.window.tabGroups.all.flatMap(group=>group.tabs).filter(tab=>tab.input instanceof vscode.TabInputWebview&&tab.input.viewType.endsWith('airk.explorer'));
+exports.run=async()=>{const evidence={schema:'airk-extension-update-editor/1',native_service_exercised:false};try{
+const extension=await until(()=>vscode.extensions.getExtension('iokaio.airk'),'AIRK extension discovery'),api=await extension.activate();await api.whenReady();
+assert.equal((await api.getServerDefinitions())[0].label,'initial');
+await vscode.commands.executeCommand('airk.explorer.open','indexing/library');await until(()=>tabs().length===1,'initial Explorer');
+const initialTab=tabs()[0];
+evidence.initialViewType=initialTab.input.viewType;
+const next=path.join(extensions,'iokaio.airk-1.8.13');await fs.cp(candidate,next,{recursive:true});
+const registry=JSON.parse(await fs.readFile(path.join(extensions,'extensions.json'),'utf8'));const entry=registry.find(entry=>entry.identifier.id==='iokaio.airk');entry.version='1.8.13';entry.relativeLocation=path.basename(next);entry.location={scheme:'file',path:process.platform==='win32'?'/'+next.replaceAll('\\','/'):next};await fs.writeFile(path.join(extensions,'extensions.json'),JSON.stringify(registry));
+await until(async()=>(await api.getServerDefinitions())[0]?.label==='updated','new-version graph');await until(()=>tabs().length===1&&tabs()[0]!==initialTab,'updated singleton Explorer');const updatedTab=tabs()[0];
+assert.equal((await api.getServerDefinitions())[0].args[0],'indexing/library');
+await Promise.all(Array.from({length:12},()=>vscode.commands.executeCommand('airk.explorer.open','search/query')));assert.equal(tabs().length,1);
+const hostFile=path.join(next,'out','serviceExtension.js');await fs.writeFile(hostFile,(await fs.readFile(hostFile,'utf8')).replace('TAG="updated"','TAG="rebuilt"'));
+const inventoryPath=path.join(next,'airk-update.json'),inventory=JSON.parse(await fs.readFile(inventoryPath,'utf8'));inventory.files['out/serviceExtension.js']=crypto.createHash('sha256').update(await fs.readFile(hostFile)).digest('hex');await fs.writeFile(inventoryPath,JSON.stringify(inventory));
+await until(async()=>(await api.getServerDefinitions())[0]?.label==='rebuilt','same-version graph');await until(()=>tabs().length===1&&tabs()[0]!==updatedTab,'rebuilt singleton Explorer');
+assert.equal((await api.getServerDefinitions())[0].args[0],'search/query');
+await vscode.window.tabGroups.close(tabs(),true);assert.equal(tabs().length,0);
+await until(async()=>(await api.getServerDefinitions())[0]?.args[1]===false,'closed panel disposition');
+await fs.writeFile(hostFile,(await fs.readFile(hostFile,'utf8')).replace('TAG="rebuilt"','TAG="closed"'));inventory.files['out/serviceExtension.js']=crypto.createHash('sha256').update(await fs.readFile(hostFile)).digest('hex');await fs.writeFile(inventoryPath,JSON.stringify(inventory));
+await until(async()=>(await api.getServerDefinitions())[0]?.label==='closed','closed Explorer handoff');assert.equal(tabs().length,0);
+Object.assign(evidence,{status:'passed',initial:'1.8.12',updated:'1.8.13',same_version_replacement:true,route_preserved:true,singleton:true,closed_stays_closed:true,stable_api_forwarded:true,window_reloaded:false});
+await fs.writeFile(result,JSON.stringify(evidence,null,2));
+}catch(error){evidence.status='failed';evidence.error=String(error);evidence.stack=error.stack;await fs.writeFile(result,JSON.stringify(evidence,null,2));throw error;}};

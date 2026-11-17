@@ -1,0 +1,79 @@
+--- a/docs/service-project-retirement.md
++++ b/docs/service-project-retirement.md
+@@ -38,6 +38,14 @@
+ Interrupted cleanup retains its native proof and resumes through the existing
+ owner. Source files, other indexes and shared models are preserved. This is
+ logical deletion, not secure erasure of earlier results, exports or backups.
++
++Registration can precede the first worker or index build. A reviewed retirement
++can remove that never-started index's current references without initializing
++ownership, quota or writer-advisory files just to clean up. Native cleanup checks
++that no selected storage or credit needs disposal and preserves unrelated files
++and other indexes sharing the data root. Releasing selected credit still requires
++its actual writer advisory and retained native custody. Unknown or changed native
++state keeps cleanup pending; missing ownership is not permission to adopt it.
+ 
+ A fresh upgrade from 1.8.7 can require a different preactivation recovery when an
+ old index's source configuration is unavailable. See [explicit legacy upgrade
+--- a/docs/releases/release-1.8.8.md
++++ b/docs/releases/release-1.8.8.md
+@@ -15,6 +15,17 @@
+ remain in progress. Earlier P14 evidence below retains its original source,
+ package identities and platform limits. It does not qualify this added behavior
+ or the final current-source local test installer. Version 1.8.8 is unpublished.
++
++**6 November correction checkpoint:** Native source
++`6de490d57d7053cbd63862366e840cc3657df4ef10e8a57c4ca018e6d19a2633`
++/ 968 inputs adds logical cleanup for valid registered-but-never-started indexes
++without creating ownership or storage. The preceding full Windows run on
++`4292d19f...` finished **2,651 passed / 7 failed**: six metadata-only retirement
++cases and one stale generated CLI reference. The corrected focused selection
++passed **47 tests** in **438.126 s** of owner elapsed time. Current-source
++42-case Neo, fresh matched DEBUG/process and full 2,661-test qualification remain
++pending at this checkpoint. Earlier source results retain their original
++identities; these focused results do not qualify the final local test installer.
+ 
+ ## Retained local phase checkpoints
+ 
+--- a/docs/research/implementation-v190.md
++++ b/docs/research/implementation-v190.md
+@@ -5166,3 +5166,39 @@
+ Linux/Intel/editor qualification, release promotion or publication is inferred.
+ The accepted P14 source `237f8969...` and its earlier `5d8912b1...` evidence above
+ retain their original identities and limits. Working version remains **1.8.8**.
++
++### 6 November 2026 - never-started index cleanup correction (qualification in progress)
++
++The first full post-P14 Windows Nextest run on native source
++`4292d19f083a6829fd7932f25d80e7f70d157afb0515e4aa9b371b7cd0a8c838`
++/ 968 inputs completed **2,651 passed / 7 failed**, with **51 selection skips**.
++Six failures exposed a valid metadata-only registration boundary: registration
++can succeed before a worker creates native data ownership, collection storage or
++its writer advisory. Cleanup must remove retired logical references without
++initializing missing state or weakening custody for actual selected credit. The
++seventh failure was the stale generated public CLI reference. All results from
++that completed run remain recorded; it is not a passing workspace gate.
++
++The correction on native source
++`6de490d57d7053cbd63862366e840cc3657df4ef10e8a57c4ca018e6d19a2633`
++/ 968 inputs preserves unknown or changed storage and validates zero selected
++effects before permitting logical-only cleanup without an advisory. Actual
++selected-credit disposal still requires its native ownership and advisory.
++Three new regressions cover uninitialized registration, initial binding before a
++first writer, changed/unknown state refusal and shared-root isolation with a real
++unrelated funded operation. One old watch fixture now uses canonical private
++roots and actual source disappearance; its fencing, job and independent-project
++assertions remain intact. The combined correction selection passed **47 tests**
++(**34 new / 13 related**) in **438.126 s** of owner elapsed time, with persistent
++P10 target reuse, Windows incremental compilation and retained Cargo timings.
++
++The preceding source `4292d19f...` 33-case Neo result retains its own identity and
++mandatory Cargo cleanup evidence, including **3.4 GiB reclaimed** and target
++absence. The four actual installed-extension 1.8.7 predecessor process scenarios
++also retain their original matched development runtime identity; they do not
++become new-source process qualification by relabeling. The current-source
++42-case Neo batch, fresh matched DEBUG/process checks and full **2,661-test**
++Windows run remain pending at this dated checkpoint. Their complete outcomes,
++cleanup and timing receipts must be collected separately. Version **1.8.8** is
++still unpublished; no optimized/signed rebuild, final local installer, broader
++platform or publication qualification follows from the focused pass.

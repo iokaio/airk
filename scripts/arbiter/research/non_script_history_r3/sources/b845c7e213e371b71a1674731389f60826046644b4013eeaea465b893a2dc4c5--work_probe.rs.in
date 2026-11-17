@@ -1,0 +1,150 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Optional synchronous producer accounting. No paths, source text or identities.
+//! The scope is deliberately !Send: enter it on the owning blocking producer,
+//! never across an async suspension or to infer child-thread CPU/inference work.
+use std::{cell::RefCell, rc::Rc, time::Instant};
+
+#[derive(Clone, Copy, Debug)]
+#[repr(usize)]
+pub enum Metric {
+    QueueDecode,
+    QueueEncode,
+    QueueSelect,
+    QueueRetain,
+    SemanticUpdate,
+    FullFtsCapture,
+    FullFtsDocs,
+    FullFtsShadow,
+    FullFtsAux,
+    PublicationPrepare,
+    PublicationApply,
+    PublicationCommit,
+    ResourceRead,
+    ResourceWrite,
+    EmbeddingBatch,
+    JournalMaps,
+    JournalInputs,
+    JournalMetadata,
+}
+const METRICS: usize = 18;
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Work {
+    pub calls: u64,
+    pub failures: u64,
+    pub elapsed_ns: u64,
+    pub items: u64,
+    pub bytes: u64,
+    pub saturated: bool,
+}
+#[derive(Clone, Debug, Default)]
+pub struct Snapshot {
+    pub work: [Work; METRICS],
+}
+impl Snapshot {
+    pub fn get(&self, metric: Metric) -> Work {
+        self.work[metric as usize]
+    }
+}
+thread_local! {
+    static ACTIVE: RefCell<Option<Rc<RefCell<Snapshot>>>> = const { RefCell::new(None) };
+}
+struct Scope(Option<Rc<RefCell<Snapshot>>>);
+impl Drop for Scope {
+    fn drop(&mut self) {
+        ACTIVE.with(|active| *active.borrow_mut() = self.0.take());
+    }
+}
+/// Observe one actual synchronous producer entry point, preserving its result.
+/// Nested scopes isolate their work and restore the outer owner even on panic.
+/// No observer, I/O or extra validation runs inside the measured operation.
+pub fn observe<T>(operation: impl FnOnce() -> T) -> (T, Snapshot) {
+    let state = Rc::new(RefCell::new(Snapshot::default()));
+    let previous = ACTIVE.with(|active| active.replace(Some(state.clone())));
+    let scope = Scope(previous);
+    let result = operation();
+    drop(scope);
+    let snapshot = state.borrow().clone();
+    (result, snapshot)
+}
+#[doc(hidden)]
+pub fn enabled() -> bool {
+    ACTIVE.with(|active| active.borrow().is_some())
+}
+fn increment(target: &mut u64, value: u64, saturated: &mut bool) {
+    match target.checked_add(value) {
+        Some(total) => *target = total,
+        None => {
+            *target = u64::MAX;
+            *saturated = true;
+        }
+    }
+}
+pub fn add(metric: Metric, items: u64, bytes: u64) {
+    ACTIVE.with(|active| {
+        if let Some(state) = active.borrow().as_ref() {
+            let mut state = state.borrow_mut();
+            let work = &mut state.work[metric as usize];
+            increment(&mut work.items, items, &mut work.saturated);
+            increment(&mut work.bytes, bytes, &mut work.saturated);
+        }
+    });
+}
+#[doc(hidden)]
+pub fn measure<T>(
+    metric: Metric,
+    operation: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let state = ACTIVE.with(|active| active.borrow().clone());
+    let Some(state) = state else {
+        return operation();
+    };
+    let started = Instant::now();
+    let result = operation();
+    let mut state = state.borrow_mut();
+    let work = &mut state.work[metric as usize];
+    increment(&mut work.calls, 1, &mut work.saturated);
+    increment(
+        &mut work.failures,
+        u64::from(result.is_err()),
+        &mut work.saturated,
+    );
+    let elapsed = started.elapsed().as_nanos();
+    if elapsed > u64::MAX as u128 {
+        work.saturated = true;
+    }
+    increment(
+        &mut work.elapsed_ns,
+        elapsed.min(u64::MAX as u128) as u64,
+        &mut work.saturated,
+    );
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn failed_actual_operation_keeps_error_and_nested_scope_isolation() {
+        let (error, outer) = observe(|| {
+            let (inner, snapshot) = observe(|| {
+                measure(Metric::ResourceRead, || {
+                    add(Metric::ResourceRead, 1, 7);
+                    Err::<(), _>(
+                        std::io::Error::new(std::io::ErrorKind::PermissionDenied, "fixture").into(),
+                    )
+                })
+            });
+            assert_eq!(snapshot.get(Metric::ResourceRead).failures, 1);
+            assert_eq!(snapshot.get(Metric::ResourceRead).bytes, 7);
+            inner
+        });
+        let error = error.unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+        assert_eq!(outer.get(Metric::ResourceRead).calls, 0);
+        let (_, fresh) = observe(|| ());
+        assert_eq!(fresh.get(Metric::ResourceRead).calls, 0);
+    }
+}

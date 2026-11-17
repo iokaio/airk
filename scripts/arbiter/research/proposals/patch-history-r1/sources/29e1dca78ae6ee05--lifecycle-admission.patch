@@ -1,0 +1,124 @@
+--- a/crates/airk-cli/src/runtime_lifecycle.rs
++++ b/crates/airk-cli/src/runtime_lifecycle.rs
+@@ -153,7 +153,18 @@
+     activation::start_selected(root, &approval, &main, None).await
+ }
+ pub(super) async fn run(root: &Path, input: Input) -> Result<LifecycleRecord> {
+-    let _lock = install_lock(root)?;
++    run_with_admission_budget(root, input, Duration::from_secs(60)).await
++}
++
++pub(super) async fn run_with_admission_budget(
++    root: &Path,
++    input: Input,
++    budget: Duration,
++) -> Result<LifecycleRecord> {
++    // Launcher admission may briefly own the same installer lock. Wait before
++    // accepting lifecycle work; never replay a submitted Stop/Restart operation.
++    // Keep this lock through every authority check and the complete operation.
++    let _lock = connection_install_lock(root, budget).await?;
+     activation::require_settled(root)?;
+     launcher_repair::require_settled(root)?;
+     ensure!(
+--- a/crates/airk-cli/src/runtime_install_tests.rs
++++ b/crates/airk-cli/src/runtime_install_tests.rs
+@@ -1649,3 +1649,39 @@
+     }
+     Ok(())
+ }
++
++#[tokio::test]
++async fn lifecycle_install_admission_timeout_preserves_unaccepted_state() -> Result<()> {
++    let owner = tempfile::tempdir()?;
++    let root = owner.path().canonicalize()?.join("installation");
++    local_ipc::prepare_root(&root)?;
++    let selection = root.join("selected.json");
++    fs::write(&selection, b"Selection must not be inspected before admission.\n")?;
++    let before = fs::read(&selection)?;
++    let input = || serde_json::from_value::<lifecycle::Input>(serde_json::json!({
++        "caller":"11".repeat(16),
++        "key":{"namespace":"22".repeat(16),"epoch":0,"nonce":"33".repeat(16)},
++        "action":"stop","expected_instance":"44".repeat(16),"runtime":"55".repeat(32),"force":false
++    }));
++    let held = install_lock(&root)?;
++    let failure = tokio::time::timeout(
++        Duration::from_secs(2),
++        lifecycle::run_with_admission_budget(&root, input()?, Duration::from_millis(100)),
++    ).await?.expect_err("held installer lock must exhaust admission");
++    ensure!(format!("{failure:#}").contains("service connection installer wait expired or failed"),
++        "failed after lifecycle admission instead: {failure:#}");
++    ensure!(fs::read(&selection)? == before, "admission failure rewrote selection");
++    ensure!(!root.join("control").try_exists()?, "admission failure created a native registry");
++    ensure!(install_lock(&root).is_err(), "admission failure stole lock ownership");
++    drop(held);
++    fs::write(root.join("install-1.4.lock"), b"foreign lock bytes")?;
++    let failure = tokio::time::timeout(
++        Duration::from_secs(2),
++        lifecycle::run_with_admission_budget(&root, input()?, Duration::from_secs(60)),
++    ).await?.expect_err("invalid lock data must fail without a contention wait");
++    ensure!(format!("{failure:#}").contains("invalid install lock"), "unexpected invalid-lock result: {failure:#}");
++    ensure!(fs::read(root.join("install-1.4.lock"))? == b"foreign lock bytes", "foreign lock was replaced");
++    ensure!(fs::read(&selection)? == before && !root.join("control").try_exists()?,
++        "invalid lock admission changed lifecycle state");
++    Ok(())
++}
+--- a/crates/airk-cli/src/runtime_install_native_tests.rs
++++ b/crates/airk-cli/src/runtime_install_native_tests.rs
+@@ -570,3 +570,57 @@
+     }
+     Ok(())
+ }
++
++#[tokio::test]
++#[ignore = "requires a freshly built sealed pair and explicit approved digest; run serially"]
++async fn native_lifecycle_waits_for_installer_then_completes_one_exact_stop() -> Result<()> {
++    let fixture = NativeFixture::new().await?;
++    let result = async {
++        let first = fixture.health().await?;
++        let ledger = airk_store::service::registry::ServiceRegistry::open_saved(&fixture.control)?;
++        let (namespace, epoch) = ledger.saved_request_epoch()?;
++        drop(ledger);
++        let request = serde_json::json!({
++            "caller":airk_kernel::service_broker::new_instance_id()?,
++            "key":{"namespace":namespace,"epoch":epoch,"nonce":airk_kernel::service_broker::new_instance_id()?},
++            "action":"stop","expected_instance":first.instance,"runtime":fixture.identity,"force":false
++        });
++        let before = lifecycle::inspect(&fixture.root)?;
++        let count = || -> Result<i64> {
++            let database = rusqlite::Connection::open_with_flags(
++                fixture.control.join("service-1.4.sqlite3"),
++                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
++            )?;
++            Ok(database.query_row("SELECT COUNT(*) FROM service_lifecycle", [], |row| row.get(0))?)
++        };
++        let rows_before = count()?;
++        let held = install_lock(&fixture.root)?;
++        let input = serde_json::from_value::<lifecycle::Input>(request.clone())?;
++        let mut stopping = Box::pin(lifecycle::run(&fixture.root, input));
++        std::future::poll_fn(|cx| {
++            assert!(std::future::Future::poll(stopping.as_mut(), cx).is_pending(),
++                "lifecycle must wait for the real held installer lock");
++            std::task::Poll::Ready(())
++        }).await;
++        ensure!(lifecycle::inspect(&fixture.root)? == before && count()? == rows_before,
++            "waiting accepted or mutated lifecycle work before admission");
++        ensure!(fixture.health().await?.instance == first.instance, "waiting changed the live instance");
++        drop(held);
++        let record = tokio::time::timeout(Duration::from_secs(90), stopping).await??;
++        let observed = serde_json::to_value(&record)?;
++        ensure!(observed["phase"] == "complete", "Stop did not complete: {observed}");
++        let mut expected = request.clone();
++        expected.as_object_mut().context("request object")?.remove("force");
++        expected["manager"] = serde_json::Value::Bool(false);
++        ensure!(observed["request"] == expected, "completed another lifecycle request: {observed}");
++        ensure!(count()? == rows_before + 1, "one invocation created multiple lifecycle records");
++        let after = lifecycle::inspect(&fixture.root)?;
++        ensure!(after["pending"].is_null() && after["explicitly_stopped"] == true,
++            "Stop did not settle its durable lifecycle state");
++        wait_quiescent(&fixture.root).await?;
++        ensure!(fixture.health().await.is_err(), "completed Stop left the service live");
++        Ok(())
++    }.await;
++    let cleanup = fixture.cleanup().await;
++    result.and(cleanup)
++}

@@ -1,0 +1,62 @@
+{
+  "schema": "airk.source-relocation/1",
+  "scope": "Only three reviewed substantial authored source bodies from finite830document followup. Ordinary reports/prose and publisher examples remain unarchived.",
+  "files": [
+    {
+      "source": "artifacts/readiness-1817/final-windows-plan.md",
+      "destination": "scripts/arbiter/source_rescue/runbook_history/windows-qualification-plan.md",
+      "original_sha256": "e46e2b33c3f2b827b0c708dee2ed41b93a892bd978b9bc1f24db177ff7131435",
+      "bytes": 25293,
+      "maintained_sha256": "e46e2b33c3f2b827b0c708dee2ed41b93a892bd978b9bc1f24db177ff7131435",
+      "maintained_bytes": 25293,
+      "changes": [],
+      "disposition": "reviewed-runbook-source",
+      "code_role": {
+        "description": "Pinned editor verification and Windows qualification/package command runbook"
+      },
+      "exact_extracted_git_blob": "b446d59b52e090acf58baeca5c1f18a231c6b4af",
+      "extracted_git_blob_reachable": false
+    },
+    {
+      "source": "artifacts/advanced-split/local-delivery-preparation-r1/NATIVE-HELP.md",
+      "destination": "scripts/arbiter/source_rescue/runbook_history/native-help-runbook.md",
+      "original_sha256": "4356984f2065c2b2f910e2c20b875fe6fbf2bf0fce78f13f7902b4f7f69e9bca",
+      "bytes": 10798,
+      "maintained_sha256": "4356984f2065c2b2f910e2c20b875fe6fbf2bf0fce78f13f7902b4f7f69e9bca",
+      "maintained_bytes": 10798,
+      "changes": [],
+      "disposition": "reviewed-runbook-source",
+      "code_role": {
+        "description": "Reviewed native Help generation, environment import, emitter and consumer command chain"
+      },
+      "exact_extracted_git_blob": "a1acd89c92a42ff525af8fd103ffa468983f6303",
+      "extracted_git_blob_reachable": false
+    },
+    {
+      "source": "artifacts/local/one-airk-1.8.14/noncli-ignore-boundary-investigation.md",
+      "destination": "scripts/arbiter/source_rescue/runbook_history/windows-handle-probe.py.in",
+      "original_sha256": "5d72a63b010b1a99c7319a174a2cf50a963ab5d3cb6ed3d1da8ae504a4dce99c",
+      "bytes": 4817,
+      "maintained_sha256": "87cf8d7549da88b88ba36c5bc4fcb26a10c9c849b283987a79cdce11a08d5afe",
+      "maintained_bytes": 677,
+      "changes": [
+        {
+          "kind": "byte-range-extraction",
+          "offset": 1079,
+          "bytes": 639,
+          "extracted_sha256": "d9f6b4d6e6891bee8bb529faa71b24bafbec6ac1636f32af104b36ff287e8267"
+        },
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ],
+      "disposition": "reviewed-diagnostic-byte-range",
+      "code_role": {
+        "description": "Only the Windows CreateFileW diagnostic fragment; surrounding investigation/report not copied"
+      },
+      "exact_extracted_git_blob": "9d1aa2af8be44defaa152bc9892739e441e2bb23",
+      "extracted_git_blob_reachable": false
+    }
+  ]
+}

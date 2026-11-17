@@ -1,0 +1,109 @@
+--- crates/airk-service/src/service_runtime/arbiter.rs
++++ crates/airk-service/src/service_runtime/arbiter.rs
+@@ -49,6 +49,8 @@
+             joint_ledger: context.joint_ledger.clone(),
+             #[cfg(all(feature = "local-inference", feature = "test-support"))]
+             evaluation: None,
++            #[cfg(all(feature = "local-inference", feature = "test-support"))]
++            context_observer: None,
+             configuration: context.configuration.clone(),
+             #[cfg(feature = "local-inference")]
+             assets: context.assets.clone(),
+@@ -398,6 +400,8 @@
+     joint_ledger: Arc<Mutex<joint_ledger::Ledger>>,
+     #[cfg(all(feature = "local-inference", feature = "test-support"))]
+     evaluation: Option<airk_retrieval::arbiter::runtime::EvaluationCatalog>,
++    #[cfg(all(feature = "local-inference", feature = "test-support"))]
++    context_observer: Option<evaluation::ContextObservationSink>,
+     configuration: Arc<airk_store::service::arbiter::ConfigurationStore>,
+     #[cfg(feature = "local-inference")]
+     assets: Arc<airk_store::service::arbiter_assets::AssetStore>,
+@@ -430,6 +434,8 @@
+             joint_ledger: Arc::new(Mutex::new(joint_ledger::Ledger::default())),
+             #[cfg(all(feature = "local-inference", feature = "test-support"))]
+             evaluation: None,
++            #[cfg(all(feature = "local-inference", feature = "test-support"))]
++            context_observer: None,
+             ownership: ownership.clone(),
+             configuration: Arc::new(configuration),
+             #[cfg(feature = "local-inference")]
+--- crates/airk-service/src/service_runtime/arbiter/evaluation.rs
++++ crates/airk-service/src/service_runtime/arbiter/evaluation.rs
+@@ -6,6 +6,14 @@
+     fs::File,
+     io::{Read, Seek, SeekFrom, Write},
+ };
++
++/// Native test-support observation only. The sink is attached before exact
++/// same-lease/same-gate fixture composition; no wire value attaches it.
++pub type ContextObservationSink = Arc<
++    dyn Fn(&airk_core::native_context_action::NativeContextActionRequest, &Profile) -> Result<()>
++        + Send
++        + Sync,
++>;
+ 
+ #[derive(serde::Serialize)]
+ pub struct EvaluationResult<T> {
+@@ -65,6 +73,13 @@
+         owner.focus.evaluation = Some(catalog.clone());
+         owner.context.evaluation = Some(catalog);
+         Ok(Self { owner })
++    }
++    /// Observe an already admitted request without dispatching Context scoring.
++    /// Source/configuration/deadline postchecks still decide the canonical reply.
++    /// Separate compiler census/recording work is not a deployed-model timing.
++    pub fn observe_context(mut self, sink: ContextObservationSink) -> Self {
++        self.owner.context.context_observer = Some(sink);
++        self
+     }
+     pub fn configuration(&self) -> Result<EvaluationResult<Configuration>> {
+         Ok(EvaluationResult::new(self.owner.configuration()?))
+--- crates/airk-service/src/service_runtime/arbiter/CONTRACT.md
++++ crates/airk-service/src/service_runtime/arbiter/CONTRACT.md
+@@ -180,3 +180,46 @@
+ disabled rollback propagation preserve newer other-stage choices; cleanup keeps
+ its original asset-operation revision. Warm and NN delivery retain strict full
+ snapshot gates and their one specifically admitted cached continuation.
++
++
++## Private selected-path CAL observation
++
++Only local-inference plus test-support compiles ContextObservationSink and
++EvaluationOwner.observe_context. The fixture attaches that native callback
++before the existing exact ServiceLease Arc and NativeCatalogAdmission instance
++check in into_owner_for. No public operation, downloaded profile, environment
++setting in an ordinary service, or serialized metadata attaches this capability.
++The ignored actual-fixture runner may explicitly select this private mode. Its
++catalog remains opaque, isolated and release_qualified=false.
++
++Capture uses the actual already-Ready/warmed Context profile and the actual
++selected MiniLM/Focus path. It is not a pre-load shortcut or fake readiness.
++Before capture the actor validates the installed worker/read authority, original
++native attempt/clock, publication, exact current configuration, actual selected
++profile, task policy and frozen roster policy. It checks the same fixed native
++issue immediately before and after the private observer. Compiler census and
++record I/O execute outside the admission mutex. The canonical caller then
++rechecks original source authority, profile/configuration and deadline; a failed
++postcheck refuses. A retained private snapshot alone is neither delivered
++advice nor completed admission/qualification evidence.
++
++The hook runs before the deployed Context score queue, Context NN reservation
++and Context forward. Separate pure compiler census and private recording retain
++their own measured work/receipts and consume elapsed original time; they cannot
++be called deployed Context timing or hidden inside a zero-cost model claim.
++After successful canonical postchecks, the explicit unavailable advice preserves
++the requested original token ceiling and reports observed_input_tokens=Some(0)
++with default deployed Context Work: Context scoring was known not dispatched.
++It supplies no action, score, confidence or fitted/calibrated decision. Existing
++actual Focus work and its shared original-attempt ledger charges remain intact;
++no Focus reservation is refunded, renewed or converted into fresh Context work.
++
++Captured Core requests, profiles and source references are serialized by their
++Rust owners; no handwritten request/response mirror is introduced. Private
++recordings retain full post-Focus provenance and actual selected profile/
++pipeline identities. Duplicate/cap guards belong to this bounded private run,
++not to a new product quota. Verified counterfactual read requests use separate
++canonical transport attempts and disclose their preparation overhead; they are
++not actuated learned trajectories or extra allowances in the captured request.
++Artifacts remain private and unqualified until the required actual native,
++independent-label, fitting, held-out, resource and product qualification gates.

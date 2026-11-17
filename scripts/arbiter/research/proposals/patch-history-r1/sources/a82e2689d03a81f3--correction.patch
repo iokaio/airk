@@ -1,0 +1,222 @@
+--- a/scripts/cuda-package-provenance.py
++++ b/scripts/cuda-package-provenance.py
+@@ -12,6 +12,18 @@
+  if p.is_absolute():raise ValueError('absolute package path')
+  return p
+ 
++def _payload_path(name,legal):
++ path=_path(name)
++ if len(path.parts)!=1:raise ValueError('native optional payload must remain a direct child')
++ if legal:
++  # Role/component/source validation belongs to the authenticated Rust emitter.
++  # Its projection flattens Notice assets to these unchanged safe leaf names.
++  if len(name)>128 or '..' in name or not re.fullmatch(r'airk-cuda-notice-[a-z0-9_.+-]+-[a-z0-9_.+-]+',name) or not name.endswith(('.txt','.html','.md')):raise ValueError('native legal notice leaf differs')
++ else:
++  if name.lower() in ('nvcuda.dll','onnxruntime.dll'):raise ValueError('driver/second-core GPU payload refused')
++  if not (name.lower().endswith('.dll') or name in ('airk-cuda-runtime.json','airk-cuda-build-provenance.json')):raise ValueError('private/developer/model GPU payload refused')
++ return path
++
+ def exact_optional_payload(base_files,native_runtime_files,notice_files):
+  # Native owner must have validated/emitted native_runtime_files. This is not a manifest decoder.
+  if not native_runtime_files:raise NativeGpuProjectionUnavailable('actual native GPU file projection unavailable')
+@@ -20,14 +32,9 @@
+  if not required.issubset(native_runtime_files):raise NativeGpuProjectionUnavailable('native same-core runtime projection incomplete')
+  for mapping,legal in [(native_runtime_files,False),(notice_files,True)]:
+   for name,digest in mapping.items():
+-   path=_path(name)
++   _payload_path(name,legal)
+    if name.casefold() in seen:raise ValueError('duplicate/case-colliding optional payload entry')
+    if not re.fullmatch('[0-9a-f]{64}',digest):raise ValueError('payload SHA256 differs')
+-   if legal:
+-    if len(path.parts)<3 or path.parts[0]!='notices' or path.parts[1]!='cuda-runtime':raise ValueError('GPU legal file outside exact notice root')
+-   else:
+-    if len(path.parts)!=1 or name.lower()=='nvcuda.dll' or name.lower()=='onnxruntime.dll':raise ValueError('driver/second-core/nested GPU payload refused')
+-    if not (name.lower().endswith('.dll') or name in ('airk-cuda-runtime.json','airk-cuda-build-provenance.json')):raise ValueError('private/developer/model GPU payload refused')
+    seen.add(name.casefold());combined[name]=digest
+  if not notice_files:raise NativeGpuProjectionUnavailable('actual exact GPU legal projection unavailable')
+  return combined
+@@ -57,9 +64,9 @@
+  files={};legal={};native={};total=0
+  for row in rows:
+   if set(row)!={'name','bytes','sha256'} or type(row['bytes']) is not int or not 0<row['bytes']<=2<<30:raise ValueError('native file row bound/shape differs')
+-  name=row['name'];_path(name)
++  name=row['name'];is_legal=isinstance(name,str) and name.startswith('airk-cuda-notice-');_payload_path(name,is_legal)
+   if name in files:raise ValueError('duplicate native file row')
+-  if name.startswith('notices/cuda-runtime/'):legal[name]=row['sha256']
++  if is_legal:legal[name]=row['sha256']
+   else:native[name]=row['sha256']
+   source=owner.regular(root.joinpath(*PurePosixPath(name).parts));actual=owner.pin(source)
+   if (actual['bytes'],actual['sha256'])!=(row['bytes'],row['sha256']):raise ValueError('actual exact native payload byte drift')
+--- a/scripts/cuda-native-execution/CONTRACT.md
++++ b/scripts/cuda-native-execution/CONTRACT.md
+@@ -27,3 +27,18 @@
+ is outside that measured elapsed scope. The accessor requires all three successful
+ proofs and independently reopens each pin. No skipped exists/is_file branch or
+ absent SHA row can turn an incomplete parent observation into a pass.
++
++
++Native legal-roster correction: Rust provenance::legal_assets returns Notice
++assets named airk-cuda-notice-<component>-<leaf>.txt/.html/.md directly under the
++runtime root. windows::observe_package_projection authenticates them and emits
++the same names, sizes and hashes. The projection has no serialized role field.
++Python classifies only these already-authenticated projection rows, enforces a
++safe lowercase direct leaf/prefix/extension and keeps every byte/name unchanged.
++Rust alone validates component membership, original-source identity, Notice role
++and complete legal coverage. Python does not decode a RuntimeManifest or infer
++legal authority from a filename; the native projection and closed original census
++remain mandatory. Nested notices/cuda-runtime names, bare cuda-license.txt,
++renamed/omitted/extra rows and case collisions are refused. Builder, signing and
++installer consumers forward that exact roster; notices remain beside the service
++image. Private provider-only staging remains incomplete and unapproved.
+--- a/scripts/tests/test_gpu_owners.py
++++ b/scripts/tests/test_gpu_owners.py
+@@ -66,7 +66,8 @@
+    self.assertFalse(destination.exists())
+  def test_public_projection_absence_and_private_payload_refusals(self):
+   with self.assertRaises(package.NativeGpuProjectionUnavailable):package.require_native_activation_projection()
+-  native={'onnxruntime_providers_shared.dll':'a'*64,'onnxruntime_providers_cuda.dll':'b'*64,'airk-cuda-runtime.json':'c'*64};legal={'notices/cuda-runtime/LICENSE.txt':'d'*64}
++  native={'onnxruntime_providers_shared.dll':'a'*64,'onnxruntime_providers_cuda.dll':'b'*64,'airk-cuda-runtime.json':'c'*64};legal={'airk-cuda-notice-cuda-license.txt':'d'*64}
++  self.assertEqual(package.exact_optional_payload({},native,legal),dict(native,**legal))
+   for name in ['nvcuda.dll','onnxruntime.dll','source/model.safetensors','fixture.json','C:/private/file.dll']:
+    with self.subTest(name=name):
+     with self.assertRaises(ValueError):package.exact_optional_payload({},dict(native,**{name:'e'*64}),legal)
+@@ -142,6 +143,17 @@
+   for row in pins:self.assertEqual(set(row),{'path','bytes','sha256'});self.assertIs(type(row['bytes']),int)
+   self.assertNotIn('probe',str(pins));runtime.canonical(pins)
+ 
++
++class NativeLegalLeafControls(unittest.TestCase):
++ def test_native_direct_legal_extensions_and_mutation_refusals(self):
++  native={'onnxruntime_providers_shared.dll':'a'*64,'onnxruntime_providers_cuda.dll':'b'*64,'airk-cuda-runtime.json':'c'*64}
++  for name in ['airk-cuda-notice-onnxruntime-license.txt','airk-cuda-notice-cuda-license.html','airk-cuda-notice-cudnn-license.md']:
++   self.assertIn(name,package.exact_optional_payload({},native,{name:'d'*64}))
++  for name in ['notices/cuda-runtime/license.txt','cuda-license.txt','airk-cuda-notice-cuda-source.dll','airk-cuda-notice-cuda-../license.txt','AIRK-CUDA-NOTICE-cuda-license.txt','airk-cuda-notice--license.txt','airk-cuda-notice-cuda-license.exe','airk-cuda-notice-cuda-'+('x'*128)+'.txt']:
++   with self.subTest(name=name),self.assertRaises(ValueError):package.exact_optional_payload({},native,{name:'d'*64})
++  with self.assertRaises(ValueError):package.exact_optional_payload({},native,{})
++  with self.assertRaises(ValueError):package.exact_optional_payload({'airk-cuda-notice-cuda-license.txt':'d'*64},native,{'airk-cuda-notice-cuda-license.txt':'d'*64})
++
+ if __name__=='__main__':unittest.main()
+ 
+ 
+--- a/scripts/tests/test_native_package_adapter.py
++++ b/scripts/tests/test_native_package_adapter.py
+@@ -54,7 +54,7 @@
+   with self.assertRaises(ValueError):p.require_native_activation_projection('x','a'*64,{},native_execution_receipt='not-tuple',repo_root=HERE)
+  def test_stage_creates_only_exact_selected_bytes(self):
+   with tempfile.TemporaryDirectory(dir=HERE) as t:
+-   root=Path(t);source=root/'source';source.mkdir();dest=root/'dest';dest.mkdir();(source/'one.dll').write_bytes(b'one');(source/'notices').mkdir();(source/'notices/license.txt').write_bytes(b'license');files={name:hashlib.sha256((source/name).read_bytes()).hexdigest() for name in ['one.dll','notices/license.txt']};value={'files':files,'source_root':source}
++   root=Path(t);source=root/'source';source.mkdir();dest=root/'dest';dest.mkdir();(source/'one.dll').write_bytes(b'one');(source/'airk-cuda-notice-cuda-license.txt').write_bytes(b'license');files={name:hashlib.sha256((source/name).read_bytes()).hexdigest() for name in ['one.dll','airk-cuda-notice-cuda-license.txt']};value={'files':files,'source_root':source}
+    with patch.object(p,'reverify_native_projection',side_effect=lambda v,h:v),patch.object(p,'_execution_owner',return_value=n):self.assertEqual(p.stage_native_projection(value,dest,{}),files)
+    self.assertEqual(sorted(x.relative_to(dest).as_posix() for x in dest.rglob('*') if x.is_file()),sorted(files))
+  def test_stage_preserves_existing_entry_without_partial_copy(self):
+@@ -109,4 +109,56 @@
+    with self.assertRaisesRegex(ValueError,'ownership primitive'):n.helpers({'ownership_helper_root':str(HERE)})
+    loader.assert_not_called()
+ 
++
++class NativeProjectionLegalBoundary(unittest.TestCase):
++ # Independent literal shape from Rust windows::observe_package_projection.
++ # Native execution authenticity is injected; this is never an actual NN0 pass.
++ def literal(self,root):
++  runtime=root/'runtime';runtime.mkdir()
++  payload={'airk-cuda-runtime.json':b'literal descriptor','airk-cuda-build-provenance.json':b'literal public provenance','onnxruntime_providers_shared.dll':b'inert shared provider','onnxruntime_providers_cuda.dll':b'inert cuda provider','airk-cuda-notice-onnxruntime-license.txt':b'literal ORT license','airk-cuda-notice-cuda-license.txt':b'literal CUDA license','airk-cuda-notice-cudnn-license.txt':b'literal cuDNN license'}
++  for name,raw in payload.items():(runtime/name).write_bytes(raw)
++  pins=[n.pin(runtime/name) for name in sorted(payload)]
++  rows=[{'name':Path(row['path']).name,'bytes':row['bytes'],'sha256':row['sha256']} for row in pins]
++  value={'schema':'airk.native.cuda-package-projection/1','descriptor':next(row for row in rows if row['name']=='airk-cuda-runtime.json'),'static_core_build':'9'*64,'files':rows,'scope':'literal native-shaped descriptive fixture','activation':False,'qualification':False}
++  projection=root/'projection.json';execution=root/'execution.json';execution.write_bytes(b'inert injected custody receipt')
++  plan={'runtime_root':str(runtime),'runtime_files':pins,'descriptor':n.pin(runtime/'airk-cuda-runtime.json')}
++  owner=SimpleNamespace(pin=n.pin,regular=n.regular,read=n.read,verify_execution=lambda *a,**kw:(plan,{}))
++  handoff={'activation_pins_available':False,'gpu_build':{'schema':'airk.cuda-static-build-proof/2','build_receipt':{'sha256':'9'*64}}}
++  return payload,value,projection,execution,plan,owner,handoff
++ def consume(self,value,projection,execution,owner,handoff):
++  import json
++  projection.write_text(json.dumps(value),encoding='utf-8')
++  with patch.object(p,'_execution_owner',return_value=owner):
++   return p.require_native_activation_projection(projection,n.digest(projection),handoff,native_execution_receipt=(execution,n.digest(execution)),repo_root=HERE)
++ def test_complete_native_shaped_legal_roster_is_accepted_and_staged_without_renaming(self):
++  with tempfile.TemporaryDirectory(dir=HERE) as t:
++   root=Path(t);payload,value,projection,execution,plan,owner,handoff=self.literal(root)
++   observed=self.consume(value,projection,execution,owner,handoff)
++   self.assertEqual(set(observed['files']),{'airk-cuda-runtime.json','airk-cuda-build-provenance.json','onnxruntime_providers_shared.dll','onnxruntime_providers_cuda.dll','airk-cuda-notice-onnxruntime-license.txt','airk-cuda-notice-cuda-license.txt','airk-cuda-notice-cudnn-license.txt'})
++   destination=root/'staged';destination.mkdir()
++   with patch.object(p,'_execution_owner',return_value=owner):
++    p.stage_native_projection(observed,destination,handoff)
++   self.assertEqual({file.name:file.read_bytes() for file in destination.iterdir()},payload)
++ def test_mutated_legal_names_are_refused_at_the_real_projection_boundary(self):
++  import copy
++  with tempfile.TemporaryDirectory(dir=HERE) as t:
++   root=Path(t);payload,value,projection,execution,plan,owner,handoff=self.literal(root)
++   for name in ['notices/cuda-runtime/license.txt','airk-cuda-notice-cuda-license.dll','AIRK-CUDA-NOTICE-cuda-license.txt','../airk-cuda-notice-cuda-license.txt','cuda-license.txt']:
++    changed=copy.deepcopy(value);next(row for row in changed['files'] if row['name']=='airk-cuda-notice-cuda-license.txt')['name']=name
++    changed['files'].sort(key=lambda row:row['name'])
++    with self.subTest(name=name),self.assertRaises(ValueError):self.consume(changed,projection,execution,owner,handoff)
++ def test_omitted_extra_duplicate_and_tampered_legal_rows_cannot_replace_native_census(self):
++  import copy
++  with tempfile.TemporaryDirectory(dir=HERE) as t:
++   root=Path(t);payload,value,projection,execution,plan,owner,handoff=self.literal(root)
++   for kind in ['omitted','extra','duplicate','hash']:
++    changed=copy.deepcopy(value);notice=next(row for row in changed['files'] if row['name']=='airk-cuda-notice-cuda-license.txt')
++    if kind=='omitted':changed['files'].remove(notice)
++    elif kind=='duplicate':changed['files'].append(dict(notice))
++    elif kind=='hash':notice['sha256']='0'*64
++    else:
++     extra=Path(plan['runtime_root'])/'airk-cuda-notice-extra-license.txt';extra.write_bytes(b'inert extra outside original census');row=n.pin(extra);changed['files'].append({'name':extra.name,'bytes':row['bytes'],'sha256':row['sha256']})
++    changed['files'].sort(key=lambda row:row['name'])
++    with self.subTest(kind=kind),self.assertRaises(ValueError):self.consume(changed,projection,execution,owner,handoff)
++
+ if __name__=='__main__':unittest.main()
+--- a/scripts/tests/test_package_consumers.py
++++ b/scripts/tests/test_package_consumers.py
+@@ -1,6 +1,6 @@
+ # SPDX-License-Identifier: Apache-2.0
+ """Explicit optional-context plumbing controls. No signing/native/model operations."""
+-import argparse,importlib.util,json,tempfile,unittest
++import argparse,importlib.util,json,tempfile,unittest,hashlib
+ from pathlib import Path
+ from types import SimpleNamespace
+ from unittest.mock import Mock,patch
+@@ -49,4 +49,21 @@
+    owner=Mock();context={'projection':{'opaque':'native'},'handoff':{'opaque':'same'}}
+    with patch.object(local,'ROOT',root),patch.object(local,'admin_digests',return_value={}),patch.object(local,'load_script',return_value=owner):local.stage(root/'layout',airk,ctl,'1.8.207',None,verified_notices=notices,cuda=context)
+    owner.stage_native_projection.assert_called_once_with(context['projection'],root/'layout/service',context['handoff'])
++
++ def test_installer_preserves_actual_direct_child_notice_names_and_bytes(self):
++  native=load('cuda-package-provenance');owner=load('cuda-native-execution')
++  with tempfile.TemporaryDirectory(dir=HERE) as t:
++   root=Path(t);src=root/'source';src.mkdir();airk=src/'airk.exe';ctl=src/'airkctl.exe';airk.write_bytes(b'inert service');ctl.write_bytes(b'inert ctl');notices=src/'notices';notices.mkdir();(notices/'LICENSE').write_bytes(b'inert notice')
++   for name in ['LICENSE','NOTICE','THIRD_PARTY_NOTICES.md']:(root/name).write_bytes(b'inert legal')
++   payload={'onnxruntime_providers_shared.dll':b'inert shared','onnxruntime_providers_cuda.dll':b'inert cuda','airk-cuda-runtime.json':b'inert descriptor','airk-cuda-build-provenance.json':b'inert provenance','airk-cuda-notice-onnxruntime-license.txt':b'inert ORT license','airk-cuda-notice-cuda-license.txt':b'inert CUDA license','airk-cuda-notice-cudnn-license.txt':b'inert cuDNN license'}
++   for name,raw in payload.items():(src/name).write_bytes(raw)
++   value={'source_root':src,'files':{name:hashlib.sha256(raw).hexdigest() for name,raw in payload.items()}}
++   context={'projection':value,'handoff':{}}
++   with patch.object(local,'ROOT',root),patch.object(local,'admin_digests',return_value={}),patch.object(local,'load_script',return_value=native),patch.object(native,'reverify_native_projection',side_effect=lambda value,handoff:value),patch.object(native,'_execution_owner',return_value=owner):
++    inventory=local.stage(root/'layout',airk,ctl,'1.8.207',None,verified_notices=notices,cuda=context)
++   for name,raw in payload.items():
++    self.assertEqual((root/'layout/service'/name).read_bytes(),raw)
++    self.assertEqual(inventory['files']['service/'+name]['sha256'],hashlib.sha256(raw).hexdigest())
++   self.assertFalse((root/'layout/service/notices/cuda-runtime').exists())
++
+ if __name__=='__main__':unittest.main()
+--- a/scripts/tests/test_service_runtime_build.py
++++ b/scripts/tests/test_service_runtime_build.py
+@@ -831,7 +831,9 @@
+                  "onnxruntime_providers_cuda.dll": "e" * 64,
+                  "onnxruntime_providers_shared.dll": "f" * 64,
+                  "airk-cuda-build-provenance.json": "1" * 64,
+-                 "cuda-license.txt": "2" * 64}
++                 "airk-cuda-notice-cuda-license.txt": "2" * 64,
++                 "airk-cuda-notice-cudnn-license.txt": "7" * 64,
++                 "airk-cuda-notice-onnxruntime-license.txt": "8" * 64}
+         return {"files": files, "source_root": root,
+                 "native_projection": {"path": str(root / "projection.json"), "bytes": 123, "sha256": "3" * 64},
+                 "native_execution_receipt": {"path": str(root / "execution.json"), "bytes": 456, "sha256": "4" * 64},
+@@ -867,7 +869,7 @@
+                 self.assertEqual(result["static_ort"][key], handoff["static_ort"][key])
+             original = result["static_ort"]["verified_inputs_sha256"]
+             self.assertNotEqual(original, handoff["static_ort"]["verified_inputs_sha256"])
+-            native["files"]["cuda-license.txt"] = "6" * 64
++            native["files"]["airk-cuda-notice-cuda-license.txt"] = "6" * 64
+             changed, _ = self.prepare(builder, root, handoff, native)
+             self.assertNotEqual(changed["static_ort"]["verified_inputs_sha256"], original)
+ 

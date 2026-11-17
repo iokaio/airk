@@ -1,0 +1,522 @@
+{
+  "schema": "airk.source-relocation/1",
+  "scope": "27reviewed authored text-suffixed programs/fragments only; source bodies preserved, no historical execution.",
+  "request": {
+    "path": "artifacts/v190/final-plan/exec-20261116T052942Z/embedded-container-proof-requests-r1.json",
+    "sha256": "8add84112e2755ff56b92cb7bccd6a24e3ef2fa82f364467bf2fe77103da1f3d"
+  },
+  "files": [
+    {
+      "source": "artifacts/v190/final-plan/exec-20261116T052942Z/harness-proposal/benchmark-config-test.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/harness-proposal-benchmark-config-test--fded9fbf5690.py.in",
+      "original_sha256": "fded9fbf5690f73635a0c106658aeb990d6921cd2f51a59c847d15517f07f29d",
+      "bytes": 2247,
+      "maintained_sha256": "f1a7a18ec051af54596ab1c428850b6b6688f7a5c5c83015e87d1b69e8663c07",
+      "maintained_bytes": 2285,
+      "disposition": "spdx-prefix-historical-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ],
+      "code_role": {
+        "language": "python-test-fragment",
+        "description": "Owned benchmark configuration regression test body for exact scope/control configuration."
+      },
+      "exact_git_blob": "4ca1731a7652784824cec35c63353603cc9eb093",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/release-1.8.7-review/pr56-diff.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/release-1.8.7-review-pr56-diff--936a0d88a462.patch",
+      "original_sha256": "936a0d88a46230d4c979f8ff5cb323df86044e91e674bcfa7b6b471c566bb781",
+      "bytes": 92048,
+      "maintained_sha256": "936a0d88a46230d4c979f8ff5cb323df86044e91e674bcfa7b6b471c566bb781",
+      "maintained_bytes": 92048,
+      "disposition": "byte-identical-historical-source",
+      "changes": [],
+      "code_role": {
+        "language": "patch",
+        "description": "Historical PR56 complete source review diff; never auto-apply."
+      },
+      "exact_git_blob": "f6e75e7d3d66586eb2e01167ea1864755202b0be",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-native-preparation-r1/context.rs.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/context-native-preparation-r1-context.rs--d72108fc454b.rs.in",
+      "original_sha256": "d72108fc454b477489f75d4d382c5cea42405802063aea1c7e3764ad3fe92e9d",
+      "bytes": 11807,
+      "maintained_sha256": "d72108fc454b477489f75d4d382c5cea42405802063aea1c7e3764ad3fe92e9d",
+      "maintained_bytes": 11807,
+      "disposition": "byte-identical-historical-source",
+      "changes": [],
+      "code_role": {
+        "language": "rust-template",
+        "description": "Context candidate admission/native execution and FP32 storage proposal."
+      },
+      "exact_git_blob": "065f140126104c7587b3bf415c5ae5dcd25ea4cf",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/models/qwen3-challengers-r1/context-fp32-storage-r1/context-fp32.rs.proposed.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/context-fp32-storage-r1-context-fp32.rs.proposed--d5fc918eeb21.rs.in",
+      "original_sha256": "d5fc918eeb21540f07fee6af35092392772cda8104a46463b5015a0714f17e64",
+      "bytes": 15139,
+      "maintained_sha256": "d5fc918eeb21540f07fee6af35092392772cda8104a46463b5015a0714f17e64",
+      "maintained_bytes": 15139,
+      "disposition": "byte-identical-historical-source",
+      "changes": [],
+      "code_role": {
+        "language": "rust-template",
+        "description": "Context candidate admission/native execution and FP32 storage proposal."
+      },
+      "exact_git_blob": "2feabec8061d78ebe83d7924b83801a48821eed4",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-native-source-r1/materialized-source.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/native-parent-bag-native-source-r1-materialized-source--7c86cf5d28cd.rs.in",
+      "original_sha256": "7c86cf5d28cd6c0cf77cccd5473233ff6a14b8396d9b025f9c619a18ed1353bf",
+      "bytes": 26681,
+      "maintained_sha256": "7c86cf5d28cd6c0cf77cccd5473233ff6a14b8396d9b025f9c619a18ed1353bf",
+      "maintained_bytes": 26681,
+      "disposition": "byte-identical-historical-source",
+      "changes": [],
+      "code_role": {
+        "language": "rust-template",
+        "description": "MiniLM parent-bag native candidate admission, private control, and development proposal."
+      },
+      "exact_git_blob": "35f54895868ee983ce7cebcd54a4d5ee485f2cd2",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-native-run-preparation-r2/development.rs.proposed.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/native-parent-bag-native-run-preparation-r2-development.rs.proposed--9af6dd73910d.rs.in",
+      "original_sha256": "9af6dd73910dbb2da31f36ffa0bec0a1f34dfc1944cd8dc9f262b39a24587046",
+      "bytes": 14513,
+      "maintained_sha256": "9af6dd73910dbb2da31f36ffa0bec0a1f34dfc1944cd8dc9f262b39a24587046",
+      "maintained_bytes": 14513,
+      "disposition": "byte-identical-historical-source",
+      "changes": [],
+      "code_role": {
+        "language": "rust-template",
+        "description": "MiniLM parent-bag native candidate admission, private control, and development proposal."
+      },
+      "exact_git_blob": "a229ef18fe1f8faf5a01727d50761a7696fb5e00",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-native-run-preparation-r2/native_parent_bag.rs.formatted.proposed.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/native-parent-bag-native-run-preparation-r2-native_parent_bag.rs.formatted.proposed--820ddfd98548.rs.in",
+      "original_sha256": "820ddfd98548c0bc0f05ea147bc7c2a90415a90720cd3c28089a048d1b6678b9",
+      "bytes": 29947,
+      "maintained_sha256": "820ddfd98548c0bc0f05ea147bc7c2a90415a90720cd3c28089a048d1b6678b9",
+      "maintained_bytes": 29947,
+      "disposition": "byte-identical-historical-source",
+      "changes": [],
+      "code_role": {
+        "language": "rust-template",
+        "description": "MiniLM parent-bag native candidate admission, private control, and development proposal."
+      },
+      "exact_git_blob": "207a008fff1ade88cf2446c5d041cf5ba913f0df",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-native-run-preparation-r2/native_parent_bag.rs.proposed.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/native-parent-bag-native-run-preparation-r2-native_parent_bag.rs.proposed--1d10c43e447d.rs.in",
+      "original_sha256": "1d10c43e447d216690cedbdb70d72c1507a7ead4830d4ae321dcb4f34d02bc05",
+      "bytes": 30237,
+      "maintained_sha256": "1d10c43e447d216690cedbdb70d72c1507a7ead4830d4ae321dcb4f34d02bc05",
+      "maintained_bytes": 30237,
+      "disposition": "byte-identical-historical-source",
+      "changes": [],
+      "code_role": {
+        "language": "rust-template",
+        "description": "MiniLM parent-bag native candidate admission, private control, and development proposal."
+      },
+      "exact_git_blob": "7385415f63fdf9b7aa86c4c8e0c5c8325d363cf0",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-native-run-preparation-r2/private_control.rs.fragment.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/native-parent-bag-native-run-preparation-r2-private_control.rs.fragment--ea909d33efbb.rs.in",
+      "original_sha256": "ea909d33efbbd23f37b877a17537e6768ebf715adae8962e18662f65b92f6720",
+      "bytes": 3179,
+      "maintained_sha256": "291cf45429ceef7c1b270391a0c4af804618cc347fc33f1277ff67df6729fb3a",
+      "maintained_bytes": 3218,
+      "disposition": "spdx-prefix-historical-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ],
+      "code_role": {
+        "language": "rust-template",
+        "description": "MiniLM parent-bag native candidate admission, private control, and development proposal."
+      },
+      "exact_git_blob": "f3d50816b4ea3c6313fdab241772aeb11ce1c2c2",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-native-run-preparation-r1/development.rs.proposed.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/native-parent-bag-native-run-preparation-r2-development.rs.proposed--9af6dd73910d.rs.in",
+      "original_sha256": "9af6dd73910dbb2da31f36ffa0bec0a1f34dfc1944cd8dc9f262b39a24587046",
+      "bytes": 14513,
+      "maintained_sha256": "9af6dd73910dbb2da31f36ffa0bec0a1f34dfc1944cd8dc9f262b39a24587046",
+      "maintained_bytes": 14513,
+      "disposition": "byte-identical-historical-source",
+      "changes": [],
+      "code_role": {
+        "language": "rust-template",
+        "description": "MiniLM parent-bag native candidate admission, private control, and development proposal."
+      },
+      "exact_git_blob": "a229ef18fe1f8faf5a01727d50761a7696fb5e00",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-native-run-preparation-r1/native_parent_bag.rs.formatted.proposed.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/native-parent-bag-native-run-preparation-r2-native_parent_bag.rs.formatted.proposed--820ddfd98548.rs.in",
+      "original_sha256": "820ddfd98548c0bc0f05ea147bc7c2a90415a90720cd3c28089a048d1b6678b9",
+      "bytes": 29947,
+      "maintained_sha256": "820ddfd98548c0bc0f05ea147bc7c2a90415a90720cd3c28089a048d1b6678b9",
+      "maintained_bytes": 29947,
+      "disposition": "byte-identical-historical-source",
+      "changes": [],
+      "code_role": {
+        "language": "rust-template",
+        "description": "MiniLM parent-bag native candidate admission, private control, and development proposal."
+      },
+      "exact_git_blob": "207a008fff1ade88cf2446c5d041cf5ba913f0df",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-native-run-preparation-r1/native_parent_bag.rs.proposed.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/native-parent-bag-native-run-preparation-r2-native_parent_bag.rs.proposed--1d10c43e447d.rs.in",
+      "original_sha256": "1d10c43e447d216690cedbdb70d72c1507a7ead4830d4ae321dcb4f34d02bc05",
+      "bytes": 30237,
+      "maintained_sha256": "1d10c43e447d216690cedbdb70d72c1507a7ead4830d4ae321dcb4f34d02bc05",
+      "maintained_bytes": 30237,
+      "disposition": "byte-identical-historical-source",
+      "changes": [],
+      "code_role": {
+        "language": "rust-template",
+        "description": "MiniLM parent-bag native candidate admission, private control, and development proposal."
+      },
+      "exact_git_blob": "7385415f63fdf9b7aa86c4c8e0c5c8325d363cf0",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/models/native-parent-bag-native-run-preparation-r1/private_control.rs.fragment.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/native-parent-bag-native-run-preparation-r2-private_control.rs.fragment--ea909d33efbb.rs.in",
+      "original_sha256": "ea909d33efbbd23f37b877a17537e6768ebf715adae8962e18662f65b92f6720",
+      "bytes": 3179,
+      "maintained_sha256": "291cf45429ceef7c1b270391a0c4af804618cc347fc33f1277ff67df6729fb3a",
+      "maintained_bytes": 3218,
+      "disposition": "spdx-prefix-historical-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ],
+      "code_role": {
+        "language": "rust-template",
+        "description": "MiniLM parent-bag native candidate admission, private control, and development proposal."
+      },
+      "exact_git_blob": "f3d50816b4ea3c6313fdab241772aeb11ce1c2c2",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/models/context-verification-headroom-r1/legacy-frame-reproduction.rs.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/context-verification-headroom-r1-legacy-frame-reproduction.rs--867e48352eac.rs.in",
+      "original_sha256": "867e48352eac77cd409d2e7453d70501ac2617e6f10ba3ae4efc772a4f3cfbf9",
+      "bytes": 1417,
+      "maintained_sha256": "5f5c7525b9242701ef3f5ac965c887e6dd39498d9f3af61e6bd95c90b5fc83e6",
+      "maintained_bytes": 1456,
+      "disposition": "spdx-prefix-historical-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ],
+      "code_role": {
+        "language": "rust-fragment",
+        "description": "Source-verification metadata capacity calculation and legacy-frame reproduction."
+      },
+      "exact_git_blob": "ba6f8a6d0243687591d3bdaca0bfc02c105aa36b",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/models/context-verification-headroom-r1/typed-floor-helper.rs.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/context-verification-headroom-r1-typed-floor-helper.rs--020cbb2451f3.rs.in",
+      "original_sha256": "020cbb2451f335d0f2f9259cc855fdbde80e92630cba7734add991601699c9b9",
+      "bytes": 1902,
+      "maintained_sha256": "06e2a78991a9b016273258545221bf87c6543e2d411a43ef389a9f8e2152ea61",
+      "maintained_bytes": 1941,
+      "disposition": "spdx-prefix-historical-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ],
+      "code_role": {
+        "language": "rust-fragment",
+        "description": "Source-verification metadata capacity calculation and legacy-frame reproduction."
+      },
+      "exact_git_blob": "8076e36eab7a9274688f2b0fa001b614163b5bb2",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/mac-cli-await-r9/apply-source.review.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/mac-cli-await-r9-apply-source.review--efef76984c66.sh.in",
+      "original_sha256": "efef76984c66a9b0860ab19401f2c76f6f4774295bf3ca649f01d5030a0bf297",
+      "bytes": 4856,
+      "maintained_sha256": "58e12ab32fc398bf927eb948420fb5abe0f16cf0750a9e15a1f8bfdb2c9f41da",
+      "maintained_bytes": 4894,
+      "disposition": "spdx-prefix-historical-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ],
+      "code_role": {
+        "language": "shell-template",
+        "description": "Reviewed macOS public-source transfer template with sealed payload omitted; not directly runnable."
+      },
+      "exact_git_blob": "704613e42d58d29c0ba9d1c5bcc5a073d0e66d47",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/mac-cli-await-r8/apply-source.review.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/mac-cli-await-r8-apply-source.review--6694d8e67e9e.sh.in",
+      "original_sha256": "6694d8e67e9e3b682268c809a17a09296514189daa8abd6e02f622bd93c018ce",
+      "bytes": 4856,
+      "maintained_sha256": "e2dc719601c9909639915dc572f8ebd379f5b6c420a23e86e302038f06e5c6fb",
+      "maintained_bytes": 4894,
+      "disposition": "spdx-prefix-historical-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ],
+      "code_role": {
+        "language": "shell-template",
+        "description": "Reviewed macOS public-source transfer template with sealed payload omitted; not directly runnable."
+      },
+      "exact_git_blob": "1b4257a9c764f9a67d9232d86afde96cf7d9e32f",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/mac-cli-await-r7/apply-source.review.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/mac-cli-await-r7-apply-source.review--da7fdb403100.sh.in",
+      "original_sha256": "da7fdb40310074eac581e11b36de86bcc51d8455fd3b0d72bdb77f3920ae32dd",
+      "bytes": 4850,
+      "maintained_sha256": "ef05ec015d4347b7a8ca49440003c6c912f7b4e40e3d1b0643b68f1daa4b7b54",
+      "maintained_bytes": 4888,
+      "disposition": "spdx-prefix-historical-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ],
+      "code_role": {
+        "language": "shell-template",
+        "description": "Reviewed macOS public-source transfer template with sealed payload omitted; not directly runnable."
+      },
+      "exact_git_blob": "dd3fe6b411c298b76ea8cf1397830020992e9a76",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/mac-cli-await-r6/apply-source.review.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/mac-cli-await-r6-apply-source.review--cbf337d4de0d.sh.in",
+      "original_sha256": "cbf337d4de0d6549b3cc8dfa14dc70499d79c528e05369641756e3c45f700cf1",
+      "bytes": 4850,
+      "maintained_sha256": "3194e8e4fd34f8820c12899c80b6102c3843f07e4c46740b33112b439a30c1b1",
+      "maintained_bytes": 4888,
+      "disposition": "spdx-prefix-historical-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ],
+      "code_role": {
+        "language": "shell-template",
+        "description": "Reviewed macOS public-source transfer template with sealed payload omitted; not directly runnable."
+      },
+      "exact_git_blob": "63e9c79d9bbbfb2ed34cfb458e183369b51fd70d",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/mac-cli-await-r5/apply-source.review.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/mac-cli-await-r5-apply-source.review--138fce30377d.sh.in",
+      "original_sha256": "138fce30377dbf7e46681a892ce4e3f06a2ba92c7a7723d0d614c1a0ed7b1759",
+      "bytes": 4849,
+      "maintained_sha256": "7f064793109b8f2c47d77fe94e93e0694fc248254a81a2ede3348909fbce277a",
+      "maintained_bytes": 4887,
+      "disposition": "spdx-prefix-historical-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ],
+      "code_role": {
+        "language": "shell-template",
+        "description": "Reviewed macOS public-source transfer template with sealed payload omitted; not directly runnable."
+      },
+      "exact_git_blob": "68ff7ff58cd222e7106b7e25e8f49d25466c9448",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/mac-cli-await-r4/apply-source.review.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/mac-cli-await-r4-apply-source.review--03d4f9a4101f.sh.in",
+      "original_sha256": "03d4f9a4101ff6f8ebfeaee617c0e63ad47596e0fa67904cfb8f13d48341137a",
+      "bytes": 4849,
+      "maintained_sha256": "1865e8c7c4ab11e400733a58790d131f43de228542cd437714964c4c04a20b1e",
+      "maintained_bytes": 4887,
+      "disposition": "spdx-prefix-historical-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ],
+      "code_role": {
+        "language": "shell-template",
+        "description": "Reviewed macOS public-source transfer template with sealed payload omitted; not directly runnable."
+      },
+      "exact_git_blob": "dff5832715a01221f4fa02916a9e0ba688ae9801",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/mac-cli-await-r2/apply-source.review.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/mac-cli-await-r2-apply-source.review--07740a58a368.sh.in",
+      "original_sha256": "07740a58a368004db783e305ab6576a0eb54be096d223745a44ffb0c999fec52",
+      "bytes": 4703,
+      "maintained_sha256": "9a969a04dc0c62ba4b15ec4055ee4664248a59f55ec378dc2b02631d5decdca2",
+      "maintained_bytes": 4741,
+      "disposition": "spdx-prefix-historical-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ],
+      "code_role": {
+        "language": "shell-template",
+        "description": "Reviewed macOS public-source transfer template with sealed payload omitted; not directly runnable."
+      },
+      "exact_git_blob": "8f6bb0b35941e5158444048f52e84c9cc72fa302",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/mac-cli-await-r12/apply-source.review.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/mac-cli-await-r12-apply-source.review--c234f766f11c.sh.in",
+      "original_sha256": "c234f766f11c933a9de7d84a2d071d37b4936214810f36c9b593c11eeb81990c",
+      "bytes": 2881,
+      "maintained_sha256": "824fad7ef43565e1f6651d30913080c7f78de8ec5353969de705aaeedede2cfb",
+      "maintained_bytes": 2919,
+      "disposition": "spdx-prefix-historical-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ],
+      "code_role": {
+        "language": "shell-template",
+        "description": "Reviewed macOS public-source transfer template with sealed payload omitted; not directly runnable."
+      },
+      "exact_git_blob": "83735460ca662d0cf51a54bfa842a476b182ce89",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/mac-cli-await-r11/apply-source.review.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/mac-cli-await-r11-apply-source.review--46e4a8cf1eb2.sh.in",
+      "original_sha256": "46e4a8cf1eb2d0b279f60e9e6327e0fee1545aad80223e01ce93949d0ee1b639",
+      "bytes": 4856,
+      "maintained_sha256": "6681bd6a4f906050b383bafe248f6a05a8c5c551a5aa309c61285f25d373bdeb",
+      "maintained_bytes": 4894,
+      "disposition": "spdx-prefix-historical-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ],
+      "code_role": {
+        "language": "shell-template",
+        "description": "Reviewed macOS public-source transfer template with sealed payload omitted; not directly runnable."
+      },
+      "exact_git_blob": "da3dfe19d305ceefc20d6c7f04df9a874b509d99",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/mac-cli-await-r10/apply-source.review.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/mac-cli-await-r10-apply-source.review--ab779cf2485a.sh.in",
+      "original_sha256": "ab779cf2485a6c375e95aee3a685f2d5bac41ec9b6daca0ac2fd012575896ed5",
+      "bytes": 4857,
+      "maintained_sha256": "0d0238c79fc57d4ff90dc788346acd1ad30855f1a2364960c1657dd4580a10eb",
+      "maintained_bytes": 4895,
+      "disposition": "spdx-prefix-historical-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "# SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ],
+      "code_role": {
+        "language": "shell-template",
+        "description": "Reviewed macOS public-source transfer template with sealed payload omitted; not directly runnable."
+      },
+      "exact_git_blob": "1438466380e2eeb7c9e0baec261374e124d62c5a",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/kernel-focus-preparation-r1/singleton-sdk-test.fragment.txt",
+      "destination": "scripts/arbiter/source_rescue/text_history/kernel-focus-preparation-r1-singleton-sdk-test.fragment--54d6241881ef.rs.in",
+      "original_sha256": "54d6241881efda6a019c48115ae65471e9225165ad6ed288f7a59b9fcf6d09c8",
+      "bytes": 5697,
+      "maintained_sha256": "90d842d090bb6b5fbe2d57ee000a7f8f74e88a0f8b6ddff5aa9781cba7fb13a8",
+      "maintained_bytes": 5736,
+      "disposition": "spdx-prefix-historical-source",
+      "changes": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ],
+      "code_role": {
+        "language": "rust-test-fragment",
+        "description": "Focus singleton allowance and direct-custody SDK regression test."
+      },
+      "exact_git_blob": "3d7412ff44affcacd854f95bdb7dd7266b96429b",
+      "git_blob_reachable_at_plan": false
+    },
+    {
+      "source": "artifacts/advanced-split/local-delivery-preparation-r1/MAC-SOURCE-SYNC.md",
+      "destination": "scripts/arbiter/source_rescue/text_history/local-delivery-preparation-r1-MAC-SOURCE-SYNC--725d35b970fd.md",
+      "original_sha256": "725d35b970fd32b8ea523183eec9115b66b83d87fb377a0b9a5b25a001593026",
+      "bytes": 15770,
+      "maintained_sha256": "725d35b970fd32b8ea523183eec9115b66b83d87fb377a0b9a5b25a001593026",
+      "maintained_bytes": 15770,
+      "disposition": "byte-identical-historical-source",
+      "changes": [],
+      "code_role": {
+        "language": "shell-transfer-runbook",
+        "description": "Authored source-only macOS transfer runbook with three preserved Python/shell code fences; not an operational authorization."
+      },
+      "exact_git_blob": "b18eb5a39579af67b900c0e1fff58383ad3b1d20",
+      "git_blob_reachable_at_plan": false
+    }
+  ]
+}

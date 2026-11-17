@@ -1,0 +1,38 @@
+--- a/packages/vscode/src/test/serviceConsole.test.ts
++++ b/packages/vscode/src/test/serviceConsole.test.ts
+@@ -10,6 +10,7 @@
+ import { record, RecordValue, ServiceClient, ServiceError } from '../serviceClient';
+ import { IntentJournal } from '../serviceIntents';
+ import { splitFixture, splitAtStage, splitFrozenFixture } from './fixtures/split';
++import { splitExport } from '../indexingSplit';
+ const project='12'.repeat(32),namespace='34'.repeat(16),instance='56'.repeat(16),job='78'.repeat(32);
+ 
+ test('lost split acceptance survives restart, missing/expired evidence and later terminal native status without replay',async()=>{
+@@ -1442,3 +1443,27 @@
+         assert.equal(f.controller.state.connected,true);
+     }finally{release();await poll;f.controller.dispose();}
+ });
++
++test('split journal reconciles retained witness through observed pending refresh and preserves completed proof in exports',async()=>{
++    const f=fixture(),base=f.host.runtime.client({} as any),split=splitFixture(),journal=new IntentJournal(f.host.storage,'/control',namespace);
++    const first=splitAtStage(split.snapshot,'destination_validated',4),initial=record(first.receipt),sourceProof=record(record(splitAtStage(split.snapshot,'original_fenced').receipt).remainder_witness);
++    const witnessJob=(id:string)=>({purpose:'original_witness',caller:'c1'.repeat(16),key:{namespace,epoch:7,nonce:id.repeat(16)},job:id.repeat(32),backing:record(record(first.request).original_registration).binding,engine_identity:'c2'.repeat(32),configuration_digest:'c3'.repeat(32)});
++    initial.jobs=[witnessJob('c4')];initial.remainder_witness={...sourceProof,job:'c4'.repeat(32)};
++    const pending=structuredClone(first),pendingReceipt=record(pending.receipt);pendingReceipt.revision=5;pendingReceipt.previous_receipt_digest=first.receipt_digest;pendingReceipt.jobs=[witnessJob('c4'),witnessJob('c5')];pendingReceipt.state={state:'running'};pending.receipt_digest='c6'.repeat(32);
++    const completed=structuredClone(pending),completedReceipt=record(completed.receipt);completedReceipt.revision=6;completedReceipt.previous_receipt_digest=pending.receipt_digest;completedReceipt.state={state:'pending'};completedReceipt.remainder_witness={...sourceProof,job:'c5'.repeat(32),expected_hash:'c7'.repeat(32),observed_from_unix_ms:3,observed_to_unix_ms:4,future_verification:'complete_native_proof_retained'};completed.receipt_digest='c8'.repeat(32);
++    let current=first,reads=0,writes=0;
++    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(input){
++        if(typeof input!=='string'&&'catalog_split_receipt'in record(input)){reads++;return {status:'catalog_split_receipt',...record(record(input).catalog_split_receipt),snapshot:current,expired:false};}
++        if(typeof input!=='string'&&('catalog_split_apply'in record(input)||'catalog_split_recover'in record(input))){writes++;throw new Error('read reconciliation must never dispatch a split mutation');}
++        return base.transport.request(input);
++    }});
++    let reopened:ServiceConsoleController|undefined;
++    try{
++        await journal.prepare('Tracked accepted split',{catalog_split_apply:{draft:split.draft}});await f.controller.refresh();
++        await f.controller.catalogReconcile();assert.deepEqual(record(f.controller.catalogPendingDetails()[0].last_known_split_snapshot).receipt,first.receipt);
++        current=pending;await f.controller.catalogReconcile();assert.deepEqual(record(f.controller.catalogPendingDetails()[0].last_known_split_snapshot).receipt,pending.receipt);
++        current=completed;await f.controller.catalogReconcile();const details=f.controller.catalogPendingDetails();assert.equal(details.length,1);assert.deepEqual(record(details[0].last_known_split_snapshot).receipt,completed.receipt);
++        assert.ok(splitExport({details}).includes('complete_native_proof_retained'));assert.ok(splitExport({details},true).includes('complete_native_proof_retained'));
++        f.controller.dispose();reopened=new ServiceConsoleController(f.host);await reopened.refresh();assert.deepEqual(record(reopened.catalogPendingDetails()[0].last_known_split_snapshot).receipt,completed.receipt);await reopened.catalogReconcile();assert.equal(reads,4);assert.equal(writes,0);
++    }finally{f.controller.dispose();reopened?.dispose();}
++});

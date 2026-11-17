@@ -1,0 +1,130 @@
+--- private/producer-r3.py
++++ private/producer-r4.py
+@@ -42,22 +42,18 @@
+     return {"account": account, "sid": sid, "logged_in_human_observation": sessions}
+ 
+ def unaliased(path):
+-    path = Path(path).absolute()
+-    for item in (path, *path.parents):
+-        meta = item.lstat()
+-        need(not item.is_symlink() and not getattr(meta, "st_file_attributes", 0) & 0x400, "Aliased input/output ancestry refused: " + str(item))
+-    return path.resolve(strict=True)
+-
+-def python_source_workspace(path):
+-    """Same actual source directory with ordinary Win32 spelling for Python include traversal.
+-
+-    Rust/native FilePins keep their observed canonical verbatim paths. Python's
+-    maintained source parser intentionally checks unresolved relative includes;
+-    Win32 verbatim paths do not normalize their literal .. components.
++    """One ordinary resolved Python path, with actual identity and alias checks.
++
++    Native FilePins use native_path() separately and retain canonical verbatim
++    strings. Python lexical/path traversal consumers always receive this owner.
+     """
+     supplied=os.fspath(path)
+-    need(Path(supplied).is_absolute() and not any(part in ('.','..') for part in re.split(r'[\\/]',supplied)), 'Absolute non-dot source workspace required')
+-    observed=unaliased(supplied)
++    need(not any(part in ('.','..') for part in re.split(r'[\\/]',supplied)), 'Explicit dot ancestry refused')
++    path=Path(supplied).absolute()
++    for item in (path,*path.parents):
++        meta=item.lstat()
++        need(not item.is_symlink() and not getattr(meta,'st_file_attributes',0)&0x400,'Aliased input/output ancestry refused: '+str(item))
++    observed=path.resolve(strict=True)
+     text=str(observed)
+     if text.startswith('\\\\?\\UNC\\'):
+         ordinary=Path('\\\\'+text[8:])
+@@ -65,9 +61,15 @@
+         ordinary=Path(text[4:])
+     else:
+         ordinary=observed
+-    ordinary=unaliased(ordinary)
+-    need(observed.is_dir() and ordinary.is_dir() and observed.samefile(ordinary), 'Python/native source workspace identity differs')
++    ordinary=ordinary.resolve(strict=True)
++    need(observed.samefile(ordinary),'Native/Python physical path identity differs')
+     return ordinary
++
++def python_source_workspace(path):
++    need(Path(path).is_absolute(),'Absolute source workspace required')
++    source=unaliased(path)
++    need(source.is_dir(),'Source workspace must be a directory')
++    return source
+ 
+ def native_path(path):
+     """Observe the actual native final path; never assume a verbatim-prefix spelling."""
+@@ -196,6 +198,35 @@
+     write_new(output, plan)
+     print(json.dumps({"prepared":str(output), "sha256":sha(output), "selected_profile":profile["id"], "source_dirty":full_source["dirty"], "tasks":9, "mode_slots":27, "runtime_or_nn_execution":False}))
+ 
++def preflight_paths(plan,quality):
++    """Metadata-only actual path fences; no child, Fixture constructor or native request."""
++    base=unaliased(STATE)
++    fixture=unaliased(plan["fixture"])
++    source=python_source_workspace(plan["source"])
++    model=unaliased(plan["model_directory"])
++    binary=unaliased(plan["pins"]["runtime_image"]["path"])
++    cli=unaliased(plan["pins"]["cli_image"]["path"])
++    runtime=quality.clients.runtime_root(binary.parent)
++    need(quality.clients.classify_runtime(runtime)["topology"]=="split_pair","Actual paired runtime required")
++    paired=quality.clients.paired_images(runtime)
++    need(paired[0].samefile(binary) and paired[1].samefile(cli),"Actual fixture pair path identity differs")
++    need(binary.relative_to(runtime).as_posix()=="airk.exe" and cli.relative_to(runtime).as_posix()=="airkctl.exe","Actual Windows pair layout differs")
++    need(fixture.is_relative_to(base) and not list(fixture.iterdir()),"Fixture must remain fresh and empty; never replay")
++    locations={"base":base,"fixture":fixture,"source_workspace":source,"model_directory":model,"runtime":runtime,"runtime_image":binary,"cli_image":cli}
++    for name in ("inputs","evidence","temp"):
++        locations[name]=unaliased(base/name)
++        need(locations[name].is_relative_to(base),"Actual mutable path escapes private base")
++    need(model.is_relative_to(base) and not model.is_relative_to(fixture),"Model view must remain private and outside fixture sources/state")
++    need(re.fullmatch(r"[a-zA-Z0-9_-]+",plan["name"]),"Simple frozen plan name required")
++    outputs=[locations["evidence"]/(plan["name"]+suffix) for suffix in ("-transport.json","-transport-progress.jsonl","-native-index-job.json","-transport-owned.log","-transport-owner.json","-native-pins.jsonl","-native-pins-owned.log","-native-pins-owner.json","-native-compare.jsonl","-native-compare-owned.log","-native-compare-owner.json")]
++    outputs.append(locations["inputs"]/(plan["name"]+"-seed.json"))
++    for output in outputs:
++        need(unaliased(output.parent).is_relative_to(base) and not output.exists() and not output.is_symlink(),"Fresh owned phase output required; preserve prior evidence")
++    locations["planned_outputs"]=outputs
++    locations["future_fixture_layout"]={name:fixture/name for name in ("root","index-data","state","install","pair-fixture-payload")}
++    need(all(path.is_relative_to(fixture) for path in locations["future_fixture_layout"].values()),"Native fixture layout escapes original owner")
++    return locations
++
+ def execute(args):
+     custody = load_script(STATE / "execution-owner-r1/custody.py", "fresh_ann_custody")
+     actual_job = custody.require_transport_job()
+@@ -212,8 +243,8 @@
+     need(quality.source_identity() == plan["source_identity"], "Candidate real full/dirty source changed after prepare")
+     need(quality.clients.runtime_builder().source_identity() == plan["candidate_consumed_c7"], "Candidate C7 consumed inputs changed")
+     need(quality.native_read_budget() == plan["native_read_budget"], "Rust emitted native read budget changed")
+-    fixture_root = unaliased(plan["fixture"])
+-    need(fixture_root.is_relative_to(unaliased(STATE)) and not list(fixture_root.iterdir()), "Fixture must remain fresh and empty; never replay")
++    paths=preflight_paths(plan,quality)
++    fixture_root=paths["fixture"]
+     output = STATE / "evidence" / (plan["name"] + "-transport.json")
+     need(not output.exists(), "Never overwrite/retry an actual capture")
+     rows = [{"case":q["id"], "mode":mode, "split":q["split"], "family":q["family"], "trial":0, "input":copy.deepcopy(q), "status":"not_run"} for q in corpus["queries"] for mode in q["modes"]]
+@@ -305,7 +336,7 @@
+     quality.clients.Fixture = ObservedFixture
+     quality.open_session = observed_open
+     try:
+-        quality.representative_fixture(Path(plan["pins"]["runtime_image"]["path"]), fixture_root, corpus, plan["pins"]["cohort"]["sha256"], 1, plan["detail"], Path(plan["model_directory"]), report["representative"], Path(plan["pins"]["cli_image"]["path"]))
++        quality.representative_fixture(paths["runtime_image"], fixture_root, corpus, plan["pins"]["cohort"]["sha256"], 1, plan["detail"], paths["model_directory"], report["representative"], paths["cli_image"])
+     except BaseException as failure:
+         error = failure.__cause__ if isinstance(failure, StopCapture) else failure
+         report["failure"] = {"type":type(error).__name__, "message":str(error), "traceback":traceback.format_exc()}
+--- private/runner-r3.py
++++ private/runner-r4.py
+@@ -77,6 +77,7 @@
+     quality=producer.load_script(producer.python_source_workspace(plan['source'])/'scripts/check-retrieval-quality.py','ann_owned_frozen_quality')
+     need(quality.source_identity()==plan['source_identity'],'Actual consumed candidate full/dirty source changed')
+     need(quality.clients.runtime_builder().source_identity()==plan['candidate_consumed_c7'],'Immutable runtime C7 source changed')
++    if args.phase=='transport':producer.preflight_paths(plan,quality)
+     need(time.monotonic()<deadline,'Original phase expired during actual preflight')
+     name=plan['name']+'-'+args.phase
+     log=STATE/'evidence'/(name+'-owned.log')
+@@ -105,7 +106,9 @@
+                 need(args.input is not None and args.input_sha256 is not None,'Actual frozen native input and SHA required')
+                 need(digest(args.input)==args.input_sha256,'Actual native phase input bytes differ')
+                 selector=('inference_owner::evaluation_tests::ann_query::emit_fresh_stopped_ann_query_typed_pins' if args.phase=='native-pins' else 'inference_owner::evaluation_tests::ann_query::fresh_queries_compare_exact_all_live_to_diskann_with_same_embedding')
+-                image=plan['pins']['diagnostic_image']
++                # Python image proof compares lexical resolved paths; retain native
++                # serialized FilePin unchanged and normalize only this local view.
++                image={**plan['pins']['diagnostic_image'],'path':str(producer.unaliased(plan['pins']['diagnostic_image']['path']))}
+                 command=[image['path'],'--exact',selector,'--ignored','--nocapture']
+                 result_path=STATE/'evidence'/(plan['name']+'-'+args.phase+'.jsonl')
+                 environment.update(AIRK_ANN_QUERY_INPUT=str(args.input),AIRK_ANN_QUERY_INPUT_SHA256=args.input_sha256,AIRK_ANN_QUERY_OUTPUT=str(result_path))

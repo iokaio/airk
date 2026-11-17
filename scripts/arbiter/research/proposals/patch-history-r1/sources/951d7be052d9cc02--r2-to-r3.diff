@@ -1,0 +1,56 @@
+--- R2/device.rs
++++ R3/device.rs
+@@ -194,25 +194,31 @@
+             SelectedModel::ContextLarge => &self.context_large,
+         }
+     }
+-    /// Resolves immutable descriptive bytes only. This never constructs native
+-    /// ExecutionProfile or bypasses release qualification/asset/source gates.
++    /// Resolve exactly once per variant and return the SAME reference checked
++    /// below. An interior-mutating Fn cannot swap in an unchecked second lookup.
++    /// This remains descriptive data, never an ExecutionProfile or permit.
+     pub fn materialize<'a>(
+         &self,
+         slot: SelectedModel,
+         manifest: Sha256Digest,
+         resolve: impl Fn(Sha256Digest) -> Option<&'a Profile>,
+     ) -> Result<&'a Profile> {
+-        self.validate(&resolve)?;
+-        ensure!(
+-            self.slot(slot).iter().any(|row| row.manifest == manifest),
+-            "variant is outside selected model slot"
+-        );
+-        resolve(manifest).context("native variant disappeared during materialization")
++        self.resolve_validated(&resolve, Some((slot, manifest)))?
++            .context("variant is outside selected model slot")
+     }
+     pub fn validate<'a>(
+         &self,
+         resolve: impl Fn(Sha256Digest) -> Option<&'a Profile>,
+     ) -> Result<()> {
++        self.resolve_validated(&resolve, None)?;
++        Ok(())
++    }
++    fn resolve_validated<'a>(
++        &self,
++        resolve: &impl Fn(Sha256Digest) -> Option<&'a Profile>,
++        selected: Option<(SelectedModel, Sha256Digest)>,
++    ) -> Result<Option<&'a Profile>> {
++        let mut verified = None;
+         ensure!(
+             self.schema == DEVICE_CATALOG_SCHEMA,
+             "unknown device catalog schema"
+@@ -239,9 +245,12 @@
+                         && row.execution_identity == profile.device_execution_identity()?,
+                     "foreign model/execution variant"
+                 );
++                if selected == Some((slot, row.manifest)) {
++                    verified = Some(profile);
++                }
+             }
+         }
+-        Ok(())
++        Ok(verified)
+     }
+ }
+ #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

@@ -1,0 +1,63 @@
+--- crates/airk-retrieval/src/arbiter/context_action.rs
++++ crates/airk-retrieval/src/arbiter/context_action.rs
+@@ -418,4 +418,59 @@
+         assert_eq!(selected_action(&[0.0, 10.0], &roster, &calibration)?, None); // action alone isn't qualified
+         Ok(())
+     }
+-}
++
++    #[test]
++    fn newest_actual_read_survives_full_initial_search_without_reversing_hit_rank() -> Result<()> {
++        let raw: serde_json::Value = serde_json::from_slice(include_bytes!(
++            "../../../../fixtures/split/arbiter/context_action_cases.json"
++        ))?;
++        let response: ContextResponseV2 = serde_json::from_value(raw["cases"][0]["input"].clone())?;
++        let scope = response.assessment.scope;
++        let mut initial = response.records[0].clone();
++        initial.id = Sha256Digest::from_bytes([101; 32]);
++        initial.operation = NativeRead::Search;
++        let template = initial.canonical_result["hits"][0].clone();
++        let hits: Vec<_> = (0..5)
++            .map(|index| {
++                let mut hit = template.clone();
++                hit["text"] = format!("initial ranked hit {index}").into();
++                hit
++            })
++            .collect();
++        initial.canonical_result = json!({"hits": hits});
++        let mut newer = initial.clone();
++        newer.id = Sha256Digest::from_bytes([102; 32]);
++        newer.operation = NativeRead::ReadEvidence;
++        let mut first = template.clone();
++        first["text"] = format!("new {}", "\u{e9}".repeat(100)).into();
++        let mut second = template;
++        second["text"] = "new second ranked source".into();
++        newer.canonical_result = json!({"hits": [first, second]});
++        let mut empty = newer.clone();
++        empty.id = Sha256Digest::from_bytes([103; 32]);
++        empty.canonical_result = json!({"hits": []});
++        let before = build_roster("fixed question", &scope, &[initial.clone()], &[])?;
++        let records = vec![initial, newer, empty];
++        let roster = build_roster("fixed question", &scope, &records, &[])?;
++        let shown: Vec<_> = roster.basis.source_units_presented.iter()
++            .map(|unit| (unit.record, unit.result_pointer.as_str(), unit.utf8_end))
++            .collect();
++        assert_eq!(shown, vec![
++            (Sha256Digest::from_bytes([102; 32]), "/hits/0", 192),
++            (Sha256Digest::from_bytes([102; 32]), "/hits/1", 24),
++            (Sha256Digest::from_bytes([101; 32]), "/hits/0", 20),
++            (Sha256Digest::from_bytes([101; 32]), "/hits/1", 20),
++        ]);
++        assert_eq!(roster.basis.source_units_available, 7);
++        assert_eq!(roster.basis.source_units_omitted, 3);
++        assert_eq!(roster.basis.source_units_partial, 1);
++        assert_eq!(roster.cards.len(), 3);
++        assert_ne!(roster.input_digest, before.input_digest);
++        assert!(roster.cards.iter().all(|card| before.cards.iter().all(|old| old.id != card.id)));
++        roster.validate(&records)?;
++        let mut foreign = records.clone();
++        foreign[0].scope.authorization = Sha256Digest::from_bytes([104; 32]);
++        assert!(build_roster("fixed question", &scope, &foreign, &[]).is_err());
++        Ok(())
++    }
++}

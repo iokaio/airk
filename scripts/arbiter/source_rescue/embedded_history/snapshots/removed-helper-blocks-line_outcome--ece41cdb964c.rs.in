@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: Apache-2.0
+/// What a command line produced: exit code, comparable stdout and the final
+/// error message without its program prefix.
+fn line_outcome(
+    code: Option<i32>,
+    stdout: &[u8],
+    stderr: &[u8],
+    prefix: &str,
+) -> (Option<i32>, Option<Value>, String) {
+    let stdout = (!stdout.is_empty()).then(|| comparable(serde_json::from_slice(stdout).unwrap()));
+    let stderr = String::from_utf8_lossy(stderr);
+    let message = stderr
+        .lines()
+        .last()
+        .unwrap_or_default()
+        .strip_prefix(prefix)
+        .unwrap_or_default()
+        .to_owned();
+    (code, stdout, message)
+}

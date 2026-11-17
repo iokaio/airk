@@ -1,0 +1,605 @@
+--- a/crates/airk-cli/src/service_management.rs
++++ b/crates/airk-cli/src/service_management.rs
+@@ -503,6 +503,9 @@
+                 source.changed();
+                 let mut next_tick = std::time::Instant::now();
+                 let mut metadata_failed = false;
++                let mut next_receipts = std::time::Instant::now();
++                let mut receipt_pending = false;
++                let mut receipt_failed = false;
+                 loop {
+                     if std::time::Instant::now() >= next_tick {
+                         let running = registry.as_mut().ok().and_then(|registry| {
+@@ -513,19 +516,34 @@
+                                 .advance_maintenance_plans(now.as_millis().try_into().ok()?)
+                                 .ok()
+                         });
+-                        if running.is_none() && !metadata_failed {
++                        if std::time::Instant::now() >= next_receipts {
++                            let retired = registry
++                                .as_mut()
++                                .ok()
++                                .and_then(|registry| registry.maintain_job_receipts().ok());
++                            receipt_pending = retired.as_ref().is_some_and(|turn| turn.pending);
++                            receipt_failed = retired.is_none();
++                            // Existing owner only: one <=64 retirement turn per second,
++                            // regardless of UI requests; queued work still gets a turn.
++                            next_receipts = std::time::Instant::now() + Duration::from_secs(1);
++                        }
++                        let failed = running.is_none() || receipt_failed;
++                        if failed && !metadata_failed {
+                             log.record(
+                                 airk_core::service_logs::LogKind::MetadataUnavailable,
+                                 None,
+                                 None,
+                             );
+                         }
+-                        metadata_failed = running.is_none();
++                        metadata_failed = failed;
+                         // Unknown metadata state retains service ownership until a
+                         // later bounded turn can establish whether work remains.
+-                        runnable_plans.store(running.unwrap_or(true), Ordering::Release);
++                        runnable_plans.store(
++                            running.unwrap_or(true) || receipt_pending || receipt_failed,
++                            Ordering::Release,
++                        );
+                         next_tick = std::time::Instant::now()
+-                            + Duration::from_millis(if running.is_some() { 250 } else { 1000 });
++                            + Duration::from_millis(if failed { 1000 } else { 250 });
+                     }
+                     let (method, reply) = match receiver.recv_timeout(
+                         next_tick.saturating_duration_since(std::time::Instant::now()),
+@@ -982,4 +1000,89 @@
+         );
+         Ok(())
+     }
++    #[test]
++    fn owned_receipt_turn_and_canceled_management_waiter_keep_service_lease_until_drain()
++    -> Result<()> {
++        use airk_core::service::{JobKind, RequestKey};
++        use std::future::Future;
++        let owner = tempfile::tempdir()?;
++        let root = owner.path().join("control");
++        crate::local_ipc::prepare_root(&root)?;
++        let ownership = airk_store::service::ServiceLease::acquire(&root)?;
++        let caller = Incarnation::from_bytes([82; 16]);
++        let mut registry = ServiceRegistry::open(&root, caller)?;
++        let project = ProjectRegistration::new(
++            "/never-read-source".into(),
++            "/never-open-index".into(),
++            "receipt-owner".into(),
++        )?;
++        registry.register(&project)?;
++        let (namespace, epoch) = registry.saved_request_epoch()?;
++        let key = RequestKey {
++            namespace,
++            epoch,
++            nonce: caller,
++        };
++        let job = registry.enqueue(project.binding, caller, &key, JobKind::Index)?;
++        registry.cancel_pending(job.id)?;
++        let mut connection = rusqlite::Connection::open(root.join("service-1.4.sqlite3"))?;
++        let tx = connection.transaction()?;
++        for n in 0..4096i64 {
++            let mut nonce = [83u8; 16];
++            nonce[..8].copy_from_slice(&n.to_le_bytes());
++            tx.execute("INSERT INTO service_requests(namespace,epoch,nonce,caller,job) VALUES(?1,?2,?3,?4,?5)",rusqlite::params![namespace.to_string(),epoch,Incarnation::from_bytes(nonce).to_string(),caller.to_string(),job.id.to_string()])?;
++        }
++        tx.commit()?;
++        drop(connection);
++        let (sender, receiver) = sync_channel::<Envelope>(2);
++        let (release, gate) = sync_channel(1);
++        let (ready, turn) = sync_channel(1);
++        let (done, drained) = sync_channel(1);
++        let pending = Arc::new(AtomicUsize::new(0));
++        let active = pending.clone();
++        let thread = std::thread::spawn(move || {
++            let _ownership = ownership;
++            let report = registry.maintain_job_receipts().unwrap();
++            ready.send(report).unwrap();
++            gate.recv_timeout(Duration::from_secs(15)).unwrap();
++            for (method, reply) in receiver {
++                let response = execute_request(&mut registry, method);
++                active.fetch_sub(1, Ordering::AcqRel);
++                let _ = reply.send(response);
++                let _ = done.send(());
++            }
++        });
++        let management = Management {
++            sender: Some(sender),
++            thread: Some(thread),
++            pending,
++            plans: Arc::new(AtomicBool::new(false)),
++        };
++        let retired = turn.recv_timeout(Duration::from_secs(15))?;
++        assert_eq!(retired.retired, 1);
++        assert!(!retired.pending);
++        let runtime = tokio::runtime::Builder::new_current_thread()
++            .enable_all()
++            .build()?;
++        {
++            let _entered = runtime.enter();
++            let mut request = Box::pin(management.request(ControlMethod::RequestReceipt {
++                caller,
++                key,
++                project: Some(project.binding),
++            }));
++            let mut context = std::task::Context::from_waker(std::task::Waker::noop());
++            assert!(request.as_mut().poll(&mut context).is_pending());
++            drop(request); // actual accepted queue charge survives the caller
++        }
++        assert!(!management.can_idle_exit());
++        assert!(airk_store::service::ServiceLease::acquire(&root).is_err());
++        release.send(())?;
++        drained.recv_timeout(Duration::from_secs(15))?;
++        assert!(management.can_idle_exit());
++        assert!(airk_store::service::ServiceLease::acquire(&root).is_err());
++        drop(management); // actual Drop closes queue and joins its native owner
++        assert!(airk_store::service::ServiceLease::acquire(&root).is_ok());
++        Ok(())
++    }
+ }
+--- a/crates/airk-store/src/service_jobs.rs
++++ b/crates/airk-store/src/service_jobs.rs
+@@ -1,6 +1,6 @@
+ // SPDX-License-Identifier: Apache-2.0
+ //! Durable desired-state jobs, idempotent receipts and fencing-checked completion.
+-use super::ServiceRegistry;
++use super::{JobReceiptMaintenance, ServiceRegistry};
+ use crate::service::ProjectLease;
+ use airk_core::{
+     identity::{Incarnation, Sha256Digest, framed_digest},
+@@ -251,7 +251,7 @@
+         &mut self,
+         needs_job: bool,
+         protected: Option<Sha256Digest>,
+-    ) -> Result<()> {
++    ) -> Result<u64> {
+         let transaction = self
+             .connection
+             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+@@ -261,11 +261,13 @@
+             transaction.query_row("SELECT count(*) FROM service_requests", [], |row| {
+                 row.get(0)
+             })?;
++        let mut retired = 0;
+         let count_full = (needs_job && jobs >= MAX_JOBS) || requests >= MAX_REQUESTS;
+         if count_full || metadata_pressure(&transaction)? {
+             let deleted = transaction.execute("DELETE FROM service_jobs WHERE seq IN(
+                 SELECT seq FROM service_jobs WHERE state IN('succeeded','failed','canceled') AND (?1 IS NULL OR id<>?1) ORDER BY seq LIMIT 64)", [protected.map(|id|id.to_string())])?;
+             ensure!(deleted > 0 || !count_full, JobError::Capacity);
++            retired = deleted as u64;
+             if deleted > 0 {
+                 let epoch: i64 = transaction.query_row(
+                     "SELECT request_epoch FROM service_meta WHERE id=1",
+@@ -281,7 +283,29 @@
+             }
+         }
+         transaction.commit()?;
+-        Ok(())
++        Ok(retired)
++    }
++
++    // Hint only: no IMMEDIATE transaction or durable change on a healthy idle tick.
++    fn job_receipt_pressure(&self) -> Result<bool> {
++        let requests: i64 =
++            self.connection
++                .query_row("SELECT count(*) FROM service_requests", [], |row| {
++                    row.get(0)
++                })?;
++        Ok(requests >= MAX_REQUESTS || metadata_pressure(&self.connection)?)
++    }
++    /// Same pressure and retirement policy as RequestEpoch(false), independent of UI.
++    /// At most64 terminal jobs; pending/running jobs and their accepted keys remain.
++    pub fn maintain_job_receipts(&mut self) -> Result<JobReceiptMaintenance> {
++        if !self.job_receipt_pressure()? {
++            return Ok(JobReceiptMaintenance::default());
++        }
++        // Authoritative thresholds/protected states are rechecked inside IMMEDIATE.
++        let retired = self.prune_job_receipts(false, None)?;
++        let pending=self.job_receipt_pressure()? && self.connection.query_row(
++            "SELECT EXISTS(SELECT 1 FROM service_jobs WHERE state IN('succeeded','failed','canceled'))",[],|row|row.get::<_,bool>(0))?;
++        Ok(JobReceiptMaintenance { retired, pending })
+     }
+ 
+     pub fn request_epoch(&mut self) -> Result<(Incarnation, u64)> {
+@@ -2116,4 +2140,167 @@
+         );
+         Ok(())
+     }
++    #[test]
++    fn receipt_owner_healthy_precheck_is_read_only_and_authoritative_recheck_can_cancel_pressure()
++    -> Result<()> {
++        let root = tempfile::tempdir()?;
++        let caller = Incarnation::from_bytes([61; 16]);
++        let mut registry = ServiceRegistry::open(root.path(), caller)?;
++        let project = ProjectRegistration::new(
++            "/source".into(),
++            "/state".into(),
++            "receipt-maintenance".into(),
++        )?;
++        registry.register(&project)?;
++        let (namespace, epoch) = registry.saved_request_epoch()?;
++        let key = RequestKey {
++            namespace,
++            epoch,
++            nonce: caller,
++        };
++        let job = registry.enqueue(project.binding, caller, &key, JobKind::Index)?;
++        registry.cancel_pending(job.id)?;
++        let before = registry.connection.total_changes();
++        registry
++            .connection
++            .pragma_update(None, "query_only", true)?;
++        assert_eq!(
++            registry.maintain_job_receipts()?,
++            JobReceiptMaintenance::default()
++        );
++        assert_eq!(registry.connection.total_changes(), before);
++        assert_eq!(registry.saved_request_epoch()?, (namespace, epoch));
++        registry
++            .connection
++            .pragma_update(None, "query_only", false)?;
++        // A separate actual writer owns admission; a healthy hint must still
++        // succeed without attempting its own IMMEDIATE transaction.
++        let mut competing = Connection::open(root.path().join("service-1.4.sqlite3"))?;
++        let held = competing.transaction_with_behavior(TransactionBehavior::Immediate)?;
++        registry
++            .connection
++            .busy_timeout(std::time::Duration::ZERO)?;
++        assert_eq!(
++            registry.maintain_job_receipts()?,
++            JobReceiptMaintenance::default()
++        );
++        drop(held);
++        drop(competing);
++
++        let tx = registry.connection.transaction()?;
++        for n in 0..MAX_REQUESTS {
++            let mut bytes = [91u8; 16];
++            bytes[..8].copy_from_slice(&n.to_le_bytes());
++            let nonce = Incarnation::from_bytes(bytes);
++            tx.execute("INSERT INTO service_requests(namespace,epoch,nonce,caller,job) VALUES(?1,?2,?3,?4,?5)",params![namespace.to_string(),epoch,nonce.to_string(),caller.to_string(),job.id.to_string()])?;
++        }
++        tx.commit()?;
++        assert!(registry.job_receipt_pressure()?);
++        // A different metadata action removed the pressure between hint and
++        // authoritative helper. The real write transaction must not retire a job.
++        registry.connection.execute(
++            "DELETE FROM service_requests WHERE nonce<>?1",
++            [caller.to_string()],
++        )?;
++        assert_eq!(registry.prune_job_receipts(false, None)?, 0);
++        assert_eq!(registry.saved_request_epoch()?, (namespace, epoch));
++        assert_eq!(
++            registry.request_receipt(caller, &key)?.0.unwrap().id,
++            job.id
++        );
++        Ok(())
++    }
++    #[test]
++    fn bounded_owner_turns_retire_only_terminal_receipts_rotate_once_and_preserve_accepted_work()
++    -> Result<()> {
++        let root = tempfile::tempdir()?;
++        let caller = Incarnation::from_bytes([62; 16]);
++        let mut registry = ServiceRegistry::open(root.path(), caller)?;
++        let project = ProjectRegistration::new(
++            "/source".into(),
++            "/state".into(),
++            "receipt-maintenance".into(),
++        )?;
++        registry.register(&project)?;
++        let (namespace, epoch) = registry.saved_request_epoch()?;
++        let retired_key = RequestKey {
++            namespace,
++            epoch,
++            nonce: Incarnation::from_bytes([63; 16]),
++        };
++        let retired = registry.enqueue(project.binding, caller, &retired_key, JobKind::Index)?;
++        registry.cancel_pending(retired.id)?;
++        let running_key = RequestKey {
++            nonce: Incarnation::from_bytes([64; 16]),
++            ..retired_key.clone()
++        };
++        let running = registry.enqueue(project.binding, caller, &running_key, JobKind::Index)?;
++        let mut lease = ProjectLease::acquire(root.path(), project.binding)?;
++        registry.admit_worker(&mut lease)?;
++        registry.claim_job_id(&lease, running.id)?;
++        let pending_key = RequestKey {
++            nonce: Incarnation::from_bytes([65; 16]),
++            ..retired_key.clone()
++        };
++        let pending = registry.enqueue(project.binding, caller, &pending_key, JobKind::Rebuild)?;
++        let last = framed_digest(b"receipt-owner-terminal", &[&69i64.to_le_bytes()]);
++        let tx = registry.connection.transaction()?;
++        for n in 0..70i64 {
++            let id = framed_digest(b"receipt-owner-terminal", &[&n.to_le_bytes()]);
++            tx.execute("INSERT INTO service_jobs(id,project,kind,state,epoch,attempts,outcome) VALUES(?1,?2,'verify','canceled',0,0,?3)",params![id.to_string(),project.binding.to_string(),serde_json::to_vec(&JobOutcome::Canceled)?])?;
++        }
++        for n in 0..MAX_REQUESTS {
++            let mut bytes = [92u8; 16];
++            bytes[..8].copy_from_slice(&n.to_le_bytes());
++            let nonce = Incarnation::from_bytes(bytes);
++            tx.execute("INSERT INTO service_requests(namespace,epoch,nonce,caller,job) VALUES(?1,?2,?3,?4,?5)",params![namespace.to_string(),epoch,nonce.to_string(),caller.to_string(),last.to_string()])?;
++        }
++        tx.commit()?;
++        let first = registry.maintain_job_receipts()?;
++        assert_eq!(
++            first,
++            JobReceiptMaintenance {
++                retired: 64,
++                pending: true
++            }
++        );
++        assert_eq!(registry.saved_request_epoch()?.1, epoch + 1);
++        for (key, id) in [(&running_key, running.id), (&pending_key, pending.id)] {
++            let (accepted, expired) = registry.request_receipt(caller, key)?;
++            assert!(!expired);
++            assert_eq!(accepted.unwrap().id, id);
++        }
++        assert_eq!(
++            registry
++                .enqueue(project.binding, caller, &running_key, JobKind::Index)?
++                .id,
++            running.id
++        );
++        assert_eq!(registry.job(running.id)?.state, JobState::Running);
++        assert_eq!(registry.job(pending.id)?.state, JobState::Pending);
++        let (missing, expired) = registry.request_receipt(caller, &retired_key)?;
++        assert!(missing.is_none() && expired);
++        let second = registry.maintain_job_receipts()?;
++        assert_eq!(
++            second,
++            JobReceiptMaintenance {
++                retired: 7,
++                pending: false
++            }
++        );
++        assert_eq!(registry.saved_request_epoch()?.1, epoch + 2);
++        assert!(matches!(
++            registry
++                .enqueue(project.binding, caller, &retired_key, JobKind::Index)
++                .unwrap_err()
++                .downcast_ref(),
++            Some(JobError::KeyExpired)
++        ));
++        assert_eq!(
++            registry.maintain_job_receipts()?,
++            JobReceiptMaintenance::default()
++        );
++        assert_eq!(registry.saved_request_epoch()?.1, epoch + 2);
++        Ok(())
++    }
+ }
+--- a/crates/airk-store/src/service_registry.rs
++++ b/crates/airk-store/src/service_registry.rs
+@@ -27,6 +27,13 @@
+     SavedScopeExpired, SavedScopeObservation, SavedScopeResolution, SavedScopeStamp,
+     source_scope_retryable,
+ };
++
++/// One pressure-triggered receipt turn in the existing service metadata owner.
++#[derive(Debug, Default, PartialEq, Eq)]
++pub struct JobReceiptMaintenance {
++    pub retired: u64,
++    pub pending: bool,
++}
+ 
+ /// Only callers that have established a read-only operation may retry this failure.
+ /// Corruption, I/O, validation and missing records remain ordinary failures.
+--- a/packages/vscode/src/serviceConsoleController.ts
++++ b/packages/vscode/src/serviceConsoleController.ts
+@@ -216,16 +216,40 @@
+             if(page.schema!==1||!Array.isArray(page.records)||page.records.length>32)throw new ServiceError('invalid_process_log_page');
+             this.state.serviceEvents={state:'cached',value:page,checkedAt:Date.now()};
+         }catch(error){this.state.serviceEvents={...this.state.serviceEvents,state:'failed',code:code(error),checkedAt:Date.now()};}
+-        const epoch=await this.rpc('request_epoch','request_epoch');
+-        this.restoreJournal(identifier(epoch.namespace,16));
++        // Events already occurs in this poll and carries the registry namespace.
++        // It is an observation, never a request-key epoch or mutation admission.
++        let eventFailure:string|undefined;
++        try{await this.events();}catch(error){
++            eventFailure=code(error);this.state.message=eventFailure;
++            void this.host.diagnosticFailure?.('events_namespace',error,this.bootstrap).catch(()=>{});
++            const reset=error instanceof ServiceError&&['event_cursor_expired','event_scope_changed'].includes(error.code);
++            let confirmed=false;
++            if(reset){
++                if(error.code==='event_scope_changed'){this.observationToken=randomUUID();this.clearRegistryObservation(true);}
++                this.eventCursor=null;this.state.historyOmitted=true;
++                try{await this.events(true);confirmed=true;}catch(resetError){
++                    void this.host.diagnosticFailure?.('event_cursor_reset',resetError,this.bootstrap).catch(()=>{});
++                }
++            }
++            if(!confirmed){
++                // Preserve old page availability when optional Events cannot
++                // confirm namespace. This is the original native epoch operation,
++                // not a replay of any keyed/uncertain mutation.
++                try{
++                    const epoch=await this.rpc('request_epoch','request_epoch');
++                    this.restoreJournal(identifier(epoch.namespace,16));
++                    if(reset)this.state.historyOmitted=true;
++                }catch(confirmError){
++                    void this.host.diagnosticFailure?.('event_namespace_fallback',confirmError,this.bootstrap).catch(()=>{});
++                    // The shared deadline still owns transport cleanup/reconnect;
++                    // the original Events diagnostic has already been retained.
++                    if(code(confirmError)==='status_poll_timed_out')throw confirmError;
++                    throw error;
++                }
++            }
++        }
+         this.pending();
+-        try{await this.page(false);}catch(error){this.state.message=code(error);}
+-        try{await this.events();}catch(error){
+-            this.state.message=code(error);
+-            if(error instanceof ServiceError&&['event_cursor_expired','event_scope_changed'].includes(error.code)){
+-                this.eventCursor=null;this.state.historyOmitted=true;
+-            }
+-        }
++        try{await this.page(false);}catch(error){this.state.message=eventFailure??code(error);if(eventFailure)void this.host.diagnosticFailure?.('console_page_after_event_reset',error,this.bootstrap).catch(()=>{});}
+         if(this.state.plan)await this.plan(false);
+     }
+     private clearRegistryObservation(retainedMetadata=false):void{
+@@ -313,16 +337,25 @@
+         this.state.configurationResults=results;
+         this.state.configurationResultsOmitted=false;
+     }
+-    private async events():Promise<void>{
++    private async events(historyReset=false):Promise<void>{
++        const client=this.client,binding=this.binding,instance=this.observedInstance;
+         const page=record((await this.rpc({events:{project:null,cursor:this.eventCursor,limit:32}},'events')).page);
++        this.authorized();
++        if(this.client!==client||this.binding!==binding||this.observedInstance!==instance)throw new ServiceError('stale_event_observation');
++        const namespace=identifier(page.namespace,16);
+         if(!Array.isArray(page.events)||page.events.length>32)throw new ServiceError('invalid_event_page');
+-        const events=page.events.map(event=>record(event));
++        const cursor=(value:unknown)=>{const c=record(value);if(identifier(c.namespace,16)!==namespace||c.project!==null)throw new ServiceError('invalid_event_page');count(c.after);if(c.through!==null)count(c.through);return c;};
++        const next=page.next===null?null:cursor(page.next),tail=cursor(page.tail);
++        const events=page.events.map(event=>{const row=record(event);count(row.sequence);return row;});
++        // Namespace confirmation clears old page/selection/plan/history BEFORE
++        // rows merge, including a replacement behind the same live service.
++        this.restoreJournal(namespace);
+         const merged=new Map(this.state.events.map(event=>[event.sequence,event]));
+-        events.forEach(event=>{count(event.sequence);merged.set(event.sequence,event);});
+-        this.state.historyOmitted||=page.retained_prefix_lost===true||merged.size>128;
++        events.forEach(event=>merged.set(event.sequence,event));
++        this.state.historyOmitted||=historyReset||page.retained_prefix_lost===true||merged.size>128;
+         this.state.events=[...merged.values()].slice(-128);
+         // Keep an unfinished snapshot cursor; never advance straight to its tail.
+-        this.eventCursor=page.next??page.tail;
++        this.eventCursor=next??tail;
+     }
+     private async plan(more:boolean):Promise<void>{
+         const current=this.state.plan;if(!current)return;
+--- a/packages/vscode/src/test/serviceConsole.test.ts
++++ b/packages/vscode/src/test/serviceConsole.test.ts
+@@ -8,6 +8,7 @@
+ /** What Explorer Management shows for a console state (the Service Console view was removed in 1.5.0). */
+ const shown = (state: ServiceConsoleState): string => JSON.stringify(managementView(state));
+ import { RecordValue, ServiceClient, ServiceError } from '../serviceClient';
++import { IntentJournal } from '../serviceIntents';
+ const project='12'.repeat(32),namespace='34'.repeat(16),instance='56'.repeat(16),job='78'.repeat(32);
+ test('raw log actions use the trusted local host and never enter summary reports',async()=>{
+     const f=fixture(),calls:boolean[]=[];
+@@ -616,7 +617,7 @@
+ 
+ // Run the actual controller and ServiceClient path; defer only transport replies.
+ test('verified health is published before every optional console probe finishes',async()=>{
+-    for(const blockedMethod of ['resources','embedding_status','source_status','logs','request_epoch','console','workers','events']){
++    for(const blockedMethod of ['resources','embedding_status','source_status','logs','console','workers','events']){
+         const f=fixture(),base=f.host.runtime.client({} as any),snapshots:ServiceConsoleState[]=[];
+         let release!:()=>void,entered!:()=>void;
+         const gate=new Promise<void>(resolve=>{release=resolve;});
+@@ -707,3 +708,113 @@
+         assert.equal(f.controller.state.connected,true);
+     }finally{release();await poll;f.controller.dispose();}
+ });
++
++test('periodic observation uses Events namespace before page without RequestEpoch; actual keyed action still obtains one',async()=>{
++    const f=fixture();
++    try{
++        await f.controller.refresh();
++        const names=()=>f.sent.map(method=>typeof method==='string'?method:Object.keys(method as object)[0]);
++        assert.equal(names().filter(name=>name==='request_epoch').length,0);
++        assert.equal(names().filter(name=>name==='events').length,1);
++        assert.ok(names().indexOf('events')<names().indexOf('console'));
++        await f.action('index',{project});
++        assert.equal(names().filter(name=>name==='request_epoch').length,1,'action key() keeps native admission/epoch producer');
++        assert.equal(names().filter(name=>name==='enqueue').length,1);
++    }finally{f.controller.dispose();}
++});
++test('same service replacement namespace resets one old cursor, keeps first failure and never joins old history or replays intent',async()=>{
++    const f=fixture(),base=f.host.runtime.client({} as any),replacement='ab'.repeat(16),newProject='cd'.repeat(32);
++    let changed=false;const seen:unknown[]=[],diagnostics:string[]=[];
++    const journal=new IntentJournal(f.host.storage,'/control',namespace);
++    await journal.prepare('retained uncertain request',{enqueue:{project,caller:'89'.repeat(16),key:{namespace,epoch:7,nonce:'90'.repeat(16)},kind:'index'}});
++    f.host.diagnosticFailure=async operation=>{diagnostics.push(operation);};
++    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
++        seen.push(structuredClone(method));const name=typeof method==='string'?method:Object.keys(method as object)[0];
++        if(name==='events'){
++            const cursor=(method as any).events.cursor,current=changed?replacement:namespace;
++            if(cursor&&cursor.namespace!==current)return {status:'failure',code:'event_scope_changed'};
++            return {status:'events',page:{namespace:current,oldest_sequence:1,snapshot_through:1,retained_prefix_lost:false,
++                events:[{sequence:1,observed_unix_ms:changed?222:111,project:changed?newProject:project,kind:'registered'}],next:null,tail:{namespace:current,project:null,after:1,through:null}}};
++        }
++        if(name==='request_receipt')return {status:'request_receipt',job:null};
++        if(changed&&name==='console')return {status:'console',page:{revision:2,cached:true,observed_unix_ms:222,after:null,projects:[{project:{registration:{binding:newProject,root:'/new-source',data_root:'/new-data',collection:'fixture'},paused:false,fencing_generation:1}}]}};
++        if(changed&&name==='workers')return {status:'workers',observations:[{project:newProject,identity:null,restarting:false,automatic_start_blocked:false}],age_ms:0};
++        return base.transport.request(method);
++    }});
++    try{
++        await f.controller.refresh();assert.equal(f.controller.state.events[0].observed_unix_ms,111);
++        const saved=JSON.stringify([...f.values.entries()]);f.controller.state.selected.add(project);
++        f.controller.state.plan={value:{id:'ef'.repeat(32)},items:[],after:null};
++        seen.length=0;changed=true;await f.controller.refresh();
++        const events=seen.filter(value=>value&&typeof value==='object'&&'events' in value) as any[];
++        assert.equal(events.length,2);assert.equal(events[0].events.cursor.namespace,namespace);assert.equal(events[1].events.cursor,null);
++        assert.equal(f.controller.state.message,'event_scope_changed');assert.equal(f.controller.state.historyOmitted,true);
++        assert.equal(f.controller.state.events.length,1);assert.equal(f.controller.state.events[0].project,newProject);assert.equal(f.controller.state.events[0].observed_unix_ms,222);
++        assert.equal(f.controller.state.selected.size,0);assert.equal(f.controller.state.plan,undefined);
++        assert.equal((f.controller.state.page!.projects[0].project as any).registration.binding,newProject);
++        assert.equal(JSON.stringify([...f.values.entries()]),saved,'old uncertain journal stays retained, never rewritten or submitted');
++        assert.equal(seen.some(value=>value==='request_epoch'||value&&typeof value==='object'&&('enqueue' in value||'request_receipt' in value)),false);
++        assert.deepEqual(f.controller.state.pending,[]);
++    }finally{f.controller.dispose();}
++});
++test('fresh Events reset failure preserves first refusal and cannot adopt a page or retry a mutation',async()=>{
++    const f=fixture(),base=f.host.runtime.client({} as any),seen:string[]=[],failures:string[]=[];
++    let broken=false,eventReads=0;
++    f.host.diagnosticFailure=async(operation,error)=>{failures.push(`${operation}:${(error as ServiceError).code}`);};
++    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
++        const name=typeof method==='string'?method:Object.keys(method as object)[0];seen.push(name);
++        if(broken&&name==='events')return {status:'failure',code:++eventReads===1?'event_scope_changed':'registry_unavailable'};
++        if(broken&&name==='request_epoch')return {status:'failure',code:'registry_unavailable'};
++        return base.transport.request(method);
++    }});
++    try{
++        await f.controller.refresh();const identity=f.controller.observationIdentity;seen.length=0;broken=true;await f.controller.refresh();
++        assert.notEqual(f.controller.observationIdentity,identity,'scope refusal invalidates old UI completions even if the fresh observation fails');
++        assert.equal(eventReads,2);assert.equal(f.controller.state.message,'event_scope_changed');
++        assert.ok(failures.includes('event_cursor_reset:registry_unavailable'));
++        assert.equal(f.controller.state.page,undefined);assert.deepEqual(f.controller.state.events,[]);
++        assert.equal(f.controller.state.historyOmitted,true);
++        assert.ok(!seen.some(name=>['console','workers','enqueue'].includes(name)));
++        assert.equal(seen.filter(name=>name==='request_epoch').length,1);
++        assert.ok(failures.includes('event_namespace_fallback:registry_unavailable'));
++    }finally{f.controller.dispose();}
++});
++test('trust loss while Events namespace is held prevents namespace/page adoption',async()=>{
++    const f=fixture(),base=f.host.runtime.client({} as any);let hold=false,release!:()=>void,entered!:()=>void;
++    const gate=new Promise<void>(resolve=>{release=resolve;}),waiting=new Promise<void>(resolve=>{entered=resolve;});
++    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
++        const name=typeof method==='string'?method:Object.keys(method as object)[0];
++        if(hold&&name==='events'){entered();await gate;}
++        return base.transport.request(method);
++    }});
++    try{
++        await f.controller.refresh();const identity=f.controller.observationIdentity;
++        hold=true;const pending=f.controller.refresh();await waiting;f.setTrusted(false);release();await pending;
++        assert.equal(f.controller.observationIdentity,identity);assert.equal(f.controller.state.trusted,false);
++        assert.equal(f.controller.state.message,'runtime_client_no_longer_authorized');
++    }finally{release();f.controller.dispose();}
++});
++
++test('optional Events failure falls back to original namespace confirmation and keeps healthy project/worker observations',async()=>{
++    for(const scenario of ['unsupported_service_method','invalid_event_page','registry_unavailable']){
++    const f=fixture(),base=f.host.runtime.client({} as any),seen:string[]=[],failures:string[]=[];
++    let unavailable=false;
++    f.host.diagnosticFailure=async(operation,error)=>{failures.push(`${operation}:${(error as ServiceError).code}`);};
++    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
++        const name=typeof method==='string'?method:Object.keys(method as object)[0];seen.push(name);
++        if(unavailable&&name==='events')return scenario==='invalid_event_page'?{status:'events',page:{namespace,events:'malformed',next:null,tail:{namespace,project:null,after:0,through:null}}}:{status:'failure',code:scenario};
++        const response=await base.transport.request(method);
++        if(unavailable&&name==='console')return {...response,page:{...(response as any).page,revision:2,observed_unix_ms:222}};
++        return response;
++    }});
++    try{
++        await f.controller.refresh();seen.length=0;unavailable=true;await f.controller.refresh();
++        assert.equal(f.controller.state.connected,true);assert.equal(f.controller.state.health.state,'live');
++        assert.equal(f.controller.state.page?.revision,2);assert.equal(f.controller.state.page?.observed_unix_ms,222);
++        assert.ok(f.controller.state.workers);assert.equal(f.controller.state.message,scenario);
++        assert.deepEqual(seen.filter(name=>['events','request_epoch','console','workers'].includes(name)),['events','request_epoch','console','workers']);
++        assert.ok(failures.includes(`events_namespace:${scenario}`));
++        assert.equal(seen.some(name=>['enqueue','configure_project','retry','plan_execute'].includes(name)),false);
++    }finally{f.controller.dispose();}
++    }
++});

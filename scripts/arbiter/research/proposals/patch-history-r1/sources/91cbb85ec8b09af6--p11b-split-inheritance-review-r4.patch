@@ -1,0 +1,1018 @@
+diff --git a/crates/airk-cli/src/catalog_split_control.rs b/crates/airk-cli/src/catalog_split_control.rs
+--- a/crates/airk-cli/src/catalog_split_control.rs
++++ b/crates/airk-cli/src/catalog_split_control.rs
+@@ -88,11 +88,32 @@
+                 );
+                 // No destination setup, quota admission, source read or job is
+                 // attempted before the exact Accepted intent is durable.
+-                match registry.catalog_reserve_split(
+-                    &draft.request,
+-                    &draft.before_policy,
+-                    &draft.plan,
+-                ) {
++                let admitted = (|| -> Result<_> {
++                    if draft.request.extraction_policy.is_some() {
++                        let original = &draft.request.original_registration;
++                        let collection = Collection::existing(
++                            Path::new(&original.data_root),
++                            &original.root,
++                            &original.collection,
++                        )?;
++                        let selected = collection.select()?;
++                        let captured = collection
++                            .capture_split_extraction_policy(&selected.store, &draft.request)?;
++                        registry.catalog_reserve_split_with_extraction(
++                            &draft.request,
++                            &draft.before_policy,
++                            &draft.plan,
++                            &captured,
++                        )
++                    } else {
++                        registry.catalog_reserve_split(
++                            &draft.request,
++                            &draft.before_policy,
++                            &draft.plan,
++                        )
++                    }
++                })();
++                match admitted {
+                     Ok(snapshot) => ControlResponse::CatalogSplitAccepted {
+                         snapshot: Box::new(snapshot),
+                     },
+@@ -213,25 +234,34 @@
+         &original.collection,
+     )?
+     .select()?;
+-    // A new retained profile needs a reviewed private inheritance capsule. The
+-    // existing legacy split protocol must not silently reset it to Agent Lean.
+-    if let Some(bytes) = selected.store.extraction_policy_bytes(&original.root)? {
+-        let configured: airk_kernel::extraction::ExtractionPolicy = serde_json::from_slice(&bytes)?;
+-        ensure!(
+-            configured.retained_profile.is_none(),
+-            "split requires qualified native retained-profile inheritance; current legacy split protocol refused"
+-        );
+-    }
++    let extraction_policy = selected
++        .store
++        .extraction_policy_bytes(&original.root)?
++        .as_deref()
++        .map(airk_kernel::Kernel::split_retained_policy_reference)
++        .transpose()?
++        .flatten();
+     if let Some(scope) = selected
+         .store
+         .current_scope(&original.root, &original.collection)?
+     {
+         let read = selected.store.current_read(&scope)?;
+-        ensure!(
+-            read.collection_state()?
+-                .is_none_or(|state| state.configuration.retained_profile.is_none()),
+-            "split requires qualified native applied-profile inheritance; current legacy split protocol refused"
+-        );
++        let applied = read
++            .collection_state()?
++            .context("split applied configuration missing")?
++            .configuration;
++        match &extraction_policy {
++            Some(reference) => ensure!(
++                applied.extraction_policy_digest == reference.configured_policy_digest
++                    && applied.retained_profile == Some(reference.retained_profile)
++                    && applied.index_detail == reference.legacy_fallback_detail,
++                "split waits for exact configured retained profile publication"
++            ),
++            None => ensure!(
++                applied.retained_profile.is_none(),
++                "split waits for pending retained profile change"
++            ),
++        }
+     }
+     let settings = inspect_settings_digest(&selected.store, &original.root)?;
+     let incarnation = selected
+@@ -327,9 +357,13 @@
+     let destination_quota =
+         Quota::review_service_funding_policy(Path::new(&destination.data_root))?;
+     let request = SplitRequest {
+-        extraction_policy: None,
++        extraction_policy: extraction_policy.clone(),
+         schema: 1,
+-        required_policy_contract: SPLIT_CONTRACT,
++        required_policy_contract: if extraction_policy.is_some() {
++            3
++        } else {
++            SPLIT_CONTRACT
++        },
+         caller,
+         key: selection.key.clone(),
+         expected_catalog_revision: selection.expected_catalog_revision,
+@@ -386,6 +420,7 @@
+         destination_storage_action: review.storage_action(),
+         control_inputs: serde_json::json!({
+             "schema":1,"behavior":"protected native capture enforces permanent policy at use",
++            "destination_retention_basis":if extraction_policy.is_some(){"inherited exact reviewed policy4"}else{"legacy destination Agent Lean default"},
+             "rules":["nested ignore ancestry","extractor configuration","tokenizer and custom model assets","preparation and import inputs"],
+             "filesystem_review":review.review_digest()?.to_string(),
+             "funding_budgets":funding.budgets
+diff --git a/crates/airk-cli/src/catalog_split_control_tests.rs b/crates/airk-cli/src/catalog_split_control_tests.rs
+--- a/crates/airk-cli/src/catalog_split_control_tests.rs
++++ b/crates/airk-cli/src/catalog_split_control_tests.rs
+@@ -32,6 +32,12 @@
+ /// fixture. The original publication/settings/incarnation come from real Kernel
+ /// indexing; no claimed publication or job result is fabricated here.
+ pub(crate) fn native_fixture(prepared: bool) -> Result<NativeSplitFixture> {
++    native_fixture_with_retention(prepared, None)
++}
++pub(crate) fn native_fixture_with_retention(
++    prepared: bool,
++    target: Option<airk_core::retention::RetainedProfile>,
++) -> Result<NativeSplitFixture> {
+     let temporary = tempfile::tempdir()?;
+     let base = temporary.path().canonicalize()?;
+     let root = base.join("source");
+@@ -54,6 +60,11 @@
+     )?;
+     kernel.configure_vectors(false)?;
+     kernel.index()?;
++    if let Some(target) = target {
++        let review = kernel.preview_retained_migration(target)?;
++        kernel.configure_retained_migration(&review)?;
++        kernel.index()?;
++    }
+     drop(kernel);
+     let mut registry = ServiceRegistry::open(&control, namespace)?;
+     registry.register(&original)?;
+@@ -414,3 +425,122 @@
+     );
+     Ok(())
+ }
++
++#[test]
++fn native_split_inheritance_is_compact_exact_and_saved_before_any_build() -> Result<()> {
++    let mut fixture = native_fixture(false)?;
++    let kernel = airk_kernel::Kernel::open_service_collection(
++        &fixture.original.root,
++        Some(PathBuf::from(&fixture.original.data_root)),
++        &fixture.original.collection,
++    )?;
++    let review = kernel.preview_retained_migration(airk_core::retention::RetainedProfile::Lean)?;
++    kernel.configure_retained_migration(&review)?;
++    kernel.index()?;
++    drop(kernel);
++    let ControlResponse::CatalogSplitDraft { draft } = response(
++        &mut fixture.registry,
++        &fixture.control,
++        ControlMethod::CatalogSplitDraft {
++            selection: Box::new(fixture.selection.clone()),
++        },
++    )?
++    else {
++        anyhow::bail!("missing inherited draft");
++    };
++    let reference = draft
++        .request
++        .extraction_policy
++        .as_ref()
++        .context("native draft dropped inherited profile")?;
++    assert_eq!(draft.request.required_policy_contract, 3);
++    assert_eq!(
++        reference.retained_profile,
++        airk_core::retention::RetainedProfile::Lean
++    );
++    assert!(serde_json::to_vec(&draft)?.len() <= airk_core::catalog_management::MAX_PAGE_BYTES);
++    let collection = Collection::existing(
++        Path::new(&fixture.original.data_root),
++        &fixture.original.root,
++        &fixture.original.collection,
++    )?;
++    let selected = collection.select()?;
++    let captured = collection.capture_split_extraction_policy(&selected.store, &draft.request)?;
++    drop(selected);
++    let mut other = fixture.selection.clone();
++    other.key.nonce = Incarnation::from_bytes([111; 16]);
++    let ControlResponse::CatalogSplitDraft { draft: crossed } = response(
++        &mut fixture.registry,
++        &fixture.control,
++        ControlMethod::CatalogSplitDraft {
++            selection: Box::new(other),
++        },
++    )?
++    else {
++        anyhow::bail!("missing second exact draft");
++    };
++    assert!(
++        fixture
++            .registry
++            .catalog_reserve_split_with_extraction(
++                &crossed.request,
++                &crossed.before_policy,
++                &crossed.plan,
++                &captured
++            )
++            .is_err(),
++        "capture from another native request admitted effects"
++    );
++    assert_eq!(
++        fixture.registry.catalog_state()?.unwrap().policy_contract,
++        0
++    );
++    let ControlResponse::CatalogSplitAccepted { snapshot } = response(
++        &mut fixture.registry,
++        &fixture.control,
++        ControlMethod::CatalogSplitApply {
++            draft: draft.clone(),
++        },
++    )?
++    else {
++        anyhow::bail!("inherited apply absent");
++    };
++    assert_eq!(snapshot.request.extraction_policy, Some(reference.clone()));
++    assert!(snapshot.receipt.jobs.is_empty());
++    assert!(snapshot.receipt.destination_storage.is_none());
++    assert!(snapshot.receipt.capacity_receipt.is_none());
++    assert_eq!(
++        fixture.registry.catalog_state()?.unwrap().policy_contract,
++        3
++    );
++    let db = rusqlite::Connection::open_with_flags(
++        fixture.control.join("service-1.4.sqlite3"),
++        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
++    )?;
++    let body: Vec<u8> = db.query_row(
++        "SELECT body FROM index_split_extraction_policies WHERE operation_id=?1",
++        [snapshot.receipt.operation_id.to_string()],
++        |row| row.get(0),
++    )?;
++    reference.validate_body(&body)?;
++    drop(db);
++    let public = serde_json::to_value(&snapshot)?;
++    assert!(public.pointer("/request/extraction_policy/body").is_none());
++    assert!(public.pointer("/request/extraction_policy/rules").is_none());
++    fixture.registry = ServiceRegistry::open_saved(&fixture.control)?;
++    let saved = fixture
++        .registry
++        .catalog_split_status(snapshot.receipt.operation_id)?
++        .unwrap();
++    assert_eq!(saved.request, snapshot.request);
++    let ControlResponse::CatalogSplitAccepted { snapshot: replayed } = response(
++        &mut fixture.registry,
++        &fixture.control,
++        ControlMethod::CatalogSplitApply { draft },
++    )?
++    else {
++        anyhow::bail!("exact inherited receipt replay absent");
++    };
++    assert_eq!(*replayed, saved);
++    Ok(())
++}
+diff --git a/crates/airk-cli/src/project_supervisor_split_tests.rs b/crates/airk-cli/src/project_supervisor_split_tests.rs
+--- a/crates/airk-cli/src/project_supervisor_split_tests.rs
++++ b/crates/airk-cli/src/project_supervisor_split_tests.rs
+@@ -32,7 +32,21 @@
+ #[test]
+ fn real_empty_native_owner_completes_witness_fence_remainder_membership_and_funding_ack()
+ -> Result<()> {
+-    let mut fixture = crate::catalog_split_control::tests::native_fixture(false)?;
++    run_empty_native_split(crate::catalog_split_control::tests::native_fixture(false)?)
++}
++#[test]
++fn real_empty_native_owner_completes_inherited_rich_fence_membership_and_two_root_ack() -> Result<()>
++{
++    run_empty_native_split(
++        crate::catalog_split_control::tests::native_fixture_with_retention(
++            false,
++            Some(airk_core::retention::RetainedProfile::Rich),
++        )?,
++    )
++}
++fn run_empty_native_split(
++    mut fixture: crate::catalog_split_control::tests::NativeSplitFixture,
++) -> Result<()> {
+     ensure!(
+         !fixture.selection.projects.is_empty(),
+         "native import needs affected Project census"
+@@ -484,6 +498,52 @@
+         Kernel::open_existing_service_observer(&complete.request.destination_registration)?;
+     original.require_unrestricted_read()?;
+     destination.require_unrestricted_read()?;
++    if let Some(reference) = &complete.request.extraction_policy {
++        for (registration, path) in [
++            (&fixture.original, "remainder.md"),
++            (
++                &complete.request.destination_registration,
++                "docs/selected.md",
++            ),
++        ] {
++            let collection = airk_store::service::collection::Collection::existing(
++                Path::new(&registration.data_root),
++                &registration.root,
++                &registration.collection,
++            )?;
++            let selected = collection.select()?;
++            let scope = selected
++                .store
++                .current_scope(&registration.root, &registration.collection)?
++                .context("inherited final scope missing")?;
++            let read = selected.store.current_read(&scope)?;
++            let config = read
++                .collection_state()?
++                .context("inherited final config missing")?
++                .configuration;
++            assert_eq!(config.retained_profile, Some(reference.retained_profile));
++            assert_eq!(
++                config.extraction_policy_digest,
++                reference.configured_policy_digest
++            );
++            let artifact = read
++                .artifact(path)?
++                .context("inherited final artifact missing")?;
++            let profile = artifact
++                .retained
++                .as_ref()
++                .and_then(|retained| retained.profile.as_ref())
++                .context("inherited final profile missing")?;
++            assert!(
++                matches!(airk_core::retention::AppliedRetention::from_profile(profile)?,airk_core::retention::AppliedRetention::Selected{profile:target,family:airk_core::retention::RetainedFamily::Markdown,..} if target==reference.retained_profile)
++            );
++            let body = selected
++                .store
++                .extraction_policy_bytes(&registration.root)?
++                .context("inherited final policy missing")?;
++            reference.validate_body(&body)?;
++        }
++    }
+     let remainder_files = original.list_files("", 32, MAX_PAGE_BYTES)?;
+     let destination_files = destination.list_files("", 32, MAX_PAGE_BYTES)?;
+     ensure!(
+diff --git a/crates/airk-cli/src/project_worker_split.rs b/crates/airk-cli/src/project_worker_split.rs
+--- a/crates/airk-cli/src/project_worker_split.rs
++++ b/crates/airk-cli/src/project_worker_split.rs
+@@ -118,7 +118,21 @@
+     #[test]
+     fn claimed_paid_build_creates_independent_sealed_evidence_without_changing_original()
+     -> Result<()> {
+-        let mut fixture = crate::catalog_split_control::tests::native_fixture(true)?;
++        run_paid_build_and_cancel(crate::catalog_split_control::tests::native_fixture(true)?)
++    }
++    #[test]
++    fn claimed_paid_inherited_retention_build_and_cancel_preserves_source_and_two_root_accounting()
++    -> Result<()> {
++        run_paid_build_and_cancel(
++            crate::catalog_split_control::tests::native_fixture_with_retention(
++                true,
++                Some(airk_core::retention::RetainedProfile::Lean),
++            )?,
++        )
++    }
++    fn run_paid_build_and_cancel(
++        mut fixture: crate::catalog_split_control::tests::NativeSplitFixture,
++    ) -> Result<()> {
+         let accepted = fixture
+             .snapshot
+             .take()
+@@ -193,6 +207,52 @@
+         assert_eq!(result.selected_sources, 1);
+         assert_eq!(result.policy_digest, building.plan.destination.identity()?);
+         assert_ne!(result.publication, Some(before));
++        if let Some(reference) = &building.request.extraction_policy {
++            let claimed = fixture
++                .registry
++                .claimed_split_work(&lease, job, fixture.engine)?;
++            let funding =
++                crate::catalog_split_control::prepare_claimed_funding(&fixture.registry, &claimed)?
++                    .context("inherited paid phase absent")?;
++            let collection = airk_store::service::collection::Collection::existing(
++                Path::new(&registration.data_root),
++                &registration.root,
++                &registration.collection,
++            )?;
++            let store = collection
++                .select_for_diagnostics()?
++                .with_split_access(claimed.permit)?
++                .with_operation_funding(funding)?;
++            let scope = store
++                .current_scope(&registration.root, &registration.collection)?
++                .context("inherited current absent")?;
++            let read = store.current_read(&scope)?;
++            let applied = read
++                .collection_state()?
++                .context("inherited applied metadata absent")?
++                .configuration;
++            assert_eq!(applied.retained_profile, Some(reference.retained_profile));
++            assert_eq!(
++                applied.extraction_policy_digest,
++                reference.configured_policy_digest
++            );
++            let artifact = read
++                .artifact("docs/selected.md")?
++                .context("selected inherited artifact absent")?;
++            let profile = artifact
++                .retained
++                .as_ref()
++                .and_then(|retained| retained.profile.as_ref())
++                .context("selected inherited profile absent")?;
++            assert!(
++                matches!(airk_core::retention::AppliedRetention::from_profile(profile)?,airk_core::retention::AppliedRetention::Selected{profile:target,family:airk_core::retention::RetainedFamily::Markdown,..} if target==reference.retained_profile)
++            );
++            assert!(read.artifact("remainder.md")?.is_none());
++            let body = store
++                .extraction_policy_bytes(&registration.root)?
++                .context("inherited private body absent")?;
++            reference.validate_body(&body)?;
++        }
+         fixture.registry.complete_job(&lease, job, outcome)?;
+         let validated = fixture.registry.catalog_complete_split_job(
+             building.receipt.operation_id,
+diff --git a/crates/airk-core/src/catalog_split.rs b/crates/airk-core/src/catalog_split.rs
+--- a/crates/airk-core/src/catalog_split.rs
++++ b/crates/airk-core/src/catalog_split.rs
+@@ -108,7 +108,13 @@
+ impl SplitRequest {
+     pub fn validate(&self) -> Result<()> {
+         ensure!(
+-            self.schema == 1 && self.required_policy_contract == SPLIT_CONTRACT,
++            self.schema == 1
++                && self.required_policy_contract
++                    == if self.extraction_policy.is_some() {
++                        3
++                    } else {
++                        SPLIT_CONTRACT
++                    },
+             "unsupported split contract"
+         );
+         self.original_registration.validate()?;
+diff --git a/crates/airk-kernel/src/extraction.rs b/crates/airk-kernel/src/extraction.rs
+--- a/crates/airk-kernel/src/extraction.rs
++++ b/crates/airk-kernel/src/extraction.rs
+@@ -277,3 +277,89 @@
+         Ok(result)
+     }
+ }
++
++impl Kernel {
++    /// Parse fixed private policy metadata only. Body and configured digests have
++    /// distinct canonical encodings and are deliberately reported separately.
++    pub fn split_retained_policy_reference(
++        body: &[u8],
++    ) -> Result<Option<airk_core::retention::SplitExtractionPolicyReference>> {
++        let policy = ExtractionPolicy::parse(
++            body,
++            &airk_ingest::adapters::registry::AdapterRegistry::baseline(),
++        )?;
++        let Some(target) = policy.retained_profile else {
++            return Ok(None);
++        };
++        let reference = airk_core::retention::SplitExtractionPolicyReference {
++            schema: 1,
++            policy_body_digest: framed_digest(b"airk/split-extraction-policy-body/1", &[body]),
++            configured_policy_digest: policy_digest(&policy)?,
++            encoded_bytes: u32::try_from(body.len())?,
++            retained_profile: target,
++            legacy_fallback_detail: policy
++                .legacy_fallback_detail
++                .context("retained policy fallback absent")?,
++            required_extraction_contract: airk_core::retention::PROFILE_CONTRACT,
++        };
++        reference.validate_body(body)?;
++        Ok(Some(reference))
++    }
++    pub(crate) fn install_split_retained_policy(
++        &self,
++        work: &airk_store::service::registry::catalog::split::ClaimedSplitWork,
++    ) -> Result<()> {
++        use airk_core::catalog_split::SplitJobPurpose;
++        anyhow::ensure!(
++            work.job.purpose == SplitJobPurpose::DestinationBuild
++                && self.split_authority.is_some()
++                && self.service_selection.is_none(),
++            "split retained policy needs exact unpinned destination build owner"
++        );
++        let Some(reference) = &work.snapshot.request.extraction_policy else {
++            anyhow::ensure!(
++                work.extraction_policy.is_none(),
++                "legacy split unexpectedly carries private policy"
++            );
++            return Ok(());
++        };
++        let bytes = work
++            .extraction_policy
++            .as_ref()
++            .context("native saved split policy absent")?
++            .bytes_for(&work.snapshot.request)?;
++        anyhow::ensure!(
++            Self::split_retained_policy_reference(bytes)?.as_ref() == Some(reference),
++            "saved split policy semantics changed"
++        );
++        let quota = self.collection_quota()?;
++        anyhow::ensure!(
++            quota.funding_use().is_some(),
++            "split retained metadata needs admitted funding"
++        );
++        let writer = self.store.lock()?;
++        self.service_collection
++            .as_ref()
++            .context("split native collection absent")?
++            .require_extraction_contract(
++                &self.store,
++                &writer,
++                &quota,
++                airk_core::retention::PROFILE_CONTRACT,
++            )?;
++        if self
++            .store
++            .extraction_policy_bytes(&self.root_id())?
++            .as_deref()
++            != Some(bytes)
++        {
++            self.store.configure_extraction_policy_bytes(
++                &writer,
++                &quota,
++                &self.root_id(),
++                bytes,
++            )?;
++        }
++        Ok(())
++    }
++}
+diff --git a/crates/airk-kernel/src/split_execution.rs b/crates/airk-kernel/src/split_execution.rs
+--- a/crates/airk-kernel/src/split_execution.rs
++++ b/crates/airk-kernel/src/split_execution.rs
+@@ -28,6 +28,9 @@
+             _ => anyhow::bail!("split current execution purpose is unsupported"),
+         };
+         let selected = self.with_expected_source_policy(Some(policy.clone()))?;
++        if work.job.purpose == SplitJobPurpose::DestinationBuild {
++            selected.install_split_retained_policy(work)?;
++        }
+         let mut application = selected.apply_source_policy(policy, policy_operation)?;
+         if work.job.purpose == SplitJobPurpose::OriginalCleanup {
+             // Each native turn deletes at most 4096 owned files. Keep the job
+diff --git a/crates/airk-store/src/extraction_policy.rs b/crates/airk-store/src/extraction_policy.rs
+--- a/crates/airk-store/src/extraction_policy.rs
++++ b/crates/airk-store/src/extraction_policy.rs
+@@ -90,7 +90,8 @@
+         writer.invalidate_census_before_mutation()?;
+         let reservation = quota.reserve(collection, bytes.len() as u64)?;
+         reservation.charge(bytes.len() as u64)?;
+-        let mut temporary = tempfile::NamedTempFile::new_in(&directory)?;
++        // Exact reservation staging remains discoverable after abrupt worker death.
++        let mut temporary = tempfile::NamedTempFile::new_in(reservation.staging_directory()?)?;
+         temporary.write_all(&bytes)?;
+         temporary.as_file().sync_all()?;
+         temporary.persist(directory.join("extraction-policy.json"))?;
+diff --git a/crates/airk-store/src/service_catalog.rs b/crates/airk-store/src/service_catalog.rs
+--- a/crates/airk-store/src/service_catalog.rs
++++ b/crates/airk-store/src/service_catalog.rs
+@@ -13,6 +13,7 @@
+ 
+ pub(super) const SCHEMA: &str = include_str!("service_catalog_schema.sql");
+ const AUTHORITY_V1_SCHEMA: &str = include_str!("service_catalog_authority_v1.sql");
++const SPLIT_V3_SCHEMA: &str = include_str!("service_catalog_split_extraction_v3.sql");
+ const SPLIT_V2_SCHEMA: &str = include_str!("service_catalog_split_v2.sql");
+ const POLICY_V1_SCHEMA: &str = include_str!("service_catalog_policy_v1.sql");
+ const LEGACY_SCHEMA: &str = include_str!("service_registry_schema11.sql");
+@@ -22,7 +23,7 @@
+ // P6 and P9 must explicitly advance their own required contracts. Older schema-12
+ // readers must refuse them rather than silently ignore grants or source policy.
+ pub const SUPPORTED_AUTHORITY_CONTRACT: u32 = 1;
+-pub const SUPPORTED_POLICY_CONTRACT: u32 = 2;
++pub const SUPPORTED_POLICY_CONTRACT: u32 = 3;
+ 
+ #[derive(Clone, Copy, Debug)]
+ pub struct AdmissionPending;
+@@ -224,24 +225,29 @@
+     Schema12Authority1,
+     Schema12Authority1Policy1,
+     Schema12Authority1Policy2,
++    Schema12Authority1Policy3,
+ }
+ 
+ fn expected_layout(layout: CatalogLayout) -> Result<&'static Vec<SchemaObject>> {
+     static AUTHORITY_V1: OnceLock<Result<Vec<SchemaObject>, String>> = OnceLock::new();
+     static POLICY_V1: OnceLock<Result<Vec<SchemaObject>, String>> = OnceLock::new();
+     static SPLIT_V2: OnceLock<Result<Vec<SchemaObject>, String>> = OnceLock::new();
++    static SPLIT_V3: OnceLock<Result<Vec<SchemaObject>, String>> = OnceLock::new();
+     match layout {
+         CatalogLayout::Schema11 => expected(11),
+         CatalogLayout::Schema12Authority0 => expected(12),
+         CatalogLayout::Schema12Authority1
+         | CatalogLayout::Schema12Authority1Policy1
+-        | CatalogLayout::Schema12Authority1Policy2 => {
++        | CatalogLayout::Schema12Authority1Policy2
++        | CatalogLayout::Schema12Authority1Policy3 => {
+             (if layout == CatalogLayout::Schema12Authority1 {
+                 &AUTHORITY_V1
+             } else if layout == CatalogLayout::Schema12Authority1Policy1 {
+                 &POLICY_V1
++            } else if layout == CatalogLayout::Schema12Authority1Policy2 {
++                &SPLIT_V2
+             } else {
+-                &SPLIT_V2
++                &SPLIT_V3
+             })
+             .get_or_init(|| {
+                 (|| -> Result<_> {
+@@ -256,8 +262,15 @@
+                     if layout != CatalogLayout::Schema12Authority1 {
+                         connection.execute_batch(POLICY_V1_SCHEMA)?;
+                     }
+-                    if layout == CatalogLayout::Schema12Authority1Policy2 {
++                    if matches!(
++                        layout,
++                        CatalogLayout::Schema12Authority1Policy2
++                            | CatalogLayout::Schema12Authority1Policy3
++                    ) {
+                         connection.execute_batch(SPLIT_V2_SCHEMA)?;
++                    }
++                    if layout == CatalogLayout::Schema12Authority1Policy3 {
++                        connection.execute_batch(SPLIT_V3_SCHEMA)?;
+                     }
+                     schema_objects(&connection)
+                 })()
+@@ -280,6 +293,8 @@
+         Ok(CatalogLayout::Schema12Authority1Policy1)
+     } else if objects == expected_layout(CatalogLayout::Schema12Authority1Policy2)?.as_slice() {
+         Ok(CatalogLayout::Schema12Authority1Policy2)
++    } else if objects == expected_layout(CatalogLayout::Schema12Authority1Policy3)?.as_slice() {
++        Ok(CatalogLayout::Schema12Authority1Policy3)
+     } else {
+         anyhow::bail!("unsupported registry table, index, foreign-key or trigger shape")
+     }
+@@ -306,6 +321,7 @@
+                 | (CatalogLayout::Schema12Authority1, 1, 0)
+                 | (CatalogLayout::Schema12Authority1Policy1, 1, 1)
+                 | (CatalogLayout::Schema12Authority1Policy2, 1, 2)
++                | (CatalogLayout::Schema12Authority1Policy3, 1, 3)
+         ),
+         "index authority marker does not match the compiled registry layout"
+     );
+@@ -327,7 +343,9 @@
+                 [],
+             )?;
+         }
+-        CatalogLayout::Schema12Authority1Policy1 | CatalogLayout::Schema12Authority1Policy2 => {}
++        CatalogLayout::Schema12Authority1Policy1
++        | CatalogLayout::Schema12Authority1Policy2
++        | CatalogLayout::Schema12Authority1Policy3 => {}
+         _ => anyhow::bail!("policy installation requires qualified authority 1"),
+     }
+     validate_catalog_layout(connection)?;
+@@ -352,12 +370,35 @@
+         )?;
+     }
+     ensure!(
+-        validate_catalog_layout(connection)? == CatalogLayout::Schema12Authority1Policy2,
++        matches!(
++            validate_catalog_layout(connection)?,
++            CatalogLayout::Schema12Authority1Policy2 | CatalogLayout::Schema12Authority1Policy3
++        ),
+         "split capability layout differs"
+     );
+     Ok(())
+ }
+ 
++/// Only an already admitted exact private capture may request this within Accepted CAS.
++pub(super) fn apply_split_extraction_v3_layout(connection: &Connection) -> Result<()> {
++    ensure!(
++        !connection.is_autocommit(),
++        "split policy inheritance requires owning transaction"
++    );
++    apply_split_v2_layout(connection)?;
++    if validate_catalog_layout(connection)? == CatalogLayout::Schema12Authority1Policy2 {
++        connection.execute_batch(SPLIT_V3_SCHEMA)?;
++        connection.execute(
++            "UPDATE index_catalog_meta SET policy_contract=3,accepted_new_writes=1 WHERE id=1",
++            [],
++        )?;
++    }
++    ensure!(
++        validate_catalog_layout(connection)? == CatalogLayout::Schema12Authority1Policy3,
++        "split extraction capability layout differs"
++    );
++    Ok(())
++}
+ pub(super) fn apply_authority_v1_layout(connection: &Connection) -> Result<()> {
+     ensure!(
+         !connection.is_autocommit(),
+diff --git a/crates/airk-store/src/service_catalog_split.rs b/crates/airk-store/src/service_catalog_split.rs
+--- a/crates/airk-store/src/service_catalog_split.rs
++++ b/crates/airk-store/src/service_catalog_split.rs
+@@ -46,10 +46,15 @@
+     let capsules = snapshot
+         .checked_mul((MAX_SPLIT_JOBS + 4) as u64)
+         .context("split capsule capacity overflow")?;
+-    let inherited = request
+-        .extraction_policy
+-        .as_ref()
+-        .map_or(0, |reference| u64::from(reference.encoded_bytes));
++    // StoredPolicy includes an escaped owning root and the parsed body. Reserve
++    // its full bounded envelope plus one replacement/staging copy, not only the
++    // compact public body's bytes. This is native metadata capacity, not a claim
++    // that selected source payloads fit the separately reviewed build budget.
++    let inherited = if request.extraction_policy.is_some() {
++        2 * 160 * 1024
++    } else {
++        0
++    };
+     let fixed = (MAX_PAGE_BYTES + 16384 + 16384 + 65536 + 2 * 16384) as u64 + inherited;
+     let required = capsules
+         .checked_add(fixed)
+@@ -450,6 +455,24 @@
+         baseline: &SourcePolicy,
+         plan: &SplitPolicyPlan,
+     ) -> Result<SplitSnapshot> {
++        self.catalog_reserve_split_owned(request, baseline, plan, None)
++    }
++    pub fn catalog_reserve_split_with_extraction(
++        &mut self,
++        request: &SplitRequest,
++        baseline: &SourcePolicy,
++        plan: &SplitPolicyPlan,
++        captured: &crate::service::collection::CapturedSplitExtractionPolicy,
++    ) -> Result<SplitSnapshot> {
++        self.catalog_reserve_split_owned(request, baseline, plan, Some(captured))
++    }
++    fn catalog_reserve_split_owned(
++        &mut self,
++        request: &SplitRequest,
++        baseline: &SourcePolicy,
++        plan: &SplitPolicyPlan,
++        captured: Option<&crate::service::collection::CapturedSplitExtractionPolicy>,
++    ) -> Result<SplitSnapshot> {
+         request.validate_plan(baseline, plan)?;
+         if let Some(saved) = self.catalog_split_receipt(request.caller, &request.key)? {
+             ensure!(
+@@ -471,10 +494,11 @@
+             );
+             return Ok(saved);
+         }
+-        ensure!(
+-            request.extraction_policy.is_none(),
+-            "split retained policy requires the exact native private inheritance admission owner"
+-        );
++        let inherited = match (&request.extraction_policy, captured) {
++            (None, None) => None,
++            (Some(_), Some(captured)) => Some(captured.validate_for(request)?),
++            _ => anyhow::bail!("split retained policy requires exact native capture"),
++        };
+         let metadata = native_metadata_capacity(request, baseline, plan)?;
+         ensure!(
+             request.capacity.cleanup_allowance >= metadata.total,
+@@ -502,7 +526,11 @@
+         projects_current(&tx, request)?;
+         let pending: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM index_operation_receipts WHERE kind='catalog_management_fenced' AND stage<>'metadata_applied')",[],|row|row.get(0))?;
+         ensure!(!pending, "split waits for existing native catalog fence");
+-        super::apply_split_v2_layout(&tx)?;
++        if inherited.is_some() {
++            super::apply_split_extraction_v3_layout(&tx)?;
++        } else {
++            super::apply_split_v2_layout(&tx)?;
++        }
+         let active: i64 = tx.query_row(
+             "SELECT count(DISTINCT operation_id) FROM index_split_participants WHERE active=1",
+             [],
+@@ -568,6 +596,12 @@
+                 i64::try_from(RESERVED_COMPLETION_BYTES)?
+             ],
+         )?;
++        if let Some(body) = inherited {
++            tx.execute(
++                "INSERT INTO index_split_extraction_policies VALUES(?1,?2)",
++                params![request.operation_id()?.to_string(), body],
++            )?;
++        }
+         for (id, role) in [
+             (request.original_index, "original_remainder"),
+             (request.destination.index_id, "destination"),
+@@ -880,15 +914,34 @@
+                 permit = permit.with_native_retry_predecessor(previous.clone())?;
+             }
+         }
++        let extraction_policy = if reference.purpose == SplitJobPurpose::DestinationBuild
++            && state.request.extraction_policy.is_some()
++        {
++            let body: Vec<u8> = tx.query_row(
++                "SELECT substr(body,1,131073) FROM index_split_extraction_policies WHERE operation_id=?1",
++                [state.receipt.operation_id.to_string()],
++                |row| row.get(0),
++            )?;
++            Some(
++                crate::service::collection::SavedSplitExtractionPolicy::from_record(
++                    &state.request,
++                    body,
++                )?,
++            )
++        } else {
++            None
++        };
+         Ok(ClaimedSplitWork {
+             snapshot: state,
+             job: reference,
+             permit,
++            extraction_policy,
+         })
+     }
+ }
+ 
+ pub struct ClaimedSplitWork {
++    pub extraction_policy: Option<crate::service::collection::SavedSplitExtractionPolicy>,
+     pub snapshot: SplitSnapshot,
+     pub job: SplitJobRef,
+     pub permit: crate::service::collection::SplitBuildPermit,
+diff --git a/crates/airk-store/src/service_catalog_split_extraction_v3.sql b/crates/airk-store/src/service_catalog_split_extraction_v3.sql
+new file mode 100644
+--- /dev/null
++++ b/crates/airk-store/src/service_catalog_split_extraction_v3.sql
+@@ -0,0 +1,7 @@
++-- SPDX-License-Identifier: Apache-2.0
++-- Exact policy-3 addition to owned policy-2. No public snapshot embeds this body.
++CREATE TABLE index_split_extraction_policies(
++ operation_id TEXT PRIMARY KEY REFERENCES index_split_operations(operation_id) ON DELETE CASCADE,
++ body BLOB NOT NULL CHECK(length(body) BETWEEN 1 AND 131072)) WITHOUT ROWID;
++CREATE TRIGGER index_split_extraction_immutable BEFORE UPDATE ON index_split_extraction_policies
++ BEGIN SELECT RAISE(ABORT,'split extraction policy is immutable'); END;
+diff --git a/crates/airk-store/src/service_collection.rs b/crates/airk-store/src/service_collection.rs
+--- a/crates/airk-store/src/service_collection.rs
++++ b/crates/airk-store/src/service_collection.rs
+@@ -35,6 +35,9 @@
+ mod split;
+ pub(crate) use split::{NativeTerminalPublication, TerminalSlot, initial_split_seal};
+ pub use split::{SplitBuildPermit, validate_split_store_access};
++#[path = "service_collection_retention_inheritance.rs"]
++mod retention_inheritance;
++pub use retention_inheritance::{CapturedSplitExtractionPolicy, SavedSplitExtractionPolicy};
+ 
+ #[derive(Clone, Copy, Debug)]
+ pub struct SelectionContention;
+diff --git a/crates/airk-store/src/service_collection_retention_inheritance.rs b/crates/airk-store/src/service_collection_retention_inheritance.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/airk-store/src/service_collection_retention_inheritance.rs
+@@ -0,0 +1,128 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Private bounded policy capture. No source document/model I/O or wire authority.
++use super::*;
++use crate::service::registry::catalog::setup::storage::SetupDirectory;
++use airk_core::catalog_split::SplitRequest;
++use airk_core::retention::SplitExtractionPolicyReference;
++use std::ffi::OsStr;
++
++pub struct CapturedSplitExtractionPolicy {
++    request: Sha256Digest,
++    body: Vec<u8>,
++}
++pub struct SavedSplitExtractionPolicy {
++    request: Sha256Digest,
++    body: Vec<u8>,
++}
++impl CapturedSplitExtractionPolicy {
++    pub(crate) fn validate_for(&self, request: &SplitRequest) -> Result<&[u8]> {
++        ensure!(
++            self.request == request.identity()?,
++            "captured split policy crossed request"
++        );
++        request
++            .extraction_policy
++            .as_ref()
++            .context("split policy reference absent")?
++            .validate_body(&self.body)?;
++        Ok(&self.body)
++    }
++}
++impl SavedSplitExtractionPolicy {
++    pub(in crate::service) fn from_record(request: &SplitRequest, body: Vec<u8>) -> Result<Self> {
++        request
++            .extraction_policy
++            .as_ref()
++            .context("saved split policy reference absent")?
++            .validate_body(&body)?;
++        Ok(Self {
++            request: request.identity()?,
++            body,
++        })
++    }
++    pub fn bytes_for(&self, request: &SplitRequest) -> Result<&[u8]> {
++        ensure!(
++            self.request == request.identity()?,
++            "saved split policy crossed request"
++        );
++        request
++            .extraction_policy
++            .as_ref()
++            .context("saved split policy reference absent")?
++            .validate_body(&self.body)?;
++        Ok(&self.body)
++    }
++}
++impl Collection {
++    /// Read fixed private policy under existing writer/manifest exclusion. The native
++    /// draft has already parsed semantics; exact body/ref/settings/source still bind here.
++    pub fn capture_split_extraction_policy(
++        &self,
++        store: &FileStore,
++        request: &SplitRequest,
++    ) -> Result<CapturedSplitExtractionPolicy> {
++        request.validate()?;
++        let reference: &SplitExtractionPolicyReference = request
++            .extraction_policy
++            .as_ref()
++            .context("no reviewed extraction policy")?;
++        let _writer = store.existing_writer_exclusion()?;
++        let _manifest = manifest_lock(&self.directory)?;
++        let manifest = self.manifest()?;
++        let logical = SetupDirectory::open_canonical(&self.directory)?;
++        let owner: Owner = super::retention_barrier::read_json(
++            &logical,
++            "service-owner.json",
++            MAX_METADATA as u64,
++        )?;
++        let actual = airk_core::service::ProjectRegistration::new(
++            owner.root.clone(),
++            owner.data_root.clone(),
++            owner.collection.clone(),
++        )?;
++        let selected = logical
++            .open_dir(OsStr::new("incarnations"))?
++            .open_dir(OsStr::new(&manifest.active.to_string()))?;
++        ensure!(
++            owner.version == 140
++                && owner_digest(&owner)? == self.binding
++                && actual == request.original_registration
++                && SetupDirectory::open_canonical(store.directory())?.identity()?
++                    == selected.identity()?
++                && store.service_incarnation()? == Some(request.original_incarnation),
++            "split policy capture differs from actual original owner"
++        );
++        let scope = store
++            .current_scope(&self.owner.root, &self.owner.collection)?
++            .context("split retained profile needs current publication")?;
++        let read = store.current_read(&scope)?;
++        let applied = read
++            .collection_state()?
++            .context("split applied configuration missing")?
++            .configuration;
++        ensure!(
++            applied.retained_profile == Some(reference.retained_profile)
++                && applied.index_detail == reference.legacy_fallback_detail
++                && applied.extraction_policy_digest == reference.configured_policy_digest,
++            "split retained profile is not exactly applied"
++        );
++        drop(read);
++        ensure!(
++            settings_id(&settings(store, &self.owner.root)?) == request.original_settings_digest,
++            "split extraction policy settings changed"
++        );
++        let body = crate::extraction_policy::extraction_policy_bytes_at(&selected, &owner.root)?
++            .context("reviewed original extraction policy disappeared")?;
++        reference.validate_body(&body)?;
++        ensure!(
++            SetupDirectory::open_canonical(&self.directory)?.identity()? == logical.identity()?
++                && SetupDirectory::open_canonical(store.directory())?.identity()?
++                    == selected.identity()?,
++            "split policy owner directory changed during capture"
++        );
++        Ok(CapturedSplitExtractionPolicy {
++            request: request.identity()?,
++            body,
++        })
++    }
++}
+diff --git a/packages/vscode/src/explorerWebview/indexingSplit.tsx b/packages/vscode/src/explorerWebview/indexingSplit.tsx
+--- a/packages/vscode/src/explorerWebview/indexingSplit.tsx
++++ b/packages/vscode/src/explorerWebview/indexingSplit.tsx
+@@ -72,6 +72,7 @@
+         {view.submittedSplitReview&&<details><summary>Exact submitted native split review</summary><pre>{JSON.stringify(view.submittedSplitReview,null,2)}</pre></details>}
+         <h3>Read current split state</h3><p>Receipt lookup and status reads never repeat a mutation. A missing or expired receipt leaves its outcome unknown. Current state may be newer than an accepted historical recovery acknowledgment.</p>
+         <form onSubmit={event=>{event.preventDefault();void run(()=>request('indexing.split.read',{operation,generation:view.generation}));}}><label>Native operation ID<input required pattern="[0-9a-f]{32}" value={operation} onInput={event=>setOperation(event.currentTarget.value)}/></label><button disabled={disabled||!view.canReviewSplit}>Read native split status</button></form>
++        {snapshot&&<p>Destination retained evidence: {catalogObject(catalogObject(snapshot).request).extraction_policy==null?'legacy Agent Lean default':`${String(catalogObject(catalogObject(catalogObject(snapshot).request).extraction_policy).retained_profile)} with unchanged legacy fallback`}. Original retention is preserved. OCR remains an explicit operation.</p>}
+         {status&&(snapshot?<><p>Current stage: <strong>{String(receipt?.stage)}</strong>. State: {String(state?.state)}. Receipt revision: {String(receipt?.revision)}.</p><p>{postFence?'The original transfer fence is active. Cancellation cannot restore transferred evidence; resume the recorded restrictive completion.':'The original remains admitted under its existing policy until the exact transfer fence. Before that fence, cancellation cleans only the owned destination.'}</p><p>{receipt?.physical_cleanup_authorization?'Physical cleanup authorization recorded.':'Physical cleanup not yet authorized.'} Funding releases: {Object.keys(catalogObject(receipt?.funding_release_receipts)).length}; completion requires all owned funding and cleanup to settle.</p><pre>{JSON.stringify(status,null,2)}</pre>
+             {receipt?.cleanup_attention&&<p>Destination cleanup requires explicit recovery: <code>{String(receipt.cleanup_attention)}</code>.</p>}{finalization&&<p>Current terminal publication: {String(finalization.progress)}; envelope revision {String(finalization.revision)}. {finalization.attention?`Explicit recovery required: ${String(finalization.attention)}.`:'No current finalization attention latch.'} Funding acknowledgments: {Array.isArray(finalization.funding_acknowledged)?finalization.funding_acknowledged.length:0}. Historical recovery acknowledgment does not clear a later attention latch.</p>}
+             <button disabled={disabled||terminal} onClick={()=>void run(()=>request('indexing.split.recover',{action:'resume',generation:view.generation}))}>{finalization?'Resume terminal publication and funding acknowledgments':'Resume recorded native phase'}</button>
+diff --git a/packages/vscode/src/indexingSplit.ts b/packages/vscode/src/indexingSplit.ts
+--- a/packages/vscode/src/indexingSplit.ts
++++ b/packages/vscode/src/indexingSplit.ts
+@@ -73,7 +73,8 @@
+     return response;
+ }
+ function validateRequest(input:unknown):CatalogObject {
+-    const request=catalogObject(input);if(request.schema!==1||request.required_policy_contract!==2)throw new Error('unsupported_split_contract');catalogHex(request.caller);splitKey(request.key);catalogId(request.original_index,'idx_');for(const key of ['expected_catalog_revision','expected_definition_revision','expected_source_revision'])catalogRevision(request[key]);catalogHex(request.original_incarnation);catalogHex(request.original_settings_digest,64);catalogHex(request.before_policy_digest,64);catalogHex(request.compiled_plan_digest,64);catalogHex(request.original_watch_digest,64);
++    const request=catalogObject(input);if(request.schema!==1||request.required_policy_contract!==(request.extraction_policy==null?2:3))throw new Error('unsupported_split_contract');catalogHex(request.caller);splitKey(request.key);catalogId(request.original_index,'idx_');for(const key of ['expected_catalog_revision','expected_definition_revision','expected_source_revision'])catalogRevision(request[key]);catalogHex(request.original_incarnation);catalogHex(request.original_settings_digest,64);catalogHex(request.before_policy_digest,64);catalogHex(request.compiled_plan_digest,64);catalogHex(request.original_watch_digest,64);
++    if(request.extraction_policy!=null){const inherited=catalogObject(request.extraction_policy);exact(inherited,'schema,policy_body_digest,configured_policy_digest,encoded_bytes,retained_profile,legacy_fallback_detail,required_extraction_contract');if(inherited.schema!==1||inherited.required_extraction_contract!==3||!['lean','rich'].includes(String(inherited.retained_profile))||!['essential','agent_lean','balanced','detailed'].includes(String(inherited.legacy_fallback_detail))||integer(inherited.encoded_bytes,true)>131072)throw new Error('invalid_split_extraction_reference');catalogHex(inherited.policy_body_digest,64);catalogHex(inherited.configured_policy_digest,64);}
+     const original=registration(request.original_registration),destination=registration(request.destination_registration),binding=catalogObject(request.destination);catalogId(binding.index_id,'idx_');catalogHex(binding.owner_binding,64);collection(binding.collection);const mappings=catalogObject(binding.source_ids),mapped=new Set<string>();if(!Object.keys(mappings).length||Object.keys(mappings).length>17)throw new Error('invalid_split_source_mapping');for(const [source,target]of Object.entries(mappings)){catalogId(source,'src_');const id=catalogId(target,'src_');if(mapped.has(id)||id in mappings)throw new Error('invalid_split_source_mapping');mapped.add(id);}if(request.original_index===binding.index_id||original.binding===destination.binding||original.root!==destination.root||binding.owner_binding!==destination.binding||binding.collection!==destination.collection)throw new Error('crossed_split_destination');
+     const source=catalogObject(request.source_configuration);if(source.primary_root!==original.root)throw new Error('crossed_split_root');const aliases=catalogObject(source.aliases);if(Object.keys(aliases).length>16)throw new Error('invalid_split_sources');Object.values(aliases).forEach(path);if(!sameCatalogValue(request.selectors,normalizeSplitSelectors(request.selectors)))throw new Error('unnormalized_split_selectors');
+     const baseline=catalogObject(request.baseline);if(baseline.baseline_kind==='persisted'){const reference=catalogObject(baseline.reference);catalogRevision(reference.epoch);catalogHex(reference.digest,64);}else if(baseline.baseline_kind!=='virtual_unrestricted')throw new Error('invalid_split_baseline');
+diff --git a/packages/vscode/src/test/indexingSplit.test.ts b/packages/vscode/src/test/indexingSplit.test.ts
+--- a/packages/vscode/src/test/indexingSplit.test.ts
++++ b/packages/vscode/src/test/indexingSplit.test.ts
+@@ -176,3 +176,13 @@
+     const crossedSource=structuredClone(refreshed);catalogObject(catalogObject(crossedSource.receipt).remainder_witness).before_policy_digest='ff'.repeat(32);assert.throws(()=>validateSplitContinuity(before,crossedSource),/witness/);
+     const afterFence=splitAtStage(before,'original_fenced',5);catalogObject(afterFence.receipt).remainder_witness=structuredClone(receipt.remainder_witness);const illegal=splitAtStage(refreshed,'original_fenced',6);catalogObject(illegal.receipt).remainder_witness=structuredClone(next.remainder_witness);assert.throws(()=>validateSplitContinuity(afterFence,illegal),/proof/);
+ });
++
++test('split retains compact native policy inheritance and refuses contract/body-budget/selection mismatches',()=>{
++    const f=splitFixture(),snapshot=structuredClone(f.snapshot),request=catalogObject(snapshot.request);
++    request.required_policy_contract=3;request.extraction_policy={schema:1,policy_body_digest:'c1'.repeat(32),configured_policy_digest:'c2'.repeat(32),encoded_bytes:131072,retained_profile:'lean',legacy_fallback_detail:'agent_lean',required_extraction_contract:3};
++    validateSplitSnapshot(snapshot);assert.ok(splitExport(snapshot,true).includes('configured_policy_digest'));
++    const old=structuredClone(snapshot);catalogObject(old.request).required_policy_contract=2;assert.throws(()=>validateSplitSnapshot(old),/contract/);
++    const oversized=structuredClone(snapshot);catalogObject(catalogObject(oversized.request).extraction_policy).encoded_bytes=131073;assert.throws(()=>validateSplitSnapshot(oversized),/reference/);
++    const aliased=structuredClone(snapshot);catalogObject(catalogObject(aliased.request).extraction_policy).retained_profile='balanced';assert.throws(()=>validateSplitSnapshot(aliased),/reference/);
++    const changed=structuredClone(snapshot);catalogObject(catalogObject(changed.request).extraction_policy).policy_body_digest='c3'.repeat(32);assert.throws(()=>validateSplitContinuity(snapshot,changed),/identity/);
++});

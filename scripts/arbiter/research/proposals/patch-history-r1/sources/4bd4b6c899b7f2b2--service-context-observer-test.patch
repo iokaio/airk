@@ -1,0 +1,30 @@
+--- crates/airk-service/src/service_runtime/arbiter/joint_scoring/tests.rs
++++ crates/airk-service/src/service_runtime/arbiter/joint_scoring/tests.rs
+@@ -123,3 +123,27 @@
+     );
+     Ok(())
+ }
++
++#[test]
++#[cfg(all(feature = "local-inference", feature = "test-support"))]
++fn private_observation_is_known_zero_dispatch_not_lost_work_or_a_decision() -> Result<()> {
++    let cases: serde_json::Value = serde_json::from_slice(include_bytes!(
++        "../../../../../../fixtures/split/arbiter/native_context_action_cases.json"
++    ))?;
++    let request: NativeContextActionRequest =
++        serde_json::from_value(cases["cases"][0]["input"].clone())?;
++    let profile: Profile = serde_json::from_slice(include_bytes!(
++        "../../../../../../fixtures/arbiter/profile-downloads.json"
++    ))?;
++    let before = serde_json::to_value(&request)?;
++    let value = captured_without_dispatch(&request, &profile, request.roster.policy)?;
++    assert_eq!(value.observed_input_tokens, Some(0));
++    assert_eq!(value.work, Work::default());
++    assert_eq!(value.reserved_input_tokens, request.remaining_input_tokens);
++    assert!(matches!(value.outcome, Outcome::Unavailable { .. }));
++    assert_eq!(value.scope, request.scope);
++    assert_eq!(value.task_policy, request.roster.policy);
++    assert_eq!(serde_json::to_value(&request)?, before);
++    value.validate()?;
++    Ok(())
++}

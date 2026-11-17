@@ -1,0 +1,131 @@
+// SPDX-License-Identifier: Apache-2.0
+// Draft excerpts for the existing external Mac owner test module.
+    #[test]
+    fn missing_path_waits_for_proven_death_with_original_deadline() -> Result<()> {
+        use std::{
+            cell::{Cell, RefCell},
+            collections::VecDeque,
+            time::{Duration, Instant},
+        };
+        let epoch = Instant::now();
+        let elapsed = Cell::new(Duration::ZERO);
+        let sleeps = RefCell::new(Vec::new());
+        let mut observations = VecDeque::from([
+            ProcessObservation::ExpectedImage,
+            ProcessObservation::PendingUnknownPath,
+            ProcessObservation::PendingUnknownPath,
+            ProcessObservation::Retired,
+        ]);
+        wait_for_retirement(
+            epoch + Duration::from_millis(100),
+            || Ok(observations.pop_front().expect("must stop at proven death")),
+            || epoch + elapsed.get(),
+            |delay| {
+                sleeps.borrow_mut().push(delay);
+                elapsed.set(elapsed.get() + delay);
+            },
+        )?;
+        assert!(observations.is_empty());
+        assert_eq!(*sleeps.borrow(), vec![Duration::from_millis(20); 3]);
+        assert_eq!(elapsed.get(), Duration::from_millis(60));
+        Ok(())
+    }
+
+    #[test]
+    fn persistent_missing_path_never_renews_deadline_or_claims_retirement() {
+        use std::{
+            cell::{Cell, RefCell},
+            time::{Duration, Instant},
+        };
+        let epoch = Instant::now();
+        let elapsed = Cell::new(Duration::ZERO);
+        let calls = Cell::new(0);
+        let sleeps = RefCell::new(Vec::new());
+        let error = wait_for_retirement(
+            epoch + Duration::from_millis(45),
+            || {
+                calls.set(calls.get() + 1);
+                Ok(ProcessObservation::PendingUnknownPath)
+            },
+            || epoch + elapsed.get(),
+            |delay| {
+                sleeps.borrow_mut().push(delay);
+                elapsed.set(elapsed.get() + delay);
+            },
+        )
+        .unwrap_err();
+        assert_eq!(calls.get(), 3);
+        assert_eq!(
+            *sleeps.borrow(),
+            vec![
+                Duration::from_millis(20),
+                Duration::from_millis(20),
+                Duration::from_millis(5)
+            ]
+        );
+        assert_eq!(elapsed.get(), Duration::from_millis(45));
+        assert!(error.to_string().contains("deadline expired"));
+        assert!(error.to_string().contains("PendingUnknownPath"));
+    }
+
+    #[test]
+    fn retirement_wait_does_not_retry_permission_image_or_right_errors() {
+        use std::{
+            cell::Cell,
+            time::{Duration, Instant},
+        };
+        for refusal in [
+            "permission denied",
+            "Mac captured process image changed",
+            "Mac task-name type unavailable",
+        ] {
+            let epoch = Instant::now();
+            let calls = Cell::new(0);
+            let error = wait_for_retirement(
+                epoch + Duration::from_secs(1),
+                || {
+                    calls.set(calls.get() + 1);
+                    Err(anyhow::anyhow!(refusal))
+                },
+                || epoch,
+                |_| panic!("hard failures cannot enter retirement polling"),
+            )
+            .unwrap_err();
+            assert_eq!(calls.get(), 1);
+            assert_eq!(error.to_string(), refusal);
+        }
+    }
+
+    #[test]
+    fn expired_retirement_deadline_does_not_start_an_observation() {
+        let deadline = std::time::Instant::now();
+        let error = wait_for_retirement(
+            deadline,
+            || panic!("expired deadline cannot start another observation"),
+            || deadline,
+            |_| panic!("expired deadline cannot sleep"),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("deadline expired"));
+    }
+
+    #[test]
+    fn retirement_observed_after_original_deadline_is_not_success() {
+        use std::{
+            cell::Cell,
+            time::{Duration, Instant},
+        };
+        let epoch = Instant::now();
+        let elapsed = Cell::new(Duration::ZERO);
+        let error = wait_for_retirement(
+            epoch + Duration::from_millis(10),
+            || {
+                elapsed.set(Duration::from_millis(11));
+                Ok(ProcessObservation::Retired)
+            },
+            || epoch + elapsed.get(),
+            |_| panic!("expired observation cannot sleep"),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("deadline expired"));
+    }

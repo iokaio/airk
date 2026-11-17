@@ -1,0 +1,11 @@
+--- crates/airk-service/src/service_runtime/arbiter.rs
++++ crates/airk-service/src/service_runtime/arbiter.rs
+@@ -25,7 +25,7 @@
+ mod lifecycle;
+ pub(super) mod policy_delivery;
+ mod scoring;
+-#[cfg(all(feature = "local-inference", feature = "test-support"))]
++#[cfg(all(test, feature = "local-inference", feature = "test-support"))]
+ pub(super) mod warm_observer;
+ 
+ /// One service composition owner; stages share custody, revisions and the actual

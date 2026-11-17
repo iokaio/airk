@@ -1,0 +1,29 @@
+--- preserved-r5-runner.py
++++ additive-native-runner-r6.py
+@@ -42,6 +42,17 @@
+ def write_new(path,value):
+     with Path(path).open('x',encoding='utf-8',newline='\n') as stream:
+         json.dump(value,stream,indent=2);stream.write('\n');stream.flush();os.fsync(stream.fileno())
++
++def native_environment_paths(input_path,output_path,producer):
++    """Native strict canonical spelling uses observed handles, separate from Python views."""
++    need(Path(input_path).is_absolute(),'Native input must be absolute')
++    native_input=producer.native_path(input_path)
++    output=Path(output_path)
++    need(output.is_absolute() and output.name not in ('','.','..'),'Absolute fresh native output required')
++    parent=producer.unaliased(output.parent)
++    need(parent==producer.unaliased(STATE/'evidence') and not output.exists(),'Fresh owned native evidence output required')
++    native_output=Path(producer.native_path(parent))/output.name
++    return {'AIRK_ANN_QUERY_INPUT':native_input,'AIRK_ANN_QUERY_OUTPUT':str(native_output)}
+ 
+ def final_phase_observation(receipt,log,started,deadline,*,clock=time.monotonic,hash_file=digest):
+     """Hash every remaining file proof before ONE final monotonic cutoff sample."""
+@@ -115,7 +126,7 @@
+                 image={**plan['pins']['diagnostic_image'],'path':str(producer.unaliased(plan['pins']['diagnostic_image']['path']))}
+                 command=[image['path'],'--exact',selector,'--ignored','--nocapture']
+                 result_path=STATE/'evidence'/(plan['name']+'-'+args.phase+'.jsonl')
+-                environment.update(AIRK_ANN_QUERY_INPUT=str(args.input),AIRK_ANN_QUERY_INPUT_SHA256=args.input_sha256,AIRK_ANN_QUERY_OUTPUT=str(result_path))
++                environment.update(native_environment_paths(args.input,result_path,producer),AIRK_ANN_QUERY_INPUT_SHA256=args.input_sha256)
+                 def authenticate(api,job,info,child_deadline):
+                     return reference.suspended_authentication(api,info,deadline,child_deadline,SID,image,owner.image_proof,sid_reader=worker.windows_sid)
+                 remaining=deadline-time.monotonic();need(remaining>0,'Original native phase expired before launch')

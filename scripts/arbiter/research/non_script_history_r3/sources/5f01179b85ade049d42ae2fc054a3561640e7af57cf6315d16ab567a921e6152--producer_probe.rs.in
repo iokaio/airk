@@ -1,0 +1,200 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Opt-in isolated qualification output. Never stdout or a public tool response.
+use super::*;
+use airk_store::current::work_probe::{self, Metric, Snapshot};
+use std::{cell::Cell, io::Write, rc::Rc, time::Instant};
+const PREFIX: &str = "AIRK_PRODUCER_V1 ";
+#[derive(Clone)]
+struct Identity {
+    run: String,
+    runtime: String,
+    project: String,
+    job: String,
+    pid: u32,
+    worker: String,
+    service: String,
+    fencing_generation: u64,
+}
+fn configuration(
+    project: airk_core::service::ProjectBinding,
+    job: airk_core::identity::Sha256Digest,
+) -> Option<Identity> {
+    let value = std::env::var("AIRK_PRODUCER_PROBE").ok()?;
+    let (run, runtime) = value.split_once(':')?;
+    if run.len() != 32
+        || runtime.len() != 64
+        || !run
+            .bytes()
+            .chain(runtime.bytes())
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return None;
+    }
+    Some(Identity {
+        run: run.into(),
+        runtime: runtime.into(),
+        project: project.to_string(),
+        job: job.to_string(),
+        pid: std::process::id(),
+        worker: String::new(),
+        service: String::new(),
+        fencing_generation: 0,
+    })
+}
+fn emit(
+    identity: &Identity,
+    sequence: u64,
+    stage: &str,
+    outcome: &str,
+    elapsed_ns: u64,
+    snapshot: Option<&Snapshot>,
+    boundary: Option<Metric>,
+    suppressed: u64,
+) {
+    let mut metrics = serde_json::Map::new();
+    if let Some(snapshot) = snapshot {
+        for metric in [
+            Metric::QueueDecode,
+            Metric::QueueEncode,
+            Metric::QueueSelect,
+            Metric::QueueRetain,
+            Metric::SemanticUpdate,
+            Metric::FullFtsCapture,
+            Metric::FullFtsDocs,
+            Metric::FullFtsShadow,
+            Metric::FullFtsAux,
+            Metric::PublicationPrepare,
+            Metric::PublicationApply,
+            Metric::PublicationCommit,
+            Metric::ResourceRead,
+            Metric::ResourceWrite,
+            Metric::EmbeddingBatch,
+            Metric::JournalMaps,
+            Metric::JournalInputs,
+            Metric::JournalMetadata,
+        ] {
+            let work = snapshot.get(metric);
+            metrics.insert(format!("{metric:?}"), serde_json::json!({"calls":work.calls,"failures":work.failures,
+                "elapsed_ns":work.elapsed_ns,"items":work.items,"bytes":work.bytes,"saturated":work.saturated}));
+        }
+    }
+    let value = serde_json::json!({"schema":1,"run":identity.run,"runtime_install_sha256":identity.runtime,
+        "native_version":env!("CARGO_PKG_VERSION"),"project":identity.project,"job":identity.job,
+        "process_id":identity.pid,"worker":identity.worker,"service":identity.service,"fencing_generation":identity.fencing_generation,"sequence":sequence,"stage":stage,"outcome":outcome,
+        "elapsed_ns":elapsed_ns,"suppressed_samples":suppressed,"metrics":metrics,"boundary":boundary.map(|metric| format!("{metric:?}"))});
+    if let Ok(mut bytes) = serde_json::to_vec(&value) {
+        if bytes.len() + PREFIX.len() + 1 > 16384 {
+            return;
+        }
+        let mut record = Vec::with_capacity(PREFIX.len() + bytes.len() + 1);
+        record.extend_from_slice(PREFIX.as_bytes());
+        record.append(&mut bytes);
+        record.push(b'\n');
+        let _ = std::io::stderr().lock().write_all(&record);
+    }
+}
+pub(super) fn execute_observed(
+    kernel: &Kernel,
+    kind: JobKind,
+    job: airk_core::identity::Sha256Digest,
+    worker_identity: WorkerIdentity,
+) -> Result<JobOutcome> {
+    // Disabled means no scope, clocks, snapshots, serialization or output.
+    let Some(mut identity) = configuration(worker_identity.project, job) else {
+        return super::execute(kernel, kind, job);
+    };
+    identity.worker = worker_identity.worker.to_string();
+    identity.service = worker_identity.service.to_string();
+    identity.fencing_generation = worker_identity.fencing_generation;
+    let started = Instant::now();
+    emit(&identity, 0, "started", "in_progress", 0, None, None, 0);
+    let sequence = Rc::new(Cell::new(0u64));
+    let suppressed = Rc::new(Cell::new(0u64));
+    let (count, dropped, sampled_identity) =
+        (sequence.clone(), suppressed.clone(), identity.clone());
+    let seen = Cell::new(0u64);
+    let failed_seen = Cell::new(false);
+    let (result, snapshot) = work_probe::observe_reported(
+        || super::execute(kernel, kind, job),
+        move |snapshot, metric, failed| {
+            seen.set(seen.get().saturating_add(1));
+            let first_failure = if failed {
+                !failed_seen.replace(true)
+            } else {
+                false
+            };
+            if !first_failure && (count.get() >= 128 || (seen.get() > 16 && seen.get() % 16 != 0)) {
+                dropped.set(dropped.get().saturating_add(1));
+                return;
+            }
+            count.set(count.get() + 1);
+            emit(
+                &sampled_identity,
+                count.get(),
+                "producer_boundary",
+                if failed {
+                    "failed"
+                } else {
+                    "completed_interval"
+                },
+                started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+                Some(snapshot),
+                Some(metric),
+                dropped.get(),
+            );
+        },
+    );
+    let outcome = match &result {
+        Ok(JobOutcome::Succeeded { .. }) => "execute_succeeded",
+        Ok(JobOutcome::Canceled) => "execute_canceled",
+        Ok(_) => "execute_non_success",
+        Err(_) => "execute_error",
+    };
+    emit(
+        &identity,
+        sequence.get() + 1,
+        "execute_finished",
+        outcome,
+        started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+        Some(&snapshot),
+        None,
+        suppressed.get(),
+    );
+    result
+}
+
+pub(crate) fn enabled() -> bool {
+    std::env::var("AIRK_PRODUCER_PROBE")
+        .ok()
+        .is_some_and(|value| {
+            value.split_once(':').is_some_and(|(run, runtime)| {
+                run.len() == 32
+                    && runtime.len() == 64
+                    && run
+                        .bytes()
+                        .chain(runtime.bytes())
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            })
+        })
+}
+pub(crate) fn spawned(
+    project: airk_core::service::ProjectBinding,
+    worker: u32,
+    instance: airk_core::identity::Incarnation,
+    service: airk_core::identity::Incarnation,
+) {
+    let Some(identity) = configuration(
+        project,
+        airk_core::identity::Sha256Digest::from_bytes([0; 32]),
+    ) else {
+        return;
+    };
+    let value = serde_json::json!({"schema":1,"run":identity.run,"runtime_install_sha256":identity.runtime,
+        "parent_process_id":std::process::id(),"worker_process_id":worker,"project":identity.project,"worker":instance.to_string(),"service":service.to_string()});
+    if let Ok(bytes) = serde_json::to_vec(&value) {
+        let mut record = b"AIRK_PRODUCER_OWNER_V1 ".to_vec();
+        record.extend_from_slice(&bytes);
+        record.push(b'\n');
+        let _ = std::io::stderr().lock().write_all(&record);
+    }
+}

@@ -1,0 +1,619 @@
+--- r1/r154_diagnostic.py
++++ r2/r154_diagnostic.py
+@@ -38,15 +38,38 @@
+         json.dump(value, output, ensure_ascii=False, indent=2)
+         output.write('\n')
+ 
+-def preparation():
+-    packet = json.loads((BASE / 'preparation.json').read_bytes())
++def frozen_packet(raw,expected,original=None):
++    require(hashlib.sha256(raw).hexdigest()==expected,'Externally reviewed preparation bytes differ')
++    if original is not None:require(raw==original,'Original preparation bytes changed')
++    return json.loads(raw)
++
++def validate_question(packet,historical):
++    require(packet['question']==historical['question'] and
++        hashlib.sha256(packet['question'].encode('utf-8')).hexdigest()==packet['original_question_sha256'],
++        'Frozen question differs from original authenticated arguments')
++
++def final_observation(report,started,cutoff,clock=time.monotonic):
++    observed=clock();report['elapsed_seconds']=observed-started
++    report['original_phase_expired']=observed>=cutoff
++    return report['original_phase_expired']
++
++def preparation(expected, frozen=None):
++    raw=(BASE/'preparation.json').read_bytes()
++    packet=frozen_packet(raw,expected,frozen)
+     require(packet['classification'].startswith('fresh attribution-only'), 'Wrong experiment identity')
+     if 'orchestrator' in packet:
+         pinned(__file__, packet['orchestrator']['sha256'])
+         pinned(packet['source_custody']['path'], packet['source_custody']['sha256'])
+-    for row in packet['historical_pins'] + packet['helpers']:
++    for row in packet['historical_pins'] + packet['historical_helpers']:
+         pinned(row['original_path'], row['sha256'])
+         pinned(row['copy_path'], row['sha256'])
++    for row in packet['helpers']:
++        pinned(row['path'],row['sha256'])
++    for row in packet['maintained_owner_originals']:
++        pinned(row['path'],row['sha256']);pinned(row['before'],row['sha256'])
++    original_args=next(row for row in packet['historical_pins'] if row['kind']=='arguments')
++    historical=json.loads(pinned(original_args['copy_path'],original_args['sha256']).read_bytes())
++    validate_question(packet,historical)
+     for row in packet['copied_source_files']:
+         for field in ['original_path', 'copy_path']:
+             source = pinned(row[field], row['sha256'])
+@@ -77,8 +100,8 @@
+         'Foreign ignored SDK artifacts cannot be adopted')
+     return {'path': str(manifest_path), 'sha256': expected, 'files': len(rows)}
+ 
+-def execute(args, packet, account):
+-    require(args.phase_seconds is not None and 0 < args.phase_seconds <= 1800,
++def execute(args, packet, account, frozen, started, cutoff):
++    require(args.phase_seconds == 360,
+         'Explicit bounded diagnostic phase required')
+     repository = Path(args.repository_root).resolve(strict=True)
+     output = Path(args.output).absolute()
+@@ -113,6 +136,12 @@
+     from native_policy import NativePolicy
+     policy_pin = {'path': str(policy_path), 'sha256': args.resource_policy_input_sha256}
+     policy = NativePolicy(policy_pin)
++    from native_delivery import NativeDelivery
++    delivery_pin={'path':str(pinned(args.native_budget_cases,args.native_budget_cases_sha256)),
++        'sha256':args.native_budget_cases_sha256}
++    require(delivery_pin['path']==packet['native_budget_cases']['path'] and
++        delivery_pin['sha256']==packet['native_budget_cases']['sha256'],'Delivery must use the externally reviewed Rust fixture')
++    delivery=NativeDelivery(delivery_pin,policy)
+     template = json.loads(template_path.read_bytes())
+     require(template['budget']['deadline_ms'] == policy.deadline_ms and
+         template['budget']['input_tokens'] == policy.shared_input_tokens,
+@@ -122,8 +151,6 @@
+     require(set(arguments) == set(template) and
+         all(arguments[key] == template[key] for key in template if key != 'question'),
+         'Only the frozen question may replace native template data')
+-    started = time.monotonic()
+-    cutoff = started + args.phase_seconds
+     def remaining():
+         value = cutoff - time.monotonic()
+         require(value > 0, 'Original diagnostic phase deadline expired')
+@@ -142,21 +169,27 @@
+     write(output / 'execution-inputs.json', vars(args))
+     write(output / 'fresh-question-arguments.json', arguments)
+     client = None
++    service_handle = None
+     failed = None
+     try:
++        import custody,reference_worker
++        service_handle=custody.OriginalProcess(ready['health']['process_id'],
++            {'path':args.service_executable_path,'sha256':args.service_executable_sha256},
++            SID,reference_worker.windows_sid)
+         client = NativeGoalClient(pair, ready['control_root'], selected[0]['index_id'], output / 'canonical-call',
+             fixture_ready=ready_path, index_bindings=bindings_path, repository_root=repository,
+-            resource_policy_input=policy_pin)
++            resource_policy_input=policy_pin,native_delivery_input=delivery_pin)
+         before = client.observe_stage_status(output / 'stage-status', 'before', args.context_manifest,
+             args.focus_manifest, timeout=min(remaining(), policy.deadline_seconds))
+         actual = before['full_native_response']
+         require(all(actual[stage]['availability'] == 'ready' for stage in ['focus', 'context']),
+             'Both exact selected current stages must already be natively warm/Ready')
+-        require(remaining() >= policy.deadline_seconds, 'Remaining phase cannot admit one unchanged native read budget')
++        report['delivery_management']=client.prepare_delivery(remaining())
++        require(remaining() >= delivery.deadline_seconds, 'Remaining original phase cannot admit the whole native delivery allowance')
+         # Exactly one fresh call. Native owners mint its new attempt/absolute
+         # expiry. Historical request/admission identities are never submitted.
+         report['canonical_call_attempts'] = 1
+-        receipt = client.call('answer', arguments, policy.deadline_seconds)
++        receipt = client.call('answer', arguments, delivery.deadline_seconds,prepared_delivery=True)
+         report['canonical_call'] = receipt
+         report['fresh_call_validated'] = receipt.get('validated') is True
+         if receipt.get('timed_out'):
+@@ -177,18 +210,63 @@
+             except BaseException as error:
+                 report['session_close_failure'] = {'type': type(error).__name__, 'message': str(error)}
+                 if failed is None: failed = error
+-        report['elapsed_seconds'] = time.monotonic() - started
++        if service_handle is not None:
++            try:
++                require(service_handle.api.WaitForSingleObject(service_handle.handle,0)==258,'Original fixture process exited before canonical shutdown')
++                if client is not None:report['health_before_shutdown']=client.observe_health(output,'health-before-shutdown',remaining())
++                command=[str(pair/'airkctl.exe'),'--service-runtime-dir',ready['control_root'],'service','shutdown']
++                stopped=subprocess.run(command,capture_output=True,timeout=remaining(),check=False)
++                (output/'service-shutdown-stdout.bin').write_bytes(stopped.stdout)
++                (output/'service-shutdown-stderr.bin').write_bytes(stopped.stderr)
++                stop=json.loads(stopped.stdout)
++                report['native_service_shutdown']={'command':command,'returncode':stopped.returncode,
++                    'full_response':stop,'stdout_sha256':hashlib.sha256(stopped.stdout).hexdigest(),
++                    'stderr_sha256':hashlib.sha256(stopped.stderr).hexdigest()}
++                require(stopped.returncode==0 and stop.get('status')=='stopping',
++                    'Actual instance-fenced native fixture shutdown was refused or outcome unknown; no retry')
++                report['fresh_service_process_settlement']=service_handle.observe_original_exit(cutoff)
++                closed_path=ready_path.parent/'closed.json';closed_raw=closed_path.read_bytes();closed=json.loads(closed_raw)
++                require(closed.get('schema')=='airk.private-arbiter-fixture-closed/1'
++                    and closed.get('instance')==ready['health']['instance']
++                    and closed.get('control_root')==ready['control_root']
++                    and closed.get('shutdown_completed') is True and closed.get('service_lease_reacquired') is True,
++                    'Original private fixture native drain/lease closure absent')
++                report['native_closure']={'path':str(closed_path),'sha256':hashlib.sha256(closed_raw).hexdigest()}
++                (output/'native-fixture-closed.json').write_bytes(closed_raw)
++                report['native_journals']={}
++                for name in ['composed-observer','warm-completions']:
++                    summary_path=ready_path.parent/(name+'.closed.json');summary_raw=summary_path.read_bytes();summary=json.loads(summary_raw)
++                    require(summary.get('complete') is True and summary.get('dropped')==0,
++                        'Actual native journal did not close completely')
++                    raw_path=ready_path.parent/(name+'.jsonl');raw_bytes=raw_path.read_bytes()
++                    (output/(name+'.closed.json')).write_bytes(summary_raw)
++                    (output/(name+'.jsonl')).write_bytes(raw_bytes)
++                    report['native_journals'][name]={'summary':{'path':str(summary_path),'sha256':hashlib.sha256(summary_raw).hexdigest()},
++                        'raw':{'path':str(raw_path),'sha256':hashlib.sha256(raw_bytes).hexdigest(),'bytes':len(raw_bytes)}}
++            except BaseException as error:
++                report['service_settlement_failure']={'type':type(error).__name__,'message':str(error)}
++                if failed is None:failed=error
++            finally:
++                if service_handle.handle is not None:
++                    closed=service_handle.api.CloseHandle(service_handle.handle)
++                    service_handle.handle=None
++                    report['unsettled_service_observer_handle_closed']=bool(closed)
++                    # This closes only our observer capability, never the service.
+         try:
+-            preparation()
++            preparation(args.preparation_sha256,frozen)
+             pinned(ready_path, args.fixture_ready_sha256)
+             pinned(bindings_path, args.index_bindings_sha256)
+             pinned(policy_path, args.resource_policy_input_sha256)
+             pinned(build_path, args.runtime_build_sha256)
+             sdk_closure(repository, args.sdk_manifest, args.sdk_manifest_sha256)
++            pinned(template_path,args.request_template_sha256)
++            pinned(delivery_pin['path'],delivery_pin['sha256'])
+             report['prepared_sources_and_inputs_unchanged'] = True
+         except BaseException as error:
+             report['post_input_failure'] = {'type': type(error).__name__, 'message': str(error)}
+             if failed is None: failed = error
++        final_observation(report,started,cutoff)
++        if report['original_phase_expired'] and failed is None:failed=TimeoutError('Original whole diagnostic phase expired after final retention')
+         # Session/helper exit is retained separately; never equate it with
+         # cancellation, dispatch drain, lease release or native service exit.
+         write(output / 'diagnostic.json', report)
+@@ -197,25 +275,37 @@
+     if failed is not None: raise failed
+     return 0 if report.get('fresh_call_validated') else 1
+ 
+-def main():
++def parser():
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument('--execute-new-diagnostic', action='store_true')
+     for name in ['repository-root', 'runtime-pair', 'runtime-build-sha256', 'fixture-ready',
+-        'fixture-ready-sha256', 'service-executable-sha256', 'index-bindings', 'index-bindings-sha256',
++        'fixture-ready-sha256', 'service-executable-sha256', 'service-executable-path', 'index-bindings', 'index-bindings-sha256',
+         'resource-policy-input', 'resource-policy-input-sha256', 'request-template-sha256',
+-        'context-manifest', 'focus-manifest', 'sdk-manifest', 'sdk-manifest-sha256', 'output']:
++        'context-manifest', 'focus-manifest', 'sdk-manifest', 'sdk-manifest-sha256', 'output',
++        'native-budget-cases','native-budget-cases-sha256']:
+         parser.add_argument('--' + name)
+     parser.add_argument('--phase-seconds', type=float)
+-    args = parser.parse_args()
++    parser.add_argument('--preparation-sha256',required=True)
++    parser.add_argument('--owned-started',type=float)
++    parser.add_argument('--owned-deadline',type=float)
++    return parser
++
++def main():
++    args=parser().parse_args()
+     account = identity()
+-    packet = preparation()
++    frozen=(BASE/'preparation.json').read_bytes()
++    packet = preparation(args.preparation_sha256,frozen)
+     if not args.execute_new_diagnostic:
+         print(json.dumps({'preparation_verified': True, 'source_files': len(packet['copied_source_files']),
+             'source_bytes': packet['source_bytes'], 'helpers': len(packet['helpers']),
+             'native_or_model_execution': False, 'execution_identity': account}))
+         return 0
+-    require(all(value is not None for value in vars(args).values()), 'All future execution input pins are required')
+-    return execute(args, packet, account)
++    require(all(value is not None for value in vars(args).values()), 'All future execution input pins and original owner cutoff required')
++    sys.path.insert(0,str(BASE/'owned'))
++    import custody
++    custody.require_transport_job()
++    require(args.owned_deadline==args.owned_started+args.phase_seconds,'Original outer cutoff was changed')
++    return execute(args, packet, account,frozen,args.owned_started,args.owned_deadline)
+ 
+ if __name__ == '__main__':
+     sys.exit(main())
+--- r1/helpers/native_goal_client.py
++++ r2/helpers/native_goal_client.py
+@@ -77,7 +77,8 @@
+                 'fixture_ready':str(client.fixture_ready),'ready_sha256':digest(client.fixture_ready),
+                 'index_bindings':str(client.binding.path),'bindings_sha256':digest(client.binding.path),
+                 'index_id':client.index_id,'transcript_dir':str(directory/'i2-transcript'),
+-                'repository_root':str(client.repository_root),'resource_policy_input':client.policy.pin}
++                'repository_root':str(client.repository_root),'resource_policy_input':client.policy.pin,
++                'native_delivery_input':client.delivery.pin if client.delivery else None}
+         for name,key in [('session.js','session_module_sha256'),('runner.js','runner_module_sha256'),('adminChunks.js','admin_chunks_sha256')]:
+             config[key]=digest(root/'packages/vscode/out/airkctl'/name)
+         path=directory/'config.json';path.write_text(json.dumps(config,indent=2)+'\n',encoding='utf-8')
+@@ -134,11 +135,14 @@
+ 
+ class NativeGoalClient:
+     """Read-only, one invocation per call; never retries or invents readiness."""
+-    def __init__(self,runtime_pair,control_root,index_id,output,fixture_ready=None,process_observer=None,*,index_bindings=None,session_factory=None,repository_root,resource_policy_input):
++    def __init__(self,runtime_pair,control_root,index_id,output,fixture_ready=None,process_observer=None,*,index_bindings=None,session_factory=None,repository_root,resource_policy_input,native_delivery_input=None):
+         self.pair=Path(runtime_pair).resolve();self.control=Path(control_root).resolve();self.index_id=index_id
+         self.output=Path(output).resolve()
+         self.repository_root=Path(repository_root).resolve(strict=True)
+         self.policy=NativePolicy(resource_policy_input)
++        from native_delivery import NativeDelivery
++        self.delivery=NativeDelivery(native_delivery_input,self.policy) if native_delivery_input else None
++        self.delivery_prepared=False
+         root=self.repository_root/'artifacts'
+         if self.output.exists() or not self.output.is_relative_to(root):raise ValueError('fresh private native call directory required')
+         self.binding=ResidentBinding(index_bindings,index_id=index_id) if index_bindings is not None else None
+@@ -184,12 +188,13 @@
+                 or not Path(self.binding.receipt['control_root']).samefile(self.control)):
+                 raise ValueError('original native binding service instance/namespace differs')
+         self.adapter_seals={}
+-        for path in [Path(__file__).with_name('goal_sources.py'),Path(__file__).with_name('native_eval_session.cjs'),Path(__file__).with_name('native_policy.py'),Path(__file__).with_name('native_policy.cjs')]:self.adapter_seals[path]=path.read_bytes()
++        for path in [Path(__file__).with_name('goal_sources.py'),Path(__file__).with_name('native_eval_session.cjs'),Path(__file__).with_name('native_policy.py'),Path(__file__).with_name('native_policy.cjs'),Path(__file__).with_name('native_delivery.py'),Path(__file__).with_name('native_delivery.cjs')]:self.adapter_seals[path]=path.read_bytes()
+         self.session=None;self.session_factory=session_factory or PinnedSession
+         self.sequence=0
+ 
+     def verify(self):
+         self.policy.verify()
++        if self.delivery:self.delivery.verify()
+         if Path(__file__).read_bytes()!=self.source_bytes or (self.pair/'airk-runtime.json').read_bytes()!=self.metadata_bytes:
+             raise ValueError('native goal adapter/runtime metadata changed')
+         if any(digest(path)!=self.pins[name] for name,path in self.images.items()):raise ValueError('matched native images changed')
+@@ -237,23 +242,39 @@
+         (directory/(phase+'.json')).write_text(json.dumps(result,indent=2)+'\n')
+         return result
+ 
+-    def call(self,tool,arguments,remaining_canonical_seconds):
++    def prepare_delivery(self,timeout):
++        """Management setup is charged to the outer owner, before native dispatch."""
++        if not self.service_identity or not self.delivery or self.session is not None or self.delivery_prepared:
++            raise ValueError('one new original native delivery session required')
++        started=time.monotonic();self.verify()
++        directory=self.output/'delivery-management';directory.mkdir()
++        health=self.observe_health(directory,'health-before-session',timeout)
++        remaining=timeout-(time.monotonic()-started)
++        if remaining<=0:raise TimeoutError('original management allowance exhausted before session initialization')
++        self.session=self.session_factory(self,remaining)
++        self.verify();self.delivery_prepared=True
++        return {'health':health,'elapsed_seconds':time.monotonic()-started,
++            'native_delivery_source':self.delivery.pin,'native_dispatches':0}
++
++    def call(self,tool,arguments,remaining_canonical_seconds,*,prepared_delivery=False):
+         adapter_started=time.monotonic()
+         if tool not in ('search','read_file','context','answer'):raise ValueError('evaluator may invoke only approved canonical read tools')
+-        if not isinstance(arguments,dict) or not 0<remaining_canonical_seconds<=self.policy.deadline_seconds:raise ValueError('invalid native arguments/deadline')
++        cap=self.delivery.deadline_seconds if prepared_delivery and self.delivery else self.policy.deadline_seconds
++        if not isinstance(arguments,dict) or not 0<remaining_canonical_seconds<=cap:raise ValueError('invalid native arguments/deadline')
++        if prepared_delivery and (tool!='answer' or self.sequence!=0 or not self.delivery_prepared or self.session is None or remaining_canonical_seconds!=cap):raise ValueError('unchanged full prepared Answer delivery required')
+         self.verify();self.sequence+=1;directory=self.output/f'call-{self.sequence:04d}';directory.mkdir()
+         args_bytes=(json.dumps(arguments,ensure_ascii=False,indent=2)+'\n').encode();args_path=directory/'arguments.json';args_path.write_bytes(args_bytes)
+         command=[str(self.images['airkctl']),'--service-runtime-dir',str(self.control),'tools','call',tool,'--index',self.index_id,'--args-file',str(args_path)]
+         overall_rpc_start=time.monotonic();health=[]
+-        if self.service_identity:health.append(self.observe_health(directory,'health-before',remaining_canonical_seconds))
+-        remaining=remaining_canonical_seconds-(time.monotonic()-overall_rpc_start)
++        if self.service_identity and not prepared_delivery:health.append(self.observe_health(directory,'health-before',remaining_canonical_seconds))
++        remaining=remaining_canonical_seconds if prepared_delivery else remaining_canonical_seconds-(time.monotonic()-overall_rpc_start)
+         if remaining<=0:raise ValueError('identity observations exhausted native invocation deadline')
+         start=time.monotonic();timed_out=False;identity_error=None;session_exchange=None
+         try:
+             if self.service_identity:
+                 if self.session is None:
+                     self.session=self.session_factory(self,remaining)
+-                remaining=remaining_canonical_seconds-(time.monotonic()-overall_rpc_start)
++                remaining=remaining_canonical_seconds if prepared_delivery else remaining_canonical_seconds-(time.monotonic()-overall_rpc_start)
+                 if remaining<=0:raise TimeoutError('original native invocation budget exhausted before dispatch')
+                 session_exchange=self.session.invoke(str(self.sequence),tool,args_path,remaining)
+                 result=session_exchange['result'];stdout=result['stdout'].encode();stderr=result['stderr'].encode();code=result['exitCode']
+@@ -279,7 +300,7 @@
+             try:self.binding.validate(parsed)
+             except (ValueError,KeyError,TypeError) as error:identity_error=str(error)
+         remaining=remaining_canonical_seconds-(time.monotonic()-overall_rpc_start)
+-        if self.service_identity and not timed_out:
++        if self.service_identity and not timed_out and not prepared_delivery:
+             if remaining<=0:timed_out=True
+             else:
+                 try:health.append(self.observe_health(directory,'health-after',remaining))
+@@ -291,6 +312,7 @@
+             'native_binding_sha256':digest(self.binding.path) if self.binding else None,'session_exchange':session_exchange,
+             'identity_error':identity_error,'validated':not identity_error and not parse_error and not timed_out and code==0,
+             'elapsed_seconds':elapsed,'deadline_seconds':remaining_canonical_seconds,'timed_out':timed_out,'returncode':code,
++            'prepared_native_delivery':prepared_delivery,'native_delivery_source':self.delivery.pin if prepared_delivery else None,
+             'canonical_read_process_seconds':read_elapsed,'identity_management_cli_invocations':len(health),'actual_health_observations':health,
+             'stdout_sha256':hashlib.sha256(stdout).hexdigest(),'stderr_sha256':hashlib.sha256(stderr).hexdigest(),
+             'stdout_bytes':len(stdout),'stderr_bytes':len(stderr),
+--- r1/helpers/native_eval_session.cjs
++++ r2/helpers/native_eval_session.cjs
+@@ -9,6 +9,7 @@
+ const readline = require('node:readline');
+ 
+ const {readNativePolicy} = require('./native_policy.cjs');
++const {readNativeDelivery} = require('./native_delivery.cjs');
+ const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+ const inside = (parent, child) => { const rel = path.relative(parent, child); return rel === '' || (!rel.startsWith('..'+path.sep) && rel !== '..' && !path.isAbsolute(rel)); };
+ function sameDirectory(left, right) {
+@@ -21,6 +22,7 @@
+     if(!path.isAbsolute(config.repository_root||''))throw Error('explicit current repository root required');
+     const ROOT=fs.realpathSync(config.repository_root);
+     const nativePolicy=readNativePolicy(config.resource_policy_input);
++    const nativeDelivery=config.native_delivery_input?readNativeDelivery(config.native_delivery_input,nativePolicy.policy):null;
+     const directory = path.resolve(config.transcript_dir);
+     if (!inside(path.join(ROOT, 'artifacts'), directory) || fs.existsSync(directory)) throw Error('fresh private transcript directory required');
+     const seals = new Map();
+@@ -30,6 +32,8 @@
+         seals.set(target, bytes);return bytes;
+     }
+     retain(config.resource_policy_input.path,config.resource_policy_input.sha256);
++    if(nativeDelivery)retain(config.native_delivery_input.path,config.native_delivery_input.sha256);
++    retain(require.resolve('./native_delivery.cjs'));
+     retain(__filename);retain(require.resolve('./native_policy.cjs'));
+     for (const field of ['ready_sha256', 'bindings_sha256']) if (!/^[a-f0-9]{64}$/.test(config[field] || '')) throw Error('explicit input digest required: '+field);
+     if (!dependencies.library) {
+@@ -119,7 +123,7 @@
+         },
+         async invoke(request) {
+             verify();
+-            if (!request || !['search', 'context', 'read_file', 'answer'].includes(request.tool) || !Number.isInteger(request.deadline_ms) || request.deadline_ms < 1 || request.deadline_ms > nativePolicy.policy.deadline_ms || !path.isAbsolute(request.args_file) || !inside(path.join(ROOT, 'artifacts'), path.resolve(request.args_file))) throw Error('invalid private read invocation');
++            if (!request || !['search', 'context', 'read_file', 'answer'].includes(request.tool) || !Number.isInteger(request.deadline_ms) || request.deadline_ms < 1 || request.deadline_ms > (nativeDelivery?nativeDelivery.deadlineMs:nativePolicy.policy.deadline_ms) || !path.isAbsolute(request.args_file) || !inside(path.join(ROOT, 'artifacts'), path.resolve(request.args_file))) throw Error('invalid private read invocation');
+             const raw = fs.readFileSync(request.args_file);
+             const parsed = JSON.parse(raw);
+             if (raw.length > 65536 || parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw Error('invalid native read argument file');
+--- /dev/null
++++ r2/helpers/native_delivery.py
+@@ -0,0 +1,18 @@
++"""Consume the SHA-pinned Rust-emitted budget fixture; no native contract defaults."""
++import hashlib,json
++from pathlib import Path
++class NativeDelivery:
++    def __init__(self,pin,policy):
++        self.pin=dict(pin);self.path=Path(pin['path'])
++        if not self.path.is_absolute() or self.path.is_symlink() or not self.path.is_file():raise ValueError('original native delivery fixture required')
++        self.raw=self.path.read_bytes()
++        if len(self.raw)>16777216 or hashlib.sha256(self.raw).hexdigest()!=pin['sha256']:raise ValueError('native delivery fixture bytes differ')
++        value=json.loads(self.raw)
++        if (value.get('schema')!='airk.arbiter.budget-cases/1'
++            or value['operation_deadline_ms']!=policy.deadline_ms
++            or value['default_budget']['input_tokens']!=policy.shared_input_tokens
++            or type(value['transport_deadline_ms']) is not int
++            or value['transport_deadline_ms']<policy.deadline_ms):raise ValueError('native delivery/policy sources differ')
++        self.deadline_ms=value['transport_deadline_ms'];self.deadline_seconds=self.deadline_ms/1000
++    def verify(self):
++        if self.path.read_bytes()!=self.raw:raise ValueError('native delivery fixture changed')
+--- /dev/null
++++ r2/helpers/native_delivery.cjs
+@@ -0,0 +1,13 @@
++// SPDX-License-Identifier: Apache-2.0
++'use strict';
++// Consume original Rust-emitted bytes, never define a parallel budget/default.
++const fs=require('node:fs'),crypto=require('node:crypto'),path=require('node:path');
++function readNativeDelivery(pin,policy){
++ if(!pin||!path.isAbsolute(pin.path)||!/^[a-f0-9]{64}$/.test(pin.sha256||''))throw Error('pinned native delivery fixture required');
++ const stat=fs.lstatSync(pin.path);if(!stat.isFile()||stat.isSymbolicLink()||stat.size>16777216)throw Error('ordinary bounded native delivery fixture required');
++ const raw=fs.readFileSync(pin.path);if(crypto.createHash('sha256').update(raw).digest('hex')!==pin.sha256)throw Error('native delivery fixture bytes differ');
++ const value=JSON.parse(raw);
++ if(value.schema!=='airk.arbiter.budget-cases/1'||value.operation_deadline_ms!==policy.deadline_ms||value.default_budget.input_tokens!==policy.shared_input_tokens||!Number.isSafeInteger(value.transport_deadline_ms)||value.transport_deadline_ms<policy.deadline_ms)throw Error('native delivery/policy sources differ');
++ return {raw,deadlineMs:value.transport_deadline_ms};
++}
++module.exports={readNativeDelivery};
+--- r1/helpers/CONTRACT.md
++++ r2/helpers/CONTRACT.md
+@@ -44,3 +44,24 @@
+ separately. Expiry refuses before dispatch. A wakeup never restarts a warm clock.
+ Controller construction is inside retained failure handling; its parent stderr
+ handle closes even on launch refusal. No process exit or cleanup is invented.
++
++R154 R2 is one explicitly fresh attribution-only Answer, not a retry, original
++observer reconstruction, gold, acceptance or promotion. Its optional prepared
++session mode consumes the SHA-pinned existing Core Rust budget-cases fixture's
++transport declaration. Native template/policy remain unchanged. Health/session
++setup and post-read management are charged to the original360s outer phase;
++after preparation the one-use Answer receives the entire native transport
++allowance. Historical ordinary adapter calls retain their prior policy cap.
++Both Python and JS consume the same original Rust-emitted fixture bytes.
++
++The externally reviewed preparation SHA is mandatory and its original bytes
++remain fixed; changing the document plus its declared source hashes cannot
++self-certify. Question text must equal SHA-pinned original arguments and the
++declared UTF8 digest. Native owners create a new attempt on freshly indexed
++copied sources. There is one Answer and no automatic retry on any outcome.
++
++All final753-source/SDK/template/delivery/input hashes follow authentic canonical
++fixture shutdown, actual original process-handle exit and native recorder/lease
++closure, under the external maintained multiprocess owner's original deadline.
++One final monotonic observation rejects >= whole-phase expiry. Receipt writing
++follows that observation scope. A helper/socket close cannot certify native drain.
+--- /dev/null
++++ r2/launch_owned.py
+@@ -0,0 +1,99 @@
++"""One explicit fresh R154 diagnostic under the maintained same-human multiprocess owner."""
++import hashlib,importlib.util,json,os,sys,time
++from pathlib import Path
++BASE=Path(__file__).resolve().parent
++
++def load(path,name):
++    spec=importlib.util.spec_from_file_location(name,path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
++
++def natural(owned):
++    expected={'exit_code':0,'timed_out':False,'log_oversized':False,
++        'owned_descendants_settled':True,'owned_job_forced_termination':False,
++        'owned_job_final_active_processes':0,'owned_job_final_member_pids':[],
++        'parent_assigned_to_job':False,'child_assigned_before_resume':True}
++    return all(type(owned.get(k)) is type(v) and owned.get(k)==v for k,v in expected.items())
++
++def main():
++    started=time.monotonic()
++    sys.path.insert(0,str(BASE/'helpers'));sys.path.insert(0,str(BASE/'owned'))
++    diagnostic=load(BASE/'r154_diagnostic.py','r154_owned_diagnostic')
++    args=diagnostic.parser().parse_args()
++    frozen=(BASE/'preparation.json').read_bytes()
++    packet=diagnostic.preparation(args.preparation_sha256,frozen)
++    if not args.execute_new_diagnostic:
++        return diagnostic.main()
++    diagnostic.require(args.phase_seconds==360 and args.owned_started is None and args.owned_deadline is None,
++        'One fresh original360s owner cutoff required; caller cannot set descendant clock')
++    cutoff=started+args.phase_seconds
++    import reference_worker,reference_owned,reference_parent_no_site_r2,custody,windows_job_8g
++    diagnostic.require(reference_worker.windows_sid()==diagnostic.SID,'Same verified human parent required')
++    ready_path=diagnostic.pinned(args.fixture_ready,args.fixture_ready_sha256)
++    ready=json.loads(ready_path.read_bytes())
++    diagnostic.require(ready.get('schema')=='airk.private-arbiter-fixture/1' and ready.get('evaluation') is True
++        and ready.get('release_qualified') is False,'Actual isolated private fixture required')
++    diagnostic.require(ready['health']['executable_sha256']==args.service_executable_sha256,'Actual native fixture image differs')
++    root=Path(args.output).absolute()
++    diagnostic.require(not root.exists() and root.parent.resolve().is_relative_to(ready_path.parent.resolve()),
++        'Fresh output must stay in original owner-private fixture work')
++    diagnostic.require(not root.resolve().is_relative_to(Path(packet['source_root']).resolve()),'Output cannot modify frozen source')
++    diagnostic.require(time.monotonic()<cutoff,'Original phase expired during input preflight')
++    root.mkdir();(root/'temp').mkdir()
++    handle=None;report={'schema':'airk.private-r154-owned-diagnostic/1','classification':packet['classification'],
++        'complete':False,'qualification_granted':False,'original_call_retried':False,
++        'original_started_monotonic':started,'original_deadline_monotonic':cutoff,
++        'original_preparation_sha256':args.preparation_sha256,'other_processes_touched':False,
++        'no_automatic_retry':True,'failure':None}
++    python={'path':str(Path(sys.executable).resolve()),'sha256':diagnostic.digest(sys.executable)}
++    # Child command derives from the same native-facing parser; no native DTOs.
++    argv=[python['path'],'-S','-B',str(BASE/'r154_diagnostic.py'),*sys.argv[1:]]
++    position=argv.index('--output');argv[position+1]=str(root/'worker')
++    argv.extend(['--owned-started',repr(started),'--owned-deadline',repr(cutoff)])
++    report['command']=argv;report['python']=python
++    def before_resume(api,job,info,child_deadline):
++        return reference_parent_no_site_r2.suspended_authentication(api,info,cutoff,child_deadline,
++            diagnostic.SID,python,reference_owned.image_proof)
++    try:
++        handle=custody.OriginalProcess(ready['health']['process_id'],
++            {'path':args.service_executable_path,'sha256':args.service_executable_sha256},
++            diagnostic.SID,reference_worker.windows_sid)
++        report['original_service_before']=dict(handle.proof)
++        env=dict(os.environ);env.update({'TEMP':str(root/'temp'),'TMP':str(root/'temp')})
++        remaining=cutoff-time.monotonic();diagnostic.require(remaining>0,'Original prelaunch cutoff expired')
++        with (root/'stdout-stderr.log').open('xb') as log:
++            owned=windows_job_8g.run_windows_owned(argv,BASE,log,remaining,env,
++                absolute_deadline=cutoff,before_resume=before_resume)
++        report['owned']=owned
++        diagnostic.require(natural(owned),'Actual diagnostic subprocess/descendant ownership did not naturally settle')
++        raw=(root/'worker/diagnostic.json').read_bytes();child=json.loads(raw)
++        report['diagnostic']={'path':str(root/'worker/diagnostic.json'),'sha256':hashlib.sha256(raw).hexdigest()}
++        diagnostic.require(child.get('canonical_call_attempts')==1 and child.get('fresh_call_validated') is True
++            and child.get('prepared_sources_and_inputs_unchanged') is True
++            and child.get('original_phase_expired') is False
++            and child.get('native_service_shutdown',{}).get('full_response',{}).get('status')=='stopping',
++            'Full fresh one-Answer/input/native-shutdown capture absent or refused')
++        report['original_service_after']=handle.observe_original_exit(cutoff)
++        diagnostic.require(child.get('fresh_service_process_settlement',{}).get('process_created_filetime')
++            ==report['original_service_before']['process_created_filetime'],
++            'Worker original service process identity differs from outer retained HANDLE')
++        report['complete']=True
++    except BaseException as error:
++        report['failure']={'type':type(error).__name__,'message':str(error)}
++    finally:
++        if handle is not None and handle.handle is not None:
++            closed=handle.api.CloseHandle(handle.handle);handle.handle=None
++            report['unsettled_service_observer_handle_closed']=bool(closed)
++            report['original_service_after']=dict(handle.proof)
++            if not closed and report['failure'] is None:report['failure']={'type':'HandleCloseRefusal','message':'Observer handle close failed'}
++        # Worker owns all753-source/SDK/post-shutdown hashes under the actual Job.
++        # This final small retained output hash also precedes the sole final clock.
++        log_path=root/'stdout-stderr.log'
++        if log_path.is_file():report['stdout']={'path':str(log_path),'sha256':diagnostic.digest(log_path),'bytes':log_path.stat().st_size}
++        observed=time.monotonic();report['elapsed_seconds']=observed-started
++        report['original_phase_expired']=observed>=cutoff
++        if report['original_phase_expired'] or report['failure'] is not None:report['complete']=False
++        if report['original_phase_expired'] and report['failure'] is None:report['failure']={'type':'OriginalPhaseExpired','message':'Final retained observations exceeded original360s cutoff'}
++        diagnostic.write(root/'owned-execution.json',report)
++    print(json.dumps({'output':str(root),'complete':report['complete'],'qualification_granted':False,'failure':report['failure']}))
++    return 0 if report['complete'] else 1
++
++if __name__=='__main__':sys.exit(main())
+--- /dev/null
++++ r2/OWNED-CONTRACT.md
+@@ -0,0 +1,39 @@
++# R154 owned diagnostic execution
++
++Preparation only; no service/model execution or Cargo is authorized by this packet.
++The exact reviewed maintained Windows multiprocess8GiB Job owner is copied with
++only a pre-resume authentication callback and a post-auth original-cutoff check.
++It creates the child suspended, assigns its real Job before resume, and retains
++its original descendant census/handle waits/final-empty observations/shared5s
++emergency cleanup. The original before image is retained; the small diff is
++reviewable. It has no two-process training cap. Callback uses the unchanged
++reviewed same-human TokenUser/image authenticator; parent is not in the Job.
++
++Only the diagnostic worker/Node/airkctl/pwsh descendants belong to this Job. The
++fresh private evaluation Service process remains under Root's original native
++owner and its original1800s lifetime. Both the outer launcher and worker retain
++the exact actual Service PID HANDLE, verify SID/image/creation time, and never
++terminate that process. Worker invokes existing canonical airkctl service
++shutdown once (native Health then instance-fenced Shutdown), requires Stopping,
++and separately waits original handle exit0. This is the test fixture's canonical
++shutdown route, not installed managed StopComplete. Native closed.json must match
++Ready instance/control and prove shutdown + ServiceLease reacquisition; original
++dispatch and warm summary/raw journal bytes remain retained separately.
++
++On actual worker timeout its real descendant Job may be forced under the existing
++owner; that is a failed/unknown diagnostic, never service cancellation/drain proof.
++No ambient service/editor process is killed. The private Service's original Root
++owner/lifetime remains responsible if the worker cannot issue/observe shutdown.
++An observer handle close alone never means process exit. Missing native closure,
++wrong original PID/image, forced Job cleanup, changed sources, unknown Answer or
++late whole-phase observation refuses complete. Failed state remains preserved;
++no automatic retry, deletion, ACL/ownership change or regenerated gold exists.
++
++The immutable outer360s cutoff begins before source/SDK preflight and is passed to
++the actual external Job owner and worker without renewal. Health/session setup is
++management. Core's exact existing Rust-emitted budget fixture supplies125s delivery
++for the unchanged120s request; no Python/JS default or native DTO is invented.
++All worker final source/SDK hashes remain inside the actual Job watchdog. The
++outer original service-handle observation and final stdout hash precede one final
++clock; receipt serialization follows the observation scope. No actual run passes
++without exact reviewed preparation/build/Ready/index/template/SDK/source pins.
+--- reviewed-owner/windows_job_8g.py
++++ r2/owned/windows_job_8g.py
+@@ -8,7 +8,7 @@
+ import time
+ MAX_LOG = 64 * 1024 * 1024
+ 
+-def run_windows_owned(argv, cwd, output, timeout, environment, *, absolute_deadline=None):
++def run_windows_owned(argv, cwd, output, timeout, environment, *, absolute_deadline=None, before_resume=None):
+     """Drain actual owned members within one five-second cleanup deadline.
+ 
+     Leader exit alone is not job settlement. Retain native member handles for
+@@ -74,6 +74,7 @@
+     job = checked(api.CreateJobObjectW(None, None))
+     info = ProcessInfo()
+     assigned = resumed = False
++    suspend_proof = None
+     attributes_initialized = False
+     emergency_members = []
+     observed_members = {}
+@@ -116,6 +117,10 @@
+             assigned = True
+             if absolute_deadline is not None and time.monotonic() >= absolute_deadline:
+                 raise TimeoutError("Original job phase expired before child resume")
++            if before_resume is not None:
++                suspend_proof = before_resume(api, job, info, absolute_deadline)
++            if absolute_deadline is not None and time.monotonic() >= absolute_deadline:
++                raise TimeoutError("Original job phase expired during child authentication")
+             if api.ResumeThread(info.thread) == 0xFFFFFFFF:
+                 raise ctypes.WinError(ctypes.get_last_error())
+             resumed = True
+@@ -244,7 +249,8 @@
+                   "owned_descendants_settled": settled, "owned_job_forced_termination": forced,
+                   "owned_job_observed_member_images": list(observed_members.values()),
+                   "owned_job_final_active_processes": active, "owned_job_final_member_pids": members,
+-                  "parent_assigned_to_job": False, "child_assigned_before_resume": True}
++                  "parent_assigned_to_job": False, "child_assigned_before_resume": True,
++                  "suspended_assignment": suspend_proof}
+         if not settled:
+             result["cleanup_refusal"] = "Owned job did not settle within the original five-second cleanup deadline"
+         return result
+--- reviewed-owner/custody.py
++++ r2/owned/custody.py
+@@ -77,6 +77,8 @@
+             raise
+     def after_canonical_stop(self, stop, original_deadline):
+         need(stop is not None and stop.get('status')=='lifecycle' and stop['record']['phase']=='complete','Actual native StopComplete required before original process exit proof')
++        return self.observe_original_exit(original_deadline)
++    def observe_original_exit(self,original_deadline):
+         remaining=original_deadline-time.monotonic()
+         need(remaining>0,'Original transport phase expired before original service exit observation')
+         waited=self.api.WaitForSingleObject(self.handle,max(1,int(remaining*1000)))

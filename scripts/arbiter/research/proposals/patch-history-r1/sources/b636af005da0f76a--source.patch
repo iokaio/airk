@@ -1,0 +1,2701 @@
+--- a/crates/airk-retrieval/src/arbiter/runtime.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime.rs
+@@ -390,6 +390,8 @@
+     Execution,
+     #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
+     PlacementDiagnostic,
++    #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
++    GraphMetadataDiagnostic,
+ }
+ impl Scorer {
+     pub fn open(profile: ExecutionProfile, source: &dyn AssetSource) -> Result<Self> {
+@@ -428,6 +430,17 @@
+     ) -> Result<()> {
+         cuda::diagnostic::require_diagnostic_profile(&profile)?;
+         match Self::open_internal(profile, source, Ok, OpenMode::PlacementDiagnostic)? {
++            None => Ok(()),
++            Some(_) => anyhow::bail!("diagnostic unexpectedly constructed a scorer"),
++        }
++    }
++    #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
++    pub fn diagnose_cuda_graph_metadata(
++        profile: ExecutionProfile,
++        source: &dyn AssetSource,
++    ) -> Result<()> {
++        cuda::diagnostic::require_diagnostic_profile(&profile)?;
++        match Self::open_internal(profile, source, Ok, OpenMode::GraphMetadataDiagnostic)? {
+             None => Ok(()),
+             Some(_) => anyhow::bail!("diagnostic unexpectedly constructed a scorer"),
+         }
+@@ -577,7 +590,10 @@
+         }
+         builder = configure(builder)?;
+         #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
+-        if matches!(_mode, OpenMode::PlacementDiagnostic) {
++        if matches!(
++            _mode,
++            OpenMode::PlacementDiagnostic | OpenMode::GraphMetadataDiagnostic
++        ) {
+             cuda::diagnostic::require_diagnostic_profile(&profile)?;
+             builder = builder.with_config_entry("session.disable_cpu_ep_fallback", "0")?;
+         }
+@@ -646,7 +662,10 @@
+             gpu.clone(),
+         );
+         #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
+-        if matches!(_mode, OpenMode::PlacementDiagnostic) {
++        if matches!(
++            _mode,
++            OpenMode::PlacementDiagnostic | OpenMode::GraphMetadataDiagnostic
++        ) {
+             cuda::diagnostic::session_created(gpu.as_ref().context("diagnostic binding missing")?)?;
+         }
+         #[cfg(feature = "gpu-cuda")]
+@@ -658,7 +677,10 @@
+             let diagnostic = {
+                 #[cfg(feature = "test-support")]
+                 {
+-                    matches!(_mode, OpenMode::PlacementDiagnostic)
++                    matches!(
++                        _mode,
++                        OpenMode::PlacementDiagnostic | OpenMode::GraphMetadataDiagnostic
++                    )
+                 }
+                 #[cfg(not(feature = "test-support"))]
+                 {
+@@ -780,8 +802,16 @@
+             );
+         }
+         #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
+-        if matches!(_mode, OpenMode::PlacementDiagnostic) {
+-            cuda::diagnostic::finish(session, gpu.as_ref().context("diagnostic binding missing")?)?;
++        if matches!(
++            _mode,
++            OpenMode::PlacementDiagnostic | OpenMode::GraphMetadataDiagnostic
++        ) {
++            let binding = gpu.as_ref().context("diagnostic binding missing")?;
++            if matches!(_mode, OpenMode::GraphMetadataDiagnostic) {
++                cuda::diagnostic::finish_graph_metadata(session, binding)?;
++            } else {
++                cuda::diagnostic::finish(session, binding)?;
++            }
+             return Ok(None);
+         }
+         Ok(Some(Self {
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
+@@ -27,7 +27,11 @@
+ };
+ pub(super) mod diagnostic;
+ #[cfg(feature = "test-support")]
++pub(super) mod graph_metadata;
++#[cfg(feature = "test-support")]
+ pub use diagnostic::{LoadObserver, LoadSnapshot};
++#[cfg(feature = "test-support")]
++pub use graph_metadata::{Observation as GraphMetadataObservation, Row as GraphMetadataRow};
+ mod eligibility;
+ mod manifest;
+ mod numeric;
+@@ -546,6 +550,26 @@
+             fit.headroom_bytes,
+         )
+     }
++    #[cfg(feature = "test-support")]
++    pub(super) fn graph_metadata(
++        &self,
++        session: &ort::session::Session,
++        deadline: Instant,
++        placement: &PlacementObservation,
++    ) -> Result<GraphMetadataObservation> {
++        in_time(deadline)?;
++        #[cfg(all(windows, target_arch = "x86_64"))]
++        {
++            self.runtime
++                .loaded
++                .graph_metadata(session, deadline, placement)
++        }
++        #[cfg(not(all(windows, target_arch = "x86_64")))]
++        {
++            let _ = (session, placement);
++            anyhow::bail!("final graph metadata unavailable")
++        }
++    }
+     pub(super) fn placement(
+         &self,
+         session: &ort::session::Session,
+@@ -725,6 +749,8 @@
+     pub producer_sha256: Sha256Digest,
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub checkpointed_proof: Option<airk_core::arbiter::resource_policy::ResourceFilePin>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub incremental_proof: Option<airk_core::arbiter::resource_policy::ResourceFilePin>,
+     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+     pub custody_copies: Vec<MetadataCustodyCopy>,
+     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/windows.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/windows.rs
+@@ -1012,6 +1012,7 @@
+     );
+     ensure!(
+         input.checkpointed_proof.is_some()
++            || input.incremental_proof.is_some()
+             || (input.custody_copies.is_empty() && input.historical_tool_copies.is_empty()),
+         "custody mappings require explicit checkpoint branch"
+     );
+@@ -1024,6 +1025,30 @@
+         files: std::cell::RefCell::new(BTreeMap::new()),
+         custody: super::custody::Custody::new(&input.custody_copies)?,
+         historical: super::custody::HistoricalTools::new(&input.historical_tool_copies)?,
++    };
++    ensure!(
++        !(input.checkpointed_proof.is_some() && input.incremental_proof.is_some()),
++        "conflicting producer proof modes"
++    );
++    let incremental = if let Some(proof) = &input.incremental_proof {
++        let raw = airk_core::arbiter::resource_policy::ResourceFilePin {
++            path: input
++                .directory
++                .join(&input.producer_name)
++                .to_str()
++                .context("producer path is not UTF8")?
++                .into(),
++            sha256: input.producer_sha256,
++        };
++        Some(
++            super::provenance::projection::validate_incremental_producer(
++                &checkpoint_source,
++                &raw,
++                proof,
++            )?,
++        )
++    } else {
++        None
+     };
+     let checkpointed = if let Some(proof) = &input.checkpointed_proof {
+         let raw = airk_core::arbiter::resource_policy::ResourceFilePin {
+@@ -1049,7 +1074,7 @@
+         None
+     };
+     // Historical schema/status remains exact and is never an alias for checkpointed success.
+-    let receipt = if checkpointed.is_none() {
++    let receipt = if checkpointed.is_none() && incremental.is_none() {
+         Some(serde_json::from_slice::<serde_json::Value>(&read(
+             &producer.file,
+             16 << 20,
+@@ -1081,7 +1106,16 @@
+         let (imports, delay_imports) = super::pe::imports_file(&value.file, deadline)?;
+         if name.starts_with("onnxruntime_providers_") {
+             ensure!(
+-                if let Some(verified) = &checkpointed {
++                if let Some(verified) = &incremental {
++                    verified
++                        .provider_dlls
++                        .iter()
++                        .filter(|v| {
++                            v.name == *name && v.sha256 == value.sha && v.bytes == value.bytes
++                        })
++                        .count()
++                        == 1
++                } else if let Some(verified) = &checkpointed {
+                     verified
+                         .provider_dlls
+                         .iter()
+@@ -1145,6 +1179,21 @@
+ }
+ 
+ impl LoadedRuntime {
++    #[cfg(feature = "test-support")]
++    pub fn graph_metadata(
++        &self,
++        session: &ort::session::Session,
++        deadline: Instant,
++        placement: &PlacementObservation,
++    ) -> Result<super::GraphMetadataObservation> {
++        reconcile(&self.files, &self.baseline, "before-graph-metadata")?;
++        let collector = final_graph_collector()?;
++        // SAFETY: owning static-core export, held live Session, bounded synchronous callbacks.
++        let observed =
++            unsafe { super::graph_metadata::observe(collector, session, deadline, placement) };
++        reconcile(&self.files, &self.baseline, "after-graph-metadata")?;
++        Ok(observed)
++    }
+     pub fn placement(&self, session: &ort::session::Session) -> Result<PlacementObservation> {
+         reconcile(&self.files, &self.baseline, "before-placement")?;
+         // SAFETY: exact same statically linked ORT owner; live Session is held
+@@ -1172,6 +1221,29 @@
+     // Missing/old core refuses GPU; no second core or API offset is attempted.
+     unsafe { symbol(module as usize, c"airk_ort_collect_final_placement_v1") }
+         .context(RuntimeUnavailable::new("final-placement capability absent"))
++}
++
++#[cfg(feature = "test-support")]
++fn final_graph_collector() -> Result<super::graph_metadata::Collector> {
++    let mut module = std::ptr::null_mut();
++    // FROM_ADDRESS interprets this parameter as a code address, not UTF16 text.
++    // No reference count is changed; the native main image has process lifetime.
++    win(unsafe {
++        GetModuleHandleExW(
++            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
++            ort::sys::OrtGetApiBase as *const () as *const u16,
++            &mut module,
++        )
++    })?;
++    ensure!(
++        module == unsafe { GetModuleHandleW(std::ptr::null()) },
++        "ORT API base is not in the authenticated single static-core native image"
++    );
++    // Optional export: CPU --all-features builds still link without this symbol.
++    // Missing/old core refuses GPU; no second core or API offset is attempted.
++    unsafe { symbol(module as usize, c"airk_ort_collect_final_graph_metadata_v1") }.context(
++        RuntimeUnavailable::new("final-graph-metadata capability absent"),
++    )
+ }
+ 
+ #[cfg(feature = "test-support")]
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic.rs
+@@ -15,6 +15,30 @@
+     pub bytes: usize,
+     pub truncated: bool,
+     pub rows: Vec<LogRow>,
++}
++#[cfg(feature = "test-support")]
++impl LogSnapshot {
++    fn validate_disclosure(&self) -> Result<()> {
++        ensure!(
++            self.retained == self.rows.len() as u64
++                && self.selected.checked_sub(self.retained) == Some(self.omitted)
++                && self.seen >= self.selected
++                && (self.omitted == 0 || self.truncated)
++                && self.bytes <= 65536
++                && self
++                    .rows
++                    .iter()
++                    .all(|r| r.location.len() + 2 + r.message.len() <= 4096)
++                && self.bytes
++                    == self
++                        .rows
++                        .iter()
++                        .map(|r| r.location.len() + 2 + r.message.len())
++                        .sum::<usize>(),
++            "diagnostic selected-log disclosure is inconsistent"
++        );
++        Ok(())
++    }
+ }
+ #[derive(Default)]
+ pub(crate) struct Capture {
+@@ -129,15 +153,47 @@
+     }
+ }
+ #[cfg(feature = "test-support")]
++fn capture_then_settle<T>(
++    session: T,
++    capture: impl FnOnce() -> Result<()>,
++    pre: impl FnOnce(&T) -> Result<()>,
++    unknown_release: impl FnOnce(),
++    post: impl FnOnce() -> (Result<()>, Option<usize>, bool),
++) -> (Result<()>, Teardown) {
++    let captured = std::panic::catch_unwind(std::panic::AssertUnwindSafe(capture))
++        .unwrap_or_else(|_| Err(anyhow::anyhow!("diagnostic observation capture panicked")));
++    let teardown = settle_with(session, pre, unknown_release, post);
++    (captured, teardown)
++}
++#[cfg(feature = "test-support")]
+ #[derive(Clone, Debug, Default, Serialize)]
+ pub struct LoadSnapshot {
+     pub session_created: bool,
+     pub placement: Option<PlacementObservation>,
++    pub graph_metadata: Option<super::GraphMetadataObservation>,
+     pub logs: LogSnapshot,
+     pub teardown: Option<Teardown>,
+ }
+ #[cfg(feature = "test-support")]
+ impl LoadSnapshot {
++    pub fn validate_graph_metadata(&self) -> Result<()> {
++        self.logs.validate_disclosure()?;
++        ensure!(self.session_created, "diagnostic session was not created");
++        let placement = self
++            .placement
++            .as_ref()
++            .context("diagnostic placement missing")?;
++        complete_placement(placement)?;
++        self.graph_metadata
++            .as_ref()
++            .context("diagnostic graph metadata missing")?
++            .validate_against(placement)?;
++        self.teardown
++            .as_ref()
++            .context("diagnostic teardown missing")?
++            .validate()?;
++        Ok(())
++    }
+     pub fn validate(&self) -> Result<()> {
+         ensure!(self.session_created, "diagnostic session was not created");
+         complete_placement(
+@@ -278,18 +334,50 @@
+     session: super::super::session_owner::SessionOwner,
+     binding: &Binding,
+ ) -> Result<()> {
++    finish_mode(session, binding, false)
++}
++#[cfg(feature = "test-support")]
++pub(crate) fn finish_graph_metadata(
++    session: super::super::session_owner::SessionOwner,
++    binding: &Binding,
++) -> Result<()> {
++    finish_mode(session, binding, true)
++}
++#[cfg(feature = "test-support")]
++fn finish_mode(
++    session: super::super::session_owner::SessionOwner,
++    binding: &Binding,
++    graph_mode: bool,
++) -> Result<()> {
+     let placement = binding.device.placement(&session);
+-    // Keep partial placement even when subsequent settlement fails.
+-    if let Ok(value) = &placement {
+-        binding
+-            .log
+-            .lock()
+-            .map_err(|_| anyhow::anyhow!("CUDA diagnostic observation poisoned"))?
+-            .state
+-            .placement = Some(value.clone());
+-    }
+-    let teardown = settle_with(
++    let metadata = if graph_mode {
++        placement
++            .as_ref()
++            .map_err(|e| anyhow::anyhow!("{e:#}"))
++            .and_then(|p| {
++                binding
++                    .device
++                    .graph_metadata(&session, binding.load_deadline, p)
++            })
++            .map(Some)
++    } else {
++        Ok(None)
++    };
++    let (captured, teardown) = capture_then_settle(
+         session,
++        || {
++            let mut capture = binding
++                .log
++                .lock()
++                .map_err(|_| anyhow::anyhow!("CUDA diagnostic observation poisoned"))?;
++            if let Ok(Some(value)) = &metadata {
++                capture.state.graph_metadata = Some(value.clone());
++            }
++            if let Ok(value) = &placement {
++                capture.state.placement = Some(value.clone());
++            }
++            Ok(())
++        },
+         |s| s.synchronize(binding.load_deadline),
+         || {
+             binding.device.poison();
+@@ -304,24 +392,32 @@
+             )
+         },
+     );
+-    binding
++    let recorded = binding
+         .log
+         .lock()
+-        .map_err(|_| anyhow::anyhow!("CUDA diagnostic observation poisoned"))?
+-        .state
+-        .teardown = Some(teardown.clone());
++        .map_err(|_| anyhow::anyhow!("CUDA diagnostic observation poisoned"))
++        .map(|mut capture| {
++            capture.state.teardown = Some(teardown.clone());
++        });
+     let observed = placement?;
+     complete_placement(&observed)?;
+     teardown.validate()?;
+-    ensure!(
+-        !binding
+-            .log
+-            .lock()
+-            .map_err(|_| anyhow::anyhow!("CUDA diagnostic observation poisoned"))?
+-            .logs
+-            .truncated,
+-        "selected CUDA diagnostic logs were truncated"
+-    );
++    captured.and(recorded)?;
++    if graph_mode {
++        metadata?
++            .context("graph metadata absent")?
++            .validate_against(&observed)?;
++    } else {
++        ensure!(
++            !binding
++                .log
++                .lock()
++                .map_err(|_| anyhow::anyhow!("CUDA diagnostic observation poisoned"))?
++                .logs
++                .truncated,
++            "selected CUDA diagnostic logs were truncated"
++        );
++    }
+     in_time(binding.load_deadline)
+ }
+ #[cfg(test)]
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic/tests.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic/tests.rs
+@@ -199,6 +199,7 @@
+     let mut value = LoadSnapshot {
+         session_created: true,
+         placement: Some(placement()),
++        graph_metadata: None,
+         logs: LogSnapshot::default(),
+         teardown: None,
+     };
+@@ -213,3 +214,109 @@
+     value.logs.truncated = true;
+     assert!(value.validate().is_err());
+ }
++
++#[cfg(feature = "test-support")]
++#[test]
++fn graph_mode_permits_truncation_only_with_truthful_log_disclosure() {
++    let logs = LogSnapshot {
++        seen: 1,
++        selected: 1,
++        retained: 0,
++        omitted: 1,
++        bytes: 0,
++        truncated: true,
++        rows: vec![],
++    };
++    assert!(logs.validate_disclosure().is_ok());
++    for mutation in 0..4 {
++        let mut broken = logs.clone();
++        match mutation {
++            0 => broken.truncated = false,
++            1 => broken.retained = 1,
++            2 => broken.bytes = 1,
++            _ => broken.seen = 0,
++        }
++        assert!(broken.validate_disclosure().is_err());
++    }
++}
++
++#[cfg(feature = "test-support")]
++#[test]
++fn poisoned_capture_never_bypasses_settlement_or_unknown_release_retention() {
++    use std::cell::{Cell, RefCell};
++    let capture = Mutex::new(());
++    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
++        let _guard = capture.lock().unwrap();
++        panic!("injected capture poison");
++    }));
++    for fail_drop in [false, true] {
++        let events = RefCell::new(Vec::new());
++        let poisoned = Cell::new(false);
++        struct Owned<'a> {
++            events: &'a RefCell<Vec<&'static str>>,
++            fail: bool,
++        }
++        impl Drop for Owned<'_> {
++            fn drop(&mut self) {
++                self.events.borrow_mut().push("drop");
++                assert!(!self.fail, "injected unknown drop");
++            }
++        }
++        let (recorded, teardown) = capture_then_settle(
++            Owned {
++                events: &events,
++                fail: fail_drop,
++            },
++            || {
++                events.borrow_mut().push("capture");
++                let _guard = capture
++                    .lock()
++                    .map_err(|_| anyhow::anyhow!("capture poisoned"))?;
++                Ok(())
++            },
++            |_| {
++                events.borrow_mut().push("pre");
++                Ok(())
++            },
++            || {
++                events.borrow_mut().push("retain");
++                poisoned.set(true);
++            },
++            || {
++                events.borrow_mut().push("post");
++                (Ok(()), Some(0), poisoned.get())
++            },
++        );
++        assert!(recorded.is_err());
++        assert_eq!(teardown.session_drop_returned, !fail_drop);
++        assert_eq!(teardown.poisoned, fail_drop);
++        if fail_drop {
++            assert_eq!(
++                *events.borrow(),
++                ["capture", "pre", "drop", "retain", "post"]
++            );
++        } else {
++            assert_eq!(*events.borrow(), ["capture", "pre", "drop", "post"]);
++            assert!(teardown.validate().is_ok());
++        }
++    }
++}
++#[cfg(feature = "test-support")]
++#[test]
++fn capture_panic_still_performs_actual_settlement() {
++    use std::cell::Cell;
++    let post_seen = Cell::new(false);
++    let (captured, teardown) = capture_then_settle(
++        (),
++        || panic!("injected capture panic"),
++        |_| Ok(()),
++        || panic!("known drop must not retain"),
++        || {
++            post_seen.set(true);
++            (Ok(()), Some(0), false)
++        },
++    );
++    assert!(captured.is_err());
++    assert!(post_seen.get());
++    assert!(teardown.validate().is_ok());
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/CONTRACT.md
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/CONTRACT.md
+@@ -589,3 +589,48 @@
+ control and files. Teardown.poisoned records that device state. The separate
+ process_cuda_poisoned field remains the actual global runtime-loader observation;
+ per-device poison does not fabricate global loader poison. Neither can pass.
++
++## Final graph metadata observation
++
++A separate test-support graph-only diagnostic collects
++`airk.private.ort-final-graph-metadata/1` through additive same-core export
++`airk_ort_collect_final_graph_metadata_v1`. Existing placement-v1 and the strict
++execution policy remain unchanged. Graph-only completion requires a complete
++metadata inventory, exact full-node multiset agreement with placement-v1, original
++deadline, actual session teardown and native custody release. Selected logs retain
++their existing64KiB bound and explicit truncation fields; graph-only observation
++does not require complete logs. The old placement diagnostic still refuses log
++truncation. Neither mode grants a Scorer, forward or placement-policy exception.
++
++Metadata JSON is compact and at most8MiB within the existing16MiB native result;
++new native graph-only reports use bounded compact serialization. Limits are65536
++nodes,262144 values,524288 ordered edges,4096 UTF8 bytes/string,rank16,64 attributes
++per node and64 elements/typed attribute array. CPU-device immutable INT32/INT64/
++BOOL constants alone permit up to64 elements each and1MiB total source payload,
++always under the encoded budget. All unsupported, large or non-CPU constants
++remain explicitly unread. Unknown types or outer bindings are never inferred
++from names. No tensor transfers, full GraphProto or weight materialization occur.
++
++Final Node indices and SessionState value IDs bind ordered explicit/implicit
++inputs, outputs, graph boundaries, attributes, dimensions and constant provenance.
++Consumers derive from the complete observed edge inventory. Both producer-to-edge
++and edge-to-producer relations are checked. Callback cancellation, partial counts,
++unknown identities, malformed ordering, duplicate records and nonfinite or invalid
++UTF8 attributes refuse complete evidence. Original loaded-file security/reconcile
++fences and poisoned-custody retention apply unchanged. A bounded C ABI record has
++independent size/alignment/offset checks in both owners; no C++ object crosses it.
++
++The optional assembly incremental_proof is a separate authenticated producer
++mode, mutually exclusive with checkpointed_proof. It validates fresh static-core
++ancestry through the existing provenance owner; old checkpointed receipts retain
++their original identities and admission path. New core/public metadata must be
++emitted under fresh artifact/source identities, never by retagging old receipts.
++The incremental producer policy and independent fixtures belong to the
++provenance owner and remain required for admission.
++
++Observation capture failure or panic must not bypass session settlement. The
++capture-and-settle owner retains that error, then always performs pre-sync,
++SessionOwner Drop, actual unknown-release poison/retention if needed, and post-
++sync. Capture locks are released before teardown. Recording teardown may fail,
++but only after actual custody has settled or been retained; missing observations
++never become release evidence.
+--- a/crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition.rs
+@@ -15,7 +15,7 @@
+     "d2879546ba9e949fdd8b135a244923de2adb781e8598539cc33f4d7d6f0794eb";
+ // Exact runtime owner hook bytes. A different build source requires a new reviewed row.
+ const CURRENT_RUNTIME_SOURCE: Option<&str> =
+-    Some("254f1209c5136f964b5ae8f6c1edee7560a65d07658352339ada8c943e379db0");
++    Some("a59c063c5d08e1bf5adc7c531336c2715078adeb50d3f9b90faa8f93951b3ff5");
+ const LEGACY_CORE: &str = "ddd9dbc76ae2c7e92c3b57b58a9443161fb045bbc175596f57bb41c9b1b5bbe6";
+ const CURRENT_CORE: &str = "77fa25e4623f32e568a7163553cf7531cd4425dbb157ea2b67fef7940998c57f";
+ const CURRENT_TASK: &str = "cc25cb7e3a3b6ea4cb78f232c0c1bf6764005e79775af20a1d0b3aa5d8d1bdab";
+--- a/crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition/tests.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition/tests.rs
+@@ -226,11 +226,11 @@
+ fn cuda_bridge_and_driver_closure_preserve_closed_cpu_runtime_source() -> Result<()> {
+     assert_eq!(
+         source_sha(include_bytes!("../../runtime.rs"))?.to_string(),
+-        "254f1209c5136f964b5ae8f6c1edee7560a65d07658352339ada8c943e379db0"
++        "a59c063c5d08e1bf5adc7c531336c2715078adeb50d3f9b90faa8f93951b3ff5"
+     );
+     assert_eq!(
+         source_sha(include_bytes!("../cuda/windows.rs"))?.to_string(),
+-        "4af9924dbd953cc6065c4acc4549a079c3adfa10a1f850f5c32ca7dd94674cbe"
++        "34903ab00d2d9c6921f0d2ffb99ffb8e64de0517b44141ebd9082ad1c0be6503"
+     );
+     assert_eq!(
+         source_sha(include_bytes!("../cuda/modules.rs"))?.to_string(),
+@@ -242,7 +242,7 @@
+     let record = serde_json::to_value(witness.record(&profile)?)?;
+     assert_eq!(
+         record["current_runtime_source"],
+-        "254f1209c5136f964b5ae8f6c1edee7560a65d07658352339ada8c943e379db0"
++        "a59c063c5d08e1bf5adc7c531336c2715078adeb50d3f9b90faa8f93951b3ff5"
+     );
+     assert_eq!(
+         record["current_task_policy"],
+@@ -259,15 +259,15 @@
+ -> Result<()> {
+     assert_eq!(
+         source_sha(include_bytes!("../../runtime.rs"))?.to_string(),
+-        "254f1209c5136f964b5ae8f6c1edee7560a65d07658352339ada8c943e379db0"
++        "a59c063c5d08e1bf5adc7c531336c2715078adeb50d3f9b90faa8f93951b3ff5"
+     );
+     assert_eq!(
+         source_sha(include_bytes!("../cuda/diagnostic.rs"))?.to_string(),
+-        "29c7376e8e70c74562e53da3ad622fb0668b093e48f353e88cdc18f6e337d081"
++        "8b1e5334f3205367df116764dba85652f27171966567d214e37e81115c969495"
+     );
+     assert_eq!(
+         source_sha(include_bytes!("../cuda.rs"))?.to_string(),
+-        "81d80bf79baa783d9592446c1fef5f00155641d39d0674997996a1206c71ad87"
++        "840cb13ad29d34a6c9e5def447c9b3c7ab9e5b6b3308787843ca908b2ee5b526"
+     );
+     assert_ne!(
+         CURRENT_RUNTIME_SOURCE,
+@@ -281,3 +281,26 @@
+     assert_eq!(serde_json::to_vec(&profile)?, original);
+     Ok(())
+ }
++
++#[test]
++fn final_graph_metadata_supplement_binds_current_source_without_policy_admission() -> Result<()> {
++    assert_eq!(
++        source_sha(include_bytes!("../../runtime.rs"))?.to_string(),
++        "a59c063c5d08e1bf5adc7c531336c2715078adeb50d3f9b90faa8f93951b3ff5"
++    );
++    assert_eq!(
++        source_sha(include_bytes!("../cuda/graph_metadata.rs"))?.to_string(),
++        "6685b43309d2058dbbcef27362187b558caa95a7ea76c89ca3a75949aed8b527"
++    );
++    assert_ne!(
++        CURRENT_RUNTIME_SOURCE,
++        Some("254f1209c5136f964b5ae8f6c1edee7560a65d07658352339ada8c943e379db0")
++    );
++    let profile = legacy_focus()?;
++    let before = serde_json::to_vec(&profile)?;
++    let record = serde_json::to_value(CpuSourceTransition::admit(&profile)?.record(&profile)?)?;
++    assert_eq!(record["task_qualification_transferred"], false);
++    assert_eq!(record["public_source_rewritten"], false);
++    assert_eq!(serde_json::to_vec(&profile)?, before);
++    Ok(())
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition/CONTRACT.md
++++ b/crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition/CONTRACT.md
+@@ -184,3 +184,20 @@
+ unknown-release behavior. A caught SessionOwner Drop panic invokes the actual
+ device poison/epoch owner and retains Binding before post-sync; native custody
+ therefore retains all owned resources. The original closed CPU path is unchanged.
++
++## Final graph metadata source supplement
++
++Current runtime source advances from historical 254f1209c5136f964b5ae8f6c1edee7560a65d07658352339ada8c943e379db0 to a59c063c5d08e1bf5adc7c531336c2715078adeb50d3f9b90faa8f93951b3ff5 for the separate
++same-core graph-only diagnostic. Ordinary CPU Execution mode and its builder,
++assets, ABI, Scorer construction and original task/compiler policies remain
++unchanged. The source inverse record reconstructs exact prior runtime bytes;
++this is source evidence, not qualification. The first eight closed CPU controls
++remain byte-identical. Existing CUDA source pins deliberately advance and an
++additional literal control binds graph metadata. No legacy descriptor,
++calibration, public source or qualification is rewritten or transferred.
++
++The prior strict and placement-diagnostic behavior remains; graph-only permits
++truthfully truncated selected logs solely for graph evidence, with all exact
++metadata/placement/custody checks intact. Incremental producer validation uses
++fresh static-core identities; no old runtime profile is retagged. G5 must rebase
++onto this current runtime source rather than historical9e/DDE/254f bytes.
+--- /dev/null
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/graph_metadata.rs
+@@ -0,0 +1,921 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Bounded final graph observations from the owning static core; never a policy permit.
++use super::*;
++use serde_json::Value;
++const MAX_JSON: usize = 8 << 20;
++#[derive(Clone, Debug, Serialize)]
++#[serde(tag = "kind", rename_all = "snake_case")]
++pub enum Row {
++    Graph {
++        graph: u64,
++        parent_graph: Option<u64>,
++        parent_node: Option<u64>,
++        attribute: String,
++        outer_bindings: String,
++    },
++    Node {
++        graph: u64,
++        node: u64,
++        name: String,
++        domain: String,
++        op: String,
++        ep: String,
++        version: i64,
++    },
++    Value {
++        graph: u64,
++        value: u64,
++        name: String,
++        element_type: Option<i64>,
++        rank: Option<u64>,
++        type_state: String,
++        provenance: String,
++        producer: Option<u64>,
++    },
++    Dimension {
++        graph: u64,
++        value: u64,
++        index: u64,
++        number: Option<i64>,
++        symbol: Option<String>,
++    },
++    Edge {
++        graph: u64,
++        node: Option<u64>,
++        value: Option<u64>,
++        role: u32,
++        slot: u64,
++    },
++    Attribute {
++        graph: u64,
++        node: u64,
++        index: u64,
++        name: String,
++        attribute_type: i64,
++        count: u64,
++        readable: bool,
++        reason: String,
++    },
++    AttributeElement {
++        graph: u64,
++        node: u64,
++        attribute: u64,
++        index: u64,
++        element_kind: u32,
++        value: Value,
++    },
++    Constant {
++        graph: u64,
++        value: u64,
++        element_type: i64,
++        count: u64,
++        readable: bool,
++        reason: String,
++        device: String,
++    },
++    ConstantElement {
++        graph: u64,
++        value: u64,
++        index: u64,
++        element_bytes: u32,
++        integer: i64,
++    },
++    End {
++        graph: u64,
++    },
++}
++impl Row {
++    fn graph(&self) -> u64 {
++        match self {
++            Self::Graph { graph, .. }
++            | Self::Node { graph, .. }
++            | Self::Value { graph, .. }
++            | Self::Dimension { graph, .. }
++            | Self::Edge { graph, .. }
++            | Self::Attribute { graph, .. }
++            | Self::AttributeElement { graph, .. }
++            | Self::Constant { graph, .. }
++            | Self::ConstantElement { graph, .. }
++            | Self::End { graph } => *graph,
++        }
++    }
++    fn strings(&self) -> Vec<&str> {
++        match self {
++            Self::Graph { attribute, .. } => vec![attribute],
++            Self::Node {
++                name,
++                domain,
++                op,
++                ep,
++                ..
++            } => vec![name, domain, op, ep],
++            Self::Value {
++                name, provenance, ..
++            } => vec![name, provenance],
++            Self::Dimension { symbol, .. } => symbol.iter().map(String::as_str).collect(),
++            Self::Attribute { name, reason, .. } => vec![name, reason],
++            Self::AttributeElement {
++                value: Value::String(s),
++                ..
++            } => vec![s],
++            Self::Constant { reason, device, .. } => vec![reason, device],
++            _ => vec![],
++        }
++    }
++}
++#[derive(Clone, Debug, Serialize)]
++pub struct Observation {
++    pub schema: &'static str,
++    pub complete: bool,
++    pub shim_status: i32,
++    pub ort_error_code: i32,
++    pub reported_counts: [u64; 6],
++    pub encoded_bytes: usize,
++    pub failure: Option<String>,
++    pub rows: Vec<Row>,
++}
++impl Observation {
++    pub fn validate_against(&self, placement: &PlacementObservation) -> Result<()> {
++        ensure!(
++            self.complete
++                && self.shim_status == 0
++                && self.ort_error_code == 0
++                && self.failure.is_none(),
++            "final graph metadata incomplete"
++        );
++        ensure!(
++            placement.complete && placement.shim_status == 0 && placement.ort_error_code == 0,
++            "comparison placement incomplete"
++        );
++        ensure!(
++            serde_json::to_vec(self)?.len() == self.encoded_bytes && self.encoded_bytes <= MAX_JSON,
++            "metadata encoded size differs"
++        );
++        ensure!(
++            placement.scope == "onnxruntime-final-session-state-ep-placement"
++                && placement.reported_nodes == placement.nodes.len() as u64,
++            "comparison placement count or scope differs"
++        );
++        let mut replay = Sink::default();
++        for row in &self.rows {
++            replay.accept(row.clone())?;
++        }
++        let replay = replay.finish(self.shim_status, self.ort_error_code, self.reported_counts);
++        ensure!(
++            replay.complete,
++            "metadata semantic closure or counters differ"
++        );
++        let mut observed = Vec::new();
++        for row in &self.rows {
++            if let Row::Node {
++                graph,
++                name,
++                domain,
++                op,
++                ep,
++                ..
++            } = row
++            {
++                observed.push((
++                    *graph,
++                    name.as_str(),
++                    domain.as_str(),
++                    op.as_str(),
++                    ep.as_str(),
++                ));
++            }
++        }
++        let mut expected = placement
++            .nodes
++            .iter()
++            .map(|n| {
++                (
++                    n.subgraph_index,
++                    n.name.as_str(),
++                    n.domain.as_str(),
++                    n.op.as_str(),
++                    n.ep.as_str(),
++                )
++            })
++            .collect::<Vec<_>>();
++        observed.sort_unstable();
++        expected.sort_unstable();
++        ensure!(
++            observed == expected && observed.len() as u64 == self.reported_counts[0],
++            "metadata final node identities differ from placement-v1"
++        );
++        Ok(())
++    }
++    /// Every consumer comes from an observed ordered explicit/implicit edge.
++    pub fn consumers(&self, graph: u64, value: u64) -> Vec<(u64, u32, u64)> {
++        self.rows
++            .iter()
++            .filter_map(|r| match r {
++                Row::Edge {
++                    graph: g,
++                    node: Some(n),
++                    value: Some(v),
++                    role,
++                    slot,
++                } if *g == graph && *v == value && *role < 2 => Some((*n, *role, *slot)),
++                _ => None,
++            })
++            .collect()
++    }
++}
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
++#[repr(C)]
++pub(super) struct Raw {
++    kind: u32,
++    flags: u32,
++    graph: u64,
++    node: u64,
++    value: u64,
++    slot: u64,
++    integer: i64,
++    real: f64,
++    text: [*const u8; 4],
++    text_bytes: [usize; 4],
++}
++#[cfg(all(windows, target_arch = "x86_64"))]
++pub(super) type Collector = unsafe extern "C" fn(
++    *const std::ffi::c_void,
++    *const std::ffi::c_void,
++    unsafe extern "C" fn(*mut std::ffi::c_void, *const Raw) -> i32,
++    *mut std::ffi::c_void,
++    *mut u64,
++    *mut i32,
++) -> i32;
++#[derive(Default)]
++struct ValueState {
++    rank: Option<u64>,
++    dims: u64,
++    element: Option<i64>,
++    provenance: String,
++    producer: Option<u64>,
++    constant: Option<(u64, u64, bool, i64)>,
++}
++#[derive(Default)]
++struct Sink {
++    rows: Vec<Row>,
++    counts: [u64; 6],
++    json_bytes: usize,
++    stack: Vec<u64>,
++    graphs: u64,
++    nodes: BTreeSet<(u64, u64)>,
++    values: BTreeMap<(u64, u64), ValueState>,
++    slots: BTreeMap<(u64, Option<u64>, u32), u64>,
++    outputs: BTreeMap<(u64, u64), u64>,
++    graph_inputs: BTreeSet<(u64, u64)>,
++    attributes: BTreeMap<(u64, u64, u64), (u64, u64, bool, i64)>,
++    attribute_next: BTreeMap<(u64, u64), u64>,
++    failure: Option<String>,
++    deadline: Option<Instant>,
++}
++impl Sink {
++    fn accept(&mut self, row: Row) -> Result<()> {
++        if let Some(deadline) = self.deadline {
++            in_time(deadline)?;
++        }
++        let bytes = serde_json::to_vec(&row)?.len() + 1;
++        ensure!(
++            self.json_bytes
++                .checked_add(bytes)
++                .is_some_and(|n| n <= MAX_JSON - 4096),
++            "metadata encoded JSON budget"
++        );
++        let strings = row.strings();
++        ensure!(
++            strings.iter().all(|s| s.len() <= 4096),
++            "metadata string bound"
++        );
++        let text_bytes = strings.iter().map(|s| s.len() as u64).sum::<u64>();
++        ensure!(
++            self.counts[3] + text_bytes <= MAX_JSON as u64 && self.counts[5] < 4194304,
++            "metadata callback budget"
++        );
++        if !matches!(row, Row::Graph { .. }) {
++            ensure!(
++                self.stack.last() == Some(&row.graph()),
++                "metadata graph scope/order"
++            );
++        }
++        match &row {
++            Row::Graph {
++                graph,
++                parent_graph,
++                parent_node,
++                attribute,
++                outer_bindings,
++            } => {
++                ensure!(
++                    *graph == self.graphs && self.graphs < 4096 && self.stack.len() <= 32,
++                    "metadata graph identity/depth"
++                );
++                match (parent_graph, parent_node) {
++                    (None, None) => ensure!(
++                        *graph == 0
++                            && self.stack.is_empty()
++                            && attribute.is_empty()
++                            && outer_bindings == "not_applicable",
++                        "metadata root binding"
++                    ),
++                    (Some(g), Some(n)) => ensure!(
++                        self.stack.last() == Some(g)
++                            && self.nodes.contains(&(*g, *n))
++                            && !attribute.is_empty()
++                            && outer_bindings == "unresolved",
++                        "metadata child binding"
++                    ),
++                    _ => anyhow::bail!("partial parent binding"),
++                }
++                self.graphs += 1;
++                self.stack.push(*graph);
++            }
++            Row::Node {
++                graph,
++                node,
++                op,
++                ep,
++                version,
++                ..
++            } => {
++                ensure!(
++                    self.counts[0] < 65536
++                        && !op.is_empty()
++                        && !ep.is_empty()
++                        && *version > 0
++                        && self.nodes.insert((*graph, *node)),
++                    "metadata node duplicate/bound/identity"
++                );
++                self.counts[0] += 1;
++            }
++            Row::Value {
++                graph,
++                value,
++                name,
++                element_type,
++                rank,
++                type_state,
++                provenance,
++                producer,
++            } => {
++                ensure!(
++                    self.counts[1] < 262144 && !name.is_empty() && rank.is_none_or(|n| n <= 16),
++                    "metadata value bound"
++                );
++                ensure!(
++                    matches!(
++                        type_state.as_str(),
++                        "tensor" | "unsupported_non_tensor" | "unknown"
++                    ) && (type_state == "tensor" || (rank.is_none() && element_type.is_none())),
++                    "metadata value type state"
++                );
++                ensure!(
++                    [
++                        "immutable_session_initializer",
++                        "overridable_initializer_unread",
++                        "node_output",
++                        "graph_input",
++                        "unresolved_outer_or_internal"
++                    ]
++                    .contains(&provenance.as_str()),
++                    "unknown metadata provenance"
++                );
++                ensure!(
++                    self.values
++                        .insert(
++                            (*graph, *value),
++                            ValueState {
++                                rank: *rank,
++                                element: *element_type,
++                                provenance: provenance.clone(),
++                                producer: *producer,
++                                ..Default::default()
++                            }
++                        )
++                        .is_none(),
++                    "duplicate metadata value"
++                );
++                self.counts[1] += 1;
++            }
++            Row::Dimension {
++                graph,
++                value,
++                index,
++                number,
++                symbol,
++            } => {
++                let v = self
++                    .values
++                    .get_mut(&(*graph, *value))
++                    .context("dimension before value")?;
++                ensure!(
++                    v.rank.is_some_and(|rank| *index < rank)
++                        && *index == v.dims
++                        && !(number.is_some() && symbol.is_some())
++                        && number.is_none_or(|n| n >= 0)
++                        && symbol.as_ref().is_none_or(|s| !s.is_empty()),
++                    "invalid dimension/order"
++                );
++                v.dims += 1;
++            }
++            Row::Edge {
++                graph,
++                node,
++                value,
++                role,
++                slot,
++            } => {
++                ensure!(
++                    self.counts[2] < 524288 && *role <= 5 && ((*role < 3) == node.is_some()),
++                    "metadata edge role/bound"
++                );
++                if let Some(n) = node {
++                    ensure!(
++                        self.nodes.contains(&(*graph, *n)),
++                        "edge references unknown node"
++                    );
++                }
++                if let Some(v) = value {
++                    ensure!(
++                        self.values.contains_key(&(*graph, *v)),
++                        "edge references unknown value"
++                    );
++                } else {
++                    ensure!(*role < 3, "graph boundary cannot be absent");
++                }
++                let next = self.slots.entry((*graph, *node, *role)).or_default();
++                ensure!(*slot == *next, "edge slot missing/repeated");
++                *next += 1;
++                if *role == 2 {
++                    if let Some(v) = value {
++                        ensure!(
++                            self.outputs.insert((*graph, *v), node.unwrap()).is_none(),
++                            "multiple final producers"
++                        );
++                    }
++                }
++                if *role == 3 {
++                    self.graph_inputs.insert((*graph, value.unwrap()));
++                }
++                self.counts[2] += 1;
++            }
++            Row::Attribute {
++                graph,
++                node,
++                index,
++                name,
++                attribute_type,
++                count,
++                readable,
++                reason,
++            } => {
++                ensure!(
++                    self.nodes.contains(&(*graph, *node)) && !name.is_empty(),
++                    "attribute owner absent"
++                );
++                let next = self.attribute_next.entry((*graph, *node)).or_default();
++                ensure!(
++                    *index == *next && *index < 64,
++                    "attribute ordering or per-node bound"
++                );
++                *next += 1;
++                ensure!(
++                    !*readable
++                        || (*count <= 64
++                            && matches!(*attribute_type, 1 | 2 | 3 | 6 | 7 | 8)
++                            && (!matches!(*attribute_type, 1 | 2 | 3) || *count == 1)
++                            && reason == "read"),
++                    "unsupported readable attribute"
++                );
++                ensure!(
++                    *readable
++                        || ["large_array_unread", "unsupported_attribute_unread"]
++                            .contains(&reason.as_str()),
++                    "attribute missing unread reason"
++                );
++                self.attributes.insert(
++                    (*graph, *node, *index),
++                    (*count, 0, *readable, *attribute_type),
++                );
++            }
++            Row::AttributeElement {
++                graph,
++                node,
++                attribute,
++                index,
++                element_kind,
++                value,
++            } => {
++                let a = self
++                    .attributes
++                    .get_mut(&(*graph, *node, *attribute))
++                    .context("attribute element before header")?;
++                let expected = match a.3 {
++                    2 | 7 => 1,
++                    1 | 6 => 2,
++                    3 | 8 => 3,
++                    _ => 0,
++                };
++                ensure!(
++                    a.2 && *index == a.1 && *index < a.0 && *element_kind == expected,
++                    "attribute payload order/type"
++                );
++                ensure!(
++                    match element_kind {
++                        1 => value.as_i64().is_some(),
++                        2 => value.as_f64().is_some_and(f64::is_finite),
++                        3 => value.as_str().is_some(),
++                        _ => false,
++                    },
++                    "attribute payload representation"
++                );
++                a.1 += 1;
++            }
++            Row::Constant {
++                graph,
++                value,
++                element_type,
++                count,
++                readable,
++                reason,
++                device,
++            } => {
++                let v = self
++                    .values
++                    .get_mut(&(*graph, *value))
++                    .context("constant before value")?;
++                ensure!(
++                    v.provenance == "immutable_session_initializer" && v.constant.is_none(),
++                    "constant provenance/duplicate"
++                );
++                ensure!(
++                    !*readable
++                        || (*count <= 64
++                            && [6, 7, 9].contains(element_type)
++                            && reason == "read"
++                            && device == "CPU"
++                            && v.element == Some(*element_type)),
++                    "unsafe readable constant"
++                );
++                ensure!(
++                    *readable
++                        || [
++                            "not_tensor",
++                            "non_CPU_unread",
++                            "unsupported_type_unread",
++                            "large_constant_unread",
++                            "constant_payload_budget_unread"
++                        ]
++                        .contains(&reason.as_str()),
++                    "constant unread reason absent"
++                );
++                v.constant = Some((*count, 0, *readable, *element_type));
++            }
++            Row::ConstantElement {
++                graph,
++                value,
++                index,
++                element_bytes,
++                integer,
++            } => {
++                let c = self
++                    .values
++                    .get_mut(&(*graph, *value))
++                    .and_then(|v| v.constant.as_mut())
++                    .context("constant payload before header")?;
++                let width = match c.3 {
++                    6 => 4,
++                    7 => 8,
++                    9 => 1,
++                    _ => 0,
++                };
++                ensure!(
++                    c.2 && *index == c.1
++                        && *index < c.0
++                        && *element_bytes == width
++                        && self.counts[4] + u64::from(width) <= 1 << 20,
++                    "constant payload bound/type/order"
++                );
++                ensure!(
++                    (c.3 != 6 || i32::try_from(*integer).is_ok())
++                        && (c.3 != 9 || [0, 1].contains(integer)),
++                    "constant value outside element type"
++                );
++                c.1 += 1;
++                self.counts[4] += u64::from(width);
++            }
++            Row::End { graph } => {
++                ensure!(self.stack.pop() == Some(*graph), "graph end order");
++            }
++        }
++        self.counts[3] += text_bytes;
++        self.counts[5] += 1;
++        self.json_bytes += bytes;
++        self.rows.push(row);
++        Ok(())
++    }
++    fn closure(&self) -> Result<()> {
++        ensure!(
++            self.stack.is_empty() && self.graphs > 0 && self.counts[0] > 0,
++            "metadata graph did not complete"
++        );
++        for (key, v) in &self.values {
++            ensure!(v.rank.is_none_or(|r| r == v.dims), "missing dimensions");
++            if let Some(n) = v.producer {
++                ensure!(
++                    self.nodes.contains(&(key.0, n)) && self.outputs.get(key) == Some(&n),
++                    "value producer differs from output edges"
++                );
++            }
++            match v.provenance.as_str() {
++                "node_output" => ensure!(v.producer.is_some(), "node output has no producer"),
++                "immutable_session_initializer" => ensure!(
++                    v.constant.is_some(),
++                    "immutable initializer metadata missing"
++                ),
++                "graph_input" => ensure!(
++                    self.graph_inputs.contains(key),
++                    "input provenance differs from graph boundary"
++                ),
++                _ => (),
++            }
++            if let Some((count, seen, readable, _)) = v.constant {
++                ensure!(!readable || count == seen, "constant payload missing");
++            }
++        }
++        for (key, node) in &self.outputs {
++            ensure!(
++                self.values
++                    .get(key)
++                    .is_some_and(|v| v.producer == Some(*node)),
++                "output edge lacks matching producer metadata"
++            );
++        }
++        ensure!(
++            self.attributes
++                .values()
++                .all(|(count, seen, readable, _)| !*readable || count == seen),
++            "attribute payload missing"
++        );
++        Ok(())
++    }
++    fn finish(mut self, status: i32, error: i32, reported: [u64; 6]) -> Observation {
++        if self.failure.is_none() {
++            if let Err(error) = self.closure() {
++                self.failure = Some(format!("{error:#}"));
++            } else if self.counts != reported {
++                self.failure = Some("collector counters differ".into());
++            }
++        }
++        let mut value = Observation {
++            schema: "airk.private.ort-final-graph-metadata/1",
++            complete: status == 0 && error == 0 && self.failure.is_none(),
++            shim_status: status,
++            ort_error_code: error,
++            reported_counts: reported,
++            encoded_bytes: 0,
++            failure: self.failure,
++            rows: self.rows,
++        };
++        for _ in 0..8 {
++            let n = serde_json::to_vec(&value).map_or(MAX_JSON + 1, |v| v.len());
++            if n == value.encoded_bytes {
++                break;
++            }
++            value.encoded_bytes = n;
++        }
++        if value.encoded_bytes > MAX_JSON {
++            value.complete = false;
++            value.failure = Some("metadata encoded budget exceeded".into());
++        }
++        value
++    }
++}
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
++unsafe fn decode(raw: &Raw) -> Result<Row> {
++    let mut strings = Vec::with_capacity(4);
++    for i in 0..4 {
++        ensure!(
++            raw.text_bytes[i] <= 4096 && (raw.text_bytes[i] == 0 || !raw.text[i].is_null()),
++            "invalid metadata string span"
++        );
++        let bytes = if raw.text_bytes[i] == 0 {
++            &[][..]
++        } else {
++            unsafe { std::slice::from_raw_parts(raw.text[i], raw.text_bytes[i]) }
++        };
++        strings.push(std::str::from_utf8(bytes)?.to_owned());
++    }
++    let optional = |v| if v == u64::MAX { None } else { Some(v) };
++    let [a, b, c, d]: [String; 4] = strings.try_into().unwrap();
++    Ok(match raw.kind {
++        1 => {
++            ensure!(raw.flags <= 1, "unknown outer binding flag");
++            Row::Graph {
++                graph: raw.graph,
++                parent_graph: optional(raw.value),
++                parent_node: optional(raw.node),
++                attribute: a,
++                outer_bindings: if raw.flags == 0 {
++                    "not_applicable"
++                } else {
++                    "unresolved"
++                }
++                .into(),
++            }
++        }
++        2 => Row::Node {
++            graph: raw.graph,
++            node: raw.node,
++            name: a,
++            domain: b,
++            op: c,
++            ep: d,
++            version: raw.integer,
++        },
++        3 => {
++            ensure!(raw.flags <= 2, "unknown value type flag");
++            Row::Value {
++                graph: raw.graph,
++                value: raw.value,
++                name: a,
++                element_type: if raw.flags == 1 {
++                    Some(raw.integer)
++                } else {
++                    None
++                },
++                rank: optional(raw.slot),
++                type_state: match raw.flags {
++                    1 => "tensor",
++                    2 => "unsupported_non_tensor",
++                    _ => "unknown",
++                }
++                .into(),
++                provenance: b,
++                producer: optional(raw.node),
++            }
++        }
++        4 => {
++            ensure!(raw.flags <= 2, "unknown dimension flag");
++            Row::Dimension {
++                graph: raw.graph,
++                value: raw.value,
++                index: raw.slot,
++                number: if raw.flags == 1 {
++                    Some(raw.integer)
++                } else {
++                    None
++                },
++                symbol: if raw.flags == 2 { Some(a) } else { None },
++            }
++        }
++        5 => Row::Edge {
++            graph: raw.graph,
++            node: optional(raw.node),
++            value: optional(raw.value),
++            role: raw.flags,
++            slot: raw.slot,
++        },
++        6 => {
++            ensure!(raw.flags <= 1, "attribute readability flag");
++            Row::Attribute {
++                graph: raw.graph,
++                node: raw.node,
++                index: raw.slot,
++                name: a,
++                attribute_type: raw.integer,
++                count: raw.value,
++                readable: raw.flags == 1,
++                reason: b,
++            }
++        }
++        7 => Row::AttributeElement {
++            graph: raw.graph,
++            node: raw.node,
++            attribute: raw.slot,
++            index: raw.value,
++            element_kind: raw.flags,
++            value: match raw.flags {
++                1 => Value::from(raw.integer),
++                2 => Value::Number(
++                    serde_json::Number::from_f64(raw.real).context("nonfinite attribute")?,
++                ),
++                3 => Value::String(a),
++                _ => anyhow::bail!("unknown attribute element kind"),
++            },
++        },
++        8 => {
++            ensure!(raw.flags <= 1, "constant readability flag");
++            Row::Constant {
++                graph: raw.graph,
++                value: raw.value,
++                element_type: raw.integer,
++                count: raw.slot,
++                readable: raw.flags == 1,
++                reason: a,
++                device: b,
++            }
++        }
++        9 => Row::ConstantElement {
++            graph: raw.graph,
++            value: raw.value,
++            index: raw.slot,
++            element_bytes: raw.flags,
++            integer: raw.integer,
++        },
++        10 => Row::End { graph: raw.graph },
++        _ => anyhow::bail!("unknown metadata record kind"),
++    })
++}
++#[cfg(all(windows, target_arch = "x86_64"))]
++unsafe extern "C" fn callback(user: *mut std::ffi::c_void, raw: *const Raw) -> i32 {
++    if user.is_null() || raw.is_null() {
++        return 1;
++    }
++    let sink = unsafe { &mut *user.cast::<Sink>() };
++    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
++        let raw = unsafe { &*raw };
++        if raw.kind == 0 {
++            ensure!(
++                raw.flags == 0
++                    && raw.graph == 0
++                    && raw.node == 0
++                    && raw.value == 0
++                    && raw.slot == 0
++                    && raw.integer == 0
++                    && raw.real == 0.0
++                    && raw.text.iter().all(|p| p.is_null())
++                    && raw.text_bytes == [0; 4],
++                "invalid cancellation checkpoint"
++            );
++            if let Some(deadline) = sink.deadline {
++                in_time(deadline)?;
++            }
++            return Ok(());
++        }
++        sink.accept(unsafe { decode(raw) }?)
++    }));
++    match result {
++        Ok(Ok(())) => 0,
++        Ok(Err(error)) => {
++            sink.failure = Some(format!("{error:#}"));
++            1
++        }
++        Err(_) => {
++            sink.failure = Some("metadata callback panicked".into());
++            1
++        }
++    }
++}
++#[cfg(all(windows, target_arch = "x86_64"))]
++pub(super) unsafe fn observe(
++    collect: Collector,
++    session: &ort::session::Session,
++    deadline: Instant,
++    placement: &PlacementObservation,
++) -> Observation {
++    use ort::AsPointer;
++    let mut sink = Sink {
++        deadline: Some(deadline),
++        ..Default::default()
++    };
++    let mut counts = [0; 6];
++    let mut error = 0;
++    let status = if Instant::now() >= deadline {
++        sink.failure = Some("original metadata deadline expired".into());
++        1
++    } else {
++        unsafe {
++            collect(
++                ort::sys::OrtGetApiBase().cast(),
++                session.ptr().cast(),
++                callback,
++                (&mut sink as *mut Sink).cast(),
++                counts.as_mut_ptr(),
++                &mut error,
++            )
++        }
++    };
++    if Instant::now() >= deadline {
++        sink.failure = Some("original metadata deadline expired".into());
++    }
++    let mut observation = sink.finish(status, error, counts);
++    if observation.complete {
++        if let Err(error) = observation.validate_against(placement) {
++            observation.complete = false;
++            observation.failure = Some(format!("{error:#}"));
++        }
++    }
++    for _ in 0..8 {
++        let n = serde_json::to_vec(&observation).map_or(MAX_JSON + 1, |v| v.len());
++        if n == observation.encoded_bytes {
++            break;
++        }
++        observation.encoded_bytes = n;
++    }
++    observation
++}
++#[cfg(test)]
++mod tests;
+--- /dev/null
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/graph_metadata/tests.rs
+@@ -0,0 +1,453 @@
++// SPDX-License-Identifier: Apache-2.0
++use super::*;
++fn fixture() -> Vec<Row> {
++    vec![
++        Row::Graph {
++            graph: 0,
++            parent_graph: None,
++            parent_node: None,
++            attribute: "".into(),
++            outer_bindings: "not_applicable".into(),
++        },
++        Row::Value {
++            graph: 0,
++            value: 0,
++            name: "input".into(),
++            element_type: Some(1),
++            rank: Some(2),
++            type_state: "tensor".into(),
++            provenance: "graph_input".into(),
++            producer: None,
++        },
++        Row::Dimension {
++            graph: 0,
++            value: 0,
++            index: 0,
++            number: Some(1),
++            symbol: None,
++        },
++        Row::Dimension {
++            graph: 0,
++            value: 0,
++            index: 1,
++            number: None,
++            symbol: Some("tokens".into()),
++        },
++        Row::Value {
++            graph: 0,
++            value: 1,
++            name: "shape".into(),
++            element_type: Some(7),
++            rank: Some(1),
++            type_state: "tensor".into(),
++            provenance: "node_output".into(),
++            producer: Some(4),
++        },
++        Row::Dimension {
++            graph: 0,
++            value: 1,
++            index: 0,
++            number: Some(2),
++            symbol: None,
++        },
++        Row::Edge {
++            graph: 0,
++            node: None,
++            value: Some(0),
++            role: 3,
++            slot: 0,
++        },
++        Row::Edge {
++            graph: 0,
++            node: None,
++            value: Some(1),
++            role: 4,
++            slot: 0,
++        },
++        Row::Edge {
++            graph: 0,
++            node: None,
++            value: Some(0),
++            role: 5,
++            slot: 0,
++        },
++        Row::Node {
++            graph: 0,
++            node: 4,
++            name: "shape_node".into(),
++            domain: "".into(),
++            op: "Shape".into(),
++            ep: "CPUExecutionProvider".into(),
++            version: 15,
++        },
++        Row::Edge {
++            graph: 0,
++            node: Some(4),
++            value: Some(0),
++            role: 0,
++            slot: 0,
++        },
++        Row::Edge {
++            graph: 0,
++            node: Some(4),
++            value: Some(1),
++            role: 2,
++            slot: 0,
++        },
++        Row::End { graph: 0 },
++    ]
++}
++fn consume(rows: Vec<Row>) -> Result<Sink> {
++    let mut s = Sink::default();
++    for row in rows {
++        s.accept(row)?;
++    }
++    s.closure()?;
++    Ok(s)
++}
++fn placement() -> PlacementObservation {
++    PlacementObservation {
++        scope: "onnxruntime-final-session-state-ep-placement",
++        complete: true,
++        shim_status: 0,
++        ort_error_code: 0,
++        reported_nodes: 1,
++        reported_string_bytes: 35,
++        nodes: vec![PlacedNode {
++            subgraph_index: 0,
++            name: "shape_node".into(),
++            domain: "".into(),
++            op: "Shape".into(),
++            ep: "CPUExecutionProvider".into(),
++        }],
++    }
++}
++#[test]
++fn complete_fixture_derives_consumers_and_matches_full_placement() -> Result<()> {
++    let sink = consume(fixture())?;
++    assert_eq!(sink.counts, [1, 2, 5, 73, 0, 13]);
++    let counts = sink.counts;
++    let value = sink.finish(0, 0, counts);
++    assert!(value.complete);
++    value.validate_against(&placement())?;
++    assert_eq!(value.consumers(0, 0), vec![(4, 0, 0)]);
++    assert!(value.encoded_bytes <= 8 << 20);
++    assert!(placement().validate_strict().is_err());
++    Ok(())
++}
++#[test]
++fn same_count_changed_provider_or_name_is_not_equivalent() -> Result<()> {
++    let sink = consume(fixture())?;
++    let counts = sink.counts;
++    let value = sink.finish(0, 0, counts);
++    for mutate in 0..3 {
++        let mut p = placement();
++        match mutate {
++            0 => p.nodes[0].ep = "CUDAExecutionProvider".into(),
++            1 => p.nodes[0].name = "different".into(),
++            _ => p.nodes[0].subgraph_index = 1,
++        };
++        assert!(value.validate_against(&p).is_err());
++    }
++    Ok(())
++}
++#[test]
++fn missing_dimension_end_or_producer_refuses() {
++    for remove in [3, 12] {
++        let mut rows = fixture();
++        rows.remove(remove);
++        assert!(consume(rows).is_err());
++    }
++    let mut rows = fixture();
++    if let Row::Value {
++        producer,
++        provenance,
++        ..
++    } = &mut rows[4]
++    {
++        *producer = None;
++        *provenance = "unresolved_outer_or_internal".into();
++    }
++    assert!(
++        consume(rows).is_err(),
++        "output edge requires producer metadata in both directions"
++    );
++}
++#[test]
++fn duplicate_unknown_value_and_repeated_edge_slots_refuse() {
++    let mut rows = fixture();
++    rows.insert(2, rows[1].clone());
++    assert!(consume(rows).is_err());
++    let mut rows = fixture();
++    if let Row::Edge { value, .. } = &mut rows[10] {
++        *value = Some(999);
++    }
++    assert!(consume(rows).is_err());
++    let mut rows = fixture();
++    if let Row::Edge { slot, .. } = &mut rows[10] {
++        *slot = 1;
++    }
++    assert!(consume(rows).is_err());
++}
++fn constant_rows(readable: bool, device: &str, count: u64) -> Vec<Row> {
++    vec![
++        Row::Value {
++            graph: 0,
++            value: 2,
++            name: "axis".into(),
++            element_type: Some(7),
++            rank: Some(0),
++            type_state: "tensor".into(),
++            provenance: "immutable_session_initializer".into(),
++            producer: None,
++        },
++        Row::Constant {
++            graph: 0,
++            value: 2,
++            element_type: 7,
++            count,
++            readable,
++            reason: if readable { "read" } else { "non_CPU_unread" }.into(),
++            device: device.into(),
++        },
++    ]
++}
++#[test]
++fn only_bounded_cpu_constants_are_readable() {
++    for (device, count) in [("non_CPU", 1), ("CPU", 65)] {
++        let mut rows = fixture();
++        rows.splice(6..6, constant_rows(true, device, count));
++        assert!(consume(rows).is_err());
++    }
++    let mut rows = fixture();
++    let mut constants = constant_rows(true, "CPU", 1);
++    constants.push(Row::ConstantElement {
++        graph: 0,
++        value: 2,
++        index: 0,
++        element_bytes: 8,
++        integer: 0,
++    });
++    rows.splice(6..6, constants);
++    assert!(consume(rows).is_ok());
++}
++#[test]
++fn unread_gpu_constant_is_explicit_and_cannot_have_payload() {
++    let mut rows = fixture();
++    rows.splice(6..6, constant_rows(false, "non_CPU", 1));
++    assert!(consume(rows.clone()).is_ok());
++    rows.insert(
++        8,
++        Row::ConstantElement {
++            graph: 0,
++            value: 2,
++            index: 0,
++            element_bytes: 8,
++            integer: 0,
++        },
++    );
++    assert!(consume(rows).is_err());
++}
++#[test]
++fn constant_missing_payload_and_width_drift_refuse() {
++    let mut rows = fixture();
++    rows.splice(6..6, constant_rows(true, "CPU", 1));
++    assert!(consume(rows.clone()).is_err());
++    rows.insert(
++        8,
++        Row::ConstantElement {
++            graph: 0,
++            value: 2,
++            index: 0,
++            element_bytes: 4,
++            integer: 0,
++        },
++    );
++    assert!(consume(rows).is_err());
++}
++#[test]
++fn attribute_declared_count_type_and_payload_are_checked() {
++    let attr = Row::Attribute {
++        graph: 0,
++        node: 4,
++        index: 0,
++        name: "start".into(),
++        attribute_type: 2,
++        count: 1,
++        readable: true,
++        reason: "read".into(),
++    };
++    let mut rows = fixture();
++    rows.insert(10, attr);
++    assert!(consume(rows.clone()).is_err());
++    rows.insert(
++        11,
++        Row::AttributeElement {
++            graph: 0,
++            node: 4,
++            attribute: 0,
++            index: 0,
++            element_kind: 1,
++            value: Value::from(0),
++        },
++    );
++    assert!(consume(rows.clone()).is_ok());
++    if let Row::AttributeElement { element_kind, .. } = &mut rows[11] {
++        *element_kind = 3;
++    }
++    assert!(consume(rows).is_err());
++}
++#[test]
++fn original_deadline_and_encoded_budget_cancel_before_append() {
++    let mut sink = Sink {
++        deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
++        ..Default::default()
++    };
++    assert!(sink.accept(fixture().remove(0)).is_err());
++    assert!(sink.rows.is_empty());
++    let mut sink = Sink {
++        json_bytes: MAX_JSON - 4096,
++        ..Default::default()
++    };
++    assert!(sink.accept(fixture().remove(0)).is_err());
++    assert!(sink.rows.is_empty());
++}
++#[test]
++fn collector_error_cancel_and_counter_drift_never_complete() -> Result<()> {
++    for (status, error, drift) in [(5, 1, false), (6, 1, false), (0, 0, true)] {
++        let sink = consume(fixture())?;
++        let mut counts = sink.counts;
++        if drift {
++            counts[0] += 1;
++        }
++        assert!(!sink.finish(status, error, counts).complete);
++    }
++    Ok(())
++}
++#[test]
++fn child_graph_outer_binding_stays_explicitly_unresolved() {
++    let mut rows = fixture();
++    rows.insert(
++        12,
++        Row::Graph {
++            graph: 1,
++            parent_graph: Some(0),
++            parent_node: Some(4),
++            attribute: "body".into(),
++            outer_bindings: "unresolved".into(),
++        },
++    );
++    rows.insert(13, Row::End { graph: 1 });
++    assert!(consume(rows.clone()).is_ok());
++    if let Row::Graph { outer_bindings, .. } = &mut rows[12] {
++        *outer_bindings = "proven".into();
++    }
++    assert!(consume(rows).is_err());
++}
++#[test]
++fn raw_utf8_null_span_and_unknown_record_refuse() {
++    let invalid = [255u8];
++    let mut raw = Raw {
++        kind: 2,
++        flags: 0,
++        graph: 0,
++        node: 0,
++        value: 0,
++        slot: 0,
++        integer: 1,
++        real: 0.0,
++        text: [std::ptr::null(); 4],
++        text_bytes: [0; 4],
++    };
++    raw.text[0] = invalid.as_ptr();
++    raw.text_bytes[0] = 1;
++    assert!(unsafe { decode(&raw) }.is_err());
++    raw.text[0] = std::ptr::null();
++    assert!(unsafe { decode(&raw) }.is_err());
++    raw.text_bytes[0] = 0;
++    raw.kind = 99;
++    assert!(unsafe { decode(&raw) }.is_err());
++    raw.kind = 7;
++    raw.flags = 2;
++    raw.real = f64::NAN;
++    assert!(unsafe { decode(&raw) }.is_err());
++}
++
++#[test]
++fn same_core_record_abi_has_independent_x64_layout() {
++    assert_eq!(std::mem::size_of::<Raw>(), 120);
++    assert_eq!(std::mem::align_of::<Raw>(), 8);
++    assert_eq!(std::mem::offset_of!(Raw, text), 56);
++    assert_eq!(std::mem::offset_of!(Raw, text_bytes), 88);
++}
++
++#[test]
++fn metadata_attribute_population_refuses_sixty_fifth_entry() {
++    for count in [64, 65] {
++        let mut rows = fixture();
++        let attributes = (0..count).map(|index| Row::Attribute {
++            graph: 0,
++            node: 4,
++            index,
++            name: format!("attr{index}"),
++            attribute_type: 7,
++            count: 0,
++            readable: true,
++            reason: "read".into(),
++        });
++        rows.splice(10..10, attributes);
++        assert_eq!(consume(rows).is_ok(), count == 64);
++    }
++}
++#[test]
++fn scalar_attributes_require_one_value_but_lists_can_be_empty() {
++    for attribute_type in [1, 2, 3] {
++        for count in [0, 1, 2] {
++            let mut rows = fixture();
++            let mut attributes = vec![Row::Attribute {
++                graph: 0,
++                node: 4,
++                index: 0,
++                name: "scalar".into(),
++                attribute_type,
++                count,
++                readable: true,
++                reason: "read".into(),
++            }];
++            for index in 0..count {
++                let (element_kind, value) = match attribute_type {
++                    1 => (2, serde_json::json!(1.0)),
++                    2 => (1, serde_json::json!(1)),
++                    _ => (3, serde_json::json!("x")),
++                };
++                attributes.push(Row::AttributeElement {
++                    graph: 0,
++                    node: 4,
++                    attribute: 0,
++                    index,
++                    element_kind,
++                    value,
++                });
++            }
++            rows.splice(10..10, attributes);
++            assert_eq!(consume(rows).is_ok(), count == 1);
++        }
++    }
++    for attribute_type in [6, 7, 8] {
++        let mut rows = fixture();
++        rows.insert(
++            10,
++            Row::Attribute {
++                graph: 0,
++                node: 4,
++                index: 0,
++                name: "list".into(),
++                attribute_type,
++                count: 0,
++                readable: true,
++                reason: "read".into(),
++            },
++        );
++        assert!(consume(rows).is_ok());
++    }
++}
+--- a/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification.rs
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification.rs
+@@ -256,6 +256,25 @@
+                         "AIRK_CUDA_CHECKPOINTED_PROOF",
+                         "AIRK_CUDA_CHECKPOINTED_PROOF_SHA256",
+                     )?),
++                },
++                incremental_proof: match std::env::var_os("AIRK_CUDA_INCREMENTAL_PROOF") {
++                    None => {
++                        ensure!(
++                            std::env::var_os("AIRK_CUDA_INCREMENTAL_PROOF_SHA256").is_none(),
++                            "incremental proof hash requires explicit proof path"
++                        );
++                        None
++                    }
++                    Some(_) => {
++                        ensure!(
++                            std::env::var_os("AIRK_CUDA_CHECKPOINTED_PROOF").is_none(),
++                            "conflicting producer proof modes"
++                        );
++                        Some(env_pin(
++                            "AIRK_CUDA_INCREMENTAL_PROOF",
++                            "AIRK_CUDA_INCREMENTAL_PROOF_SHA256",
++                        )?)
++                    }
+                 },
+                 custody_copies: match std::env::var_os("AIRK_CUDA_METADATA_CUSTODY") {
+                     None => {
+@@ -687,6 +706,7 @@
+         producer_name: "producer.json".into(),
+         producer_sha256: Sha256Digest::from_bytes([1; 32]),
+         checkpointed_proof: None,
++        incremental_proof: None,
+         custody_copies: Vec::new(),
+         historical_tool_copies: Vec::new(),
+         module_names: vec![],
+@@ -695,6 +715,7 @@
+     };
+     let mut json = serde_json::to_value(&assembly)?;
+     assert!(json.get("checkpointed_proof").is_none());
++    assert!(json.get("incremental_proof").is_none());
+     json["checkpointed_proof"] =
+         serde_json::json!({"path":"literal-proof.json","sha256":Sha256Digest::from_bytes([2;32])});
+     let decoded: RuntimeAssemblyInput = serde_json::from_value(json.clone())?;
+@@ -1562,3 +1583,514 @@
+         );
+     }
+ }
++
++// This additive selector preserves the existing placement-mode wire and success rules.
++const GRAPH_DIAGNOSTIC_BYTES: usize = 16 << 20;
++fn bounded_graph_diagnostic_json(receipt: &Value, maximum: usize) -> Result<Vec<u8>> {
++    ensure!(
++        maximum > 0 && maximum <= GRAPH_DIAGNOSTIC_BYTES,
++        "invalid graph diagnostic byte cap"
++    );
++    struct Bounded {
++        bytes: Vec<u8>,
++        maximum: usize,
++    }
++    impl std::io::Write for Bounded {
++        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
++            if !self
++                .bytes
++                .len()
++                .checked_add(bytes.len())
++                .is_some_and(|n| n <= self.maximum)
++            {
++                return Err(std::io::Error::new(
++                    std::io::ErrorKind::InvalidData,
++                    "graph diagnostic output cap",
++                ));
++            }
++            self.bytes.extend_from_slice(bytes);
++            Ok(bytes.len())
++        }
++        fn flush(&mut self) -> std::io::Result<()> {
++            Ok(())
++        }
++    }
++    let mut output = Bounded {
++        bytes: Vec::new(),
++        maximum,
++    };
++    serde_json::to_writer(&mut output, receipt)?;
++    Ok(output.bytes)
++}
++fn flush_graph_diagnostic(file: &mut File, receipt: &Value) -> Result<()> {
++    // Complete bounded serialization precedes seek/write: overflow preserves prior bytes.
++    let bytes = bounded_graph_diagnostic_json(receipt, GRAPH_DIAGNOSTIC_BYTES)?;
++    file.seek(SeekFrom::Start(0))?;
++    file.write_all(&bytes)?;
++    file.set_len(bytes.len() as u64)?;
++    file.flush()?;
++    file.sync_data()?;
++    Ok(())
++}
++fn graph_diagnostic_logs_complete(snapshot: &cuda::LoadSnapshot) -> bool {
++    !snapshot.logs.truncated && snapshot.logs.omitted == 0
++}
++fn graph_diagnostic_custody(
++    loaded: bool,
++    retained: bool,
++    cleaned: bool,
++    released: bool,
++    poisoned: bool,
++) -> Result<()> {
++    ensure!(loaded, "disposable graph diagnostic returned failure");
++    diagnostic_settlement(true, retained, cleaned, released, poisoned)
++}
++fn graph_diagnostic_evidence(
++    loaded: bool,
++    snapshot: Option<&cuda::LoadSnapshot>,
++    retained: bool,
++    cleaned: bool,
++    released: bool,
++    poisoned: bool,
++) -> Result<()> {
++    graph_diagnostic_custody(loaded, retained, cleaned, released, poisoned)?;
++    snapshot
++        .context("disposable graph observer is absent")?
++        .validate_graph_metadata()
++}
++
++#[test]
++#[ignore = "disposable final graph metadata only: original120s/16GiB/24GiB, actual CUDA lease/device; no scorer or forward"]
++fn cuda_load_only_graph_metadata_diagnostic() -> Result<()> {
++    let started_ns = airk_process::monotonic::now_ns()?;
++    let started = Instant::now();
++    let execution_user = airk_ipc::endpoint::current_user()?;
++    let default_owner = diagnostic_default_owner()?;
++    ensure!(
++        execution_user == default_owner,
++        "diagnostic default owner differs from execution user"
++    );
++    let (request, request_pin) = request()?;
++    let Request::Probe {
++        schema,
++        gpu_input,
++        runtime_manifest,
++        bounds,
++        cold_bytes,
++        warm_bytes,
++        headroom_bytes,
++        job_limit_bytes,
++    } = request
++    else {
++        anyhow::bail!("graph metadata diagnostic requires unchanged native Probe request")
++    };
++    ensure!(schema == SCHEMA, "unknown diagnostic request schema");
++    bounds.validate()?;
++    ensure!(
++        bounds.deadline_ms == 120000
++            && bounds.host_limit_bytes == 16 << 30
++            && bounds.device_limit_bytes == 24 << 30
++            && job_limit_bytes == 24 << 30,
++        "graph metadata diagnostic original bounds differ"
++    );
++    let deadline = started + Duration::from_millis(bounds.deadline_ms);
++    let expires_ns = started_ns
++        .checked_add(bounds.deadline_ms * 1_000_000)
++        .context("diagnostic expiry overflow")?;
++    // Actual source assets are authenticated below before disposable session creation.
++    let (input, profile, files, _) = inputs_from(&gpu_input)?;
++    let capacity_plan = bounds_validate(
++        &bounds,
++        cold_bytes,
++        warm_bytes,
++        headroom_bytes,
++        job_limit_bytes,
++        profile.memory_reservation_bytes,
++    )?;
++    ensure!(
++        profile.model == ModelChoice::ContextQwenCompact
++            && profile.device_execution.is_some()
++            && profile.cpu_fit.is_none(),
++        "graph metadata diagnostic requires frozen Compact GPU metadata"
++    );
++    pinned(&runtime_manifest, 128 << 10)?;
++    let (root, manifest) = airk_host::gpu_runtime::installed_paths()?;
++    ensure!(
++        manifest.as_path() == Path::new(&runtime_manifest.path),
++        "diagnostic manifest differs from installed runtime locator"
++    );
++    let actual_job = job_limits(bounds.host_limit_bytes, job_limit_bytes)?;
++    let mut resources = airk_kernel::service_resources::Resources::detect(ResourceConfiguration {
++        preset: ResourcePreset::Throughput,
++        ..ResourceConfiguration::default()
++    })?;
++    let available = airk_kernel::service_resource_observations::available_memory();
++    resources.observe(
++        airk_kernel::service_resource_observations::rss(std::process::id()),
++        available,
++        true,
++    );
++    let incarnation = Incarnation::from_bytes(request_pin.sha256.as_bytes()[..16].try_into()?);
++    let charge =
++        Arc::new(resources.reserve_optional(incarnation, bounds.host_limit_bytes, available)?);
++    let charge_release = charge.release_observer();
++    let (parent, control) = private_control()?;
++    let mut control_parent = Some(parent);
++    let lease = Arc::new(airk_store::service::ServiceLease::acquire(&control)?);
++    let owner = Arc::new(airk_kernel::inference_owner::NativeInferenceOwner::admit(
++        lease.clone(),
++    )?);
++    let binary = file_hash(&std::env::current_exe()?)?;
++    let mut file = OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .open(output()?)?;
++    let mut receipt = json!({
++        "schema":"airk.private.cuda-graph-metadata-diagnostic/1", "diagnostic_complete":false,
++        "operation_scope":"Disposable session creation and final graph metadata observation only; no Scorer, forward, hybrid policy or qualification is returned",
++        "outcome":"not_dispatched","qualification":false,"product_admission":false,
++        "session_load_dispatched":false,"session_created":false,"strict_production_unchanged":true,
++        "cpu_fallback_disabled":false,"scorer_returned":false,"forward_dispatched":false,
++        "model_requests_dispatched":false,"operations_journal_created":false,"forward_count_observed":null,
++        "placement":null,"graph_metadata":null,"logs":null,"selected_logs_complete":false,"teardown":null,
++        "request":request_pin,"native_input":gpu_input,"profile":profile.manifest,"source_manifest":input.source_manifest,
++        "runtime_manifest":runtime_manifest,"pid":std::process::id(),"native_binary_sha256":binary,
++        "execution_user":execution_user,"default_owner":default_owner,"bounds":bounds,"actual_job":actual_job,
++        "native_host_reservation_bytes":charge.bytes(),"resource_snapshot":resources.snapshot(),
++        "original_expires_monotonic_ns":expires_ns,"error":null,"error_chain":[],"diagnostic_error":null
++    });
++    flush_graph_diagnostic(&mut file, &receipt)?;
++    let mut dispatched = false;
++    let mut observer = None;
++    let run = owner.run(|| -> Result<()> {
++        let mut custody = Custody {
++            scorer: None,
++            device: None,
++            owner: owner.clone(),
++            lease: lease.clone(),
++            charge: Some(charge),
++            control: &mut control_parent,
++            files: Some(files),
++        };
++        ensure!(
++            Instant::now() < deadline,
++            "original graph metadata diagnostic expiry before admission"
++        );
++        verify_files(custody.files.as_ref().unwrap(), &profile)?;
++        let runtime = airk_host::gpu_runtime::admit(lease.clone(), &root, &manifest, deadline)?;
++        ensure!(
++            runtime.manifest_identity() == runtime_manifest.sha256,
++            "diagnostic runtime differs from frozen manifest"
++        );
++        let adapters = runtime.adapters(deadline)?;
++        ensure!(
++            adapters.len() == 1,
++            "graph metadata diagnostic requires one actual adapter"
++        );
++        let device = runtime.device(adapters[0].uuid, deadline)?;
++        custody.device = Some(device.clone());
++        receipt["adapter_before"] = serde_json::to_value(device.observation(deadline)?)?;
++        let catalog =
++            airk_kernel::inference_owner::evaluation_catalog(lease.clone(), vec![profile.clone()])?;
++        let execution = catalog
++            .execution_profile(profile.manifest)?
++            .bind_cuda_probe(device, capacity_plan, deadline)?;
++        observer = Some(execution.cuda_load_observer()?);
++        ensure!(
++            Instant::now() < deadline,
++            "original graph metadata diagnostic expiry before session load"
++        );
++        dispatched = true;
++        receipt["session_load_dispatched"] = json!(true);
++        let result =
++            Scorer::diagnose_cuda_graph_metadata(execution, custody.files.as_ref().unwrap());
++        let post_files = verify_files(custody.files.as_ref().unwrap(), &profile);
++        result.and(post_files)
++    });
++    let admission = run.and_then(std::convert::identity);
++    let snapshot = observer
++        .as_ref()
++        .map(cuda::LoadObserver::snapshot)
++        .transpose();
++    drop(owner);
++    drop(lease);
++    let retained = control_parent.is_none();
++    let cleanup = control_parent
++        .take()
++        .map(tempfile::TempDir::close)
++        .transpose();
++    let cleaned = matches!(&cleanup, Ok(Some(())));
++    let mut released_future = std::pin::pin!(charge_release.wait());
++    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
++    let released = matches!(
++        std::future::Future::poll(released_future.as_mut(), &mut cx),
++        std::task::Poll::Ready(Ok(()))
++    );
++    let poisoned = cuda::process_poisoned();
++    receipt["session_load_dispatched"] = json!(dispatched);
++    if let Ok(Some(value)) = &snapshot {
++        receipt["session_created"] = json!(value.session_created);
++        receipt["placement"] = serde_json::to_value(&value.placement)?;
++        receipt["logs"] = serde_json::to_value(&value.logs)?;
++        receipt["graph_metadata"] = serde_json::to_value(&value.graph_metadata)?;
++        receipt["selected_logs_complete"] = json!(graph_diagnostic_logs_complete(value));
++        receipt["teardown"] = serde_json::to_value(&value.teardown)?;
++    }
++    receipt["native_control_retained_for_unknown_cuda"] = json!(retained);
++    receipt["native_control_cleanup_observed"] = json!(cleaned);
++    receipt["native_control_cleanup_error"] =
++        json!(cleanup.as_ref().err().map(ToString::to_string));
++    receipt["native_host_charge_release_observed"] = json!(released);
++    receipt["process_cuda_poisoned"] = json!(poisoned);
++    if let Err(error) = &admission {
++        receipt["error"] = json!(format!("{error:#}"));
++        receipt["error_chain"] = json!(error.chain().map(ToString::to_string).collect::<Vec<_>>());
++    }
++    let post = (|| -> Result<()> {
++        ensure!(dispatched, "disposable session load was not dispatched");
++        ensure!(cleanup.is_ok(), "native diagnostic control cleanup failed");
++        let observed = snapshot
++            .as_ref()
++            .map_err(|error| anyhow::anyhow!("{error:#}"))?;
++        graph_diagnostic_evidence(
++            admission.is_ok(),
++            observed.as_ref(),
++            retained,
++            cleaned,
++            released,
++            poisoned,
++        )?;
++        pinned(&request_pin, 1 << 20)?;
++        pinned(&gpu_input, 1 << 20)?;
++        pinned(&input.profile, 1 << 20)?;
++        pinned(&input.source_manifest, 16 << 20)?;
++        pinned(&runtime_manifest, 128 << 10)?;
++        ensure!(
++            Instant::now() < deadline,
++            "original graph metadata diagnostic expiry during postpins"
++        );
++        Ok(())
++    })();
++    let peak = peak_rss();
++    let peak_decision = final_host_peak(peak, bounds.host_limit_bytes);
++    receipt["peak_process_rss_bytes"] = json!(peak);
++    receipt["final_host_peak_error"] = json!(peak_decision.as_ref().err().map(ToString::to_string));
++    let final_result = admission.and(post).and(peak_decision.map(|_| ()));
++    receipt["outcome"] = json!(if final_result.is_ok() {
++        "graph_metadata_observed"
++    } else if dispatched {
++        "failed"
++    } else {
++        "not_dispatched"
++    });
++    receipt["diagnostic_complete"] = json!(final_result.is_ok());
++    receipt["diagnostic_error"] = json!(final_result.as_ref().err().map(|e| format!("{e:#}")));
++    receipt["elapsed_us_to_final_report_start"] = json!(started.elapsed().as_micros());
++    flush_graph_diagnostic(&mut file, &receipt)?;
++    if Instant::now() >= deadline {
++        receipt["diagnostic_complete"] = json!(false);
++        receipt["outcome"] = json!("failed");
++        receipt["final_report_retention_exceeded_original_deadline"] = json!(true);
++        receipt["diagnostic_error"] =
++            json!("original graph metadata diagnostic expiry during final report retention");
++        flush_graph_diagnostic(&mut file, &receipt)?;
++        anyhow::bail!("original graph metadata diagnostic expiry during final report retention");
++    }
++    final_result
++}
++
++#[test]
++fn graph_diagnostic_compact_encoding_preserves_literal_json_and_exact_cap() -> Result<()> {
++    let value = json!({"x":"é\n"});
++    let expected = "{\"x\":\"é\\n\"}".as_bytes();
++    let encoded = bounded_graph_diagnostic_json(&value, expected.len())?;
++    assert_eq!(encoded, expected);
++    assert_eq!(serde_json::from_slice::<Value>(&encoded)?, value);
++    assert!(bounded_graph_diagnostic_json(&value, expected.len() - 1).is_err());
++    Ok(())
++}
++#[test]
++fn graph_diagnostic_encoding_rejects_invalid_or_overflowed_budget() {
++    assert!(bounded_graph_diagnostic_json(&json!(null), 0).is_err());
++    assert!(bounded_graph_diagnostic_json(&json!(null), GRAPH_DIAGNOSTIC_BYTES + 1).is_err());
++    assert!(bounded_graph_diagnostic_json(&json!({"x":"a".repeat(100)}), 16).is_err());
++}
++#[test]
++fn graph_diagnostic_log_disclosure_does_not_relabel_placement_success() {
++    let mut value = synthetic_placement_snapshot();
++    assert!(graph_diagnostic_logs_complete(&value));
++    value.logs.truncated = true;
++    assert!(!graph_diagnostic_logs_complete(&value));
++    assert!(value.validate().is_err());
++    value.logs.truncated = false;
++    value.logs.omitted = 1;
++    assert!(!graph_diagnostic_logs_complete(&value));
++    assert!(value.validate().is_err());
++}
++#[test]
++fn graph_diagnostic_requires_actual_load_and_clean_outer_custody() -> Result<()> {
++    graph_diagnostic_custody(true, false, true, true, false)?;
++    for (loaded, retained, cleaned, released, poisoned) in [
++        (false, false, true, true, false),
++        (true, true, false, false, true),
++        (true, false, false, true, false),
++        (true, false, true, false, false),
++        (true, false, true, true, true),
++    ] {
++        assert!(graph_diagnostic_custody(loaded, retained, cleaned, released, poisoned).is_err());
++    }
++    Ok(())
++}
++#[test]
++fn graph_diagnostic_refuses_missing_snapshot_or_graph_even_with_complete_placement() {
++    assert!(graph_diagnostic_evidence(true, None, false, true, true, false).is_err());
++    let value = synthetic_placement_snapshot();
++    assert!(value.validate().is_ok());
++    assert!(graph_diagnostic_evidence(true, Some(&value), false, true, true, false).is_err());
++}
++
++fn synthetic_graph_snapshot() -> Result<cuda::LoadSnapshot> {
++    use cuda::GraphMetadataRow as R;
++    let mut snapshot = synthetic_placement_snapshot();
++    let mut graph = cuda::GraphMetadataObservation {
++        schema: "airk.private.ort-final-graph-metadata/1",
++        complete: true,
++        shim_status: 0,
++        ort_error_code: 0,
++        reported_counts: [1, 2, 5, 62, 0, 12],
++        encoded_bytes: 0,
++        failure: None,
++        rows: vec![
++            R::Graph {
++                graph: 0,
++                parent_graph: None,
++                parent_node: None,
++                attribute: "".into(),
++                outer_bindings: "not_applicable".into(),
++            },
++            R::Value {
++                graph: 0,
++                value: 0,
++                name: "input".into(),
++                element_type: Some(1),
++                rank: Some(1),
++                type_state: "tensor".into(),
++                provenance: "graph_input".into(),
++                producer: None,
++            },
++            R::Dimension {
++                graph: 0,
++                value: 0,
++                index: 0,
++                number: Some(3),
++                symbol: None,
++            },
++            R::Value {
++                graph: 0,
++                value: 1,
++                name: "shape".into(),
++                element_type: Some(7),
++                rank: Some(1),
++                type_state: "tensor".into(),
++                provenance: "node_output".into(),
++                producer: Some(7),
++            },
++            R::Dimension {
++                graph: 0,
++                value: 1,
++                index: 0,
++                number: Some(1),
++                symbol: None,
++            },
++            R::Edge {
++                graph: 0,
++                node: None,
++                value: Some(0),
++                role: 3,
++                slot: 0,
++            },
++            R::Edge {
++                graph: 0,
++                node: None,
++                value: Some(1),
++                role: 4,
++                slot: 0,
++            },
++            R::Edge {
++                graph: 0,
++                node: None,
++                value: Some(0),
++                role: 5,
++                slot: 0,
++            },
++            R::Node {
++                graph: 0,
++                node: 7,
++                name: "shape".into(),
++                domain: "".into(),
++                op: "Shape".into(),
++                ep: "CPUExecutionProvider".into(),
++                version: 15,
++            },
++            R::Edge {
++                graph: 0,
++                node: Some(7),
++                value: Some(0),
++                role: 0,
++                slot: 0,
++            },
++            R::Edge {
++                graph: 0,
++                node: Some(7),
++                value: Some(1),
++                role: 2,
++                slot: 0,
++            },
++            R::End { graph: 0 },
++        ],
++    };
++    // Only the self-describing encoded length is calculated; expected graph facts are literal.
++    for _ in 0..8 {
++        let size = serde_json::to_vec(&graph)?.len();
++        if size == graph.encoded_bytes {
++            break;
++        }
++        graph.encoded_bytes = size;
++    }
++    snapshot.graph_metadata = Some(graph);
++    Ok(snapshot)
++}
++#[test]
++fn graph_diagnostic_success_keeps_truncated_logs_explicit_without_old_mode_pass() -> Result<()> {
++    let mut snapshot = synthetic_graph_snapshot()?;
++    snapshot.logs.seen = 1;
++    snapshot.logs.selected = 1;
++    snapshot.logs.omitted = 1;
++    snapshot.logs.truncated = true;
++    graph_diagnostic_evidence(true, Some(&snapshot), false, true, true, false)?;
++    assert!(!graph_diagnostic_logs_complete(&snapshot));
++    assert!(
++        placement_diagnostic_evidence(true, Some(&snapshot), false, true, true, false).is_err()
++    );
++    assert!(
++        snapshot
++            .placement
++            .as_ref()
++            .unwrap()
++            .validate_strict()
++            .is_err()
++    );
++    Ok(())
++}
++#[test]
++fn graph_diagnostic_rejects_incomplete_graph_and_node_provider_mismatch() -> Result<()> {
++    let snapshot = synthetic_graph_snapshot()?;
++    graph_diagnostic_evidence(true, Some(&snapshot), false, true, true, false)?;
++    let mut partial = snapshot.clone();
++    partial.graph_metadata.as_mut().unwrap().complete = false;
++    assert!(graph_diagnostic_evidence(true, Some(&partial), false, true, true, false).is_err());
++    let mut changed = snapshot;
++    changed.placement.as_mut().unwrap().nodes[0].ep = "CUDAExecutionProvider".into();
++    assert!(graph_diagnostic_evidence(true, Some(&changed), false, true, true, false).is_err());
++    Ok(())
++}
+--- a/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification/CONTRACT.md
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification/CONTRACT.md
+@@ -195,3 +195,16 @@
+ not interchangeable proofs: any unknown retained-custody path prevents diagnostic
+ completion even when global process_cuda_poisoned is false. Parent process exit
+ never relabels that unknown native teardown as an observed native release.
++
++
++## Native final-graph metadata diagnostic
++
++The existing placement selector, byte writer and strict selected-log completeness rules remain unchanged. A distinct ignored cuda_load_only_graph_metadata_diagnostic selector emits airk.private.cuda-graph-metadata-diagnostic/1 and can report graph_metadata_observed only after the actual native diagnostic call, complete final placement, complete final graph metadata cross-comparison and real session/outer custody settlement all pass.
++
++The new selector consumes fresh authenticated FP32 Compact Probe metadata with the current native runtime manifest/static-core identity. It retains the same original120s, process16GiB and Job24GiB limits, actual lease/device/evaluation authority, file authentication, host reservation, final RSS and post-input checks. It returns no Scorer, dispatches no forward, creates no operation journal and grants no hybrid policy, activation or qualification. Existing poison/unknown-release custody remains unchanged.
++
++The graph_metadata object is the Retrieval-owned airk.private.ort-final-graph-metadata/1 observation. The full capped log snapshot is retained. selected_logs_complete is true exactly when logs.truncated is false and logs.omitted is zero; false is explicit and does not claim that the old placement diagnostic passed. New-mode success requires LoadSnapshot::validate_graph_metadata rather than the older log-complete LoadSnapshot::validate. Missing graph metadata, partial placement/graph records, mismatched node identities, failed actual session load or unproved teardown refuse success.
++
++New-mode receipt serialization is compact and bounded during encoding to16MiB before the output file is changed. Existing modes retain their old pretty serialization. The receipt is synchronized and its retention checked against the unchanged original deadline. Serialization overflow cannot replace a previous partial receipt with truncated JSON or become a successful diagnostic. Primary model/load errors and actual cleanup facts remain explicit.
++
++Pure controls cover missing/failed metadata evidence, log-completeness disclosure, serializer failure before output mutation, compact JSON preservation and byte caps. They do not prove actual graph capture, CUDA execution or model qualification. Integration requires scoped Clippy and selected native tests after combined review.--- /dev/null
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/README.md
+@@ -0,0 +1,23 @@
++# Native CUDA runtime
++
++This component owns authenticated CUDA runtime loading, device custody, resource
++claims, provider setup and final execution placement. Its current executable
++policy requires strict GPU placement; a serialized policy or diagnostic report
++never grants execution authority. See [CONTRACT.md](CONTRACT.md).
++
++`windows.rs` retains authenticated files and verifies mapped modules. `modules.rs`
++classifies exact module identities. Device and session custody retain resources
++when native settlement is uncertain; `../session_owner.rs` owns session teardown.
++
++`placement.rs` observes the final same-core SessionState provider map.
++`graph_metadata.rs` additionally records bounded final graph IDs, ordered edges,
++types, attributes and small CPU-resident integer constants. Its callbacks never
++copy model weights or read GPU tensors. Unsupported values and outer bindings
++remain explicit, and consumers derive from the complete observed edge inventory.
++
++`diagnostic.rs` exposes observation-only test-support paths with actual teardown
++proof. The graph-only path discloses capped-log truncation independently of graph
++completeness. Existing placement diagnostics retain their log-completeness check.
++Neither path returns a Scorer, dispatches a forward, or qualifies a hybrid policy.
++Pure semantic fixtures live beside each owner. Runtime admission and qualification
++require separate authenticated native evidence under the original resource limits.

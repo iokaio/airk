@@ -1,0 +1,45 @@
+--- crates\airk-service\src\service_runtime\arbiter\CONTRACT.md
++++ crates\airk-service\src\service_runtime\arbiter\CONTRACT.md
+@@ -321,3 +321,42 @@
+ cannot leave busy/pending state with no future owner. The event-gated regression
+ uses the real Store CAS and native pending selector without reading model bytes
+ or dispatching NN, and refuses a stale completion consuming that new intent.
++
++### Private evaluation warm completion wakeup
++
++The opt-in native test-support evaluation fixture may attach a bounded warm
++completion observer before service composition, using the same real lease and
++catalog gate. This is not a product event, persisted state, readiness authority,
++or a qualification claim. Absent the explicit fixture environment opt-in,
++existing Ready output and model behavior remain unchanged.
++
++The observer captures expected request configuration without relabeling it as
++actual Store state. At the existing owning native observation fences, it copies
++actual active profile/revision without acquiring an additional native queue lock.
++After the original warm returns (including retained-resident and failed/drained
++paths), completion uses only in-memory lifecycle snapshots via try_lock. It
++performs no Store load, filesystem I/O, awaited send, blocking observer lock,
++model call or admission change. Successful uncanceled completion matching native
++activation, lifecycle serial and captured same-stage Configure intent is a Ready
++wakeup; superseded intent/serial/cancellation is Superseded, other completion is
++Failed. The full actual current Configuration is established only by the fresh
++canonical Status read. There is no invented actual_configuration snapshot.
++
++The native activation_path distinguishes retained_resident from
++native_warm_admitted and not_admitted. Neither a Ready wakeup nor a warm admission
++alone proves a cold load or memory fit: those require original idle/absent-native
++state and actual load/resource evidence. A separate bounded writer flushes events
++outside ownership gates. Try-lock/queue loss and any captured Guard dropped
++without completion make final journal closure incomplete. Service settlement and
++all captured completions precede closure; no observer creates settlement.
++
++A future private caller installs a watcher on this journal's actual directory
++before scanning it, binds its native observer identity to original fixture Ready,
++and binds exact Configure configuration/stage/manifest and a pre-Configure journal
++sequence floor. Stale/foreign events never prove the new attempt. Failed or
++Superseded matching completion stops the attempt. A matching Ready only wakes a
++fresh canonical Status request, whose exact current selected/active profile,
++configuration revision and Ready state remain authoritative. The original warm
++deadline, whole phase deadline and 128-observation ceiling remain unchanged.
++No sleeps, scoring probes, failed-operation retries or registry-file readiness
++assumptions are introduced. Prior failed attempts remain failed.

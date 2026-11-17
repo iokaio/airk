@@ -1,0 +1,669 @@
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -1,4 +1,33 @@
+ # Architecture
++
++P12's unpublished **1.8.8 candidate** adds explicitly reviewed reference refresh
++through the existing native Configure job and collection publication owners.
++Core owns bounded intent, exact selection identity and typed review-required
++outcomes. CLI authenticates the native host, current Project/grant/catalog scope
++and backing, binds the existing shared-model metadata context, and saves complete
++job/results. Store rejects generic enqueue/retry of this special work and retains
++exact receipts. Kernel rechecks publication, settings and controls under the
++actual writer before recovery, source capture or publication. Held-writer
++validation uses the owning saved-settings digest; it does not recursively inspect
++or reacquire that writer.
++
++Ingest records the actual protected matcher inputs and qualified absence.
++The optional Current control resource binds its configuration and input ledger
++to the exact incarnation/publication sequence, avoiding a self-referential resource
++hash. Trusted source publication and qualified semantic-only successors rebind
++it; an older writer that preserves the unknown resource cannot keep it qualified
++across another publication. Explicit full requalification publishes a new binding
++even when an old unbound witness has identical captured bytes.
++
++First-wave admission targets one existing index, at most 64 source locators
++within wire budgets, and requires complete frozen/configured-source metadata
++authority even for selected work. It grants no partial-scope bypass. Workbench
++uses live native reference handles, a separately reviewed mutation, exact receipt
++reads and a separately confirmed requery; Stop, trust and selection fences stay
++in the extension host. Evidence MCP remains read-only. No new crate, database or
++scheduler is introduced. The [guide](source-verification.md#explicit-reference-refresh-p12-candidate)
++and [ledger](research/implementation-v190.md) distinguish the 39 passing focused
++Windows tests from release/Mac/primary acceptance still in progress.
+ 
+ P11a's unpublished **1.8.8 working build** adds opt-in
+ [per-file family reporting](profile-family-reporting.md). Core owns the fixed
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -1,61 +1,35 @@
+ # AIRK documentation
+ 
+-P11b's unpublished **1.8.8 working build** adds explicitly reviewed Lean/Rich
+-retained profiles. Legacy indexing levels keep their existing meanings and
+-defaults; reply projection remains independent. Scoped Windows native/resource,
+-release-runtime and focused Mac ARM checks passed, with the limits in the
+-implementation ledger. P11b is accepted for unpublished local development. P11a remains accepted for local development.
+-P12–P14 and deleted-source recovery remain unfinished.
+-
+-P11a’s [per-file profile family reporting](profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P10 is accepted for local development. P11a qualification has passed: focused native, Mac ARM, Workbench and actual CLI/console/MCP checks, followed by the required final gates. P11a has passed its local phase checks and is accepted for unpublished local development. The working version remains **1.8.8**, unpublished.
+-
+-[Permanent source exclusions](source-policy.md) describes P9's reviewed deny,
+-native enforcement, removal and separate cleanup observations. Windows workspace/
+-runtime and focused Mac ARM checks passed; qualification and pending-phase limits
+-are in the [implementation ledger](research/implementation-v190.md).
+-
+-[Reviewed index splitting](index-splitting.md) describes P10 in the
+-unpublished 1.8.8 working build: independent partitions, sealed build, reviewed
+-Project cutover and exact recovery through physical cleanup and funding
+-acknowledgments. Frozen Windows qualification passed all **22 gates**, including
+-2,565 workspace tests and actual CLI/MCP process checks. Focused Mac ARM batches
+-passed with Cargo cleanup. [Exact evidence and limits](research/implementation-v190.md#p10--local-phase-checkpoint-5-november-2026)
+-retain source identities, prior failures and resource/platform coverage. P10 has passed its local phase checks; the working build remains unpublished.
+-
+-[Recommendations and agent query scope](recommendations.md) explains P8's bounded
+-metadata-only advice, temporary selections, reviewed defaults and copied harness
+-instructions in the unpublished 1.8.8 working build.
+-
+-[Combined Project reads](combined-reads.md) records P7's unique-index composition,
+-shared budgets, member-qualified results and current acceptance boundary.
+-
+-P7 implements [combined Project reads](combined-reads.md) across native, CLI, MCP and Workbench, including plans, sessions, verification and exports. Windows release and Apple Silicon debug native checks passed, along with all 84 unchanged legacy latency gates and 120 Windows fan-out trials. [Evidence and platform limits](research/implementation-v190.md#p7--combined-retrieval-and-consumers). Working version **1.8.8** remains unpublished.
+-
+-P6e makes [oversized stdio input](mcp.md) an explicit bounded failure and uses [qualified Workbench publication comparisons](workbench/implementation.md) instead of treating unequal tokens as older. It adds no status polling and preserves retained exports. Local qualification and release limits remain in the implementation ledger.
+-
+-P6d's [source admission changes](service-freshness.md) give eligible source work priority over pending Vector jobs and yield running Vector turns at safe boundaries. Saved semantic work resumes afterward. Actual Windows and Mac ARM backlog scenarios passed; the implementation ledger records final qualification and remaining platform limits.
+-
+-P6c's [search execution contract](search-execution.md) discloses policy-qualified lexical results when the embedding helper is unavailable, preserving strict explicit semantic requests and independent source-verification receipts. Local Windows/Mac ARM gates and all 84 unchanged-bound latency comparisons passed; the ledger records exact coverage and remaining release limits.
+-
+-**1.8.8 manual-test working build:** [Saved-source verification](source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Earlier P4 acceptance and current validation limits are in the [ledger](research/implementation-v190.md).
+-
+-The [1.8.8 working-build record](releases/release-1.8.8.md) tracks current validation. [1.9.0](releases/release-1.9.0.md) remains the planned promotion target after implementation and manual acceptance. The [approved plan](research/plan-v190.md) retains its phase names and gates.
+-
+-P5's catalog upgrade foundation passed local isolated qualification. The [storage boundary](storage-formats.md#development-catalog-boundary)
+-records candidate-owned migration and recovery limits; P6f activation requires native readiness and grant enforcement.
+-
+-P6a's copied Mac launcher, shared signed release producer and offline contributor
+-bootstrap passed local gates, including actual Developer ID signed installation
+-and all 60 latency comparisons. The [ledger](research/implementation-v190.md)
+-separates those results from pending notarization, editor and platform qualification.
+-
+-P6b's [helper recovery](service-embedding.md#helper-recovery) adds durable cooldown,
+-measured healthy reset and worker-grant repair. Local Windows/Mac ARM gates and
+-all 84 latency comparisons passed; the ledger retains release qualification limits.
+-
+-The [dependency supply-chain policy](dependency-advisories.md) adds pinned
+-`cargo-deny` and `cargo-vet` checks, visible unreviewed baseline exemptions and
+-review requirements for changed Rust dependencies alongside existing advisories.
++The unpublished **1.8.8 manual-test working build** includes accepted local
++P9 permanent exclusions, P10 reviewed index splitting, P11a per-file profile
++reporting and P11b explicit Lean/Rich retained profiles. Existing indexing levels
++and reply defaults keep their meanings. These development checkpoints do not
++constitute a published release or final installed-editor acceptance.
++
++P12 adds an explicit **reviewed reference refresh and separate requery** candidate.
++Its focused Windows native selection passed **39 tests**, including actual
++native/CLI/MCP shared-helper, Lean/Rich, pause, lost-reply and restart paths.
++Release-runtime and focused Neo qualification, final primary review and phase
++acceptance are still in progress. The first wave refreshes one existing index
++from eligible references and requires full-index metadata authority; partial
++Project/path grants are unsupported. Evidence reads and source verification do
++not start indexing. P13 ranking/diversity remains conditional; P14, deleted-source
++recovery and the final local test installer remain pending.
++
++| Current guide | Scope |
++| --- | --- |
++| [Source verification and explicit reference refresh](source-verification.md) | Dated read-only verification; separately reviewed P12 refresh/requery candidate and its limits |
++| [Retained indexing profiles](code-indexing-options.md) | Explicit Lean/Rich migration, legacy meanings and independent replies |
++| [Per-file family reporting](profile-family-reporting.md) | Actual applied profile and bounded availability observations |
++| [Reviewed index splitting](index-splitting.md) | Independent destination, restrictive cutover and exact cleanup/recovery |
++| [Permanent source exclusions](source-policy.md) | Native enforcement, removal publications and separate reclamation |
++| [Combined Project reads](combined-reads.md) | Unique-index composition, scope and complete member results |
++| [Recommendations](recommendations.md) | Bounded metadata advice and separately reviewed defaults |
++
++The [1.8.8 working-build record](releases/release-1.8.8.md) and
++[implementation ledger](research/implementation-v190.md) retain exact source/runtime
++identities, historical failures and platform limits. [1.9.0](releases/release-1.9.0.md)
++is the planned promotion target after implementation and manual acceptance.
+ 
+ The dated [1.8.7 external audit](issue-analysis/audit-report.md) and
+ [open-issue analysis](issue-analysis/open-issue-analysis.md) retain their reported
+--- a/docs/releases/release-1.8.8.md
++++ b/docs/releases/release-1.8.8.md
+@@ -1,51 +1,26 @@
+ # AIRK 1.8.8 manual-test working build
+ 
+-P11b's unpublished **1.8.8 working build** adds explicitly reviewed Lean/Rich
+-retained profiles. Legacy indexing levels keep their existing meanings and
+-defaults; reply projection remains independent. Scoped Windows native/resource,
+-release-runtime and focused Mac ARM checks passed, with the limits in the
+-implementation ledger. P11b is accepted for unpublished local development. P11a remains accepted for local development.
+-P12–P14 and deleted-source recovery remain unfinished.
++The unpublished **1.8.8 manual-test working build** includes accepted local
++P9 permanent exclusions, P10 reviewed index splitting, P11a per-file profile
++reporting and P11b explicit Lean/Rich retained profiles. Existing indexing levels
++and reply defaults keep their meanings. These development checkpoints do not
++constitute a published release or final installed-editor acceptance.
+ 
+-P11a’s [per-file profile family reporting](../profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P10 is accepted for local development. P11a qualification has passed: focused native, Mac ARM, Workbench and actual CLI/console/MCP checks, followed by the required final gates. P11a has passed its local phase checks and is accepted for unpublished local development. The working version remains **1.8.8**, unpublished.
++P12 adds an explicit **reviewed reference refresh and separate requery** candidate.
++Its focused Windows native selection passed **39 tests**, including actual
++native/CLI/MCP shared-helper, Lean/Rich, pause, lost-reply and restart paths.
++Release-runtime and focused Neo qualification, final primary review and phase
++acceptance are still in progress. The first wave refreshes one existing index
++from eligible references and requires full-index metadata authority; partial
++Project/path grants are unsupported. Evidence reads and source verification do
++not start indexing. P13 ranking/diversity remains conditional; P14, deleted-source
++recovery and the final local test installer remain pending.
+ 
+-P10's [reviewed split workflow](../index-splitting.md) adds independent
+-partitions, sealed build, complete Project review and exact recovery through
+-physical cleanup and final funding acknowledgment. Frozen Windows qualification
+-passed all **22 gates** on `c713b469…` / 945 native inputs, including **2,565 passed /
+-0 failed / 49 ignored** workspace tests, actual CLI/MCP process checks and all 84
+-unchanged latency gates. Focused Mac ARM batches passed with mandatory Cargo
+-cleanup; their distinct source identities and coverage remain in the
+-[dated ledger](../research/implementation-v190.md#p10--local-phase-checkpoint-5-november-2026).
+-**P10 has passed its local phase checks; the working build remains unpublished.** Resource samples do not establish total CPU or true physical peaks.
+-P11–P14 remain unaccepted.
+-
+-P9 adds [permanent source exclusions](../source-policy.md)
+-through reviewed native management. Native policy fences precede removal;
+-logical removal and physical reclamation have separate resumable observations.
+-Windows workspace/runtime and focused Mac ARM checks passed with the limits in
+-the [ledger](../research/implementation-v190.md). P11–P14 acceptance remains pending;
+-this working build is unpublished.
+-
+-Contributor iteration now has a [scoped, timed Clippy command](../../CONTRIBUTING.md#local-rust-iteration)
+-with persistent build output and a Windows-only development incremental default.
+-Required qualification and release profiles remain unchanged; measured speedup
+-is not yet established. Mac Neo test batches retain their mandatory cleanup.
+-
+-P8 adds [Recommendations and copied agent scope instructions](../recommendations.md)
+-through the canonical native `query_scope` read, CLI/MCP aliases and Workbench
+-plans/forms. Indexing renders available/selected/omitted scope, explicit temporary
+-selection and separately reviewed defaults. Missing observations remain unknown;
+-capability-qualified split review is implemented in P10; permanent exclusions use accepted P9 management. [Validation and limits](../research/implementation-v190.md#p8--recommendations-and-harness-guidance)
+-are recorded separately from release qualification. The working version remains 1.8.8.
+-
+-P7 implements [combined Project reads](../combined-reads.md) across native, CLI, MCP and Workbench, including plans, sessions, verification and exports. Windows release and Apple Silicon debug native checks passed, along with all 84 unchanged legacy latency gates and 120 Windows fan-out trials. [Evidence and platform limits](../research/implementation-v190.md#p7--combined-retrieval-and-consumers). Working version **1.8.8** remains unpublished.
+-
+-P6e makes [oversized stdio input](../mcp.md) an explicit bounded failure and uses [qualified Workbench publication comparisons](../workbench/implementation.md) instead of treating unequal tokens as older. It adds no status polling and preserves retained exports. Local qualification and release limits remain in the implementation ledger.
+-
+-P6d's [source admission changes](../service-freshness.md) give eligible source work priority over pending Vector jobs and yield running Vector turns at safe boundaries. Saved semantic work resumes afterward. Actual Windows and Mac ARM backlog scenarios passed; the implementation ledger records final qualification and remaining platform limits.
+-
+-P6c's [search execution contract](../search-execution.md) discloses policy-qualified lexical results when the embedding helper is unavailable, preserving strict explicit semantic requests and independent source-verification receipts. Local Windows/Mac ARM gates and all 84 unchanged-bound latency comparisons passed; the ledger records exact coverage and remaining release limits.
++The [refresh guide](../source-verification.md#explicit-reference-refresh-p12-candidate)
++keeps native mutation review separate from read-only verification and MCP evidence.
++The [implementation ledger](../research/implementation-v190.md) records accepted
++P9–P11b checkpoints and the pending P12 qualification on source `4121692a…` /
++960 native inputs. No P12 release-runtime or Mac result is claimed yet.
+ 
+ On 3 November 2026, the maintainer selected **1.8.8** as the working version for
+ completing and manually testing the [1.9.0 implementation plan](../research/plan-v190.md).
+@@ -69,9 +44,8 @@
+ backup/migration/import/recovery, candidate-process handoff and a gated installer
+ coordinator. P6f's working candidate activates only qualified authority-1 catalogs
+ with reviewed Indexing/setup/grant consumers. P7 adds combined reads and P8 adds
+-Recommendations. P9 permanent exclusions are accepted for this local development
+-phase; P10 splitting is implemented only as the unaccepted candidate described
+-above. Earlier dated receipts retain their original scope. See the [storage boundary](../storage-formats.md#development-catalog-boundary).
++Recommendations. P9 exclusions, P10 splitting and P11a/P11b profile work are
++accepted for unpublished local development; P12 remains under qualification. Earlier dated receipts retain their original scope. See the [storage boundary](../storage-formats.md#development-catalog-boundary).
+ 
+ Complete implementation and local gates, then manually test the identified 1.8.8
+ native pair and VSIX before the CI/release handoff. Use explicit isolated testing
+--- a/docs/releases/release-1.9.0.md
++++ b/docs/releases/release-1.9.0.md
+@@ -1,10 +1,14 @@
+ # Planned AIRK 1.9.0 release and development checkpoints
+ 
+-P8 implements [Recommendations and agent scope instructions](../recommendations.md)
+-on the unpublished **1.8.8** working build. Advice is metadata-only, selections
+-are explicit and saved defaults retain separate native review. Split and trim
+-remain pending P10/P9; [P8 evidence and limits](../research/implementation-v190.md#p8--recommendations-and-harness-guidance)
+-remain separate from final 1.9.0 release qualification.
++This is the planned promotion record, not a published release. The current
++working version remains **1.8.8**. P9 exclusions, P10 splitting and P11a/P11b
++profile work are accepted for unpublished local development. P12's explicit
++[reference refresh/requery](../source-verification.md#explicit-reference-refresh-p12-candidate)
++candidate passed 39 focused Windows native tests; release-runtime, focused Mac
++qualification and primary acceptance are still in progress. P13 remains
++conditional; P14, deleted-source cleanup and the final local test installer
++remain pending. Exact accepted and historical evidence is in the
++[working-build record](release-1.8.8.md) and [ledger](../research/implementation-v190.md).
+ 
+ P7 implements [combined Project reads](../combined-reads.md) with complete
+ native, CLI, MCP, Workbench, plan/session, verification and export support.
+--- a/docs/research/implementation-v190.md
++++ b/docs/research/implementation-v190.md
+@@ -9,15 +9,16 @@
+ Progress below is observed local evidence; it does not establish publication or
+ cross-platform qualification.
+ 
+-**Current checkpoint, 6 November 2026:** P9, P10 and P11a are accepted for
+-unpublished local development; P11a is committed as `f2bf2d2`. P11b scoped local
+-qualification and primary review passed; P11b is accepted for unpublished
+-local development. Current native source is `8c4fc38e…` / 954
+-inputs. The original functional/Mac source `e3827769…` remains separately
+-identified, with 952 unchanged native inputs and only two resource-test changes.
+-P12–P14, deleted-source recovery and the final local test installer remain
+-unfinished. Earlier checkpoints retain their original source and payload
+-identities, failures and platform limits; they are not relabeled.
++**Current checkpoint, 6 November 2026:** P9, P10, P11a and P11b are accepted for
++unpublished local development. P10 is committed as `c2584cb`, P11a as `f2bf2d2`
++and P11b as `aa28425`. P12 is implemented but **not phase accepted**: its focused
++Windows native selection passed **39/39** on `4121692a…` / 960 inputs, strict
++six-package all-target/all-feature Clippy passed, and the full extension suite
++passed **776 tests with 19 skips**. Release-runtime and focused Neo qualification
++and final primary review are in progress. P13 ranking/diversity remains
++conditional; P14, deleted-source recovery and the final local test installer
++remain pending. Earlier entries preserve their exact source/runtime identities,
++failed attempts and platform limits; they are not relabeled.
+ 
+ ## Entry identity and boundaries
+ 
+@@ -58,10 +59,12 @@
+ | P7 | Complete — locally qualified checkpoint | Unique-index composition and complete native/CLI/MCP/Workbench/parse/session/verification support; Windows release and Neo debug actual suites, all 84 latency gates and 120 Windows fan-out trials passed; platform/release limits below |
+ | P8 | Complete — locally qualified checkpoint | Canonical Recommendations and harness scope guidance; Windows release / Neo debug actual transports, useful subset evidence and all 84 unchanged latency gates passed; installed/platform limits below |
+ | P9 | Accepted locally | Windows workspace/runtime, 84 frozen latency gates and focused Mac ARM checks passed; exact source identities, test-only follow-up and release limits recorded below |
+-| P10 | Isolated implementation in progress — not integrated or accepted | Split and integrated management advice; acceptance follows signed P9 |
+-| P11a–P12 | Not started | Effective-profile reporting, explicit retained-profile migration and refresh |
+-| P13a/P13b | Conditional | Ranking/diversity only if frozen relevance/resource gates pass |
+-| P14 | Not started | Combined qualification and release-candidate evidence |
++| P10 | Accepted locally — `c2584cb` | Reviewed independent split, native cutover and recovery through funding acknowledgment; dated Windows/Mac evidence below |
++| P11a | Accepted locally — `f2bf2d2` | Bounded actual per-file profile family reporting and complete transports |
++| P11b | Accepted locally — `aa28425` | Explicit retained Lean/Rich migration, legacy continuity and paid split inheritance |
++| P12 | Implemented; qualification in progress, not accepted | 39 focused Windows native tests and strict scoped Clippy passed; UI 776 passed/19 skipped; release/Neo and primary review pending |
++| P13a/P13b | Conditional; current ranking retained | No candidate enabled; adoption needs frozen quality/resource, native disclosure and scope gates |
++| P14 | Pending | Combined qualification, platform/fault/resource coverage and final candidate evidence |
+ 
+ **Additional maintainer request — 5 November 2026:** after P9–P14, reproduce and
+ fix deleted-source failure loops in the current release: individual indexed files
+@@ -4865,3 +4868,84 @@
+ qualification and primary review passed; it is accepted for unpublished local development. P12–P14, deleted-source
+ recovery and the final local test installer remain unfinished. No push,
+ publication, normal installation or complete-plan claim is made.
++
++
++### P12 — focused Windows qualification; release and Neo pending, 6 November 2026
++
++P11b is accepted at `aa28425d2d3031b42f358e41d6ec366822635379`.
++P12's current **1.8.8** implementation is **not yet phase accepted**. The frozen
++native input identity is
++`4121692a2cc0272358023f5362ae886eeed4fd06203cea7af23bbfc5f4be86b9`
++(**960 inputs**). The optimized release pair and focused Neo batch are in
++progress; no result or cleanup completion is claimed for those runs here.
++
++The [refresh guide](../source-verification.md#explicit-reference-refresh-p12-candidate)
++describes the first wave: one existing index and at most 64 referenced sources,
++subject to wire limits, with complete configured-source metadata authority even
++for selected work. Partial Project/path grants and several refreshed indexes in
++one operation are unsupported. Native review binds the actual backing, grant,
++original publication/source identities, settings and configured policy/model.
++Full fallback is a separate explicit choice. Generic configuration enqueue/retry
++cannot bypass the dedicated native refresh owner. MCP evidence stays read-only.
++
++Kernel checks the original publication, unfinished bootstrap/current work and
++saved settings while holding the actual writer, before recovery or source work.
++Ingest records protected matcher inputs and qualified absence; the authenticated
++Current witness binds exact incarnation/sequence. Trusted source and qualified
++semantic-only publication rebind it, while older writer publication invalidates
++an unchanged unknown witness. Full requalification cannot no-op on identical
++historical unbound bytes. Original Lean/Rich identity, source coordinates,
++unselected payload, pause/manual/watch choices and semantic policy are preserved.
++
++Exact receipt lookup remains read-only after lost responses or restart. Missing
++saved evidence remains unknown; no mutation replay or reconstructed success is
++introduced. Requery is separately confirmed from the original query, yields new
++native evidence and leaves the old result/refresh acknowledgment historical.
++Workbench rechecks host trust, selection and Stop generation across asynchronous
++review and journal boundaries. Its refresh-specific originals stay in memory;
++metadata/receipt export does not invent unavailable originals after reload.
++
++**Observed focused evidence:**
++
++- Strict Windows Clippy passed on all targets/features of Core, Ingest, Store,
++  Kernel, MCP and CLI with warnings denied (`p12-focused-clippy-r8`). This is a
++  scoped six-package check, not a claim of a full workspace suite.
++- `p12-focused-r4` passed **39/39**, zero failures, with 2,578 tests not selected
++  by its explicit filter. It includes all **18 new cases** and 21 Windows legacy
++  cases. One additional legacy ignore-control alias test is `cfg(unix)` and is
++  retained for Neo instead of being counted as a Windows pass.
++- The actual CLI process case passed in **115.855 seconds** using Cargo's matched
++  debug main/helper pair and the existing isolated component-format fixture. It
++  exercises real native Lean/Rich migration, full qualification then selected
++  publication, a transport closed without reading its acknowledgment, receipt-only
++  reconciliation, paused Pending work, explicit unpause, stale review refusal,
++  graceful restart and actual shared-helper continuation. Complete native/CLI/MCP
++  FileInfo/profile/status/query responses and exact scoped members are compared.
++- The full extension suite after the epoch correction passed **776**, failed
++  **0**, skipped **19**, out of **795** (`p12-ui-full-epoch-r1`). These mocks and
++  host-flow tests do not substitute for installed-editor qualification.
++
++**Earlier attempts remain failed evidence.** R1 collected **31 passed / 8 failed
++out of 39**, while the original queue incorrectly expected 40 because it included
++a Unix-only baseline. R2 correctly selected 39 and again collected **31 passed /
++8 failed**. Native validators had conflated catalog and service-request namespaces
++and then rejected valid native request epoch zero. Corrections preserve those
++separate authority domains and the actual registry epoch; fixtures were not made
++to pretend they were equal or positive. The earlier attempts also exposed a
++writer preflight that recursively acquired its already-held lock through ordinary
++inspection, losing the settings observation and reporting configuration change.
++The owning writer-aware digest fixed that common pipeline error before R3.
++R3 then collected **37 passed / 2 failed**: identical historical-unbound witness
++bytes suppressed full requalification, and the process fixture compared Pending
++with Running job observations from different moments. The no-op guard now also requires exact
++current witness binding; moving-state polling uses complete native observations,
++while strict full native/CLI equality remains at stable receipt boundaries.
++R4 passed after those corrections; no earlier result is relabeled.
++
++This is bounded development evidence, not release/installer/Genesis, ONNX/default
++provider, physical power-loss, arbitrary remote source or total model/resource
++cost qualification. Publication-before-saved-result remains failed/unknown.
++Release-runtime, source-bound Neo results and mandatory `cargo clean`, final
++primary review and a signed phase checkpoint are still pending. P13 remains
++conditional; P14, the separately requested missing-source isolation/cleanup fix
++and final local test installer are not completed by this entry.
+--- a/docs/source-verification.md
++++ b/docs/source-verification.md
+@@ -74,7 +74,7 @@
+ Inspector and Checker also reuse native observations, retaining an independent
+ unsaved-editor observation instead of hashing the file a second time.
+ 
+-The P9 candidate applies the same native ownership boundary to explicit Strategy
++The P9 implementation applies the same native ownership boundary to explicit Strategy
+ saved-source checks, Review Changes and source-open observations. The persisted
+ `host.hashSavedFiles` operator name remains compatible, but verification runs
+ through the native owner. The extension observes dirty buffers separately and
+@@ -150,10 +150,11 @@
+ verification claim and returns `verification_projection_changed`. These are
+ nonretryable requests to revise the inputs, not automatic replay instructions.
+ 
+-Selected refresh and multi-index verification are later phases; P4 does not
+-refresh sources or extend query scope. See [ADR 003](decisions/003-dated-saved-source-verification.md)
+-for the contract and the [implementation ledger](research/implementation-v190.md)
+-for measured costs, tests and remaining qualification boundaries.
++Verification itself does not refresh sources or extend query scope. P7 carries
++these receipts across combined members; the P12 candidate below adds a separate
++reviewed mutation and requery flow. See [ADR 003](decisions/003-dated-saved-source-verification.md)
++and the [implementation ledger](research/implementation-v190.md) for the dated
++contract, costs and qualification boundaries.
+ 
+ 
+ Per-step verification requires the raw plan output view, which retains each step's
+@@ -192,3 +193,81 @@
+ Report adds intentional saved-byte and metadata work: the final warm-cache small
+ file median was 135.76 ms versus 66.67 ms with Off. The phase ledger retains all
+ earlier failures, final measurements and remaining platform/physical-I/O limits.
++
++
++## Explicit reference refresh (P12 candidate)
++
++The unpublished 1.8.8 candidate separates **refresh**, **receipt lookup** and
++**requery**. Reading evidence, verifying saved source bytes, opening a result or
++exporting it does not start indexing. The candidate's focused Windows native
++selection passed 39 tests and the extension suite passed 776 tests with 19 skips;
++release-runtime, focused Neo and primary phase acceptance are still in progress.
++These results do not qualify a published release or an installed editor.
++
++First-wave review selects references from **one completed live result step and
++one existing index**, with at most 64 distinct source locators. The request must
++also fit its 12-KiB selection and 16-KiB configuration budgets. Long paths or
++metadata can therefore require a smaller selection. Both selected refresh and
++the full fallback require authority for that index's complete configured source
++metadata. Partial Project/path grants, arbitrary imported results and admission
++of several refreshed indexes in one operation are unsupported. The original
++query may include other members; only the explicitly reviewed index is refreshed.
++
++Native admission independently binds the current grant/Project/catalog choice,
++index backing, original publication, source-root identities and hashes, saved
++settings, retained policy and immutable model selection. Copied references and
++webview messages are not authority. Changed scope, settings, publication or
++control provenance requires fresh review. An unsafe selected operation refuses
++with review-required or failed/unknown evidence; it never silently performs a
++full scan. A full fallback requires its own explicit review, and declining it
++submits no broader job.
++
++Selected work revalidates the protected matcher inputs before source capture and
++before publication. Its retained control witness is authenticated and bound to
++one exact incarnation/publication sequence. Trusted source and qualified
++semantic-only successors rebind it under the owning writer. A predecessor that
++preserves the unknown resource across a publication cannot keep that witness
++qualified merely because the old control bytes return. An explicit reviewed
++full pass can qualify it again, including an older unbound witness with otherwise
++identical bytes. This is not an atomic filesystem snapshot or certification of
++all live source files.
++
++Refresh uses existing native Configure jobs and publication ownership. Sources
++remain read-only; retained Lean/Rich policy, original source locations, configured
++model/vector semantics and watch preferences remain separate choices. Accepting
++refresh does not unpause a Project: the job stays pending until explicit unpause.
++Selected work preserves unselected retained payload. Independently requested
++watcher or full-index work remains a different operation. Source completion does
++not imply complete semantic readiness; existing vector continuation rules apply.
++
++A lost response is reconciled through the **exact saved native receipt key**.
++The full acknowledgment retains its accepted configuration, current job outcome
++and saved native result. A missing, expired or pruned receipt is unknown; it is
++not permission to resend a mutation, invent success or discard the old intent.
++Publication without a saved qualified result remains failed/unknown. Cancellation
++and recovery use the existing native job controls and do not add an automatic
++retry loop. Native management owns these operations; MCP continues to expose
++read-only evidence rather than a refresh-administration tool.
++
++After qualified completion, **requery requires a separate confirmation** using
++the saved original query and a fresh valid selection. It produces a new result
++bound to its actual publication. Old snippets, hashes, dates and receipts remain
++historical; the refresh result records that it did not execute the query. Native,
++CLI and MCP evidence reads preserve the complete equivalent result, and native
++receipt reads through the CLI preserve all acknowledgment/result fields.
++
++Workbench's current refresh flow keeps its original query/result evidence in
++memory, separate from ordinary saved session history. Its durable intent journal
++retains bounded metadata and native acknowledgments, not a second persisted copy
++of that evidence. After reload, exact receipt checks remain available, while
++unavailable originals are not reconstructed from reduced cards or history for
++requery. Full details and JSON/Markdown copies retain the native observations;
++explicit exports identify any unavailable original evidence. Stop, trust or
++selection changes prevent further host submission/requery, but do not retract an
++already accepted durable native job. Inspect that job before deciding on a
++separate cancellation or newly reviewed action.
++
++See the [P12 ledger](research/implementation-v190.md#p12--focused-windows-qualification-release-and-neo-pending-6-november-2026)
++for exact source identities, historical failures and pending platform/release
++checks. The tiny shared-helper fixture does not qualify ONNX/default-provider
++costs, physical power loss or all remote-source behavior.
+--- a/docs/vscode-extension.md
++++ b/docs/vscode-extension.md
+@@ -1,4 +1,16 @@
+ # Native VS Code extension
++
++**1.8.8 P12 development candidate:** Workbench can review refresh of eligible
++references from one completed live result step and one index, then check the
++exact native receipt and separately confirm requery. The first wave requires
++full-index metadata authority; partial Project/path grants are unsupported.
++Refresh evidence for this flow stays in memory: after reload, its receipt can
++still be checked but unavailable originals are not reconstructed for requery.
++Stop, trust or selection changes prevent further host submission/requery; they
++do not undo an already accepted durable native job. Reading, verification and
++export remain separate from indexing. See the [controls and limits](source-verification.md#explicit-reference-refresh-p12-candidate).
++Focused Windows native and UI tests passed; release-runtime, focused Mac and
++primary phase acceptance are in progress. The working build is unpublished.
+ 
+ **1.8.4 development candidate:** Workbench's **+ → Tool forms** exposes indexed language/evidence-type filters, explicit name matching, reference ordering/paging, file summaries and count precision as typed controls. Default/Yes/No preserves optional booleans; blank fields retain the existing native default. Structured results show definition pointers and qualified written method targets with explicit **Inspect** and **Find callers** actions. Continuation preserves original selectors/publication, and both JSON and Markdown exports retain discovery metadata. These are local evidence operations; they do not execute tests, resolve every caller or modify sources. See [Workbench details](workbench/implementation.md#184-bounded-discovery-controls) and the [1.8.4 qualification record](releases/release-1.8.7.md#candidate-1-8-4).
+ 
+--- a/packages/vscode/README.md
++++ b/packages/vscode/README.md
+@@ -1,57 +1,30 @@
+ # AIRK: Local Search for Coding Agents
+ 
+-P11b's unpublished **1.8.8 working build** adds explicitly reviewed Lean/Rich
+-retained profiles. Legacy indexing levels keep their existing meanings and
+-defaults; reply projection remains independent. Scoped Windows native/resource,
+-release-runtime and focused Mac ARM checks passed, with the limits in the
+-implementation ledger. P11b is accepted for unpublished local development. P11a remains accepted for local development.
+-P12–P14 and deleted-source recovery remain unfinished.
++The unpublished **1.8.8 manual-test working build** includes accepted local
++P9 permanent exclusions, P10 reviewed index splitting, P11a per-file profile
++reporting and P11b explicit Lean/Rich retained profiles. Existing indexing levels
++and reply defaults keep their meanings. These development checkpoints do not
++constitute a published release or final installed-editor acceptance.
+ 
+-P11a’s [per-file profile family reporting](https://github.com/iokaio/airk/blob/main/docs/profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P10 is accepted for local development. P11a qualification has passed: focused native, Mac ARM, Workbench and actual CLI/console/MCP checks, followed by the required final gates. P11a has passed its local phase checks and is accepted for unpublished local development. The working version remains **1.8.8**, unpublished.
++P12 adds an explicit **reviewed reference refresh and separate requery** candidate.
++Its focused Windows native selection passed **39 tests**, including actual
++native/CLI/MCP shared-helper, Lean/Rich, pause, lost-reply and restart paths.
++Release-runtime and focused Neo qualification, final primary review and phase
++acceptance are still in progress. The first wave refreshes one existing index
++from eligible references and requires full-index metadata authority; partial
++Project/path grants are unsupported. Evidence reads and source verification do
++not start indexing. P13 ranking/diversity remains conditional; P14, deleted-source
++recovery and the final local test installer remain pending.
+ 
+-The unpublished **1.8.8 P10 working build** implements [reviewed index splitting](https://github.com/iokaio/airk/blob/main/docs/index-splitting.md): independent destination storage, inherited source restrictions, sealed build, reviewed Project cutover and exact recovery through cleanup and funding acknowledgment. Frozen Windows qualification passed all **22 gates**, including the full workspace and actual CLI/MCP process checks; focused Mac ARM batches also passed and cleaned their Cargo targets. **P10 has passed its local phase checks; the working build remains unpublished.** See the [exact evidence and platform/resource limits](https://github.com/iokaio/airk/blob/main/docs/research/implementation-v190.md#p10--local-phase-checkpoint-5-november-2026).
+-
+-The unpublished **1.8.8 P9 working build** adds reviewed [permanent source exclusions](https://github.com/iokaio/airk/blob/main/docs/source-policy.md), native read fences, retained-evidence removal and resumable cleanup. Logical removal and physical reclamation have separate observations. Windows workspace/runtime and focused Mac ARM checks passed; qualification limits and pending P11–P14 acceptance are in the [implementation ledger](https://github.com/iokaio/airk/blob/main/docs/research/implementation-v190.md).
+-
+-The unpublished **1.8.8** P8 working build adds [Recommendations](https://github.com/iokaio/airk/blob/main/docs/recommendations.md): review available, selected and omitted indexes, prefill a temporary query scope, review saved Project defaults and copy catalog-checked agent instructions. Advice keeps missing readiness/cost observations unknown; capability-qualified split review is implemented in P10; permanent exclusions use accepted P9 management. [Validation and limits](https://github.com/iokaio/airk/blob/main/docs/research/implementation-v190.md#p8--recommendations-and-harness-guidance).
+-
+-P7 implements [combined Project reads](https://github.com/iokaio/airk/blob/main/docs/combined-reads.md) across native, CLI, MCP and Workbench, including plans, sessions, verification and exports. Windows release and Apple Silicon debug native checks passed, along with all 84 unchanged legacy latency gates and 120 Windows fan-out trials. [Evidence and platform limits](https://github.com/iokaio/airk/blob/main/docs/research/implementation-v190.md#p7--combined-retrieval-and-consumers). Working version **1.8.8** remains unpublished.
+-
+-P6e makes [oversized stdio input](https://github.com/iokaio/airk/blob/main/docs/mcp.md) an explicit bounded failure and uses [qualified Workbench publication comparisons](https://github.com/iokaio/airk/blob/main/docs/workbench/implementation.md) instead of treating unequal tokens as older. It adds no status polling and preserves retained exports. Local qualification and release limits remain in the implementation ledger.
+-
+-P6d's [source admission changes](https://github.com/iokaio/airk/blob/main/docs/service-freshness.md) give eligible source work priority over pending Vector jobs and yield running Vector turns at safe boundaries. Saved semantic work resumes afterward. Actual Windows and Mac ARM backlog scenarios passed; the implementation ledger records final qualification and remaining platform limits.
+-
+-P6c's [search execution contract](https://github.com/iokaio/airk/blob/main/docs/search-execution.md) discloses policy-qualified lexical results when the embedding helper is unavailable, preserving strict explicit semantic requests and independent source-verification receipts. Local Windows/Mac ARM gates and all 84 unchanged-bound latency comparisons passed; the ledger records exact coverage and remaining release limits.
+-
+-**1.8.8 manual-test working build:** native/extension versions and lockfiles are synchronized. The [working-build record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.8.md) records accepted development phases toward the planned 1.9.0 release. Project/index setup and grants require explicit review. Saved-source verification defaults to Report; see the [controls and limits](https://github.com/iokaio/airk/blob/main/docs/source-verification.md).
+-
+-Compact discovery now supplies cited evidence to dependent plans and Workbench
+-results. Nested plan inputs are advertised as JSON objects. See the candidate
+-record for validation and qualification limits.
+-
+-P6a implements the macOS copied-launcher correction and shared signed
+-release producer. Local gates passed, including actual Developer ID signed
+-installation and all 60 latency comparisons. The [implementation ledger](https://github.com/iokaio/airk/blob/main/docs/research/implementation-v190.md)
+-records remaining notarization, installed-editor and platform gates.
+-
+-P6b adds durable helper cooldown recovery, measured healthy reset and isolated
+-worker-grant repair. Local Windows/Mac ARM gates and all 84 latency comparisons
+-passed; see the validation limits in the
+-[helper recovery contract](https://github.com/iokaio/airk/blob/main/docs/service-embedding.md#helper-recovery).
+-
+-**Lean/Rich replies:** select Reply detail in a Workbench tool form, or pass
+-`reply_detail` in MCP / `--reply-detail` on CLI read commands. Choices affect
+-available evidence in the reply, preserve existing defaults when omitted and
+-require no reindex. Rich cannot recreate unretained facts. See the
+-[reply guide](https://github.com/iokaio/airk/blob/main/docs/reply-detail.md).
+-
+-**Evidence guidance:** Workbench explains observed missing or limited evidence
+-and suggests a next read without executing tools or changing indexing. See the
+-[guide](https://github.com/iokaio/airk/blob/main/docs/evidence-guidance.md).
+-
+-The [P3 design contracts](https://github.com/iokaio/airk/blob/main/docs/research/contracts-v190/README.md) define Project/index scope, migration and verification safeguards. P6f implements their single-index management and grant path; P4 implemented saved-source verification.
+-
+-**Inherited 1.8.7 behavior:** CLI and Workbench reads use the MCP handlers and retain their full results, including configured `query_concurrency` in status/diagnostics. This release consolidates all unpublished 1.8.0-1.8.6 storage, startup, retrieval, concurrency and Workbench improvements. See the [consolidated release notes](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.7.md) for current behavior and dated validation.
++The [refresh guide](https://github.com/iokaio/airk/blob/main/docs/source-verification.md#explicit-reference-refresh-p12-candidate)
++explains explicit review, exact receipts, memory-only refresh evidence and requery.
++[Retained profiles](https://github.com/iokaio/airk/blob/main/docs/code-indexing-options.md),
++[profile reports](https://github.com/iokaio/airk/blob/main/docs/profile-family-reporting.md),
++[split](https://github.com/iokaio/airk/blob/main/docs/index-splitting.md) and
++[exclusion](https://github.com/iokaio/airk/blob/main/docs/source-policy.md) guides
++keep those controls separate. The [working-build record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.8.md)
++and [implementation ledger](https://github.com/iokaio/airk/blob/main/docs/research/implementation-v190.md)
++record exact evidence and remaining release limits.
+ 
+ **Find the code and documents behind a feature. Give your coding agent cited evidence, or explore it yourself in AIRK Workbench.**
+ 
+--- a/README.md
++++ b/README.md
+@@ -1,61 +1,32 @@
+ # AIRK: Local Search for Coding Agents
+ 
+-P11b's unpublished **1.8.8 working build** adds explicitly reviewed Lean/Rich
+-retained profiles. Legacy indexing levels keep their existing meanings and
+-defaults; reply projection remains independent. Scoped Windows native/resource,
+-release-runtime and focused Mac ARM checks passed, with the limits in the
+-implementation ledger. P11b is accepted for unpublished local development. P11a remains accepted for local development.
+-P12–P14 and deleted-source recovery remain unfinished.
+-
+-P11a’s [per-file profile family reporting](docs/profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P10 is accepted for local development. P11a qualification has passed: focused native, Mac ARM, Workbench and actual CLI/console/MCP checks, followed by the required final gates. P11a has passed its local phase checks and is accepted for unpublished local development. The working version remains **1.8.8**, unpublished.
+-
+-The unpublished **1.8.8 P10 working build** implements [reviewed index splitting](docs/index-splitting.md): independent destination storage, inherited source restrictions, sealed build, reviewed Project cutover and exact recovery through cleanup and funding acknowledgment. Frozen Windows qualification passed all **22 gates**, including the full workspace and actual CLI/MCP process checks; focused Mac ARM batches also passed and cleaned their Cargo targets. **P10 has passed its local phase checks; the working build remains unpublished.** See the [exact evidence and platform/resource limits](docs/research/implementation-v190.md#p10--local-phase-checkpoint-5-november-2026).
+-
+-The unpublished **1.8.8 P9 working build** adds reviewed [permanent source exclusions](docs/source-policy.md), native read fences, retained-evidence removal and resumable cleanup. Logical removal and physical reclamation have separate observations. Windows workspace/runtime and focused Mac ARM checks passed; qualification limits and pending P11–P14 acceptance are in the [implementation ledger](docs/research/implementation-v190.md).
+-
+-The unpublished **1.8.8** P8 working build adds [Recommendations](docs/recommendations.md): review available, selected and omitted indexes, prefill a temporary query scope, review saved Project defaults and copy catalog-checked agent instructions. Advice keeps missing readiness/cost observations unknown; capability-qualified split review is implemented in P10; permanent exclusions use accepted P9 management. [Validation and limits](docs/research/implementation-v190.md#p8--recommendations-and-harness-guidance).
+-
+-P7 implements [combined Project reads](docs/combined-reads.md) across native, CLI, MCP and Workbench, including plans, sessions, verification and exports. Windows release and Apple Silicon debug native checks passed, along with all 84 unchanged legacy latency gates and 120 Windows fan-out trials. [Evidence and platform limits](docs/research/implementation-v190.md#p7--combined-retrieval-and-consumers). Working version **1.8.8** remains unpublished.
+-
+-P6e makes [oversized stdio input](docs/mcp.md) an explicit bounded failure and uses [qualified Workbench publication comparisons](docs/workbench/implementation.md) instead of treating unequal tokens as older. It adds no status polling and preserves retained exports. Local qualification and release limits remain in the implementation ledger.
+-
+-P6d's [source admission changes](docs/service-freshness.md) give eligible source work priority over pending Vector jobs and yield running Vector turns at safe boundaries. Saved semantic work resumes afterward. Actual Windows and Mac ARM backlog scenarios passed; the implementation ledger records final qualification and remaining platform limits.
+-
+-P6c's [search execution contract](docs/search-execution.md) discloses policy-qualified lexical results when the embedding helper is unavailable, preserving strict explicit semantic requests and independent source-verification receipts. Local Windows/Mac ARM gates and all 84 unchanged-bound latency comparisons passed; the ledger records exact coverage and remaining release limits.
+-
+-**1.8.8 manual-test working build:** native/extension versions and lockfiles are synchronized. The [working-build record](docs/releases/release-1.8.8.md) and [implementation ledger](docs/research/implementation-v190.md) track implementation and validation toward the [planned 1.9.0 release](docs/research/plan-v190.md). Project/index setup and grants require explicit review. Saved-source verification defaults to Report; see the [controls and limits](docs/source-verification.md).
+-
+-P5's catalog upgrade foundation passed local isolated qualification. P6f's working
+-candidate admits activation through qualified native Genesis/upgrade readiness;
+-see the [storage boundary](docs/storage-formats.md#development-catalog-boundary).
+-
+-P6a implements the macOS copied-launcher correction, shared signed release
+-producer and offline contributor bootstrap. Local gates passed, including the
+-actual Developer ID signed installer lifecycle and all 60 latency comparisons.
+-Notarization, installed-editor acceptance and remaining
+-platform gates are recorded in the [implementation ledger](docs/research/implementation-v190.md).
+-
+-P6b adds durable helper cooldown recovery, measured healthy reset and isolated
+-worker-grant repair. Local Windows/Mac ARM gates and all 84 latency comparisons
+-passed; see the validation limits in the
+-[helper recovery contract](docs/service-embedding.md#helper-recovery).
+-
+-Contributor dependency checks now include pinned `cargo-deny` and `cargo-vet`,
+-with committed policy and visible unreviewed baseline exemptions. See the
+-[supply-chain policy](docs/dependency-advisories.md) for coverage and limits.
+-
+-Compact discovery now feeds dependent plans and cited results;
+-nested plan inputs are advertised as JSON objects. [Validation and limits](docs/read-interface-parity.md#regression-evidence)
+-remain recorded per phase.
+-
+-Choose [Lean or Rich replies](docs/reply-detail.md) per read in MCP, CLI or
+-Workbench, independently of retained indexing detail. Omission preserves existing
+-defaults; Rich cannot restore evidence omitted during indexing.
+-
+-[Evidence guidance](docs/evidence-guidance.md) explains returned limitations and
+-useful next reads without extra queries or automatic indexing.
+-
+-P3 records the [Project/index, migration and verification design contracts](docs/research/contracts-v190/README.md). P6f implements their management and grant path; P7 adds [combined Project reads](docs/combined-reads.md) and complete consumers. P4 implemented saved-source verification.
++The unpublished **1.8.8 manual-test working build** includes accepted local
++P9 permanent exclusions, P10 reviewed index splitting, P11a per-file profile
++reporting and P11b explicit Lean/Rich retained profiles. Existing indexing levels
++and reply defaults keep their meanings. These development checkpoints do not
++constitute a published release or final installed-editor acceptance.
++
++P12 adds an explicit **reviewed reference refresh and separate requery** candidate.
++Its focused Windows native selection passed **39 tests**, including actual
++native/CLI/MCP shared-helper, Lean/Rich, pause, lost-reply and restart paths.
++Release-runtime and focused Neo qualification, final primary review and phase
++acceptance are still in progress. The first wave refreshes one existing index
++from eligible references and requires full-index metadata authority; partial
++Project/path grants are unsupported. Evidence reads and source verification do
++not start indexing. P13 ranking/diversity remains conditional; P14, deleted-source
++recovery and the final local test installer remain pending.
++
++See [refresh controls and limits](docs/source-verification.md#explicit-reference-refresh-p12-candidate),
++[retained profiles](docs/code-indexing-options.md),
++[profile family reporting](docs/profile-family-reporting.md),
++[reviewed splitting](docs/index-splitting.md),
++[permanent exclusions](docs/source-policy.md),
++[combined Project reads](docs/combined-reads.md) and
++[Recommendations](docs/recommendations.md). The [working-build record](docs/releases/release-1.8.8.md)
++and [dated implementation ledger](docs/research/implementation-v190.md) retain
++exact qualification identities, earlier failures and platform limits. Promotion
++to 1.9.0 follows implementation and manual acceptance; it does not relabel these
++working binaries.
+ 
+ **Inherited 1.8.7 behavior:** CLI and Workbench reads use the MCP handlers and retain their full results, including configured `query_concurrency` in status/diagnostics. Cold status preserves explicit setup-timeout receipts across later polls. This release consolidates all unpublished 1.8.0-1.8.6 storage, startup, retrieval, concurrency and Workbench improvements. See the [consolidated release notes](docs/releases/release-1.8.7.md) for current behavior and dated validation.
+ 

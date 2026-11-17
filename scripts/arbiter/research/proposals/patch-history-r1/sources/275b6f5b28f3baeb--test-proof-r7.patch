@@ -1,0 +1,55 @@
+diff --git a/crates/airk-cli/tests/combined_reads/deleted_source_recovery.rs b/crates/airk-cli/tests/combined_reads/deleted_source_recovery.rs
+--- a/crates/airk-cli/tests/combined_reads/deleted_source_recovery.rs
++++ b/crates/airk-cli/tests/combined_reads/deleted_source_recovery.rs
+@@ -711,6 +711,51 @@
+             !ServiceRegistry::open_saved(&f.control)?.project_was_removed(destination.binding)?,
+             "share denial did not interrupt native disposal"
+         );
++        ensure!(service.is_none(), "owned native service was not reaped");
++        // OwnedProcess::drop drains this exact Job, waits for every captured
++        // descendant HANDLE and ActiveProcesses==0, then reaps the root child.
++        // Now force the owning cleanup attempt to finish synchronously: merely
++        // observing scratch before killing a worker cannot prove rename failed.
++        let saved = ServiceRegistry::open_saved(&f.control)?;
++        let incarnation = saved.incarnation()?;
++        drop(saved);
++        let mut native = ServiceRegistry::open(&f.control, incarnation)?;
++        ensure!(
++            native
++                .pending_project_removals(None, 32)?
++                .contains(&destination),
++            "exact A retirement was not pending before synchronous retry"
++        );
++        let funding_before_denial = quota.observe_funding(operation)?;
++        let denial = native
++            .purge_removed_project_turn(destination.binding)
++            .err()
++            .context("no-DELETE HANDLE failed to deny actual native metadata replacement")?;
++        let os = denial
++            .downcast_ref::<std::io::Error>()
++            .context("native metadata denial lost its typed OS error")?;
++        let expected_context = match os.raw_os_error() {
++            Some(32) => "NtSetInformationFile setup publication: NTSTATUS 0xc0000043",
++            Some(5) => "NtSetInformationFile setup publication: NTSTATUS 0xc0000022",
++            other => anyhow::bail!("unexpected native replacement OS error {other:?}: {denial:#}"),
++        };
++        ensure!(
++            denial
++                .chain()
++                .any(|cause| cause.to_string() == expected_context),
++            "denial was not the exact anchored metadata replacement: {denial:#}"
++        );
++        ensure!(
++            !native.project_was_removed(destination.binding)?
++                && native
++                    .pending_project_removals(None, 32)?
++                    .contains(&destination)
++                && native.catalog_split_status(operation)?.as_ref() == Some(complete)
++                && quota.observe_funding(operation)? == funding_before_denial
++                && scratch.is_file(),
++            "denied native retry changed exact retirement/funding/terminal receipt or lost scratch"
++        );
++        drop(native);
+         drop(parent);
+         let interrupted = quota.observe_funding(operation)?;
+         ensure!(

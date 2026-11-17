@@ -1,0 +1,18 @@
+--- crates/airk-retrieval/src/model.rs
++++ crates/airk-retrieval/src/model.rs
+@@ -1125,7 +1125,14 @@
+         // no request field, environment role or unowned metadata grants this.
+         return Ok(true);
+     }
+-    crate::model_catalog::contains_active_manifest(&manifest)
++    let active = crate::model_catalog::contains_active_manifest(&manifest)?;
++    if active {
++        ensure!(
++            crate::model_catalog::contains_active_asset_references(set)?,
++            "active model asset lengths or digests differ from the catalog"
++        );
++    }
++    Ok(active)
+ }
+ 
+ pub fn onnx_object_metadata_uses_active_catalog(

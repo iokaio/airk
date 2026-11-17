@@ -1,0 +1,106 @@
+--- a/scripts/tests/test_benchmark_service_http.py
++++ b/scripts/tests/test_benchmark_service_http.py
+@@ -326,50 +326,45 @@
+     def test_owned_modern_configuration_has_exact_scope_control_and_no_launch_args(self):
+         with tempfile.TemporaryDirectory() as folder:
+             root = Path(folder).resolve()
+-            binary, control = root / "airk", root / "control"
+-            binary.write_bytes(b"approved-main"); control.mkdir()
+-            (control / "http-1").mkdir()
+-            (root / "airk-runtime.json").write_text(json.dumps({"version": "1.8.14"}))
+-            selected = {"namespace": "native", "grant_id": "frozen", "expected_catalog_revision": 4}
+-            service = SimpleNamespace(single_image=True, binary=binary, control=control,
++            binary, cli, control = root / "airk", root / "airkctl", root / "control"
++            binary.write_bytes(b"approved-main"); cli.write_bytes(b"approved-cli"); control.mkdir()
++            (root / "airk-runtime.json").write_text(json.dumps({"version": "1.8.207"}))
++            selected = {"index_id": "idx_fixture", "namespace": "native"}
++            service = SimpleNamespace(single_image=True, binary=binary, cli=cli, control=control,
+                 projects={"owned": {"root": str(root)}}, scopes={"owned": selected},
+-                enroll_http=mock.Mock(return_value={"native": "exact-enrolled-metadata"}),
++                enroll_http=mock.Mock(side_effect=AssertionError("U110 enrolls no read credentials")),
+                 arguments=mock.Mock(side_effect=AssertionError("Modern config must not acquire a stdio launch")))
+             result = INVESTIGATION.owned_configuration(service, "owned", root)
+-            self.assertEqual(result["schema"], 2); self.assertEqual(result["transport"], "https")
++            self.assertEqual(result["schema"], 3); self.assertEqual(result["transport"], "https")
++            self.assertEqual(result["command"], str(cli))
++            self.assertEqual(result["launcher_sha256"], INVESTIGATION.digest_bytes(cli.read_bytes()))
+             self.assertEqual(result["args"], [])
+             self.assertEqual(result["control"], str(control)); self.assertEqual(result["source_root"], str(root))
+-            self.assertEqual(result["selection"], {"kind": "scoped", "selection": selected})
+-            service.enroll_http.assert_called_once_with({"kind": "scoped", "selection": selected}, mock.ANY, "unknown")
+-            roster = json.loads(Path(result["connections_file"]).read_bytes())
+-            self.assertEqual(roster, {"schema": 1, "client": "unknown", "connections": [{"native": "exact-enrolled-metadata"}]})
+-            result["selection"]["selection"]["grant_id"] = "changed"
+-            self.assertEqual(selected["grant_id"], "frozen")
+-            service.single_image = False
++            self.assertEqual(result["scope"], {"index_ids": ["idx_fixture"]})
++            service.enroll_http.assert_not_called()
++            self.assertNotIn("connections_file", result)
++            self.assertEqual(list(control.iterdir()), [])
++            result["scope"]["index_ids"][0] = "changed"
++            self.assertEqual(selected["index_id"], "idx_fixture")
++            service.single_image = False; service.cli = None
+             service.arguments = lambda _: ["--root", str(root)]
+             (root / "airk-runtime.json").write_text(json.dumps({"version": "1.8.12"}))
+             legacy = INVESTIGATION.owned_configuration(service, "owned", root)
+             self.assertEqual(legacy["args"], ["--root", str(root), "mcp"])
+             self.assertNotIn("transport", legacy)
+ 
+-    def test_sixty_four_clients_enroll_distinct_credentials_with_exact_immutable_authority(self):
+-        selected = {"namespace": "native", "grant_id": "same-reviewed-grant", "expected_catalog_revision": 1}
+-        methods = []
++    def test_sixty_four_clients_use_one_checked_endpoint_and_explicit_scope_without_credentials(self):
++        selected = {"index_id": "idx_" + "a" * 32}
+         health = {"instance": "service", "user": "user", "executable_sha256": "execution", "catalog_clock": {"namespace": "native"}}
+-        def rpc(method):
+-            self.assertEqual(method, "health", "Console must not perform private HTTP enrollment")
+-            return {"status": "health", "observation": health}
+-        def enroll_http(selection, identity, client):
+-            methods.append((copy.deepcopy(selection), identity, client))
+-            return {"connection_id": identity, "selection": copy.deepcopy(selection),
+-                "endpoint": {"service_instance": "service", "user": "user", "namespace": "native", "executable_sha256": "execution"}}
+-        fixture = SimpleNamespace(scopes={"owned": selected}, rpc=rpc, enroll_http=enroll_http, managed_health=health)
+-        connections = [SERVICE.enroll(fixture, "owned") for _ in range(64)]
+-        self.assertEqual(len({info["connection_id"] for info in connections}), 64)
+-        self.assertEqual(len(methods), 64)
+-        self.assertTrue(all(selection == {"kind": "scoped", "selection": selected} and client == "unknown"
+-                            for selection, _, client in methods))
+-        self.assertEqual(selected["expected_catalog_revision"], 1)
++        endpoint = {"service_instance": "service", "user": "user", "namespace": "native", "executable_sha256": "execution"}
++        fixture = SimpleNamespace(scopes={"owned": selected}, rpc=mock.Mock(return_value={"observation":health}),
++            http_endpoint=mock.Mock(return_value=endpoint),
++            enroll_http=mock.Mock(side_effect=AssertionError("No enrollment")), managed_health=health)
++        contexts = [SERVICE.endpoint_context(fixture, "owned") for _ in range(64)]
++        self.assertEqual(len(contexts), 64)
++        self.assertTrue(all(value == {"endpoint":endpoint, "scope":{"index_ids":["idx_"+"a"*32]}} for value in contexts))
++        fixture.enroll_http.assert_not_called()
++        self.assertEqual(fixture.http_endpoint.call_count, 64)
+ 
+     def test_payload_verification_never_hashes_a_modern_helper_but_requires_legacy_helper(self):
+         binary = Path("/owned/airk")
+@@ -412,7 +407,7 @@
+             self.assertEqual(sum(method == "initialize" for method, _ in observed), 1)
+             self.assertEqual(sum(method == "DELETE" for method, _ in observed), 1)
+ 
+-    def test_new_request_retires_stale_tcp_and_keeps_the_original_mcp_session_and_credential(self):
++    def test_new_request_retires_stale_tcp_and_keeps_the_original_tokenless_mcp_session(self):
+         fixture = TLS.ActualHttpsFixtureTests()
+         with fixture.server() as (connection, observed):
+             session = SERVICE.HttpSession(connection, fixture.root)
+@@ -455,6 +450,7 @@
+                     def wait(self, *args): pass
+                     def arguments(self, name): return [name]
+                     def run(self, *args, **kwargs): return SimpleNamespace(returncode=0, stdout=json.dumps(envelope()))
++                    def open_call(self, *args, **kwargs): return 0, envelope()
+                 def envelope():
+                     path = fixture.owner / "load-0" / "file-0.txt"
+                     value = {"collection": "load-0", "hits": [{
+@@ -491,7 +487,7 @@
+                 with mock.patch.object(SERVICE.clients, "Fixture", Native), \
+                         mock.patch.object(SERVICE.clients, "owned_client_fixture", tempfile.TemporaryDirectory), \
+                         mock.patch.object(SERVICE, "retained_snapshot", return_value=observed), \
+-                        mock.patch.object(SERVICE, "enroll", side_effect=enroll), \
++                        mock.patch.object(SERVICE, "endpoint_context", side_effect=enroll), \
+                         mock.patch.object(SERVICE.clients, "read_envelope", side_effect=AssertionError("no harness replay")), \
+                         mock.patch.object(SERVICE, "HttpSession", Session):
+                     if refused_read == "tool_error":

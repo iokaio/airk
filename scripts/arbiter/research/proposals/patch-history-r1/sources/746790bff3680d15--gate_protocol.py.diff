@@ -1,0 +1,36 @@
+--- compact/gate_protocol.py
++++ large/gate_protocol.py
+@@ -21,12 +21,12 @@
+     need(type(tokens) is int and tokens in [1,17,128,8192],'Unsupported exact shape case')
+     need(len(inputs)==11 and not any(inputs[3:5]) and not any(inputs[7:10]),'No-past/no extra GQA inputs required')
+     need(len(outputs)==3 and all(outputs) and len(set(outputs))==3,'Three distinct internal outputs required')
+-    need(attrs.get('num_heads')==16 and attrs.get('kv_num_heads')==8 and attrs.get('causal')==1
++    need(attrs.get('num_heads')==32 and attrs.get('kv_num_heads')==8 and attrs.get('causal')==1
+          and attrs.get('local_window_size')==-1 and attrs.get('do_rotary')==0
+          and attrs.get('softcap')==0. and attrs.get('smooth_softmax')==0
+          and struct.pack('<f',attrs.get('scale',0.)).hex()=='f304b53d','Exact pinned CPU GQA attributes required')
+     need(inputs[5:7]==[ns+'seqlen32',ns+'total32'] and inputs[10]=='/scorer/Where_output_0','Original mask/full physical seqlen required')
+-    for name,expected in [(inputs[0],(1,[1,tokens,2048])),(inputs[1],(1,[1,tokens,1024])),
++    for name,expected in [(inputs[0],(1,[1,tokens,4096])),(inputs[1],(1,[1,tokens,1024])),
+         (inputs[2],(1,[1,tokens,1024])),(inputs[10],(1,[1,1,tokens,tokens])),
+         (inputs[5],(6,[1])),(inputs[6],(6,[1]))]:
+         need(known.get(name)==expected,'Resolved native GQA input type/shape required: '+name)
+@@ -64,10 +64,10 @@
+     need(len(users)==1,'Exact original single attention-axis consumer required')
+     user=users[0]
+     match=re.fullmatch(r'/scorer/layers\.([0-9]+)/self_attn/Unsqueeze(?:_[0-9]+)?',user['name'])
+-    need(match is not None and 0<=int(match.group(1))<28 and user['op']=='Unsqueeze'
++    need(match is not None and 0<=int(match.group(1))<36 and user['op']=='Unsqueeze'
+         and len(user['inputs'])==2 and user['inputs'][1]==outputs[0]
+         and user['name'] in removed,'Constant must be axis of removed attention-only Unsqueeze')
+-    return int(match.group(1))
++    return int(match.group(1))
+ 
+ def install_external_value_guard(engine,external_names):
+     """Keep true tensor metadata; optional external values are unknown, never read."""
+@@ -88,4 +88,4 @@
+             return None
+         return stock_try(node,index)
+     engine._get_value=get_value;engine._try_get_value=try_value
+-    return observed
++    return observed

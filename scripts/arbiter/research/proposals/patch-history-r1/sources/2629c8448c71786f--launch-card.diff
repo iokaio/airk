@@ -1,0 +1,55 @@
+--- original-r4-card
++++ private-r5-card
+@@ -1,14 +1,14 @@
+ {
+-  "schema": "airk.private-r154-composed-launch-card/4",
+-  "classification": "one fresh attribution-only Answer through existing canonical private fixture; no historical replay/CAL/qualification",
++  "schema": "airk.private-r154-composed-launch-card/5",
++  "classification": "one fresh R5 attribution-only Answer after full753 semantic readiness; R4 remains failed; no historical replay/CAL/qualification",
+   "whole_seconds": 1800,
+   "r154_seconds": 360,
+   "outer_job_policy": "maintained uncapped kill-on-close actual multiprocess owner; original native profile CPU/RAM gates unchanged",
+   "observer_job_bytes": 8589934592,
+   "repository_root": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3",
+   "stage_root": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1",
+-  "work": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1\\work-r4",
+-  "output": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1\\composed-route-r4",
++  "work": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1\\work-r5",
++  "output": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1\\composed-route-r5",
+   "staging_guard": "D:\\code\\Github\\airk\\artifacts\\advanced-split\\models\\actual-composed-service-r2\\r154-flat-stage-preparation-r1\\stage_assets.py",
+   "staging_receipt": {
+     "path": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1\\staging-receipt.json",
+@@ -35,7 +35,7 @@
+     "path": "D:\\code\\Github\\airk\\artifacts\\tools\\node-v24.15.0-win-x64\\node.exe",
+     "sha256": "3331e1ffe19874215472217c5e94f5a0c6d8e18c4ac7111d3937aa0ad5e9b4a5"
+   },
+-  "r154_launcher": "D:\\code\\Github\\airk\\artifacts\\advanced-split\\models\\actual-composed-service-r2\\r154-fresh-attribution-preparation-r3\\launch_owned.py",
++  "r154_launcher": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r5-readiness-reporting-proposal-r1\\launch_owned.py",
+   "r154_preparation": {
+     "path": "D:\\code\\Github\\airk\\artifacts\\advanced-split\\models\\actual-composed-service-r2\\r154-fresh-attribution-preparation-r3\\preparation.json",
+     "sha256": "573d6539104c8265dd197c6339b910f7943b73d5e652507de3fa803c67466e83",
+@@ -314,7 +314,7 @@
+   "service_environment": {
+     "AIRK_ARBITER_EVALUATION_INPUTS": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1\\evaluation-inputs.private.json",
+     "AIRK_ARBITER_EVALUATION_INPUTS_SHA256": "55719e6943a992271bd9cfa1e98046dc4b946332b22bdf146efb0d8b487b6656",
+-    "AIRK_ARBITER_EVALUATION_WORK": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1\\work-r4",
++    "AIRK_ARBITER_EVALUATION_WORK": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1\\work-r5",
+     "AIRK_ARBITER_EVALUATION_SECONDS": "1800",
+     "AIRK_ARBITER_EVALUATION_RESOURCE_CONSENT": "throughput64gib4threads",
+     "AIRK_NATIVE_DISPATCH_OBSERVER": "true",
+@@ -2173,9 +2173,13 @@
+     "D:\\code\\Github\\airk\\artifacts\\advanced-split\\models\\actual-composed-service-r2\\final-plan-current-policy-preparation-20261116T085632Z\\current-orchestration\\final-integrated-native-preservation-r1\\images\\airk_inference-6d234555c8e6346d.exe": "6ec1e27c65c752b7df4dae27f30196fba09f76eb3c617d2ff4470e670c25dc85",
+     "D:\\code\\Github\\airk\\artifacts\\advanced-split\\models\\actual-composed-service-r2\\final-plan-current-policy-preparation-20261116T085632Z\\current-orchestration\\final-integrated-native-preservation-r1\\images\\airk_service-282cc6b4f1bbdc18.exe": "6b836e4b659825a8ceb3bbd0881e6f0c2f7fe4570967ac6ab9a7ec12ee693786",
+     "D:\\code\\Github\\airk\\artifacts\\advanced-split\\models\\actual-composed-service-r2\\r154-composed-launch-preparation-r4\\inference-component-byte-bridge.json": "45c7a9497c3182e2d868856d3a7076587a995ac41e953e0f2dc959cec95ee2a9",
+-    "D:\\code\\Github\\airk\\artifacts\\advanced-split\\models\\actual-composed-service-r2\\r154-composed-launch-preparation-r4\\launch-card.template.json": "0f53203c88e8e42ea0d215231777ee56f2d9cbe6f83466362a5ea325ec84eadb"
++    "D:\\code\\Github\\airk\\artifacts\\advanced-split\\models\\actual-composed-service-r2\\r154-composed-launch-preparation-r4\\launch-card.template.json": "0f53203c88e8e42ea0d215231777ee56f2d9cbe6f83466362a5ea325ec84eadb",
++    "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r5-readiness-reporting-proposal-r1\\launch_route.py": "e197021fe754cb9692a19941cdba1132408833c335c260101a75523fe76714eb",
++    "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r5-readiness-reporting-proposal-r1\\launch_owned.py": "8de03259e5a3d4907b9726bc0f7563f9733645f6912a15ad68595c3a18ba75d1",
++    "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r5-readiness-reporting-proposal-r1\\OWNED-CONTRACT.md": "994ebd3be42fb76b822c2d7d10234500b2221adce7f7ec71848453852d5b1165",
++    "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r5-readiness-reporting-proposal-r1\\test_r5_controls.py": "84cc82abf509b1f844d2c1383b6572352640fd5c2066e2f4ca2d586cf68c4910"
+   },
+-  "index_data": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1\\index-data-r4",
++  "index_data": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1\\index-data-r5",
+   "previous_failed_run": {
+     "card": "D:\\code\\Github\\airk\\artifacts\\advanced-split\\models\\actual-composed-service-r2\\r154-composed-launch-preparation-r3\\launch-card.json",
+     "sha256": "999cc0f676cb40ef596b5e6d12a4c99cbb1a1d05a8682b803b587a512061ac16",

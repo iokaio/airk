@@ -1,0 +1,1274 @@
+// SPDX-License-Identifier: Apache-2.0
+//! A single workspace boundary and one application service for CLI and MCP.
+use airk_core::{
+    Artifact, Citation, DocumentLocation, FactsResponse, Hit, SearchQuery, SearchResponse,
+    Snapshot, validate_budget,
+};
+pub use airk_core::{FactQuery, RelationshipQuery};
+use airk_ingest::IndexReport;
+pub use airk_ingest::pdf_worker::dispatch as dispatch_pdf_worker;
+pub use airk_store::current::CurrentGateContention;
+
+pub mod analysis;
+pub mod changes;
+pub mod combined_reads;
+pub mod compression;
+mod continuity;
+pub mod coverage;
+pub mod current;
+pub mod diagnostics;
+mod discovery;
+mod execution;
+pub mod extraction;
+mod historical;
+mod profile_families;
+pub use historical::{HistoryAvailability, HistoryAvailabilityRequest};
+pub mod history_controls;
+pub mod limits;
+pub mod maintenance;
+/// Read-only native capability/catalog inspection; does not open collection state.
+pub use airk_retrieval::model_catalog::inspect_catalog as inspect_model_catalog;
+mod publication;
+mod references;
+mod remote_tokenization;
+mod resources;
+pub mod retrieval_retry;
+pub mod roots;
+pub mod scheduler;
+pub mod scoped_reads;
+pub mod service_broker;
+pub mod service_catalog_upgrade;
+pub mod service_configuration;
+mod service_enrichment;
+pub mod service_execution;
+mod service_freshness;
+pub mod service_inspection;
+pub mod service_projects;
+mod service_publication;
+mod service_reference_refresh;
+pub mod service_resource_observations;
+pub mod service_resources;
+mod shared_models;
+pub mod source_observations;
+pub mod source_policy;
+pub use source_policy::SourcePolicyReadUnavailable;
+pub mod source_watch;
+pub mod storage;
+#[cfg(feature = "local-inference")]
+mod tokenization;
+#[cfg(not(feature = "local-inference"))]
+use remote_tokenization as tokenization;
+pub mod usage;
+pub mod usage_page;
+pub mod vectors;
+pub mod verification;
+pub mod watcher;
+pub mod workbench;
+use airk_retrieval::truncate_utf8;
+use airk_store::{CollectionUsage, FileStore};
+use anyhow::{Context, Result, ensure};
+use serde::Serialize;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+#[cfg(test)]
+fn unlinked_tempdir() -> Result<tempfile::TempDir> {
+    // Strict model/registration fixtures use the same physical paths that
+    // native client preparation supplies, including on macOS's /var alias.
+    Ok(tempfile::tempdir_in(std::env::temp_dir().canonicalize()?)?)
+}
+
+#[derive(Clone)]
+pub struct Kernel {
+    source_policy: Arc<std::sync::Mutex<source_policy::PolicyRuntime>>,
+    read_scope: Option<Arc<scoped_reads::SessionScope>>,
+    verification_cancellation: Option<Arc<std::sync::atomic::AtomicBool>>,
+    progress: Option<ProgressObserver>,
+    root: PathBuf,
+    collection: String,
+    data_root: PathBuf,
+    store: FileStore,
+    service_collection: Option<airk_store::service::collection::Collection>,
+    service_selection: Option<Arc<airk_store::service::collection::Selection>>,
+    service_freshness: Option<Arc<service_freshness::Cache>>,
+    split_authority: Option<SplitKernelAuthority>,
+    native_owner: Arc<
+        std::sync::Mutex<
+            Option<airk_store::service::collection::integrity::native_owner::NativeOwnerSession>,
+        >,
+    >,
+}
+
+#[derive(Clone)]
+struct SplitKernelAuthority {
+    permit: airk_store::service::collection::SplitBuildPermit,
+    funding: Option<airk_store::quota::funding::FundingUse>,
+}
+
+type ProgressObserver = Arc<dyn Fn(&airk_core::readiness::IndexProgress) + Send + Sync>;
+
+#[cfg(windows)]
+fn managed_data_path(path: PathBuf) -> Result<PathBuf> {
+    // Resolve the nearest existing directory without creating managed state on
+    // read-only open. Canonical Windows paths carry the extended prefix needed
+    // by native dependencies when later component filenames cross MAX_PATH.
+    let mut existing = std::path::absolute(path)?;
+    let mut missing = Vec::new();
+    loop {
+        match std::fs::metadata(&existing) {
+            Ok(metadata) => {
+                ensure!(
+                    metadata.is_dir(),
+                    "data directory ancestor is not a directory"
+                );
+                let mut resolved = existing.canonicalize()?;
+                for component in missing.into_iter().rev() {
+                    resolved.push(component);
+                }
+                return Ok(resolved);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(
+                    existing
+                        .file_name()
+                        .context("data directory has no existing ancestor")?
+                        .to_os_string(),
+                );
+                ensure!(existing.pop(), "data directory has no existing ancestor");
+            }
+            Err(error) => return Err(error).context("resolve managed data directory"),
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct Status {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_policy: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_availability: Option<service_projects::SourceObservation>,
+    pub execution: airk_core::execution::ExecutionPlan,
+    pub indexing: airk_core::extraction::IndexCoverage,
+    pub freshness: airk_core::changes::FreshnessObservation,
+    pub retention: maintenance::RetentionObservation,
+    pub publication: Option<airk_core::evidence::RevisionEnvelope>,
+    pub semantic_readiness: airk_core::readiness::SemanticReadiness,
+    pub discovery_readiness: airk_core::readiness::DiscoveryReadiness,
+    pub source_roots: std::collections::BTreeMap<String, String>,
+    pub generation: u64,
+    pub collection: String,
+    pub files: usize,
+    pub chunks: usize,
+    pub source_bytes: usize,
+    pub extractor_version: String,
+    pub exact_fact_backend: &'static str,
+    pub lexical_backend: &'static str,
+    pub vector_backend: &'static str,
+    pub local_model_ready: bool,
+    pub vectors_enabled: bool,
+    pub indexed_vectors: usize,
+    pub vector_selection_digest: Option<airk_core::identity::Sha256Digest>,
+    pub vector_eligible_artifacts: usize,
+    pub vector_excluded_artifacts: usize,
+    pub semantic_producer: Option<String>,
+    pub imported_facts: usize,
+    pub imported_relationships: usize,
+}
+
+#[derive(Serialize)]
+pub struct FileList {
+    #[serde(flatten)]
+    pub page: airk_core::discovery::DiscoveryPage,
+    pub publication: Option<airk_core::evidence::RevisionEnvelope>,
+    pub generation: u64,
+    pub collection: String,
+    pub paths: Vec<String>,
+    pub truncated: bool,
+}
+
+#[derive(Serialize)]
+pub struct FileInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_families: Option<airk_core::profile_families::ProfileFamilyReport>,
+    pub publication: Option<airk_core::evidence::RevisionEnvelope>,
+    pub source: airk_store::roots::SourceLocation,
+    pub generation: u64,
+    pub collection: String,
+    pub path: String,
+    pub content_hash: String,
+    pub source_bytes: usize,
+    pub language: String,
+    pub extraction_method: String,
+    pub parse_status: String,
+    pub chunks: usize,
+    pub facts: usize,
+    pub indexed_lines: usize,
+    pub line_basis: &'static str,
+    pub vector_selection: airk_core::vector_selection::VectorSelectionDecision,
+    pub vector_selection_digest: airk_core::identity::Sha256Digest,
+}
+
+#[derive(Serialize)]
+pub struct ReferencesResponse {
+    pub resolution: &'static str,
+    pub evidence: SearchResponse,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<airk_core::references::ReferencePage>,
+}
+
+impl Kernel {
+    pub fn open(root: impl AsRef<Path>, data_dir: Option<PathBuf>) -> Result<Self> {
+        Self::open_collection(root, data_dir, "default")
+    }
+
+    pub fn open_collection(
+        root: impl AsRef<Path>,
+        data_dir: Option<PathBuf>,
+        collection: &str,
+    ) -> Result<Self> {
+        Self::open_collection_with_layout(root, data_dir, collection, true, false)
+    }
+
+    /// Service-only fresh storage. Never migrates or opens a legacy collection.
+    pub fn open_service_collection(
+        root: impl AsRef<Path>,
+        data_dir: Option<PathBuf>,
+        collection: &str,
+    ) -> Result<Self> {
+        Self::open_collection_with_layout(root, data_dir, collection, true, true)
+    }
+
+    /// The project owner can report failed captured recovery and accept an explicit
+    /// fresh rebuild without silently discarding the failed journal on startup.
+    pub fn open_service_collection_for_diagnostics(
+        root: impl AsRef<Path>,
+        data_dir: Option<PathBuf>,
+        collection: &str,
+    ) -> Result<Self> {
+        Self::open_collection_with_layout(root, data_dir, collection, false, true)
+    }
+
+    /// Open retained state for inspection without replaying pending publications
+    /// or runtime bootstrap recovery. Reads reject an incomplete publication.
+    pub fn open_collection_for_diagnostics(
+        root: impl AsRef<Path>,
+        data_dir: Option<PathBuf>,
+        collection: &str,
+    ) -> Result<Self> {
+        Self::open_collection_with_layout(root, data_dir, collection, false, false)
+    }
+
+    fn open_collection_with_recovery(
+        root: impl AsRef<Path>,
+        data_dir: Option<PathBuf>,
+        collection: &str,
+        recover: bool,
+    ) -> Result<Self> {
+        Self::open_collection_with_layout(root, data_dir, collection, recover, false)
+    }
+
+    fn open_collection_with_layout(
+        root: impl AsRef<Path>,
+        data_dir: Option<PathBuf>,
+        collection: &str,
+        recover: bool,
+        service: bool,
+    ) -> Result<Self> {
+        airk_store::validate_collection(collection)?;
+        let (root, source_available) = if service && !recover {
+            service_projects::retained_root(root.as_ref())?
+        } else {
+            (
+                root.as_ref()
+                    .canonicalize()
+                    .context("resolve workspace root")?,
+                true,
+            )
+        };
+        ensure!(
+            root.to_str().is_some(),
+            "non-UTF-8 workspace root is unsupported; collection identities must be lossless"
+        );
+        ensure!(
+            !source_available || root.is_dir(),
+            "workspace root must be a directory"
+        );
+        let directory = data_dir.unwrap_or_else(|| root.join(".airk"));
+        #[cfg(windows)]
+        let directory = managed_data_path(directory)?;
+        airk_store::relocation::check_root(&directory)?;
+        ensure!(
+            directory != root,
+            "data directory must not be the workspace root"
+        );
+        if directory.exists() {
+            ensure!(
+                !root.starts_with(directory.canonicalize()?),
+                "data directory must not contain the workspace root"
+            );
+        }
+        let service_collection = if service {
+            let collection = if source_available {
+                std::fs::create_dir_all(&directory)?;
+                airk_store::service::collection::Collection::initialize(
+                    &directory,
+                    root.to_str().context("non-UTF-8 workspace")?,
+                    collection,
+                    service_broker::new_instance_id()?,
+                )?
+            } else {
+                airk_store::service::collection::Collection::existing(
+                    &directory,
+                    root.to_str().context("non-UTF-8 workspace")?,
+                    collection,
+                )
+                .context("source unavailable and no matching retained service collection exists")?
+            };
+            let sealed = matches!(
+                collection.split_evidence_constraint()?,
+                Some(
+                    airk_core::catalog_split::SplitEvidenceConstraint::SealedDestination
+                        | airk_core::catalog_split::SplitEvidenceConstraint::SealedCutover
+                )
+            );
+            ensure!(
+                !recover || !sealed,
+                "split recovery requires its exact native job owner"
+            );
+            if source_available && !sealed {
+                collection.recover_abandoned_replacement()?;
+            }
+            Some(collection)
+        } else {
+            None
+        };
+        let store = if let Some(collection) = &service_collection {
+            if recover {
+                collection.selected_store()?
+            } else {
+                collection.select_for_diagnostics()?
+            }
+        } else {
+            FileStore::new(directory.join("collections-1.2").join(collection))
+        };
+        let kernel = Self {
+            source_policy: source_policy::PolicyRuntime::shared_load(if service {
+                directory.join("collections-1.4").join(collection)
+            } else {
+                store.directory().to_path_buf()
+            })?,
+            read_scope: None,
+            verification_cancellation: None,
+            progress: None,
+            root,
+            collection: collection.into(),
+            data_root: directory.clone(),
+            store,
+            service_collection,
+            service_selection: None,
+            service_freshness: None,
+            split_authority: None,
+            native_owner: Arc::new(std::sync::Mutex::new(None)),
+        };
+        if recover {
+            kernel.recover_runtime_bootstrap()?;
+            if let Some(scope) = kernel.current_scope()? {
+                let needs_recovery = match kernel
+                    .store
+                    .current_read(&scope)
+                    .and_then(|r| r.has_prepared_update())
+                {
+                    Ok(prepared) => prepared,
+                    // A writer can acquire the gate after scope discovery.
+                    // Preserve contention instead of trying to recover its work
+                    // and replacing the cause with a writer-lock error.
+                    Err(error) if error.downcast_ref::<CurrentGateContention>().is_some() => {
+                        return Err(error);
+                    }
+                    Err(_) => true,
+                };
+                if needs_recovery {
+                    current::recover_current(&kernel.store, &kernel.collection_quota()?, &scope)?;
+                }
+            }
+        }
+        kernel.observe_retained_source_policy()?;
+        Ok(kernel)
+    }
+
+    /// Read existing native metadata without creation, bootstrap recovery,
+    /// replacement cleanup or model initialization. This grants no staged read
+    /// authority; it is also the base for exact native job admission.
+    pub fn open_existing_service_observer(
+        registration: &airk_core::service::ProjectRegistration,
+    ) -> Result<Self> {
+        service_projects::validate_retained(registration)?;
+        let collection = airk_store::service::collection::Collection::existing(
+            Path::new(&registration.data_root),
+            &registration.root,
+            &registration.collection,
+        )?;
+        let store = collection.select_for_diagnostics()?;
+        let kernel = Self {
+            source_policy: source_policy::PolicyRuntime::shared_load(
+                Path::new(&registration.data_root)
+                    .join("collections-1.4")
+                    .join(&registration.collection),
+            )?,
+            read_scope: None,
+            verification_cancellation: None,
+            progress: None,
+            root: PathBuf::from(&registration.root),
+            collection: registration.collection.clone(),
+            data_root: PathBuf::from(&registration.data_root),
+            store,
+            service_collection: Some(collection),
+            service_selection: None,
+            service_freshness: None,
+            split_authority: None,
+            native_owner: Arc::new(std::sync::Mutex::new(None)),
+        };
+        kernel.observe_retained_source_policy()?;
+        Ok(kernel)
+    }
+
+    /// A native job gets its own store context. The ordinary worker Kernel
+    /// retains no permit, and no serde or boolean can construct this authority.
+    pub fn with_split_job_access(
+        &self,
+        permit: airk_store::service::collection::SplitBuildPermit,
+        funding: Option<airk_store::quota::funding::FundingUse>,
+    ) -> Result<Self> {
+        let mut selected = self.clone();
+        let collection = self
+            .service_collection
+            .as_ref()
+            .context("split job requires a native collection")?
+            .clone()
+            .with_split_access(permit.clone())?;
+        selected.service_collection = Some(match &funding {
+            Some(owner) => collection.with_operation_funding(owner.clone())?,
+            None => collection,
+        });
+        selected.split_authority = Some(SplitKernelAuthority { permit, funding });
+        selected.store = selected.inherit_shared_models(self.store.clone())?;
+        selected.service_selection = None;
+        selected.native_owner = Arc::new(std::sync::Mutex::new(None));
+        Ok(selected)
+    }
+
+    fn root_id(&self) -> String {
+        self.root.to_string_lossy().into_owned()
+    }
+
+    fn collection_quota(&self) -> Result<airk_store::quota::Quota> {
+        airk_store::quota::Quota::for_store(&self.store)
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+    /// Validate configured source locations before a service operation captures originals.
+    /// Native adapters must keep one resident materialization budget shared
+    /// across every client and across transport cancellation.
+    pub fn is_service_collection(&self) -> bool {
+        self.service_collection.is_some()
+    }
+
+    pub fn require_service_sources(&self) -> Result<()> {
+        #[cfg(test)]
+        self.note_service_source_check();
+        if self.service_collection.is_some() {
+            service_projects::require_source(&self.root)?;
+            let roots =
+                airk_store::roots::RootConfig::load(self.store.directory(), &self.root_id())?;
+            for root in roots.roots.values() {
+                service_projects::require_source(Path::new(root))?;
+            }
+        }
+        Ok(())
+    }
+    fn service_source_observation(&self) -> Option<service_projects::SourceObservation> {
+        // A published-scope grant does not authorize mutable pending roots.
+        // Retain unknown availability until a separately scoped live check is
+        // available; never expand a status read through RootConfig.
+        if self.read_scope.is_some() {
+            return None;
+        }
+        self.service_collection.as_ref()?;
+        use service_projects::SourceState;
+        let (state, reason) = match self.require_service_sources() {
+            Ok(()) => (SourceState::Available, None),
+            Err(error) if error.is::<service_projects::SourceUnavailable>() => (
+                SourceState::Unavailable,
+                Some(service_projects::problem(&error)),
+            ),
+            Err(_) => (SourceState::Unknown, None),
+        };
+        Some(service_projects::SourceObservation {
+            state,
+            reason,
+            observed_unix_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |time| time.as_millis().min(u64::MAX as u128) as u64),
+        })
+    }
+    /// Observers receive stage updates and committed boundaries and must not reenter the writer.
+    pub fn with_index_progress(
+        mut self,
+        observer: impl Fn(&airk_core::readiness::IndexProgress) + Send + Sync + 'static,
+    ) -> Self {
+        self.progress = Some(Arc::new(observer));
+        self
+    }
+    pub(crate) fn emit_progress(&self, mut progress: airk_core::readiness::IndexProgress) {
+        crate::service_execution::progress_indexed(&progress);
+        progress.collection = self.collection.clone();
+        if let Some(observer) = &self.progress {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| observer(&progress)));
+        }
+    }
+    pub fn data_dir(&self) -> &Path {
+        &self.data_root
+    }
+    pub fn collection(&self) -> &str {
+        &self.collection
+    }
+    pub fn collections(&self) -> Result<Vec<CollectionUsage>> {
+        self.require_unrestricted_read()?;
+        airk_store::list_collections(&self.data_root)
+    }
+    pub fn remove_collection(&self, id: &str) -> Result<CollectionUsage> {
+        airk_store::remove_collection(&self.data_root, id)
+    }
+    pub fn prune_indexes(&self, _dry_run: bool) -> Result<airk_store::retention::PruneReport> {
+        anyhow::bail!(
+            "generation pruning is unsupported in AIRK 1.2; current objects are reclaimed automatically"
+        )
+    }
+    fn empty_snapshot(&self) -> Snapshot {
+        let mut snapshot = Snapshot::empty(self.root_id());
+        snapshot.collection = self.collection.clone();
+        snapshot.persistent_indexes = true;
+        snapshot.storage_format = 1;
+        snapshot
+    }
+
+    fn load_optional(&self) -> Result<Option<Snapshot>> {
+        self.require_unrestricted_read()?;
+        let Some(scope) = self.current_scope()? else {
+            return Ok(None);
+        };
+        let read = self.attach_private_read(self.store.current_read(&scope)?)?;
+        self.current_scan_projection(&read).map(Some)
+    }
+
+    fn load(&self) -> Result<Snapshot> {
+        self.load_optional()?
+            .context("workspace is not indexed; run airk index first")
+    }
+
+    pub fn initialize(&self) -> Result<Status> {
+        self.initialize_current()
+    }
+
+    pub fn index(&self) -> Result<IndexReport> {
+        self.index_with_mode(false)
+    }
+
+    /// Re-extract all sources. Obsolete derived formats are reset before rebuilding.
+    pub fn reindex(&self) -> Result<IndexReport> {
+        self.index_with_mode(true)
+    }
+
+    fn index_with_mode(&self, full: bool) -> Result<IndexReport> {
+        self.index_current(full, false)
+    }
+
+    pub fn status(&self) -> Result<Status> {
+        self.current_status()
+    }
+
+    pub fn search(&self, query: &SearchQuery) -> Result<SearchResponse> {
+        self.current_search(query, current::CurrentSearchMode::Lexical)
+    }
+
+    pub fn semantic_search(&self, query: &SearchQuery) -> Result<SearchResponse> {
+        self.vector_search(query, false)
+    }
+
+    pub fn hybrid_search(&self, query: &SearchQuery) -> Result<SearchResponse> {
+        self.vector_search(query, true)
+    }
+
+    fn vector_search(&self, query: &SearchQuery, hybrid: bool) -> Result<SearchResponse> {
+        ensure!(
+            self.vectors_enabled()?,
+            "vector search is disabled for this collection"
+        );
+        self.current_search(
+            query,
+            if hybrid {
+                current::CurrentSearchMode::Hybrid
+            } else {
+                current::CurrentSearchMode::Vector
+            },
+        )
+    }
+
+    fn configured_model(&self) -> Result<Option<String>> {
+        if self.store.shared_model_runtime().is_some() {
+            return Ok(self
+                .configured_model_objects(false)?
+                .map(|set| set.legacy_identity));
+        }
+        if !self.vectors_enabled()? {
+            return Ok(None);
+        }
+        let directory = self.data_root.join("models/local");
+        if directory.exists() {
+            Ok(Some(airk_retrieval::model::inspect(&directory)?.identity))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn publication_reservation(&self) -> Result<airk_store::quota::Reservation> {
+        self.publication_reservation_with_limit(4 << 30)
+    }
+
+    fn publication_reservation_with_limit(
+        &self,
+        maximum: u64,
+    ) -> Result<airk_store::quota::Reservation> {
+        let quota = self.collection_quota()?;
+        // The reservation includes temporary and retained bytes together. Each
+        // provider charges before writes; exhausting it leaves the active pin intact.
+        let free = self.reservation_headroom(&quota)?;
+        quota.reserve_available(&self.collection, (free / 2).min(maximum))
+    }
+
+    fn reservation_headroom(&self, quota: &airk_store::quota::Quota) -> Result<u64> {
+        // The exact prepaid ledger is authoritative even at zero ordinary root
+        // headroom. Avoid an unrelated root inventory for each funded batch.
+        if let Some(free) = quota.operation_growth_headroom(&self.collection)? {
+            return Ok(free);
+        }
+        let status = quota.status()?;
+        let root_free = status
+            .root_limit_bytes
+            .saturating_sub(status.used_bytes)
+            .saturating_sub(status.reserved_bytes);
+        Ok(status
+            .collections
+            .get(&self.collection)
+            .map_or(root_free, |c| {
+                c.limit_bytes
+                    .saturating_sub(c.used_bytes)
+                    .saturating_sub(c.reserved_bytes)
+            })
+            .min(root_free))
+    }
+
+    pub fn read_file(
+        &self,
+        path: &str,
+        start_line: usize,
+        end_line: usize,
+        max_bytes: usize,
+    ) -> Result<SearchResponse> {
+        let read = self.current_reader()?;
+        self.current_read_lines(
+            &read,
+            path,
+            current::runtime::LineSelection::Range {
+                start: start_line,
+                end: end_line,
+            },
+            max_bytes,
+        )
+    }
+
+    fn read_snapshot(
+        publication: Option<airk_core::evidence::RevisionEnvelope>,
+        snapshot: &Snapshot,
+        artifact: &Artifact,
+        path: &str,
+        start_line: usize,
+        end_line: usize,
+        max_bytes: usize,
+    ) -> Result<SearchResponse> {
+        validate_budget(1, max_bytes)?;
+        ensure!(
+            start_line > 0 && end_line >= start_line,
+            "invalid line range"
+        );
+        // Lookup only in inventory: caller paths never become filesystem reads.
+        let last_line = artifact.chunks.last().map_or(0, |c| c.end_line);
+        ensure!(end_line <= last_line, "line range exceeds indexed source");
+        let location = if artifact.extraction_method == "utf8" {
+            DocumentLocation::Lines {
+                start: start_line,
+                end: end_line,
+            }
+        } else {
+            let mut locations = artifact
+                .chunks
+                .iter()
+                .filter(|c| c.end_line >= start_line && c.start_line <= end_line)
+                .map(|c| &c.location);
+            let location = locations.next().context("document location unavailable")?;
+            ensure!(
+                locations.all(|other| other == location),
+                "range crosses document locations; request one page/block/slide at a time"
+            );
+            location.clone()
+        };
+        Self::selected_lines_response(
+            publication,
+            snapshot,
+            artifact,
+            path,
+            start_line,
+            end_line,
+            location,
+            artifact.chunks.iter().flat_map(|chunk| {
+                chunk
+                    .text
+                    .split_inclusive('\n')
+                    .enumerate()
+                    .map(move |(offset, line)| (chunk.start_line + offset, line))
+            }),
+            max_bytes,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn selected_lines_response<'a>(
+        publication: Option<airk_core::evidence::RevisionEnvelope>,
+        snapshot: &Snapshot,
+        artifact: &Artifact,
+        path: &str,
+        start_line: usize,
+        end_line: usize,
+        location: DocumentLocation,
+        lines: impl Iterator<Item = (usize, &'a str)>,
+        max_bytes: usize,
+    ) -> Result<SearchResponse> {
+        let mut remaining = max_bytes;
+        let mut text = String::new();
+        let mut truncated = false;
+        for (number, line) in lines {
+            if number < start_line || number > end_line {
+                continue;
+            }
+            let (part, cut) = truncate_utf8(line, remaining);
+            remaining -= part.len();
+            text.push_str(&part);
+            if cut {
+                truncated = true;
+                break;
+            }
+        }
+        Ok(SearchResponse {
+            publication,
+            execution: None,
+            semantic_readiness: None,
+            discovery_readiness: None,
+            generation: snapshot.generation,
+            collection: snapshot.collection.clone(),
+            truncated,
+            hits: vec![Hit {
+                citation: Citation {
+                    path: path.into(),
+                    content_hash: artifact.content_hash.clone(),
+                    start_line,
+                    end_line,
+                    location,
+                },
+                text,
+                truncated,
+            }],
+        })
+    }
+
+    pub fn file_info(&self, path: &str) -> Result<FileInfo> {
+        self.file_info_with_profile_families(path, false)
+    }
+    pub fn file_info_with_profile_families(
+        &self,
+        path: &str,
+        include_profile_families: bool,
+    ) -> Result<FileInfo> {
+        self.current_file_info_with_profile_families(
+            self.current_reader()?.as_ref(),
+            path,
+            include_profile_families,
+        )
+    }
+
+    pub fn relationships(
+        &self,
+        query: &RelationshipQuery,
+    ) -> Result<airk_core::RelationshipsResponse> {
+        let read = self.current_reader()?;
+        let result = read.native_relationships(&self.store, query)?;
+        let configuration = read
+            .collection_state()?
+            .context("current configuration missing")?;
+        Ok(airk_core::RelationshipsResponse {
+            indexing: configuration.configuration.index_coverage(),
+            publication: Some(current::runtime::envelope(&read)?),
+            generation: read.head().sequence,
+            collection: self.collection.clone(),
+            relationships: result.relationships,
+            suggested_targets: result.suggested_targets,
+            truncated: result.truncated,
+            coverage: result.coverage.into(),
+        })
+    }
+
+    /// Prepare binding before the external producer runs; outputs JSON through CLI.
+    fn verify_source_inventory(&self, snapshot: &Snapshot) -> Result<Snapshot> {
+        ensure!(
+            self.configured_roots()? == snapshot.roots,
+            "index pending source root changes before preparing or publishing provider analysis"
+        );
+        let policy = self.extraction_policy()?;
+        ensure!(
+            !policy.pending_reindex,
+            "index pending extraction policy before preparing provider analysis"
+        );
+        let permanent_policy = self.source_policy_for_work()?;
+        let (current, _, _) = airk_ingest::scan_payloads_with_execution_source_policy(
+            &self.root,
+            &self.data_root,
+            snapshot,
+            &snapshot.roots,
+            self.scan_limits()?,
+            &policy.policy,
+            false,
+            airk_ingest::ExtractionExecution::default(),
+            None,
+            permanent_policy.as_deref(),
+            |request| {
+                let path = request.path;
+                let hash = request.source_hash;
+                let profile = request.profile;
+                Ok(snapshot
+                    .artifacts
+                    .get(path)
+                    .filter(|artifact| {
+                        artifact.content_hash == hash.to_string()
+                            && artifact
+                                .retained
+                                .as_ref()
+                                .and_then(|r| r.profile.as_ref())
+                                .is_some_and(|p| p == profile)
+                    })
+                    .cloned()
+                    .map(|artifact| airk_ingest::observations::VerifiedReuse {
+                        artifact,
+                        basis: airk_ingest::observations::ReuseBasis::SamePath,
+                    }))
+            },
+            |_, artifact, _, _| {
+                // Verification needs identities, never a second in-memory corpus.
+                let mut metadata = artifact.clone();
+                metadata.chunks.clear();
+                metadata.facts.clear();
+                Ok(metadata)
+            },
+        )?;
+        Ok(current)
+    }
+
+    pub fn prepare_analysis(
+        &self,
+        producer: &str,
+        version: &str,
+        build_inputs: &[String],
+    ) -> Result<airk_core::AnalysisManifest> {
+        let _lock = self.store.lock()?;
+        let snapshot = self.load()?;
+        ensure!(
+            snapshot.roots.is_empty(),
+            "SCIP imports require a single primary root; additional source aliases are not supported by this adapter"
+        );
+        let current = self.verify_source_inventory(&snapshot)?;
+        ensure!(
+            airk_ingest::semantic::source_inventory(&snapshot)
+                == airk_ingest::semantic::source_inventory(&current)
+                && snapshot.extractor_version == airk_core::EXTRACTOR_VERSION,
+            "reindex before preparing analysis"
+        );
+        for input in build_inputs {
+            self.require_source_policy_source(&self.root_id(), input)?;
+        }
+        airk_ingest::semantic::prepare(&self.root, &snapshot, producer, version, build_inputs)
+    }
+
+    pub fn import_scip(&self, index: &Path, manifest: &Path) -> Result<Status> {
+        self.require_source_policy_input(index)?;
+        self.require_source_policy_input(manifest)?;
+        let writer = self.store.lock()?;
+        let baseline = self.load()?;
+        let source = airk_store::blobs::RetainedSource {
+            store: &self.store,
+            snapshot: &baseline,
+        };
+        let mut snapshot = baseline.clone();
+        ensure!(
+            snapshot.roots.is_empty(),
+            "SCIP imports require a single primary root; additional source aliases are not supported by this adapter"
+        );
+        let binding: airk_core::AnalysisManifest =
+            serde_json::from_slice(&airk_ingest::semantic::read_bounded(manifest, 8_388_608)?)?;
+        for input in binding.build_inputs.keys() {
+            self.require_source_policy_source(&self.root_id(), input)?;
+        }
+        airk_ingest::semantic::validate_build_inputs(&self.root, &binding)?;
+        let current = self.verify_source_inventory(&snapshot)?;
+        ensure!(
+            airk_ingest::semantic::source_inventory(&snapshot)
+                == airk_ingest::semantic::source_inventory(&current)
+                && snapshot.extractor_version == airk_core::EXTRACTOR_VERSION,
+            "source changed; reindex and regenerate analysis"
+        );
+        let bytes =
+            airk_ingest::semantic::read_bounded(index, airk_ingest::semantic::MAX_IMPORT_BYTES)?;
+        airk_ingest::semantic::import_with_source(&mut snapshot, binding.clone(), &bytes, &source)?;
+        airk_ingest::semantic::validate_build_inputs(&self.root, &binding)?;
+        snapshot.generation = snapshot
+            .generation
+            .checked_add(1)
+            .context("generation overflow")?;
+        snapshot.persistent_indexes = true;
+        let verified = snapshot;
+        self.with_pressure_retry(&writer, || {
+            airk_ingest::semantic::validate_build_inputs(&self.root, &binding)?;
+            let current = self.verify_source_inventory(&verified)?;
+            ensure!(
+                airk_ingest::semantic::source_inventory(&current)
+                    == airk_ingest::semantic::source_inventory(&verified),
+                "source changed before SCIP publication; previous generation retained"
+            );
+            let mut snapshot = verified.clone();
+            let reservation = self.publication_reservation()?;
+            for artifact in snapshot.artifacts.values_mut() {
+                *artifact = self.store.retain_artifact_with_budget_owned(
+                    &writer,
+                    artifact,
+                    None,
+                    Some(&reservation),
+                )?;
+            }
+            snapshot.storage_format = 1;
+            snapshot.embedding_model = self.configured_model()?;
+            self.publish_v2(
+                &writer,
+                &snapshot,
+                reservation,
+                airk_core::changes::PublicationReason::ScipImport,
+            )?;
+            Ok(())
+        })?;
+        self.status()
+    }
+
+    pub fn context(
+        &self,
+        path: &str,
+        line: usize,
+        before: usize,
+        after: usize,
+        max_bytes: usize,
+    ) -> Result<SearchResponse> {
+        ensure!(
+            before <= airk_core::native_reads::CONTEXT_RADIUS_MAX
+                && after <= airk_core::native_reads::CONTEXT_RADIUS_MAX,
+            "context radius must be 0..100"
+        );
+        let read = self.current_reader()?;
+        self.current_read_lines(
+            &read,
+            path,
+            current::runtime::LineSelection::Context {
+                line,
+                before,
+                after,
+                maximum_end: false,
+            },
+            max_bytes,
+        )
+    }
+
+    pub fn references(
+        &self,
+        name: &str,
+        path_prefix: &str,
+        limit: usize,
+        max_bytes: usize,
+    ) -> Result<ReferencesResponse> {
+        if self.read_scope.is_some() {
+            return self.references_page(
+                name,
+                path_prefix,
+                limit,
+                max_bytes,
+                &airk_core::references::ReferenceOptions::default(),
+            );
+        }
+        validate_budget(limit, max_bytes)?;
+        ensure!(
+            !name.is_empty()
+                && name.len() <= 1024
+                && path_prefix.len() <= 4096
+                && name.chars().all(|c| c.is_alphanumeric() || c == '_'),
+            "reference name must be a single identifier"
+        );
+        let read = self.current_reader()?;
+        let snapshot = self.current_scan_projection(&read)?;
+        let mut evidence = SearchResponse {
+            execution: None,
+            publication: Some(current::runtime::envelope(&read)?),
+            semantic_readiness: Some(current::enrichment::readiness(&read, &self.store)?),
+            discovery_readiness: Some(current::progress::readiness(&read, &self.store)?),
+            generation: snapshot.generation,
+            collection: snapshot.collection.clone(),
+            hits: Vec::new(),
+            truncated: false,
+        };
+        let mut remaining = max_bytes;
+        let mut read_bytes = 0usize;
+        let mut artifacts = std::collections::BTreeMap::new();
+        let lexical = current::open_selected_lexical(&self.store, &read)?;
+        let candidates = lexical.search(&SearchQuery {
+            text: name.into(),
+            path_prefix: Some(path_prefix.into()),
+            limit: 100,
+            max_bytes: 65536,
+        })?;
+        // Bound retained candidate scanning independently of authenticated index selection.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
+        evidence.truncated |= candidates.incomplete;
+        'files: for candidate in candidates.values {
+            let path = &candidate.citation.path;
+            let entry = snapshot
+                .artifacts
+                .get(path)
+                .context("reference candidate missing from current index")?;
+            if std::time::Instant::now() >= deadline {
+                evidence.truncated = true;
+                break;
+            }
+            if !artifacts.contains_key(path) {
+                read_bytes = read_bytes.saturating_add(entry.extracted_bytes());
+                if read_bytes > 16_777_216 {
+                    evidence.truncated = true;
+                    break;
+                }
+                artifacts.insert(path.clone(), self.current_artifact(&read, path, false)?);
+            }
+            let a = &artifacts[path];
+            let chunk = a
+                .chunks
+                .get(usize::try_from(candidate.local)?)
+                .context("reference candidate chunk missing")?;
+            ensure!(
+                candidate.stable_id
+                    == airk_store::current::lexical::stable_id(path, candidate.local)?
+                    && candidate.citation.content_hash == a.content_hash
+                    && candidate.citation.start_line == chunk.start_line
+                    && candidate.citation.end_line == chunk.end_line
+                    && candidate.citation.location == chunk.location,
+                "reference candidate differs from retained evidence"
+            );
+            for (offset, line) in chunk.text.split_inclusive('\n').enumerate() {
+                if !line
+                    .split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .any(|word| word == name)
+                {
+                    continue;
+                }
+                if evidence.hits.len() == limit || remaining == 0 {
+                    evidence.truncated = true;
+                    break 'files;
+                }
+                let (text, truncated) = truncate_utf8(line, remaining);
+                remaining -= text.len();
+                evidence.truncated |= truncated;
+                let number = chunk.start_line + offset;
+                let location = if a.extraction_method == "utf8" {
+                    DocumentLocation::Lines {
+                        start: number,
+                        end: number,
+                    }
+                } else {
+                    chunk.location.clone()
+                };
+                evidence.hits.push(Hit {
+                    text,
+                    truncated,
+                    citation: Citation {
+                        path: path.clone(),
+                        content_hash: a.content_hash.clone(),
+                        start_line: number,
+                        end_line: number,
+                        location,
+                    },
+                });
+            }
+        }
+        Ok(ReferencesResponse {
+            resolution: "textual-occurrences; includes comments, strings and definitions; no name resolution",
+            evidence,
+            page: None,
+        })
+    }
+}
+
+impl Kernel {
+    /// Only a live native owner can attach relaxed request authority. Public
+    /// Kernel instances and unsupported native roots keep ordinary strict reads.
+    fn attach_private_read(
+        &self,
+        read: Arc<airk_store::current::CurrentRead>,
+    ) -> Result<Arc<airk_store::current::CurrentRead>> {
+        self.attach_source_policy_read(&read)?;
+        if let Some(scope) = &self.read_scope {
+            scope.attach(&read)?;
+        }
+        let slot = self
+            .native_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?;
+        match slot.as_ref() {
+            Some(owner) => owner.attach_read(read),
+            None => Ok(read),
+        }
+    }
+
+    fn retire_failed_native_owner_after_replacement(
+        &self,
+        replaced: Option<airk_core::identity::Incarnation>,
+        token: airk_store::current::CurrentToken,
+    ) -> Result<()> {
+        let mut slot = self
+            .native_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?;
+        if let Some(owner) = slot.as_ref()
+            && owner.failed()
+        {
+            owner.require_owned_replacement(
+                replaced.context("failed owner replacement scope missing")?,
+                token,
+            )?;
+            // Dropping a failed capability leaves its durable Active marker.
+            // A later enrollment still requires explicit physical recovery.
+            slot.take();
+        }
+        Ok(())
+    }
+
+    /// Current-process failure observation used to choose a fresh accepted Verify
+    /// recovery epoch even when a query failed after the last worker status sample.
+    pub fn native_owner_requires_recovery(&self) -> Result<bool> {
+        Ok(self
+            .native_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?
+            .as_ref()
+            .is_some_and(|owner| owner.failed()))
+    }
+
+    pub(crate) fn retire_failed_native_owner_after_recovery(
+        &self,
+        registry: &airk_store::service::registry::ServiceRegistry,
+        proof: &airk_store::service::collection::integrity::verify::EnabledComponentAuditProof,
+    ) -> Result<()> {
+        let mut slot = self
+            .native_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?;
+        if let Some(owner) = slot.as_ref() {
+            owner.require_recovered_owner(registry, proof)?;
+            slot.take();
+        }
+        Ok(())
+    }
+
+    /// Native worker admission. Unsupported boundaries retain strict behavior;
+    /// inherited Active or policy/head mismatches remain explicit recovery errors.
+    pub fn try_arm_native_owner(
+        &self,
+        registry: &mut airk_store::service::registry::ServiceRegistry,
+        lease: Arc<airk_store::service::ProjectLease>,
+        bound: &airk_store::service::data_scope::BoundDataRoot,
+        identity: airk_core::service::WorkerIdentity,
+    ) -> Result<bool> {
+        if let Some(owner) = self
+            .native_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?
+            .as_ref()
+        {
+            if owner.failed() {
+                return Err(anyhow::Error::new(airk_store::service::collection::integrity::native_owner::NativeOwnerRecoveryRequired));
+            }
+            return Ok(true);
+        }
+        if self.current_scope()?.is_none() {
+            return Ok(false);
+        }
+        match self.arm_native_owner(registry, lease, bound, identity) {
+            Ok(()) => Ok(true),
+            Err(error) if error.downcast_ref::<airk_store::service::collection::integrity::native_owner::NativeBoundaryUnavailable>().is_some() => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Explicit native-worker admission before sealed request readers are exposed.
+    /// The fixed recovery profile covers every component relaxed by those readers.
+    pub fn arm_native_owner(
+        &self,
+        registry: &mut airk_store::service::registry::ServiceRegistry,
+        lease: Arc<airk_store::service::ProjectLease>,
+        bound: &airk_store::service::data_scope::BoundDataRoot,
+        identity: airk_core::service::WorkerIdentity,
+    ) -> Result<()> {
+        let mut slot = self
+            .native_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?;
+        ensure!(slot.is_none(), "native owner session already admitted");
+        let collection = self
+            .service_collection
+            .as_ref()
+            .context("native owner requires service collection")?;
+        *slot = Some(collection.arm_native_owner(registry, lease, bound, identity)?);
+        Ok(())
+    }
+    /// Owning CLI final-drain adapter only, after actual LocalTools shutdown.
+    /// Consumes once; any failure leaves durable Active and cannot be retried as clean.
+    pub fn settle_native_owner_after_owned_drain(
+        &self,
+        registry: &mut airk_store::service::registry::ServiceRegistry,
+    ) -> Result<()> {
+        let owner = self
+            .native_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?
+            .take();
+        if let Some(owner) = owner {
+            owner.settle_after_owned_drain(registry)?;
+        }
+        Ok(())
+    }
+}
+
+#[path = "split.rs"]
+pub mod split;
+mod split_execution;
+pub use split::SplitWitnessLimits;

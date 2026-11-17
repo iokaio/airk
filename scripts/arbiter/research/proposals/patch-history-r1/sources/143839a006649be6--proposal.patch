@@ -1,0 +1,159 @@
+--- a/scripts/dev/receipt_runner.py
++++ b/scripts/dev/receipt_runner.py
+@@ -155,6 +155,56 @@
+     module = importlib.util.module_from_spec(spec)
+     spec.loader.exec_module(module)
+     return module
++
++
++
++def cargo_timing_command(command, root=None):
++    """Only Cargo or reviewed build entrypoints can own a fresh shared timing file.
++
++    Inline programs and arbitrary scripts are not evidence of a Cargo producer.
++    The maintained static-environment wrapper forwards one explicit argv after --.
++    """
++    root = ROOT if root is None else Path(root)
++    if not command:
++        return False
++    program = Path(command[0]).name.lower().removesuffix(".exe")
++    arguments = list(command[1:])
++    if program == "cargo":
++        return any(word == "--timings" or word.startswith("--timings=") for word in arguments)
++    if re.fullmatch(r"python(?:[0-9]+(?:\.[0-9]+)*)?", program) or program == "py":
++        while arguments and arguments[0] in ("-B", "-I", "-u", "-E", "-s", "-S"):
++            arguments.pop(0)
++        if not arguments or arguments[0].startswith("-"):
++            return False
++        script, arguments = arguments[0], arguments[1:]
++    elif program in ("pwsh", "powershell"):
++        lowered = [word.lower() for word in arguments]
++        if "-command" in lowered or "-c" in lowered or "-file" not in lowered:
++            return False
++        index = lowered.index("-file") + 1
++        if index >= len(arguments):
++            return False
++        script, arguments = arguments[index], arguments[index + 1:]
++    else:
++        return False
++    path = Path(script)
++    path = (path if path.is_absolute() else root / path).resolve()
++    try:
++        script = path.relative_to(root.resolve()).as_posix()
++    except ValueError:
++        return False
++    if script == "scripts/static-runtime-environment.py":
++        return "--" in arguments and cargo_timing_command(arguments[arguments.index("--") + 1:], root)
++    if script in ("scripts/build-service-runtime.py", "scripts/build-service-container.py"):
++        return True
++    if script == "scripts/dev-check.py":
++        return "--dry-run" not in arguments
++    if script == "scripts/build-local-service-installer.py":
++        return "--force-build" in arguments and "--runtime-dir" not in arguments
++    if script in ("scripts/build-local-service-installer.ps1", "scripts/build-local-installers.ps1"):
++        lowered = [word.lower() for word in arguments]
++        return "-forcebuild" in lowered and "-runtimedir" not in lowered
++    return False
+ 
+ 
+ def runtime_identity(runtime, target):
+@@ -412,7 +462,8 @@
+                             [str(args.node), "--version"], capture_output=True, text=True).stdout.strip()}
+                     receipt["node"] = evidence("node", node_identity)
+                 timing = Path(env["CARGO_TARGET_DIR"]) / "cargo-timings/cargo-timing.html"
+-                if timing.exists() and timing.stat().st_mtime >= started_unix:
++                if (cargo_timing_command(command) and timing.exists()
++                        and timing.stat().st_mtime >= started_unix):
+                     def copy_timing():
+                         name = args.name + "-cargo-timing.html"
+                         shutil.copy2(timing, out / name)
+--- a/scripts/tests/test_receipt_runner.py
++++ b/scripts/tests/test_receipt_runner.py
+@@ -370,5 +370,87 @@
+                     self.assertEqual(receipt["junit"]["sha256"], RUNNER.digest(junit))
+ 
+ 
++
++class CargoTimingAttribution(unittest.TestCase):
++    def test_direct_cargo_requires_requested_timings(self):
++        for command in (["cargo", "build", "--timings"], ["cargo.exe", "nextest", "run", "--timings"],
++                        ["cargo", "clippy", "--timings=html"]):
++            self.assertTrue(RUNNER.cargo_timing_command(command, ROOT), command)
++        for command in (["cargo", "metadata"], ["cargo", "fmt", "--all"], []):
++            self.assertFalse(RUNNER.cargo_timing_command(command, ROOT), command)
++
++    def test_owned_maintained_build_wrappers_keep_indirect_timings(self):
++        commands = [
++            [sys.executable, "scripts/build-service-runtime.py", "--destination", "artifacts/runtime"],
++            [sys.executable, "-I", "-B", "scripts/build-service-container.py", "--destination", "artifacts/container"],
++            [sys.executable, "scripts/dev-check.py", "-p", "airkctl"],
++            [sys.executable, "scripts/build-local-service-installer.py", "--force-build"],
++            ["pwsh", "-NoProfile", "-File", "scripts/build-local-service-installer.ps1", "-ForceBuild"],
++            ["pwsh", "-NoProfile", "-File", "scripts/build-local-installers.ps1", "-ForceBuild"],
++            [sys.executable, "scripts/static-runtime-environment.py", "--environment-file", "verified.json", "--",
++                sys.executable, "scripts/build-service-runtime.py", "--destination", "artifacts/runtime"],
++        ]
++        for command in commands:
++            with self.subTest(command=command):
++                self.assertTrue(RUNNER.cargo_timing_command(command, ROOT))
++
++    def test_unrelated_or_nonbuilding_modes_cannot_adopt_another_cargo_report(self):
++        commands = [
++            [sys.executable, "-c", "print('cargo build --timings')"],
++            [sys.executable, "scripts/tests/test_local_wrappers.py"],
++            [sys.executable, str(ROOT.parent / "other/scripts/build-service-runtime.py")],
++            ["node", "--test", "some.test.cjs"],
++            ["pwsh", "-Command", "cargo build --timings"],
++            [sys.executable, "scripts/dev-check.py", "-p", "airkctl", "--dry-run"],
++            [sys.executable, "scripts/build-local-service-installer.py", "--runtime-dir", "tested", "--admin-inventory", "checked.json"],
++            ["pwsh", "-File", "scripts/build-local-service-installer.ps1", "-RuntimeDir", "tested", "-AdminInventory", "checked.json"],
++            [sys.executable, "scripts/static-runtime-environment.py", "--environment-file", "verified.json"],
++            [sys.executable, "scripts/static-runtime-environment.py", "--environment-file", "verified.json", "--", sys.executable, "-c", "pass"],
++        ]
++        for command in commands:
++            with self.subTest(command=command):
++                self.assertFalse(RUNNER.cargo_timing_command(command, ROOT))
++
++    def timing_receipt(self, command):
++        # The fake child writes a genuinely fresh artifact in this test's target.
++        # No Cargo process or shared checkout target is touched.
++        class Child:
++            pid = 12345
++            returncode = 0
++            def wait(self): return 0
++            def poll(self): return 0
++        with tempfile.TemporaryDirectory() as temporary:
++            out = Path(temporary)
++            target = out / "target"
++            timing = target / "cargo-timings/cargo-timing.html"
++            def launch(*args, **kwargs):
++                timing.parent.mkdir(parents=True)
++                timing.write_bytes(b"fresh timing from a concurrent Cargo owner")
++                return Child()
++            with patch.object(RUNNER, "ROOT", ROOT), patch.object(RUNNER.subprocess, "Popen", side_effect=launch), \
++                    contextlib.redirect_stdout(io.StringIO()):
++                status = RUNNER.main(["--groups", "", "--out", str(out), "--target-dir", str(target), "timing-owner", *command])
++            self.assertEqual(status, 0)
++            receipt = json.loads((out / "timing-owner.json").read_text(encoding="utf-8"))
++            copied = out / "timing-owner-cargo-timing.html"
++            return receipt, copied.read_bytes() if copied.exists() else None
++
++    def test_fresh_incidental_report_is_not_copied_for_python_or_node(self):
++        for command in ([sys.executable, "-c", "pass"], ["node", "a-script.cjs"]):
++            with self.subTest(command=command):
++                receipt, copied = self.timing_receipt(command)
++                self.assertNotIn("cargo_timings", receipt)
++                self.assertIsNone(copied)
++                self.assertEqual(receipt["status"], "completed")
++                self.assertTrue(receipt["passed"])
++
++    def test_fresh_report_is_retained_for_cargo_and_owned_indirect_builder(self):
++        for command in (["cargo", "build", "--timings"], [sys.executable, "scripts/build-service-runtime.py", "--destination", "artifacts/runtime"]):
++            with self.subTest(command=command):
++                receipt, copied = self.timing_receipt(command)
++                self.assertEqual(receipt["cargo_timings"], "timing-owner-cargo-timing.html")
++                self.assertEqual(copied, b"fresh timing from a concurrent Cargo owner")
++
++
+ if __name__ == "__main__":
+     unittest.main()

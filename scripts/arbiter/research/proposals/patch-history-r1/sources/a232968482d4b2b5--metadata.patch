@@ -1,0 +1,241 @@
+--- crates/airk-retrieval/src/model.rs
++++ crates/airk-retrieval/src/model.rs
+@@ -1494,3 +1494,36 @@
+         Ok(())
+     }
+ }
++
++/// Metadata-only active-catalog fence. Historical descriptors stay readable but
++/// cannot advertise usable vectors merely because their ORT version is current.
++pub fn onnx_asset_metadata_uses_active_catalog(
++    source: &dyn ModelAssetSource,
++    set: &ModelObjectSet,
++) -> Result<bool> {
++    let descriptor=descriptor_from_asset_metadata(source,set)?;
++    if !onnx_descriptor_uses_current_runtime(&descriptor) {return Ok(false);}
++    let bytes=source.read_asset(ModelAssetName::ModelJson,16384)?;
++    let reference=&set.assets[&ModelAssetName::ModelJson];
++    ensure!(bytes.len() as u64==reference.bytes
++        && Sha256Digest::from_bytes(Sha256::digest(&bytes).into())==reference.sha256,
++        "active model metadata changed after descriptor authentication");
++    let (manifest,_)=onnx_manifest(&bytes)?;
++    #[cfg(all(feature="local-inference",feature="test-support"))]
++    if crate::native_inference::evaluation_model_lease(&bytes).is_some() {
++        // Only the existing actual owner/thread-local exact-manifest scope;
++        // no request field, environment role or unowned metadata grants this.
++        return Ok(true);
++    }
++    crate::model_catalog::contains_active_manifest(&manifest)
++}
++
++pub fn onnx_object_metadata_uses_active_catalog(collection: &Path,set: &ModelObjectSet) -> Result<bool> {
++    onnx_asset_metadata_uses_active_catalog(&ObjectAssets {collection,set},set)
++}
++
++/// Refusal-only metadata classification after a genuine missing shared model.
++/// True is never admission: full authenticated model.json remains required.
++pub fn onnx_asset_references_may_be_active(set: &ModelObjectSet) -> Result<bool> {
++    crate::model_catalog::contains_active_asset_references(set)
++}
+--- crates/airk-retrieval/src/model_catalog.rs
++++ crates/airk-retrieval/src/model_catalog.rs
+@@ -325,6 +325,26 @@
+ }
+ 
+ /// Only these exact pinned exports can execute; arbitrary/FP32 graphs cannot.
++pub(crate) fn contains_active_manifest(manifest: &OnnxManifest) -> Result<bool> {
++    let catalog: ModelCatalog=serde_json::from_str(include_str!("model_catalog.json"))?;
++    catalog.validate()?;
++    Ok(catalog.profiles.iter().any(|profile|profile.manifest==*manifest))
++}
++
++pub(crate) fn contains_active_asset_references(set: &airk_core::model_objects::ModelObjectSet) -> Result<bool> {
++    use airk_core::model_objects::ModelAssetName;
++    set.validate()?;
++    let catalog: ModelCatalog=serde_json::from_str(include_str!("model_catalog.json"))?;
++    catalog.validate()?;
++    Ok(catalog.profiles.iter().any(|profile| {
++        [(ModelAssetName::ModelOnnx,"model.onnx"),(ModelAssetName::TokenizerJson,"tokenizer.json"),(ModelAssetName::License,"LICENSE")]
++            .into_iter().all(|(name,file)| {
++                let Some(reference)=set.assets.get(&name) else {return false;};
++                profile.assets.iter().any(|asset|asset.name==file && reference.sha256.to_string()==asset.sha256 && reference.bytes==asset.bytes)
++            })
++    }))
++}
++
+ pub fn approved_manifest(manifest: &OnnxManifest) -> Result<()> {
+     let catalog: ModelCatalog = serde_json::from_str(include_str!("model_catalog.json"))?;
+     catalog.validate()?;
+--- crates/airk-kernel/src/shared_models.rs
++++ crates/airk-kernel/src/shared_models.rs
+@@ -24,8 +24,25 @@
+     {
+         return Ok(false);
+     }
+-    let descriptor = descriptor(store, objects)?;
+-    Ok(!airk_retrieval::model::onnx_descriptor_uses_current_runtime(&descriptor))
++    let observed = if objects.shared.is_some() {
++        store.shared_model_source(objects).and_then(|source| airk_retrieval::model::onnx_asset_metadata_uses_active_catalog(&source,objects))
++    } else {
++        airk_retrieval::model::onnx_object_metadata_uses_active_catalog(store.directory(),objects)
++    };
++    match observed {
++        Ok(active)=>Ok(!active),
++        Err(error)=> {
++            let absent=error.chain().any(|cause| cause.downcast_ref::<std::io::Error>().is_some_and(|io|io.kind()==std::io::ErrorKind::NotFound));
++            if absent && let Some(shared)=&objects.shared {
++                let runtime=store.shared_model_runtime().context("shared model runtime is not bound")?;
++                ensure!(shared.owner==airk_store::service::model_files::model_scope(runtime)?,"shared model belongs to another runtime");
++                if !airk_retrieval::model::onnx_asset_references_may_be_active(objects)? {
++                    return Ok(true);
++                }
++            }
++            Err(error)
++        }
++    }
+ }
+ 
+ pub(crate) fn open_model(store: &FileStore, objects: &ModelObjectSet) -> Result<EmbeddingModel> {
+--- crates/airk-retrieval/src/model/object_metadata_tests.rs
++++ crates/airk-retrieval/src/model/object_metadata_tests.rs
+@@ -428,3 +428,52 @@
+     assert_eq!(accepted, 1);
+     Ok(())
+ }
++
++#[test]
++fn same_runtime_unapproved_model_metadata_requires_upgrade_without_payload_reads() -> Result<()> {
++    let fixture=Fixture::new(true)?;
++    assert!(onnx_descriptor_uses_current_runtime(&fixture.descriptor));
++    for name in [ModelAssetName::ModelOnnx,ModelAssetName::TokenizerJson,ModelAssetName::License] {
++        fs::remove_file(fixture.path(name))?;
++    }
++    assert!(!onnx_object_metadata_uses_active_catalog(fixture.collection.path(),&fixture.set)?);
++    assert_eq!(descriptor_from_objects_metadata(fixture.collection.path(),&fixture.set)?,fixture.descriptor);
++    assert!(EmbeddingModel::open_objects(fixture.collection.path(),&fixture.set).is_err());
++    Ok(())
++}
++
++#[test]
++fn active_manifest_metadata_is_lazy_and_same_runtime_weight_change_cannot_mix_cache_keys() -> Result<()> {
++    struct OnlyMetadata(Vec<u8>);
++    impl ModelAssetSource for OnlyMetadata {
++        fn read_asset(&self,name:ModelAssetName,maximum:u64)->Result<Vec<u8>> {
++            ensure!(name==ModelAssetName::ModelJson && self.0.len() as u64<=maximum,"payload opened in metadata fence");
++            Ok(self.0.clone())
++        }
++    }
++    let profile=crate::model_catalog::selected_profile()?;
++    let build=|manifest:&OnnxManifest|->Result<(OnlyMetadata,ModelObjectSet)> {
++        let bytes=serde_json::to_vec(manifest)?;
++        let mut refs=BTreeMap::from([
++            (ModelAssetName::ModelOnnx,ModelObjectRef {sha256:manifest.model_sha256.parse()?,bytes:1}),
++            (ModelAssetName::TokenizerJson,ModelObjectRef {sha256:manifest.tokenizer_sha256.parse()?,bytes:1}),
++            (ModelAssetName::License,ModelObjectRef {sha256:manifest.license_sha256.parse()?,bytes:1}),
++        ]);
++        refs.insert(ModelAssetName::ModelJson,ModelObjectRef {sha256:Sha256Digest::from_bytes(Sha256::digest(&bytes).into()),bytes:bytes.len() as u64});
++        let set=plan_from_asset_references(&bytes,refs)?;Ok((OnlyMetadata(bytes),set))
++    };
++    let (source,current)=build(&profile.manifest)?;
++    assert!(onnx_asset_metadata_uses_active_catalog(&source,&current)?);
++    assert!(onnx_asset_metadata_uses_active_catalog(&OnlyMetadata(b"{}".to_vec()),&current).is_err(),"corrupt active metadata must remain an error");
++    let mut other=profile.manifest;other.model_sha256="01".repeat(32);
++    let (old_source,old)=build(&other)?;
++    assert!(!onnx_asset_metadata_uses_active_catalog(&old_source,&old)?);
++    assert_ne!(current.pipeline_digest,old.pipeline_digest);
++    let a=descriptor_from_asset_metadata(&source,&current)?;
++    let b=descriptor_from_asset_metadata(&old_source,&old)?;
++    assert_eq!(a.inference,b.inference,"regression must preserve the exact runtime");
++    assert_ne!(airk_core::embedding::embedding_key(&a,b"same input")?,airk_core::embedding::embedding_key(&b,b"same input")?);
++    let mut crossed=old.clone();crossed.pipeline_digest=current.pipeline_digest;
++    assert!(descriptor_from_asset_metadata(&old_source,&crossed).is_err());
++    Ok(())
++}
+--- crates/airk-kernel/src/shared_models/embedded_tests.rs
++++ crates/airk-kernel/src/shared_models/embedded_tests.rs
+@@ -170,3 +170,74 @@
+     assert_eq!(fs::read(source.join("memo.md"))?, b"original harbor");
+     Ok(())
+ }
++
++#[test]
++fn same_runtime_retired_weights_arm_the_shared_semantic_upgrade_fence() -> Result<()> {
++    use airk_core::{identity::Sha256Digest,model_objects::{ModelAssetName,ModelObjectRef}};
++    use sha2::{Digest,Sha256};
++    let owner=tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?;
++    let store=FileStore::new(owner.path().join("collection"));
++    let metadata=store.directory().join("objects/models");fs::create_dir_all(&metadata)?;
++    let selected=airk_retrieval::model_catalog::selected_profile()?;
++    let retain=|manifest:&airk_retrieval::model::OnnxManifest|->Result<ModelObjectSet> {
++        let raw=serde_json::to_vec(manifest)?;
++        let mut refs=std::collections::BTreeMap::new();
++        for (name,digest) in [(ModelAssetName::ModelOnnx,&manifest.model_sha256),(ModelAssetName::TokenizerJson,&manifest.tokenizer_sha256),(ModelAssetName::License,&manifest.license_sha256)] {
++            refs.insert(name,ModelObjectRef {sha256:digest.parse()?,bytes:1});
++        }
++        let pin=Sha256Digest::from_bytes(Sha256::digest(&raw).into());
++        fs::write(metadata.join(pin.to_string()),&raw)?;
++        refs.insert(ModelAssetName::ModelJson,ModelObjectRef {sha256:pin,bytes:raw.len() as u64});
++        airk_retrieval::model::plan_from_asset_references(&raw,refs)
++    };
++    let active=retain(&selected.manifest)?;
++    assert!(!semantic_upgrade_pending(&store,Some(&active))?);
++    let mut retired=selected.manifest;retired.model_sha256="02".repeat(32);
++    let old=retain(&retired)?;
++    let a=descriptor(&store,&active)?;let b=descriptor(&store,&old)?;
++    assert_eq!(a.inference,b.inference,"test must preserve exact runtime");
++    assert_ne!(a.identity()?,b.identity()?);
++    assert!(semantic_upgrade_pending(&store,Some(&old))?);
++    assert!(open_model(&store,&old).is_err(),"retired metadata must not authorize model execution");
++    assert!(!metadata.join(old.assets[&ModelAssetName::ModelOnnx].sha256.to_string()).exists(),"metadata fence read weights");
++    Ok(())
++}
++
++#[test]
++fn missing_retired_shared_metadata_is_pending_but_missing_active_metadata_stays_error() -> Result<()> {
++    use airk_core::{identity::Sha256Digest,model_objects::{ModelAssetName,ModelObjectRef}};
++    use sha2::{Digest,Sha256};
++    let owner=tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?;
++    let source=owner.path().join("source");let data=owner.path().join("data");let runtime=owner.path().join("runtime");
++    for path in [&source,&data,&runtime] {fs::create_dir(path)?;}
++    fs::write(source.join("memo.md"),b"original source remains unchanged")?;
++    let profile=airk_retrieval::model_catalog::selected_profile()?;
++    let build=|manifest:&airk_retrieval::model::OnnxManifest|->Result<(Vec<u8>,ModelObjectSet)> {
++        let raw=serde_json::to_vec(manifest)?;let mut refs=BTreeMap::new();
++        for (name,digest) in [(ModelAssetName::ModelOnnx,&manifest.model_sha256),(ModelAssetName::TokenizerJson,&manifest.tokenizer_sha256),(ModelAssetName::License,&manifest.license_sha256)] {
++            let bytes=profile.assets.iter().find(|asset|asset.name==name.filename()).context("known native asset absent")?.bytes;
++            refs.insert(name,ModelObjectRef {sha256:digest.parse()?,bytes});
++        }
++        refs.insert(ModelAssetName::ModelJson,ModelObjectRef {sha256:Sha256Digest::from_bytes(Sha256::digest(&raw).into()),bytes:raw.len() as u64});
++        let set=airk_retrieval::model::plan_from_asset_references(&raw,refs)?;Ok((raw,set))
++    };
++    let (raw,active)=build(&profile.manifest)?;
++    let mut old_manifest=profile.manifest;old_manifest.model_sha256="03".repeat(32);
++    let (_,old)=build(&old_manifest)?;
++    let assets=Arc::new(MetadataSource {assets:BTreeMap::from([(ModelAssetName::ModelJson,raw)]),reads:Mutex::new(Vec::new())});
++    let kernel=Kernel::open_service_collection(&source,Some(data),"fixture")?
++        .with_embedded_service_models(&runtime,active.clone(),assets.clone())?;
++    let current=kernel.store.embedded_default_reference()?.context("active embedded reference absent")?;
++    assert!(!semantic_upgrade_pending(&kernel.store,Some(&current))?);
++    let old=old.shared_with(airk_store::service::model_files::model_scope(&runtime)?)?;
++    assert!(kernel.store.shared_model_source(&old).is_err(),"fixture unexpectedly installed historical assets");
++    assert!(semantic_upgrade_pending(&kernel.store,Some(&old))?);
++    let missing_active=kernel.store.clone().with_service_models(&runtime,active)?;
++    assert!(semantic_upgrade_pending(&missing_active,Some(&current)).is_err(),"missing active metadata must not become a success-shaped pending result");
++    let foreign=old.local_set().shared_with(Sha256Digest::from_bytes([9;32]))?;
++    assert!(semantic_upgrade_pending(&kernel.store,Some(&foreign)).is_err(),"foreign owner hidden by missing-retired fallback");
++    assert!(!runtime.join("model-files-1.4").exists());
++    assert_eq!(fs::read(source.join("memo.md"))?,b"original source remains unchanged");
++    assert!(assets.reads.lock().unwrap().iter().all(|name|*name==ModelAssetName::ModelJson));
++    Ok(())
++}
+--- crates/airk-kernel/src/current/indexing.rs
++++ crates/airk-kernel/src/current/indexing.rs
+@@ -688,7 +688,7 @@
+                         .and_then(|state| state.configuration.model.as_ref())
+                 )
+                 .context(Stage("vector_settings"))?,
+-                "semantic_upgrade_required: retained vectors belong to an older native runtime; select the current trained model and use the existing reviewed full vector rebuild; retained lexical evidence remains readable"
++                "semantic_upgrade_required: retained vectors belong to a retired native model or runtime; select the current trained model and use the existing reviewed full vector rebuild; retained lexical evidence remains readable"
+             );
+         }
+         let (reviewed_writer, reviewed_controls) = if let Some((project, request)) = reviewed {

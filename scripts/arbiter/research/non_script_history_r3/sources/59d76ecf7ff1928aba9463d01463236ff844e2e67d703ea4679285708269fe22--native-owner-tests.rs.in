@@ -1,0 +1,148 @@
+// SPDX-License-Identifier: Apache-2.0
+
+#[cfg(any(windows,target_os="linux"))]
+fn native_private_fixture()->Result<IntegrityFixture> {
+    use crate::service::{ProjectLease,data_scope,registry::ServiceRegistry};
+    use airk_core::service::ProjectRegistration;
+    let temporary=match std::env::var_os("AIRK_PRIVATE_CENSUS_BASE") {
+        Some(base)=>tempfile::Builder::new().prefix("native-owner-fixture-").tempdir_in(base)?,
+        None=>tempfile::tempdir()?,
+    };
+    let base=temporary.path().canonicalize()?;
+    let (data,source,control)=(base.join("data"),base.join("source"),base.join("control"));
+    fs::create_dir(&source)?;fs::create_dir(&control)?;
+    let namespace=Incarnation::from_bytes([111;16]);
+    let registration=ProjectRegistration::new(source.to_str().unwrap().into(),data.to_str().unwrap().into(),"fixture".into())?;
+    let mut registry=ServiceRegistry::open(&control,namespace)?;
+    registry.register(&registration)?;
+    // Exercise the actual new-root creation adapter; no fixture chmod/ACL rewrite.
+    let bound=data_scope::bind(&data,&control,namespace)?;
+    let slot=Incarnation::from_bytes([112;16]);
+    let collection=Collection::initialize(&data,&registration.root,"fixture",slot)?;
+    let store=collection.selected_store()?;
+    initialize(&store,&registration.root,slot)?;
+    let scope=store.current_owned_scope()?.context("native fixture scope missing")?;
+    let mut lease=ProjectLease::acquire(&control,registration.binding)?;
+    registry.admit_worker(&mut lease)?;
+    Ok((temporary,collection,registry,bound,lease,store,scope))
+}
+
+#[cfg(any(windows,target_os="linux"))]
+#[test]
+#[cfg_attr(target_os="linux",ignore="requires AIRK_PRIVATE_CENSUS_BASE with positively protected local ancestry")]
+fn native_old_head_enrollment_and_restart_are_metadata_only_and_do_not_hold_writer()->Result<()> {
+    let (_temporary,collection,mut registry,bound,lease,store,scope)=native_private_fixture()?;
+    let lease=std::sync::Arc::new(lease);
+    // Exact existing corruption seam: metadata/head still authenticates while a
+    // full lexical audit fails. Enrollment must truthfully retain audit Unknown.
+    {
+        let connection=rusqlite::Connection::open(store.directory().join("current.sqlite3"))?;
+        assert_eq!(connection.execute("UPDATE current_fts_config SET v=999 WHERE k='version'",[])?,1);
+    }
+    {
+        let owner=collection.integrity_owner(&registry,lease.as_ref(),&bound)?;
+        let mut writer=store.lock()?;
+        let authority=owner.enroll_native_owner(lease.clone(),&mut writer,1000)?;
+        drop(writer);
+        // Normal indexing can acquire its actual OS writer while authority lives.
+        let writer=store.lock()?;drop(writer);
+        let read=store.current_read(&scope)?;
+        let observed=authority.observe_for(&read)?;
+        assert_eq!(observed.head().token()?,read.token()?);
+        assert_eq!(*observed.physical_audit(),super::integrity::PhysicalAudit::Unknown);
+        assert!(read.verify_lexical_integrity().is_err(),"ordinary strict audit remains enabled");
+    }
+    drop(lease);
+    let mut lease=crate::service::ProjectLease::acquire(bound.native_control_root(),registry.bindings()?[0])?;
+    registry.admit_worker(&mut lease)?;
+    let lease=std::sync::Arc::new(lease);
+    let owner=collection.integrity_owner(&registry,lease.as_ref(),&bound)?;
+    let authority=owner.resume_native_owner(lease.clone())?;
+    let read=store.current_read(&scope)?;
+    assert_eq!(*authority.observe_for(&read)?.physical_audit(),super::integrity::PhysicalAudit::Unknown);
+    assert!(read.verify_lexical_integrity().is_err(),"restart did not silently perform/require full audit");
+    Ok(())
+}
+
+#[cfg(any(windows,target_os="linux"))]
+#[test]
+#[cfg_attr(target_os="linux",ignore="requires AIRK_PRIVATE_CENSUS_BASE with positively protected local ancestry")]
+fn native_damage_control_veto_survives_collection_quota_failure_and_worker_restart()->Result<()> {
+    let (_temporary,collection,mut registry,bound,lease,store,scope)=native_private_fixture()?;
+    let binding=lease.identity().0;
+    let lease=std::sync::Arc::new(lease);
+    {
+        let owner=collection.integrity_owner(&registry,lease.as_ref(),&bound)?;
+        let mut writer=store.lock()?;
+        let authority=owner.enroll_native_owner(lease.clone(),&mut writer,1100)?;
+        drop(writer);
+        let before=fs::read(collection.directory.join("integrity-observation.json"))?;
+        {
+            let connection=rusqlite::Connection::open(store.directory().join("current.sqlite3"))?;
+            assert_eq!(connection.execute("UPDATE current_fts_config SET v=999 WHERE k='version'",[])?,1);
+        }
+        let quota=Quota::open_service(Path::new(&collection.owner.data_root))?;
+        let original=quota.policy()?;
+        let status=quota.status()?;
+        let mut full=original.clone();
+        full.root_bytes=status.used_bytes.checked_add(status.reserved_bytes).context("fixture quota overflow")?;
+        quota.configure(full)?;
+        let read=store.current_read(&scope)?;
+        assert!(read.verify_lexical_integrity().is_err(),"record actual detected lexical damage");
+        let component=read.head().lexical_commit;
+        let failed=owner.record_damage(&read,component,1101);
+        quota.configure(original)?;
+        assert!(failed.is_err());
+        assert_eq!(fs::read(collection.directory.join("integrity-observation.json"))?,before,
+            "collection failure must not rewrite a previously clean metadata anchor");
+        assert!(authority.observe_for(&read).is_err(),"shared live revocation must be immediate");
+        assert!(registry.recorded_integrity_damage(lease.as_ref())?.iter().any(|entry|entry.component==component));
+    }
+    drop(lease);
+    let mut lease=crate::service::ProjectLease::acquire(bound.native_control_root(),binding)?;
+    registry.admit_worker(&mut lease)?;
+    let lease=std::sync::Arc::new(lease);
+    // Fresh runtime token must not depend on the prior process-only revocation.
+    let fresh=crate::service::data_scope::bind(Path::new(&collection.owner.data_root),bound.native_control_root(),registry.incarnation()?)?;
+    let owner=collection.integrity_owner(&registry,lease.as_ref(),&fresh)?;
+    assert!(owner.resume_native_owner(lease.clone()).is_err(),"durable control veto must refuse stale clean enrollment after restart");
+    Ok(())
+}
+
+#[cfg(any(windows,target_os="linux"))]
+#[test]
+#[cfg_attr(target_os="linux",ignore="requires AIRK_PRIVATE_CENSUS_BASE with positively protected local ancestry")]
+fn native_live_audit_and_clean_cancel_do_not_disable_healthy_owner_restart()->Result<()> {
+    use airk_core::service::{JobKind,JobOutcome,RequestKey};
+    use crate::service::registry::IntegrityAuditState;
+    let (_temporary,collection,mut registry,bound,lease,store,scope)=native_private_fixture()?;
+    let binding=lease.identity().0;
+    let lease=std::sync::Arc::new(lease);
+    let authority={
+        let owner=collection.integrity_owner(&registry,lease.as_ref(),&bound)?;
+        let mut writer=store.lock()?;
+        owner.enroll_native_owner(lease.clone(),&mut writer,1200)?
+    };
+    let (namespace,epoch)=registry.request_epoch()?;
+    let key=RequestKey{namespace,epoch,nonce:Incarnation::from_bytes([113;16])};
+    let job=registry.enqueue(binding,namespace,&key,JobKind::Verify)?;
+    registry.claim_job_id(lease.as_ref(),job.id)?.context("audit not claimed")?;
+    assert_eq!(registry.integrity_audit_state(lease.as_ref())?,IntegrityAuditState::LiveAudit{job:job.id});
+    {
+        let read=store.current_read(&scope)?;
+        assert_eq!(*authority.observe_for(&read)?.physical_audit(),super::integrity::PhysicalAudit::Unknown,
+            "ordinary live audit must not require deep completion before owner admission");
+    }
+    let proof=registry.drained_verify_before_execution(lease.as_ref(),&bound,job.id)?;
+    registry.complete_job_with_maintenance_and_audit_at(lease.as_ref(),job.id,JobOutcome::Canceled,1201,None,Some(&proof))?;
+    assert_eq!(registry.integrity_audit_state(lease.as_ref())?,IntegrityAuditState::Clear);
+    drop(authority);drop(lease);
+    let mut lease=crate::service::ProjectLease::acquire(bound.native_control_root(),binding)?;
+    registry.admit_worker(&mut lease)?;
+    let lease=std::sync::Arc::new(lease);
+    let owner=collection.integrity_owner(&registry,lease.as_ref(),&bound)?;
+    let authority=owner.resume_native_owner(lease.clone())?;
+    let read=store.current_read(&scope)?;
+    assert_eq!(*authority.observe_for(&read)?.physical_audit(),super::integrity::PhysicalAudit::Unknown);
+    Ok(())
+}

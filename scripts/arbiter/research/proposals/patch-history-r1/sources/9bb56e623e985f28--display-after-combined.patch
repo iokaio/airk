@@ -1,0 +1,281 @@
+--- a/packages/vscode/src/test/workbenchClientLifetime.test.ts
++++ b/packages/vscode/src/test/workbenchClientLifetime.test.ts
+@@ -3,7 +3,7 @@
+ import Module from 'node:module';
+ import { test } from 'node:test';
+ import type { LaunchSpec } from '../model';
+-import type { WorkbenchSession, Value } from '../workbenchContracts';
++import { applyWorkbenchUpdate, type WorkbenchState, type WorkbenchUpdate, type WorkbenchSession, type Value } from '../workbenchContracts';
+ import { newSession } from '../workbenchSessions';
+ import { renderExport } from '../workbenchRender';
+ 
+@@ -248,3 +248,42 @@
+         assert.equal(f.created.length,1);
+     }finally{f.provider.dispose();}
+ });
++
++test('actual provider status/save messages omit retained bodies and replay through the real webview consumer exactly',async()=>{
++    const f=fixture(true),session=newSession(A);
++    session.turns=Array.from({length:200},(_,i)=>({id:`turn-${i}`,at:i,input:`request ${i}`,format:'structured' as const,envelope:{status:'partial',publication:'retained-head',calls:1,
++        plan:{budgets:{calls:6}},steps:[{tool:'search',status:'complete',result:{cursor:`original-${i}`}}],
++        evidence:[{step:'s',text:`retained-${i}-`+'x'.repeat(2048),citation:{path:`docs/${i}.md`,start_line:1,end_line:2,content_hash:'ab'.repeat(32)}}]}}));
++    try{
++        await f.state.select(A);await tick();
++        Object.assign(f.store,{load:async()=>session});
++        await f.state.message({type:'recent',id:session.id});
++        const hostState=()=> (f.provider as unknown as {state():WorkbenchState}).state();
++        const baseline=structuredClone(hostState()),exported=renderExport(session,'json');
++        const status=deferred<{payload:Value}>(),entered=deferred<void>();
++        f.respond(tool=>{assert.equal(tool,'airk_status');entered.resolve();return status.promise;});
++        const refreshing=f.state.message({type:'refresh'});await entered.promise;
++        f.messages.length=0;
++        status.resolve({payload:{publication:{token:'new-status-head'},semantic_readiness:{state:'ready'}}});await refreshing;
++        const statusMessages=f.messages.slice() as WorkbenchUpdate[];
++        assert.equal(statusMessages.length,1);assert.equal(statusMessages[0].type,'status');
++        assert.ok(!JSON.stringify(statusMessages).includes('retained-0-'));
++        let rendered=statusMessages.reduce(applyWorkbenchUpdate,baseline);
++        assert.deepEqual(rendered,structuredClone(hostState()));
++        const fullBytes=Buffer.byteLength(JSON.stringify({type:'state',state:hostState()})),statusBytes=Buffer.byteLength(JSON.stringify(statusMessages[0]));
++        assert.ok(statusBytes<fullBytes/20,'count actual encoded posted bytes; do not infer latency');
++        f.messages.length=0;
++        f.state.save(session);await f.state.saveQueue;
++        const saveMessages=f.messages.slice() as WorkbenchUpdate[];
++        assert.equal(saveMessages.length,1);assert.equal(saveMessages[0].type,'saved');
++        assert.ok(!JSON.stringify(saveMessages).includes('retained-0-'));
++        rendered=saveMessages.reduce(applyWorkbenchUpdate,rendered);
++        assert.deepEqual(rendered,structuredClone(hostState()));
++        assert.equal(renderExport(rendered.session!,'json'),exported);
++        assert.equal(rendered.continuations?.['turn-199'][0].id,'page-0');
++        assert.equal(f.saved[0].turns.length,200);assert.equal(f.saved[0].turns[199].envelope!.steps!==undefined,true);
++        const lateStatus=structuredClone(statusMessages[0]),lateSaved=structuredClone(saveMessages[0]);
++        await f.provider.newSession();const fresh=structuredClone(hostState());
++        assert.equal(applyWorkbenchUpdate(fresh,lateStatus),fresh);assert.equal(applyWorkbenchUpdate(fresh,lateSaved),fresh);
++    }finally{f.provider.dispose();}
++});
+--- /dev/null
++++ b/packages/vscode/src/test/workbenchDisplay.test.ts
+@@ -0,0 +1,40 @@
++// SPDX-License-Identifier: Apache-2.0
++import {strict as assert} from 'node:assert';
++import {test} from 'node:test';
++import {applyWorkbenchUpdate, WorkbenchState, WorkbenchTurn} from '../workbenchContracts';
++import {CurrentTurnProjections, DISPLAY_PROJECTION_TURNS, continuations, evidenceCards, renderExport} from '../workbenchRender';
++import {newSession} from '../workbenchSessions';
++function turn(id:string):WorkbenchTurn{return {id,at:1,input:'full input 雪',format:'structured',envelope:{status:'partial',publication:'original-head',calls:1,
++    plan:{budgets:{calls:6},steps:[{id:'s',tool:'search'}]},steps:[{status:'complete',tool:'search',result:{cursor:'original cursor'}}],
++    evidence:[{step:'s',text:'complete retained body',citation:{path:'docs/a.md',start_line:2,end_line:3,content_hash:'ab'.repeat(32),location:{Lines:{start:2,end:3}}}}]}};}
++test('display projection reuses exact results, invalidates envelope replacement and evicts beyond bounded ownership',()=>{
++    const cache=new CurrentTurnProjections(),first=turn('__proto__'),session=newSession('aa'.repeat(32));session.turns=[first];
++    const before=renderExport(session,'json'),a=cache.project(session.turns),b=cache.project(session.turns);
++    assert.deepEqual(a.cards[first.id],evidenceCards(first.envelope!));assert.deepEqual(a.continuations[first.id],continuations(first.envelope!));
++    assert.equal(a.cards[first.id],b.cards[first.id]);assert.equal(a.continuations[first.id],b.continuations[first.id]);
++    assert.ok(Object.hasOwn(a.cards,'__proto__'),'preserve Object.fromEntries key behavior');
++    assert.equal(renderExport(session,'json'),before,'projection cannot trim or rewrite authoritative exports');
++    first.envelope={...first.envelope,evidence:[],steps:[]};const changed=cache.project(session.turns);
++    assert.notEqual(changed.cards[first.id],a.cards[first.id]);assert.deepEqual(changed.cards[first.id],[]);assert.deepEqual(changed.continuations[first.id],[]);
++    const many=Array.from({length:DISPLAY_PROJECTION_TURNS+1},(_,i)=>turn(String(i)));
++    const full=cache.project(many),again=cache.project(many);
++    assert.equal(Object.keys(full.cards).length,many.length,'cache bound is not output truncation');
++    assert.notEqual(full.cards['0'],again.cards['0'],'oldest uncached projection is recomputed rather than retained');
++    assert.equal(full.cards['1'],again.cards['1']);
++    cache.clear();assert.notEqual(cache.project(many).cards['1'],again.cards['1']);
++});
++test('actual webview update consumer retains exact bodies/cursors and rejects cross-session scalar completion',()=>{
++    const session=newSession('aa'.repeat(32));session.turns=[turn('retained')];
++    const projected=new CurrentTurnProjections().project(session.turns);
++    const state:WorkbenchState={projects:[],project:session.project,session,recent:[],...projected,busy:false,save:'Saving…',persistence:true};
++    const before=renderExport(session,'json');
++    const ready=applyWorkbenchUpdate(state,{type:'status',sessionId:session.id,project:session.project,status:{publication:{token:'new-head'}}});
++    assert.equal(ready.session,session);assert.equal(ready.cards,state.cards);assert.equal(ready.continuations,state.continuations);
++    const saved=applyWorkbenchUpdate(ready,{type:'saved',sessionId:session.id,project:session.project,revision:7,recent:[],save:'Auto-saved'});
++    assert.equal(saved.session!.turns,session.turns);assert.equal(saved.cards,state.cards);assert.equal(saved.session!.revision,7);
++    assert.equal(renderExport(saved.session!,'json'),before);assert.equal(saved.continuations?.retained[0].id,'page-0');
++    assert.equal(applyWorkbenchUpdate(saved,{type:'status',sessionId:'old',project:session.project,status:{wrong:true}}),saved);
++    assert.equal(applyWorkbenchUpdate(saved,{type:'saved',sessionId:session.id,project:'foreign',revision:100,recent:[],save:'wrong'}),saved);
++    const replacement={...state,session:newSession(session.project)};
++    assert.equal(applyWorkbenchUpdate(saved,{type:'state',state:replacement}),replacement);
++});
+--- a/packages/vscode/src/workbenchContracts.ts
++++ b/packages/vscode/src/workbenchContracts.ts
+@@ -13,6 +13,19 @@
+     cards: Record<string, EvidenceCard[]>; busy: boolean; notice?: string; save: string;
+     continuations?:Record<string,Continuation[]>;
+     status?: Value; persistence: boolean; operations?: Value;
++}
++/** Host-to-webview display updates. Full result ownership stays in the host. */
++export type WorkbenchUpdate =
++    | {type:'state';state:WorkbenchState}
++    | {type:'status';sessionId:string|undefined;project:string|undefined;status:Value|undefined}
++    | {type:'saved';sessionId:string;project:string;revision:number;recent:WorkbenchState['recent'];save:string};
++/** Shared actual webview consumer; delta fields cannot replace result bodies. */
++export function applyWorkbenchUpdate(previous:WorkbenchState,message:WorkbenchUpdate):WorkbenchState {
++    if(message.type==='state')return message.state;
++    if(message.sessionId!==previous.session?.id||message.project!==previous.session?.project)return previous;
++    if(message.type==='status')return {...previous,status:message.status};
++    if(!previous.session)return previous;
++    return {...previous,session:{...previous.session,revision:message.revision},recent:message.recent,save:message.save};
+ }
+ export type WorkbenchMessage =
+     | { type: 'ready' | 'stop' | 'new' | 'clear' | 'manage' | 'help' | 'refresh' | 'retrySave' | 'fork' | 'forms' }
+--- a/packages/vscode/src/workbenchRender.ts
++++ b/packages/vscode/src/workbenchRender.ts
+@@ -17,6 +17,28 @@
+         return [{ id: `record-${i}`, path, hash, start: Number(citation.start_line), end: Number(citation.end_line), text: typeof row.text === 'string' ? row.text : '', location: citation.location,
+             step: String(row.step ?? ''), publication: typeof row.publication === 'string' ? row.publication : undefined }];
+     });
++}
++/** A display-only cache owned by one view, bounded to its current transcript.
++ * Completed native envelopes are replaced, never mutated by WorkbenchView.
++ * No export, continuation admission, citation validation or history read uses it. */
++export const DISPLAY_PROJECTION_TURNS=200;
++export class CurrentTurnProjections {
++    private readonly retained=new Map<WorkbenchTurn,{envelope:Value|undefined;cards:EvidenceCard[];continuations:Continuation[]}>();
++    project(turns:WorkbenchTurn[]):{cards:Record<string,EvidenceCard[]>;continuations:Record<string,Continuation[]>} {
++        const current=new Set(turns.slice(-DISPLAY_PROJECTION_TURNS));
++        for(const turn of this.retained.keys())if(!current.has(turn))this.retained.delete(turn);
++        const cards:Array<[string,EvidenceCard[]]>=[],pages:Array<[string,Continuation[]]>=[];
++        for(const turn of turns){
++            let value=this.retained.get(turn);
++            if(!value||value.envelope!==turn.envelope){
++                value={envelope:turn.envelope,cards:evidenceCards(turn.envelope??{}),continuations:continuations(turn.envelope??{})};
++                if(current.has(turn))this.retained.set(turn,value);
++            }
++            cards.push([turn.id,value.cards]);pages.push([turn.id,value.continuations]);
++        }
++        return {cards:Object.fromEntries(cards),continuations:Object.fromEntries(pages)};
++    }
++    clear():void{this.retained.clear();}
+ }
+ export function canonical(value: unknown): string {
+     const sorted = (v: unknown): unknown => Array.isArray(v) ? v.map(sorted) : v && typeof v === 'object'
+--- a/packages/vscode/src/workbenchView.ts
++++ b/packages/vscode/src/workbenchView.ts
+@@ -8,7 +8,7 @@
+ import { openSource, saveStudioInWorkspace } from './explorerWorkspaceIO';
+ import { strategyFromPlan } from './workbenchStrategies';
+ import { newSession, SessionStore } from './workbenchSessions';
+-import { continuations, evidenceCards, renderExport } from './workbenchRender';
++import { CurrentTurnProjections, continuations, evidenceCards, renderExport } from './workbenchRender';
+ import { object, parseWorkbenchMessage, Value, WorkbenchMessage, WorkbenchSession, WorkbenchState, WORKBENCH_HELP_ROUTE } from './workbenchContracts';
+ 
+ // Cold native setup (10 s) plus scalar observation (2 s), with transport slack.
+@@ -24,6 +24,7 @@
+ /** Host owns sessions, evidence and native transport; webview actions carry opaque handles. */
+ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposable {
+     private view?:vscode.WebviewView;
++    private readonly display=new CurrentTurnProjections();
+     private readonly visibilityChanged=new vscode.EventEmitter<void>();
+     readonly onDidChangeVisibility=this.visibilityChanged.event;
+     get visible():boolean{return this.view?.visible===true;}
+@@ -75,14 +76,17 @@
+         view.webview.options={enableScripts:true,enableCommandUris:false,localResourceRoots:[vscode.Uri.joinPath(this.context.extensionUri,'out')]};
+         view.webview.html=workbenchHtml(view.webview,this.context.extensionUri,randomBytes(24).toString('base64url'));
+         const received=view.webview.onDidReceiveMessage(raw=>{const message=parseWorkbenchMessage(raw);if(message){void this.message(message).catch(error=>this.fail(error));}else{this.fail(new Error('Workbench request is invalid or exceeds its size limit.'));}});
+-        const release=view.onDidDispose(()=>{received.dispose();visibility.dispose();release.dispose();if(this.view===view){this.view=undefined;this.visibilityChanged.fire();this.stop();this.releaseClient();}});
++        const release=view.onDidDispose(()=>{received.dispose();visibility.dispose();release.dispose();if(this.view===view){this.view=undefined;this.display.clear();this.visibilityChanged.fire();this.stop();this.releaseClient();}});
+         void this.refresh().catch(error=>this.fail(error));
+     }
+     private state():WorkbenchState{
+         return {projects:this.host.specs().flatMap(s=>s.service?[{id:s.service.project,name:s.name}]:[]),project:this.session?.project,session:this.session,recent:this.recent,
+-            cards:Object.fromEntries((this.session?.turns??[]).map(t=>[t.id,evidenceCards(t.envelope??{})])),continuations:Object.fromEntries((this.session?.turns??[]).map(t=>[t.id,continuations(t.envelope??{})])),busy:this.busy,notice:this.notice,save:this.saving,status:this.status,persistence:this.persistence(),operations:this.operations};
++            ...this.display.project(this.session?.turns??[]),busy:this.busy,notice:this.notice,save:this.saving,status:this.status,persistence:this.persistence(),operations:this.operations};
+     }
+     private send():void{if(!this.disposed){void this.view?.webview.postMessage({type:'state',state:this.state()});}}
++    private sendStatus():void{if(!this.disposed){void this.view?.webview.postMessage({type:'status',sessionId:this.session?.id,project:this.session?.project,status:this.status});}}
++    private sendSaved(session:WorkbenchSession):void{if(!this.disposed&&this.session===session){void this.view?.webview.postMessage({type:'saved',sessionId:session.id,project:session.project,revision:session.revision,recent:this.recent,save:this.saving});}}
++
+     private fail(error:unknown):void{this.notice=error instanceof Error?error.message:String(error);this.send();}
+     async refresh():Promise<void>{
+         this.invalidateChangedClient();
+@@ -108,7 +112,7 @@
+         if(!this.permitted()){return;}
+         const client=this.evidence();
+         // New transcripts still request status; only the exact transport is reused.
+-        void client.call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS}).then(result=>{if(current()&&client===this.client&&this.permitted()){this.status=result.payload;this.send();}},error=>{if(current()&&client===this.client&&this.permitted()){this.fail(error);}});
++        void client.call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS}).then(result=>{if(current()&&client===this.client&&this.permitted()){this.status=result.payload;this.sendStatus();}},error=>{if(current()&&client===this.client&&this.permitted()){this.fail(error);}});
+     }
+     private evidence():EvidenceClient{
+         this.authorized();if(!this.nativeAllowed()){throw new Error('Native execution is disabled.');}const spec=this.selectedSpec();
+@@ -143,7 +147,7 @@
+             const summaries=recent??(await this.store.list(session.project)).map(s=>({id:s.id,title:s.title,updatedAt:s.updatedAt,turns:s.turns.length}));
+             // Empty saves retain the list fallback; a new transcript can arrive during it.
+             if(this.session!==session){return;}
+-            this.recent=summaries;this.saving=results?'Auto-saved':'Inputs saved; results excluded';this.send();
++            this.recent=summaries;this.saving=results?'Auto-saved':'Inputs saved; results excluded';this.sendSaved(session);
+         }).catch(error=>{this.saving='Save failed — export or retry';this.fail(error);});
+     }
+     private async privacyChanged():Promise<void>{
+@@ -186,7 +190,7 @@
+         this.authorized();
+         switch(message.type){
+             case 'project':await this.select(message.id);break;
+-            case 'refresh':{await this.refresh();if(this.session){const generation=this.generation;const result=await this.evidence().call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS});if(generation===this.generation&&this.permitted()){this.status=result.payload;this.send();}}break;}
++            case 'refresh':{await this.refresh();if(this.session){const generation=this.generation;const result=await this.evidence().call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS});if(generation===this.generation&&this.permitted()){this.status=result.payload;this.sendStatus();}}break;}
+             case 'new':await this.newSession();break;
+             case 'stop':this.stop();if(this.session){this.save(this.session);}break;
+             case 'clear':await this.clear();break;
+@@ -241,7 +245,7 @@
+             }
+         }
+     }
+-    dispose():void{this.visibilityChanged.dispose();this.stop();this.disposed=true;this.releaseClient();for(const sub of this.subscriptions){sub.dispose();}}
++    dispose():void{this.visibilityChanged.dispose();this.stop();this.disposed=true;this.display.clear();this.releaseClient();for(const sub of this.subscriptions){sub.dispose();}}
+     async removeProject(project:string):Promise<void>{
+         if(this.session?.project===project){this.stop();this.releaseClient();this.session=undefined;this.status=undefined;}
+         await this.saveQueue;await this.store.remove(project);this.send();
+--- a/packages/vscode/src/workbenchWebview/main.tsx
++++ b/packages/vscode/src/workbenchWebview/main.tsx
+@@ -1,7 +1,7 @@
+ // SPDX-License-Identifier: Apache-2.0
+ import { render } from 'preact';
+-import { useEffect, useRef, useState } from 'preact/hooks';
+-import { object, WorkbenchMessage, WorkbenchState, WorkbenchTurn } from '../workbenchContracts';
++import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
++import { applyWorkbenchUpdate, object, WorkbenchMessage, WorkbenchState, WorkbenchTurn } from '../workbenchContracts';
+ import { canonical, markdown } from '../workbenchRender';
+ import './style.css';
+ declare function acquireVsCodeApi(): { postMessage(message:WorkbenchMessage):void };
+@@ -20,8 +20,9 @@
+ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
+     const [format,setFormat]=useState<'structured'|'json'|'markdown'>(turn.format),[show,setShow]=useState(20),[filter,setFilter]=useState(''),[selected,setSelected]=useState<string[]>([]),[edit,setEdit]=useState(false),[draft,setDraft]=useState(''),[issue,setIssue]=useState(''),[group,setGroup]=useState(false);
+     const envelope=turn.envelope??{},plan=object(envelope.plan),cards=state.cards[turn.id]??[];
+-    const rows=cards.filter(c=>`${c.path} ${c.text}`.toLowerCase().includes(filter.toLowerCase()));
+-    if(group){rows.sort((a,b)=>a.path.localeCompare(b.path)||a.start-b.start);}
++    const rows=useMemo(()=>{const matching=cards.filter(c=>`${c.path} ${c.text}`.toLowerCase().includes(filter.toLowerCase()));if(group)matching.sort((a,b)=>a.path.localeCompare(b.path)||a.start-b.start);return matching;},[cards,filter,group]);
++    const planText=useMemo(()=>canonical(plan),[turn.envelope]);
++    const formatted=useMemo(()=>format==='json'?canonical(envelope):format==='markdown'?markdown(turn):'', [format,turn]);
+     const publication=object(state.status?.publication).token,old=typeof publication==='string'&&typeof envelope.publication==='string'&&publication!==envelope.publication;
+     const runPlan=(prepare:boolean)=>{try{const parsed=JSON.parse(draft);if(prepare){parsed.digest='';}send({type:'run',input:turn.input,prepare,plan:parsed});setIssue('');}catch{setIssue('Enter a valid JSON plan.');}};
+     return <article class="turn">
+@@ -31,10 +32,10 @@
+         {turn.trimmed&&<p class="warning">Saved result trimmed. Re-run to collect current evidence.</p>}
+ 
+         {!!turn.envelope&&<>
+-            <details><summary>Plan and evidence details</summary><button disabled={state.busy} onClick={()=>send({type:'rerun',turn:turn.id})}>Re-run with current evidence</button><pre>{canonical(plan)}</pre><button onClick={()=>{setEdit(!edit);setDraft(canonical(plan));}}>Edit plan</button><button onClick={()=>send({type:'remember',turn:turn.id})}>Remember accepted inputs</button><button onClick={()=>send({type:'saveStrategy',turn:turn.id})}>Save compatible inputs to Strategies…</button></details>
+-            {Array.isArray(plan.steps)&&plan.steps.length>0&&['prepared','needs_input'].includes(String(envelope.status))&&<button disabled={state.busy} onClick={()=>{setEdit(true);setDraft(canonical(plan));}}>Review proposed plan</button>}
++            <details><summary>Plan and evidence details</summary><button disabled={state.busy} onClick={()=>send({type:'rerun',turn:turn.id})}>Re-run with current evidence</button><pre>{planText}</pre><button onClick={()=>{setEdit(!edit);setDraft(planText);}}>Edit plan</button><button onClick={()=>send({type:'remember',turn:turn.id})}>Remember accepted inputs</button><button onClick={()=>send({type:'saveStrategy',turn:turn.id})}>Save compatible inputs to Strategies…</button></details>
++            {Array.isArray(plan.steps)&&plan.steps.length>0&&['prepared','needs_input'].includes(String(envelope.status))&&<button disabled={state.busy} onClick={()=>{setEdit(true);setDraft(planText);}}>Review proposed plan</button>}
+             {edit&&<div class="editor"><label>Plan JSON<textarea value={draft} onInput={e=>setDraft(e.currentTarget.value)} spellcheck={false}/></label><button onClick={()=>runPlan(true)}>Prepare edited plan</button><button disabled={state.busy} onClick={()=>runPlan(false)}>Run plan</button>{issue&&<p role="alert">{issue}</p>}</div>}
+-            {Array.isArray(envelope.requires_input)&&envelope.requires_input.length>0&&<div class="warning"><p>{envelope.requires_input.map(r=>String(object(r).reason??r)).join(' · ')}</p>{envelope.requires_input.flatMap(raw=>{const requirement=object(raw);return Array.isArray(requirement.choices)&&['name','path'].includes(String(requirement.field))?requirement.choices.map(choice=><button disabled={state.busy} onClick={()=>{const revised=JSON.parse(canonical(plan));revised.digest='';const target=revised.steps.find((s:any)=>s.id===requirement.step);if(target){if(requirement.field==='path'){const source=revised.steps.find((s:any)=>s.id===target.bind?.[0]?.from);if(source){source.args.path=choice;}}else{target.args.name=choice;}send({type:'run',input:turn.input,prepare:false,plan:revised});}}}>Use {String(choice)}</button>):[];})}<button disabled={state.busy} onClick={()=>send({type:'run',input:`/search ${JSON.stringify(turn.input)}`,prepare:true})}>Prepare text search</button><button disabled={state.busy} onClick={()=>send({type:'run',input:'/status',prepare:false})}>Index status</button><button disabled={state.busy} onClick={()=>send({type:'run',input:'/diagnostics',prepare:false})}>Diagnostics</button></div>}
++            {Array.isArray(envelope.requires_input)&&envelope.requires_input.length>0&&<div class="warning"><p>{envelope.requires_input.map(r=>String(object(r).reason??r)).join(' · ')}</p>{envelope.requires_input.flatMap(raw=>{const requirement=object(raw);return Array.isArray(requirement.choices)&&['name','path'].includes(String(requirement.field))?requirement.choices.map(choice=><button disabled={state.busy} onClick={()=>{const revised=JSON.parse(planText);revised.digest='';const target=revised.steps.find((s:any)=>s.id===requirement.step);if(target){if(requirement.field==='path'){const source=revised.steps.find((s:any)=>s.id===target.bind?.[0]?.from);if(source){source.args.path=choice;}}else{target.args.name=choice;}send({type:'run',input:turn.input,prepare:false,plan:revised});}}}>Use {String(choice)}</button>):[];})}<button disabled={state.busy} onClick={()=>send({type:'run',input:`/search ${JSON.stringify(turn.input)}`,prepare:true})}>Prepare text search</button><button disabled={state.busy} onClick={()=>send({type:'run',input:'/status',prepare:false})}>Index status</button><button disabled={state.busy} onClick={()=>send({type:'run',input:'/diagnostics',prepare:false})}>Diagnostics</button></div>}
+             <section class="result"><header><span>{String(envelope.status)} · {cards.length} retained records</span><div role="group" aria-label="Output format">{(['structured','json','markdown'] as const).map(f=><button aria-pressed={format===f} onClick={()=>setFormat(f)}>{f}</button>)}</div></header>
+                 {Array.isArray(envelope.warnings)&&envelope.warnings.map(w=><p class="note">{String(w)}</p>)}
+                 {Array.isArray(envelope.completeness)&&envelope.completeness.length>0&&<p class="warning">Incomplete: {envelope.completeness.map(String).join('; ')}</p>}
+@@ -48,7 +49,7 @@
+                     {rows.length>show&&<button onClick={()=>setShow(show+20)}>Show 20 more retained records</button>}
+                     {(state.continuations?.[turn.id]??[]).map(page=><button disabled={state.busy} onClick={()=>send({type:'continue',turn:turn.id,step:page.id})}>Fetch next {page.tool} page · {page.callsRemaining} calls remain</button>)}
+                     {!cards.length&&<pre>{canonical(envelope.steps??envelope)}</pre>}
+-                </>:<pre>{format==='json'?canonical(envelope):markdown(turn)}</pre>}
++                </>:<pre>{formatted}</pre>}
+                 <footer><button onClick={()=>send({type:'copy',turn:turn.id,format:format==='json'?'json':'markdown'})}>Copy {format==='json'?'JSON':'Markdown'}</button>
+                     {selected.length>0&&<button onClick={()=>send({type:'copy',turn:turn.id,format:format==='json'?'json':'markdown',cards:selected})}>Copy selected ({selected.length})</button>}
+                     <button onClick={()=>send({type:'export',turn:turn.id,format:format==='json'?'json':'markdown'})}>Save export…</button>
+@@ -68,7 +69,7 @@
+     const composer=useRef<HTMLTextAreaElement>(null),menuTrigger=useRef<string>(),openMenu=useRef<Menu>();
+     openMenu.current=menu;
+     const toggle=(next:Menu,event:Event)=>{menuTrigger.current=(event.currentTarget as HTMLElement).getAttribute('aria-controls')??undefined;setMenu(menu===next?undefined:next);setTitle(state.session?.title??'');};
+-    useEffect(()=>{const listener=(event:MessageEvent)=>{if(event.data?.type==='state'){setState(event.data.state);}else if(event.data?.type==='prefill'&&typeof event.data.input==='string'){setInput(event.data.input);composer.current?.focus();}};window.addEventListener('message',listener);send({type:'ready'});return()=>window.removeEventListener('message',listener);},[]);
++    useEffect(()=>{const listener=(event:MessageEvent)=>{if(['state','status','saved'].includes(event.data?.type)){setState(previous=>applyWorkbenchUpdate(previous,event.data));}else if(event.data?.type==='prefill'&&typeof event.data.input==='string'){setInput(event.data.input);composer.current?.focus();}};window.addEventListener('message',listener);send({type:'ready'});return()=>window.removeEventListener('message',listener);},[]);
+     useEffect(()=>{const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'&&openMenu.current){setMenu(undefined);requestAnimationFrame(()=>{document.querySelector<HTMLButtonElement>(`button[aria-controls="${menuTrigger.current}"]`)?.focus();});}},outside=(event:PointerEvent)=>{if(!(event.target as Element).closest('.menu-anchor'))setMenu(undefined);};document.addEventListener('keydown',escape);document.addEventListener('pointerdown',outside);return()=>{document.removeEventListener('keydown',escape);document.removeEventListener('pointerdown',outside);};},[]);
+     const run=(prepare=false)=>{if(!state.busy&&(input.trim()||recipe)){send({type:'run',input,prepare,pathPrefix:scope,...(recipe?{recipe}:{})});setInput('');setHistory(-1);setMenu(undefined);}};
+     const action=(message:WorkbenchMessage)=>{send(message);setMenu(undefined);};

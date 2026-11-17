@@ -1,0 +1,77 @@
+--- crates/airk-service/src/service_runtime/arbiter/evaluation.rs
++++ crates/airk-service/src/service_runtime/arbiter/evaluation.rs
+@@ -58,17 +58,68 @@
+         gate: airk_catalog_control::catalog_admission::NativeCatalogAdmission,
+         profiles: Vec<Profile>,
+     ) -> Result<Self> {
++        Self::new_bound(ownership, gate, profiles, None)
++    }
++    #[cfg(test)]
++    pub(in crate::service_runtime) fn reopen_same_configuration(
++        ownership: Arc<airk_store::service::ServiceLease>,
++        gate: airk_catalog_control::catalog_admission::NativeCatalogAdmission,
++        profiles: Vec<Profile>,
++        expected: &Configuration,
++    ) -> Result<Self> {
++        Self::verify_restart_settled(&ownership)?;
++        Self::new_bound(ownership, gate, profiles, Some(expected))
++    }
++    #[cfg(test)]
++    pub(in crate::service_runtime) fn verify_restart_settled(
++        lease: &airk_store::service::ServiceLease,
++    ) -> Result<()> {
++        let mut registry =
++            airk_store::service::registry::ServiceRegistry::open_saved(lease.root())?;
++        ensure!(
++            registry.pending_projects(1)?.is_empty(),
++            "Restart has native pending/running work"
++        );
++        let mut after = None;
++        let mut revision = None;
++        loop {
++            let page = registry.list(after, revision, 32)?;
++            revision = Some(page.revision);
++            for project in page.projects {
++                let binding = project.registration.binding;
++                ensure!(
++                    registry.pending_job_observation(binding)?.is_none()
++                        && !registry.has_unsettled_configuration(binding)?,
++                    "Restart has paused queued work or unfinished configuration"
++                );
++            }
++            after = page.after;
++            if after.is_none() {
++                break;
++            }
++        }
++        drop(registry);
++        Ok(())
++    }
++    fn new_bound(
++        ownership: Arc<airk_store::service::ServiceLease>,
++        gate: airk_catalog_control::catalog_admission::NativeCatalogAdmission,
++        profiles: Vec<Profile>,
++        expected: Option<&Configuration>,
++    ) -> Result<Self> {
+         let catalog =
+             airk_kernel::inference_owner::evaluation_catalog(ownership.clone(), profiles)?;
+         let mut owner = Owner::new(ownership, gate)?;
+         let configuration = owner.configuration()?;
+         ensure!(
+-            ![&configuration.focus, &configuration.context]
+-                .into_iter()
+-                .any(|stage| stage.enabled
+-                    || !stage.indexes.is_empty()
+-                    || stage.selected_profile.is_some()),
+-            "Private evaluation requires an isolated unconfigured owner"
++            expected.is_some_and(|saved| saved == &configuration)
++                || (expected.is_none()
++                    && ![&configuration.focus, &configuration.context]
++                        .into_iter()
++                        .any(|stage| stage.enabled
++                            || !stage.indexes.is_empty()
++                            || stage.selected_profile.is_some())),
++            "Private evaluation requires an unconfigured owner or exact saved restart configuration"
+         );
+         owner.focus.evaluation = Some(catalog.clone());
+         owner.context.evaluation = Some(catalog);

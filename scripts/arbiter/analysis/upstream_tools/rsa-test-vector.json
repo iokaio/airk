@@ -1,0 +1,7 @@
+{
+  "public_key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA9RnBSEkrc/y0jLzVeEvyQy/vIkJKKVyrOGR6YxcsGnGQ/YtZ/MbSrvyorIpZN8MkK7Fr1a7KI1Bpol4z2CEXk2XkJpewzZOFf1b969sceShdENtVMDRNVn/PI39LiRuwOODG6DpBbhcb3ZKimPrH6MgCsO1Naae/IsUqA+5tZS/9a+OO1RuAKiwMYS0LMMKe4dbmYu55fQ3a0WF4brSZ0waZ8yKXJcSDaub/AJWwGGUK/tD/LrL8CtlTo8LU+pjZky//jd1dHsmBd+uBwcwRLEN2gGkWIpS2zydy98NCnlnT26+2YsPWdISsOvIXTsg9gk9NI9QjrIxGsJ5JesXuCQIDAQAB",
+  "origin": "Fixed public verification vector signed independently using .NET RSA PKCS1 SHA256; private key discarded.",
+  "signature": "8h54DKZrTg5AmfkZ1j5ZgiewcNMIkPrYTrhGN6jos-VYWWLLEGF25jvc1tFWzjwsgouXIgAuAM39RqbVN4s7mCfBIAmhRySqXjNicp-EPSIlD1CYwT8RveBsr8Kj4llqdvNHuEYtTVfZfmnsnRrdOgpvOs4WTmT8pKq-sWZe1wDRETXe7CyMf3GxdwXall-wdbpAYZ_3IuGX4R8LNUbbYZJS42TE1V_463G2d8LsLvNl3JFFw2DlczYnNodAD_BjulPykooVEZ-eNy6QIzCNySiPqxIrpo2O6QHaDUcs5FXOTCrJwralA6YvDzsiCFt2ZcB8D0ymd9WFF9eD7XA4NA",
+  "payload": "YXVkaXQtdGVzdA",
+  "protected": "eyJhbGciOiJSUzI1NiJ9"
+}

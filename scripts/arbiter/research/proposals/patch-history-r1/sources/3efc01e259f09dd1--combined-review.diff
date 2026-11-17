@@ -1,0 +1,2868 @@
+--- D:\code\Github\airk\crates\airk-core\src\arbiter\mod.rs
++++ D:\code\Github\airk\artifacts\advanced-split\model-download-origin-preparation-r1\core-contract-r1\proposed\crates\airk-core\src\arbiter\mod.rs
+@@ -139,6 +139,9 @@
+ #[serde(deny_unknown_fields)]
+ pub struct AssetPart {
+     pub url: String,
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    #[schemars(length(max = 2))]
++    pub backup_urls: Vec<String>,
+     pub bytes: u64,
+     pub sha256: Sha256Digest,
+ }
+@@ -373,7 +376,7 @@
+ }
+ impl Profile {
+     /// A compiled qualified release must bind every logical asset and each
+-    /// bounded GitHub release part. Downloaded metadata cannot supply this list.
++    /// bounded part with complete reviewed source ordinals. Downloaded metadata cannot supply this list.
+     pub fn validate_release_downloads(&self) -> Result<()> {
+         self.validate()?;
+         ensure!(
+@@ -391,35 +394,9 @@
+                 .iter()
+                 .find(|asset| asset.name == download.asset_name)
+                 .ok_or_else(|| anyhow::anyhow!("unknown Arbiter asset download"))?;
+-            ensure!(
+-                !download.parts.is_empty() && download.parts.len() <= 16,
+-                "Arbiter asset part limit"
+-            );
++            download.source_count()?;
+             let mut bytes = 0_u64;
+-            let mut urls = BTreeSet::new();
+             for part in &download.parts {
+-                ensure!(
+-                    part.bytes > 0 && part.bytes <= 1_u64 << 30 && urls.insert(&part.url),
+-                    "invalid Arbiter asset part"
+-                );
+-                let path = part
+-                    .url
+-                    .strip_prefix("https://github.com/iokaio/airk/releases/download/")
+-                    .ok_or_else(|| anyhow::anyhow!("unapproved Arbiter asset source"))?;
+-                let pieces = path.split('/').collect::<Vec<_>>();
+-                ensure!(
+-                    pieces.len() == 2
+-                        && pieces.iter().all(|piece| {
+-                            !piece.is_empty()
+-                                && piece.len() <= 192
+-                                && *piece != "."
+-                                && *piece != ".."
+-                                && piece.bytes().all(|byte| {
+-                                    byte.is_ascii_alphanumeric() || b"._-".contains(&byte)
+-                                })
+-                        }),
+-                    "invalid Arbiter release asset URL"
+-                );
+                 bytes = bytes
+                     .checked_add(part.bytes)
+                     .ok_or_else(|| anyhow::anyhow!("Arbiter part byte overflow"))?;
+@@ -923,6 +900,9 @@
+     }
+ }
+ 
++mod downloads;
++pub use downloads::{DownloadOrigin, download_origin};
++
+ pub mod context_action;
+ pub mod literal;
+ pub mod schema;
+--- D:\code\Github\airk\crates\airk-core\src\arbiter\downloads.rs
++++ D:\code\Github\airk\artifacts\advanced-split\model-download-origin-preparation-r1\core-contract-r1\proposed\crates\airk-core\src\arbiter\downloads.rs
+@@ -0,0 +1,104 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Compiled immutable acquisition locations; never source or execution authority.
++use super::*;
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum DownloadOrigin {
++    GitHubRelease,
++    HuggingFace,
++}
++
++fn safe_component(value: &str) -> bool {
++    !value.is_empty()
++        && value.len() <= 192
++        && value != "."
++        && value != ".."
++        && value
++            .bytes()
++            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
++}
++/// Validate the exact initial source. Redirects remain a separate transport fence.
++pub fn download_origin(url: &str) -> Result<DownloadOrigin> {
++    ensure!(url.len() <= 2048, "Arbiter source URL byte limit");
++    if let Some(path) = url.strip_prefix("https://github.com/iokaio/airk/releases/download/") {
++        let pieces: Vec<_> = path.split('/').collect();
++        ensure!(
++            pieces.len() == 2 && pieces.iter().all(|piece| safe_component(piece)),
++            "invalid Arbiter release asset URL"
++        );
++        return Ok(DownloadOrigin::GitHubRelease);
++    }
++    let path = url
++        .strip_prefix("https://huggingface.co/")
++        .ok_or_else(|| anyhow::anyhow!("unapproved Arbiter asset source"))?;
++    let pieces: Vec<_> = path.split('/').collect();
++    ensure!(
++        pieces.len() == 5 && pieces[2] == "resolve",
++        "invalid immutable Arbiter model URL"
++    );
++    ensure!(
++        matches!(
++            (pieces[0], pieces[1]),
++            (
++                "Qwen",
++                "Qwen3-Reranker-0.6B" | "Qwen3-0.6B-Base" | "Qwen3-1.7B" | "Qwen3-4B"
++            ) | ("onnx-community", "Qwen3-Reranker-0.6B-ONNX")
++        ),
++        "unreviewed Arbiter model repository"
++    );
++    ensure!(
++        pieces[3].len() == 40
++            && pieces[3]
++                .bytes()
++                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
++            && safe_component(pieces[4]),
++        "invalid immutable Arbiter model revision or file"
++    );
++    Ok(DownloadOrigin::HuggingFace)
++}
++impl AssetPart {
++    pub fn validate(&self) -> Result<()> {
++        ensure!(
++            self.bytes > 0 && self.bytes <= 1_u64 << 30 && self.backup_urls.len() <= 2,
++            "invalid Arbiter asset part"
++        );
++        let mut seen = BTreeSet::new();
++        for url in std::iter::once(&self.url).chain(self.backup_urls.iter()) {
++            ensure!(seen.insert(url), "duplicate Arbiter part source");
++            download_origin(url)?;
++        }
++        Ok(())
++    }
++    /// Zero is primary; later ordinals inherit this SAME part's bytes and SHA.
++    pub fn source_url(&self, ordinal: usize) -> Option<&str> {
++        if ordinal == 0 {
++            Some(&self.url)
++        } else {
++            self.backup_urls.get(ordinal - 1).map(String::as_str)
++        }
++    }
++}
++impl AssetDownload {
++    /// A source choice always has a complete ordered roster for the whole asset.
++    pub fn source_count(&self) -> Result<usize> {
++        ensure!(
++            !self.parts.is_empty() && self.parts.len() <= 16,
++            "Arbiter asset part limit"
++        );
++        let backups = self.parts[0].backup_urls.len();
++        let mut seen = BTreeSet::new();
++        for part in &self.parts {
++            part.validate()?;
++            ensure!(
++                part.backup_urls.len() == backups,
++                "incomplete Arbiter whole-asset backup roster"
++            );
++            for url in std::iter::once(&part.url).chain(part.backup_urls.iter()) {
++                ensure!(seen.insert(url), "duplicate Arbiter asset part location");
++            }
++        }
++        Ok(1 + backups)
++    }
++}
++#[cfg(test)]
++mod tests;
+--- D:\code\Github\airk\crates\airk-core\src\arbiter\downloads\tests.rs
++++ D:\code\Github\airk\artifacts\advanced-split\model-download-origin-preparation-r1\core-contract-r1\proposed\crates\airk-core\src\arbiter\downloads\tests.rs
+@@ -0,0 +1,215 @@
++// SPDX-License-Identifier: Apache-2.0
++use super::*;
++use serde_json::json;
++use sha2::{Digest, Sha256};
++const HF: &str = "https://huggingface.co/Qwen/Qwen3-0.6B-Base/resolve/da87bfb608c14b7cf20ba1ce41287e8de496c0cd/LICENSE";
++const HF_BACKUP: &str = "https://huggingface.co/Qwen/Qwen3-1.7B/resolve/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e/LICENSE";
++fn part() -> AssetPart {
++    AssetPart {
++        url: HF.into(),
++        backup_urls: vec![],
++        bytes: 11_343,
++        sha256: "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e"
++            .parse()
++            .unwrap(),
++    }
++}
++fn profile() -> Result<Profile> {
++    Ok(serde_json::from_slice(include_bytes!(
++        "../../../../../fixtures/arbiter/profile-downloads.json"
++    ))?)
++}
++#[test]
++fn empty_backups_preserve_exact_retained_part_and_profile_identity() -> Result<()> {
++    let original = br#"{"url":"https://github.com/iokaio/airk/releases/download/v1.9.0/model.bin","bytes":17,"sha256":"1111111111111111111111111111111111111111111111111111111111111111"}"#;
++    let value: AssetPart = serde_json::from_slice(original)?;
++    assert!(value.backup_urls.is_empty());
++    assert_eq!(serde_json::to_vec(&value)?, original);
++    let mut explicit: serde_json::Value = serde_json::from_slice(original)?;
++    explicit["backup_urls"] = json!([]);
++    assert_eq!(
++        serde_json::to_vec(&serde_json::from_value::<AssetPart>(explicit)?)?,
++        original
++    );
++    let raw = include_bytes!("../../../../../fixtures/arbiter/profile-downloads.json");
++    assert_eq!(
++        format!("{:x}", Sha256::digest(raw)),
++        "d0064974be46e7cb56099a71c248587d81cd93eccd1405ec9e736664c199d593"
++    );
++    let original = profile()?;
++    original.validate_release_downloads()?;
++    let mut explicit = serde_json::to_value(&original)?;
++    for download in explicit["downloads"].as_array_mut().unwrap() {
++        for part in download["parts"].as_array_mut().unwrap() {
++            part["backup_urls"] = json!([]);
++        }
++    }
++    let decoded: Profile = serde_json::from_value(explicit)?;
++    assert_eq!(
++        serde_json::to_vec(&decoded)?,
++        serde_json::to_vec(&original)?
++    );
++    assert_eq!(decoded.manifest, original.manifest);
++    Ok(())
++}
++#[test]
++fn immutable_reviewed_download_origins_are_closed() -> Result<()> {
++    for (repo, revision, file) in [
++        (
++            "Qwen/Qwen3-Reranker-0.6B",
++            "e61197ed45024b0ed8a2d74b80b4d909f1255473",
++            "tokenizer.json",
++        ),
++        (
++            "Qwen/Qwen3-0.6B-Base",
++            "da87bfb608c14b7cf20ba1ce41287e8de496c0cd",
++            "LICENSE",
++        ),
++        (
++            "Qwen/Qwen3-1.7B",
++            "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
++            "tokenizer.json",
++        ),
++        (
++            "Qwen/Qwen3-4B",
++            "1cfa9a7208912126459214e8b04321603b3df60c",
++            "tokenizer.json",
++        ),
++        (
++            "onnx-community/Qwen3-Reranker-0.6B-ONNX",
++            "9995c50e2310679108a55f5ccd16ba8be9f17c20",
++            "tokenizer.json",
++        ),
++    ] {
++        assert_eq!(
++            download_origin(&format!(
++                "https://huggingface.co/{repo}/resolve/{revision}/{file}"
++            ))?,
++            DownloadOrigin::HuggingFace
++        );
++    }
++    assert_eq!(
++        download_origin("https://github.com/iokaio/airk/releases/download/v1.9.0/part01")?,
++        DownloadOrigin::GitHubRelease
++    );
++    for url in [
++        HF.replace("https:", "http:"),
++        HF.replace("huggingface.co/", "user@huggingface.co/"),
++        HF.replace("huggingface.co/", "huggingface.co:443/"),
++        HF.replace("huggingface.co/", "huggingface.co.evil/"),
++        HF.replace("Qwen/Qwen3-0.6B-Base", "unknown/repo"),
++        HF.replace("Qwen/Qwen3-0.6B-Base", "iokaio/airk-models"),
++        HF.replace("da87bfb608c14b7cf20ba1ce41287e8de496c0cd", "main"),
++        HF.replace(
++            "da87bfb608c14b7cf20ba1ce41287e8de496c0cd",
++            "DA87BFB608C14B7CF20BA1CE41287E8DE496C0CD",
++        ),
++        HF.replace("/LICENSE", "/../LICENSE"),
++        HF.replace("/LICENSE", "/%2e%2e"),
++        HF.replace("/LICENSE", "/."),
++        HF.replace("/LICENSE", "/nested/LICENSE"),
++        format!("{HF}?token=secret"),
++        format!("{HF}#fragment"),
++    ] {
++        assert!(download_origin(&url).is_err(), "{url}");
++    }
++    Ok(())
++}
++#[test]
++fn complete_backup_ordinals_share_exact_part_identity_and_asset_bounds() -> Result<()> {
++    let mut value = part();
++    value.backup_urls = vec![HF_BACKUP.into()];
++    value.validate()?;
++    assert_eq!(value.source_url(0), Some(HF));
++    assert_eq!(value.source_url(1), Some(HF_BACKUP));
++    assert_eq!(value.source_url(2), None);
++    let mut duplicate = value.clone();
++    duplicate.backup_urls.push(HF.into());
++    assert!(duplicate.validate().is_err());
++    duplicate.backup_urls = vec![HF_BACKUP.into(), HF_BACKUP.into()];
++    assert!(duplicate.validate().is_err());
++    duplicate.backup_urls = vec![HF_BACKUP.into(); 3];
++    assert!(duplicate.validate().is_err());
++    duplicate = value.clone();
++    duplicate.bytes = 0;
++    assert!(duplicate.validate().is_err());
++    duplicate.bytes = (1_u64 << 30) + 1;
++    assert!(duplicate.validate().is_err());
++    let mut profile = profile()?;
++    for download in &mut profile.downloads {
++        for part in &mut download.parts {
++            let filename = part.url.rsplit('/').next().unwrap();
++            part.backup_urls = vec![format!(
++                "https://huggingface.co/Qwen/Qwen3-1.7B/resolve/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e/{filename}"
++            )];
++        }
++    }
++    profile.validate_release_downloads()?;
++    let mut three = profile.clone();
++    for download in &mut three.downloads {
++        for part in &mut download.parts {
++            let filename = part.url.rsplit('/').next().unwrap();
++            part.backup_urls.push(format!("https://huggingface.co/Qwen/Qwen3-4B/resolve/1cfa9a7208912126459214e8b04321603b3df60c/{filename}"));
++        }
++        assert_eq!(download.source_count()?, 3);
++    }
++    three.validate_release_downloads()?;
++    let last = profile.downloads.len() - 1;
++    assert_eq!(profile.downloads[last].source_count()?, 2);
++    let mut incomplete = profile.clone();
++    incomplete.downloads[last].parts[1].backup_urls.clear();
++    assert!(incomplete.validate_release_downloads().is_err());
++    let mut repeated = profile.clone();
++    repeated.downloads[last].parts[1].backup_urls =
++        repeated.downloads[last].parts[0].backup_urls.clone();
++    assert!(repeated.validate_release_downloads().is_err());
++    let mut short = profile.clone();
++    short.downloads[last].parts[1].bytes += 1;
++    assert!(short.validate_release_downloads().is_err());
++    let mut singleton = profile.clone();
++    singleton.downloads[0].parts[0].sha256 = Sha256Digest::from_bytes([9; 32]);
++    assert!(singleton.validate_release_downloads().is_err());
++    let mut raw = serde_json::to_value(value)?;
++    raw["backup_bytes"] = json!(1);
++    assert!(serde_json::from_value::<AssetPart>(raw).is_err());
++    Ok(())
++}
++#[test]
++fn native_download_origin_semantic_fixture_emitter() -> Result<()> {
++    let original = profile()?;
++    original.validate_release_downloads()?;
++    let hf = part();
++    hf.validate()?;
++    let mut actual_hf_backup = hf.clone();
++    actual_hf_backup.backup_urls = vec![HF_BACKUP.into()];
++    actual_hf_backup.validate()?;
++    // Transport shape only. No working GitHub backup or publication is invented.
++    let mut configured_gh_backup = hf.clone();
++    configured_gh_backup.backup_urls = vec![original.downloads[0].parts[0].url.clone()];
++    configured_gh_backup.validate()?;
++    let incomplete = AssetDownload {
++        asset_name: "structural-two-part".into(),
++        parts: vec![actual_hf_backup.clone(), hf.clone()],
++    };
++    assert!(incomplete.source_count().is_err());
++    let mut empty = incomplete.clone();
++    empty.parts.clear();
++    assert!(empty.source_count().is_err());
++    let document = json!({"schema":"airk.arbiter.download-origin-cases/1","qualification":false,"network_executed":false,
++        "hf_primary_no_backup":{"part":hf,"origin":"hugging_face","source_count":1,"public_metadata_identity_only":true},
++        "hf_primary_actual_same_byte_hf_backup":{"part":actual_hf_backup,"source_count":2,"public_metadata_identity_only":true},
++        "hf_primary_configured_gh_backup_structural_only":{"part":configured_gh_backup,"source_count":2,"working_gh_backup_asserted":false},
++        "retained_profile":{"profile":original,"empty_backups_omit":true,"old_profile_fixture_sha256":"d0064974be46e7cb56099a71c248587d81cd93eccd1405ec9e736664c199d593"},
++        "incomplete_backup_roster":{"download":incomplete,"valid":false},"empty_parts":{"download":empty,"valid":false},
++        "schema_document":crate::arbiter::schema::document()});
++    if let Some(path) = std::env::var_os("AIRK_WRITE_ARBITER_DOWNLOAD_ORIGIN_CASES") {
++        std::fs::write(path, serde_json::to_vec_pretty(&document)?)?;
++    }
++    if let Some(path) = std::env::var_os("AIRK_WRITE_ARBITER_SCHEMA") {
++        std::fs::write(
++            path,
++            serde_json::to_vec_pretty(&crate::arbiter::schema::document())?,
++        )?;
++    }
++    Ok(())
++}
+--- D:\code\Github\airk\crates\airk-core\src\arbiter\stage_tests.rs
++++ D:\code\Github\airk\artifacts\advanced-split\model-download-origin-preparation-r1\core-contract-r1\proposed\crates\airk-core\src\arbiter\stage_tests.rs
+@@ -329,7 +329,7 @@
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     cpu_fit: Option<CpuFit>,
+     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+-    downloads: Vec<AssetDownload>,
++    downloads: Vec<RetainedAssetDownload>,
+     model: ModelChoice,
+     profile_id: String,
+     manifest: Sha256Digest,
+@@ -345,6 +345,21 @@
+     memory_reservation_bytes: u64,
+     peak_disk_bytes: u64,
+     assets: Vec<Asset>,
++}
++// Retain the old nested owner too: using current AssetPart here would mask
++// accidental insertion into an existing persisted profile's canonical bytes.
++#[derive(Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct RetainedAssetPart {
++    url: String,
++    bytes: u64,
++    sha256: Sha256Digest,
++}
++#[derive(Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct RetainedAssetDownload {
++    asset_name: String,
++    parts: Vec<RetainedAssetPart>,
+ }
+ #[test]
+ fn retained_profile_bytes_have_no_stage_insertion_or_digest_reidentification() -> Result<()> {
+--- D:\code\Github\airk\crates\airk-core\src\arbiter\CONTRACT.md
++++ D:\code\Github\airk\artifacts\advanced-split\model-download-origin-preparation-r1\core-contract-r1\proposed\crates\airk-core\src\arbiter\CONTRACT.md
+@@ -399,9 +399,9 @@
+ 
+ ## Explicit compiled asset transport decision (2026-11-14)
+ 
+-Profile's optional `downloads` list is omitted when empty, preserving legacy qualification-profile bytes. It contains Rust-owned `AssetDownload { asset_name, parts: Vec<AssetPart { url, bytes, sha256 }> }`. A product compiled release requires a complete unique download row for every declared logical asset, including compiler, calibration, fixture and notices. Developer qualification may omit transport but cannot become a provisionable release profile that way.
+-
+-Each ordered part is positive and at most 1 GiB, at most sixteen parts per logical asset, and has its own length/SHA-256. URLs are exact `https://github.com/iokaio/airk/releases/download/<tag>/<filename>` with bounded safe ASCII tag/filename components, no credentials/query/fragment/percent escapes/traversal. Part lengths sum to logical Asset.bytes; a singleton also has the logical hash. The native download transaction hashes every part and the entire concatenation before publication. Only the exact profile compiled into the native authenticated catalog supplies transport authority; local/downloaded metadata and candidate exports never do.
++Profile's optional `downloads` list is omitted when empty, preserving legacy qualification-profile bytes. It contains Rust-owned `AssetDownload { asset_name, parts: Vec<AssetPart { url, backup_urls, bytes, sha256 }> }`. A product compiled release requires a complete unique download row for every declared logical asset, including compiler, calibration, fixture and notices. Developer qualification may omit transport but cannot become a provisionable release profile that way.
++
++Each ordered part is positive and at most 1 GiB, at most sixteen parts per logical asset, and has its own length/SHA-256. Primary and optional backup URLs use Core `download_origin`: exact `https://github.com/iokaio/airk/releases/download/<tag>/<filename>` or the reviewed immutable HF forms below, with bounded safe ASCII components and no credentials/query/fragment/percent escapes/traversal. Part lengths sum to logical Asset.bytes; a singleton also has the logical hash. The native download transaction hashes every part and the entire concatenation before publication. Only the exact profile compiled into the native authenticated catalog supplies transport authority; local/downloaded metadata and candidate exports never do.
+ 
+ ## Private evaluation admission decision (2026-11-14)
+ 
+@@ -840,3 +840,41 @@
+ current Context profiles use it explicitly. Historical four-model fixtures remain
+ unchanged and gain no selected-model eligibility. No wire field, tokenizer/model
+ math, budget, persisted format or historical qualification identity changes.
++
++
++### Immutable model acquisition origins and complete backup ordinals
++
++The recorded optional-source decision adds AssetPart.backup_urls, serde default
++and omitted when empty. At most two distinct backups share the SAME part bytes
++and SHA; no alternate payload identity exists. Empty lists retain original part
++and Profile canonical bytes, demonstrated by literal old part bytes and the
++retained old nested Rust Profile serializer/hashed fixture. No airk-state/1
++fixture is rewritten. Nonempty release descriptors require a new authenticated
++manifest/catalog through final promotion, never rewritten consent or enablement.
++
++Core download_origin is the sole initial-source predicate. Existing official
++iokaio/airk GitHub release URLs retain their exact safe tag/file rules. HF URLs
++are HTTPS huggingface.co with exact reviewed repositories Qwen/Qwen3-Reranker-0.6B,
++Qwen/Qwen3-0.6B-Base, Qwen/Qwen3-1.7B, Qwen/Qwen3-4B and
++onnx-community/Qwen3-Reranker-0.6B-ONNX, then resolve/40-lowercase-hex/safe-single-file.
++No credentials, explicit ports, branches, query, fragment, escapes or traversal;
++no derived AIRK repository is invented. Metadata/source shape does not establish
++actual availability, rights or payload qualification. Redirect admission remains
++an independently bounded native transport duty.
++
++AssetDownload.source_count validates a complete same-count backup ordinal on
++EVERY ordered part, at most initial+two alternatives. AssetPart.source_url(0)
++returns primary and later ordinals its declared backup, without changing bytes
++or SHA. Part locations are distinct across the asset; existing positive/1GiB
++part bounds, sixteen-part cap, full length sum and singleton whole SHA remain.
++Profile.validate_release_downloads validates this entire closure.
++
++Only explicit Provision acquires network bytes. Recover stays local reconciliation
++and warm; startup/query/status/import grant no download. Whole-asset fallback
++requires narrow Store-owned sealed-partial restart, no failed-part append or
++mutation of completed/foreign/unsealed files. Every original per-part900s deadline,
++30s response/idle limit and shared four redirects per part remain across source
++attempts; no retry or new time follows from a backup. Cancellation, supersession,
++revocation or local custody failure stops immediately. Native publication lists
++only actual GitHub-hosted files; all HF descriptors stay in authenticated catalog
++closure. Rust structural GH-backup cases assert no working URL or publication.
+--- D:\code\Github\airk\crates\airk-store\src\service\arbiter_assets\CONTRACT.md
++++ D:\code\Github\airk\artifacts\advanced-split\model-download-origin-preparation-r1\store-restart\r2\CONTRACT.md.proposed
+@@ -46,3 +46,11 @@
+ publication cannot be undone by a later cancellation; its original owned files
+ and recovery receipt remain explicit. Only the complete verified closure can
+ settle Ready. Import itself never enables or enrolls a stage or starts a download.
++
++### Same-operation failed source restart
++
++`Transaction::restart_failed_asset_if(writer, check)` consumes only its own unpublished writer for one declared logical asset under the existing original operation and writer exclusion. It positively seals the existing partial/3 record, closes that writer, and reopens the exact operation, partial proof and staged object. Original stage identity, ServiceLease identity, operation/configuration revision, asset declaration, native object identity, actual length and complete partial hash must still match. Only those authenticated unfinished bytes and their proof may be unlinked through the existing platform custody path; a fresh CreateNew writer begins at zero. Final cached files, all other assets, older stage generations and receipts are preserved. Foreign/replaced/linked/unsealed bytes refuse without adoption or truncation. Failure cannot claim Ready, deletion or successful restart.
++
++This is local transaction custody only: it grants no network, retry, deadline, scope, consent or configuration authority. Service admits a backup only within its original bounded source attempt/per-part deadline/cancellation contract and retains sanitized failed-source diagnostics. A failed seal or local custody check stops, and the original file/evidence remains for explicit recovery. The internal sealed-writer bit is not persisted and does not pretend that a partial asset was published. Existing assets/3 and partial/3 serialized bytes are unchanged.
++
++Production callers use `restart_failed_asset_if(writer, check)` with an original-clock/atomic-cancellation-only admission predicate; the callback acquires no lifecycle, configuration or Store locks and authorizes no I/O/network itself. Entry and post-seal checks run before cleanup. The last predicate runs after full actual partial-byte hashing, immediately before first native deletion; Windows holds the authenticated proof and asset write/delete exclusions there. An observed cancellation/expired original source deadline before that fence refuses with the partial/proof and completed cache preserved. Native cleanup already committed before a later cancellation is not fabricated into rollback; no fresh writer/network is admitted after the final predicate. The unchecked one-argument convenience exists only inside owning unit tests.
+--- D:\code\Github\airk\crates\airk-store\src\service\arbiter_assets.rs
++++ D:\code\Github\airk\artifacts\advanced-split\model-download-origin-preparation-r1\store-restart\r2\arbiter_assets.rs.proposed
+@@ -855,7 +855,168 @@
+             stage: self.stage.try_clone()?,
+             operation: self.record.clone(),
+             published: false,
++            partial_sealed: false,
++            partial_proof: None,
+         }))
++    }
++    /// Restart only the exact unpublished asset after a failed source attempt.
++    /// This consumes local custody, not download, retry or deadline authority.
++    pub fn restart_failed_asset_if(
++        &self,
++        writer: AssetWriter,
++        check: impl Fn() -> Result<()>,
++    ) -> Result<AssetWriter> {
++        self.restart_failed_asset_checked(writer, &check, || Ok(()))
++    }
++    #[cfg(test)]
++    fn restart_failed_asset(&self, writer: AssetWriter) -> Result<AssetWriter> {
++        self.restart_failed_asset_if(writer, || Ok(()))
++    }
++    #[cfg(test)]
++    fn restart_failed_asset_with(
++        &self,
++        writer: AssetWriter,
++        before_cleanup: impl FnOnce() -> Result<()>,
++    ) -> Result<AssetWriter> {
++        self.restart_failed_asset_checked(writer, &|| Ok(()), before_cleanup)
++    }
++    fn restart_failed_asset_checked(
++        &self,
++        mut writer: AssetWriter,
++        check: &impl Fn() -> Result<()>,
++        before_cleanup: impl FnOnce() -> Result<()>,
++    ) -> Result<AssetWriter> {
++        check()?;
++        ensure!(
++            !writer.published
++                && writer.operation == self.record
++                && Arc::ptr_eq(&writer._ownership, &self.store.ownership)
++                && writer.stage.identity()? == self.stage.identity()?
++                && self.profile.assets.contains(&writer.asset),
++            "Failed asset writer belongs to another original operation; bytes preserved"
++        );
++        let (custody, _) = self
++            .store
++            .read(&self.directory, &self.profile)?
++            .context("Original failed-asset custody is missing")?;
++        ensure!(
++            custody.revision == self.record.revision
++                && custody.configuration_revision == self.record.configuration_revision
++                && custody.phase == Phase::Downloading,
++            "Failed asset operation was superseded; bytes preserved"
++        );
++        let intent = self.stage.read_file(OsStr::new("operation.json"), 131072)?;
++        ensure!(
++            intent == canonical(&self.record)?,
++            "Original failed-asset stage changed; bytes preserved"
++        );
++        let asset = writer.asset.clone();
++        let written_bytes = writer.bytes;
++        let expected_hash = Sha256Digest::from_bytes(writer.hash.clone().finalize().into());
++        let expected_identity = file_identity(&writer.file)?;
++        writer.seal_partial()?;
++        let proof_name = format!("{}.partial.json", asset.name);
++        let mut proof = writer
++            .partial_proof
++            .take()
++            .context("Failed asset partial seal lacks its original descriptor")?;
++        let proof_identity = file_identity(&proof)?;
++        proof.seek(SeekFrom::Start(0))?;
++        let mut bytes = Vec::new();
++        (&mut proof).take(131073).read_to_end(&mut bytes)?;
++        ensure!(
++            bytes.len() <= 131072,
++            "Failed asset partial proof exceeds bound"
++        );
++        drop(writer);
++        check()?;
++        before_cleanup()?;
++        let mut current_proof = self
++            .stage
++            .open_file(OsStr::new(&proof_name), SetupFileMode::Read)?;
++        ensure!(
++            file_identity(&current_proof)? == proof_identity,
++            "Failed asset partial proof was replaced; bytes preserved"
++        );
++        let mut expected_proof = asset.clone();
++        expected_proof.bytes = u64::try_from(bytes.len())?;
++        expected_proof.sha256 = Sha256Digest::from_bytes(Sha256::digest(&bytes).into());
++        hash(&mut current_proof, &expected_proof)?;
++        drop(current_proof);
++        ensure!(
++            self.stage.read_file(OsStr::new("operation.json"), 131072)? == intent,
++            "Failed asset operation changed before cleanup; bytes preserved"
++        );
++        let partial: PartialRecord = serde_json::from_slice(&bytes)?;
++        ensure!(
++            canonical(&partial)? == bytes
++                && partial.schema == "airk.arbiter.partial/3"
++                && partial.operation == self.record
++                && partial.asset == asset
++                && partial.written_bytes == written_bytes
++                && partial.sha256 == expected_hash
++                && partial.file_identity == expected_identity
++                && written_bytes <= asset.bytes,
++            "Failed asset partial proof differs; bytes preserved"
++        );
++        let mut observed = asset.clone();
++        observed.bytes = written_bytes;
++        observed.sha256 = expected_hash;
++        #[cfg(windows)]
++        let raw_stage = {
++            use airk_process::directory::OpenedDirectory;
++            let root = OpenedDirectory::open(self.store.ownership.root())?;
++            same_directory(&root, &self.store.root)?;
++            let directory = root
++                .open_child(OsStr::new("arbiter-v3"))?
++                .open_child(OsStr::new("assets"))?
++                .open_child(OsStr::new(&self.profile.manifest.to_string()))?;
++            same_directory(&directory, &self.directory)?;
++            let stage =
++                directory.open_child(OsStr::new(&format!("stage-{}", self.record.revision)))?;
++            same_directory(&stage, &self.stage)?;
++            stage
++        };
++        #[cfg(not(windows))]
++        {
++            let mut file = self
++                .stage
++                .open_file(OsStr::new(&asset.name), SetupFileMode::Read)?;
++            ensure!(
++                file_identity(&file)? == expected_identity,
++                "Failed asset object replaced; bytes preserved"
++            );
++            hash(&mut file, &observed)?;
++            check()?;
++            self.stage
++                .unlink_file_if_identity(OsStr::new(&asset.name), &file)?;
++            self.stage
++                .unlink_file_if_identity(OsStr::new(&proof_name), &proof)?;
++        }
++        #[cfg(windows)]
++        remove_verified_with(
++            &raw_stage,
++            OsStr::new(&proof_name),
++            &expected_proof,
++            Some(proof_identity),
++            |_| {
++                // Keep the authenticated proof under native write/delete exclusion
++                // while disposing only its authenticated unfinished asset.
++                check()?;
++                remove_verified_with(
++                    &raw_stage,
++                    OsStr::new(&asset.name),
++                    &observed,
++                    Some(expected_identity),
++                    |_| check(),
++                )
++            },
++        )?;
++        drop(proof);
++        self.stage.sync()?;
++        check()?;
++        self.asset(&asset)?
++            .context("Failed-asset restart cannot adopt a completed file")
+     }
+     pub fn publish(&self, writer: AssetWriter) -> Result<()> {
+         self.publish_with(writer, || Ok(()))
+@@ -866,7 +1027,9 @@
+         before_publish: impl FnOnce() -> Result<()>,
+     ) -> Result<()> {
+         ensure!(
+-            writer.operation == self.record && self.profile.assets.contains(&writer.asset),
++            !writer.partial_sealed
++                && writer.operation == self.record
++                && self.profile.assets.contains(&writer.asset),
+             "Arbiter publication belongs to another original operation"
+         );
+         ensure!(
+@@ -961,10 +1124,12 @@
+     stage: SetupDirectory,
+     operation: Record,
+     published: bool,
++    partial_sealed: bool,
++    partial_proof: Option<File>,
+ }
+ impl AssetWriter {
+     fn seal_partial(&mut self) -> Result<()> {
+-        if self.published {
++        if self.published || self.partial_sealed {
+             return Ok(());
+         }
+         self.file.sync_all()?;
+@@ -995,7 +1160,17 @@
+             .open_file(OsStr::new(&name), SetupFileMode::CreateNew)?;
+         receipt.write_all(&canonical(&record)?)?;
+         receipt.sync_all()?;
+-        self.stage.sync()
++        self.stage.sync()?;
++        let proof = self
++            .stage
++            .open_file(OsStr::new(&name), SetupFileMode::Read)?;
++        ensure!(
++            file_identity(&proof)? == file_identity(&receipt)?,
++            "Arbiter sealed partial proof was replaced"
++        );
++        self.partial_proof = Some(proof);
++        self.partial_sealed = true;
++        Ok(())
+     }
+ }
+ impl Drop for AssetWriter {
+@@ -1005,6 +1180,11 @@
+ }
+ impl Write for AssetWriter {
+     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
++        if self.partial_sealed {
++            return Err(std::io::Error::other(
++                "Arbiter partial writer is already sealed",
++            ));
++        }
+         let size = u64::try_from(bytes.len()).map_err(std::io::Error::other)?;
+         if self
+             .bytes
+--- D:\code\Github\airk\crates\airk-store\src\service\arbiter_assets\tests.rs
++++ D:\code\Github\airk\artifacts\advanced-split\model-download-origin-preparation-r1\store-restart\r2\tests.rs.proposed
+@@ -603,3 +603,329 @@
+     assert_eq!(store.phase(&profile)?, Some(Phase::Removed));
+     Ok(())
+ }
++
++#[test]
++fn failed_source_restart_starts_at_zero_and_preserves_completed_cache() -> Result<()> {
++    let (root, store, profile) = fixture()?;
++    let transaction = store.begin(&profile, 1)?;
++    let mut cached = transaction.asset(&profile.assets[1])?.unwrap();
++    cached.write_all(b"asset-data")?;
++    transaction.publish(cached)?;
++    let cached_file = transaction
++        .directory
++        .open_file(OsStr::new(&profile.assets[1].name), SetupFileMode::Read)?;
++    let cached_identity = file_identity(&cached_file)?;
++    drop(cached_file);
++    let mut failed = transaction.asset(&profile.assets[0])?.unwrap();
++    failed.write_all(b"asset-")?;
++    failed.write_all(b"da")?; // A completed prefix part plus failed next-part prefix.
++    let mut replacement = transaction.restart_failed_asset(failed)?;
++    assert_eq!(replacement.bytes, 0);
++    assert_eq!(replacement.file.metadata()?.len(), 0);
++    replacement.write_all(b"asset-data")?;
++    transaction.publish(replacement)?;
++    for asset in profile.assets.iter().skip(2) {
++        let mut writer = transaction.asset(asset)?.unwrap();
++        writer.write_all(b"asset-data")?;
++        transaction.publish(writer)?;
++    }
++    let cached_file = transaction
++        .directory
++        .open_file(OsStr::new(&profile.assets[1].name), SetupFileMode::Read)?;
++    assert_eq!(file_identity(&cached_file)?, cached_identity);
++    drop(cached_file);
++    transaction.finish()?;
++    assert_eq!(store.phase(&profile)?, Some(Phase::Ready));
++    let pinned = store.pin(&profile)?;
++    for asset in &profile.assets {
++        assert_eq!(pinned.read(asset)?, b"asset-data");
++    }
++    let stage = root
++        .path()
++        .join("arbiter-v3/assets")
++        .join(profile.manifest.to_string())
++        .join("stage-1");
++    assert!(!stage.join(&profile.assets[0].name).exists());
++    assert!(
++        !stage
++            .join(format!("{}.partial.json", profile.assets[0].name))
++            .exists()
++    );
++    assert!(stage.join("operation.json").exists());
++    Ok(())
++}
++
++#[test]
++fn failed_source_restart_refuses_writer_from_other_root_or_settled_operation() -> Result<()> {
++    let (first_root, first, profile) = fixture()?;
++    let (_second_root, second, _) = fixture()?;
++    let transaction = first.begin(&profile, 1)?;
++    let other = second.begin(&profile, 1)?;
++    let mut wrong = other.asset(&profile.assets[0])?.unwrap();
++    wrong.write_all(b"asse")?;
++    assert!(transaction.restart_failed_asset(wrong).is_err());
++    assert_eq!(
++        other
++            .stage
++            .read_file(OsStr::new(&profile.assets[0].name), 16)?,
++        b"asse"
++    );
++    drop(other);
++    let mut old = transaction.asset(&profile.assets[0])?.unwrap();
++    old.write_all(b"asset-")?;
++    transaction.cancel()?;
++    let current = first.begin(&profile, 2)?;
++    assert!(current.restart_failed_asset(old).is_err());
++    let old_path = first_root
++        .path()
++        .join("arbiter-v3/assets")
++        .join(profile.manifest.to_string())
++        .join("stage-1");
++    assert_eq!(
++        std::fs::read(old_path.join(&profile.assets[0].name))?,
++        b"asset-"
++    );
++    assert!(
++        old_path
++            .join(format!("{}.partial.json", profile.assets[0].name))
++            .exists()
++    );
++    assert!(
++        current
++            .stage
++            .open_file(OsStr::new(&profile.assets[0].name), SetupFileMode::Read)
++            .is_err()
++    );
++    Ok(())
++}
++
++#[test]
++fn failed_source_restart_seal_failure_preserves_unfinished_and_foreign_proof() -> Result<()> {
++    let (_root, store, profile) = fixture()?;
++    let transaction = store.begin(&profile, 1)?;
++    let mut writer = transaction.asset(&profile.assets[0])?.unwrap();
++    writer.write_all(b"asset-")?;
++    let proof_name = format!("{}.partial.json", profile.assets[0].name);
++    let mut foreign = transaction
++        .stage
++        .open_file(OsStr::new(&proof_name), SetupFileMode::CreateNew)?;
++    foreign.write_all(b"unowned-proof")?;
++    drop(foreign);
++    assert!(transaction.restart_failed_asset(writer).is_err());
++    assert_eq!(
++        transaction
++            .stage
++            .read_file(OsStr::new(&profile.assets[0].name), 16)?,
++        b"asset-"
++    );
++    assert_eq!(
++        transaction.stage.read_file(OsStr::new(&proof_name), 32)?,
++        b"unowned-proof"
++    );
++    Ok(())
++}
++
++#[test]
++fn failed_source_restart_refuses_replaced_or_linked_asset_and_changed_operation() -> Result<()> {
++    for defect in ["replaced", "linked", "operation"] {
++        let (root, store, profile) = fixture()?;
++        let transaction = store.begin(&profile, 1)?;
++        let mut writer = transaction.asset(&profile.assets[0])?.unwrap();
++        writer.write_all(b"asset-")?;
++        let stage = root
++            .path()
++            .join("arbiter-v3/assets")
++            .join(profile.manifest.to_string())
++            .join("stage-1");
++        let asset_path = stage.join(&profile.assets[0].name);
++        let retained = root.path().join("retained-original");
++        assert!(
++            transaction
++                .restart_failed_asset_with(writer, || {
++                    match defect {
++                        "replaced" => {
++                            std::fs::rename(&asset_path, &retained)?;
++                            std::fs::write(&asset_path, b"asset-")?;
++                        }
++                        "linked" => {
++                            std::fs::hard_link(&asset_path, &retained)?;
++                        }
++                        "operation" => {
++                            std::fs::write(stage.join("operation.json"), b"foreign operation")?;
++                        }
++                        _ => unreachable!(),
++                    }
++                    Ok(())
++                })
++                .is_err()
++        );
++        assert_eq!(std::fs::read(&asset_path)?, b"asset-");
++        if defect != "operation" {
++            assert_eq!(std::fs::read(&retained)?, b"asset-");
++        }
++        assert!(
++            stage
++                .join(format!("{}.partial.json", profile.assets[0].name))
++                .exists()
++        );
++    }
++    Ok(())
++}
++
++#[test]
++fn failed_source_restart_refuses_replaced_or_changed_partial_proof_before_asset_effects()
++-> Result<()> {
++    for replace in [false, true] {
++        let (root, store, profile) = fixture()?;
++        let transaction = store.begin(&profile, 1)?;
++        let mut writer = transaction.asset(&profile.assets[0])?.unwrap();
++        writer.write_all(b"asset-")?;
++        let stage = root
++            .path()
++            .join("arbiter-v3/assets")
++            .join(profile.manifest.to_string())
++            .join("stage-1");
++        let proof = stage.join(format!("{}.partial.json", profile.assets[0].name));
++        assert!(
++            transaction
++                .restart_failed_asset_with(writer, || {
++                    if replace {
++                        let bytes = std::fs::read(&proof)?;
++                        std::fs::rename(&proof, root.path().join("retained-proof"))?;
++                        std::fs::write(&proof, bytes)?;
++                    } else {
++                        std::fs::write(&proof, b"{}")?;
++                    }
++                    Ok(())
++                })
++                .is_err()
++        );
++        assert_eq!(
++            std::fs::read(stage.join(&profile.assets[0].name))?,
++            b"asset-"
++        );
++        assert!(proof.exists());
++    }
++    Ok(())
++}
++
++#[test]
++fn sealed_failed_writer_cannot_be_extended_or_published_as_complete() -> Result<()> {
++    let (_root, store, profile) = fixture()?;
++    let transaction = store.begin(&profile, 1)?;
++    let mut writer = transaction.asset(&profile.assets[0])?.unwrap();
++    writer.write_all(b"asset-data")?;
++    writer.seal_partial()?;
++    assert!(writer.write_all(b"x").is_err());
++    assert!(transaction.publish(writer).is_err());
++    assert!(
++        transaction
++            .directory
++            .open_file(OsStr::new(&profile.assets[0].name), SetupFileMode::Read)
++            .is_err()
++    );
++    assert_eq!(
++        transaction
++            .stage
++            .read_file(OsStr::new(&profile.assets[0].name), 16)?,
++        b"asset-data"
++    );
++    Ok(())
++}
++
++#[test]
++fn failed_source_restart_postseal_cancel_or_expiry_preserves_partial_proof_and_cache() -> Result<()>
++{
++    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
++    for expire in [false, true] {
++        let (_root, store, profile) = fixture()?;
++        let transaction = store.begin(&profile, 1)?;
++        let mut cached = transaction.asset(&profile.assets[1])?.unwrap();
++        cached.write_all(b"asset-data")?;
++        transaction.publish(cached)?;
++        let cached_file = transaction
++            .directory
++            .open_file(OsStr::new(&profile.assets[1].name), SetupFileMode::Read)?;
++        let identity = file_identity(&cached_file)?;
++        drop(cached_file);
++        let mut writer = transaction.asset(&profile.assets[0])?.unwrap();
++        writer.write_all(b"asset-")?;
++        let canceled = AtomicBool::new(false);
++        let clock = AtomicU64::new(100);
++        let check = || {
++            ensure!(
++                !canceled.load(Ordering::SeqCst) && clock.load(Ordering::SeqCst) < 200,
++                "original cancellation/deadline refused"
++            );
++            Ok(())
++        };
++        assert!(
++            transaction
++                .restart_failed_asset_checked(writer, &check, || {
++                    if expire {
++                        clock.store(201, Ordering::SeqCst);
++                    } else {
++                        canceled.store(true, Ordering::SeqCst);
++                    }
++                    Ok(())
++                })
++                .is_err()
++        );
++        assert_eq!(
++            transaction
++                .stage
++                .read_file(OsStr::new(&profile.assets[0].name), 16)?,
++            b"asset-"
++        );
++        assert!(
++            transaction
++                .stage
++                .open_file(
++                    OsStr::new(&format!("{}.partial.json", profile.assets[0].name)),
++                    SetupFileMode::Read
++                )
++                .is_ok()
++        );
++        let cached_file = transaction
++            .directory
++            .open_file(OsStr::new(&profile.assets[1].name), SetupFileMode::Read)?;
++        assert_eq!(file_identity(&cached_file)?, identity);
++    }
++    Ok(())
++}
++
++#[cfg(windows)]
++#[test]
++fn failed_source_restart_native_posthash_admission_refuses_before_disposition() -> Result<()> {
++    use std::sync::atomic::{AtomicBool, Ordering};
++    let (root, store, profile) = fixture()?;
++    let transaction = store.begin(&profile, 1)?;
++    let mut writer = transaction.asset(&profile.assets[0])?.unwrap();
++    writer.write_all(b"asset-")?;
++    let stage = root
++        .path()
++        .join("arbiter-v3/assets")
++        .join(profile.manifest.to_string())
++        .join("stage-1");
++    let path = stage.join(&profile.assets[0].name);
++    // This independent peer observes the native write exclusion held by the
++    // existing exact-byte/hash deletion adapter; it writes/truncates nothing.
++    assert!(std::fs::OpenOptions::new().write(true).open(&path).is_ok());
++    let posthash_fence_observed = AtomicBool::new(false);
++    let result = transaction.restart_failed_asset_if(writer, || {
++        if std::fs::OpenOptions::new().write(true).open(&path).is_err() {
++            posthash_fence_observed.store(true, Ordering::SeqCst);
++            anyhow::bail!("injected cancellation at actual native posthash admission fence");
++        }
++        Ok(())
++    });
++    assert!(result.is_err());
++    assert!(posthash_fence_observed.load(Ordering::SeqCst));
++    assert_eq!(std::fs::read(path)?, b"asset-");
++    assert!(
++        stage
++            .join(format!("{}.partial.json", profile.assets[0].name))
++            .exists()
++    );
++    Ok(())
++}
+--- D:\code\Github\airk\crates\airk-service\src\service_runtime\arbiter\download.rs
++++ D:\code\Github\airk\artifacts\advanced-split\model-download-origin-preparation-r1\service-consumer-r4\download.rs.proposed
+@@ -1,12 +1,80 @@
+ // SPDX-License-Identifier: Apache-2.0
+-//! Official release HTTP transport. Only compiled Core part declarations enter.
++//! Explicit native Provision transport. Core owns every declared source.
+ use super::*;
++use airk_core::arbiter::{DownloadOrigin, download_origin};
+ use airk_store::service::arbiter_assets::AssetWriter;
+ use http_body_util::{BodyExt, Empty};
+ use sha2::{Digest, Sha256};
+ use std::io::Write;
+ use tokio_util::sync::CancellationToken;
+ 
++#[derive(Debug)]
++pub(super) enum Failure {
++    Source(anyhow::Error),
++    Local(anyhow::Error),
++    Canceled,
++    Deadline,
++}
++impl Failure {
++    pub(super) fn can_fallback(&self) -> bool {
++        matches!(self, Self::Source(_))
++    }
++    pub(super) fn class(&self) -> &'static str {
++        match self {
++            Self::Source(_) => "source_failure",
++            Self::Local(_) => "local_custody_or_policy_failure",
++            Self::Canceled => "canceled",
++            Self::Deadline => "original_part_deadline",
++        }
++    }
++}
++impl std::fmt::Display for Failure {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        match self {
++            Self::Source(error) | Self::Local(error) => write!(f, "{}: {error:#}", self.class()),
++            _ => f.write_str(self.class()),
++        }
++    }
++}
++impl std::error::Error for Failure {}
++
++pub(super) struct PartBudget {
++    deadline: tokio::time::Instant,
++    redirects: usize,
++}
++impl PartBudget {
++    pub(super) fn new() -> Self {
++        Self {
++            deadline: tokio::time::Instant::now() + Duration::from_secs(900),
++            redirects: 0,
++        }
++    }
++    pub(super) fn live(&self) -> std::result::Result<(), Failure> {
++        if tokio::time::Instant::now() >= self.deadline {
++            Err(Failure::Deadline)
++        } else {
++            Ok(())
++        }
++    }
++    fn admit(&self, cancel: &CancellationToken) -> std::result::Result<(), Failure> {
++        if cancel.is_cancelled() {
++            return Err(Failure::Canceled);
++        }
++        self.live()
++    }
++    fn redirect(&mut self) -> Result<()> {
++        ensure!(self.redirects < 4, "Arbiter original part redirect limit");
++        self.redirects += 1;
++        Ok(())
++    }
++}
++
++fn hex_component(value: &str, bytes: usize) -> bool {
++    value.len() == bytes
++        && value
++            .bytes()
++            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
++}
+ fn approved(url: &str, initial: bool) -> Result<::http::Uri> {
+     let uri: ::http::Uri = url.parse()?;
+     ensure!(
+@@ -15,24 +83,90 @@
+     );
+     let authority = uri.authority().context("Arbiter download host missing")?;
+     ensure!(
+-        !authority.as_str().contains('@') && uri.port_u16().is_none_or(|port| port == 443),
++        !authority.as_str().contains('@')
++            && authority.as_str() == uri.host().context("Arbiter download host missing")?,
+         "Arbiter download authority refused"
+     );
++    if initial || download_origin(url).is_ok() {
++        download_origin(url)?;
++        return Ok(uri);
++    }
+     let host = uri.host().context("Arbiter download host missing")?;
+     let path = uri.path();
+-    let github = host == "github.com"
+-        && path.starts_with("/iokaio/airk/releases/download/")
+-        && uri.query().is_none();
+-    let cdn = !initial
+-        && ((host == "release-assets.githubusercontent.com"
+-            && path.starts_with("/github-production-release-asset/"))
+-            || (host == "objects.githubusercontent.com"
+-                && path.starts_with("/github-production-release-asset-2e65be/")));
++    let github = (host == "release-assets.githubusercontent.com"
++        && path.starts_with("/github-production-release-asset/"))
++        || (host == "objects.githubusercontent.com"
++            && path.starts_with("/github-production-release-asset-2e65be/"));
++    let pieces = path.split('/').collect::<Vec<_>>();
++    let hf_cdn = host == "us.aws.cdn.hf.co"
++        && pieces.len() == 4
++        && pieces[1] == "xet-bridge-us"
++        && hex_component(pieces[2], 24)
++        && hex_component(pieces[3], 64);
++    let hf_cache = if host == "huggingface.co" {
++        path.strip_prefix("/api/resolve-cache/models/")
++            .is_some_and(|suffix| {
++                let parts = suffix.split('/').collect::<Vec<_>>();
++                parts.len() == 4
++                    && download_origin(&format!(
++                        "https://huggingface.co/{}/{}/resolve/{}/{}",
++                        parts[0], parts[1], parts[2], parts[3]
++                    ))
++                    .is_ok()
++            })
++    } else {
++        false
++    };
+     ensure!(
+-        github || cdn,
+-        "Arbiter release download redirected outside approved hosts"
++        github || hf_cdn || hf_cache,
++        "Arbiter download redirected outside approved hosts/routes"
+     );
+     Ok(uri)
++}
++fn redirect_url(original: &str, location: &str) -> Result<String> {
++    let origin = download_origin(original)?;
++    let next = if location.starts_with('/') && !location.starts_with("//") {
++        ensure!(
++            origin == DownloadOrigin::HuggingFace,
++            "Arbiter relative release redirect refused"
++        );
++        format!("https://huggingface.co{location}")
++    } else {
++        location.to_owned()
++    };
++    let uri = approved(&next, false)?;
++    match origin {
++        DownloadOrigin::GitHubRelease => ensure!(
++            uri.host().is_some_and(|host| matches!(
++                host,
++                "github.com"
++                    | "release-assets.githubusercontent.com"
++                    | "objects.githubusercontent.com"
++            )),
++            "Arbiter release redirect crossed source origin"
++        ),
++        DownloadOrigin::HuggingFace => {
++            ensure!(
++                uri.host()
++                    .is_some_and(|host| matches!(host, "huggingface.co" | "us.aws.cdn.hf.co")),
++                "Arbiter HF redirect crossed source origin"
++            );
++            if uri.host() == Some("huggingface.co") {
++                let original_uri: ::http::Uri = original.parse()?;
++                let original_path = original_uri.path();
++                let suffix = original_path
++                    .strip_prefix('/')
++                    .context("HF original path")?
++                    .replace("/resolve/", "/");
++                ensure!(
++                    uri.path() == original_path
++                        || uri.path() == format!("/api/resolve-cache/models/{suffix}"),
++                    "Arbiter HF redirect changed immutable source"
++                );
++            }
++        }
++    }
++    Ok(next)
+ }
+ struct Connection(tokio::task::JoinHandle<()>);
+ impl Drop for Connection {
+@@ -64,13 +198,13 @@
+     let connection = Connection(tokio::spawn(async move {
+         let _ = connection.await;
+     }));
+-    let target = uri
+-        .path_and_query()
+-        .context("download path missing")?
+-        .as_str();
+     let request = hyper::Request::builder()
+         .method("GET")
+-        .uri(target)
++        .uri(
++            uri.path_and_query()
++                .context("download path missing")?
++                .as_str(),
++        )
+         .header("Host", host)
+         .header("User-Agent", "AIRK-Arbiter-native")
+         .header("Accept-Encoding", "identity")
+@@ -78,100 +212,272 @@
+     Ok((sender.send_request(request).await?, connection))
+ }
+ 
+-async fn consume<B>(mut body: B, part: &AssetPart, writer: &mut AssetWriter) -> Result<()>
++#[cfg(test)]
++pub(super) async fn consume<B>(
++    body: B,
++    part: &AssetPart,
++    writer: &mut AssetWriter,
++) -> std::result::Result<(), Failure>
++where
++    B: http_body::Body<Data = bytes::Bytes> + Unpin,
++    B::Error: std::error::Error + Send + Sync + 'static,
++{
++    consume_checked(body, part, writer, || Ok(())).await
++}
++async fn consume_checked<B>(
++    mut body: B,
++    part: &AssetPart,
++    writer: &mut AssetWriter,
++    check: impl Fn() -> std::result::Result<(), Failure> + Send + Sync,
++) -> std::result::Result<(), Failure>
+ where
+     B: http_body::Body<Data = bytes::Bytes> + Unpin,
+     B::Error: std::error::Error + Send + Sync + 'static,
+ {
+     let mut bytes = 0_u64;
+     let mut hash = Sha256::new();
+-    while let Some(frame) = tokio::time::timeout(Duration::from_secs(30), body.frame())
+-        .await
+-        .context("Arbiter asset idle deadline")?
+-    {
+-        let frame = frame?;
++    loop {
++        check()?;
++        let Some(frame) = tokio::time::timeout(Duration::from_secs(30), body.frame())
++            .await
++            .context("Arbiter asset idle deadline")
++            .map_err(Failure::Source)?
++        else {
++            break;
++        };
++        check()?;
++        let frame = frame.map_err(|error| Failure::Source(anyhow::Error::new(error)))?;
+         let data = frame
+             .into_data()
+-            .map_err(|_| anyhow::anyhow!("Arbiter asset trailers refused"))?;
++            .map_err(|_| Failure::Source(anyhow::anyhow!("Arbiter asset trailers refused")))?;
+         bytes = bytes
+-            .checked_add(u64::try_from(data.len())?)
+-            .context("Arbiter asset byte overflow")?;
+-        ensure!(bytes <= part.bytes, "Arbiter part exceeds approved bytes");
++            .checked_add(u64::try_from(data.len()).map_err(|error| Failure::Source(error.into()))?)
++            .context("Arbiter asset byte overflow")
++            .map_err(Failure::Source)?;
++        if bytes > part.bytes {
++            return Err(Failure::Source(anyhow::anyhow!(
++                "Arbiter part exceeds approved bytes"
++            )));
++        }
+         hash.update(&data);
+-        writer.write_all(&data)?;
+-    }
+-    ensure!(
+-        bytes == part.bytes
+-            && airk_core::identity::Sha256Digest::from_bytes(hash.finalize().into()) == part.sha256,
+-        "Arbiter part digest differs"
+-    );
++        check()?;
++        writer
++            .write_all(&data)
++            .map_err(|error| Failure::Local(error.into()))?;
++    }
++    check()?;
++    if bytes != part.bytes
++        || airk_core::identity::Sha256Digest::from_bytes(hash.finalize().into()) != part.sha256
++    {
++        return Err(Failure::Source(anyhow::anyhow!(
++            "Arbiter part digest differs"
++        )));
++    }
++    check()?;
+     Ok(())
+ }
+ pub(super) async fn part(
+     part: &AssetPart,
++    ordinal: usize,
++    budget: &mut PartBudget,
+     writer: &mut AssetWriter,
+     cancel: &CancellationToken,
+-) -> Result<()> {
+-    approved(&part.url, true)?;
+-    ensure!(
+-        part.bytes > 0 && part.bytes <= 1_u64 << 30,
+-        "Arbiter download part bound"
+-    );
++) -> std::result::Result<(), Failure> {
++    part.validate().map_err(Failure::Local)?;
++    let original = part
++        .source_url(ordinal)
++        .context("Arbiter complete source ordinal absent")
++        .map_err(Failure::Local)?;
++    approved(original, true).map_err(Failure::Local)?;
++    budget.admit(cancel)?;
++    let deadline = budget.deadline;
+     let work = async {
+-        let mut url = part.url.clone();
+-        for redirects in 0..=4 {
++        let mut url = original.to_owned();
++        loop {
++            budget.admit(cancel)?;
+             let (response, connection) =
+                 tokio::time::timeout(Duration::from_secs(30), response(&url))
+                     .await
+-                    .context("Arbiter response deadline")??;
++                    .context("Arbiter response deadline")
++                    .map_err(Failure::Source)?
++                    .map_err(Failure::Source)?;
+             if response.status().is_redirection() {
+-                ensure!(redirects < 4, "Arbiter redirect limit");
++                budget.redirect().map_err(Failure::Source)?;
+                 let next = response
+                     .headers()
+                     .get(::http::header::LOCATION)
+-                    .context("Arbiter redirect missing location")?
+-                    .to_str()?
+-                    .to_owned();
+-                approved(&next, false)?;
++                    .context("Arbiter redirect missing location")
++                    .map_err(Failure::Source)?
++                    .to_str()
++                    .context("Arbiter redirect location encoding")
++                    .map_err(Failure::Source)?;
++                url = redirect_url(original, next).map_err(Failure::Source)?;
+                 drop(response);
+                 drop(connection);
+-                url = next;
+                 continue;
+             }
+-            ensure!(
+-                response.status() == ::http::StatusCode::OK,
+-                "Arbiter asset HTTP status {}",
+-                response.status()
+-            );
+-            ensure!(
+-                response
+-                    .headers()
+-                    .get(::http::header::CONTENT_ENCODING)
+-                    .is_none_or(|v| v == "identity"),
+-                "Arbiter compressed transport refused"
+-            );
++            if response.status() != ::http::StatusCode::OK {
++                return Err(Failure::Source(anyhow::anyhow!(
++                    "Arbiter asset HTTP status {}",
++                    response.status()
++                )));
++            }
++            if response
++                .headers()
++                .get(::http::header::CONTENT_ENCODING)
++                .is_some_and(|value| value != "identity")
++            {
++                return Err(Failure::Source(anyhow::anyhow!(
++                    "Arbiter compressed transport refused"
++                )));
++            }
+             let declared = response
+                 .headers()
+                 .get(::http::header::CONTENT_LENGTH)
+-                .context("Arbiter asset length missing")?
+-                .to_str()?
+-                .parse::<u64>()?;
+-            ensure!(
+-                declared == part.bytes,
+-                "Arbiter part Content-Length differs"
+-            );
+-            consume(response.into_body(), part, writer).await?;
++                .context("Arbiter asset length missing")
++                .map_err(Failure::Source)?
++                .to_str()
++                .context("Arbiter asset length encoding")
++                .map_err(Failure::Source)?
++                .parse::<u64>()
++                .context("Arbiter asset length invalid")
++                .map_err(Failure::Source)?;
++            if declared != part.bytes {
++                return Err(Failure::Source(anyhow::anyhow!(
++                    "Arbiter part Content-Length differs"
++                )));
++            }
++            consume_checked(response.into_body(), part, writer, || budget.admit(cancel)).await?;
+             drop(connection);
+             return Ok(());
+         }
+-        anyhow::bail!("Arbiter redirect limit")
+     };
+-    tokio::select! {biased;_ = cancel.cancelled()=>anyhow::bail!("Arbiter provisioning canceled"),result=tokio::time::timeout(Duration::from_secs(900),work)=>result.context("Arbiter part deadline")?}
++    tokio::select! {biased;
++        _ = cancel.cancelled() => Err(Failure::Canceled),
++        result = tokio::time::timeout_at(deadline, work) => result.unwrap_or(Err(Failure::Deadline)),
++    }
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++    struct CancelOnData {
++        cancel: CancellationToken,
++        sent: bool,
++    }
++    impl http_body::Body for CancelOnData {
++        type Data = bytes::Bytes;
++        type Error = std::convert::Infallible;
++        fn poll_frame(
++            self: std::pin::Pin<&mut Self>,
++            _: &mut std::task::Context<'_>,
++        ) -> std::task::Poll<Option<std::result::Result<http_body::Frame<Self::Data>, Self::Error>>>
++        {
++            let body = self.get_mut();
++            if body.sent {
++                return std::task::Poll::Ready(None);
++            }
++            body.sent = true;
++            body.cancel.cancel();
++            std::task::Poll::Ready(Some(Ok(http_body::Frame::data(bytes::Bytes::from_static(
++                b"hello",
++            )))))
++        }
++    }
++    #[test]
++    fn native_emitted_canonical_source_cases_enter_transport_without_invented_backups() -> Result<()>
++    {
++        let cases: serde_json::Value = serde_json::from_slice(include_bytes!(
++            "../../../../../fixtures/split/arbiter/download_origin_cases.json"
++        ))?;
++        for name in [
++            "hf_primary_no_backup",
++            "hf_primary_actual_same_byte_hf_backup",
++            "hf_primary_configured_gh_backup_structural_only",
++        ] {
++            let row = &cases[name];
++            let part: AssetPart = serde_json::from_value(row["part"].clone())?;
++            let count = usize::try_from(
++                row["source_count"]
++                    .as_u64()
++                    .context("Native source count absent")?,
++            )?;
++            for ordinal in 0..count {
++                approved(
++                    part.source_url(ordinal).context("Native source absent")?,
++                    true,
++                )?;
++            }
++            assert!(part.source_url(count).is_none());
++        }
++        assert_eq!(cases["network_executed"], false);
++        assert_eq!(cases["qualification"], false);
++        assert_eq!(
++            cases["hf_primary_configured_gh_backup_structural_only"]["working_gh_backup_asserted"],
++            false
++        );
++        Ok(())
++    }
++    #[test]
++    fn canonical_hf_sources_and_only_observed_origin_bound_redirects_are_accepted() -> Result<()> {
++        let source = "https://huggingface.co/Qwen/Qwen3-1.7B/resolve/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e/tokenizer.json";
++        approved(source, true)?;
++        let cache = "/api/resolve-cache/models/Qwen/Qwen3-1.7B/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e/tokenizer.json?etag=opaque";
++        redirect_url(source, cache)?;
++        redirect_url(
++            source,
++            "https://us.aws.cdn.hf.co/xet-bridge-us/680da7517bcb5198014ad394/6aec39639a0a2d1ca966356b8c2b8426a484f80ff80731f44fa8482040713bdf?signature=opaque",
++        )?;
++        for bad in [
++            "https://cdn.huggingface.co/anything",
++            "https://us.aws.cdn.hf.co/arbitrary/object?signature=opaque",
++            "https://huggingface.co/api/resolve-cache/models/Qwen/Qwen3-4B/1cfa9a7208912126459214e8b04321603b3df60c/tokenizer.json",
++            "https://github.com/iokaio/airk/releases/download/v1.9.0/tokenizer.json",
++            "//evil.invalid/tokenizer.json",
++        ] {
++            assert!(redirect_url(source, bad).is_err(), "{bad}");
++        }
++        assert!(approved(cache, true).is_err());
++        assert!(
++            redirect_url(
++                "https://github.com/iokaio/airk/releases/download/v1.9.0/model.part01",
++                source
++            )
++            .is_err()
++        );
++        Ok(())
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn part_deadline_and_redirect_budget_are_never_reset_for_backup() -> Result<()> {
++        let mut budget = PartBudget::new();
++        let original = budget.deadline;
++        let cancel = CancellationToken::new();
++        budget.admit(&cancel)?;
++        let already_canceled = CancellationToken::new();
++        already_canceled.cancel();
++        assert!(matches!(
++            budget.admit(&already_canceled),
++            Err(Failure::Canceled)
++        ));
++        assert_eq!(budget.deadline, original);
++        for _ in 0..4 {
++            budget.redirect()?;
++        }
++        assert!(budget.redirect().is_err());
++        assert_eq!(budget.redirects, 4);
++        tokio::time::advance(Duration::from_secs(899)).await;
++        budget.live()?;
++        assert_eq!(budget.deadline, original);
++        tokio::time::advance(Duration::from_secs(1)).await;
++        assert!(matches!(budget.live(), Err(Failure::Deadline)));
++        assert_eq!(budget.deadline, original);
++        assert!(Failure::Source(anyhow::anyhow!("network")).can_fallback());
++        assert!(!Failure::Local(anyhow::anyhow!("custody")).can_fallback());
++        assert!(!Failure::Canceled.can_fallback());
++        assert!(!Failure::Deadline.can_fallback());
++        Ok(())
++    }
+     #[test]
+     fn approved_release_redirects_are_exact_https_and_never_workspace_or_arbitrary_hosts()
+     -> Result<()> {
+@@ -249,6 +555,7 @@
+             .context("missing stage")?;
+         let first = AssetPart {
+             url: "https://github.com/iokaio/airk/releases/download/v1.9.0/model.part01".into(),
++            backup_urls: vec![],
+             bytes: 5,
+             sha256: digest,
+         };
+@@ -293,6 +600,30 @@
+             .await
+             .is_err()
+         );
++        let mut stopped = transaction
++            .asset(&profile.assets[3])?
++            .context("missing cancellation stage")?;
++        let cancel = CancellationToken::new();
++        let budget = PartBudget::new();
++        let result = consume_checked(
++            CancelOnData {
++                cancel: cancel.clone(),
++                sent: false,
++            },
++            &first,
++            &mut stopped,
++            || budget.admit(&cancel),
++        )
++        .await;
++        assert!(matches!(result, Err(Failure::Canceled)));
++        drop(stopped);
++        let untouched = root
++            .path()
++            .join("arbiter-v3/assets")
++            .join(profile.manifest.to_string())
++            .join("stage-1")
++            .join(&profile.assets[3].name);
++        assert_eq!(std::fs::metadata(untouched)?.len(), 0);
+         drop(transaction);
+         assert_eq!(store.phase(&profile)?, Some(Phase::Failed));
+         assert!(store.pin(&profile).is_err());
+--- D:\code\Github\airk\crates\airk-service\src\service_runtime\arbiter\assets.rs
++++ D:\code\Github\airk\artifacts\advanced-split\model-download-origin-preparation-r1\service-consumer-r5\assets.rs.proposed
+@@ -58,6 +58,7 @@
+     store: &Arc<AssetStore>,
+     revision: u64,
+     cancel: &CancellationToken,
++    source_log: Option<&airk_host::service_logs::Log>,
+ ) -> Result<()> {
+     profile.validate_release_downloads()?;
+     let probe = store.clone();
+@@ -81,14 +82,24 @@
+                 .iter()
+                 .find(|download| download.asset_name == asset.name)
+                 .context("Arbiter asset transport missing")?;
+-            for part in &download.parts {
+-                if let Err(error) = super::download::part(part, &mut writer, cancel).await {
++            writer = match whole_asset(
++                &transaction,
++                download,
++                writer,
++                cancel,
++                &mut native_part,
++                source_log.map(|log| (log, asset.sha256)),
++            )
++            .await
++            {
++                Ok(writer) => writer,
++                Err(error) => {
+                     if cancel.is_cancelled() {
+                         transaction.cancel()?;
+                     }
+                     return Err(error);
+                 }
+-            }
++            };
+             transaction.publish(writer)?;
+         }
+     }
+@@ -98,3 +109,102 @@
+     }
+     transaction.finish()
+ }
++
++type PartFuture<'a> = std::pin::Pin<
++    Box<
++        dyn std::future::Future<Output = std::result::Result<(), super::download::Failure>>
++            + Send
++            + 'a,
++    >,
++>;
++fn native_part<'a>(
++    part: &'a AssetPart,
++    ordinal: usize,
++    budget: &'a mut super::download::PartBudget,
++    writer: &'a mut airk_store::service::arbiter_assets::AssetWriter,
++    cancel: &'a CancellationToken,
++) -> PartFuture<'a> {
++    Box::pin(super::download::part(part, ordinal, budget, writer, cancel))
++}
++async fn whole_asset<F>(
++    transaction: &airk_store::service::arbiter_assets::Transaction,
++    download: &airk_core::arbiter::AssetDownload,
++    mut writer: airk_store::service::arbiter_assets::AssetWriter,
++    cancel: &CancellationToken,
++    request: &mut F,
++    diagnostics: Option<(
++        &airk_host::service_logs::Log,
++        airk_core::identity::Sha256Digest,
++    )>,
++) -> Result<airk_store::service::arbiter_assets::AssetWriter>
++where
++    F: for<'a> FnMut(
++        &'a AssetPart,
++        usize,
++        &'a mut super::download::PartBudget,
++        &'a mut airk_store::service::arbiter_assets::AssetWriter,
++        &'a CancellationToken,
++    ) -> PartFuture<'a>,
++{
++    let sources = download.source_count()?;
++    let mut budgets: Vec<Option<super::download::PartBudget>> =
++        (0..download.parts.len()).map(|_| None).collect();
++    let mut failures = Vec::new();
++    for ordinal in 0..sources {
++        ensure!(!cancel.is_cancelled(), "Arbiter provisioning canceled");
++        for budget in budgets.iter().flatten() {
++            budget.live()?;
++        }
++        let mut failed = None;
++        for (index, part) in download.parts.iter().enumerate() {
++            let budget = budgets[index].get_or_insert_with(super::download::PartBudget::new);
++            if let Err(error) = request(part, ordinal, budget, &mut writer, cancel).await {
++                failed = Some(error);
++                break;
++            }
++        }
++        match failed {
++            None => return Ok(writer),
++            Some(error) => {
++                failures.push(format!("source ordinal {ordinal}: {}", error.class()));
++                if let Some((log, asset_sha256)) = diagnostics {
++                    log.record_code(
++                        airk_core::service_logs::LogKind::ModelFailed,
++                        None,
++                        None,
++                        Some(&source_failure_code(asset_sha256, ordinal, &error)),
++                    );
++                }
++                if !error.can_fallback() || ordinal + 1 == sources || cancel.is_cancelled() {
++                    return Err(anyhow::anyhow!(
++                        "Arbiter asset source attempts stopped: {}",
++                        failures.join("; ")
++                    ))
++                    .context(error);
++                }
++                for budget in budgets.iter().flatten() {
++                    budget.live()?;
++                }
++                writer = transaction.restart_failed_asset_if(writer, || {
++                    ensure!(!cancel.is_cancelled(), "Arbiter provisioning canceled");
++                    for budget in budgets.iter().flatten() {
++                        budget.live()?;
++                    }
++                    Ok(())
++                })?;
++            }
++        }
++    }
++    anyhow::bail!("Arbiter complete source roster exhausted")
++}
++
++#[cfg(test)]
++mod source_attempt_tests;
++
++fn source_failure_code(
++    asset: airk_core::identity::Sha256Digest,
++    ordinal: usize,
++    failure: &super::download::Failure,
++) -> String {
++    format!("arbiter_source_{asset}_{ordinal}_{}", failure.class())
++}
+--- D:\code\Github\airk\crates\airk-service\src\service_runtime\arbiter\assets\source_attempt_tests.rs
++++ D:\code\Github\airk\artifacts\advanced-split\model-download-origin-preparation-r1\service-consumer-r5\source_attempt_tests.rs.proposed
+@@ -0,0 +1,271 @@
++// SPDX-License-Identifier: Apache-2.0
++use super::*;
++use airk_core::arbiter::{AssetDownload, AssetPart, Stage, Task};
++use airk_store::service::{
++    ServiceLease,
++    arbiter_assets::{AssetWriter, Phase},
++};
++use sha2::{Digest, Sha256};
++use std::io::Write;
++type Calls = Arc<Mutex<Vec<usize>>>;
++
++#[test]
++fn source_failure_diagnostics_use_existing_bounded_content_free_records() -> Result<()> {
++    use super::super::download::Failure;
++    let asset = airk_core::identity::Sha256Digest::from_bytes([7; 32]);
++    for failure in [
++        Failure::Source(anyhow::anyhow!(
++            "https://example.invalid/?signature=do_not_log"
++        )),
++        Failure::Local(anyhow::anyhow!("/private/source/path")),
++        Failure::Canceled,
++        Failure::Deadline,
++    ] {
++        let code = source_failure_code(asset, 2, &failure);
++        assert!(code.len() <= 128);
++        assert!(code.contains(&asset.to_string()));
++        assert!(code.contains(failure.class()));
++        assert!(!code.contains("https"));
++        assert!(!code.contains("signature"));
++        assert!(!code.contains("/private"));
++        airk_core::service_logs::LogRecord {
++            schema: 1,
++            instance: airk_core::identity::Incarnation::from_bytes([1; 16]),
++            observed_unix_ms: 1,
++            kind: airk_core::service_logs::LogKind::ModelFailed,
++            project: None,
++            job: None,
++            count: 1,
++            code: Some(code),
++        }
++        .validate()?;
++    }
++    Ok(())
++}
++
++fn fixture(backups: usize) -> Result<(tempfile::TempDir, Arc<AssetStore>, Profile)> {
++    let root = tempfile::tempdir()?;
++    let store = AssetStore::open(
++        Arc::new(ServiceLease::acquire(root.path())?),
++        airk_core::identity::Sha256Digest::from_bytes([1; 32]),
++        airk_core::identity::Incarnation::from_bytes([2; 16]),
++    )?;
++    let mut profile: Profile = serde_json::from_slice(include_bytes!(
++        "../../../../../../fixtures/arbiter/profile-downloads.json"
++    ))?;
++    profile.qualification = None;
++    profile.stage = Some(Stage::Context);
++    profile.model = airk_core::arbiter::ModelChoice::ContextQwenCompact;
++    profile.tasks = std::collections::BTreeSet::from([Task::ContextAction]);
++    profile.task_policies = std::collections::BTreeMap::from([(
++        Task::ContextAction,
++        airk_retrieval::arbiter::context_action::policy_digest()?,
++    )]);
++    profile.abi = super::super::failure_tests::structural_context_abi();
++    profile.assets.truncate(6);
++    profile.peak_disk_bytes = 1 << 20;
++    let full = airk_core::identity::Sha256Digest::from_bytes(Sha256::digest(b"helloworld").into());
++    for asset in &mut profile.assets {
++        asset.bytes = 10;
++        asset.sha256 = full;
++    }
++    profile.compiler = full;
++    profile.calibration = full;
++    profile.downloads = profile.assets.iter().map(|asset| AssetDownload {
++        asset_name: asset.name.clone(),
++        parts: [b"hello".as_slice(), b"world".as_slice()].into_iter().enumerate().map(|(index, data)| AssetPart {
++            url: format!("https://github.com/iokaio/airk/releases/download/v1.9.0/{}-part{:02}", asset.name, index + 1),
++            backup_urls: (1..=backups).map(|ordinal| format!("https://github.com/iokaio/airk/releases/download/v1.9.0/{}-backup{}-part{:02}", asset.name, ordinal, index + 1)).collect(),
++            bytes: 5,
++            sha256: airk_core::identity::Sha256Digest::from_bytes(Sha256::digest(data).into()),
++        }).collect(),
++    }).collect();
++    profile.validate_release_downloads()?;
++    Ok((root, store, profile))
++}
++
++#[derive(Clone, Copy)]
++enum Script {
++    Success,
++    PartialPrimary,
++    AlwaysFail,
++    LocalFailure,
++    Cancel,
++    Expire,
++}
++fn scripted(
++    mode: Script,
++    calls: Calls,
++) -> impl for<'a> FnMut(
++    &'a AssetPart,
++    usize,
++    &'a mut super::super::download::PartBudget,
++    &'a mut AssetWriter,
++    &'a CancellationToken,
++) -> PartFuture<'a> {
++    move |part, ordinal, budget, writer, cancel| {
++        let calls = calls.clone();
++        Box::pin(async move {
++            calls.lock().unwrap().push(ordinal);
++            budget.live()?;
++            if matches!(mode, Script::Expire) {
++                tokio::time::advance(Duration::from_secs(900)).await;
++                return Err(super::super::download::Failure::Source(anyhow::anyhow!(
++                    "late primary"
++                )));
++            }
++            if matches!(mode, Script::LocalFailure) {
++                return Err(super::super::download::Failure::Local(anyhow::anyhow!(
++                    "local custody"
++                )));
++            }
++            if matches!(mode, Script::Cancel) {
++                cancel.cancel();
++                return Err(super::super::download::Failure::Source(anyhow::anyhow!(
++                    "source closed during cancel"
++                )));
++            }
++            if matches!(mode, Script::AlwaysFail)
++                || matches!(mode, Script::PartialPrimary)
++                    && ordinal == 0
++                    && part.url.ends_with("part02")
++            {
++                writer
++                    .write_all(b"bad")
++                    .map_err(|error| super::super::download::Failure::Local(error.into()))?;
++                return Err(super::super::download::Failure::Source(anyhow::anyhow!(
++                    "injected source disconnect"
++                )));
++            }
++            let data = if part.url.ends_with("part01") {
++                b"hello"
++            } else {
++                b"world"
++            };
++            super::super::download::consume(
++                http_body_util::Full::new(bytes::Bytes::copy_from_slice(data)),
++                part,
++                writer,
++            )
++            .await
++        })
++    }
++}
++
++#[tokio::test]
++async fn primary_success_skips_backup_and_partial_primary_restarts_whole_asset() -> Result<()> {
++    for mode in [Script::Success, Script::PartialPrimary] {
++        let (root, store, profile) = fixture(1)?;
++        let transaction = store.begin(&profile, 1)?;
++        let writer = transaction
++            .asset(&profile.assets[0])?
++            .context("missing writer")?;
++        let calls = Arc::new(Mutex::new(Vec::new()));
++        let mut request = scripted(mode, calls.clone());
++        let writer = whole_asset(
++            &transaction,
++            &profile.downloads[0],
++            writer,
++            &CancellationToken::new(),
++            &mut request,
++            None,
++        )
++        .await?;
++        transaction.publish(writer)?;
++        assert_eq!(
++            *calls.lock().unwrap(),
++            if matches!(mode, Script::Success) {
++                vec![0, 0]
++            } else {
++                vec![0, 0, 1, 1]
++            }
++        );
++        assert_eq!(
++            std::fs::read(
++                root.path()
++                    .join("arbiter-v3/assets")
++                    .join(profile.manifest.to_string())
++                    .join(&profile.assets[0].name)
++            )?,
++            b"helloworld"
++        );
++        assert!(store.pin(&profile).is_err());
++    }
++    Ok(())
++}
++
++#[tokio::test(start_paused = true)]
++async fn source_attempts_are_bounded_and_cancel_custody_or_original_deadline_never_fallback()
++-> Result<()> {
++    for mode in [
++        Script::AlwaysFail,
++        Script::LocalFailure,
++        Script::Cancel,
++        Script::Expire,
++    ] {
++        let (_root, store, profile) = fixture(2)?;
++        let transaction = store.begin(&profile, 1)?;
++        let writer = transaction
++            .asset(&profile.assets[0])?
++            .context("missing writer")?;
++        let calls = Arc::new(Mutex::new(Vec::new()));
++        let mut request = scripted(mode, calls.clone());
++        assert!(
++            whole_asset(
++                &transaction,
++                &profile.downloads[0],
++                writer,
++                &CancellationToken::new(),
++                &mut request
++            None,
++            )
++            .await
++            .is_err()
++        );
++        assert_eq!(
++            *calls.lock().unwrap(),
++            if matches!(mode, Script::AlwaysFail) {
++                vec![0, 1, 2]
++            } else {
++                vec![0]
++            }
++        );
++        drop(transaction);
++        assert_eq!(store.phase(&profile)?, Some(Phase::Failed));
++        assert!(store.pin(&profile).is_err());
++    }
++    Ok(())
++}
++
++#[tokio::test]
++async fn absent_backup_and_precanceled_provisioning_never_invent_attempts() -> Result<()> {
++    for canceled in [false, true] {
++        let (_root, store, profile) = fixture(0)?;
++        let transaction = store.begin(&profile, 1)?;
++        let writer = transaction
++            .asset(&profile.assets[0])?
++            .context("missing writer")?;
++        let calls = Arc::new(Mutex::new(Vec::new()));
++        let mut request = scripted(Script::AlwaysFail, calls.clone());
++        let cancel = CancellationToken::new();
++        if canceled {
++            cancel.cancel();
++        }
++        assert!(
++            whole_asset(
++                &transaction,
++                &profile.downloads[0],
++                writer,
++                &cancel,
++                &mut request
++            None,
++            )
++            .await
++            .is_err()
++        );
++        assert_eq!(calls.lock().unwrap().len(), if canceled { 0 } else { 1 });
++        drop(transaction);
++        assert_ne!(store.phase(&profile)?, Some(Phase::Ready));
++    }
++    Ok(())
++}
+--- D:\code\Github\airk\crates\airk-service\src\service_runtime\arbiter.rs
++++ D:\code\Github\airk\artifacts\advanced-split\model-download-origin-preparation-r1\service-consumer-r5\arbiter.rs.proposed
+@@ -78,6 +78,16 @@
+             #[cfg(all(feature = "local-inference", feature = "test-support"))]
+             gate,
+         })
++    }
++    pub(super) fn with_source_diagnostics(self, log: airk_host::service_logs::Log) -> Result<Self> {
++        #[cfg(feature = "local-inference")]
++        {
++            self.focus.bind_source_diagnostics(log.clone())?;
++            self.context.bind_source_diagnostics(log)?;
++        }
++        #[cfg(not(feature = "local-inference"))]
++        let _ = log;
++        Ok(self)
+     }
+     fn stage(&self, stage: Stage) -> &StageOwner {
+         match stage {
+--- D:\code\Github\airk\crates\airk-service\src\service_runtime\arbiter\lifecycle.rs
++++ D:\code\Github\airk\artifacts\advanced-split\model-download-origin-preparation-r1\service-consumer-r6\lifecycle.rs.proposed
+@@ -18,6 +18,7 @@
+     cancel: CancellationToken,
+     handle: Option<Handle>,
+     pending: Option<PreparedLaunch>,
++    source_log: Option<airk_host::service_logs::Log>,
+     #[cfg(all(test, feature = "test-support"))]
+     warm_observer: Option<super::warm_observer::Observer>,
+ }
+@@ -33,6 +34,7 @@
+             cancel: CancellationToken::new(),
+             handle: None,
+             pending: None,
++            source_log: None,
+             #[cfg(all(test, feature = "test-support"))]
+             warm_observer: None,
+         }
+@@ -559,11 +561,16 @@
+                     Availability::Downloading,
+                     "Downloading the exact compiled qualified Arbiter asset parts.",
+                 )?;
++                let source_log = {
++                    let state = shared.lock().map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
++                    state.source_log.clone()
++                };
+                 super::assets::provision(
+                     execution.description(),
+                     &store,
+                     expected.revision,
+                     &cancel,
++                    source_log.as_ref(),
+                 )
+                 .await?;
+             }
+@@ -826,6 +833,13 @@
+ }
+ 
+ impl StageOwner {
++    pub(super) fn bind_source_diagnostics(&self, log: airk_host::service_logs::Log) -> Result<()> {
++        self.lifecycle
++            .lock()
++            .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?
++            .source_log = Some(log);
++        Ok(())
++    }
+     pub(super) fn unavailable_status(&self, reason: &str) -> Result<StageStatus> {
+         let state = self
+             .lifecycle
+@@ -922,7 +936,7 @@
+                 } else if active == Some(profile.manifest) {
+                     (Availability::Requested,"Previous native session is retained but is not admitted for the current enabled selection.".into())
+                 } else {
+-                    match self.assets.phase(profile)?{Some(Phase::Ready)=>(Availability::Requested,"Completed provisioning receipt retained; native activation requires re-verification and the selected enabled choice.".into()),Some(Phase::Downloading)|Some(Phase::Failed)|Some(Phase::Canceled)|Some(Phase::Removing)=>(Availability::Failed,"Prior asset operation did not complete. Explicit recovery is required; no download was resumed.".into()),_=>(Availability::MissingAssets,"Explicit provisioning is required.".into())}
++                    match self.assets.phase(profile)?{Some(Phase::Ready)=>(Availability::Requested,"Completed provisioning receipt retained; native activation requires re-verification and the selected enabled choice.".into()),Some(Phase::Downloading)|Some(Phase::Failed)|Some(Phase::Canceled)=>(Availability::Failed,"Asset acquisition did not complete. Use a new explicit Provision or verified local Import; Recover does not download.".into()),Some(Phase::Removing)=>(Availability::Failed,"An unfinished asset removal requires local Recover; no download was resumed.".into()),_=>(Availability::MissingAssets,"Explicit provisioning is required.".into())}
+                 };
+                 ProfileStatus {
+                     cpu_fit: profile.cpu_fit.clone(),
+--- D:\code\Github\airk\crates\airk-service\src\service_runtime.rs
++++ D:\code\Github\airk\artifacts\advanced-split\model-download-origin-preparation-r1\service-consumer-r5\service_runtime.rs.proposed
+@@ -1710,6 +1710,9 @@
+             Some(owner.into_owner_for(&_ownership, &gate)?)
+         }
+     };
++    let arbiter = arbiter
++        .map(|owner| owner.with_source_diagnostics(log.clone()))
++        .transpose()?;
+     let state = Arc::new(State {
+         draining: std::sync::atomic::AtomicBool::new(false),
+         arbiter,
+--- D:\code\Github\airk\crates\airk-retrieval\src\arbiter\publication\CONTRACT.md
++++ D:\code\Github\airk\artifacts\advanced-split\model-download-origin-preparation-r1\publication-consumer-r2\proposed\crates\airk-retrieval\src\arbiter\publication\CONTRACT.md
+@@ -0,0 +1,33 @@
++# Selected compiled publication source projection
++
++The immutable compiled catalog remains the authority for the complete exact
++three selected profiles, their native policies, final qualification/task/target
++and CPU fit, logical assets and all Core-validated immutable source locations.
++The compiled catalog SHA authenticates HF authority even though the legacy
++GitHub publication file map does not repeat those files.
++
++Publication keeps schema airk.arbiter.publication/1 and exactly three qualified
++model slots. Its assets map contains ONLY files whose approved part primary or
++actual declared backup is an official GitHub release location at the requested
++native release tag. HF-only parts add no GitHub filename. A GitHub backup counts
++regardless of primary origin. Duplicate GitHub filenames must have equal byte
++length/hash; a foreign GitHub tag or Core-rejected origin/backup refuses. The
++public github_part_filenames hook is the same owner used by Service final-source
++slice projection; consumers never guess filenames or promote source URLs.
++
++There is no empty-catalog/count relaxation, no synthetic qualification transfer,
++no changed task/ABI/policy rules and no source or download-availability claim.
++The new Core origin/backup decision and Rust semantic fixtures must pass before
++these consumers mount. Synthetic profiles and URLs in tests are structural
++controls only and are explicitly not public artifact availability evidence.
++
++The existing positive/negative selected-three fixture assertions survive through
++a private test-helper extraction. Additional controls cover three HF-only
++profiles (zero GH assets/full catalog hash), GH backup projection, foreign-tag
++backup refusal, missing selected slot and unapproved backup. Actual production
++fixture emission remains ignored until the three profiles genuinely qualify.
++
++The new projection test can emit the native hypothetical semantic fixture using
++AIRK_ARBITER_PUBLICATION_SOURCE_CASES_OUTPUT. It records HF primary with zero GH
++files and HF primary with a declared GH backup, plus tag/slot refusals. No actual
++fixture emission has occurred during private preparation.
+--- D:\code\Github\airk\crates\airk-retrieval\src\arbiter\publication\source_tests.rs
++++ D:\code\Github\airk\artifacts\advanced-split\model-download-origin-preparation-r1\publication-consumer-r2\proposed\crates\airk-retrieval\src\arbiter\publication\source_tests.rs
+@@ -0,0 +1,94 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Synthetic source metadata only; no URL availability or model qualification.
++use super::*;
++const HF: &str = "https://huggingface.co/Qwen/Qwen3-1.7B/resolve/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e/tokenizer.json";
++#[test]
++fn publication_hf_primary_has_no_fictitious_github_asset_but_real_backup_is_projected() -> Result<()>
++{
++    let mut profiles = super::tests::selected_profiles()?;
++    for profile in &mut profiles {
++        for download in &mut profile.downloads {
++            for (index, part) in download.parts.iter_mut().enumerate() {
++                part.url = format!(
++                    "https://huggingface.co/Qwen/Qwen3-1.7B/resolve/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e/{}-{}.bin",
++                    download.asset_name, index
++                );
++                part.backup_urls.clear();
++            }
++        }
++    }
++    let catalog = serde_json::json!({"schema":CATALOG_SCHEMA,"profiles":profiles});
++    let bytes = serde_json::to_vec(&catalog)?;
++    let primary = project(&bytes, "v1.9.0")?;
++    assert_eq!(primary.profiles.len(), 3);
++    assert!(primary.assets.is_empty());
++    assert_eq!(
++        primary.compiled_catalog_sha256,
++        Sha256Digest::from_bytes(Sha256::digest(&bytes).into())
++    );
++    let mut backed = catalog.clone();
++    let part = &mut backed["profiles"][0]["downloads"][0]["parts"][0];
++    part["backup_urls"] = serde_json::json!([
++        "https://github.com/iokaio/airk/releases/download/v1.9.0/real-metadata-fixture.bin"
++    ]);
++    // All parts of this asset require a matching backup roster.
++    let count = backed["profiles"][0]["downloads"][0]["parts"]
++        .as_array()
++        .unwrap()
++        .len();
++    for index in 1..count {
++        backed["profiles"][0]["downloads"][0]["parts"][index]["backup_urls"] = serde_json::json!([
++            format!(
++                "https://github.com/iokaio/airk/releases/download/v1.9.0/real-metadata-fixture-{index}.bin"
++            )
++        ]);
++    }
++    let with_backup = project(&serde_json::to_vec(&backed)?, "v1.9.0")?;
++    assert_eq!(with_backup.assets.len(), count);
++    assert!(with_backup.assets.contains_key("real-metadata-fixture.bin"));
++    assert_ne!(
++        primary.compiled_catalog_sha256,
++        with_backup.compiled_catalog_sha256
++    );
++    backed["profiles"][0]["downloads"][0]["parts"][0]["backup_urls"] =
++        serde_json::json!(["https://github.com/iokaio/airk/releases/download/v0.0.0/foreign.bin"]);
++    assert!(project(&serde_json::to_vec(&backed)?, "v1.9.0").is_err());
++    let mut missing = catalog;
++    missing["profiles"].as_array_mut().unwrap().pop();
++    assert!(project(&serde_json::to_vec(&missing)?, "v1.9.0").is_err());
++    if let Some(path) = std::env::var_os("AIRK_ARBITER_PUBLICATION_SOURCE_CASES_OUTPUT") {
++        std::fs::write(
++            path,
++            serde_json::to_vec_pretty(&serde_json::json!({
++                "schema":"airk.arbiter.publication-source-cases/1",
++                "hypothetical":true,"actual_source_availability_claimed":false,
++                "cases":[
++                    {"name":"hf_primary_without_github_file","accepted":true,"projection":primary},
++                    {"name":"hf_primary_with_declared_github_backup","accepted":true,"projection":with_backup},
++                    {"name":"foreign_github_backup_tag","accepted":false},
++                    {"name":"missing_selected_profile","accepted":false}
++                ]
++            }))?,
++        )?;
++    }
++    Ok(())
++}
++#[test]
++fn github_projection_classifies_every_location_and_refuses_unapproved_backup() -> Result<()> {
++    let mut part = AssetPart {
++        url: HF.into(),
++        backup_urls: vec![],
++        bytes: 1,
++        sha256: Sha256Digest::from_bytes([1; 32]),
++    };
++    assert!(github_part_filenames(&part, "v1.9.0")?.is_empty());
++    part.backup_urls =
++        vec!["https://github.com/iokaio/airk/releases/download/v1.9.0/backup.bin".into()];
++    assert_eq!(
++        github_part_filenames(&part, "v1.9.0")?,
++        BTreeSet::from(["backup.bin".into()])
++    );
++    part.backup_urls = vec!["https://example.invalid/backup.bin".into()];
++    assert!(github_part_filenames(&part, "v1.9.0").is_err());
++    Ok(())
++}
+--- D:\code\Github\airk\crates\airk-retrieval\src\arbiter\publication.rs
++++ D:\code\Github\airk\artifacts\advanced-split\model-download-origin-preparation-r1\publication-consumer-r2\proposed\crates\airk-retrieval\src\arbiter\publication.rs
+@@ -40,6 +40,33 @@
+ #[cfg(feature = "test-support")]
+ pub fn project_distribution_candidate(bytes: &[u8], tag: &str) -> Result<Publication> {
+     project(bytes, tag)
++}
++/// Actual GitHub files named by a validated part, including real backup locations.
++/// HF locations remain authenticated in the complete compiled catalog, not this
++/// GitHub release-file projection. This validates metadata, not availability.
++pub fn github_part_filenames(part: &AssetPart, tag: &str) -> Result<BTreeSet<String>> {
++    part.validate()?;
++    let prefix = format!("https://github.com/iokaio/airk/releases/download/{tag}/");
++    let mut names = BTreeSet::new();
++    for ordinal in 0..=part.backup_urls.len() {
++        let source = part
++            .source_url(ordinal)
++            .context("complete part source roster")?;
++        match download_origin(source)? {
++            DownloadOrigin::HuggingFace => continue,
++            DownloadOrigin::GitHubRelease => {
++                let filename = source
++                    .strip_prefix(&prefix)
++                    .context("asset tag differs from final release")?;
++                ensure!(
++                    !filename.is_empty() && !filename.contains('/'),
++                    "invalid release filename"
++                );
++                names.insert(filename.to_owned());
++            }
++        }
++    }
++    Ok(names)
+ }
+ fn project(bytes: &[u8], tag: &str) -> Result<Publication> {
+     #[derive(Deserialize)]
+@@ -64,7 +91,6 @@
+     let mut models = BTreeSet::new();
+     let mut manifests = BTreeSet::new();
+     let mut assets = BTreeMap::new();
+-    let prefix = format!("https://github.com/iokaio/airk/releases/download/{tag}/");
+     for profile in catalog.profiles {
+         profile.validate_release_downloads()?;
+         super::runtime::validate_selected_policies(&profile)?;
+@@ -103,20 +129,14 @@
+         );
+         for download in profile.downloads {
+             for part in download.parts {
+-                let filename = part
+-                    .url
+-                    .strip_prefix(&prefix)
+-                    .ok_or_else(|| anyhow::anyhow!("asset tag differs from final release"))?;
+-                ensure!(
+-                    !filename.is_empty() && !filename.contains('/'),
+-                    "invalid release filename"
+-                );
+-                let pin = PublishedAsset {
+-                    bytes: part.bytes,
+-                    sha256: part.sha256,
+-                };
+-                if let Some(previous) = assets.insert(filename.to_owned(), pin.clone()) {
+-                    ensure!(previous == pin, "conflicting release asset pins");
++                for filename in github_part_filenames(&part, tag)? {
++                    let pin = PublishedAsset {
++                        bytes: part.bytes,
++                        sha256: part.sha256,
++                    };
++                    if let Some(previous) = assets.insert(filename, pin.clone()) {
++                        ensure!(previous == pin, "conflicting release asset pins");
++                    }
+                 }
+             }
+         }
+@@ -177,8 +197,7 @@
+         );
+         Ok(())
+     }
+-    #[test]
+-    fn publication_requires_all_final_slots_and_consistent_final_asset_pins() -> Result<()> {
++    pub(super) fn selected_profiles() -> Result<Vec<Profile>> {
+         let base: Profile = serde_json::from_slice(include_bytes!(
+             "../../../../fixtures/arbiter/profile-downloads.json"
+         ))?;
+@@ -289,6 +308,11 @@
+             }
+             profiles.push(profile);
+         }
++        Ok(profiles)
++    }
++    #[test]
++    fn publication_requires_all_final_slots_and_consistent_final_asset_pins() -> Result<()> {
++        let profiles = selected_profiles()?;
+         let input = serde_json::json!({"schema":CATALOG_SCHEMA,"profiles":profiles});
+         let positive = project(&serde_json::to_vec(&input)?, "v1.9.0")?;
+         assert_eq!(positive.profiles.len(), 3);
+@@ -368,3 +392,6 @@
+         Ok(())
+     }
+ }
++
++#[cfg(test)]
++mod source_tests;
+--- D:\code\Github\airk\crates\airk-service\src\service_runtime\arbiter\final_distribution\CONTRACT.md
++++ D:\code\Github\airk\artifacts\advanced-split\model-download-origin-preparation-r1\publication-consumer-r2\proposed\crates\airk-service\src\service_runtime\arbiter\final_distribution\CONTRACT.md
+@@ -1,4 +1,4 @@
+-# Final selected-profile promotion and offline distribution
++# Final selected-profile promotion and approved-source distribution
+ 
+ Private preparation only. Root must record and freeze this proof decision and
+ Rust-emitted refusal cases before consumers mount. There is no new crate,
+@@ -43,10 +43,17 @@
+ Only the Core qualification digest, qualified-target proof pins, reviewed release
+ transport roster and release manifest identity are added. The new release
+ manifest uses the recorded domain `airk.arbiter.release-profile/1` over the final
+-Rust Profile with only its manifest field zeroed. Release part names derive from
+-the selected model and asset SHA, avoiding a manifest/URL digest cycle. Each part
+-is at most 1GiB; complete logical files remain bounded by Core. Root must approve
+-that identity recipe before any actual qualified emission.
++Rust Profile with only its manifest field zeroed. The promoter never creates
++URLs or filenames from a tag, model or digest. Candidate.download_sources is a
++required PinnedFile containing the Core-owned Vec<AssetDownload>; the separate
++RecordedDecision.approved_download_source_maps must explicitly approve that
++exact file SHA. Missing/unapproved maps refuse before acquiring any delivery
++authority. The exact asset/file census, Core source/backup roster and every
++ordered part length/hash are checked against bounded local reads, followed by
++the complete logical asset length/hash. Origin trust stays Core-owned; no
++unreviewed repository or source fallback is admitted. Each part remains at most
++1GiB and complete logical files retain Core bounds. A validated metadata map is
++not a claim that a remote payload has been published or downloaded.
+ 
+ The native owner emits catalog/2 plus an offline file projection with schema
+ `airk.arbiter.offline-bundle-plan/1`. It includes the exact catalog SHA, release
+@@ -54,6 +61,18 @@
+ manifest and each logical file's name/length/SHA. A separately pinned PRIVATE
+ source map supplies actual original filenames. It is not shipped. The existing
+ compiled publication projection independently checks final release-part pins.
++Publication.assets and private Sources.parts contain only GitHub files actually
++present as primary or backup locations in the approved map and matching the
++requested release tag. HF-only locations do not invent a GitHub file; complete
++immutable HF origin/revision/filename and backup authority remains authenticated
++by the compiled catalog/profile hash. A real GitHub backup is projected even
++when the primary is HF. Duplicate filenames require identical pins. Exact three
++selected qualified models remain mandatory even when there are zero GitHub
++files. No release publication or availability follows from projection.
++
++The offline plan remains a secondary manual-import option. Optional Arbiter
++weights are not installer/VSIX payloads; app-owned explicit on-demand acquisition
++is primary, subject to actual source availability and all qualification gates.
+ 
+ The stager requires those exact native output pins, a fresh named output under
+ an explicit artifact anchor and reviewed licensed sources. It copies only the
+@@ -224,3 +243,15 @@
+ actual delivery refusal, settlement and explicit subsequent stage disable/final
+ charge release remain required. Canonical authority fields are never removed
+ to make an unaffected-read comparison pass.
++
++
++Source-map consumer controls (Core download-origin gate required first)
++
++The private changes consume Core AssetPart.backup_urls, source_url and
++AssetDownload.source_count; they cannot mount before the recorded Core decision
++and actual native fixture gate. Synthetic controls exercise missing/unapproved
++map, omitted required Candidate field, duplicate/foreign/missing logical asset,
++extra local mapping, changed same-length source, wrong part/full hash, reordered
++slices, wrong lengths/origin/backup roster, HF-only projection and actual declared
++GitHub backup/tag handling. These are inert metadata/file controls, not model,
++remote-availability or release qualification. Root alone executes Cargo/NN.
+--- D:\code\Github\airk\crates\airk-service\src\service_runtime\arbiter\final_distribution\source_map_tests.rs
++++ D:\code\Github\airk\artifacts\advanced-split\model-download-origin-preparation-r1\publication-consumer-r2\proposed\crates\airk-service\src\service_runtime\arbiter\final_distribution\source_map_tests.rs
+@@ -0,0 +1,181 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Inert actual-file controls for approved delivery maps; never an evidence gate pass.
++use super::*;
++fn part(url: &str, raw: &[u8]) -> AssetPart {
++    AssetPart {
++        url: url.into(),
++        backup_urls: vec![],
++        bytes: raw.len() as u64,
++        sha256: sha(raw),
++    }
++}
++fn decision(approved: BTreeSet<Sha256Digest>) -> Result<RecordedDecision> {
++    Ok(serde_json::from_value(
++        serde_json::json!({"schema":"airk.private-recorded-stage-promotion/1","decision":"synthetic-not-a-release","approved_final_proofs":[],"approved_download_source_maps":approved}),
++    )?)
++}
++fn fixture() -> Result<(tempfile::TempDir, Profile, Candidate, RecordedDecision)> {
++    let directory = tempfile::tempdir()?;
++    let mut profile: Profile = serde_json::from_slice(include_bytes!(
++        "../../../../../../fixtures/arbiter/profile-downloads.json"
++    ))?;
++    let mut files = BTreeMap::new();
++    let mut downloads = Vec::new();
++    for asset in &mut profile.assets {
++        let raw = format!("synthetic-local-{}", asset.name).into_bytes();
++        asset.bytes = raw.len() as u64;
++        asset.sha256 = sha(&raw);
++        let path = directory.path().join(&asset.name);
++        fs::write(&path, &raw)?;
++        files.insert(asset.name.clone(), path);
++        if asset.role == AssetRole::Compiler {
++            profile.compiler = asset.sha256;
++        }
++        if asset.role == AssetRole::Calibration {
++            profile.calibration = asset.sha256;
++        }
++        downloads.push(AssetDownload {
++            asset_name: asset.name.clone(),
++            parts: vec![part(
++                &format!(
++                    "https://github.com/iokaio/airk/releases/download/v1.9.0/{}",
++                    asset.name
++                ),
++                &raw,
++            )],
++        });
++    }
++    profile.downloads.clear();
++    profile.validate()?;
++    let map = directory.path().join("source-map.json");
++    let raw = serde_json::to_vec(&downloads)?;
++    fs::write(&map, &raw)?;
++    let pin = PinnedFile {
++        path: map,
++        bytes: raw.len() as u64,
++        sha256: sha(&raw),
++    };
++    let candidate = Candidate {
++        profile: pin.clone(),
++        final_proof: pin.clone(),
++        download_sources: pin.clone(),
++        files,
++    };
++    let approval = decision(BTreeSet::from([pin.sha256]))?;
++    Ok((directory, profile, candidate, approval))
++}
++fn write_map(
++    candidate: &mut Candidate,
++    decision: &mut RecordedDecision,
++    downloads: &[AssetDownload],
++) -> Result<()> {
++    let raw = serde_json::to_vec(downloads)?;
++    fs::write(&candidate.download_sources.path, &raw)?;
++    candidate.download_sources.bytes = raw.len() as u64;
++    candidate.download_sources.sha256 = sha(&raw);
++    decision.approved_download_source_maps = BTreeSet::from([candidate.download_sources.sha256]);
++    Ok(())
++}
++#[test]
++fn final_source_maps_require_recorded_approval_and_exact_native_census() -> Result<()> {
++    let (_dir, profile, mut candidate, mut approved) = fixture()?;
++    let original = verified_download_sources(&profile, &candidate, &approved)?;
++    assert_eq!(original.len(), profile.assets.len());
++    let mut canonical = original.clone();
++    canonical[0].parts[0].backup_urls = vec![canonical[0].parts[0].url.clone()];
++    canonical[0].parts[0].url = "https://huggingface.co/Qwen/Qwen3-1.7B/resolve/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e/tokenizer.json".into();
++    write_map(&mut candidate, &mut approved, &canonical)?;
++    let preserved = verified_download_sources(&profile, &candidate, &approved)?;
++    assert_eq!(preserved[0].parts[0].url, canonical[0].parts[0].url);
++    assert_eq!(
++        preserved[0].parts[0].backup_urls,
++        canonical[0].parts[0].backup_urls
++    );
++    write_map(&mut candidate, &mut approved, &original)?;
++    assert!(verified_download_sources(&profile, &candidate, &decision(BTreeSet::new())?).is_err());
++    let mut missing = original.clone();
++    missing.pop();
++    write_map(&mut candidate, &mut approved, &missing)?;
++    assert!(verified_download_sources(&profile, &candidate, &approved).is_err());
++    let mut duplicate = original.clone();
++    duplicate[1] = duplicate[0].clone();
++    write_map(&mut candidate, &mut approved, &duplicate)?;
++    assert!(verified_download_sources(&profile, &candidate, &approved).is_err());
++    let mut foreign = original.clone();
++    foreign[0].asset_name = "foreign.bin".into();
++    write_map(&mut candidate, &mut approved, &foreign)?;
++    assert!(verified_download_sources(&profile, &candidate, &approved).is_err());
++    write_map(&mut candidate, &mut approved, &original)?;
++    candidate.files.insert(
++        "extra.bin".into(),
++        candidate.files.values().next().unwrap().clone(),
++    );
++    assert!(verified_download_sources(&profile, &candidate, &approved).is_err());
++    Ok(())
++}
++#[test]
++fn approved_map_cannot_hide_wrong_local_hash_part_order_length_origin_or_backups() -> Result<()> {
++    let (_dir, profile, mut candidate, mut approval) = fixture()?;
++    let original = verified_download_sources(&profile, &candidate, &approval)?;
++    for change in ["part_hash", "part_length", "origin", "backup"] {
++        let mut changed = original.clone();
++        let p = &mut changed[0].parts[0];
++        match change {
++            "part_hash" => p.sha256 = Sha256Digest::from_bytes([0; 32]),
++            "part_length" => p.bytes += 1,
++            "origin" => p.url = "https://example.invalid/wrong".into(),
++            _ => p.backup_urls = vec![p.url.clone()],
++        };
++        write_map(&mut candidate, &mut approval, &changed)?;
++        assert!(
++            verified_download_sources(&profile, &candidate, &approval).is_err(),
++            "{change}"
++        );
++    }
++    let source = candidate.files.values().next().unwrap();
++    let length = fs::metadata(source)?.len() as usize;
++    fs::write(source, vec![b'x'; length])?;
++    write_map(&mut candidate, &mut approval, &original)?;
++    assert!(verified_download_sources(&profile, &candidate, &approval).is_err());
++    let dir = tempfile::tempdir()?;
++    let path = dir.path().join("slices.bin");
++    fs::write(&path, b"abcdef")?;
++    let asset = Asset {
++        name: "slices.bin".into(),
++        role: AssetRole::ExternalWeights,
++        bytes: 6,
++        sha256: sha(b"abcdef"),
++    };
++    let mut download = AssetDownload {
++        asset_name: asset.name.clone(),
++        parts: vec![
++            part(
++                "https://github.com/iokaio/airk/releases/download/v1.9.0/a.bin",
++                b"ab",
++            ),
++            part(
++                "https://github.com/iokaio/airk/releases/download/v1.9.0/b.bin",
++                b"cdef",
++            ),
++        ],
++    };
++    logical_asset(&asset, &path, &download)?;
++    let mut wrong_full = asset.clone();
++    wrong_full.sha256 = Sha256Digest::from_bytes([0; 32]);
++    assert!(logical_asset(&wrong_full, &path, &download).is_err());
++    download.parts.swap(0, 1);
++    assert!(logical_asset(&asset, &path, &download).is_err());
++    Ok(())
++}
++#[test]
++fn candidate_missing_source_map_is_a_decode_refusal() -> Result<()> {
++    let pin =
++        serde_json::json!({"path":"unused","bytes":1,"sha256":Sha256Digest::from_bytes([1;32])});
++    assert!(
++        serde_json::from_value::<Candidate>(
++            serde_json::json!({"profile":pin,"final_proof":pin,"files":{}})
++        )
++        .is_err()
++    );
++    Ok(())
++}
+--- D:\code\Github\airk\crates\airk-service\src\service_runtime\arbiter\final_distribution.rs
++++ D:\code\Github\airk\artifacts\advanced-split\model-download-origin-preparation-r1\publication-consumer-r2\proposed\crates\airk-service\src\service_runtime\arbiter\final_distribution.rs
+@@ -97,12 +97,15 @@
+     pub approved_calibration_component_equivalences: BTreeSet<Sha256Digest>,
+     #[serde(default)]
+     pub approved_component_target_provenances: BTreeSet<Sha256Digest>,
++    #[serde(default)]
++    pub approved_download_source_maps: BTreeSet<Sha256Digest>,
+ }
+ #[derive(Deserialize)]
+ #[serde(deny_unknown_fields)]
+ pub struct Candidate {
+     pub profile: PinnedFile,
+     pub final_proof: PinnedFile,
++    pub download_sources: PinnedFile,
+     pub files: BTreeMap<String, PathBuf>,
+ }
+ #[derive(Serialize)]
+@@ -1524,60 +1527,111 @@
+     // reports remain unmodified; a raw numeric/resource/CAL/A6 bool is insufficient.
+     Ok((proof, candidate.final_proof.sha256))
+ }
+-fn logical_asset(
+-    profile: &Profile,
+-    asset: &Asset,
+-    path: &Path,
+-    tag: &str,
+-) -> Result<AssetDownload> {
++fn logical_asset(asset: &Asset, path: &Path, download: &AssetDownload) -> Result<()> {
++    ensure!(
++        download.asset_name == asset.name,
++        "source map asset identity differs"
++    );
++    download.source_count()?; // Core owns origin, part bounds and complete backups.
+     let meta = fs::symlink_metadata(path)?;
+     ensure!(
+         meta.is_file() && !meta.file_type().is_symlink() && meta.len() == asset.bytes,
+         "logical source object differs"
+     );
++    #[cfg(windows)]
++    {
++        use std::os::windows::fs::MetadataExt;
++        ensure!(
++            meta.file_attributes() & 0x400 == 0,
++            "logical source reparse refused"
++        );
++    }
+     let mut file = fs::File::open(path)?;
+     let mut full = Sha256::new();
+-    let mut consumed = 0u64;
+-    let mut parts = Vec::new();
+-    let model = serde_json::to_value(profile.model)?
+-        .as_str()
+-        .context("model identity")?
+-        .to_owned();
+-    let mut buffer = vec![0u8; 4 << 20];
+-    while consumed < asset.bytes {
+-        let length = (asset.bytes - consumed).min(1 << 30);
+-        let mut remaining = length;
+-        let mut part = Sha256::new();
++    let mut consumed = 0_u64;
++    let mut buffer = vec![0_u8; 4 << 20];
++    for part in &download.parts {
++        let mut remaining = part.bytes;
++        let mut digest = Sha256::new();
+         while remaining > 0 {
+             let wanted = usize::try_from(remaining.min(buffer.len() as u64))?;
+             let count = file.read(&mut buffer[..wanted])?;
+             ensure!(count > 0, "logical source shortened");
+-            part.update(&buffer[..count]);
++            digest.update(&buffer[..count]);
+             full.update(&buffer[..count]);
+-            consumed += count as u64;
++            consumed = consumed
++                .checked_add(count as u64)
++                .context("source byte overflow")?;
+             remaining -= count as u64;
+         }
+-        parts.push(AssetPart {
+-            url: format!(
+-                "https://github.com/iokaio/airk/releases/download/{tag}/{model}-{}.part{:02}",
+-                asset.sha256,
+-                parts.len() + 1
+-            ),
+-            bytes: length,
+-            sha256: Sha256Digest::from_bytes(part.finalize().into()),
+-        });
+-    }
+-    let mut extra = [0u8; 1];
+-    ensure!(
+-        file.read(&mut extra)? == 0
++        ensure!(
++            Sha256Digest::from_bytes(digest.finalize().into()) == part.sha256,
++            "approved ordered local part digest differs"
++        );
++    }
++    let mut extra = [0_u8; 1];
++    ensure!(
++        consumed == asset.bytes
++            && file.read(&mut extra)? == 0
+             && file.metadata()?.len() == asset.bytes
+             && Sha256Digest::from_bytes(full.finalize().into()) == asset.sha256,
+         "complete logical asset source changed"
+     );
+-    Ok(AssetDownload {
+-        asset_name: asset.name.clone(),
+-        parts,
+-    })
++    Ok(())
++}
++fn verified_download_sources(
++    profile: &Profile,
++    candidate: &Candidate,
++    decision: &RecordedDecision,
++) -> Result<Vec<AssetDownload>> {
++    ensure!(
++        decision
++            .approved_download_source_maps
++            .contains(&candidate.download_sources.sha256),
++        "download source map absent from recorded approval"
++    );
++    ensure!(
++        candidate.files.keys().collect::<BTreeSet<_>>()
++            == profile
++                .assets
++                .iter()
++                .map(|a| &a.name)
++                .collect::<BTreeSet<_>>(),
++        "local source map census differs"
++    );
++    let downloads: Vec<AssetDownload> =
++        serde_json::from_slice(&pinned(&candidate.download_sources)?)?;
++    ensure!(
++        downloads.len() == profile.assets.len()
++            && downloads
++                .iter()
++                .map(|d| &d.asset_name)
++                .collect::<BTreeSet<_>>()
++                == profile
++                    .assets
++                    .iter()
++                    .map(|a| &a.name)
++                    .collect::<BTreeSet<_>>(),
++        "approved source map has missing/duplicate/foreign logical assets"
++    );
++    let mut proposed = profile.clone();
++    proposed.downloads = downloads.clone();
++    proposed.validate_release_downloads()?;
++    for asset in &profile.assets {
++        let download = downloads
++            .iter()
++            .find(|d| d.asset_name == asset.name)
++            .context("approved asset source missing")?;
++        logical_asset(
++            asset,
++            candidate
++                .files
++                .get(&asset.name)
++                .context("local logical asset source missing")?,
++            download,
++        )?;
++    }
++    Ok(downloads)
+ }
+ fn validate_task_scope(profile: &Profile, files: &BTreeMap<String, PathBuf>) -> Result<()> {
+     if profile.declared_stage() == Some(Stage::Context) {
+@@ -1645,6 +1699,12 @@
+                 && models.insert(profile.model),
+             "already-promoted/duplicate candidate"
+         );
++        ensure!(
++            decision
++                .approved_download_source_maps
++                .contains(&candidate.download_sources.sha256),
++            "download source map absent from recorded approval"
++        );
+         let (proof, proof_sha) = verify_proof(&profile, candidate, &decision)?;
+         ensure!(
+             candidate.files.keys().cloned().collect::<BTreeSet<_>>()
+@@ -1656,16 +1716,7 @@
+             "incomplete/extraneous source map"
+         );
+         validate_task_scope(&profile, &candidate.files)?;
+-        let mut downloads = Vec::new();
+-        for asset in &profile.assets {
+-            downloads.push(logical_asset(
+-                &profile,
+-                asset,
+-                &candidate.files[&asset.name],
+-                tag,
+-            )?);
+-        }
+-        profile.downloads = downloads;
++        profile.downloads = verified_download_sources(&profile, candidate, &decision)?;
+         profile.qualification = Some(proof_sha);
+         profile.qualified_targets = vec![QualifiedTarget {
+             target: proof.binding.target,
+@@ -1693,28 +1744,26 @@
+         for download in &profile.downloads {
+             let mut offset = 0u64;
+             for part in &download.parts {
+-                let filename = part
+-                    .url
+-                    .rsplit('/')
+-                    .next()
+-                    .context("native release part filename")?
+-                    .to_owned();
+-                if let Some(old) = parts.get(&filename) {
+-                    ensure!(
+-                        old.bytes == part.bytes && old.sha256 == part.sha256,
+-                        "conflicting native part slice"
+-                    );
+-                } else {
+-                    parts.insert(
+-                        filename,
+-                        PartSource {
+-                            profile: profile.manifest,
+-                            asset_name: download.asset_name.clone(),
+-                            offset,
+-                            bytes: part.bytes,
+-                            sha256: part.sha256,
+-                        },
+-                    );
++                for filename in
++                    airk_retrieval::arbiter::publication::github_part_filenames(part, tag)?
++                {
++                    if let Some(old) = parts.get(&filename) {
++                        ensure!(
++                            old.bytes == part.bytes && old.sha256 == part.sha256,
++                            "conflicting native part slice"
++                        );
++                    } else {
++                        parts.insert(
++                            filename,
++                            PartSource {
++                                profile: profile.manifest,
++                                asset_name: download.asset_name.clone(),
++                                offset,
++                                bytes: part.bytes,
++                                sha256: part.sha256,
++                            },
++                        );
++                    }
+                 }
+                 offset = offset
+                     .checked_add(part.bytes)
+@@ -2228,3 +2277,6 @@
+         Ok(())
+     }
+ }
++
++#[cfg(test)]
++mod source_map_tests;

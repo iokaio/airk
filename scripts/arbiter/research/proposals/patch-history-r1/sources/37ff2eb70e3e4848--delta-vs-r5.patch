@@ -1,0 +1,107 @@
+--- r5/WORKER-CONTRACT.md
++++ r6/WORKER-CONTRACT.md
+@@ -10,7 +10,7 @@
+ 
+ General QASPER replay retains the original publisher instruction; only software code rows use the DEV-selected instruction. Both are native-emitted. Code comparisons use the identical selected instruction for original/adapted weights; replay is original human paragraph relevance, never complete evidence.
+ 
+-R2 actual-owned continuity: DEV selection consumes a pinned naturally successful SCORE receipt/start/plan/result. A pure immutable key binds checkpoint/model/runtime/data/fullsource/owner/baseimage/versions/commonenvironment/deviceidentity/host+GPUcaps across stages. Only mode, output-local caches, wall and selection/probe evidence vary; the selected instruction is verified separately. ProbeÃ¢â€ â€™train also preserves the selected instruction. Exactly85score list entries and unique IDs are required before mapping. R1 remains preserved; no oldrun is relabelled.
++R2 actual-owned continuity: DEV selection consumes a pinned naturally successful SCORE receipt/start/plan/result. A pure immutable key binds checkpoint/model/runtime/data/fullsource/owner/baseimage/versions/commonenvironment/deviceidentity/host+GPUcaps across stages. Only mode, output-local caches, wall and selection/probe evidence vary; the selected instruction is verified separately. ProbeÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢train also preserves the selected instruction. Exactly85score list entries and unique IDs are required before mapping. R1 remains preserved; no oldrun is relabelled.
+ 
+ R3 parent clock closure: after actual maintained owned settlement (including worker finally output retention), parent hashes final worker result, child log, actual plan and every consumed execution-source pin, preserving hash failures separately from the original owned result/failure. It constructs/validates the full receipt body, then samples the original clock LAST; at/after original wall cap is nonpass. Only final elapsed/disposition insertion, final execution.json serialization/write and terminal reporting are excluded. Hash exceptions/mismatches never erase original natural-nonzero versus unsettled evidence or create a pass. No clock renewal, replay, extra model run or process-control change.
+ 
+@@ -48,3 +48,18 @@
+ context files came from original prepare_reference's metadata source manifest.
+ Only the reviewed8 change; all other7context entries and training_execution.py
+ stay untouched. Original files/failed receipts are not relabeled or mutated.
++
++
++Python bootstrap provenance (additive R6)
++
++`-B`/PYTHONDONTWRITEBYTECODE prevent writes but do not prevent old .pyc reads.
++Every SCORE/probe/train plan seals the same PYTHONPYCACHEPREFIX, the absent
++C:/Users/tdotn/AppData/Local/airk-final-exec-20261116T052942Z/f1-fresh-unwritten-pycache-r1.
++Root sets this environment variable BEFORE starting parent CPython. The parent
++requires actual sys.pycache_prefix equal to the sealed canonical absolute prefix,
++sys.dont_write_bytecode true, PYTHONDONTWRITEBYTECODE=1, and prefix absent before
++any output or child. CreateProcessW receives sealed child environment before
++CPython startup. The child uses -B and inherits the same prefix. No late setter,
++cache deletion, cache output, ownership/ACL change or model-source refresh is used.
++The stable prefix is in existing continuity environment across SCORE/probe/train.
++Existing prefix, old prefix or bytecode-write-enabled bootstrap refuses.
+--- r5/make_plan.py
++++ r6/make_plan.py
+@@ -41,7 +41,7 @@
+         actual_probe=load_owned(measured,'probe')
+         if actual_probe['plan']['selected_instruction']!=selected:raise ValueError('actual probe used another selected instruction')
+     wall=120 if args.mode=='probe'else 600;logdir=args.log_dir.resolve();cache=logdir/'cache'
+-    environment={'PYTHONDONTWRITEBYTECODE':'1','PYTHONIOENCODING':'utf-8','PYTHONPATH':os.pathsep.join([str(O),str(Path(reference['reference_module']['path']).parent),reference['site_packages']]),'CUBLAS_WORKSPACE_CONFIG':':4096:8','CUDA_MODULE_LOADING':'LAZY','HF_HUB_OFFLINE':'1','TRANSFORMERS_OFFLINE':'1','HF_HUB_DISABLE_TELEMETRY':'1','TORCH_HOME':str(cache/'torch'),'CUDA_CACHE_PATH':str(cache/'cuda'),'TOKENIZERS_PARALLELISM':'false'}
++    environment={'PYTHONPYCACHEPREFIX':r'C:\Users\tdotn\AppData\Local\airk-final-exec-20261116T052942Z\f1-fresh-unwritten-pycache-r1','PYTHONDONTWRITEBYTECODE':'1','PYTHONIOENCODING':'utf-8','PYTHONPATH':os.pathsep.join([str(O),str(Path(reference['reference_module']['path']).parent),reference['site_packages']]),'CUBLAS_WORKSPACE_CONFIG':':4096:8','CUDA_MODULE_LOADING':'LAZY','HF_HUB_OFFLINE':'1','TRANSFORMERS_OFFLINE':'1','HF_HUB_DISABLE_TELEMETRY':'1','TORCH_HOME':str(cache/'torch'),'CUDA_CACHE_PATH':str(cache/'cuda'),'TOKENIZERS_PARALLELISM':'false'}
+     sources={str(path):pin(path)for path in O.glob('*.py')}
+     sources[str(identity_path)]=pin(identity_path)
+     owner_path=root/'artifacts/advanced-split/models/weights-v2/software-v2-independent-numeric-r1/reference_owned.py';reference_worker=root/'artifacts/advanced-split/models/weights-v2/software-v2-independent-numeric-r1/reference_worker.py'
+--- r5/launch_owned.py
++++ r6/launch_owned.py
+@@ -10,6 +10,19 @@
+ 
+ from workflow import continuity_key
+ 
++
++
++FRESH_PYCACHE = r'C:\Users\tdotn\AppData\Local\airk-final-exec-20261116T052942Z\f1-fresh-unwritten-pycache-r1'
++
++
++def verify_bootstrap(plan,actual_prefix,dont_write_bytecode,*,path_exists=lambda p:p.exists()):
++    expected=plan['environment'].get('PYTHONPYCACHEPREFIX')
++    if expected!=FRESH_PYCACHE or actual_prefix!=expected or dont_write_bytecode is not True or plan['environment'].get('PYTHONDONTWRITEBYTECODE')!='1':
++        raise ValueError('actual Python startup prefix/bytecode policy differs from sealed fresh bootstrap')
++    prefix=Path(expected)
++    if not prefix.is_absolute() or prefix.resolve()!=prefix or path_exists(prefix):
++        raise ValueError('sealed Python cache prefix must be canonical absolute and absent')
++    return {'actual_pycache_prefix':actual_prefix,'actual_dont_write_bytecode':True,'prefix_absent':True,'child_environment_before_CPython_startup':True}
+ 
+ 
+ def disposition(owned,worker):
+@@ -87,6 +100,8 @@
+ 
+     plan=json.loads(Path(path).read_bytes());started=time.monotonic();deadline=started+plan['limits']['wall_seconds']
+ 
++    bootstrap=verify_bootstrap(plan,sys.pycache_prefix,sys.dont_write_bytecode)
++
+     if plan['continuity_key']!=continuity_key(plan):raise ValueError('immutable continuation key changed')
+ 
+     identity_module=load_module(plan['human_identity_helper'],'actual_human_custody');identity=identity_module.identity()
+@@ -109,7 +124,7 @@
+ 
+     out.mkdir();command=[plan['base_python']['path'],'-B',plan['worker']['path'],'--plan',str(path),'--plan-sha256',sha]
+ 
+-    start={'schema':'airk.private.F1-F2-owned-start/1','plan':{'path':str(path),'sha256':sha},'identity':identity,'argv':command,'monotonic_start':started,'monotonic_deadline':deadline,'gpu_observed':gpu,'sources':plan['execution_sources'],'limits':plan['limits']}
++    start={'schema':'airk.private.F1-F2-owned-start/1','plan':{'path':str(path),'sha256':sha},'identity':identity,'argv':command,'bootstrap':bootstrap,'monotonic_start':started,'monotonic_deadline':deadline,'gpu_observed':gpu,'sources':plan['execution_sources'],'limits':plan['limits']}
+ 
+     (out/'start.json').write_text(json.dumps(start,indent=2)+'\n',encoding='utf8')
+ 
+--- r5/test_bootstrap.py
++++ r6/test_bootstrap.py
+@@ -0,0 +1,23 @@
++"""Pure Python startup provenance controls; no child or cache writes."""
++import unittest
++from launch_owned import verify_bootstrap
++
++PREFIX=r'C:\Users\tdotn\AppData\Local\airk-final-exec-20261116T052942Z\f1-fresh-unwritten-pycache-r1'
++
++
++class BootstrapControls(unittest.TestCase):
++    def test_actual_sealed_fresh_prefix_and_no_writes_required(self):
++        plan={'environment':{'PYTHONPYCACHEPREFIX':PREFIX,'PYTHONDONTWRITEBYTECODE':'1'}}
++        result=verify_bootstrap(plan,PREFIX,True,path_exists=lambda _:False)
++        self.assertEqual(result['actual_pycache_prefix'],PREFIX)
++        self.assertTrue(result['actual_dont_write_bytecode'])
++        self.assertTrue(result['prefix_absent'])
++    def test_old_existing_or_write_enabled_bootstrap_refuses(self):
++        plan={'environment':{'PYTHONPYCACHEPREFIX':PREFIX,'PYTHONDONTWRITEBYTECODE':'1'}}
++        for actual,flag,exists in [(None,True,False),(r'C:\old-cache',True,False),(PREFIX,False,False),(PREFIX,True,True)]:
++            with self.subTest(actual=actual,flag=flag,exists=exists),self.assertRaises(ValueError):
++                verify_bootstrap(plan,actual,flag,path_exists=lambda _:exists)
++        plan['environment']['PYTHONDONTWRITEBYTECODE']='0'
++        with self.assertRaises(ValueError):verify_bootstrap(plan,PREFIX,True,path_exists=lambda _:False)
++
++if __name__=='__main__':unittest.main(verbosity=2)

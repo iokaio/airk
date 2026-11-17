@@ -1,0 +1,39 @@
+--- a/crates/airk-cli/tests/service_runtime.rs
++++ b/crates/airk-cli/tests/service_runtime.rs
+@@ -1419,6 +1419,12 @@
+                 limit: 1,
+             })
+             .await?;
++            // Worker waits retain the last sampled job even after it completes.
++            // Only this already-succeeded Inspect may remain as historical wait
++            // metadata; the worker and all live jobs/grants must still be gone.
++            // An ordinary worker may also attempt the optional helper at startup.
++            // Its stopped, jobless global failure is retained history, not active
++            // recovery work. Every other recovery observation prevents readiness.
+             let ready = matches!(
+                 &source,
+                 Response::SourceStatus {
+@@ -1428,8 +1434,9 @@
+                     ..
+                 }
+             ) && matches!(&worker, Response::Worker {
+-                project: found, identity: None, restarting: false, waiting: None, ..
+-            } if *found == project.binding)
++                project: found, identity: None, restarting: false, waiting, ..
++            } if *found == project.binding
++                && waiting.as_ref().is_none_or(|wait| wait.job == inspection.id))
+                 && matches!(&resources, Response::Resources {
+                     observation, configuration_error: false, ..
+                 } if observation.resident_workers == 0
+@@ -1445,7 +1452,10 @@
+                         && page.projects[0].project.paused
+                         && page.projects[0].pending_job.is_none()
+                         && page.projects[0].pending_gate.is_none()
+-                        && page.projects[0].recovery.is_empty()
++                        && page.projects[0].recovery.iter().all(|recovery|
++                            recovery.reason == "helper_unavailable"
++                                && recovery.state == "stopped"
++                                && recovery.job.is_none())
+                         && page.projects[0].failed_observations.is_empty()
+                         && page.projects[0].watch.as_ref().is_some_and(|watch|
+                             watch.configuration_observed && watch.enabled));

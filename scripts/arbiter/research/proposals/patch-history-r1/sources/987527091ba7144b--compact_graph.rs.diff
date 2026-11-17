@@ -1,0 +1,291 @@
+--- a/crates/airk-retrieval/src/arbiter/runtime/qualification/regeneration/compact_graph.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/qualification/regeneration/compact_graph.rs
+@@ -1,5 +1,5 @@
+ // SPDX-License-Identifier: Apache-2.0
+-//! Private Compact graph identity only. No scoring or qualification authority.
++//! Private pinned Compact/Large graph identities only. No scoring or qualification authority.
+ use super::*;
+ 
+ #[derive(serde::Deserialize, serde::Serialize)]
+@@ -10,14 +10,57 @@
+     pub owned_creation: ResourceFilePin,
+     pub baseline_input: ResourceFilePin,
+ }
+-fn graph_evidence(proof: &Value, owner: &Value, input: &Input) -> Result<()> {
++
++struct Family {
++    layers: usize,
++    width: usize,
++    source: &'static str,
++    initializers: usize,
++    cores: usize,
++    reservation: u64,
++    profile_id: &'static str,
++    resolved_field: &'static str,
++    owner_schema: &'static str,
++}
++fn family(model: ModelChoice) -> Result<Family> {
++    match model {
++        ModelChoice::ContextQwenCompact => Ok(Family {
++            layers: 28,
++            width: 2048,
++            source: "c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4",
++            initializers: 310,
++            cores: 4,
++            reservation: 16u64 << 30,
++            profile_id: "private-compact-fp32-gqa-diagnostic-v1",
++            resolved_field: "all28_resolved",
++            owner_schema: "airk.private.compact-graph-owner/1",
++        }),
++        ModelChoice::ContextQwenLarge => Ok(Family {
++            layers: 36,
++            width: 4096,
++            source: "f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94",
++            initializers: 398,
++            cores: 16,
++            reservation: 40u64 << 30,
++            profile_id: "private-large-fp32-gqa-diagnostic-v1",
++            resolved_field: "all36_resolved",
++            owner_schema: "airk.private.large-graph-owner/1",
++        }),
++        _ => anyhow::bail!("only pinned Compact or Large GQA identity is admitted"),
++    }
++}
++pub(super) fn profile_id(model: ModelChoice) -> Result<&'static str> {
++    Ok(family(model)?.profile_id)
++}
++
++fn graph_evidence(proof: &Value, owner: &Value, input: &Input, model: ModelChoice) -> Result<()> {
++    let selected = family(model)?;
+     ensure!(
+         proof["new_graph_sha256"] == json!(input.graph.sha256)
+-            && proof["source_sha256"]
+-                == "c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4"
+-            && proof["gqa_nodes"] == 28
++            && proof["source_sha256"] == selected.source
++            && proof["gqa_nodes"] == selected.layers
+             && proof["original_scale_float32_bits"] == "f304b53d"
+-            && proof["original_initializers"] == 310
++            && proof["original_initializers"] == selected.initializers
+             && proof["original_nodes_preserved_verbatim"] == true
+             && proof["original_initializers_and_external_ranges_preserved_verbatim"] == true
+             && proof["all6inputs_scores_only"] == true
+@@ -40,7 +83,7 @@
+         ensure!(
+             case["tokens"] == tokens
+                 && case["options"] == options
+-                && case["all28_resolved"] == true
++                && case[selected.resolved_field] == true
+                 && case["external_weight_value_policy"]["external_required_values_refused"] == 0,
+             "strict shape case failed or changed"
+         );
+@@ -48,12 +91,12 @@
+             .as_array()
+             .context("shape witnesses absent")?;
+         ensure!(
+-            rows.len() == 28,
+-            "complete28-layer shape witnesses required"
++            rows.len() == selected.layers,
++            "complete selected-layer shape witnesses required"
+         );
+         for row in rows {
+             ensure!(
+-                row["context"] == json!([1, tokens, 2048])
++                row["context"] == json!([1, tokens, selected.width])
+                     && row["cache_shapes_resolved_by_pinned_cpu_compute"]
+                         == json!([[1, 8, tokens, 128], [1, 8, tokens, 128]]),
+                 "actual strict context/cache dimensions differ"
+@@ -61,7 +104,7 @@
+         }
+     }
+     ensure!(
+-        owner["schema"] == "airk.private.compact-graph-owner/1"
++        owner["schema"] == selected.owner_schema
+             && owner["complete"] == true
+             && owner["failure"].is_null()
+             && owner["graph_only"] == true
+@@ -89,7 +132,8 @@
+     );
+     Ok(())
+ }
+-fn baseline(input: &Input) -> Result<(ResourceRunInput, Profile)> {
++fn baseline(input: &Input, model: ModelChoice) -> Result<(ResourceRunInput, Profile)> {
++    let selected = family(model)?;
+     let request: ResourceRunInput =
+         serde_json::from_slice(&pinned_metadata(&input.baseline_input, 1 << 20)?)?;
+     request.validate()?;
+@@ -101,25 +145,26 @@
+     profile.validate()?;
+     let fit = profile.cpu_fit.as_ref().context("original CpuFit absent")?;
+     ensure!(
+-        profile.model == ModelChoice::ContextQwenCompact
++        profile.model == model
+             && profile.max_tokens == 8192
+             && profile.max_candidates == 8
+-            && profile.memory_reservation_bytes == 16u64 << 30
+-            && fit.minimum_physical_cores == 4
+-            && fit.intra_threads == 4
++            && profile.memory_reservation_bytes == selected.reservation
++            && fit.minimum_physical_cores == selected.cores
++            && fit.intra_threads == selected.cores
+             && fit.inter_threads == 1
+             && fit.sequential
+             && !fit.spinning,
+-        "unchanged Compact8192/Cpu4/16GiB baseline required"
++        "unchanged selected-model8192/CPU/memory baseline required"
+     );
+     Ok((request, profile))
+ }
+-pub(super) fn apply(input: &Input, assets: &mut [AssetInput]) -> Result<()> {
+-    let (request, old) = baseline(input)?;
++pub(super) fn apply(input: &Input, assets: &mut [AssetInput], model: ModelChoice) -> Result<()> {
++    let selected = family(model)?;
++    let (request, old) = baseline(input, model)?;
+     let graph = pinned_metadata(&input.graph, 64 << 20)?;
+     let proof: Value = serde_json::from_slice(&pinned_metadata(&input.shape_proof, 1 << 20)?)?;
+     let owner: Value = serde_json::from_slice(&pinned_metadata(&input.owned_creation, 1 << 20)?)?;
+-    graph_evidence(&proof, &owner, input)?;
++    graph_evidence(&proof, &owner, input, model)?;
+     ensure!(
+         proof["bytes"] == graph.len() && owner["graph"]["bytes"] == graph.len(),
+         "actual graph length differs"
+@@ -137,10 +182,9 @@
+         );
+         if item.asset.role == AssetRole::Model {
+             ensure!(
+-                item.asset.sha256.to_string()
+-                    == "c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4"
++                item.asset.sha256.to_string() == selected.source
+                     && input.graph.sha256 != item.asset.sha256,
+-                "exact original/new Compact graph identity required"
++                "exact selected original/new graph identity required"
+             );
+             item.asset.sha256 = input.graph.sha256;
+             item.asset.bytes = graph.len() as u64;
+@@ -150,10 +194,12 @@
+     Ok(())
+ }
+ pub(super) fn validate_prepared(input: &Input, prepared: &PreparedProfile) -> Result<()> {
+-    let (request, old) = baseline(input)?;
++    let selected = family(prepared.profile.model)?;
++    let (request, old) = baseline(input, prepared.profile.model)?;
+     let new = &prepared.profile;
+     ensure!(
+-        new.profile_id == "private-compact-fp32-gqa-diagnostic-v1"
++        new.profile_id == selected.profile_id
++            && new.model == old.model
+             && new.manifest != old.manifest
+             && new.compiler == old.compiler
+             && new.policy == old.policy
+@@ -234,7 +280,7 @@
+         "owned":{"exit_code":0,"timed_out":false,"log_oversized":false,"owned_descendants_settled":true,
+             "owned_job_forced_termination":false,"owned_job_final_active_processes":0,
+             "owned_job_final_member_pids":[],"parent_assigned_to_job":false,"child_assigned_before_resume":true}});
+-    graph_evidence(&proof, &owner, &input)?;
++    graph_evidence(&proof, &owner, &input, ModelChoice::ContextQwenCompact)?;
+     for (path, value) in [
+         ("/source_sha256", json!("changed")),
+         ("/custom_shape_witnesses", json!([])),
+@@ -254,7 +300,7 @@
+         *changed
+             .pointer_mut(path)
+             .context("literal proof mutation")? = value;
+-        assert!(graph_evidence(&changed, &owner, &input).is_err());
++        assert!(graph_evidence(&changed, &owner, &input, ModelChoice::ContextQwenCompact).is_err());
+     }
+     for (path, value) in [
+         ("/complete", json!(false)),
+@@ -268,7 +314,92 @@
+         *changed
+             .pointer_mut(path)
+             .context("literal owner mutation")? = value;
+-        assert!(graph_evidence(&proof, &changed, &input).is_err());
++        assert!(graph_evidence(&proof, &changed, &input, ModelChoice::ContextQwenCompact).is_err());
+     }
+     Ok(())
+ }
++
++#[test]
++fn large_graph_proof_refuses_compact_shape_source_or_unsettled_creator() -> Result<()> {
++    let input = Input {
++        graph: ResourceFilePin {
++            path: "C:/private/model.onnx".into(),
++            sha256: Sha256Digest::from_bytes([1; 32]),
++        },
++        shape_proof: ResourceFilePin {
++            path: "C:/private/proof.json".into(),
++            sha256: Sha256Digest::from_bytes([2; 32]),
++        },
++        owned_creation: ResourceFilePin {
++            path: "C:/private/owner.json".into(),
++            sha256: Sha256Digest::from_bytes([3; 32]),
++        },
++        baseline_input: ResourceFilePin {
++            path: "C:/private/input.json".into(),
++            sha256: Sha256Digest::from_bytes([4; 32]),
++        },
++    };
++    let cases = [(1,1),(17,3),(128,8),(8192,8)].into_iter().map(|(t,n)| json!({
++        "tokens":t,"options":n,"all36_resolved":true,
++        "external_weight_value_policy":{"external_required_values_refused":0},
++        "witnesses":(0..36).map(|_|json!({"context":[1,t,4096],
++            "cache_shapes_resolved_by_pinned_cpu_compute":[[1,8,t,128],[1,8,t,128]]})).collect::<Vec<_>>()
++    })).collect::<Vec<_>>();
++    let proof = json!({"new_graph_sha256":input.graph.sha256,
++        "source_sha256":"f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94",
++        "gqa_nodes":36,"original_scale_float32_bits":"f304b53d","original_initializers":398,
++        "original_nodes_preserved_verbatim":true,"original_initializers_and_external_ranges_preserved_verbatim":true,
++        "all6inputs_scores_only":true,"cache_outputs_internal_only":true,"model_forward":false,
++        "custom_shape_gate_pending":false,"native_kernel_gate_pending":true,
++        "onnx_checker":"original and candidate; real original external-data context; custom kernel ownership separate",
++        "custom_shape_witnesses":cases});
++    let owner = json!({"schema":"airk.private.large-graph-owner/1","complete":true,"failure":null,
++        "graph_only":true,"model_forward":false,"original_phase_expired":false,"post_input_drift":[],
++        "graph":{"path":input.graph.path,"sha256":input.graph.sha256},
++        "shape_proof":{"path":input.shape_proof.path,"sha256":input.shape_proof.sha256},
++        "owned":{"exit_code":0,"timed_out":false,"log_oversized":false,"owned_descendants_settled":true,
++            "owned_job_forced_termination":false,"owned_job_final_active_processes":0,
++            "owned_job_final_member_pids":[],"parent_assigned_to_job":false,"child_assigned_before_resume":true}});
++    graph_evidence(&proof, &owner, &input, ModelChoice::ContextQwenLarge)?;
++    for (path, value) in [
++        (
++            "/source_sha256",
++            json!("c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4"),
++        ),
++        ("/gqa_nodes", json!(28)),
++        ("/original_initializers", json!(310)),
++        ("/custom_shape_witnesses", json!([])),
++        ("/custom_shape_witnesses/3/tokens", json!(2048)),
++        (
++            "/custom_shape_witnesses/3/witnesses/0/context",
++            json!([1, 2048, 2048]),
++        ),
++        (
++            "/custom_shape_witnesses/3/external_weight_value_policy/external_required_values_refused",
++            json!(1),
++        ),
++        ("/all6inputs_scores_only", json!(false)),
++        ("/model_forward", json!(true)),
++    ] {
++        let mut changed = proof.clone();
++        *changed
++            .pointer_mut(path)
++            .context("literal proof mutation")? = value;
++        assert!(graph_evidence(&changed, &owner, &input, ModelChoice::ContextQwenLarge).is_err());
++    }
++    for (path, value) in [
++        ("/complete", json!(false)),
++        ("/owned/exit_code", json!(1)),
++        ("/owned/owned_job_forced_termination", json!(true)),
++        ("/owned/owned_job_final_member_pids", json!([1])),
++        ("/graph/sha256", json!(Sha256Digest::from_bytes([9; 32]))),
++        ("/post_input_drift", json!(["changed"])),
++    ] {
++        let mut changed = owner.clone();
++        *changed
++            .pointer_mut(path)
++            .context("literal owner mutation")? = value;
++        assert!(graph_evidence(&proof, &changed, &input, ModelChoice::ContextQwenLarge).is_err());
++    }
++    Ok(())
++}

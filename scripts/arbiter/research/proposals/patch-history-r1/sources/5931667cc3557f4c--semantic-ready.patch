@@ -1,0 +1,182 @@
+diff --git a/crates/airk-cli/tests/combined_reads/split.rs b/crates/airk-cli/tests/combined_reads/split.rs
+--- a/crates/airk-cli/tests/combined_reads/split.rs
++++ b/crates/airk-cli/tests/combined_reads/split.rs
+@@ -65,6 +65,13 @@
+ }
+ 
+ async fn draft(f: &Fixture, nonce: u8) -> Result<SplitDraft> {
++    draft_with_readiness(f, nonce, false).await
++}
++async fn draft_with_readiness(
++    f: &Fixture,
++    nonce: u8,
++    require_semantic_ready: bool,
++) -> Result<SplitDraft> {
+     let method = ControlMethod::CatalogSplitSourceState {
+         index_id: f.indexes[2],
+         expected_catalog_revision: revision(f)?,
+@@ -119,7 +126,7 @@
+             original_rewrite: 128 << 20,
+             cleanup_allowance: 64 << 20,
+         },
+-        require_semantic_ready: false,
++        require_semantic_ready,
+         destination_watch_enabled: false,
+     };
+     let method = ControlMethod::CatalogSplitDraft {
+@@ -540,6 +547,16 @@
+ #[tokio::test]
+ async fn split_actual_service_provider_cutover_retains_complete_rpc_cli_mcp_evidence() -> Result<()>
+ {
++    provider_cutover(false).await
++}
++#[cfg(feature = "embedding-worker")]
++#[tokio::test]
++async fn split_semantic_ready_destination_has_real_paid_vectors_and_complete_transports()
++-> Result<()> {
++    provider_cutover(true).await
++}
++#[cfg(feature = "embedding-worker")]
++async fn provider_cutover(require_semantic_ready: bool) -> Result<()> {
+     let mut f = Fixture::with_helper()?;
+     f.session.project_ids = vec![f.projects[2]];
+     f.session.index_ids = Some(vec![f.indexes[2]]);
+@@ -590,7 +607,19 @@
+         &body(&warm)?,
+         &body(&warm_mcp["result"])?,
+     )?;
+-    let reviewed = draft(&f, 131).await?;
++    // The original tiny custom model prewarms a real provider. Semantic-ready
++    // destination work deliberately uses the production paired default model,
++    // not an unreviewed test model injection or inherited custom-model claim.
++    let helper_before = if require_semantic_ready {
++        Some(airk_cli::service_runtime::request(&f.control, ControlMethod::EmbeddingStatus).await?)
++    } else {
++        None
++    };
++    let reviewed = draft_with_readiness(&f, 131, require_semantic_ready).await?;
++    ensure!(
++        reviewed.request.require_semantic_ready == require_semantic_ready,
++        "native draft lost requested readiness"
++    );
+     if let Some(observer) = capture.as_mut() {
+         observer.destination(&f, &reviewed)?;
+     }
+@@ -602,6 +631,61 @@
+             .paused,
+         "native split changed the original user's Pause setting"
+     );
++    if require_semantic_ready {
++        let build = complete
++            .receipt
++            .jobs
++            .iter()
++            .find(|job| job.purpose == airk_core::catalog_split::SplitJobPurpose::DestinationBuild)
++            .context("native semantic destination job absent")?;
++        let method = ControlMethod::ConfigurationResult { id: build.job };
++        let response = airk_cli::service_runtime::request(&f.control, method.clone()).await?;
++        ensure!(
++            rpc_cli(&f, method).await? == serde_json::to_value(&response)?,
++            "CLI reduced actual semantic build result"
++        );
++        let ControlResponse::Configuration {
++            job,
++            result: Some(result),
++        } = response
++        else {
++            anyhow::bail!("actual semantic build result missing");
++        };
++        ensure!(
++            job.id == build.job
++                && job.project == complete.request.destination_registration.binding
++                && job.state == airk_core::service::JobState::Succeeded,
++            "semantic result belongs to wrong/unfinished native job"
++        );
++        let actual: airk_core::catalog_split::SplitJobResult = serde_json::from_value(result)?;
++        ensure!(
++            actual.operation_id == operation
++                && actual.request_digest == complete.receipt.request_digest
++                && actual.purpose == airk_core::catalog_split::SplitJobPurpose::DestinationBuild
++                && actual.semantic_ready
++                && actual.selected_sources > 0
++                && actual.publication.is_some()
++                && actual.publication == complete.receipt.destination_publication,
++            "native semantic destination never qualified actual ready publication: {actual:?}"
++        );
++        actual.validate_for(&complete.request, &complete.plan)?;
++        let helper_after =
++            airk_cli::service_runtime::request(&f.control, ControlMethod::EmbeddingStatus).await?;
++        ensure!(
++            matches!(
++                &helper_after,
++                ControlResponse::EmbeddingStatus {
++                    available: true,
++                    process_id: Some(_),
++                    worker: Some(_),
++                    loads: 1..,
++                    ..
++                }
++            ),
++            "real helper not observed; before={helper_before:?};after={helper_after:?}"
++        );
++        // Loads/forwards are observations, not guessed exact inference counts.
++    }
+     let removal = complete
+         .receipt
+         .jobs
+@@ -688,6 +772,55 @@
+     fresh_grant(&mut f, &complete, 133).await?;
+     let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+     let mut mcp = McpSession::start(&f)?;
++    if require_semantic_ready {
++        let destination = complete.request.destination.index_id;
++        let args = json!({"query":"boundaryneedle","mode":"vector","limit":8,"max_bytes":16384,"verification":"off","response_mode":"full","project_ids":[f.projects[2]],"index_ids":[destination],"member_availability":"require"});
++        let native = native_read(backend.as_ref(), "airk_search", &args).await?;
++        let cli = f.cli("airk_search", &args).await?;
++        let wire = mcp.call(19, "airk_search", args)?;
++        ensure!(
++            native["isError"] != true
++                && cli["isError"] != true
++                && wire["result"]["isError"] != true,
++            "semantic destination read refused: native={native};CLI={cli};MCP={wire}"
++        );
++        let result = body(&native)?;
++        let members = result["members"]
++            .as_array()
++            .context("semantic destination member missing")?;
++        ensure!(
++            members.len() == 1
++                && members[0]["index_id"] == json!(destination)
++                && members[0]["is_error"] == false,
++            "semantic query escaped selected destination or failed"
++        );
++        let ranking = result["ranking"]
++            .as_array()
++            .context("semantic destination ranking absent")?;
++        ensure!(
++            !ranking.is_empty(),
++            "ready destination produced no actual vector evidence"
++        );
++        for row in ranking {
++            let origin = airk_core::combined_reads::materialize_ranked_origin(&result, row)?;
++            ensure!(
++                origin.index_id == destination
++                    && origin.project_ids == vec![f.projects[2]]
++                    && origin.source_relative_path.starts_with("api/"),
++                "semantic destination origin/scope changed"
++            );
++        }
++        assert_parity(
++            "actual paid semantic destination CLI",
++            &result,
++            &body(&cli)?,
++        )?;
++        assert_parity(
++            "actual paid semantic destination MCP",
++            &result,
++            &body(&wire["result"])?,
++        )?;
++    }
+     for (tool, args) in [
+         (
+             "airk_list_files",

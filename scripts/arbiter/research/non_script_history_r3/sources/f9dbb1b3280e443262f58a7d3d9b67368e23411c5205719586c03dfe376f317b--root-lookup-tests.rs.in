@@ -1,0 +1,58 @@
+// SPDX-License-Identifier: Apache-2.0
+
+#[cfg(test)]
+mod source_lookup_ownership_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize,Ordering};
+    #[tokio::test(flavor="current_thread")]
+    async fn four_cancelled_callers_cannot_release_blocked_lookup_or_accumulate_workers() -> Result<()> {
+        let temporary=tempfile::tempdir()?;
+        let scope=crate::service_frontend::RootScope::new(temporary.path(),None)?;
+        let control=temporary.path().join("control"); std::fs::create_dir(&control)?;
+        let owner=Arc::new(SourceLookupOwner::new());
+        let calls=Arc::new(AtomicUsize::new(0));
+        let (entered,started)=tokio::sync::oneshot::channel();
+        let (release,held)=std::sync::mpsc::channel();
+        let request_owner=owner.clone();let counted=calls.clone();let root=scope.clone();let path=control.clone();
+        let first=tokio::spawn(async move {
+            request_owner.run(Instant::now()+Duration::from_secs(30),move || {
+                counted.fetch_add(1,Ordering::SeqCst);let _=entered.send(());
+                held.recv()?;
+                Ok(Arc::new(root.observe(&path)?))
+            }).await
+        });
+        started.await?;
+        let mut requests=vec![first];
+        for _ in 0..3 {
+            let request_owner=owner.clone();let counted=calls.clone();let root=scope.clone();let path=control.clone();
+            requests.push(tokio::spawn(async move {
+                request_owner.run(Instant::now()+Duration::from_secs(30),move || {
+                    counted.fetch_add(1,Ordering::SeqCst);Ok(Arc::new(root.observe(&path)?))
+                }).await
+            }));
+        }
+        tokio::task::yield_now().await;
+        for request in &requests { request.abort(); }
+        for request in requests { assert!(matches!(request.await,Err(error) if error.is_cancelled())); }
+        assert_eq!(calls.load(Ordering::SeqCst),1);
+        assert_eq!(owner.permit.available_permits(),0,"caller Drop cannot release actual worker admission");
+        assert!(owner.worker.lock().await.as_ref().is_some_and(|worker|!worker.is_finished()));
+        let root=scope.clone();let path=control.clone();
+        assert!(owner.run(Instant::now(),move || Ok(Arc::new(root.observe(&path)?))).await.is_err());
+        let mut drain=Box::pin(owner.shutdown());
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(drain.as_mut(),cx).is_pending());
+            std::task::Poll::Ready(())
+        }).await;
+        drop(drain);
+        assert!(owner.worker.lock().await.is_some(),"cancelled drain retains actual handle");
+        release.send(())?;
+        owner.shutdown().await?;
+        assert!(owner.worker.lock().await.is_none());
+        assert_eq!(calls.load(Ordering::SeqCst),1);
+        assert!(std::fs::read_dir(&control)?.next().is_none());
+        let path=control.clone();
+        assert!(owner.run(Instant::now()+Duration::from_secs(2),move || Ok(Arc::new(scope.observe(&path)?))).await.is_err());
+        Ok(())
+    }
+}

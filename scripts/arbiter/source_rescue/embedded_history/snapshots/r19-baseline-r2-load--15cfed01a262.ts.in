@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+{
+    const expected = after === null ? null : num(rec(after)?.revision);
+    const result = await run(OPS.catalogPage, body.catalogPage(props.kind, filter, after, expected));
+    const page = result.kind === 'ok' ? rec(rec(result.envelope.result)?.page) : null;
+    if (page === null) return;
+    const got = arr(page.items)
+      .map(itemOf)
+      .filter((item): item is Item => item !== null);
+    const merged = after === null ? got : [...items, ...got];
+    setItems(merged);
+    props.onItems?.(merged, (page.continuation ?? null) === null);
+    setCursor(page.continuation ?? null);
+    const revision = num(page.revision);
+    if (revision !== null) {
+      setHeader({ namespace: text(page.namespace), revision });
+      props.onRevision(revision);
+    }
+  }

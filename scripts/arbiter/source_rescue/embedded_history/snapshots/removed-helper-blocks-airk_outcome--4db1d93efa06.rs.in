@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: Apache-2.0
+/// The recorded `airk` run's outcome (split U95).
+fn airk_outcome(recorded: common::parity::Recorded) -> (Option<i32>, Option<Value>, String) {
+    line_outcome(
+        recorded.code,
+        recorded.stdout.as_bytes(),
+        recorded.stderr.as_bytes(),
+        "Error: ",
+    )
+}

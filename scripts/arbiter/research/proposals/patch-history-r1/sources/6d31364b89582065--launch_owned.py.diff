@@ -1,0 +1,78 @@
+--- D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\r154-fresh-attribution-preparation-r3\launch_owned.py
++++ private-r5/launch_owned.py
+@@ -1,7 +1,7 @@
+ """One explicit fresh R154 diagnostic under the maintained same-human multiprocess owner."""
+ import hashlib,importlib.util,json,os,sys,time
+ from pathlib import Path
+-BASE=Path(__file__).resolve().parent
++BASE=Path('D:\\code\\Github\\airk\\artifacts\\advanced-split\\models\\actual-composed-service-r2\\r154-fresh-attribution-preparation-r3')
+ 
+ def load(path,name):
+     spec=importlib.util.spec_from_file_location(name,path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
+@@ -12,6 +12,35 @@
+         'owned_job_final_active_processes':0,'owned_job_final_member_pids':[],
+         'parent_assigned_to_job':False,'child_assigned_before_resume':True}
+     return all(type(owned.get(k)) is type(v) and owned.get(k)==v for k,v in expected.items())
++
++def ownership_settled(value):
++    expected={'timed_out':False,'log_oversized':False,'owned_descendants_settled':True,
++        'owned_job_forced_termination':False,'owned_job_final_active_processes':0,
++        'owned_job_final_member_pids':[],'parent_assigned_to_job':False,'child_assigned_before_resume':True}
++    return (type(value.get('exit_code')) is int
++        and all(type(value.get(k)) is type(v) and value[k]==v for k,v in expected.items()))
++
++def ownership_outcome(value):
++    if not ownership_settled(value):return 'unsettled_or_unknown'
++    return 'naturally_settled_success' if value['exit_code']==0 else 'naturally_settled_nonzero'
++
++def retain_child_report(root,report):
++    path=root/'worker/diagnostic.json'
++    with path.open('rb') as stream:raw=stream.read(8*1024*1024+1)
++    if len(raw)>8*1024*1024:raise ValueError('Worker diagnostic exceeds8MiB')
++    child=json.loads(raw)
++    report['diagnostic']={'path':str(path),'sha256':hashlib.sha256(raw).hexdigest(),'full_result':child}
++    return child
++
++def observe_child_shutdown(child,report,handle,cutoff):
++    proof=child.get('fresh_service_process_settlement',{})
++    if (child.get('native_service_shutdown',{}).get('full_response',{}).get('status')=='stopping'
++        and proof.get('exit_observed') is True and type(proof.get('exit_code')) is int and proof['exit_code']==0
++        and proof.get('handle_closed') is True
++        and proof.get('process_created_filetime')==report['original_service_before']['process_created_filetime']):
++        # The child proof only permits an observation of OUR retained HANDLE.
++        # It never substitutes its exit claim for the observer's actual wait.
++        report['original_service_after']=handle.observe_original_exit(cutoff)
+ 
+ def main():
+     started=time.monotonic()
+@@ -63,15 +92,17 @@
+             owned=windows_job_8g.run_windows_owned(argv,BASE,log,remaining,env,
+                 absolute_deadline=cutoff,before_resume=before_resume)
+         report['owned']=owned
+-        diagnostic.require(natural(owned),'Actual diagnostic subprocess/descendant ownership did not naturally settle')
+-        raw=(root/'worker/diagnostic.json').read_bytes();child=json.loads(raw)
+-        report['diagnostic']={'path':str(root/'worker/diagnostic.json'),'sha256':hashlib.sha256(raw).hexdigest()}
++        report['owned_outcome']=ownership_outcome(owned)
++        diagnostic.require(ownership_settled(owned),'Actual diagnostic subprocess/descendant ownership unsettled or unknown')
++        child=retain_child_report(root,report)
++        observe_child_shutdown(child,report,handle,cutoff)
++        diagnostic.require(natural(owned),'Actual diagnostic naturally settled with nonzero exit '+str(owned['exit_code'])+'; original child failure retained')
+         diagnostic.require(child.get('complete') is True and child.get('canonical_call_attempts')==1 and child.get('fresh_call_validated') is True
+             and child.get('prepared_sources_and_inputs_unchanged') is True
+             and child.get('original_phase_expired') is False
+             and child.get('native_service_shutdown',{}).get('full_response',{}).get('status')=='stopping',
+             'Full fresh one-Answer/input/native-shutdown capture absent or refused')
+-        report['original_service_after']=handle.observe_original_exit(cutoff)
++        if 'original_service_after' not in report:report['original_service_after']=handle.observe_original_exit(cutoff)
+         diagnostic.require(child.get('fresh_service_process_settlement',{}).get('process_created_filetime')
+             ==report['original_service_before']['process_created_filetime'],
+             'Worker original service process identity differs from outer retained HANDLE')
+@@ -82,7 +113,7 @@
+         if handle is not None and handle.handle is not None:
+             closed=handle.api.CloseHandle(handle.handle);handle.handle=None
+             report['unsettled_service_observer_handle_closed']=bool(closed)
+-            report['original_service_after']=dict(handle.proof)
++            report['original_service_after']={**handle.proof,'handle_closed':bool(closed)}
+             if not closed and report['failure'] is None:report['failure']={'type':'HandleCloseRefusal','message':'Observer handle close failed'}
+         # Worker owns all753-source/SDK/post-shutdown hashes under the actual Job.
+         # This final small retained output hash also precedes the sole final clock.

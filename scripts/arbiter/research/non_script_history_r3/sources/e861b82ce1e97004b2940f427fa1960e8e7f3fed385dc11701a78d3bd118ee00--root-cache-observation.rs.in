@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: Apache-2.0
+pub(crate) struct RootObservation {
+    pub resolution: RootResolution,
+    pub fence: Option<crate::project_client::SourceFence>,
+    pub stamp: Option<airk_store::service::registry::SavedScopeStamp>,
+    pub observed_unix_ms: Option<u64>,
+    root: PathBuf,
+    collection: Option<String>,
+    captured: std::time::Instant,
+}
+impl RootObservation {
+    pub(crate) fn age_ms(&self) -> u64 {
+        std::time::Instant::now().saturating_duration_since(self.captured).as_millis()
+            .try_into().unwrap_or(u64::MAX)
+    }
+    pub(crate) fn expires_at(&self) -> std::time::Instant {
+        self.captured + std::time::Duration::from_secs(5)
+    }
+    pub(crate) fn fresh_at(&self, now: std::time::Instant) -> bool {
+        now.saturating_duration_since(self.captured) < std::time::Duration::from_secs(5)
+    }
+}
+fn scope_observed_unix_ms() -> Option<u64> {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?
+        .as_millis().try_into().ok()
+}

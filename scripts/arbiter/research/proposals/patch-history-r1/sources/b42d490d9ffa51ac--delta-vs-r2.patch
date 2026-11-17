@@ -1,0 +1,28 @@
+--- r2/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/tests.rs
++++ r3/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/tests.rs
+@@ -222,10 +222,22 @@
+         "../cudart64_12.dll",
+     ] {
+         let mut changed = value.clone();
+-        changed.files[1].name = name.into();
++        let mut forbidden = changed.files[1].clone();
++        forbidden.name = name.into();
++        changed.files.push(forbidden);
+         let mut matching_native = native.clone();
+-        matching_native[1].name = name.into();
+-        assert!(!accepts(&changed, &matching_native), "{name}");
++        let mut forbidden_native = matching_native[1].clone();
++        forbidden_native.name = name.into();
++        matching_native.push(forbidden_native);
++        let (raw, asset) = raw_asset(&changed).unwrap();
++        let error = validate(&raw, &asset, hash(12), &matching_native)
++            .err()
++            .expect("intrinsically forbidden DLL accepted");
++        assert_eq!(
++            error.to_string(),
++            "unapproved/duplicate runtime payload",
++            "{name}"
++        );
+     }
+     let mut changed = value.clone();
+     changed.files[1].sha256 = hash(30);

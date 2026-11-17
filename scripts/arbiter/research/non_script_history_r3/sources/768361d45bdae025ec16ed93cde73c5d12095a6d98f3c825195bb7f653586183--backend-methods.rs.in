@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: Apache-2.0
+impl Backend {
+    fn accept_source_fence(&self, fence: SourceFence) -> bool {
+        if fence.project != self.project { return false; }
+        let mut latest = self.latest_source.lock().unwrap_or_else(|error| error.into_inner());
+        if latest.is_some_and(|old| old.namespace != fence.namespace || old.revision > fence.revision) {
+            return false;
+        }
+        *latest = Some(fence);
+        true
+    }
+    fn source_fence_current(&self, scope: CacheScope) -> bool {
+        match scope {
+            CacheScope::Pinned(_) => true,
+            CacheScope::Source(fence) => self.latest_source.lock()
+                .unwrap_or_else(|error| error.into_inner()).as_ref() == Some(&fence),
+        }
+    }
+    pub(crate) fn call_observed(
+        &self, tool: String, arguments: serde_json::Map<String, serde_json::Value>, fence: SourceFence,
+    ) -> airk_mcp::remote::RemoteFuture<'_> {
+        self.call_bound(tool, arguments, Some(fence))
+    }

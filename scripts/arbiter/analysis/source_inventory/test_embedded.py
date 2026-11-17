@@ -30,4 +30,13 @@ class HistoricalLinks(unittest.TestCase):
     def test_missing_historical_object_refuses(self):
         with self.assertRaises(ValueError):
             links_owner.links({'head':'h','candidates':[{'path':'a','source_sha256':'s','classification':'committed_git_blob_match','git_blob_oid':'missing'}]}, {})
+spec=importlib.util.spec_from_file_location('byte_audit',Path(__file__).with_name('byte_audit.py'))
+audit_owner=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(audit_owner)
+class ByteAuditPresence(unittest.TestCase):
+    def test_missing_mapped_target_refuses(self):
+        with self.assertRaisesRegex(ValueError,'missing required mapped targets'):
+            audit_owner.require_mapped_targets({'required.py':'sha'}, {})
+    def test_unmapped_absent_attribute_does_not_require_target(self):
+        audit_owner.require_mapped_targets({}, {})
 if __name__=='__main__':unittest.main()

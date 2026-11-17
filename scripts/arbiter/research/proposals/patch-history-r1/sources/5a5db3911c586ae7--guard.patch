@@ -1,0 +1,53 @@
+--- a/crates/airk-kernel/src/inference_owner/evaluation_tests/train_units/public_human_visibility/source_spans.rs
++++ b/crates/airk-kernel/src/inference_owner/evaluation_tests/train_units/public_human_visibility/source_spans.rs
+@@ -606,7 +606,20 @@
+             16 << 20,
+         )
+     };
+-    Compiler::from_verified(&asset(AssetRole::Compiler)?, &asset(AssetRole::Tokenizer)?)
++    verified_focus_compiler(&asset(AssetRole::Compiler)?, &asset(AssetRole::Tokenizer)?)
++}
++fn verified_focus_compiler(profile_bytes: &[u8], tokenizer_bytes: &[u8]) -> Result<Compiler> {
++    let profile: airk_core::arbiter::CompilerProfile = serde_json::from_slice(profile_bytes)?;
++    ensure!(
++        profile.max_tokens == 512,
++        "actual Focus compiler must have512token width"
++    );
++    let compiler = Compiler::from_verified(profile_bytes, tokenizer_bytes)?;
++    ensure!(
++        compiler.recipe() == airk_core::arbiter::CompilerRecipe::QwenRerankYesNoV1,
++        "actual Focus compiler recipe differs"
++    );
++    Ok(compiler)
+ }
+ fn complete_bag(states: &[Option<bool>]) -> Option<bool> {
+     if states.is_empty() || states.iter().any(Option::is_none) {
+--- a/crates/airk-kernel/src/inference_owner/evaluation_tests/train_units/public_human_visibility/source_spans/tests.rs
++++ b/crates/airk-kernel/src/inference_owner/evaluation_tests/train_units/public_human_visibility/source_spans/tests.rs
+@@ -142,3 +142,26 @@
+     assert!(context_rights(&json!({"rows":[{"rights_pins":[]}]})).is_err());
+     Ok(())
+ }
++
++#[test]
++fn actual_verified_focus_compiler_rejects_wider_valid_native_profile() -> Result<()> {
++    let tokenizer = serde_json::to_vec(
++        &json!({"version":"1.0","truncation":null,"padding":null,"added_tokens":[
++        {"id":151644,"content":"<|im_start|>","single_word":false,"lstrip":false,"rstrip":false,"normalized":false,"special":true},
++        {"id":151645,"content":"<|im_end|>","single_word":false,"lstrip":false,"rstrip":false,"normalized":false,"special":true},
++        {"id":151643,"content":"<|endoftext|>","single_word":false,"lstrip":false,"rstrip":false,"normalized":false,"special":true}],
++        "normalizer":null,"pre_tokenizer":{"type":"Whitespace"},"post_processor":null,"decoder":null,
++        "model":{"type":"WordLevel","vocab":{"[UNK]":0,"word":1,"no":2152,"yes":9693,"<|endoftext|>":151643,"<|im_start|>":151644,"<|im_end|>":151645},"unk_token":"[UNK]"}}),
++    )?;
++    let bytes = airk_retrieval::arbiter::compiler::focus::compiler_profile(&tokenizer)?;
++    assert_eq!(
++        verified_focus_compiler(&bytes, &tokenizer)?.recipe(),
++        airk_core::arbiter::CompilerRecipe::QwenRerankYesNoV1
++    );
++    let mut wide: airk_core::arbiter::CompilerProfile = serde_json::from_slice(&bytes)?;
++    wide.max_tokens = 8192;
++    let bytes = serde_json::to_vec(&wide)?;
++    assert!(Compiler::from_verified(&bytes, &tokenizer).is_ok());
++    assert!(verified_focus_compiler(&bytes, &tokenizer).is_err());
++    Ok(())
++}

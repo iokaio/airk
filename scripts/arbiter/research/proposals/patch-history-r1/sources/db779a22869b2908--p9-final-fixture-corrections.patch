@@ -1,0 +1,32 @@
+*** Begin Patch
+*** Update File: D:/code/Github/airk/crates/airk-kernel/src/source_policy.rs
+@@
+         let operation = Incarnation::from_bytes([8; 16]);
++        // Revocation prevents delivery but cannot release an independently
++        // held request gate. The native transport drains its owners; this
++        // direct library fixture must release its own retained reader.
++        let blocked=kernel.apply_source_policy(&policy,operation).unwrap_err();
++        assert!(matches!(blocked.downcast_ref::<airk_store::current::CurrentGateContention>(),Some(airk_store::current::CurrentGateContention::Readers)),"{blocked:#}");
++        assert!(retained.token().is_err());
++        drop(retained);
+         let report = kernel.apply_source_policy(&policy, operation)?;
+@@
+-        assert!(retained.token().is_err());
+         assert_eq!(std::fs::read(kernel.root.join("blocked/private.rs"))?, before);
+*** Update File: D:/code/Github/airk/crates/airk-kernel/tests/current_fts.rs
+@@
+     let rebuilding =
+-        Kernel::open_collection_for_diagnostics(root.path(), Some(state.path().into()), "default")?;
++        Kernel::open_collection_for_diagnostics(root.path(), Some(state.path().into()), "default")?
++            // This isolated fixture created an empty-policy index. Supply the
++            // native owner's explicit authority; damaged retained metadata is
++            // deliberately insufficient to infer absence of permanent denies.
++            .with_expected_source_policy(None)?;
+@@
+         let rebuilding = Kernel::open_collection_for_diagnostics(
+             root.path(),
+             Some(state.path().into()),
+             "default",
+-        )?;
++        )?.with_expected_source_policy(None)?;
+*** End Patch

@@ -1,0 +1,47 @@
+--- a/crates/airk-cli/tests/combined_reads/split.rs
++++ b/crates/airk-cli/tests/combined_reads/split.rs
+@@ -260,6 +260,21 @@
+         )?;
+         sql.busy_timeout(Duration::from_secs(2))?;
+         let native = registry.catalog_split_state(snapshot.receipt.operation_id)?;
++        // Retained split children can already be Failed/Canceled when the
++        // coordinator latches attention; pending-only SQL would hide the cause.
++        // Observe at most eight exact accepted child IDs, without retry/mutation.
++        let mut split_children = Vec::new();
++        for child in snapshot.receipt.jobs.iter().rev().take(8) {
++            let work = registry.configuration_work(child.job)?;
++            split_children.push(json!({
++                "reference": child,
++                "job": registry.job(child.job)?,
++                "configuration_operation": work.as_ref()
++                    .map(|work| serde_json::to_value(&work.request.configuration))
++                    .transpose()?.and_then(|value| value.get("operation").cloned()),
++                "saved_result": registry.configuration_result(child.job)?,
++            }));
++        }
+         let mut participants = Vec::new();
+         for registration in [
+             &snapshot.request.original_registration,
+@@ -313,7 +328,9 @@
+         };
+         Ok(
+             json!({"operation":snapshot.receipt.operation_id,"stage":snapshot.receipt.stage,
+-            "receipt_digest":snapshot.receipt_digest,"participants":participants,"witness_preparation":witness_preparation}),
++            "receipt_digest":snapshot.receipt_digest,"participants":participants,
++            "split_children":split_children,"split_children_truncated":snapshot.receipt.jobs.len()>8,
++            "witness_preparation":witness_preparation}),
+         )
+     };
+     let metadata =
+@@ -396,9 +413,9 @@
+                     .finalization
+                     .as_ref()
+                     .is_none_or(|finalization| finalization.attention.is_none()),
+-            "native split needs attention: {}; service:{}",
++            "native split needs attention: {}; diagnostics:{}",
+             serde_json::to_string(&snapshot)?,
+-            fs::read_to_string(f.owner.path().join("service.log")).unwrap_or_default()
++            stalled_native_diagnostics(f, &snapshot)
+         );
+         if snapshot.finalization.as_ref().is_some_and(|finalization| {
+             finalization.progress == SplitFinalizationProgress::Complete

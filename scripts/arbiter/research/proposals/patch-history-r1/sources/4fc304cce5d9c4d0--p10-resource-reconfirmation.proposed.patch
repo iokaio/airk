@@ -1,0 +1,307 @@
+--- a/crates/airk-cli/tests/combined_reads/split_metrics.rs
++++ b/crates/airk-cli/tests/combined_reads/split_metrics.rs
+@@ -11,6 +11,9 @@
+     next_sample: Instant,
+     source_before: Value,
+     clients: Vec<McpSession>,
++    selection: CombinedConnectRequest,
++    authority_baseline: Value,
++    publication_baseline: Option<Value>,
+     data: Vec<(String, PathBuf)>,
+     sequence: usize,
+     waves: usize,
+@@ -117,6 +120,50 @@
+         matches!(response,ControlResponse::Job{job}if job.state==airk_core::service::JobState::Running),
+     )
+ }
++
++// Compare complete native authority items, excluding only enclosing observation
++// revision. A changed/revoked grant, membership or source definition refuses.
++async fn identity(f: &Fixture, selected: &CombinedConnectRequest) -> Result<(Value, Value)> {
++    use airk_core::catalog_management::CatalogEntity;
++    let entities = [
++        CatalogEntity::Grant {
++            id: selected.grant_id,
++        },
++        CatalogEntity::Project { id: f.projects[0] },
++        CatalogEntity::Index { id: f.indexes[0] },
++        CatalogEntity::Membership {
++            project_id: f.projects[0],
++            index_id: f.indexes[0],
++        },
++    ];
++    let mut items = Vec::new();
++    let mut reads = Vec::new();
++    for entity in entities {
++        let response = airk_cli::service_runtime::request(
++            &f.control,
++            ControlMethod::CatalogDetail {
++                entity,
++                expected_catalog_revision: Some(selected.expected_catalog_revision),
++            },
++        )
++        .await?;
++        let ControlResponse::CatalogDetail { detail, .. } = &response else {
++            anyhow::bail!(
++                "native independent identity observation refused: {}",
++                serde_json::to_string(&response)?
++            );
++        };
++        ensure!(
++            detail.namespace == selected.namespace
++                && detail.revision == selected.expected_catalog_revision
++                && detail.item.is_some(),
++            "native independent identity absent or stale"
++        );
++        items.push(serde_json::to_value(&detail.item)?);
++        reads.push(serde_json::to_value(&response)?);
++    }
++    Ok((json!(items), json!(reads)))
++}
+ impl Capture {
+     pub(super) async fn start(
+         f: &mut Fixture,
+@@ -126,6 +173,7 @@
+         let Some(base) = std::env::var_os("AIRK_P10_RESOURCE_OUTPUT_DIR") else {
+             return Ok(None);
+         };
++        let case_started = Instant::now();
+         // Performance evidence requires an explicitly selected fresh matched pair.
+         ensure!(
+             std::env::var_os("AIRK_CATALOG_CANDIDATE_BINARY").is_some(),
+@@ -222,12 +270,11 @@
+         selected.context_key = metric_context;
+         selected.grant_id = grant.id;
+         selected.expected_grant_revision = grant.revision;
+-        f.session = selected;
++        let (authority_baseline, authority_reads) = identity(f, &selected).await?;
+         let clients = (0..4)
+-            .map(|_| McpSession::start(f))
+-            .collect::<Result<Vec<_>>>();
++            .map(|_| McpSession::start_selected(f, &selected))
++            .collect::<Result<Vec<_>>>()?;
+         f.session = original;
+-        let clients = clients?;
+         ensure!(
+             service.child.try_wait()?.is_none(),
+             "owned service exited before measurement"
+@@ -251,10 +298,13 @@
+                 .create_new(true)
+                 .open(directory.join("observations.jsonl"))?,
+             directory,
+-            started: Instant::now(),
++            started: case_started,
+             next_sample: Instant::now(),
+             source_before,
+             clients,
++            selection: selected,
++            authority_baseline,
++            publication_baseline: None,
+             data: vec![
+                 (
+                     "original_data".into(),
+@@ -275,6 +325,10 @@
+             finished: false,
+             require_running_overlap: case == "complete",
+         };
++        capture.event(
++            json!({"phase":"initial_confirmation","native_reads":authority_reads,
++            "selection":capture.selection}),
++        )?;
+         let mut baseline_successes = 0;
+         for _ in 0..2 {
+             baseline_successes += capture.wave("baseline", false)?;
+@@ -314,6 +368,61 @@
+         );
+         self.data.push(("destination_data".into(), path));
+         self.event(json!({"phase":"reviewed","capacity":draft.request.capacity,"operation_id":draft.plan.operation_id}))
++    }
++
++    async fn reconfirm(&mut self, f: &Fixture, force: bool) -> Result<bool> {
++        let observed = revision(f)?;
++        if !force && observed == self.selection.expected_catalog_revision {
++            return Ok(true);
++        }
++        let started = Instant::now();
++        let mut selected = self.selection.clone();
++        selected.expected_catalog_revision = observed;
++        let outcome: Result<(Vec<McpSession>, Value)> = async {
++            let (identity, reads) = identity(f, &selected).await?;
++            ensure!(
++                identity == self.authority_baseline,
++                "independent native grant/Project/Index authority changed; reconfirmation refused"
++            );
++            ensure!(
++                source_inventory(f)? == self.source_before,
++                "source bytes changed before reconfirmation"
++            );
++            let backend =
++                airk_cli::combined_frontend::resolve(None, Some(&f.control), &selected).await?;
++            backend.close();
++            backend.shutdown().await?;
++            let clients = (0..4)
++                .map(|_| McpSession::start_selected(f, &selected))
++                .collect::<Result<Vec<_>>>()?;
++            Ok((clients, reads))
++        }
++        .await;
++        match outcome {
++            Ok((clients, reads)) => {
++                // Exactly the same grant/key/projects/index; only observed
++                // catalog revision changes, without writing any native state.
++                self.clients = clients;
++                self.selection = selected;
++                self.event(json!({"phase":"reconfirmation","outcome":"confirmed",
++                    "elapsed_us_separate_from_query":started.elapsed().as_micros(),
++                    "selection":self.selection,"native_reads":reads,"query_replayed":false}))?;
++                Ok(true)
++            }
++            Err(error) => {
++                let text = format!("{error:#}");
++                ensure!(
++                    text.len() <= 16384,
++                    "reconfirmation error exceeds frozen bound"
++                );
++                self.event(json!({"phase":"reconfirmation","outcome":"refused",
++                    "elapsed_us_separate_from_query":started.elapsed().as_micros(),
++                    "proposed_selection":selected,"error":text,"query_replayed":false}))?;
++                // Keep the old session. The next planned wave records its
++                // actual refusals; failure is never a successful sample.
++                Ok(false)
++            }
++        }
+     }
+     fn wave(&mut self, phase: &str, observed_running: bool) -> Result<usize> {
+         let wave = self.waves;
+@@ -339,12 +448,37 @@
+         let mut successes = 0;
+         for (reply, micros) in replies {
+             let result = &reply["result"];
++            let encoded_reply = serde_json::to_vec(&reply)?;
++            let digest =
++                airk_core::identity::framed_digest(b"airk/p10-metric-reply/1", &[&encoded_reply]);
++            ensure!(
++                encoded_reply.len() <= 65536,
++                "metric native reply exceeds frozen 64KiB bound; digest:{digest};bytes:{}",
++                encoded_reply.len()
++            );
++            self.event(json!({"phase":phase,"query_reply":{"elapsed_ms":micros as f64/1000.0,
++                "attempts":1,"reply_bytes":encoded_reply.len(),"reply_digest":digest,"reply":reply}}))?;
++            // Retain a completed failed attempt. Never replay it, even after a
++            // later wave explicitly confirms the same independent authority.
+             let outcome = if result["isError"] == true {
++                let refusal = body(result)?;
++                let scope_refused = matches!(
++                    refusal["error"]["code"].as_str(),
++                    Some("combined_scope_unavailable" | "combined_scope_expired")
++                ) && refusal["error"]["retryable"] == false
++                    && refusal["error"]["query_replay_safe"] == false
++                    && refusal["requested_scope"]["confirmed"] == false
++                    && refusal["requested_scope"]["selection"]
++                        == serde_json::to_value(&self.selection)?;
++                let typed = scope_refused || read_retry::classify(result).is_some();
++                self.event(json!({"phase":phase,"query":{"outcome":if scope_refused {"scope_refusal"}else if typed {"typed_rejection"}else{"untyped_rejection"},
++                    "elapsed_ms":micros as f64/1000.0,"attempts":1,"split_observed_running":false,
++                    "reply_bytes":encoded_reply.len(),"reply_digest":digest,"reply":reply}}))?;
+                 ensure!(
+-                    read_retry::classify(result).is_some(),
+-                    "untyped metric query refusal: {reply}"
++                    typed,
++                    "untyped metric query refusal retained at digest {digest}"
+                 );
+-                "typed_rejection"
++                continue;
+             } else {
+                 let value = body(result)?;
+                 let member =
+@@ -355,12 +489,27 @@
+                     member["hits"][0]["citation"]["content_hash"] == self.expected_hash,
+                     "unrelated metric citation/hash changed: {reply}"
+                 );
++                let identity = json!({"publication":member["publication"],"generation":member["generation"],
++                    "collection":member["collection"],"citation":member["hits"][0]["citation"]});
++                ensure!(
++                    !identity["publication"].is_null(),
++                    "metric search omitted exact publication"
++                );
++                if let Some(expected) = &self.publication_baseline {
++                    ensure!(
++                        *expected == identity,
++                        "unrelated metric publication/citation identity changed: {identity}"
++                    );
++                } else {
++                    self.publication_baseline = Some(identity);
++                }
+                 successes += 1;
+                 "success"
+             };
+             self.event(
+                 json!({"phase":phase,"query":{"outcome":outcome,"elapsed_ms":micros as f64/1000.0,
+-                "attempts":1,"split_observed_running":observed_running}}),
++                "attempts":1,"split_observed_running":observed_running,
++                "reply_bytes":encoded_reply.len(),"reply_digest":digest,"reply":reply}}),
+             )?;
+         }
+         Ok(successes)
+@@ -380,7 +529,6 @@
+             "owned service exited during measurement"
+         );
+         let started = Instant::now();
+-        let before = running(f, snapshot).await?;
+         let native =
+             airk_cli::service_runtime::request(&f.control, ControlMethod::Resources).await?;
+         let disk = file_bytes(f.owner.path(), &self.data)?;
+@@ -388,10 +536,13 @@
+             "finalization":snapshot.finalization,"resources_native":native,"disk":{"roots":disk},"service_pid":service.child.id(),
+             "service_handle_retained_by_fixture":true,"observer_elapsed_us":started.elapsed().as_micros()}))?;
+         if self.waves < 32 {
+-            // Count coverage only if this exact native child is Running at both bounds.
++            // Confirmation belongs to the next planned wave, never a replay.
++            let confirmed = self.reconfirm(f, false).await?;
++            // Bound the query wave itself, excluding reconfirmation latency.
++            let before = running(f, snapshot).await?;
+             let successes = self.wave("during", false)?;
+             let after = running(f, snapshot).await?;
+-            if before && after {
++            if confirmed && before && after {
+                 self.running_successes += successes;
+                 self.event(json!({"phase":"split_active","running_wave_successes":successes,
+                 "job":snapshot.receipt.jobs.last().map(|job|job.job),"same_job_running_at_both_bounds":true}))?;
+@@ -407,7 +558,11 @@
+     ) -> Result<()> {
+         let mut settled_successes = 0;
+         for _ in 0..2 {
+-            settled_successes += self.wave("settled", false)?;
++            let confirmed = self.reconfirm(f, true).await?;
++            let successes = self.wave("settled", false)?;
++            if confirmed {
++                settled_successes += successes;
++            }
+         }
+         ensure!(
+             settled_successes >= 4,
+@@ -492,6 +647,7 @@
+             "service_pid":service.child.id(),"service_handle_retained_by_fixture":true,"operation_id":snapshot.receipt.operation_id,
+             "operation_stage":snapshot.receipt.stage,"finalization":snapshot.finalization,"running_successes":self.running_successes,
+             "contention_coverage":if !self.require_running_overlap{"not_applicable_metadata_only_cancel"}else if overlap{"observed"}else{"inconclusive_no_required_overlap"},
++            "case_elapsed_us":self.started.elapsed().as_micros(),
+             "whole_split_cpu_us":null,"physical_disk_peak_bytes":null,"native_qualification":false}))?,
+         )?;
+         self.finished = true;
+--- a/crates/airk-cli/tests/combined_reads.rs
++++ b/crates/airk-cli/tests/combined_reads.rs
+@@ -889,10 +889,13 @@
+ }
+ impl McpSession {
+     fn start(f: &Fixture) -> Result<Self> {
++        Self::start_selected(f, &f.session)
++    }
++    fn start_selected(f: &Fixture, selected: &CombinedConnectRequest) -> Result<Self> {
+         let mut command = Command::new(&f.candidate);
+         command
+             .arg("--combined-session")
+-            .arg(serde_json::to_string(&f.session)?)
++            .arg(serde_json::to_string(selected)?)
+             .arg("--service-runtime-dir")
+             .arg(&f.control)
+             .arg("mcp")

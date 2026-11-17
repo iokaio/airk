@@ -1,0 +1,37 @@
+--- r10/continue_cuda_runtime.py
++++ r11/continue_cuda_runtime.py
+@@ -39,7 +39,7 @@
+  syntax_path=o.plain(a.syntax_receipt,regular=True)
+  if digest(syntax_path)!=a.syntax_receipt_sha256:raise ValueError('reviewed actual syntax receipt differs')
+  syntax=o.read_json(syntax_path)
+- if syntax.get('status')!='PASS_SYNTAX_ONLY' or syntax.get('request_sha256')!=a.approved_request_sha256 or syntax.get('source_sha256')!=req['after']['sha256'] or not o.successful(syntax.get('command',{})):raise ValueError('actual corrected CAPI /Zs proof required')
++ if syntax.get('process_tree_owner') is not True or syntax.get('status')!='PASS_SYNTAX_ONLY' or syntax.get('request_sha256')!=a.approved_request_sha256 or syntax.get('source_sha256')!=req['after']['sha256'] or not o.successful(syntax.get('command',{})):raise ValueError('actual corrected CAPI /Zs proof required')
+  if digest(HERE/'wall-origin.json')!=a.approved_wall_origin_sha256:raise ValueError('reviewed absolute wall cutoff differs')
+  wall=o.read_json(HERE/'wall-origin.json');o.verify_file(o.plain(wall['start_file']['path'],regular=True),wall['start_file']);original_start=o.read_json(wall['start_file']['path'])
+  started=datetime.datetime.fromisoformat(original_start['started_utc']);cutoff=started+datetime.timedelta(seconds=10800)
+@@ -48,7 +48,7 @@
+  if observed_utc<datetime.datetime.fromisoformat(wall['prepared_utc']):raise ValueError('UTC moved backwards before continuation')
+  active_elapsed=parent['elapsed_seconds']+syntax['elapsed_seconds'];remaining=wall_remaining(started,observed_utc,active_elapsed);deadline=start+remaining
+  if remaining<=0 or remaining>req['remaining_original_budget_seconds']:raise ValueError('original10800s budget exhausted or widened')
+- out=recipe.PARENT/'cu8-continuation-r10';idlock=copy.deepcopy(lock);idlock['build_path']['fresh_child']=out.name;policy=recipe.identity_and_parent(o,out,idlock);out.mkdir()
++ out=recipe.PARENT/'cu8-continuation-r11';idlock=copy.deepcopy(lock);idlock['build_path']['fresh_child']=out.name;policy=recipe.identity_and_parent(o,out,idlock);out.mkdir()
+  if digest(HERE/'input-pins.json')!=a.approved_environment_input_sha256:raise ValueError('reviewed environment input closure differs')
+  environment_pins=o.read_json(HERE/'input-pins.json')
+  for item in environment_pins:o.verify_file(o.plain(item['path'],regular=True),item)
+@@ -91,13 +91,13 @@
+   preflight=recipe.configured_build_preflight(o,dest,parent['configure_argv'],newlock)
+   if {k:v for k,v in preflight.items() if k!='final_capi_source_sha256'}!={k:v for k,v in parent['configured_preflight'].items() if k!='final_capi_source_sha256'}:raise ValueError('configure/build target identity changed')
+   receipt['configured_preflight']=preflight
+-  inputs=closure+[row(o.plain(HERE/n,regular=True)) for n in ['continuation-request.json','continuation-baseline.json','wall-origin.json','continue_cuda_runtime.py','onnxruntime_c_api.cc.before','onnxruntime_c_api.cc','initialized-public-api.patch','syntax-card.json','capi-syntax.rsp','producer_environment.py','environment-source.json','input-pins.json']]+[row(syntax_path)]
++  inputs=closure+[row(o.plain(HERE/n,regular=True)) for n in ['continuation-request.json','continuation-baseline.json','wall-origin.json','continue_cuda_runtime.py','onnxruntime_c_api.cc.before','onnxruntime_c_api.cc','initialized-public-api.patch','syntax-card.json','capi-syntax.rsp','producer_environment.py','environment-source.json','input-pins.json','process_tree.py','wait_process_tree.ps1']]+[row(syntax_path)]
+   recipe.write(out/'frozen-input-closure.json',inputs);receipt['frozen_input_closure_sha256']=digest(out/'frozen-input-closure.json')
+-  for stage,targets in [('core-session-build-r10',['onnxruntime_session']),('build-r10',['all','re2'])]:
++  for stage,targets in [('core-session-build-r11',['onnxruntime_session']),('build-r11',['all','re2'])]:
+    left=min(deadline-time.monotonic(),(cutoff-datetime.datetime.now(datetime.timezone.utc)).total_seconds())
+    if left<=0:raise TimeoutError('original10800s build budget expired')
+    argv=[tools['cmake']['path'],'--build',str(dest/'b/Release'),'--config','Release','--target',*targets,'--parallel','2'];receipt[stage+'_argv']=argv
+-   actual=o.windows_command(argv,tools,out,stage);command=o.run_owned(actual,dest,out/'logs'/(stage+'.log'),left,environment);receipt['commands'].append(command)
++   actual=o.windows_command(argv,tools,out,stage);tree_owner=load(HERE/'process_tree.py','reviewed_continuation_tree_owner');command=tree_owner.run_tree(o,actual,dest,out,stage,left,environment);receipt['commands'].append(command)
+    if not o.successful(command):raise ValueError('continuation stage failed or unsettled: '+stage)
+   verify(after);recipe.verify_input_closure(o,inputs)
+   if digest(out/'frozen-input-closure.json')!=receipt['frozen_input_closure_sha256']:raise ValueError('new closure record drift')

@@ -1,0 +1,131 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Actual service selector supplies the original singleton allocation.
+use super::*;
+use airk_core::{
+    arbiter::{FocusProfileLimits, focus::ordinary_search_allocation},
+    combined_context::{PartitionAllowance, Resources},
+    identity::Sha256Digest,
+    index_catalog::IndexId,
+};
+
+pub(super) fn admit(
+    state: &Arc<super::super::State>,
+    tool: &str,
+    arguments: &Map<String, Value>,
+    context: ReadAttemptContext,
+    selection: Sha256Digest,
+    indexes: &[IndexId],
+) -> Result<ReadAttemptContext> {
+    if !matches!(tool, "search" | "airk_search")
+        || context.context_partition().is_some()
+        || uses_combined_arguments(arguments)
+    {
+        return Ok(context);
+    }
+    let [index] = indexes else {
+        return Ok(context);
+    };
+    let Some(limits) = state
+        .arbiter
+        .as_ref()
+        .and_then(|owner| owner.singleton_focus_limits(*index).ok().flatten())
+    else {
+        return Ok(context);
+    };
+    // The canonical parser owns supported arguments/defaults. Invalid source
+    // requests remain canonical refusals, not extra native model work.
+    let Ok(args) = serde_json::from_value::<airk_mcp::SearchArgs>(Value::Object(arguments.clone()))
+    else {
+        return Ok(context);
+    };
+    capture(context, selection, *index, args.limit, &limits)
+}
+fn capture(
+    context: ReadAttemptContext,
+    selection: Sha256Digest,
+    index: IndexId,
+    limit: usize,
+    limits: &FocusProfileLimits,
+) -> Result<ReadAttemptContext> {
+    require_live(&context)?;
+    let id = match context.request_id() {
+        Some(id) => id,
+        None => airk_kernel::service_broker::new_instance_id()?,
+    };
+    let context = context.with_request_id(id)?;
+    let attempt = airk_host::read_attempt::encode(&context, id)?;
+    let sampled = std::time::Instant::now();
+    let Some(parent_budget) = ordinary_search_allocation(
+        attempt,
+        attempt.clock,
+        airk_process::monotonic::now_ns()?,
+        limit,
+        limit,
+        limits,
+        65_536,
+    )?
+    else {
+        return Ok(context);
+    };
+    let deadline = sampled
+        .checked_add(std::time::Duration::from_millis(parent_budget.deadline_ms))
+        .context("singleton Focus deadline overflow")?;
+    // The original absolute attempt identity remains unchanged. Narrowed
+    // Instant/relative transport carriers consume the same original allowance.
+    let context = context
+        .narrowed(deadline)
+        .capture_transport_attempt(attempt)?;
+    let allocation = PartitionAllowance {
+        schema: airk_core::combined_context::ALLOWANCE_SCHEMA.into(),
+        attempt: attempt.request_id,
+        selection,
+        index_id: index,
+        resources: Resources::budget(&parent_budget),
+        parent_budget,
+        assessment_ordinals: vec![],
+    };
+    context.with_context_partition(allocation)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use airk_core::identity::Incarnation;
+    #[test]
+    fn actual_singleton_focus_capture_preserves_original_identity_and_shared_cancellation()
+    -> Result<()> {
+        let parent = ReadAttemptContext::new(
+            std::time::Instant::now() + std::time::Duration::from_secs(90),
+            Default::default(),
+        )
+        .with_request_id(Incarnation::from_bytes([11; 16]))?;
+        let original = airk_host::read_attempt::encode(&parent, parent.request_id().unwrap())?;
+        let parent = parent.capture_transport_attempt(original)?;
+        let index = IndexId::from_identity(Incarnation::from_bytes([12; 16]));
+        let selection = Sha256Digest::from_bytes([13; 32]);
+        let limits = FocusProfileLimits {
+            max_candidates: 5,
+            pair_input_tokens: 512,
+            max_input_tokens: 2048,
+        };
+        let captured = capture(parent.clone(), selection, index, 16, &limits)?;
+        let wire = captured
+            .captured_transport_attempt()
+            .context("original capture absent")?;
+        assert_eq!(wire.request_id, original.request_id);
+        assert_eq!(wire.expires_monotonic_ns, original.expires_monotonic_ns);
+        assert!(captured.deadline() < parent.deadline());
+        let allocation = captured.context_partition().unwrap();
+        allocation.validate_binding(&wire, selection, index)?;
+        assert!(allocation.assessment_ordinals.is_empty());
+        assert_eq!(allocation.parent_budget.calls, 1);
+        assert_eq!(allocation.parent_budget.rounds, 1);
+        assert_eq!(allocation.parent_budget.fanout, 1);
+        assert_eq!(allocation.resources.input_tokens, 2048);
+        assert_eq!(allocation.resources.candidates, 4);
+        parent.cancellation().cancel();
+        assert!(captured.cancellation().is_cancelled());
+        assert!(capture(captured, selection, index, 16, &limits).is_err());
+        Ok(())
+    }
+}

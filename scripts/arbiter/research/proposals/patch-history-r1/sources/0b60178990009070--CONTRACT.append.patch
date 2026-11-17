@@ -1,0 +1,21 @@
+*** Begin Patch
+*** Update File: crates/airk-kernel/src/inference_owner/evaluation_tests/CONTRACT.md
+@@
++
++The fresh-query diagnostic accepts both existing canonical search representations.
++The current implicit singleton fixed query recipe admits exactly its five original
++query/mode/limit/max_bytes/response_mode arguments. Explicit index/index-set/
++Project/workspace selectors, member policy, per-index limits, origin publication,
++legacy project and unknown additional fields cannot silently enter that branch.
++The whole-index roster independently rejects fields outside its bounded recipe.
++The singleton deserializes Core SearchResponse, the native scope_observation as
++Core ScopeObservation with validate(), and the full VerificationReceipt. Its
++separate original read_scope disclosure must name the same sole expected index.
++Full publication/collection/generation, native source origins, original roots,
++frozen hashes, citation/reference pointers and bindings remain fenced. The
++combined branch retains its original Core materializer/member/publication checks.
++Native partial/unchecked/budget-exhausted/empty/readiness fields stay unchanged;
++metadata validation never upgrades them to saved-source verification success.
++The independent physical census still checks every original source, and all
++original Stop/lease/head/model/profile/deadline fences remain mandatory.
+*** End Patch

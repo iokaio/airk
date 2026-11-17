@@ -1,0 +1,301 @@
+--- D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\final-plan-current-policy-preparation-20261116T085632Z\current-orchestration\public-focus-recipe-r4\run_public_focus_r4.py
++++ D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\final-plan-current-policy-preparation-20261116T085632Z\current-orchestration\public-focus-recipe-r5\run_public_focus_r5.py
+@@ -37,7 +37,7 @@
+     with path.open('x',encoding='utf-8') as f:json.dump(value,f,indent=2);f.write('\n')
+ 
+ def verify_preparation(expected_sha256):
+-    packet_path=Path(__file__).with_name('public-focus-preparation-r4.json')
++    packet_path=Path(__file__).with_name('public-focus-preparation-r5.json')
+     if digest(packet_path)!=expected_sha256:raise ValueError('reviewed private preparation packet differs')
+     packet=json.loads(packet_path.read_text(encoding='utf-8'))
+     for pin in packet['files']+packet['helper_source_pins']:
+@@ -121,7 +121,7 @@
+     preparation=verify_preparation(args.preparation_sha256)
+     started=time.monotonic();cutoff=started+args.whole_phase_seconds
+     output.mkdir(exist_ok=False)
+-    fixture=None;handles=[];children=[];stop_limits=StopCutoffs(cutoff);stop_attempts=set();report={'schema':'airk.public-focus-native-journey/4',
++    fixture=None;handles=[];children=[];stop_limits=StopCutoffs(cutoff);stop_attempts=set();report={'schema':'airk.public-focus-native-journey/5',
+         'scope':'isolated U93 managed public-control fixture; modern I4 installed journey unqualified',
+         'passed':False,'release_qualified':False,'large_public_finalize_exercised':False,
+         'current_public_context_available':False,'native_nn_calls_claimed':False,'steps':[]}
+@@ -155,17 +155,17 @@
+         frozen=output/'frozen-source'/'scripts';frozen.mkdir(parents=True)
+         helper_pins={}
+         for name in HELPERS:
+-            data=(Path(__file__).with_name('public-focus-r4-helper-source')/'scripts'/name).read_bytes();(frozen/name).write_bytes(data)
++            data=(Path(__file__).with_name('public-focus-r5-helper-source')/'scripts'/name).read_bytes();(frozen/name).write_bytes(data)
+             helper_pins[name]=hashlib.sha256(data).hexdigest()
+             expected=next(pin['sha256'] for pin in preparation['helper_source_pins'] if Path(pin['path']).name==name)
+             if helper_pins[name]!=expected:raise ValueError('helper changed during source freeze: '+name)
+-        private_assertions=Path(__file__).with_name('public_focus_evidence_r4.py').read_bytes()
+-        (frozen/'public_focus_evidence_r4.py').write_bytes(private_assertions)
+-        helper_pins['public_focus_evidence_r4.py']=hashlib.sha256(private_assertions).hexdigest()
++        private_assertions=Path(__file__).with_name('public_focus_evidence_r5.py').read_bytes()
++        (frozen/'public_focus_evidence_r5.py').write_bytes(private_assertions)
++        helper_pins['public_focus_evidence_r5.py']=hashlib.sha256(private_assertions).hexdigest()
+         record('helper-inputs',{'sha256':helper_pins,'preparation_packet_sha256':args.preparation_sha256})
+         evidence=load('public_focus_combined',frozen/'combined_evidence.py')
+         quality=load('public_focus_source_oracle',frozen/'check-retrieval-quality.py')
+-        assertions=load('public_focus_assertions',frozen/'public_focus_evidence_r4.py')
++        assertions=load('public_focus_assertions',frozen/'public_focus_evidence_r5.py')
+         clients=load('current_public_focus_clients',frozen/'check-service-clients.py')
+         class ObservedFixture(clients.Fixture):
+             stop_cutoff=None
+@@ -252,18 +252,28 @@
+                  for name,(_,source) in sources.items()}
+         if not all(oracles.values()):raise ValueError('native catalog source closure required')
+         record('pre-read-source-oracles',{name:quality.oracle_receipt(value) for name,value in oracles.items()})
+-        publications={}
++        publications={};scope_observations={}
+         def canonical_read(name,kind,arguments,until):
+             index=fixture.scopes['focus-'+name]['index_id']
++            request_path=Path(arguments[1]) if arguments[0]=='--args-file' else None
++            request_bytes=request_path.read_bytes() if request_path is not None else arguments[1].encode('utf-8')
++            request_arguments=json.loads(request_bytes)
++            request_sha256=hashlib.sha256(request_bytes).hexdigest()
+             result=fixture.run('--service-runtime-dir',fixture.control,'tools','call',
+                 'search' if kind=='search' else 'airk_diagnostics', '--index',index,*arguments,
+                 check=False,timeout=min(120,remaining(until)))
+             # Retain exact native bytes even when parsing/admission subsequently refuses.
+-            record('raw-'+kind+'-'+name,{'stdout':result.stdout,'stderr':result.stderr,'exit_code':result.returncode})
++            record('raw-'+kind+'-'+name,{'stdout':result.stdout,'stderr':result.stderr,'exit_code':result.returncode,
++                'original_request_arguments':request_arguments,'original_request_sha256':request_sha256,
++                'original_request_path':str(request_path) if request_path is not None else None,
++                'original_outer_index':index})
+             envelope=json.loads(result.stdout)
++            if request_path is not None and digest(request_path)!=request_sha256:
++                raise ValueError('original native request file changed during dispatch; retain first result')
+             if result.returncode:raise RuntimeError('actual native canonical read refused')
+             observation=assertions.observe(envelope,index,oracles[name],evidence,quality,kind=kind,
+-                                            expected_publications=publications.get(name))
++                                            expected_publications=publications.get(name),request_arguments=request_arguments,
++                                            expected_scope=scope_observations.get(name))
+             record('validated-'+kind+'-'+name,observation)
+             return observation
+         def tool(name,argument_name):
+@@ -278,7 +288,8 @@
+                 readiness=clients.semantic_readiness(observed['member_body'])
+                 if readiness['state']=='failed':raise RuntimeError('normal MiniLM semantic work failed')
+                 if readiness['state']=='ready':
+-                    publications[name]=observed['publication_members']
++                    publications[name]=observed['publication_identity']
++                    scope_observations[name]=observed['member_body']['scope_observation']
+                     record('semantic-ready-'+name,observed);break
+         baselines={name:tool(name,'search-hybrid.json') for name in sources}
+         for observation in baselines.values():
+--- D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\final-plan-current-policy-preparation-20261116T085632Z\current-orchestration\public-focus-recipe-r4\public_focus_evidence_r4.py
++++ D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\final-plan-current-policy-preparation-20261116T085632Z\current-orchestration\public-focus-recipe-r5\public_focus_evidence_r5.py
+@@ -30,7 +30,7 @@
+     return body
+ 
+ 
+-def observe(envelope, index, oracle, evidence, quality, *, kind, expected_publications=None):
++def observe_combined(envelope, index, oracle, evidence, quality, *, kind, expected_publications=None):
+     require(kind in ('search', 'diagnostics'), 'unsupported observation purpose')
+     combined = canonical_body(envelope)
+     require(combined.get('schema') == 'airk.combined-read/1', 'combined read required')
+@@ -104,7 +104,121 @@
+             origins.append(origin)
+     return {'envelope': deepcopy(envelope), 'combined': combined,
+             'materialized_member_result': member_result, 'member_body': leaf,
+-            'qualified_origins': origins, 'publication_members': deepcopy(rows)}
++            'qualified_origins': origins, 'publication_identity': deepcopy(rows), 'native_shape': 'combined'}
++
++
++def require_scope(leaf,index,oracle,quality,expected_scope=None):
++    scope=leaf['scope_observation']
++    require(scope['schema']==1 and scope['qualifier']=='selected_subset'
++        and scope.get('grant') is None and scope.get('provenance') is None
++        and scope['selection']['owner']=='agent', 'native open scope authority differs')
++    require(set(scope)<= {'schema','qualifier','fingerprint','selection','members','grant','provenance'}
++        and set(scope['selection'])=={'owner','scope_identity','catalog_revision'}, 'unknown native scope authority')
++    roots=sorted({root for selected,root,_ in oracle['sources'] if selected==index})
++    members=scope['members']
++    require(roots and len(members)==1 and members[0]['index_id']==index
++        and members[0]['memberships']==[] and sorted(members[0]['source_root_ids'])==roots,
++        'selected native source roots/Projects differ')
++    require(members[0]['source_revision']>0 and members[0]['policy_epoch']>=0
++        and (members[0]['policy_epoch']==0)==(members[0].get('policy_digest') is None), 'native source policy differs')
++    if expected_scope is not None:
++        require(scope==expected_scope,'immutable native source scope changed')
++    return scope
++
++
++def observe_singleton(envelope,index,oracle,evidence,quality,*,kind,request_arguments,expected_publications=None,expected_scope=None):
++    # Current native Open routes one implicit index through open_single_backend.
++    # A genuine singleton is retained as received; never fabricate a CombinedRead.
++    require(isinstance(request_arguments,dict)
++        and not {'project_ids','index_ids','member_availability'} & request_arguments.keys(),
++        'singleton requires original implicit one-index request')
++    permitted=({'response_mode'} if kind=='diagnostics' else
++        {'query','mode','limit','max_bytes','response_mode','full_chunks','include_status'})
++    require(set(request_arguments)<=permitted and request_arguments.get('response_mode')=='full',
++        'singleton request recipe differs')
++    leaf=canonical_body(envelope)
++    require('schema' not in leaf and not {'members','ranking','selection','publication_vector','shared_values'} & leaf.keys(),
++        'unknown native singleton shape')
++    require(leaf['read_scope']=={'source':'named','index_ids':[index]},'exact named singleton disclosure differs')
++    require_scope(leaf,index,oracle,quality,expected_scope)
++    pub=leaf['publication']
++    require(isinstance(pub,dict) and set(pub)=={'collection','incarnation','generation','revision','token'}
++        and type(pub['generation']) is int and pub['generation']>0
++        and leaf['collection']==pub['collection'] and leaf['generation']==pub['generation'],
++        'native singleton publication/collection/generation differs')
++    require(pub['token']=='airk-r1:'+pub['incarnation']+':'+str(pub['generation'])+':'+pub['revision'],
++        'native singleton publication token differs')
++    if expected_publications is not None:
++        require(pub==expected_publications,'immutable publication changed')
++    if kind=='diagnostics':
++        require('hits' not in leaf and 'semantic_readiness' in leaf and 'discovery_readiness' in leaf,
++            'native singleton diagnostics required')
++    else:
++        require(type(leaf['truncated']) is bool and isinstance(leaf['hits'],list) and len(leaf['hits'])<=100,
++            'bounded native singleton SearchResponse required')
++        # This checks source identities, never upgrades a partial/unchecked
++        # verification status or claims source-check semantic qualification.
++        verification=leaf['source_verification']
++        require(verification['schema']=='airk.saved-source-verification/1'
++            and len(evidence.canonical(verification))<=32768,'bounded native saved-source receipt required')
++        origins=verification['origins'];sources=verification['sources'];references=verification['references']
++        require(len(origins)<=32 and len(sources)<=4096 and len(references)<=4096,'native verification roster exceeds bounds')
++        origin_ids=[r['id'] for r in origins];source_ids=[r['id'] for r in sources];reference_ids=[r['id'] for r in references]
++        require(len(set(origin_ids))==len(origin_ids) and len(set(source_ids))==len(source_ids)
++            and len(set(reference_ids))==len(reference_ids),'duplicate native verification identities')
++        for origin in origins:
++            require(origin['index_id']==index and origin['project_ids']==[]
++                and origin['collection']==pub['collection'] and origin['incarnation']==pub['incarnation']
++                and origin['publication']==pub['token'],'singleton verification origin differs')
++        def citation_key(citation):
++            keys=[key for key,row in oracle['sources'].items() if key[0]==index
++                and row['virtual_path']==citation['path'] and row['sha256']==citation['content_hash']]
++            require(len(keys)==1,'singleton citation source/hash differs')
++            return keys[0]
++        for hit in leaf['hits']:citation_key(hit['citation'])
++        catalog_roots={item['value']['id']:item['value']['canonical_path']
++            for item in oracle['native_catalog']['page']['items'] if item['kind']=='source'}
++        for source in sources:
++            key=(index,source['source_root_id'],source['source_relative_path'])
++            require(key in oracle['sources'] and source['origin_id'] in origin_ids
++                and source['path']==oracle['sources'][key]['virtual_path'] and source['project_ids']==[]
++                and quality.location_key(source['original_root'])==quality.location_key(catalog_roots[key[1]])
++                and all(source.get(field) is None or source[field]==oracle['sources'][key]['sha256']
++                    for field in ('expected_hash','observed_hash')), 'singleton verification source/root/hash differs')
++        for ref in references:
++            # Native references remain relative to this native body, exactly.
++            pointer=ref['result_pointer']
++            require(ref['kind']=='citation' and pointer.startswith('/hits/') and pointer.endswith('/citation'),
++                'native singleton citation pointer required')
++            ordinal=pointer[len('/hits/'):-len('/citation')]
++            require(ordinal.isascii() and ordinal.isdecimal() and str(int(ordinal))==ordinal
++                and int(ordinal)<len(leaf['hits']),'native singleton citation pointer invalid')
++            citation=leaf['hits'][int(ordinal)]['citation'];key=citation_key(citation)
++            matches=[source for source in sources if source['id']==ref['source_id']]
++            require(len(matches)==1 and matches[0]['source_root_id']==key[1]
++                and matches[0]['source_relative_path']==key[2]
++                and ref['id'] in matches[0]['reference_ids'],'singleton reference rebound to another source')
++    return {'envelope':deepcopy(envelope),'combined':None,'native_body':deepcopy(leaf),
++        'materialized_member_result':None,'member_body':leaf,'qualified_origins':[],
++        'publication_identity':deepcopy(pub),'native_shape':'singleton'}
++
++
++def observe(envelope,index,oracle,evidence,quality,*,kind,expected_publications=None,request_arguments=None,expected_scope=None):
++    require(kind in ('search','diagnostics'),'unsupported observation purpose')
++    require(len(evidence.canonical(envelope))<=1048576,'native evidence exceeds public envelope bound')
++    body=canonical_body(envelope)
++    if body.get('schema')=='airk.combined-read/1':
++        if request_arguments is not None:
++            require(isinstance(request_arguments,dict)
++                and bool({'project_ids','index_ids','member_availability'} & request_arguments.keys()),
++                'one-index combined response requires original explicit subset control')
++        result=observe_combined(envelope,index,oracle,evidence,quality,kind=kind,
++            expected_publications=expected_publications)
++        require_scope(result['member_body'],index,oracle,quality,expected_scope)
++        return result
++    require('schema' not in body,'unknown canonical native response schema')
++    return observe_singleton(envelope,index,oracle,evidence,quality,kind=kind,
++        request_arguments=request_arguments,expected_publications=expected_publications,expected_scope=expected_scope)
+ 
+ 
+ def applied_focus(observation):
+@@ -131,7 +245,7 @@
+ def require_hybrid(observation):
+     leaf = observation['member_body']
+     require(leaf.get('hits') and leaf.get('execution', {}).get('served_mode') == 'hybrid'
+-            and leaf['execution'].get('incomplete') is False,
++            and leaf['execution'].get('incomplete') is False and leaf.get('truncated') is False,
+             'complete native bundled MiniLM hybrid execution absent')
+ 
+ 
+--- D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\final-plan-current-policy-preparation-20261116T085632Z\current-orchestration\public-focus-recipe-r4\CONTRACT.md
++++ D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\final-plan-current-policy-preparation-20261116T085632Z\current-orchestration\public-focus-recipe-r5\CONTRACT.md
+@@ -53,3 +53,24 @@
+ Unqualified/constrained/unsupported and missing-profile results remain complete
+ retained facts; no extra query or deadline is introduced. Cache Health is also
+ retained before its identity checks. R3 packet550e... stays immutable.
++
++
++R5 native-shape correction (before any R5 execution): an original Open request
++with exactly one resolved index and no explicit project_ids/index_ids/
++member_availability controls uses Service open_single_backend. Search and
++Diagnostics remain their complete native singleton bodies and U110 read_scope.
++No request control is added, no native response is fabricated or flattened.
++The alternative existing combined owner remains canonical for genuine combined
++responses; its vector/header/origin materializers remain unchanged.
++
++Singleton checks bind the original request, exact named immutable index,
++publication/collection/generation, native open scope and saved physical source
++oracle for A/B independently. Ready freezes each index publication and complete
++scope observation for subsequent reads. Search verification references/sources/
++origins retain native identities and local citation pointers; partial, unchecked,
++unknown readiness and verification statuses remain verbatim, not upgraded into
++qualification. The functional hybrid requirement remains a separate check.
++Native source_verification semantic validation stays Rust-owned. Python checks
++only identity/projection/roster bounds for this private acceptance consumer.
++Old R4 failed receipt/raw008/Job/nativeStop/PIDexit remain immutable historical
++failure evidence. R5 has fresh output/fixture and needs a newly reviewed card.
+--- D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\final-plan-current-policy-preparation-20261116T085632Z\current-orchestration\public-focus-recipe-r4\test_public_focus_r4.py
++++ D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\final-plan-current-policy-preparation-20261116T085632Z\current-orchestration\public-focus-recipe-r5\test_public_focus_r5.py
+@@ -12,10 +12,10 @@
+     spec=importlib.util.spec_from_file_location(name,path)
+     value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value);return value
+ 
+-A=load('private_public_focus_r2',BASE/'public_focus_evidence_r4.py')
+-E=load('public_focus_canonical_evidence',REPO/'scripts/combined_evidence.py')
+-Q=load('public_focus_canonical_oracle',REPO/'scripts/check-retrieval-quality.py')
+-R=load('public_focus_r2_runner',BASE/'run_public_focus_r4.py')
++A=load('private_public_focus_r2',BASE/'public_focus_evidence_r5.py')
++E=load('public_focus_canonical_evidence',BASE/'public-focus-r5-helper-source/scripts/combined_evidence.py')
++Q=load('public_focus_canonical_oracle',BASE/'public-focus-r5-helper-source/scripts/check-retrieval-quality.py')
++R=load('public_focus_r2_runner',BASE/'run_public_focus_r5.py')
+ INDEX='index-fixture-a'; ROOT='source-fixture-a'; HASH='ab'*32
+ PUBLICATION={'collection':'fixture-a','incarnation':'01'*16,'generation':7,'revision':'02'*32,'token':'airk-r1:'+('01'*16)+':7:'+('02'*32)}
+ AUTHORITY={'owner':'agent','scope_identity':'03'*32,'catalog_revision':9}
+@@ -100,7 +100,7 @@
+         result=self.check(raw,'diagnostics')
+         self.assertEqual(result['member_body']['publication'],{'token':PUBLICATION['token']})
+         self.assertEqual(result['member_body']['freshness']['observed_unix_ms'],1001)
+-        self.assertEqual(result['publication_members'],[{'index_id':INDEX,'publication':PUBLICATION}])
++        self.assertEqual(result['publication_identity'],[{'index_id':INDEX,'publication':PUBLICATION}])
+         raw['shared_values']['values'][identity]['fields']['freshness']['state']='forged'
+         with self.assertRaises(ValueError):self.check(raw,'diagnostics')
+ 
+@@ -146,7 +146,7 @@
+                 with self.assertRaises((ValueError,KeyError,TypeError)):self.check(raw)
+ 
+     def test_original_publication_cannot_advance_across_reads(self):
+-        raw=fixture(); frozen=self.check(raw)['publication_members']; raw['publication_vector']['members'][0]['publication']['generation']=8
++        raw=fixture(); frozen=self.check(raw)['publication_identity']; raw['publication_vector']['members'][0]['publication']['generation']=8
+         with self.assertRaises(ValueError):self.check(raw,expected_publications=frozen)
+ 
+     def test_native_outer_member_and_body_refusals_remain_refusals(self):
+--- D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\final-plan-current-policy-preparation-20261116T085632Z\current-orchestration\public-focus-recipe-r4\test_outer_r4.py
++++ D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\final-plan-current-policy-preparation-20261116T085632Z\current-orchestration\public-focus-recipe-r5\test_outer_r5.py
+@@ -4,7 +4,7 @@
+ from pathlib import Path
+ import unittest
+ B=Path(__file__).parent
+-S=importlib.util.spec_from_file_location('private_focus_outer',B/'run_owned_public_focus_r4.py')
++S=importlib.util.spec_from_file_location('private_focus_outer',B/'run_owned_public_focus_r5.py')
+ M=importlib.util.module_from_spec(S);S.loader.exec_module(M)
+ 
+ 

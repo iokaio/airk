@@ -1,0 +1,340 @@
+--- r1/operation-proposal/operation.rs
++++ r2/operation-proposal/operation.rs
+@@ -142,34 +142,47 @@
+         anyhow::bail!("original native operation expired before dispatch");
+     }
+     let value = call();
+-    let returned = clock()?;
+-    ensure!(
+-        returned >= native_start,
+-        "operation return clock moved backwards"
+-    );
+-    let native_call_elapsed_us = (returned - native_start) / 1000;
+-    *sequence = sequence
+-        .checked_add(1)
+-        .context("operation sequence overflow")?;
+-    event.sequence = *sequence;
+-    event.phase = Phase::Returned;
+-    event.observed_monotonic_ns = returned;
+-    event.native_call_elapsed_us = Some(native_call_elapsed_us);
+-    event.native_success = Some(value.is_ok());
+-    // A returned error is a real observation. Failure to retain its end refuses
+-    // delivery and no caller may admit another operation.
+-    publish(&event)?;
+-    let retained = clock()?;
+-    ensure!(
+-        retained >= returned,
+-        "operation retention clock moved backwards"
+-    );
+-    Ok(Returned {
+-        value,
+-        elapsed_us: (retained - started).div_ceil(1000),
+-        native_call_elapsed_us,
+-        within_deadline: retained <= expires,
+-    })
++    let observation = (|| -> Result<(u64, u64)> {
++        let returned = clock()?;
++        ensure!(
++            returned >= native_start,
++            "operation return clock moved backwards"
++        );
++        let native_call_elapsed_us = (returned - native_start) / 1000;
++        *sequence = sequence
++            .checked_add(1)
++            .context("operation sequence overflow")?;
++        event.sequence = *sequence;
++        event.phase = Phase::Returned;
++        event.observed_monotonic_ns = returned;
++        event.native_call_elapsed_us = Some(native_call_elapsed_us);
++        event.native_success = Some(value.is_ok());
++        // A returned native error remains the primary typed cause if its
++        // retention also fails. No observer failure can admit another call.
++        publish(&event)?;
++        let retained = clock()?;
++        ensure!(
++            retained >= returned,
++            "operation retention clock moved backwards"
++        );
++        Ok((native_call_elapsed_us, retained))
++    })();
++    match observation {
++        Ok((native_call_elapsed_us, retained)) => Ok(Returned {
++            value,
++            elapsed_us: (retained - started).div_ceil(1000),
++            native_call_elapsed_us,
++            within_deadline: retained <= expires,
++        }),
++        Err(observation_error) => Err(match value {
++            Err(native_error) => native_error.context(format!(
++                "after-call observation also failed: {observation_error:#}"
++            )),
++            Ok(_) => observation_error.context(
++                "native operation returned successfully before after-call observation failed",
++            ),
++        }),
++    }
+ }
+ pub(super) struct Journal {
+     file: File,
+--- r1/operation-proposal/operation/tests.rs
++++ r2/operation-proposal/operation/tests.rs
+@@ -273,3 +273,93 @@
+     );
+     assert!(!called.get());
+ }
++
++#[test]
++fn native_operation_retains_original_native_error_when_any_after_call_observer_fails() {
++    #[derive(Debug)]
++    struct ActualNativeFailure;
++    impl std::fmt::Display for ActualNativeFailure {
++        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++            f.write_str("actual native failure marker")
++        }
++    }
++    impl std::error::Error for ActualNativeFailure {}
++    let cases = [
++        (
++            vec![Some(100), Some(200), None],
++            false,
++            0,
++            "injected clock read failure",
++        ),
++        (
++            vec![Some(100), Some(200), Some(199)],
++            false,
++            0,
++            "return clock moved backwards",
++        ),
++        (
++            vec![Some(100), Some(200), Some(300)],
++            true,
++            0,
++            "injected end retention failure",
++        ),
++        (
++            vec![Some(100), Some(200), Some(300), None],
++            false,
++            0,
++            "injected clock read failure",
++        ),
++        (
++            vec![Some(100), Some(200), Some(300), Some(299)],
++            false,
++            0,
++            "retention clock moved backwards",
++        ),
++        (
++            vec![Some(100), Some(200), Some(300)],
++            false,
++            u64::MAX - 1,
++            "operation sequence overflow",
++        ),
++    ];
++    for (times, end_fails, mut sequence, expected_observer_error) in cases {
++        let identity = identity();
++        let mut times = times.into_iter();
++        let called = Cell::new(0);
++        let result: Result<Returned<()>> = observe(
++            attempt(&identity, Kind::Numeric, 1),
++            &mut sequence,
++            &mut || {
++                times
++                    .next()
++                    .unwrap()
++                    .ok_or_else(|| anyhow::anyhow!("injected clock read failure"))
++            },
++            &mut |event| {
++                if end_fails && event.phase == Phase::Returned {
++                    anyhow::bail!("injected end retention failure");
++                }
++                Ok(())
++            },
++            || {
++                called.set(called.get() + 1);
++                Err(ActualNativeFailure.into())
++            },
++        );
++        let error = result
++            .err()
++            .expect("after-call observation must fail closed");
++        assert!(
++            error.downcast_ref::<ActualNativeFailure>().is_some(),
++            "lost original typed native error"
++        );
++        let display = format!("{error:#}");
++        assert!(display.contains("actual native failure marker"));
++        assert!(display.contains(expected_observer_error), "{display}");
++        assert_eq!(
++            called.get(),
++            1,
++            "observer failure admitted another native call"
++        );
++    }
++}
+--- r1/operation-proposal/CONTRACT.md
++++ r2/operation-proposal/CONTRACT.md
+@@ -256,7 +256,7 @@
+ 
+ The test-only software_v2 operation module emits create-new, append-only
+ OUTPUT.with_extension("operations.jsonl") observations for resource load,
+-warmup0 and samples1â€“20, or numeric load and each original full fixture row.
++warmup0 and samples1ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“20, or numeric load and each original full fixture row.
+ It has no production Scorer hook, new provider, caller signal or public API.
+ An event binds the pinned native run-input/profile/image, actual process ID,
+ strict sequence, kind/ordinal and exact compiled input digest where present.
+@@ -308,3 +308,10 @@
+ No whole-source group, process image or source manifest is silently rewritten.
+ Unix source clocks remain portable; this Windows watcher does not itself
+ qualify a Neo external-observer implementation or any model/platform outcome.
++
++
++When a native operation returns an error and any later clock, sequence or end
++retention observation also fails, retain the original typed native error as the
++cause and add the complete observation failure context. Failure remains closed;
++no duration is invented when a clock fails and no subsequent call is admitted.
++A post-call observer failure after native success records that distinction.
+--- r1/launch_native.py
++++ r2/launch_native.py
+@@ -45,6 +45,21 @@
+     if plan['mode']=='resource' and request['numeric_fixture'] is not None:raise ValueError('resource-only plan unexpectedly changed')
+     return plan,request
+ 
++def check_combined_source_bridge(combined,old_group,new_group,prior,current):
++    changes={name:current.get(name) for name in set(prior)|set(current) if prior.get(name)!=current.get(name)}
++    if (combined.get('schema')!='airk.private.reviewed-native-source-bridge/1'
++        or combined.get('old_native_group')!=old_group
++        or combined.get('new_native_group')!=new_group):
++        raise ValueError('Root-reviewed combined source bridge has different actual native groups')
++    approved=combined['changes']
++    if set(approved)!=set(changes):
++        raise ValueError('combined source bridge omits or invents an actual per-path delta')
++    for name,after in changes.items():
++        row=approved[name]
++        if (row.get('before_sha256')!=prior.get(name) or row.get('after_sha256')!=after
++            or not isinstance(row.get('reviewed_scope'),str) or not row['reviewed_scope'].strip()):
++            raise ValueError('actual source delta differs from its explicit reviewed scope: '+name)
++
+ def new_image(args,plan):
+     packet_path=pin(args.image_packet,args.image_packet_sha256);packet=json.loads(packet_path.read_bytes())
+     if packet['schema']!='airk.preserved-native-test-images/1':raise ValueError('genuine preserved native image packet required')
+@@ -59,8 +74,17 @@
+         raise ValueError('actual new build/source inventory failed or changed')
+     prior=old['groups']['native']['files'];current=build['groups']['native']['files']
+     changes={name:current.get(name) for name in set(prior)|set(current) if prior.get(name)!=current.get(name)}
+-    if changes!=plan['expected_source_changes']:
+-        raise ValueError('new source is not exactly the reviewed four-file operation observer change')
++    required=plan['required_observer_source_changes']
++    if any(current.get(name)!=expected for name,expected in required.items()):
++        raise ValueError('new source lacks the exact reviewed observer proposal')
++    bridge_path=pin(args.source_bridge,args.source_bridge_sha256)
++    combined=json.loads(bridge_path.read_bytes())
++    check_combined_source_bridge(combined,old['groups']['native']['sha256'],build['groups']['native']['sha256'],prior,current)
++    repository=Path(plan['repository_root']).resolve()
++    for row in plan['unchanged_scoring_source_pins']:
++        relative=Path(row['path']).resolve().relative_to(repository).as_posix()
++        if current.get(relative)!=row['sha256']:
++            raise ValueError('original NN scoring/profile/constructor/math source changed: '+relative)
+     if packet['native_group']!=build['groups']['native']['sha256']:
+         raise ValueError('new image/build native source group differs')
+     if (image['preserved_file_owner_sid']!=plan['human_sid']
+@@ -69,7 +93,8 @@
+         'new_native_group':build['groups']['native']['sha256'],'exact_source_changes':changes,
+         'new_build_receipt':build_pin,'new_image_packet':{'path':str(packet_path),'sha256':args.image_packet_sha256},
+         'original_NN0_metadata_and_reference_source_pins_preserved':True,
+-        'scope':'mechanical primitive-run source delta only; final native metadata/promoter compatibility remains an independent gate'}
++        'combined_source_bridge':{'path':str(bridge_path),'sha256':args.source_bridge_sha256},
++        'scope':'explicit Root-reviewed combined per-path bridge; unchanged scoring-source pins and new native metadata/promoter provenance remain strict'}
+ 
+ def write(path,value):
+     with Path(path).open('x',encoding='utf-8') as output:json.dump(value,output,indent=2);output.write('\n')
+@@ -101,7 +126,11 @@
+         'mode':plan['mode'],'model':plan['model'],'profile':plan['profile'],'command':argv,'limits':plan['limits'],
+         'cpu_fit':plan['cpu_fit'],'reservation_bytes':plan['reservation_bytes'],'source_bridge':bridge,
+         'original_input_seals':plan['input_seals'],'native_image':image,'execution_sid':plan['human_sid'],
+-        'whole_deadline_not_renewed':True,'failure':None,'post_input_drift':[],
++        'whole_deadline_not_renewed':True,'whole_phase_deadline_not_refreshed':True,
++        'whole_phase_expired':False,'no_automatic_retry':True,'other_processes_touched':False,
++        'failure':None,'post_input_drift':[],
++        'input_seals':dict(plan['input_seals']) | {image['path']:image['sha256']},
++        'committed_memory_passed':False,
+         'coexistence_proven':False,'scope':plan['scope']}
+     write(output/'started.json',receipt)
+     watch=None
+@@ -144,6 +173,11 @@
+             raise ValueError('native original full resource series incomplete')
+         receipt['native_body_pin']={'path':str(raw),'sha256':digest(raw),'bytes':raw.stat().st_size}
+         receipt['operation_journal_pin']={'path':str(journal),'sha256':digest(journal),'bytes':journal.stat().st_size}
++        receipt['committed_memory_passed']=(isinstance(owned.get('peak_host_committed_bytes'),int)
++            and not isinstance(owned['peak_host_committed_bytes'],bool)
++            and 0<owned['peak_host_committed_bytes']<=plan['reservation_bytes'])
++        if not receipt['committed_memory_passed']:
++            raise ValueError('actual owned committed-memory exceeds native profile reservation; RSS pass cannot waive it')
+         receipt['complete']=True;receipt['measurement_passed']=True
+     except BaseException as error:
+         receipt['failure']={'type':type(error).__name__,'message':str(error)}
+@@ -158,13 +192,16 @@
+                 receipt['watch_handle_close_failure']={'type':type(error).__name__,'message':str(error)}
+                 receipt['complete']=False;receipt['measurement_passed']=False
+                 if receipt['failure'] is None:receipt['failure']={'type':'WatchHandleCloseRefusal','message':str(error)}
+-        for path,expected in plan['input_seals'].items():
++        for path,expected in receipt['input_seals'].items():
+             try:
+                 if digest(path)!=expected:receipt['post_input_drift'].append(path)
+             except OSError:receipt['post_input_drift'].append(path)
+-        if receipt['post_input_drift'] or time.monotonic()>deadline:
++        receipt['whole_phase_expired']=time.monotonic()>deadline
++        if receipt['post_input_drift'] or receipt['whole_phase_expired']:
+             receipt['complete']=False;receipt['measurement_passed']=False
+             if receipt['failure'] is None:receipt['failure']={'type':'FinalObservationRefusal','message':'original input/whole-phase observation failed'}
++        if log_path.is_file():
++            receipt['stdout']={'path':str(log_path),'sha256':digest(log_path),'bytes':log_path.stat().st_size}
+         receipt['elapsed_seconds']=time.monotonic()-started
+         write(output/'execution.json',receipt)
+     print(json.dumps({'output':str(output),'measurement_passed':receipt['measurement_passed'],
+@@ -176,14 +213,15 @@
+     parser.add_argument('--plan',required=True);parser.add_argument('--plan-sha256',required=True)
+     parser.add_argument('--execute-reviewed',action='store_true')
+     parser.add_argument('--image-packet');parser.add_argument('--image-packet-sha256');parser.add_argument('--output')
++    parser.add_argument('--source-bridge');parser.add_argument('--source-bridge-sha256')
+     args=parser.parse_args()
+     started=time.monotonic()
+     plan,request=plan_input(args)
+     if not args.execute_reviewed:
+         print(json.dumps({'plan_metadata_verified':True,'large_asset_hashes_deferred':True,'mode':plan['mode'],'model':plan['model'],
+             'native_or_model_execution':False,'new_observer_image_required':True}));return 0
+-    if not args.image_packet or not args.image_packet_sha256 or not args.output:
+-        raise ValueError('actual reviewed new image packet/pin and fresh output are mandatory')
++    if not args.image_packet or not args.image_packet_sha256 or not args.output or not args.source_bridge or not args.source_bridge_sha256:
++        raise ValueError('actual reviewed image, combined source bridge pins and fresh output are mandatory')
+     return run(args,plan,request,started)
+ 
+ if __name__=='__main__':sys.exit(main())
+--- r1/rebind_inputs.py
++++ r2/rebind_inputs.py
+@@ -10,12 +10,14 @@
+ def main():
+     p=argparse.ArgumentParser(description=__doc__)
+     for name in ['old-card','old-card-sha256','new-native-input','new-native-input-sha256',
+-        'new-blank-template','new-blank-template-sha256','new-image-packet','new-image-packet-sha256','output']:
++        'new-blank-template','new-blank-template-sha256','new-image-packet','new-image-packet-sha256',
++        'source-bridge','source-bridge-sha256','output']:
+         p.add_argument('--'+name,required=True)
+     a=p.parse_args();old=json.loads(pin(a.old_card,a.old_card_sha256).read_bytes())
+     before=json.loads(pin(old['native_input']['path'],old['native_input']['sha256']).read_bytes())
+     fresh_path=pin(a.new_native_input,a.new_native_input_sha256);fresh=json.loads(fresh_path.read_bytes())
+-    _,bridge=new_image(SimpleNamespace(image_packet=a.new_image_packet,image_packet_sha256=a.new_image_packet_sha256),old)
++    _,bridge=new_image(SimpleNamespace(image_packet=a.new_image_packet,image_packet_sha256=a.new_image_packet_sha256,
++        source_bridge=a.source_bridge,source_bridge_sha256=a.source_bridge_sha256),old)
+     manifest_path=pin(fresh['source_manifest']['path'],fresh['source_manifest']['sha256'])
+     manifest=json.loads(manifest_path.read_bytes())
+     if manifest['native_build_receipt']!=bridge['new_build_receipt']:
+@@ -41,7 +43,7 @@
+         raise ValueError('new native blank tensor template differs; references cannot silently transfer')
+     card=copy.deepcopy(old);card['native_input']={'path':str(fresh_path),'sha256':a.new_native_input_sha256}
+     card['native_source_reconciliation']=bridge;card['status']='actual new NN0 inputs bound; Root review required before execution'
+-    for value in [fresh['source_manifest'],fresh['profile'],bridge['new_build_receipt'],bridge['new_image_packet'],
++    for value in [fresh['source_manifest'],fresh['profile'],bridge['new_build_receipt'],bridge['new_image_packet'],bridge['combined_source_bridge'],
+         {'path':str(fresh_path),'sha256':a.new_native_input_sha256},
+         {'path':str(current_template),'sha256':a.new_blank_template_sha256}]:
+         pin(value['path'],value['sha256']);card['input_seals'][value['path']]=value['sha256']

@@ -1,0 +1,429 @@
+--- /dev/null
++++ b/packages/vscode/src/test/workbenchClientLifetime.test.ts
+@@ -0,0 +1,250 @@
++// SPDX-License-Identifier: Apache-2.0
++import { strict as assert } from 'node:assert';
++import Module from 'node:module';
++import { test } from 'node:test';
++import type { LaunchSpec } from '../model';
++import type { WorkbenchSession, Value } from '../workbenchContracts';
++import { newSession } from '../workbenchSessions';
++import { renderExport } from '../workbenchRender';
++
++function deferred<T>() { let resolve!: (value:T)=>void,reject!: (error:Error)=>void; const promise=new Promise<T>((done,fail)=>{resolve=done;reject=fail;}); return {promise,resolve,reject}; }
++const tick=()=>new Promise<void>(resolve=>setImmediate(resolve));
++class Emitter<T> {
++    readonly listeners=new Set<(event:T)=>unknown>();
++    readonly event=(listener:(event:T)=>unknown)=>{this.listeners.add(listener);return {dispose:()=>this.listeners.delete(listener)};};
++    fire(event:T):void{for(const listener of this.listeners){listener(event);}}
++    dispose():void{this.listeners.clear();}
++}
++const A='aa'.repeat(32),B='bb'.repeat(32);
++const spec=(project:string):LaunchSpec=>({command:'/fixture/airk',root:`/fixture/${project}`,dataDir:`/fixture/data-${project}`,collection:'fixture',name:project===A?'A':'B',service:{installDir:'/fixture/runtime',project}});
++function fixture(attach=false) {
++    let specs=[spec(A),spec(B)],trusted=true,native=true;
++    const changed=new Emitter<void>(),configuration=new Emitter<{affectsConfiguration(key:string):boolean}>();
++    const created:FakeClient[]=[],messages:unknown[]=[],removed:string[]=[],saved:WorkbenchSession[]=[],exports:Buffer[]=[];
++    let response:(tool:string,client:FakeClient)=>Promise<{payload:Value}> = async tool=>({payload:{tag:tool}});
++    let confirm=()=>Promise.resolve('Delete sessions');
++    const store={
++        list:async (_project:string):Promise<WorkbenchSession[]>=>[],
++        remove:async (project:string)=>{removed.push(project);},
++        save:async (session:WorkbenchSession)=>{session.revision++;saved.push(structuredClone(session));},
++        findShortcut:async():Promise<Value|undefined>=>undefined,
++    };
++    class FakeClient {
++        readonly calls:string[]=[];disposed=0;canceled=0;
++        constructor(readonly spec:LaunchSpec){created.push(this);}
++        call(tool:string):Promise<{payload:Value}>{this.calls.push(tool);return response(tool,this);}
++        cancel():void{this.canceled++;}
++        dispose():void{this.disposed++;}
++    }
++    const stub={EventEmitter:Emitter,workspace:{
++        getConfiguration:()=>({get:(_key:string,fallback:unknown)=>fallback,inspect:()=>({globalValue:native})}),
++        onDidChangeConfiguration:configuration.event,fs:{writeFile:async(_uri:unknown,bytes:Uint8Array)=>{exports.push(Buffer.from(bytes));}},
++    },window:{showWarningMessage:()=>confirm(),showSaveDialog:async()=>({fsPath:'/fixture/export.json'})},commands:{executeCommand:async()=>undefined},
++        Uri:{file:(fsPath:string)=>({fsPath}),joinPath:(base:{fsPath:string},...parts:string[])=>({fsPath:[base.fsPath,...parts].join('/')} )}};
++    const loader=Module as unknown as {_load:(name:string,...args:any[])=>any},original=loader._load;
++    loader._load=function(name:string,...args:any[]){
++        if(name==='vscode'){return stub;}
++        if(name==='./explorerEvidence'){return {EvidenceClient:FakeClient};}
++        if(name==='./explorerWorkspaceIO'){return {openSource:async()=>undefined,saveStudioInWorkspace:async()=>({saved:false})};}
++        return original.call(this,name,...args);
++    };
++    let WorkbenchView:typeof import('../workbenchView').WorkbenchView;
++    try{delete require.cache[require.resolve('../workbenchView')];({WorkbenchView}=require('../workbenchView'));}finally{loader._load=original;}
++    const host={trusted:()=>trusted,specs:()=>specs,activeProject:()=>undefined,onDidChangeSpecs:changed.event,version:'1.8.0'};
++    const provider=new WorkbenchView({globalStorageUri:{fsPath:'/unused'},extensionUri:{fsPath:'/fixture/extension'}} as any,host as any);
++    type Internal={sessions:typeof store;session?:WorkbenchSession;status?:Value;notice?:string;recent:unknown[];saveQueue:Promise<void>;
++        select(id:string):Promise<void>;run(input:string):Promise<void>;save(session:WorkbenchSession):void;message(value:unknown):Promise<void>};
++    const state=provider as unknown as Internal;state.sessions=store;
++    const release=new Emitter<void>();
++    if(attach){provider.resolveWebviewView({visible:true,webview:{options:{},html:'',cspSource:'fixture',asWebviewUri:(uri:{fsPath:string})=>uri.fsPath,
++        postMessage:(message:unknown)=>{messages.push(structuredClone(message));return Promise.resolve(true);},onDidReceiveMessage:()=>({dispose(){}})},
++        onDidChangeVisibility:()=>({dispose(){}}),onDidDispose:release.event} as any);}
++    return {provider,state,store,created,messages,removed,saved,exports,
++        respond:(handler:typeof response)=>{response=handler;},confirm:(handler:typeof confirm)=>{confirm=handler;},
++        specs:()=>specs,replace:(next:LaunchSpec[])=>{specs=next;changed.fire();},
++        trust:(value:boolean)=>{trusted=value;changed.fire();},native:(value:boolean)=>{native=value;configuration.fire({affectsConfiguration:key=>key==='airk.runtime.nativeExecution'});},
++        disposeView:()=>release.fire(),
++    };
++}
++
++test('New and Clear keep one exact client while held old query and first status cannot attach to the new transcript',async()=>{
++    for(const reset of ['new','clear']){
++    const f=fixture(true),status=deferred<{payload:Value}>(),query=deferred<{payload:Value}>();let statuses=0;
++    f.respond(tool=>tool==='airk_parse'?query.promise:++statuses===1?status.promise:Promise.resolve({payload:{tag:'new-status'}}));
++    try{
++        await f.state.select(A);const previous=f.state.session!;
++        const running=f.state.run('/search old');await tick();
++        assert.equal(f.created[0].calls.filter(tool=>tool==='airk_parse').length,1);
++        if(reset==='new'){await f.provider.newSession();}else{await f.provider.clear();}await tick();
++        assert.notEqual(f.state.session!.id,previous.id);assert.equal(f.created.length,1);assert.equal(f.created[0].disposed,0);
++        assert.equal(statuses,2);assert.equal(f.state.status?.tag,'new-status');
++        status.resolve({payload:{tag:'old-status'}});query.resolve({payload:{status:'complete',evidence:[{text:'old body'}]}});
++        await running;await tick();
++        assert.equal(f.state.status?.tag,'new-status');assert.equal(f.state.session!.turns.length,0);assert.equal(previous.turns[0].envelope,undefined);
++        assert.match(previous.turns[0].error!,/stopped/);assert.equal(f.saved.length,0);
++    }finally{f.provider.dispose();}
++    assert.equal(f.created[0].disposed,1);
++    }
++});
++
++test('a held remembered shortcut cannot label a New transcript or submit its old request',async()=>{
++    const f=fixture(true),shortcut=deferred<Value|undefined>();
++    try{
++        await f.state.select(A);const previous=f.state.session!;
++        f.store.findShortcut=()=>shortcut.promise;
++        const running=f.state.run('/search old remembered request');await tick();
++        await f.provider.newSession();
++        assert.notEqual(f.state.session!.id,previous.id);assert.equal(f.state.notice,undefined);
++        shortcut.resolve({schema:'airk.parse.plan/1',steps:[]});await running;
++        assert.equal(f.state.notice,undefined);
++        assert.equal(f.state.session!.turns.length,0);
++        assert.equal(f.created.length,1);
++        assert.equal(f.created[0].calls.filter(tool=>tool==='airk_parse').length,0);
++    }finally{shortcut.resolve(undefined);f.provider.dispose();}
++});
++
++test('Clear on the same project keeps its exact client and still probes status for the new transcript',async()=>{
++    const f=fixture();try{
++        await f.state.select(A);const previous=f.state.session!.id;
++        await f.provider.clear();await tick();
++        assert.deepEqual(f.removed,[A]);assert.notEqual(f.state.session!.id,previous);
++        assert.equal(f.created.length,1);assert.equal(f.created[0].disposed,0);
++        assert.equal(f.created[0].calls.filter(tool=>tool==='airk_status').length,2);
++    }finally{f.provider.dispose();}
++    assert.equal(f.created[0].disposed,1);
++});
++
++test('a late session list cannot select or start status for a superseded project',async()=>{
++    const f=fixture(),listing=deferred<WorkbenchSession[]>();
++    f.store.list=project=>project===A?listing.promise:Promise.resolve([]);
++    try{
++        const selecting=f.state.select(A);await f.state.select(B);
++        listing.resolve([]);await selecting;await tick();
++        assert.equal(f.state.session!.project,B);assert.equal(f.created.length,1);
++        assert.equal(f.created[0].spec.service!.project,B);assert.deepEqual(f.created[0].calls,['airk_status']);
++    }finally{f.provider.dispose();}
++});
++
++test('a rejected old list is ignored after supersession without starting its status',async()=>{
++    const f=fixture(),listing=deferred<WorkbenchSession[]>();f.store.list=project=>project===A?listing.promise:Promise.resolve([]);
++    try{
++        const selecting=f.state.select(A);await f.state.select(B);
++        listing.reject(new Error('old list failure'));await selecting;
++        assert.equal(f.state.session!.project,B);assert.equal(f.created.length,1);
++        assert.equal(f.created[0].spec.service!.project,B);
++    }finally{f.provider.dispose();}
++});
++
++test('accepted Clear drains its original deletion after save/remove waits without restoring an old selection',async()=>{
++    for(const boundary of ['save','remove']){
++        const f=fixture(),gate=deferred<void>();
++        try{
++            await f.state.select(A);
++            if(boundary==='save'){f.state.saveQueue=gate.promise;}
++            else{f.store.remove=async project=>{f.removed.push(project);await gate.promise;};}
++            const clearing=f.provider.clear();await tick();
++            await f.state.select(B);gate.resolve();await clearing;await tick();
++            assert.deepEqual(f.removed,[A]);assert.equal(f.state.session!.project,B);
++            assert.equal(f.created.length,2);assert.equal(f.created[0].disposed,1);
++            assert.deepEqual(f.created[1].calls,['airk_status']);
++        }finally{gate.resolve();f.provider.dispose();}
++    }
++});
++
++// Required combined-phase gate: the isolated transport source intentionally
++// leaves save() untouched. This normal test exposes its existing late-list race
++// until root's returned-summary / empty-save fallback recheck is integrated.
++test('[requires save-summaries integration] delayed old empty-save list cannot replace a New transcript recent projection',async()=>{
++    const f=fixture(true),listing=deferred<WorkbenchSession[]>();
++    try{
++        await f.state.select(A);const previous=f.state.session!;
++        const stale=newSession(A);stale.title='old saved summary';
++        const fresh=newSession(A);fresh.title='current saved summary';
++        let lists=0;f.store.list=()=>++lists===1?listing.promise:Promise.resolve([fresh]);
++        f.state.save(previous);await tick();
++        assert.equal(lists,1);
++        await f.provider.newSession();const recent=structuredClone(f.state.recent);
++        assert.equal((recent[0] as {title:string}).title,'current saved summary');
++        listing.resolve([stale]);await f.state.saveQueue;
++        assert.notEqual(f.state.session!.id,previous.id);
++        assert.deepEqual(f.state.recent,recent);
++    }finally{listing.resolve([]);f.provider.dispose();}
++});
++
++test('Clear confirmation cannot delete after the transcript or selected project is superseded',async()=>{
++    const f=fixture(),confirmation=deferred<string>();f.confirm(()=>confirmation.promise);
++    try{
++        await f.state.select(A);const clearing=f.provider.clear();
++        await f.state.select(B);confirmation.resolve('Delete sessions');await clearing;
++        assert.deepEqual(f.removed,[]);assert.equal(f.state.session!.project,B);
++    }finally{confirmation.resolve('Cancel');f.provider.dispose();}
++});
++
++test('hidden provider retains unrelated specs but synchronously closes changed selected specs, trust and native opt-out',async()=>{
++    for(const loss of ['selected','removed','trust','native']){
++        const f=fixture();try{
++            await f.state.select(A);const client=f.created[0];
++            f.replace([f.specs()[0],{...f.specs()[1],command:'/fixture/unrelated-replacement'}]);
++            assert.equal(client.disposed,0);
++            if(loss==='selected'){f.replace([{...f.specs()[0],command:'/fixture/selected-replacement'},f.specs()[1]]);}
++            else if(loss==='removed'){f.replace([f.specs()[1]]);}
++            else if(loss==='trust'){f.trust(false);}
++            else{f.native(false);}
++            assert.equal(client.disposed,1);assert.equal(f.state.status,undefined);
++            if(loss==='removed'){await f.provider.refresh();assert.equal(f.state.session,undefined);}
++            if(loss==='selected'){
++                await f.provider.newSession();assert.equal(f.created.length,2);
++                assert.equal(f.created[1].spec.command,'/fixture/selected-replacement');
++            }
++        }finally{f.provider.dispose();}
++        assert.ok(f.created.every(client=>client.disposed===1));
++    }
++});
++
++test('selected spec replacement during a held list prevents an old status admission',async()=>{
++    const f=fixture(),listing=deferred<WorkbenchSession[]>();f.store.list=()=>listing.promise;
++    try{
++        const selecting=f.state.select(A);
++        f.replace([{...f.specs()[0],command:'/fixture/replaced'},f.specs()[1]]);
++        listing.resolve([]);await selecting;
++        assert.equal(f.created.length,0);
++    }finally{listing.resolve([]);f.provider.dispose();}
++});
++
++test('view and provider disposal close once and discard a held status; new results retain full export values',async()=>{
++    const f=fixture(true),status=deferred<{payload:Value}>();
++    f.respond(()=>status.promise);
++    await f.state.select(A);f.disposeView();f.provider.dispose();
++    status.resolve({payload:{tag:'late'}});await tick();
++    assert.equal(f.created[0].disposed,1);assert.notEqual(f.state.status?.tag,'late');
++    const current=fixture(true);
++    const payload:Value={status:'partial',publication:'airk-r1:fixture',truncated:true,warnings:['complete retained warning'],
++        evidence:[{step:'s',citation:{path:'docs/note.md',start_line:1,end_line:1,content_hash:'ab'.repeat(32)},text:'full original evidence'}]};
++    current.respond(async tool=>({payload:tool==='airk_parse'?payload:{tag:'ready'}}));
++    try{
++        await current.state.select(A);await current.state.run('/search new');await tick();
++        assert.deepEqual(current.state.session!.turns[0].envelope,payload);
++        const exported=JSON.parse(renderExport(current.state.session!,'json'));
++        assert.deepEqual(exported.turns[0].envelope,payload);
++        assert.ok(current.messages.length>0);
++    }finally{current.provider.dispose();}
++});
++
++
++test('native opt-out closes native admission while local export and Clear remain available',async()=>{
++    const f=fixture();
++    const payload:Value={status:'complete',evidence:[{text:'retained complete value'}]};
++    f.respond(async tool=>({payload:tool==='airk_parse'?payload:{tag:'ready'}}));
++    try{
++        await f.state.select(A);await f.state.run('/search retained');await f.state.saveQueue;
++        const calls=f.created[0].calls.length;f.native(false);
++        assert.equal(f.created[0].disposed,1);
++        await f.state.message({type:'export',format:'json'});
++        assert.deepEqual(JSON.parse(f.exports[0].toString('utf8')).turns[0].envelope,payload);
++        await f.provider.clear();
++        assert.deepEqual(f.removed,[A]);assert.equal(f.state.session!.turns.length,0);
++        assert.equal(f.created.length,1);assert.equal(f.created[0].calls.length,calls);
++        await assert.rejects(f.state.run('/search forbidden'),/Native execution is disabled/);
++        assert.equal(f.created.length,1);
++    }finally{f.provider.dispose();}
++});
+--- a/packages/vscode/src/workbenchView.ts
++++ b/packages/vscode/src/workbenchView.ts
+@@ -3,6 +3,7 @@
+ import * as path from 'node:path';
+ import { randomBytes, randomUUID } from 'node:crypto';
+ import type { ExplorerHost } from './explorerController';
++import type { LaunchSpec } from './model';
+ import { EvidenceClient } from './explorerEvidence';
+ import { openSource, saveStudioInWorkspace } from './explorerWorkspaceIO';
+ import { strategyFromPlan } from './workbenchStrategies';
+@@ -31,6 +32,7 @@
+         else await this.focus();
+     }
+     private client?:EvidenceClient;
++    private clientIdentity?:string;
+     private generation=0;
+     private session?:WorkbenchSession;
+     private sessions?:SessionStore;
+@@ -46,13 +48,26 @@
+     private disposed=false;
+     private pendingInput?:string;
+     constructor(private readonly context:vscode.ExtensionContext, private readonly host:ExplorerHost){
+-        this.subscriptions.push(host.onDidChangeSpecs(()=>{if(this.view){void this.refresh().catch(error=>this.fail(error));}}),vscode.workspace.onDidChangeConfiguration(event=>{
++        this.subscriptions.push(host.onDidChangeSpecs(()=>{this.invalidateChangedClient();if(this.view){void this.refresh().catch(error=>this.fail(error));}}),vscode.workspace.onDidChangeConfiguration(event=>{
++            if(event.affectsConfiguration('airk.runtime.nativeExecution')){this.invalidateChangedClient();if(this.view){void this.refresh().catch(error=>this.fail(error));}}
+             if(event.affectsConfiguration('airk.workbench')){void this.privacyChanged().catch(error=>this.fail(error));}
+         }));
+     }
+     private persistence():boolean{return vscode.workspace.getConfiguration('airk').get('workbench.persistSessions',true);}
+     private persistResults():boolean{return vscode.workspace.getConfiguration('airk').get('workbench.persistResults',true);}
++    private nativeAllowed():boolean{return vscode.workspace.getConfiguration('airk').inspect<boolean>('runtime.nativeExecution')?.globalValue!==false;}
++    private localAllowed():boolean{return this.host.trusted()&&!this.disposed;}
++    private permitted():boolean{return this.localAllowed()&&this.nativeAllowed();}
+     private authorized():void{if(!this.host.trusted()||this.disposed){throw new Error('A trusted workspace is required.');}}
++    private releaseClient():void{this.client?.dispose();this.client=undefined;this.clientIdentity=undefined;}
++    private selectedSpec():LaunchSpec|undefined{return this.host.specs().find(spec=>spec.service?.project===this.session?.project);}
++    /** Invalidate synchronously before refresh/list awaits, including hidden views. */
++    private invalidateChangedClient():void{
++        const spec=this.selectedSpec();
++        if(!this.permitted()||(this.session&&!spec)||(this.client&&this.clientIdentity!==JSON.stringify(spec))){
++            this.stop();this.releaseClient();this.status=undefined;this.operations=undefined;
++        }
++    }
+     resolveWebviewView(view:vscode.WebviewView):void{
+         this.view=view;
+         const visibility=view.onDidChangeVisibility(()=>this.visibilityChanged.fire());
+@@ -60,7 +75,7 @@
+         view.webview.options={enableScripts:true,enableCommandUris:false,localResourceRoots:[vscode.Uri.joinPath(this.context.extensionUri,'out')]};
+         view.webview.html=workbenchHtml(view.webview,this.context.extensionUri,randomBytes(24).toString('base64url'));
+         const received=view.webview.onDidReceiveMessage(raw=>{const message=parseWorkbenchMessage(raw);if(message){void this.message(message).catch(error=>this.fail(error));}else{this.fail(new Error('Workbench request is invalid or exceeds its size limit.'));}});
+-        const release=view.onDidDispose(()=>{received.dispose();visibility.dispose();release.dispose();if(this.view===view){this.view=undefined;this.visibilityChanged.fire();this.stop();this.client?.dispose();this.client=undefined;}});
++        const release=view.onDidDispose(()=>{received.dispose();visibility.dispose();release.dispose();if(this.view===view){this.view=undefined;this.visibilityChanged.fire();this.stop();this.releaseClient();}});
+         void this.refresh().catch(error=>this.fail(error));
+     }
+     private state():WorkbenchState{
+@@ -70,33 +85,52 @@
+     private send():void{if(!this.disposed){void this.view?.webview.postMessage({type:'state',state:this.state()});}}
+     private fail(error:unknown):void{this.notice=error instanceof Error?error.message:String(error);this.send();}
+     async refresh():Promise<void>{
+-        if(!this.host.trusted()){this.stop();this.client?.dispose();this.client=undefined;this.send();return;}
++        this.invalidateChangedClient();
++        if(!this.permitted()){this.send();return;}
+         const specs=this.host.specs();
+         if(!this.session){const id=this.host.activeProject()??(specs.length===1?specs[0].service?.project:undefined);if(id){await this.select(id);return;}}
+-        if(this.session&&!specs.some(s=>s.service?.project===this.session!.project)){this.stop();this.client?.dispose();this.client=undefined;this.session=undefined;this.status=undefined;}
++        if(this.session&&!specs.some(s=>s.service?.project===this.session!.project)){this.stop();this.releaseClient();this.session=undefined;this.status=undefined;}
+         this.send();
+     }
+     private async select(id:string):Promise<void>{
+-        this.authorized();if(!this.host.specs().some(s=>s.service?.project===id)){throw new Error('Project is not registered in this workspace.');}
+-        this.stop();this.client?.dispose();this.client=undefined;this.status=undefined;
+-        this.session=newSession(id);this.notice=undefined;
+-        this.recent=this.persistence()?(await this.store.list(id)).map(s=>({id:s.id,title:s.title,updatedAt:s.updatedAt,turns:s.turns.length})):[];this.send();
+-        const generation=this.generation;
+-        void this.evidence().call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS}).then(result=>{if(generation===this.generation&&this.host.trusted()){this.status=result.payload;this.send();}},error=>{if(generation===this.generation){this.fail(error);}});
++        this.authorized();const spec=this.host.specs().find(value=>value.service?.project===id);if(!spec){throw new Error('Project is not registered in this workspace.');}
++        const identity=JSON.stringify(spec);
++        this.stop();
++        if(this.client&&this.clientIdentity!==identity){this.releaseClient();}
++        this.status=undefined;this.session=newSession(id);this.notice=undefined;
++        const generation=this.generation,session=this.session;
++        const current=()=>generation===this.generation&&session===this.session&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity;
++        let recent:WorkbenchState['recent'];
++        try{recent=this.persistence()?(await this.store.list(id)).map(value=>({id:value.id,title:value.title,updatedAt:value.updatedAt,turns:value.turns.length})):[];}
++        catch(error){if(!current()){return;}throw error;}
++        if(!current()){return;}
++        this.recent=recent;this.send();
++        if(!this.permitted()){return;}
++        const client=this.evidence();
++        // New transcripts still request status; only the exact transport is reused.
++        void client.call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS}).then(result=>{if(current()&&client===this.client&&this.permitted()){this.status=result.payload;this.send();}},error=>{if(current()&&client===this.client&&this.permitted()){this.fail(error);}});
+     }
+     private evidence():EvidenceClient{
+-        this.authorized();const spec=this.host.specs().find(s=>s.service?.project===this.session?.project);
++        this.authorized();if(!this.nativeAllowed()){throw new Error('Native execution is disabled.');}const spec=this.selectedSpec();
+         if(!spec){throw new Error('Choose a registered project.');}
+-        if(this.client&&JSON.stringify(this.client.spec)!==JSON.stringify(spec)){this.client.dispose();this.client=undefined;}
+-        return this.client??=new EvidenceClient(spec,this.host.version,{workbench:true,clientName:'airk-workbench',timeout:35000});
++        const identity=JSON.stringify(spec);
++        if(this.client&&this.clientIdentity!==identity){this.stop();this.releaseClient();this.status=undefined;this.operations=undefined;}
++        if(!this.client){this.client=new EvidenceClient(spec,this.host.version,{workbench:true,clientName:'airk-workbench',timeout:35000});this.clientIdentity=identity;}
++        return this.client;
+     }
+     stop():void{this.generation++;if(this.busy){const turn=this.session?.turns.at(-1);if(turn&&!turn.envelope){turn.error='Request stopped. Already admitted native reads may still finish; late replies are discarded.';}}this.busy=false;this.client?.cancel('workbench');this.send();}
+     async newSession():Promise<void>{if(this.session){await this.select(this.session.project);}else{await this.refresh();}}
+     async clear():Promise<void>{
+         this.authorized();if(!this.session){return;}
+-        const selected=this.session.project;
++        const session=this.session,selected=session.project,generation=this.generation,identity=JSON.stringify(this.selectedSpec());
+         const choice=await vscode.window.showWarningMessage('Delete saved Workbench sessions for this project?',{modal:true},'Delete sessions');
+-        if(choice==='Delete sessions'&&this.session?.project===selected){this.stop();await this.saveQueue;await this.store.remove(selected);await this.select(selected);}
++        if(choice==='Delete sessions'&&this.session===session&&generation===this.generation&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity){
++            this.stop();const accepted=this.generation;
++            // The already authorized deletion keeps its exact project even if a
++            // later selection supersedes it; it never restores that old selection.
++            await this.saveQueue;await this.store.remove(selected);
++            if(accepted===this.generation&&this.session===session&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity){if(this.selectedSpec()){await this.select(selected);}else{this.session=undefined;this.recent=[];this.status=undefined;this.send();}}
++        }
+     }
+     private save(session:WorkbenchSession):void{
+         if(!this.persistence()){this.saving='Session persistence off';this.send();return;}
+@@ -121,20 +155,22 @@
+     }
+     private async run(input:string,prepare=false,recipe?:string,plan?:Value,pathPrefix?:string):Promise<void>{
+         this.authorized();if(!this.session){throw new Error('Choose a project first.');}
+-        this.stop();const generation=this.generation,session=this.session,client=this.evidence();this.busy=true;this.notice=undefined;
++        this.stop();const session=this.session,client=this.evidence(),generation=this.generation;this.busy=true;this.notice=undefined;
+         const turn={id:randomUUID(),at:Date.now(),input:(input||`${recipe??'Plan'} evidence`).slice(0,4096),format:'structured' as const,request:undefined as Value|undefined,envelope:undefined as Value|undefined,error:undefined as string|undefined};
+         session.turns.push(turn);if(session.turns.length===1){session.title=turn.input.replaceAll('\n',' ').slice(0,80);}this.send();
+         try{
++            let remembered=false;
+             if(!plan&&!recipe&&this.persistence()){
+                 const shortcut=await this.store.findShortcut(session.project,input,pathPrefix??'');
+-                if(shortcut){plan=shortcut;this.notice='Using an explicitly remembered plan; all steps are validated against current evidence.';}
+-            }
+-            if(generation!==this.generation||session!==this.session||!this.host.trusted()){return;}
++                if(shortcut){plan=shortcut;remembered=true;}
++            }
++            if(generation!==this.generation||session!==this.session||client!==this.client||this.clientIdentity!==JSON.stringify(this.selectedSpec())||!this.permitted()){return;}
++            if(remembered){this.notice='Using an explicitly remembered plan; all steps are validated against current evidence.';}
+             const request:Value={schema:'airk.parse.request/1',mode:prepare?'prepare':'execute',...(pathPrefix?{path_prefix:pathPrefix}:{})};
+             if(plan){request.plan=plan;}else if(recipe){request.recipe={id:recipe,parameters:input.trim()?{name:input.trim()}:{}};}else{request.text=input;}
+             turn.request=structuredClone(request);
+             const result=await client.call('airk_parse',request,{supersede:'workbench',timeout:35000});
+-            if(generation!==this.generation||session!==this.session||!this.host.trusted()){return;}
++            if(generation!==this.generation||session!==this.session||client!==this.client||this.clientIdentity!==JSON.stringify(this.selectedSpec())||!this.permitted()){return;}
+             turn.envelope=result.payload;
+             if(result.payload.status==='prepared'){this.notice='Plan prepared. Review or edit it, then choose Run plan.';}
+         }catch(error){if(generation===this.generation){turn.error=error instanceof Error?error.message:String(error);}}
+@@ -146,12 +182,12 @@
+         this.authorized();
+         switch(message.type){
+             case 'project':await this.select(message.id);break;
+-            case 'refresh':{await this.refresh();if(this.session){const generation=this.generation;const result=await this.evidence().call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS});if(generation===this.generation){this.status=result.payload;this.send();}}break;}
++            case 'refresh':{await this.refresh();if(this.session){const generation=this.generation;const result=await this.evidence().call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS});if(generation===this.generation&&this.permitted()){this.status=result.payload;this.send();}}break;}
+             case 'new':await this.newSession();break;
+             case 'stop':this.stop();if(this.session){this.save(this.session);}break;
+             case 'clear':await this.clear();break;
+             case 'manage':await vscode.commands.executeCommand('airk.explorer.open','manage/overview');break;
+-            case 'forms':{const generation=this.generation;const reply=await this.evidence().call('airk_capabilities',{});if(generation===this.generation){this.operations=object(object(reply.payload.workbench).operations);this.send();}break;}
++            case 'forms':{const generation=this.generation;const reply=await this.evidence().call('airk_capabilities',{});if(generation===this.generation&&this.permitted()){this.operations=object(object(reply.payload.workbench).operations);this.send();}break;}
+             case 'retrySave':if(this.session){this.save(this.session);}break;
+             case 'fork':if(this.session){this.stop();const fork={...structuredClone(this.session),id:randomUUID(),revision:0,title:`${this.session.title.slice(0,70)} (copy)`};this.session=fork;this.save(fork);this.send();}break;
+             case 'recent':if(this.session){this.stop();await this.saveQueue;this.session=await this.store.load(this.session.project,message.id);this.send();}break;
+@@ -201,9 +237,9 @@
+             }
+         }
+     }
+-    dispose():void{this.visibilityChanged.dispose();this.stop();this.disposed=true;this.client?.dispose();for(const sub of this.subscriptions){sub.dispose();}}
++    dispose():void{this.visibilityChanged.dispose();this.stop();this.disposed=true;this.releaseClient();for(const sub of this.subscriptions){sub.dispose();}}
+     async removeProject(project:string):Promise<void>{
+-        if(this.session?.project===project){this.stop();this.client?.dispose();this.client=undefined;this.session=undefined;this.status=undefined;}
++        if(this.session?.project===project){this.stop();this.releaseClient();this.session=undefined;this.status=undefined;}
+         await this.saveQueue;await this.store.remove(project);this.send();
+     }
+     async focus(input?:string):Promise<void>{

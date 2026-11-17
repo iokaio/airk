@@ -1,0 +1,365 @@
+--- crates/airk-frontend/src/project_client/CONTRACT.md
++++ crates/airk-frontend/src/project_client/CONTRACT.md
+@@ -0,0 +1,26 @@
++# Canonical project connection reads
++
++`Connection::exchange` validates an existing original read attempt and Core
++PartitionAllowance before its first frame write. A valid `is_ordinary_focus()`
++allowance accepts only canonical `airk_search`; every other valid partition,
++including a zero-optional-work Context share, accepts only `airk_answer`. Neither
++accepts NativeRead requests or public aliases at this internal boundary. An
++unsupported peer cannot carry any partition. No partition leaves the ordinary
++connection path unchanged.
++
++The selector/Host owns actual selection admission. This frontend predicate is
++purpose validation only and grants no authority. Existing Host clock, original
++request identity, immutable absolute expiry, native worker/scope proof, transport
++submission and delivery fences remain required; nothing creates a new budget
++or retries a submitted query.
++
++Cheap regressions in `project_client::read_attempt_tests` use Rust-emitted Core
++allowance fixtures and the actual Connection exchange over local IPC. They
++compare original allowances and arguments, retain the original attempt ID and
++check crossed/native/unsupported/malformed refusal before the first frame.
++
++Direct LocalTools SDK dispatch applies the same Core purpose predicate to every
++partition before selecting an operation-specific attempt path. A partition on
++any other canonical tool is refused, rather than silently discarded. Existing
++Search/Answer aliases retain their previous local-only mapping; the native
++connection continues to require canonical wire names.
+--- crates/airk-frontend/src/project_client.rs
++++ crates/airk-frontend/src/project_client.rs
+@@ -620,9 +620,16 @@
+                 .as_ref()
+                 .context("context partition original attempt missing")?;
+             partition.validate_binding(attempt, partition.selection, partition.index_id)?;
++            // Core's validated purpose is inert: the actual selector/Host and
++            // worker still own admission, authority and the original budget.
++            let canonical_tool = if partition.is_ordinary_focus() {
++                "airk_search"
++            } else {
++                "airk_answer"
++            };
+             ensure!(
+-                query.native.is_none() && query.tool == "airk_answer",
+-                "context partition requires canonical Answer"
++                query.native.is_none() && query.tool == canonical_tool,
++                "partition requires its canonical Search or Answer purpose"
+             );
+         }
+         loop {
+--- crates/airk-frontend/src/project_client/read_attempt_tests.rs
++++ crates/airk-frontend/src/project_client/read_attempt_tests.rs
+@@ -250,3 +250,196 @@
+     exchange_fixture("identity", true, false).await?;
+     exchange_fixture("scope", true, false).await
+ }
++
++async fn partition_purpose_exchange(row: &str, refusals: bool) -> Result<()> {
++    use airk_core::combined_context::PartitionAllowance;
++    let fixtures: serde_json::Value = serde_json::from_slice(include_bytes!(
++        "../../../../fixtures/split/arbiter/focus_only_allowance_cases.json"
++    ))?;
++    let allowance: PartitionAllowance = serde_json::from_value(fixtures[row]["allowance"].clone())?;
++    allowance.validate()?;
++    let canonical = match fixtures[row]["canonical_tool"].as_str() {
++        Some("search") => "airk_search",
++        Some("answer") => "airk_answer",
++        _ => anyhow::bail!("fixture canonical operation missing"),
++    }
++    .to_owned();
++    let arguments = if canonical == "airk_search" {
++        serde_json::json!({"query":"fixed native purpose control", "limit":allowance.resources.candidates, "max_bytes":4096})
++    } else {
++        let mut budget = allowance.parent_budget.clone();
++        budget.calls = allowance.resources.calls;
++        budget.candidates = allowance.resources.candidates;
++        budget.max_bytes = allowance.resources.bytes;
++        budget.input_tokens = allowance.resources.input_tokens.max(1);
++        let request = airk_core::arbiter::context_action::ContextRequestV2 {
++            schema: airk_core::arbiter::context_action::REQUEST_SCHEMA_V2.into(),
++            question: "fixed native purpose control".into(),
++            budget,
++        };
++        request.validate()?;
++        serde_json::to_value(request)?
++    };
++    if canonical == "airk_search" {
++        let _: airk_mcp::SearchArgs = serde_json::from_value(arguments.clone())?;
++    } else {
++        serde_json::from_value::<airk_mcp::AnswerArgs>(arguments.clone())?
++            .request
++            .validate()?;
++    }
++    let arguments = arguments.as_object().unwrap().clone();
++    let directory = tempfile::tempdir()?;
++    let root = directory.path().join("runtime");
++    local_ipc::prepare_root(&root)?;
++    let endpoint = local_ipc::endpoint(&root, "partition-purpose")?;
++    let mut listener = local_ipc::Listener::bind(&endpoint)?;
++    let expected = allowance.clone();
++    let expected_arguments = arguments.clone();
++    let expected_tool = canonical.clone();
++    let peer = tokio::spawn(async move {
++        let mut stream = listener.accept().await?;
++        let query: Query = local_ipc::read_message(&mut stream, Duration::from_secs(5))
++            .await?
++            .context("valid partition was not submitted")?;
++        ensure!(
++            query.tool == expected_tool && query.native.is_none(),
++            "wrong purpose crossed exchange"
++        );
++        ensure!(
++            query.arguments == expected_arguments,
++            "canonical arguments changed"
++        );
++        ensure!(
++            serde_json::to_value(&query.context_partition)?
++                == serde_json::to_value(Some(&expected))?,
++            "original partition changed"
++        );
++        let attempt = query.read_attempt.context("original attempt omitted")?;
++        ensure!(
++            attempt.request_id == expected.attempt,
++            "original attempt identity changed"
++        );
++        ensure!(
++            airk_host::read_attempt::decode(attempt)?.deadline() > Instant::now(),
++            "original attempt expired"
++        );
++        local_ipc::write_message(
++            &mut stream,
++            &protocol::QueryResult {
++                result: airk_mcp::unified::success(serde_json::json!({"complete":true})),
++                status_receipt: Default::default(),
++                rebind: false,
++                read_admission: None,
++            },
++            Duration::from_secs(5),
++        )
++        .await?;
++        let extra =
++            local_ipc::read_message::<_, Query>(&mut stream, Duration::from_secs(5)).await?;
++        ensure!(extra.is_none(), "unexpected second frame or replay");
++        Ok::<_, anyhow::Error>(())
++    });
++    let stream = local_ipc::connect(&endpoint).await?;
++    let now = Instant::now();
++    let mut connection = Connection {
++        stream: Some(stream),
++        identity: airk_core::service::WorkerIdentity {
++            service: airk_core::identity::Incarnation::from_bytes([1; 16]),
++            worker: airk_core::identity::Incarnation::from_bytes([2; 16]),
++            project: "ab".repeat(32).parse()?,
++            fencing_generation: 1,
++        },
++        authorized_until: now + Duration::from_secs(55),
++        last_finished: now,
++        healthy: true,
++        scoped: true,
++        read_scope: None,
++        read_attempt_supported: true,
++        status_receipt: Default::default(),
++    };
++    let context = airk_mcp::read_attempt::ReadAttemptContext::new(
++        now + Duration::from_secs(5),
++        Default::default(),
++    )
++    .with_request_id(allowance.attempt)?
++    .with_context_partition(allowance.clone())?;
++    if refusals {
++        let wrong = if canonical == "airk_search" {
++            "airk_answer"
++        } else {
++            "airk_search"
++        };
++        assert!(
++            connection
++                .call_with_read_context(wrong.into(), arguments.clone(), context.clone())
++                .await
++                .is_err()
++        );
++        assert!(
++            connection.healthy && connection.stream.is_some(),
++            "crossed purpose reached submission"
++        );
++        assert!(
++            connection
++                .read_native_with_context(airk_mcp::local::NativeRead::UsagePolicy, context.clone())
++                .await
++                .is_err()
++        );
++        assert!(
++            connection.healthy && connection.stream.is_some(),
++            "native request reached submission"
++        );
++        connection.read_attempt_supported = false;
++        assert!(
++            connection
++                .call_with_read_context(canonical.clone(), arguments.clone(), context.clone())
++                .await
++                .is_err()
++        );
++        assert!(
++            connection.healthy && connection.stream.is_some(),
++            "unsupported attempt reached submission"
++        );
++        connection.read_attempt_supported = true;
++        let mut malformed = allowance.clone();
++        malformed.resources.calls = malformed.parent_budget.calls + 1;
++        assert!(
++            airk_mcp::read_attempt::ReadAttemptContext::new(
++                now + Duration::from_secs(5),
++                Default::default()
++            )
++            .with_request_id(malformed.attempt)?
++            .with_context_partition(malformed)
++            .is_err()
++        );
++    }
++    let reply = connection
++        .call_with_read_context(canonical, arguments, context)
++        .await?;
++    let body: serde_json::Value = serde_json::from_str(
++        reply["content"][0]["text"]
++            .as_str()
++            .context("body missing")?,
++    )?;
++    assert_eq!(body["complete"], true);
++    drop(connection);
++    peer.await??;
++    Ok(())
++}
++
++#[tokio::test]
++async fn actual_connection_submits_focus_search_and_context_answer_with_original_allowance()
++-> Result<()> {
++    for row in ["ordinary_focus", "context", "zero_optional_work"] {
++        partition_purpose_exchange(row, false).await?;
++    }
++    Ok(())
++}
++#[tokio::test]
++async fn actual_connection_refuses_crossed_native_malformed_and_unsupported_partition_purposes()
++-> Result<()> {
++    for row in ["ordinary_focus", "context", "zero_optional_work"] {
++        partition_purpose_exchange(row, true).await?;
++    }
++    Ok(())
++}
+--- crates/airk-mcp/src/local.rs
++++ crates/airk-mcp/src/local.rs
+@@ -199,22 +199,22 @@
+                 || context.captured_transport_attempt().is_some(),
+             "narrowed Answer requires the native Host-captured absolute attempt before local dispatch"
+         );
++        anyhow::ensure!(
++            context.context_partition().is_none_or(|partition| {
++                if partition.is_ordinary_focus() {
++                    matches!(name.as_str(), "airk_search" | "search")
++                } else {
++                    matches!(name.as_str(), "airk_answer" | "answer")
++                }
++            }),
++            "native partition purpose differs from the canonical operation"
++        );
+         if let Some(attempt) = context.captured_transport_attempt()
+             && matches!(
+                 name.as_str(),
+                 "airk_answer" | "answer" | "airk_search" | "search"
+             )
+         {
+-            anyhow::ensure!(
+-                context.context_partition().is_none_or(|partition| {
+-                    if partition.is_ordinary_focus() {
+-                        matches!(name.as_str(), "airk_search" | "search")
+-                    } else {
+-                        matches!(name.as_str(), "airk_answer" | "answer")
+-                    }
+-                }),
+-                "native partition purpose differs from the canonical operation"
+-            );
+             server.kernel = match context.context_partition() {
+                 Some(partition) => server
+                     .kernel
+--- crates/airk-mcp/src/focus_handler_tests.rs
++++ crates/airk-mcp/src/focus_handler_tests.rs
+@@ -533,3 +533,78 @@
+     tools.close().await?;
+     Ok(())
+ }
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn local_sdk_refuses_partition_on_other_canonical_tools_before_dispatch() -> Result<()> {
++    let temporary = tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?;
++    let source = temporary.path().join("source");
++    std::fs::create_dir_all(source.join("public"))?;
++    let saved = b"fixed source remains unchanged\n";
++    std::fs::write(source.join("public/a.txt"), saved)?;
++    let base = Kernel::open(&source, Some(temporary.path().join("data")))?;
++    base.configure_vectors(false)?;
++    base.index()?;
++    let reviewed = crate::scoped_observation_tests::authority(&base)?;
++    let scoped = base.with_scoped_reads(reviewed.clone())?;
++    let authority = ScopedReadRef {
++        schema: 1,
++        lease_generation: 1,
++        index_id: reviewed.index_id,
++        grant_id: Some(reviewed.grant.id),
++        grant_revision: Some(reviewed.grant.revision),
++        selection: None,
++        fingerprint: scoped.scoped_read_fingerprint()?.unwrap(),
++    };
++    let owner = Arc::new(FocusOwner {
++        enabled: true,
++        requests: Mutex::new(vec![]),
++    });
++    let mut tools = local::LocalTools::new(scoped.with_native_arbiter(
++        WorkerIdentity {
++            service: Incarnation::from_bytes([8; 16]),
++            worker: Incarnation::from_bytes([9; 16]),
++            project: reviewed.backing,
++            fencing_generation: 1,
++        },
++        authority,
++        owner.clone(),
++    )?)
++    .await?;
++    // An ordinary call really reaches the same SDK handler successfully.
++    payload(tools.call("airk_status".into(), Default::default()).await?)?;
++    let fixtures: Value = serde_json::from_slice(include_bytes!(
++        "../../../fixtures/split/arbiter/focus_only_allowance_cases.json"
++    ))?;
++    for row in ["ordinary_focus", "context", "zero_optional_work"] {
++        let allowance: airk_core::combined_context::PartitionAllowance =
++            serde_json::from_value(fixtures[row]["allowance"].clone())?;
++        let mut wire = attempt().wire_attempt().unwrap();
++        wire.request_id = allowance.attempt;
++        let context = crate::read_attempt::ReadAttemptContext::new(
++            Instant::now() + Duration::from_secs(30),
++            Default::default(),
++        )
++        .with_wire_attempt(wire)?
++        .with_context_partition(allowance)?;
++        assert!(context.captured_transport_attempt().is_some());
++        for tool in ["airk_status", "status"] {
++            let error = tools
++                .call_with_read_context(tool.into(), Default::default(), context.clone())
++                .await
++                .unwrap_err();
++            assert!(
++                error
++                    .to_string()
++                    .contains("native partition purpose differs"),
++                "{error:#}"
++            );
++        }
++    }
++    assert!(
++        owner.requests.lock().unwrap().is_empty(),
++        "a rejected purpose scored candidates"
++    );
++    assert_eq!(std::fs::read(source.join("public/a.txt"))?, saved);
++    tools.close().await?;
++    Ok(())
++}

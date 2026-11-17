@@ -1,0 +1,525 @@
+// SPDX-License-Identifier: Apache-2.0
+//! A task-name right authenticates the audit token; the kernel signals that
+//! exact PID/idversion, never a subsequently reused numeric process ID.
+//!
+//! proc_pidpath_audittoken is available since macOS 11. The atomic signal API
+//! arrived later than our 13.3 deployment minimum, so resolve it at runtime.
+//! Unsupported systems retain graceful/SMAppService shutdown and refuse a
+//! required hard stop. No debugger entitlement or task control right is used.
+use anyhow::{Result, ensure};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(C)]
+struct AuditToken([u32; 8]);
+
+fn validate_token(token: AuditToken, expected_pid: u32, user: u32) -> Result<()> {
+    ensure!(
+        expected_pid != 0
+            && token.0[5] == expected_pid
+            && token.0[1] == user
+            && token.0[3] == user
+            && token.0[7] != 0,
+        "Mac upgrade process audit identity differs"
+    );
+    Ok(())
+}
+
+// An executable vnode can lose its path while its process is still alive.
+// ESRCH from a path lookup alone is therefore not an exit observation.
+fn path_failure_proves_retirement(missing_process_error: bool, dead_task_name: bool) -> bool {
+    missing_process_error && dead_task_name
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProcessObservation {
+    ExpectedImage,
+    PendingUnknownPath,
+    Retired,
+}
+
+// Every observation remains bound to the original captured process identity.
+// Only a proven retired task permits success; an unavailable path is never an
+// invitation to signal, replay a mutation or start another deadline.
+fn wait_for_retirement(
+    deadline: std::time::Instant,
+    mut observe: impl FnMut() -> Result<ProcessObservation>,
+    mut now: impl FnMut() -> std::time::Instant,
+    mut sleep: impl FnMut(std::time::Duration),
+) -> Result<()> {
+    let mut last_observation = None;
+    loop {
+        ensure!(
+            now() < deadline,
+            "exact Mac predecessor retirement deadline expired; activation remains pending; last_observation={last_observation:?}"
+        );
+        let observation = observe()?;
+        last_observation = Some(observation);
+        let observed_at = now();
+        ensure!(
+            observed_at < deadline,
+            "exact Mac predecessor retirement deadline expired; activation remains pending; last_observation={last_observation:?}"
+        );
+        if observation == ProcessObservation::Retired {
+            return Ok(());
+        }
+        sleep((deadline - observed_at).min(std::time::Duration::from_millis(20)));
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod native {
+    use super::*;
+    use anyhow::{Context, bail};
+    use std::{
+        ffi::{CStr, c_int, c_void},
+        path::{Path, PathBuf},
+        sync::OnceLock,
+        time::Instant,
+    };
+
+    type Signal = unsafe extern "C" fn(*const AuditToken, c_int) -> c_int;
+    const TASK_AUDIT_TOKEN: u32 = 15;
+    const TOKEN_WORDS: u32 = 8;
+
+    #[link(name = "System")]
+    unsafe extern "C" {
+        static mach_task_self_: u32;
+        fn task_name_for_pid(task: u32, pid: c_int, name: *mut u32) -> c_int;
+        fn task_info(task: u32, flavor: u32, output: *mut u32, words: *mut u32) -> c_int;
+        fn mach_port_deallocate(task: u32, name: u32) -> c_int;
+        fn mach_port_type(task: u32, name: u32, kind: *mut u32) -> c_int;
+    }
+    #[link(name = "proc")]
+    unsafe extern "C" {
+        fn proc_pidpath_audittoken(
+            token: *const AuditToken,
+            path: *mut c_void,
+            capacity: u32,
+        ) -> c_int;
+    }
+
+    fn signal_api() -> Result<Signal> {
+        static API: OnceLock<Option<Signal>> = OnceLock::new();
+        // SAFETY: resolve the public native function without introducing a
+        // strong reference that would prevent startup on older supported OSes.
+        let api = API.get_or_init(|| unsafe {
+            let pointer = libc::dlsym(libc::RTLD_DEFAULT, c"proc_signal_with_audittoken".as_ptr());
+            if pointer.is_null() {
+                None
+            } else {
+                Some(std::mem::transmute::<*mut c_void, Signal>(pointer))
+            }
+        });
+        api.context("macos_atomic_process_stop_unavailable: graceful or Service Management shutdown must release the old owners on this OS")
+    }
+
+    pub(in super::super) struct Owner {
+        name: u32,
+        token: AuditToken,
+        expected: PathBuf,
+        signal: Signal,
+    }
+    impl Drop for Owner {
+        fn drop(&mut self) {
+            // SAFETY: this object owns the send right acquired by capture.
+            unsafe { mach_port_deallocate(mach_task_self_, self.name) };
+        }
+    }
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum TaskNameState {
+        Alive,
+        Dead,
+    }
+
+    impl Owner {
+        fn failure_context(&self, phase: &str) -> String {
+            format!(
+                "Mac predecessor phase={phase} pid={} audit_token={:?} expected_image={}",
+                self.token.0[5],
+                self.token,
+                self.expected.display()
+            )
+        }
+
+        fn task_name_state(&self) -> Result<TaskNameState> {
+            let mut kind = 0;
+            // SAFETY: inspect only our retained task-name right. A failed or
+            // unsupported right observation remains an error, never exit proof.
+            let status = unsafe { mach_port_type(mach_task_self_, self.name, &mut kind) };
+            ensure!(status == 0, "Mac task-name type unavailable ({status})");
+            const MACH_PORT_TYPE_DEAD_NAME: u32 = 1 << 20;
+            const MACH_PORT_TYPE_SEND: u32 = 1 << 16;
+            if kind & MACH_PORT_TYPE_DEAD_NAME != 0 {
+                return Ok(TaskNameState::Dead);
+            }
+            ensure!(
+                kind & MACH_PORT_TYPE_SEND != 0,
+                "Mac task-name right is not a live send right ({kind})"
+            );
+            Ok(TaskNameState::Alive)
+        }
+
+        fn observe(&self, phase: &str) -> Result<ProcessObservation> {
+            self.observe_inner()
+                .with_context(|| self.failure_context(phase))
+        }
+
+        fn observe_inner(&self) -> Result<ProcessObservation> {
+            let mut buffer = [0u8; 4096];
+            // SAFETY: token is captured from our retained task-name port; this
+            // API atomically compares PID/idversion before reading its path.
+            let count = unsafe {
+                *libc::__error() = 0;
+                proc_pidpath_audittoken(
+                    &self.token,
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len() as u32,
+                )
+            };
+            if count == 0 {
+                let error = std::io::Error::last_os_error();
+                // Permission, I/O and unsupported lookup failures are not a
+                // transient retirement state and must not enter the wait loop.
+                if error.raw_os_error() != Some(libc::ESRCH) {
+                    return Err(error).context("Mac captured process path unavailable");
+                }
+                let state = self.task_name_state()?;
+                return Ok(
+                    if path_failure_proves_retirement(true, state == TaskNameState::Dead) {
+                        ProcessObservation::Retired
+                    } else {
+                        ProcessObservation::PendingUnknownPath
+                    },
+                );
+            }
+            ensure!(
+                count > 0 && (count as usize) < buffer.len(),
+                "Mac process path exceeded bound"
+            );
+            let path = CStr::from_bytes_until_nul(&buffer)
+                .context("Mac process path is not terminated")?;
+            use std::os::unix::ffi::OsStrExt;
+            let path = PathBuf::from(std::ffi::OsStr::from_bytes(path.to_bytes()));
+            ensure!(
+                path.canonicalize()? == self.expected,
+                "Mac captured process image changed"
+            );
+            Ok(ProcessObservation::ExpectedImage)
+        }
+    }
+
+    pub(in super::super) fn capture(pid: u32, expected: &Path) -> Result<Option<Owner>> {
+        ensure!(
+            pid != 0 && pid != std::process::id() && pid <= c_int::MAX as u32,
+            "Mac predecessor phase=capture pid={pid} expected_image={}: installer cannot capture itself or an invalid PID",
+            expected.display()
+        );
+        let expected = expected.canonicalize().with_context(|| format!("Mac predecessor phase=capture pid={pid} expected_image={}: canonical path unavailable", expected.display()))?;
+        let signal = signal_api().with_context(|| {
+            format!(
+                "Mac predecessor phase=capture pid={pid} expected_image={}",
+                expected.display()
+            )
+        })?;
+        let mut name = 0;
+        // SAFETY: read-only task-name capability, not task_for_pid/control.
+        let status = unsafe { task_name_for_pid(mach_task_self_, pid as c_int, &mut name) };
+        ensure!(
+            status == 0 && name != 0,
+            "Mac predecessor phase=capture pid={pid} expected_image={}: task-name capture unavailable ({status}); no numeric PID signal attempted",
+            expected.display()
+        );
+        let mut owner = Owner {
+            name,
+            token: AuditToken([0; 8]),
+            expected,
+            signal,
+        };
+        let mut words = TOKEN_WORDS;
+        // SAFETY: eight writable token words and a retained read-only right.
+        let status = unsafe {
+            task_info(
+                name,
+                TASK_AUDIT_TOKEN,
+                owner.token.0.as_mut_ptr(),
+                &mut words,
+            )
+        };
+        ensure!(
+            status == 0 && words == TOKEN_WORDS,
+            "Mac predecessor phase=capture pid={pid} expected_image={}: audit-token capture unavailable ({status})",
+            owner.expected.display()
+        );
+        // SAFETY: actual native user identity, independent of environment.
+        validate_token(owner.token, pid, unsafe { libc::geteuid() })
+            .with_context(|| owner.failure_context("capture"))?;
+        match owner.observe("capture")? {
+            ProcessObservation::Retired => Ok(None),
+            ProcessObservation::ExpectedImage => Ok(Some(owner)),
+            ProcessObservation::PendingUnknownPath => bail!(
+                "{}: captured executable path unresolved; capture refused; no signal attempted",
+                owner.failure_context("capture")
+            ),
+        }
+    }
+
+    pub(in super::super) fn terminate(owner: &Owner) -> Result<()> {
+        match owner.observe("terminate")? {
+            ProcessObservation::Retired => return Ok(()),
+            ProcessObservation::ExpectedImage => {}
+            ProcessObservation::PendingUnknownPath => bail!(
+                "{}: captured executable path unresolved; no signal attempted",
+                owner.failure_context("terminate")
+            ),
+        }
+        // SAFETY: the kernel compares the original audit PID/idversion as one
+        // operation. A PID reused after this path check cannot be signaled.
+        let status = unsafe { (owner.signal)(&owner.token, libc::SIGKILL) };
+        if status == 0 || status == libc::ESRCH {
+            return Ok(());
+        }
+        bail!(
+            "{}: cannot stop exact Mac predecessor: {}",
+            owner.failure_context("terminate"),
+            std::io::Error::from_raw_os_error(status)
+        );
+    }
+
+    pub(in super::super) fn wait(owner: &Owner, deadline: Instant) -> Result<()> {
+        wait_for_retirement(
+            deadline,
+            || owner.observe("wait"),
+            Instant::now,
+            std::thread::sleep,
+        )
+        .with_context(|| owner.failure_context("wait"))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::time::Duration;
+
+        #[test]
+        fn retained_task_name_distinguishes_live_child_from_proven_exit() -> Result<()> {
+            let child = std::process::Command::new("/bin/sleep").arg("60").spawn()?;
+            struct Child(std::process::Child);
+            impl Drop for Child {
+                fn drop(&mut self) {
+                    let _ = self.0.kill();
+                    let _ = self.0.wait();
+                }
+            }
+            let mut child = Child(child);
+            let expected = Path::new("/bin/sleep").canonicalize()?;
+            let mut name = 0;
+            // SAFETY: read-only capability for this exact owned child. The wait
+            // regression must not require the optional hard-signal API.
+            let status =
+                unsafe { task_name_for_pid(mach_task_self_, child.0.id() as c_int, &mut name) };
+            ensure!(
+                status == 0 && name != 0,
+                "owned child task-name capture failed"
+            );
+            unsafe extern "C" fn unused_signal(_: *const AuditToken, _: c_int) -> c_int {
+                libc::EINVAL
+            }
+            let mut owner = Owner {
+                name,
+                token: AuditToken([0; 8]),
+                expected,
+                signal: unused_signal,
+            };
+            let mut words = TOKEN_WORDS;
+            // SAFETY: token is read from the original retained task-name right.
+            let status = unsafe {
+                task_info(
+                    name,
+                    TASK_AUDIT_TOKEN,
+                    owner.token.0.as_mut_ptr(),
+                    &mut words,
+                )
+            };
+            ensure!(
+                status == 0 && words == TOKEN_WORDS,
+                "owned child audit-token capture failed"
+            );
+            validate_token(owner.token, child.0.id(), unsafe { libc::geteuid() })?;
+            assert_eq!(owner.task_name_state()?, TaskNameState::Alive);
+            assert_eq!(
+                owner.observe("test_before_exit")?,
+                ProcessObservation::ExpectedImage
+            );
+            child.0.kill()?;
+            // Observe retirement through the original right before reaping the
+            // child. child.wait() must not hide the missing-path/dead-name race.
+            wait(&owner, Instant::now() + Duration::from_secs(5))?;
+            assert_eq!(owner.task_name_state()?, TaskNameState::Dead);
+            assert_eq!(
+                owner.observe("test_after_exit")?,
+                ProcessObservation::Retired
+            );
+            child.0.wait()?;
+            Ok(())
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(super) use native::{capture, terminate, wait};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn missing_executable_path_requires_a_proven_dead_task_name() {
+        assert!(!path_failure_proves_retirement(true, false));
+        assert!(path_failure_proves_retirement(true, true));
+        assert!(!path_failure_proves_retirement(false, false));
+        assert!(!path_failure_proves_retirement(false, true));
+    }
+    #[test]
+    fn token_requires_exact_pid_native_user_and_nonzero_execution_generation() -> Result<()> {
+        let mut token = AuditToken([501, 501, 20, 501, 20, 123, 1, 72]);
+        validate_token(token, 123, 501)?;
+        assert!(validate_token(token, 124, 501).is_err());
+        assert!(validate_token(token, 123, 502).is_err());
+        for field in [1, 3, 5, 7] {
+            let original = token;
+            token.0[field] = 0;
+            assert!(validate_token(token, 123, 501).is_err());
+            token = original;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn missing_path_waits_for_proven_death_with_original_deadline() -> Result<()> {
+        use std::{
+            cell::{Cell, RefCell},
+            collections::VecDeque,
+            time::{Duration, Instant},
+        };
+        let epoch = Instant::now();
+        let elapsed = Cell::new(Duration::ZERO);
+        let sleeps = RefCell::new(Vec::new());
+        let mut observations = VecDeque::from([
+            ProcessObservation::ExpectedImage,
+            ProcessObservation::PendingUnknownPath,
+            ProcessObservation::PendingUnknownPath,
+            ProcessObservation::Retired,
+        ]);
+        wait_for_retirement(
+            epoch + Duration::from_millis(100),
+            || Ok(observations.pop_front().expect("must stop at proven death")),
+            || epoch + elapsed.get(),
+            |delay| {
+                sleeps.borrow_mut().push(delay);
+                elapsed.set(elapsed.get() + delay);
+            },
+        )?;
+        assert!(observations.is_empty());
+        assert_eq!(*sleeps.borrow(), vec![Duration::from_millis(20); 3]);
+        assert_eq!(elapsed.get(), Duration::from_millis(60));
+        Ok(())
+    }
+
+    #[test]
+    fn persistent_missing_path_never_renews_deadline_or_claims_retirement() {
+        use std::{
+            cell::{Cell, RefCell},
+            time::{Duration, Instant},
+        };
+        let epoch = Instant::now();
+        let elapsed = Cell::new(Duration::ZERO);
+        let calls = Cell::new(0);
+        let sleeps = RefCell::new(Vec::new());
+        let error = wait_for_retirement(
+            epoch + Duration::from_millis(45),
+            || {
+                calls.set(calls.get() + 1);
+                Ok(ProcessObservation::PendingUnknownPath)
+            },
+            || epoch + elapsed.get(),
+            |delay| {
+                sleeps.borrow_mut().push(delay);
+                elapsed.set(elapsed.get() + delay);
+            },
+        )
+        .unwrap_err();
+        assert_eq!(calls.get(), 3);
+        assert_eq!(
+            *sleeps.borrow(),
+            vec![
+                Duration::from_millis(20),
+                Duration::from_millis(20),
+                Duration::from_millis(5)
+            ]
+        );
+        assert_eq!(elapsed.get(), Duration::from_millis(45));
+        assert!(error.to_string().contains("deadline expired"));
+        assert!(error.to_string().contains("PendingUnknownPath"));
+    }
+
+    #[test]
+    fn retirement_wait_does_not_retry_permission_image_or_right_errors() {
+        use std::{
+            cell::Cell,
+            time::{Duration, Instant},
+        };
+        for refusal in [
+            "permission denied",
+            "Mac captured process image changed",
+            "Mac task-name type unavailable",
+        ] {
+            let epoch = Instant::now();
+            let calls = Cell::new(0);
+            let error = wait_for_retirement(
+                epoch + Duration::from_secs(1),
+                || {
+                    calls.set(calls.get() + 1);
+                    Err(anyhow::anyhow!(refusal))
+                },
+                || epoch,
+                |_| panic!("hard failures cannot enter retirement polling"),
+            )
+            .unwrap_err();
+            assert_eq!(calls.get(), 1);
+            assert_eq!(error.to_string(), refusal);
+        }
+    }
+
+    #[test]
+    fn expired_retirement_deadline_does_not_start_an_observation() {
+        let deadline = std::time::Instant::now();
+        let error = wait_for_retirement(
+            deadline,
+            || panic!("expired deadline cannot start another observation"),
+            || deadline,
+            |_| panic!("expired deadline cannot sleep"),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("deadline expired"));
+    }
+
+    #[test]
+    fn retirement_observed_after_original_deadline_is_not_success() {
+        use std::{
+            cell::Cell,
+            time::{Duration, Instant},
+        };
+        let epoch = Instant::now();
+        let elapsed = Cell::new(Duration::ZERO);
+        let error = wait_for_retirement(
+            epoch + Duration::from_millis(10),
+            || {
+                elapsed.set(Duration::from_millis(11));
+                Ok(ProcessObservation::Retired)
+            },
+            || epoch + elapsed.get(),
+            |_| panic!("expired observation cannot sleep"),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("deadline expired"));
+    }
+}

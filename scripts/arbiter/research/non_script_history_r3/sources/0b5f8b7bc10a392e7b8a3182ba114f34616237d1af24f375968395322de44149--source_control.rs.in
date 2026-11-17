@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Bounded retained control witnesses, never an authorization credential.
+use crate::identity::{Sha256Digest, framed_digest};
+use anyhow::{Result, ensure};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+pub const MAX_CONTROL_INPUTS: usize = 4096;
+pub const MAX_CONTROL_INPUT_BYTES: u64 = 1 << 20;
+pub const MAX_CONTROL_BASELINE_BYTES: usize = 1 << 20;
+pub const CONTROL_BASELINE_RESOURCE: &str = "source-controls/1";
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ControlInputState {
+    File { sha256: Sha256Digest, bytes: u64 },
+    Absent,
+    Directory,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceControlBaseline {
+    pub schema: u32,
+    /// Complete serialized CollectionConfiguration digest, including future
+    /// P11 retained-profile fields, roots, permanent policy and model identity.
+    pub configuration: Sha256Digest,
+    /// Complete native configuration-input identity captured for this scan.
+    pub settings: Sha256Digest,
+    /// Eligibility implementation version + canonical source roots + actual
+    /// computed global control locators/CWD/home, not caller-selected values.
+    pub contexts: BTreeMap<String, Sha256Digest>,
+    pub inputs: BTreeMap<String, ControlInputState>,
+}
+impl SourceControlBaseline {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.schema == 1 && !self.contexts.is_empty() && self.contexts.len() <= 17,
+            "unsupported source control baseline"
+        );
+        ensure!(
+            self.inputs.len() <= MAX_CONTROL_INPUTS,
+            "source control entry budget exceeded"
+        );
+        let mut bytes = 0u64;
+        for (path, state) in &self.inputs {
+            ensure!(
+                !path.is_empty() && path.len() <= 32768 && !path.chars().any(char::is_control),
+                "invalid retained control locator"
+            );
+            if let ControlInputState::File {
+                bytes: captured, ..
+            } = state
+            {
+                bytes = bytes
+                    .checked_add(*captured)
+                    .ok_or_else(|| anyhow::anyhow!("source control byte overflow"))?;
+                ensure!(
+                    bytes <= MAX_CONTROL_INPUT_BYTES,
+                    "source control byte budget exceeded"
+                );
+            }
+        }
+        for root in self.contexts.keys() {
+            ensure!(
+                !root.is_empty() && root.len() <= 32768 && !root.chars().any(char::is_control),
+                "invalid retained control context locator"
+            );
+        }
+        crate::index_catalog::encoded_size(self, MAX_CONTROL_BASELINE_BYTES)?;
+        Ok(())
+    }
+    pub fn identity(&self) -> Result<Sha256Digest> {
+        self.validate()?;
+        Ok(framed_digest(
+            b"airk/source-controls/1",
+            &[&serde_json::to_vec(self)?],
+        ))
+    }
+}

@@ -1,0 +1,3459 @@
+--- a/crates/airk-kernel/src/analysis.rs
++++ b/crates/airk-kernel/src/analysis.rs
+@@ -163,7 +163,8 @@
+                     source_bytes: bytes.len(),
+                 },
+             )?;
+-            *artifact = self.store.retain_payload_with_budget(
++            *artifact = self.store.retain_payload_with_budget_owned(
++                &writer,
+                 &prepared,
+                 &payload,
+                 &profile,
+--- a/crates/airk-kernel/src/compression.rs
++++ b/crates/airk-kernel/src/compression.rs
+@@ -165,7 +165,8 @@
+             admitted += bytes;
+             let retained = self.store.load_retrieval_artifact(artifact)?;
+             let source = self.store.read_retained_source(artifact)?;
+-            let updated = self.store.retain_payload_encoded(
++            let updated = self.store.retain_payload_encoded_owned(
++                &writer,
+                 &retained.artifact,
+                 &retained.payload,
+                 &retained.profile,
+--- a/crates/airk-kernel/src/current/enrichment.rs
++++ b/crates/airk-kernel/src/current/enrichment.rs
+@@ -185,9 +185,11 @@
+     pub fn resource_change(
+         &self,
+         store: &FileStore,
++        writer: &airk_store::WriterLock,
+         reservation: &Reservation,
+     ) -> Result<ResourceChange> {
+-        let reference = store.retain_current_resource(&self.canonical_bytes()?, reservation)?;
++        let reference =
++            store.retain_current_resource_owned(writer, &self.canonical_bytes()?, reservation)?;
+         Ok(ResourceChange {
+             key: KEY.into(),
+             reference: Some(reference),
+@@ -473,7 +475,7 @@
+         drop(read);
+         let resources = [
+             match work {
+-                Some(work) => work.resource_change(&self.store, &reservation)?,
++                Some(work) => work.resource_change(&self.store, &writer, &reservation)?,
+                 None => ResourceChange {
+                     key: KEY.into(),
+                     reference: None,
+@@ -632,7 +634,7 @@
+         .apply_with_resources(
+             &[],
+             None,
+-            &[work.resource_change(&self.store, &reservation)?],
++            &[work.resource_change(&self.store, &writer, &reservation)?],
+         )?;
+         Ok(work.readiness(policy))
+     }
+@@ -653,7 +655,9 @@
+         let quota = self.collection_quota()?;
+         let reservation = self.publication_reservation()?;
+         let bytes = serde_json::to_vec(&SavedSearchPolicy { version: 1, policy })?;
+-        let reference = self.store.retain_current_resource(&bytes, &reservation)?;
++        let reference = self
++            .store
++            .retain_current_resource_owned(&writer, &bytes, &reservation)?;
+         CurrentUpdater {
+             store: &self.store,
+             quota: &quota,
+@@ -700,7 +704,7 @@
+         .apply_with_resources(
+             &[],
+             None,
+-            &[work.resource_change(&self.store, &reservation)?],
++            &[work.resource_change(&self.store, &writer, &reservation)?],
+         )?;
+         Ok(())
+     }
+--- a/crates/airk-kernel/src/current/indexing.rs
++++ b/crates/airk-kernel/src/current/indexing.rs
+@@ -178,7 +178,7 @@
+         let mut next_scan_work = self.scan_work.clone();
+         next_scan_work.advanced(self.processed, self.committed + self.batch.len() as u64)?;
+         let mut resources = vec![
+-            next_scan_work.resource_change(&self.kernel.store, &reservation)?,
++            next_scan_work.resource_change(&self.kernel.store, self.writer, &reservation)?,
+             airk_store::current::resources::ResourceChange {
+                 key: "analysis".into(),
+                 reference: None,
+@@ -187,7 +187,7 @@
+         resources.push(
+             selected
+                 .as_ref()
+-                .map(|work| work.resource_change(&self.kernel.store, &reservation))
++                .map(|work| work.resource_change(&self.kernel.store, self.writer, &reservation))
+                 .transpose()?
+                 .unwrap_or(airk_store::current::resources::ResourceChange {
+                     key: "semantic-work".into(),
+@@ -298,7 +298,7 @@
+             None,
+             &[self
+                 .scan_work
+-                .resource_change(&self.kernel.store, reservation)?],
++                .resource_change(&self.kernel.store, self.writer, reservation)?],
+         )?;
+         Ok(())
+     }
+@@ -808,7 +808,7 @@
+                 .apply_with_resources(
+                     &[],
+                     None,
+-                    &[scan_work.resource_change(&self.store, &publication)?],
++                    &[scan_work.resource_change(&self.store, &writer, &publication)?],
+                 )
+                 .context("publish progressive scan start")?;
+             }
+@@ -939,7 +939,8 @@
+                 {
+                     artifact.clone()
+                 } else {
+-                    self.store.retain_payload_encoded(
++                    self.store.retain_payload_encoded_owned(
++                        &writer,
+                         artifact,
+                         payload.context("fresh extraction payload missing")?,
+                         profile,
+@@ -1098,7 +1099,7 @@
+         {
+             let semantic_resource = semantic_work
+                 .as_ref()
+-                .map(|work| work.resource_change(&self.store, &reservation))
++                .map(|work| work.resource_change(&self.store, &writer, &reservation))
+                 .transpose()?;
+             let semantic = model
+                 .as_ref()
+@@ -1140,7 +1141,7 @@
+                 }),
+             ];
+             if let Some(work) = &final_scan_work {
+-                resources.push(work.resource_change(&self.store, &reservation)?);
++                resources.push(work.resource_change(&self.store, &writer, &reservation)?);
+             }
+             let result = CurrentUpdater {
+                 store: &self.store,
+--- a/crates/airk-kernel/src/current/metadata.rs
++++ b/crates/airk-kernel/src/current/metadata.rs
+@@ -17,6 +17,7 @@
+ 
+ pub(super) fn prepare(
+     store: &FileStore,
++    writer: &airk_store::WriterLock,
+     read: &CurrentRead,
+     changes: &[ArtifactChange],
+     configuration: Option<&CollectionConfiguration>,
+@@ -155,7 +156,8 @@
+             captured_bytes <= airk_store::current::MAX_CURRENT_METADATA_READ_BYTES,
+             "current captured metadata admission exceeded"
+         );
+-        references.push(store.retain_current_metadata_encoded(
++        references.push(store.retain_current_metadata_encoded_owned(
++            writer,
+             path,
+             &file,
+             reservation,
+--- a/crates/airk-kernel/src/current/progress.rs
++++ b/crates/airk-kernel/src/current/progress.rs
+@@ -113,11 +113,12 @@
+     pub fn resource_change(
+         &self,
+         store: &FileStore,
++        writer: &airk_store::WriterLock,
+         reservation: &Reservation,
+     ) -> Result<ResourceChange> {
+         self.validate()?;
+         let bytes = serde_json::to_vec(self)?;
+-        let reference = store.retain_current_resource(&bytes, reservation)?;
++        let reference = store.retain_current_resource_owned(writer, &bytes, reservation)?;
+         Ok(ResourceChange {
+             key: KEY.into(),
+             reference: Some(reference),
+--- a/crates/airk-kernel/src/current/publication.rs
++++ b/crates/airk-kernel/src/current/publication.rs
+@@ -61,10 +61,11 @@
+                 facts: snapshot.imported_facts.clone(),
+                 relationships: snapshot.imported_relationships.clone(),
+             };
+-            Some(
+-                self.store
+-                    .retain_current_resource(&analysis.canonical_bytes()?, reservation)?,
+-            )
++            Some(self.store.retain_current_resource_owned(
++                writer,
++                &analysis.canonical_bytes()?,
++                reservation,
++            )?)
+         } else {
+             None
+         };
+--- a/crates/airk-kernel/src/current/update.rs
++++ b/crates/airk-kernel/src/current/update.rs
+@@ -502,6 +502,7 @@
+             .or(applied.as_ref().map(|state| &state.configuration));
+         let metadata = super::metadata::prepare(
+             self.store,
++            self.writer,
+             &read,
+             changes,
+             configuration,
+@@ -801,7 +802,7 @@
+                 }
+                 work.fully_ready_unix_ms = Some(super::enrichment::now_unix_ms()?);
+             }
+-            resources.push(work.resource_change(self.store, self.reservation)?);
++            resources.push(work.resource_change(self.store, self.writer, self.reservation)?);
+         }
+         if let Some(cache) = &owned_cache {
+             let started = std::time::Instant::now();
+@@ -845,9 +846,11 @@
+                     .cache_compacted_records
+                     .saturating_add(statistics.compacted_records);
+             }
+-            let reference = self
+-                .store
+-                .retain_current_resource(&manifest.canonical_bytes()?, self.reservation)?;
++            let reference = self.store.retain_current_resource_owned(
++                self.writer,
++                &manifest.canonical_bytes()?,
++                self.reservation,
++            )?;
+             resources.push(airk_store::current::resources::ResourceChange {
+                 key: "embedding-cache".into(),
+                 reference: Some(reference),
+--- a/crates/airk-kernel/src/lib.rs
++++ b/crates/airk-kernel/src/lib.rs
+@@ -767,9 +767,12 @@
+             let mut snapshot = verified.clone();
+             let reservation = self.publication_reservation()?;
+             for artifact in snapshot.artifacts.values_mut() {
+-                *artifact =
+-                    self.store
+-                        .retain_artifact_with_budget(artifact, None, Some(&reservation))?;
++                *artifact = self.store.retain_artifact_with_budget_owned(
++                    &writer,
++                    artifact,
++                    None,
++                    Some(&reservation),
++                )?;
+             }
+             snapshot.storage_format = 1;
+             snapshot.embedding_model = self.configured_model()?;
+--- a/crates/airk-kernel/src/limits.rs
++++ b/crates/airk-kernel/src/limits.rs
+@@ -138,6 +138,7 @@
+         let bytes = serde_json::to_vec(&config)?;
+         let reservation = self.collection_quota()?.reserve(&self.collection, 16_384)?;
+         reservation.charge(bytes.len() as u64)?;
++        self.store.invalidate_owned_state_before_mutation(&_lock)?;
+         let mut temporary = tempfile::NamedTempFile::new_in(self.store.directory())?;
+         temporary.write_all(&bytes)?;
+         temporary.as_file().sync_all()?;
+--- a/crates/airk-kernel/src/roots.rs
++++ b/crates/airk-kernel/src/roots.rs
+@@ -61,6 +61,7 @@
+             .collection_quota()?
+             .reserve(&self.collection, 96 * 1024)?;
+         reservation.charge(96 * 1024)?;
++        self.store.invalidate_owned_state_before_mutation(&lock)?;
+         config.save(self.store.directory())?;
+         drop(lock);
+         self.roots()
+@@ -75,6 +76,7 @@
+             .collection_quota()?
+             .reserve(&self.collection, 96 * 1024)?;
+         reservation.charge(96 * 1024)?;
++        self.store.invalidate_owned_state_before_mutation(&lock)?;
+         config.save(self.store.directory())?;
+         drop(lock);
+         self.roots()
+--- a/crates/airk-store/Cargo.toml
++++ b/crates/airk-store/Cargo.toml
+@@ -23,4 +23,4 @@
+ libc.workspace = true
+ 
+ [target.'cfg(windows)'.dependencies]
+-windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_Globalization"] }
++windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_Globalization", "Win32_Security", "Win32_Security_Authorization"] }
+--- a/crates/airk-store/src/blobs.rs
++++ b/crates/airk-store/src/blobs.rs
+@@ -355,6 +355,53 @@
+ }
+ 
+ impl FileStore {
++    pub fn retain_artifact_with_budget_owned(
++        &self,
++        writer: &crate::WriterLock,
++        artifact: &Artifact,
++        source: Option<&[u8]>,
++        reservation: Option<&crate::quota::Reservation>,
++    ) -> Result<Artifact> {
++        crate::current::gate::check_writer(self, writer)?;
++        writer.invalidate_census_before_mutation()?;
++        self.retain_artifact_with_budget(artifact, source, reservation)
++    }
++    #[allow(clippy::too_many_arguments)]
++    pub fn retain_payload_with_budget_owned(
++        &self,
++        writer: &crate::WriterLock,
++        artifact: &Artifact,
++        payload: &airk_core::extraction::ExtractionPayload,
++        profile: &airk_core::extraction::ExtractionProfile,
++        source: Option<&[u8]>,
++        reservation: Option<&crate::quota::Reservation>,
++    ) -> Result<Artifact> {
++        self.retain_payload_encoded_owned(
++            writer,
++            artifact,
++            payload,
++            profile,
++            source,
++            reservation,
++            airk_core::compression::CompressionMode::Off,
++        )
++    }
++    #[allow(clippy::too_many_arguments)]
++    pub fn retain_payload_encoded_owned(
++        &self,
++        writer: &crate::WriterLock,
++        artifact: &Artifact,
++        payload: &airk_core::extraction::ExtractionPayload,
++        profile: &airk_core::extraction::ExtractionProfile,
++        source: Option<&[u8]>,
++        reservation: Option<&crate::quota::Reservation>,
++        mode: airk_core::compression::CompressionMode,
++    ) -> Result<Artifact> {
++        crate::current::gate::check_writer(self, writer)?;
++        writer.invalidate_census_before_mutation()?;
++        self.retain_payload_encoded(artifact, payload, profile, source, reservation, mode)
++    }
++
+     /// Receipt-authenticated full-generation model dependencies. Historical
+     /// representations deliberately do not retain these retrieval assets.
+     pub fn model_object_references(
+--- a/crates/airk-store/src/current/journal.rs
++++ b/crates/airk-store/src/current/journal.rs
+@@ -680,6 +680,7 @@
+         scope.validate()?;
+         database::validate_capacity(database_capacity_bytes)?;
+         crate::maintenance::check_writer(self, writer, quota)?;
++        writer.invalidate_census_before_mutation()?;
+         ensure!(
+             self.collection_id()? == scope.collection,
+             "foreign current writer collection"
+@@ -2261,3 +2262,22 @@
+         Ok(released)
+     }
+ }
++
++impl super::CurrentRead {
++    /// Authenticated journal state in THIS read snapshot, not object integrity
++    /// or a restart capability. An owner must open a fresh read while holding
++    /// the actual logical writer before using it for native-owner enrollment.
++    /// A retained pre-mutation read cannot establish current settled state.
++    pub fn settled_native_head(&self) -> Result<Option<CurrentHead>> {
++        self.with_connection(|connection| {
++            let (phase, head) = state(connection, &self.head().scope)?;
++            ensure!(head == *self.head(), "native owner read snapshot changed");
++            let pending = pending(connection, &head.scope)?;
++            if phase == TransactionPhase::Ready && pending.is_none() {
++                Ok(Some(head))
++            } else {
++                Ok(None)
++            }
++        })
++    }
++}
+--- a/crates/airk-store/src/current/metadata.rs
++++ b/crates/airk-store/src/current/metadata.rs
+@@ -35,6 +35,19 @@
+ }
+ 
+ impl FileStore {
++    pub fn retain_current_metadata_encoded_owned(
++        &self,
++        writer: &crate::WriterLock,
++        path: &str,
++        file: &InventoryFile,
++        reservation: &Reservation,
++        mode: airk_core::compression::CompressionMode,
++    ) -> Result<FileMetadataRef> {
++        super::gate::check_writer(self, writer)?;
++        writer.invalidate_census_before_mutation()?;
++        self.retain_current_metadata_encoded(path, file, reservation, mode)
++    }
++
+     pub fn retain_current_metadata(
+         &self,
+         path: &str,
+--- a/crates/airk-store/src/current/mod.rs
++++ b/crates/airk-store/src/current/mod.rs
+@@ -204,6 +204,7 @@
+     pub fn write_runtime_bootstrap(&self, writer: &crate::WriterLock, bytes: &[u8]) -> Result<()> {
+         use std::io::Write;
+         gate::check_writer(self, writer)?;
++        writer.invalidate_census_before_mutation()?;
+         ensure!(
+             bytes.len() <= 2 << 20 && self.runtime_bootstrap()?.is_none(),
+             "invalid or existing runtime bootstrap"
+@@ -217,6 +218,7 @@
+     }
+     pub fn finish_runtime_bootstrap(&self, writer: &crate::WriterLock) -> Result<()> {
+         gate::check_writer(self, writer)?;
++        writer.invalidate_census_before_mutation()?;
+         std::fs::remove_file(self.directory().join("current-runtime-bootstrap.json"))?;
+         crate::maintenance::sync_parent(self.directory())
+     }
+--- a/crates/airk-store/src/current/resources.rs
++++ b/crates/airk-store/src/current/resources.rs
+@@ -33,6 +33,18 @@
+ }
+ 
+ impl FileStore {
++    /// Writer-owned producer seam; legacy callers remain unqualified for census promotion.
++    pub fn retain_current_resource_owned(
++        &self,
++        writer: &crate::WriterLock,
++        bytes: &[u8],
++        reservation: &Reservation,
++    ) -> Result<ResourceReference> {
++        super::gate::check_writer(self, writer)?;
++        writer.invalidate_census_before_mutation()?;
++        self.retain_current_resource(bytes, reservation)
++    }
++
+     pub fn retain_current_resource(
+         &self,
+         bytes: &[u8],
+--- a/crates/airk-store/src/extraction_policy.rs
++++ b/crates/airk-store/src/extraction_policy.rs
+@@ -87,6 +87,7 @@
+             bytes.len() <= MAX_BYTES,
+             "extraction policy file exceeds bound"
+         );
++        writer.invalidate_census_before_mutation()?;
+         let reservation = quota.reserve(collection, bytes.len() as u64)?;
+         reservation.charge(bytes.len() as u64)?;
+         let mut temporary = tempfile::NamedTempFile::new_in(&directory)?;
+--- a/crates/airk-store/src/history_policy.rs
++++ b/crates/airk-store/src/history_policy.rs
+@@ -596,6 +596,7 @@
+     ) -> Result<HistoryPolicyReceipt> {
+         use anyhow::Context;
+         crate::maintenance::check_writer(self, writer, quota)?;
++        writer.invalidate_census_before_mutation()?;
+         policy.validate()?;
+         ensure!(
+             !policy.enabled || crate::maintenance::retirement_count(self)? == 0,
+@@ -1000,6 +1001,7 @@
+     ) -> Result<HistoryMaintenanceRun> {
+         use anyhow::Context;
+         crate::maintenance::check_writer(self, writer, quota)?;
++        writer.invalidate_census_before_mutation()?;
+         let mut work = crate::maintenance::WorkBudget::history(budget)?;
+         let current = self
+             .catalog()?
+@@ -1208,6 +1210,7 @@
+     ) -> Result<PurgeReceipt> {
+         use anyhow::Context;
+         crate::maintenance::check_writer(self, writer, quota)?;
++        writer.invalidate_census_before_mutation()?;
+         let mut work = crate::maintenance::WorkBudget::history(budget)?;
+         let plan = purge_plan(self, &request.request, &mut work)?;
+         ensure!(
+--- a/crates/airk-store/src/lib.rs
++++ b/crates/airk-store/src/lib.rs
+@@ -364,6 +364,11 @@
+     }
+     /// OS-backed exclusivity releases after process death. Legacy lock markers
+     /// still fail closed until an operator establishes that their writer exited.
++    /// Native direct-settings adapter: validate the actual writer before its first effect.
++    pub fn invalidate_owned_state_before_mutation(&self, writer: &WriterLock) -> Result<()> {
++        crate::current::gate::check_writer(self, writer)?;
++        writer.invalidate_census_before_mutation()
++    }
+     pub fn lock(&self) -> Result<WriterLock> {
+         if self.managed_path().is_ok() {
+             managed_collection::validate_ancestors(&self.directory)?;
+@@ -440,6 +445,7 @@
+         file.persist_noclobber(&path)
+             .context("write collection writer marker; another writer may be active")?;
+         let guard = WriterLock {
++            census_mutations: std::sync::atomic::AtomicU64::new(0),
+             path,
+             _file: advisory,
+             _lifecycle: lifecycle,
+@@ -489,6 +495,7 @@
+ }
+ 
+ pub struct WriterLock {
++    census_mutations: std::sync::atomic::AtomicU64,
+     path: PathBuf,
+     _file: File,
+     _lifecycle: Option<Arc<File>>,
+@@ -505,6 +512,21 @@
+ }
+ 
+ impl WriterLock {
++    pub(crate) fn census_mutation_epoch(&self) -> u64 {
++        self.census_mutations
++            .load(std::sync::atomic::Ordering::Acquire)
++    }
++    pub(crate) fn invalidate_census_before_mutation(&self) -> Result<()> {
++        self.census_mutations
++            .fetch_update(
++                std::sync::atomic::Ordering::AcqRel,
++                std::sync::atomic::Ordering::Acquire,
++                |epoch| epoch.checked_add(1),
++            )
++            .map_err(|_| anyhow::anyhow!("census mutation generation exhausted"))?;
++        Ok(())
++    }
++
+     pub fn capture_objects(&self) -> ObjectCaptureGuard<'_> {
+         self.object_captures
+             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+@@ -754,3 +776,9 @@
+         Ok(())
+     }
+ }
++
++#[allow(dead_code)] // Unwired foundation APIs; no read-cutover claim.
++mod private_storage;
++#[cfg(windows)]
++#[allow(dead_code)] // Native walker qualification is a separately scheduled gate.
++mod service_census_windows;
+--- a/crates/airk-store/src/maintenance.rs
++++ b/crates/airk-store/src/maintenance.rs
+@@ -923,6 +923,7 @@
+         origin: PolicyOrigin,
+     ) -> Result<PolicyReceipt> {
+         check_writer(self, writer, quota)?;
++        writer.invalidate_census_before_mutation()?;
+         policy.validate()?;
+         let receipt = PolicyReceipt {
+             digest: digest(&policy)?,
+@@ -1563,6 +1564,7 @@
+         let attempt = (|| -> Result<Option<Reservation>> {
+             if let Some(writer) = writer {
+                 check_writer(self, writer, quota)?;
++                writer.invalidate_census_before_mutation()?;
+             } else {
+                 ensure!(
+                     self.directory().join("writer.lock").is_file(),
+@@ -1831,6 +1833,7 @@
+         dry_run: bool,
+     ) -> Result<crate::retention::PruneReport> {
+         check_writer(self, writer, quota)?;
++        writer.invalidate_census_before_mutation()?;
+         prune_compat_inner(self, Some(writer), quota, dry_run)
+     }
+ }
+--- /dev/null
++++ b/crates/airk-store/src/private_storage.rs
+@@ -0,0 +1,267 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Positive handle evidence only; never grants cached/relaxed read authority.
++use anyhow::Result;
++use sha2::{Digest, Sha256};
++use std::fs::File;
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) enum Kind {
++    RootDirectory,
++    Directory,
++    File,
++}
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) enum Unknown {
++    UnsupportedPlatform,
++    UnsupportedFilesystem,
++    UnsupportedAcl,
++    NotPrivate,
++    RedirectedOrAliased,
++    Changed,
++}
++#[derive(Clone, Debug, PartialEq, Eq)]
++struct Evidence {
++    identity: [u64; 3],
++    security: [u8; 32],
++    kind: Kind,
++}
++
++/// Non-Clone, non-serializable, borrowed from the actual inspected handle.
++/// It certifies this object, not a pathname, tree census, writer provenance or
++/// future files. No constructor accepts a serialized eligibility claim.
++pub(crate) struct PrivateObject<'a> {
++    file: &'a File,
++    evidence: Evidence,
++}
++pub(crate) enum Observation<'a> {
++    Private(PrivateObject<'a>),
++    Unknown(Unknown),
++}
++impl PrivateObject<'_> {
++    pub(crate) fn recheck(&self) -> Result<std::result::Result<(), Unknown>> {
++        Ok(match platform(self.file, self.evidence.kind)? {
++            Ok(current) if current == self.evidence => Ok(()),
++            Ok(_) => Err(Unknown::Changed),
++            Err(reason) => Err(reason),
++        })
++    }
++    pub(crate) fn identity(&self) -> [u64; 3] {
++        self.evidence.identity
++    }
++    /// Caller obtains current through its existing no-follow namespace guard.
++    /// A pinned old handle staying private does not authenticate a replaced path.
++    pub(crate) fn check_current(&self, current: &File) -> Result<bool> {
++        Ok(
++            matches!(platform(current, self.evidence.kind)?, Ok(evidence) if evidence == self.evidence),
++        )
++    }
++}
++pub(crate) fn inspect(file: &File, kind: Kind) -> Result<Observation<'_>> {
++    Ok(match platform(file, kind)? {
++        Ok(evidence) => Observation::Private(PrivateObject { file, evidence }),
++        Err(reason) => Observation::Unknown(reason),
++    })
++}
++
++#[cfg(target_os = "linux")]
++fn platform(file: &File, kind: Kind) -> Result<std::result::Result<Evidence, Unknown>> {
++    use std::os::{fd::AsRawFd, unix::fs::MetadataExt};
++    let before = file.metadata()?;
++    // SAFETY: fstatfs writes exactly one initialized output; file owns its fd.
++    let mut filesystem = std::mem::MaybeUninit::<libc::statfs>::uninit();
++    if unsafe { libc::fstatfs(file.as_raw_fd(), filesystem.as_mut_ptr()) } != 0 {
++        return Err(std::io::Error::last_os_error().into());
++    }
++    let filesystem = unsafe { filesystem.assume_init() };
++    // Narrow supported local Linux filesystems; network/FUSE/unknown stays Unknown.
++    if ![0xef53, 0x58465342, 0x9123683e, 0x01021994].contains(&(filesystem.f_type as u64)) {
++        return Ok(Err(Unknown::UnsupportedFilesystem));
++    }
++    let directory = kind != Kind::File;
++    // SAFETY: geteuid has no pointers or failure mode.
++    if before.uid() != unsafe { libc::geteuid() }
++        || (directory && !before.is_dir())
++        || (!directory && !before.is_file())
++        || before.mode() & 0o7777 != if directory { 0o700 } else { 0o600 }
++    {
++        return Ok(Err(Unknown::NotPrivate));
++    }
++    if !directory && before.nlink() != 1 {
++        return Ok(Err(Unknown::RedirectedOrAliased));
++    }
++    for name in [
++        b"system.posix_acl_access\0".as_slice(),
++        b"system.posix_acl_default\0".as_slice(),
++    ] {
++        if !directory && name == b"system.posix_acl_default\0" {
++            continue;
++        }
++        // SAFETY: terminated attribute name and owned fd; null buffer requests size only.
++        let size = unsafe {
++            libc::fgetxattr(
++                file.as_raw_fd(),
++                name.as_ptr().cast(),
++                std::ptr::null_mut(),
++                0,
++            )
++        };
++        if size >= 0 {
++            return Ok(Err(Unknown::UnsupportedAcl));
++        }
++        let error = std::io::Error::last_os_error();
++        if error.raw_os_error() != Some(libc::ENODATA) {
++            return if error.raw_os_error() == Some(libc::ENOTSUP) {
++                Ok(Err(Unknown::UnsupportedAcl))
++            } else {
++                Err(error.into())
++            };
++        }
++    }
++    let after = file.metadata()?;
++    if (
++        before.dev(),
++        before.ino(),
++        before.uid(),
++        before.mode(),
++        before.nlink(),
++    ) != (
++        after.dev(),
++        after.ino(),
++        after.uid(),
++        after.mode(),
++        after.nlink(),
++    ) {
++        return Ok(Err(Unknown::Changed));
++    }
++    let mut security = Sha256::new();
++    security.update(b"airk.private-object.linux.v1\0");
++    security.update(before.uid().to_le_bytes());
++    security.update(before.mode().to_le_bytes());
++    Ok(Ok(Evidence {
++        identity: [before.dev(), before.ino(), 0],
++        security: security.finalize().into(),
++        kind,
++    }))
++}
++
++#[cfg(windows)]
++#[path = "private_storage_windows.rs"]
++mod windows;
++#[cfg(windows)]
++fn platform(file: &File, kind: Kind) -> Result<std::result::Result<Evidence, Unknown>> {
++    windows::inspect(file, kind)
++}
++#[cfg(not(any(windows, target_os = "linux")))]
++fn platform(_file: &File, _kind: Kind) -> Result<std::result::Result<Evidence, Unknown>> {
++    Ok(Err(Unknown::UnsupportedPlatform))
++}
++
++#[cfg(windows)]
++pub(crate) fn same_volume(left: &File, right: &File) -> bool {
++    match (windows::local_volume(left), windows::local_volume(right)) {
++        (Some(left), Some(right)) => left == right,
++        _ => false,
++    }
++}
++
++#[cfg(all(test, target_os = "linux"))]
++mod tests {
++    use super::*;
++    use std::{fs, os::unix::fs::PermissionsExt};
++    #[test]
++    fn mode_change_invalidates_borrowed_positive_evidence() -> Result<()> {
++        let root = tempfile::tempdir()?;
++        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700))?;
++        let file = File::open(root.path())?;
++        let Observation::Private(proof) = inspect(&file, Kind::RootDirectory)? else {
++            anyhow::bail!("test filesystem lacks required positive ACL/filesystem evidence");
++        };
++        assert!(proof.recheck()?.is_ok());
++        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o750))?;
++        assert!(proof.recheck()?.is_err());
++        Ok(())
++    }
++    #[test]
++    fn default_acl_and_path_replacement_invalidate_positive_use() -> Result<()> {
++        use std::os::fd::AsRawFd;
++        let root = tempfile::tempdir()?;
++        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700))?;
++        let directory = File::open(root.path())?;
++        let Observation::Private(proof) = inspect(&directory, Kind::RootDirectory)? else {
++            anyhow::bail!("positive ACL test requires supported local Linux filesystem");
++        };
++        let mut acl = 2u32.to_le_bytes().to_vec();
++        for (tag, permission) in [(1u16, 7u16), (4, 0), (32, 0)] {
++            acl.extend(tag.to_le_bytes());
++            acl.extend(permission.to_le_bytes());
++            acl.extend(u32::MAX.to_le_bytes());
++        }
++        // SAFETY: owned descriptor, terminated xattr name and bounded ACL bytes.
++        if unsafe {
++            libc::fsetxattr(
++                directory.as_raw_fd(),
++                c"system.posix_acl_default".as_ptr(),
++                acl.as_ptr().cast(),
++                acl.len(),
++                0,
++            )
++        } != 0
++        {
++            return Err(std::io::Error::last_os_error().into());
++        }
++        assert!(
++            proof.recheck()?.is_err(),
++            "default inheritance must not stay eligible"
++        );
++        let path = root.path().join("state");
++        fs::write(&path, b"first inert object")?;
++        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
++        // The directory default ACL is minimal; remove it before file proof.
++        if unsafe {
++            libc::fremovexattr(directory.as_raw_fd(), c"system.posix_acl_default".as_ptr())
++        } != 0
++        {
++            return Err(std::io::Error::last_os_error().into());
++        }
++        let original = File::open(&path)?;
++        let Observation::Private(proof) = inspect(&original, Kind::File)? else {
++            anyhow::bail!("inert private file did not qualify");
++        };
++        fs::rename(&path, root.path().join("old-state"))?;
++        fs::write(&path, b"replacement inert object")?;
++        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
++        assert!(
++            proof.recheck()?.is_ok(),
++            "old pinned object still exists privately"
++        );
++        assert!(
++            !proof.check_current(&File::open(&path)?)?,
++            "old proof cannot authenticate new path object"
++        );
++        Ok(())
++    }
++
++    #[test]
++    fn hardlink_is_never_positive_even_under_private_directory() -> Result<()> {
++        let root = tempfile::tempdir()?;
++        let path = root.path().join("state");
++        fs::write(&path, b"inert fixture")?;
++        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
++        fs::hard_link(&path, root.path().join("alias"))?;
++        assert!(matches!(
++            inspect(&File::open(path)?, Kind::File)?,
++            Observation::Unknown(_)
++        ));
++        Ok(())
++    }
++}
++
++#[cfg(all(test, windows))]
++pub(crate) fn test_private_root(path: &std::path::Path) -> Result<()> {
++    windows::tests::private_root(path)
++}
++
++#[cfg(all(test, windows))]
++pub(crate) fn test_foreign_readable_root(path: &std::path::Path) -> Result<()> {
++    windows::tests::foreign_readable_root(path)
++}
+--- /dev/null
++++ b/crates/airk-store/src/private_storage_windows.rs
+@@ -0,0 +1,407 @@
++// SPDX-License-Identifier: Apache-2.0
++use super::*;
++use anyhow::ensure;
++use std::{ffi::c_void, mem, os::windows::io::AsRawHandle};
++use windows_sys::Win32::{
++    Foundation::LocalFree,
++    Security::{
++        ACCESS_ALLOWED_ACE, ACE_HEADER,
++        Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
++        DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetLengthSid, GetSecurityDescriptorControl,
++        GetSecurityDescriptorLength, GetTokenInformation, IsValidSid, OWNER_SECURITY_INFORMATION,
++        TOKEN_QUERY, TOKEN_USER, TokenUser,
++    },
++    Storage::FileSystem::{
++        BY_HANDLE_FILE_INFORMATION, GetDriveTypeW, GetFileInformationByHandle,
++        GetFinalPathNameByHandleW, GetVolumeInformationByHandleW,
++    },
++    System::Threading::{GetCurrentProcess, OpenProcessToken},
++};
++struct Descriptor(*mut c_void);
++impl Drop for Descriptor {
++    fn drop(&mut self) {
++        unsafe {
++            LocalFree(self.0);
++        }
++    }
++}
++
++fn information(file: &File) -> Result<BY_HANDLE_FILE_INFORMATION> {
++    let mut info = mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
++    // SAFETY: owned file handle and correctly sized writable output remain live.
++    ensure!(
++        unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) } != 0,
++        "private storage identity inspection failed"
++    );
++    Ok(unsafe { info.assume_init() })
++}
++// Only a handle-returned volume GUID root can reach drive classification.
++// This never accepts a caller-supplied drive letter/UNC/path-prefix guess.
++fn volume_guid_root(path: &[u16]) -> Option<Vec<u16>> {
++    let text = String::from_utf16(path).ok()?;
++    let rest = text.strip_prefix(r"\\?\Volume{")?;
++    let guid = rest.get(..36)?;
++    if !guid.bytes().enumerate().all(|(index, byte)| {
++        if [8, 13, 18, 23].contains(&index) {
++            byte == b'-'
++        } else {
++            byte.is_ascii_hexdigit()
++        }
++    }) || !rest.get(36..)?.starts_with("}\\")
++    {
++        return None;
++    }
++    Some(text.get(..49)?.encode_utf16().chain(Some(0)).collect())
++}
++fn fixed_volume(root: Option<&[u16]>, drive_type: u32) -> bool {
++    root.is_some() && drive_type == 3 // DRIVE_FIXED; every unknown/remote/removable type refuses.
++}
++pub(super) fn local_volume(file: &File) -> Option<Vec<u16>> {
++    let mut path = vec![0u16; 32_768];
++    // SAFETY: owned file handle and bounded writable UTF-16 output live for call.
++    let length = unsafe {
++        GetFinalPathNameByHandleW(
++            file.as_raw_handle(),
++            path.as_mut_ptr(),
++            path.len() as u32,
++            1, /* VOLUME_NAME_GUID | FILE_NAME_NORMALIZED */
++        )
++    } as usize;
++    if length == 0 || length >= path.len() {
++        return None;
++    }
++    let root = volume_guid_root(&path[..length])?;
++    // SAFETY: root is terminated and extracted only from this actual handle.
++    if !fixed_volume(Some(&root), unsafe { GetDriveTypeW(root.as_ptr()) }) {
++        return None;
++    }
++    Some(root)
++}
++
++pub(super) fn inspect(file: &File, kind: Kind) -> Result<std::result::Result<Evidence, Unknown>> {
++    use std::os::windows::io::{FromRawHandle, OwnedHandle};
++    let before = information(file)?;
++    let Some(volume) = local_volume(file) else {
++        return Ok(Err(Unknown::UnsupportedFilesystem));
++    };
++    let directory = kind != Kind::File;
++    if before.dwFileAttributes & 0x400 != 0
++        || (before.dwFileAttributes & 0x10 != 0) != directory
++        || (!directory && before.nNumberOfLinks != 1)
++    {
++        return Ok(Err(Unknown::RedirectedOrAliased));
++    }
++    let mut filesystem = [0u16; 32];
++    let mut flags = 0;
++    // SAFETY: file owns handle; optional outputs are null and buffers are sized.
++    if unsafe {
++        GetVolumeInformationByHandleW(
++            file.as_raw_handle(),
++            std::ptr::null_mut(),
++            0,
++            std::ptr::null_mut(),
++            std::ptr::null_mut(),
++            &mut flags,
++            filesystem.as_mut_ptr(),
++            filesystem.len() as u32,
++        )
++    } == 0
++    {
++        return Ok(Err(Unknown::UnsupportedFilesystem));
++    }
++    let length = filesystem
++        .iter()
++        .position(|c| *c == 0)
++        .unwrap_or(filesystem.len());
++    if flags & 0x8 == 0 || String::from_utf16(&filesystem[..length])? != "NTFS" {
++        return Ok(Err(Unknown::UnsupportedFilesystem));
++    }
++    let (mut owner, mut dacl, mut descriptor) = (
++        std::ptr::null_mut(),
++        std::ptr::null_mut(),
++        std::ptr::null_mut(),
++    );
++    // SAFETY: readable security outputs are allocated by the OS for this handle.
++    let error = unsafe {
++        GetSecurityInfo(
++            file.as_raw_handle(),
++            SE_FILE_OBJECT,
++            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
++            &mut owner,
++            std::ptr::null_mut(),
++            &mut dacl,
++            std::ptr::null_mut(),
++            &mut descriptor,
++        )
++    };
++    if error != 0 {
++        return Err(std::io::Error::from_raw_os_error(error as i32).into());
++    }
++    let _descriptor = Descriptor(descriptor);
++    if owner.is_null() || dacl.is_null() {
++        return Ok(Err(Unknown::NotPrivate));
++    }
++    let mut token = std::ptr::null_mut();
++    // SAFETY: current process pseudo handle is valid; output owns a real token handle.
++    ensure!(
++        unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } != 0,
++        "private storage token inspection failed"
++    );
++    let token = unsafe { OwnedHandle::from_raw_handle(token) };
++    let mut user = [0usize; 64];
++    let mut returned = 0;
++    // SAFETY: aligned bounded buffer exceeds TOKEN_USER plus native SID maximum.
++    ensure!(
++        unsafe {
++            GetTokenInformation(
++                token.as_raw_handle(),
++                TokenUser,
++                user.as_mut_ptr().cast(),
++                mem::size_of_val(&user) as u32,
++                &mut returned,
++            )
++        } != 0
++            && returned as usize >= mem::size_of::<TOKEN_USER>(),
++        "invalid private storage user token"
++    );
++    let sid = unsafe { (*user.as_ptr().cast::<TOKEN_USER>()).User.Sid };
++    if unsafe { IsValidSid(owner) } == 0 || unsafe { EqualSid(owner, sid) } == 0 {
++        return Ok(Err(Unknown::NotPrivate));
++    }
++    let mut control = 0;
++    let mut revision = 0;
++    ensure!(
++        unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) } != 0,
++        "invalid private storage descriptor"
++    );
++    // Root must stop inheritance from a broader ancestor. Children are separately
++    // inspected; inheritance alone is never evidence of their actual descriptor.
++    if kind == Kind::RootDirectory && control & 0x1000 == 0 {
++        return Ok(Err(Unknown::NotPrivate));
++    }
++    if unsafe { (*dacl).AceCount } != 1 {
++        return Ok(Err(Unknown::UnsupportedAcl));
++    }
++    let mut ace = std::ptr::null_mut();
++    ensure!(
++        unsafe { GetAce(dacl, 0, &mut ace) } != 0 && !ace.is_null(),
++        "invalid private storage ACL"
++    );
++    let header = unsafe { &*ace.cast::<ACE_HEADER>() };
++    if header.AceType != 0
++        || (header.AceSize as usize) < mem::size_of::<ACCESS_ALLOWED_ACE>()
++        || header.AceFlags & 0x8 != 0
++    {
++        return Ok(Err(Unknown::UnsupportedAcl));
++    }
++    let allowed = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
++    let allowed_sid = std::ptr::addr_of!(allowed.SidStart).cast_mut().cast();
++    if unsafe { IsValidSid(allowed_sid) } == 0
++        || 8usize + unsafe { GetLengthSid(allowed_sid) } as usize > header.AceSize as usize
++        || unsafe { EqualSid(allowed_sid, sid) } == 0
++        || allowed.Mask & 0x1f01ff != 0x1f01ff
++        || (directory && header.AceFlags & 3 != 3)
++    {
++        return Ok(Err(Unknown::NotPrivate));
++    }
++    // Hash only a bounded self-relative descriptor, never pointer-valued layout.
++    let length = unsafe { GetSecurityDescriptorLength(descriptor) } as usize;
++    if control & 0x8000 == 0 || length == 0 || length > 65_536 {
++        return Ok(Err(Unknown::UnsupportedAcl));
++    }
++    let mut security = Sha256::new();
++    security.update(b"airk.private-object.windows.v1\0");
++    for unit in volume {
++        security.update(unit.to_le_bytes());
++    }
++    security.update(unsafe { std::slice::from_raw_parts(descriptor.cast::<u8>(), length) });
++    let security: [u8; 32] = security.finalize().into();
++    let after = information(file)?;
++    if (
++        before.dwVolumeSerialNumber,
++        before.nFileIndexHigh,
++        before.nFileIndexLow,
++        before.dwFileAttributes,
++        before.nNumberOfLinks,
++    ) != (
++        after.dwVolumeSerialNumber,
++        after.nFileIndexHigh,
++        after.nFileIndexLow,
++        after.dwFileAttributes,
++        after.nNumberOfLinks,
++    ) {
++        return Ok(Err(Unknown::Changed));
++    }
++    Ok(Ok(Evidence {
++        identity: [
++            before.dwVolumeSerialNumber.into(),
++            before.nFileIndexHigh.into(),
++            before.nFileIndexLow.into(),
++        ],
++        security,
++        kind,
++    }))
++}
++
++#[cfg(test)]
++pub(super) mod tests {
++    use super::*;
++    use anyhow::Context;
++    use std::{
++        fs,
++        os::windows::{
++            ffi::OsStrExt,
++            fs::OpenOptionsExt,
++            io::{FromRawHandle, OwnedHandle},
++        },
++    };
++    use windows_sys::Win32::{
++        Security::{
++            Authorization::{
++                ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
++                SDDL_REVISION_1,
++            },
++            SECURITY_ATTRIBUTES,
++        },
++        Storage::FileSystem::CreateDirectoryW,
++    };
++    fn user_sid() -> Result<String> {
++        let mut token = std::ptr::null_mut();
++        ensure!(
++            unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } != 0,
++            "test token unavailable"
++        );
++        let token = unsafe { OwnedHandle::from_raw_handle(token) };
++        let mut user = [0usize; 64];
++        let mut returned = 0;
++        ensure!(
++            unsafe {
++                GetTokenInformation(
++                    token.as_raw_handle(),
++                    TokenUser,
++                    user.as_mut_ptr().cast(),
++                    mem::size_of_val(&user) as u32,
++                    &mut returned,
++                )
++            } != 0,
++            "test user unavailable"
++        );
++        let sid = unsafe { (*user.as_ptr().cast::<TOKEN_USER>()).User.Sid };
++        let mut text = std::ptr::null_mut();
++        ensure!(
++            unsafe { ConvertSidToStringSidW(sid, &mut text) } != 0,
++            "test SID conversion failed"
++        );
++        let _owner = Descriptor(text.cast());
++        let mut length = 0;
++        while length < 256 && unsafe { *text.add(length) } != 0 {
++            length += 1;
++        }
++        ensure!(length < 256, "test SID exceeded bound");
++        Ok(String::from_utf16(unsafe {
++            std::slice::from_raw_parts(text, length)
++        })?)
++    }
++    pub(crate) fn private_root(path: &std::path::Path) -> Result<()> {
++        directory_acl(path, false)
++    }
++    pub(crate) fn foreign_readable_root(path: &std::path::Path) -> Result<()> {
++        directory_acl(path, true)
++    }
++    fn directory_acl(path: &std::path::Path, foreign: bool) -> Result<()> {
++        let sid = user_sid()?;
++        let extra = if foreign { "(A;OICI;FR;;;WD)" } else { "" };
++        let text: Vec<u16> = format!("O:{sid}D:P(A;OICI;FA;;;{sid}){extra}")
++            .encode_utf16()
++            .chain(Some(0))
++            .collect();
++        let mut descriptor = std::ptr::null_mut();
++        ensure!(
++            unsafe {
++                ConvertStringSecurityDescriptorToSecurityDescriptorW(
++                    text.as_ptr(),
++                    SDDL_REVISION_1,
++                    &mut descriptor,
++                    std::ptr::null_mut(),
++                )
++            } != 0,
++            "private test descriptor invalid"
++        );
++        let _owner = Descriptor(descriptor);
++        let attributes = SECURITY_ATTRIBUTES {
++            nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
++            lpSecurityDescriptor: descriptor,
++            bInheritHandle: 0,
++        };
++        let path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
++        ensure!(
++            unsafe { CreateDirectoryW(path.as_ptr(), &attributes) } != 0,
++            "private test root creation failed"
++        );
++        Ok(())
++    }
++    #[test]
++    fn only_handle_volume_guid_with_positive_fixed_classification_is_local() {
++        let local: Vec<u16> = r"\\?\Volume{01234567-89ab-cdef-0123-456789abcdef}\state"
++            .encode_utf16()
++            .collect();
++        let root = volume_guid_root(&local).expect("well formed handle GUID result");
++        assert!(fixed_volume(Some(&root), 3));
++        for unsupported in [0, 1, 2, 4, 5, 6] {
++            assert!(!fixed_volume(Some(&root), unsupported));
++        }
++        assert!(!fixed_volume(None, 3));
++        for remote_or_unsupported in [
++            r"\\server\share\state",
++            r"\\?\UNC\server\share\state",
++            r"C:\state",
++            r"\Device\Mup\server\share\state",
++            r"\\?\Volume{bad}\state",
++        ] {
++            let path: Vec<u16> = remote_or_unsupported.encode_utf16().collect();
++            assert!(volume_guid_root(&path).is_none());
++        }
++    }
++    #[test]
++    #[ignore = "requires an explicitly provisioned SMB/remote read-only fixture"]
++    fn real_remote_handle_never_qualifies_as_local() -> Result<()> {
++        let path = std::env::var_os("AIRK_TEST_REMOTE_PRIVATE_STORAGE_FILE")
++            .context("set AIRK_TEST_REMOTE_PRIVATE_STORAGE_FILE to the approved remote fixture")?;
++        let file = File::open(path)?;
++        assert!(
++            local_volume(&file).is_none(),
++            "fixture must be an actual remote/unsupported handle"
++        );
++        assert!(matches!(
++            super::super::inspect(&file, Kind::File)?,
++            Observation::Unknown(Unknown::UnsupportedFilesystem)
++        ));
++        Ok(())
++    }
++
++    #[test]
++    fn explicit_current_user_root_and_actual_inherited_file_qualify() -> Result<()> {
++        let temporary = tempfile::tempdir()?;
++        let root = temporary.path().join("private");
++        private_root(&root)?;
++        let directory = fs::OpenOptions::new()
++            .read(true)
++            .custom_flags(0x02000000 | 0x00200000)
++            .open(&root)?;
++        let Observation::Private(proof) = super::super::inspect(&directory, Kind::RootDirectory)?
++        else {
++            anyhow::bail!("Windows qualification requires local NTFS and exact owner ACL");
++        };
++        assert!(proof.recheck()?.is_ok());
++        let path = root.join("state");
++        fs::write(&path, b"inert inherited file")?;
++        let file = File::open(&path)?;
++        let Observation::Private(proof) = super::super::inspect(&file, Kind::File)? else {
++            anyhow::bail!("actual inherited private file did not qualify");
++        };
++        assert!(proof.recheck()?.is_ok());
++        fs::hard_link(&path, root.join("alias"))?;
++        assert!(proof.recheck()?.is_err());
++        Ok(())
++    }
++}
+--- /dev/null
++++ b/crates/airk-store/src/service_census_windows.rs
+@@ -0,0 +1,623 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Bounded Windows physical enumeration, never an eligibility constructor.
++use crate::private_storage::{self, Kind, Observation};
++use anyhow::{Context, Result, ensure};
++use std::{
++    collections::BTreeSet,
++    ffi::c_void,
++    fs::File,
++    mem,
++    os::windows::{
++        ffi::OsStrExt,
++        io::{AsRawHandle, FromRawHandle},
++    },
++    path::{Component, Path, PathBuf, Prefix},
++};
++use windows_sys::Win32::Storage::FileSystem::{
++    BY_HANDLE_FILE_INFORMATION, FILE_ID_BOTH_DIR_INFO, FILE_STREAM_INFO,
++    GetFileInformationByHandle, GetFileInformationByHandleEx,
++};
++
++#[repr(C)]
++struct UnicodeString {
++    length: u16,
++    maximum_length: u16,
++    buffer: *mut u16,
++}
++#[repr(C)]
++struct ObjectAttributes {
++    length: u32,
++    root: *mut c_void,
++    name: *mut UnicodeString,
++    attributes: u32,
++    descriptor: *mut c_void,
++    qos: *mut c_void,
++}
++#[repr(C)]
++struct IoStatus {
++    status_or_pointer: usize,
++    information: usize,
++}
++#[link(name = "ntdll")]
++unsafe extern "system" {
++    fn NtCreateFile(
++        handle: *mut *mut c_void,
++        access: u32,
++        attributes: *mut ObjectAttributes,
++        status: *mut IoStatus,
++        allocation: *mut i64,
++        file_attributes: u32,
++        share: u32,
++        disposition: u32,
++        options: u32,
++        ea: *mut c_void,
++        ea_length: u32,
++    ) -> i32;
++}
++fn info(file: &File) -> Result<BY_HANDLE_FILE_INFORMATION> {
++    let mut result = mem::MaybeUninit::uninit();
++    // SAFETY: valid owned handle and correctly sized writable output.
++    ensure!(
++        unsafe { GetFileInformationByHandle(file.as_raw_handle(), result.as_mut_ptr()) } != 0,
++        "Windows census identity unavailable"
++    );
++    Ok(unsafe { result.assume_init() })
++}
++fn file_id(file: &File) -> Result<u64> {
++    let info = info(file)?;
++    Ok((u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow))
++}
++fn valid_component(name: &[u16]) -> bool {
++    !name.is_empty()
++        && name.len() <= 255
++        && name != [46]
++        && name != [46, 46]
++        && !name.iter().any(|c| [0, 47, 92, 58, 42, 63].contains(c))
++}
++fn relative(parent: &File, name: &[u16]) -> Result<File> {
++    ensure!(
++        valid_component(name),
++        "unsupported Windows census component"
++    );
++    native_open(Some(parent), name)
++}
++fn native_open(parent: Option<&File>, name: &[u16]) -> Result<File> {
++    ensure!(
++        name.len() * 2 <= u16::MAX as usize,
++        "Windows census native name exceeds bound"
++    );
++    let mut name = name.to_vec();
++    let mut unicode = UnicodeString {
++        length: (name.len() * 2) as u16,
++        maximum_length: (name.len() * 2) as u16,
++        buffer: name.as_mut_ptr(),
++    };
++    let mut attributes = ObjectAttributes {
++        length: mem::size_of::<ObjectAttributes>() as u32,
++        root: parent.map_or(std::ptr::null_mut(), AsRawHandle::as_raw_handle),
++        name: &mut unicode,
++        attributes: 0,
++        descriptor: std::ptr::null_mut(),
++        qos: std::ptr::null_mut(),
++    };
++    let mut status = IoStatus {
++        status_or_pointer: 0,
++        information: 0,
++    };
++    let mut handle = std::ptr::null_mut();
++    // SAFETY: parent remains owned; all bounded relative name/output structures
++    // remain live. FILE_OPEN never creates; OPEN_REPARSE_POINT avoids traversal.
++    let result = unsafe {
++        NtCreateFile(
++            &mut handle,
++            0x0012_0081,
++            &mut attributes,
++            &mut status,
++            std::ptr::null_mut(),
++            0,
++            3,           /* READ|WRITE, deliberately no DELETE sharing */
++            1,           /* FILE_OPEN */
++            0x0020_0020, /* OPEN_REPARSE_POINT|SYNCHRONOUS_NONALERT */
++            std::ptr::null_mut(),
++            0,
++        )
++    };
++    ensure!(
++        result >= 0 && !handle.is_null(),
++        "Windows relative census open refused ({result:#x})"
++    );
++    // SAFETY: successful NtCreateFile transferred one real owned handle.
++    let file = unsafe { File::from_raw_handle(handle) };
++    let metadata = info(&file)?;
++    ensure!(
++        metadata.dwFileAttributes & (0x400 | 0x40) == 0,
++        "Windows census refuses reparse/device object"
++    );
++    Ok(file)
++}
++struct AbsoluteRoot {
++    file: File,
++    _ancestors: Vec<File>,
++}
++fn absolute(path: &Path) -> Result<AbsoluteRoot> {
++    let mut components = path.components();
++    let Some(Component::Prefix(prefix)) = components.next() else {
++        anyhow::bail!("census requires local absolute path")
++    };
++    let disk = match prefix.kind() {
++        Prefix::Disk(disk) | Prefix::VerbatimDisk(disk) => disk,
++        _ => anyhow::bail!("unsupported Windows census root namespace"),
++    };
++    ensure!(
++        matches!(components.next(), Some(Component::RootDir)),
++        "census root is not absolute"
++    );
++    // This is only the drive-root anchor. Every caller component below is opened
++    // relative to an actual pinned parent, never concatenated into an open path.
++    let anchor = format!("\\??\\{}:\\", char::from(disk))
++        .encode_utf16()
++        .collect::<Vec<_>>();
++    let mut parent = native_open(None, &anchor)?;
++    ensure!(
++        info(&parent)?.dwFileAttributes & 0x400 == 0,
++        "redirected volume anchor"
++    );
++    ensure!(
++        private_storage::same_volume(&parent, &parent),
++        "Windows census anchor is not supported local storage"
++    );
++    let mut ancestors = Vec::new();
++    for component in components {
++        ensure!(
++            ancestors.len() < 64,
++            "Windows census ancestry bound exceeded"
++        );
++        let Component::Normal(name) = component else {
++            anyhow::bail!("noncanonical census ancestry")
++        };
++        let child = relative(&parent, &name.encode_wide().collect::<Vec<_>>())?;
++        ensure!(
++            child.metadata()?.is_dir(),
++            "Windows census ancestor is not directory"
++        );
++        ancestors.push(parent);
++        parent = child;
++    }
++    Ok(AbsoluteRoot {
++        file: parent,
++        _ancestors: ancestors,
++    })
++}
++
++struct Entry {
++    name: Vec<u16>,
++    id: u64,
++    attributes: u32,
++    special: bool,
++}
++fn open_entry(parent: &File, entry: &Entry) -> Result<File> {
++    ensure!(
++        entry.attributes & (0x400 | 0x40) == 0,
++        "Windows census reparse/device entry"
++    );
++    let child = relative(parent, &entry.name)?;
++    ensure!(
++        file_id(&child)? == entry.id,
++        "Windows census entry replaced before open"
++    );
++    Ok(child)
++}
++struct Cursor {
++    buffer: Box<[u64; 512]>,
++    offset: Option<usize>,
++    restart: bool,
++    ended: bool,
++    dots: usize,
++}
++impl Cursor {
++    fn new() -> Self {
++        Self {
++            buffer: Box::new([0; 512]),
++            offset: None,
++            restart: true,
++            ended: false,
++            dots: 0,
++        }
++    }
++    fn next(&mut self, parent: &File) -> Result<Option<Entry>> {
++        loop {
++            if self.ended {
++                return Ok(None);
++            }
++            if self.offset.is_none() {
++                self.buffer.fill(0);
++                // SAFETY: aligned bounded writable buffer and owned directory.
++                let ok = unsafe {
++                    GetFileInformationByHandleEx(
++                        parent.as_raw_handle(),
++                        if self.restart { 11 } else { 10 },
++                        self.buffer.as_mut_ptr().cast(),
++                        4096,
++                    )
++                };
++                if ok == 0 {
++                    let error = std::io::Error::last_os_error();
++                    if error.raw_os_error() == Some(18) {
++                        self.ended = true;
++                        return Ok(None);
++                    }
++                    return Err(error).context("Windows directory census did not reach exact end");
++                }
++                self.restart = false;
++                self.offset = Some(0);
++            }
++            let offset = self.offset.take().expect("buffer loaded");
++            // SAFETY: complete initialized fixed buffer; each field is bounds-checked below.
++            let bytes =
++                unsafe { std::slice::from_raw_parts(self.buffer.as_ptr().cast::<u8>(), 4096) };
++            let field = |at: usize| -> Result<u32> {
++                let value = bytes
++                    .get(offset + at..offset + at + 4)
++                    .context("truncated census field")?;
++                Ok(u32::from_ne_bytes(value.try_into()?))
++            };
++            let next = field(mem::offset_of!(FILE_ID_BOTH_DIR_INFO, NextEntryOffset))? as usize;
++            let attributes = field(mem::offset_of!(FILE_ID_BOTH_DIR_INFO, FileAttributes))?;
++            let length = field(mem::offset_of!(FILE_ID_BOTH_DIR_INFO, FileNameLength))? as usize;
++            let start = offset + mem::offset_of!(FILE_ID_BOTH_DIR_INFO, FileName);
++            let limit = if next == 0 {
++                4096
++            } else {
++                ensure!(
++                    next % 8 == 0
++                        && next >= mem::offset_of!(FILE_ID_BOTH_DIR_INFO, FileName)
++                        && offset.checked_add(next).is_some_and(|end| end < 4096),
++                    "invalid census continuation offset"
++                );
++                self.offset = Some(offset + next);
++                offset + next
++            };
++            ensure!(
++                length > 0 && length % 2 == 0 && length <= 510 && start + length <= limit,
++                "unsupported census name bounds"
++            );
++            let name = bytes[start..start + length]
++                .chunks_exact(2)
++                .map(|value| u16::from_ne_bytes([value[0], value[1]]))
++                .collect::<Vec<_>>();
++            let at = offset + mem::offset_of!(FILE_ID_BOTH_DIR_INFO, FileId);
++            let id = u64::from_ne_bytes(
++                bytes
++                    .get(at..at + 8)
++                    .context("truncated census file ID")?
++                    .try_into()?,
++            );
++            if name == [46] || name == [46, 46] {
++                self.dots += 1;
++                ensure!(self.dots <= 2, "repeated special directory entries");
++                return Ok(Some(Entry {
++                    name,
++                    id,
++                    attributes,
++                    special: true,
++                }));
++            }
++            ensure!(
++                valid_component(&name) && id != 0,
++                "unsupported directory entry"
++            );
++            return Ok(Some(Entry {
++                name,
++                id,
++                attributes,
++                special: false,
++            }));
++        }
++    }
++}
++fn no_alternate_streams(file: &File) -> Result<bool> {
++    let mut buffer = [0u64; 512];
++    let ok = unsafe {
++        GetFileInformationByHandleEx(file.as_raw_handle(), 7, buffer.as_mut_ptr().cast(), 4096)
++    };
++    if ok == 0 {
++        return Ok(std::io::Error::last_os_error().raw_os_error() == Some(38));
++    }
++    let bytes = unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), 4096) };
++    let at = mem::offset_of!(FILE_STREAM_INFO, StreamName);
++    let length_at = mem::offset_of!(FILE_STREAM_INFO, StreamNameLength);
++    let length = u32::from_ne_bytes(bytes[length_at..length_at + 4].try_into()?) as usize;
++    let next = u32::from_ne_bytes(bytes[..4].try_into()?);
++    if next != 0 || length % 2 != 0 || at + length > 4096 {
++        return Ok(false);
++    }
++    let name = bytes[at..at + length]
++        .chunks_exact(2)
++        .map(|c| u16::from_ne_bytes([c[0], c[1]]))
++        .collect::<Vec<_>>();
++    Ok(name == "::$DATA".encode_utf16().collect::<Vec<_>>())
++}
++struct Frame {
++    file: File,
++    cursor: Cursor,
++    count: usize,
++}
++pub(crate) enum Outcome {
++    Pending { objects: usize },
++    Observed { objects: usize },
++}
++/// Observed is physical enumeration only; caller still fences owner/token and
++/// mutation producers. It is deliberately not named Eligible/Private/Complete.
++pub(crate) struct WindowsWalk {
++    root: AbsoluteRoot,
++    path: PathBuf,
++    identity: [u64; 3],
++    frames: Vec<Frame>,
++    seen: BTreeSet<[u64; 3]>,
++    failed: bool,
++}
++impl WindowsWalk {
++    pub(crate) fn begin(path: &Path) -> Result<Self> {
++        let root = absolute(path)?;
++        let Observation::Private(proof) =
++            private_storage::inspect(&root.file, Kind::RootDirectory)?
++        else {
++            anyhow::bail!("Windows census root lacks positive private evidence")
++        };
++        let identity = proof.identity();
++        ensure!(
++            no_alternate_streams(&root.file)?,
++            "unsupported directory streams"
++        );
++        let file = root.file.try_clone()?;
++        let mut seen = BTreeSet::new();
++        seen.insert(identity);
++        Ok(Self {
++            root,
++            path: path.into(),
++            identity,
++            frames: vec![Frame {
++                file,
++                cursor: Cursor::new(),
++                count: 0,
++            }],
++            seen,
++            failed: false,
++        })
++    }
++    pub(crate) fn root_identity(&self) -> [u64; 3] {
++        self.identity
++    }
++    pub(crate) fn check_current(&self) -> Result<()> {
++        ensure!(!self.failed, "Windows census has failed");
++        let current = absolute(&self.path)?;
++        let Observation::Private(proof) =
++            private_storage::inspect(&self.root.file, Kind::RootDirectory)?
++        else {
++            anyhow::bail!("Windows census root privacy changed")
++        };
++        ensure!(
++            proof.identity() == self.identity && proof.check_current(&current.file)?,
++            "Windows census root namespace changed"
++        );
++        Ok(())
++    }
++    pub(crate) fn step(
++        &mut self,
++        maximum: usize,
++        fence: impl FnMut() -> Result<()>,
++    ) -> Result<Outcome> {
++        ensure!(
++            !self.failed,
++            "Windows census already failed; restart requires fresh owner authority"
++        );
++        let result = self.step_inner(maximum, fence);
++        if result.is_err() {
++            self.failed = true;
++            self.frames.clear();
++        }
++        result
++    }
++    fn step_inner(
++        &mut self,
++        maximum: usize,
++        mut fence: impl FnMut() -> Result<()>,
++    ) -> Result<Outcome> {
++        ensure!(
++            (1..=64).contains(&maximum),
++            "invalid Windows census step bound"
++        );
++        fence()?;
++        self.check_current()?;
++        for _ in 0..maximum {
++            let Some(frame) = self.frames.last_mut() else {
++                fence()?;
++                return Ok(Outcome::Observed {
++                    objects: self.seen.len(),
++                });
++            };
++            let Some(entry) = frame.cursor.next(&frame.file)? else {
++                self.frames.pop();
++                continue;
++            };
++            frame.count += 1;
++            ensure!(
++                frame.count <= 4096 && self.seen.len() < 100_000,
++                "Windows census inventory bound exceeded"
++            );
++            if entry.special {
++                continue;
++            }
++            let child = open_entry(&frame.file, &entry)?;
++            ensure!(
++                private_storage::same_volume(&self.root.file, &child),
++                "Windows census volume boundary"
++            );
++            let directory = child.metadata()?.is_dir();
++            let Observation::Private(proof) = private_storage::inspect(
++                &child,
++                if directory {
++                    Kind::Directory
++                } else {
++                    Kind::File
++                },
++            )?
++            else {
++                anyhow::bail!("Windows census child lacks positive evidence")
++            };
++            ensure!(
++                self.seen.insert(proof.identity()),
++                "Windows census duplicate physical object"
++            );
++            ensure!(
++                no_alternate_streams(&child)?,
++                "Windows census refuses alternate streams"
++            );
++            if directory {
++                ensure!(
++                    self.frames.len() < 64,
++                    "Windows census depth bound exceeded"
++                );
++                self.frames.push(Frame {
++                    file: child,
++                    cursor: Cursor::new(),
++                    count: 0,
++                });
++            }
++        }
++        fence()?;
++        Ok(Outcome::Pending {
++            objects: self.seen.len(),
++        })
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::fs;
++    fn fixture() -> Result<(tempfile::TempDir, PathBuf)> {
++        let temporary = tempfile::tempdir()?;
++        let root = temporary.path().join("private");
++        private_storage::test_private_root(&root)?;
++        Ok((temporary, root))
++    }
++    #[test]
++    fn actual_enumeration_resumes_in_bounded_steps_and_reaches_exact_eof() -> Result<()> {
++        let (_temporary, root) = fixture()?;
++        for index in 0..130 {
++            fs::write(root.join(format!("state-{index:03}")), b"inert")?;
++        }
++        fs::create_dir(root.join("child"))?;
++        fs::write(root.join("child/nested"), b"inert nested object")?;
++        let mut walk = WindowsWalk::begin(&root)?;
++        let mut previous = 1;
++        for _ in 0..1024 {
++            match walk.step(2, || Ok(()))? {
++                Outcome::Pending { objects } => {
++                    assert!(objects >= previous && objects <= previous + 2);
++                    previous = objects;
++                }
++                Outcome::Observed { objects } => {
++                    assert_eq!(objects, 133);
++                    return Ok(());
++                }
++            }
++        }
++        anyhow::bail!("bounded actual enumeration never reached ERROR_NO_MORE_FILES")
++    }
++    #[test]
++    fn actual_entry_replacement_between_enumeration_and_relative_open_refuses() -> Result<()> {
++        let (_temporary, path) = fixture()?;
++        fs::write(path.join("state"), b"first inert file")?;
++        let root = absolute(&path)?;
++        let mut cursor = Cursor::new();
++        let mut entry = cursor.next(&root.file)?.context("fixture entry missing")?;
++        for _ in 0..2 {
++            if !entry.special {
++                break;
++            }
++            entry = cursor.next(&root.file)?.context("fixture entry missing")?;
++        }
++        ensure!(!entry.special, "regular fixture entry missing");
++        assert_eq!(file_id(&open_entry(&root.file, &entry)?)?, entry.id);
++        // Parent remains pinned; the not-yet-retained child may be replaced.
++        fs::rename(path.join("state"), path.join("previous-state"))?;
++        fs::write(path.join("state"), b"replacement inert file")?;
++        assert!(open_entry(&root.file, &entry).is_err());
++        let current = relative(&root.file, &"state".encode_utf16().collect::<Vec<_>>())?;
++        assert_ne!(file_id(&current)?, entry.id);
++        Ok(())
++    }
++    #[test]
++    fn root_namespace_is_pinned_and_foreign_readable_child_refuses_stickily() -> Result<()> {
++        let (temporary, root) = fixture()?;
++        private_storage::test_foreign_readable_root(&root.join("foreign"))?;
++        let mut walk = WindowsWalk::begin(&root)?;
++        assert!(
++            fs::rename(&root, temporary.path().join("renamed")).is_err(),
++            "held root must deny rename admission"
++        );
++        assert!(walk.step(64, || Ok(())).is_err());
++        assert!(
++            walk.step(64, || Ok(())).is_err(),
++            "failed census cannot erase its first refusal"
++        );
++        Ok(())
++    }
++    #[test]
++    fn actual_hardlink_alias_and_lost_owner_fence_never_finish() -> Result<()> {
++        let (_temporary, root) = fixture()?;
++        fs::write(root.join("state"), b"inert")?;
++        fs::hard_link(root.join("state"), root.join("alias"))?;
++        let mut walk = WindowsWalk::begin(&root)?;
++        assert!(walk.step(64, || Ok(())).is_err());
++        let mut walk = WindowsWalk::begin(&root)?;
++        assert!(
++            walk.step(1, || anyhow::bail!("fixture owner fence closed"))
++                .is_err()
++        );
++        assert!(walk.step(1, || Ok(())).is_err());
++        Ok(())
++    }
++    #[test]
++    fn alternate_stream_and_parent_component_escape_refuse() -> Result<()> {
++        let (_temporary, root) = fixture()?;
++        fs::write(root.join("state"), b"inert")?;
++        fs::write(root.join("state:unexpected"), b"inert alternate stream")?;
++        let mut walk = WindowsWalk::begin(&root)?;
++        assert!(walk.step(64, || Ok(())).is_err());
++        let parent = absolute(&root)?;
++        for invalid in ["..", ".", "child\\outside", "state:unexpected"] {
++            assert!(relative(&parent.file, &invalid.encode_utf16().collect::<Vec<_>>()).is_err());
++        }
++        Ok(())
++    }
++    #[test]
++    #[ignore = "requires administrator-provisioned private root containing one junction/volume mount"]
++    fn actual_mount_reparse_entry_is_refused_before_target_enumeration() -> Result<()> {
++        let root = std::env::var_os("AIRK_TEST_CENSUS_MOUNT_ROOT")
++            .context("set AIRK_TEST_CENSUS_MOUNT_ROOT to the approved private mount fixture")?;
++        let mut walk = WindowsWalk::begin(Path::new(&root))?;
++        let error = walk
++            .step(64, || Ok(()))
++            .err()
++            .context("mount entry was traversed")?;
++        assert!(format!("{error:#}").contains("reparse"));
++        assert_eq!(walk.seen.len(), 1);
++        Ok(())
++    }
++    #[test]
++    #[ignore = "requires explicitly qualified Windows symlink creation privilege or Developer Mode"]
++    fn actual_directory_reparse_child_never_traverses_target() -> Result<()> {
++        let (temporary, root) = fixture()?;
++        let target = temporary.path().join("outside");
++        private_storage::test_private_root(&target)?;
++        fs::write(target.join("must-not-visit"), b"inert outside object")?;
++        std::os::windows::fs::symlink_dir(&target, root.join("redirect"))?;
++        let mut walk = WindowsWalk::begin(&root)?;
++        assert!(walk.step(64, || Ok(())).is_err());
++        assert_eq!(walk.seen.len(), 1);
++        Ok(())
++    }
++}
+--- a/crates/airk-store/src/service_collection.rs
++++ b/crates/airk-store/src/service_collection.rs
+@@ -23,6 +23,8 @@
+ 
+ #[path = "service_collection_cleanup.rs"]
+ mod cleanup;
++#[path = "service_collection_integrity.rs"]
++pub mod integrity;
+ #[path = "service_collection_purge.rs"]
+ mod purge;
+ 
+@@ -405,7 +407,8 @@
+                 continue;
+             }
+             let path = entry.path();
+-            let owned = cleanup::owned_scratch(&path, self.binding)
++            let owned = integrity::owned_scratch(&path, self.binding)
++                || cleanup::owned_scratch(&path, self.binding)
+                 || json::<Manifest>(&path)
+                     .is_ok_and(|value| value.version == 140 && value.owner == self.binding)
+                 || json::<Intent>(&path)
+--- /dev/null
++++ b/crates/airk-store/src/service_collection_census.rs
+@@ -0,0 +1,528 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Bounded census evidence only: no accelerated authority without mutation producers.
++use super::*;
++#[cfg(not(windows))]
++use std::collections::BTreeSet;
++#[cfg(target_os = "linux")]
++use std::fs::File;
++
++#[derive(Debug, PartialEq, Eq)]
++pub enum CensusOutcome {
++    Pending {
++        objects: usize,
++    },
++    /// Complete observed privacy census, not byte integrity or read authorization.
++    Observed {
++        objects: usize,
++        mutation_epoch: u64,
++    },
++    Ineligible(CensusUnknown),
++}
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub enum CensusUnknown {
++    UnsupportedPlatform,
++    ObjectEvidence,
++    DuplicateIdentity,
++    MountBoundary,
++    InventoryBound,
++    NamespaceChanged,
++}
++
++/// Ending every iterator proves coverage only under the retained real service
++/// lease and exclusive writer borrow. No ordinary query uses this capability.
++pub struct Census<'a> {
++    owner: &'a IntegrityOwner<'a>,
++    fence: (Incarnation, u64),
++    scope: crate::current::CurrentScope,
++    token: CurrentToken,
++    root: PathBuf,
++    root_identity: [u64; 3],
++    writer: &'a mut crate::WriterLock,
++    observed_generation: u64,
++    #[cfg(not(windows))]
++    seen: BTreeSet<[u64; 3]>,
++    #[cfg(target_os = "linux")]
++    frames: Vec<Frame>,
++    #[cfg(target_os = "linux")]
++    _root_pin: Option<File>,
++    #[cfg(windows)]
++    windows: Option<crate::service_census_windows::WindowsWalk>,
++    terminal: Option<CensusUnknown>,
++    complete: bool,
++    observed_objects: usize,
++}
++/// Borrowed live service-owned privacy evidence; never serialized or cloned.
++/// Retains the real writer/lease and must not survive their owner lifecycle.
++pub struct OwnerPrivateCensus<'a>(Census<'a>);
++impl OwnerPrivateCensus<'_> {
++    pub fn check(&self) -> Result<()> {
++        self.0.check_fence()?;
++        ensure!(
++            self.0.complete && self.0.terminal.is_none(),
++            "incomplete private census"
++        );
++        if let Some(receipt) = self.0.owner.load(self.0.fence.0)? {
++            ensure!(
++                receipt.known_damage.len() < MAX_DAMAGE,
++                "integrity damage capacity requires strict fallback"
++            );
++        }
++        Ok(())
++    }
++    /// Save a dated observation, never a restart-reusable authority receipt.
++    pub fn record(&self) -> Result<IntegrityObservation> {
++        self.check()?;
++        let selected = self.0.owner.collection.select()?;
++        let read = selected.store.current_read(&self.0.scope)?;
++        ensure!(
++            read.token()? == self.0.token,
++            "census observation publication changed"
++        );
++        let observed_unix_ms = std::time::SystemTime::now()
++            .duration_since(std::time::UNIX_EPOCH)?
++            .as_millis()
++            .try_into()?;
++        self.0.owner.publish(
++            &read,
++            None,
++            PrivacyEligibility::OwnerCensus {
++                version: 1,
++                objects: self.0.observed_objects,
++                observed_unix_ms,
++            },
++        )
++    }
++}
++#[cfg(target_os = "linux")]
++struct Frame {
++    file: File,
++    entries: fs::ReadDir,
++    count: usize,
++}
++
++impl<'a> IntegrityOwner<'a> {
++    /// Call only as bounded service Verify work; no transaction survives a step.
++    pub fn begin_census(
++        &'a self,
++        read: &CurrentRead,
++        writer: &'a mut crate::WriterLock,
++    ) -> Result<Census<'a>> {
++        let fence = self.check()?;
++        let selected = self.collection.select()?;
++        ensure!(
++            selected.store.current_owned_scope()?.as_ref() == Some(&read.head().scope),
++            "census selection changed"
++        );
++        let token = read.token()?;
++        let root = selected.store.directory().to_path_buf();
++        crate::maintenance::check_writer(
++            &selected.store,
++            writer,
++            &Quota::open_service(Path::new(&self.collection.owner.data_root))?,
++        )?;
++        let observed_generation = writer.census_mutation_epoch();
++        #[cfg(target_os = "linux")]
++        {
++            let file = open_absolute(&root)?;
++            let Some(identity) = private_identity(&file, true)? else {
++                return Ok(Census::ineligible(
++                    self,
++                    fence,
++                    read,
++                    root,
++                    writer,
++                    CensusUnknown::ObjectEvidence,
++                )?);
++            };
++            let entries = entries(&file)?;
++            let root_pin = file.try_clone()?;
++            let mut seen = BTreeSet::new();
++            seen.insert(identity);
++            Ok(Census {
++                owner: self,
++                fence,
++                scope: read.head().scope.clone(),
++                token,
++                root,
++                root_identity: identity,
++                writer,
++                observed_generation,
++                seen,
++                frames: vec![Frame {
++                    file,
++                    entries,
++                    count: 0,
++                }],
++                _root_pin: Some(root_pin),
++                terminal: None,
++                complete: false,
++                observed_objects: 1,
++            })
++        }
++        #[cfg(windows)]
++        {
++            let walk = crate::service_census_windows::WindowsWalk::begin(&root)?;
++            let root_identity = walk.root_identity();
++            Ok(Census {
++                owner: self,
++                fence,
++                scope: read.head().scope.clone(),
++                token,
++                root,
++                root_identity,
++                writer,
++                observed_generation,
++                windows: Some(walk),
++                terminal: None,
++                complete: false,
++                observed_objects: 1,
++            })
++        }
++        #[cfg(not(any(target_os = "linux", windows)))]
++        {
++            Census::ineligible(
++                self,
++                fence,
++                read,
++                root,
++                writer,
++                CensusUnknown::UnsupportedPlatform,
++            )
++        }
++    }
++}
++impl<'a> Census<'a> {
++    fn ineligible(
++        owner: &'a IntegrityOwner<'a>,
++        fence: (Incarnation, u64),
++        read: &CurrentRead,
++        root: PathBuf,
++        writer: &'a mut crate::WriterLock,
++        reason: CensusUnknown,
++    ) -> Result<Self> {
++        let observed_generation = writer.census_mutation_epoch();
++        Ok(Self {
++            owner,
++            fence,
++            scope: read.head().scope.clone(),
++            token: read.token()?,
++            root,
++            root_identity: [0; 3],
++            writer,
++            observed_generation,
++            #[cfg(not(windows))]
++            seen: BTreeSet::new(),
++            #[cfg(target_os = "linux")]
++            frames: Vec::new(),
++            #[cfg(target_os = "linux")]
++            _root_pin: None,
++            #[cfg(windows)]
++            windows: None,
++            terminal: Some(reason),
++            complete: false,
++            observed_objects: 0,
++        })
++    }
++    fn check_fence(&self) -> Result<()> {
++        ensure!(
++            self.owner.check()? == self.fence
++                && self.writer.census_mutation_epoch() == self.observed_generation,
++            "census ownership generation changed"
++        );
++        let selected = self.owner.collection.select()?;
++        ensure!(
++            selected.store.directory() == self.root
++                && selected.store.current_owned_scope()?.as_ref() == Some(&self.scope)
++                && selected.store.current_read(&self.scope)?.token()? == self.token,
++            "census selection changed"
++        );
++        #[cfg(target_os = "linux")]
++        ensure!(
++            private_identity(&open_absolute(&self.root)?, true)? == Some(self.root_identity),
++            "census root namespace changed"
++        );
++        #[cfg(windows)]
++        {
++            let walk = self
++                .windows
++                .as_ref()
++                .context("Windows census root absent")?;
++            ensure!(
++                walk.root_identity() == self.root_identity,
++                "Windows census root identity changed"
++            );
++            walk.check_current()?;
++        }
++        Ok(())
++    }
++    pub fn into_owner_private(self) -> Result<OwnerPrivateCensus<'a>> {
++        let proof = OwnerPrivateCensus(self);
++        proof.check()?;
++        Ok(proof)
++    }
++    /// Fixed maximum64 visited entries per turn. FS calls themselves are not preemptible.
++    pub fn step(&mut self, maximum: usize) -> Result<CensusOutcome> {
++        ensure!((1..=64).contains(&maximum), "invalid census step budget");
++        if let Some(reason) = &self.terminal {
++            return Ok(CensusOutcome::Ineligible(reason.clone()));
++        }
++        if self.complete {
++            self.check_fence()?;
++            return Ok(CensusOutcome::Observed {
++                objects: self.observed_objects,
++                mutation_epoch: self.observed_generation,
++            });
++        }
++        if self.owner.check()? != self.fence {
++            return self.stop(CensusUnknown::NamespaceChanged);
++        }
++        if self.writer.census_mutation_epoch() != self.observed_generation {
++            return self.stop(CensusUnknown::NamespaceChanged);
++        }
++        let selected = self.owner.collection.select()?;
++        if selected.store.directory() != self.root
++            || selected.store.current_owned_scope()?.as_ref() != Some(&self.scope)
++            || selected.store.current_read(&self.scope)?.token()? != self.token
++        {
++            return self.stop(CensusUnknown::NamespaceChanged);
++        }
++        drop(selected);
++        #[cfg(target_os = "linux")]
++        {
++            let root = open_absolute(&self.root)?;
++            if private_identity(&root, true)? != Some(self.root_identity) {
++                return self.stop(CensusUnknown::NamespaceChanged);
++            }
++            for _ in 0..maximum {
++                let Some(frame) = self.frames.last_mut() else {
++                    self.check_fence()?;
++                    self.complete = true;
++                    self.observed_objects = self.seen.len();
++                    return Ok(CensusOutcome::Observed {
++                        objects: self.seen.len(),
++                        mutation_epoch: self.observed_generation,
++                    });
++                };
++                let Some(entry) = frame.entries.next() else {
++                    self.frames.pop();
++                    continue;
++                };
++                let entry = entry?;
++                frame.count += 1;
++                if frame.count > 4096 || self.seen.len() >= 100_000 {
++                    return self.stop(CensusUnknown::InventoryBound);
++                }
++                let file = open_child(&frame.file, &entry.file_name())?;
++                let metadata = file.metadata()?;
++                if !metadata.is_dir() && !metadata.is_file() {
++                    return self.stop(CensusUnknown::ObjectEvidence);
++                }
++                let Some(identity) = private_identity(&file, metadata.is_dir())? else {
++                    return self.stop(CensusUnknown::ObjectEvidence);
++                };
++                if identity[0] != self.root_identity[0] {
++                    return self.stop(CensusUnknown::MountBoundary);
++                }
++                if !self.seen.insert(identity) {
++                    return self.stop(CensusUnknown::DuplicateIdentity);
++                }
++                if metadata.is_dir() {
++                    if self.frames.len() >= 64 {
++                        return self.stop(CensusUnknown::InventoryBound);
++                    }
++                    let entries = entries(&file)?;
++                    self.frames.push(Frame {
++                        file,
++                        entries,
++                        count: 0,
++                    });
++                }
++            }
++        }
++        #[cfg(windows)]
++        {
++            use crate::service_census_windows::Outcome;
++            let owner = self.owner;
++            let writer = &*self.writer;
++            let expected = self.fence;
++            let epoch = self.observed_generation;
++            let root = &self.root;
++            let scope = &self.scope;
++            let token = self.token;
++            let outcome = self
++                .windows
++                .as_mut()
++                .context("Windows census cursor absent")?
++                .step(maximum, || {
++                    ensure!(
++                        owner.check()? == expected && writer.census_mutation_epoch() == epoch,
++                        "Windows census worker/writer changed"
++                    );
++                    let selected = owner.collection.select()?;
++                    ensure!(
++                        selected.store.directory() == root
++                            && selected.store.current_owned_scope()?.as_ref() == Some(scope)
++                            && selected.store.current_read(scope)?.token()? == token,
++                        "Windows census selection changed"
++                    );
++                    Ok(())
++                })?;
++            return Ok(match outcome {
++                Outcome::Pending { objects } => {
++                    self.observed_objects = objects;
++                    CensusOutcome::Pending { objects }
++                }
++                Outcome::Observed { objects } => {
++                    self.complete = true;
++                    self.observed_objects = objects;
++                    CensusOutcome::Observed {
++                        objects,
++                        mutation_epoch: self.observed_generation,
++                    }
++                }
++            });
++        }
++        #[cfg(not(windows))]
++        {
++            Ok(CensusOutcome::Pending {
++                objects: self.seen.len(),
++            })
++        }
++    }
++    fn stop(&mut self, reason: CensusUnknown) -> Result<CensusOutcome> {
++        self.terminal = Some(reason.clone());
++        #[cfg(target_os = "linux")]
++        self.frames.clear();
++        #[cfg(windows)]
++        {
++            self.windows = None;
++        }
++        Ok(CensusOutcome::Ineligible(reason))
++    }
++}
++#[cfg(test)]
++pub(crate) fn test_invalidate(census: &Census<'_>) -> Result<()> {
++    census.writer.invalidate_census_before_mutation()
++}
++
++#[cfg(target_os = "linux")]
++fn private_identity(file: &File, directory: bool) -> Result<Option<[u64; 3]>> {
++    use crate::private_storage::{Kind, Observation, inspect};
++    Ok(
++        match inspect(
++            file,
++            if directory {
++                Kind::Directory
++            } else {
++                Kind::File
++            },
++        )? {
++            Observation::Private(proof) if proof.recheck()?.is_ok() => Some(proof.identity()),
++            _ => None,
++        },
++    )
++}
++#[cfg(target_os = "linux")]
++fn entries(file: &File) -> Result<fs::ReadDir> {
++    use std::os::fd::AsRawFd;
++    // procfd names the retained directory descriptor; child access never uses
++    // the enumerated path and always goes through openat on that same handle.
++    fs::read_dir(format!("/proc/self/fd/{}", file.as_raw_fd())).map_err(Into::into)
++}
++#[cfg(target_os = "linux")]
++fn open_child(parent: &File, name: &std::ffi::OsStr) -> Result<File> {
++    use std::os::{
++        fd::{AsRawFd, FromRawFd},
++        unix::ffi::OsStrExt,
++    };
++    let name = std::ffi::CString::new(name.as_bytes())?;
++    let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
++    // Reject special entries before opening; no-follow open still guards a
++    // subsequent link replacement. Missing mutation ownership prevents promotion.
++    ensure!(
++        unsafe {
++            libc::fstatat(
++                parent.as_raw_fd(),
++                name.as_ptr(),
++                metadata.as_mut_ptr(),
++                libc::AT_SYMLINK_NOFOLLOW,
++            )
++        } == 0,
++        "census child metadata unavailable"
++    );
++    let mode = unsafe { metadata.assume_init() }.st_mode & libc::S_IFMT;
++    ensure!(
++        mode == libc::S_IFREG || mode == libc::S_IFDIR,
++        "census child is not regular storage"
++    );
++    // SAFETY: owned parent fd, terminated single-component name, no-follow open.
++    let fd = unsafe {
++        libc::openat(
++            parent.as_raw_fd(),
++            name.as_ptr(),
++            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
++        )
++    };
++    ensure!(
++        fd >= 0,
++        "census child unavailable or redirected: {}",
++        std::io::Error::last_os_error()
++    );
++    Ok(unsafe { File::from_raw_fd(fd) })
++}
++#[cfg(all(test, target_os = "linux"))]
++pub(crate) fn test_open_child(parent: &File, name: &std::ffi::OsStr) -> Result<File> {
++    open_child(parent, name)
++}
++#[cfg(target_os = "linux")]
++fn open_absolute(path: &Path) -> Result<File> {
++    use std::path::Component;
++    ensure!(path.is_absolute(), "census root must be absolute");
++    let mut parent = File::open("/")?;
++    ensure!(
++        safe_ancestor(&parent)?,
++        "census namespace ancestry is not positively protected"
++    );
++    for (count, component) in path.components().enumerate() {
++        ensure!(count < 64, "census ancestry bound exceeded");
++        match component {
++            Component::RootDir => (),
++            Component::Normal(name) => {
++                parent = open_child(&parent, name)?;
++                ensure!(
++                    parent.metadata()?.is_dir(),
++                    "census ancestor is not directory"
++                );
++                ensure!(
++                    safe_ancestor(&parent)?,
++                    "census namespace ancestry is not positively protected"
++                );
++            }
++            _ => anyhow::bail!("census root traversal is not canonical"),
++        }
++    }
++    // No ancestry-security promotion exists here. Even complete traversal stays
++    // ineligible until the positive ancestry adapter + mutation producers exist.
++    Ok(parent)
++}
++
++#[cfg(target_os = "linux")]
++fn safe_ancestor(file: &File) -> Result<bool> {
++    use std::os::{fd::AsRawFd, unix::fs::MetadataExt};
++    let before = file.metadata()?;
++    let uid = unsafe { libc::geteuid() };
++    if !before.is_dir() || (before.uid() != 0 && before.uid() != uid) || before.mode() & 0o022 != 0
++    {
++        return Ok(false);
++    }
++    for name in [c"system.posix_acl_access", c"system.posix_acl_default"] {
++        let size =
++            unsafe { libc::fgetxattr(file.as_raw_fd(), name.as_ptr(), std::ptr::null_mut(), 0) };
++        if size >= 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ENODATA) {
++            return Ok(false);
++        }
++    }
++    let after = file.metadata()?;
++    Ok((before.dev(), before.ino(), before.uid(), before.mode())
++        == (after.dev(), after.ino(), after.uid(), after.mode()))
++}
+--- /dev/null
++++ b/crates/airk-store/src/service_collection_integrity.rs
+@@ -0,0 +1,236 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Durable observations only. This module grants no relaxed read authority.
++use super::*;
++use crate::current::{CurrentHead, CurrentRead};
++use crate::service::{ProjectLease, data_scope::BoundDataRoot, registry::ServiceRegistry};
++
++#[path = "service_collection_census.rs"]
++pub mod census;
++
++const RECEIPT: &str = "integrity-observation.json";
++const MAX_DAMAGE: usize = 32;
++
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum PrivacyEligibility {
++    /// Owner/mode warnings are not complete owner/DACL or ACL evidence.
++    PlatformEvidenceUnavailable,
++    /// Dated observation only; never reconstructs the live borrowed capability.
++    OwnerCensus {
++        version: u32,
++        objects: usize,
++        observed_unix_ms: u64,
++    },
++}
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum PublicationBasis {
++    RetainedHeadMetadataAnchor,
++}
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum PhysicalAudit {
++    Unknown,
++}
++
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct KnownDamage {
++    pub incarnation: Incarnation,
++    pub component: Sha256Digest,
++    pub observed_unix_ms: u64,
++}
++#[derive(Clone, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct IntegrityObservation {
++    version: u32,
++    owner: Sha256Digest,
++    namespace: Incarnation,
++    worker_epoch: u64,
++    pub head: CurrentHead,
++    pub basis: PublicationBasis,
++    pub physical_audit: PhysicalAudit,
++    pub privacy: PrivacyEligibility,
++    pub known_damage: Vec<KnownDamage>,
++}
++
++pub(super) fn owned_scratch(path: &Path, owner: Sha256Digest) -> bool {
++    json::<IntegrityObservation>(path).is_ok_and(|value| {
++        value.version == 1
++            && value.owner == owner
++            && value.known_damage.len() <= MAX_DAMAGE
++            && value.head.validate().is_ok()
++    })
++}
++
++/// Non-Clone borrow retains the actual process lease and rechecks its registry
++/// epoch and bound data root for each metadata operation. Never retain CurrentRead.
++pub struct IntegrityOwner<'a> {
++    collection: &'a Collection,
++    registry: &'a ServiceRegistry,
++    lease: &'a ProjectLease,
++    bound: &'a BoundDataRoot,
++}
++impl Collection {
++    pub fn integrity_owner<'a>(
++        &'a self,
++        registry: &'a ServiceRegistry,
++        lease: &'a ProjectLease,
++        bound: &'a BoundDataRoot,
++    ) -> Result<IntegrityOwner<'a>> {
++        let owner = IntegrityOwner {
++            collection: self,
++            registry,
++            lease,
++            bound,
++        };
++        owner.check()?;
++        Ok(owner)
++    }
++}
++impl IntegrityOwner<'_> {
++    fn check(&self) -> Result<(Incarnation, u64)> {
++        let (registration, namespace, epoch) = self
++            .registry
++            .integrity_registration(self.lease, self.bound)?;
++        ensure!(
++            registration.root == self.collection.owner.root
++                && registration.collection == self.collection.owner.collection
++                && registration.data_root == self.collection.owner.data_root,
++            "foreign integrity collection authority"
++        );
++        Ok((namespace, epoch))
++    }
++    fn load(&self, namespace: Incarnation) -> Result<Option<IntegrityObservation>> {
++        let path = self.collection.directory.join(RECEIPT);
++        match fs::symlink_metadata(&path) {
++            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
++            Err(error) => return Err(error.into()),
++            Ok(_) => {}
++        }
++        let state: IntegrityObservation = json(&path)?;
++        ensure!(
++            state.version == 1
++                && state.owner == self.collection.binding
++                && state.namespace == namespace
++                && state.known_damage.len() <= MAX_DAMAGE,
++            "foreign or unsupported integrity observation"
++        );
++        state.head.validate()?;
++        ensure!(
++            state.head.scope.root == self.collection.owner.root
++                && state.head.scope.collection == self.collection.owner.collection,
++            "foreign integrity publication"
++        );
++        Ok(Some(state))
++    }
++    /// Anchor only metadata already selected by the caller's authorized read.
++    /// No lexical/object audit, no writer-certificate promotion, no query bypass.
++    pub fn anchor(&self, read: &CurrentRead) -> Result<IntegrityObservation> {
++        self.publish(read, None, PrivacyEligibility::PlatformEvidenceUnavailable)
++    }
++    /// Bounded initial native metadata enrollment under the actual logical writer.
++    /// Opens its own fresh read; accepts no retained pre-mutation snapshot. This
++    /// owning operation may use existing collection lock creation. It creates no
++    /// restart/query authority, producer certificate or physical audit coverage.
++    pub fn enroll_native_metadata(
++        &self,
++        writer: &crate::WriterLock,
++    ) -> Result<Option<IntegrityObservation>> {
++        self.check()?;
++        let selected = self.collection.select()?;
++        crate::current::gate::check_writer(&selected.store, writer)?;
++        let Some(scope) = selected.store.current_owned_scope()? else {
++            return Ok(None);
++        };
++        let read = selected.store.current_read(&scope)?;
++        if read.settled_native_head()?.is_none() {
++            return Ok(None);
++        }
++        Ok(Some(self.anchor(&read)?))
++    }
++    /// Durable sticky detection, never a claim that other components are clean.
++    /// Only actual verifier callers may use this; permission/busy is not damage.
++    pub fn record_damage(
++        &self,
++        read: &CurrentRead,
++        component: Sha256Digest,
++        observed_unix_ms: u64,
++    ) -> Result<IntegrityObservation> {
++        self.publish(
++            read,
++            Some(KnownDamage {
++                incarnation: read.head().scope.incarnation,
++                component,
++                observed_unix_ms,
++            }),
++            PrivacyEligibility::PlatformEvidenceUnavailable,
++        )
++    }
++    fn publish(
++        &self,
++        read: &CurrentRead,
++        damage: Option<KnownDamage>,
++        privacy: PrivacyEligibility,
++    ) -> Result<IntegrityObservation> {
++        let _lock = manifest_lock(&self.collection.directory)?;
++        let (namespace, epoch) = self.check()?;
++        let selected = self.collection.manifest()?;
++        let expected = FileStore::new(self.collection.slot(selected.active));
++        // A replaced slot/recovered publication cannot be relabelled by an old read.
++        ensure!(
++            expected.current_owned_scope()?.as_ref() == Some(&read.head().scope),
++            "integrity selection changed"
++        );
++        read.token()?;
++        // Follow the existing reader's journal/WAL authentication; never turn a
++        // stale in-memory head into an observation over an unsafe overlay.
++        // A valid Applying transaction may still expose its authenticated base.
++        {
++            let current = expected.current_read(&read.head().scope)?;
++            ensure!(
++                current.token()? == read.token()?,
++                "integrity publication changed"
++            );
++        }
++        let head = read.head().clone();
++        head.validate()?;
++        ensure!(
++            head.scope.root == self.collection.owner.root
++                && head.scope.collection == self.collection.owner.collection,
++            "foreign integrity head"
++        );
++        let mut known_damage = self
++            .load(namespace)?
++            .map_or_else(Vec::new, |value| value.known_damage);
++        if let Some(damage) = damage {
++            if !known_damage.iter().any(|old| {
++                old.incarnation == damage.incarnation && old.component == damage.component
++            }) {
++                ensure!(
++                    known_damage.len() < MAX_DAMAGE,
++                    "integrity damage receipt full; repair required"
++                );
++                known_damage.push(damage);
++            }
++        }
++        let state = IntegrityObservation {
++            version: 1,
++            owner: self.collection.binding,
++            namespace,
++            worker_epoch: epoch,
++            head,
++            known_damage,
++            basis: PublicationBasis::RetainedHeadMetadataAnchor,
++            physical_audit: PhysicalAudit::Unknown,
++            privacy,
++        };
++        // Same lease/root fence immediately before durable metadata publication.
++        ensure!(
++            self.check()? == (namespace, epoch),
++            "integrity worker changed"
++        );
++        write(self.collection, RECEIPT, &state)?;
++        Ok(state)
++    }
++}
+--- a/crates/airk-store/src/service_collection_purge.rs
++++ b/crates/airk-store/src/service_collection_purge.rs
+@@ -60,6 +60,7 @@
+                 matches!(
+                     name,
+                     "service-owner.json"
++                        | "integrity-observation.json"
+                         | "active.json"
+                         | "replacement.json"
+                         | "initial-slot.json"
+--- a/crates/airk-store/src/service_collection_tests.rs
++++ b/crates/airk-store/src/service_collection_tests.rs
+@@ -142,6 +142,21 @@
+     let collection = Collection::initialize(&data, source_text, "fixture", slot)?;
+     let store = collection.selected_store()?;
+     let token = initialize(&store, source_text, slot)?;
++    // F10 receipt follows physical relocation without promoting its audit basis.
++    let mut integrity_lease =
++        crate::service::ProjectLease::acquire(&control, registration.binding)?;
++    registry.admit_worker(&mut integrity_lease)?;
++    let integrity_bound = data_scope::bind(&data, &control, namespace)?;
++    let integrity_scope = store
++        .current_owned_scope()?
++        .context("initial scope missing")?;
++    let integrity_read = store.current_read(&integrity_scope)?;
++    collection
++        .integrity_owner(&registry, &integrity_lease, &integrity_bound)?
++        .record_damage(&integrity_read, token.digest, 700)?;
++    let integrity_before = fs::read(collection.directory.join("integrity-observation.json"))?;
++    drop(integrity_read);
++    drop(integrity_lease);
+     fs::write(
+         store.directory().join("scan-limits.json"),
+         b"saved settings",
+@@ -189,6 +204,26 @@
+         job.id
+     );
+     let collection = Collection::initialize(&destination, source_text, "fixture", slot)?;
++    assert_eq!(
++        fs::read(collection.directory.join("integrity-observation.json"))?,
++        integrity_before
++    );
++    let mut resumed_registry = ServiceRegistry::open_saved(&control)?;
++    let mut resumed_lease = crate::service::ProjectLease::acquire(&control, migrated.binding)?;
++    resumed_registry.admit_worker(&mut resumed_lease)?;
++    let resumed_bound = data_scope::bind(&destination, &control, namespace)?;
++    let resumed_store = collection.selected_store()?;
++    let resumed_scope = resumed_store
++        .current_owned_scope()?
++        .context("relocated scope missing")?;
++    let resumed_read = resumed_store.current_read(&resumed_scope)?;
++    let resumed_state = collection
++        .integrity_owner(&resumed_registry, &resumed_lease, &resumed_bound)?
++        .anchor(&resumed_read)?;
++    assert_eq!(resumed_state.known_damage.len(), 1);
++    assert_eq!(resumed_state.known_damage[0].component, token.digest);
++    drop(resumed_read);
++    drop(resumed_lease);
+     assert_eq!(
+         fs::read(collection.directory.join("active.json"))?,
+         manifest
+@@ -501,3 +536,679 @@
+     assert!(old.directory().join("current.sqlite3").is_file());
+     Ok(())
+ }
++
++#[test]
++fn integrity_anchor_is_unknown_and_damage_survives_worker_restart() -> Result<()> {
++    use super::integrity::{PhysicalAudit, PrivacyEligibility, PublicationBasis};
++    use crate::service::{ProjectLease, data_scope, registry::ServiceRegistry};
++    use airk_core::service::ProjectRegistration;
++    let temporary = tempfile::tempdir()?;
++    let base = temporary.path().canonicalize()?;
++    let (data, source, control) = (base.join("data"), base.join("source"), base.join("control"));
++    for path in [&data, &source, &control] {
++        fs::create_dir(path)?;
++    }
++    let namespace = Incarnation::from_bytes([21; 16]);
++    let slot = Incarnation::from_bytes([22; 16]);
++    let registration = ProjectRegistration::new(
++        source.to_str().unwrap().into(),
++        data.to_str().unwrap().into(),
++        "fixture".into(),
++    )?;
++    let mut registry = ServiceRegistry::open(&control, namespace)?;
++    registry.register(&registration)?;
++    let bound = data_scope::bind(&data, &control, namespace)?;
++    let collection = Collection::initialize(&data, &registration.root, "fixture", slot)?;
++    let store = collection.selected_store()?;
++    let token = initialize(&store, &registration.root, slot)?;
++    let scope = store
++        .current_owned_scope()?
++        .context("fixture scope missing")?;
++    let read = store.current_read(&scope)?;
++    let mut lease = ProjectLease::acquire(&control, registration.binding)?;
++    // Exclusion without registry admission is insufficient.
++    assert!(
++        collection
++            .integrity_owner(&registry, &lease, &bound)
++            .is_err()
++    );
++    registry.admit_worker(&mut lease)?;
++    {
++        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++        let anchor = owner.anchor(&read)?;
++        assert_eq!(anchor.head.token()?, token);
++        assert_eq!(anchor.basis, PublicationBasis::RetainedHeadMetadataAnchor);
++        assert_eq!(anchor.physical_audit, PhysicalAudit::Unknown);
++        assert_eq!(
++            anchor.privacy,
++            PrivacyEligibility::PlatformEvidenceUnavailable
++        );
++        let damaged = owner.record_damage(&read, token.digest, 123)?;
++        assert_eq!(damaged.known_damage.len(), 1);
++        assert_eq!(owner.anchor(&read)?.known_damage, damaged.known_damage);
++    }
++    drop(lease);
++    let mut replacement = ProjectLease::acquire(&control, registration.binding)?;
++    registry.admit_worker(&mut replacement)?;
++    let reopened = Collection::existing(&data, &registration.root, "fixture")?;
++    let owner = reopened.integrity_owner(&registry, &replacement, &bound)?;
++    let state = owner.anchor(&read)?;
++    assert_eq!(state.known_damage.len(), 1);
++    assert_eq!(state.known_damage[0].component, token.digest);
++    assert_eq!(
++        read.token()?,
++        token,
++        "metadata foundation must not alter strict reads"
++    );
++    Ok(())
++}
++
++#[test]
++fn integrity_owner_rejects_cross_registry_bound_root() -> Result<()> {
++    use crate::service::{ProjectLease, data_scope, registry::ServiceRegistry};
++    use airk_core::service::ProjectRegistration;
++    let temporary = tempfile::tempdir()?;
++    let base = temporary.path().canonicalize()?;
++    let (data, source, control, other) = (
++        base.join("data"),
++        base.join("source"),
++        base.join("control"),
++        base.join("other"),
++    );
++    for path in [&data, &source, &control, &other] {
++        fs::create_dir(path)?;
++    }
++    let namespace = Incarnation::from_bytes([31; 16]);
++    let registration = ProjectRegistration::new(
++        source.to_str().unwrap().into(),
++        data.to_str().unwrap().into(),
++        "fixture".into(),
++    )?;
++    let mut registry = ServiceRegistry::open(&control, namespace)?;
++    registry.register(&registration)?;
++    let bound = data_scope::bind(&data, &control, namespace)?;
++    let collection = Collection::initialize(
++        &data,
++        &registration.root,
++        "fixture",
++        Incarnation::from_bytes([32; 16]),
++    )?;
++    let mut foreign = ProjectLease::acquire(&other, registration.binding)?;
++    assert!(registry.admit_worker(&mut foreign).is_err());
++    assert!(
++        collection
++            .integrity_owner(&registry, &foreign, &bound)
++            .is_err()
++    );
++    Ok(())
++}
++
++type IntegrityFixture = (
++    tempfile::TempDir,
++    Collection,
++    crate::service::registry::ServiceRegistry,
++    crate::service::data_scope::BoundDataRoot,
++    crate::service::ProjectLease,
++    FileStore,
++    crate::current::CurrentScope,
++);
++fn integrity_fixture() -> Result<IntegrityFixture> {
++    use crate::service::{ProjectLease, data_scope, registry::ServiceRegistry};
++    use airk_core::service::ProjectRegistration;
++    let temporary = match std::env::var_os("AIRK_PRIVATE_CENSUS_BASE") {
++        Some(base) => tempfile::Builder::new()
++            .prefix("airk-census-fixture-")
++            .tempdir_in(base)?,
++        None => tempfile::tempdir()?,
++    };
++    let base = temporary.path().canonicalize()?;
++    let (data, source, control) = (base.join("data"), base.join("source"), base.join("control"));
++    for path in [&data, &source, &control] {
++        fs::create_dir(path)?;
++    }
++    let namespace = Incarnation::from_bytes([51; 16]);
++    let registration = ProjectRegistration::new(
++        source.to_str().unwrap().into(),
++        data.to_str().unwrap().into(),
++        "fixture".into(),
++    )?;
++    let mut registry = ServiceRegistry::open(&control, namespace)?;
++    registry.register(&registration)?;
++    let bound = data_scope::bind(&data, &control, namespace)?;
++    let slot = Incarnation::from_bytes([52; 16]);
++    let collection = Collection::initialize(&data, &registration.root, "fixture", slot)?;
++    let store = collection.selected_store()?;
++    initialize(&store, &registration.root, slot)?;
++    let scope = store
++        .current_owned_scope()?
++        .context("fixture scope missing")?;
++    let mut lease = ProjectLease::acquire(&control, registration.binding)?;
++    registry.admit_worker(&mut lease)?;
++    Ok((temporary, collection, registry, bound, lease, store, scope))
++}
++
++#[test]
++fn integrity_replacement_preserves_damage_and_refuses_retired_head() -> Result<()> {
++    let (_temporary, collection, registry, bound, lease, old, scope) = integrity_fixture()?;
++    let read = old.current_read(&scope)?;
++    let token = read.token()?;
++    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++    owner.record_damage(&read, token.digest, 100)?;
++    drop(read);
++    let next = Incarnation::from_bytes([53; 16]);
++    let mut replacement = collection.begin_replacement(next, Sha256Digest::from_bytes([54; 32]))?;
++    initialize(&replacement.store(), &scope.root, next)?;
++    replacement.commit(Some(token), settings_digest(&old, &scope.root)?)?;
++    drop(replacement);
++    // Retained old bytes remain readable through their original strict scope,
++    // but cannot overwrite selected-incarnation metadata.
++    let retired = old.current_read(&scope)?;
++    assert!(owner.anchor(&retired).is_err());
++    drop(retired);
++    let selected = collection.selected_store()?;
++    let new_scope = selected
++        .current_owned_scope()?
++        .context("replacement scope missing")?;
++    let read = selected.current_read(&new_scope)?;
++    let state = owner.anchor(&read)?;
++    assert_eq!(state.head.scope.incarnation, next);
++    assert_eq!(state.known_damage.len(), 1);
++    assert_eq!(state.known_damage[0].incarnation, scope.incarnation);
++    assert_eq!(state.known_damage[0].component, token.digest);
++    Ok(())
++}
++
++#[test]
++fn integrity_abandoned_replacement_recovery_keeps_original_observation() -> Result<()> {
++    let (_temporary, collection, registry, bound, lease, store, scope) = integrity_fixture()?;
++    let read = store.current_read(&scope)?;
++    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++    let state = owner.record_damage(&read, read.token()?.digest, 200)?;
++    drop(read);
++    let receipt = fs::read(collection.directory.join("integrity-observation.json"))?;
++    let replacement = collection.begin_replacement(
++        Incarnation::from_bytes([55; 16]),
++        Sha256Digest::from_bytes([56; 32]),
++    )?;
++    // Simulate a process dying after durable replacement intent / slot creation.
++    drop(replacement);
++    collection.recover_abandoned_replacement()?;
++    assert_eq!(
++        fs::read(collection.directory.join("integrity-observation.json"))?,
++        receipt
++    );
++    let read = store.current_read(&scope)?;
++    assert_eq!(owner.anchor(&read)?.known_damage, state.known_damage);
++    Ok(())
++}
++
++#[test]
++fn integrity_scratch_recovery_and_malformed_record_never_clear_damage() -> Result<()> {
++    let (_temporary, collection, registry, bound, lease, store, scope) = integrity_fixture()?;
++    let read = store.current_read(&scope)?;
++    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++    owner.record_damage(&read, read.token()?.digest, 300)?;
++    let path = collection.directory.join("integrity-observation.json");
++    let before = fs::read(&path)?;
++    let owned = collection.directory.join(".service-metadata-owned-crash");
++    let unknown = collection
++        .directory
++        .join(".service-metadata-unrelated-crash");
++    fs::write(&owned, &before)?;
++    fs::write(&unknown, b"preserve unrelated partial bytes")?;
++    collection.recover_abandoned_replacement()?;
++    assert!(!owned.exists());
++    assert_eq!(fs::read(&unknown)?, b"preserve unrelated partial bytes");
++    assert_eq!(fs::read(&path)?, before);
++    // A malformed durable record is not interpreted as missing/clean.
++    fs::write(&path, b"{}")?;
++    assert!(owner.anchor(&read).is_err());
++    assert_eq!(fs::read(&path)?, b"{}");
++    fs::write(&path, &before)?;
++    assert_eq!(owner.anchor(&read)?.known_damage.len(), 1);
++    Ok(())
++}
++
++#[test]
++fn integrity_quota_refusal_preserves_the_last_durable_damage_receipt() -> Result<()> {
++    let (_temporary, collection, registry, bound, lease, store, scope) = integrity_fixture()?;
++    let read = store.current_read(&scope)?;
++    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++    owner.record_damage(&read, read.token()?.digest, 600)?;
++    let path = collection.directory.join("integrity-observation.json");
++    let before = fs::read(&path)?;
++    let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
++    let original = quota.policy()?;
++    let status = quota.status()?;
++    let mut full = original.clone();
++    full.root_bytes = status
++        .used_bytes
++        .checked_add(status.reserved_bytes)
++        .context("quota overflow")?;
++    quota.configure(full)?;
++    let refused = owner.record_damage(&read, Sha256Digest::from_bytes([98; 32]), 601);
++    quota.configure(original)?;
++    assert!(refused.is_err());
++    assert_eq!(fs::read(&path)?, before);
++    assert_eq!(owner.anchor(&read)?.known_damage.len(), 1);
++    Ok(())
++}
++
++#[test]
++fn integrity_live_owner_refuses_epoch_removal_and_namespace_replacement() -> Result<()> {
++    let (temporary, collection, registry, bound, lease, store, scope) = integrity_fixture()?;
++    let read = store.current_read(&scope)?;
++    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++    owner.record_damage(&read, read.token()?.digest, 900)?;
++    let path = collection.directory.join("integrity-observation.json");
++    let before = fs::read(&path)?;
++    // Fault injection is confined to this fixture's registry. It models stale
++    // epochs and namespace replacement independently of caller cached objects.
++    let db = rusqlite::Connection::open(temporary.path().join("control/service-1.4.sqlite3"))?;
++    let binding = lease.identity().0.to_string();
++    db.execute(
++        "UPDATE projects SET epoch=epoch+1 WHERE binding=?1",
++        [&binding],
++    )?;
++    assert!(owner.anchor(&read).is_err());
++    db.execute(
++        "UPDATE projects SET epoch=epoch-1,registered=0,paused=1 WHERE binding=?1",
++        [&binding],
++    )?;
++    assert!(owner.anchor(&read).is_err());
++    // Re-registration alone does not recreate a matching admitted generation.
++    db.execute(
++        "UPDATE projects SET registered=1,paused=0,epoch=epoch+1 WHERE binding=?1",
++        [&binding],
++    )?;
++    assert!(owner.anchor(&read).is_err());
++    db.execute(
++        "UPDATE projects SET epoch=epoch-1 WHERE binding=?1",
++        [&binding],
++    )?;
++    db.execute(
++        "UPDATE service_meta SET incarnation=?1 WHERE id=1",
++        [Incarnation::from_bytes([59; 16]).to_string()],
++    )?;
++    assert!(owner.anchor(&read).is_err());
++    assert_eq!(fs::read(path)?, before);
++    Ok(())
++}
++
++#[test]
++fn integrity_foreign_imported_receipt_is_preserved_and_never_adopted() -> Result<()> {
++    let (_temporary, collection, registry, bound, lease, store, scope) = integrity_fixture()?;
++    let read = store.current_read(&scope)?;
++    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++    owner.record_damage(&read, read.token()?.digest, 950)?;
++    let path = collection.directory.join("integrity-observation.json");
++    let mut imported: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
++    imported["owner"] = serde_json::to_value(Sha256Digest::from_bytes([60; 32]))?;
++    // Keep canonical typed serialization so rejection is binding, not encoding.
++    let typed: super::integrity::IntegrityObservation = serde_json::from_value(imported)?;
++    let copied = serde_json::to_vec(&typed)?;
++    fs::write(&path, &copied)?;
++    assert!(owner.anchor(&read).is_err());
++    assert_eq!(fs::read(path)?, copied);
++    assert!(
++        read.token().is_ok(),
++        "observation receipt must not gate strict evidence reads"
++    );
++    Ok(())
++}
++
++#[test]
++fn integrity_real_applying_replay_preserves_damage_and_refuses_unsafe_wal() -> Result<()> {
++    use crate::current::{
++        TransactionPhase,
++        graph::{GraphOverlay, GraphOverlayLimits},
++    };
++    use airk_core::graph_storage::{GraphRecord, GraphRecordOverlay, PreparedGraphDelta};
++    let (_temporary, collection, registry, bound, lease, store, scope) = integrity_fixture()?;
++    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++    let old = store.current_read(&scope)?;
++    let base = old.head().clone();
++    let token = old.token()?;
++    owner.record_damage(&old, token.digest, 1000)?;
++    let receipt_path = collection.directory.join("integrity-observation.json");
++    let receipt = fs::read(&receipt_path)?;
++    let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
++    let reservation = quota.reserve(&scope.collection, 4 << 20)?;
++    let overlay = GraphOverlay::new(
++        &reservation,
++        store.current_read(&scope)?,
++        GraphOverlayLimits {
++            maximum_bytes: 1 << 20,
++            ..Default::default()
++        },
++    )?;
++    overlay.append(
++        0,
++        GraphRecord {
++            embedding_key: None,
++            live: false,
++            bytes: vec![0; 16],
++        },
++    )?;
++    overlay.append(
++        1,
++        GraphRecord {
++            embedding_key: Some(Sha256Digest::from_bytes([61; 32])),
++            live: true,
++            bytes: vec![7; 16],
++        },
++    )?;
++    let sealed = overlay.seal()?;
++    let mut target = base.clone();
++    target.sequence += 1;
++    target.graph_head = sealed.descriptor().target.clone();
++    let writer = store.lock()?;
++    let mut current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
++    let pending = current.prepare(&token, target, &sealed, &[], None)?;
++    assert_eq!(current.phase()?, TransactionPhase::Prepared);
++    assert_eq!(owner.anchor(&old)?.head.token()?, token);
++    current.mark_applying(&pending)?;
++    assert_eq!(current.phase()?, TransactionPhase::Applying);
++    // Wrong external commit identity fails before publication and cannot clear
++    // either the existing receipt or the authenticated base publication.
++    assert!(
++        current
++            .commit(&pending, Sha256Digest::from_bytes([62; 32]))
++            .is_err()
++    );
++    assert_eq!(fs::read(&receipt_path)?, receipt);
++    assert_eq!(owner.anchor(&old)?.head.token()?, token);
++    drop(current);
++    {
++        let applying_read = store.current_read(&scope)?;
++        assert!(
++            applying_read.settled_native_head()?.is_none(),
++            "authenticated Applying base must not be relabelled settled"
++        );
++    }
++    assert!(
++        owner.enroll_native_metadata(&writer)?.is_none(),
++        "fresh owning metadata enrollment cannot certify Applying as settled"
++    );
++    assert_eq!(fs::read(&receipt_path)?, receipt);
++    drop(writer);
++    // Actual interrupted Applying WAL, using the existing oversized-sidecar
++    // recovery seam. Even a previously opened read cannot mint a new anchor.
++    let wal = store.directory().join("current.sqlite3-wal");
++    let bytes = fs::read(&wal)?;
++    let file = fs::OpenOptions::new().write(true).open(&wal)?;
++    file.set_len(128 << 20)?;
++    drop(file);
++    assert!(store.current_read(&scope).is_err());
++    assert!(owner.anchor(&old).is_err());
++    assert_eq!(fs::read(&receipt_path)?, receipt);
++    // Restore this fixture's exact owned WAL bytes, not reconstructed source.
++    fs::write(&wal, &bytes)?;
++    drop(old);
++    let writer = store.lock()?;
++    let mut recovery = store.current_write(&writer, &quota, &scope, 8 << 20)?;
++    assert_eq!(recovery.phase()?, TransactionPhase::Applying);
++    recovery.mark_applying(&pending)?;
++    recovery.commit(&pending, pending.target.lexical_commit)?;
++    recovery.release_orphan_grants()?;
++    drop(recovery);
++    drop(writer);
++    let recovered = store.current_read(&scope)?;
++    assert_eq!(recovered.token()?, pending.target.token()?);
++    assert_eq!(
++        recovered.settled_native_head()?,
++        Some(recovered.head().clone())
++    );
++    let state = owner.anchor(&recovered)?;
++    assert_eq!(state.head.token()?, pending.target.token()?);
++    assert_eq!(
++        state.physical_audit,
++        super::integrity::PhysicalAudit::Unknown
++    );
++    assert_eq!(
++        state.basis,
++        super::integrity::PublicationBasis::RetainedHeadMetadataAnchor
++    );
++    assert_eq!(state.known_damage.len(), 1);
++    assert_eq!(state.known_damage[0].component, token.digest);
++    Ok(())
++}
++
++#[cfg(target_os = "linux")]
++#[test]
++#[ignore = "requires AIRK_PRIVATE_CENSUS_BASE on positively protected local Linux ancestry"]
++fn integrity_census_resumes_bounded_pages_and_requires_complete_live_owner() -> Result<()> {
++    use super::integrity::census::{CensusOutcome, CensusUnknown};
++    use std::os::unix::fs::PermissionsExt;
++    ensure!(
++        std::env::var_os("AIRK_PRIVATE_CENSUS_BASE").is_some(),
++        "explicit private census qualification base required"
++    );
++    let (_temporary, collection, registry, bound, lease, store, scope) = integrity_fixture()?;
++    // Fixture-only security preparation. Production census never rewrites mode/ACL.
++    fn restrict(path: &Path) -> Result<()> {
++        let metadata = fs::symlink_metadata(path)?;
++        ensure!(
++            !metadata.file_type().is_symlink(),
++            "unexpected fixture link"
++        );
++        fs::set_permissions(
++            path,
++            fs::Permissions::from_mode(if metadata.is_dir() { 0o700 } else { 0o600 }),
++        )?;
++        if metadata.is_dir() {
++            for entry in fs::read_dir(path)? {
++                restrict(&entry?.path())?;
++            }
++        }
++        Ok(())
++    }
++    restrict(store.directory())?;
++    let read = store.current_read(&scope)?;
++    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++    let mut writer = store.lock()?;
++    let mut census = owner.begin_census(&read, &mut writer)?;
++    assert!(matches!(census.step(1)?, CensusOutcome::Pending { .. }));
++    super::integrity::census::test_invalidate(&census)?;
++    assert_eq!(
++        census.step(1)?,
++        CensusOutcome::Ineligible(CensusUnknown::NamespaceChanged)
++    );
++    drop(census);
++    let mut census = owner.begin_census(&read, &mut writer)?;
++    let mut ended = false;
++    for _ in 0..100_100 {
++        match census.step(1)? {
++            CensusOutcome::Pending { .. } => (),
++            CensusOutcome::Observed { .. } => {
++                ended = true;
++                break;
++            }
++            other => anyhow::bail!("private fixture did not establish census evidence: {other:?}"),
++        }
++    }
++    assert!(ended, "bounded census did not finish actual enumeration");
++    let proof = census.into_owner_private()?;
++    proof.check()?;
++    let observed = proof.record()?;
++    assert!(matches!(
++        observed.privacy,
++        super::integrity::PrivacyEligibility::OwnerCensus { version: 1, .. }
++    ));
++    assert_eq!(
++        observed.physical_audit,
++        super::integrity::PhysicalAudit::Unknown
++    );
++    Ok(())
++}
++
++#[cfg(target_os = "linux")]
++#[test]
++fn integrity_relative_census_open_refuses_symlink_traversal() -> Result<()> {
++    // Root-relative openat is tested directly: no namespace or privacy proof is
++    // inferred from success, and this fixture need not have private ancestry.
++    use std::os::unix::fs::symlink;
++    let temporary = tempfile::tempdir()?;
++    let root = fs::File::open(temporary.path())?;
++    fs::create_dir(temporary.path().join("real"))?;
++    symlink("real", temporary.path().join("redirect"))?;
++    assert!(
++        super::integrity::census::test_open_child(&root, std::ffi::OsStr::new("redirect")).is_err()
++    );
++    assert!(super::integrity::census::test_open_child(&root, std::ffi::OsStr::new("real")).is_ok());
++    Ok(())
++}
++
++#[test]
++fn integrity_actual_current_writer_and_resource_producers_invalidate_same_owner_epoch() -> Result<()>
++{
++    let (_temporary, collection, _registry, _bound, _lease, store, scope) = integrity_fixture()?;
++    let writer = store.lock()?;
++    let initial = writer.census_mutation_epoch();
++    assert!(
++        store.lock().is_err(),
++        "actual OS writer ownership must exclude another writer"
++    );
++    let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
++    let current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
++    assert!(
++        writer.census_mutation_epoch() > initial,
++        "real current writer must invalidate before WAL/SQLite effects"
++    );
++    drop(current);
++    let before_resource = writer.census_mutation_epoch();
++    let reservation = quota.reserve(&scope.collection, 1 << 20)?;
++    let reference =
++        store.retain_current_resource_owned(&writer, b"owned resource fixture", &reservation)?;
++    assert!(writer.census_mutation_epoch() > before_resource);
++    assert_eq!(
++        store.read_current_resource(&reference)?,
++        b"owned resource fixture"
++    );
++    let other = FileStore::new(collection.slot(Incarnation::from_bytes([63; 16])));
++    assert!(
++        other.lock().is_err(),
++        "different physical slots share the logical collection writer lock"
++    );
++    Ok(())
++}
++
++#[test]
++fn integrity_damage_capacity_refuses_without_evicting_old_detections() -> Result<()> {
++    let (_temporary, collection, registry, bound, lease, store, scope) = integrity_fixture()?;
++    let read = store.current_read(&scope)?;
++    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++    for n in 0u8..32 {
++        owner.record_damage(&read, Sha256Digest::from_bytes([n; 32]), 400 + u64::from(n))?;
++    }
++    let path = collection.directory.join("integrity-observation.json");
++    let before = fs::read(&path)?;
++    assert!(
++        owner
++            .record_damage(&read, Sha256Digest::from_bytes([99; 32]), 500)
++            .is_err()
++    );
++    assert_eq!(fs::read(&path)?, before);
++    assert_eq!(owner.anchor(&read)?.known_damage.len(), 32);
++    // Duplicate detection at capacity still preserves the first observation.
++    assert_eq!(
++        owner
++            .record_damage(&read, Sha256Digest::from_bytes([1; 32]), 999)?
++            .known_damage[1]
++            .observed_unix_ms,
++        401
++    );
++    Ok(())
++}
++
++#[test]
++fn integrity_sidecar_does_not_strand_owned_purge_or_certify_full_reset() -> Result<()> {
++    let (_temporary, collection, registry, bound, lease, store, scope) = integrity_fixture()?;
++    let registration = registry.get(lease.identity().0)?.registration;
++    fs::write(
++        Path::new(&registration.root).join("source-must-stay.txt"),
++        b"original source",
++    )?;
++    let read = store.current_read(&scope)?;
++    collection
++        .integrity_owner(&registry, &lease, &bound)?
++        .record_damage(&read, read.token()?.digest, 800)?;
++    drop(read);
++    // Exercise the actual owned deletion adapter. Request/registration transition
++    // is covered by existing unregistration tests, not synthesized here.
++    let mut complete = false;
++    for _ in 0..8 {
++        if Collection::purge_removed_turn(&registration, &lease)? {
++            complete = true;
++            break;
++        }
++    }
++    assert!(complete, "new metadata name stranded owning removal");
++    assert!(!collection.directory.exists());
++    assert_eq!(
++        fs::read(Path::new(&registration.root).join("source-must-stay.txt"))?,
++        b"original source"
++    );
++    let reset_slot = Incarnation::from_bytes([57; 16]);
++    let reset = Collection::initialize(
++        Path::new(&registration.data_root),
++        &registration.root,
++        "fixture",
++        reset_slot,
++    )?;
++    let reset_store = reset.selected_store()?;
++    initialize(&reset_store, &registration.root, reset_slot)?;
++    let reset_scope = reset_store
++        .current_owned_scope()?
++        .context("reset scope missing")?;
++    let read = reset_store.current_read(&reset_scope)?;
++    let state = reset
++        .integrity_owner(&registry, &lease, &bound)?
++        .anchor(&read)?;
++    assert!(
++        state.known_damage.is_empty(),
++        "only explicit full derived-state destruction removes old receipt"
++    );
++    assert_eq!(
++        state.physical_audit,
++        super::integrity::PhysicalAudit::Unknown
++    );
++    assert_eq!(
++        state.basis,
++        super::integrity::PublicationBasis::RetainedHeadMetadataAnchor
++    );
++    assert_eq!(state.head.scope.incarnation, reset_slot);
++    Ok(())
++}
++
++#[test]
++fn native_metadata_enrollment_requires_exact_writer_and_never_promotes_unknown_audit() -> Result<()>
++{
++    let (temporary, collection, registry, bound, lease, store, _scope) = integrity_fixture()?;
++    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++    let writer = store.lock()?;
++    let state = owner
++        .enroll_native_metadata(&writer)?
++        .context("settled native head missing")?;
++    assert_eq!(
++        state.physical_audit,
++        super::integrity::PhysicalAudit::Unknown
++    );
++    assert_eq!(
++        state.privacy,
++        super::integrity::PrivacyEligibility::PlatformEvidenceUnavailable
++    );
++    assert_eq!(
++        state.basis,
++        super::integrity::PublicationBasis::RetainedHeadMetadataAnchor
++    );
++    let before = fs::read(collection.directory.join("integrity-observation.json"))?;
++    let foreign = FileStore::new(temporary.path().join("foreign-writer"));
++    let foreign_writer = foreign.lock()?;
++    assert!(owner.enroll_native_metadata(&foreign_writer).is_err());
++    assert_eq!(
++        fs::read(collection.directory.join("integrity-observation.json"))?,
++        before
++    );
++    Ok(())
++}
+--- a/crates/airk-store/src/service_data_scope.rs
++++ b/crates/airk-store/src/service_data_scope.rs
+@@ -74,6 +74,20 @@
+ #[derive(Clone)]
+ pub struct BoundDataRoot(Scope);
+ impl BoundDataRoot {
++    pub(crate) fn require_identity(
++        &self,
++        data: &Path,
++        control: &Path,
++        namespace: Incarnation,
++    ) -> Result<()> {
++        self.check()?;
++        ensure!(
++            self.0.data == data && self.0.control == control && self.0.namespace == namespace,
++            "foreign integrity data root"
++        );
++        Ok(())
++    }
++
+     /// Recheck the saved authority before every native query or job.
+     pub fn check(&self) -> Result<()> {
+         ensure!(
+--- a/crates/airk-store/src/service_registry.rs
++++ b/crates/airk-store/src/service_registry.rs
+@@ -1490,3 +1490,26 @@
+         Ok(())
+     }
+ }
++
++impl ServiceRegistry {
++    /// Live service ownership only; this does not certify platform privacy or payload bytes.
++    pub(crate) fn integrity_registration(
++        &self,
++        lease: &ProjectLease,
++        bound: &super::data_scope::BoundDataRoot,
++    ) -> Result<(ProjectRegistration, Incarnation, u64)> {
++        ensure!(
++            !lease.derived,
++            "cleanup worker cannot publish integrity state"
++        );
++        let epoch = jobs::worker_epoch(&self.connection, &self.root, lease)?;
++        ensure!(
++            self.is_registered(lease.binding)?,
++            "integrity worker registration removed"
++        );
++        let registration = self.get(lease.binding)?.registration;
++        let namespace = self.incarnation()?;
++        bound.require_identity(Path::new(&registration.data_root), &self.root, namespace)?;
++        Ok((registration, namespace, epoch))
++    }
++}
+--- a/crates/airk-store/src/vector_policy.rs
++++ b/crates/airk-store/src/vector_policy.rs
+@@ -119,6 +119,7 @@
+         );
+         let bytes = serde_json::to_vec(&policy)?;
+         ensure!(bytes.len() <= MAX_BYTES, "vector policy file exceeds bound");
++        writer.invalidate_census_before_mutation()?;
+         let reservation = quota.reserve(collection, bytes.len() as u64)?;
+         reservation.charge(bytes.len() as u64)?;
+         let mut temporary = tempfile::NamedTempFile::new_in(&directory)?;

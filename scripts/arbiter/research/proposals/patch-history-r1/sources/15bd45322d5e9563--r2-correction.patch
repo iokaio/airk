@@ -1,0 +1,166 @@
+--- r2/crates/airk-ingest/src/source_scope/CONTRACT.md
++++ r3/crates/airk-ingest/src/source_scope/CONTRACT.md
+@@ -1,74 +1,74 @@
+-# Source admission and private retained agent edits
+-
+-Owners: `source_scope.rs`, discovery/scan in `lib.rs`, coverage `inventory.rs`
+-and protected capture in `source_read.rs`. Core owns the shared
+-[live reservation predicates](../../../airk-core/src/source_policy/CONTRACT.md).
+-The approved private archive boundary is documented in
+-[D8 Â§3.13](../../../../docs/split/contracts.md#313-approved-d8-decision-retaining-displaced-agent-configuration).
+-
+-Source roots with a reserved `.airk` ancestor refuse before loading ignore
+-controls or emitting payloads, including explicitly selected roots and aliases
+-rebased inside the archive. Native metadata canonicalization supplements the
+-lexical predicate. Coverage inventory and all scans share this admission.
+-The direct selected-source adapter returns false for reserved roots and
+-propagates unavailable root boundaries; it never silently treats unknown
+-metadata as permission to read. Ordinary descendant `.airk` exclusions remain
+-unreincludeable; similarly named neighboring source folders remain eligible.
+-
+-Explicit administrative extraction, direct protected input and saved-source
+-verification reject `.airk/agent-edits` and every descendant/version even when
+-the caller or permanent policy would otherwise permit the path. This private
+-archive fence is narrower than source-root exclusion: unrelated legacy `.airk`
+-assets remain available through already authorized administrative inputs.
+-
+-Authorization still precedes metadata resolution in `capture_input`. Resolution
+-is observed solely for exclusion, and never substitutes a newly resolved
+-spelling for authorized no-follow capture. Repeat the fence after opening and
+-pinning the existing source traversal, before reading source bytes. Windows
+-existing ancestor handles exclude delete sharing; Unix traversal keeps openat
+-directory handles and retains the existing post-read/reopen identity checks.
+-All naming/probe failures refuse or return an unchecked verification state.
+-A confirmed private archive returns `OutOfScope`, no hash and zero bytes read.
+-
+-The original ten Windows diagnostic assertions remain in
+-`tests/retained_archive_exclusion.rs`; Unix additionally observes a real
+-canonical symlink alias. Additive tests cover exact `before`, `prepared` and
+-`receipt.json` roles, authorization precedence, and a Windows dot-name alias
+-whose canonical equivalence is first observed on that host. No sleeps/retries,
+-real user config copies or archive writer consumers are introduced.
+-
+-T0 selectors, for the primary Cargo owner after scoped Clippy:
+-
+-```console
+-cargo nextest run --profile ci -p airk-core --lib --locked --timings -E 'test(live_reserved_source_paths_)'
+-cargo nextest run --profile ci -p airk-ingest --test retained_archive_exclusion --locked --timings -E 'test(retained_archive_)'
+-```
+-
+-These gates establish exercised source/capture admission only. Store/Kernel
+-historical/public-result fencing, actual transport comparisons, all platform
+-native aliases/filesystems, handle-private archive creation and Git/package
+-admission remain separate obligations. This change neither enables archives
+-nor alters source policy formats, digests, user ignore files or publication.
+-
+-Native ignore-control locators join each directory component separately,
+-including .git/info/exclude and XDG git/config and git/ignore. Windows canonical
+-verbatim paths do not treat a literal forward slash as an ordinary Win32
+-separator. Missing controls retain their existing absence handling; unavailable
+-metadata still refuses with the actual failing locator and native error code.
+-The focused verbatim-path regression loads an actual exclusion and confirms
+-source and control bytes remain unchanged. No naming normalization substitutes
+-a different source authority or changes policy/ignore precedence.
+-
+-Native naming-open refusals preserve their original reason, public Display/Debug
+-and standard error source/downcast identity. Native syscall code, component class
+-and ordinal, and the attempted locator are retained only as private error metadata.
+-The diagnostic locator is an escaped UTF-8 prefix of at most 4096 bytes with an
+-explicit truncation flag, never a reopened capture path. The existing Kernel-to-Host
+-raw-error capture appends that metadata through its existing 8 KiB bounded/truncated
+-private sink; public read/control/error projections gain
+-no locator, field or changed refusal class. The no-follow flags, supported case-mode
+-checks and missing-future-suffix handling remain unchanged. This diagnostic does not
+-qualify a redirected or previously unsupported ancestor.
++# Source admission and private retained agent edits
++
++Owners: `source_scope.rs`, discovery/scan in `lib.rs`, coverage `inventory.rs`
++and protected capture in `source_read.rs`. Core owns the shared
++[live reservation predicates](../../../airk-core/src/source_policy/CONTRACT.md).
++The approved private archive boundary is documented in
++[D8 §3.13](../../../../docs/split/contracts.md#313-approved-d8-decision-retaining-displaced-agent-configuration).
++
++Source roots with a reserved `.airk` ancestor refuse before loading ignore
++controls or emitting payloads, including explicitly selected roots and aliases
++rebased inside the archive. Native metadata canonicalization supplements the
++lexical predicate. Coverage inventory and all scans share this admission.
++The direct selected-source adapter returns false for reserved roots and
++propagates unavailable root boundaries; it never silently treats unknown
++metadata as permission to read. Ordinary descendant `.airk` exclusions remain
++unreincludeable; similarly named neighboring source folders remain eligible.
++
++Explicit administrative extraction, direct protected input and saved-source
++verification reject `.airk/agent-edits` and every descendant/version even when
++the caller or permanent policy would otherwise permit the path. This private
++archive fence is narrower than source-root exclusion: unrelated legacy `.airk`
++assets remain available through already authorized administrative inputs.
++
++Authorization still precedes metadata resolution in `capture_input`. Resolution
++is observed solely for exclusion, and never substitutes a newly resolved
++spelling for authorized no-follow capture. Repeat the fence after opening and
++pinning the existing source traversal, before reading source bytes. Windows
++existing ancestor handles exclude delete sharing; Unix traversal keeps openat
++directory handles and retains the existing post-read/reopen identity checks.
++All naming/probe failures refuse or return an unchecked verification state.
++A confirmed private archive returns `OutOfScope`, no hash and zero bytes read.
++
++The original ten Windows diagnostic assertions remain in
++`tests/retained_archive_exclusion.rs`; Unix additionally observes a real
++canonical symlink alias. Additive tests cover exact `before`, `prepared` and
++`receipt.json` roles, authorization precedence, and a Windows dot-name alias
++whose canonical equivalence is first observed on that host. No sleeps/retries,
++real user config copies or archive writer consumers are introduced.
++
++T0 selectors, for the primary Cargo owner after scoped Clippy:
++
++```console
++cargo nextest run --profile ci -p airk-core --lib --locked --timings -E 'test(live_reserved_source_paths_)'
++cargo nextest run --profile ci -p airk-ingest --test retained_archive_exclusion --locked --timings -E 'test(retained_archive_)'
++```
++
++These gates establish exercised source/capture admission only. Store/Kernel
++historical/public-result fencing, actual transport comparisons, all platform
++native aliases/filesystems, handle-private archive creation and Git/package
++admission remain separate obligations. This change neither enables archives
++nor alters source policy formats, digests, user ignore files or publication.
++
++Native ignore-control locators join each directory component separately,
++including .git/info/exclude and XDG git/config and git/ignore. Windows canonical
++verbatim paths do not treat a literal forward slash as an ordinary Win32
++separator. Missing controls retain their existing absence handling; unavailable
++metadata still refuses with the actual failing locator and native error code.
++The focused verbatim-path regression loads an actual exclusion and confirms
++source and control bytes remain unchanged. No naming normalization substitutes
++a different source authority or changes policy/ignore precedence.
++
++Native naming-open refusals preserve their original reason, public Display/Debug
++and standard error source/downcast identity. Native syscall code, component class
++and ordinal, and the attempted locator are retained only as private error metadata.
++The diagnostic locator is an escaped UTF-8 prefix of at most 4096 bytes with an
++explicit truncation flag, never a reopened capture path. The existing Kernel-to-Host
++raw-error capture appends that metadata through its existing 8 KiB bounded/truncated
++private sink; public read/control/error projections gain
++no locator, field or changed refusal class. The no-follow flags, supported case-mode
++checks and missing-future-suffix handling remain unchanged. This diagnostic does not
++qualify a redirected or previously unsupported ancestor.
+ 
+ ## Narrow macOS system ignore-control alias
+ 
+--- r2/crates/airk-ingest/src/control_capture/macos/tests.rs
++++ r3/crates/airk-ingest/src/control_capture/macos/tests.rs
+@@ -53,5 +53,15 @@
+         crate::source_read::read_control_at(&parent, Path::new("../control"), &file, 64, 65)
+             .is_err()
+     );
++    // O_NONBLOCK must return a held FIFO descriptor without waiting for a
++    // writer; the shared regular-file guard refuses BEFORE any byte read.
++    let fifo = root.join("fifo-control");
++    let fifo_name = CString::new(fifo.as_os_str().as_bytes())?;
++    // SAFETY: fresh owned temporary name, no privileges or existing path changes.
++    assert_eq!(unsafe { libc::mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
++    assert!(
++        crate::source_read::read_control_at(&parent, Path::new("fifo-control"), &fifo, 64, 65)
++            .is_err()
++    );
+     Ok(())
+ }

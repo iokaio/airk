@@ -1,0 +1,446 @@
+--- maintained/launch_resource20_current.py
++++ private/launch_resource20_gpu.py
+@@ -13,7 +13,10 @@
+ import sys
+ import time
+ sys.dont_write_bytecode=True
+-BASE=Path(__file__).resolve().parent
++LOCAL=Path(__file__).resolve().parent
++BASE=Path('D:/code/Github/airk/artifacts/advanced-split/models/actual-composed-service-r2/software-v2-native-execution-preparation-r3')
++sys.path.insert(0,str(LOCAL))
++import gpu_parent_policy as gpu_policy
+ CF_BASE=BASE.parent/'compact-native-diagnostic-owner-r1'
+ 
+ def digest(path):
+@@ -30,23 +33,31 @@
+ def load(path,name):
+     spec=importlib.util.spec_from_file_location(name,path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
+ 
++def document(row):
++    path=pin(row['path'],row['sha256'])
++    if type(row['bytes']) is not int or path.stat().st_size!=row['bytes']:
++        raise ValueError('native pinned document length differs')
++    return json.loads(path.read_bytes())
++
+ def plan_input(args, full=False):
+     path=pin(args.plan,args.plan_sha256);plan=json.loads(path.read_bytes())
+-    if plan.get('schema')!='airk.private.software-v2-owned-native-plan/1':raise ValueError('wrong execution plan')
+-    if plan['mode']!='resource':raise ValueError('Only original20-sample resource campaign admitted')
+-    required={'whole_process_seconds':3600,'host_committed_bytes':32<<30,'log_bytes':64<<20,'operation_journal_bytes':131072,'per_operation_ms':120000}
+-    if plan['limits']!=required or plan['reservation_bytes']!=16<<30:raise ValueError('Original Compact resource limits differ')
+-    if plan['input_seals'].get(str(Path(__file__).resolve()))!=digest(__file__):raise ValueError('Actual resource launcher omitted from seals')
+-    for source,expected in plan['input_seals'].items():
++    if plan.get('schema')!='airk.private.cuda-resource20-owned-plan/1' or plan.get('mode')!='gpu-resource':
++        raise ValueError('distinct native GPU resource plan required')
++    if plan['input_seals'].get(str(Path(__file__).resolve()))!=digest(__file__):
++        raise ValueError('actual GPU resource parent omitted from source seals')
++    for source,expected_sha in plan['input_seals'].items():
+         path=Path(source)
+-        if full or path.stat().st_size<=16*1024*1024:pin(source,expected)
+-    request=json.loads(pin(plan['native_input']['path'],plan['native_input']['sha256']).read_bytes())
+-    if request['policy']!=plan['policy'] or request['policy_digest']!=plan['policy_digest']:raise ValueError('actual native policy changed')
+-    if (plan['limits']['per_operation_ms']!=request['policy']['deadline_ms']
+-        or plan['limits']['log_bytes']!=64*1024*1024 or plan['limits']['operation_journal_bytes']!=131072):
+-        raise ValueError('observer bound differs from original plan')
+-    if plan['mode']=='numeric' and request['numeric_fixture'] is None:raise ValueError('independent numeric fixture unavailable')
+-    if plan['mode']=='resource' and request['numeric_fixture'] is not None:raise ValueError('resource-only plan unexpectedly changed')
++        if full or path.stat().st_size<=16*1024*1024:pin(source,expected_sha)
++    wrapper=document(plan['native_input'])
++    request=document(wrapper['gpu_input'])
++    profile=document(request['profile'])
++    expected=document(wrapper['expectations'])
++    native_policy=document(plan['native_policy'])
++    # The original owned NN0 emission is retained as source/output provenance.
++    # Its pinned owner evidence must be independently reviewed by Root; a JSON
++    # success flag here cannot authorize a native request.
++    document(plan['native_emission_receipt'])
++    gpu_policy.documents(plan,wrapper,request,profile,expected,native_policy)
+     return plan,request
+ 
+ def check_combined_source_bridge(combined,old_group,new_group,prior,current):
+@@ -96,7 +107,7 @@
+     return image,{'old_native_group':old['groups']['native']['sha256'],
+         'new_native_group':build['groups']['native']['sha256'],'exact_source_changes':changes,
+         'new_build_receipt':build_pin,'new_image_packet':{'path':str(packet_path),'sha256':args.image_packet_sha256},
+-        'original_NN0_metadata_and_reference_source_pins_preserved':True,
++        'reviewed_native_source_bridge_verified':True,
+         'combined_source_bridge':{'path':str(bridge_path),'sha256':args.source_bridge_sha256},
+         'scope':'explicit Root-reviewed combined per-path bridge; unchanged scoring-source pins and new native metadata/promoter provenance remain strict'}
+ 
+@@ -117,19 +128,36 @@
+             receipt['failure']={'type':'FinalObservationRefusal','message':'original input/whole-phase observation failed'}
+     # Serializing the immutable owner record follows the observation scope.
+ 
+-def resource_result(body,plan):
+-    if (body.get('schema')!='airk.arbiter.native-resource/2' or body.get('candidate_resource_passed') is not True
+-        or body.get('numeric_status')!='unavailable_in_resource_only_run'
+-        or body['resource']['complete'] is not True or body['resource']['attempted_samples']!=20
+-        or len(body['resource']['samples'])!=20 or body['resource']['failure'] is not None
+-        or body['resource']['reservation_bytes']!=plan['reservation_bytes']):
+-        raise ValueError('Original full resource20 denominator incomplete')
+-    if body['input']!=plan['expected_resource_input']:
+-        raise ValueError('Complete actual Rust-compiled resource input differs')
++def resource_result(body,plan,wrapper,request,profile,expected,raw_log):
++    gpu_policy.result(body,plan,wrapper,request,profile,expected)
++    attention=body.get('attention_backend_plan')
++    if plan['attention_observation_required']:
++        if not isinstance(attention,dict) or attention.get('schema')!='airk.native.cuda-fp16-attention-plan/1':
++            raise ValueError('actual native G5 final-node plan absent')
++        device=profile['device_execution']
++        if (attention['model']!=profile['model'] or attention['graph']!=device['graph']
++            or attention['math_policy']!=device['math_policy'] or attention['provider_options']!=device['provider_options']
++            or attention['dtype']!='fp16' or attention['domain']!='com.microsoft'
++            or attention.get('actual_backend_observed') is not False
++            or attention.get('forward_completion_claimed') is not False
++            or attention.get('qualification') is not False):
++            raise ValueError('native G5 graph/profile/observer authority differs')
++        nodes=attention['nodes']
++        if any(n['operator']!=attention['operator'] or n['domain']!=attention['domain'] for n in nodes):
++            raise ValueError('native final attention node operator/domain differs')
++        observer=load(pin(plan['attention_observer']['path'],plan['attention_observer']['sha256']),'frozen_g5_raw_observer')
++        return observer.observe(raw_log,nodes=tuple(n['name'] for n in nodes),
++            forward_roster=tuple(plan['forward_roster']),completed_forwards=tuple(body['completed_forwards']),
++            operator=attention['operator'],backend=attention['backend'])
++    if attention is not None:
++        raise ValueError('unexpected G5 plan cannot skip actual backend observation')
++    return None
++
+ def run(args,plan,request,started):
+     deadline=started+plan['limits']['whole_process_seconds']
+     plan,request=plan_input(args,full=True)
+     image,bridge=new_image(args,plan)
++    wrapper=document(plan['native_input']);profile=document(request['profile']);expected=document(wrapper['expectations'])
+     source_manifest=json.loads(pin(request['source_manifest']['path'],request['source_manifest']['sha256']).read_bytes())
+     if source_manifest['native_build_receipt']!=bridge['new_build_receipt']:
+         raise ValueError('native NN0 source manifest must be regenerated against the exact NEW image build receipt; old source proof is never transferred')
+@@ -141,8 +169,8 @@
+     cf=load(CF_BASE/'runner.py','resource_verified_cf_owner')
+     cf_card=cf.source_modules()
+     cf.capacity_smoke(json.loads(pin(plan['capacity_os_control']['path'],plan['capacity_os_control']['sha256']).read_bytes()),cf_card,parent)
+-    base_watch=load(BASE/'native_operations_watchdog.py','resource_native_operation_owner')
+-    memory_watch=load(BASE/'watch_resource20.py','resource_actual_capacity_watch')
++    base_watch=load(LOCAL/'native_operations_watchdog_gpu.py','resource_native_operation_owner')
++    memory_watch=load(LOCAL/'watch_resource20_gpu.py','resource_actual_capacity_watch')
+     parent.worker.verify_loaded_runtime(plan)
+     output=Path(args.output).absolute()
+     if output.exists() or output.parent.resolve()!=Path(plan['output_parent']).resolve():raise ValueError('fresh immediate owned run directory required')
+@@ -151,9 +179,9 @@
+     raw=output/'native-result.json';journal=raw.with_suffix('.operations.jsonl');log_path=output/'stdout-stderr.log'
+     argv=[image['path'],'--ignored','--exact',plan['command_selector'],'--nocapture','--test-threads=1']
+     environment=dict(os.environ);environment.update(plan['environment'])
+-    environment.update({'TEMP':str(temp),'TMP':str(temp),'AIRK_SOFTWARE_V2_NATIVE_INPUT':plan['native_input']['path'],
+-        'AIRK_SOFTWARE_V2_NATIVE_INPUT_SHA256':plan['native_input']['sha256'],
+-        'AIRK_SOFTWARE_V2_NATIVE_OUTPUT':str(raw)})
++    environment.update({'TEMP':str(temp),'TMP':str(temp),'AIRK_CUDA_RESOURCE_INPUT':plan['native_input']['path'],
++        'AIRK_CUDA_RESOURCE_INPUT_SHA256':plan['native_input']['sha256'],
++        'AIRK_CUDA_QUALIFICATION_OUTPUT':str(raw)})
+     receipt={'schema':'airk.private.owned-software-v2-native-execution/1','complete':False,'measurement_passed':False,
+         'evaluation':True,'qualification_granted':False,'plan':{'path':str(Path(args.plan).resolve()),'sha256':args.plan_sha256},
+         'mode':plan['mode'],'model':plan['model'],'profile':plan['profile'],'command':argv,'limits':plan['limits'],
+@@ -164,7 +192,8 @@
+         'failure':None,'post_input_drift':[],
+         'input_seals':dict(plan['input_seals']) | {image['path']:image['sha256']},
+         'committed_memory_passed':False,'resource_only':True,'native_numeric_status':'unavailable_in_resource_only_run','live_guard_interval_ms':100,'detailed_snapshot_interval_ms':1000,
+-        'coexistence_proven':False,'scope':plan['scope']}
++        'coexistence_proven':False,'final_gpu_qualification':False,'measured_peak_device_bytes':None,
++        'gpu_peak_status':'unavailable_complete_process_observer','latency_host_placement_passed':False,'scope':plan['scope']}
+     write(output/'started.json',receipt)
+     watch=None
+     def before_resume(api,job,info,child_deadline):
+@@ -173,7 +202,7 @@
+         identity={'input_sha256':plan['native_input']['sha256'],'profile':plan['profile'],
+             'process_id':int(info.pid),'native_binary_sha256':image['sha256']}
+         watch=memory_watch.make_watch(base_watch,journal,log_path,identity,plan['native_operation_roster'],
+-            plan['policy']['deadline_ms'],output)
++            plan['policy']['deadline_ms'],output,plan['reservation_bytes'],plan['limits']['host_committed_bytes'])
+         watch.process,watch.job=info.process,job
+         watch.inspect()
+         return proof
+@@ -203,7 +232,7 @@
+             or body.get('cpu_fit')!=plan['cpu_fit'] or body.get('complete') is not True
+             or body.get('measurement_identity')!='native-original-operation-start-to-post-end-retention/1'):
+             raise ValueError('native result/process/input/policy/measurement identity incomplete')
+-        resource_result(body,plan)
++        receipt['attention_dispatch']=resource_result(body,plan,wrapper,request,profile,expected,log_path.read_bytes())
+         receipt['native_body_pin']={'path':str(raw),'sha256':digest(raw),'bytes':raw.stat().st_size}
+         receipt['operation_journal_pin']={'path':str(journal),'sha256':digest(journal),'bytes':journal.stat().st_size}
+         receipt['committed_memory_passed']=(isinstance(owned.get('peak_host_committed_bytes'),int)
+@@ -233,6 +262,7 @@
+         try:parent.worker.verify_loaded_runtime(plan)
+         except BaseException as error:receipt['post_input_drift'].append('loaded Python runtime: '+str(error))
+         finish_observations(receipt,started,deadline,log_path)
++        receipt['latency_host_placement_passed']=receipt['measurement_passed']
+         write(output/'execution.json',receipt)
+     print(json.dumps({'output':str(output),'measurement_passed':receipt['measurement_passed'],
+         'qualification_granted':False,'failure':receipt['failure']}))
+--- maintained/capacity_resource20.py
++++ private/capacity_resource20_gpu.py
+@@ -17,7 +17,11 @@
+     need(type(free) is int and free>=FREE,'Fresh diagnostic storage has less than original9GiB free')
+ 
+ class Capacity:
+-    def __init__(self,clock=time.monotonic):
++    def __init__(self,reservation_bytes,containment_bytes,clock=time.monotonic):
++        need(type(reservation_bytes) is int and type(containment_bytes) is int,"Integral native capacity pair required")
++        need((reservation_bytes,containment_bytes) in ((4<<30,8<<30),(16<<30,32<<30),(40<<30,48<<30)),
++            "Original native-emitted model reservation/containment pair differs")
++        self.reservation_bytes,self.containment_bytes=reservation_bytes,containment_bytes
+         self.clock=clock;self.last_sample_time=None;self.latest=None
+         self.files={};self.samples=[];self.observations=0
+         self.peak_rss=self.peak_commit=0;self.last=None
+@@ -45,8 +49,8 @@
+         for name,row in files.items():
+             cap=GRAPH if name in ('graph','profile','body','stdout') else WEIGHTS
+             need(row['bytes']<=cap,'Native output exceeded original bound: '+name)
+-        need(self.peak_rss<=RESERVATION,'Actual native peak RSS exceeds16GiB reservation')
+-        need(self.peak_commit<=RESERVATION,'Actual whole-Job peak commit exceeds16GiB reservation')
++        need(self.peak_rss<=self.reservation_bytes,'Actual native peak RSS exceeds original model reservation')
++        need(self.peak_commit<=self.reservation_bytes,'Actual whole-Job peak commit exceeds original model reservation')
+     def proof(self):
+         return {'observations':self.observations,'peak_process_rss_bytes':self.peak_rss,
+             'peak_job_committed_bytes':self.peak_commit,'last_files':self.files,'changed_samples':self.samples,'final_observation':self.latest,
+@@ -54,7 +58,9 @@
+             'file_bound_scope':'live100ms/event observations plus native/final append-only optimized file checks'}
+ 
+ class WindowsRead:
+-    def __init__(self):
++    def __init__(self,containment_bytes):
++        need(containment_bytes in (8<<30,32<<30,48<<30),"Original model Job containment differs")
++        self.containment_bytes=containment_bytes
+         need(os.name=='nt','Qualified Windows-only capacity observer')
+         self.api=ctypes.WinDLL('kernel32',use_last_error=True)
+         self.psapi=ctypes.WinDLL('psapi',use_last_error=True)
+@@ -99,8 +105,8 @@
+         if not self.psapi.GetProcessMemoryInfo(process,ctypes.byref(value),ctypes.sizeof(value)):raise ctypes.WinError(ctypes.get_last_error())
+         limits=self.Job()
+         if not self.api.QueryInformationJobObject(job,9,ctypes.byref(limits),ctypes.sizeof(limits),None):raise ctypes.WinError(ctypes.get_last_error())
+-        need(limits.process_memory==limits.job_memory==CONTAINMENT and limits.basic.flags&0x300==0x300,
+-            'Actual original32GiB process/Job containment differs')
++        need(limits.process_memory==limits.job_memory==self.containment_bytes and limits.basic.flags&0x300==0x300,
++            'Actual original model process/Job containment differs')
+         return {'peak_rss':int(value.peak_working),'current_rss':int(value.working),
+             'peak_process_commit':int(value.peak_pagefile),'current_private_commit':int(value.private),
+             'peak_job_commit':int(limits.peak_job)}
+--- maintained/watch_resource20.py
++++ private/watch_resource20_gpu.py
+@@ -2,13 +2,13 @@
+ import ctypes,math,time
+ from ctypes import wintypes as w
+ from pathlib import Path
+-from capacity_resource20 import Capacity,WindowsRead
++from capacity_resource20_gpu import Capacity,WindowsRead
+ 
+-def make_watch(base,journal,stdout,identity,roster,deadline_ms,root):
++def make_watch(base,journal,stdout,identity,roster,deadline_ms,root,reservation_bytes,containment_bytes):
+     class Watch(base.WindowsWatch):
+         def __init__(self):
+             super().__init__(journal,stdout,identity,roster,deadline_ms,True)
+-            self.capacity=Capacity();self.reader=WindowsRead();self.process=self.job=None
++            self.capacity=Capacity(reservation_bytes,containment_bytes);self.reader=WindowsRead(containment_bytes);self.process=self.job=None
+         def inspect(self):
+             super().inspect()
+             if self.process is not None:
+--- maintained/native_operations_watchdog.py
++++ private/native_operations_watchdog_gpu.py
+@@ -51,7 +51,8 @@
+                     raise ObservationFailure('invalid native unsigned operation field: ' + key)
+             if event['sequence'] != self.sequence+1:
+                 raise ObservationFailure('native operation sequence duplicate/gap')
+-            if event['expires_monotonic_ns'] != event['started_monotonic_ns'] + self.deadline_ns:
++            # GPU owner clips at its original whole-phase cutoff; never renews or exceeds120s.
++            if not event['started_monotonic_ns'] < event['expires_monotonic_ns'] <= event['started_monotonic_ns'] + self.deadline_ns:
+                 raise ObservationFailure('native operation did not retain the original policy allowance')
+             if event['observed_monotonic_ns'] > now:
+                 raise ObservationFailure('native operation clock is ahead of the observing host counter')
+--- /dev/null
++++ private/gpu_parent_policy.py
+@@ -0,0 +1,112 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Private CUDA Resource20 parent predicates; consumes native output, constructs no native request."""
++GIB = 1 << 30
++ORIGINAL_PAIRS = {
++    "arbiter-focus-qwen3-reranker-06b": (4 * GIB, 8 * GIB),
++    "arbiter-context-qwen3-17b": (16 * GIB, 32 * GIB),
++    "arbiter-context-qwen3-4b": (40 * GIB, 48 * GIB),
++}
++def need(value, message):
++    if not value:
++        raise ValueError(message)
++
++def model_pair(native_policy, model):
++    need(native_policy.get("schema") == "airk.private.cuda-resource-benchmark-policy/1",
++         "native benchmark policy sidecar required")
++    rows = native_policy["model_limits"]
++    expected = [{"model": name, "host_limit_bytes": host,
++                 "process_containment_bytes": job, "job_limit_bytes": job}
++                for name, (host, job) in ORIGINAL_PAIRS.items()]
++    need(rows == expected and all(type(r[k]) is int for r in rows for k in
++         ("host_limit_bytes", "process_containment_bytes", "job_limit_bytes")),
++         "complete native model policy differs from independent original pairs")
++    need(native_policy.get("whole_process_ms") == 3_600_000
++         and native_policy.get("load_operations") == 1
++         and native_policy.get("warmup_operations") == 1
++         and native_policy.get("sample_operations") == 20
++         and native_policy.get("gpu_process_peak_required_for_final_qualification") is True,
++         "native resource denominator/whole cutoff differs")
++    need(model in ORIGINAL_PAIRS, "model outside original resource roster")
++    return ORIGINAL_PAIRS[model]
++
++def documents(plan, wrapper, request, profile, expected, native_policy):
++    host, job = model_pair(native_policy, profile["model"])
++    need(wrapper.get("schema") == "airk.private.cuda-resource-benchmark-request/1"
++         and type(wrapper["outer_deadline_ms"]) is int and wrapper["outer_deadline_ms"] == 3_600_000,
++         "actual native wrapper/whole cutoff differs")
++    need(all(type(wrapper[k]) is int and wrapper[k] > 0 for k in
++         ("host_limit_bytes", "device_limit_bytes", "cold_bytes",
++          "headroom_bytes", "job_limit_bytes")), "explicit native capacity bounds required")
++    need(type(wrapper["warm_bytes"]) is int and wrapper["warm_bytes"] >= 0, "invalid native warm capacity")
++    need((wrapper["host_limit_bytes"], wrapper["job_limit_bytes"]) == (host, job)
++         and wrapper["cold_bytes"] + wrapper["headroom_bytes"] <= wrapper["device_limit_bytes"],
++         "original model reservation/containment or device bound differs")
++    need(profile["cpu_fit"] is None and profile.get("device_execution") is not None
++         and profile["memory_reservation_bytes"] == host, "native GPU profile/host reservation differs")
++    need(expected.get("schema")=="airk.private.cuda-resource-benchmark-expectations/1"
++         and expected["native_input"]==wrapper["gpu_input"], "native expectations source binding differs")
++    need(plan["model"] == profile["model"] == expected["model"]
++         and plan["profile"] == profile["manifest"] == expected["profile"],
++         "native model/profile identity differs")
++    need(plan["cpu_fit"] is None and plan["reservation_bytes"] == host, "CPU fit cannot be transferred")
++    need(plan["limits"] == {"whole_process_seconds": 3600, "host_committed_bytes": job,
++         "log_bytes": 64 << 20, "operation_journal_bytes": 131072, "per_operation_ms": 120000},
++         "original parent whole/log/operation/Job limits differ")
++    need(request["numeric_fixture"] is None, "Resource20 must not relabel a numerical fixture")
++    need(plan["policy"] == request["policy"] == expected["policy"] == native_policy["resource_policy"]
++         and plan["policy_digest"] == request["policy_digest"] == expected["policy_digest"]
++         and plan["policy"]["deadline_ms"] == 120000, "native policy/digest differs")
++    need(plan["expected_resource_input"] == expected["expected_resource_input"]
++         and plan["native_operation_roster"] == expected["native_operation_roster"]
++         and plan["forward_roster"] == expected["forward_roster"] == native_policy["forward_roster"],
++         "original native compiled input/operation/forward expectations differ")
++    roster = plan["native_operation_roster"]
++    need(len(roster) == 22 and [(r["kind"], r["ordinal"]) for r in roster]
++         == [("load", 0), ("warmup", 0)] + [("sample", n) for n in range(1, 21)],
++         "complete original 22 operation denominator required")
++    need(plan["forward_roster"] == ["warmup-0"] + [f"sample-{n:02}" for n in range(1, 21)],
++         "complete original 21 forward denominator required")
++    return host, job
++
++def result(body, plan, wrapper, request, profile, expected):
++    need(body.get("schema") == "airk.private.cuda-native-resource/1"
++         and body.get("complete") is True and body.get("latency_host_placement_passed") is True
++         and body.get("final_gpu_qualification") is False and body.get("release_qualified") is False
++         and body.get("numeric_status") == "unavailable_in_resource_only_run"
++         and body.get("gpu_peak_status") == "unavailable_complete_process_observer"
++         and body.get("measured_peak_device_bytes", "absent") is None,
++         "distinct GPU latency/host/placement scope required; GPU peak is unavailable")
++    need(body.get("model")==plan["model"] and body.get("cpu_fit", "absent") is None
++         and body["device_execution"] == profile["device_execution"]
++         and body["bounds"] == wrapper and body["native_input"] == wrapper["gpu_input"]
++         and body["runtime_manifest"] == wrapper["runtime_manifest"]
++         and body["request"] == plan["native_input"]
++         and body["expectations"]==wrapper["expectations"]
++         and body["native_operation_roster"]==expected["native_operation_roster"],
++         "actual native wrapper/input/profile/runtime bindings differ")
++    need(body.get("native_control_retained_for_unknown_cuda") is False
++         and body.get("native_control_cleanup_observed") is True
++         and body.get("native_control_cleanup_error", "absent") is None
++         and body.get("native_host_charge_release_observed") is True
++         and body.get("process_cuda_poisoned") is False
++         and body.get("final_host_peak_error", "absent") is None,
++         "actual native release/cleanup/known settlement missing")
++    peak = body.get("peak_process_rss_bytes")
++    need(type(peak) is int and 0 < peak <= plan["reservation_bytes"],
++         "actual final persistent native RSS missing/excessive")
++    need(body["native_host_reservation_bytes"] == plan["reservation_bytes"],
++         "actual retained host reservation differs")
++    actual_job = body["actual_job"]
++    cap = plan["limits"]["host_committed_bytes"]
++    need(actual_job["process_memory_limit_bytes"] == cap
++         and actual_job["job_memory_limit_bytes"] == cap
++         and type(actual_job["flags"]) is int and actual_job["flags"] & 0x2300 == 0x2300,
++         "actual native original process/Job containment differs")
++    series = body["resource"]
++    need(series["complete"] is True and series["attempted_samples"] == 20
++         and len(series["samples"]) == 20 and series["failure"] is None
++         and series["reservation_bytes"] == plan["reservation_bytes"],
++         "original full Resource20 result denominator incomplete")
++    need(body["input"] == expected["expected_resource_input"] == plan["expected_resource_input"]
++         and body["forward_roster"] == body["completed_forwards"] == plan["forward_roster"],
++         "complete native input or successful synchronized forward roster differs")
+--- /dev/null
++++ private/bind_resource20_gpu.py
+@@ -0,0 +1,74 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Bind native-emitted GPU resource documents into the existing private parent plan.
++No native DTO is constructed and no native process is launched.
++"""
++import argparse, hashlib, json
++from pathlib import Path
++import launch_resource20_gpu as owner
++
++SELECTOR = ("inference_engine::pool::arbiter::qualification::software_v2::"
++            "cuda_qualification::cuda_resources::cuda_selected_native_resources20")
++def file_pin(path, sha):
++    p=owner.pin(path,sha)
++    return {"path":str(p),"bytes":p.stat().st_size,"sha256":sha}
++def bind(template, wrapper_pin, policy_pin, emission_pin, observer_pin, attention_required):
++    # Template retains the genuine image/source-bridge/runtime/OS-custody inputs.
++    # Root must supply current reviewed source bindings; none are silently dropped.
++    result=json.loads(json.dumps(template))
++    wrapper=owner.document(wrapper_pin)
++    request=owner.document(wrapper["gpu_input"])
++    expected=owner.document(wrapper["expectations"])
++    profile=owner.document(request["profile"])
++    policy=owner.document(policy_pin)
++    host,job=owner.gpu_policy.model_pair(policy,profile["model"])
++    result.update(schema="airk.private.cuda-resource20-owned-plan/1",mode="gpu-resource",
++        native_input=wrapper_pin,native_policy=policy_pin,native_emission_receipt=emission_pin,
++        model=profile["model"],profile=profile["manifest"],cpu_fit=profile["cpu_fit"],
++        reservation_bytes=host,policy=request["policy"],policy_digest=request["policy_digest"],
++        expected_resource_input=expected["expected_resource_input"],
++        native_operation_roster=expected["native_operation_roster"],forward_roster=expected["forward_roster"],
++        limits={"whole_process_seconds":3600,"host_committed_bytes":job,"log_bytes":64<<20,
++                "operation_journal_bytes":131072,"per_operation_ms":120000},
++        command_selector=SELECTOR,attention_observer=observer_pin,
++        attention_observation_required=attention_required,
++        scope="Actual native GPU latency/host/placement Resource20 only; GPU process peak unavailable; no numerical, coexistence, final GPU qualification or product grant.")
++    # Do not invent native output/ownership authority from a filename or a bool.
++    owner.document(emission_pin)
++    required=[wrapper_pin,wrapper["gpu_input"],wrapper["expectations"],policy_pin,emission_pin,
++              request["profile"],request["source_manifest"],wrapper["runtime_manifest"],observer_pin]
++    assets={a["name"]:a for a in profile["assets"]}
++    if not assets or len(assets)!=len(profile["assets"]) or set(assets)!=set(request["files"]):
++        raise ValueError("exact native profile asset/file closure required")
++    required += [{"path":request["files"][name],"bytes":a["bytes"],"sha256":a["sha256"]}
++                 for name,a in assets.items()]
++    required += [file_pin(Path(__file__).parent/name,owner.digest(Path(__file__).parent/name))
++                 for name in ("bind_resource20_gpu.py","launch_resource20_gpu.py","gpu_parent_policy.py",
++                              "capacity_resource20_gpu.py","watch_resource20_gpu.py","native_operations_watchdog_gpu.py")]
++    seals=dict(result["input_seals"])
++    for row in required:
++        prior=seals.get(row["path"])
++        if prior is not None and prior!=row["sha256"]:
++            raise ValueError("existing frozen source/input seal would be overwritten")
++        seals[row["path"]]=row["sha256"]
++    result["input_seals"]=seals
++    owner.gpu_policy.documents(result,wrapper,request,profile,expected,policy)
++    return result
++
++def main():
++    parser=argparse.ArgumentParser(description=__doc__)
++    for key in ("template","request","policy","emission","observer"):
++        parser.add_argument("--"+key,required=True)
++        parser.add_argument("--"+key+"-sha256",required=True)
++    parser.add_argument("--attention-required",action="store_true")
++    parser.add_argument("--output",required=True)
++    a=parser.parse_args()
++    template_pin=file_pin(a.template,a.template_sha256)
++    pairs=[file_pin(getattr(a,k),getattr(a,k+"_sha256")) for k in ("request","policy","emission","observer")]
++    plan=bind(owner.document(template_pin),*pairs,a.attention_required)
++    plan["input_seals"][template_pin["path"]]=template_pin["sha256"]
++    # Existing owner source/image checks still execute before any native child.
++    owner.write(a.output,plan)
++    print(json.dumps({"plan":file_pin(a.output,owner.digest(a.output)),
++                      "native_model_Cargo_runs":0,"Root_review_required_before_execution":True}))
++if __name__=="__main__":
++    main()

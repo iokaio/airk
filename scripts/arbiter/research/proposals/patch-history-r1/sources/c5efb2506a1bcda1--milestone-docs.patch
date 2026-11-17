@@ -1,0 +1,77 @@
+--- a/docs/simplify/one-process-ledger.md
++++ b/docs/simplify/one-process-ledger.md
+@@ -6748,3 +6748,41 @@
+ recovered22.170GiB while preserving the warm target. Next review08:35Z; deadline
+ remains2026-11-19T05:29:42.2081757Z. The plan is incomplete. No release,
+ publication, quality, GPU or final qualification is claimed.
++
++### 2026-11-17 — Mac refresh passes; separate exact-target cleanup
++
++The actual Mac continuation passes all37 selected tests: affected controls31/31
++in92.302707s, private-log controls5/5 in103.062850s and exact reference refresh
++1/1 in145.798307s including build (71.10s test execution). Each phase exits0
++with naturally settled owned descendants and no signals. Inputs remain unchanged.
++The continuation batch remains nonpass because automatic cargo clean exits101:
++CACHEDIR.TAG is missing; the target is preserved. Prior missing-Nextest and
++refresh failures retain their original identities. Full retained receipts/logs:
++E/neo-system-control-continuation-monitor-r1/receipt.json SHA
++3741d490766336c5a3a4a9edc058798199800a4daf252e811b7f81ca41181716.
++
++After independent review and explicit user authorization for manual artifact
++cleanup, Root separately removes the exact isolated UID501 target with
++no-follow inode/path/owner/tree/process guards. Actual inner cleanup passes
++1.407811s (1.738s outer), removing6426 entries; target absence is reobserved.
++The missing tag is recorded, not repaired. Source and original dirty-checkout
++status hashes remain unchanged. Logical file size is4920275336B; observed
++whole-volume available space increases4333711360B (4.036083GiB), a separate
++measurement subject to background host activity. Original automatic cleanup
++and batch failures are not relabelled. Eleven retained tag/inventory/storage/
++process/result files are bound by E/neo-exact-target-manual-cleanup-harvest-r1/
++receipt.json SHA6ac1d97666c476ecd274918df45a1e70a49380e7303ec516e9af1eecaa29da7f.
++
++The reviewed77-file higher native/device consumer change is applied. Eleven-crate
++all-target/all-feature Clippy passes33.958642s with unchanged inputs:
++E/gpu-integrated-clippy-r7.json. Grouped native regressions are still building;
++no count or pass is inferred. Current UI source checks pass110/110 in1.833913s,
++Admin typecheck3.606194s and editor typecheck7.402405s, with unchanged inputs:
++E/gpu-device-ui-regressions-r1.json, E/gpu-device-admin-typecheck-r1.json and
++E/gpu-device-editor-typecheck-r1.json. These do not retag signed R3 artifacts
++or establish real transport/device behavior.
++
++C++ core execution now has actual natural process-tree settlement proof.
++The1259-object CUDA provider build remains active under its original08:27Z
++cutoff; no GPU model has run. Native GPU, numerical/resource/CAL, full-workspace,
++installed and release gates remain open. Deadline and score floors are unchanged.
+--- a/docs/arbiter/final-plan.md
++++ b/docs/arbiter/final-plan.md
+@@ -1055,10 +1055,10 @@
+ | Step | Status | Observed outcome and remaining work |
+ | --- | --- | --- |
+ | 1 | passed | Clean starting source/branch/contributor recorded; human Windows identity verified; existing human-owned warm target audited; issue/input/platform inventory retained. Foreign and unreadable inputs preserved. |
+-| 2 | in_progress | Original D04–D06 CPU/manual/terminal/budget contracts and Rust fixtures pass their recorded controls. D08 Core/Store device-metadata foundations are applied; scoped Clippy, native generation2/2 and repaired166/166 regressions pass. Forty-nine device cases and native/editor generated types are adopted with qualification=false. Device/runtime/Auto fallback and GPU qualification remain incomplete. |
++| 2 | in_progress | Original D04–D06 CPU/manual/terminal/budget contracts and Rust fixtures pass their recorded controls. D08 Core/Store device-metadata foundations are applied; scoped Clippy, native generation2/2 and repaired166/166 regressions pass. Forty-nine device cases and native/editor generated types are adopted with qualification=false. The77-file higher-consumer change is applied and eleven-crate all-target/all-feature Clippy passes33.958642s; grouped native regressions are still building. Device/runtime/Auto fallback and GPU qualification remain incomplete. |
+ | 3 | in_progress | Rust-owned manual configuration, whole-file shared-parent refusal, eleven tokenless harness migrations and per-session status repair are implemented. Current c547 genesis-only bootstrap repair preserves authority refusals. Signed R3 preflight passes144.210s; the subsequent matched e306 Windows R5 pair builds and passes its16-file/model preflight126.466879s. These identified candidates retain separate source and process proofs; earlier failed signed reads remain retained. |
+ | 4 | in_progress | Native8192/120 defaults and125-second delivery remain. Reviewed D06 removes55/60-second connection-admission clamps from the accepted parent without extending TTLs or weakening authority; scoped Clippy/106 regressions pass. Fresh rebuilt e306 R8 reaches full753-source readiness and delivers one canonical packet in62.964776s. Seven NN calls/29 finite scores and original service HANDLE/lease settle. Paragraphs=[], unsupported, stopbudget and unassessed/basis_omitted remain. Native verification is UNVERIFIED0/18 under the existing64KiB frame/3283-byte receipt allowance. This is delivery evidence, not useful Answer quality, p95, CAL or promotion; original R154 is not replayed. |
+-| 5 | passed | Task-oriented Service/Agents, canonical manual Copy, twelve-icon navigation and the compact Workbench composer are implemented. Signed R3 Workbench retains sixteen full comparisons/two Answer routes; Admin retains eight full comparisons and wide/narrow navigation/title/icon checks. Both native processes have Stop/original HANDLE exit 0 proof. Real Code 1.146.0 activates the production R3 VSIX installed in a private profile and passes Explorer singleton/close-reopen/same-version CSS handoff in 8.109072s. Code parent exits 0 and a later CIM snapshot finds no Code using that private profile; no all-descendant HANDLE proof or native I4 claim follows. Historical observation gaps remain uncounted. |
++| 5 | passed | Task-oriented Service/Agents, canonical manual Copy, twelve-icon navigation and the compact Workbench composer are implemented. Signed R3 Workbench retains sixteen full comparisons/two Answer routes; Admin retains eight full comparisons and wide/narrow navigation/title/icon checks. Both native processes have Stop/original HANDLE exit 0 proof. Real Code 1.146.0 activates the production R3 VSIX installed in a private profile and passes Explorer singleton/close-reopen/same-version CSS handoff in 8.109072s. Code parent exits 0 and a later CIM snapshot finds no Code using that private profile; no all-descendant HANDLE proof or native I4 claim follows. Historical observation gaps remain uncounted. Current device-UI source checks additionally pass110/110 tests and Admin/editor typechecks; these do not retag signed R3 artifacts or qualify native device behavior. |
+ | 6 | in_progress | The original acquisition failure remains failed; the independent 23-asset census and repaired Large finalization/cached verification passes are retained. Public Focus R7 now passes its complete isolated U93 journey in 82.614s: Provision/Import, scoring, removal, explicit restart, A/B MiniLM reads, two actual Stops and original HANDLE exit 0. Both native and owned-runtime receipts pass. Earlier R4/R5 failures remain historical. This proves the exercised public Focus lifecycle, not modern I4, all-three public Context availability, task quality, CAL or release qualification. |
+ | 7 | in_progress | The earlier identified matched-runtime baseline captures 27/27 lexical/vector/hybrid results across nine original queries with actual Stop/PID exit. Eighteen vector/hybrid verification receipts remain partial under the original source budget. Exact/ANN same-vector diagnostics accept the current canonical singleton without weakening scope/source fences; scoped Clippy, six ANN and five human-visibility controls pass. Genuine native pins and the nine-query comparison retain exactly nine uncached forwards, exact/ANN order agreement on all ten live vectors, natural exit/empty Job and original 120s/8GiB bounds. Population equals k10; no quality or scale improvement is claimed. Later optimized CoSQA visibility has its own offline source/image identity, not Debug product p95 evidence. |
+ | 8 | in_progress | Public human labels are acquired and audited: CoSQA/CodeSearchNet joins 1,955 judged pairs across 38 repository families; ContextBench retains 150 source-complete multifile TRAIN cases; original TechQA provenance leaves 290 positive pairs/254 documents, only fifteen complete original menus. After two failed Debug censuses, the optimized full 1,955-row census passes 34.137539s under unchanged 120s/4GiB bounds, retaining 16,386 native units across 316 files. Only 21 strict whole-input MiniLM matches (five functions/four repositories) pass visibility; 1,934 stay unknown. Focus fits 1,953 original full-function pairs with two positive overflows; within the supported private rights scope, 1,867 pairs fit (932 positive/935 negative, 37 repositories/437 functions). Eighty-six unknown-rights rows remain unknown. These are visibility/fit observations, not semantic training admission. Other native mappings, splits/clones/chronology, pre-score sample/power freeze and exact label-scope acceptance remain unresolved; unknown pairs are not negatives. |
+@@ -1069,7 +1069,7 @@
+ | 13 | blocked | Exact-artifact CAL/confirmation and composed qualification require the unresolved baseline/profile/data gates. |
+ | 14 | blocked | No current held-out promotion comparison is admitted; consumed historical FINAL populations stay evaluation-only. |
+ | 15 | blocked | Exactly-three qualified optional profiles, rights/source maps and genuine final publication capture are unavailable. Final-series refusal gates remain strict. |
+-| 16 | in_progress | Historical c9fe/059a full Clippy/4825 regressions retain their identities. Current D06 passes three-crate Clippy/106 regressions and rebuilt R5 preflight. Applied Mac alias correction passes Windows Clippy/25 tests and actual Mac Clippy116.872s/one metadata case. The missing-Nextest failure is retained; official-cache helper transfer passes0.395s and Root is running the remaining three phases. Core/Store strict unknown-field correction, Clippy R3, native generation2/2 and repaired166/166 regressions pass;49 generated device cases retain qualification=false. The original164-pass/two-fail batch is preserved. CUDA R11 process-tree witnesses pass separately; actual syntax fails the original120-second deadline. GPU, installed and final workspace gates remain open. |
++| 16 | in_progress | Historical c9fe/059a full Clippy/4825 regressions retain their identities. Current D06 rebuilt R5/R8 delivery evidence remains separately bounded. Applied Mac alias correction passes Windows Clippy/25 tests, Mac Clippy/one metadata case and all37 continuation tests, including exact refresh. The continuation batch remains nonpass on automatic cleanup; separately reviewed manual cleanup removes6426 isolated target entries with unchanged sources and reobserved absence. Core/Store generation2/2 and repaired166/166 pass. Higher77-file consumers pass eleven-crate all-target/all-feature Clippy33.958642s; grouped native regressions are still building. UI110 tests/typechecks pass under source-only scope. C++ core has natural tree settlement;1259 provider objects remain compiling under the original08:27Z cutoff. No GPU model, final-workspace, installed or release pass follows. |
+ | 17 | in_progress | Version 1.8.207 and the signed c547 R3 EXE/native ZIP/VSIX delivery retain their verified byte, signature, notices and client/UI proofs. Real Code 1.146.0 production VSIX Explorer activation/close-reopen/CSS checks pass on a private profile in 8.109072s; native_execution is false. Code parent exit 0 and a private-profile CIM observation are retained without claiming every descendant HANDLE. No native production activation or I4 installed journey follows. The user's 1.8.206 installation/configuration remain preserved; no qualified final-series release or publication is claimed. |
+ | 18 | in_progress | Current delivery, verification limits, platform failures and Core/Store/GPU progress retain their exact identities. Signed c547 R3 remains the delivered CPU candidate; e306 R5/R8 are separate current evidence. FP32 then efficient FP16 and remaining gates stay open; no old-candidate packaging expansion, score-floor change or release claim. Outside analyses remain ignored as implementation input. Deadline2026-11-19T05:29:42Z; latest06:35Z self-check2 passed/10 in_progress/6 blocked, next08:35Z. No publication authorization. |
+ 
+@@ -1097,7 +1097,7 @@
+ | Context prompt fit | Complete native126-request census passes with121 shrinks/5growths/0refusals, all within original2048. The original shrink-only test remains failed. This does not qualify new8192 graphs or reconstruct missing R154 bytes. |
+ | Historical accepted failures/90% threshold | Superseded by this plan; no acceptance waiver. Native private-boundary tests pass under verified human identity; config49/49 pass with only disposable fixture GIT_PAGER removed. Other reported failure classes are repaired or awaiting current grouped native checks. |
+ | Completion criterion wording | Frozen gate is at least.75 completion, at most.02 completion regression, and at least.10 paired common-success external-turn reduction. Historical '.02 gain' prose is not the acceptance rule. |
+-| Platforms and installed artifacts | Signed R3 client/UI/Code Explorer and historical c9fe4,825/4,825 retain their CPU candidate scope. Applied Mac alias correction passes Windows Clippy/25 tests and actual Mac Clippy/one metadata case; the missing-Nextest failure is preserved and Root is running the official-cache continuation, so exact refresh/platform completion remains pending. Linux96-archive aggregation passes; no Linux application or modern Windows I4 pass follows. D08 Core/Store Clippy, generation2/2 and repaired166/166 tests pass with49 generated device cases retaining qualification=false; CUDA process witnesses pass but syntax fails120s. GPU implementation and qualification remain incomplete. |
++| Platforms and installed artifacts | Signed R3 client/UI/Code Explorer and historical c9fe4,825/4,825 retain their CPU candidate scope. Mac alias Clippy/metadata and37 continuation tests, including exact refresh, pass; the automatic-cleanup batch stays nonpass. Separate authorized manual cleanup removes the exact isolated target while preserving source/evidence. Linux96-archive aggregation passes; no Linux application or modern Windows I4 pass follows. Core/Store and higher-consumer scoped checks pass; grouped native regressions/provider compilation remain active. GPU model execution and final qualification remain pending. |
+ 
+ ## 11. Automatic GPU execution and CPU fallback (D08)
+ 

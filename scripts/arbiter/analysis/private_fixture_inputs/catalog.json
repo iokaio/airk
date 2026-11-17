@@ -1,0 +1,52 @@
+{
+  "schema": "airk.private-fixture-projection-inputs/1",
+  "delta": {
+    "path": "artifacts/v190/final-plan/exec-20261116T052942Z/source-broad-delta-r1.json",
+    "sha256": "ce0b4e7eb0a4755796c4cb8d325165276b749deec49f0963b0af4fec8718d5fc",
+    "bytes": 184123444
+  },
+  "producer": {
+    "path": "scripts/benchmark-detail.py",
+    "sha256": "6bbc6c3efd0c60331a0f8afbb948c01bdeb98fa3a5982f1ac62e41fe6134e6cc",
+    "bytes": 16460
+  },
+  "inputs": [
+    {
+      "path": "artifacts/detail-inputs.json",
+      "sha256": "ce4f8c7ffc3b778d8f80dee870c1a02f8a5822f0fd9acb0700161a68652118b8",
+      "bytes": 415
+    },
+    {
+      "path": "artifacts/enhancements-inputs.json",
+      "sha256": "3d3e91a0021f6b4e0e4d4fd8bb1677a5893980fe32362f0eb37896ccb7005bde",
+      "bytes": 567
+    }
+  ],
+  "summaries": [
+    {
+      "path": "artifacts/detail-real-final/summary-private.json",
+      "sha256": "c97467cfb0cef5ea77cc4822b056af027a35100d5a9602b6763d8e73e08a5a57",
+      "bytes": 189291
+    },
+    {
+      "path": "artifacts/enhancements-qualified-final/summary-private.json",
+      "sha256": "22cffb5d9ff3ba0481049c0f0ed7a9c15e84fe5daedc9109e5b30ca7ecf74700",
+      "bytes": 198793
+    },
+    {
+      "path": "artifacts/enhancements-real-final/summary-private.json",
+      "sha256": "1b35c34ad19aa44073502460c2afe0747dad1f762e1af88bf9e752f274f5f8ee",
+      "bytes": 218673
+    }
+  ],
+  "inventory": {
+    "path": "artifacts/detail-real-final/state/essential/collections/comparison-bookbuilder-essential/generations/8c503990cf69fb4840a0f2a0057f7e60db75807967d2992d3e5a4b080200e7f6/inventory.json",
+    "sha256": "a151b7089760d87008583f358fddfeb831c9558e362ed5723811cc0a95afde4b",
+    "bytes": 7622073
+  },
+  "manifest": {
+    "path": "artifacts/detail-real-final/state/essential/collections/comparison-bookbuilder-essential/generations/8c503990cf69fb4840a0f2a0057f7e60db75807967d2992d3e5a4b080200e7f6/manifest.json",
+    "sha256": "4a8d1629bedcf279016341be267c0b384921ad760682ed69590dff0849dfaaf6",
+    "bytes": 3770
+  }
+}

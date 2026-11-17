@@ -1,0 +1,143 @@
+--- original/reference_worker.py
++++ proposed/reference_worker.py
+@@ -168,6 +168,75 @@
+     return hashlib.sha256(clone.SerializeToString(deterministic=True)).hexdigest()
+ 
+ 
++GQA_SOURCE_SHA = 'c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4'
++GQA_GRAPH_SHA = 'd2b32177c875a989bdbe56071168bbcabb8d589ba740099feea44972459828c3'
++GQA_PROOF_SHA = '7cd056abdedffe07a4c8684de3b21744e4f877630d7b1415f3b83aa292b249f0'
++GQA_TEMPLATE_SHA = '7d4a546d9017a14594d61a59eda9693a47e241da4a5dd9ef1edf4bbb0e626c4b'
++
++def exact_gqa_context(plan, profile, graph_sha):
++    binding = plan.get('compact_gqa_binding')
++    if graph_sha != GQA_GRAPH_SHA and binding is None:
++        return False
++    if (graph_sha != GQA_GRAPH_SHA or plan['kind'] != 'same_artifact'
++            or plan['upstream'] != 'Qwen/Qwen3-1.7B' or profile['model'] != 'arbiter-context-qwen3-17b'
++            or not isinstance(binding, dict) or set(binding) != {'source_graph', 'shape_proof'}
++            or binding['source_graph']['sha256'] != GQA_SOURCE_SHA
++            or binding['shape_proof']['sha256'] != GQA_PROOF_SHA
++            or plan['native_template']['sha256'] != GQA_TEMPLATE_SHA):
++        raise ValueError('only exact reviewed Compact c79-to-d2 GQA/native-template binding permitted')
++    return True
++
++def exact_gqa_source(graph, graph_path, profile, plan, onnx):
++    binding = plan['compact_gqa_binding']
++    for value in binding.values():
++        path = pinned(value)
++        if plan['input_seals'].get(str(path)) != value['sha256']:
++            raise ValueError('GQA source/proof omitted from owned input closure')
++    source_path = pinned(binding['source_graph'])
++    source = onnx.load(str(source_path), load_external_data=False)
++    proof = json.loads(pinned(binding['shape_proof']).read_bytes())
++    if (proof['source_sha256'] != GQA_SOURCE_SHA or proof['new_graph_sha256'] != GQA_GRAPH_SHA
++            or proof['custom_shape_gate_pending'] is not False or proof['gqa_nodes'] != 28
++            or proof['original_initializers_and_external_ranges_preserved_verbatim'] is not True):
++        raise ValueError('actual reviewed GQA structural proof differs')
++    old = {t.name: t.SerializeToString(deterministic=True) for t in source.graph.initializer}
++    new = {t.name: t.SerializeToString(deterministic=True) for t in graph.graph.initializer}
++    extras = {'/airk_compact_gqa/qshape', '/airk_compact_gqa/kshape', '/airk_compact_gqa/axis1', '/airk_compact_gqa/one'}
++    if len(old) != 310 or len(new) != 314 or set(new) - set(old) != extras or any(new.get(k) != v for k,v in old.items()):
++        raise ValueError('original TensorProto bytes/external ranges changed')
++    for boundary in ['input', 'output']:
++        if ([v.SerializeToString(deterministic=True) for v in getattr(source.graph,boundary)]
++                != [v.SerializeToString(deterministic=True) for v in getattr(graph.graph,boundary)]):
++            raise ValueError('native six-input/scores-only boundary changed')
++    custom = [n for n in graph.graph.node if n.domain]
++    if ({n.name for n in custom} != {'/airk_compact_gqa/'+str(i)+'/GQA' for i in range(28)}
++            or len(custom) != 28 or any(n.domain != 'com.microsoft' or n.op_type != 'GroupQueryAttention' for n in custom)):
++        raise ValueError('unreviewed custom-domain node; no generic domain exception')
++    if any(n.op_type in ('MatMulNBits','MatMulInteger','QuantizeLinear','DequantizeLinear') for n in graph.graph.node):
++        raise ValueError('quantized graph outside exact FP32 GQA route')
++    # The c79 source still passes the EXISTING whole-graph/value comparison
++    # against the authenticated old exporter. d2 is bound by exact bytes/proof.
++    return source, source_path
++
++def mapped_parameter_directory(tensor, request, profile, plan):
++    locations = [entry.value for entry in tensor.external_data if entry.key == 'location']
++    if not locations:
++        return None
++    if len(locations) != 1:
++        raise ValueError('ambiguous external parameter location')
++    location = locations[0]
++    if Path(location).name != location or Path(location).is_absolute() or '..' in location:
++        raise ValueError('external parameter location is not exact logical basename')
++    assets = [a for a in profile['assets'] if a['name'] == location and a['role'] == 'external_weights']
++    if len(assets) != 1 or location not in request['files']:
++        raise ValueError('external parameter has no exact native Core asset/file map')
++    path = regular(request['files'][location])
++    if (path.name != location or path.stat().st_size != assets[0]['bytes']
++            or plan['input_seals'].get(str(path)) != assets[0]['sha256']):
++        raise ValueError('external parameter does not bind actual owned original file')
++    return path.parent
++
++
+ def candidate_parameters(scorer, request, profile, plan):
+     import numpy as np
+     import onnx
+@@ -179,10 +248,12 @@
+     graph = onnx.load(str(graph_path), load_external_data=False)
+     original_graph_path = pinned(plan['original_export_graph'])
+     original_graph = onnx.load(str(original_graph_path), load_external_data=False)
+-    if graph_semantics(graph, graph_path.parent) != graph_semantics(original_graph, original_graph_path.parent):
+-        raise ValueError('actual candidate graph changed more than authenticated byte relocation/storage')
+-    del original_graph
+-    if any(node.domain or node.op_type in ('MatMulNBits', 'MatMulInteger', 'QuantizeLinear', 'DequantizeLinear') for node in graph.graph.node):
++    gqa = exact_gqa_context(plan, profile, digest(graph_path))
++    comparison, comparison_path = exact_gqa_source(graph, graph_path, profile, plan, onnx) if gqa else (graph, graph_path)
++    if graph_semantics(comparison, comparison_path.parent) != graph_semantics(original_graph, original_graph_path.parent):
++        raise ValueError('actual candidate source graph changed more than authenticated byte relocation/storage')
++    del original_graph, comparison
++    if not gqa and any(node.domain or node.op_type in ('MatMulNBits', 'MatMulInteger', 'QuantizeLinear', 'DequantizeLinear') for node in graph.graph.node):
+         raise ValueError('only actual FP32 Context candidate reconstruction is implemented')
+     tensors = {tensor.name: tensor for tensor in graph.graph.initializer}
+     nodes = {node.name: node for node in graph.graph.node}
+@@ -202,12 +273,16 @@
+         tensor = tensors.get(initializer)
+         if tensor is None or tensor.data_type != onnx.TensorProto.FLOAT:
+             raise ValueError('candidate FP32 parameter missing: ' + name)
+-        for entry in tensor.external_data:
+-            if entry.key == 'location':
+-                location = Path(entry.value)
+-                if location.name != entry.value or location.is_absolute() or (graph_path.parent / location).resolve() not in {Path(path).resolve() for path in request['files'].values()}:
+-                    raise ValueError('candidate external parameter escaped exact file map')
+-        actual = onnx.numpy_helper.to_array(tensor, base_dir=str(graph_path.parent))
++        if gqa:
++            directory = mapped_parameter_directory(tensor, request, profile, plan) or graph_path.parent
++        else:
++            for entry in tensor.external_data:
++                if entry.key == 'location':
++                    location = Path(entry.value)
++                    if location.name != entry.value or location.is_absolute() or (graph_path.parent / location).resolve() not in {Path(path).resolve() for path in request['files'].values()}:
++                        raise ValueError('candidate external parameter escaped exact file map')
++            directory = graph_path.parent
++        actual = onnx.numpy_helper.to_array(tensor, base_dir=str(directory))
+         source = actual.T if transpose else actual
+         expected = parameter.detach().cpu().numpy()
+         if source.dtype != np.float32 or source.shape != expected.shape or not np.array_equal(source, expected):
+@@ -244,6 +319,15 @@
+             raise RuntimeError('reference worker cannot launch another process or use the network')
+     sys.addaudithook(no_process_or_network)
+     request, template, profile, original = native_documents(plan)
++    if plan['kind'] == 'same_artifact':
++        model_assets = [a for a in profile['assets'] if a['role'] == 'model']
++        if len(model_assets) != 1:
++            raise ValueError('exact candidate graph required before Torch startup')
++        if exact_gqa_context(plan, profile, model_assets[0]['sha256']):
++            for value in plan['compact_gqa_binding'].values():
++                path = pinned(value)
++                if plan['input_seals'].get(str(path)) != value['sha256']:
++                    raise ValueError('GQA source/proof omitted before Torch startup')
+     if windows_sid() != plan['human_sid']:
+         raise ValueError('reference process is not the verified human SID')
+     for package, expected in plan['versions'].items():
+@@ -305,6 +389,8 @@
+               'original_reference_assets': original['original_reference_assets'], 'original_reference_files': original['original_reference_files'],
+               'rows': [], 'candidate_parameter_bindings': mappings, 'torch_forward_invocations': 0, 'complete': False,
+               'cuda_observation': cuda_observation, 'cpu_threads': torch.get_num_threads(), 'interop_threads': torch.get_num_interop_threads()}
++    if plan.get('compact_gqa_binding'):
++        result['compact_gqa_binding'] = plan['compact_gqa_binding']
+     destination = Path(destination)
+     with destination.open('x', encoding='utf-8') as stream:
+         json.dump(result, stream, indent=2)

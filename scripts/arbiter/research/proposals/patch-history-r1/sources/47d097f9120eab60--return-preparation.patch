@@ -1,0 +1,204 @@
+--- a/packages/vscode/src/explorerAssistance/tools.ts
++++ b/packages/vscode/src/explorerAssistance/tools.ts
+@@ -178,10 +178,17 @@
+         if (typeof input === 'string') { return { ok: false, code: 'INVALID_SCHEMA', detail: input }; }
+         const offset = Number(input.offset ?? 0), limit = Number(input.limit ?? 10), budget = Number(input.max_bytes ?? 8192);
+         const value = { ...this.identity(), templates: [] as object[], total: CORE_PACK.length, next_offset: null as number | null };
++        // Keep the original conservative prospective next_offset framing, but
++        // encode the empty envelope once and each candidate once. No growing
++        // array clone or repeated serialization of already admitted items.
++        let prospectiveBytes: number | undefined;
+         for (const entry of CORE_PACK.slice(offset, offset + limit)) {
+             const item = { template_id: entry.strategy.id, version: entry.strategy.version, title: entry.strategy.title, summary: entry.strategy.summary,
+                 category: entry.strategy.category, runnable: entry.runnable, ...(entry.reason ? { reason: entry.reason } : {}) };
+-            if (bytes({ ...value, templates: [...value.templates, item], next_offset: CORE_PACK.length }) > budget) { break; }
++            prospectiveBytes ??= bytes({ ...value, next_offset: CORE_PACK.length });
++            const candidateBytes = prospectiveBytes + bytes(item) + (value.templates.length ? 1 : 0);
++            if (candidateBytes > budget) { break; }
++            prospectiveBytes = candidateBytes;
+             value.templates.push(item);
+         }
+         if (offset + value.templates.length < CORE_PACK.length) { value.next_offset = offset + value.templates.length; }
+--- a/packages/vscode/src/explorerSuggestions.ts
++++ b/packages/vscode/src/explorerSuggestions.ts
+@@ -45,6 +45,10 @@
+     private readonly keys = new Map<string, string>();
+     private readonly recent: number[] = [];
+     private readonly listeners = new Set<() => void>();
++    // Only admitted immutable fields: status, binding checks, expiry sweep and
++    // application revisions remain live on every request. Weak keys follow the
++    // existing item lifetime without adding fields to returned Suggestion objects.
++    private readonly receiptProjections = new WeakMap<Suggestion, Readonly<Pick<ProposalReceipt, 'destination' | 'received_at' | 'expires_at'>>>();
+ 
+     constructor(private readonly context: StoreContext) {}
+ 
+@@ -59,19 +63,31 @@
+         for (const item of this.items.values()) {
+             if ((item.status === 'pending_review' || item.status === 'deferred') && item.expiresAt <= now) { item.status = 'expired'; changed = true; }
+         }
+-        const resolved = [...this.items.values()].filter(item => item.status !== 'pending_review' && item.status !== 'deferred').sort((a, b) => a.receivedAt - b.receivedAt);
+-        while (this.items.size > SUGGESTION_LIMITS.retained && resolved.length) {
+-            const oldest = resolved.shift()!;
+-            this.items.delete(oldest.id); this.keys.delete(oldest.draft.idempotencyKey); changed = true;
++        if (this.items.size > SUGGESTION_LIMITS.retained) {
++            const resolved = [...this.items.values()].filter(item => item.status !== 'pending_review' && item.status !== 'deferred').sort((a, b) => a.receivedAt - b.receivedAt);
++            while (this.items.size > SUGGESTION_LIMITS.retained && resolved.length) {
++                const oldest = resolved.shift()!;
++                this.items.delete(oldest.id); this.keys.delete(oldest.draft.idempotencyKey); changed = true;
++            }
+         }
+         if (changed) { this.changed(); }
+     }
+ 
++    private receiptProjection(item: Suggestion) {
++        let projection = this.receiptProjections.get(item);
++        if (!projection) {
++            projection = { destination: destinationOf(item.draft.body), received_at: new Date(item.receivedAt).toISOString(), expires_at: new Date(item.expiresAt).toISOString() };
++            this.receiptProjections.set(item, projection);
++        }
++        return projection;
++    }
++
+     private receipt(item: Suggestion): ProposalReceipt {
+-        return { schema_version: DRAFT_SCHEMA_VERSION, proposal_id: item.id, proposal_type: item.kind, status: item.status, destination: destinationOf(item.draft.body),
++        const projection = this.receiptProjection(item);
++        return { schema_version: DRAFT_SCHEMA_VERSION, proposal_id: item.id, proposal_type: item.kind, status: item.status, destination: projection.destination,
+             workspace_binding: item.binding, ...(item.targetRevision !== undefined ? { target_draft_revision: item.targetRevision } : {}),
+-            accepted: false, applied: item.status === 'applied', executed: false, received_at: new Date(item.receivedAt).toISOString(),
+-            expires_at: new Date(item.expiresAt).toISOString(), warnings: item.warnings };
++            accepted: false, applied: item.status === 'applied', executed: false, received_at: projection.received_at,
++            expires_at: projection.expires_at, warnings: item.warnings };
+     }
+ 
+     /** Dry-run admission checks. No Inbox, idempotency, TTL or rate state is changed. */
+@@ -138,13 +154,14 @@
+         this.sweep();
+         const item = this.items.get(id);
+         if (!item) { return undefined; }
++        const projection = this.receiptProjection(item);
+         const stale = item.binding !== this.context.binding(), status = stale && ['pending_review', 'deferred'].includes(item.status) ? 'conflicted' : item.status;
+         const current = this.targetRevision(item.kind);
+-        return { proposal_id: item.id, status, destination: destinationOf(item.draft.body), applied: status === 'applied', executed: false,
++        return { proposal_id: item.id, status, destination: projection.destination, applied: status === 'applied', executed: false,
+             reason: stale ? 'binding_changed' : item.reason ?? ({ pending_review: 'awaiting_user_review', deferred: 'deferred_by_user', applied: item.appliedRevision !== undefined ? 'applied_to_draft' : 'accepted_for_application', rejected: 'rejected_by_user', expired: 'ttl_expired', conflicted: 'target_changed' }[status]),
+             ...(item.targetRevision !== undefined ? { target_draft_revision: item.targetRevision } : {}),
+             ...(current !== undefined ? { current_target_revision: current } : {}), ...(item.appliedRevision !== undefined ? { applied_target_revision: item.appliedRevision } : {}),
+-            expires_at: new Date(item.expiresAt).toISOString() };
++            expires_at: projection.expires_at };
+     }
+ 
+     acknowledge(id: string, revision: number): boolean {
+--- a/packages/vscode/src/test/explorerAssistanceTools.test.ts
++++ b/packages/vscode/src/test/explorerAssistanceTools.test.ts
+@@ -9,7 +9,7 @@
+ import { HelpIndex } from '../explorerAssistance/help';
+ import { windowChannel } from '../explorerAssistance/attach';
+ import { AssistanceIpcHost } from '../explorerAssistanceHost';
+-import { ASSISTANCE_TOOLS } from '../explorerContracts';
++import { ASSISTANCE_SERVER_NAME, ASSISTANCE_TOOLS } from '../explorerContracts';
+ import { HandoffStore, HANDOFF_TTL_MS } from '../explorerHandoffs';
+ import { CORE_PACK, jsonBytes } from '../explorerStrategies';
+ import { SuggestionStore } from '../explorerSuggestions';
+@@ -129,3 +129,47 @@
+         session?.close(); host?.dispose(); await fs.promises.rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+     }
+ });
++
++
++test('template paging preserves the original serialized prospective budget at every boundary offline', async () => {
++    for (const version of ['1.8.0', '1.8.0-雪"\\\n']) {
++        const catalog = new HelpIndex({ catalogVersion: 1, extensionVersion: version, topics: [] });
++        const tools = new AssistanceTools(catalog, async () => { assert.fail('static template paging must stay offline'); });
++        const identity = { server: ASSISTANCE_SERVER_NAME, extension_version: version, catalog_version: 1 };
++        const items = CORE_PACK.map(entry => ({ template_id: entry.strategy.id, version: entry.strategy.version,
++            title: entry.strategy.title, summary: entry.strategy.summary, category: entry.strategy.category,
++            runnable: entry.runnable, ...(entry.reason ? { reason: entry.reason } : {}) }));
++        for (let offset = 0; offset <= items.length; offset++) {
++            const boundaries = new Set([1024, 32768]);
++            for (let count = 1; count <= Math.min(25, items.length - offset); count++) {
++                const size = jsonBytes({ ...identity, templates: items.slice(offset, offset + count), total: items.length, next_offset: items.length });
++                for (const budget of [size - 1, size, size + 1]) { if (budget >= 1024 && budget <= 32768) { boundaries.add(budget); } }
++            }
++            for (const budget of boundaries) {
++                // Serialized oracle retains the old conservative prospective
++                // next_offset, independently of the incremental byte calculation.
++                let admitted = 0;
++                while (admitted < Math.min(25, items.length - offset) && jsonBytes({ ...identity,
++                    templates: items.slice(offset, offset + admitted + 1), total: items.length, next_offset: items.length }) <= budget) { admitted++; }
++                const expected = { ...identity, templates: items.slice(offset, offset + admitted), total: items.length,
++                    next_offset: offset + admitted < items.length ? offset + admitted : null };
++                const reply = await tools.call('airk_explorer_templates_list', { offset, limit: 25, max_bytes: budget });
++                assert.ok(reply.ok);
++                assert.equal(JSON.stringify(reply.value), JSON.stringify(expected));
++            }
++        }
++    }
++});
++
++test('template paging never serializes a growing admitted array', async t => {
++    const tools = new AssistanceTools(index(), async () => { assert.fail('no live attachment'); });
++    const encode = JSON.stringify;
++    const envelopeLengths: number[] = [];
++    t.mock.method(JSON, 'stringify', (value: unknown, replacer?: unknown, space?: unknown) => {
++        if (value && typeof value === 'object' && 'templates' in value && Array.isArray(value.templates)) { envelopeLengths.push(value.templates.length); }
++        return Reflect.apply(encode, JSON, [value, replacer, space]) as string;
++    });
++    const reply = await tools.call('airk_explorer_templates_list', { limit: 25, max_bytes: 32768 });
++    assert.ok(reply.ok);
++    assert.deepEqual(envelopeLengths, [0]);
++});
+--- a/packages/vscode/src/test/explorerSuggestions.test.ts
++++ b/packages/vscode/src/test/explorerSuggestions.test.ts
+@@ -211,3 +211,52 @@
+     assert.ok(handlers.length > 100, 'suggestion handlers found');
+     assert.doesNotMatch(handlers, /control\.run|executeCommand|manage\.action/, 'resolving a suggestion only records the decision');
+ });
++
++
++test('receipt projection formats dates once while status, target and TTL remain live', t => {
++    const revisions = { planner: 2 };
++    const { store: inbox } = store({ revisions });
++    const input = { schema_version: '1.0', idempotency_key: 'immutable-receipt', title: 'Plan', expected_target_revision: 2,
++        tasks: [{ task_id: 'T1', title: 'Inspect' }] };
++    const dates = t.mock.method(Date.prototype, 'toISOString');
++    const first = inbox.submit('plan', input, CLIENT); assert.ok(first.ok);
++    assert.equal(dates.mock.callCount(), 2);
++    const again = inbox.submit('plan', input, CLIENT); assert.ok(again.ok);
++    assert.equal(JSON.stringify(again.receipt), JSON.stringify(first.receipt));
++    assert.ok(inbox.resolve(first.receipt.proposal_id, 'applied'));
++    revisions.planner = 3;
++    assert.ok(inbox.acknowledge(first.receipt.proposal_id, 3));
++    const applied = inbox.submit('plan', input, CLIENT); assert.ok(applied.ok);
++    assert.equal(applied.receipt.status, 'applied'); assert.equal(applied.receipt.applied, true);
++    assert.equal(applied.receipt.target_draft_revision, 2);
++    assert.equal(inbox.status(first.receipt.proposal_id)?.current_target_revision, 3);
++    assert.equal(inbox.status(first.receipt.proposal_id)?.applied_target_revision, 3);
++    assert.equal(applied.receipt.received_at, first.receipt.received_at);
++    assert.equal(applied.receipt.expires_at, first.receipt.expires_at);
++    assert.equal(dates.mock.callCount(), 2);
++    const ttl = store();
++    const pending = ttl.store.submit('search', search('projection-expiry'), CLIENT); assert.ok(pending.ok);
++    let notifications = 0;
++    ttl.store.onDidChange(() => { notifications++; });
++    ttl.advance(24 * 3600_000);
++    assert.equal(ttl.store.status(pending.receipt.proposal_id)?.status, 'expired');
++    assert.equal(notifications, 1);
++    assert.equal(ttl.store.status(pending.receipt.proposal_id)?.status, 'expired');
++    assert.equal(notifications, 1);
++});
++
++test('status avoids resolved sorting below retention and preserves oldest eviction above it', t => {
++    const { store: inbox, advance } = store();
++    const ids: string[] = [];
++    for (let index = 0; index <= SUGGESTION_LIMITS.retained; index++) {
++        advance(60_001);
++        const admitted = inbox.submit('search', search(`retained-${index}`), CLIENT); assert.ok(admitted.ok);
++        ids.push(admitted.receipt.proposal_id);
++        assert.ok(inbox.resolve(admitted.receipt.proposal_id, 'rejected'));
++    }
++    const sorting = t.mock.method(Array.prototype, 'sort');
++    assert.equal(inbox.status(ids[0]), undefined);
++    assert.equal(inbox.status(ids[1])?.status, 'rejected');
++    assert.equal(inbox.status(ids.at(-1)!)?.status, 'rejected');
++    assert.equal(sorting.mock.callCount(), 0);
++});

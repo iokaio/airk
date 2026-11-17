@@ -1,0 +1,140 @@
+--- a/crates/airk-cli/tests/combined_reads/split.rs
++++ b/crates/airk-cli/tests/combined_reads/split.rs
+@@ -249,6 +249,81 @@
+     Ok(operation)
+ }
+ 
++// Explicit local raw-failure export for this synthetic owned fixture only.
++// Stream/filter exact retained child IDs without allocating the complete log.
++fn split_raw_failures(f: &Fixture, snapshot: &SplitSnapshot) -> Value {
++    const LIMIT: usize = 65536;
++    struct Filter {
++        ids: Vec<String>,
++        line: Vec<u8>,
++        records: std::collections::VecDeque<Vec<u8>>,
++        bytes: usize,
++        oversized: bool,
++        truncated: bool,
++    }
++    impl std::io::Write for Filter {
++        fn write(&mut self, input: &[u8]) -> std::io::Result<usize> {
++            for byte in input {
++                if *byte == b'\n' {
++                    if !self.oversized
++                        && let Ok(value) = serde_json::from_slice::<Value>(&self.line)
++                        && value
++                            .pointer("/failure/job")
++                            .and_then(Value::as_str)
++                            .is_some_and(|job| self.ids.iter().any(|id| id == job))
++                    {
++                        self.line.push(b'\n');
++                        while self.bytes + self.line.len() > LIMIT {
++                            if let Some(old) = self.records.pop_front() {
++                                self.bytes -= old.len();
++                                self.truncated = true;
++                            } else {
++                                break;
++                            }
++                        }
++                        self.bytes += self.line.len();
++                        self.records.push_back(std::mem::take(&mut self.line));
++                    }
++                    self.line.clear();
++                    self.oversized = false;
++                } else if !self.oversized {
++                    if self.line.len() < LIMIT - 1 {
++                        self.line.push(*byte);
++                    } else {
++                        self.line.clear();
++                        self.oversized = true;
++                        self.truncated = true;
++                    }
++                }
++            }
++            Ok(input.len())
++        }
++        fn flush(&mut self) -> std::io::Result<()> {
++            Ok(())
++        }
++    }
++    let mut output = Filter {
++        ids: snapshot
++            .receipt
++            .jobs
++            .iter()
++            .rev()
++            .take(8)
++            .map(|child| child.job.to_string())
++            .collect(),
++        line: Vec::new(),
++        records: std::collections::VecDeque::new(),
++        bytes: 0,
++        oversized: false,
++        truncated: false,
++    };
++    let exported = airk_cli::service_logs::export_raw_to(&f.control, &mut output);
++    let retained: Vec<u8> = output.records.into_iter().flatten().collect();
++    json!({"exact_child_ids":output.ids,"retained_bytes":retained.len(),
++        "truncated":output.truncated,"raw_jsonl":String::from_utf8_lossy(&retained),
++        "export_error":exported.err().map(|error|format!("{error:#}"))})
++}
++
+ // Bounded read-only native queue/settings evidence, captured before fixture Drop.
+ // This does not replay a job, recover a journal, or inspect source document bytes.
+ fn stalled_native_diagnostics(f: &Fixture, snapshot: &SplitSnapshot) -> String {
+@@ -260,6 +335,21 @@
+         )?;
+         sql.busy_timeout(Duration::from_secs(2))?;
+         let native = registry.catalog_split_state(snapshot.receipt.operation_id)?;
++        // Retained split children can already be Failed/Canceled when the
++        // coordinator latches attention; pending-only SQL would hide the cause.
++        // Observe at most eight exact accepted child IDs, without retry/mutation.
++        let mut split_children = Vec::new();
++        for child in snapshot.receipt.jobs.iter().rev().take(8) {
++            let work = registry.configuration_work(child.job)?;
++            split_children.push(json!({
++                "reference": child,
++                "job": registry.job(child.job)?,
++                "configuration_operation": work.as_ref()
++                    .map(|work| serde_json::to_value(&work.request.configuration))
++                    .transpose()?.and_then(|value| value.get("operation").cloned()),
++                "saved_result": registry.configuration_result(child.job)?,
++            }));
++        }
+         let mut participants = Vec::new();
+         for registration in [
+             &snapshot.request.original_registration,
+@@ -313,7 +403,9 @@
+         };
+         Ok(
+             json!({"operation":snapshot.receipt.operation_id,"stage":snapshot.receipt.stage,
+-            "receipt_digest":snapshot.receipt_digest,"participants":participants,"witness_preparation":witness_preparation}),
++            "receipt_digest":snapshot.receipt_digest,"participants":participants,
++            "split_children":split_children,"split_children_truncated":snapshot.receipt.jobs.len()>8,
++            "witness_preparation":witness_preparation}),
+         )
+     };
+     let metadata =
+@@ -328,7 +420,9 @@
+         Ok(String::from_utf8_lossy(&tail).into_owned())
+     })()
+     .unwrap_or_else(|error| format!("service log unavailable: {error:#}"));
+-    json!({"native":metadata,"service_log_tail":log}).to_string()
++    json!({"native":metadata,"service_log_tail":log,
++        "private_fixture_raw_failures":split_raw_failures(f, snapshot)})
++    .to_string()
+ }
+ 
+ async fn terminal(
+@@ -396,9 +490,9 @@
+                     .finalization
+                     .as_ref()
+                     .is_none_or(|finalization| finalization.attention.is_none()),
+-            "native split needs attention: {}; service:{}",
++            "native split needs attention: {}; diagnostics:{}",
+             serde_json::to_string(&snapshot)?,
+-            fs::read_to_string(f.owner.path().join("service.log")).unwrap_or_default()
++            stalled_native_diagnostics(f, &snapshot)
+         );
+         if snapshot.finalization.as_ref().is_some_and(|finalization| {
+             finalization.progress == SplitFinalizationProgress::Complete

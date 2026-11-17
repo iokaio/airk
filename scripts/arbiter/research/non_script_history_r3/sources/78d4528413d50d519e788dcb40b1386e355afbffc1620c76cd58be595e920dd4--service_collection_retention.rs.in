@@ -1,0 +1,470 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Native bounded predecessor capability publication; no source or index mutation.
+use super::*;
+use crate::service::registry::catalog::setup::storage::{
+    SetupDirectory, SetupFileMode, file_identity,
+};
+use std::ffi::OsStr;
+
+pub(super) fn read_json<T: serde::de::DeserializeOwned + Serialize>(
+    pin: &SetupDirectory,
+    name: &str,
+    limit: u64,
+) -> Result<T> {
+    let bytes = pin.read_file(OsStr::new(name), limit)?;
+    let value: T = serde_json::from_slice(&bytes)?;
+    ensure!(
+        serde_json::to_vec(&value)? == bytes,
+        "noncanonical retained capability metadata"
+    );
+    Ok(value)
+}
+/// A paid temporary in the captured directory; Drop removes only its exact object.
+pub(crate) struct PreparedMarker {
+    name: String,
+    file: File,
+    pin: SetupDirectory,
+    published: bool,
+}
+impl PreparedMarker {
+    pub(crate) fn new(pin: &SetupDirectory, name: &str, bytes: &[u8]) -> Result<Self> {
+        let captured = pin.try_clone()?;
+        let file = match pin.open_file(OsStr::new(name), SetupFileMode::CreateNew) {
+            Ok(file) => file,
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|e| e.kind() == std::io::ErrorKind::AlreadyExists) =>
+            {
+                let existing = pin.open_file(OsStr::new(name), SetupFileMode::Read)?;
+                ensure!(
+                    pin.read_file(OsStr::new(name), bytes.len() as u64)? == bytes,
+                    "foreign or changed pending capability metadata"
+                );
+                return Ok(Self {
+                    name: name.into(),
+                    file: existing,
+                    pin: captured,
+                    published: false,
+                });
+            }
+            Err(error) => return Err(error),
+        };
+        let mut prepared = Self {
+            name: name.into(),
+            file,
+            pin: captured,
+            published: false,
+        };
+        prepared.file.write_all(bytes)?;
+        prepared.file.sync_all()?;
+        Ok(prepared)
+    }
+    pub(crate) fn publish(
+        &mut self,
+        pin: &SetupDirectory,
+        target: &str,
+        expected: &File,
+    ) -> Result<()> {
+        ensure!(
+            self.pin.identity()? == pin.identity()?,
+            "foreign retained publication directory"
+        );
+        pin.replace_file(
+            OsStr::new(&self.name),
+            &self.file,
+            OsStr::new(target),
+            expected,
+        )?;
+        self.published = true;
+        Ok(())
+    }
+}
+impl Drop for PreparedMarker {
+    fn drop(&mut self) {
+        if !self.published {
+            let _ = self
+                .pin
+                .unlink_file_if_identity(OsStr::new(&self.name), &self.file);
+        }
+    }
+}
+pub(super) fn install(
+    collection: &Collection,
+    store: &FileStore,
+    writer: &crate::WriterLock,
+    quota: &Quota,
+    contract: u32,
+    after_stable: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    let required = RequiredExtractionContract::try_from(contract)?;
+    crate::maintenance::check_writer(store, writer, quota)?;
+    quota.require_store_funding(store)?;
+    // Same ordering as native replacement: no new/recovered target may appear
+    // between this bounded roster and final lower-owner publication.
+    let _replacement = acquire_file(&collection.directory, "replacement.lock")?;
+    let _manifest = manifest_lock(&collection.directory)?;
+    let pin = SetupDirectory::open_canonical(&collection.directory)?;
+    let mut expected = pin.open_file(OsStr::new("service-owner.json"), SetupFileMode::Read)?;
+    let mut bytes = Vec::new();
+    (&mut expected)
+        .take(MAX_METADATA as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    ensure!(
+        bytes.len() <= MAX_METADATA,
+        "stable capability owner exceeds bound"
+    );
+    let mut owner: Owner = serde_json::from_slice(&bytes)?;
+    ensure!(
+        serde_json::to_vec(&owner)? == bytes
+            && owner_digest(&owner)? == collection.binding
+            && owner.root == collection.owner.root
+            && owner.data_root == collection.owner.data_root
+            && owner.collection == collection.owner.collection,
+        "stable retained owner changed"
+    );
+    let manifest: Manifest = read_json(&pin, "active.json", MAX_METADATA as u64)?;
+    ensure!(
+        manifest.version == 140
+            && manifest.owner == collection.binding
+            && manifest.retired.len() <= MAX_RETIRED,
+        "foreign retained selection manifest"
+    );
+    let mut slots = std::collections::BTreeSet::from([manifest.active]);
+    slots.extend(manifest.retired.iter().map(|r| r.slot));
+    ensure!(
+        slots.len() == manifest.retired.len() + 1,
+        "duplicate or active retired slot"
+    );
+    match pin.read_file(OsStr::new("replacement.json"), MAX_METADATA as u64) {
+        Ok(bytes) => {
+            let intent: Intent = serde_json::from_slice(&bytes)?;
+            ensure!(
+                serde_json::to_vec(&intent)? == bytes
+                    && intent.version == 140
+                    && intent.owner == collection.binding,
+                "foreign recoverable retention target"
+            );
+            slots.insert(intent.slot);
+        }
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            ()
+        }
+        Err(error) => return Err(error),
+    }
+    ensure!(
+        slots.len() <= MAX_RETIRED + 2,
+        "retained slot roster exceeds bound"
+    );
+    let incarnations = pin.open_dir(OsStr::new("incarnations"))?;
+    let entries = incarnations
+        .entries()?
+        .take(MAX_RETIRED + 3)
+        .collect::<Result<Vec<_>>>()?;
+    ensure!(
+        entries.len() <= MAX_RETIRED + 2,
+        "retained slot inventory exceeds bound"
+    );
+    let mut actual = std::collections::BTreeSet::new();
+    for name in entries {
+        let slot: Incarnation = name.to_str().context("non-UTF8 retained slot")?.parse()?;
+        ensure!(
+            slots.contains(&slot),
+            "unowned incarnation preserved during retention migration"
+        );
+        actual.insert(slot);
+    }
+    ensure!(
+        actual.contains(&manifest.active),
+        "active retained slot missing"
+    );
+    let active_pin = incarnations.open_dir(OsStr::new(&manifest.active.to_string()))?;
+    ensure!(
+        SetupDirectory::open_canonical(store.directory())?.identity()? == active_pin.identity()?,
+        "retention migration requires exact active slot"
+    );
+    // This is an idempotent already-installed capability check, NOT fresh
+    // absence or Ready proof. The exact native split owner may resume its own
+    // bootstrap; canonical current recovery still validates every existing byte.
+    if owner.required_extraction_contract == Some(required) && slots.len() == 1 {
+        match active_pin.open_file(OsStr::new("current-owner.json"), SetupFileMode::Read) {
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                if let Some(permit) = store.split_access.as_ref() {
+                    let _gate = Gate::exclusive_pinned_slot(store, writer, store, &pin)?;
+                    if permit.retained_policy_already_installed(store, &pin, &active_pin, quota)? {
+                        return Ok(());
+                    }
+                }
+            }
+            Ok(_) => (),
+            Err(error) => return Err(error),
+        }
+    }
+    let mut markers = Vec::new();
+    for slot in actual {
+        let candidate = collection.context_store(collection.slot(slot))?;
+        let candidate_pin = incarnations.open_dir(OsStr::new(&slot.to_string()))?;
+        ensure!(
+            SetupDirectory::open_canonical(candidate.directory())?.identity()?
+                == candidate_pin.identity()?,
+            "retained slot pathname changed"
+        );
+        let marker = candidate.prepare_extraction_contract(
+            store,
+            writer,
+            quota,
+            candidate_pin,
+            &pin,
+            &owner.root,
+            &owner.collection,
+            contract,
+        )?;
+        if slot == manifest.active && !marker.had_current() {
+            let permit = store
+                .split_access
+                .as_ref()
+                .context("fresh retention requires claimed DestinationBuild")?;
+            let funding = quota
+                .funding_use()
+                .context("fresh retention requires exact paid phase")?;
+            permit.validate_funding_use(funding)?;
+            ensure!(
+                funding.phase.purpose
+                    == airk_core::catalog_split::SplitJobPurpose::DestinationBuild,
+                "only exact DestinationBuild can initialize retained policy"
+            );
+            permit.validate_pinned_store(store, &pin)?;
+        }
+        markers.push(marker);
+    }
+    // Every native writer/Gate and exact expected header is held before ANY
+    // effect. A crash here leaves only stricter capability metadata, never new
+    // policy/profile bytes or an altered publication. Retry seals all slots.
+    owner.required_extraction_contract = Some(required);
+    match pin.open_file(
+        OsStr::new(".service-metadata-retention-pending"),
+        SetupFileMode::Read,
+    ) {
+        Ok(file) => {
+            let prior: Owner = read_json(
+                &pin,
+                ".service-metadata-retention-pending",
+                MAX_METADATA as u64,
+            )?;
+            ensure!(
+                owner_digest(&prior)? == collection.binding
+                    && prior.root == owner.root
+                    && prior.data_root == owner.data_root
+                    && prior.collection == owner.collection
+                    && prior.required_extraction_contract == Some(required),
+                "foreign pending stable extraction capability"
+            );
+            pin.unlink_file_if_identity(OsStr::new(".service-metadata-retention-pending"), &file)?;
+        }
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            ()
+        }
+        Err(error) => return Err(error),
+    }
+    let bytes = serde_json::to_vec(&owner)?;
+    let reservation = quota.reserve(&owner.collection, MAX_METADATA as u64 * 2)?;
+    reservation.charge(bytes.len() as u64)?;
+    let mut prepared = PreparedMarker::new(&pin, ".service-metadata-retention-pending", &bytes)?;
+    ensure!(
+        SetupDirectory::open_canonical(&collection.directory)?.identity()? == pin.identity()?,
+        "retained collection rebound"
+    );
+    ensure!(
+        file_identity(&pin.open_file(OsStr::new("service-owner.json"), SetupFileMode::Read)?)?
+            == file_identity(&expected)?,
+        "retained stable owner replaced before commit"
+    );
+    prepared.publish(&pin, "service-owner.json", &expected)?;
+    after_stable()?;
+    for marker in &mut markers {
+        marker.publish()?;
+    }
+    ensure!(
+        SetupDirectory::open_canonical(&collection.directory)?.identity()? == pin.identity()?,
+        "retention collection pathname changed before configuration handoff"
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::current::CurrentScope;
+    fn observed_contract(path: &Path) -> Result<serde_json::Value> {
+        let value: serde_json::Value = serde_json::from_slice(&fs::read(path)?)?;
+        Ok(value["required_extraction_contract"].clone())
+    }
+    #[test]
+    fn all_recoverable_slot_readers_refuse_then_stable_interruption_retries_without_publication_change()
+    -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let base = temporary.path().canonicalize()?;
+        let source = base.join("source");
+        let data = base.join("data");
+        fs::create_dir(&source)?;
+        fs::create_dir(&data)?;
+        fs::write(source.join("original.rs"), b"pub struct Original;")?;
+        let root = source.to_str().context("fixture root UTF8")?;
+        let first = Incarnation::from_bytes([101; 16]);
+        let second = Incarnation::from_bytes([102; 16]);
+        let collection = Collection::initialize(&data, root, "fixture", first)?;
+        let active = collection.selected_store()?;
+        let token = super::super::tests::initialize(&active, root, first)?;
+        let replacement =
+            collection.begin_replacement(second, Sha256Digest::from_bytes([103; 32]))?;
+        let candidate = replacement.store();
+        super::super::tests::initialize(&candidate, root, second)?;
+        drop(replacement); // Actual durable replacement intent survives ownership loss.
+        let candidate_scope = CurrentScope {
+            root: root.into(),
+            collection: "fixture".into(),
+            incarnation: second,
+        };
+        let read = candidate.current_read(&candidate_scope)?;
+        let writer = active.lock()?;
+        let quota = Quota::open_service(&data)?;
+        let stable_before = fs::read(collection.directory.join("service-owner.json"))?;
+        let active_before = fs::read(active.directory().join("current-owner.json"))?;
+        let candidate_before = fs::read(candidate.directory().join("current-owner.json"))?;
+        let refused = install(&collection, &active, &writer, &quota, 3, || Ok(())).unwrap_err();
+        assert!(
+            refused
+                .downcast_ref::<crate::current::CurrentGateContention>()
+                .is_some()
+        );
+        assert_eq!(
+            fs::read(collection.directory.join("service-owner.json"))?,
+            stable_before
+        );
+        assert_eq!(
+            fs::read(active.directory().join("current-owner.json"))?,
+            active_before
+        );
+        assert_eq!(
+            fs::read(candidate.directory().join("current-owner.json"))?,
+            candidate_before
+        );
+        drop(read);
+        let interrupted = install(&collection, &active, &writer, &quota, 3, || {
+            anyhow::bail!("injected exact stable-before-lower interruption")
+        });
+        assert!(interrupted.is_err());
+        assert_eq!(
+            observed_contract(&collection.directory.join("service-owner.json"))?,
+            3
+        );
+        assert_eq!(
+            fs::read(active.directory().join("current-owner.json"))?,
+            active_before
+        );
+        assert_eq!(
+            fs::read(candidate.directory().join("current-owner.json"))?,
+            candidate_before
+        );
+        assert!(
+            !active
+                .directory()
+                .join(".current-retention-pending")
+                .exists()
+        );
+        assert!(
+            !candidate
+                .directory()
+                .join(".current-retention-pending")
+                .exists()
+        );
+        install(&collection, &active, &writer, &quota, 3, || Ok(()))?;
+        assert_eq!(
+            observed_contract(&active.directory().join("current-owner.json"))?,
+            3
+        );
+        assert_eq!(
+            observed_contract(&candidate.directory().join("current-owner.json"))?,
+            3
+        );
+        let active_scope = CurrentScope {
+            root: root.into(),
+            collection: "fixture".into(),
+            incarnation: first,
+        };
+        assert_eq!(active.current_read(&active_scope)?.token()?, token);
+        assert!(required_extraction_contract_for_scope(&active, &candidate_scope).is_err());
+        assert_eq!(
+            required_extraction_contract_for_scope(&active, &active_scope)?.map(u32::from),
+            Some(3)
+        );
+        drop(writer);
+        // Real recovery classifies the abandoned slot but cannot replace the
+        // protected active publication. Both retained headers stay sealed.
+        collection.recover_abandoned_replacement()?;
+        assert_eq!(collection.manifest()?.active, first);
+        assert!(
+            collection
+                .manifest()?
+                .retired
+                .iter()
+                .any(|row| row.slot == second)
+        );
+        assert_eq!(
+            observed_contract(&candidate.directory().join("current-owner.json"))?,
+            3
+        );
+        assert_eq!(
+            fs::read(source.join("original.rs"))?,
+            b"pub struct Original;"
+        );
+        Ok(())
+    }
+    #[test]
+    fn unowned_slot_and_malformed_pending_marker_are_preserved_before_capability_effect()
+    -> Result<()> {
+        for unknown_slot in [false, true] {
+            let temporary = tempfile::tempdir()?;
+            let base = temporary.path().canonicalize()?;
+            let source = base.join("source");
+            let data = base.join("data");
+            fs::create_dir(&source)?;
+            fs::create_dir(&data)?;
+            let root = source.to_str().unwrap();
+            let slot = Incarnation::from_bytes([104; 16]);
+            let collection = Collection::initialize(&data, root, "fixture", slot)?;
+            let active = collection.selected_store()?;
+            super::super::tests::initialize(&active, root, slot)?;
+            let preserved = if unknown_slot {
+                let foreign = collection.slot(Incarnation::from_bytes([105; 16]));
+                fs::create_dir(&foreign)?;
+                foreign.join("source.txt")
+            } else {
+                active.directory().join(".current-retention-pending")
+            };
+            fs::write(&preserved, b"unknown bytes must remain")?;
+            let before = fs::read(collection.directory.join("service-owner.json"))?;
+            let writer = active.lock()?;
+            let quota = Quota::open_service(&data)?;
+            assert!(install(&collection, &active, &writer, &quota, 3, || Ok(())).is_err());
+            assert_eq!(
+                fs::read(collection.directory.join("service-owner.json"))?,
+                before
+            );
+            assert_eq!(fs::read(&preserved)?, b"unknown bytes must remain");
+        }
+        Ok(())
+    }
+}

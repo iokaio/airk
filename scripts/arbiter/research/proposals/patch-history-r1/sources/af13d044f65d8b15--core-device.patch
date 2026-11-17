@@ -1,0 +1,1382 @@
+--- a/crates/airk-core/src/arbiter/CONTRACT.md
++++ b/crates/airk-core/src/arbiter/CONTRACT.md
+@@ -993,3 +993,41 @@
+ the source/output identities. Other environment values do not authorize a write.
+ The terminal budget/source/acceptance emitters remain separately explicit and
+ never confer model or publication qualification.
++
++## D08 versioned GPU device contracts and automatic selection (G1)
++
++# D08 G1 PRIVATE contract proposal
++
++PRIVATE, uncompiled and unapplied. Root approval of D08 does not approve an unspecified encoding. Review these exact Rust definitions before implementation. No existing profile/fixture/receipt/source/vector identity is rewritten.
++
++## Descriptor identity and compatibility
++Profile gains only omitted-when-None device_execution, schema airk.arbiter.device-execution/1. All CPU producers supply None; existing CPU serializer bytes, runtime constant, CpuFit tiers and canonical/digest rules remain unchanged. GPU descriptors require explicit onnxruntime-cuda|directml|coreml/1.30.0 runtime, cpu_fit=None, separate host_fit, exact model graphSHA, immutable runtime_build/compatibility_policy/provider_options/math_policy hashes, precision, placement and measured capacity/headroom. No graph/precision substitution within one identity. Compiler/tokenizer/calibration/task-policy/outputABI invariants still apply; FP32 score ABI stays. New GPU graph/profile/manifest/calibration and per-target receipts have distinct identities. The current publication owner still computes Profile.manifest; this module never invents or grants publication/qualification authority.
++
++Execution identity is backend runtime + /device-execution/ + Core framed_digest(domain airk.arbiter.device-execution/1, field compact Rust-struct field-order JSON of DeviceExecution, no newline). Actual adapter/driver/dependent-library observations remain bound separately in native receipts. compatibility_policy hashes resolve ONLY through authenticated compiled native predicates checking OS/arch/vendor/device-class/driver/runtime/API/operator/shape constraints, never a passed boolean or adapter name alone. Exact GPU kernel math/options, including TF32, are bound. Enum inclusion does not implement or qualify a backend.
++
++StrictGpu requires registration error_on_failure, no explicit CPU EP with disable_cpu_ep_fallback=1, and full optimized graph/subgraph placement evidence. BoundedHybrid binds an exact reviewed native allowed-CPU-node policy; unexpected CPU compute refuses. Normal I/O transfers or CPU-memory scalar inputs are separately measured, not falsely counted as CPU compute. CUDA/DML/CoreML eligibility needs its own tested compatibility class; A6000 does not qualify unrelated GPUs.
++
++## Exactly three model slots, multiple variants
++DeviceCatalog is a new authenticated compiled sidecar schema airk.arbiter.device-catalog/1 alongside unchanged catalog/2. Fields focus/context_compact/context_large are nonempty lists of exact {manifest,execution_identity}; they are exactly existing Focus/Compact/Large families, never extra models. Each resolves only to an owning native Profile of the exact ModelChoice; foreign/missing/duplicate/incorrect-identity refs and unknown keys refuse. Total variant refs <= existing catalog16 bound. Catalog data is not download, source or compute authority.
++
++Existing final promoter remains unchanged and strict in this proposal. Later integration must retain exactly3 model slots and independently qualify EVERY extra variant for target/runtime/placement/numerical/resource/CAL/task/asset custody. GPU listing, Profile.validate or a claimed qualification digest never bypasses final promotion, native release admission, compiled download closure or private EvaluationOwner limits. Until reviewed variant-aware consumers exist, production GPU admission remains refused.
++
++## Configuration/status encodings
++New configuration/4 preserves installation/catalog/revision and independent focus/context {enabled,selected_model,device_policy,indexes}. New disabled settings default Auto. Stages stay off and enrollment/consent is unchanged. Explicit current configuration/3 -> /4 migration resolves exact old selected_profile through authenticated CPU catalog, preserves selected model, all consent/enrollments, increments revision once under the existing atomic actor, and sets Auto for BOTH stages under the explicit D08 user decision. Configuration/3 had no explicit device preference, so this preserves exact model slot, enabled state, consent and enrollment while allowing ONLY a fully qualified fitting GPU variant. Original CPU profile/receipt bytes remain historical and unchanged. Existing explicit configuration/4 Cpu remains Cpu on load/save; migration applies only to /3, never to /4. Old config3 reader/writer bytes remain unchanged, unknown schemas refuse, old /1,/2 repair policy stays unchanged. Missing/foreign profile, installation/catalog mismatch or revision overflow refuses. Migration function here is data-only; the existing atomic configuration owner must authenticate and commit it.
++
++DeviceSelection schema airk.arbiter.device-status/1 reports model/policy, actual selected manifest/execution/adapter/capabilityEpoch and ordered typed candidate rejections. It is a new proposed status subrecord, not a silent rewrite of status/2/advice/scope. Exact parent mounting/version/generated-view decisions are still required before public use; no handwritten TS/Python DTOs. Existing CPU-only advice/status validators stay strict until their owning reviewed extension.
++
++## Observations, admission and fallback
++Core AdvisoryCandidate and DeviceSelection are explicitly advisory diagnostic data, not native admission, qualification, source or execution authority. There is NO constructor deriving qualification from a deserialized Profile, target string or native_rejection=None. These values cannot materialize ExecutionProfile, OptionalReservation/OptionalReuse, NativeInferenceOwner, ResidentPermit or ServiceLease. No production Auto path is implemented in this G1 patch, and current native CPU/release/evaluation/source/consent gates remain in force. Production Auto must remain REFUSED until the owning Inference lane retains actual admitted ExecutionProfile plus authentic native runtime/device/capacity observation and real host/device reservation witnesses. See NATIVE-BRIDGE-REQUIRED.md for exact existing owners and blockers. Do not substitute a private boolean, a claimed qualification digest, pure metadata validation or successful allocation for those capabilities.
++
++Scope-wide AuthorityChanged, SettlementUnknown and DeadlineExpired terminate the WHOLE selection operation with selected=None and operation_failure set. They are not per-adapter failures and never fall through to CPU or another GPU, including forcedCpu. Candidate-local compatibility/capacity/init failures may be considered for same-model CPU fallback only after the native owner establishes the operation-wide gates. Zero remaining original time also stops globally.
++Auto uses only the same selected model, GPU priority CUDA then DirectML then CoreML, stable adapter key then profile digest. This ordering is deterministic policy, not a speed claim. If all GPU candidates refuse, a separately qualified currently-fitting CPU variant is selected with exact rejected-GPU reasons retained. Cpu skips GPU and records ForcedCpu. Missing/failing CPU produces typed unavailable, never Compact-for-Large or an optional MiniLM substitution. Ordinary bundled MiniLM is unaffected. NoGPU, unqualified, target/runtime/driver/device/graph unsupported, unknown/low memory, CPU-fit, init/allocation/circuit/stale/authority/deadline/settlement states are typed.
++
++Device capacity uses actual free observation, measured peak and explicit headroom. Subtract ONLY pending broker reservations not represented in actual allocated usage. Dedicated VRAM requires separate host RAM admission too. Unified memory uses measured_joint_peak for BOTH optional stages/MiniLM/host work in ONE pool; never add duplicated host+device reservations. Free memory races; native broker ownership and honest allocation refusal remain mandatory. Arena gpu_mem_limit is not totalVRAM. Unknown telemetry refuses optional GPU. Keep unrelated applications/nonselected devices untouched.
++
++Recheck source/consent/configuration/epoch/capacity and original deadline before actual dispatch. Before work, a GPU refusal may choose CPU within the SAME remaining budget. After native/device work begins, same-request CPU fallback requires positively observed real settlement, current authority and remaining original budget plus actual readmission; otherwise preserve first failure and held charges/pins until true settlement, and prefer CPU for subsequent fitting work. No uncertain replay, invented completion, unknown-work refund, retries-to-green or renewed timeout. Broken-provider circuit key includes adapter/driver/runtime/configuration epoch and invalidates only on relevant change. Failed Large CPU evidence is not a fallback.
++
++## Integration remains pending
++No live changes, native/model runs or Cargo. New Profile field requires mechanical None at all existing Rust literal producers before compile and exact retained serialization controls. This proposal does not change catalog2/ProfileStatus/config3/advice/finalpromoter/vector formats. Pending owners must implement authenticated runtime compatibility, hardware/fit observers, actual reservations and device synchronization, scorer/provider/initializer support, atomic config4/status transport mounting, generated clients and full variant-aware promotion. Public operation remains CPU and automatic GPU selection remains UNIMPLEMENTED/REFUSED until those are implemented and independently qualified. Do not apply the new format before Root approval of this contract and consumer plan.
++
++R3 materialization correction: catalog validation and requested profile materialization share ONE native descriptor resolution pass; materialization returns the exact immutable reference that passed model/manifest/execution validation. Resolver interior mutation cannot hand off a second unchecked reference. All legacy CPU literal producers receive only device_execution:None, preserving exact bytes/EOL otherwise. Source and test changes remain PRIVATE, uncompiled and unapplied.
+--- /dev/null
++++ b/crates/airk-core/src/arbiter/device/tests.rs
+@@ -0,0 +1,625 @@
++// SPDX-License-Identifier: Apache-2.0
++use super::*;
++fn candidate(id: u8, gpu: bool, rejection: Option<SelectionReason>) -> AdvisoryCandidate {
++    AdvisoryCandidate {
++        manifest: Sha256Digest::from_bytes([id; 32]),
++        model: SelectedModel::ContextCompact,
++        execution_identity: if gpu {
++            "literal-cuda-execution"
++        } else {
++            "literal-cpu-execution"
++        }
++        .into(),
++        backend: gpu.then_some(GpuBackend::Cuda),
++        adapter_key: if gpu {
++            format!("adapter-{id}")
++        } else {
++            "cpu".into()
++        },
++        capability_epoch: 7,
++        rejection,
++    }
++}
++#[test]
++fn auto_prefers_gpu_and_forced_cpu_is_explicit() -> Result<()> {
++    let rows = [candidate(2, false, None), candidate(1, true, None)];
++    let auto = select(
++        SelectedModel::ContextCompact,
++        DevicePolicy::Auto,
++        7,
++        120_000_000,
++        &rows,
++    )?;
++    assert_eq!(
++        auto.selected.unwrap().manifest,
++        Sha256Digest::from_bytes([1; 32])
++    );
++    let cpu = select(
++        SelectedModel::ContextCompact,
++        DevicePolicy::Cpu,
++        7,
++        120_000_000,
++        &rows,
++    )?;
++    assert_eq!(
++        cpu.selected.unwrap().manifest,
++        Sha256Digest::from_bytes([2; 32])
++    );
++    assert_eq!(cpu.reasons[0].reason, SelectionReason::ForcedCpu);
++    Ok(())
++}
++#[test]
++fn all_gpu_pre_dispatch_failures_use_same_model_cpu_with_exact_reason() -> Result<()> {
++    for reason in [
++        SelectionReason::Unqualified,
++        SelectionReason::TargetUnsupported,
++        SelectionReason::RuntimeUnavailable,
++        SelectionReason::DriverUnsupported,
++        SelectionReason::DeviceUnsupported,
++        SelectionReason::GraphUnsupported,
++        SelectionReason::ProviderInitializationFailed,
++        SelectionReason::AllocationFailed,
++        SelectionReason::DeviceMemoryUnknown,
++        SelectionReason::DeviceMemoryInsufficient,
++        SelectionReason::HostMemoryUnknown,
++        SelectionReason::HostMemoryInsufficient,
++        SelectionReason::CircuitOpen,
++    ] {
++        let rows = [candidate(1, true, Some(reason)), candidate(2, false, None)];
++        let result = select(
++            SelectedModel::ContextCompact,
++            DevicePolicy::Auto,
++            7,
++            100,
++            &rows,
++        )?;
++        assert_eq!(
++            result.selected.unwrap().manifest,
++            Sha256Digest::from_bytes([2; 32])
++        );
++        assert_eq!(result.reasons[0].reason, reason);
++    }
++    Ok(())
++}
++#[test]
++fn cpu_fit_failure_and_absent_cpu_never_substitute_another_model() -> Result<()> {
++    let rows = [
++        candidate(1, true, Some(SelectionReason::GraphUnsupported)),
++        candidate(2, false, Some(SelectionReason::CpuFitInsufficient)),
++    ];
++    let result = select(
++        SelectedModel::ContextCompact,
++        DevicePolicy::Auto,
++        7,
++        100,
++        &rows,
++    )?;
++    assert!(result.selected.is_none());
++    assert_eq!(
++        result.reasons[1].reason,
++        SelectionReason::CpuFitInsufficient
++    );
++    let result = select(
++        SelectedModel::ContextCompact,
++        DevicePolicy::Auto,
++        7,
++        100,
++        &rows[..1],
++    )?;
++    assert!(result.selected.is_none());
++    assert_eq!(
++        result.reasons.last().unwrap().reason,
++        SelectionReason::NoQualifiedCpu
++    );
++    let mut foreign = candidate(3, false, None);
++    foreign.model = SelectedModel::ContextLarge;
++    assert!(
++        select(
++            SelectedModel::ContextCompact,
++            DevicePolicy::Auto,
++            7,
++            100,
++            &[foreign]
++        )
++        .is_err()
++    );
++    Ok(())
++}
++#[test]
++fn deterministic_adapter_order_and_generation_revalidation() -> Result<()> {
++    let rows = [
++        candidate(2, true, None),
++        candidate(1, true, None),
++        candidate(3, false, None),
++    ];
++    assert_eq!(
++        select(
++            SelectedModel::ContextCompact,
++            DevicePolicy::Auto,
++            7,
++            100,
++            &rows
++        )?
++        .selected
++        .unwrap()
++        .manifest,
++        Sha256Digest::from_bytes([1; 32])
++    );
++    let result = select(
++        SelectedModel::ContextCompact,
++        DevicePolicy::Auto,
++        8,
++        100,
++        &rows,
++    )?;
++    assert!(result.selected.is_none());
++    assert!(
++        result
++            .reasons
++            .iter()
++            .all(|row| row.reason == SelectionReason::ObservationStale)
++    );
++    assert!(
++        select(
++            SelectedModel::ContextCompact,
++            DevicePolicy::Auto,
++            7,
++            100,
++            &[candidate(1, true, None), candidate(1, true, None)]
++        )
++        .is_err()
++    );
++    Ok(())
++}
++#[test]
++fn original_deadline_and_uncertain_settlement_forbid_replay() -> Result<()> {
++    let result = select(
++        SelectedModel::ContextCompact,
++        DevicePolicy::Auto,
++        7,
++        0,
++        &[candidate(1, true, None)],
++    )?;
++    assert!(result.selected.is_none());
++    assert_eq!(result.reasons[0].reason, SelectionReason::DeadlineExpired);
++    assert_eq!(
++        fallback_permitted(true, false, true, 100),
++        Err(SelectionReason::SettlementUnknown)
++    );
++    assert_eq!(
++        fallback_permitted(true, true, true, 0),
++        Err(SelectionReason::DeadlineExpired)
++    );
++    assert_eq!(
++        fallback_permitted(false, false, false, 100),
++        Err(SelectionReason::AuthorityChanged)
++    );
++    assert_eq!(fallback_permitted(true, true, true, 100), Ok(()));
++    Ok(())
++}
++#[test]
++fn device_memory_is_checked_joint_capacity_not_arena_limit() -> Result<()> {
++    assert_eq!(
++        DeviceMemory::Dedicated {
++            measured_peak_bytes: 10,
++            headroom_bytes: 2
++        }
++        .required_bytes()?,
++        12
++    );
++    assert_eq!(
++        DeviceMemory::Unified {
++            measured_joint_peak_bytes: 20,
++            headroom_bytes: 3
++        }
++        .required_bytes()?,
++        23
++    );
++    assert!(
++        DeviceMemory::Dedicated {
++            measured_peak_bytes: u64::MAX,
++            headroom_bytes: 1
++        }
++        .required_bytes()
++        .is_err()
++    );
++    assert!(
++        DeviceMemory::Unified {
++            measured_joint_peak_bytes: 0,
++            headroom_bytes: 1
++        }
++        .required_bytes()
++        .is_err()
++    );
++    Ok(())
++}
++#[test]
++fn default_auto_and_unknown_wire_fields_refuse() -> Result<()> {
++    assert_eq!(DevicePolicy::default(), DevicePolicy::Auto);
++    assert!(serde_json::from_str::<DevicePolicy>(r#""gpu_only""#).is_err());
++    assert!(
++        serde_json::from_str::<PlacementPolicy>(r#"{"mode":"strict_gpu","allow_cpu":true}"#)
++            .is_err()
++    );
++    assert!(
++        serde_json::from_str::<DeviceMemory>(
++            r#"{"kind":"dedicated","measured_peak_bytes":1,"headroom_bytes":1,"gpu_mem_limit":2}"#
++        )
++        .is_err()
++    );
++    assert!(serde_json::from_str::<DeviceCatalog>(r#"{"schema":"airk.arbiter.device-catalog/1","focus":[],"context_compact":[],"context_large":[],"fourth":[]}"#).is_err());
++    Ok(())
++}
++
++#[test]
++fn capacity_unknown_race_and_unified_accounting_are_explicit() -> Result<()> {
++    let requirement = DeviceMemory::Dedicated {
++        measured_peak_bytes: 10,
++        headroom_bytes: 2,
++    };
++    assert_eq!(
++        device_capacity_refusal(&requirement, None, 0)?,
++        Some(SelectionReason::DeviceMemoryUnknown)
++    );
++    assert_eq!(device_capacity_refusal(&requirement, Some(12), 0)?, None);
++    assert_eq!(
++        device_capacity_refusal(&requirement, Some(12), 1)?,
++        Some(SelectionReason::DeviceMemoryInsufficient)
++    );
++    assert_eq!(
++        device_capacity_refusal(&requirement, Some(1), u64::MAX)?,
++        Some(SelectionReason::DeviceMemoryInsufficient)
++    );
++    let unified = DeviceMemory::Unified {
++        measured_joint_peak_bytes: 10,
++        headroom_bytes: 2,
++    };
++    assert_eq!(device_capacity_refusal(&unified, Some(12), 0)?, None);
++    Ok(())
++}
++#[test]
++fn cpu_profile_omission_roundtrip_and_explicit_disabled_migration() -> Result<()> {
++    let profile: Profile = serde_json::from_slice(include_bytes!(
++        "../../../../../fixtures/arbiter/profile-downloads.json"
++    ))?;
++    profile.validate()?;
++    assert!(profile.device_execution.is_none());
++    let serialized = serde_json::to_value(&profile)?;
++    assert!(serialized.get("device_execution").is_none());
++    assert_eq!(
++        profile.device_execution_identity()?,
++        profile
++            .cpu_fit
++            .clone()
++            .unwrap_or_default()
++            .runtime_identity()?
++    );
++    let legacy: Configuration = serde_json::from_str(
++        r#"{"schema":"airk.arbiter.configuration/3","installation":"0101010101010101010101010101010101010101010101010101010101010101","catalog":"02020202020202020202020202020202","revision":1,"focus":{"enabled":false,"selected_profile":null,"indexes":[]},"context":{"enabled":false,"selected_profile":null,"indexes":[]}}"#,
++    )?;
++    let before = legacy.canonical_bytes()?;
++    let migrated = DeviceConfiguration::migrate_legacy(&legacy, |_| None)?;
++    assert_eq!(migrated.focus.device_policy, DevicePolicy::Auto);
++    assert_eq!(migrated.context.device_policy, DevicePolicy::Auto);
++    assert!(!migrated.focus.enabled && !migrated.context.enabled);
++    assert_eq!(migrated.revision, legacy.revision + 1);
++    assert_eq!(legacy.canonical_bytes()?, before);
++    assert_eq!(
++        DeviceStageConfiguration::disabled().device_policy,
++        DevicePolicy::Auto
++    );
++    Ok(())
++}
++
++#[test]
++fn gpu_execution_identity_binds_every_policy_and_cpu_runtime_cannot_impersonate_it() -> Result<()> {
++    let mut profile: Profile = serde_json::from_slice(include_bytes!(
++        "../../../../../fixtures/arbiter/profile-downloads.json"
++    ))?;
++    let pin = Sha256Digest::from_bytes([7; 32]);
++    let execution = DeviceExecution {
++        schema: DEVICE_EXECUTION_SCHEMA.into(),
++        backend: GpuBackend::Cuda,
++        runtime_build: pin,
++        compatibility_policy: pin,
++        provider_options: pin,
++        math_policy: pin,
++        precision: DevicePrecision::Mixed,
++        placement: PlacementPolicy::StrictGpu,
++        graph: profile
++            .assets
++            .iter()
++            .find(|asset| asset.role == AssetRole::Model)
++            .unwrap()
++            .sha256,
++        host_fit: CpuFit::default(),
++        memory: DeviceMemory::Dedicated {
++            measured_peak_bytes: 10,
++            headroom_bytes: 2,
++        },
++    };
++    let identity = execution.execution_identity()?;
++    assert!(identity.starts_with("onnxruntime-cuda/1.30.0/device-execution/"));
++    let mut changed = execution.clone();
++    changed.math_policy = Sha256Digest::from_bytes([8; 32]);
++    assert_ne!(identity, changed.execution_identity()?);
++    changed = execution.clone();
++    changed.precision = DevicePrecision::Float16;
++    assert_ne!(identity, changed.execution_identity()?);
++    changed = execution.clone();
++    changed.placement = PlacementPolicy::BoundedHybrid { policy: pin };
++    assert_ne!(identity, changed.execution_identity()?);
++    profile.device_execution = Some(execution);
++    assert!(profile.validate().is_err()); // legacy CPU identity is never reinterpreted
++    profile.device_execution = None;
++    profile.runtime = "onnxruntime-cuda/1.30.0".into();
++    assert!(profile.validate().is_err());
++    Ok(())
++}
++#[test]
++fn three_slot_catalog_requires_every_slot_and_canonical_resolution() -> Result<()> {
++    let empty = DeviceCatalog {
++        schema: DEVICE_CATALOG_SCHEMA.into(),
++        focus: vec![],
++        context_compact: vec![],
++        context_large: vec![],
++    };
++    assert!(empty.validate(|_| None).is_err());
++    let mut profile: Profile = serde_json::from_slice(include_bytes!(
++        "../../../../../fixtures/arbiter/profile-downloads.json"
++    ))?;
++    profile.cpu_fit = Some(CpuFit::default());
++    let row = VariantReference {
++        manifest: profile.manifest,
++        execution_identity: profile.device_execution_identity()?,
++    };
++    let bad = DeviceCatalog {
++        schema: DEVICE_CATALOG_SCHEMA.into(),
++        focus: vec![row.clone()],
++        context_compact: vec![row.clone()],
++        context_large: vec![row],
++    };
++    assert!(bad.validate(|_| Some(&profile)).is_err()); // historical/foreign model cannot acquire Focus
++    assert!(bad.validate(|_| None).is_err());
++    Ok(())
++}
++
++#[test]
++fn operation_wide_failures_never_fall_through_to_another_device() -> Result<()> {
++    for reason in [
++        SelectionReason::AuthorityChanged,
++        SelectionReason::SettlementUnknown,
++        SelectionReason::DeadlineExpired,
++    ] {
++        for policy in [DevicePolicy::Auto, DevicePolicy::Cpu] {
++            let rows = [
++                candidate(1, true, Some(reason)),
++                candidate(2, false, None),
++                candidate(3, true, None),
++            ];
++            let result = select(SelectedModel::ContextCompact, policy, 7, 100, &rows)?;
++            assert!(result.selected.is_none());
++            assert_eq!(result.operation_failure, Some(reason));
++            assert_eq!(result.reasons.len(), 1);
++            assert_eq!(result.reasons[0].reason, reason);
++        }
++    }
++    Ok(())
++}
++fn literal_profile(slot: SelectedModel, id: u8, gpu: bool) -> Result<Profile> {
++    let mut profile = crate::arbiter::stage_tests::current_profile(slot.stage())?;
++    profile.model = slot.model();
++    profile.manifest = Sha256Digest::from_bytes([id; 32]);
++    profile.cpu_fit = Some(CpuFit::default());
++    if gpu {
++        let pin = Sha256Digest::from_bytes([7; 32]);
++        profile.cpu_fit = None;
++        profile.runtime = "onnxruntime-cuda/1.30.0".into();
++        profile.device_execution = Some(DeviceExecution {
++            schema: DEVICE_EXECUTION_SCHEMA.into(),
++            backend: GpuBackend::Cuda,
++            runtime_build: pin,
++            compatibility_policy: pin,
++            provider_options: pin,
++            math_policy: pin,
++            precision: DevicePrecision::Float32,
++            placement: PlacementPolicy::StrictGpu,
++            graph: profile
++                .assets
++                .iter()
++                .find(|asset| asset.role == AssetRole::Model)
++                .unwrap()
++                .sha256,
++            host_fit: CpuFit::default(),
++            memory: DeviceMemory::Dedicated {
++                measured_peak_bytes: 10,
++                headroom_bytes: 2,
++            },
++        });
++    }
++    profile.validate()?;
++    Ok(profile)
++}
++#[test]
++fn exact_three_slots_materialize_distinct_cpu_gpu_and_refuse_cross_model() -> Result<()> {
++    let profiles = [
++        literal_profile(SelectedModel::Focus, 1, false)?,
++        literal_profile(SelectedModel::ContextCompact, 2, false)?,
++        literal_profile(SelectedModel::ContextCompact, 3, true)?,
++        literal_profile(SelectedModel::ContextLarge, 4, false)?,
++    ];
++    let row = |i: usize| -> Result<VariantReference> {
++        Ok(VariantReference {
++            manifest: profiles[i].manifest,
++            execution_identity: profiles[i].device_execution_identity()?,
++        })
++    };
++    let catalog = DeviceCatalog {
++        schema: DEVICE_CATALOG_SCHEMA.into(),
++        focus: vec![row(0)?],
++        context_compact: vec![row(1)?, row(2)?],
++        context_large: vec![row(3)?],
++    };
++    let resolve = |pin| profiles.iter().find(|profile| profile.manifest == pin);
++    catalog.validate(resolve)?;
++    assert_eq!(
++        catalog
++            .materialize(SelectedModel::ContextCompact, profiles[2].manifest, resolve)?
++            .runtime,
++        "onnxruntime-cuda/1.30.0"
++    );
++    assert!(
++        catalog
++            .materialize(SelectedModel::ContextLarge, profiles[2].manifest, resolve)
++            .is_err()
++    );
++    let mut stale = catalog.clone();
++    stale.context_compact[1].execution_identity = "onnxruntime-cpu/1.30.0".into();
++    assert!(stale.validate(resolve).is_err());
++    let mut duplicate = catalog.clone();
++    duplicate.context_compact.push(row(1)?);
++    assert!(duplicate.validate(resolve).is_err());
++    assert!(
++        catalog
++            .materialize(
++                SelectedModel::ContextCompact,
++                Sha256Digest::from_bytes([99; 32]),
++                resolve
++            )
++            .is_err()
++    );
++    Ok(())
++}
++#[test]
++fn enabled_legacy_migrates_auto_without_changing_model_enrollment_or_consent() -> Result<()> {
++    let focus = literal_profile(SelectedModel::Focus, 7, false)?;
++    let compact = literal_profile(SelectedModel::ContextCompact, 8, false)?;
++    let legacy = crate::arbiter::stage_tests::configuration(true, true);
++    let before = legacy.canonical_bytes()?;
++    let migrated = DeviceConfiguration::migrate_legacy(&legacy, |pin| {
++        if pin == focus.manifest {
++            Some(&focus)
++        } else if pin == compact.manifest {
++            Some(&compact)
++        } else {
++            None
++        }
++    })?;
++    assert!(migrated.focus.enabled && migrated.context.enabled);
++    assert_eq!(migrated.focus.selected_model, Some(SelectedModel::Focus));
++    assert_eq!(
++        migrated.context.selected_model,
++        Some(SelectedModel::ContextCompact)
++    );
++    assert_eq!(migrated.focus.device_policy, DevicePolicy::Auto);
++    assert_eq!(migrated.context.device_policy, DevicePolicy::Auto);
++    assert_eq!(
++        serde_json::to_value(&migrated.focus.indexes)?,
++        serde_json::to_value(&legacy.focus.indexes)?
++    );
++    assert_eq!(
++        serde_json::to_value(&migrated.context.indexes)?,
++        serde_json::to_value(&legacy.context.indexes)?
++    );
++    assert_eq!(legacy.canonical_bytes()?, before);
++    let mut explicit_cpu = migrated.clone();
++    explicit_cpu.context.device_policy = DevicePolicy::Cpu;
++    let bytes = explicit_cpu.canonical_bytes()?;
++    let decoded: DeviceConfiguration = serde_json::from_slice(&bytes)?;
++    assert_eq!(decoded.context.device_policy, DevicePolicy::Cpu);
++    assert_eq!(decoded.canonical_bytes()?, bytes);
++    assert!(DeviceConfiguration::migrate_legacy(&legacy, |_| None).is_err());
++    assert!(DeviceConfiguration::migrate_legacy(&legacy, |_| Some(&compact)).is_err());
++    Ok(())
++}
++#[test]
++fn exact_execution_canonical_bytes_and_framed_digest_are_literal() -> Result<()> {
++    const CANONICAL: &str = r#"{"schema":"airk.arbiter.device-execution/1","backend":"cuda","runtime_build":"0707070707070707070707070707070707070707070707070707070707070707","compatibility_policy":"0707070707070707070707070707070707070707070707070707070707070707","provider_options":"0707070707070707070707070707070707070707070707070707070707070707","math_policy":"0707070707070707070707070707070707070707070707070707070707070707","precision":"mixed","placement":{"mode":"strict_gpu"},"graph":"0707070707070707070707070707070707070707070707070707070707070707","host_fit":{"minimum_physical_cores":1,"intra_threads":1,"inter_threads":1,"sequential":true,"spinning":false},"memory":{"kind":"dedicated","measured_peak_bytes":10,"headroom_bytes":2}}"#;
++    let execution: DeviceExecution = serde_json::from_str(CANONICAL)?;
++    assert_eq!(serde_json::to_vec(&execution)?, CANONICAL.as_bytes());
++    assert_eq!(
++        execution.execution_identity()?,
++        "onnxruntime-cuda/1.30.0/device-execution/810cd6ef6bb7fe1d0d3d6beb285175652f3eea38c4d95971f98a9ba6c52423c3"
++    );
++    let encoded = serde_json::to_vec(&execution)?;
++    let decoded: DeviceExecution = serde_json::from_slice(&encoded)?;
++    assert_eq!(decoded, execution);
++    let mut duplicate=CANONICAL.replacen("\"runtime_build\":","\"runtime_build\":\"0707070707070707070707070707070707070707070707070707070707070707\",\"runtime_build\":",1);
++    assert!(serde_json::from_str::<DeviceExecution>(&duplicate).is_err());
++    duplicate = CANONICAL.replacen(
++        "\"schema\":\"airk.arbiter.device-execution/1\"",
++        "\"schema\":\"airk.arbiter.device-execution/9\"",
++        1,
++    );
++    assert!(
++        serde_json::from_str::<DeviceExecution>(&duplicate)?
++            .execution_identity()
++            .is_err()
++    );
++    Ok(())
++}
++
++#[test]
++fn materialization_never_returns_a_changed_unverified_resolver_reference() -> Result<()> {
++    use std::cell::Cell;
++    let profiles = [
++        literal_profile(SelectedModel::Focus, 1, false)?,
++        literal_profile(SelectedModel::ContextCompact, 2, false)?,
++        literal_profile(SelectedModel::ContextLarge, 3, false)?,
++    ];
++    let row = |i: usize| -> Result<VariantReference> {
++        Ok(VariantReference {
++            manifest: profiles[i].manifest,
++            execution_identity: profiles[i].device_execution_identity()?,
++        })
++    };
++    let catalog = DeviceCatalog {
++        schema: DEVICE_CATALOG_SCHEMA.into(),
++        focus: vec![row(0)?],
++        context_compact: vec![row(1)?],
++        context_large: vec![row(2)?],
++    };
++    let calls = Cell::new(0usize);
++    let resolve = |pin| {
++        if pin == profiles[1].manifest {
++            calls.set(calls.get() + 1);
++            Some(if calls.get() == 1 {
++                &profiles[1]
++            } else {
++                &profiles[2]
++            })
++        } else {
++            profiles.iter().find(|profile| profile.manifest == pin)
++        }
++    };
++    let selected =
++        catalog.materialize(SelectedModel::ContextCompact, profiles[1].manifest, resolve)?;
++    assert_eq!(calls.get(), 1);
++    assert!(std::ptr::eq(selected, &profiles[1]));
++    assert_ne!(selected.model, ModelChoice::ContextQwenLarge);
++    // A resolver giving the wrong object first is refused, never retried into success.
++    let calls = Cell::new(0usize);
++    let wrong_first = |pin| {
++        if pin == profiles[1].manifest {
++            calls.set(calls.get() + 1);
++            Some(if calls.get() == 1 {
++                &profiles[2]
++            } else {
++                &profiles[1]
++            })
++        } else {
++            profiles.iter().find(|profile| profile.manifest == pin)
++        }
++    };
++    assert!(
++        catalog
++            .materialize(
++                SelectedModel::ContextCompact,
++                profiles[1].manifest,
++                wrong_first
++            )
++            .is_err()
++    );
++    assert_eq!(calls.get(), 1);
++    Ok(())
++}
+--- /dev/null
++++ b/crates/airk-core/src/arbiter/device.rs
+@@ -0,0 +1,623 @@
++// SPDX-License-Identifier: Apache-2.0
++//! D08 PRIVATE PROPOSAL. Pure decisions, never native admission or qualification authority.
++use super::*;
++use crate::identity::framed_digest;
++use anyhow::Context;
++
++pub const DEVICE_EXECUTION_SCHEMA: &str = "airk.arbiter.device-execution/1";
++pub const DEVICE_CATALOG_SCHEMA: &str = "airk.arbiter.device-catalog/1";
++pub const DEVICE_CONFIGURATION_SCHEMA: &str = "airk.arbiter.configuration/4";
++pub const DEVICE_STATUS_SCHEMA: &str = "airk.arbiter.device-status/1";
++
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
++#[serde(rename_all = "snake_case")]
++pub enum DevicePolicy {
++    #[default]
++    Auto,
++    Cpu,
++}
++#[derive(
++    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
++)]
++#[serde(rename_all = "snake_case")]
++pub enum SelectedModel {
++    Focus,
++    ContextCompact,
++    ContextLarge,
++}
++impl SelectedModel {
++    pub fn model(self) -> ModelChoice {
++        match self {
++            Self::Focus => ModelChoice::FocusQwenReranker06B,
++            Self::ContextCompact => ModelChoice::ContextQwenCompact,
++            Self::ContextLarge => ModelChoice::ContextQwenLarge,
++        }
++    }
++    pub fn stage(self) -> Stage {
++        match self {
++            Self::Focus => Stage::Focus,
++            _ => Stage::Context,
++        }
++    }
++    pub fn from_model(model: ModelChoice) -> Result<Self> {
++        match model {
++            ModelChoice::FocusQwenReranker06B => Ok(Self::Focus),
++            ModelChoice::ContextQwenCompact => Ok(Self::ContextCompact),
++            ModelChoice::ContextQwenLarge => Ok(Self::ContextLarge),
++            _ => anyhow::bail!("historical model cannot acquire a device slot"),
++        }
++    }
++}
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
++#[serde(rename_all = "snake_case")]
++pub enum GpuBackend {
++    Cuda,
++    DirectMl,
++    CoreMl,
++}
++impl GpuBackend {
++    pub fn runtime(self) -> &'static str {
++        match self {
++            Self::Cuda => "onnxruntime-cuda/1.30.0",
++            Self::DirectMl => "onnxruntime-directml/1.30.0",
++            Self::CoreMl => "onnxruntime-coreml/1.30.0",
++        }
++    }
++    fn priority(self) -> u8 {
++        match self {
++            Self::Cuda => 0,
++            Self::DirectMl => 1,
++            Self::CoreMl => 2,
++        }
++    }
++}
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
++#[serde(rename_all = "snake_case")]
++pub enum DevicePrecision {
++    Float32,
++    Float16,
++    Bfloat16,
++    Mixed,
++}
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
++#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
++pub enum PlacementPolicy {
++    StrictGpu,
++    BoundedHybrid { policy: Sha256Digest },
++}
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
++#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
++pub enum DeviceMemory {
++    Dedicated {
++        measured_peak_bytes: u64,
++        headroom_bytes: u64,
++    },
++    Unified {
++        measured_joint_peak_bytes: u64,
++        headroom_bytes: u64,
++    },
++}
++impl DeviceMemory {
++    pub fn required_bytes(&self) -> Result<u64> {
++        let (peak, headroom) = match self {
++            Self::Dedicated {
++                measured_peak_bytes,
++                headroom_bytes,
++            } => (*measured_peak_bytes, *headroom_bytes),
++            Self::Unified {
++                measured_joint_peak_bytes,
++                headroom_bytes,
++            } => (*measured_joint_peak_bytes, *headroom_bytes),
++        };
++        ensure!(
++            peak > 0 && headroom > 0,
++            "measured device capacity/headroom required"
++        );
++        peak.checked_add(headroom)
++            .context("device capacity overflow")
++    }
++}
++/// GPU-only additive Profile field. None preserves every legacy CPU serialization.
++/// Hashes name compiled, authenticated native policies, not ambient strings or capabilities.
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
++#[serde(deny_unknown_fields)]
++pub struct DeviceExecution {
++    pub schema: String,
++    pub backend: GpuBackend,
++    pub runtime_build: Sha256Digest,
++    pub compatibility_policy: Sha256Digest,
++    pub provider_options: Sha256Digest,
++    pub math_policy: Sha256Digest,
++    pub precision: DevicePrecision,
++    pub placement: PlacementPolicy,
++    pub graph: Sha256Digest,
++    pub host_fit: CpuFit,
++    pub memory: DeviceMemory,
++}
++impl DeviceExecution {
++    pub fn validate(&self, profile: &Profile) -> Result<()> {
++        ensure!(
++            self.schema == DEVICE_EXECUTION_SCHEMA
++                && profile.runtime == self.backend.runtime()
++                && profile.cpu_fit.is_none()
++                && profile.model.stage().is_some(),
++            "device profile/version/runtime or legacy CPU tier mismatch"
++        );
++        self.host_fit.validate()?;
++        self.memory.required_bytes()?;
++        ensure!(
++            profile
++                .assets
++                .iter()
++                .filter(|asset| asset.role == AssetRole::Model)
++                .all(|asset| asset.sha256 == self.graph),
++            "device graph identity mismatch"
++        );
++        Ok(())
++    }
++    pub fn execution_identity(&self) -> Result<String> {
++        self.host_fit.validate()?;
++        self.memory.required_bytes()?;
++        ensure!(
++            self.schema == DEVICE_EXECUTION_SCHEMA,
++            "unknown device execution schema"
++        );
++        let bytes = serde_json::to_vec(self)?;
++        let digest = framed_digest(b"airk.arbiter.device-execution/1", &[&bytes]);
++        Ok(format!(
++            "{}/device-execution/{digest}",
++            self.backend.runtime()
++        ))
++    }
++}
++/// Exactly three logical model slots; variants do not add selected models.
++/// Each reference resolves only through the authenticated native catalog owner.
++#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
++#[serde(deny_unknown_fields)]
++pub struct VariantReference {
++    pub manifest: Sha256Digest,
++    pub execution_identity: String,
++}
++#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
++#[serde(deny_unknown_fields)]
++pub struct DeviceCatalog {
++    pub schema: String,
++    pub focus: Vec<VariantReference>,
++    pub context_compact: Vec<VariantReference>,
++    pub context_large: Vec<VariantReference>,
++}
++impl DeviceCatalog {
++    pub fn slot(&self, slot: SelectedModel) -> &[VariantReference] {
++        match slot {
++            SelectedModel::Focus => &self.focus,
++            SelectedModel::ContextCompact => &self.context_compact,
++            SelectedModel::ContextLarge => &self.context_large,
++        }
++    }
++    /// Resolve exactly once per variant and return the SAME reference checked
++    /// below. An interior-mutating Fn cannot swap in an unchecked second lookup.
++    /// This remains descriptive data, never an ExecutionProfile or permit.
++    pub fn materialize<'a>(
++        &self,
++        slot: SelectedModel,
++        manifest: Sha256Digest,
++        resolve: impl Fn(Sha256Digest) -> Option<&'a Profile>,
++    ) -> Result<&'a Profile> {
++        self.resolve_validated(&resolve, Some((slot, manifest)))?
++            .context("variant is outside selected model slot")
++    }
++    pub fn validate<'a>(
++        &self,
++        resolve: impl Fn(Sha256Digest) -> Option<&'a Profile>,
++    ) -> Result<()> {
++        self.resolve_validated(&resolve, None)?;
++        Ok(())
++    }
++    fn resolve_validated<'a>(
++        &self,
++        resolve: &impl Fn(Sha256Digest) -> Option<&'a Profile>,
++        selected: Option<(SelectedModel, Sha256Digest)>,
++    ) -> Result<Option<&'a Profile>> {
++        let mut verified = None;
++        ensure!(
++            self.schema == DEVICE_CATALOG_SCHEMA,
++            "unknown device catalog schema"
++        );
++        let mut manifests = BTreeSet::new();
++        let mut count = 0usize;
++        for slot in [
++            SelectedModel::Focus,
++            SelectedModel::ContextCompact,
++            SelectedModel::ContextLarge,
++        ] {
++            ensure!(!self.slot(slot).is_empty(), "missing selected model slot");
++            for row in self.slot(slot) {
++                count += 1;
++                ensure!(
++                    count <= 16 && manifests.insert(row.manifest),
++                    "device catalog capacity/duplicate variant"
++                );
++                let profile = resolve(row.manifest).context("unresolved native catalog variant")?;
++                profile.validate()?;
++                ensure!(
++                    profile.manifest == row.manifest
++                        && profile.model == slot.model()
++                        && row.execution_identity == profile.device_execution_identity()?,
++                    "foreign model/execution variant"
++                );
++                if selected == Some((slot, row.manifest)) {
++                    verified = Some(profile);
++                }
++            }
++        }
++        Ok(verified)
++    }
++}
++#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
++#[serde(deny_unknown_fields)]
++pub struct DeviceStageConfiguration {
++    pub enabled: bool,
++    pub selected_model: Option<SelectedModel>,
++    pub device_policy: DevicePolicy,
++    pub indexes: Vec<Enrollment>,
++}
++impl DeviceStageConfiguration {
++    pub fn validate(&self, stage: Stage) -> Result<()> {
++        ensure!(
++            self.selected_model
++                .is_none_or(|model| model.stage() == stage),
++            "wrong stage/model slot"
++        );
++        let legacy = StageConfiguration {
++            enabled: false,
++            selected_profile: None,
++            indexes: self.indexes.clone(),
++        };
++        legacy.validate(stage)?;
++        ensure!(
++            !self.enabled || (self.selected_model.is_some() && !self.indexes.is_empty()),
++            "enablement requires model/enrollment"
++        );
++        Ok(())
++    }
++}
++impl DeviceStageConfiguration {
++    pub fn disabled() -> Self {
++        Self {
++            enabled: false,
++            selected_model: None,
++            device_policy: DevicePolicy::Auto,
++            indexes: Vec::new(),
++        }
++    }
++}
++#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
++#[serde(deny_unknown_fields)]
++pub struct DeviceConfiguration {
++    pub schema: String,
++    pub installation: Sha256Digest,
++    pub catalog: Incarnation,
++    pub revision: u64,
++    pub focus: DeviceStageConfiguration,
++    pub context: DeviceStageConfiguration,
++}
++impl DeviceConfiguration {
++    pub fn validate(&self) -> Result<()> {
++        ensure!(
++            self.schema == DEVICE_CONFIGURATION_SCHEMA && self.revision > 0,
++            "unknown device configuration"
++        );
++        self.focus.validate(Stage::Focus)?;
++        self.context.validate(Stage::Context)?;
++        let indexes: BTreeSet<_> = self
++            .focus
++            .indexes
++            .iter()
++            .chain(&self.context.indexes)
++            .map(|row| row.index_id)
++            .collect();
++        ensure!(
++            indexes.len() <= MAX_ENROLLMENTS,
++            "device enrollment capacity"
++        );
++        Ok(())
++    }
++}
++impl DeviceConfiguration {
++    /// Explicit migration preserves consent/indexes and uses the user-approved Auto policy while preserving exact model,
++    /// consent and enrollment. Existing /4 Cpu settings are never migrated.
++    pub fn migrate_legacy<'a>(
++        legacy: &Configuration,
++        resolve: impl Fn(Sha256Digest) -> Option<&'a Profile>,
++    ) -> Result<Self> {
++        legacy.validate()?;
++        let stage =
++            |old: &StageConfiguration, expected: Stage| -> Result<DeviceStageConfiguration> {
++                let selected_model = match old.selected_profile {
++                    None => None,
++                    Some(manifest) => {
++                        let profile =
++                            resolve(manifest).context("legacy selected profile unresolved")?;
++                        profile.validate()?;
++                        ensure!(
++                            profile.manifest == manifest
++                                && profile.device_execution.is_none()
++                                && profile.runtime == RUNTIME,
++                            "legacy profile cannot acquire GPU identity"
++                        );
++                        Some(SelectedModel::from_model(profile.model)?)
++                    }
++                };
++                let value = DeviceStageConfiguration {
++                    enabled: old.enabled,
++                    selected_model,
++                    device_policy: DevicePolicy::Auto,
++                    indexes: old.indexes.clone(),
++                };
++                value.validate(expected)?;
++                Ok(value)
++            };
++        let value = Self {
++            schema: DEVICE_CONFIGURATION_SCHEMA.into(),
++            installation: legacy.installation,
++            catalog: legacy.catalog,
++            revision: legacy
++                .revision
++                .checked_add(1)
++                .context("configuration revision exhausted")?,
++            focus: stage(&legacy.focus, Stage::Focus)?,
++            context: stage(&legacy.context, Stage::Context)?,
++        };
++        value.validate()?;
++        Ok(value)
++    }
++    pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
++        self.validate()?;
++        let mut bytes = serde_json::to_vec(self)?;
++        bytes.push(b'\n');
++        ensure!(
++            bytes.len() <= MAX_CONFIGURATION_BYTES,
++            "device configuration byte limit"
++        );
++        Ok(bytes)
++    }
++}
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
++#[serde(rename_all = "snake_case")]
++pub enum SelectionReason {
++    ForcedCpu,
++    NoGpu,
++    Unqualified,
++    TargetUnsupported,
++    RuntimeUnavailable,
++    DriverUnsupported,
++    DeviceUnsupported,
++    GraphUnsupported,
++    ProviderInitializationFailed,
++    AllocationFailed,
++    DeviceMemoryUnknown,
++    DeviceMemoryInsufficient,
++    HostMemoryUnknown,
++    HostMemoryInsufficient,
++    CpuFitInsufficient,
++    CircuitOpen,
++    AuthorityChanged,
++    ObservationStale,
++    DeadlineExpired,
++    SettlementUnknown,
++    NoQualifiedCpu,
++}
++/// available_bytes is an actual native observation after existing real device
++/// usage; subtract ONLY broker reservations not yet represented in that usage.
++/// Unified measured_joint_peak is one shared pool, never host+device summed twice.
++pub fn device_capacity_refusal(
++    requirement: &DeviceMemory,
++    available_bytes: Option<u64>,
++    pending_unbacked_bytes: u64,
++) -> Result<Option<SelectionReason>> {
++    let required = requirement.required_bytes()?;
++    let Some(available) = available_bytes else {
++        return Ok(Some(SelectionReason::DeviceMemoryUnknown));
++    };
++    Ok(
++        if available
++            .checked_sub(pending_unbacked_bytes)
++            .is_some_and(|free| free >= required)
++        {
++            None
++        } else {
++            Some(SelectionReason::DeviceMemoryInsufficient)
++        },
++    )
++}
++/// Advisory diagnostic facts ONLY: no Deserialize and no qualification/admission
++/// authority. In particular Profile+target+None cannot construct a native permit.
++/// Production Auto remains REFUSED until Inference holds real ExecutionProfile,
++/// OptionalReservation/OptionalReuse and authentic device-runtime/capacity witness.
++#[derive(Clone, Debug)]
++pub struct AdvisoryCandidate {
++    pub manifest: Sha256Digest,
++    pub model: SelectedModel,
++    pub execution_identity: String,
++    pub backend: Option<GpuBackend>,
++    pub adapter_key: String,
++    pub capability_epoch: u64,
++    pub rejection: Option<SelectionReason>,
++}
++#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
++#[serde(deny_unknown_fields)]
++pub struct CandidateRejection {
++    pub manifest: Option<Sha256Digest>,
++    pub adapter_key: Option<String>,
++    pub reason: SelectionReason,
++}
++#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
++#[serde(deny_unknown_fields)]
++pub struct SelectedVariant {
++    pub manifest: Sha256Digest,
++    pub execution_identity: String,
++    pub backend: Option<GpuBackend>,
++    pub adapter_key: String,
++    pub capability_epoch: u64,
++}
++#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
++#[serde(deny_unknown_fields)]
++pub struct DeviceSelection {
++    pub schema: String,
++    pub model: SelectedModel,
++    pub policy: DevicePolicy,
++    pub selected: Option<SelectedVariant>,
++    pub reasons: Vec<CandidateRejection>,
++    pub operation_failure: Option<SelectionReason>,
++}
++/// Advisory deterministic ordering ONLY. Caller must recheck source/consent,
++/// qualification, actual capacity, epoch and original deadline before native dispatch.
++pub fn select(
++    model: SelectedModel,
++    policy: DevicePolicy,
++    epoch: u64,
++    remaining_us: u64,
++    candidates: &[AdvisoryCandidate],
++) -> Result<DeviceSelection> {
++    ensure!(
++        epoch > 0 && candidates.len() <= 16,
++        "device observation epoch/capacity"
++    );
++    let mut result = DeviceSelection {
++        schema: DEVICE_STATUS_SCHEMA.into(),
++        model,
++        policy,
++        selected: None,
++        reasons: Vec::new(),
++        operation_failure: None,
++    };
++    if remaining_us == 0 {
++        result.operation_failure = Some(SelectionReason::DeadlineExpired);
++        result.reasons.push(CandidateRejection {
++            manifest: None,
++            adapter_key: None,
++            reason: SelectionReason::DeadlineExpired,
++        });
++        return Ok(result);
++    }
++    // These are operation-wide failures, including when seen on an unselected
++    // adapter or under forced Cpu. Never continue to any other candidate.
++    if let Some(reason) = candidates
++        .iter()
++        .filter_map(|candidate| candidate.rejection)
++        .find(|reason| {
++            matches!(
++                reason,
++                SelectionReason::AuthorityChanged
++                    | SelectionReason::SettlementUnknown
++                    | SelectionReason::DeadlineExpired
++            )
++        })
++    {
++        result.operation_failure = Some(reason);
++        result.reasons.push(CandidateRejection {
++            manifest: None,
++            adapter_key: None,
++            reason,
++        });
++        return Ok(result);
++    }
++    let mut seen = BTreeSet::new();
++    for candidate in candidates {
++        ensure!(
++            candidate.model == model
++                && !candidate.execution_identity.is_empty()
++                && candidate.execution_identity.len() <= 4096
++                && !candidate.adapter_key.is_empty()
++                && candidate.adapter_key.len() <= 256
++                && candidate.capability_epoch > 0
++                && seen.insert((candidate.manifest, candidate.adapter_key.clone())),
++            "foreign/duplicate/unbounded device observation"
++        );
++    }
++    let mut ordered: Vec<_> = candidates.iter().collect();
++    ordered.sort_by_key(|row| {
++        (
++            row.backend.map(|backend| backend.priority()).unwrap_or(3),
++            row.adapter_key.as_str(),
++            row.manifest,
++        )
++    });
++    let gpu_count = candidates
++        .iter()
++        .filter(|row| row.backend.is_some())
++        .count();
++    if policy == DevicePolicy::Cpu {
++        result.reasons.push(CandidateRejection {
++            manifest: None,
++            adapter_key: None,
++            reason: SelectionReason::ForcedCpu,
++        });
++    } else if gpu_count == 0 {
++        result.reasons.push(CandidateRejection {
++            manifest: None,
++            adapter_key: None,
++            reason: SelectionReason::NoGpu,
++        });
++    }
++    for candidate in ordered {
++        if policy == DevicePolicy::Cpu && candidate.backend.is_some() {
++            continue;
++        }
++        let rejection = if candidate.capability_epoch != epoch {
++            Some(SelectionReason::ObservationStale)
++        } else {
++            candidate.rejection
++        };
++        if let Some(reason) = rejection {
++            result.reasons.push(CandidateRejection {
++                manifest: Some(candidate.manifest),
++                adapter_key: Some(candidate.adapter_key.clone()),
++                reason,
++            });
++            continue;
++        }
++        result.selected = Some(SelectedVariant {
++            manifest: candidate.manifest,
++            execution_identity: candidate.execution_identity.clone(),
++            backend: candidate.backend,
++            adapter_key: candidate.adapter_key.clone(),
++            capability_epoch: epoch,
++        });
++        break;
++    }
++    if result.selected.is_none()
++        && candidates
++            .iter()
++            .all(|candidate| candidate.backend.is_some())
++    {
++        result.reasons.push(CandidateRejection {
++            manifest: None,
++            adapter_key: None,
++            reason: SelectionReason::NoQualifiedCpu,
++        });
++    }
++    Ok(result)
++}
++/// No automatic replay after uncertain work. The one original deadline is input,
++/// never created/refreshed here. Real native settlement proof remains owner-held.
++pub fn fallback_permitted(
++    work_started: bool,
++    settlement_observed: bool,
++    authority_current: bool,
++    remaining_us: u64,
++) -> std::result::Result<(), SelectionReason> {
++    if !authority_current {
++        return Err(SelectionReason::AuthorityChanged);
++    }
++    if work_started && !settlement_observed {
++        return Err(SelectionReason::SettlementUnknown);
++    }
++    if remaining_us == 0 {
++        return Err(SelectionReason::DeadlineExpired);
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests;
+--- a/crates/airk-core/src/arbiter/mod.rs
++++ b/crates/airk-core/src/arbiter/mod.rs
+@@ -73,6 +73,7 @@
+     pub tasks: BTreeSet<Task>,
+ }
+ 
++pub mod device;
+ mod stages;
+ pub use stages::*;
+ pub mod focus;
+@@ -163,6 +164,8 @@
+     pub qualified_targets: Vec<QualifiedTarget>,
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub cpu_fit: Option<CpuFit>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub device_execution: Option<device::DeviceExecution>,
+     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+     pub downloads: Vec<AssetDownload>,
+     pub model: ModelChoice,
+@@ -412,13 +415,22 @@
+         }
+         Ok(())
+     }
++    pub fn device_execution_identity(&self) -> Result<String> {
++        match &self.device_execution {
++            Some(execution) => execution.execution_identity(),
++            None => self.cpu_fit.clone().unwrap_or_default().runtime_identity(),
++        }
++    }
+     pub fn validate(&self) -> Result<()> {
+         ensure!(
+-            self.runtime == RUNTIME && !self.profile_id.is_empty() && self.profile_id.len() <= 128,
++            !self.profile_id.is_empty() && self.profile_id.len() <= 128,
+             "unsupported Arbiter profile runtime or identity"
+         );
+-        if let Some(fit) = &self.cpu_fit {
+-            fit.validate()?;
++        if let Some(execution) = &self.device_execution {
++            execution.validate(self)?;
++        } else {
++            ensure!(self.runtime == RUNTIME, "unsupported legacy CPU profile runtime");
++            if let Some(fit) = &self.cpu_fit { fit.validate()?; }
+         }
+         if let Some(stage) = self.model.stage() {
+             self.validate_stage(stage)?;
+@@ -446,12 +458,12 @@
+                 ) && targets.insert(&target.target),
+                 "unknown or duplicate qualification target"
+             );
+-            let fit = self
+-                .cpu_fit
+-                .as_ref()
+-                .ok_or_else(|| anyhow::anyhow!("qualified target lacks explicit execution fit"))?;
+-            ensure!(
+-                target.execution_identity == fit.runtime_identity()?,
++            ensure!(
++                self.device_execution.is_some() || self.cpu_fit.is_some(),
++                "qualified target lacks explicit execution fit"
++            );
++            ensure!(
++                target.execution_identity == self.device_execution_identity()?,
+                 "qualified target execution identity mismatch"
+             );
+         }
+--- a/crates/airk-retrieval/src/arbiter/runtime/qualification.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/qualification.rs
+@@ -375,6 +375,7 @@
+         task_policies: BTreeMap::from([(task, policy)]),
+         qualified_targets: vec![],
+         cpu_fit: Some(input.cpu_fit),
++        device_execution: None,
+         downloads: vec![],
+         model: input.model,
+         profile_id: input.profile_id,
+--- a/crates/airk-store/src/service/arbiter_assets/tests.rs
++++ b/crates/airk-store/src/service/arbiter_assets/tests.rs
+@@ -7,6 +7,7 @@
+         task_policies: std::collections::BTreeMap::from([(Task::ContextAction, digest)]),
+         qualified_targets: vec![],
+         cpu_fit: None,
++        device_execution: None,
+         downloads: vec![],
+         stage: Some(Stage::Context),
+         model: ModelChoice::ContextQwenCompact,

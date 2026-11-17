@@ -1,0 +1,536 @@
+--- a/crates/airk-retrieval/src/arbiter/runtime.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime.rs
+@@ -329,6 +329,64 @@
+ 
+ impl Scorer {
+     pub fn open(profile: ExecutionProfile, source: &dyn AssetSource) -> Result<Self> {
++        Self::open_configured(profile, source, Ok)
++    }
++    #[cfg(any(test, feature = "test-support"))]
++    pub fn open_profiled(
++        profile: ExecutionProfile,
++        source: &dyn AssetSource,
++        profiling_prefix: &std::path::Path,
++        optimized_model: &std::path::Path,
++    ) -> Result<Self> {
++        // Only this private profiler serializes an optimized graph. Ordinary
++        // open(None-equivalent) keeps its exact builder and does not save.
++        let external = optimized_model.with_extension("weights.bin");
++        ensure!(
++            optimized_model
++                .parent()
++                .is_some_and(std::path::Path::is_dir)
++                && !optimized_model.exists()
++                && !external.exists(),
++            "fresh optimized graph/external weights paths required"
++        );
++        let external_name = external
++            .file_name()
++            .and_then(|s| s.to_str())
++            .context("UTF-8 optimized external weights basename required")?;
++        let scorer = Self::open_configured(profile, source, |builder| {
++            Ok(builder
++                .with_profiling(profiling_prefix)?
++                .with_config_entry(
++                    "session.optimized_model_external_initializers_file_name",
++                    external_name,
++                )?
++                .with_config_entry(
++                    "session.optimized_model_external_initializers_min_size_in_bytes",
++                    "1024",
++                )?
++                .with_optimized_model_path(optimized_model)?)
++        })?;
++        // Saving remains inside this original load operation. The owned caller
++        // must also observe these same live output bounds during FFI save.
++        let graph_bytes = std::fs::metadata(optimized_model)?.len();
++        let weights_bytes = std::fs::metadata(&external)?.len();
++        ensure!(
++            graph_bytes > 0 && graph_bytes <= 64 * 1024 * 1024,
++            "diagnostic optimized graph output bound exceeded"
++        );
++        ensure!(
++            weights_bytes > 0 && weights_bytes <= 8 * 1024 * 1024 * 1024,
++            "diagnostic optimized external weights output bound exceeded"
++        );
++        Ok(scorer)
++    }
++    fn open_configured(
++        profile: ExecutionProfile,
++        source: &dyn AssetSource,
++        configure: impl FnOnce(
++            ort::session::builder::SessionBuilder,
++        ) -> Result<ort::session::builder::SessionBuilder>,
++    ) -> Result<Self> {
+         crate::native_inference::require_service_compute()?;
+         profile.description.validate()?;
+         validate_selected_policies(profile.description())?;
+@@ -421,6 +479,7 @@
+                 .build()])?
+             .with_config_entry("session.intra_op.allow_spinning", "0")?
+             .with_config_entry("session.inter_op.allow_spinning", "0")?;
++        builder = configure(builder)?;
+         for asset in profile
+             .description
+             .assets
+@@ -587,6 +646,16 @@
+             joint_calibration,
+         })
+     }
++    #[cfg(any(test, feature = "test-support"))]
++    pub fn finish_profiling(&self) -> Result<std::path::PathBuf> {
++        crate::native_inference::require_service_compute()?;
++        Ok(self
++            .session
++            .lock()
++            .map_err(|_| anyhow::anyhow!("Arbiter native session poisoned"))?
++            .end_profiling()?
++            .into())
++    }
+     pub fn execution_identity(&self) -> Result<(String, usize)> {
+         Ok((
+             self.profile
+@@ -659,3 +728,116 @@
+         Ok(scores.to_vec())
+     }
+ }
++
++/// Synthetic GQA operator control only; no model weights or execution profile.
++#[cfg(any(test, feature = "test-support"))]
++pub fn synthetic_gqa_profile(
++    graph: &[u8],
++    tokens: usize,
++    profiling_prefix: &std::path::Path,
++    optimized_model: &std::path::Path,
++) -> Result<serde_json::Value> {
++    crate::native_inference::require_service_compute()?;
++    ensure!(
++        matches!(tokens, 17 | 8192) && graph.len() <= 65536,
++        "bounded synthetic GQA control required"
++    );
++    ensure!(
++        airk_process::cpu_fit::usable_physical_cores()? >= 4,
++        "native CPU4 refused"
++    );
++    crate::onnx::initialize_runtime()?;
++    let _environment = crate::onnx::acquire_session_environment()?;
++    let mut session = Session::builder()?
++        .with_intra_threads(4)?
++        .with_inter_threads(1)?
++        .with_optimization_level(GraphOptimizationLevel::Level3)?
++        .with_parallel_execution(false)?
++        .with_memory_pattern(false)?
++        .with_execution_providers([CPUExecutionProvider::default()
++            .with_arena_allocator(false)
++            .build()])?
++        .with_config_entry("session.intra_op.allow_spinning", "0")?
++        .with_config_entry("session.inter_op.allow_spinning", "0")?
++        .with_profiling(profiling_prefix)?
++        .with_optimized_model_path(optimized_model)?
++        .commit_from_memory(graph)?;
++    ensure!(
++        session
++            .inputs
++            .iter()
++            .map(|input| input.name.as_str())
++            .collect::<Vec<_>>()
++            == [
++                "query",
++                "key",
++                "value",
++                "bias",
++                "seqlens_k",
++                "total_sequence_length"
++            ]
++            && session
++                .outputs
++                .iter()
++                .map(|output| output.name.as_str())
++                .collect::<Vec<_>>()
++                == ["context"],
++        "synthetic control ABI differs; cache must remain private"
++    );
++    let q = vec![0f32; tokens * 2048];
++    let k = vec![0f32; tokens * 1024];
++    let mut v = vec![0f32; tokens * 1024];
++    for t in 0..tokens {
++        for h in 0..8 {
++            for d in 0..128 {
++                v[t * 1024 + h * 128 + d] = (h * 128 + d) as f32 / 1024. + t as f32 / 8192.;
++            }
++        }
++    }
++    let mut bias = vec![0f32; tokens * tokens];
++    for t in 0..tokens {
++        for future in t + 1..tokens {
++            bias[t * tokens + future] = f32::MIN;
++        }
++    }
++    let options = RunOptions::new()?.with_outputs(OutputSelector::no_default().with("context"));
++    let outputs = session.run_with_options(
++        ort::inputs![
++            "query"=>Tensor::from_array(([1,tokens,2048],q))?,
++            "key"=>Tensor::from_array(([1,tokens,1024],k))?,
++            "value"=>Tensor::from_array(([1,tokens,1024],v))?,
++            "bias"=>Tensor::from_array(([1,1,tokens,tokens],bias))?,
++            "seqlens_k"=>Tensor::from_array(([1],vec![tokens as i32-1]))?,
++            "total_sequence_length"=>Tensor::from_array(([1],vec![tokens as i32]))?,
++        ],
++        &options,
++    )?;
++    let (shape, actual) = outputs["context"].try_extract_tensor::<f32>()?;
++    ensure!(
++        shape.as_ref() == [1, tokens as i64, 2048],
++        "actual synthetic context shape differs"
++    );
++    let mut maximum_error = 0f32;
++    for t in 0..tokens {
++        for h in 0..16 {
++            for d in 0..128 {
++                let expected = ((h / 2) * 128 + d) as f32 / 1024. + t as f32 / 16384.;
++                let value = actual[t * 2048 + h * 128 + d];
++                ensure!(value.is_finite(), "nonfinite synthetic GQA value");
++                maximum_error = maximum_error.max((value - expected).abs());
++            }
++        }
++    }
++    drop(outputs);
++    let profiling = session.end_profiling()?;
++    ensure!(
++        maximum_error <= 0.0001,
++        "synthetic causal/GQA value check refused"
++    );
++    Ok(
++        serde_json::json!({"tokens":tokens,"profiling_path":profiling,
++        "optimized_graph_path":optimized_model,"maximum_error":maximum_error,
++        "graph_outputs":["context"],"model_weights_loaded":false,
++        "scope":"actual synthetic CPU GQA kernel only; no model/task qualification"}),
++    )
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime/input.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/input.rs
+@@ -210,4 +210,35 @@
+         assert!(validate(&input, Readout::DecisionSymbol, 3, 2).is_err());
+         Ok(())
+     }
++    #[test]
++    fn context_attention_candidate_keeps_the_existing_all_live_sequential_domain() -> Result<()> {
++        let valid = CompiledInput {
++            prompt: "SYNTHETIC; NO FORWARD".into(),
++            input_ids: vec![11, 12, 13],
++            attention_mask: vec![1, 1, 1],
++            position_ids: vec![0, 1, 2],
++            decision_position: 2,
++            candidate_positions: vec![32, 33, 34],
++            option_mask: vec![true; 3],
++            input_digest: Sha256Digest::from_bytes([7; 32]),
++        };
++        validate(&valid, Readout::DecisionSymbol, 8192, 8)?;
++        for mask in [
++            vec![0, 1, 1],
++            vec![1, 1, 0],
++            vec![1, 0, 1],
++            vec![0, 0, 0],
++            vec![1, 2, 1],
++        ] {
++            let mut input = valid.clone();
++            input.attention_mask = mask;
++            assert!(validate(&input, Readout::DecisionSymbol, 8192, 8).is_err());
++        }
++        for positions in [vec![0, 0, 2], vec![1, 2, 3], vec![0, 2, 1]] {
++            let mut input = valid.clone();
++            input.position_ids = positions;
++            assert!(validate(&input, Readout::DecisionSymbol, 8192, 8).is_err());
++        }
++        Ok(())
++    }
+ }
+--- a/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2.rs
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2.rs
+@@ -797,3 +797,5 @@
+ 
+ #[cfg(test)]
+ mod tests;
++
++mod attention_diagnostic;
+--- /dev/null
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/attention_diagnostic.rs
+@@ -0,0 +1,244 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Private profiling diagnostic only; no all-row/model/task qualification.
++use super::*;
++
++fn allocated_gqa_profile(raw: &[u8], tokens: usize, required: usize) -> Result<()> {
++    let events: Vec<Value> = serde_json::from_slice(raw)?;
++    let mut nodes = BTreeSet::new();
++    for event in events
++        .iter()
++        .filter(|event| event["args"]["op_name"] == "GroupQueryAttention")
++    {
++        let args = &event["args"];
++        ensure!(
++            args["provider"] == "CPUExecutionProvider",
++            "GQA did not execute on the pinned CPU provider"
++        );
++        ensure!(
++            event["dur"].as_u64().is_some_and(|value| value > 0),
++            "actual GQA kernel duration absent"
++        );
++        let key = args["node_index"]
++            .as_str()
++            .context("native profiler node identity absent")?;
++        ensure!(
++            nodes.insert(key.to_owned()),
++            "repeated GQA execution in single-forward diagnostic"
++        );
++        let expected = json!([{"float":[1,tokens,2048]},{"float":[1,8,tokens,128]},{"float":[1,8,tokens,128]}]);
++        ensure!(
++            args["output_type_shape"] == expected,
++            "actual context/internal KV allocations absent or different"
++        );
++        let bytes = args["output_size"]
++            .as_str()
++            .context("native allocated output size absent")?
++            .parse::<u64>()?;
++        ensure!(
++            bytes == (tokens as u64) * 4096 * 4,
++            "actual allocated GQA output bytes differ"
++        );
++    }
++    ensure!(
++        nodes.len() == required,
++        "actual GQA kernel population incomplete"
++    );
++    Ok(())
++}
++
++#[test]
++fn actual_allocated_gqa_profile_refuses_missing_cache_provider_repeat_or_shape() -> Result<()> {
++    let event = json!({"dur":1,"args":{"op_name":"GroupQueryAttention","provider":"CPUExecutionProvider",
++        "node_index":"17","output_size":"278528",
++        "output_type_shape":[{"float":[1,17,2048]},{"float":[1,8,17,128]},{"float":[1,8,17,128]}]}});
++    allocated_gqa_profile(&serde_json::to_vec(&vec![event.clone()])?, 17, 1)?;
++    for (path, value) in [
++        ("/args/provider", json!("OtherProvider")),
++        ("/args/output_type_shape", json!([{"float":[1,17,2048]}])),
++        ("/args/output_size", json!("1")),
++        ("/dur", json!(0)),
++    ] {
++        let mut changed = event.clone();
++        *changed.pointer_mut(path).context("literal mutation path")? = value;
++        assert!(allocated_gqa_profile(&serde_json::to_vec(&vec![changed])?, 17, 1).is_err());
++    }
++    assert!(
++        allocated_gqa_profile(&serde_json::to_vec(&vec![event.clone(), event])?, 17, 2).is_err()
++    );
++    assert!(allocated_gqa_profile(b"[]", 8192, 28).is_err());
++    Ok(())
++}
++
++#[test]
++#[ignore = "explicit new Compact graph/current input/source pins and exclusive native window; ONE diagnostic forward"]
++fn software_v2_compact_attention_profiled_8192_diagnostic() -> Result<()> {
++    let (input, profile, files, input_hash) = inputs()?;
++    let fit = profile.cpu_fit.as_ref().context("native CPU fit absent")?;
++    ensure!(
++        profile.model == ModelChoice::ContextQwenCompact
++            && profile.max_tokens == 8192
++            && profile.memory_reservation_bytes == 16u64 << 30
++            && fit.intra_threads == 4
++            && fit.inter_threads == 1
++            && fit.sequential
++            && !fit.spinning,
++        "only original Compact8192/CPU4/16GiB diagnostic is admitted"
++    );
++    ensure!(
++        std::env::var("ORT_GQA_DISABLE_FLASH_ATTENTION").as_deref() == Ok("0"),
++        "explicit frozen native GQA flash policy required"
++    );
++    let fixture_pin = input
++        .numeric_fixture
++        .as_ref()
++        .context("original exact numeric fixture required")?;
++    let fixture: NumericFixture = serde_json::from_slice(&pinned(fixture_pin, 16 << 20)?)?;
++    numeric_shape(&fixture, &profile, &input.policy)?;
++    let row = fixture
++        .rows
++        .get(2)
++        .context("full8192 original row absent")?;
++    ensure!(
++        row.input.input_ids.len() == 8192
++            && row.input.attention_mask == vec![1; 8192]
++            && row.input.candidate_positions.len() == 8,
++        "unchanged full8192/N8 row required"
++    );
++    let reference = row
++        .reference_original_fp32
++        .as_ref()
++        .context("genuine original publisher array absent")?;
++    let output = PathBuf::from(std::env::var("AIRK_SOFTWARE_V2_NATIVE_OUTPUT")?);
++    let parent = output.parent().context("diagnostic output parent absent")?;
++    let profile_prefix = parent.join("compact-gqa-profile");
++    let optimized = parent.join("compact-gqa-optimized.onnx");
++    ensure!(!optimized.exists(), "fresh optimized graph output required");
++    let mut file = OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .open(&output)?;
++    let binary_sha256 = file_hash(&std::env::current_exe()?)?;
++    let mut receipt = json!({"kind":"compact_attention_diagnostic","complete":false,"evaluation":true,
++        "release_qualified":false,"qualification_granted":false,"input_sha256":input_hash,
++        "profile":profile.manifest,"profile_source_sha256":input.profile.sha256,"source_manifest":input.source_manifest,
++        "resource_policy":input.policy,"resource_policy_digest":input.policy_digest,"model":profile.model,
++        "cpu_fit":profile.cpu_fit,"target":current_target(),"isa":isa(),"process_id":std::process::id(),
++        "execution_user":airk_ipc::endpoint::current_user()?,"native_binary_sha256":binary_sha256,
++        "measurement_identity":"native-original-operation-start-to-post-end-retention/1",
++        "diagnostic_measurement_identity":"compact-fp32-gqa-profiled/1","profiling_enabled":true,
++        "operation_journal":output.with_extension("operations.jsonl"),"rows":[],
++        "reference_scope":"original-publisher numeric diagnostic only; old same-artifact custody is NOT new-graph proof"});
++    flush(&mut file, &receipt)?;
++    let mut operations = operation::Journal::create(
++        &output,
++        operation::Identity {
++            input_sha256: input_hash,
++            profile: profile.manifest,
++            process_id: std::process::id(),
++            native_binary_sha256: binary_sha256,
++        },
++        input.policy.deadline_ms,
++    )?;
++    let (_parent, control) = private_control()?;
++    let owner = airk_kernel::inference_owner::NativeInferenceOwner::admit(Arc::new(
++        airk_store::service::ServiceLease::acquire(&control)?,
++    ))?;
++    let result=owner.run(||->Result<()> {
++        verify_files(&files,&profile)?;
++        let loaded=operations.observe(operation::Kind::Load,0,None,||Scorer::open_profiled(
++            ExecutionProfile::for_qualification(profile.clone())?,&files,&profile_prefix,&optimized))?;
++        receipt["optimized_save"] = json!({"mode":"externalized-injected-initializers",
++            "graph_limit_bytes":67108864u64,"weights_limit_bytes":8589934592u64,
++            "external_path":optimized.with_extension("weights.bin"),
++            "scope":"save included in original load deadline/RSS; fresh output watchdog required"});
++        receipt["load_us"]=json!(loaded.elapsed_us);
++        receipt["load_peak_process_rss_bytes"]=json!(peak_rss());flush(&mut file,&receipt)?;
++        ensure!(loaded.within_deadline,"original diagnostic load deadline exceeded");
++        ensure!(peak_rss()>0 && peak_rss()<=profile.memory_reservation_bytes,"known diagnostic load RSS refused before forward");
++        let scorer=loaded.value?;
++        let scored=operations.observe(operation::Kind::Numeric,3,Some(row.input.input_digest),||scorer.score(&row.input))?;
++        let within=scored.within_deadline;
++        let actual=scored.value;
++        if let Ok(values)=&actual {
++            receipt["rows"]=json!([{"input_digest":row.input.input_digest,"tokens":8192,"options":8,
++                "raw_scores":values,"elapsed_us":scored.elapsed_us,"native_call_elapsed_us":scored.native_call_elapsed_us}]);
++            flush(&mut file,&receipt)?;
++        }
++        let profiling=scorer.finish_profiling();
++        let (actual,profiling)=match(actual,profiling) {
++            (Ok(values),Ok(path))=>(values,path),
++            (Err(native),Err(retention))=>return Err(native.context(format!("profiling also failed: {retention:#}"))),
++            (Err(native),Ok(path))=>{receipt["profiling_path"]=json!(path);return Err(native);},
++            (Ok(_),Err(retention))=>return Err(retention),
++        };
++        receipt["profiling_path"]=json!(profiling);receipt["optimized_graph_path"]=json!(optimized);
++        receipt["peak_process_rss_bytes"]=json!(peak_rss());flush(&mut file,&receipt)?;
++        ensure!(within,"original120s diagnostic score operation exceeded");
++        ensure!(peak_rss()>0 && peak_rss()<=profile.memory_reservation_bytes,"actual diagnostic RSS refused");
++        let(raw,mass,argmax)=comparison(&actual,reference)?;
++        receipt["original_fp32_comparison"]=json!({"raw":raw,"mass":mass,"argmax":argmax});
++        ensure!(raw<=0.001 && mass<=0.05 && argmax,"unchanged original FP32 numerical gate refused");
++        allocated_gqa_profile(&std::fs::read(&profiling)?,8192,28)?;
++        drop(scorer);verify_files(&files,&profile)?;
++        Ok(())
++    }).and_then(std::convert::identity);
++    receipt["complete"] = json!(result.is_ok());
++    if let Err(error) = &result {
++        receipt["error"] = json!(format!("{error:#}"));
++    }
++    flush(&mut file, &receipt)?;
++    result
++}
++
++fn tiny_profile(tokens: usize) -> Result<()> {
++    ensure!(
++        std::env::var("ORT_GQA_DISABLE_FLASH_ATTENTION").as_deref() == Ok("0"),
++        "explicit frozen GQA policy required"
++    );
++    let graph_pin = ResourceFilePin {
++        path: std::env::var("AIRK_GQA_TINY_GRAPH")?,
++        sha256: serde_json::from_value(json!(std::env::var("AIRK_GQA_TINY_GRAPH_SHA256")?))?,
++    };
++    let graph = pinned(&graph_pin, 65536)?;
++    let output = PathBuf::from(std::env::var("AIRK_GQA_TINY_OUTPUT")?);
++    let parent = output.parent().context("synthetic output parent")?;
++    let prefix = parent.join(format!("synthetic-gqa-{tokens}"));
++    let optimized = parent.join(format!("synthetic-gqa-{tokens}-optimized.onnx"));
++    ensure!(
++        !optimized.exists(),
++        "fresh synthetic optimized graph required"
++    );
++    let (_parent, control) = private_control()?;
++    let owner = airk_kernel::inference_owner::NativeInferenceOwner::admit(Arc::new(
++        airk_store::service::ServiceLease::acquire(&control)?,
++    ))?;
++    let result = owner
++        .run(|| {
++            airk_retrieval::arbiter::runtime::synthetic_gqa_profile(
++                &graph, tokens, &prefix, &optimized,
++            )
++        })
++        .and_then(std::convert::identity)?;
++    let profile = PathBuf::from(
++        result["profiling_path"]
++            .as_str()
++            .context("actual profiling output absent")?,
++    );
++    allocated_gqa_profile(&std::fs::read(profile)?, tokens, 1)?;
++    let mut file = OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .open(output)?;
++    flush(&mut file, &result)?;
++    Ok(())
++}
++#[test]
++#[ignore = "explicit synthetic GQA graph/pins/output and actual owned120s CPU4 process required; no model weights"]
++fn software_v2_synthetic_gqa_allocation_t17() -> Result<()> {
++    tiny_profile(17)
++}
++#[test]
++#[ignore = "explicit synthetic GQA graph/pins/output and actual owned120s CPU4 process required; no model weights"]
++fn software_v2_synthetic_gqa_allocation_t8192() -> Result<()> {
++    tiny_profile(8192)
++}
+--- a/crates/airk-inference/src/inference_engine/pool/arbiter/CONTRACT.md
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/CONTRACT.md
+@@ -315,3 +315,31 @@
+ cause and add the complete observation failure context. Failure remains closed;
+ no duration is invented when a clock fails and no subsequent call is admitted.
+ A post-call observer failure after native success records that distinction.
++
++## Proposed Compact attention diagnostic profiling
++
++Test-support may create one profiling-enabled scorer with the same native
++profile/source admission, CPU/provider/thread/arena options and input guard.
++Ordinary open calls the identical configured owner with an identity builder;
++profiling and optimized-graph output are test-support APIs only. The diagnostic
++keeps the original native operation journal/watchdog and actual ServiceLease/
++NativeInferenceOwner through scorer drop and source rechecks. It records actual
++ORT allocation/provider/type/shape data, not declared output names as proof.
++No cache output becomes public and no zero-value dependency is added to scores.
++One full8192 Compact forward is diagnostic-only; all-row qualification selectors,
++weights/compiler/inputs, numerical/resource limits and source custody remain
++unchanged. Old same-artifact seals cannot qualify a different graph. Synthetic
++GQA operator controls are separate from model forwards and prove only actual
++registered CPU kernel/allocation shape, never model or task qualification.
++
++
++Private Compact attention proposal R3: the profiled full-model constructor uses
++pinned ORT externalized optimized serialization (fresh weights basename, 1024
++byte threshold). It must never use default Model::Save on injected multi-GiB
++weights. Save time and memory remain inside the original 120 second load and
++16 GiB native budget. Fresh graph <=64 MiB and external weights <=8 GiB are
++checked before forward; the actual execution owner must observe these bounds
++while synchronous serialization is in flight and retain all emitted bytes.
++No profiled execution is authorized by source preparation. Ordinary Scorer::open
++keeps its original builder and performs no optimized serialization. Tiny graphs
++contain no learned/external weights and retain their separately bounded save.

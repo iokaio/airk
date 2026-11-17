@@ -1,0 +1,165 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Private same-owner restart proof; no service/catalog/database is copied.
+use super::*;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Pinned {
+    path: PathBuf,
+    sha256: Sha256Digest,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Request {
+    ready: Pinned,
+    closed: Pinned,
+    status: Pinned,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Saved {
+    pub control: PathBuf,
+    pub configuration: airk_core::arbiter::Configuration,
+    prior_instance: airk_core::identity::Incarnation,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Closed {
+    schema: String,
+    evaluation: bool,
+    release_qualified: bool,
+    control_root: PathBuf,
+    instance: airk_core::identity::Incarnation,
+    shutdown_completed: bool,
+    service_lease_reacquired: bool,
+}
+fn read(pin: &Pinned) -> Result<Vec<u8>> {
+    let (_, mut file) = source_file(&pin.path, &artifact_root()?)?;
+    let bytes = bounded(&mut file)?;
+    ensure!(sha(&bytes) == pin.sha256, "Restart proof bytes changed");
+    Ok(bytes)
+}
+fn settled(ready: &Ready, closed: &Closed, status: &airk_core::arbiter::Status) -> bool {
+    closed_matches(ready.health.instance, &ready.control_root, closed)
+        && status.initialization.is_none()
+        && [&status.focus, &status.context]
+            .iter()
+            .all(|stage| stage.queued == 0 && stage.running == 0)
+        && ready
+            .health
+            .catalog_clock
+            .is_some_and(|clock| clock.namespace == status.configuration.catalog)
+}
+fn closed_matches(
+    instance: airk_core::identity::Incarnation,
+    control: &Path,
+    closed: &Closed,
+) -> bool {
+    closed.schema == "airk.private-arbiter-fixture-closed/1"
+        && closed.evaluation
+        && !closed.release_qualified
+        && closed.shutdown_completed
+        && closed.service_lease_reacquired
+        && closed.instance == instance
+        && closed.control_root == control
+}
+
+#[test]
+fn same_owner_restart_requires_actual_complete_closure_and_original_identity() {
+    let instance = airk_core::identity::Incarnation::from_bytes([83; 16]);
+    let control = PathBuf::from("original-control");
+    let mut closed = Closed {
+        schema: "airk.private-arbiter-fixture-closed/1".into(),
+        evaluation: true,
+        release_qualified: false,
+        control_root: control.clone(),
+        instance,
+        shutdown_completed: true,
+        service_lease_reacquired: true,
+    };
+    assert!(closed_matches(instance, &control, &closed));
+    closed.shutdown_completed = false;
+    assert!(!closed_matches(instance, &control, &closed));
+    closed.shutdown_completed = true;
+    closed.service_lease_reacquired = false;
+    assert!(!closed_matches(instance, &control, &closed));
+    closed.service_lease_reacquired = true;
+    assert!(!closed_matches(
+        airk_core::identity::Incarnation::from_bytes([84; 16]),
+        &control,
+        &closed
+    ));
+    assert!(!closed_matches(
+        instance,
+        Path::new("foreign-control"),
+        &closed
+    ));
+}
+pub(super) fn from_env(expected: Sha256Digest, prepared: &[Prepared]) -> Result<Option<Saved>> {
+    let Some(path) = std::env::var_os("AIRK_ARBITER_EVALUATION_RESTART") else {
+        return Ok(None);
+    };
+    let digest: Sha256Digest = std::env::var("AIRK_ARBITER_EVALUATION_RESTART_SHA256")?.parse()?;
+    let request: Request = serde_json::from_slice(&read(&Pinned {
+        path: PathBuf::from(path),
+        sha256: digest,
+    })?)?;
+    let ready: Ready = serde_json::from_slice(&read(&request.ready)?)?;
+    let closed: Closed = serde_json::from_slice(&read(&request.closed)?)?;
+    let status: airk_core::arbiter::Status = serde_json::from_slice(&read(&request.status)?)?;
+    status.validate()?;
+    let prior_work = request
+        .ready
+        .path
+        .parent()
+        .context("Prior Ready parent missing")?
+        .canonicalize()?;
+    ensure!(
+        request.ready.path.file_name() == Some(OsStr::new("ready.json"))
+            && request.closed.path.canonicalize()?
+                == prior_work.join("closed.json").canonicalize()?
+            && ready.control_root.canonicalize()? == prior_work.join("control").canonicalize()?
+            && prior_work.starts_with(artifact_root()?),
+        "Restart must reopen its original private control root"
+    );
+    ensure!(
+        ready.schema == "airk.private-arbiter-fixture/1"
+            && ready.evaluation
+            && !ready.release_qualified
+            && ready.inputs_sha256 == expected
+            && ready.profiles.len() == prepared.len()
+            && ready
+                .profiles
+                .iter()
+                .zip(prepared)
+                .all(|(old, current)| old.manifest == current.profile.manifest
+                    && old.model == current.profile.model
+                    && old.profile_sha256 == current.sha256)
+            && settled(&ready, &closed, &status),
+        "Restart closure, profiles or saved configuration differ"
+    );
+    // Actual exclusion is acquired again by normal serve_owned. No caller proof replaces it.
+    let lease = airk_store::service::ServiceLease::acquire(&ready.control_root)?;
+    drop(lease);
+    Ok(Some(Saved {
+        control: ready.control_root,
+        configuration: status.configuration,
+        prior_instance: ready.health.instance,
+    }))
+}
+pub(super) fn matches_control(work: &Path, ready: &Ready) -> Result<bool> {
+    if ready.control_root == work.join("control") {
+        return Ok(true);
+    }
+    let Some(raw) = crate::ipc::private_record::read_private(work, "restart-owner.json", LIMIT)?
+    else {
+        return Ok(false);
+    };
+    let saved: Saved = serde_json::from_slice(&raw)?;
+    Ok(saved.control == ready.control_root
+        && saved.prior_instance != ready.health.instance
+        && ready
+            .health
+            .catalog_clock
+            .is_some_and(|clock| clock.namespace == saved.configuration.catalog))
+}

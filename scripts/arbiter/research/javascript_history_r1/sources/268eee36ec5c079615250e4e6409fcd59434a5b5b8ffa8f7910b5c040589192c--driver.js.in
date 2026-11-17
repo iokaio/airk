@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: Apache-2.0
+const vscode=require('vscode'),fs=require('node:fs/promises'),path=require('node:path'),assert=require('node:assert/strict');
+exports.activate=()=>{let reloading=false;void (async()=>{
+ const extension=vscode.extensions.getExtension('iokaio.airk');assert.ok(extension);
+ const extensionRelative=path.relative("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\extensions",extension.extensionPath);assert.ok(extensionRelative&&!extensionRelative.startsWith('..')&&!path.isAbsolute(extensionRelative));
+ const api=await extension.activate();await fs.writeFile("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\activation-ready.json",'{}');
+ let definitions=await api.getServerDefinitions();await fs.writeFile("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\definitions-ready.json",'{}');
+ const files=["D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\workspace\\.codex\\config.toml","D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\workspace\\.mcp.json","D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\workspace\\.vscode\\mcp.json"],name="airk-project-f1a7404baf373981cfb45273";
+ const manual=JSON.parse(await fs.readFile(files[2],'utf8')).servers;
+ const definition=manual.airk??definitions[0];assert.ok(definition);
+ if(manual.airk)assert.equal(definitions.length,0,'manual configuration owns disabled state and suppresses a duplicate provider');
+ const flag=(args,key)=>{const index=args.indexOf(key);assert.ok(index>=0,key);return args[index+1];};
+ const same=(a,b)=>path.relative(process.platform==='win32'?path.toNamespacedPath(a):a,process.platform==='win32'?path.toNamespacedPath(b):b)==='';
+ const {RuntimeHost}=require(path.join(extension.extensionPath,'out/serviceBootstrap.js'));
+ const runtime=new RuntimeHost(extension.extensionPath,extension.packageJSON.version,{channel:'stable',installDir:"D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\native-service"});
+ const installation=await runtime.discover(),binding=runtime.binding(installation.inspection,installation.installDir),client=runtime.client(binding);
+ await fs.writeFile("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\observed-binding.json",JSON.stringify({controlDir:binding.controlDir}));
+ let registration;
+ try{const page=await client.projects(null,null,32,false);assert.equal(page.after,null);const matches=page.projects.map(row=>row.project.registration).filter(value=>same(value.root,"D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\workspace")&&value.collection==="project-f1a7404baf373981cfb45273");assert.equal(matches.length,1);registration=matches[0];}finally{client.dispose();}
+ const spec={command:definition.command,root:registration.root,dataDir:registration.data_root,collection:registration.collection,name:'fixture',service:{installDir:binding.installDir,project:registration.binding,universal:!definition.args.includes('launch')}};
+ async function diagnostics(){
+  const {McpStdioSession}=require(path.join(extension.extensionPath,'out/mcpStdioSession.js'));
+  const {session}=await McpStdioSession.open({command:definition.command,args:definition.args,cwd:path.dirname(definition.command),clientName:'installer-acceptance',clientVersion:extension.packageJSON.version},90000);
+  try{const result=await session.request('tools/call',{name:'diagnostics',arguments:{response_mode:'full'}},90000);assert.notEqual(result.isError,true);return JSON.parse(result.content.find(part=>part.type==='text').text);}finally{session.close();}
+ }
+ if(null&&!await fs.access("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\baseline.json").then(()=>true,()=>false)){
+  assert.equal(extension.packageJSON.version,null);
+  await fs.writeFile("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\baseline.json",JSON.stringify({version:extension.packageJSON.version,command:definition.command,args:definition.args,project:spec.service.project,dataDir:spec.dataDir,root:spec.root,controlDir:binding.controlDir}));
+  const deadline=Date.now()+180000;
+  while(!await fs.access("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\upgrade-reload.json").then(()=>true,()=>false)){if(Date.now()>deadline)throw new Error('Upgrade did not finish installing');await new Promise(resolve=>setTimeout(resolve,100));}
+  reloading=true;await vscode.commands.executeCommand('workbench.action.reloadWindow');return;
+ }
+ assert.equal(extension.packageJSON.version,"1.8.2");
+ if(false){const old=JSON.parse(await fs.readFile("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\baseline.json",'utf8'));assert.equal(old.project,spec.service.project);assert.equal(old.dataDir,spec.dataDir);assert.equal(old.root,spec.root);}
+ if(false){
+  const live=await require(path.join(extension.extensionPath,'out/native.js')).probeMcp(spec,28,'upgrade-before-reconnect');
+  assert.ok(live.tools.includes('diagnostics'));const status=await diagnostics();assert.equal(status.runtime.service.version,"1.8.2");
+  await fs.writeFile("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\new-runtime-active.json",JSON.stringify(status));
+  const deadline=Date.now()+45000;while(!await fs.access("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\clients-disconnected.json").then(()=>true,()=>false)){if(Date.now()>deadline)throw new Error('Installer did not terminate preceding clients');await new Promise(resolve=>setTimeout(resolve,100));}
+ }
+ const texts=await Promise.all(files.map(file=>fs.readFile(file,'utf8')));
+ assert.ok(same(flag(definition.args,'--root'),spec.root));
+ for(const text of texts){assert.ok(text.includes('airk-launcher'));assert.ok(text.includes('--root'));assert.ok(!text.includes('--service-project'));assert.ok(!text.includes('--data-dir'));}
+ assert.ok(texts[0].includes('enabled = false'));
+ for(const index of [1,2]){const value=JSON.parse(texts[index]),servers=value[index===1?'mcpServers':'servers'];assert.equal(servers[name],undefined);assert.equal(servers.airk.disabled,true);assert.equal(servers.airk.env.AIRK_CLIENT,'fixture');assert.equal(servers.other.command,'preserve-other');assert.equal(servers.airk.command,definition.command);assert.deepEqual(servers.airk.args,definition.args);}
+ await vscode.commands.executeCommand('airk.installCli');assert.deepEqual(await Promise.all(files.map(file=>fs.readFile(file,'utf8'))),texts);
+ await vscode.commands.executeCommand('airk.explorer.open','#manage/overview');
+ await vscode.commands.executeCommand('notifications.showList');
+ await fs.writeFile("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\notification-ready.json",JSON.stringify({project:spec.service.project}));
+ const noticeDeadline=Date.now()+45000;
+ while(!await fs.access("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\notification-verified.json").then(()=>true,()=>false)){if(Date.now()>noticeDeadline)throw new Error('Installer notification was not verified');await new Promise(resolve=>setTimeout(resolve,100));}
+ const probe=await require(path.join(extension.extensionPath,'out/native.js')).probeMcp(spec,28,'installer-acceptance');assert.ok(probe.tools.includes('status'));
+ const quick=JSON.parse(probe.status.content[0].text);assert.equal(quick.runtime,undefined);assert.equal(quick.work,undefined);
+ const observed=await diagnostics();
+ for(const actual of [observed.runtime.mcp_frontend.process.version,observed.runtime.index_worker.process.version,observed.runtime.service.version])assert.equal(actual,"1.8.2");
+ assert.equal(observed.runtime.service.payload_sha256,"6b3942fa9ebd168746281e2ceec8c604913545c10afe95a32ab99fe0cdab8fa7");
+ const setupDeadline=Date.now()+45000;
+ while(!await fs.access("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\setup-review.json").then(()=>true,()=>false)){if(Date.now()>setupDeadline)throw new Error('Setup review receipt was not retained');await new Promise(resolve=>setTimeout(resolve,100));}
+ await fs.writeFile("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\result.json",JSON.stringify({passed:true,installed:true,version:extension.packageJSON.version,extensionPath:extension.extensionPath,files,command:definition.command,args:definition.args,controlDir:binding.controlDir,tools:probe.tools,status:probe.status,diagnostics:observed,policyPreserved:true,repairIdempotent:true,quietCompletionVerified:true,managementTabsVerified:true,setupReview:JSON.parse(await fs.readFile("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\setup-review.json",'utf8')),installProgressVerified:await fs.access("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\progress-verified.json").then(()=>true,()=>false)},null,2));
+ })().catch(error=>{if(reloading&&String(error)==='Canceled: Canceled')return;return fs.writeFile("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-oURxbi\\error.json",JSON.stringify({error:String(error),stack:error.stack}));}).finally(()=>{if(!reloading)return vscode.commands.executeCommand('workbench.action.quit');});};

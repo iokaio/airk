@@ -1,0 +1,21 @@
+--- crates\airk-retrieval\src\arbiter\publication.rs
++++ crates\airk-retrieval\src\arbiter\publication.rs
+@@ -28,6 +28,18 @@
+         "publication tag differs from native version"
+     );
+     project(include_bytes!("release-catalog.json"), tag)
++}
++/// Private build-input check; this grants no runtime acquisition authority.
++#[cfg(feature = "test-support")]
++pub fn validate_candidate_for_distribution(profile: &Profile) -> Result<()> {
++    profile.validate()?;
++    super::runtime::validate_selected_policies(profile)
++}
++/// Reuse the canonical publication owner for a privately prepared final catalog.
++/// Embedding, packaging, target qualification and publication remain separate.
++#[cfg(feature = "test-support")]
++pub fn project_distribution_candidate(bytes: &[u8], tag: &str) -> Result<Publication> {
++    project(bytes, tag)
+ }
+ fn project(bytes: &[u8], tag: &str) -> Result<Publication> {
+     #[derive(Deserialize)]

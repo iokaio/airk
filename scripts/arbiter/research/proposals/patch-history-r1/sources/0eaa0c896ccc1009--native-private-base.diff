@@ -1,0 +1,138 @@
+--- crates\airk-kernel\src\inference_owner\evaluation_tests\native_parent_bag.rs
++++ crates\airk-kernel\src\inference_owner\evaluation_tests\native_parent_bag.rs
+@@ -83,6 +83,7 @@
+ #[test]
+ #[ignore = "explicit selected epoch1 private assets; emits Rust-owned native manifests before consumers"]
+ fn emit_parent_bag_epoch1_native_manifests() -> Result<()> {
++    private_base(std::env::var_os("AIRK_PARENT_BAG_PRIVATE_BASE").as_deref())?;
+     let base = PathBuf::from(
+         std::env::var_os("AIRK_PARENT_BAG_EXPORTS").context("missing exact export root")?,
+     )
+@@ -142,7 +143,7 @@
+         );
+         std::fs::write(&path, serde_json::to_vec_pretty(&manifest)?)?;
+         let model_json_sha256: Sha256Digest = asset_sha(&path)?.parse()?;
+-        let control = tempfile::tempdir()?;
++        let control = private_control()?;
+         let lease = Arc::new(airk_store::service::ServiceLease::acquire(control.path())?);
+         let owner = NativeInferenceOwner::admit(lease)?;
+         owner.run_encoder_evaluation(model_json_sha256, || {
+@@ -161,6 +162,7 @@
+ #[test]
+ #[ignore = "two exact epoch1 candidate assets and independent padded-input oracles required"]
+ fn parent_bag_two_families_match_independent_native_bucket_oracles() -> Result<()> {
++    private_base(std::env::var_os("AIRK_PARENT_BAG_PRIVATE_BASE").as_deref())?;
+     let output =
+         std::env::var_os("AIRK_NATIVE_ENCODER_OUTPUT").context("missing native encoder receipt")?;
+     let mut results = Vec::new();
+@@ -180,7 +182,7 @@
+                     == BTreeSet::from([32, 64, 128, 256]),
+             "all original10 plus independent64/128 bucket cases required"
+         );
+-        let root = tempfile::tempdir()?;
++        let root = private_control()?;
+         let lease = Arc::new(airk_store::service::ServiceLease::acquire(root.path())?);
+         let owner = NativeInferenceOwner::admit(lease)?;
+         if input.family.starts_with("original-") {
+@@ -359,6 +361,7 @@
+ #[test]
+ #[ignore = "one selected candidate DEV64 native run; no final promotion; explicit reviewed inputs"]
+ fn parent_bag_dev64_questions_use_current_kernel_with_fixed20_quality_mask() -> Result<()> {
++    private_base(std::env::var_os("AIRK_PARENT_BAG_PRIVATE_BASE").as_deref())?;
+     let corpus_path = PathBuf::from(
+         std::env::var_os("AIRK_NATIVE_DEV64_CORPUS").context("missing fixed DEV corpus")?,
+     );
+@@ -458,7 +461,7 @@
+     let binary = std::env::current_exe()?;
+     let binary_sha256 = Sha256Digest::from_bytes(Sha256::digest(std::fs::read(&binary)?).into());
+     sealed(&input.directory.join("model.json"), input.model_json_sha256)?;
+-    let control = tempfile::tempdir()?;
++    let control = private_control()?;
+     let lease = Arc::new(airk_store::service::ServiceLease::acquire(control.path())?);
+     let owner = NativeInferenceOwner::admit(lease)?;
+     let expected_model = owner.run_encoder_evaluation(input.model_json_sha256, || {
+@@ -513,3 +516,65 @@
+     std::fs::write(output, serde_json::to_vec_pretty(&receipt)?)?;
+     Ok(())
+ }
++
++// A path is not a role: the reviewed outer launcher proves the actual current-SID
++// owner-only anchor before/after execution. Actual exclusion remains ServiceLease.
++pub(super) fn private_base(path: Option<&std::ffi::OsStr>) -> Result<PathBuf> {
++    let path = std::path::Path::new(path.context("missing reviewed parent-bag private base")?);
++    ensure!(path.is_absolute() && !path.components().any(|part| matches!(part,
++        std::path::Component::ParentDir | std::path::Component::CurDir)),
++        "absolute unaliased parent-bag private base required");
++    for ancestor in path.ancestors() {
++        let metadata = std::fs::symlink_metadata(ancestor)?;
++        ensure!(metadata.is_dir() && !metadata.file_type().is_symlink(), "private base ancestor alias refused");
++        #[cfg(windows)] {
++            use std::os::windows::fs::MetadataExt;
++            ensure!(metadata.file_attributes() & 0x400 == 0, "private base reparse ancestor refused");
++        }
++    }
++    #[cfg(unix)] {
++        use std::os::unix::fs::PermissionsExt;
++        ensure!(std::fs::metadata(path)?.permissions().mode() & 0o777 == 0o700,
++            "private base must retain native mode0700");
++    }
++    Ok(path.canonicalize()?)
++}
++
++pub(super) fn private_control() -> Result<tempfile::TempDir> {
++    let supplied = std::env::var_os("AIRK_PARENT_BAG_PRIVATE_BASE");
++    let base = private_base(supplied.as_deref())?;
++    let control = tempfile::Builder::new().prefix("native-control-").tempdir_in(&base)?;
++    #[cfg(unix)] {
++        use std::os::unix::fs::{MetadataExt,PermissionsExt};
++        let parent = std::fs::metadata(&base)?;
++        let actual = std::fs::metadata(control.path())?;
++        ensure!(actual.uid() == parent.uid() && actual.permissions().mode() & 0o777 == 0o700,
++            "private child native owner/mode differs from the reviewed base");
++    }
++    Ok(control)
++}
++
++#[test]
++fn parent_bag_private_base_refuses_missing_relative_file_and_alias_before_native_lease() -> Result<()> {
++    assert!(private_base(None).is_err());
++    assert!(private_base(Some(std::ffi::OsStr::new("relative-private-base"))).is_err());
++    let fixture = tempfile::tempdir()?;
++    let missing = fixture.path().join("absent");
++    assert!(private_base(Some(missing.as_os_str())).is_err());
++    let file = fixture.path().join("file");std::fs::write(&file,b"inert")?;
++    assert!(private_base(Some(file.as_os_str())).is_err());
++    assert!(!missing.exists(),"refusal cannot create the missing base");
++    #[cfg(unix)] {
++        use std::os::unix::fs::{symlink,PermissionsExt};
++        let canonical = fixture.path().canonicalize()?;
++        std::fs::set_permissions(&canonical,std::fs::Permissions::from_mode(0o700))?;
++        private_base(Some(canonical.as_os_str()))?;
++        let alias = canonical.parent().unwrap().join(format!("parent-bag-alias-{}",std::process::id()));
++        symlink(&canonical,&alias)?;
++        let refused=private_base(Some(alias.as_os_str())).is_err();std::fs::remove_file(alias)?;
++        assert!(refused);
++        std::fs::set_permissions(&canonical,std::fs::Permissions::from_mode(0o755))?;
++        assert!(private_base(Some(canonical.as_os_str())).is_err());
++    }
++    Ok(())
++}
+--- crates\airk-kernel\src\inference_owner\evaluation_tests\development.rs
++++ crates\airk-kernel\src\inference_owner\evaluation_tests\development.rs
+@@ -131,6 +131,7 @@
+ #[test]
+ #[ignore = "one matched six-family DEV64 native run; no final promotion; explicit reviewed inputs"]
+ fn native_dev64_questions_use_current_kernel_with_fixed20_quality_mask() -> Result<()> {
++    super::native_parent_bag::private_base(std::env::var_os("AIRK_PARENT_BAG_PRIVATE_BASE").as_deref())?;
+     let corpus_path = PathBuf::from(
+         std::env::var_os("AIRK_NATIVE_DEV64_CORPUS").context("missing fixed DEV corpus")?,
+     );
+@@ -228,7 +229,7 @@
+     let binary = std::env::current_exe()?;
+     let binary_sha256 = Sha256Digest::from_bytes(Sha256::digest(std::fs::read(&binary)?).into());
+     sealed(&input.directory.join("model.json"), input.model_json_sha256)?;
+-    let control = tempfile::tempdir()?;
++    let control = super::native_parent_bag::private_control()?;
+     let lease = Arc::new(airk_store::service::ServiceLease::acquire(control.path())?);
+     let owner = NativeInferenceOwner::admit(lease)?;
+     let expected_model = owner.run_encoder_evaluation(input.model_json_sha256, || {

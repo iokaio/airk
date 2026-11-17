@@ -1,0 +1,25 @@
+--- r3/launch_owned.py
++++ r4/launch_owned.py
+@@ -13,7 +13,8 @@
+ def finalize_receipt(owned,worker,plan,plan_path,plan_sha,started,command,identity,failure,deadline,*,clock=time.monotonic,hash_file=digest,flush_log=None):
+     # The last clock sample follows every consumed hash and the receipt body.
+     # Only the final timing-field replacement/serialization/write is excluded.
+-    state=disposition(owned,worker);errors=[];hashes={}
++    state=disposition(owned,worker);errors=[];hashes={}
++    if failure is not None:state['passed']=False
+     def observe(label,path,expected=None):
+         try:
+             actual=hash_file(path);hashes[label]={'path':str(path),'sha256':actual}
+--- r3/test_final_clock.py
++++ r4/test_final_clock.py
+@@ -26,6 +26,10 @@
+             return'sourceSHA'if str(path).endswith('last.py')else'planSHA'if str(path).endswith('plan.json')else'observed'
+         receipt=self.finalize(hash_file,lambda:ticks.append('sample')or 3.,owned=self.owned(7),failure=failure)
+         self.assertIs(receipt['failure'],failure);self.assertEqual(receipt['owned']['exit_code'],7);self.assertTrue(receipt['disposition']['known_natural_nonzero']);self.assertFalse(receipt['disposition']['passed']);self.assertEqual(len(receipt['final_hash_failures']),1);self.assertEqual(ticks,['sample'])
++    def test_parent_failure_after_natural_success_cannot_claim_pass(self):
++        failure={'type':'InterruptedAfterWorkerRead','message':'actual parent failure'}
++        def hash_file(path):return'sourceSHA'if str(path).endswith('last.py')else'planSHA'if str(path).endswith('plan.json')else'observed'
++        receipt=self.finalize(hash_file,lambda:3.,failure=failure);self.assertFalse(receipt['disposition']['passed']);self.assertTrue(receipt['disposition']['naturally_settled']);self.assertFalse(receipt['disposition']['known_natural_nonzero']);self.assertIs(receipt['failure'],failure)
+     def test_source_mismatch_fails_without_inventing_unsettled_process(self):
+         def hash_file(path):return'planSHA'if str(path).endswith('plan.json')else'wrongsource'if str(path).endswith('last.py')else'observed'
+         receipt=self.finalize(hash_file,lambda:2.);self.assertFalse(receipt['disposition']['passed']);self.assertTrue(receipt['disposition']['naturally_settled']);self.assertFalse(receipt['disposition']['ownership_unknown_or_unsettled'])

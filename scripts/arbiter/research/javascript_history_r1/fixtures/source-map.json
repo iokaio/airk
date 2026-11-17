@@ -1,0 +1,167 @@
+{
+  "schema": "airk.source-relocation/1",
+  "input_analysis": {
+    "path": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\source-javascript-provenance-r2.json",
+    "sha256": "a43d5e3bc530779a659c8ae3ba7dacc2806fa83bba262eb1b8e80075153a7ed0",
+    "bytes": 7385173
+  },
+  "scope": "Four exact historical authored editor fixture implementations; no runtime data",
+  "qualification": false,
+  "historical_code_executed": false,
+  "files": [
+    {
+      "source": "artifacts/editor-update-preflight/run-HZeyEW/candidate/out/serviceExtension.js",
+      "original_sha256": "063f34e1d8c08d7afc75b7ec7037c63b606f91108bdbaacec64c4cfd1673f668",
+      "original_bytes": 637,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/063f34e1d8c08d7afc75b7ec7037c63b606f91108bdbaacec64c4cfd1673f668--serviceExtension.js.in",
+      "maintained_sha256": "c75e80c52ddea948f59a662c0b085f31d4afdfbfb5280b1f700f83fabb25d686",
+      "maintained_bytes": 676,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-LbzXoi/candidate/out/serviceExtension.js",
+      "original_sha256": "063f34e1d8c08d7afc75b7ec7037c63b606f91108bdbaacec64c4cfd1673f668",
+      "original_bytes": 637,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/063f34e1d8c08d7afc75b7ec7037c63b606f91108bdbaacec64c4cfd1673f668--serviceExtension.js.in",
+      "maintained_sha256": "c75e80c52ddea948f59a662c0b085f31d4afdfbfb5280b1f700f83fabb25d686",
+      "maintained_bytes": 676,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-LbzXoi/profile/User/globalStorage/iokaio.airk/interface-cache/16489d74dbeb2a9c34869af4cf0da9755d42fde6aab582bea3331070a68b9559/out/serviceExtension.js",
+      "original_sha256": "063f34e1d8c08d7afc75b7ec7037c63b606f91108bdbaacec64c4cfd1673f668",
+      "original_bytes": 637,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/063f34e1d8c08d7afc75b7ec7037c63b606f91108bdbaacec64c4cfd1673f668--serviceExtension.js.in",
+      "maintained_sha256": "c75e80c52ddea948f59a662c0b085f31d4afdfbfb5280b1f700f83fabb25d686",
+      "maintained_bytes": 676,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-k5Ecrc/candidate/out/serviceExtension.js",
+      "original_sha256": "063f34e1d8c08d7afc75b7ec7037c63b606f91108bdbaacec64c4cfd1673f668",
+      "original_bytes": 637,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/063f34e1d8c08d7afc75b7ec7037c63b606f91108bdbaacec64c4cfd1673f668--serviceExtension.js.in",
+      "maintained_sha256": "c75e80c52ddea948f59a662c0b085f31d4afdfbfb5280b1f700f83fabb25d686",
+      "maintained_bytes": 676,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-HZeyEW/extensions/iokaio.airk-1.8.12/out/serviceExtension.js",
+      "original_sha256": "76441669d7c34ec287cd434e9a8fe4793739735c26f96cb8804f9d1cef79ef48",
+      "original_bytes": 637,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/76441669d7c34ec287cd434e9a8fe4793739735c26f96cb8804f9d1cef79ef48--serviceExtension.js.in",
+      "maintained_sha256": "5748e999ad7f418aabc5a85fccdb0d9c3ccc868c4a531fb2443002656034ff3e",
+      "maintained_bytes": 676,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-LbzXoi/extensions/iokaio.airk-1.8.12/out/serviceExtension.js",
+      "original_sha256": "76441669d7c34ec287cd434e9a8fe4793739735c26f96cb8804f9d1cef79ef48",
+      "original_bytes": 637,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/76441669d7c34ec287cd434e9a8fe4793739735c26f96cb8804f9d1cef79ef48--serviceExtension.js.in",
+      "maintained_sha256": "5748e999ad7f418aabc5a85fccdb0d9c3ccc868c4a531fb2443002656034ff3e",
+      "maintained_bytes": 676,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-LbzXoi/profile/User/globalStorage/iokaio.airk/interface-cache/23625842ac506b7b4a530263be88b7160c62168737b02c32a5817ffbaf2b65ca/out/serviceExtension.js",
+      "original_sha256": "76441669d7c34ec287cd434e9a8fe4793739735c26f96cb8804f9d1cef79ef48",
+      "original_bytes": 637,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/76441669d7c34ec287cd434e9a8fe4793739735c26f96cb8804f9d1cef79ef48--serviceExtension.js.in",
+      "maintained_sha256": "5748e999ad7f418aabc5a85fccdb0d9c3ccc868c4a531fb2443002656034ff3e",
+      "maintained_bytes": 676,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-k5Ecrc/extensions/iokaio.airk-1.8.12/out/serviceExtension.js",
+      "original_sha256": "76441669d7c34ec287cd434e9a8fe4793739735c26f96cb8804f9d1cef79ef48",
+      "original_bytes": 637,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/76441669d7c34ec287cd434e9a8fe4793739735c26f96cb8804f9d1cef79ef48--serviceExtension.js.in",
+      "maintained_sha256": "5748e999ad7f418aabc5a85fccdb0d9c3ccc868c4a531fb2443002656034ff3e",
+      "maintained_bytes": 676,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-LbzXoi/extensions/iokaio.airk-1.8.13/out/serviceExtension.js",
+      "original_sha256": "0da807f83642e0c690e8d006e06c741e2c574f32d2ebd0fed14e8ff7cb6dead7",
+      "original_bytes": 636,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0da807f83642e0c690e8d006e06c741e2c574f32d2ebd0fed14e8ff7cb6dead7--serviceExtension.js.in",
+      "maintained_sha256": "228ca016337f64e86a949f81a5908052e56265e2e91a1bf99f1df2de9831878a",
+      "maintained_bytes": 675,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-LbzXoi/profile/User/globalStorage/iokaio.airk/interface-cache/d8b1960106e91dc2c55a7f3bd0b5aa3f81ff97a835902ccba377b0c88821f2a3/out/serviceExtension.js",
+      "original_sha256": "0da807f83642e0c690e8d006e06c741e2c574f32d2ebd0fed14e8ff7cb6dead7",
+      "original_bytes": 636,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0da807f83642e0c690e8d006e06c741e2c574f32d2ebd0fed14e8ff7cb6dead7--serviceExtension.js.in",
+      "maintained_sha256": "228ca016337f64e86a949f81a5908052e56265e2e91a1bf99f1df2de9831878a",
+      "maintained_bytes": 675,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-LbzXoi/profile/User/globalStorage/iokaio.airk/interface-cache/9dd285fb6b44913be5e634e45a18c64b9bab95fc51e35586da91f371ccc3c83f/out/serviceExtension.js",
+      "original_sha256": "ad24e64154df1f5d74ece2e573884f9ae220aef6d2f7150d6ee64fec13858434",
+      "original_bytes": 637,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/ad24e64154df1f5d74ece2e573884f9ae220aef6d2f7150d6ee64fec13858434--serviceExtension.js.in",
+      "maintained_sha256": "a5128c0b0f9c5fbf8d1cce8d0bed9b626a8c0d7c95f0544d784b415fbccda794",
+      "maintained_bytes": 676,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    }
+  ]
+}

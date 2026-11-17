@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+import hashlib,json,shutil
+from pathlib import Path
+r=Path.cwd();b=r/'artifacts/advanced-split/models/selected-native-goal-driver-r1/chunked-cal-r1';out=r/'artifacts/advanced-split/receipts/cal-harness-review-r152';assert not out.exists()
+def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+checks={b/'collector/manifest.json':'7ef151f004f514a7a93c788098dcb0e3c0efdc3ed34e464ad15693902562dabf',b/'proof/source-review.json':'40189b0d8227e0abacbf73d492869fbfb065f7b150f3c08d9edc636d7ce6fb9d',b/'proof/consumer-install.proposed.json':'4d5c720a49161f61fd7400ccfc2da9ed35b1057493598e9eb1a321cd8de34342',r/'artifacts/advanced-split/stage-service-preparation-r1/cal-execution-r102/common-cal-release-preparation-r1/source-review-r2.json':'61de835e2afc14e4967f398311fe6ac9a6c30ed8e36baafebccd021e8c13d8f9'}
+for p,digest in checks.items():assert sha(p)==digest,str(p)
+install=json.loads((b/'proof/consumer-install.proposed.json').read_bytes());out.mkdir()
+for row in install['rows']:
+    p=Path(row['target']);new=Path(row['proposed']);assert sha(p)==row['base_sha256'];assert sha(new)==row['proposed_sha256'];shutil.copyfile(p,out/p.name);shutil.copyfile(new,p)
+record={'approved_contract':True,'execution_authorized':False,'source_reviews':{str(p):h for p,h in checks.items()},'consumer_install':install,'review':'Root independently reviewed collector, native client/root resolution, same-selection regrant, phase producer/controller, global start/bound helpers, aggregate validator and narrow raw/certificate consumer branch. Exact 100 IDs/500 probes, thirteen separate 1800-second closures under original absolute10800 fixture bound, original30-second reads, source/config/profile/pipeline binding and honest nonce identities remain. Old failed/partial runs excluded. Source availability/publication unrelated and not granted. Actual exact fixture/common release/controller packet approval required before reads.','controls':'Collector15 Python+6 compiledSDK; proof17; immutable-start5 controls passed under frozen owner reviews. These prove harness only, not actual collection/model quality.','native_source':'13dc85349c783077aec1ad4eae194e17542a3205639c0fe7d927b165a6a0cf25','native_images':'artifacts/advanced-split/receipts/context-identity-gates-r148/images.json'}
+(out/'review.json').write_text(json.dumps(record,indent=2)+'\n',encoding='utf-8');print(json.dumps({'consumer_installed':True,'review':str(out/'review.json'),'sha256':sha(out/'review.json')}))

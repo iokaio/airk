@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: Apache-2.0
+const vscode=require('vscode'),fs=require('node:fs/promises'),path=require('node:path'),assert=require('node:assert/strict');
+exports.activate=()=>{void (async()=>{
+ const extension=vscode.extensions.getExtension('iokaio.airk');assert.ok(extension);assert.ok(extension.extensionPath.startsWith("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-5HBTwc\\extensions"));
+ const api=await extension.activate();const definitions=await api.getServerDefinitions();assert.equal(definitions.length,1);
+ const definition=definitions[0],files=["D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-5HBTwc\\workspace\\.codex\\config.toml","D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-5HBTwc\\workspace\\.mcp.json","D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-5HBTwc\\workspace\\.vscode\\mcp.json"],name="airk-project-35d59c97cb0bf8a9107178f2";
+ const texts=await Promise.all(files.map(file=>fs.readFile(file,'utf8')));
+ for(const text of texts){assert.ok(text.includes('airk-launcher'));assert.ok(text.includes('--service-project'));assert.ok(text.includes("project-35d59c97cb0bf8a9107178f2"));}
+ assert.ok(texts[0].includes('enabled = false'));assert.ok(texts[0].includes('AIRK_CLIENT = "fixture"'));
+ for(const index of [1,2]){const value=JSON.parse(texts[index]),servers=value[index===1?'mcpServers':'servers'];assert.equal(servers[name].disabled,true);assert.equal(servers[name].env.AIRK_CLIENT,'fixture');assert.equal(servers.other.command,'preserve-other');assert.equal(servers[name].command,definition.command);assert.deepEqual(servers[name].args,definition.args);}
+ await vscode.commands.executeCommand('airk.installCli');assert.deepEqual(await Promise.all(files.map(file=>fs.readFile(file,'utf8'))),texts);
+ const spec={command:definition.command,root:"D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-5HBTwc\\workspace",dataDir:definition.args[8],collection:"project-35d59c97cb0bf8a9107178f2",name:'fixture',service:{installDir:definition.args[3],project:definition.args[12]}};
+ const probe=await require(path.join(extension.extensionPath,'out/native.js')).probeMcp(spec,16,'installer-acceptance');assert.ok(probe.tools.includes('airk_status'));
+ await fs.writeFile("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-5HBTwc\\result.json",JSON.stringify({passed:true,installed:true,version:extension.packageJSON.version,extensionPath:extension.extensionPath,files,command:definition.command,args:definition.args,tools:probe.tools,status:probe.status,policyPreserved:true,repairIdempotent:true},null,2));
+ })().catch(error=>fs.writeFile("D:\\code\\Github\\airk\\artifacts\\editor-qualification\\agent-install-5HBTwc\\error.json",JSON.stringify({error:String(error),stack:error.stack}))).finally(()=>vscode.commands.executeCommand('workbench.action.quit'));};

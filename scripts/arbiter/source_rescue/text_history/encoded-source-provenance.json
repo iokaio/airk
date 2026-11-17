@@ -1,0 +1,26 @@
+{
+  "schema": "airk.encoded-source-migration/1",
+  "scope": "One reviewed raw-text container; empty pointer selects its complete strict UTF-8 field. Traceback/result bytes are not copied.",
+  "files": [
+    {
+      "container": "artifacts/local/one-airk-1814/neo-final-preparation-1794097748/stderr.txt",
+      "container_format": "utf8-text",
+      "container_sha256": "d85a004ed7ea1a3ba13244445595b022e8e18b61588f5d5f417e64dde344c804",
+      "container_bytes": 13274,
+      "json_pointer": "",
+      "encoded_field_sha256": "d85a004ed7ea1a3ba13244445595b022e8e18b61588f5d5f417e64dde344c804",
+      "encoded_field_bytes": 13274,
+      "decode_method": "single-python-b64decode-literal/1",
+      "decoded_sha256": "c51f8acec624fab63804a5655a1c910df2d6c1a4128e0d71665ecde7e9ae1a68",
+      "decoded_bytes": 4663,
+      "destination": "scripts/arbiter/source_rescue/text_history/neo-final-preparation--c51f8acec624.py.in",
+      "prefix": "# SPDX-License-Identifier: Apache-2.0\n",
+      "maintained_sha256": "c3c859eed7c86ff20893eb4fe1b32c5eac5a5326be1a6aadc38ae8d0b32c7c87",
+      "maintained_bytes": 4701,
+      "language": "python",
+      "disposition": "extracted-source",
+      "exact_git_blob": "e12e89d938dfb2d48fdd97fc3bab96f98ca4d284",
+      "git_blob_reachable_at_plan": false
+    }
+  ]
+}

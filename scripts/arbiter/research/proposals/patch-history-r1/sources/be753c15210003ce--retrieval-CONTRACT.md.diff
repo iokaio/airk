@@ -1,0 +1,34 @@
+--- a/crates/airk-retrieval/src/arbiter/runtime/qualification/CONTRACT.md
++++ b/crates/airk-retrieval/src/arbiter/runtime/qualification/CONTRACT.md
+@@ -119,3 +119,31 @@
+ build seals are required. The existing native numeric-template emitter must
+ produce a byte-identical blank17/128/8192 template before any scoring; original
+ independent numeric arrays remain opaque, unchanged evidence only.
++
++
++## Private Large graph diagnostic extension (/2)
++
++The Compact-only /2 scope above is extended additively by optional large_graph.
++A /2 request carries exactly one of compact_graph or large_graph; /1 carries
++neither, and a mixed override refuses. The native selected model determines
++source identity, layer count, attention width, original initializer count,
++CPU and reservation independently of the caller's proof. Compact remains
++28layers/context2048/CPU4/16GiB. Large requires the original40GiB/CPU16
++8192/N8 baseline,36layers/context4096/KV8/head128,398 original initializers,
++326 external learned Float weights and original graph SHA
++f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94.
++Large backbone hidden2560 must not be used as attention4096. The same original
++compiler, policy, task map, ABI, disk, exact full physical asset paths and all
++non-graph Asset bytes are preserved; the new model identity/calibration has no
++old same-artifact custody or qualification. Constructor output has no downloads,
++qualified targets, supported terminal evidence or release authority. Authentic
++new graph/checker/shape/settled creator pins and actual matching source/build
++receipts remain mandatory. Large shape proof includes all four1/17/128/8192
++populations and all36 internal cache witnesses; actual native kernel/tiny/full
++allocation and independent reference checks remain separate gates.
++
++The existing synthetic GQA helper keeps its Compact entry point. An additive
++test-support-only selected-model entry point uses exact CompactQ16/2048/CPU4
++or LargeQ32/4096/CPU16 with sharedKV8/head128 and private caches. Other models
++refuse. This changes no ordinary scorer constructor, public input/output ABI,
++production provider selection, native operation deadline or memory policy.

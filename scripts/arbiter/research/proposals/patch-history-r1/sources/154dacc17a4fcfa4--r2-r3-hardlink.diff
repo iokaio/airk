@@ -1,0 +1,16 @@
+--- r2/manual-clean-remote.py
++++ r3/manual-clean-remote.py
+@@ -78,7 +78,12 @@
+   rows=[]
+   try:listing(targetfd,'',rows,targetmeta['dev'])
+   finally:fresh('before-inventory.json',rows)
+-  fresh('before-storage.json',{'entries':len(rows),'logical_file_bytes':sum(r['bytes'] for r in rows if stat.S_ISREG(r['mode'])),'allocated_blocks512_sum':sum(r['blocks512'] for r in rows),'hardlink_entries':[r['path'] for r in rows if stat.S_ISREG(r['mode']) and r['nlink']>1],'hardlink_policy':'Unlink directory entries only; no file data/metadata edits. External hard links remain intact.','space':before_space})
++  fresh('before-storage.json',{'entries':len(rows),'logical_file_bytes':sum(r['bytes'] for r in rows if stat.S_ISREG(r['mode'])),'allocated_blocks512_sum':sum(r['blocks512'] for r in rows),'hardlink_entries':[r['path'] for r in rows if stat.S_ISREG(r['mode']) and r['nlink']>1],'hardlink_policy':'Only closed-within-target hardlink groups admitted; outside/unaccounted aliases refuse before deletion. No file data/ACL/owner edits.','space':before_space})
++  # All regular-file hard links must close inside the authorized target.
++  link_counts=collections.Counter((r['dev'],r['inode']) for r in rows if stat.S_ISREG(r['mode']))
++  outside_links=[r for r in rows if stat.S_ISREG(r['mode']) and r['nlink']!=link_counts[(r['dev'],r['inode'])]]
++  fresh('hardlink-closure.json',{'outside_or_unaccounted_aliases':outside_links,'all_regular_links_accounted_in_target':not outside_links})
++  assert not outside_links,'outside/unaccounted hardlink aliases; whole target preserved'
+   actor();again=processes();fresh('predelete-processes.json',again);assert not again['blockers'];assert tree(targetfd,targetmeta['dev'])==rows,'tree changed after inventory'
+   bypath={r['path']:r for r in rows};children=collections.defaultdict(list)
+   for row in rows:

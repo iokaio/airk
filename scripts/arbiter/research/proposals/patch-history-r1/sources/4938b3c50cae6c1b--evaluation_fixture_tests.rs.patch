@@ -1,0 +1,64 @@
+--- crates/airk-service/src/service_runtime/evaluation_fixture_tests.rs
++++ crates/airk-service/src/service_runtime/evaluation_fixture_tests.rs
+@@ -1275,6 +1275,61 @@
+             })
+             .collect(),
+     };
++
++    if std::env::var("AIRK_SELECTED_MEMBERSHIP_REVOKE")
++        .ok()
++        .as_deref()
++        == Some("1")
++    {
++        ensure!(
++            bindings.len() == 1,
++            "membership revocation fixture requires one actual bound index"
++        );
++        let binding = bindings
++            .values()
++            .next()
++            .context("single fault binding absent")?;
++        ensure!(
++            binding.window_scope_selection.project_ids.len() == 1
++                && binding.window_scope_selection.index_ids == vec![binding.index_id],
++            "fault W4 selection must be exactly one project/index"
++        );
++        let project_id = binding.window_scope_selection.project_ids[0];
++        let project = projects
++            .iter()
++            .find(|project| project.id == project_id)
++            .context("actual fault project absent")?;
++        let members = memberships
++            .iter()
++            .filter(|member| member.project_id == project_id)
++            .collect::<Vec<_>>();
++        ensure!(
++            members.len() == 1 && members[0].index_id == binding.index_id,
++            "fault project must have exactly its actual single membership"
++        );
++        let member = members[0];
++        let operation = airk_core::catalog_management::CatalogOperation::RemoveMembership {
++            project_id,
++            index_id: binding.index_id,
++            expected_scope_revision: project.scope_revision,
++            expected_membership_revision: member.revision,
++        };
++        ensure!(
++            operation.requires_authority_fence() && !operation.requires_worker_drain(),
++            "membership fixture cannot wait for worker NN drain"
++        );
++        write(&work, "fault-membership-remove.operation.json", &operation)?;
++        write(
++            &work,
++            "fault-membership-before.private.json",
++            &serde_json::json!({
++                "schema":"airk.private-composed-membership-before/1","evaluation":true,"release_qualified":false,
++                "instance":ready.health.instance,"namespace":catalog.namespace,"catalog_revision":catalog.revision,
++                "project":project,"membership":member,"index":binding.definition,
++                "window_scope_selection":binding.window_scope_selection,"operation":operation,
++            }),
++        )?;
++    }
+     write(&work, &format!("{prefix}.configure.json"), &request)?;
+     write(
+         &work,

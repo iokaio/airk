@@ -1,0 +1,533 @@
+--- a/README.md
++++ b/README.md
+@@ -14,8 +14,21 @@
+ accepted this unpublished local phase. The first wave refreshes one existing index
+ from eligible references and requires full-index metadata authority; partial
+ Project/path grants are unsupported. Evidence reads and source verification do
+-not start indexing. P13 ranking/diversity remains conditional; P14, deleted-source
+-recovery and the final local test installer remain pending.
++not start indexing.
++
++P13 retained current ranking and diversity; no candidate was adopted. P14 remains
++**in progress, not accepted** on source `5d8912b1...` / 960 native inputs. Current
++Windows full Nextest passed **2,626 tests**, with **50 selection exclusions**.
++Formatting, strict Clippy (17.394 s), two typed-read tests, actual native/CLI/MCP
++held-ledger coverage and the lightweight check passed. Neo passed five native
++tests, built the fresh ARM64 release, passed Developer ID signing, the independently
++copied launcher and isolated installed lifecycle, and completed Cargo cleanup.
++
++The new Windows producer and final R4 queue, broader current-producer campaigns,
++editor and real-corpus outcomes remain pending collection/review. Earlier D4e
++passes (2,624 tests, 15 final stages and 15 repeated native smoke suites) retain
++their source and limits. Deleted-source recovery and the local test installer
++remain unfinished. Version **1.8.8** is unpublished.
+ 
+ See [refresh controls and limits](docs/source-verification.md#explicit-reference-refresh),
+ [retained profiles](docs/code-indexing-options.md),
+@@ -60,7 +73,7 @@
+ ## Try AIRK
+ 
+ 1. Install the platform extension from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=iokaio.airk), or use a local candidate VSIX when testing unreleased changes. The runtime and models are bundled; VS Code 1.140+ is required.
+-2. Open a trusted project. Automatic setup registers it and starts indexing saved files. Review progress and extraction failures in **AIRK Explorer → Management**.
++2. **Review an index and its access.** Open a trusted folder, then use **Indexing > Index library** to review source, storage and watching choices and the resulting native setup work. Create Project memberships and an access grant, then explicitly **Use Grant for this window** before reading evidence. Opening a folder alone does not register or index it. Management shows progress, readiness and skipped or failed work.
+ 3. Open **AIRK: Open Workbench** and run `/files`. Search for a term from your project, inspect a cited result and open its source. Workbench opens once automatically after successful setup.
+ 4. To use an agent, run **AIRK: Connect Coding Agent**, review its configuration and enable AIRK in that client. Verify access with a scoped request; configuration alone does not prove a live connection.
+ 
+@@ -143,7 +156,14 @@
+ 
+ CLI installation removes previous extension-managed terminal executable copies regardless of version. It also retires the previous native rollback payload after successful activation, preserving the selected runtime, sources, indexes and settings. Locked files report incomplete cleanup; disconnect old clients and use **AIRK: Install or Repair CLI**, or allow the next trusted activation to retry. Close old terminal sessions completely; **Developer: Reload Window** can preserve their environment.
+ 
+-Trusted VSIX activation now installs the native runtime and the `airk` terminal command, registers new workspace folders, prepares the bundled offline model and queues indexing with automatic watching. No setup links are required. Open a new VS Code terminal after installation; restart external terminal applications to refresh PATH. User `airk.cli.autoInstall: false` disables automatic installation and registration. Existing 1.4 registrations, selected index-data locations and watching preferences are preserved, including after a storage change. Compatible 1.4 runtime updates use the native fenced activation and schema-migration path; no fresh registration or reindex is requested for saved projects. Managed runtime ownership and explicit Stop remain authoritative. Use **Choose Index Storage Folder** or **Choose Native Automatic Watching** to change defaults later. Storage selection creates a reviewed binding and retains old index files for separate cleanup. Agent connection remains a separate explicit action.
++Trusted activation can install or reconnect the approved runtime and terminal
++command, then reconcile existing native registrations. It does not register opened
++folders, start a new index or grant evidence access. New source/storage/watching
++choices require [reviewed index setup](docs/service-project-setup.md); Project memberships, grants and
++**Use Grant for this window** remain separate. `airk.cli.autoInstall` controls
++automatic runtime setup, not indexing authority. Existing accepted work, explicit
++Stop, pause and watching preferences remain native. Open a new terminal after PATH
++integration; external terminal applications may need restarting.
+ 
+ **1.5.0 AIRK Explorer and Explorer Assistance.** See the [release record](docs/releases/release-1.5.0.md). The previous **1.4.4 native service and storage recovery** is recorded in its [release record](docs/releases/release-1.4.4.md). Earlier 1.4.0/1.4.1/1.4.2 qualification remains historical; this candidate requires its own validation. Publication is controlled by protected-main CI and the release workflows. [Routine CI](docs/ci-and-builds.md) runs the full workspace on Linux, focused Windows/macOS regressions and all native/VSIX build and smoke gates; full platform and multi-project lifecycle qualification is opt-in.
+ 
+@@ -164,7 +184,11 @@
+ 
+ Each project has a canonical source, separate data root, collection name and opaque service binding. Registration reserves disjoint storage before creating it. Sources cannot overlap registered data, runtime state, control or bound logs. Native workers own indexing and source watching. Automatic watching explicitly continues after editor windows close; login startup is a separate opt-in choice.
+ 
+-## Start with a fresh 1.4 namespace
++## Historical 1.4 namespace transition
++
++The following clean-break and automatic-folder behavior describes the historical
++1.4 transition, not current setup or instructions to discard existing state.
++For this 1.8.8 working build, follow [reviewed setup](docs/service-project-setup.md).
+ 
+ The [native management clients](docs/service-native-management.md) provide direct usage/settings reads, bounded exports and guarded project changes. Usage & Savings waits for native completion; imports bind the reviewed input bytes, and shared quota updates reject stale policies.
+ 
+@@ -172,7 +196,9 @@
+ 
+ In the extension, trusted activation sets up new workspace roots automatically. Use **AIRK: Index Now** for later explicit indexing and **AIRK: Choose Native Automatic Watching** to switch between manual and automatic watching. **AIRK Explorer > Management** shows cached observations, readiness, jobs, sampled native wait reasons, independent source/helper state, project settings, guarded repairs and lifecycle controls. Queued jobs remain visible while paused and can be canceled explicitly. Start is explicit after a deliberate Stop; reconnect cannot clear that preference. Management also offers Terse/Full response mode, reviewed runtime upgrades/rollback and saved-request recovery.
+ 
+-Project settings offer [project removal](docs/service-project-retirement.md), including paused projects. Removal stops admission and source watching, drains the selected owner and automatically deletes its index and saved settings. Source files are untouched. A minimal opaque identity/time record keeps explicit removal authoritative; explicit Add Project can register again after cleanup.
++## Current native management
++
++Native project retirement is reviewed and preserves source files. Permanent exclusions keep their stable owner after retirement; review a distinct new index setup when a new independent index is intended. Reopening folders grants no authority. See [project retirement](docs/service-project-retirement.md), [permanent exclusions](docs/source-policy.md) and [reviewed setup](docs/service-project-setup.md).
+ 
+ Native project settings can reset scan-limit overrides to automatic limits. Native quotas apply to manual and automatic work; retired editor timer/soft-budget settings no longer appear. Workspace tree actions use the clicked project, and native usage counts performed source, semantic and replacement work independently of job acceptance.
+ 
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -14,8 +14,21 @@
+ accepted this unpublished local phase. The first wave refreshes one existing index
+ from eligible references and requires full-index metadata authority; partial
+ Project/path grants are unsupported. Evidence reads and source verification do
+-not start indexing. P13 ranking/diversity remains conditional; P14, deleted-source
+-recovery and the final local test installer remain pending.
++not start indexing.
++
++P13 retained current ranking and diversity; no candidate was adopted. P14 remains
++**in progress, not accepted** on source `5d8912b1...` / 960 native inputs. Current
++Windows full Nextest passed **2,626 tests**, with **50 selection exclusions**.
++Formatting, strict Clippy (17.394 s), two typed-read tests, actual native/CLI/MCP
++held-ledger coverage and the lightweight check passed. Neo passed five native
++tests, built the fresh ARM64 release, passed Developer ID signing, the independently
++copied launcher and isolated installed lifecycle, and completed Cargo cleanup.
++
++The new Windows producer and final R4 queue, broader current-producer campaigns,
++editor and real-corpus outcomes remain pending collection/review. Earlier D4e
++passes (2,624 tests, 15 final stages and 15 repeated native smoke suites) retain
++their source and limits. Deleted-source recovery and the local test installer
++remain unfinished. Version **1.8.8** is unpublished.
+ 
+ | Current guide | Scope |
+ | --- | --- |
+@@ -44,7 +57,7 @@
+ [Lean/Rich replies](reply-detail.md) explains independent per-read
+ projection, legacy defaults/flags, Workbench choices, CLI/MCP examples and limits.
+ 
+-[P3 design contracts](research/contracts-v190/README.md), [ADR 002](decisions/002-projects-indexes-and-query-scope.md), [ADR 003](decisions/003-dated-saved-source-verification.md) and the [profile-family inventory](research/profile-family-inventory-v190.md) fix future scope, ownership, upgrade and verification boundaries; runtime activation remains gated.
++[P3 design contracts](research/contracts-v190/README.md), [ADR 002](decisions/002-projects-indexes-and-query-scope.md), [ADR 003](decisions/003-dated-saved-source-verification.md) and the [profile-family inventory](research/profile-family-inventory-v190.md) define scope, ownership, upgrade and verification boundaries. Native activation is implemented for this local working build; final release and platform qualification remain pending P14.
+ 
+ [Evidence guidance](evidence-guidance.md) describes bounded existing-observation
+ reasons, empty-result limits and inert next reads across CLI/MCP/Workbench.
+@@ -123,7 +136,14 @@
+ 
+ CLI installation removes previous terminal executables regardless of version and retires the previous native runtime and rollback reference after successful activation. Locked files report incomplete cleanup and retry on a later trusted activation or **Install or Repair CLI**. Sources, indexes and settings are preserved. See the [console installation contract](service-console.md).
+ 
+-Trusted VSIX activation now installs the native runtime and the `airk` terminal command, registers new workspace folders, prepares the bundled offline model and queues indexing with automatic watching. No setup links are required. Open a new VS Code terminal after installation; restart external terminal applications to refresh PATH. User `airk.cli.autoInstall: false` disables automatic installation and registration. Existing 1.4 registrations, selected index-data locations and watching preferences are preserved, including after a storage change. Compatible 1.4 runtime updates use the native fenced activation and schema-migration path; no fresh registration or reindex is requested for saved projects. Managed runtime ownership and explicit Stop remain authoritative. Use **Choose Index Storage Folder** or **Choose Native Automatic Watching** to change defaults later. Storage selection creates a reviewed binding and retains old index files for separate cleanup. Agent connection remains a separate explicit action.
++Trusted activation can install or reconnect the approved runtime and terminal
++command, then reconcile existing native registrations. It does not register opened
++folders, start a new index or grant evidence access. New source/storage/watching
++choices require [reviewed index setup](service-project-setup.md); Project memberships, grants and
++**Use Grant for this window** remain separate. `airk.cli.autoInstall` controls
++automatic runtime setup, not indexing authority. Existing accepted work, explicit
++Stop, pause and watching preferences remain native. Open a new terminal after PATH
++integration; external terminal applications may need restarting.
+ 
+ **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**
+ 
+--- a/docs/releases/release-1.8.8.md
++++ b/docs/releases/release-1.8.8.md
+@@ -14,8 +14,27 @@
+ accepted this unpublished local phase. The first wave refreshes one existing index
+ from eligible references and requires full-index metadata authority; partial
+ Project/path grants are unsupported. Evidence reads and source verification do
+-not start indexing. P13 ranking/diversity remains conditional; P14, deleted-source
+-recovery and the final local test installer remain pending.
++not start indexing.
++
++P13 retained current ranking and diversity; no candidate was adopted. P14 remains
++**in progress, not accepted** on source `5d8912b1...` / 960 native inputs. Current
++Windows full Nextest passed **2,626 tests**, with **50 selection exclusions**.
++Formatting, strict Clippy (17.394 s), two typed-read tests, actual native/CLI/MCP
++held-ledger coverage and the lightweight check passed. Neo passed five native
++tests, built the fresh ARM64 release, passed Developer ID signing, the independently
++copied launcher and isolated installed lifecycle, and completed Cargo cleanup.
++
++The new Windows producer and final R4 queue, broader current-producer campaigns,
++editor and real-corpus outcomes remain pending collection/review. Earlier D4e
++passes (2,624 tests, 15 final stages and 15 repeated native smoke suites) retain
++their source and limits. Deleted-source recovery and the local test installer
++remain unfinished. Version **1.8.8** is unpublished.
++
++**P14 evidence scope:** source `d4e48a53…` is a fresh production candidate,
++including the cold-default model correction. Its 15 final Windows stages,
++2,624-case workspace suite and two scoped Neo cases passed. The P12 record below
++retains its original source and limits. Broader and installed/platform outcomes
++are pending; P14 is not accepted.
+ 
+ The [refresh guide](../source-verification.md#explicit-reference-refresh)
+ keeps native mutation review separate from read-only verification and MCP evidence.
+--- a/docs/releases/release-1.9.0.md
++++ b/docs/releases/release-1.9.0.md
+@@ -7,9 +7,14 @@
+ passed 39 focused Windows native tests, all 12 final release qualification
+ stages and 19 scoped Neo tests with successful cleanup. Primary review accepted
+ P12 for unpublished local development; installed-editor and final plan acceptance
+-remain separate. P13 remains
+-conditional; P14, deleted-source cleanup and the final local test installer
+-remain pending. Exact accepted and historical evidence is in the
++remain separate. P13 review retained current ranking and diversity; no candidate
++was adopted. P14 now evaluates corrected source `5d8912b1...` / 960 native inputs after cold
++bundled-default and typed quota-read admission corrections. Current Windows full Nextest passed 2,626 tests with 50 selection exclusions, plus
++focused checks. Neo passed five tests, fresh ARM64 release, Developer ID/copy checks,
++isolated installed lifecycle and cleanup. The new Windows producer/final queue,
++broader resource/editor/corpus outcomes and primary review remain pending. Dated D4e core passes do not qualify
++the newer source. **P14 is not accepted.** Deleted-source recovery and the local
++test installer remain unfinished; no promotion or publication is implied. Exact accepted and historical evidence is in the
+ [working-build record](release-1.8.8.md) and [ledger](../research/implementation-v190.md).
+ 
+ P7 implements [combined Project reads](../combined-reads.md) with complete
+--- a/docs/research/implementation-v190.md
++++ b/docs/research/implementation-v190.md
+@@ -9,7 +9,22 @@
+ Progress below is observed local evidence; it does not establish publication or
+ cross-platform qualification.
+ 
+-**Current checkpoint, 6 November 2026:** P9, P10, P11a, P11b and P12 are accepted for
++**Current checkpoint, 6 November 2026 - P14 pending:** P9-P12 remain accepted
++for unpublished local development. P13 retained ranking/diversity; no candidate
++or gain is claimed. Current source `5d8912b1...` / 960 inputs includes canonical
++cold-default split provisioning and typed quota-read admission corrections.
++Windows full Nextest passed **2,626 tests**, with **50 selection exclusions**.
++Formatting, strict Clippy (17.394 s), Kernel typed tests (2), actual native/CLI/MCP
++held-ledger coverage (1) and lightweight check passed. Neo passed five native tests,
++fresh ARM64 release, Developer ID/post-seal copied-launcher checks and the actual
++isolated installed lifecycle; all three cleanup observations exited 0 with target
++absent. The new Windows producer, fresh final R4 queue, broader/editor/corpus
++outcomes and primary review remain pending.
++**P14 is not accepted.** Earlier D4e receipts retain their original identity.
++Deleted-source recovery and the local test installer remain unfinished. Version
++**1.8.8** is unpublished.
++
++**Earlier P12 checkpoint, 6 November 2026 (historical):** P9, P10, P11a, P11b and P12 are accepted for
+ unpublished local development. P10 is committed as `c2584cb`, P11a as `f2bf2d2`
+ and P11b as `aa28425`. P12 passed primary local phase review: its focused
+ Windows native selection passed **39/39** on `4121692a…` / 960 inputs, strict
+@@ -66,8 +81,8 @@
+ | P11a | Accepted locally — `f2bf2d2` | Bounded actual per-file profile family reporting and complete transports |
+ | P11b | Accepted locally — `aa28425` | Explicit retained Lean/Rich migration, legacy continuity and paid split inheritance |
+ | P12 | Accepted locally | 39 focused Windows native tests; strict scoped Clippy; UI 776 passed/19 skipped; all 12 final Windows release stages and 19 scoped Neo tests passed; clean exit zero and target removed |
+-| P13a/P13b | Conditional decision: retain current ranking | Candidate remains inert; quality/resource, independent-label, native disclosure and scope gates are not established; no quality gain or candidate failure is claimed |
+-| P14 | Pending | Combined qualification, platform/fault/resource coverage and final candidate evidence |
++| P13a/P13b | Resolved: retain current ranking/diversity | Candidate remains inert; quality/resource, independent-label, native disclosure and scope gates are not established; no quality gain or candidate failure is claimed |
++| P14 | In progress — not accepted | Current D4e production candidate: 2,624 Windows tests, 15 final stages and two scoped Neo cases passed; broader/resource/installed/platform results pending |
+ 
+ **Additional maintainer request — 5 November 2026:** after P9–P14, reproduce and
+ fix deleted-source failure loops in the current release: individual indexed files
+@@ -5024,3 +5039,73 @@
+ or modify dependency/model/OCR adapters. Any later adoption requires a new
+ reviewed evidence-based decision. This P13 record is a separate checkpoint after
+ P12 acceptance; its authorized signed commit is a separate Git action.
++
++## P14 - current qualification in progress, 6 November 2026
++
++Current native source is
++`5d8912b117b410306ac9a3b44af6d96d70bb018006c2d49a1efa365597fe3e11`
++(**960** inputs), on working version **1.8.8**. P13 retained the existing ranker and
++diversity behavior. No ranking gain or phase acceptance is inferred.
++
++The cold-default split failure exposed a destination without an installed model
++reference. Source-only indexing correctly does not provision one. An explicitly
++semantic-ready DestinationBuild now selects the paired bundled default through
++its existing claimed model owner before indexing. The 32-turn bound, prepaid
++funding, source policy and actual ready-publication checks remain intact.
++
++The later D4e service-load case (10 Projects, 50 clients) exposed a real typed
++quota-ledger read refusal falling back to raw error text. Current code maps only
++Store's typed `QuotaContention` to the existing same-request `selection_busy`
++read-admission category. Permission errors and identical generic text do not
++become retryable. Durable jobs retain `quota_ledger_busy`; mutation replay is
++unchanged. Actual held-ledger coverage compares complete native/CLI/MCP refusals
++in Full and Terse, then verifies the same publication and unchanged source.
++
++The 10k scale harness previously failed on a supported typed read refusal. Its
++correction preserves the exact read, original deadline, finite attempts and attempt
++outputs/costs. Only actual exit 1 with a complete typed hint is eligible; exit 2,
++signals and unknown/transport failures remain terminal. Index/configuration
++mutations never enter this path. Driver tests passed **8**, with **1** Linux RSS
++case skipped on Windows; these unit results do not establish a successful 10k run.
++
++The original runtime-upgrade fixture registered without initializing owned
++collection state, then met the intentional `ConfigurationUnavailable` compatibility
++boundary. Missing `roots.json` itself is not the cause: absent owned metadata stays
++unknown and cannot create imported authority. The corrected positive harness
++explicitly indexes the fictional OLD runtime through one saved job before upgrade;
++its actual current-producer upgrade result remains pending. The corrected positive
++fixture passed on the prior D4e pair in **67.743 s**, registry **11 to 12**, with
++exact source/registration preservation and acknowledged uninstall. This qualifies
++the fixture against that prior pair, not the newer producer. The never-indexed mode
++retains the original refusal and pending manual recovery. It is not counted as a
++successful upgrade and does not auto-index, abort, restart an old reader or uninstall
++committed pending state. The SQL registry target is **12**, separate from working
++version and policy contracts. Early fixture detachment and separate primary/teardown
++diagnostics preserve failures; the original failed fixture was lost under the old
++masked teardown, so no retained database proof is claimed. Seven Python ownership,
++acknowledgment and timeout tests passed.
++
++| Scope | Current observation / final result to fill from actual receipts |
++| --- | --- |
++| Windows focused `5d8912b1...` | Formatting, strict workspace Clippy **17.394 s**, Kernel **2**, native/CLI/MCP **1** and lightweight check passed. |
++| Windows full / fresh final | **2,626 passed**, **0 failed**, **50 selection exclusions**; Nextest **1,599.125 s**, wrapper **1,648.753 s**. The fresh Windows producer `p14-runtime-final-r2` (incremental off) and final **R4** queue remain **pending**; record exact producer/source/runtime seal and outcomes. |
++| Neo current source | **5 tests** across 4 commands plus format passed; fresh ARM64 release **1,096.11 s**. Developer ID signing of four components, post-seal copied-launcher check and actual isolated installed lifecycle passed. All **3** cleanup observations exited **0** with target absent. No notarization claim. |
++| Current broader / installed / corpus | Service-load, 10k/resource, runtime-upgrade, repeat smokes, VSIX multiwindow/legacy, corpus and other platform results: **pending exact current-producer outcomes**. |
++| Phase decision | **P14 not accepted**; primary review and final evidence required. Deleted-source recovery remains a separate unfinished follow-up before the local test installer. |
++
++### Dated D4e checkpoint (6 November 2026; superseded source)
++
++`d4e48a53...` / 960 inputs passed **2,624** Windows tests with **50 selection
++exclusions**, the four restored long cases, **15** final stages and **15** native
++smoke suites (five repetitions of each of three suites). All **84** unchanged
++comparison gates passed. The P12 extension suite remained **776 passed / 19
++skipped**; two scoped Neo cases passed with Cargo clean exit 0 and target absent.
++These receipts keep their actual source/runtime identity. Later load, scale and
++upgrade failures remain failures, not erased by those passes. The canceled obsolete
++D4e Mac producer is not current signing qualification.
++
++Client-only counters do not establish total service CPU/RSS or peak physical disk.
++No full Mac workspace, current Linux/Intel/installed Mac editor, notarization or
++release/publication qualification follows without its actual evidence. Fill the
++pending rows only from collected receipts; do not relabel old artifacts. Earlier
++P12 and other dated records remain unchanged.
+--- a/docs/research/plan-v190.md
++++ b/docs/research/plan-v190.md
+@@ -1,4 +1,10 @@
+ # AIRK 1.9.0 research assessment and delivery plan
++
++**Current implementation status, 6 November 2026:** P9–P12 are accepted locally.
++P13 review retained current ranking/diversity. P14 is in progress on the 1.8.8
++working candidate; broader and installed/platform results remain pending.
++This dated research plan keeps its proposed gates; the
++[implementation ledger](implementation-v190.md) owns actual evidence and acceptance.
+ 
+ **Assessment date:** 2 November 2026. **Baseline:** AIRK 1.8.7.
+ **Status:** recommended scope and implementation gates, not implemented behavior or
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -1,4 +1,21 @@
+ # Architecture
++
++P14's current **1.8.8 candidate**, `5d8912b1...` / 960 inputs, keeps the
++existing owners. A claimed DestinationBuild job that explicitly requires semantic
++readiness selects the paired bundled default through its model owner before Current
++initialization and indexing. The collection writer, prepaid funding, source policy
++and bounded continuation remain authoritative; metadata-only reads do not provision.
++Kernel's canonical read hint also classifies genuine typed quota-ledger contention
++as existing `selection_busy` admission. Raw lookalike text and permission failures
++stay terminal; ledger operations and mutations are not replayed. CLI/MCP and the
++existing read clients retain the same complete hint contract.
++
++Current Windows full Nextest passed 2,626 tests (50 selection exclusions), alongside
++focused checks. Neo passed five tests, the fresh ARM release, Developer ID and
++copied-launcher checks, isolated installed lifecycle and Cargo cleanup. The new
++Windows producer and final/broader/editor/corpus/platform outcomes remain pending. Earlier D4e evidence
++retains its source identity. **P14 is not accepted.** No new crate, database,
++scheduler, source write or release/promotion is introduced.
+ 
+ P12's accepted local **1.8.8 working build** adds explicitly reviewed reference refresh
+ through the existing native Configure job and collection publication owners.
+@@ -262,7 +279,7 @@
+ 
+ Extension CLI installation removes obsolete terminal executable copies at its own fixed global-storage locations. Native CLI ownership remains responsible for retiring the previous runtime: it fences the active selection, journals inventory-bound cleanup, drains owners, clears rollback and restarts the selected runtime. Sources, indexes and settings remain outside executable retirement. Managed provider payloads are excluded. See [console installation](service-console.md).
+ 
+-Trusted extension activation now installs the approved runtime and terminal forwarding command and sets up new workspace folders automatically. Existing 1.4 project/storage/watching selections remain native and are preserved on compatible runtime updates. Runtime activation and any schema migrations stay in the native adapter; the dashboard renders metadata and does not open indexes.
++Trusted extension activation installs or reconnects the approved runtime and terminal forwarding command, then reconciles metadata for existing native registrations. Opening workspace folders does not create an index, scan sources or grant access. Missing indexes require explicit native setup through Indexing > Index library; source/storage/watching choices and accepted setup work are reviewed. Project memberships, access grants and Use Grant are separate authority steps. Existing storage, pause, Stop and watching preferences remain native. Runtime activation and schema migrations stay in CLI/Store; the dashboard renders metadata and does not open indexes. See [reviewed setup](service-project-setup.md).
+ 
+ Store classifies registry storage contention; the CLI applies the existing registry_busy response only to an explicit whitelist of read-only observations. Mutation and receipt recovery contracts remain unchanged, including RequestEpoch receipt pruning.
+ 
+--- a/docs/index-splitting.md
++++ b/docs/index-splitting.md
+@@ -82,6 +82,20 @@
+ readiness is an explicit reviewed requirement, distinct from publication or
+ physical cleanup.
+ 
++### Cold semantic-ready destinations in the P14 candidate
++
++When the review requires semantic readiness, the destination selects the paired
++bundled default through the existing shared-model owner before initialization and
++indexing. This also handles a fresh service with no installed default reference.
++The resulting native job must prove the actual ready destination publication;
++helper availability or an empty continuation queue alone cannot establish readiness.
++The original index's custom model is not treated as an inherited destination model.
++Dated Windows and Neo cold-default cases passed on `d4e48a53...`. Current
++`5d8912b1...` also classifies genuine quota-ledger read admission through the
++existing bounded `selection_busy` contract, without replaying jobs or ledger
++mutations. Focused Windows and five Neo cases passed. Full current-source,
++broader and installed/platform outcomes remain pending; P14 is not accepted.
++
+ ## Cancellation and exact recovery
+ 
+ Before the original transfer fence, explicit Cancel preserves the original's
+--- a/packages/vscode/README.md
++++ b/packages/vscode/README.md
+@@ -14,8 +14,21 @@
+ accepted this unpublished local phase. The first wave refreshes one existing index
+ from eligible references and requires full-index metadata authority; partial
+ Project/path grants are unsupported. Evidence reads and source verification do
+-not start indexing. P13 ranking/diversity remains conditional; P14, deleted-source
+-recovery and the final local test installer remain pending.
++not start indexing.
++
++P13 retained current ranking and diversity; no candidate was adopted. P14 remains
++**in progress, not accepted** on source `5d8912b1...` / 960 native inputs. Current
++Windows full Nextest passed **2,626 tests**, with **50 selection exclusions**.
++Formatting, strict Clippy (17.394 s), two typed-read tests, actual native/CLI/MCP
++held-ledger coverage and the lightweight check passed. Neo passed five native
++tests, built the fresh ARM64 release, passed Developer ID signing, the independently
++copied launcher and isolated installed lifecycle, and completed Cargo cleanup.
++
++The new Windows producer and final R4 queue, broader current-producer campaigns,
++editor and real-corpus outcomes remain pending collection/review. Earlier D4e
++passes (2,624 tests, 15 final stages and 15 repeated native smoke suites) retain
++their source and limits. Deleted-source recovery and the local test installer
++remain unfinished. Version **1.8.8** is unpublished.
+ 
+ The [refresh guide](https://github.com/iokaio/airk/blob/main/docs/source-verification.md#explicit-reference-refresh)
+ explains explicit review, exact receipts, memory-only refresh evidence and requery.
+@@ -66,7 +79,7 @@
+ ## Get your first result
+ 
+ 1. **Install AIRK** for your workspace host’s OS and architecture. The native runtime and local models are bundled; no Docker, Rust toolchain or separate API key is needed to use the extension. VS Code 1.140 or newer is required.
+-2. **Open a trusted project.** With automatic setup enabled, AIRK registers the folder and starts indexing saved files. Open **AIRK Explorer → Management** to inspect progress, readiness and any skipped or failed files.
++2. **Review an index and its access.** Open a trusted folder, then use **Indexing > Index library** to review source, storage and watching choices and the resulting native setup work. Create Project memberships and an access grant, then explicitly **Use Grant for this window** before reading evidence. Opening a folder alone does not register or index it. Management shows progress, readiness and skipped or failed work.
+ 3. **Try Workbench.** It opens once after successful setup, or run **AIRK: Open Workbench**. Start with `/files` to see indexed paths. Then try `/search retry --mode lexical`, replacing `retry` with a term in your project, and open a cited result.
+ 4. **Connect an agent when you want one.** Run **AIRK: Connect Coding Agent**, review its scoped configuration, and enable or approve AIRK in that client. Ask the agent to discover AIRK’s tools, check `status`, search the relevant scope and verify the cited live files before editing.
+ 
+@@ -118,9 +131,9 @@
+ 
+ **Published version 1.7.6** asks before the first installation what it will change, can run without starting any AIRK process (`airk.runtime.nativeExecution`), removes its terminal integration on uninstall and reports interrupted cleanups, and adds **AIRK: Review and Remove AIRK Data**. Common credential files are skipped by default. [Release notes and validation limits](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.7.6.md) document the changes. Earlier records remain in the [release archive](https://github.com/iokaio/airk/blob/main/docs/releases/README.md).
+ 
+-VS Code may require **Developer: Reload Window** to replace an already running extension after an upgrade. AIRK keeps a **Reload to finish update** action when it detects a pending replacement. VS Code saves sidebar tab order; drag the AIRK tab to the right if needed. `airk.cli.autoInstall: false` disables automatic installation and registration; discovery can still run bundled native probes. `airk.runtime.nativeExecution: false` starts no AIRK process at all, and `airk.cli.shellIntegration` limits which shell startup files setup edits.
++VS Code may require **Developer: Reload Window** to replace an already running extension after an upgrade. AIRK keeps a **Reload to finish update** action when it detects a pending replacement. VS Code saves sidebar tab order; drag the AIRK tab to the right if needed. `airk.cli.autoInstall: false` disables automatic runtime and terminal setup; discovery can still run bundled native probes. `airk.runtime.nativeExecution: false` starts no AIRK process at all, and `airk.cli.shellIntegration` limits which shell startup files setup edits.
+ 
+-Before the first installation AIRK shows what setup changes and lets you set up, customize, defer or decline it. Setup installs the runtime/CLI, updates user PATH or marked shell-profile blocks and starts background indexing of registered folders; home folders and drive roots need an explicit choice. Hidden files can be included; common credential files are skipped by default, but AIRK is not a secret scanner, so ignore other sensitive sources before indexing. Index objects and saved Workbench results can retain excerpts, and evidence returned to an agent may reach its provider. On macOS/Linux, new storage folders are created private to you, and storage other accounts may read is reported, not changed. Uninstall removes AIRK's terminal integration but preserves native indexes; use **AIRK: Review and Remove AIRK Data** first if you want them gone. See [installation and evidence privacy](https://github.com/iokaio/airk/blob/main/docs/vscode-extension.md#installation-and-evidence-privacy) for controls and cleanup limits.
++Before the first installation AIRK reviews runtime/CLI and terminal integration changes; Customize controls the external terminal command. New index source, storage and watching choices are separate explicit reviews, as are Project memberships and grants. Existing accepted jobs or saved watching may continue independently. Hidden files can be indexed and common credential files are skipped by default, but AIRK is not a secret scanner: review sensitive sources before indexing. Indexes and saved Workbench results may retain excerpts; evidence returned to an agent may reach its provider. Private storage permissions, terminal cleanup and explicit data retirement remain separate controls. See [reviewed setup](https://github.com/iokaio/airk/blob/main/docs/service-project-setup.md) and [installation and evidence privacy](https://github.com/iokaio/airk/blob/main/docs/vscode-extension.md#installation-and-evidence-privacy).
+ 
+ AIRK stands for **Artifact Indexing and Retrieval Kernel**. It is an independent local indexing and retrieval engine, licensed under Apache-2.0.
+ 
+--- a/docs/vscode-extension.md
++++ b/docs/vscode-extension.md
+@@ -1,4 +1,8 @@
+ # Native VS Code extension
++
++Current 1.8.8 setup uses the explicit index/grant review below; opening folders
++does not create indexing authority. P14 final qualification remains pending; see
++[the working-build record](releases/release-1.8.8.md) and [reviewed setup](service-project-setup.md).
+ 
+ **1.8.8 P12 accepted local development:** Workbench can review refresh of eligible
+ references from one completed live result step and one index, then check the
+@@ -156,7 +160,7 @@
+ 
+ **Open AIRK Tools** on each dashboard collection, or **AIRK: Open AIRK Tools** in the Command Palette, opens an interactive console in the Terminal panel. It launches the verified bundled helper directly with that collection's root and storage. Enter `list`, `help airk_search`, `call airk_status`, or `exit`. [Direct MCP tool access](mcp.md#call-tools-without-a-coding-agent) documents JSON/file arguments and standalone equivalents. Trust is required; the console does not trigger indexing. Existing consoles close when their collection bindings change or the extension shuts down.
+ 
+-An independent thin native-helper extension is implemented under [packages/vscode](../packages/vscode). It wraps the Rust kernel and bundles the native helper in platform-specific VSIX packages. The checked-in release version is 1.7.6; earlier 1.2/1.3 candidate records below retain their original scope. New collections default to Agent Lean; existing saved or published detail remains in effect. See [1.3.0 candidate changes](releases/release-1.3.0.md), [1.2.4 diagnosis and recovery](releases/release-1.2.4.md) and [1.2.3 defaults](releases/release-1.2.3.md). Local and ordinary CI candidates contain unsigned helpers; the separate GitHub release workflow signs Windows/macOS downloads. [Windows local build/review instructions](windows-local-build.md) provide the single PowerShell command and an isolated editor test.
++An independent thin native-helper extension is implemented under [packages/vscode](../packages/vscode). It wraps the Rust kernel and bundles the native helper in platform-specific VSIX packages. The checked-in manual-test working version is 1.8.8, unpublished; earlier 1.2/1.3 candidate records below retain their original scope. New collections default to Agent Lean; existing saved or published detail remains in effect. See [1.3.0 candidate changes](releases/release-1.3.0.md), [1.2.4 diagnosis and recovery](releases/release-1.2.4.md) and [1.2.3 defaults](releases/release-1.2.3.md). Local and ordinary CI candidates contain unsigned helpers; the separate GitHub release workflow signs Windows/macOS downloads. [Windows local build/review instructions](windows-local-build.md) provide the single PowerShell command and an isolated editor test.
+ 
+ [Deployment and packaging](extension-deployment.md) adapts VCP's delivery practices; [CI](ci-and-builds.md) builds matching native and extension candidates on all three operating systems. Actual observed checks remain in [validation](validation.md).
+ 
+@@ -164,13 +168,13 @@
+ 
+ New vector-model setup asks the native helper for its CPU capabilities and pinned model catalog before installing its embedded assets offline. Version 1.6 selects unsigned INT8 on x64 without VNNI and signed INT8 on VNNI x64 and ARM64; prior semantic state is rebuilt. `airk model-catalog` inspects the choice offline without opening collection/model state. [CPU selection and offline provisioning](onnx-models.md) describe the implemented optimization.
+ 
+-### First-use review (1.7.6)
++### Current first-use review (1.8.8 working build)
+ 
+ Before the first runtime installation on a machine, a trusted window asks **Set up AIRK on this computer?** and shows what setup will change:
+ 
+-- where indexes are stored;
+-- which folders will be registered for background indexing;
+-- that indexing continues after windows close, and that login startup is a separate opt-in;
++- the saved storage preference and separate per-index source/storage review;
++- that opening folders does not register or index them during runtime installation;
++- that existing accepted indexing or saved watching can continue after windows close, and login startup is a separate opt-in;
+ - the shell or PATH change;
+ - possible updates to existing AIRK agent entries;
+ - that hidden files can be indexed (see `.airkignore`).
+@@ -178,11 +182,11 @@
+ The choices are:
+ 
+ - **Set up** installs as described.
+-- **Customize…** lets you deselect folders or the external terminal command.
+-- **Not now** saves a deferral. Nothing is installed, edited or registered until you run **AIRK: Set Up** or **AIRK: Install or Repair CLI**.
++- **Customize…** controls the external terminal command and its shell/PATH integration.
++- **Not now** defers runtime/terminal setup; existing accepted native work is independent. Run **AIRK: Set Up** or **AIRK: Install or Repair CLI** when ready.
+ - **Don't set up automatically** sets `airk.cli.autoInstall` to `false`.
+ 
+-The review is not shown again when an existing installation or a managed (organization) runtime is found. A home folder or a filesystem/volume root is never registered automatically: it is unchecked in **Customize…**, and otherwise needs **Add Project**. A folder you leave out is remembered and is not registered on later activations.
++Existing or managed runtimes are reconciled through their authenticated native binding. All new indexes, including broad source locations, require **Indexing > Index library** review; opening or reordering folders does not register them. Review Project memberships and an access grant, then explicitly **Use Grant for this window**. Customize does not select or deselect workspace folders. See [reviewed setup](service-project-setup.md).
+ 
+ ### Terminal command
+ 
+--- a/docs/mcp.md
++++ b/docs/mcp.md
+@@ -254,4 +254,10 @@
+ 
+ The value reuses the existing admission policy read; reporting adds no configuration read, collection access or service RPC. It is refreshed for each request even when the index status snapshot is cached. Original publication, observation time and cache age continue to describe the index snapshot. Error receipts remain unchanged. Both terse and full responses include the field; status retains its lightweight scope. The [bridge implementation and regression](../crates/airk-mcp/src/remote.rs) cover live capacity changes, aliases, cached metadata, text/structured agreement, error preservation and one policy read per request.
+ 
+-Status and diagnostics preserve recognized temporary publication/selection contention as the existing typed read retry receipt (`publication_busy` or `selection_busy`, with `action: repeat_same_request`). This is not evidence that the index is unavailable. Honor the exact retry delay and repeat only that read. Diagnostic runtime/work context does not suppress the receipt. Missing or damaged evidence retains its separate existing reporting path.
++Status and diagnostics preserve recognized temporary publication/selection contention as the existing typed read retry receipt (`publication_busy` or `selection_busy`, with `action: repeat_same_request`). This is not evidence that the index is unavailable. Honor the exact retry delay and repeat only that read. Diagnostic runtime/work context does not suppress the receipt. Missing or damaged evidence retains its separate existing reporting path.
++
++In the current 1.8.8 candidate (`5d8912b1...`), genuine bounded quota-ledger
++**read admission** uses the existing `selection_busy` hint with a **25 ms** delay.
++Repeat only the identical read within its original deadline. Ledger mutations and
++jobs are not replayed; job diagnostics retain `quota_ledger_busy`. Generic lookalike
++text, permission failures and corruption do not acquire this hint.
+--- a/docs/unified-mcp.md
++++ b/docs/unified-mcp.md
+@@ -224,6 +224,12 @@
+ 
+ The value reuses the existing admission policy read; reporting adds no configuration read, collection access or service RPC. It is refreshed for each request even when the index status snapshot is cached. Original publication, observation time and cache age continue to describe the index snapshot. Error receipts remain unchanged. Both terse and full responses include the field; status retains its lightweight scope. The [bridge implementation and regression](../crates/airk-mcp/src/remote.rs) cover live capacity changes, aliases, cached metadata, text/structured agreement, error preservation and one policy read per request.
+ 
+-Status and diagnostics preserve recognized temporary publication/selection contention as the existing typed read retry receipt (`publication_busy` or `selection_busy`, with `action: repeat_same_request`). This is not evidence that the index is unavailable. Honor the exact retry delay and repeat only that read. Diagnostic runtime/work context does not suppress the receipt. Missing or damaged evidence retains its separate existing reporting path.
++Status and diagnostics preserve recognized temporary publication/selection contention as the existing typed read retry receipt (`publication_busy` or `selection_busy`, with `action: repeat_same_request`). This is not evidence that the index is unavailable. Honor the exact retry delay and repeat only that read. Diagnostic runtime/work context does not suppress the receipt. Missing or damaged evidence retains its separate existing reporting path.
++
++In the current 1.8.8 candidate (`5d8912b1...`), genuine bounded quota-ledger
++**read admission** uses the existing `selection_busy` hint with a **25 ms** delay.
++Repeat only the identical read within its original deadline. Ledger mutations and
++jobs are not replayed; job diagnostics retain `quota_ledger_busy`. Generic lookalike
++text, permission failures and corruption do not acquire this hint.
+ 
+ See [CLI, MCP and Workbench parity](read-interface-parity.md) for the complete command audit, input/output contracts and regression coverage.
+--- a/docs/mcp-developer-guide.md
++++ b/docs/mcp-developer-guide.md
+@@ -745,4 +745,10 @@
+ 
+ Status and diagnostics preserve recognized temporary publication/selection contention as the existing typed read retry receipt (`publication_busy` or `selection_busy`, with `action: repeat_same_request`). This is not evidence that the index is unavailable. Honor the exact retry delay and repeat only that read. Diagnostic runtime/work context does not suppress the receipt. Missing or damaged evidence retains its separate existing reporting path.
+ 
++In the current 1.8.8 candidate (`5d8912b1...`), genuine bounded quota-ledger
++**read admission** uses the existing `selection_busy` hint with a **25 ms** delay.
++Repeat only the identical read within its original deadline. Ledger mutations and
++jobs are not replayed; job diagnostics retain `quota_ledger_busy`. Generic lookalike
++text, permission failures and corruption do not acquire this hint.
++
+ See [CLI, MCP and Workbench parity](read-interface-parity.md) for the complete command audit, input/output contracts and regression coverage.
+--- a/docs/service-retrieval.md
++++ b/docs/service-retrieval.md
+@@ -12,7 +12,13 @@
+ 
+ Ordinary format-140 publication continues serving the coherent committed generation. If read admission is temporarily unavailable, MCP returns an error whose JSON body contains `status: "retry"`, `retryable: true`, a bounded `retry_after_ms` (currently 25), and `action: "repeat_same_request"`. The code is `selection_busy` or `publication_busy`. Retain the same explicit revision and other arguments when retrying; a superseded exact revision still expires normally. AIRK does not automatically replay an ambiguous exchange.
+ 
+-Only confirmed selection-lock contention, the typed current-index applying gate, and SQLite BUSY/LOCKED errors from read-only operations receive hints. Permissions, corruption, I/O failures, unsupported state and expired revisions remain distinct errors. Text resembling a busy error does not make an error retryable. A retry result contains no invented publication, `items`, source freshness or empty-success claim. Usage records the actual error result; failed reads do not advance status receipts.
++In the current 1.8.8 candidate (`5d8912b1...`), genuine bounded quota-ledger
++**read admission** uses the existing `selection_busy` hint with a **25 ms** delay.
++Repeat only the identical read within its original deadline. Ledger mutations and
++jobs are not replayed; job diagnostics retain `quota_ledger_busy`. Generic lookalike
++text, permission failures and corruption do not acquire this hint.
++
++Only confirmed selection-lock contention, genuine typed quota-ledger read admission, the typed current-index applying gate, and SQLite BUSY/LOCKED errors from read-only operations receive hints. Permissions, corruption, I/O failures, unsupported state and expired revisions remain distinct errors. Text resembling a busy error does not make an error retryable. A retry result contains no invented publication, `items`, source freshness or empty-success claim. Usage records the actual error result; failed reads do not advance status receipts.
+ 
+ Development tests exercise real SQLite read exclusion and a subsequent exact-token retry, classify SQLite error codes independently of their wording, and reject false retry hints for permissions/corruption/expired revisions. Existing Windows/Linux publication tests establish committed-reader behavior separately from this rejection path. Evidence from macOS execution and installed-editor acceptance remains part of final qualification.
+ 
+--- a/docs/index-self-healing.md
++++ b/docs/index-self-healing.md
+@@ -25,6 +25,12 @@
+ | Repeated terminal source/recovery failures | Persist a project budget across new source hints, worker exits and service restarts. Three terminal failures stop automatic source retries. Explicit retry/index/recovery or a successful source/publication recovery clears the applicable budget. |
+ | Confirmed no-progress stall | Keep the existing ten-minute advancement threshold and thirty-second cooperative grace. Permit one recovery of a stalled job, with a project work budget preventing source edits from replenishing repeated recovery attempts. Heartbeats and phase-label changes do not count as progress. |
+ 
++In the current 1.8.8 candidate (`5d8912b1...`), genuine bounded quota-ledger
++**read admission** uses the existing `selection_busy` hint with a **25 ms** delay.
++Repeat only the identical read within its original deadline. Ledger mutations and
++jobs are not replayed; job diagnostics retain `quota_ledger_busy`. Generic lookalike
++text, permission failures and corruption do not acquire this hint.
++
+ Condition checks are bounded to eight due jobs per pass, at most once per second; unavailable prerequisites are checked again after thirty seconds. Waiting does not consume another job attempt. Such active waits keep the service from declaring itself idle merely because no worker is currently executing. Removed projects and paused/canceled work cannot be released by a condition check.
+ 
+ Initial model setup may wait while its independent text-indexing continuation proceeds. This keeps text usable on machines with a missing or unavailable helper. Recovery of the same job keeps the same durable receipt. Existing finite queue, source-revision, cleanup, process ownership, resource admission and fencing contracts remain in force.

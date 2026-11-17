@@ -1,0 +1,15 @@
+--- crates\airk-service\src\service_runtime\arbiter\lifecycle.rs
++++ crates\airk-service\src\service_runtime\arbiter\lifecycle.rs
+@@ -1723,11 +1723,7 @@
+         profile.stage = Some(Stage::Context);
+         profile.model = ModelChoice::ContextQwenCompact;
+         profile.tasks = std::collections::BTreeSet::from([Task::ContextAction]);
+-        let policy = *profile
+-            .task_policies
+-            .values()
+-            .next()
+-            .context("fixture task policy absent")?;
++        let policy = airk_retrieval::arbiter::context_action::policy_digest()?;
+         profile.task_policies = std::collections::BTreeMap::from([(Task::ContextAction, policy)]);
+         profile.abi = super::super::failure_tests::structural_context_abi();
+         let execution = ExecutionProfile::for_qualification(profile)?;

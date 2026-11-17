@@ -1,0 +1,116 @@
+--- r6/WORKER-CONTRACT.md
++++ r7/WORKER-CONTRACT.md
+@@ -10,7 +10,7 @@
+ 
+ General QASPER replay retains the original publisher instruction; only software code rows use the DEV-selected instruction. Both are native-emitted. Code comparisons use the identical selected instruction for original/adapted weights; replay is original human paragraph relevance, never complete evidence.
+ 
+-R2 actual-owned continuity: DEV selection consumes a pinned naturally successful SCORE receipt/start/plan/result. A pure immutable key binds checkpoint/model/runtime/data/fullsource/owner/baseimage/versions/commonenvironment/deviceidentity/host+GPUcaps across stages. Only mode, output-local caches, wall and selection/probe evidence vary; the selected instruction is verified separately. ProbeÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢train also preserves the selected instruction. Exactly85score list entries and unique IDs are required before mapping. R1 remains preserved; no oldrun is relabelled.
++R2 actual-owned continuity: DEV selection consumes a pinned naturally successful SCORE receipt/start/plan/result. A pure immutable key binds checkpoint/model/runtime/data/fullsource/owner/baseimage/versions/commonenvironment/deviceidentity/host+GPUcaps across stages. Only mode, output-local caches, wall and selection/probe evidence vary; the selected instruction is verified separately. ProbeÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢train also preserves the selected instruction. Exactly85score list entries and unique IDs are required before mapping. R1 remains preserved; no oldrun is relabelled.
+ 
+ R3 parent clock closure: after actual maintained owned settlement (including worker finally output retention), parent hashes final worker result, child log, actual plan and every consumed execution-source pin, preserving hash failures separately from the original owned result/failure. It constructs/validates the full receipt body, then samples the original clock LAST; at/after original wall cap is nonpass. Only final elapsed/disposition insertion, final execution.json serialization/write and terminal reporting are excluded. Hash exceptions/mismatches never erase original natural-nonzero versus unsettled evidence or create a pass. No clock renewal, replay, extra model run or process-control change.
+ 
+@@ -63,3 +63,19 @@
+ cache deletion, cache output, ownership/ACL change or model-source refresh is used.
+ The stable prefix is in existing continuity environment across SCORE/probe/train.
+ Existing prefix, old prefix or bytecode-write-enabled bootstrap refuses.
++
++
++GPU metadata identity (additive R7)
++
++The same128bit physical UUID may be canonical hex8-4-4-4-12 in PyTorch and carry
++an exact GPU- prefix in NVML. Only that optional exact prefix is normalized;
++hex digits are case-insensitive, canonical result lowercase. Whitespace, MIG,
++unknown/repeated prefixes, malformed UUIDs and different bytes refuse. Exact
++GPU name, both observed compute-capability integers and the existing8GiB free
++reserve must match; parent driver/name/UUID/cap checks remain intact. The worker
++prints actual raw name/UUID, parsed canonical UUID (null if malformed), cap and
++free/total bytes BEFORE comparison and before loading any model or creating a
++tensor. A refusal never substitutes name-only identity or falls back. Source
++proof retains every arithmetic function and the entire post-guard model/loss/
++scoring/training tail unchanged. This metadata correction transfers no old run
++verdict; R6 actual failure remains naturally settled/nonpass under original pins.
+--- r6/focus_worker.py
++++ r7/focus_worker.py
+@@ -2,6 +2,7 @@
+ import argparse,hashlib,importlib.metadata,importlib.util,json,math,os,struct,sys,time
+ from pathlib import Path
+ import worker_logic as logic
++from gpu_identity import describe_gpu,check_gpu_identity
+ from workflow import continuity_key,load_owned
+ 
+ def digest(path):
+@@ -92,7 +93,9 @@
+     torch.backends.cuda.matmul.allow_tf32=False;torch.backends.cudnn.allow_tf32=False;torch.backends.cudnn.benchmark=False;torch.backends.cudnn.deterministic=True
+     if not torch.cuda.is_available():raise ValueError('approved GPU unavailable; no fallback')
+     prop=torch.cuda.get_device_properties(0);free,total=torch.cuda.mem_get_info()
+-    if prop.name!=plan['gpu']['name']or str(prop.uuid)!=plan['gpu']['uuid']or free<plan['limits']['minimum_cuda_free_bytes']:raise ValueError('actual GPU identity or reserve differs')
++    actual_gpu=describe_gpu(prop.name,str(prop.uuid),[prop.major,prop.minor],free,total)
++    print('AIRK_F2_GPU_METADATA:'+json.dumps(actual_gpu,sort_keys=True),flush=True)
++    check_gpu_identity(plan['gpu'],actual_gpu,plan['limits']['minimum_cuda_free_bytes'])
+     torch.cuda.set_per_process_memory_fraction(plan['limits']['cuda_allocator_bytes']/total,0);torch.cuda.reset_peak_memory_stats();time_left()
+     official_source=load_module(plan['reference_module'],'reviewed_full_focus_source');official_source.verify_assets();model=official_source.load_official(torch,'cuda')
+     for p in model.parameters():p.requires_grad_(False)
+--- r6/gpu_identity.py
++++ r7/gpu_identity.py
+@@ -0,0 +1,26 @@
++"""Pure strict physical GPU UUID and allocation metadata; no device API imports."""
++import re
++
++UUID=re.compile(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\Z')
++
++
++def canonical_uuid(value):
++    if not isinstance(value,str):raise ValueError('GPU UUID must be text')
++    raw=value.removeprefix('GPU-')
++    if not UUID.fullmatch(raw):raise ValueError('physical GPU UUID format refused')
++    return raw.lower()
++
++
++def describe_gpu(name,raw_uuid,capability,free,total):
++    try:canonical=canonical_uuid(raw_uuid)
++    except ValueError:canonical=None
++    return {'name':name,'uuid_raw':raw_uuid,'uuid_canonical':canonical,'compute_capability':capability,'free_bytes':free,'total_bytes':total}
++
++
++def check_gpu_identity(expected,actual,minimum_free):
++    if actual['uuid_canonical']is None or canonical_uuid(actual['uuid_raw'])!=actual['uuid_canonical']or actual['uuid_canonical']!=canonical_uuid(expected['uuid']):raise ValueError('actual physical GPU UUID differs')
++    if actual['name']!=expected['name']:raise ValueError('actual GPU name differs')
++    cap=actual['compute_capability']
++    if not isinstance(cap,list)or len(cap)!=2 or any(type(x)is not int or x<0 for x in cap)or cap!=expected['compute_capability']:raise ValueError('actual GPU compute capability differs')
++    if type(actual['free_bytes'])is not int or type(actual['total_bytes'])is not int or not 0<=actual['free_bytes']<=actual['total_bytes']or actual['free_bytes']<minimum_free:raise ValueError('actual GPU reserve differs')
++    return True
+--- r6/test_gpu_identity.py
++++ r7/test_gpu_identity.py
+@@ -0,0 +1,32 @@
++import unittest
++from gpu_identity import canonical_uuid,describe_gpu,check_gpu_identity
++
++BARE='08e2b3f6-6a39-3456-77cb-a57287a702ec'
++EXPECTED={'uuid':'GPU-'+BARE,'name':'NVIDIA RTX A6000','compute_capability':[8,6]}
++RESERVE=8589934592
++
++
++class GPUIdentityControls(unittest.TestCase):
++    def test_literal_PyTorch_and_NVML_are_same128bit_identity(self):
++        for raw in [BARE,'GPU-'+BARE,BARE.upper(),'GPU-'+BARE.upper()]:
++            self.assertEqual(canonical_uuid(raw),BARE)
++            actual=describe_gpu('NVIDIA RTX A6000',raw,[8,6],49886003200,51527024640)
++            self.assertEqual(actual['uuid_raw'],raw);self.assertEqual(actual['uuid_canonical'],BARE)
++            self.assertTrue(check_gpu_identity(EXPECTED,actual,RESERVE))
++    def test_MIG_unknown_prefix_malformed_and_distinct_bytes_refuse(self):
++        for raw in ['MIG-'+BARE,'gpu-'+BARE,'GPU-GPU-'+BARE,' '+BARE,BARE+'\n',BARE.replace('-',''),'not-a-uuid',None]:
++            actual=describe_gpu(EXPECTED['name'],raw,[8,6],RESERVE,RESERVE)
++            self.assertIsNone(actual['uuid_canonical'])
++            with self.assertRaises(ValueError):check_gpu_identity(EXPECTED,actual,RESERVE)
++        actual=describe_gpu(EXPECTED['name'],'18e2b3f6-6a39-3456-77cb-a57287a702ec',[8,6],RESERVE,RESERVE)
++        with self.assertRaises(ValueError):check_gpu_identity(EXPECTED,actual,RESERVE)
++    def test_name_capability_and_memory_are_independent_guards(self):
++        for name,cap,free,total in [('Other GPU',[8,6],RESERVE,RESERVE),(EXPECTED['name'],[8,9],RESERVE,RESERVE),(EXPECTED['name'],[8,True],RESERVE,RESERVE),(EXPECTED['name'],[8,6],RESERVE-1,RESERVE),(EXPECTED['name'],[8,6],RESERVE+1,RESERVE)]:
++            actual=describe_gpu(name,BARE,cap,free,total)
++            with self.assertRaises(ValueError):check_gpu_identity(EXPECTED,actual,RESERVE)
++    def test_invalid_metadata_remains_diagnostic_before_refusal(self):
++        actual=describe_gpu('actual name','MIG-unknown',[0,0],1,2)
++        self.assertEqual(actual,{'name':'actual name','uuid_raw':'MIG-unknown','uuid_canonical':None,'compute_capability':[0,0],'free_bytes':1,'total_bytes':2})
++        with self.assertRaises(ValueError):check_gpu_identity(EXPECTED,actual,RESERVE)
++
++if __name__=='__main__':unittest.main(verbosity=2)

@@ -1,0 +1,124 @@
+--- a/packages/vscode/src/referenceRefresh.ts
++++ b/packages/vscode/src/referenceRefresh.ts
+@@ -37,6 +37,34 @@
+         }
+     }return value;
+ }
++// Core RefreshSelection::identity serializes typed structs in declaration
++// order, not arbitrary JS insertion order or alphabetically sorted JSON keys.
++// Every request object is already deny_unknown_fields; validate before ordering.
++export function refreshSelectionCanonicalJson(input:unknown):string {
++    const v=validateRefreshSelection(input),key=catalogObject(v.key),scope=catalogObject(v.selection);
++    const nativeText=(value:unknown):string=>{
++        if(typeof value!=='string'||/\p{Cc}/u.test(value)||Array.from(value).some(c=>{const n=c.codePointAt(0)!;return n>=0xd800&&n<=0xdfff;}))throw new Error('invalid_refresh_native_string');
++        return value;
++    };
++    const members=(v.members as unknown[]).map(raw=>{
++        const member=catalogObject(raw);
++        return {index_id:member.index_id,original_publication:member.original_publication,sources:(member.sources as unknown[]).map(raw=>{
++            const source=catalogObject(raw);
++            return {source_root_id:source.source_root_id,source_relative_path:nativeText(source.source_relative_path),canonical_root:nativeText(source.canonical_root),indexed_hash:source.indexed_hash};
++        })};
++    });
++    return JSON.stringify({schema:v.schema,caller:v.caller,key:{namespace:key.namespace,epoch:key.epoch,nonce:key.nonce},
++        original_result_digest:v.original_result_digest,original_evidence_selection_digest:v.original_evidence_selection_digest,original_query_digest:v.original_query_digest,
++        selection:{schema:scope.schema,context_key:scope.context_key,namespace:scope.namespace,expected_catalog_revision:scope.expected_catalog_revision,grant_id:scope.grant_id,expected_grant_revision:scope.expected_grant_revision,project_ids:scope.project_ids,index_ids:scope.index_ids},
++        mode:v.mode,members});
++}
++export function refreshSelectionIdentity(input:unknown):string {
++    const hash=createHash('sha256').update(Buffer.from('AIRK-DIGEST-1\0'));
++    for(const field of [Buffer.from('airk/catalog-refresh-selection/1'),Buffer.from(refreshSelectionCanonicalJson(input),'utf8')]){
++        const size=Buffer.alloc(8);size.writeBigUInt64BE(BigInt(field.length));hash.update(size).update(field);
++    }
++    return hash.digest('hex');
++}
+ export function refreshConfiguration(input:unknown):ProjectConfigurationRequest {
+     const value=catalogObject(input),configuration=catalogObject(value.configuration);catalogBound(value,16384);
+     if(!['configuration,incarnation,settings','configuration,incarnation,prepare,settings'].includes(Object.keys(value).sort().join(','))||value.prepare!==undefined&&value.prepare!==false)throw new Error('invalid_refresh_configuration');
+@@ -70,11 +98,12 @@
+     if(value.configuration===null){if(value.result!==null)throw new Error('unbound_refresh_result');return value;}
+     const work=catalogObject(value.configuration);catalogHex(work.engine,64);if(!isDeepStrictEqual(work.request,intent.reference_refresh.configure_project.request))throw new Error('changed_refresh_accepted_configuration');
+     if(value.result!==null){const result=catalogObject(value.result),selection=catalogObject(intent.reference_refresh.configure_project.request.configuration.selection),members=array(selection.members,8),member=catalogObject(members[0]);
++        if(result.selection_digest!==refreshSelectionIdentity(selection))throw new Error('crossed_refresh_selection_digest');
+         if(result.schema==='airk.reference-refresh-review-required/1'){
+-            if(result.original_query_digest!==selection.original_query_digest||result.publication_applied!==false||result.requery_executed!==false||job.state==='succeeded')throw new Error('crossed_refresh_refusal_result');catalogHex(result.selection_digest,64);reviewReason(result.review);return value;
++            if(result.original_query_digest!==selection.original_query_digest||result.publication_applied!==false||result.requery_executed!==false||job.state==='succeeded')throw new Error('crossed_refresh_refusal_result');reviewReason(result.review);return value;
+         }
+         if(result.schema!=='airk.reference-refresh-result/1'||result.original_query_digest!==selection.original_query_digest||result.effective_mode!==selection.mode||result.effective_scope!==(selection.mode==='selected_only'?'selected_sources':'whole_index_explicitly_reviewed')||result.requery_executed!==false||result.before_publication!==member.original_publication)throw new Error('crossed_refresh_result');
+-        catalogHex(result.selection_digest,64);const before=publication(result.before_publication),after=publication(result.after_publication);if(after.incarnation!==before.incarnation||after.generation<before.generation||after.generation===before.generation&&after.text!==before.text||catalogObject(catalogObject(result.status).publication).token!==after.text||catalogObject(result.report).generation!==after.generation)throw new Error('crossed_refresh_publication');
++        const before=publication(result.before_publication),after=publication(result.after_publication);if(after.incarnation!==before.incarnation||after.generation<before.generation||after.generation===before.generation&&after.text!==before.text||catalogObject(catalogObject(result.status).publication).token!==after.text||catalogObject(result.report).generation!==after.generation)throw new Error('crossed_refresh_publication');
+         if(job.state==='succeeded'&&(catalogObject(job.outcome).state!=='succeeded'||catalogObject(job.outcome).revision!==after.text))throw new Error('crossed_refresh_completion');
+     }return value;
+ }
+--- a/packages/vscode/src/test/referenceRefresh.test.ts
++++ b/packages/vscode/src/test/referenceRefresh.test.ts
+@@ -5,7 +5,7 @@
+ import {SPLIT_JOURNAL_BYTES} from '../indexingSplit';
+ import {IntentJournal,IntentStorage} from '../serviceIntents';
+ import {ServiceClient,ServiceError,ControlTransport} from '../serviceClient';
+-import {ReferenceRefreshIntent,ReferenceRefreshFlow,REFRESH_JOURNAL_BYTES,refreshDigest,refreshJobId,validateRefreshIntent,refreshExport,refreshCapability} from '../referenceRefresh';
++import {ReferenceRefreshIntent,ReferenceRefreshFlow,REFRESH_JOURNAL_BYTES,refreshDigest,refreshJobId,validateRefreshIntent,refreshExport,refreshCapability,refreshSelectionIdentity,refreshSelectionCanonicalJson,validateRefreshReceipt} from '../referenceRefresh';
+ type Value=Record<string,unknown>;
+ class Memory implements IntentStorage {data=new Map<string,unknown>();keys(){return [...this.data.keys()];}get<T>(key:string){return this.data.get(key) as T|undefined;}async update(key:string,value:unknown){if(value===undefined)this.data.delete(key);else this.data.set(key,structuredClone(value));}}
+ const id=(byte:string)=>byte.repeat(32),hash=(byte:string)=>byte.repeat(64);
+@@ -19,7 +19,7 @@
+ }
+ function receipt(intent:ReferenceRefreshIntent):Value {
+     const selected=intent.reference_refresh.configure_project.request.configuration.selection as Value,members=selected.members as Value[],before=String(members[0].original_publication),after='airk-r1:'+id('7')+':2:'+hash('e');
+-    return {status:'reference_refresh_receipt',job:{id:refreshJobId(intent),project:intent.reference_refresh.configure_project.project,kind:'configure',state:'succeeded',fencing_generation:1,attempts:1,outcome:{state:'succeeded',revision:after}},configuration:{engine:hash('f'),request:structuredClone(intent.reference_refresh.configure_project.request)},result:{schema:'airk.reference-refresh-result/1',selection_digest:hash('a'),original_query_digest:selected.original_query_digest,effective_mode:'selected_only',effective_scope:'selected_sources',before_publication:before,after_publication:after,report:{generation:2,path_scoped:true,future_report:'retained'},status:{publication:{token:after},future_status:[1,2,3]},requery_executed:false,future_result:{retained:true}},expired:false,future_envelope:'retained'};
++    return {status:'reference_refresh_receipt',job:{id:refreshJobId(intent),project:intent.reference_refresh.configure_project.project,kind:'configure',state:'succeeded',fencing_generation:1,attempts:1,outcome:{state:'succeeded',revision:after}},configuration:{engine:hash('f'),request:structuredClone(intent.reference_refresh.configure_project.request)},result:{schema:'airk.reference-refresh-result/1',selection_digest:refreshSelectionIdentity(selected),original_query_digest:selected.original_query_digest,effective_mode:'selected_only',effective_scope:'selected_sources',before_publication:before,after_publication:after,report:{generation:2,path_scoped:true,future_report:'retained'},status:{publication:{token:after},future_status:[1,2,3]},requery_executed:false,future_result:{retained:true}},expired:false,future_envelope:'retained'};
+ }
+ function environment(intent:ReferenceRefreshIntent,lost=false){
+     let response=receipt(intent),trusted=true,reconfirmChanged=false,queryCalls=0,mutationCalls=0,readCalls=0;const requests:unknown[]=[];
+@@ -91,7 +91,7 @@
+ 
+ test('typed accepted guard refusal remains failed and never authorizes requery or false completion',async()=>{
+     const intent=fixture(),e=environment(intent);const saved=await e.flow.reviewAndSubmit(intent,{capabilities:{reference_refresh_contract:1}}),response=receipt(intent);(response.job as Value).state='failed';(response.job as Value).outcome={state:'failed',code:'refresh_scope_changed_review_required'};
+-    const selection=intent.reference_refresh.configure_project.request.configuration.selection as Value;response.result={schema:'airk.reference-refresh-review-required/1',selection_digest:hash('a'),original_query_digest:selection.original_query_digest,review:{reasons:['pending_recovery']},publication_applied:false,requery_executed:false};e.setResponse(response);await e.flow.check(saved!);await assert.rejects(e.flow.requery(saved!),/fresh_completed/);assert.equal(e.counts().queryCalls,0);assert.equal(e.counts().mutationCalls,1);
++    const selection=intent.reference_refresh.configure_project.request.configuration.selection as Value;response.result={schema:'airk.reference-refresh-review-required/1',selection_digest:refreshSelectionIdentity(selection),original_query_digest:selection.original_query_digest,review:{reasons:['pending_recovery']},publication_applied:false,requery_executed:false};e.setResponse(response);await e.flow.check(saved!);await assert.rejects(e.flow.requery(saved!),/fresh_completed/);assert.equal(e.counts().queryCalls,0);assert.equal(e.counts().mutationCalls,1);
+ });
+ test('typed pre-admission refusal binds full request/key and cannot erase historical accepted proof',async()=>{
+     const intent=fixture(),e=environment(intent),saved=await e.flow.reviewAndSubmit(intent,{capabilities:{reference_refresh_contract:1}});await e.flow.check(saved!);const original=structuredClone(e.journal.list()[0].value.nativeRefreshReceipt),request=intent.reference_refresh.configure_project;
+@@ -123,3 +123,42 @@
+     const reopened=new ReferenceRefreshFlow(e.client,e.journal,{...e.host,trusted:()=>true});await reopened.check(saved[0].id);
+     assert.equal(e.counts().readCalls,1);assert.equal(e.counts().mutationCalls,0);assert.equal(e.journal.list().length,1);
+ });
++
++
++test('native selection identity matches Core typed JSON/framing golden and ignores caller insertion order',()=>{
++    const canonical="{\"schema\":1,\"caller\":\"01010101010101010101010101010101\",\"key\":{\"namespace\":\"01010101010101010101010101010101\",\"epoch\":1,\"nonce\":\"01010101010101010101010101010101\"},\"original_result_digest\":\"0202020202020202020202020202020202020202020202020202020202020202\",\"original_evidence_selection_digest\":\"0202020202020202020202020202020202020202020202020202020202020202\",\"original_query_digest\":\"0202020202020202020202020202020202020202020202020202020202020202\",\"selection\":{\"schema\":1,\"context_key\":\"0202020202020202020202020202020202020202020202020202020202020202\",\"namespace\":\"01010101010101010101010101010101\",\"expected_catalog_revision\":1,\"grant_id\":\"grt_01010101010101010101010101010101\",\"expected_grant_revision\":1,\"project_ids\":[\"prj_01010101010101010101010101010101\"],\"index_ids\":[\"idx_01010101010101010101010101010101\"]},\"mode\":\"selected_only\",\"members\":[{\"index_id\":\"idx_01010101010101010101010101010101\",\"original_publication\":\"airk-r1:01010101010101010101010101010101:1:0202020202020202020202020202020202020202020202020202020202020202\",\"sources\":[{\"source_root_id\":\"src_01010101010101010101010101010101\",\"source_relative_path\":\"api/é-政策😀.md\",\"canonical_root\":\"//owned/source/é\",\"indexed_hash\":\"0202020202020202020202020202020202020202020202020202020202020202\"}]}]}";
++    const expected="4630540e46f495609e14aec592677c465636aa0f32edd24c2b0b8f9f7a220298";
++    const selection=JSON.parse(canonical) as Value;
++    assert.equal(refreshSelectionCanonicalJson(selection),canonical);
++    assert.equal(refreshSelectionIdentity(selection),expected);
++    const reverse=(value:unknown):unknown=>Array.isArray(value)?value.map(reverse):value!==null&&typeof value==='object'?Object.fromEntries(Object.entries(value as Value).reverse().map(([k,v])=>[k,reverse(v)])):value;
++    assert.equal(refreshSelectionIdentity(reverse(selection)),expected);
++    assert.throws(()=>refreshSelectionIdentity({...selection,future_request_field:true}),/fields/);
++    const source=((selection.members as Value[])[0].sources as Value[])[0];source.future_request_field=true;
++    assert.throws(()=>refreshSelectionIdentity(selection),/fields/);
++    for(const relative of ['api/\ud800.md','api/\u0085.md']){
++        const invalid=JSON.parse(canonical) as Value;((invalid.members as Value[])[0].sources as Value[])[0].source_relative_path=relative;
++        assert.throws(()=>refreshSelectionIdentity(invalid),/native_string/);
++    }
++});
++
++test('success and typed refusal reject crossed source identity and arbitrary digest despite exact job/query/publications',()=>{
++    const intent=fixture(),selection=intent.reference_refresh.configure_project.request.configuration.selection as Value;
++    const crossed=structuredClone(selection);((crossed.members as Value[])[0].sources as Value[])[0].source_relative_path='other.txt';
++    crossed.original_evidence_selection_digest=refreshDigest(crossed.members);
++    assert.notEqual(refreshSelectionIdentity(crossed),refreshSelectionIdentity(selection));
++    for(const schema of ['airk.reference-refresh-result/1','airk.reference-refresh-review-required/1']){
++        const native=receipt(intent);
++        if(schema==='airk.reference-refresh-review-required/1'){
++            (native.job as Value).state='failed';(native.job as Value).outcome={state:'failed',code:'refresh_scope_changed_review_required'};
++            native.result={schema,selection_digest:refreshSelectionIdentity(selection),original_query_digest:selection.original_query_digest,review:{reasons:['pending_recovery']},publication_applied:false,requery_executed:false,future_refusal:{complete:true}};
++        }
++        assert.deepEqual(validateRefreshReceipt(native,intent),native);
++        const complete=structuredClone(native);
++        for(const digest of [refreshSelectionIdentity(crossed),hash('0')]){
++            const bad=structuredClone(native);(bad.result as Value).selection_digest=digest;
++            assert.throws(()=>validateRefreshReceipt(bad,intent),/crossed_refresh_selection_digest/);
++            assert.deepEqual(native,complete,'validation cannot mutate complete native proof');
++        }
++    }
++});

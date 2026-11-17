@@ -1,0 +1,113 @@
+--- a/provision_cuda_runtime.py
++++ b/provision_cuda_runtime.py
+@@ -27,12 +27,12 @@
+  if digest(ROOT/'scripts/provision-static-onnx-runtime.py')!=lock['cpu_owner_sha256'] or digest(ROOT/'scripts/static-onnx-runtime-lock.json')!=lock['cpu_lock_sha256']:raise ValueError('canonical CPU owner drift')
+  spec=importlib.util.spec_from_file_location('airk_cpu_owner',ROOT/'scripts/provision-static-onnx-runtime.py');o=importlib.util.module_from_spec(spec);spec.loader.exec_module(o);o.validate_lock();return o
+ 
+-def identity_and_parent(o,destination):
++def identity_and_parent(o,destination,lock):
+  # The caller additionally verifies active logged-in human before this process.
+  result=subprocess.run(['C:/Windows/System32/whoami.exe','/user','/fo','csv','/nh'],check=True,capture_output=True,text=True,timeout=15)
+  if SID not in result.stdout:raise ValueError('execution SID differs from reviewed human')
+  o.plain(PARENT);o.plain(destination)
+- if destination.parent!=PARENT or destination.exists():raise ValueError('fresh direct child of approved protected parent required')
++ if destination.parent!=PARENT or destination.name!=lock['build_path']['fresh_child'] or destination.exists():raise ValueError('exact fresh child of approved protected parent required')
+  # Absolute constant parent enters fixed PowerShell code, never caller-built shell text.
+  script="$a=Get-Acl -LiteralPath 'C:/Users/tdotn/AppData/Local/airk-final-exec-20261116T052942Z'; @{owner=$a.Owner;sddl=$a.Sddl}|ConvertTo-Json -Compress"
+  r=subprocess.run(['pwsh','-NoProfile','-Command',script],check=True,capture_output=True,text=True,timeout=15);policy=json.loads(r.stdout)
+@@ -100,7 +100,7 @@
+  if digest(Path(__file__))!=a.approved_script_sha256 or digest(LOCK)!=a.approved_lock_sha256:raise ValueError('reviewed producer/lock bytes differ')
+  if not a.execute_build:raise ValueError('no mutation/build without reviewed --execute-build')
+  if os.name!='nt' or not 1<=a.timeout_seconds<=10800:raise ValueError('Windows and bounded shared wall limit required')
+- lock=json.loads(LOCK.read_text(encoding='utf8'));o=cpu_owner(lock);dest=Path(os.path.abspath(a.destination));policy=identity_and_parent(o,dest)
++ lock=json.loads(LOCK.read_text(encoding='utf8'));o=cpu_owner(lock);dest=Path(os.path.abspath(a.destination));policy=identity_and_parent(o,dest,lock)
+  if shutil.disk_usage(PARENT).free<40*1024**3:raise ValueError('GPU producer needs40GiB free storage')
+  o.verify_source(CPU,'x86_64-pc-windows-msvc');cudnn=json.loads((INPUT/'extraction.json').read_text(encoding='utf8'))
+  if digest(INPUT/'extraction.json')!=lock['cudnn']['extraction_receipt_sha256']:raise ValueError('cuDNN extraction receipt changed')
+--- a/cuda-runtime-producer-lock.json
++++ b/cuda-runtime-producer-lock.json
+@@ -26,8 +26,8 @@
+   "offline_helper": {
+     "path": "cmake/external/helper_functions.cmake",
+     "before_sha256": "ae5cc8332e93737d92301a3f70cfa5c2fdb529d6a366d403932853f4bb640fa7",
+-    "after_sha256": "cb4f914e0b03653c352299f3668615915ce812b162993838a799a49e1f8f37bb",
+-    "patch_sha256": "5f3a2cf57c21d9e7fcc33a426507de6e35fc30b1ead104ecb24cb51a19c379da"
++    "after_sha256": "c58e2edb90ec29c4e51e816a4b125009a5d048784cddd3ffbd2e1a4201c793db",
++    "patch_sha256": "99a2b1b81c254e7fc933e598a172f38a1302afb52c31cce25e84d513e0c10ab6"
+   },
+   "frontend_upstream_arm64": {
+     "patch_sha256": "57696b39abff7a9612ffdcb03c036e9424fbe13675aec353f542f47bd9572321",
+@@ -42,8 +42,8 @@
+   "frontend_final": {
+     "path": "include/cudnn_frontend_shim.h",
+     "before_sha256": "ddaca0914107d628cc6c8b0fa0b6dd86d241f65cafd7b602140d2b5ccf184d62",
+-    "after_sha256": "bdb68afc228002dcc7812316b293beb6ec0f65c2b9135cf9b8552264fe5e584c",
+-    "patch_sha256": "e7cdaa124a816f5a69b37cf2a147845219168a981dfdc6b8f20748ded6930e0b"
++    "after_sha256": "afd0d0793be05851f101c72c460f09f4989684af1c2a75fcd61ef09a81da1093",
++    "patch_sha256": "f0c61d25e7eb130ab28a517fcf2bc369bf593a245240b434e5da46aefb7958d1"
+   },
+   "excluded_link": {
+     "path": ".claude/skills",
+@@ -90,10 +90,11 @@
+     "no_second_ort_core": true
+   },
+   "build_path": {
+-    "fresh_child": "cu3",
++    "fresh_child": "cu5",
+     "object_path_max": 240,
+     "temp_child": "t",
+     "cuda_cache_child": "cc",
+     "aliases_or_drive_substitution": false
+-  }
++  },
++  "generated_patch_eol": "LF matching authenticated source; no source-wide normalization"
+ }
+--- a/CONTRACT.md
++++ b/CONTRACT.md
+@@ -23,3 +23,9 @@
+ The direct CUDA/CU frontend macros are Windows-only. The exact original nonWindows dynamic macros remain in the nonWindows branch. Before each of the four patch invocations, validate every affected target against its declared lock.before_sha256, including all three loader files; mismatch stops before patch-child dispatch. Whole-file after hashes remain required.
+ 
+ Before PASS, reauthenticate all16copied mirror archives and their exact path census, all18original archives, the32cuDNN development files, CUDAtoolkit inventory, original recorded compiler/CMake/Ninja/patch/Python/vcvars bytes and remaining frozen producer/lock/source inputs. Recorded policy is not a substitute for reopened bytes. Preserve first failure; no retry or qualification transfer. Independent controls must reject same-size closure drift and wrong-before targets before dispatch.
++
++## R5 exact EOL and fresh-path correction
++
++R4's first actual attempt stopped before configure/compilation: original helper source is LF-only, but generated patch/after files had CRLF from Windows text output. R5 generates binary patch/after files with the original authenticated LF bytes. No existing source or prior output is normalized, overwritten or retried. Frontend shim and ARM64 expected after images are also generated with exact original LF conventions. The loader patch and original ARM64 patch retain original authenticated bytes. Real GNU patch controls on fresh archive-derived target copies must prove all four stages and exact before/after SHA256 before another full producer.
++
++The only allowed destination is fresh `cu5`, consumed directly from the lock.build_path.fresh_child field, under the same approved protected parent. R3/R4 and failed cu3 stay immutable. This corrects the prior descriptive-name mismatch and does not create a new runtime budget or qualification.
+--- a/test_provision_cuda_runtime.py
++++ b/test_provision_cuda_runtime.py
+@@ -2,6 +2,7 @@
+ import hashlib,importlib.util,json,stat,tempfile,unittest,zipfile
+ from pathlib import Path
+ from types import SimpleNamespace
++from unittest.mock import patch
+ HERE=Path(__file__).resolve().parent
+ s=importlib.util.spec_from_file_location('gpu_producer',HERE/'provision_cuda_runtime.py');g=importlib.util.module_from_spec(s);s.loader.exec_module(g)
+ s=importlib.util.spec_from_file_location('cpu',g.ROOT/'scripts/provision-static-onnx-runtime.py');cpu=importlib.util.module_from_spec(s);s.loader.exec_module(cpu)
+@@ -75,4 +76,10 @@
+   self.assertEqual(after[k:end],expected)
+   self.assertIn('#ifdef _WIN32',after[max(0,i-30):i]);self.assertIn('return cuda_symbol(__VA_ARGS__);',after[i:j])
+ 
++ def test_descriptive_child_is_enforced_before_output_or_acl_process(self):
++  with patch.object(g.subprocess,'run',return_value=SimpleNamespace(stdout=g.SID)) as processes:
++   with self.assertRaisesRegex(ValueError,'exact fresh child'):
++    g.identity_and_parent(cpu,g.PARENT/'cu4',{'build_path':{'fresh_child':'cu5'}})
++   self.assertEqual(processes.call_count,1)
++
+ if __name__=='__main__':unittest.main()
+--- a/README.md
++++ b/README.md
+@@ -1,9 +1,7 @@
+-# GPU producer R4 review handoff
++# R5 preserved EOL correction
+ 
+-R3 remains immutable and unexecuted. R4 closes the three operational review findings together: frontend direct CUDA/CU macros are Windows-only with byte-exact original nonWindows dynamic macros; every loader/offline/ARM64/frontend patch validates all lock.before_sha256 targets before any patch-child dispatch; final PASS reopens all18original archives, all16copied mirror archives/exact roster and six recorded compiler/CMake/Ninja/patch/Python/vcvars file pins, in addition to existing source/CUDA/cuDNN/producer/lock checks. The frozen closure is itself SHA-bound and rechecked. No legacy CPU validator is changed or bypassed.
++R4's only actual attempt failed at offline GNU patch before configure/compilation. The helper source was LF, while generated patch/after files were CRLF. R5 uses explicit binary output matching the original LF source; existing source is never normalized or overwritten. The frontend generated patch/after and ARM64 expected after bytes use exact LF as well. All original C++ loader/ARM64 patches retain their authenticated bytes.
+ 
+-Eleven Python controls pass, including original/mirror/compiler same-size drift, added mirror archive, wrong-before refusal without dispatch and exact nonWindows macro preservation. These are helper/source controls, not C++ or GPU execution evidence. The C++ header syntax stage still precedes full configure/build. All18source/developer archives were reopened for the final R4 freeze. The official developer/source acquisition, OSnegative controls and all earlier evidence remain under original identities.
++All four actual GNU patch target sets passed sequential before/after SHA checks on fresh archive-derived copies using the canonical owned runner: loader3, offline1, ARM641, frontend1. Receipt99e44f5f... is retained under the protected gpu-patch-controls-r5 directory. Twelve Python controls pass, including exact fresh-child enforcement. The lock and producer require fresh cu5, so descriptive path and executable path cannot diverge. Failed cu3 and all R3/R4 inputs are immutable.
+ 
+-The selected combined runtime policy is unchanged: one static ORT1.30.0 core, normalCUDA/SM86, Flash+memory-efficient compiledON, FlashNVCCthreads1/NVCCthreads2/sharedparallel2, optional same-build providers only. Short protected outputcu4/private temp/CMakeobject-path240 reduce generated Windows path length without aliases or compiler-bypass flags. Initial model gate stays FP32 original unfused/TF32off. FP16 efficient-attention masks/export/admission remain separate later G5 work. No BF16 goal, graph conversion, model execution, build, Cargo, install or publication occurs in this preparation.
+-
+-build-card-r4.json is an unexecuted bounded command requiring Root final review/authorization and the owned outer10800-second observer. The producer emits only a private unqualified build receipt, not a Rust RuntimeManifest, PE import census, admitted static-core identity or model qualification. Actual new Rust GPU aggregate/runtime/package owners must bind the later real output and complete dependency/placement proofs; no output hashes or authority are fabricated before a build.
++No CMake/C++ build, GPU DLL/model or Cargo run occurred in R5. Root subsequently requested a complete final optimized/subgraph placement owner; if that requires a same-TU native extension, preserve R5 unexecuted and prepare R6 with one explicit fifth source patch before a new full build. Do not retag the API24 basic-optimization map as the final map.

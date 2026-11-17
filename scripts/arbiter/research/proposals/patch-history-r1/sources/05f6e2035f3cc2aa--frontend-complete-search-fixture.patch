@@ -1,0 +1,33 @@
+*** Begin Patch
+*** Update File: D:/code/Github/airk/crates/airk-frontend/src/combined_frontend/answer.rs
+@@
+-            let body = &mut packet.records[0].canonical_result;
+-            body["generation"] = json!(scope.publication.generation);
+-            body["collection"] = json!(scope.publication.collection);
+-            body["publication"] = serde_json::to_value(&scope.publication)?;
+-            body["focus"] = serde_json::to_value(FocusObservation::Receipt {
+-                receipt: Box::new(receipt),
+-            })?;
++            let original_body = packet.records[0].canonical_result.clone();
++            let complete = airk_core::SearchResponse {
++                generation: scope.publication.generation,
++                collection: scope.publication.collection.clone(),
++                publication: Some(scope.publication.clone()),
++                hits: vec![hit],
++                truncated: false,
++                execution: None,
++                semantic_readiness: None,
++                discovery_readiness: None,
++                focus: Some(FocusObservation::Receipt { receipt: Box::new(receipt) }),
++            };
++            let complete = serde_json::to_value(&complete)?;
++            let body = packet.records[0].canonical_result.as_object_mut()
++                .context("fixture canonical Search object")?;
++            for (field, value) in complete.as_object().context("typed canonical Search object")? {
++                // Retain the original full Hit objects and any future fields.
++                if field != "hits" { body.insert(field.clone(), value.clone()); }
++            }
++            assert_eq!(body.get("hits"), original_body.get("hits"));
++            assert_eq!(body.get("future_native_field"), original_body.get("future_native_field"));
++            let _: airk_core::SearchResponse = serde_json::from_value(Value::Object(body.clone()))?;
+*** End Patch

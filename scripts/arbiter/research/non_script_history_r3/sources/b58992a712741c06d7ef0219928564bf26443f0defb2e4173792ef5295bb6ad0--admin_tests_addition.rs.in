@@ -1,0 +1,176 @@
+// SPDX-License-Identifier: Apache-2.0
+fn focus_query() -> Result<(protocol::Query, airk_core::service::ScopedReadRef)> {
+    use airk_core::{
+        arbiter::Budget,
+        combined_context::{ALLOWANCE_SCHEMA, PartitionAllowance, Resources},
+        index_catalog::{CatalogRevision, IndexId},
+        scoped_reads::{SelectionOwnerKind, SelectionScopeRef},
+        service::ScopedReadRef,
+    };
+    let attempt_context = airk_mcp::read_attempt::ReadAttemptContext::new(
+        std::time::Instant::now() + std::time::Duration::from_secs(30),
+        Default::default(),
+    )
+    .with_request_id(Incarnation::from_bytes([91; 16]))?;
+    let attempt =
+        airk_host::read_attempt::encode(&attempt_context, attempt_context.request_id().unwrap())?;
+    let index = IndexId::from_identity(Incarnation::from_bytes([92; 16]));
+    let selection = SelectionScopeRef {
+        owner: SelectionOwnerKind::Admin,
+        grant_nonce: Incarnation::from_bytes([93; 16]),
+        service_instance: identity().service,
+        scope_identity: Sha256Digest::from_bytes([94; 32]),
+        catalog_revision: CatalogRevision::INITIAL,
+    };
+    let budget = Budget {
+        calls: 1,
+        rounds: 1,
+        fanout: 1,
+        input_tokens: 2048,
+        candidates: 4,
+        max_bytes: 8192,
+        deadline_ms: 1000,
+    };
+    let allowance = PartitionAllowance {
+        schema: ALLOWANCE_SCHEMA.into(),
+        attempt: attempt.request_id,
+        selection: selection.scope_identity,
+        index_id: index,
+        resources: Resources::budget(&budget),
+        parent_budget: budget,
+        assessment_ordinals: vec![],
+    };
+    let mut request = query(None, "airk_search");
+    request.read_attempt = Some(attempt);
+    request.context_partition = Some(allowance);
+    request.arguments=serde_json::json!({"query":"original singleton source question","limit":16,"max_bytes":8192}).as_object().unwrap().clone();
+    let authority = ScopedReadRef {
+        schema: 1,
+        lease_generation: 1,
+        index_id: index,
+        grant_id: None,
+        grant_revision: None,
+        selection: Some(selection),
+        fingerprint: Sha256Digest::from_bytes([95; 32]),
+    };
+    Ok((request, authority))
+}
+#[test]
+fn actual_singleton_focus_worker_admission_requires_evidence_search_and_original_attempt()
+-> Result<()> {
+    let (request, authority) = focus_query()?;
+    validate_request(SessionPurpose::Evidence, &request)?;
+    validate_context_partition(&request, Some(authority))?;
+    for change in 0..5 {
+        let mut bad = request.clone();
+        match change {
+            0 => bad.tool = "airk_answer".into(),
+            1 => bad.native = Some(NativeRead::UsagePolicy),
+            2 => bad.read_attempt = None,
+            3 => bad.read_attempt.as_mut().unwrap().request_id = Incarnation::from_bytes([96; 16]),
+            _ => {
+                bad.arguments.insert("limit".into(), 1.into());
+            }
+        }
+        assert!(
+            validate_request(SessionPurpose::Evidence, &bad).is_err(),
+            "variant {change} entered backend"
+        );
+    }
+    assert!(validate_request(SessionPurpose::NativeAdministrativeRead, &request).is_err());
+    Ok(())
+}
+#[test]
+fn actual_singleton_focus_worker_admission_binds_installed_selection_index_and_lease() -> Result<()>
+{
+    let (request, authority) = focus_query()?;
+    assert!(validate_context_partition(&request, None).is_err());
+    for change in 0..5 {
+        let mut bad = authority;
+        match change {
+            0 => {
+                bad.index_id = airk_core::index_catalog::IndexId::from_identity(
+                    Incarnation::from_bytes([96; 16]),
+                )
+            }
+            1 => {
+                bad.selection.as_mut().unwrap().scope_identity = Sha256Digest::from_bytes([96; 32])
+            }
+            2 => bad.lease_generation = 0,
+            3 => bad.schema = 2,
+            _ => {
+                bad.selection = None;
+                bad.grant_id = Some(airk_core::index_catalog::GrantId::from_identity(
+                    Incarnation::from_bytes([96; 16]),
+                ));
+                bad.grant_revision = Some(airk_core::index_catalog::CatalogRevision::INITIAL);
+            }
+        }
+        assert!(
+            validate_context_partition(&request, Some(bad)).is_err(),
+            "variant {change} entered backend"
+        );
+    }
+    Ok(())
+}
+#[test]
+fn actual_singleton_focus_worker_refuses_foreign_clock_and_expired_attempt_before_storage()
+-> Result<()> {
+    let (request, _) = focus_query()?;
+    for change in 0..4 {
+        let mut bad = request.clone();
+        let attempt = bad.read_attempt.as_mut().unwrap();
+        match change {
+            0 => {
+                attempt.clock = match attempt.clock {
+                    airk_core::read_attempt::ReadClock::UnixMonotonic => {
+                        airk_core::read_attempt::ReadClock::WindowsPerformanceCounter
+                    }
+                    _ => airk_core::read_attempt::ReadClock::UnixMonotonic,
+                }
+            }
+            1 => attempt.schema = 2,
+            2 => attempt.expires_monotonic_ns = 0,
+            _ => attempt.remaining_ns = 0,
+        };
+        assert!(
+            validate_request(SessionPurpose::Evidence, &bad).is_err(),
+            "variant {change} entered storage"
+        );
+    }
+    Ok(())
+}
+#[test]
+fn malformed_focus_allowances_never_fall_back_to_context_or_unallocated_search() -> Result<()> {
+    let (request, _) = focus_query()?;
+    for change in 0..8 {
+        let mut bad = request.clone();
+        let allocation = bad.context_partition.as_mut().unwrap();
+        match change {
+            0 => allocation.resources.input_tokens = 2049,
+            1 => allocation.resources.calls = 2,
+            2 => allocation.parent_budget.rounds = 2,
+            3 => allocation.parent_budget.fanout = 2,
+            4 => allocation.resources.bytes = 65537,
+            5 => allocation.resources.candidates = 65,
+            6 => allocation.assessment_ordinals.push(1),
+            _ => allocation.schema = "foreign".into(),
+        };
+        assert!(
+            validate_request(SessionPurpose::Evidence, &bad).is_err(),
+            "variant {change} entered backend"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn actual_rust_emitted_focus_and_context_allowances_cannot_cross_native_worker_tool_purposes()->Result<()> {
+ let fixture:serde_json::Value=serde_json::from_str(include_str!("../../../../../fixtures/split/arbiter/focus_only_allowance_cases.json"))?;
+ assert_eq!(fixture["schema"],"airk.focus-only-allowance-cases/1");assert_eq!(fixture["qualification"],false);
+ let (base,mut authority)=focus_query()?;
+ for (case,tool,allowed) in [("ordinary_focus","airk_search",true),("ordinary_focus","airk_answer",false),("context","airk_search",false),("zero_optional_work","airk_search",false)] {
+ let mut request=base.clone();let mut allocation:airk_core::combined_context::PartitionAllowance=serde_json::from_value(fixture[case]["allowance"].clone())?;
+ allocation.attempt=request.read_attempt.unwrap().request_id;authority.index_id=allocation.index_id;authority.selection.as_mut().unwrap().scope_identity=allocation.selection;request.context_partition=Some(allocation);request.tool=tool.into();assert_eq!(validate_request(SessionPurpose::Evidence,&request).is_ok(),allowed,"case {case}/{tool}");if allowed{validate_context_partition(&request,Some(authority))?;}
+ }Ok(())
+}

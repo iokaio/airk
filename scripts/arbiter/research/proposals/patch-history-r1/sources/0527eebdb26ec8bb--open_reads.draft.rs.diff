@@ -1,0 +1,20 @@
+--- crates/airk-service/src/service_runtime/open_reads.rs
++++ crates/airk-service/src/service_runtime/open_reads.rs
+@@ -285,14 +285,15 @@
+     {
+         return tools_call::failed(&error);
+     }
+-    if index_ids.len() == 1 {
++    let explicit_subset = tools_call::uses_combined_arguments(&arguments);
++    if index_ids.len() == 1 && !explicit_subset {
+         arguments = match tools_call::single_index_arguments(arguments) {
+             Ok(arguments) => arguments,
+             Err(result) => return ControlResponse::ToolResult { result },
+         };
+     }
+     let backend = match index_ids.as_slice() {
+-        [index_id] => {
++        [index_id] if !explicit_subset => {
+             tools_call::open_single_backend(
+                 state,
+                 selection_ref,

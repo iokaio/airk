@@ -1,0 +1,11 @@
+--- compact/run_graph_owned.py
++++ large/run_graph_owned.py
+@@ -26,7 +26,7 @@
+         '--cpu-shape-source',plan['cpu_shape_source']['path'],'--cpu-shape-source-sha256',plan['cpu_shape_source']['sha256'],
+         '--execution-plan',str(Path(a.plan).resolve()),'--execution-plan-sha256',a.plan_sha256,'--execute-graph-only']
+     env=dict(os.environ);env.update({'TEMP':str(root/'temp'),'TMP':str(root/'temp'),'PYTHONPYCACHEPREFIX':str(root/'fresh-unwritten-pycache')})
+-    report={'schema':'airk.private.compact-graph-owner/1','complete':False,'graph_only':True,'model_forward':False,
++    report={'schema':'airk.private.large-graph-owner/1','complete':False,'graph_only':True,'model_forward':False,
+         'command':argv,'original_started':started,'original_deadline':deadline,'no_automatic_retry':True,'failure':None}
+     def before_resume(api,job,info,child_deadline):
+         return reference_parent_no_site_r2.suspended_authentication(api,info,deadline,child_deadline,

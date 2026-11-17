@@ -1,0 +1,143 @@
+--- compact/test_attention_semantics.py
++++ large/test_attention_semantics.py
+@@ -1,70 +1,70 @@
+-"""Tiny independent arithmetic controls only; no model, Torch, ORT session or forward."""
+-import math,unittest
+-
+-def dense_reference(q,k,v,mask,scale):
+-    groups=len(q)//len(k);out=[]
+-    for h,queries in enumerate(q):
+-        rows=[]
+-        # Explicit original repeat-interleave KV expansion.
+-        keys=k[h//groups];values=v[h//groups]
+-        for i,query in enumerate(queries):
+-            logits=[sum(a*b for a,b in zip(query,key))*scale if j<=i and mask[j] else -3.4028234663852886e38 for j,key in enumerate(keys)]
+-            maximum=max(logits);weights=[math.exp(value-maximum) for value in logits];mass=sum(weights)
+-            rows.append([sum(weights[j]*values[j][d] for j in range(len(keys)))/mass for d in range(len(values[0]))])
+-        out.append(rows)
+-    return out
+-
+-def grouped_online(q,k,v,mask,scale,wrong_group=False,window=None):
+-    groups=len(q)//len(k);out=[]
+-    for h,queries in enumerate(q):
+-        kv=h%len(k) if wrong_group else h//groups;rows=[]
+-        for i,query in enumerate(queries):
+-            maximum=-math.inf;mass=0.;numerator=[0.]*len(v[kv][0])
+-            for j in range(i+1):
+-                if window is not None and j<i-window+1:continue
+-                value=sum(a*b for a,b in zip(query,k[kv][j]))*scale if mask[j] else -3.4028234663852886e38
+-                updated=max(maximum,value)
+-                old=0. if maximum==-math.inf else math.exp(maximum-updated)
+-                new=math.exp(value-updated)
+-                numerator=[a*old+new*b for a,b in zip(numerator,v[kv][j])]
+-                mass=mass*old+new;maximum=updated
+-            rows.append([value/mass for value in numerator])
+-        out.append(rows)
+-    return out
+-
+-def fixture():
+-    # Non-symmetric literal head/token data catches group-map/causal changes.
+-    q=[[[1+h,1-i,0,2],[2-h,1,i+1,0],[1,2+h,i,1]] for h in range(4) for i in [1]]
+-    k=[[[1,0,2,1],[0,1,1,2],[2,1,0,1]],[[0,2,1,1],[2,0,1,1],[1,2,1,0]]]
+-    v=[[[1,2,0,4],[3,0,2,1],[5,1,3,0]],[[8,1,2,0],[2,9,1,3],[4,2,7,1]]]
+-    return q,k,v
+-
+-def error(a,b):
+-    return max(abs(x-y) for ah,bh in zip(a,b) for ar,br in zip(ah,bh) for x,y in zip(ar,br))
+-
+-class Semantics(unittest.TestCase):
+-    def test_all_live_grouped_online_matches_original_dense(self):
+-        q,k,v=fixture();self.assertLess(error(dense_reference(q,k,v,[1,1,1],.5),grouped_online(q,k,v,[1,1,1],.5)),1e-12)
+-    def test_wrong_gqa_group_mapping_is_detected(self):
+-        q,k,v=fixture();self.assertGreater(error(dense_reference(q,k,v,[1,1,1],.5),grouped_online(q,k,v,[1,1,1],.5,wrong_group=True)),1.)
+-    def test_original_bias_is_preserved_for_holes_and_right_padding(self):
+-        q,k,v=fixture()
+-        for mask in [[1,0,1],[1,1,0]]:
+-            self.assertLess(error(dense_reference(q,k,v,mask,.5),grouped_online(q,k,v,mask,.5)),1e-12)
+-            self.assertGreater(error(dense_reference(q,k,v,mask,.5),grouped_online(q,k,v,[1,1,1],.5)),.1)
+-    def test_left_padding_all_masked_counterexample_must_remain_native_refused(self):
+-        q,k,v=fixture()
+-        for mask in [[0,1,1],[0,0,0]]:
+-            # Finite-min dense all-masked rows include allT, whereas causal
+-            # skipping visits only the prefix. Never claim this wider domain.
+-            self.assertGreater(error(dense_reference(q,k,v,mask,.5),grouped_online(q,k,v,mask,.5)),.1)
+-    def test_no_sliding_window_substitution(self):
+-        q,k,v=fixture();self.assertGreater(error(dense_reference(q,k,v,[1,1,1],.5),grouped_online(q,k,v,[1,1,1],.5,window=1)),.1)
+-    def test_future_values_cannot_change_earlier_causal_queries(self):
+-        q,k,v=fixture();original=grouped_online(q,k,v,[1,1,1],.5)
+-        changed=[[list(row) for row in head] for head in v]
+-        changed[0][2]=[999]*4;changed[1][2]=[-999]*4
+-        later=grouped_online(q,k,changed,[1,1,1],.5)
+-        for before,after in zip(original,later):self.assertEqual(before[:2],after[:2])
+-
+-if __name__=='__main__':unittest.main()
++"""Tiny independent arithmetic controls only; no model, Torch, ORT session or forward."""
++import math,unittest
++
++def dense_reference(q,k,v,mask,scale):
++    groups=len(q)//len(k);out=[]
++    for h,queries in enumerate(q):
++        rows=[]
++        # Explicit original repeat-interleave KV expansion.
++        keys=k[h//groups];values=v[h//groups]
++        for i,query in enumerate(queries):
++            logits=[sum(a*b for a,b in zip(query,key))*scale if j<=i and mask[j] else -3.4028234663852886e38 for j,key in enumerate(keys)]
++            maximum=max(logits);weights=[math.exp(value-maximum) for value in logits];mass=sum(weights)
++            rows.append([sum(weights[j]*values[j][d] for j in range(len(keys)))/mass for d in range(len(values[0]))])
++        out.append(rows)
++    return out
++
++def grouped_online(q,k,v,mask,scale,wrong_group=False,window=None):
++    groups=len(q)//len(k);out=[]
++    for h,queries in enumerate(q):
++        kv=h%len(k) if wrong_group else h//groups;rows=[]
++        for i,query in enumerate(queries):
++            maximum=-math.inf;mass=0.;numerator=[0.]*len(v[kv][0])
++            for j in range(i+1):
++                if window is not None and j<i-window+1:continue
++                value=sum(a*b for a,b in zip(query,k[kv][j]))*scale if mask[j] else -3.4028234663852886e38
++                updated=max(maximum,value)
++                old=0. if maximum==-math.inf else math.exp(maximum-updated)
++                new=math.exp(value-updated)
++                numerator=[a*old+new*b for a,b in zip(numerator,v[kv][j])]
++                mass=mass*old+new;maximum=updated
++            rows.append([value/mass for value in numerator])
++        out.append(rows)
++    return out
++
++def fixture():
++    # Non-symmetric literal head/token data catches group-map/causal changes.
++    q=[[[1+h,1-i,0,2],[2-h,1,i+1,0],[1,2+h,i,1]] for h in range(4) for i in [1]]
++    k=[[[1,0,2,1],[0,1,1,2],[2,1,0,1]],[[0,2,1,1],[2,0,1,1],[1,2,1,0]]]
++    v=[[[1,2,0,4],[3,0,2,1],[5,1,3,0]],[[8,1,2,0],[2,9,1,3],[4,2,7,1]]]
++    return q,k,v
++
++def error(a,b):
++    return max(abs(x-y) for ah,bh in zip(a,b) for ar,br in zip(ah,bh) for x,y in zip(ar,br))
++
++class Semantics(unittest.TestCase):
++    def test_all_live_grouped_online_matches_original_dense(self):
++        q,k,v=fixture();self.assertLess(error(dense_reference(q,k,v,[1,1,1],.5),grouped_online(q,k,v,[1,1,1],.5)),1e-12)
++    def test_wrong_gqa_group_mapping_is_detected(self):
++        q,k,v=fixture();self.assertGreater(error(dense_reference(q,k,v,[1,1,1],.5),grouped_online(q,k,v,[1,1,1],.5,wrong_group=True)),1.)
++    def test_original_bias_is_preserved_for_holes_and_right_padding(self):
++        q,k,v=fixture()
++        for mask in [[1,0,1],[1,1,0]]:
++            self.assertLess(error(dense_reference(q,k,v,mask,.5),grouped_online(q,k,v,mask,.5)),1e-12)
++            self.assertGreater(error(dense_reference(q,k,v,mask,.5),grouped_online(q,k,v,[1,1,1],.5)),.1)
++    def test_left_padding_all_masked_counterexample_must_remain_native_refused(self):
++        q,k,v=fixture()
++        for mask in [[0,1,1],[0,0,0]]:
++            # Finite-min dense all-masked rows include allT, whereas causal
++            # skipping visits only the prefix. Never claim this wider domain.
++            self.assertGreater(error(dense_reference(q,k,v,mask,.5),grouped_online(q,k,v,mask,.5)),.1)
++    def test_no_sliding_window_substitution(self):
++        q,k,v=fixture();self.assertGreater(error(dense_reference(q,k,v,[1,1,1],.5),grouped_online(q,k,v,[1,1,1],.5,window=1)),.1)
++    def test_future_values_cannot_change_earlier_causal_queries(self):
++        q,k,v=fixture();original=grouped_online(q,k,v,[1,1,1],.5)
++        changed=[[list(row) for row in head] for head in v]
++        changed[0][2]=[999]*4;changed[1][2]=[-999]*4
++        later=grouped_online(q,k,changed,[1,1,1],.5)
++        for before,after in zip(original,later):self.assertEqual(before[:2],after[:2])
++
++if __name__=='__main__':unittest.main()

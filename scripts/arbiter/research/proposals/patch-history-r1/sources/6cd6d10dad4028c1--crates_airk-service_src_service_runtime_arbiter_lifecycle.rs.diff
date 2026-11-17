@@ -1,0 +1,178 @@
+--- crates\airk-service\src\service_runtime\arbiter\lifecycle.rs
++++ crates\airk-service\src\service_runtime\arbiter\lifecycle.rs
+@@ -18,6 +18,8 @@
+     cancel: CancellationToken,
+     handle: Option<Handle>,
+     pending: Option<PreparedLaunch>,
++    #[cfg(feature = "test-support")]
++    warm_observer: Option<super::warm_observer::Observer>,
+ }
+ impl Default for State {
+     fn default() -> Self {
+@@ -31,6 +33,8 @@
+             cancel: CancellationToken::new(),
+             handle: None,
+             pending: None,
++            #[cfg(feature = "test-support")]
++            warm_observer: None,
+         }
+     }
+ }
+@@ -278,6 +282,9 @@
+     source: Box<dyn airk_retrieval::arbiter::runtime::AssetSource + Send>,
+     context: WarmContext<'_>,
+ ) -> Result<()> {
++    #[cfg(feature = "test-support")]
++    let mut observation = WarmCapture::capture(&context, profile.description().manifest);
++    let result = async {
+     let WarmContext {
+         stage,
+         expected,
+@@ -305,7 +312,8 @@
+     admitted_current(configuration, expected, stage, cancel, admission)?;
+     if let Some(handle) = &existing {
+         handle.configure(expected.clone())?;
+-        if handle.observation_for(stage)?.active_profile == Some(manifest)
++        let retained_observation = handle.observation_for(stage)?;
++        if retained_observation.active_profile == Some(manifest)
+             && handle.resident(manifest).is_ok()
+         {
+             admitted_current(configuration, expected, stage, cancel, admission)?;
+@@ -316,6 +324,12 @@
+             state.handle = Some(handle.clone());
+             drop(state);
+             admitted_current(configuration, expected, stage, cancel, admission)?;
++            #[cfg(feature = "test-support")]
++            if let Some(observation) = observation.as_mut() {
++                observation.activation_path = super::warm_observer::ActivationPath::RetainedResident;
++                observation.native_profile = retained_observation.active_profile;
++                observation.native_revision = retained_observation.configuration_revision;
++            }
+             return phase(
+                 shared,
+                 serial,
+@@ -390,11 +404,18 @@
+     )?;
+     admitted_current(configuration, expected, stage, cancel, admission)?;
+     let receiver = handle.warm(profile, source, reservation)?;
++    #[cfg(feature = "test-support")]
++    if let Some(observation) = observation.as_mut() { observation.activation_path = super::warm_observer::ActivationPath::NativeWarmAdmitted; }
+     let result=async {
+         tokio::select!{biased;_ = cancel.cancelled()=>anyhow::bail!("Arbiter warm canceled"),value=receiver=>value.context("Arbiter warm delivery closed")??};
+         admitted_current(configuration,expected,stage,cancel,admission)?;
+         ensure!(configuration.load()? == *expected,"Native warm configuration changed before activation");
+         let observed=handle.observation_for(stage)?;
++        #[cfg(feature = "test-support")]
++        if let Some(observation) = observation.as_mut() {
++            observation.native_profile=observed.active_profile;
++            observation.native_revision=observed.configuration_revision;
++        }
+         ensure!(observed.active_profile==Some(manifest)&&observed.configuration_revision==Some(expected.revision),"Arbiter native activation not observed");
+         admitted_current(configuration,expected,stage,cancel,admission)?;
+         ensure!(configuration.load()? == *expected,"Native warm configuration changed before activation");
+@@ -423,6 +444,12 @@
+         return Err(error);
+     }
+     Ok(())
++    }.await;
++    #[cfg(feature = "test-support")]
++    if let Some(observation) = observation {
++        observation.finish(&result);
++    }
++    result
+ }
+ 
+ fn cached_intent_eligible(
+@@ -2145,3 +2172,92 @@
+         Ok(())
+     }
+ }
++
++#[cfg(feature = "test-support")]
++pub(super) fn observe_warm(
++    shared: &Arc<Mutex<State>>,
++    observer: super::warm_observer::Observer,
++) -> Result<()> {
++    shared
++        .lock()
++        .map_err(|_| anyhow::anyhow!("warm observer lifecycle unavailable"))?
++        .warm_observer = Some(observer);
++    Ok(())
++}
++#[cfg(feature = "test-support")]
++struct WarmCapture {
++    observer: super::warm_observer::Observer,
++    stage: Stage,
++    expected: Configuration,
++    manifest: Sha256Digest,
++    serial: u64,
++    shared: Arc<Mutex<State>>,
++    activation_path: super::warm_observer::ActivationPath,
++    native_profile: Option<Sha256Digest>,
++    native_revision: Option<u64>,
++    cancel: CancellationToken,
++    captured_configure_revision: u64,
++    _guard: super::warm_observer::Guard,
++}
++#[cfg(feature = "test-support")]
++impl WarmCapture {
++    fn capture(context: &WarmContext<'_>, manifest: Sha256Digest) -> Option<Self> {
++        let state = context.shared.lock().ok()?;
++        let observer = state.warm_observer.clone()?;
++        let captured_configure_revision = state.accepted_configure_revision;
++        drop(state);
++        let guard = observer.begin()?;
++        Some(Self {
++            observer,
++            stage: context.stage,
++            expected: context.expected.clone(),
++            manifest,
++            serial: context.serial,
++            shared: context.shared.clone(),
++            cancel: context.cancel.clone(),
++            activation_path: super::warm_observer::ActivationPath::NotAdmitted,
++            native_profile: None,
++            native_revision: None,
++            captured_configure_revision,
++            _guard: guard,
++        })
++    }
++    fn finish(mut self, result: &Result<()>) {
++        let Ok(state) = self.shared.try_lock() else {
++            return;
++        };
++        let (current, accepted, phase) =
++            (state.serial, state.accepted_configure_revision, state.phase);
++        drop(state);
++        let observed = std::time::SystemTime::now()
++            .duration_since(std::time::UNIX_EPOCH)
++            .ok()
++            .and_then(|duration| u64::try_from(duration.as_millis()).ok());
++        let Some(observed) = observed else { return };
++        self.observer.emit(super::warm_observer::Record {
++            schema: "airk.private.arbiter-warm-completion/1".into(),
++            observer_id: self.observer.id(),
++            sequence: 0,
++            observed_unix_ms: observed,
++            stage: self.stage,
++            profile_manifest: self.manifest,
++            expected_configuration: self.expected,
++            activation_path: self.activation_path,
++            lifecycle_serial: self.serial,
++            current_lifecycle_serial: current,
++            accepted_configure_revision: accepted,
++            phase,
++            captured_configure_revision: self.captured_configure_revision,
++            active_profile: self.native_profile,
++            native_configuration_revision: self.native_revision,
++            canceled: self.cancel.is_cancelled(),
++            operation_succeeded: result.is_ok(),
++            outcome: super::warm_observer::Outcome::Failed,
++            error: result
++                .as_ref()
++                .err()
++                .map(|error| format!("{error:#}").chars().take(1024).collect()),
++        });
++        self._guard.complete();
++    }
++}

@@ -1,0 +1,103 @@
+--- a/CONTRACT.md
++++ b/CONTRACT.md
+@@ -7,3 +7,13 @@
+ The new owner prepares fresh inputs and exact configure/build cards; actual configure/build requires Root-reviewed frozen script/lock, explicit --execute-build and single ownership. Both stages share one monotonic wall budget <=10800seconds, use existing canonical suspended-owned-job runner and retain first failure/actual settlement. No automatic retry/resume or old output overwrite. Exactsource/toolkit/dependency/dev inputs are rechecked after stages. A failure leaves build state/logs/partial receipt. Static libraries and provider DLLs are only producer outputs, not admitted payloads. No Cargo environment/publication/qualification is emitted by this new owner yet; subsequent GPU aggregate/runtime/package consumers require the new producer proof rather than CPU acceptance bypasses.
+ 
+ Before model work: actual image imports must establish no eager CUDA/provider dependency in service, no second ORT core and inference-free CLI; runtime auth/protected layout/loaded-module checks and narrowed DLL policy must exist; CPU-without-GPU-deps refusal controls and tiny native provider placement must pass. Strict FP32/TF32off uses unchanged unfused graph and native tensors. Neither this script nor its build receipt calls a model or signs a qualification decision. Retain full NVIDIA/ORT/CUTLASS/frontend/third-party notices; proprietary runtimes stay independently licensed. Actual archivedcuDNN LICENSE takes precedence over mutable metadata copies.
++
++## R3 combined runtime decision
++
++Root selected one Flash+memory-efficient-capable build after the authoritative user scope became FP32 first, then FP16 efficient attention for1.9. USE_FLASH_ATTENTION=ON, USE_MEMORY_EFFICIENT_ATTENTION=ON, FLASH_NVCC_THREADS=1, normal CUDA with SM86, NVCC_THREADS=2 and shared parallel2. Existing TRT-fused/lean/FP4/FP8/FpAIntB model branches stay outside this work. A compiled BF16 implementation in upstream source is not a BF16 product goal. Existing48Flash translation units are included by this pinned CMake even with the flagOFF; changing global provider definitions later can invalidate broader native targets, so no provider-only DLL mixing or second core is permitted.
++
++Initial model execution must use original FP32 unfused Compact/Large and TF32off under independent exact numeric/resource/placement gates. FP16 graph/export/admission and causal/padding-mask equivalence are separate later G5 work, with distinct variant/evidence identities. Compiled efficient kernels are not admitted FP16 models. This producer makes no precision conversion or graph/weight change. Root's actual source-review and build authorization are required before C++ execution.
++
++Campaign deadline is72hours total from original T0:2026-11-19T05:29:42Z (Wednesday18November22:29America/Denver). The producer's own shared10800-second build observer cap is unchanged; model120-second limits are unchanged.
++
++R3 uses a short fresh direct child `cu3` of the already approved protected parent, not a junction/SUBST/global path workaround. CMAKE_OBJECT_PATH_MAX=240 asks CMake to hash deep object paths; per-build TEMP/TMP/TMPDIR use `cu3/t` and CUDAcache `cu3/cc`. No unsupported-compiler override is used. These measures reduce generated path length; actual NVCC compatibility remains a build gate rather than an assumed pass.
+--- a/provision_cuda_runtime.py
++++ b/provision_cuda_runtime.py
+@@ -46,7 +46,7 @@
+  cmd=o.configure_argv(dest,'x86_64-pc-windows-msvc',tools)
+  if cmd.count('-Donnxruntime_USE_CUDA=OFF')!=1:raise ValueError('CPU configure contract drift')
+  cmd[cmd.index('-Donnxruntime_USE_CUDA=OFF')]='-Donnxruntime_USE_CUDA=ON'
+- cmd += ['-Donnxruntime_BUILD_CUDA_EP_AS_PLUGIN=OFF','-DCMAKE_CUDA_ARCHITECTURES=86','-DCMAKE_CUDA_COMPILER='+str(CUDA/'bin/nvcc.exe'),'-Donnxruntime_CUDA_HOME='+str(CUDA),'-DCUDAToolkit_ROOT='+str(CUDA),'-Donnxruntime_CUDNN_HOME='+str(INPUT/'cudnn-dev'),'-DCUDNN_PATH='+str(INPUT/'cudnn-dev'),'-DFETCHCONTENT_SOURCE_DIR_CUDNN_FRONTEND='+str(frontend),'-DFETCHCONTENT_UPDATES_DISCONNECTED=ON','-Donnxruntime_NVCC_THREADS=2','-Donnxruntime_USE_FLASH_ATTENTION=OFF','-Donnxruntime_USE_MEMORY_EFFICIENT_ATTENTION=OFF','-Donnxruntime_USE_TRT_FUSED_ATTENTION=OFF','-Donnxruntime_USE_LEAN_ATTENTION=OFF','-Donnxruntime_USE_FP4_QMOE=OFF','-Donnxruntime_USE_FP8_QMOE=OFF','-Donnxruntime_USE_FPA_INTB_GEMM=OFF','-Donnxruntime_USE_CUDA_NHWC_OPS=OFF','-Donnxruntime_CUDA_MINIMAL=OFF']
++ cmd += ['-Donnxruntime_BUILD_CUDA_EP_AS_PLUGIN=OFF','-DCMAKE_CUDA_ARCHITECTURES=86','-DCMAKE_OBJECT_PATH_MAX=240','-DCMAKE_CUDA_COMPILER='+str(CUDA/'bin/nvcc.exe'),'-Donnxruntime_CUDA_HOME='+str(CUDA),'-DCUDAToolkit_ROOT='+str(CUDA),'-Donnxruntime_CUDNN_HOME='+str(INPUT/'cudnn-dev'),'-DCUDNN_PATH='+str(INPUT/'cudnn-dev'),'-DFETCHCONTENT_SOURCE_DIR_CUDNN_FRONTEND='+str(frontend),'-DFETCHCONTENT_UPDATES_DISCONNECTED=ON','-Donnxruntime_NVCC_THREADS=2','-Donnxruntime_USE_FLASH_ATTENTION=ON','-Donnxruntime_FLASH_NVCC_THREADS=1','-Donnxruntime_USE_MEMORY_EFFICIENT_ATTENTION=ON','-Donnxruntime_USE_TRT_FUSED_ATTENTION=OFF','-Donnxruntime_USE_LEAN_ATTENTION=OFF','-Donnxruntime_USE_FP4_QMOE=OFF','-Donnxruntime_USE_FP8_QMOE=OFF','-Donnxruntime_USE_FPA_INTB_GEMM=OFF','-Donnxruntime_USE_CUDA_NHWC_OPS=OFF','-Donnxruntime_CUDA_MINIMAL=OFF']
+  return cmd
+ 
+ def safe_frontend(o,archive,output,lock):
+@@ -93,7 +93,7 @@
+    if o.stream_digest(f,'sha1').hexdigest()!=r['upstream_sha1']:raise ValueError('upstream CUDA dependency SHA1 differs')
+  if digest(BASE/'ort-windows-loader-proposal-r2.patch')!=lock['loader_patch_sha256'] or digest(HERE/'offline-helper.patch')!=lock['offline_helper']['patch_sha256'] or digest(HERE/'frontend-authenticated-imports.patch')!=lock['frontend_final']['patch_sha256']:raise ValueError('reviewed input patch drift')
+  dest.mkdir();write(dest/'owner.json',{'schema':'airk.private.cuda-runtime-producer/1','sid':SID,'cpu_source_owner':str(CPU),'script_sha256':a.approved_script_sha256,'lock_sha256':a.approved_lock_sha256,'output_parent_policy':policy,'qualification':False})
+- start=time.monotonic();deadline=start+a.timeout_seconds;receipt={'status':'RUNNING','commands':[],'policy':{'one_static_core':True,'optional_shared_cuda_provider':True,'runtime_version':'1.30.0','SM':86,'cpu_qualification_transferred':False},'source_inputs':[]}
++ start=time.monotonic();deadline=start+a.timeout_seconds;receipt={'status':'RUNNING','commands':[],'policy':{'one_static_core':True,'optional_shared_cuda_provider':True,'runtime_version':'1.30.0','SM':86,'compiled_flash_attention':True,'compiled_memory_efficient_attention':True,'first_model_gate':'FP32-unfused-TF32off','fp16_model_admission':'separate-later-G5-unqualified','cpu_qualification_transferred':False},'source_inputs':[]}
+  try:
+   # Canonical extraction verifies complete original source census; never copy a warm build tree.
+   o.verify_file(CPU/'downloads/source.tar.gz',o.LOCK['source']);o.extract_source(CPU/'downloads/source.tar.gz',dest,o.LOCK['source'])
+@@ -114,8 +114,8 @@
+   forbidden={'CC','CXX','CFLAGS','CXXFLAGS','CPPFLAGS','LDFLAGS','CUDAFLAGS','CUDACXX','CUDAHOSTCXX','CUDAARCHS','NVCC_PREPEND_FLAGS','NVCC_APPEND_FLAGS','CL','_CL_','LINK','LIB','LIBPATH','INCLUDE','PYTHONPATH','PYTHONHOME','CUDNN_FRONTEND_CUDART_LIB_NAME'}
+   for key in list(environment):
+    if key.upper() in forbidden or key.upper().startswith(('CMAKE_','ORT_','CUDNN_','CUDA_')):environment.pop(key)
+-  private_temp=dest/'temp';private_temp.mkdir()
+-  environment.update(PATH='C:/Windows/System32;C:/Windows;'+str(Path(sys.executable).parent)+';'+str(CUDA/'bin'),TEMP=str(private_temp),TMP=str(private_temp),TMPDIR=str(private_temp),PYTHONNOUSERSITE='1',CUDA_CACHE_PATH=str(dest/'cuda-cache'))
++  private_temp=dest/'t';private_temp.mkdir()
++  environment.update(PATH='C:/Windows/System32;C:/Windows;'+str(Path(sys.executable).parent)+';'+str(CUDA/'bin'),TEMP=str(private_temp),TMP=str(private_temp),TMPDIR=str(private_temp),PYTHONNOUSERSITE='1',CUDA_CACHE_PATH=str(dest/'cc'))
+   def run(argv,cwd,stage,wrapped=False):
+    remaining=int(deadline-time.monotonic())
+    if remaining<=0:raise ValueError('original GPU producer wall budget exhausted')
+--- a/cuda-runtime-producer-lock.json
++++ b/cuda-runtime-producer-lock.json
+@@ -77,5 +77,23 @@
+     "sha256": "c1a4567d822ebda7373fa1f19255dff4942302de741f830160b6c7d1fb31af23",
+     "extraction_receipt_sha256": "09b1b5b88d60a8ca3882bd4be8b047bd9ed76ff5d9814eb64a1b7c184225485c",
+     "archive_license_sha256": "295a1b7118d3417f5d6a943e5f87b59e2a0631fb277129c3b15dee6248adc7cf"
++  },
++  "runtime_flavor": {
++    "compiled_flash_attention": true,
++    "compiled_memory_efficient_attention": true,
++    "flash_nvcc_threads": 1,
++    "nvcc_threads": 2,
++    "parallel_jobs": 2,
++    "sm": 86,
++    "first_model_gate": "FP32-unfused-TF32off",
++    "fp16_admission": "later separate G5; no FP16 model execution/qualification from compiler availability",
++    "no_second_ort_core": true
++  },
++  "build_path": {
++    "fresh_child": "cu3",
++    "object_path_max": 240,
++    "temp_child": "t",
++    "cuda_cache_child": "cc",
++    "aliases_or_drive_substitution": false
+   }
+ }
+--- a/test_provision_cuda_runtime.py
++++ b/test_provision_cuda_runtime.py
+@@ -9,7 +9,7 @@
+  def test_fp32_single_core_exact_toolchain_flags(self):
+   stub=SimpleNamespace(configure_argv=lambda *a:['cmake','-Donnxruntime_USE_CUDA=OFF','-Donnxruntime_BUILD_SHARED_LIB=OFF','-Donnxruntime_DISABLE_CONTRIB_OPS=OFF'])
+   c=g.gpu_command(stub,Path('C:/owned'),{},Path('C:/owned/frontend'))
+-  for expected in ['-Donnxruntime_USE_CUDA=ON','-Donnxruntime_BUILD_SHARED_LIB=OFF','-Donnxruntime_BUILD_CUDA_EP_AS_PLUGIN=OFF','-DCMAKE_CUDA_ARCHITECTURES=86','-Donnxruntime_USE_FLASH_ATTENTION=OFF','-Donnxruntime_USE_MEMORY_EFFICIENT_ATTENTION=OFF','-Donnxruntime_USE_TRT_FUSED_ATTENTION=OFF','-Donnxruntime_CUDA_MINIMAL=OFF']:
++  for expected in ['-Donnxruntime_USE_CUDA=ON','-Donnxruntime_BUILD_SHARED_LIB=OFF','-Donnxruntime_BUILD_CUDA_EP_AS_PLUGIN=OFF','-DCMAKE_CUDA_ARCHITECTURES=86','-DCMAKE_OBJECT_PATH_MAX=240','-Donnxruntime_USE_FLASH_ATTENTION=ON','-Donnxruntime_FLASH_NVCC_THREADS=1','-Donnxruntime_USE_MEMORY_EFFICIENT_ATTENTION=ON','-Donnxruntime_USE_TRT_FUSED_ATTENTION=OFF','-Donnxruntime_CUDA_MINIMAL=OFF']:
+    self.assertIn(expected,c)
+   self.assertTrue(any(v.startswith('-DCMAKE_CUDA_COMPILER=') and v.replace(chr(92),'/').endswith('bin/nvcc.exe') for v in c));self.assertNotIn('-Donnxruntime_USE_CUDA=OFF',c)
+  def test_cpu_recipe_contract_drift_refused(self):
+--- a/README.md
++++ b/README.md
+@@ -1,11 +1,9 @@
+-# GPU producer R2 review handoff
++# GPU producer R3 review handoff
+ 
+-Actual: the approved two OS negative controls passed once (0.070465s), with no valid module loaded. cuDNN683336095-byte official archive passed SHA/preflight in49.525s; safe extraction of8DLL/7headers/16importlibs+LICENSE passed8.182s. Cutlass4.7.0 and frontend1.27.0 source archives match the existing upstream SHA1 and now have retained SHA256/inert censuses/notices. Originals and new protected output ACLs are preserved. No C++/Cargo/model/install/GPUprovider execution has occurred.
++R3 preserves unexecuted R2 and all acquired inputs. The only execution-policy additions are one combined Flash+memory-efficient-capable CUDA build, explicit FlashNVCCthreads1 and truthful compiled-capability metadata. NormalCUDA/SM86, sharedparallel2, NVCCthreads2, exact upstream1.30.0/ort rc10 path, patches, offline mirror, protected inputs and ownership remain. No DLL/core mixing, precision conversion, model call, C++ build or Cargo has run.
+ 
+-Active new producer is provision_cuda_runtime.py plus cuda-runtime-producer-lock.json, CONTRACT.md, offline-helper.patch and frontend-authenticated-imports.patch in this R2 folder; it also consumes the unchanged approved loader R2 patch one level above. Histories before-self-review/failed-r1 are inactive and retained. Private records/scripts are not a new public native wire protocol or qualification proof. Existing CPU files/receipts remain unmodified.
++The first model gate stays FP32 original unfused/TF32off. FP16 efficient-attention graph/export and mask-equivalence/admission are later G5 work and get distinct variant evidence. Kernel availability is not qualification. No BF16 goal or other research branch is added. This follows the Root-selected combined-flavor assessment SHA2905ba7d... and the authoritative72-hour total deadline2026-11-19T05:29:42Z; original model120-second budgets stay unchanged.
+ 
+-The unmodified upstream frontend dynamic-loader patch does not apply to declared1.27 source (its third hunk predates the environment-override block). R1 preparation failed before a build; R2 explicitly rebases the Windows helpers to reference only authenticated preloaded nvcuda/cudart12 modules and retains the original nonWindows bodies. It keeps upstream direct-call CUDA macros and separately applies the exact upstream ARM64 compatibility patch. It does not run fuzzy patching or downgrade a dependency. One inert .claude/skills link is recorded/omitted; no link is extracted or followed.
++All R2 safety corrections persist: the broken upstream frontend dynamic patch is replaced by the exact reviewed rebased Windows imported-module policy, original nonWindows bodies retained; only the exact inert9-byte .claude/skills link is omitted; source and patch identities are explicit; no ambient URL/DLL discovery or unknown negative evidence is accepted. C++ /Zs frontend/header compatibility runs before full configure/build and stops on first failure. Producer receipt remains unqualified and cannot pass the existing CPU-only validator or substitute for native GPU aggregate/runtime/package/placement/numeric/resource/product gates.
+ 
+-Six Python helper/refusal controls pass on the frozen producer. An initial5/6 result was a test-only Windows path separator expectation; failure/source are retained. Current controls cover exact F32 single-core configure decisions, CPUrecipe drift, permitted nonbuild-link omission, unexpected-link refusal, traversal refusal and archive-hash drift. They do not establish C++ compilation, frontend/cuDNN ABI compatibility, final static linking or any GPU/model outcome. The producer's first /Zs header syntax stage is before full configure/build, so that compatibility failure stops cheaply.
+-
+-build-card-r2.json provides a concrete unexecuted command and actual inputs. Root must review the producer and patches before execution. The eventual aggregate/runtime/build/package consumers still need a new GPU proof owner; do not pass this receipt through existing CPU-only verify_build or infer native model qualification. Use original FP32 unfused Compact/Large graphs and TF32off only. No F16/BF16/mixed/Flash graph work is in scope. Missing GPU dependencies must preserve MiniLM CPU and separately qualified same-slot CPU fallback; Large currently has no qualified CPU fallback.
++Cheap controls are measured in controls-r3.json. Prior source-preparation and test-path failures stay in R1/R2 history. build-card-r3.json is a concrete unexecuted command requiring Root primary/independent review and explicit build authorization. It does not authorize model work.

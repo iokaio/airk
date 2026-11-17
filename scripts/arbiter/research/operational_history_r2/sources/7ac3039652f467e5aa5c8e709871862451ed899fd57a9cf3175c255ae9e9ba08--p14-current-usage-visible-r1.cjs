@@ -1,0 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
+const fs=require('node:fs');
+const {editorUi}=require('./p10-worktree/scripts/editor-ui.cjs');
+(async()=>{const ui=await editorUi(55916,Date.now()+20000);try{const result={};result.management=await ui.service('document.body.innerText');result.workbench=await ui.workbench("JSON.stringify({picker:[...document.querySelectorAll('.quick-input-widget')].filter(n=>n.getBoundingClientRect().height).map(n=>n.innerText),dialogs:[...document.querySelectorAll('.monaco-dialog-box')].map(n=>n.innerText)})");result.admin=await ui.document("document.body.innerText.includes('Entire Index history')",'document.body.innerText');fs.writeFileSync('D:/code/Github/airk/artifacts/v190/p14-current-usage-visible-r1.json',JSON.stringify(result,null,2),{flag:'wx'});console.log(JSON.stringify(result));}finally{ui.close();}})().catch(e=>{console.error(e);process.exitCode=1});

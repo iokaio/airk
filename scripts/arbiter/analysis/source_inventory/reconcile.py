@@ -4,13 +4,15 @@ import argparse
 from collections import Counter
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 import sys
 import time
 import datetime
+from concurrent.futures import ThreadPoolExecutor
 sys.dont_write_bytecode=True
 import inventory as scanner
-from disposition import verify_disposition_row
+from disposition import verify_disposition_row, parse_map_pin
 
 
 def resolve(row, migrations, exclusions, tracked_current=None, committed=None):
@@ -51,46 +53,98 @@ def observe_tracked_owners(repo, rows, tracked_names, object_format, observe=sca
     return current,observations
 
 
+def recheck_evidence(cache, object_format, observe=scanner.evidence_hashes):
+    errors=[]
+    for path,previous in cache.items():
+        try:
+            current=observe(Path(path),object_format)
+            if current['source_sha256']!=previous['source_sha256'] or current['bytes']!=previous['bytes']:
+                raise ValueError('shared evidence changed during batch')
+        except (OSError,ValueError) as error:scanner.record_error(errors,path,'evidence_final_recheck',error)
+    return errors
+
+
+def merge_inventories(values):
+    first=values[0];merged=dict(first);candidates={};errors=[];excluded=[];notes=[];roots=[]
+    for value in values:
+        if value.get('schema')!='airk.private.source-inventory/1':raise ValueError('wrong inventory schema')
+        if any(value.get(key)!=first.get(key) for key in ['repository','object_format','head']):
+            raise ValueError('inventory repository/object format/recorded HEAD differs')
+        for row in value['candidates']:
+            prior=candidates.get(row['path'])
+            if prior is not None:
+                if any(prior.get(key)!=row.get(key) for key in ['source_sha256','bytes','git_blob_oid','normalized_text_git_blob_oid']):
+                    raise ValueError('same candidate path has conflicting retained identities')
+                prior['tracked_worktree_matches']=sorted(set(prior.get('tracked_worktree_matches',[]))|set(row.get('tracked_worktree_matches',[])))
+            else:candidates[row['path']]=dict(row)
+        errors.extend(value['errors']);excluded.extend(value['excluded']);notes.extend(value['reported_prior_scan_notes']);roots.extend(value['roots'])
+    merged.update(candidates=list(candidates.values()),errors=errors,excluded=excluded,reported_prior_scan_notes=notes,roots=sorted(set(roots)))
+    return merged
+
+
 def main():
     started=datetime.datetime.now(datetime.timezone.utc).isoformat();clock=time.monotonic()
     source_files=[Path(__file__),Path(scanner.__file__),Path(__file__).with_name('disposition.py')]
     source_pins={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in source_files}
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('inventory',type=Path)
-    p.add_argument('--disposition-map',type=Path,action='append',default=[])
-    args=p.parse_args();raw=args.inventory.read_bytes();old=json.loads(raw)
-    if old.get('schema')!='airk.private.source-inventory/1':raise ValueError('wrong inventory schema')
+    p.add_argument('--disposition-map',action='append',default=[],help='Pinned external map PATH=SHA256; repeat as needed')
+    p.add_argument('--hash-workers',type=int,choices=[8,16],default=8)
+    p.add_argument('--additional-inventory',type=Path,action='append',default=[],help='Frozen compatible inventory; merge exact candidate paths without traversal')
+    args=p.parse_args();inputs=[];values=[]
+    for path in [args.inventory,*args.additional_inventory]:
+        raw=path.read_bytes();value=json.loads(raw);values.append(value)
+        inputs.append({'path':str(path),'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw),'candidates':len(value.get('candidates',[]))})
+    old=merge_inventories(values)
     repo=Path(old['repository']);errors=[]
     committed=scanner.reachable_blobs(repo,old['head'])
     tracked_names={p.decode('utf-8').replace('\\','/') for p in scanner.git(repo,'ls-files','-z').split(b'\0') if p}
     tracked_current,tracked_observations=observe_tracked_owners(repo,old['candidates'],tracked_names,old['object_format'])
     migrations,maps=scanner.migration_index(repo,old['object_format'],set(),set(),errors)
-    excluded={};documents=[]
+    excluded={};documents=[];evidence_cache={};git_proof_cache={}
+    def observe_evidence(path,fmt):
+        key=str(path)
+        if key not in evidence_cache:evidence_cache[key]=scanner.evidence_hashes(path,fmt)
+        return evidence_cache[key]
     discovered={p for p in (repo/'scripts/arbiter').rglob('*disposition.json') if p.name in ['source-disposition.json','generated-disposition.json']}
-    discovered.update(p.absolute() for p in args.disposition_map)
+    explicit_pins={}
+    for supplied in args.disposition_map:
+        path,digest=parse_map_pin(supplied)
+        if path in explicit_pins and explicit_pins[path]!=digest:raise ValueError('conflicting external map pins')
+        explicit_pins[path]=digest
+    discovered.update(explicit_pins)
     for path in sorted(discovered):
         try:
             value,identity=scanner.verified_json(path,old['object_format'])
+            evidence_cache[str(path)]=identity
+            if path in explicit_pins and identity['source_sha256']!=explicit_pins[path]:raise ValueError('external disposition document pin differs')
             if value.get('schema')!='airk.source-disposition/1' or not isinstance(value.get('files'),list):raise ValueError('unsupported disposition map')
             document={'path':path.relative_to(repo).as_posix(),'sha256':identity['source_sha256'],'rows':0};documents.append(document)
             for row in value['files']:
-                verified=verify_disposition_row(row,repo,scanner.source_hashes,scanner.checked_relative)
+                verified=verify_disposition_row(row,repo,scanner.source_hashes,scanner.checked_relative,observe_evidence,git_proof_cache)
                 key=(row['source'],row['source_sha256'])
                 if key in excluded and excluded[key]['disposition']!=row['disposition']:raise ValueError('conflicting disposition evidence')
                 excluded[key]={**verified,'map':document['path'],'map_sha256':document['sha256']};document['rows']+=1
-        except (OSError,ValueError,KeyError,TypeError) as error:scanner.record_error(errors,path,'disposition_map',error)
+        except (OSError,ValueError,KeyError,TypeError,subprocess.SubprocessError) as error:scanner.record_error(errors,path,'disposition_map',error)
     rows=[]
-    for row in old['candidates']:
+    def recheck(row):
         try:
             now=scanner.source_hashes(scanner.checked_relative(repo,row['path'],'artifacts/'),old['object_format'])
             if now['source_sha256']!=row['source_sha256'] or now['bytes']!=row['bytes']:raise ValueError('candidate changed since inventory')
-            rows.append({'path':row['path'],'source_sha256':row['source_sha256'],'bytes':row['bytes'],**resolve(row,migrations,excluded,tracked_current,committed)})
-        except (OSError,ValueError,KeyError,TypeError) as error:scanner.record_error(errors,row['path'],'candidate_recheck',error)
+            return {'path':row['path'],'source_sha256':row['source_sha256'],'bytes':row['bytes'],**resolve(row,migrations,excluded,tracked_current,committed)},None
+        except (OSError,ValueError,KeyError,TypeError,subprocess.SubprocessError) as error:
+            return None,{'path':row['path'],'stage':'candidate_recheck','type':type(error).__name__,'message':str(error)}
+    with ThreadPoolExecutor(max_workers=args.hash_workers) as pool:
+        for row,error in pool.map(recheck,old['candidates']):
+            if row is not None:rows.append(row)
+            if error is not None:errors.append(error)
+    errors.extend(recheck_evidence(evidence_cache,old['object_format']))
     counts=Counter(row['status'] for row in rows)
     for p in source_files:
         if hashlib.sha256(p.read_bytes()).hexdigest()!=source_pins[p.name]:
             scanner.record_error(errors,p,'verifier_source_changed',ValueError('verifier changed during reconciliation'))
     report={'schema':'airk.private.source-rescue-reconciliation/1','inventory':str(args.inventory),
-            'inventory_sha256':hashlib.sha256(raw).hexdigest(),'scope':old['roots'],
+            'inventory_sha256':inputs[0]['sha256'],'input_inventories':inputs,'scope':old['roots'],
+            'hash_workers':args.hash_workers,'shared_evidence_start_end_rechecked':len(evidence_cache),
             'started_utc':started,'elapsed_seconds':time.monotonic()-clock,
             'source_pins':source_pins,
             'input_errors':old['errors'],'input_exclusions':old['excluded'],'prior_limitations':old['reported_prior_scan_notes'],

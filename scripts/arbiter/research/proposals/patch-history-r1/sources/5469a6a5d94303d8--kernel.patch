@@ -1,0 +1,141 @@
+--- a/crates/airk-kernel/src/discovery.rs
++++ b/crates/airk-kernel/src/discovery.rs
+@@ -48,21 +48,25 @@
+             truncated: false,
+         };
+         response.page.record_bytes = Some(0);
+-        let mut last = after.clone();
+         let candidates = read.lookup_paths(
+             airk_store::current::postings::Lookup::Files,
+             prefix,
+             after.as_ref().map(|k| k.path.as_str()),
+             limit + 1,
+         )?;
+-        for path in &candidates.paths {
+-            let bytes = serde_json::to_vec(path)?.len();
++        for path in candidates.paths {
++            // The count limit already proves truncation; no record-byte hint is needed.
++            if response.paths.len() >= limit {
++                response.truncated = true;
++                break;
++            }
++            let bytes = json_string_bytes(&path);
+             let used = response
+                 .page
+                 .record_bytes
+                 .as_mut()
+                 .expect("record accounting initialized");
+-            if response.paths.len() >= limit || bytes > max_bytes.saturating_sub(*used) {
++            if bytes > max_bytes.saturating_sub(*used) {
+                 response.truncated = true;
+                 if response.paths.is_empty() {
+                     response.page.required_record_bytes = Some(bytes);
+@@ -70,13 +74,13 @@
+                 break;
+             }
+             *used += bytes;
+-            response.paths.push(path.clone());
+-            last = Some(DiscoveryKey {
++            response.paths.push(path);
++        }
++        if response.truncated && response.publication.is_some() {
++            let last = response.paths.last().map(|path| DiscoveryKey {
+                 path: path.clone(),
+                 ..Default::default()
+-            });
+-        }
+-        if response.truncated && response.publication.is_some() {
++            }).or(after);
+             response.page.cursor = last
+                 .as_ref()
+                 .map(|key| discovery::encode(&binding, key))
+@@ -131,3 +135,34 @@
+         )
+     }
+ }
++
++
++/// Exact serde_json string size for an inventory record, including its two quotes.
++/// UTF-8 bytes are preserved; only JSON syntax and ASCII controls are escaped.
++fn json_string_bytes(value: &str) -> usize {
++    value.bytes().fold(2, |bytes, byte| {
++        bytes + match byte {
++            0x22 | 0x5c | 0x08 | 0x09 | 0x0a | 0x0c | 0x0d => 2,
++            0..=0x1f => 6,
++            _ => 1,
++        }
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::json_string_bytes;
++
++    #[test]
++    fn inventory_json_size_matches_independent_serializer_for_controls_and_unicode() {
++        let mut values = vec![String::new(), "plain/path.txt".into(), r#"quotes"slash/\tail"#.into(),
++            "é中😀\u{2028}\u{2029}".into(), "\u{7f}\u{80}\u{7ff}\u{800}\u{ffff}\u{10000}\u{10ffff}".into()];
++        for value in 0u8..=127 {
++            values.push(format!("prefix{}suffix", char::from(value)));
++        }
++        values.push((0u8..=31).map(char::from).collect());
++        for value in values {
++            assert_eq!(json_string_bytes(&value), serde_json::to_vec(&value).unwrap().len(), "{value:?}");
++        }
++    }
++}
+--- a/crates/airk-kernel/tests/integration/discovery.rs
++++ b/crates/airk-kernel/tests/integration/discovery.rs
+@@ -294,3 +294,52 @@
+     );
+     Ok(())
+ }
++
++
++#[test]
++fn inventory_record_budget_and_count_limit_choose_identical_continuations() -> Result<()> {
++    let root = tempfile::tempdir()?;
++    let data = tempfile::tempdir()?;
++    let expected = ["a.txt", "bΩ.txt", "c中😀.txt"];
++    for path in expected {
++        fs::write(root.path().join(path), "Original budget fixture.\n")?;
++    }
++    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
++    kernel.configure_vectors(false)?;
++    kernel.index()?;
++    let first_bytes = serde_json::to_vec(expected[0])?.len();
++    let second_bytes = serde_json::to_vec(expected[1])?.len();
++    let too_small = kernel.list_files("", 3, first_bytes - 1)?;
++    assert!(too_small.paths.is_empty() && too_small.truncated);
++    assert_eq!(too_small.page.record_bytes, Some(0));
++    assert_eq!(too_small.page.required_record_bytes, Some(first_bytes));
++    assert!(too_small.page.cursor.is_none());
++    let by_bytes = kernel.list_files("", 3, first_bytes)?;
++    let by_count = kernel.list_files("", 1, 4096)?;
++    assert_eq!(by_bytes.paths, [expected[0]]);
++    assert_eq!(by_bytes.page.cursor, by_count.page.cursor);
++    assert_eq!(by_bytes.page.record_bytes, by_count.page.record_bytes);
++    assert_eq!(by_bytes.page.record_bytes, Some(first_bytes));
++    assert!(by_bytes.truncated && by_count.truncated);
++    let pair_budget = first_bytes + second_bytes;
++    let pair = kernel.list_files("", 3, pair_budget)?;
++    assert_eq!(pair.paths, expected[..2]);
++    assert_eq!(pair.page.record_bytes, Some(pair_budget));
++    assert_eq!(pair.page.cursor, kernel.list_files("", 2, 4096)?.page.cursor);
++    let below = kernel.list_files("", 3, pair_budget - 1)?;
++    assert_eq!(below.paths, [expected[0]]);
++    let options = DiscoveryOptions { cursor: by_bytes.page.cursor, ..Default::default() };
++    let too_small_continuation = kernel.list_files_page("", 3, second_bytes - 1, &options)?;
++    assert!(too_small_continuation.paths.is_empty() && too_small_continuation.truncated);
++    assert_eq!(too_small_continuation.page.required_record_bytes, Some(second_bytes));
++    assert_eq!(too_small_continuation.page.cursor, options.cursor);
++    let second = kernel.list_files_page("", 1, second_bytes, &options)?;
++    assert_eq!(second.paths, [expected[1]]);
++    assert_eq!(second.page.record_bytes, Some(second_bytes));
++    let tail = kernel.list_files_page("", 3, 4096, &DiscoveryOptions {
++        cursor: second.page.cursor, ..Default::default()
++    })?;
++    assert_eq!(tail.paths, [expected[2]]);
++    assert!(!tail.truncated && tail.page.cursor.is_none());
++    Ok(())
++}

@@ -1,0 +1,1480 @@
+--- a/crates/airk-cli/src/project_client.rs
++++ b/crates/airk-cli/src/project_client.rs
+@@ -14,6 +14,9 @@
+     time::{Duration, Instant},
+ };
+ 
++#[path="status_observation.rs"]
++mod status_observation;
++pub(crate) use status_observation::StatusOwner;
+ #[derive(Debug)]
+ struct RetrySetup(&'static str);
+ impl std::fmt::Display for RetrySetup {
+@@ -116,6 +119,11 @@
+         project: ProjectBinding,
+         client: airk_core::usage::ClientFamily,
+     ) -> Result<Self> {
++        Self::connect_once_checked(root,project,client,None).await
++    }
++    async fn connect_once_checked(root:&Path,project:ProjectBinding,client:airk_core::usage::ClientFamily,
++        owner:Option<&StatusOwner>)->Result<Self>{
++        if let Some(owner)=owner{owner.accepting()?;}
+         let ControlResponse::Health { observation } =
+             service_runtime::request(root, ControlMethod::Health).await?
+         else {
+@@ -125,6 +133,7 @@
+             observation.version == env!("CARGO_PKG_VERSION"),
+             "native service version differs from this client"
+         );
++        let _broker_request=owner.map(StatusOwner::admit_request).transpose()?; // one request after health
+         let (role, mut grant) =
+             match service_runtime::request(root, ControlMethod::Connect { project }).await? {
+                 ControlResponse::Connection { role, grant } => (role, grant),
+@@ -254,7 +263,6 @@
+ struct ClientState {
+     connection: Option<Connection>,
+     status_receipt: airk_mcp::response::StatusReceipt,
+-    cached_status: Option<CachedStatus>,
+ }
+ 
+ pub(crate) struct Backend {
+@@ -262,6 +270,7 @@
+     project: ProjectBinding,
+     state: tokio::sync::Mutex<ClientState>,
+     latest_source: std::sync::Mutex<Option<SourceFence>>,
++    status:Arc<StatusOwner>,
+     client: std::sync::Mutex<airk_core::usage::ClientFamily>,
+ }
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -274,6 +283,7 @@
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ enum CacheScope {
+     Pinned(airk_core::identity::Incarnation),
++    Registered(SourceFence),
+     Source(SourceFence),
+ }
+ impl From<airk_core::identity::Incarnation> for CacheScope {
+@@ -293,6 +303,7 @@
+     body: serde_json::Value,
+ }
+ impl CachedStatus {
++    #[cfg(test)]
+     fn agrees_with(&self, result: &Result<serde_json::Value>) -> bool {
+         let Ok(result) = result else {
+             return false;
+@@ -358,11 +369,18 @@
+     if !root.join("service-1.4.sqlite3").try_exists()? {
+         return Ok(None);
+     }
+-    let registry = airk_store::service::registry::ServiceRegistry::open_saved(root)?;
+-    registry.get(project)?; // A removed project cannot be served from a cache.
+-    Ok(Some(CacheScope::Pinned(registry.incarnation()?)))
++    let deadline=Some(Instant::now()+Duration::from_secs(2));
++    let registry=airk_store::service::registry::ServiceRegistry::open_saved_before(root,deadline)?;
++    let before=registry.source_scope_stamp(deadline)?;
++    let registered=registry.get(project)?;
++    let after=registry.source_scope_stamp(deadline)?;
++    if before!=after{return Err(airk_store::service::registry::SavedScopeExpired.into());}
++    Ok(Some(CacheScope::Registered(SourceFence{namespace:after.namespace,revision:after.revision,
++        project,fencing_generation:registered.fencing_generation})))
+ }
+ impl airk_mcp::remote::RemoteTools for Backend {
++    fn close(&self){self.status.close();}
++    fn shutdown(&self)->airk_mcp::remote::ReadyFuture<'_>{Box::pin(async move{self.status.shutdown().await})}
+     fn client(&self, client: airk_core::usage::ClientFamily) {
+         if let Ok(mut label) = self.client.lock() {
+             *label = client;
+@@ -399,14 +417,9 @@
+     }
+     fn source_fence_current(&self, scope: CacheScope) -> bool {
+         match scope {
+-            CacheScope::Pinned(_) => true,
+-            CacheScope::Source(fence) => {
+-                self.latest_source
+-                    .lock()
+-                    .unwrap_or_else(|error| error.into_inner())
+-                    .as_ref()
+-                    == Some(&fence)
+-            }
++            CacheScope::Pinned(_) | CacheScope::Registered(_) => true,
++            CacheScope::Source(fence) => self.latest_source.lock()
++                .unwrap_or_else(|error| error.into_inner()).as_ref() == Some(&fence),
+         }
+     }
+     #[cfg(test)]
+@@ -435,155 +448,61 @@
+         source_expires: Option<Instant>,
+     ) -> airk_mcp::remote::RemoteFuture<'_> {
+         Box::pin(async move {
+-            if tool == "airk_help" {
+-                return Ok(serde_json::to_value(airk_mcp::help::call(
+-                    serde_json::Value::Object(arguments),
+-                ))?);
++            if tool=="airk_help"{return Ok(serde_json::to_value(airk_mcp::help::call(serde_json::Value::Object(arguments)))?);}
++            if matches!(tool.as_str(),"airk_status"|"airk_diagnostics")
++                &&serde_json::from_value::<airk_mcp::StatusArgs>(serde_json::Value::Object(arguments.clone())).is_err(){
++                return Ok(airk_mcp::unified::failure("INVALID_SCHEMA","Invalid status arguments."));
+             }
+-            if matches!(tool.as_str(), "airk_status" | "airk_diagnostics") {
+-                if serde_json::from_value::<airk_mcp::StatusArgs>(serde_json::Value::Object(
+-                    arguments.clone(),
+-                ))
+-                .is_err()
+-                {
+-                    return Ok(
+-                        serde_json::json!({"content":[{"type":"text","text":"Invalid airk_status arguments; inspect its current schema with airk_help."}],"isError":true}),
+-                    );
+-                }
+-                // Cold image hashing must not consume a freshly brokered connection's idle/grant lifetime.
+-                if tool == "airk_diagnostics" {
+-                    crate::runtime_metadata::observe_process();
+-                }
++            if let Some(fence)=observed{if !self.accept_source_fence(fence){return Ok(source_scope_superseded());}}
++            if source_expires.is_some_and(|until|Instant::now()>=until){return Ok(source_scope_superseded());}
++            if tool=="airk_status"{
++                let client=self.client.lock().map(|value|*value).unwrap_or(airk_core::usage::ClientFamily::Unknown);
++                return self.status.status(self.root.clone(),self.project,arguments,observed,source_expires,client).await;
+             }
+-            if let Some(fence) = observed
+-                && !self.accept_source_fence(fence)
+-            {
+-                return Ok(source_scope_superseded());
+-            }
+-            let scope = if tool == "airk_status" {
+-                if let Some(fence) = observed {
+-                    Some(CacheScope::Source(fence))
+-                } else {
+-                    let root = self.root.clone();
+-                    let project = self.project;
+-                    tokio::task::spawn_blocking(move || status_scope(&root, project)).await??
+-                }
+-            } else {
+-                None
+-            };
+-            let mut state = self.state.lock().await;
+-            if source_expires.is_some_and(|until| Instant::now() >= until) {
+-                return Ok(source_scope_superseded());
+-            }
+-            if observed.is_some_and(|fence| !self.source_fence_current(CacheScope::Source(fence))) {
+-                return Ok(source_scope_superseded());
+-            }
+-            if let Some(scope) = scope
+-                && let Some(reply) = state
+-                    .cached_status
+-                    .as_ref()
+-                    .and_then(|cached| cached.reply(scope, Instant::now(), true))
+-            {
+-                return Ok(reply);
+-            }
+-            if tool == "airk_diagnostics" {
+-                state.cached_status = None;
+-            }
+-            if state.connection.as_ref().is_none_or(|connection| {
+-                observed.map_or_else(
+-                    || !connection.reusable(Instant::now()),
+-                    |fence| !connection.reusable_for_source(fence, Instant::now()),
+-                )
+-            }) {
+-                state.connection = None;
+-                let client = self
+-                    .client
+-                    .lock()
+-                    .map(|client| *client)
+-                    .unwrap_or(airk_core::usage::ClientFamily::Unknown);
+-                let connected = if matches!(tool.as_str(), "airk_status" | "airk_diagnostics") {
+-                    Connection::connect_once(&self.root, self.project, client).await
+-                } else {
+-                    Connection::connect_as(&self.root, self.project, client).await
+-                };
+-                // Brokerage can await worker admission. A concurrent source
+-                // observation may supersede this request during that await.
+-                if source_expires.is_some_and(|until| Instant::now() >= until)
+-                    || observed
+-                        .is_some_and(|fence| !self.source_fence_current(CacheScope::Source(fence)))
+-                {
++            if tool=="airk_diagnostics"{self.status.invalidate();crate::runtime_metadata::observe_process();}
++            // Capture before the evidence mutex or any broker/health await. An
++            // old backend must never acquire a ticket for a replacement scope.
++            let receipt_fence=self.status.receipt_fence();
++            let receipt_fence=observed.is_none_or(|expected|receipt_fence.0==Some(CacheScope::Source(expected)))
++                .then_some(receipt_fence);
++            let mut state=self.state.lock().await;
++            if source_expires.is_some_and(|until|Instant::now()>=until)
++                ||observed.is_some_and(|fence|!self.source_fence_current(CacheScope::Source(fence))){return Ok(source_scope_superseded());}
++            if state.connection.as_ref().is_none_or(|connection| observed.map_or_else(
++                || !connection.reusable(Instant::now()),
++                |fence| !connection.reusable_for_source(fence, Instant::now()))){
++                state.connection=None;
++                let client=self.client.lock().map(|value|*value).unwrap_or(airk_core::usage::ClientFamily::Unknown);
++                let connected=if tool=="airk_diagnostics"{Connection::connect_once(&self.root,self.project,client).await}
++                    else{Connection::connect_as(&self.root,self.project,client).await};
++                // F05: a newer accepted observation while brokerage awaited means
++                // this old request is still unsubmitted and must not retain the channel.
++                if source_expires.is_some_and(|until|Instant::now()>=until)
++                    || observed.is_some_and(|fence|!self.source_fence_current(CacheScope::Source(fence))){
+                     return Ok(source_scope_superseded());
+                 }
+-                let mut connection = match connected {
+-                    Ok(connection) => connection,
+-                    Err(_) if matches!(tool.as_str(), "airk_status" | "airk_diagnostics") => {
+-                        if tool == "airk_status" {
+-                            return Ok(airk_mcp::unified::success(
+-                                serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","index_state":"unavailable","publication":null,"files":null,"chunks":null,"index_error":{"code":"index_worker_unavailable","message":"No index query was submitted. Call diagnostics for service and queued-job diagnosis."}}),
+-                            ));
+-                        }
+-                        return Ok(
+-                            crate::runtime_metadata::unavailable(&self.root, self.project).await,
+-                        );
+-                    }
+-                    Err(error) => return setup_rejection(&error).ok_or(error),
++                let connection=match connected{
++                    Ok(connection)=>connection,
++                    Err(_) if tool=="airk_diagnostics"=>return Ok(crate::runtime_metadata::unavailable(&self.root,self.project).await),
++                    Err(error)=>return setup_rejection(&error).ok_or(error),
+                 };
+-                connection.restore_status_receipt(state.status_receipt);
+-                state.connection = Some(connection);
++                state.connection=Some(connection);
+             }
+-            if source_expires.is_some_and(|until| Instant::now() >= until) {
+-                return Ok(source_scope_superseded());
+-            }
+-            if observed.is_some_and(|fence| !self.source_fence_current(CacheScope::Source(fence))) {
+-                return Ok(source_scope_superseded());
+-            }
+-            let is_status = tool == "airk_status";
+-            let mut result = state
+-                .connection
+-                .as_mut()
+-                .ok_or_else(|| anyhow::anyhow!("project connection unavailable"))?
+-                .call(tool, arguments)
+-                .await;
+-            if result.is_err() {
+-                state.connection = None;
+-            } else if let Some(connection) = &state.connection {
+-                // Only a completely received result advances this client's
+-                // observations. Cancellation/reconnect retains its older receipt.
+-                state.status_receipt = connection.status_receipt();
+-            }
+-
+-            if !is_status
+-                && state
+-                    .cached_status
+-                    .as_ref()
+-                    .is_some_and(|cached| !cached.agrees_with(&result))
+-            {
+-                // A changed publication or rejected old token invalidates the
+-                // preflight cache immediately rather than repeating a stale token.
+-                state.cached_status = None;
+-            }
+-            if is_status {
+-                state.cached_status = scope
+-                    .filter(|scope| self.source_fence_current(*scope))
+-                    .and_then(|scope| {
+-                        result
+-                            .as_ref()
+-                            .ok()
+-                            .and_then(|value| CachedStatus::new(scope, value))
+-                    });
+-                if let Some(cached) = &state.cached_status
+-                    && let Some(reply) = cached.reply(cached.scope, Instant::now(), false)
+-                {
+-                    result = Ok(reply);
+-                }
+-            }
+-
++            if source_expires.is_some_and(|until|Instant::now()>=until)
++                || observed.is_some_and(|fence|!self.source_fence_current(CacheScope::Source(fence))){return Ok(source_scope_superseded());}
++            let connection=state.connection.as_mut().ok_or_else(||anyhow::anyhow!("project connection unavailable"))?;
++            connection.restore_status_receipt(receipt_fence.map(|ticket|ticket.2).unwrap_or_default());
++            let result=connection.call(tool,arguments).await;
++            if result.is_ok(){let receipt=connection.status_receipt();state.status_receipt=receipt;if let Some(ticket)=receipt_fence{self.status.adopt_receipt(ticket,receipt);}}
++            else{state.connection=None;}
++            // Any completed evidence/diagnostic outcome invalidates logical scalars,
++            // even at the same publication token (pause/model/work can change).
++            self.status.invalidate();
+             result
+         })
+     }
+ }
+ 
+-/// One direct client session, shared by stdio MCP and native read-only tools.
+ pub fn tools(root: PathBuf, project: ProjectBinding) -> Arc<dyn airk_mcp::remote::RemoteTools> {
+     source_tools(root, project)
+ }
+@@ -593,12 +512,18 @@
+         project,
+         state: tokio::sync::Mutex::new(Default::default()),
+         latest_source: std::sync::Mutex::new(None),
++        status:Arc::new(StatusOwner::default()),
+         client: std::sync::Mutex::new(airk_core::usage::ClientFamily::Cli),
+     })
+ }
+ 
+ pub async fn bridge(root: PathBuf, project: ProjectBinding) -> Result<()> {
+     airk_mcp::remote::serve(tools(root, project)).await
++}
++
++pub(crate) fn source_tools_owned(root:PathBuf,project:ProjectBinding,status:Arc<StatusOwner>)->Arc<Backend>{
++    Arc::new(Backend{root,project,state:tokio::sync::Mutex::new(ClientState::default()),
++        client:std::sync::Mutex::new(airk_core::usage::ClientFamily::Unknown),latest_source:std::sync::Mutex::new(None),status})
+ }
+ 
+ #[cfg(test)]
+@@ -909,26 +834,16 @@
+     }
+ 
+     #[tokio::test]
+-    async fn old_observation_waiting_for_backend_is_explicitly_unsubmitted() -> Result<()> {
+-        let control = tempfile::tempdir()?;
+-        let old = fence(1, 9);
+-        let backend = source_tools(control.path().into(), old.project);
+-        let guard = backend.state.lock().await;
+-        let mut request = backend.call_observed("airk_status".into(), serde_json::Map::new(), old);
+-        // Poll exactly once: admit the old scope, then block on the owned state lock.
+-        assert!(
+-            std::future::poll_fn(|cx| std::task::Poll::Ready(request.as_mut().poll(cx)))
+-                .await
+-                .is_pending()
+-        );
+-        assert!(backend.accept_source_fence(fence(1, 10)));
+-        drop(guard);
+-        let reply = request.await?;
+-        let detail: serde_json::Value =
+-            serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
+-        assert_eq!(detail["error"]["query_submitted"], false);
+-        assert_eq!(detail["error"]["retryable"], true);
+-        assert!(backend.state.lock().await.connection.is_none());
++    async fn replaced_source_observation_is_unsubmitted_without_evidence_mutex() -> Result<()> {
++        let control=tempfile::tempdir()?;
++        let old=fence(1,9);
++        let backend=source_tools(control.path().into(),old.project);
++        backend.status.source_scope(fence(1,10));
++        let guard=backend.state.lock().await;
++        let reply=backend.call_observed("airk_status".into(),serde_json::Map::new(),old).await?;
++        let detail:serde_json::Value=serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
++        assert_eq!(detail["error"]["query_submitted"],false);
++        assert!(guard.connection.is_none());
+         assert!(std::fs::read_dir(control.path())?.next().is_none());
+         Ok(())
+     }
+@@ -944,17 +859,16 @@
+         let mut cached = CachedStatus::new(CacheScope::Source(scope), &value).unwrap();
+         cached.captured -= Duration::from_secs(1);
+         let timestamp = cached.observed_unix_ms;
+-        backend.state.lock().await.cached_status = Some(cached);
+-        // There is deliberately no registry database: the owned observation is the fence.
+-        let reply = backend
+-            .call_observed("airk_status".into(), serde_json::Map::new(), scope)
+-            .await?;
+-        let body: serde_json::Value =
+-            serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
++        backend.status.seed(cached);
++        // Hold the same mutex that a long evidence query owns. Scalar cache
++        // reads must complete without acquiring it or reopening the registry.
++        let guard=backend.state.lock().await;
++        let reply = backend.call_observed("airk_status".into(), serde_json::Map::new(), scope).await?;
++        let body: serde_json::Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
+         assert_eq!(body["cached"], true);
+         assert_eq!(body["observed_unix_ms"], timestamp);
+         assert!(body["cache_age_ms"].as_u64().unwrap() >= 1000);
+-        assert!(backend.state.lock().await.connection.is_none());
++        assert!(guard.connection.is_none());
+         assert!(std::fs::read_dir(control.path())?.next().is_none());
+         Ok(())
+     }
+@@ -965,39 +879,19 @@
+     use super::*;
+     #[tokio::test]
+     async fn expired_source_observation_cannot_hit_fresh_status_after_backend_wait() -> Result<()> {
+-        let control = tempfile::tempdir()?;
+-        let fence = SourceFence {
+-            namespace: airk_core::identity::Incarnation::from_bytes([81; 16]),
+-            revision: 1,
+-            project: "ab".repeat(32).parse()?,
+-            fencing_generation: 1,
+-        };
+-        let backend = source_tools(control.path().into(), fence.project);
+-        let mut state = backend.state.lock().await;
+-        state.cached_status = CachedStatus::new(
+-            CacheScope::Source(fence),
+-            &airk_mcp::unified::success(
+-                serde_json::json!({"index_state":"available","publication":{"token":"saved"}}),
+-            ),
+-        );
+-        let mut request = backend.call_observed_until(
+-            "airk_status".into(),
+-            serde_json::Map::new(),
+-            fence,
+-            Instant::now() + Duration::from_millis(20),
+-        );
+-        assert!(
+-            std::future::poll_fn(|cx| std::task::Poll::Ready(request.as_mut().poll(cx)))
+-                .await
+-                .is_pending()
+-        );
+-        tokio::time::sleep(Duration::from_millis(30)).await;
++        let control=tempfile::tempdir()?;
++        let fence=SourceFence { namespace: airk_core::identity::Incarnation::from_bytes([81;16]),
++            revision: 1, project: "ab".repeat(32).parse()?, fencing_generation: 1 };
++        let backend=source_tools(control.path().into(),fence.project);
++        let state=backend.state.lock().await;
++        backend.status.seed(CachedStatus::new(CacheScope::Source(fence),
++            &airk_mcp::unified::success(serde_json::json!({"index_state":"available","publication":{"token":"saved"}}))).unwrap());
++        let reply=backend.call_observed_until("airk_status".into(),serde_json::Map::new(),fence,Instant::now()).await?;
++        assert!(state.connection.is_none());
+         drop(state);
+-        let reply = request.await?;
+-        let detail: serde_json::Value =
+-            serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
+-        assert_eq!(detail["error"]["query_submitted"], false);
+-        assert_eq!(detail["error"]["retryable"], true);
++        let detail:serde_json::Value=serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
++        assert_eq!(detail["error"]["query_submitted"],false);
++        assert_eq!(detail["error"]["retryable"],true);
+         assert!(backend.state.lock().await.connection.is_none());
+         assert!(std::fs::read_dir(control.path())?.next().is_none());
+         Ok(())
+@@ -1180,15 +1074,17 @@
+             let old = fence(1, 9);
+             let peer = peer(&root, old, 2, true, false)?;
+             let backend = source_tools(root.clone(), old.project);
++            backend.status.source_scope(old);
+             let mut request = backend.call_observed("airk_status".into(), Default::default(), old);
+             tokio::select! { _=peer.broker_began.notified()=>{}, result=&mut request=>anyhow::bail!("broker did not block: {result:?}") }
+             assert!(backend.accept_source_fence(newer));
++            backend.status.source_scope(newer);
+             peer.broker_release.notify_one();
+             let reply = request.await?;
+             {
+                 let state = backend.state.lock().await;
+                 assert!(state.connection.is_none());
+-                assert!(state.cached_status.is_none());
++                assert!(backend.status.cache_empty());
+                 assert_eq!(state.status_receipt, Default::default());
+             }
+             drop(backend);
+@@ -1209,7 +1105,7 @@
+         let peer = peer(&root, old, 2, false, false)?;
+         let backend = source_tools(root.clone(), old.project);
+         let first = backend
+-            .call_observed("airk_status".into(), Default::default(), old)
++            .call_observed("airk_diagnostics".into(), Default::default(), old)
+             .await?;
+         assert_eq!(body(&first)?["index_state"], "available");
+         peer.broker.await??; // No broker remains; a known stale channel must not hide that fact.
+@@ -1222,12 +1118,10 @@
+             assert!(!connection.reusable_for_source(fence(3, 11), Instant::now()));
+         }
+         let second = backend
+-            .call_observed("airk_status".into(), Default::default(), fence(3, 11))
++            .call_observed("airk_diagnostics".into(), Default::default(), fence(3, 11))
+             .await?;
+-        assert_eq!(
+-            body(&second)?["index_error"]["code"],
+-            "index_worker_unavailable"
+-        );
++        assert!(body(&second)?["publication"].is_null(),
++            "fresh brokerage failure must not report retained old publication");
+         assert_eq!(
+             backend.state.lock().await.status_receipt,
+             peer.receipt,
+@@ -1250,15 +1144,16 @@
+         let old = fence(1, 9);
+         let peer = peer(&root, old, 1, false, true)?;
+         let backend = source_tools(root.clone(), old.project);
+-        let mut request = backend.call_observed("airk_status".into(), Default::default(), old);
++        let mut request = backend.call_observed("airk_read_file".into(), Default::default(), old);
+         tokio::select! { _=peer.query_began.notified()=>{}, result=&mut request=>anyhow::bail!("query did not block: {result:?}") }
+         assert!(backend.accept_source_fence(fence(2, 10)));
++        backend.status.source_scope(fence(2, 10));
+         peer.query_release.notify_one();
+         let reply = request.await?;
+         assert_eq!(body(&reply)?["publication"]["token"], "original-query");
+         {
+             let state = backend.state.lock().await;
+-            assert!(state.cached_status.is_none());
++            assert!(backend.status.cache_empty());
+             assert_eq!(state.status_receipt, peer.receipt);
+         }
+         drop(backend);
+--- /dev/null
++++ b/crates/airk-cli/src/status_observation.rs
+@@ -0,0 +1,482 @@
++// SPDX-License-Identifier: Apache-2.0
++//! One frontend-owned scalar observation; never an evidence-query replay queue.
++use super::*;
++use std::sync::{Mutex, atomic::{AtomicBool,AtomicU64,Ordering}};
++type Shared=std::result::Result<Arc<Snapshot>,Arc<anyhow::Error>>;
++#[derive(Debug)]
++struct ObservationFailure(Arc<anyhow::Error>);
++impl std::fmt::Display for ObservationFailure {
++    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result{std::fmt::Display::fmt(&self.0,f)}
++}
++impl std::error::Error for ObservationFailure {
++    fn source(&self)->Option<&(dyn std::error::Error+'static)>{self.0.as_ref().as_ref().source()}
++}
++
++#[derive(Clone,PartialEq)]
++struct Key {project:ProjectBinding,source:Option<SourceFence>,expires:Option<Instant>,args:serde_json::Value}
++struct Snapshot {scope:CacheScope,epoch:u64,result:serde_json::Value,
++    cached:Option<CachedStatus>,submitted:bool,reused:bool,receipt:airk_mcp::response::StatusReceipt}
++struct Attempt {key:Key,result:tokio::sync::watch::Receiver<Option<Shared>>,
++    task:tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
++    joined:Mutex<Option<std::result::Result<(),Arc<anyhow::Error>>>>,failure:tokio::sync::OnceCell<Shared>}
++#[derive(Default)]
++enum State {#[default] Idle,Running(Arc<Attempt>),Closed}
++// A permit covers exactly one immediately following request, never the pipeline.
++// The retained observer owns its completion; it is not a durable service receipt.
++pub(super) struct OperationPermit<'a>{_owner:std::marker::PhantomData<&'a StatusOwner>}
++pub(crate) struct StatusOwner {
++    closed:AtomicBool,epoch:AtomicU64,state:tokio::sync::Mutex<State>,
++    scope:Mutex<Option<CacheScope>>,cache:Mutex<Option<Arc<Snapshot>>>,
++    scope_worker:tokio::sync::Mutex<Option<tokio::task::JoinHandle<Result<Option<CacheScope>>>>>,
++    receipt:Mutex<airk_mcp::response::StatusReceipt>,
++}
++impl Default for StatusOwner {
++    fn default()->Self{Self{closed:AtomicBool::new(false),epoch:AtomicU64::new(0),state:Default::default(),
++        scope:Mutex::new(None),cache:Mutex::new(None),scope_worker:Default::default(),receipt:Default::default()}}
++}
++impl Drop for StatusOwner {fn drop(&mut self){self.close();}}
++impl Attempt {
++    async fn join(&self)->Result<()>{
++        let mut slot=self.task.lock().await;
++        let remembered=self.joined.lock().unwrap_or_else(|e|e.into_inner()).clone();
++        let result=if let Some(result)=remembered{result}else{
++            let result=if let Some(task)=slot.as_mut(){
++                task.await.context("owned status observer failed").map_err(Arc::new)
++            }else{Ok(())};
++            // Publish the actual outcome before any subsequent cancelable await.
++            *self.joined.lock().unwrap_or_else(|e|e.into_inner())=Some(result.clone());
++            *slot=None;result
++        };
++        result.map_err(|error|anyhow::Error::new(ObservationFailure(error)))
++    }
++    async fn failed(&self,owner:&StatusOwner)->Shared{
++        self.failure.get_or_init(||async{
++            let cause=self.join().await.err().unwrap_or_else(||anyhow::anyhow!("owned status observer ended without result"));
++            if let Err(error)=owner.drain_scope().await{return Err(Arc::new(cause.context(format!("status scope drain also failed: {error:#}"))));}
++            Err(Arc::new(cause))
++        }).await.clone()
++    }
++}
++impl StatusOwner {
++    pub(super) fn accepting(&self)->Result<()>{ensure!(!self.closed.load(Ordering::Acquire),"status owner closed");Ok(())}
++    pub(super) fn admit_request(&self)->Result<OperationPermit<'_>>{
++        // A successful RMW linearizes this exact request against close without
++        // holding a mutex across I/O. Accepted-before-close work may drain.
++        self.closed.compare_exchange(false,false,Ordering::AcqRel,Ordering::Acquire)
++            .map_err(|_|anyhow::anyhow!("status owner closed"))?;
++        Ok(OperationPermit{_owner:std::marker::PhantomData})
++    }
++    pub(crate) fn close(&self){self.closed.store(true,Ordering::Release);self.invalidate();}
++    pub(crate) fn invalidate(&self){
++        if self.epoch.fetch_update(Ordering::AcqRel,Ordering::Acquire,|value|value.checked_add(1)).is_err(){self.closed.store(true,Ordering::Release);}
++        *self.cache.lock().unwrap_or_else(|e|e.into_inner())=None;
++    }
++    pub(crate) fn source_scope(&self,fence:SourceFence){self.set_scope(CacheScope::Source(fence));}
++    pub(crate) fn clear_scope(&self){self.invalidate();*self.scope.lock().unwrap_or_else(|e|e.into_inner())=None;*self.receipt.lock().unwrap_or_else(|e|e.into_inner())=Default::default();}
++    fn set_scope(&self,scope:CacheScope){
++        let mut current=self.scope.lock().unwrap_or_else(|e|e.into_inner());
++        if *current!=Some(scope){self.invalidate();*current=Some(scope);*self.receipt.lock().unwrap_or_else(|e|e.into_inner())=Default::default();}
++    }
++    #[cfg(test)]
++    pub(super) fn cache_empty(&self)->bool{self.cache.lock().unwrap_or_else(|e|e.into_inner()).is_none()}
++    pub(crate) fn receipt(&self)->airk_mcp::response::StatusReceipt{*self.receipt.lock().unwrap_or_else(|e|e.into_inner())}
++    pub(crate) fn observed_receipt(&self,value:airk_mcp::response::StatusReceipt){*self.receipt.lock().unwrap_or_else(|e|e.into_inner())=value;}
++    pub(super) fn receipt_fence(&self)->(Option<CacheScope>,u64,airk_mcp::response::StatusReceipt){
++        let scope=self.scope.lock().unwrap_or_else(|e|e.into_inner());
++        (*scope,self.epoch.load(Ordering::Acquire),self.receipt())
++    }
++    pub(super) fn adopt_receipt(&self,fence:(Option<CacheScope>,u64,airk_mcp::response::StatusReceipt),receipt:airk_mcp::response::StatusReceipt){
++        let scope=self.scope.lock().unwrap_or_else(|e|e.into_inner());
++        if !self.closed.load(Ordering::Acquire)&&*scope==fence.0&&self.epoch.load(Ordering::Acquire)==fence.1{
++            self.observed_receipt(receipt);
++        }
++    }
++    async fn pinned_scope(&self,root:PathBuf,project:ProjectBinding)->Result<Option<CacheScope>>{
++        let mut slot=self.scope_worker.lock().await;
++        if let Some(previous)=slot.as_mut(){let result=previous.await;*slot=None;drop(result?);}
++        let _scope_request=self.admit_request()?;
++        *slot=Some(tokio::task::spawn_blocking(move||status_scope(&root,project)));
++        let result=slot.as_mut().expect("owned scope handle").await.context("status scope worker failed");
++        *slot=None;result?
++    }
++    async fn drain_scope(&self)->Result<()>{
++        let mut slot=self.scope_worker.lock().await;
++        if let Some(worker)=slot.as_mut(){let result=worker.await;*slot=None;drop(result?);}Ok(())
++    }
++    fn reply(&self,snapshot:&Snapshot,source_expires:Option<Instant>,hit:bool)->Result<serde_json::Value>{
++        ensure!(!self.closed.load(Ordering::Acquire),"status owner closed");
++        let current=self.scope.lock().unwrap_or_else(|e|e.into_inner());
++        if *current!=Some(snapshot.scope)||self.epoch.load(Ordering::Acquire)!=snapshot.epoch
++            ||source_expires.is_some_and(|until|Instant::now()>=until)
++            ||snapshot.cached.as_ref().is_some_and(|cached|Instant::now().saturating_duration_since(cached.captured)>=Duration::from_secs(5)){
++            return Ok(if snapshot.submitted&&!hit{superseded()}else{source_scope_superseded()});
++        }
++        // Only a live caller observing a completed reply advances this frontend
++        // receipt. Background completion after caller timeout never acknowledges it.
++        self.observed_receipt(snapshot.receipt);
++        Ok(snapshot.cached.as_ref().and_then(|cached|cached.reply(snapshot.scope,Instant::now(),hit))
++            .unwrap_or_else(||snapshot.result.clone()))
++    }
++    pub(crate) async fn status(self:&Arc<Self>,root:PathBuf,project:ProjectBinding,
++        args:serde_json::Map<String,serde_json::Value>,source:Option<SourceFence>,expires:Option<Instant>,
++        client:airk_core::usage::ClientFamily)->Result<serde_json::Value>{
++        ensure!(!self.closed.load(Ordering::Acquire),"status owner closed");
++        if let Some(fence)=source {
++            if *self.scope.lock().unwrap_or_else(|e|e.into_inner())!=Some(CacheScope::Source(fence)){return Ok(source_scope_superseded());}
++        }
++        let key=Key{project,source,expires,args:serde_json::Value::Object(args.clone())};
++        if let Some(fence)=source{
++            let cached=self.cache.lock().unwrap_or_else(|e|e.into_inner()).clone();
++            if let Some(cached)=cached.filter(|cached|cached.scope==CacheScope::Source(fence)
++                &&cached.cached.as_ref().is_some_and(|snapshot|snapshot.scope==cached.scope&&Instant::now().saturating_duration_since(snapshot.captured)<Duration::from_secs(5))){
++                return self.reply(&cached,expires,true);
++            }
++        }
++        self.observe(key,expires,move|owner|async move{
++            owner.materialize(root,project,args,source,expires,client).await
++        }).await
++    }
++    // Shared owner path. The private producer seam allows real IPC ownership
++    // fixtures without constructing a second service broker in each unit test.
++    async fn observe<F,Fut>(self:&Arc<Self>,key:Key,expires:Option<Instant>,produce:F)->Result<serde_json::Value>
++    where F:FnOnce(Arc<Self>)->Fut+Send+'static,Fut:Future<Output=Result<Snapshot>>+Send+'static{
++        let attempt=loop{
++            let mut state=self.state.lock().await;
++            ensure!(!self.closed.load(Ordering::Acquire),"status owner closed");
++            match &*state{
++                State::Closed=>anyhow::bail!("status owner closed"),
++                State::Running(attempt) if attempt.result.borrow().is_some()=>{
++                    let joined=attempt.join().await;
++                    *state=State::Idle;
++                    joined?;continue;
++                }
++                State::Running(attempt)=>{
++                    if attempt.key!=key{return Ok(busy());}break attempt.clone();
++                }
++                State::Idle=>{
++                    let(sender,result)=tokio::sync::watch::channel(None);
++                    let attempt=Arc::new(Attempt{key:key.clone(),result,task:Default::default(),joined:Default::default(),failure:Default::default()});
++                    let owner=self.clone();let keep=attempt.clone();
++                    let task=tokio::spawn(async move{
++                        let _keep=keep;
++                        let result=produce(owner).await.map(Arc::new).map_err(Arc::new);
++                        let _=sender.send_replace(Some(result));
++                    });
++                    *attempt.task.try_lock().expect("new status task slot")=Some(task);
++                    *state=State::Running(attempt.clone());break attempt;
++                }
++            }
++        };
++        let mut ticket=attempt.result.clone();
++        let result=loop{
++            if let Some(result)=ticket.borrow_and_update().clone(){break result;}
++            if ticket.changed().await.is_err(){break attempt.failed(self).await;}
++        };
++        {
++            let mut state=self.state.lock().await;
++            if matches!(&*state,State::Running(current) if Arc::ptr_eq(current,&attempt)){
++                let joined=attempt.join().await;
++                *state=State::Idle;
++                // The shared failure below retains the actual cohort cause.
++                // A successful published outcome still cannot hide a driver panic.
++                if result.is_ok(){joined?;}
++            }
++        }
++        match result{
++            Ok(snapshot)=>self.reply(&snapshot,expires,snapshot.reused),
++            Err(error) if airk_store::service::registry::source_scope_retryable(&error)=>Ok(source_scope_superseded()),
++            Err(error)=>Err(anyhow::Error::new(ObservationFailure(error)).context("status observation failed")),
++        }
++    }
++    async fn materialize(self:&Arc<Self>,root:PathBuf,project:ProjectBinding,
++        args:serde_json::Map<String,serde_json::Value>,source:Option<SourceFence>,expires:Option<Instant>,
++        client:airk_core::usage::ClientFamily)->Result<Snapshot>{
++        let scope=match source{Some(fence)=>Some(CacheScope::Source(fence)),None=>self.pinned_scope(root.clone(),project).await?};
++        let Some(scope)=scope else {return Err(anyhow::anyhow!("registered status scope unavailable"));};
++        if source.is_none(){self.set_scope(scope);}
++        if *self.scope.lock().unwrap_or_else(|e|e.into_inner())!=Some(scope){
++            return Ok(Snapshot{scope,epoch:self.epoch.load(Ordering::Acquire),result:source_scope_superseded(),cached:None,submitted:false,reused:false,receipt:self.receipt()});
++        }
++        let epoch=self.epoch.load(Ordering::Acquire);
++        ensure!(!self.closed.load(Ordering::Acquire),"status owner closed");
++        if expires.is_some_and(|until|Instant::now()>=until){return Ok(Snapshot{scope,epoch,result:source_scope_superseded(),cached:None,submitted:false,reused:false,receipt:self.receipt()});}
++        if let Some(cached)=self.cache.lock().unwrap_or_else(|e|e.into_inner()).clone()
++            .filter(|cached|cached.scope==scope&&cached.epoch==epoch&&cached.cached.as_ref().is_some_and(|value|value.scope==scope&&Instant::now().saturating_duration_since(value.captured)<Duration::from_secs(5))){
++            return Ok(Snapshot{scope,epoch,result:cached.result.clone(),cached:cached.cached.as_ref().map(|value|CachedStatus{
++                scope:value.scope,captured:value.captured,observed_unix_ms:value.observed_unix_ms,body:value.body.clone()}),submitted:false,reused:true,receipt:cached.receipt});
++        }
++        let mut connection=match Connection::connect_once_checked(&root,project,client,Some(self)).await{
++            Ok(connection)=>connection,
++            Err(error)=>{
++                self.accepting()?;
++                let _=error; // no evidence query was submitted
++                let result=airk_mcp::unified::success(serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown",
++                    "index_state":"unavailable","publication":null,"files":null,"chunks":null,
++                    "index_error":{"code":"index_worker_unavailable","message":"No index query was submitted. Call diagnostics for service and queued-job diagnosis."}}));
++                return Ok(Snapshot{scope,epoch,result,cached:None,submitted:false,reused:false,receipt:self.receipt()});
++            }
++        };
++        if expires.is_some_and(|until|Instant::now()>=until){return Ok(Snapshot{scope,epoch,result:source_scope_superseded(),cached:None,submitted:false,reused:false,receipt:self.receipt()});}
++        self.accepting()?;
++        if self.epoch.load(Ordering::Acquire)!=epoch||*self.scope.lock().unwrap_or_else(|e|e.into_inner())!=Some(scope){
++            return Ok(Snapshot{scope,epoch,result:source_scope_superseded(),cached:None,submitted:false,reused:false,receipt:self.receipt()});
++        }
++        connection.restore_status_receipt(self.receipt());
++        let _request=self.admit_request()?;
++        let result=connection.call("airk_status".into(),args).await?;
++        let snapshot=Snapshot{scope,epoch,cached:CachedStatus::new(scope,&result),result,submitted:true,reused:false,receipt:connection.status_receipt()};
++        let mut cache=self.cache.lock().unwrap_or_else(|e|e.into_inner());
++        if !self.closed.load(Ordering::Acquire)&&self.epoch.load(Ordering::Acquire)==epoch
++            &&expires.is_none_or(|until|Instant::now()<until)&&snapshot.cached.is_some(){
++            // Immutable logical observation only: no stream/read/transaction retained.
++            let saved=Snapshot{scope,epoch,result:serde_json::Value::Null,cached:snapshot.cached.as_ref().map(|value|CachedStatus{
++                scope:value.scope,captured:value.captured,observed_unix_ms:value.observed_unix_ms,body:value.body.clone()}),submitted:snapshot.submitted,reused:false,receipt:snapshot.receipt};
++            *cache=Some(Arc::new(saved));
++        }
++        Ok(snapshot)
++    }
++    #[cfg(test)]
++    pub(super) fn seed(&self,cached:CachedStatus){
++        self.set_scope(cached.scope);let epoch=self.epoch.load(Ordering::Acquire);
++        *self.cache.lock().unwrap_or_else(|e|e.into_inner())=Some(Arc::new(Snapshot{scope:cached.scope,epoch,
++            result:serde_json::Value::Null,cached:Some(cached),submitted:false,reused:false,receipt:Default::default()}));
++    }
++    pub(crate) async fn shutdown(&self)->Result<()>{
++        self.close();let mut state=self.state.lock().await;
++        // Drain both owners even when the observer panics. A canceled drain keeps
++        // the state and each actual handle in its slot for the next drain.
++        let observed=if let State::Running(attempt)=&*state{attempt.join().await}else{Ok(())};
++        let scoped=self.drain_scope().await;
++        *state=State::Closed;
++        match (observed,scoped){
++            (Err(error),Err(scope))=>Err(error.context(format!("status scope drain also failed: {scope:#}"))),
++            (Err(error),_)|(_,Err(error))=>Err(error),
++            _=>Ok(()),
++        }
++    }
++}
++fn busy()->serde_json::Value{
++    let detail=serde_json::json!({"error":{"code":"direct_query_admission","reason":"busy","query_submitted":false,
++        "retryable":true,"retry_after_ms":25,"fresh_brokerage_required":false}});
++    serde_json::json!({"content":[{"type":"text","text":detail.to_string()}],"isError":true})
++}
++fn superseded()->serde_json::Value{
++    let detail=serde_json::json!({"error":{"code":"status_observation_superseded","query_submitted":true,
++        "retryable":true,"fresh_brokerage_required":true}});
++    serde_json::json!({"content":[{"type":"text","text":detail.to_string()}],"isError":true})
++}
++
++#[cfg(test)]
++mod ownership_tests {
++    use super::*;
++    #[tokio::test]
++    async fn source_and_pinned_cached_status_report_actual_reuse_and_original_age()->Result<()> {
++        use airk_core::service::ProjectRegistration;
++        use airk_store::service::registry::ServiceRegistry;
++        let temporary=tempfile::tempdir()?;
++        let namespace=airk_core::identity::Incarnation::from_bytes([95;16]);
++        let mut registry=ServiceRegistry::open(temporary.path(),namespace)?;
++        let project=ProjectRegistration::new("/cache-source".into(),"/cache-data".into(),"fixture".into())?;
++        registry.register(&project)?;
++        let pinned=status_scope(temporary.path(),project.binding)?.context("pinned scope missing")?;
++        let fence=match pinned {CacheScope::Registered(fence)=>fence,_=>anyhow::bail!("registered pinned scope required")};
++        for source in [false,true] {
++            let owner=Arc::new(StatusOwner::default());
++            let scope=if source{CacheScope::Source(fence)}else{pinned};
++            let result=airk_mcp::unified::success(serde_json::json!({"index_state":"available","publication":{"token":"cached-original"}}));
++            let mut cached=CachedStatus::new(scope,&result).context("cache construction failed")?;
++            cached.captured=Instant::now()-Duration::from_secs(1);
++            cached.observed_unix_ms=123;
++            let captured=cached.captured;
++            owner.seed(cached);
++            // No native control listener exists. Only actual cached reuse can
++            // produce this available reply; pinned still observes real registry.
++            let reply=owner.status(temporary.path().into(),project.binding,Default::default(),
++                source.then_some(fence),None,airk_core::usage::ClientFamily::Unknown).await?;
++            let body:serde_json::Value=serde_json::from_str(reply["content"][0]["text"].as_str().context("cache reply missing")?)?;
++            assert_eq!(body["cached"],true);
++            assert_eq!(body["observed_unix_ms"],123);
++            assert!(body["cache_age_ms"].as_u64().context("cache age missing")?>=1000);
++            assert_eq!(body["publication"]["token"],"cached-original");
++            assert_eq!(owner.cache.lock().unwrap().as_ref().unwrap().cached.as_ref().unwrap().captured,captured,
++                "reuse must not rejuvenate its original capture time");
++            owner.shutdown().await?;
++        }
++        Ok(())
++    }
++    #[tokio::test(flavor="multi_thread",worker_threads=2)]
++    async fn coalesced_ipc_status_survives_all_waiters_then_eof_drain()->Result<()> {
++        let directory=tempfile::tempdir()?;
++        let root=directory.path().join("runtime");local_ipc::prepare_root(&root)?;
++        let endpoint=local_ipc::endpoint(&root,"owned-status-test")?;
++        let mut listener=local_ipc::Listener::bind(&endpoint)?;
++        let (sent,submitted)=tokio::sync::oneshot::channel();
++        let (release,finish)=tokio::sync::oneshot::channel();
++        let receipt:airk_mcp::response::StatusReceipt=serde_json::from_value(serde_json::json!({"freshness":"cd".repeat(32)}))?;
++        let peer=tokio::spawn(async move{
++            let mut stream=listener.accept().await?;
++            let query:Query=local_ipc::read_message(&mut stream,Duration::from_secs(5)).await?.context("missing status query")?;
++            ensure!(query.tool=="airk_status","unexpected query");
++            let _=sent.send(());finish.await?;
++            local_ipc::write_message(&mut stream,&protocol::QueryResult{
++                result:airk_mcp::unified::success(serde_json::json!({"index_state":"available","publication":{"token":"same"}})),
++                status_receipt:receipt,rebind:false},Duration::from_secs(5)).await?;
++            Ok::<_,anyhow::Error>(())
++        });
++        let project="ab".repeat(32).parse()?;
++        let stream=local_ipc::connect(&endpoint).await?;let now=Instant::now();
++        let mut connection=Connection{stream,identity:airk_core::service::WorkerIdentity{
++            service:airk_core::identity::Incarnation::from_bytes([1;16]),
++            worker:airk_core::identity::Incarnation::from_bytes([2;16]),
++            project, fencing_generation:1},authorized_until:now+Duration::from_secs(55),last_finished:now,healthy:true,status_receipt:Default::default()};
++        let owner=Arc::new(StatusOwner::default());
++        let fence=SourceFence{namespace:airk_core::identity::Incarnation::from_bytes([94;16]),revision:1,project,fencing_generation:1};
++        owner.source_scope(fence);let scope=CacheScope::Source(fence);let epoch=owner.epoch.load(Ordering::Acquire);
++        let key=Key{project,source:Some(fence),expires:None,args:serde_json::json!({})};
++        {
++        let first=owner.observe(key.clone(),None,move|owned|async move{
++            let _accepted=owned.admit_request()?;
++            let result=connection.call("airk_status".into(),Default::default()).await?;
++            Ok(Snapshot{scope,epoch,result,cached:None,submitted:true,reused:false,receipt:connection.status_receipt()})
++        });
++        tokio::pin!(first);
++        tokio::select!{result=&mut first=>anyhow::bail!("completed before release: {result:?}"),result=submitted=>{result?;}}
++        let mut other=Vec::new();
++        for _ in 0..3 {
++            let mut request=Box::pin(owner.observe(key.clone(),None,|_|async{panic!("coalesced producer invoked")}));
++            assert!(std::future::poll_fn(|cx|std::task::Poll::Ready(request.as_mut().poll(cx))).await.is_pending());
++            other.push(request);
++        }
++        drop(other);
++        // Drop the final waiter before EOF: the actual submitted exchange stays owned.
++        } // drops the actual first future, not merely its pinned reference
++        owner.close();
++        {
++            let drain=owner.shutdown();tokio::pin!(drain);
++            assert!(std::future::poll_fn(|cx|std::task::Poll::Ready(drain.as_mut().poll(cx))).await.is_pending());
++        }
++        assert!(matches!(*owner.state.lock().await,State::Running(_)));
++        release.send(()).map_err(|_|anyhow::anyhow!("peer disappeared"))?;
++        owner.shutdown().await?;peer.await??;
++        assert_eq!(owner.receipt(),Default::default());
++        assert!(matches!(*owner.state.lock().await,State::Closed));
++        Ok(())
++    }
++    #[tokio::test(flavor="multi_thread",worker_threads=2)]
++    async fn canceled_shutdown_retains_actual_registry_worker_for_second_drain()->Result<()> {
++        let owner=Arc::new(StatusOwner::default());
++        let (entered,started)=tokio::sync::oneshot::channel();
++        let (release,wait)=std::sync::mpsc::channel();
++        *owner.scope_worker.lock().await=Some(tokio::task::spawn_blocking(move||{
++            let _=entered.send(());wait.recv().context("release registry fixture")?;Ok(None)
++        }));
++        started.await?;
++        {
++            let shutdown=owner.shutdown();tokio::pin!(shutdown);
++            assert!(std::future::poll_fn(|cx|std::task::Poll::Ready(shutdown.as_mut().poll(cx))).await.is_pending());
++        }
++        assert!(owner.closed.load(Ordering::Acquire));
++        assert!(owner.scope_worker.lock().await.is_some());
++        assert!(owner.admit_request().is_err());
++        release.send(())?;
++        owner.shutdown().await?;
++        assert!(owner.scope_worker.lock().await.is_none());
++        assert!(matches!(*owner.state.lock().await,State::Closed));
++        Ok(())
++    }
++    #[tokio::test]
++    async fn panic_fans_out_then_next_owned_observation_can_succeed()->Result<()> {
++        let owner=Arc::new(StatusOwner::default());
++        let fence=SourceFence{namespace:airk_core::identity::Incarnation::from_bytes([95;16]),revision:1,project,fencing_generation:1};
++        owner.source_scope(fence);
++        let key=Key{project,source:Some(fence),expires:None,args:serde_json::json!({})};
++        let (entered,started)=tokio::sync::oneshot::channel();
++        let (release,wait)=tokio::sync::oneshot::channel();
++        {
++            let first=owner.observe(key.clone(),None,|_|async move{
++                let _=entered.send(());let _=wait.await;panic!("cohort-status-panic")
++            });tokio::pin!(first);
++            tokio::select!{result=&mut first=>anyhow::bail!("premature result: {result:?}"),result=started=>{result?;}}
++            let second=owner.observe(key.clone(),None,|_|async{panic!("duplicate producer")});tokio::pin!(second);
++            assert!(std::future::poll_fn(|cx|std::task::Poll::Ready(second.as_mut().poll(cx))).await.is_pending());
++            release.send(()).map_err(|_|anyhow::anyhow!("driver disappeared"))?;
++            let (first,second)=tokio::join!(first,second);
++            for error in [first.unwrap_err(),second.unwrap_err()]{assert!(format!("{error:#}").contains("cohort-status-panic"));}
++        }
++        assert!(matches!(*owner.state.lock().await,State::Idle));
++        let epoch=owner.epoch.load(Ordering::Acquire);
++        let result=owner.observe(key,None,move |_|async move{Ok(Snapshot{
++            scope:CacheScope::Source(fence),epoch,result:serde_json::json!({"recovered":true}),
++            cached:None,submitted:true,reused:false,receipt:Default::default()})}).await?;
++        assert_eq!(result["recovered"],true);
++        owner.shutdown().await?;
++        Ok(())
++    }
++    #[tokio::test(flavor="multi_thread",worker_threads=2)]
++    async fn canceled_failure_drain_retains_original_driver_panic()->Result<()> {
++        let owner=StatusOwner::default();
++        let (sender,result)=tokio::sync::watch::channel(None);
++        drop(sender);
++        let attempt=Attempt{key:Key{project:"ab".repeat(32).parse()?,source:None,expires:None,args:serde_json::json!({})},
++            result,task:tokio::sync::Mutex::new(Some(tokio::spawn(async{panic!("original-status-driver-panic")}))),
++            joined:Default::default(),failure:Default::default()};
++        let original=attempt.join().await.unwrap_err();
++        assert!(format!("{original:#}").contains("original-status-driver-panic"));
++        let (entered,started)=tokio::sync::oneshot::channel();
++        let (release,wait)=std::sync::mpsc::channel();
++        *owner.scope_worker.lock().await=Some(tokio::task::spawn_blocking(move||{
++            let _=entered.send(());wait.recv()?;Ok(None)
++        }));
++        started.await?;
++        {
++            let failed=attempt.failed(&owner);tokio::pin!(failed);
++            assert!(std::future::poll_fn(|cx|std::task::Poll::Ready(failed.as_mut().poll(cx))).await.is_pending());
++        }
++        assert!(owner.scope_worker.lock().await.is_some());
++        release.send(())?;
++        let error=match attempt.failed(&owner).await{Err(error)=>error,Ok(_)=>panic!("panic became success")};
++        assert!(format!("{error:#}").contains("original-status-driver-panic"));
++        assert!(!format!("{error:#}").contains("ended without result"));
++        assert!(owner.scope_worker.lock().await.is_none());
++        Ok(())
++    }
++    #[test]
++    fn exact_request_admission_linearizes_before_close_without_reusable_authority(){
++        let owner=StatusOwner::default();
++        let accepted=owner.admit_request().unwrap();
++        owner.close();
++        assert!(owner.admit_request().is_err());
++        drop(accepted); // ownership permits only completion of this accepted request
++    }
++    #[test]
++    fn late_old_scope_receipt_cannot_acknowledge_replacement()->Result<()> {
++        let owner=StatusOwner::default();
++        let old=SourceFence{namespace:airk_core::identity::Incarnation::from_bytes([92;16]),
++            revision:7,project:"ab".repeat(32).parse()?,fencing_generation:1};
++        owner.source_scope(old);
++        let captured=owner.receipt_fence();
++        let receipt:airk_mcp::response::StatusReceipt=serde_json::from_value(serde_json::json!({"freshness":"cd".repeat(32)}))?;
++        owner.source_scope(SourceFence{revision:8,..old});
++        owner.adopt_receipt(captured,receipt);
++        assert_eq!(owner.receipt(),Default::default());
++        let current=owner.receipt_fence();
++        owner.adopt_receipt(current,receipt);
++        assert_eq!(owner.receipt(),receipt);
++        Ok(())
++    }
++    #[test]
++    fn same_head_invalidation_rejects_old_snapshot_without_receipt_ack()->Result<()> {
++        let owner=StatusOwner::default();
++        let fence=SourceFence{namespace:airk_core::identity::Incarnation::from_bytes([93;16]),
++            revision:7,project:"ab".repeat(32).parse()?,fencing_generation:1};
++        owner.source_scope(fence);
++        let snapshot=Snapshot{scope:CacheScope::Source(fence),epoch:owner.epoch.load(Ordering::Acquire),
++            result:serde_json::Value::Null,cached:None,submitted:true,reused:false,receipt:Default::default()};
++        owner.invalidate(); // model/work/pause may change while publication stays identical
++        let reply=owner.reply(&snapshot,None,false)?;
++        let detail:serde_json::Value=serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
++        assert_eq!(detail["error"]["code"],"status_observation_superseded");
++        assert_eq!(detail["error"]["query_submitted"],true);
++        Ok(())
++    }
++}
+--- a/crates/airk-cli/src/unified_mcp.rs
++++ b/crates/airk-cli/src/unified_mcp.rs
+@@ -63,6 +63,8 @@
+     Closed,
+ }
+ struct ReadinessAttempt {
++    started:Instant,
++    status_deadline:tokio::sync::watch::Sender<bool>,
+     result: tokio::sync::watch::Receiver<Option<SharedReadiness>>,
+     driver_result: tokio::sync::OnceCell<SharedReadiness>,
+     failed_completion: tokio::sync::OnceCell<SharedReadiness>,
+@@ -150,9 +152,15 @@
+         self.admission.close();
+     }
+     async fn ensure(&self, install: &std::path::Path, control: &std::path::Path) -> Result<()> {
++        self.ensure_mode(install,control,false).await
++    }
++    async fn prepare_status(&self,install:&std::path::Path,control:&std::path::Path)->Result<()>{
++        self.ensure_mode(install,control,true).await
++    }
++    async fn ensure_mode(&self,install:&std::path::Path,control:&std::path::Path,status:bool)->Result<()>{
+         let install = install.to_path_buf();
+         let control = control.to_path_buf();
+-        self.run_inner(
++        self.run_inner_status(
+             move |setup| async move {
+                 let observed = crate::runtime_install::installed_control_cooperative(
+                     install,
+@@ -162,7 +170,7 @@
+                 ensure!(observed == control, "selected service control changed");
+                 Ok(())
+             },
+-            true,
++            true,status,
+         )
+         .await
+     }
+@@ -181,6 +189,11 @@
+         F: FnOnce(Option<Arc<crate::runtime_install::SetupCancellation>>) -> Fut,
+         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+     {
++        self.run_inner_status(initialize,cooperative,false).await
++    }
++    async fn run_inner_status<F,Fut>(&self,initialize:F,cooperative:bool,status:bool)->Result<()>
++    where F:FnOnce(Option<Arc<crate::runtime_install::SetupCancellation>>)->Fut,
++        Fut:std::future::Future<Output=Result<()>>+Send+'static {
+         let attempt = {
+             let mut state = self.state.lock().await;
+             ensure!(
+@@ -199,8 +212,10 @@
+                         ))
+                     });
+                     let future = initialize(setup.clone());
++                    let (status_deadline,mut status_requested)=tokio::sync::watch::channel(false);
++                    let started=Instant::now();
+                     let attempt = Arc::new(ReadinessAttempt {
+-                        result,
++                        started,status_deadline,result,
+                         driver_result: tokio::sync::OnceCell::new(),
+                         failed_completion: tokio::sync::OnceCell::new(),
+                         setup,
+@@ -211,8 +226,24 @@
+                     let task = tokio::spawn(async move {
+                         // Retain the owner and its real handle while cooperative
+                         // work drains, even if the outer session is dropped.
+-                        let _keep_attempt = keep_attempt;
+-                        let outcome = future.await.map_err(Arc::new);
++                        let owner=keep_attempt;
++                        let mut future=Box::pin(future);let mut armed=false;
++                        let outcome=loop{
++                            tokio::select!{
++                                result=&mut future=>break result.map_err(Arc::new),
++                                changed=status_requested.changed(),if !armed=>{
++                                    if changed.is_err(){break Err(Arc::new(anyhow::anyhow!("status setup deadline owner closed")));}
++                                    armed=*status_requested.borrow();
++                                }
++                                _=tokio::time::sleep_until(tokio::time::Instant::from_std(owner.started+Duration::from_secs(10))),if armed=>{
++                                    if let Some(setup)=&owner.setup{
++                                        setup.close(); // no new election; already admitted exact work drains once
++                                        break future.await.map_err(Arc::new);
++                                    }
++                                    break Err(Arc::new(anyhow::Error::new(airk_mcp::remote::PreparationExpired)));
++                                }
++                            }
++                        };
+                         let _ = sender.send_replace(Some(outcome));
+                     });
+                     let _ = attempt.abort.set(task.abort_handle());
+@@ -223,14 +254,19 @@
+             }
+         };
+         let mut ticket = attempt.result.clone();
+-        let outcome = loop {
++        if status {attempt.status_deadline.send_replace(true);}
++        let observation=async{loop {
+             if let Some(outcome) = ticket.borrow_and_update().clone() {
+                 break outcome;
+             }
+             if ticket.changed().await.is_err() {
+                 break attempt.failed_join().await;
+             }
+-        };
++        }};
++        let outcome=if status{
++            tokio::time::timeout_at(tokio::time::Instant::from_std(attempt.started+Duration::from_secs(10)),observation)
++                .await.map_err(|_|airk_mcp::remote::PreparationExpired)?
++        }else{observation.await};
+         {
+             let mut state = self.state.lock().await;
+             ensure!(
+@@ -413,9 +449,15 @@
+     sequence: std::sync::atomic::AtomicU64,
+     observation: std::sync::Mutex<Option<Arc<crate::service_frontend::RootObservation>>>,
+     lookup: Arc<SourceLookupOwner>,
++    status:Arc<crate::project_client::StatusOwner>,
+     backend: tokio::sync::Mutex<SourceBackendCache>,
+ }
+ impl RemoteTools for RootNative {
++    fn close(&self){self.lookup.close();self.status.close();}
++    fn shutdown(&self)->airk_mcp::remote::ReadyFuture<'_>{Box::pin(async move{self.status.shutdown().await})}
++    fn prepare(&self)->airk_mcp::remote::ReadyFuture<'_>{Box::pin(async move{
++        self.ready.prepare_status(&self.install,&self.control).await
++    })}
+     fn client(&self, client: airk_core::usage::ClientFamily) {
+         *self.client.lock().unwrap() = client;
+     }
+@@ -472,7 +514,7 @@
+             let registration = match &observed.resolution {
+                 crate::service_frontend::RootResolution::Registered(registration) => registration,
+                 other => {
+-                    cached.current = None;
++                    cached.current = None;self.status.clear_scope();
+                     let (code, state, message) = root_failure(match other {
+                         crate::service_frontend::RootResolution::Missing => {
+                             crate::service_frontend::RootResolution::Missing
+@@ -494,23 +536,14 @@
+                     });
+                 }
+             };
+-            let fence = observed
+-                .fence
+-                .context("registered source observation has no fence")?;
+-            ensure!(
+-                fence.project == registration.binding,
+-                "crossed source observation"
+-            );
++            let fence = observed.fence.context("registered source observation has no fence")?;
++            ensure!(fence.project == registration.binding, "crossed source observation");
++            // This is inside the same monotonic RootNative selector admission.
++            // Older backend callers cannot revert this owner to an old namespace.
++            self.status.source_scope(fence);
+             let key = (registration.binding, fence.namespace);
+-            if cached
+-                .current
+-                .as_ref()
+-                .is_none_or(|(current, _)| *current != key)
+-            {
+-                cached.current = Some((
+-                    key,
+-                    crate::project_client::source_tools(control, registration.binding),
+-                ));
++            if cached.current.as_ref().is_none_or(|(current, _)| *current != key) {
++                cached.current = Some((key, crate::project_client::source_tools_owned(control, registration.binding,self.status.clone())));
+             }
+             let backend = cached.current.as_ref().unwrap().1.clone();
+             drop(cached);
+@@ -551,6 +584,11 @@
+     backend: Arc<dyn RemoteTools>,
+ }
+ impl RemoteTools for Native {
++    fn close(&self){self.backend.close();}
++    fn shutdown(&self)->airk_mcp::remote::ReadyFuture<'_>{self.backend.shutdown()}
++    fn prepare(&self)->airk_mcp::remote::ReadyFuture<'_>{Box::pin(async move{
++        if let Some(install)=&self.install{self.ready.prepare_status(install,&self.control).await?;}Ok(())
++    })}
+     fn client(&self, client: airk_core::usage::ClientFamily) {
+         self.backend.client(client);
+     }
+@@ -712,15 +750,20 @@
+             control: control.clone(),
+         }) as Arc<dyn ExplorerTools>
+     });
+-    let backend = Unified::new(projects, (!no_default).then_some(primary), explorer)?;
++    let backend = Arc::new(Unified::new(projects, (!no_default).then_some(primary), explorer)?);
+     crate::client_owner::watch()?;
+     let close = ready.clone();
++    let observation_close=backend.clone();
+     let served = airk_mcp::remote::serve_with_input_lifecycle(
+-        Arc::new(backend),
+-        Arc::new(move || close.close_admission()),
++        backend.clone(),
++        Arc::new(move || {close.close_admission();observation_close.close();}),
+     )
+     .await;
+-    let cleanup = ready.shutdown().await;
++    let observation_cleanup=backend.shutdown().await;
++    let cleanup=match (ready.shutdown().await,observation_cleanup){
++        (Err(error),Err(cleanup))=>Err(error.context(format!("status observation cleanup also failed: {cleanup:#}"))),
++        (Err(error),_)=>Err(error),(_,result)=>result,
++    };
+     match (served, cleanup) {
+         (Err(error), Err(cleanup)) => Err(error.context(format!(
+             "runtime readiness cleanup also failed: {cleanup:#}"
+@@ -754,25 +797,25 @@
+             let lookup = Arc::new(SourceLookupOwner::new());
+             lookups.push(lookup.clone());
+             Project {
+-                binding: scope.key.clone(),
+-                name: scope.root.to_string_lossy().into_owned(),
+-                collection: scope
+-                    .collection
+-                    .clone()
+-                    .unwrap_or_else(|| "automatic".into()),
+-                backend: Arc::new(RootNative {
+-                    scope,
+-                    control: control.clone(),
+-                    install: install.clone(),
+-                    ready: ready.clone(),
+-                    client: std::sync::Mutex::new(airk_core::usage::ClientFamily::Unknown),
+-                    sequence: std::sync::atomic::AtomicU64::new(0),
+-                    observation: std::sync::Mutex::new(None),
+-                    lookup,
+-                    backend: tokio::sync::Mutex::new(SourceBackendCache::default()),
+-                }),
+-            }
+-        })
++            binding: scope.key.clone(),
++            name: scope.root.to_string_lossy().into_owned(),
++            collection: scope
++                .collection
++                .clone()
++                .unwrap_or_else(|| "automatic".into()),
++            backend: Arc::new(RootNative {
++                scope,
++                control: control.clone(),
++                install: install.clone(),
++                ready: ready.clone(),
++                client: std::sync::Mutex::new(airk_core::usage::ClientFamily::Unknown),
++                sequence: std::sync::atomic::AtomicU64::new(0),
++                observation: std::sync::Mutex::new(None),
++                lookup,
++                status:Arc::new(crate::project_client::StatusOwner::default()),
++                backend: tokio::sync::Mutex::new(SourceBackendCache::default()),
++            }),
++        }})
+         .collect();
+     let explorer = descriptor.map(|descriptor| {
+         Arc::new(Explorer {
+@@ -782,21 +825,21 @@
+             control,
+         }) as Arc<dyn ExplorerTools>
+     });
+-    let backend = Unified::new(projects, (!no_default).then_some(primary), explorer)?;
++    let backend = Arc::new(Unified::new(projects, (!no_default).then_some(primary), explorer)?);
+     crate::client_owner::watch()?;
+     let close = ready.clone();
+-    let lookup_close = lookups.clone();
++    let observation_close=backend.clone();
++    let lookup_close=lookups.clone();
+     let served = airk_mcp::remote::serve_with_input_lifecycle(
+-        Arc::new(backend),
+-        Arc::new(move || {
+-            close.close_admission();
+-            for lookup in &lookup_close {
+-                lookup.close();
+-            }
+-        }),
++        backend.clone(),
++        Arc::new(move || { close.close_admission();observation_close.close();for lookup in &lookup_close { lookup.close(); } }),
+     )
+     .await;
+-    let mut cleanup = ready.shutdown().await;
++    let observation_cleanup=backend.shutdown().await;
++    let mut cleanup=match (ready.shutdown().await,observation_cleanup){
++        (Err(error),Err(cleanup))=>Err(error.context(format!("status observation cleanup also failed: {cleanup:#}"))),
++        (Err(error),_)=>Err(error),(_,result)=>result,
++    };
+     for lookup in &lookups {
+         if let Err(error) = lookup.shutdown().await {
+             cleanup = Err(match cleanup {
+@@ -866,6 +909,7 @@
+             });
+             let (_sender, result) = tokio::sync::watch::channel(None);
+             let attempt = Arc::new(ReadinessAttempt {
++                started:Instant::now(),status_deadline:tokio::sync::watch::channel(false).0,
+                 result,
+                 driver_result: tokio::sync::OnceCell::new(),
+                 failed_completion: tokio::sync::OnceCell::new(),
+@@ -1461,6 +1505,7 @@
+             sequence: std::sync::atomic::AtomicU64::new(0),
+             observation: std::sync::Mutex::new(None),
+             lookup: Arc::new(SourceLookupOwner::new()),
++            status: Arc::new(crate::project_client::StatusOwner::default()),
+             backend: tokio::sync::Mutex::new(SourceBackendCache::default()),
+         });
+         let guard = native.backend.lock().await;
+--- a/crates/airk-mcp/src/remote.rs
++++ b/crates/airk-mcp/src/remote.rs
+@@ -12,7 +12,18 @@
+ 
+ pub type RemoteFuture<'a> =
+     Pin<Box<dyn Future<Output = anyhow::Result<serde_json::Value>> + Send + 'a>>;
++pub type ReadyFuture<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>>;
++#[derive(Debug)]
++pub struct PreparationExpired;
++impl std::fmt::Display for PreparationExpired {
++    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result{f.write_str("owned status setup deadline expired")}
++}
++impl std::error::Error for PreparationExpired {}
+ pub trait RemoteTools: Send + Sync + 'static {
++    /// Static catalog/help/initialize never invokes this owned setup hook.
++    fn prepare(&self)->ReadyFuture<'_>{Box::pin(async{Ok(())})}
++    fn close(&self){}
++    fn shutdown(&self)->ReadyFuture<'_>{Box::pin(async{Ok(())})}
+     fn catalog(&self) -> Vec<Tool> {
+         crate::local::tools()
+     }
+@@ -100,7 +111,11 @@
+ }
+ 
+ pub async fn serve(backend: Arc<dyn RemoteTools>) -> anyhow::Result<()> {
+-    serve_with_input_lifecycle(backend, Arc::new(|| {})).await
++    let close=backend.clone();
++    let served=serve_with_input_lifecycle(backend.clone(),Arc::new(move||close.close())).await;
++    let cleanup=backend.shutdown().await;
++    match (served,cleanup){(Err(error),Err(cleanup))=>Err(error.context(format!("owned observation cleanup also failed: {cleanup:#}"))),
++        (Err(error),_)=>Err(error),(_,result)=>result}
+ }
+ 
+ /// The callback must be synchronous, nonblocking and infallible. It closes
+--- a/crates/airk-mcp/src/unified.rs
++++ b/crates/airk-mcp/src/unified.rs
+@@ -267,7 +267,17 @@
+         serde_json::to_value(crate::help::call(Value::Object(args))).unwrap()
+     }
+ }
++fn status_not_observed(project:&str,stage:&str,expired:bool)->Value{
++    success(json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","project":project,
++        "index_state":"unknown","publication":null,"files":null,"chunks":null,
++        "index_error":{"code":if expired{"status_timeout"}else{"status_unavailable"},
++        "stage":stage,"retryable":true,"message":"Status could not be confirmed within this stage. Retry or call diagnostics."}}))
++}
+ impl RemoteTools for Unified {
++    fn close(&self){for project in self.projects.values(){project.backend.close();}}
++    fn shutdown(&self)->crate::remote::ReadyFuture<'_>{Box::pin(async move{
++        for project in self.projects.values(){project.backend.shutdown().await?;}Ok(())
++    })}
+     fn catalog(&self) -> Vec<Tool> {
+         tools()
+     }
+@@ -337,7 +347,7 @@
+                     Ok(p) => p,
+                     Err(error) => return Ok(error),
+                 };
+-                if tool == "status" || tool == "diagnostics" {
++                if matches!(native.name.as_ref(),"airk_status"|"airk_diagnostics") {
+                     let _options = match serde_json::from_value::<crate::StatusArgs>(Value::Object(
+                         args.clone(),
+                     )) {
+@@ -346,7 +356,12 @@
+                             return Ok(failure("INVALID_SCHEMA", "Invalid status arguments."));
+                         }
+                     };
+-                    if tool == "status" {
++                    if native.name=="airk_status" {
++                        match tokio::time::timeout(std::time::Duration::from_secs(10),project.backend.prepare()).await {
++                            Ok(Ok(()))=>{},
++                            Ok(Err(error))=>return Ok(status_not_observed(&project.binding,"setup",error.is::<crate::remote::PreparationExpired>())),
++                            Err(_)=>return Ok(status_not_observed(&project.binding,"setup",true)),
++                        }
+                         let index = match tokio::time::timeout(
+                             std::time::Duration::from_secs(2),
+                             project.backend.call(native.name.to_string(), args),
+@@ -356,12 +371,12 @@
+                             Ok(Ok(result)) => result,
+                             Ok(Err(_)) => {
+                                 return Ok(success(
+-                                    json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","project":project.binding,"index_state":"unknown","files":null,"chunks":null,"publication":null,"index_error":{"code":"status_unavailable","message":"Basic status could not be observed. Call diagnostics for troubleshooting."}}),
++                                    json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","project":project.binding,"index_state":"unknown","files":null,"chunks":null,"publication":null,"index_error":{"code":"status_unavailable","stage":"observation","message":"Basic status could not be observed. Call diagnostics for troubleshooting."}}),
+                                 ));
+                             }
+                             Err(_) => {
+                                 return Ok(success(
+-                                    json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","project":project.binding,"index_state":"unknown","publication":null,"files":null,"chunks":null,"index_error":{"code":"status_timeout","retryable":true,"message":"The quick status deadline expired; index readiness is unconfirmed. Retry or call diagnostics for diagnosis."}}),
++                                    json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","project":project.binding,"index_state":"unknown","publication":null,"files":null,"chunks":null,"index_error":{"code":"status_timeout","stage":"observation","retryable":true,"message":"The quick status deadline expired; index readiness is unconfirmed. Retry or call diagnostics for diagnosis."}}),
+                                 ));
+                             }
+                         };
+@@ -652,6 +667,33 @@
+     }
+ 
+     #[tokio::test]
++    async fn legacy_and_public_status_share_schema_response_and_refusal() {
++        let (u,native,_,ui)=fixture(false,true);
++        let public=call(&u,"status",json!({})).await;
++        let legacy=call(&u,"airk_status",json!({})).await;
++        assert_eq!(public,legacy);
++        for name in ["status","airk_status"] {
++            assert_eq!(call(&u,name,json!({"unexpected":true})).await["isError"],true);
++        }
++        assert_eq!(native.calls.lock().unwrap().len(),2);
++        native.busy_status.store(true,std::sync::atomic::Ordering::SeqCst);
++        assert_eq!(call(&u,"status",json!({})).await,call(&u,"airk_status",json!({})).await);
++        assert!(ui.calls.lock().unwrap().is_empty());
++    }
++
++    #[tokio::test]
++    async fn legacy_status_has_the_public_observation_deadline_and_null_evidence() {
++        let (u,native,_,ui)=fixture(false,true);
++        native.stall_status.store(true,std::sync::atomic::Ordering::SeqCst);
++        let result=body(&call(&u,"airk_status",json!({})).await).unwrap();
++        assert_eq!(result["index_error"]["code"],"status_timeout");
++        assert_eq!(result["index_error"]["stage"],"observation");
++        for key in ["publication","files","chunks"] {assert!(result[key].is_null());}
++        assert_eq!(native.calls.lock().unwrap().len(),1);
++        assert!(ui.calls.lock().unwrap().is_empty());
++    }
++
++    #[tokio::test]
+     async fn quick_status_forwards_typed_admission_refusal_after_a_deadline_without_evidence() {
+         // Slow hosts expire the quick deadline while the native query still
+         // holds admission; the next read is refused with a typed retry hint.
+--- a/packages/vscode/src/test/nativeSmoke.test.ts
++++ b/packages/vscode/src/test/nativeSmoke.test.ts
+@@ -87,15 +87,48 @@
+         const {launchArgs}=await import('../model');
+         session=(await McpStdioSession.open({command:spec.command,args:launchArgs(spec),cwd:fixture.owner,clientName:'status-cache-test',clientVersion:'1.6.1'},60000)).session;
+         const read=async(name:string,args:Record<string,unknown>={})=>{
+-            const result=await requestWithReadRetry(session!,name,args,name==='diagnostics'?60000:10000);return JSON.parse(result.content[0].text);
++            const result=await requestWithReadRetry(session!,name,args,name==='diagnostics'?60000:15000);return JSON.parse(result.content[0].text);
+         };
+         const expectedVersion=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../package.json'),'utf8')).version;
+         const first=await quickStatus(session);assert.equal(first.version,expectedVersion);assert.ok(['ok','updating','paused','unknown','needs_attention'].includes(first.health));
+         assert.equal(first.files,1);assert.equal(first.cached,false);assert.ok(first.observed_unix_ms>0);
+         const cached=await read('status',{response_mode:'full'});assert.equal(cached.cached,true);assert.ok(cached.cache_age_ms<5000);
+         assert.equal(cached.observed_unix_ms,first.observed_unix_ms);assert.equal(cached.publication.token,first.publication.token);
+-        for(const value of [first,cached]){assert.equal(value.runtime,undefined);assert.equal(value.work,undefined);assert.equal(value.explorer,undefined);assert.ok(Buffer.byteLength(JSON.stringify(value))<1024);}
++        const legacy=await read('airk_status',{response_mode:'full'});
++        assert.equal(legacy.cached,true);assert.equal(legacy.observed_unix_ms,first.observed_unix_ms);
++        assert.equal(legacy.publication.token,first.publication.token);assert.equal(legacy.project,first.project);
++        for(const value of [first,cached,legacy]){assert.equal(value.runtime,undefined);assert.equal(value.work,undefined);assert.equal(value.explorer,undefined);assert.ok(Buffer.byteLength(JSON.stringify(value))<1024);}
+         const detail=await read('diagnostics');assert.ok(detail.runtime);assert.ok(detail.work);
+         const after=await read('status');assert.equal(after.cached,false);assert.ok(after.observed_unix_ms>=first.observed_unix_ms);
+     }finally{session?.close();await fixture.dispose();}
+ });
++
++for(const binding of ['pinned','source'] as const){
++    test(`four cold ${binding} clients observe first status without diagnostic warmup`,{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async()=>{
++        const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
++        const sessions:McpStdioSession[]=[];
++        try{
++            const spec=await fixture.register(`four-${binding}-status`);
++            const {launchArgs}=await import('../model');
++            const args=binding==='pinned'?launchArgs(spec,'mcp',true):
++                ['runtime','launch','--install-dir',fixture.install,'--','--root',spec.root,'mcp'];
++            const opened=await Promise.allSettled(Array.from({length:4},async(_,client)=>{
++                const opened=await McpStdioSession.open({command:fixture.launcher,args,cwd:fixture.owner,
++                    clientName:`cold-${binding}-${client}`,clientVersion:'1.8.0'},60000);
++                sessions.push(opened.session);
++            }));
++            for(const result of opened)if(result.status==='rejected')throw result.reason;
++            const expected=await Promise.all(sessions.map(async session=>{
++                const result=await session.request('tools/call',{name:'projects',arguments:{}},10000);
++                return JSON.parse(result.content[0].text).default_project;
++            }));
++            const observations=await Promise.all(sessions.map(session=>quickStatus(session)));
++            for(const [index,observation] of observations.entries()){
++                assert.equal(observation.project,expected[index]);
++                assert.equal(observation.index_state,'unavailable');
++                assert.equal(observation.files,null);assert.equal(observation.publication,null);
++            }
++            assert.equal((await fixture.embedding()).loads,0,'first status does not start inference');
++        }finally{for(const session of sessions)session.close();await fixture.dispose();}
++    });
++}
+--- a/packages/vscode/src/workbenchView.ts
++++ b/packages/vscode/src/workbenchView.ts
+@@ -10,6 +10,8 @@
+ import { continuations, evidenceCards, renderExport } from './workbenchRender';
+ import { object, parseWorkbenchMessage, Value, WorkbenchMessage, WorkbenchSession, WorkbenchState, WORKBENCH_HELP_ROUTE } from './workbenchContracts';
+ 
++// Cold native setup (10 s) plus scalar observation (2 s), with transport slack.
++export const STATUS_RESPONSE_TIMEOUT_MS=15000;
+ export function workbenchHtml(webview:vscode.Webview, extension:vscode.Uri, nonce:string):string {
+     const script=webview.asWebviewUri(vscode.Uri.joinPath(extension,'out','workbenchWebview.js'));
+     const style=webview.asWebviewUri(vscode.Uri.joinPath(extension,'out','workbenchWebview.css'));
+@@ -80,7 +82,7 @@
+         this.session=newSession(id);this.notice=undefined;
+         this.recent=this.persistence()?(await this.store.list(id)).map(s=>({id:s.id,title:s.title,updatedAt:s.updatedAt,turns:s.turns.length})):[];this.send();
+         const generation=this.generation;
+-        void this.evidence().call('airk_status',{}, {timeout:10000}).then(result=>{if(generation===this.generation&&this.host.trusted()){this.status=result.payload;this.send();}},error=>{if(generation===this.generation){this.fail(error);}});
++        void this.evidence().call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS}).then(result=>{if(generation===this.generation&&this.host.trusted()){this.status=result.payload;this.send();}},error=>{if(generation===this.generation){this.fail(error);}});
+     }
+     private evidence():EvidenceClient{
+         this.authorized();const spec=this.host.specs().find(s=>s.service?.project===this.session?.project);

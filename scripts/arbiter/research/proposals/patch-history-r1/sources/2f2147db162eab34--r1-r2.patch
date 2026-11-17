@@ -1,0 +1,78 @@
+--- r1/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification/CONTRACT.md
++++ r2/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification/CONTRACT.md
+@@ -59,3 +59,10 @@
+ receipt. This component proof does not replace G4 full8192/resource20/coexistence,
+ G5 FP16 dispatch/math, semantic labels, public provenance/package or product
+ Auto/future-request recovery qualification.
++
++The actual final persistent peak RSS is sampled after adapter observation,
++session teardown, exact post-input hashing and native control cleanup, before
++setting complete/report retention. Missing/zero/over-original-bound peak refuses
++success even if earlier row peaks passed. The original primary error remains
++primary when this final independent check also refuses. Job commit limits and
++the optional charge do not substitute for this real persistent RSS observation.
+--- r1/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification.rs
++++ r2/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification.rs
+@@ -116,6 +116,14 @@
+         "device planning bound exceeds explicit reservation"
+     );
+     DeviceCapacityPlan::probe(cold, warm, headroom)
++}
++fn final_host_peak(peak: Option<u64>, limit: u64) -> Result<u64> {
++    let value = peak.context("actual final persistent host RSS peak unavailable")?;
++    ensure!(
++        value > 0 && value <= limit,
++        "final persistent host RSS peak exceeds original bound or is invalid"
++    );
++    Ok(value)
+ }
+ #[derive(Clone, Copy)]
+ enum CaseKind {
+@@ -559,9 +567,17 @@
+         (Err(error), _) => Err(error),
+         (Ok(()), Err(error)) => Err(error.into()),
+     };
++    let final_peak = peak_rss();
++    let peak_decision = final_host_peak(final_peak, bounds.host_limit_bytes);
++    receipt["peak_process_rss_bytes"] = json!(final_peak);
++    receipt["final_host_peak_error"] = json!(peak_decision.as_ref().err().map(ToString::to_string));
++    let result = match (result, peak_decision) {
++        (Err(primary), _) => Err(primary),
++        (Ok(()), Ok(_)) => Ok(()),
++        (Ok(()), Err(peak_error)) => Err(peak_error),
++    };
+     receipt["complete"] = json!(result.is_ok());
+     receipt["elapsed_us_to_final_report_start"] = json!(started.elapsed().as_micros());
+-    receipt["peak_process_rss_bytes"] = json!(peak_rss());
+     receipt["process_cuda_poisoned"] = json!(cuda::process_poisoned());
+     if let Err(error) = &result {
+         receipt["error"] = json!(format!("{error:#}"));
+--- r1/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification/tests.rs
++++ r2/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification/tests.rs
+@@ -95,3 +95,16 @@
+     );
+     Ok(())
+ }
++
++#[test]
++fn final_host_peak_refuses_late_growth_and_missing_persistent_observation() -> Result<()> {
++    assert_eq!(final_host_peak(Some(7), 10)?, 7);
++    assert!(
++        final_host_peak(Some(11), 10).is_err(),
++        "a passing early row must not hide late posthash growth"
++    );
++    assert!(final_host_peak(None, 10).is_err());
++    assert!(final_host_peak(Some(0), 10).is_err());
++    assert_eq!(final_host_peak(Some(10), 10)?, 10);
++    Ok(())
++}
+--- r1/crates/airk-retrieval/src/arbiter/runtime/qualification.rs
++++ r2/crates/airk-retrieval/src/arbiter/runtime/qualification.rs
+@@ -407,6 +407,7 @@
+         task_policies: BTreeMap::from([(task, policy)]),
+         qualified_targets: vec![],
+         cpu_fit: Some(input.cpu_fit),
++        device_execution: None,
+         downloads: vec![],
+         model: input.model,
+         profile_id: input.profile_id,

@@ -1,0 +1,72 @@
+--- a/crates/airk-cli/tests/combined_reads/split_metrics.rs
++++ b/crates/airk-cli/tests/combined_reads/split_metrics.rs
+@@ -12,6 +12,7 @@
+     source_before: Value,
+     clients: Vec<McpSession>,
+     selection: CombinedConnectRequest,
++    reconfirm_required: bool,
+     authority_baseline: Value,
+     publication_baseline: Option<Value>,
+     data: Vec<(String, PathBuf)>,
+@@ -303,6 +304,7 @@
+             source_before,
+             clients,
+             selection: selected,
++            reconfirm_required: false,
+             authority_baseline,
+             publication_baseline: None,
+             data: vec![
+@@ -372,7 +374,10 @@
+ 
+     async fn reconfirm(&mut self, f: &Fixture, force: bool) -> Result<bool> {
+         let observed = revision(f)?;
+-        if !force && observed == self.selection.expected_catalog_revision {
++        if !force
++            && !self.reconfirm_required
++            && observed == self.selection.expected_catalog_revision
++        {
+             return Ok(true);
+         }
+         let started = Instant::now();
+@@ -404,6 +409,7 @@
+                 // catalog revision changes, without writing any native state.
+                 self.clients = clients;
+                 self.selection = selected;
++                self.reconfirm_required = false;
+                 self.event(json!({"phase":"reconfirmation","outcome":"confirmed",
+                     "elapsed_us_separate_from_query":started.elapsed().as_micros(),
+                     "selection":self.selection,"native_reads":reads,"query_replayed":false}))?;
+@@ -462,16 +468,27 @@
+             // later wave explicitly confirms the same independent authority.
+             let outcome = if result["isError"] == true {
+                 let refusal = body(result)?;
+-                let scope_refused = matches!(
+-                    refusal["error"]["code"].as_str(),
+-                    Some("combined_scope_unavailable" | "combined_scope_expired")
+-                ) && refusal["error"]["retryable"] == false
++                let exact_nonreplayable = refusal["error"]["retryable"] == false
+                     && refusal["error"]["query_replay_safe"] == false
+                     && refusal["requested_scope"]["confirmed"] == false
+                     && refusal["requested_scope"]["selection"]
+                         == serde_json::to_value(&self.selection)?;
+-                let typed = scope_refused || read_retry::classify(result).is_some();
+-                self.event(json!({"phase":phase,"query":{"outcome":if scope_refused {"scope_refusal"}else if typed {"typed_rejection"}else{"untyped_rejection"},
++                let scope_refused = exact_nonreplayable
++                    && matches!(
++                        refusal["error"]["code"].as_str(),
++                        Some("combined_scope_unavailable" | "combined_scope_expired")
++                    );
++                // Canonical generic read failure is indeterminate, never proof
++                // of a scope-only cause. Preserve it as a failed attempt.
++                let indeterminate = exact_nonreplayable
++                    && refusal["error"]["code"] == "combined_read_unavailable"
++                    && refusal["error"].get("query_submitted") == Some(&Value::Null);
++                if scope_refused || indeterminate {
++                    self.reconfirm_required = true;
++                }
++                let typed =
++                    scope_refused || indeterminate || read_retry::classify(result).is_some();
++                self.event(json!({"phase":phase,"query":{"outcome":if scope_refused {"scope_refusal"}else if indeterminate {"indeterminate_read_failure"}else if typed {"typed_rejection"}else{"untyped_rejection"},
+                     "elapsed_ms":micros as f64/1000.0,"attempts":1,"split_observed_running":false,
+                     "reply_bytes":encoded_reply.len(),"reply_digest":digest,"reply":reply}}))?;
+                 ensure!(

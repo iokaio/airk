@@ -1,0 +1,19 @@
+--- ui-installed-explorer-r2/run.py
++++ ui-installed-explorer-r3/run.py
+@@ -1,13 +1,13 @@
+ import pathlib,sys,json,hashlib,importlib.util,subprocess,time,traceback
+ root=pathlib.Path.cwd();out=pathlib.Path(__file__).resolve().parent
+ node=pathlib.Path('D:/code/Github/airk/artifacts/tools/node-v24.15.0-win-x64/node.exe');editor=pathlib.Path('C:/Users/tdotn/AppData/Local/Programs/Microsoft VS Code/Code.exe');app=editor.parent/'69047191fc/resources/app';cli=app/'out/cli.js'
+-publish=pathlib.Path(r'D:/code/Github/airk/artifacts/arbiter-1.8.207/windows-candidate-r2/publish');manifest=json.loads((publish/'manifest.json').read_bytes());vsix=publish/manifest['archive']
++publish=pathlib.Path(r'D:/code/Github/airk/artifacts/arbiter-1.8.207/windows-candidate-r3/publish');manifest=json.loads((publish/'manifest.json').read_bytes());vsix=publish/manifest['archive']
+ def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+ assert json.loads((app/'package.json').read_bytes())['version']=='1.146.0'
+ assert json.loads((app/'product.json').read_bytes())['commit']=='69047191fc427f2f92828279aae1d90d8eeda7ab'
+ assert subprocess.check_output([str(node),'--version'],text=True,encoding='utf-8').strip()=='v24.15.0'
+-assert sha(vsix)==manifest['archive_sha256']=='5de5d43b03642e52f53b5dde3636cb34d8b92095a4e11d788e8d13d15c5b6062'
+-assert manifest['commit']=='6c2410791999fa7691b9be97441f371d4048d870'
++assert sha(vsix)==manifest['archive_sha256']=='5053a93364b123b87bee006df7314d4abc3e03b3c2ea8a77d7f33885b46c1c56'
++assert manifest['commit']=='c547e6547b1312c2e113bd1ddc9ab84969c229c0'
+ assert manifest['version']=='1.8.207'
+ assert manifest['payload']['out/workbenchWebview.js']=='878b5d0dcdb45078c6c602c9d6e781794192f48b7077a440c147f0b913c15b49'
+ assert manifest['payload']['out/explorerWebview.js']=='c18fb1ae95917fa7babb852f8cf9d2930662e05abbb11b32b3baf8888a72aaa6'

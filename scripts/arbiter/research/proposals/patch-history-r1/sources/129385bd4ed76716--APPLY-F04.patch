@@ -1,0 +1,1236 @@
+--- a/crates/airk-cli/src/project_client.rs
++++ b/crates/airk-cli/src/project_client.rs
+@@ -249,14 +249,35 @@
+     cached_status: Option<CachedStatus>,
+ }
+ 
+-struct Backend {
++pub(crate) struct Backend {
+     root: PathBuf,
+     project: ProjectBinding,
+     state: tokio::sync::Mutex<ClientState>,
++    latest_source: std::sync::Mutex<Option<SourceFence>>,
+     client: std::sync::Mutex<airk_core::usage::ClientFamily>,
+ }
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) struct SourceFence {
++    pub namespace: airk_core::identity::Incarnation,
++    pub revision: u64,
++    pub project: ProjectBinding,
++    pub fencing_generation: u64,
++}
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++enum CacheScope {
++    Pinned(airk_core::identity::Incarnation),
++    Source(SourceFence),
++}
++impl From<airk_core::identity::Incarnation> for CacheScope {
++    fn from(value: airk_core::identity::Incarnation) -> Self { Self::Pinned(value) }
++}
++pub(crate) fn source_scope_superseded() -> serde_json::Value {
++    let detail = serde_json::json!({"error":{"code":"direct_query_setup","reason":"busy",
++        "query_submitted":false,"retryable":true,"retry_after_ms":100,"fresh_brokerage_required":true}});
++    serde_json::json!({"content":[{"type":"text","text":detail.to_string()}],"isError":true})
++}
+ struct CachedStatus {
+-    scope: airk_core::identity::Incarnation,
++    scope: CacheScope,
+     captured: Instant,
+     observed_unix_ms: u64,
+     body: serde_json::Value,
+@@ -284,7 +305,7 @@
+         .find(|token| token.is_string())
+         .is_some_and(|token| *token == self.body["publication"]["token"])
+     }
+-    fn new(scope: airk_core::identity::Incarnation, result: &serde_json::Value) -> Option<Self> {
++    fn new(scope: impl Into<CacheScope>, result: &serde_json::Value) -> Option<Self> {
+         if result["isError"] == true {
+             return None;
+         }
+@@ -294,7 +315,7 @@
+             return None;
+         }
+         Some(Self {
+-            scope,
++            scope: scope.into(),
+             captured: Instant::now(),
+             observed_unix_ms: std::time::SystemTime::now()
+                 .duration_since(std::time::UNIX_EPOCH)
+@@ -307,12 +328,12 @@
+     }
+     fn reply(
+         &self,
+-        scope: airk_core::identity::Incarnation,
++        scope: impl Into<CacheScope>,
+         now: Instant,
+         cached: bool,
+     ) -> Option<serde_json::Value> {
+         let age = now.saturating_duration_since(self.captured);
+-        if scope != self.scope || age >= Duration::from_secs(5) {
++        if scope.into() != self.scope || age >= Duration::from_secs(5) {
+             return None;
+         }
+         let mut body = self.body.clone();
+@@ -326,13 +347,13 @@
+ fn status_scope(
+     root: &Path,
+     project: ProjectBinding,
+-) -> Result<Option<airk_core::identity::Incarnation>> {
++) -> Result<Option<CacheScope>> {
+     if !root.join("service-1.4.sqlite3").try_exists()? {
+         return Ok(None);
+     }
+     let registry = airk_store::service::registry::ServiceRegistry::open_saved(root)?;
+     registry.get(project)?; // A removed project cannot be served from a cache.
+-    Ok(Some(registry.incarnation()?))
++    Ok(Some(CacheScope::Pinned(registry.incarnation()?)))
+ }
+ impl airk_mcp::remote::RemoteTools for Backend {
+     fn client(&self, client: airk_core::usage::ClientFamily) {
+@@ -340,10 +361,45 @@
+             *label = client;
+         }
+     }
+-    fn call(
++    fn call(&self, tool: String, arguments: serde_json::Map<String, serde_json::Value>)
++        -> airk_mcp::remote::RemoteFuture<'_> {
++        self.call_bound(tool, arguments, None, None)
++    }
++}
++
++impl Backend {
++    fn accept_source_fence(&self, fence: SourceFence) -> bool {
++        if fence.project != self.project { return false; }
++        let mut latest = self.latest_source.lock().unwrap_or_else(|error| error.into_inner());
++        if latest.is_some_and(|old| old.namespace != fence.namespace || old.revision > fence.revision) {
++            return false;
++        }
++        *latest = Some(fence);
++        true
++    }
++    fn source_fence_current(&self, scope: CacheScope) -> bool {
++        match scope {
++            CacheScope::Pinned(_) => true,
++            CacheScope::Source(fence) => self.latest_source.lock()
++                .unwrap_or_else(|error| error.into_inner()).as_ref() == Some(&fence),
++        }
++    }
++    pub(crate) fn call_observed(
++        &self, tool: String, arguments: serde_json::Map<String, serde_json::Value>, fence: SourceFence,
++    ) -> airk_mcp::remote::RemoteFuture<'_> {
++        self.call_bound(tool, arguments, Some(fence), None)
++    }
++    pub(crate) fn call_observed_until(&self, tool: String,
++        arguments: serde_json::Map<String,serde_json::Value>, fence: SourceFence,
++        expires: Instant) -> airk_mcp::remote::RemoteFuture<'_> {
++        self.call_bound(tool, arguments, Some(fence), Some(expires))
++    }
++    fn call_bound(
+         &self,
+         tool: String,
+         arguments: serde_json::Map<String, serde_json::Value>,
++        observed: Option<SourceFence>,
++        source_expires: Option<Instant>,
+     ) -> airk_mcp::remote::RemoteFuture<'_> {
+         Box::pin(async move {
+             if tool == "airk_help" {
+@@ -366,14 +422,23 @@
+                     crate::runtime_metadata::observe_process();
+                 }
+             }
++            if let Some(fence) = observed {
++                if !self.accept_source_fence(fence) { return Ok(source_scope_superseded()); }
++            }
+             let scope = if tool == "airk_status" {
++                if let Some(fence) = observed { Some(CacheScope::Source(fence)) } else {
+                 let root = self.root.clone();
+                 let project = self.project;
+                 tokio::task::spawn_blocking(move || status_scope(&root, project)).await??
++                }
+             } else {
+                 None
+             };
+             let mut state = self.state.lock().await;
++            if source_expires.is_some_and(|until| Instant::now() >= until) { return Ok(source_scope_superseded()); }
++            if observed.is_some_and(|fence| !self.source_fence_current(CacheScope::Source(fence))) {
++                return Ok(source_scope_superseded());
++            }
+             if let Some(scope) = scope
+                 && let Some(reply) = state
+                     .cached_status
+@@ -418,6 +483,7 @@
+                 connection.restore_status_receipt(state.status_receipt);
+                 state.connection = Some(connection);
+             }
++            if source_expires.is_some_and(|until| Instant::now() >= until) { return Ok(source_scope_superseded()); }
+             let is_status = tool == "airk_status";
+             let mut result = state
+                 .connection
+@@ -444,7 +510,7 @@
+                 state.cached_status = None;
+             }
+             if is_status {
+-                state.cached_status = scope.and_then(|scope| {
++                state.cached_status = scope.filter(|scope| self.source_fence_current(*scope)).and_then(|scope| {
+                     result
+                         .as_ref()
+                         .ok()
+@@ -460,14 +526,19 @@
+             result
+         })
+     }
++
+ }
+ 
+ /// One direct client session, shared by stdio MCP and native read-only tools.
+ pub fn tools(root: PathBuf, project: ProjectBinding) -> Arc<dyn airk_mcp::remote::RemoteTools> {
++    source_tools(root, project)
++}
++pub(crate) fn source_tools(root: PathBuf, project: ProjectBinding) -> Arc<Backend> {
+     Arc::new(Backend {
+         root,
+         project,
+         state: tokio::sync::Mutex::new(Default::default()),
++        latest_source: std::sync::Mutex::new(None),
+         client: std::sync::Mutex::new(airk_core::usage::ClientFamily::Cli),
+     })
+ }
+@@ -731,3 +802,98 @@
+         Ok(())
+     }
+ }
++
++#[cfg(test)]
++mod source_observation_tests {
++    use super::*;
++
++    fn fence(namespace: u8, revision: u64) -> SourceFence {
++        SourceFence {
++            namespace: airk_core::identity::Incarnation::from_bytes([namespace; 16]),
++            revision,
++            project: "ab".repeat(32).parse().unwrap(),
++            fencing_generation: 1,
++        }
++    }
++
++    #[test]
++    fn revision_namespace_and_generation_are_cache_scope_not_mutable_authority() {
++        let old = fence(1, 9);
++        let value = airk_mcp::unified::success(serde_json::json!({
++            "index_state":"available", "publication":{"token":"saved"}
++        }));
++        let cached = CachedStatus::new(CacheScope::Source(old), &value).unwrap();
++        for changed in [fence(2, 9), fence(1, 10), SourceFence { fencing_generation: 2, ..old }] {
++            assert!(cached.reply(CacheScope::Source(changed), cached.captured, true).is_none());
++        }
++        assert!(cached.reply(CacheScope::Source(old), cached.captured + Duration::from_secs(5), true).is_none());
++    }
++
++    #[tokio::test]
++    async fn old_observation_waiting_for_backend_is_explicitly_unsubmitted() -> Result<()> {
++        let control = tempfile::tempdir()?;
++        let old = fence(1, 9);
++        let backend = source_tools(control.path().into(), old.project);
++        let guard = backend.state.lock().await;
++        let mut request = backend.call_observed("airk_status".into(), serde_json::Map::new(), old);
++        // Poll exactly once: admit the old scope, then block on the owned state lock.
++        assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(request.as_mut().poll(cx))).await.is_pending());
++        assert!(backend.accept_source_fence(fence(1, 10)));
++        drop(guard);
++        let reply = request.await?;
++        let detail: serde_json::Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
++        assert_eq!(detail["error"]["query_submitted"], false);
++        assert_eq!(detail["error"]["retryable"], true);
++        assert!(backend.state.lock().await.connection.is_none());
++        assert!(std::fs::read_dir(control.path())?.next().is_none());
++        Ok(())
++    }
++
++    #[tokio::test]
++    async fn observed_cache_hit_does_not_reopen_registry_and_retains_age() -> Result<()> {
++        let control = tempfile::tempdir()?;
++        let scope = fence(1, 9);
++        let backend = source_tools(control.path().into(), scope.project);
++        let value = airk_mcp::unified::success(serde_json::json!({
++            "index_state":"available", "publication":{"token":"saved"}
++        }));
++        let mut cached = CachedStatus::new(CacheScope::Source(scope), &value).unwrap();
++        cached.captured -= Duration::from_secs(1);
++        let timestamp = cached.observed_unix_ms;
++        backend.state.lock().await.cached_status = Some(cached);
++        // There is deliberately no registry database: the owned observation is the fence.
++        let reply = backend.call_observed("airk_status".into(), serde_json::Map::new(), scope).await?;
++        let body: serde_json::Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
++        assert_eq!(body["cached"], true);
++        assert_eq!(body["observed_unix_ms"], timestamp);
++        assert!(body["cache_age_ms"].as_u64().unwrap() >= 1000);
++        assert!(backend.state.lock().await.connection.is_none());
++        assert!(std::fs::read_dir(control.path())?.next().is_none());
++        Ok(())
++    }
++}
++
++#[cfg(test)]
++mod source_cache_return_age_tests {
++    use super::*;
++    #[tokio::test]
++    async fn expired_source_observation_cannot_hit_fresh_status_after_backend_wait() -> Result<()> {
++        let control=tempfile::tempdir()?;
++        let fence=SourceFence { namespace: airk_core::identity::Incarnation::from_bytes([81;16]),
++            revision: 1, project: "ab".repeat(32).parse()?, fencing_generation: 1 };
++        let backend=source_tools(control.path().into(),fence.project);
++        let mut state=backend.state.lock().await;
++        state.cached_status=CachedStatus::new(CacheScope::Source(fence),
++            &airk_mcp::unified::success(serde_json::json!({"index_state":"available","publication":{"token":"saved"}})));
++        let mut request=backend.call_observed_until("airk_status".into(),serde_json::Map::new(),fence,Instant::now());
++        assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(request.as_mut().poll(cx))).await.is_pending());
++        drop(state);
++        let reply=request.await?;
++        let detail:serde_json::Value=serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
++        assert_eq!(detail["error"]["query_submitted"],false);
++        assert_eq!(detail["error"]["retryable"],true);
++        assert!(backend.state.lock().await.connection.is_none());
++        assert!(std::fs::read_dir(control.path())?.next().is_none());
++        Ok(())
++    }
++}
+--- a/crates/airk-cli/src/service_frontend.rs
++++ b/crates/airk-cli/src/service_frontend.rs
+@@ -16,6 +16,31 @@
+     Missing,
+     Removed,
+     Ambiguous,
++}
++pub(crate) struct RootObservation {
++    pub resolution: RootResolution,
++    pub fence: Option<crate::project_client::SourceFence>,
++    pub stamp: Option<airk_store::service::registry::SavedScopeStamp>,
++    pub observed_unix_ms: Option<u64>,
++    root: PathBuf,
++    collection: Option<String>,
++    captured: std::time::Instant,
++}
++impl RootObservation {
++    pub(crate) fn age_ms(&self) -> u64 {
++        std::time::Instant::now().saturating_duration_since(self.captured).as_millis()
++            .try_into().unwrap_or(u64::MAX)
++    }
++    pub(crate) fn expires_at(&self) -> std::time::Instant {
++        self.captured + std::time::Duration::from_secs(5)
++    }
++    pub(crate) fn fresh_at(&self, now: std::time::Instant) -> bool {
++        now.saturating_duration_since(self.captured) < std::time::Duration::from_secs(5)
++    }
++}
++fn scope_observed_unix_ms() -> Option<u64> {
++    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?
++        .as_millis().try_into().ok()
+ }
+ impl RootScope {
+     pub fn new(root: &Path, collection: Option<String>) -> Result<Self> {
+@@ -47,63 +72,63 @@
+         })
+     }
+     pub fn resolve(&self, control: &Path) -> Result<RootResolution> {
++        Ok(self.observe(control)?.resolution)
++    }
++    pub(crate) fn observe(&self, control: &Path) -> Result<RootObservation> {
++        self.observe_uncached(control, None)
++    }
++    fn observe_uncached(&self, control: &Path, deadline: Option<std::time::Instant>) -> Result<RootObservation> {
++        let captured = std::time::Instant::now();
++        let observed_unix_ms = scope_observed_unix_ms();
+         if !control.join("service-1.4.sqlite3").try_exists()? {
+-            return Ok(RootResolution::Missing);
+-        }
+-        let mut registry = airk_store::service::registry::ServiceRegistry::open_saved(control)?;
+-        let mut matching = Vec::new();
+-        let mut seen = 0;
+-        let mut revision = None;
+-        for inactive in [false, true] {
+-            let mut after = None;
+-            loop {
+-                let page = if inactive {
+-                    registry.list_inactive(after, revision, 32)?
+-                } else {
+-                    registry.list(after, revision, 32)?
+-                };
+-                revision = Some(page.revision);
+-                for item in page.projects {
+-                    seen += 1;
+-                    anyhow::ensure!(
+-                        seen <= 1024,
+-                        "configured source lookup exceeds registry bound"
+-                    );
+-                    let registration = item.registration;
+-                    if Path::new(&registration.root) == self.root
+-                        && self
+-                            .collection
+-                            .as_ref()
+-                            .is_none_or(|name| *name == registration.collection)
+-                    {
+-                        matching.push(registration);
+-                    }
+-                }
+-                after = page.after;
+-                if after.is_none() {
+-                    break;
+-                }
++            return Ok(RootObservation { resolution: RootResolution::Missing, fence: None,
++                stamp: None, observed_unix_ms, root: self.root.clone(), collection: self.collection.clone(), captured });
++        }
++        let mut registry = airk_store::service::registry::ServiceRegistry::open_saved_before(control, deadline)?;
++        self.observe_registry(&mut registry, deadline, captured, observed_unix_ms)
++    }
++    pub(crate) fn observe_cached(&self, control: &Path, cached: Option<std::sync::Arc<RootObservation>>,
++        deadline: std::time::Instant) -> Result<std::sync::Arc<RootObservation>> {
++        if std::time::Instant::now() >= deadline { return Err(airk_store::service::registry::SavedScopeExpired.into()); }
++        let captured = std::time::Instant::now();
++        let observed_unix_ms = scope_observed_unix_ms();
++        if !control.join("service-1.4.sqlite3").try_exists()? {
++            if std::time::Instant::now() >= deadline { return Err(airk_store::service::registry::SavedScopeExpired.into()); }
++            return Ok(std::sync::Arc::new(RootObservation { resolution: RootResolution::Missing, fence: None,
++                stamp: None, observed_unix_ms, root: self.root.clone(), collection: self.collection.clone(), captured }));
++        }
++        let mut registry = airk_store::service::registry::ServiceRegistry::open_saved_before(control, Some(deadline))?;
++        let stamp = registry.source_scope_stamp(Some(deadline))?;
++        if let Some(cached) = cached {
++            if cached.root == self.root && cached.collection == self.collection
++                && cached.stamp == Some(stamp) && cached.fresh_at(std::time::Instant::now()) {
++                if std::time::Instant::now() >= deadline { return Err(airk_store::service::registry::SavedScopeExpired.into()); }
++                return Ok(cached); // no project row decoded; original observation age retained.
+             }
+-            if !matching.is_empty() {
+-                return Ok(if inactive {
+-                    RootResolution::Removed
+-                } else if matching.len() == 1 {
+-                    RootResolution::Registered(matching.remove(0))
+-                } else {
+-                    RootResolution::Ambiguous
+-                });
++        }
++        Ok(std::sync::Arc::new(self.observe_registry(&mut registry, Some(deadline), captured, observed_unix_ms)?))
++    }
++    fn observe_registry(&self, registry: &mut airk_store::service::registry::ServiceRegistry,
++        deadline: Option<std::time::Instant>, captured: std::time::Instant, observed_unix_ms: Option<u64>) -> Result<RootObservation> {
++        let observed = registry.observe_source_scope_before(&self.root, self.collection.as_deref(), deadline)?;
++        let stamp = Some(airk_store::service::registry::SavedScopeStamp {
++            namespace: observed.namespace, revision: observed.revision,
++        });
++        use airk_store::service::registry::SavedScopeResolution;
++        let (resolution, fence) = match observed.resolution {
++            SavedScopeResolution::Registered(project) => {
++                let fence = crate::project_client::SourceFence { namespace: observed.namespace,
++                    revision: observed.revision, project: project.registration.binding,
++                    fencing_generation: project.fencing_generation };
++                (RootResolution::Registered(project.registration), Some(fence))
+             }
+-        }
+-        Ok(
+-            if registry
+-                .source_was_removed(self.root.to_str().context("non-UTF-8 configured source")?)?
+-            {
+-                RootResolution::Removed
+-            } else {
+-                RootResolution::Missing
+-            },
+-        )
+-    }
++            SavedScopeResolution::Missing => (RootResolution::Missing,None),
++            SavedScopeResolution::Removed => (RootResolution::Removed,None),
++            SavedScopeResolution::Ambiguous => (RootResolution::Ambiguous,None),
++        };
++        Ok(RootObservation { resolution, fence, stamp, observed_unix_ms, root: self.root.clone(), collection: self.collection.clone(), captured })
++    }
++
+ }
+ 
+ /// Resolve only installation/control metadata; no project is needed for MCP discovery.
+@@ -387,3 +412,95 @@
+         Ok(())
+     }
+ }
++
++#[cfg(test)]
++mod root_resolution_cache_tests {
++    use super::*;
++    use airk_store::service::registry::ServiceRegistry;
++    use airk_core::{identity::Incarnation, service::ProjectRegistration};
++    use std::{fs, sync::Arc, time::{Duration,Instant}};
++    fn fixture() -> Result<(tempfile::TempDir, PathBuf, RootScope, ProjectRegistration)> {
++        let owner = tempfile::tempdir()?;
++        let base = owner.path().canonicalize()?;
++        let source = base.join("source"); let data = base.join("data"); let control=base.join("control");
++        for path in [&source,&data,&control] { fs::create_dir(path)?; }
++        let project = ProjectRegistration::new(source.to_str().unwrap().into(),data.to_str().unwrap().into(),"fixture".into())?;
++        Ok((owner,control,RootScope::new(&source,None)?,project))
++    }
++    #[test]
++    fn unchanged_authenticated_stamp_reuses_owned_scope_and_registration_invalidates_missing() -> Result<()> {
++        let (_owner,control,scope,project)=fixture()?;
++        let mut registry=ServiceRegistry::open(&control,Incarnation::from_bytes([71;16]))?;
++        let first=scope.observe_cached(&control,None,Instant::now()+Duration::from_secs(2))?;
++        assert!(matches!(first.resolution,RootResolution::Missing));
++        let hit=scope.observe_cached(&control,Some(first.clone()),Instant::now()+Duration::from_secs(2))?;
++        assert!(Arc::ptr_eq(&first,&hit),"hit must reuse the owned observation without full row decode");
++        assert_eq!(first.captured,hit.captured,"stamp polling must not rejuvenate the original observation");
++        assert_eq!(first.observed_unix_ms,hit.observed_unix_ms);
++        registry.register(&project)?;
++        let registered=scope.observe_cached(&control,Some(first),Instant::now()+Duration::from_secs(2))?;
++        assert!(matches!(registered.resolution,RootResolution::Registered(_)));
++        let before=registered.stamp;
++        registry.pause(project.binding,true)?;
++        let paused=scope.observe_cached(&control,Some(registered),Instant::now()+Duration::from_secs(2))?;
++        assert_ne!(paused.stamp,before);
++        Ok(())
++    }
++    #[test]
++    fn same_revision_replacement_namespace_never_reuses_old_scope() -> Result<()> {
++        let (owner,control,scope,project)=fixture()?;
++        let mut registry=ServiceRegistry::open(&control,Incarnation::from_bytes([72;16]))?;
++        registry.register(&project)?;
++        let first=scope.observe_cached(&control,None,Instant::now()+Duration::from_secs(2))?;
++        drop(registry);
++        fs::rename(&control,owner.path().join("old-control"))?;
++        fs::create_dir(&control)?;
++        let mut replacement=ServiceRegistry::open(&control,Incarnation::from_bytes([73;16]))?;
++        replacement.register(&project)?;
++        let second=scope.observe_cached(&control,Some(first.clone()),Instant::now()+Duration::from_secs(2))?;
++        assert_eq!(first.stamp.unwrap().revision,second.stamp.unwrap().revision);
++        assert_ne!(first.stamp.unwrap().namespace,second.stamp.unwrap().namespace);
++        assert!(!Arc::ptr_eq(&first,&second));
++        Ok(())
++    }
++    #[test]
++    fn cheap_stamp_is_not_a_fresh_row_audit_and_expiry_forces_validation() -> Result<()> {
++        let (_owner,control,scope,project)=fixture()?;
++        let mut registry=ServiceRegistry::open(&control,Incarnation::from_bytes([74;16]))?;
++        registry.register(&project)?;
++        let mut first=scope.observe_cached(&control,None,Instant::now()+Duration::from_secs(2))?;
++        let db=rusqlite::Connection::open(control.join("service-1.4.sqlite3"))?;
++        db.execute("UPDATE projects SET payload=x'7b7d' WHERE binding=?1",[project.binding.to_string()])?;
++        let hit=scope.observe_cached(&control,Some(first.clone()),Instant::now()+Duration::from_secs(2))?;
++        assert!(Arc::ptr_eq(&first,&hit),"same stamp fast path performs no full project decode");
++        drop(hit);
++        Arc::get_mut(&mut first).context("observation unexpectedly shared")?.captured=Instant::now()-Duration::from_secs(5);
++        assert!(scope.observe_cached(&control,Some(first),Instant::now()+Duration::from_secs(2)).is_err(),
++            "expired snapshot must detect out-of-band malformed row instead of resetting its age");
++        Ok(())
++    }
++    #[test]
++    fn expired_admission_is_known_unsubmitted_and_creates_no_registry() -> Result<()> {
++        let (_owner,control,scope,_project)=fixture()?;
++        let error=scope.observe_cached(&control,None,Instant::now()).err().context("expired scope admitted")?;
++        assert!(error.downcast_ref::<airk_store::service::registry::SavedScopeExpired>().is_some());
++        assert!(fs::read_dir(control)?.next().is_none());
++        Ok(())
++    }
++    #[test]
++    fn contended_stamp_refuses_instead_of_serving_cached_scope_and_recovers() -> Result<()> {
++        let (_owner,control,scope,project)=fixture()?;
++        let mut registry=ServiceRegistry::open(&control,Incarnation::from_bytes([75;16]))?;
++        registry.register(&project)?;
++        let first=scope.observe_cached(&control,None,Instant::now()+Duration::from_secs(2))?;
++        let db=rusqlite::Connection::open(control.join("service-1.4.sqlite3"))?;
++        db.execute_batch("BEGIN EXCLUSIVE")?;
++        let blocked=scope.observe_cached(&control,Some(first.clone()),Instant::now()+Duration::from_millis(20));
++        db.execute_batch("ROLLBACK")?;
++        assert!(blocked.is_err(),"contended authentication must not substitute cached authority");
++        let recovered=scope.observe_cached(&control,Some(first.clone()),Instant::now()+Duration::from_secs(2))?;
++        assert!(Arc::ptr_eq(&first,&recovered));
++        assert_eq!(first.captured,recovered.captured);
++        Ok(())
++    }
++}
+--- a/crates/airk-cli/src/unified_mcp.rs
++++ b/crates/airk-cli/src/unified_mcp.rs
+@@ -300,13 +300,88 @@
+         }
+     }
+ }
++struct SourceLookupOwner {
++    closed: std::sync::atomic::AtomicBool,
++    permit: Arc<tokio::sync::Semaphore>,
++    worker: tokio::sync::Mutex<Option<tokio::task::JoinHandle<Result<Arc<crate::service_frontend::RootObservation>>>>>,
++}
++impl SourceLookupOwner {
++    fn new() -> Self {
++        Self { closed: std::sync::atomic::AtomicBool::new(false),
++            permit: Arc::new(tokio::sync::Semaphore::new(1)), worker: tokio::sync::Mutex::new(None) }
++    }
++    fn close(&self) {
++        self.closed.store(true,std::sync::atomic::Ordering::Release);
++        self.permit.close();
++    }
++    async fn run<F>(self: &Arc<Self>, deadline: Instant, work: F)
++        -> Result<Arc<crate::service_frontend::RootObservation>>
++    where F: FnOnce()->Result<Arc<crate::service_frontend::RootObservation>>+Send+'static {
++        let permit=tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), self.permit.clone().acquire_owned())
++            .await.map_err(|_| airk_store::service::registry::SavedScopeExpired)?
++            .map_err(|_| airk_store::service::registry::SavedScopeExpired)?;
++        if self.closed.load(std::sync::atomic::Ordering::Acquire) || Instant::now() >= deadline {
++            return Err(airk_store::service::registry::SavedScopeExpired.into());
++        }
++        let mut slot=tokio::time::timeout_at(tokio::time::Instant::from_std(deadline),self.worker.lock())
++            .await.map_err(|_|airk_store::service::registry::SavedScopeExpired)?;
++        // A cancelled caller leaves its actual handle in this owner. The permit
++        // is released only by that worker, so any previous handle is completed.
++        if let Some(previous)=slot.as_mut() {
++            let joined=previous.await.context("previous source lookup worker failed");
++            *slot=None;
++            drop(joined?);
++        }
++        if self.closed.load(std::sync::atomic::Ordering::Acquire) || Instant::now() >= deadline {
++            return Err(airk_store::service::registry::SavedScopeExpired.into());
++        }
++        let keep_owner=self.clone();
++        *slot=Some(tokio::task::spawn_blocking(move || {
++            let _owner=keep_owner;
++            let _permit=permit;
++            work()
++        }));
++        let result=slot.as_mut().expect("owned source lookup").await.context("source lookup worker failed");
++        *slot=None;
++        result?
++    }
++    async fn shutdown(&self)->Result<()> {
++        self.close();
++        let mut slot=self.worker.lock().await;
++        if let Some(worker)=slot.as_mut() {
++            let joined=worker.await.context("source lookup drain failed");
++            *slot=None;
++            // Metadata result belongs to its request. Cleanup still reports a
++            // worker panic; cancellation does not invent a replacement result.
++            drop(joined?);
++        }
++        Ok(())
++    }
++}
++impl Drop for SourceLookupOwner { fn drop(&mut self) { self.close(); } }
++
++#[derive(Default)]
++struct SourceBackendCache {
++    latest_sequence: Option<u64>,
++    current: Option<((ProjectBinding, airk_core::identity::Incarnation), Arc<crate::project_client::Backend>)>,
++}
++impl SourceBackendCache {
++    fn admit_sequence(&mut self, sequence: u64) -> bool {
++        if self.latest_sequence.is_some_and(|latest| sequence < latest) { return false; }
++        self.latest_sequence = Some(sequence);
++        true
++    }
++}
+ struct RootNative {
+     scope: crate::service_frontend::RootScope,
+     control: PathBuf,
+     install: PathBuf,
+     ready: Arc<RuntimeReadiness>,
+     client: std::sync::Mutex<airk_core::usage::ClientFamily>,
+-    backend: tokio::sync::Mutex<Option<(ProjectBinding, Arc<dyn RemoteTools>)>>,
++    sequence: std::sync::atomic::AtomicU64,
++    observation: std::sync::Mutex<Option<Arc<crate::service_frontend::RootObservation>>>,
++    lookup: Arc<SourceLookupOwner>,
++    backend: tokio::sync::Mutex<SourceBackendCache>,
+ }
+ impl RemoteTools for RootNative {
+     fn client(&self, client: airk_core::usage::ClientFamily) {
+@@ -315,39 +390,57 @@
+     fn call(&self, tool: String, arguments: Map<String, Value>) -> RemoteFuture<'_> {
+         Box::pin(async move {
+             self.ready.ensure(&self.install, &self.control).await?;
++            let sequence = self.sequence.fetch_update(
++                std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed,
++                |value| value.checked_add(1),
++            ).map_err(|_| anyhow::anyhow!("source observation sequence exhausted"))?;
+             let control = self.control.clone();
+             let scope = self.scope.clone();
+-            let observed = control.clone();
+-            let resolved = tokio::task::spawn_blocking(move || scope.resolve(&observed)).await??;
+-            let registration = match resolved {
++            let observed_control = control.clone();
++            let admission = Instant::now() + Duration::from_secs(2);
++            let candidate = self.observation.lock().unwrap_or_else(|error| error.into_inner()).clone();
++            let previous = candidate.clone();
++            let observed = match self.lookup.run(admission, move || scope.observe_cached(&observed_control, candidate, admission)).await {
++                Ok(observed) => observed,
++                Err(error) if airk_store::service::registry::source_scope_retryable(&error)
++                    => return Ok(crate::project_client::source_scope_superseded()),
++                Err(error) => return Err(error),
++            };
++            let source_cached = previous.as_ref().is_some_and(|old| Arc::ptr_eq(old, &observed));
++            let mut cached = self.backend.lock().await;
++            // An older snapshot cannot resurrect a backend/receipt namespace
++            // after a later request already admitted its replacement.
++            if Instant::now() >= admission || !observed.fresh_at(Instant::now()) || !cached.admit_sequence(sequence) {
++                return Ok(crate::project_client::source_scope_superseded());
++            }
++            *self.observation.lock().unwrap_or_else(|error| error.into_inner()) = Some(observed.clone());
++            let registration = match &observed.resolution {
+                 crate::service_frontend::RootResolution::Registered(registration) => registration,
+                 other => {
+-                    *self.backend.lock().await = None;
+-                    let (code, state, message) = root_failure(other);
++                    cached.current = None;
++                    let (code, state, message) = root_failure(match other {
++                        crate::service_frontend::RootResolution::Missing => crate::service_frontend::RootResolution::Missing,
++                        crate::service_frontend::RootResolution::Removed => crate::service_frontend::RootResolution::Removed,
++                        crate::service_frontend::RootResolution::Ambiguous => crate::service_frontend::RootResolution::Ambiguous,
++                        _ => unreachable!(),
++                    });
+                     return Ok(if tool == "airk_status" {
+                         airk_mcp::unified::success(
+-                            json!({"version":env!("CARGO_PKG_VERSION"),"health":"needs_attention","index_state":"unavailable","files":null,"chunks":null,"publication":null,"registration_state":state,"source_root":self.scope.root,"index_error":{"code":code,"message":message}}),
++                            json!({"version":env!("CARGO_PKG_VERSION"),"health":"needs_attention","index_state":"unavailable","files":null,"chunks":null,"publication":null,"registration_state":state,"source_root":self.scope.root,"observed_unix_ms":observed.observed_unix_ms,"cache_age_ms":observed.age_ms(),"cached":source_cached,"index_error":{"code":code,"message":message}}),
+                         )
+-                    } else {
+-                        airk_mcp::unified::failure(code, message)
+-                    });
++                    } else { airk_mcp::unified::failure(code, message) });
+                 }
+             };
+-            let backend = {
+-                let mut cached = self.backend.lock().await;
+-                if cached
+-                    .as_ref()
+-                    .is_none_or(|(binding, _)| *binding != registration.binding)
+-                {
+-                    *cached = Some((
+-                        registration.binding,
+-                        crate::project_client::tools(control, registration.binding),
+-                    ));
+-                }
+-                cached.as_ref().unwrap().1.clone()
+-            };
++            let fence = observed.fence.context("registered source observation has no fence")?;
++            ensure!(fence.project == registration.binding, "crossed source observation");
++            let key = (registration.binding, fence.namespace);
++            if cached.current.as_ref().is_none_or(|(current, _)| *current != key) {
++                cached.current = Some((key, crate::project_client::source_tools(control, registration.binding)));
++            }
++            let backend = cached.current.as_ref().unwrap().1.clone();
++            drop(cached);
+             backend.client(*self.client.lock().unwrap());
+-            backend.call(tool, arguments).await
++            backend.call_observed_until(tool, arguments, fence, observed.expires_at()).await
+         })
+     }
+ }
+@@ -577,9 +670,13 @@
+         .iter()
+         .map(|scope| (scope.key.clone(), scope.clone()))
+         .collect();
++    let mut lookups=Vec::with_capacity(scopes.len());
+     let projects = scopes
+         .into_iter()
+-        .map(|scope| Project {
++        .map(|scope| {
++            let lookup=Arc::new(SourceLookupOwner::new());
++            lookups.push(lookup.clone());
++            Project {
+             binding: scope.key.clone(),
+             name: scope.root.to_string_lossy().into_owned(),
+             collection: scope
+@@ -592,9 +689,12 @@
+                 install: install.clone(),
+                 ready: ready.clone(),
+                 client: std::sync::Mutex::new(airk_core::usage::ClientFamily::Unknown),
+-                backend: tokio::sync::Mutex::new(None),
++                sequence: std::sync::atomic::AtomicU64::new(0),
++                observation: std::sync::Mutex::new(None),
++                lookup,
++                backend: tokio::sync::Mutex::new(SourceBackendCache::default()),
+             }),
+-        })
++        }})
+         .collect();
+     let explorer = descriptor.map(|descriptor| {
+         Arc::new(Explorer {
+@@ -607,12 +707,18 @@
+     let backend = Unified::new(projects, (!no_default).then_some(primary), explorer)?;
+     crate::client_owner::watch()?;
+     let close = ready.clone();
++    let lookup_close=lookups.clone();
+     let served = airk_mcp::remote::serve_with_input_lifecycle(
+         Arc::new(backend),
+-        Arc::new(move || close.close_admission()),
++        Arc::new(move || { close.close_admission(); for lookup in &lookup_close { lookup.close(); } }),
+     )
+     .await;
+-    let cleanup = ready.shutdown().await;
++    let mut cleanup = ready.shutdown().await;
++    for lookup in &lookups {
++        if let Err(error)=lookup.shutdown().await {
++            cleanup=Err(match cleanup { Ok(())=>error, Err(primary)=>primary.context(format!("source lookup cleanup also failed: {error:#}")) });
++        }
++    }
+     match (served, cleanup) {
+         (Err(error), Err(cleanup)) => Err(error.context(format!(
+             "runtime readiness cleanup also failed: {cleanup:#}"
+@@ -1115,3 +1221,83 @@
+         Ok(())
+     }
+ }
++
++#[cfg(test)]
++mod source_backend_sequence_tests {
++    use super::*;
++
++    #[test]
++    fn old_namespace_observation_cannot_repopulate_replaced_backend() {
++        let project = "ab".repeat(32).parse().unwrap();
++        let old_namespace = airk_core::identity::Incarnation::from_bytes([1; 16]);
++        let new_namespace = airk_core::identity::Incarnation::from_bytes([2; 16]);
++        let mut cache = SourceBackendCache::default();
++        assert!(cache.admit_sequence(1));
++        cache.current = Some(((project, old_namespace), crate::project_client::source_tools(PathBuf::new(), project)));
++        assert!(cache.admit_sequence(3));
++        let replacement = crate::project_client::source_tools(PathBuf::new(), project);
++        cache.current = Some(((project, new_namespace), replacement.clone()));
++        // Snapshot 2 was taken in namespace 1, but resumes after namespace 2 won.
++        assert!(!cache.admit_sequence(2));
++        let (key, retained) = cache.current.as_ref().unwrap();
++        assert_eq!(*key, (project, new_namespace));
++        assert!(Arc::ptr_eq(retained, &replacement));
++    }
++}
++
++#[cfg(test)]
++mod source_lookup_ownership_tests {
++    use super::*;
++    use std::sync::atomic::{AtomicUsize,Ordering};
++    #[tokio::test(flavor="current_thread")]
++    async fn four_cancelled_callers_cannot_release_blocked_lookup_or_accumulate_workers() -> Result<()> {
++        let temporary=tempfile::tempdir()?;
++        let scope=crate::service_frontend::RootScope::new(temporary.path(),None)?;
++        let control=temporary.path().join("control"); std::fs::create_dir(&control)?;
++        let owner=Arc::new(SourceLookupOwner::new());
++        let calls=Arc::new(AtomicUsize::new(0));
++        let (entered,started)=tokio::sync::oneshot::channel();
++        let (release,held)=std::sync::mpsc::channel();
++        let request_owner=owner.clone();let counted=calls.clone();let root=scope.clone();let path=control.clone();
++        let first=tokio::spawn(async move {
++            request_owner.run(Instant::now()+Duration::from_secs(30),move || {
++                counted.fetch_add(1,Ordering::SeqCst);let _=entered.send(());
++                held.recv()?;
++                Ok(Arc::new(root.observe(&path)?))
++            }).await
++        });
++        started.await?;
++        let mut requests=vec![first];
++        for _ in 0..3 {
++            let request_owner=owner.clone();let counted=calls.clone();let root=scope.clone();let path=control.clone();
++            requests.push(tokio::spawn(async move {
++                request_owner.run(Instant::now()+Duration::from_secs(30),move || {
++                    counted.fetch_add(1,Ordering::SeqCst);Ok(Arc::new(root.observe(&path)?))
++                }).await
++            }));
++        }
++        tokio::task::yield_now().await;
++        for request in &requests { request.abort(); }
++        for request in requests { assert!(matches!(request.await,Err(error) if error.is_cancelled())); }
++        assert_eq!(calls.load(Ordering::SeqCst),1);
++        assert_eq!(owner.permit.available_permits(),0,"caller Drop cannot release actual worker admission");
++        assert!(owner.worker.lock().await.as_ref().is_some_and(|worker|!worker.is_finished()));
++        let root=scope.clone();let path=control.clone();
++        assert!(owner.run(Instant::now(),move || Ok(Arc::new(root.observe(&path)?))).await.is_err());
++        let mut drain=Box::pin(owner.shutdown());
++        std::future::poll_fn(|cx| {
++            assert!(std::future::Future::poll(drain.as_mut(),cx).is_pending());
++            std::task::Poll::Ready(())
++        }).await;
++        drop(drain);
++        assert!(owner.worker.lock().await.is_some(),"cancelled drain retains actual handle");
++        release.send(())?;
++        owner.shutdown().await?;
++        assert!(owner.worker.lock().await.is_none());
++        assert_eq!(calls.load(Ordering::SeqCst),1);
++        assert!(std::fs::read_dir(&control)?.next().is_none());
++        let path=control.clone();
++        assert!(owner.run(Instant::now()+Duration::from_secs(2),move || Ok(Arc::new(scope.observe(&path)?))).await.is_err());
++        Ok(())
++    }
++}
+--- a/crates/airk-store/src/service_registry.rs
++++ b/crates/airk-store/src/service_registry.rs
+@@ -20,6 +20,10 @@
+ const APPLICATION: i64 = 0x41535256;
+ const MAX_DATABASE_BYTES: u64 = 32 * 1024 * 1024;
+ pub const MAX_PROJECTS: usize = 1024;
++
++#[path = "service_scope.rs"]
++mod scope;
++pub use scope::{SavedScopeObservation, SavedScopeResolution, SavedScopeStamp, SavedScopeExpired, source_scope_retryable};
+ 
+ /// Only callers that have established a read-only operation may retry this failure.
+ /// Corruption, I/O, validation and missing records remain ordinary failures.
+@@ -246,6 +250,10 @@
+     /// Observe only an existing completed registry. Never initialize, migrate,
+     /// prune receipts, or acquire service ownership for down-service diagnostics.
+     pub fn open_saved(root: &Path) -> Result<Self> {
++        Self::open_saved_before(root, None)
++    }
++    pub fn open_saved_before(root: &Path, deadline: Option<std::time::Instant>) -> Result<Self> {
++        scope::scope_remaining(deadline)?;
+         let root = root.canonicalize()?;
+         let namespace = retained_namespace(&root)?;
+         let path = root.join("service-1.4.sqlite3");
+@@ -259,10 +267,12 @@
+         }
+         let connection =
+             Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+-        connection.busy_timeout(Duration::from_secs(2))?;
++        connection.busy_timeout(scope::scope_remaining(deadline)?)?;
+         connection.execute_batch("PRAGMA query_only=ON; PRAGMA cache_size=-8192;")?;
++        connection.busy_timeout(scope::scope_remaining(deadline)?)?;
+         let application: i64 =
+             connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
++        connection.busy_timeout(scope::scope_remaining(deadline)?)?;
+         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+         ensure!(
+             application == APPLICATION && (2..=10).contains(&version),
+@@ -274,10 +284,12 @@
+             registration_state: version >= 5,
+             watch_traversal_state: version >= 7,
+         };
++        registry.connection.busy_timeout(scope::scope_remaining(deadline)?)?;
+         ensure!(
+             registry.incarnation()? == namespace,
+             "service registry ownership mismatch"
+         );
++        scope::scope_remaining(deadline)?;
+         Ok(registry)
+     }
+ 
+@@ -757,9 +769,7 @@
+             )?;
+             bump(&transaction)?;
+         }
+-        if removed && !newly_active {
+-            bump(&transaction)?;
+-        }
++        if removed && !newly_active { bump(&transaction)?; }
+         if newly_active && let Some(enabled) = setup_watch {
+             watch::ensure_row(&transaction, registration.binding)?;
+             transaction.execute("UPDATE service_watch SET enabled=?1,configuration_epoch=configuration_epoch+1,requested=requested+CASE WHEN ?1 THEN 1 ELSE 0 END,attempts=0,next_ms=0,blocked_revision=NULL,backend=CASE WHEN ?1 THEN 'periodic_fallback' ELSE 'disabled' END,native_roots=0 WHERE project=?2",params![enabled,registration.binding.to_string()])?;
+@@ -1421,7 +1431,6 @@
+         assert!(ledger.get(one.binding)?.paused);
+         Ok(())
+     }
+-
+ #[test]
+ fn active_registration_clearing_tombstone_must_advance_registry_revision() -> Result<()> {
+     let temporary = tempfile::tempdir()?;
+--- /dev/null
++++ b/crates/airk-store/src/service_scope.rs
+@@ -0,0 +1,311 @@
++// SPDX-License-Identifier: Apache-2.0
++//! One bounded saved-registry scope observation; no index/source access or migration.
++use super::*;
++
++/// Owned metadata from one SQLite read snapshot, not execution authorization.
++pub struct SavedScopeObservation {
++    pub namespace: Incarnation,
++    pub revision: u64,
++    pub resolution: SavedScopeResolution,
++}
++
++pub enum SavedScopeResolution {
++    Registered(Box<RegisteredProject>),
++    Missing,
++    Removed,
++    Ambiguous,
++}
++
++impl ServiceRegistry {
++    /// Match with native Path equality, including saved historical root spelling.
++    /// Active rows win before inactive rows/history; validate all visited rows as
++    /// the existing paginated resolver does. This is a scan, not an indexed lookup.
++    pub fn observe_source_scope(
++        &mut self,
++        root: &Path,
++        collection: Option<&str>,
++    ) -> Result<SavedScopeObservation> {
++        self.observe_source_scope_before(root, collection, None)
++    }
++    pub fn observe_source_scope_before(&mut self, root: &Path, collection: Option<&str>,
++        deadline: Option<std::time::Instant>) -> Result<SavedScopeObservation> {
++        self.connection.busy_timeout(scope_remaining(deadline)?)?;
++        let registration_state = self.registration_state;
++        let transaction = self.connection.transaction()?;
++        let (namespace, revision): (String, i64) = transaction.query_row(
++            "SELECT incarnation,revision FROM service_meta WHERE id=1", [],
++            |row| Ok((row.get(0)?, row.get(1)?)),
++        )?;
++        let namespace = namespace.parse()?;
++        let revision = u64::try_from(revision).context("invalid service registry revision")?;
++        let mut seen = 0usize;
++        for inactive in [false, true] {
++            scope_remaining(deadline)?;
++            let sql = if inactive && registration_state {
++                "SELECT substr(payload,1,20481),epoch,paused,binding FROM projects WHERE registered=0 ORDER BY binding"
++            } else if inactive {
++                "SELECT substr(payload,1,20481),epoch,paused,binding FROM projects WHERE 0 ORDER BY binding"
++            } else if registration_state {
++                "SELECT substr(payload,1,20481),epoch,paused,binding FROM projects WHERE registered=1 ORDER BY binding"
++            } else {
++                "SELECT substr(payload,1,20481),epoch,paused,binding FROM projects ORDER BY binding"
++            };
++            let mut statement = transaction.prepare(sql)?;
++            let mut rows = statement.query([])?;
++            let mut first = None;
++            let mut matching = 0usize;
++            while let Some(row) = rows.next()? {
++                scope_remaining(deadline)?;
++                let (payload, epoch, paused) = project_row(row)?;
++                let project = decode(&payload, epoch, paused)?;
++                let binding: String = row.get(3)?;
++                ensure!(binding == project.registration.binding.to_string(), "foreign service registration");
++                seen += 1;
++                ensure!(seen <= MAX_PROJECTS, "configured source lookup exceeds registry bound");
++                if Path::new(&project.registration.root) == root
++                    && collection.is_none_or(|name| name == project.registration.collection)
++                {
++                    matching += 1;
++                    if first.is_none() {
++                        first = Some(project);
++                    }
++                }
++            }
++            // Continue validating every row in this role even after ambiguity.
++            // Do not inspect inactive rows if any active registration matched.
++            if matching != 0 {
++                let resolution = if inactive {
++                    SavedScopeResolution::Removed
++                } else if matching == 1 {
++                    SavedScopeResolution::Registered(Box::new(first.expect("one matching project")))
++                } else {
++                    SavedScopeResolution::Ambiguous
++                };
++                scope_remaining(deadline)?;
++                return Ok(SavedScopeObservation { namespace, revision, resolution });
++            }
++        }
++        // Legacy saved formats may have no removal-history table. Preserve the
++        // existing root-only historical tombstone even with a collection filter.
++        let root_text = root.to_str().context("non-UTF-8 configured source")?;
++        let present: bool = transaction.query_row(
++            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name='service_removed_projects' AND type='table')",
++            [], |row| row.get(0),
++        )?;
++        let removed = present && transaction.query_row(
++            "SELECT EXISTS(SELECT 1 FROM service_removed_projects WHERE root_identity=?1)",
++            [super::project_removal::removed_root_identity(root_text).to_string()],
++            |row| row.get::<_, bool>(0),
++        )?;
++        scope_remaining(deadline)?;
++        Ok(SavedScopeObservation {
++            namespace, revision,
++            resolution: if removed { SavedScopeResolution::Removed } else { SavedScopeResolution::Missing },
++        })
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn project(root: &str, data: &str, collection: &str) -> Result<ProjectRegistration> {
++        ProjectRegistration::new(root.into(), data.into(), collection.into())
++    }
++
++    #[test]
++    fn exact_scope_keeps_active_ambiguity_pause_and_collection_precedence() -> Result<()> {
++        let directory = tempfile::tempdir()?;
++        let namespace = Incarnation::from_bytes([31; 16]);
++        let mut registry = ServiceRegistry::open(directory.path(), namespace)?;
++        let first = project("/fictional/source", "/derived/first", "first")?;
++        let second = project("/fictional/source", "/derived/second", "second")?;
++        for row in [&first, &second] { registry.register(row)?; }
++        registry.pause(first.binding, true)?;
++        assert!(matches!(registry.observe_source_scope(Path::new(&first.root), None)?.resolution, SavedScopeResolution::Ambiguous));
++        let observed = registry.observe_source_scope(Path::new(&first.root), Some("first"))?;
++        assert_eq!(observed.namespace, namespace);
++        assert_eq!(observed.revision, registry.list(None, None, 32)?.revision);
++        let SavedScopeResolution::Registered(found) = observed.resolution else { anyhow::bail!("active filtered registration missing") };
++        assert_eq!(found.registration, first);
++        assert!(found.paused);
++        assert_eq!(found.fencing_generation, registry.get(first.binding)?.fencing_generation);
++        registry.connection.execute("UPDATE projects SET registered=0,paused=1 WHERE binding=?1", [second.binding.to_string()])?;
++        assert!(matches!(registry.observe_source_scope(Path::new(&first.root), None)?.resolution, SavedScopeResolution::Registered(_)));
++        assert!(matches!(registry.observe_source_scope(Path::new(&first.root), Some("second"))?.resolution, SavedScopeResolution::Removed));
++        Ok(())
++    }
++
++    #[test]
++    fn exact_scope_preserves_native_path_equivalence_without_filesystem_reads() -> Result<()> {
++        let directory = tempfile::tempdir()?;
++        let mut registry = ServiceRegistry::open(directory.path(), Incarnation::from_bytes([32; 16]))?;
++        let saved = project("/offline/source/", "/derived/offline", "offline")?;
++        registry.register(&saved)?;
++        for query in ["/offline/source", "/offline//source/.", "/Offline/source", "/offline/other"] {
++            let equal = Path::new(&saved.root) == Path::new(query);
++            assert_eq!(matches!(registry.observe_source_scope(Path::new(query), None)?.resolution, SavedScopeResolution::Registered(_)), equal);
++        }
++        #[cfg(windows)]
++        {
++            let windows = project(r"C:\offline\source", "/derived/windows", "windows")?;
++            registry.register(&windows)?;
++            for query in [r"C:/offline/source", r"C:\offline\source\", r"c:\offline\source", r"\\?\C:\offline\source"] {
++                assert_eq!(matches!(registry.observe_source_scope(Path::new(query), None)?.resolution, SavedScopeResolution::Registered(_)), Path::new(&windows.root) == Path::new(query));
++            }
++        }
++        Ok(())
++    }
++
++    #[test]
++    fn exact_scope_keeps_root_history_even_with_different_requested_collection() -> Result<()> {
++        let directory = tempfile::tempdir()?;
++        let mut registry = ServiceRegistry::open(directory.path(), Incarnation::from_bytes([33; 16]))?;
++        let root = "/fictional/removed";
++        registry.connection.execute("INSERT INTO service_removed_projects(binding,root_identity,removed_ms) VALUES(?1,?2,0)", params!["a".repeat(64), super::super::project_removal::removed_root_identity(root).to_string()])?;
++        assert!(matches!(registry.observe_source_scope(Path::new(root), Some("different"))?.resolution, SavedScopeResolution::Removed));
++        let live = project(root, "/derived/readded", "live")?;
++        registry.register(&live)?;
++        assert!(matches!(registry.observe_source_scope(Path::new(root), None)?.resolution, SavedScopeResolution::Registered(_)));
++        Ok(())
++    }
++
++    #[test]
++    fn exact_scope_retains_unrelated_record_corruption_detection() -> Result<()> {
++        let directory = tempfile::tempdir()?;
++        let mut registry = ServiceRegistry::open(directory.path(), Incarnation::from_bytes([34; 16]))?;
++        let wanted = project("/fictional/wanted", "/derived/wanted", "wanted")?;
++        let unrelated = project("/fictional/unrelated", "/derived/unrelated", "unrelated")?;
++        registry.register(&wanted)?;registry.register(&unrelated)?;
++        registry.connection.execute("UPDATE projects SET payload=?1 WHERE binding=?2", params![b"invalid registration".as_slice(), unrelated.binding.to_string()])?;
++        assert!(registry.observe_source_scope(Path::new(&wanted.root), None).is_err());
++        Ok(())
++    }
++
++    #[test]
++    fn exact_scope_preserves_role_aware_1024_bound() -> Result<()> {
++        let directory = tempfile::tempdir()?;
++        let mut registry = ServiceRegistry::open(directory.path(), Incarnation::from_bytes([35; 16]))?;
++        let wanted = project("/fictional/wanted", "/derived/wanted", "wanted")?;
++        registry.register(&wanted)?;
++        {
++            let transaction = registry.connection.transaction()?;
++            for index in 0..MAX_PROJECTS {
++                let row = project(&format!("/fictional/unrelated-{index}"), "/derived/unrelated", "other")?;
++                transaction.execute("INSERT INTO projects(binding,payload,epoch,paused,registered) VALUES(?1,?2,0,0,1)",
++                    params![row.binding.to_string(), serde_json::to_vec(&row)?])?;
++            }
++            transaction.commit()?;
++        }
++        assert!(registry.observe_source_scope(Path::new(&wanted.root), None).is_err(), "active match cannot hide too many active rows");
++        registry.connection.execute("UPDATE projects SET registered=0,paused=1 WHERE binding<>?1", [wanted.binding.to_string()])?;
++        assert!(matches!(registry.observe_source_scope(Path::new(&wanted.root), None)?.resolution, SavedScopeResolution::Registered(_)), "inactive rows must not consume a successful active role's budget");
++        assert!(registry.observe_source_scope(Path::new("/fictional/missing"), None).is_err(), "a missing active match must charge both roles");
++        Ok(())
++    }
++
++    #[test]
++    fn exact_scope_saved_formats_are_read_only_and_preserve_namespace_and_pause() -> Result<()> {
++        for version in [2i64, 4, 5, 6, 10] {
++            let directory = tempfile::tempdir()?;
++            let namespace = Incarnation::from_bytes([36; 16]);
++            let wanted = project("/fictional/legacy", "/derived/legacy", "legacy")?;
++            let mut registry = ServiceRegistry::open(directory.path(), namespace)?;
++            registry.register(&wanted)?;
++            registry.pause(wanted.binding, true)?;
++            if version < 7 { registry.connection.execute_batch("DROP TABLE service_watch_traversal;")?; }
++            if version < 6 { registry.connection.execute_batch("ALTER TABLE projects DROP COLUMN cleanup_guard;")?; }
++            if version < 5 { registry.connection.execute_batch("ALTER TABLE projects DROP COLUMN registered;")?; }
++            if version < 10 { registry.connection.execute_batch("DROP TABLE service_removed_projects;")?; }
++            registry.connection.pragma_update(None, "user_version", version)?;
++            drop(registry);
++            let path = directory.path().join("service-1.4.sqlite3");
++            let before = fs::read(&path)?;
++            let mut saved = ServiceRegistry::open_saved(directory.path())?;
++            let observed = saved.observe_source_scope(Path::new(&wanted.root), None)?;
++            assert_eq!(observed.namespace, namespace);
++            let SavedScopeResolution::Registered(found) = observed.resolution else { anyhow::bail!("legacy active registration missing") };
++            assert_eq!(found.registration, wanted);assert!(found.paused);
++            assert!(matches!(saved.observe_source_scope(Path::new("/fictional/missing"), None)?.resolution, SavedScopeResolution::Missing));
++            let saved_version: i64 = saved.connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
++            assert_eq!(saved_version, version);
++            drop(saved);
++            assert_eq!(fs::read(path)?, before, "saved observation may not migrate or write");
++        }
++        Ok(())
++    }
++
++
++#[test]
++fn idempotent_active_registration_clearing_same_root_tombstone_advances_scope_revision() -> Result<()> {
++    let temporary = tempfile::tempdir()?;
++    let base = temporary.path().canonicalize()?;
++    let control = base.join("control");
++    let source = base.join("source");
++    let first_data = base.join("first-data");
++    let second_data = base.join("second-data");
++    for path in [&control, &source, &first_data, &second_data] { fs::create_dir(path)?; }
++    let mut registry = ServiceRegistry::open(&control, Incarnation::from_bytes([61;16]))?;
++    let first = ProjectRegistration::new(source.to_str().unwrap().into(), first_data.to_str().unwrap().into(), "first".into())?;
++    let second = ProjectRegistration::new(source.to_str().unwrap().into(), second_data.to_str().unwrap().into(), "second".into())?;
++    registry.register(&first)?;
++    registry.register(&second)?;
++    let epoch = registry.get(second.binding)?.fencing_generation;
++    // A real source disappearance may be processed for one collection before
++    // its sibling; retirement consumes that source child's fenced observation.
++    fs::remove_dir(&source)?;
++    assert!(registry.retire_missing_source(second.binding, epoch, 0)?);
++    assert!(registry.purge_removed_project_turn(second.binding)?);
++    assert!(registry.source_was_removed(&first.root)?);
++    let before = registry.observe_source_scope(&source, Some("second"))?;
++    assert!(matches!(before.resolution, SavedScopeResolution::Removed));
++    fs::create_dir(&source)?;
++    registry.register(&first)?;
++    let after = registry.observe_source_scope(&source, Some("second"))?;
++    assert!(matches!(after.resolution, SavedScopeResolution::Missing));
++    assert_eq!(after.namespace, before.namespace);
++    assert_eq!(after.revision, before.revision + 1,
++        "negative resolution changed without exactly one revision fence");
++    registry.register(&first)?;
++    assert_eq!(registry.observe_source_scope(&source, Some("second"))?.revision, after.revision,
++        "true idempotent registration must remain a no-op");
++    Ok(())
++}
++
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct SavedScopeStamp {
++    pub namespace: Incarnation,
++    pub revision: u64,
++}
++#[derive(Debug)]
++pub struct SavedScopeExpired;
++impl std::fmt::Display for SavedScopeExpired {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("source scope observation admission expired") }
++}
++impl std::error::Error for SavedScopeExpired {}
++/// Only pre-query metadata admission failures, never uncertain query outcomes.
++pub fn source_scope_retryable(error: &anyhow::Error) -> bool {
++    error.downcast_ref::<SavedScopeExpired>().is_some()
++        || error.downcast_ref::<rusqlite::Error>().is_some_and(|error| matches!(error,
++            rusqlite::Error::SqliteFailure(failure, _) if matches!(failure.code,
++                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)))
++}
++pub(super) fn scope_remaining(deadline: Option<std::time::Instant>) -> Result<Duration> {
++    let remaining = deadline.map_or(Duration::from_secs(2), |until| until.saturating_duration_since(std::time::Instant::now()));
++    if remaining.is_zero() { return Err(SavedScopeExpired.into()); }
++    Ok(remaining.min(Duration::from_secs(2)))
++}
++impl ServiceRegistry {
++    /// One authenticated scalar row, zero project payload decodes. Not a deep audit.
++    pub fn source_scope_stamp(&self, deadline: Option<std::time::Instant>) -> Result<SavedScopeStamp> {
++        self.connection.busy_timeout(scope_remaining(deadline)?)?;
++        let (namespace, revision): (String,i64) = self.connection.query_row(
++            "SELECT incarnation,revision FROM service_meta WHERE id=1", [], |row| Ok((row.get(0)?,row.get(1)?)))?;
++        let stamp = SavedScopeStamp { namespace: namespace.parse()?, revision: u64::try_from(revision)? };
++        ensure!(stamp.namespace == retained_namespace(&self.root)?, "source stamp owner changed");
++        scope_remaining(deadline)?;
++        Ok(stamp)
++    }
++}

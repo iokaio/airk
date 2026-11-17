@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: Apache-2.0
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {readFile} from 'node:fs/promises';
+import {resolve} from 'node:path';
+import {build} from '../../../packages/admin/node_modules/esbuild/lib/main.js';
+const source=await readFile(new URL('./arbiter.tsx',import.meta.url),'utf8');
+const result=await build({stdin:{contents:"export {createArbiterWorkspace,stageProfileTitle} from './arbiter';",resolveDir:resolve('packages/admin/src'),loader:'tsx'},bundle:true,write:false,platform:'node',format:'esm',jsx:'automatic',jsxImportSource:'preact',plugins:[{name:'prepared-stage-ui',setup(plugin){plugin.onLoad({filter:/[\\/]arbiter\.tsx$/},()=>({contents:source,loader:'tsx'}));}}]});
+const {createArbiterWorkspace,stageProfileTitle}=await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].contents).toString('base64')}`);
+function fixture(){let session={},visible=true;const calls=[];let reply=async()=>({kind:'no_session'});const owner=createArbiterWorkspace({session:()=>session,visible:()=>visible,run:async(op,body)=>{calls.push({op,body});return reply();},changed(){}});return{owner,calls,session(value){session=value;owner.sync();},visible(value){visible=value;},reply(value){reply=value;}};}
+test('new stage presentation reads no status, downloads no model and assumes no profile or enrollment',()=>{const f=fixture();assert.deepEqual(f.calls,[]);assert.equal(f.owner.view().observation,null);assert.equal(f.owner.view().drafts,null);assert.equal(f.owner.view().originalRequest,null);});
+test('hidden or missing management session cannot dispatch a status request',async()=>{const f=fixture();f.visible(false);await f.owner.readStatus();f.visible(true);f.session(null);await f.owner.readStatus();assert.deepEqual(f.calls,[]);});
+test('held status response cannot publish into a replaced management session',async()=>{const f=fixture();let complete;f.reply(()=>new Promise(resolve=>complete=resolve));const pending=f.owner.readStatus();f.session({replacement:true});complete({kind:'transport',status:null,message:'old failure'});await pending;assert.equal(f.calls.length,1);assert.equal(f.owner.view().outcome.phase,'idle');assert.equal(f.owner.view().originalRequest,null);assert.equal(f.owner.view().observation,null);});
+test('stage labels admit only their approved model role and leave retired/foreign choices unsupported',()=>{assert.equal(stageProfileTitle('focus','arbiter-focus-qwen3-reranker-06b'),'Arbiter Focus');assert.equal(stageProfileTitle('context','arbiter-context-qwen3-17b'),'Arbiter Context — Compact');assert.equal(stageProfileTitle('context','arbiter-context-qwen3-4b'),'Arbiter Context — Large');for(const [stage,model]of[['context','arbiter-focus-qwen3-reranker-06b'],['focus','arbiter-context-qwen3-17b'],['context','arbiter-small-intern-08b']])assert.equal(stageProfileTitle(stage,model),null);});

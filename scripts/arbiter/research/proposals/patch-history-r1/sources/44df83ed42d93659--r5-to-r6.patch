@@ -1,0 +1,11 @@
+--- service-consumer-r5/lifecycle.rs.proposed
++++ service-consumer-r6/lifecycle.rs.proposed
+@@ -936,7 +936,7 @@
+                 } else if active == Some(profile.manifest) {
+                     (Availability::Requested,"Previous native session is retained but is not admitted for the current enabled selection.".into())
+                 } else {
+-                    match self.assets.phase(profile)?{Some(Phase::Ready)=>(Availability::Requested,"Completed provisioning receipt retained; native activation requires re-verification and the selected enabled choice.".into()),Some(Phase::Downloading)|Some(Phase::Failed)|Some(Phase::Canceled)|Some(Phase::Removing)=>(Availability::Failed,"Prior asset operation did not complete. Explicit recovery is required; no download was resumed.".into()),_=>(Availability::MissingAssets,"Explicit provisioning is required.".into())}
++                    match self.assets.phase(profile)?{Some(Phase::Ready)=>(Availability::Requested,"Completed provisioning receipt retained; native activation requires re-verification and the selected enabled choice.".into()),Some(Phase::Downloading)|Some(Phase::Failed)|Some(Phase::Canceled)=>(Availability::Failed,"Asset acquisition did not complete. Use a new explicit Provision or verified local Import; Recover does not download.".into()),Some(Phase::Removing)=>(Availability::Failed,"An unfinished asset removal requires local Recover; no download was resumed.".into()),_=>(Availability::MissingAssets,"Explicit provisioning is required.".into())}
+                 };
+                 ProfileStatus {
+                     cpu_fit: profile.cpu_fit.clone(),

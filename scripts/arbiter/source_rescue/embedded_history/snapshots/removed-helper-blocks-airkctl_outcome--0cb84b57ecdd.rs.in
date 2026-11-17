@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: Apache-2.0
+/// The `airkctl` command line run in process (`airkctl::cli::run`, the code its
+/// `main` runs) with `AIRK_MCP_RESPONSE_MODE=full`, as the fixture commands set.
+/// Its output is compared in canonical space, as the recorded `airk` output.
+fn airkctl_outcome(parity: &Parity, arguments: &[&str]) -> (Option<i32>, Option<Value>, String) {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut io = airkctl::cli::Io {
+        read_attempt: None,
+        stdin: &mut std::io::empty(),
+        stdout: &mut stdout,
+        stderr: &mut stderr,
+        full_responses: true,
+        window: None,
+    };
+    let line = std::iter::once("airkctl")
+        .chain(arguments.iter().copied())
+        .map(std::ffi::OsString::from)
+        .collect();
+    let code = airkctl::cli::run(line, &mut io);
+    let stdout = parity.canonical(&String::from_utf8_lossy(&stdout));
+    let stderr = parity.canonical(&String::from_utf8_lossy(&stderr));
+    line_outcome(
+        Some(i32::from(code)),
+        stdout.as_bytes(),
+        stderr.as_bytes(),
+        "airkctl: ",
+    )
+}

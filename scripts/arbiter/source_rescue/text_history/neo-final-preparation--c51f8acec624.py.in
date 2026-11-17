@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: Apache-2.0
+
+import hashlib,json,os,platform,resource,shutil,socket,subprocess
+from pathlib import Path
+assert socket.gethostname()=='Tylers-MacBook-Neo.local' and os.getuid()==501 and platform.machine()=='arm64'
+root=Path('/Users/tylerjensen/airk-builds/one-airk-static-ort-1814-1794087059')
+tools=Path('/Users/tylerjensen/airk-builds/timing-1.6.4.PutU1P')
+env=dict(os.environ);env['PATH']=str(Path.home()/'.cargo/bin')+':'+str(tools/'tools/node-v24.15.0-darwin-arm64/bin')+':'+env['PATH']
+report={'schema':1,'host':'192.168.68.61','hostname':socket.gethostname(),'uid':os.getuid(),'machine':platform.machine(),'macos':platform.mac_ver()[0],'free_bytes':shutil.disk_usage(root).free,'cpu_count':os.cpu_count(),'nofile':list(resource.getrlimit(resource.RLIMIT_NOFILE)),'commands':[],'read_only':True,'cargo_builds':False}
+def run(name,argv):
+ p=subprocess.run(argv,capture_output=True,text=True,env=env,timeout=30)
+ report['commands'].append({'name':name,'argv':argv,'exit_code':p.returncode,'stdout':p.stdout[-4096:],'stderr':p.stderr[-2048:]})
+for name,argv in [('rustc',['rustc','--version','--verbose']),('cargo',['cargo','--version']),('nextest',['cargo','nextest','--version']),('targets',['rustup','target','list','--installed']),('clang',['/usr/bin/clang','--version']),('sdk',['/usr/bin/xcrun','--sdk','macosx','--show-sdk-version']),('node',[str(tools/'tools/node-v24.15.0-darwin-arm64/bin/node'),'--version']),('npm',[str(tools/'tools/node-v24.15.0-darwin-arm64/bin/npm'),'--version']),('console_uid',['/usr/bin/stat','-f','%u','/dev/console'])]:
+ try:run(name,argv)
+ except Exception as e:report['commands'].append({'name':name,'error':str(e)})
+p=subprocess.run(['/bin/launchctl','print','gui/501'],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True,timeout=10)
+report['same_uid_gui_domain_available']=p.returncode==0
+keychain=Path.home()/'Library/Keychains/airk-signing.keychain-db'
+p=subprocess.run(['/usr/bin/security','find-identity','-v','-p','codesigning',str(keychain)],capture_output=True,text=True,timeout=10)
+report['signing']={'keychain_exists':keychain.is_file(),'identity_probe_exit':p.returncode,'pinned_public_identity_present':'4D8496DCAB73794378194D040D9177FB28A0F982' in p.stdout.upper(),'key_access_or_notary_auth_tested':False}
+import ctypes
+security=ctypes.CDLL('/System/Library/Frameworks/Security.framework/Security')
+foundation=ctypes.CDLL('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
+security.SecKeychainOpen.argtypes=[ctypes.c_char_p,ctypes.POINTER(ctypes.c_void_p)];security.SecKeychainOpen.restype=ctypes.c_int32
+security.SecKeychainGetStatus.argtypes=[ctypes.c_void_p,ctypes.POINTER(ctypes.c_uint32)];security.SecKeychainGetStatus.restype=ctypes.c_int32
+foundation.CFRelease.argtypes=[ctypes.c_void_p]
+handle=ctypes.c_void_p();opened=security.SecKeychainOpen(str(keychain).encode(),ctypes.byref(handle));status=ctypes.c_uint32()
+observed=security.SecKeychainGetStatus(handle,ctypes.byref(status)) if opened==0 else None
+report['signing']['ssh_keychain_public_status']={'open_osstatus':opened,'get_status_osstatus':observed,'status_bits':status.value if observed==0 else None,'private_key_access_tested':False,'gui_key_access_tested':False}
+if handle.value:foundation.CFRelease(handle)
+header=Path('/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Security.framework/Headers/SecKeychain.h')
+if header.is_file():
+ lines=header.read_text().splitlines();report['signing']['sdk_status_constants']=[line.strip() for line in lines if any(token in line for token in ['kSecUnlockStateStatus','kSecReadPermStatus','kSecWritePermStatus'])][:12]
+code_package=Path('/Applications/Visual Studio Code.app/Contents/Resources/app/package.json')
+report['code_package_version']=json.loads(code_package.read_text())['version']
+report['owned_nextest_candidates']=[str(path) for path in [tools/'tools/cargo-nextest',tools/'tools/bin/cargo-nextest',Path.home()/'.cargo/bin/cargo-nextest'] if path.is_file()]
+for name in ['build-receipt.json','evidence2/receipt.json','link-supplement-recovery.json','static-environment-recovery.json']:
+ p=root/name
+ if p.is_file():report.setdefault('static_receipts',{})[name]={'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}
+static=json.loads((root/'static-environment-recovery.json').read_text())
+report['static_environment']=static['environment'];report['static_consumer_archive_count']=len(static['static_link_closure']['archives'])
+report['cargo_targets_existing']=[]
+for p in root.parent.glob('one-airk*'):
+ if (p/'target').exists():report['cargo_targets_existing'].append(str(p/'target'))
+print(json.dumps(report,indent=2))

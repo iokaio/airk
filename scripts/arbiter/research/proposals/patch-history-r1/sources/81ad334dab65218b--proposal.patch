@@ -1,0 +1,1344 @@
+--- a/crates/airk-core/src/arbiter/CONTRACT.md
++++ b/crates/airk-core/src/arbiter/CONTRACT.md
+@@ -1043,3 +1043,29 @@
+ changes the current Context task-policy digest; native current-policy metadata
+ must be regenerated. Earlier profiles, CAL and measurements retain their original
+ identities and are never retagged as current evidence.
++
++
++## G4 scoped device diagnostics (additive read contract)
++
++Canonical airk_diagnostics may carry scoped_device_status, schema
++airk.arbiter.scoped-device-status/1. Its exact ScopeBinding and per-stage
++IndexApplication distinguish this index's eligibility from complete native
++DeviceStageStatus residency/selection observations. No configuration document or
++global enrollment list is serialized. Typed unavailable uses revision0 and no
++invented stage/model state. Observations are descriptive, never execution or
++qualification capabilities. Scalar status and Search/Answer schemas are unchanged.
++
++The native read-only ArbiterDeviceRead method carries actual worker/scope, pinned
++publication and original ReadAttemptBudget; response uses the same typed name.
++Service repeats actual scope gates and original monotonic budget before/after;
++Kernel repeats actual scope/publication fences. Only strict current4 reads and
++metadata snapshots are permitted: no migration/CAS/rebind, model/device load or
++probe, downloads or native continuation. Default absent controller/original
++attempt omits the optional observation. Native absent/retained/corrupt4 yields
++truthful unavailable, never fake disabled/current configuration.
++
++Combined diagnostics keeps the complete observation under each corresponding
++member.result; it never fuses authorities or global enrollment state. Complete
++copy/export retains precision, native fallback reasons and all variant metadata.
++The additional observation is bounded256KiB inside unchanged original reply/frame
++ceilings. No retries or replacement clock are introduced.
+--- a/crates/airk-core/src/arbiter/device/read_status/tests.rs
++++ b/crates/airk-core/src/arbiter/device/read_status/tests.rs
+@@ -0,0 +1,141 @@
++// SPDX-License-Identifier: Apache-2.0
++use super::*;
++fn fixture() -> Result<(DeviceStatus, ScopeBinding)> {
++    let cases: serde_json::Value = serde_json::from_slice(include_bytes!(
++        "../../../../../../fixtures/split/arbiter/device_cases.json"
++    ))?;
++    let status: DeviceStatus = serde_json::from_value(cases["cases"][0]["status"].clone())?;
++    let mut scope = crate::arbiter::stage_tests::scope();
++    scope.installation = status.configuration.installation;
++    scope.catalog = status.configuration.catalog;
++    Ok((status, scope))
++}
++#[test]
++fn literal_scoped_snapshot_preserves_full_stage_metadata_without_any_enrollment_list() -> Result<()>
++{
++    let (status, scope) = fixture()?;
++    let focus = serde_json::to_value(&status.focus)?;
++    let context = serde_json::to_value(&status.context)?;
++    let observed = ScopedDeviceStatus::from_status(status, scope)?;
++    let json = serde_json::to_value(&observed)?;
++    assert_eq!(json["schema"], "airk.arbiter.scoped-device-status/1");
++    assert_eq!(json["observation"]["state"], "observed");
++    assert_eq!(json["observation"]["focus"]["status"], focus);
++    assert_eq!(json["observation"]["context"]["status"], context);
++    fn no_enrollment(value: &serde_json::Value) {
++        match value {
++            serde_json::Value::Object(row) => {
++                for (key, value) in row {
++                    assert!(!matches!(key.as_str(), "indexes" | "configuration"));
++                    no_enrollment(value);
++                }
++            }
++            serde_json::Value::Array(rows) => {
++                for row in rows {
++                    no_enrollment(row)
++                }
++            }
++            _ => {}
++        }
++    }
++    no_enrollment(&json);
++    let round: ScopedDeviceStatus = serde_json::from_value(json.clone())?;
++    round.validate()?;
++    assert_eq!(serde_json::to_value(round)?, json);
++    Ok(())
++}
++#[test]
++fn literal_unavailable_snapshot_never_fabricates_current_revision_or_disabled_stage() -> Result<()>
++{
++    let (_, scope) = fixture()?;
++    let value = ScopedDeviceStatus::unavailable(scope, "Current configuration unavailable")?;
++    let json = serde_json::to_value(&value)?;
++    assert_eq!(json["scope"]["configuration_revision"], 0);
++    assert_eq!(json["observation"]["state"], "unavailable");
++    assert!(json["observation"].get("focus").is_none());
++    let mut bad = value.clone();
++    bad.scope.configuration_revision = 1;
++    assert!(bad.validate().is_err());
++    assert!(ScopedDeviceStatus::unavailable(value.scope, "").is_err());
++    Ok(())
++}
++#[test]
++fn scoped_snapshot_refuses_foreign_authority_publication_stage_and_unknown_fields() -> Result<()> {
++    let (status, scope) = fixture()?;
++    let mut bad = scope.clone();
++    bad.installation = Sha256Digest::from_bytes([99; 32]);
++    assert!(ScopedDeviceStatus::from_status(status.clone(), bad).is_err());
++    let value = ScopedDeviceStatus::from_status(status, scope)?;
++    let mut bad = value.clone();
++    bad.scope.publication.generation += 1;
++    assert!(bad.validate().is_err());
++    let mut bad = value.clone();
++    if let ScopedDeviceObservation::Observed { focus, .. } = &mut bad.observation {
++        focus.application.scope.authorization = Sha256Digest::from_bytes([99; 32]);
++    }
++    assert!(bad.validate().is_err());
++    let mut bad = value.clone();
++    if let ScopedDeviceObservation::Observed { focus, .. } = &mut bad.observation {
++        focus.status.models[0].model = SelectedModel::ContextLarge;
++    }
++    assert!(bad.validate().is_err());
++    let mut json = serde_json::to_value(value)?;
++    json["observation"]["invented_qualification"] = true;
++    assert!(serde_json::from_value::<ScopedDeviceStatus>(json).is_err());
++    Ok(())
++}
++#[test]
++fn all_rust_device_cases_keep_requested_actual_precision_and_typed_reasons_complete() -> Result<()>
++{
++    let cases: serde_json::Value = serde_json::from_slice(include_bytes!(
++        "../../../../../../fixtures/split/arbiter/device_cases.json"
++    ))?;
++    let mut selected = 0;
++    for row in cases["cases"].as_array().context("native device cases")? {
++        let Some(raw) = row.get("status") else {
++            continue;
++        };
++        let status: DeviceStatus = serde_json::from_value(raw.clone())?;
++        if status.initialization.is_some() {
++            continue;
++        }
++        let mut scope = crate::arbiter::stage_tests::scope();
++        scope.installation = status.configuration.installation;
++        scope.catalog = status.configuration.catalog;
++        let output = serde_json::to_value(ScopedDeviceStatus::from_status(status, scope)?)?;
++        for stage in ["focus", "context"] {
++            assert_eq!(output["observation"][stage]["status"], raw[stage]);
++        }
++        selected += 1;
++    }
++    assert!(selected > 10, "native complete status cases missing");
++    Ok(())
++}
++
++#[test]
++fn scoped_device_semantic_case_emitter() -> Result<()> {
++    let cases: serde_json::Value = serde_json::from_slice(include_bytes!(
++        "../../../../../../fixtures/split/arbiter/device_cases.json"
++    ))?;
++    let mut outputs = Vec::new();
++    for index in [0, 4, 6] {
++        let status: DeviceStatus = serde_json::from_value(cases["cases"][index]["status"].clone())?;
++        let mut scope = crate::arbiter::stage_tests::scope();
++        scope.installation = status.configuration.installation;
++        scope.catalog = status.configuration.catalog;
++        outputs.push(serde_json::json!({"id":cases["cases"][index]["id"],"status":ScopedDeviceStatus::from_status(status,scope)?}));
++    }
++    let (_, scope) = fixture()?;
++    outputs.push(serde_json::json!({"id":"current_configuration_unavailable","status":ScopedDeviceStatus::unavailable(scope,"Current configuration4 unavailable; no migration or probe performed")?}));
++    if let Some(path) = std::env::var_os("AIRK_WRITE_SCOPED_DEVICE_CASES") {
++        use std::io::Write;
++        let mut file = std::fs::OpenOptions::new()
++            .write(true)
++            .create_new(true)
++            .open(path)?;
++        file.write_all(&serde_json::to_vec_pretty(&serde_json::json!({"schema":"airk.scoped-device-semantic-cases/1","qualification":false,"cases":outputs}))?)?;
++        file.write_all(b"\n")?;
++        file.sync_all()?;
++    }
++    Ok(())
++}
+--- a/crates/airk-core/src/arbiter/device/read_status.rs
++++ b/crates/airk-core/src/arbiter/device/read_status.rs
+@@ -0,0 +1,144 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Scoped descriptive snapshots; never model, source or execution authority.
++use super::*;
++pub const SCOPED_DEVICE_STATUS_SCHEMA: &str = "airk.arbiter.scoped-device-status/1";
++pub const MAX_SCOPED_DEVICE_STATUS_BYTES: usize = 256 << 10;
++#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
++#[serde(deny_unknown_fields)]
++pub struct ScopedDeviceStage {
++    pub application: IndexApplication,
++    pub status: DeviceStageStatus,
++}
++#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
++#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
++pub enum ScopedDeviceObservation {
++    Observed {
++        focus: Box<ScopedDeviceStage>,
++        context: Box<ScopedDeviceStage>,
++    },
++    Unavailable {
++        reason: String,
++    },
++}
++#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
++#[serde(deny_unknown_fields)]
++pub struct ScopedDeviceStatus {
++    pub schema: String,
++    pub scope: ScopeBinding,
++    pub observation: ScopedDeviceObservation,
++}
++impl ScopedDeviceStatus {
++    pub fn unavailable(mut scope: ScopeBinding, reason: &str) -> Result<Self> {
++        scope.configuration_revision = 0;
++        let value = Self {
++            schema: SCOPED_DEVICE_STATUS_SCHEMA.into(),
++            scope,
++            observation: ScopedDeviceObservation::Unavailable {
++                reason: reason.into(),
++            },
++        };
++        value.validate()?;
++        Ok(value)
++    }
++    /// Validate the complete native snapshot BEFORE projecting away all enrollment lists.
++    pub fn from_status(status: DeviceStatus, mut scope: ScopeBinding) -> Result<Self> {
++        status.validate()?;
++        ensure!(
++            status.initialization.is_none()
++                && status.configuration.installation == scope.installation
++                && status.configuration.catalog == scope.catalog,
++            "scoped device snapshot differs from native installation/catalog"
++        );
++        scope.configuration_revision = status.configuration.revision;
++        let stage = |kind: Stage, observed: DeviceStageStatus| -> Result<ScopedDeviceStage> {
++            let configured = status.configuration.stage(kind);
++            let enrolled = configured
++                .indexes
++                .iter()
++                .find(|row| row.index_id == scope.index_id);
++            let (availability, reason) = if !configured.enabled {
++                (Availability::Disabled, "Optional stage is disabled.".into())
++            } else if enrolled.is_none() {
++                (
++                    Availability::IndexDisabled,
++                    "This immutable index is not enrolled.".into(),
++                )
++            } else {
++                (observed.availability, observed.reason.clone())
++            };
++            let profile = if configured.enabled && enrolled.is_some() {
++                observed.active_profile
++            } else {
++                None
++            };
++            Ok(ScopedDeviceStage {
++                application: IndexApplication {
++                    scope: scope.clone(),
++                    profile,
++                    availability,
++                    reason,
++                },
++                status: observed,
++            })
++        };
++        let focus = stage(Stage::Focus, status.focus)?;
++        let context = stage(Stage::Context, status.context)?;
++        let value = Self {
++            schema: SCOPED_DEVICE_STATUS_SCHEMA.into(),
++            scope,
++            observation: ScopedDeviceObservation::Observed {
++                focus: Box::new(focus),
++                context: Box::new(context),
++            },
++        };
++        value.validate()?;
++        Ok(value)
++    }
++    pub fn validate(&self) -> Result<()> {
++        let publication = &self.scope.publication;
++        ensure!(
++            self.schema == SCOPED_DEVICE_STATUS_SCHEMA
++                && !publication.collection.is_empty()
++                && publication.collection.len() <= 4096
++                && publication.incarnation == publication.token.incarnation
++                && publication.generation == publication.token.generation
++                && publication.revision == publication.token.revision,
++            "invalid scoped device identity"
++        );
++        match &self.observation {
++            ScopedDeviceObservation::Unavailable { reason } => ensure!(
++                self.scope.configuration_revision == 0
++                    && !reason.trim().is_empty()
++                    && reason.len() <= 1024,
++                "invalid unavailable device observation"
++            ),
++            ScopedDeviceObservation::Observed { focus, context } => {
++                ensure!(
++                    self.scope.configuration_revision > 0,
++                    "observed device revision absent"
++                );
++                for (kind, row) in [(Stage::Focus, focus), (Stage::Context, context)] {
++                    row.application.validate()?;
++                    ensure!(
++                        row.application.scope == self.scope,
++                        "foreign scoped device application"
++                    );
++                    row.status.validate_observation(kind)?;
++                    ensure!(
++                        row.application.availability != Availability::Ready
++                            || row.status.availability == Availability::Ready
++                                && row.application.profile == row.status.active_profile,
++                        "scoped ready application differs from native resident"
++                    );
++                }
++            }
++        }
++        ensure!(
++            serde_json::to_vec(self)?.len() <= MAX_SCOPED_DEVICE_STATUS_BYTES,
++            "scoped device snapshot byte limit"
++        );
++        Ok(())
++    }
++}
++#[cfg(test)]
++mod tests;
+--- a/crates/airk-core/src/arbiter/device/state.rs
++++ b/crates/airk-core/src/arbiter/device/state.rs
+@@ -221,6 +221,23 @@
+                 && self.reason.len() <= 1024,
+             "device stage requested identity/reason differs"
+         );
++        self.validate_observation(stage)?;
++        ensure!(
++            self.availability != Availability::Ready || configuration.enabled,
++            "ready device stage lacks enabled configuration"
++        );
++        Ok(())
++    }
++    /// Descriptive validation only; does not grant enrollment or execution authority.
++    pub(crate) fn validate_observation(&self, stage: Stage) -> Result<()> {
++        ensure!(
++            !self.reason.is_empty()
++                && self.reason.len() <= 1024
++                && self
++                    .selected_model
++                    .is_none_or(|model| model.stage() == stage),
++            "invalid device stage reason/model"
++        );
+         let expected = match stage {
+             Stage::Focus => BTreeSet::from([SelectedModel::Focus]),
+             Stage::Context => {
+@@ -376,8 +393,7 @@
+         if self.availability == Availability::Ready {
+             let (model, variant) = active.context("ready device stage lacks resident variant")?;
+             ensure!(
+-                configuration.enabled
+-                    && Some(model) == self.selected_model
++                Some(model) == self.selected_model
+                     && variant.availability == Availability::Ready,
+                 "ready device stage lacks enabled selected model"
+             );
+--- a/crates/airk-core/src/arbiter/device.rs
++++ b/crates/airk-core/src/arbiter/device.rs
+@@ -711,6 +711,8 @@
+ #[cfg(test)]
+ mod tests;
+ 
++mod read_status;
++pub use read_status::*;
+ mod state;
+ pub use state::*;
+ 
+--- a/crates/airk-core/src/arbiter/schema.rs
++++ b/crates/airk-core/src/arbiter/schema.rs
+@@ -34,6 +34,7 @@
+     root::<device::DeviceConfiguration>(&mut generator, &mut roots);
+     root::<device::DeviceStageConfiguration>(&mut generator, &mut roots);
+     root::<device::DeviceStatus>(&mut generator, &mut roots);
++    root::<device::ScopedDeviceStatus>(&mut generator, &mut roots);
+     root::<device::DeviceStageStatus>(&mut generator, &mut roots);
+     root::<device::DeviceCatalog>(&mut generator, &mut roots);
+     root::<device::DeviceSelection>(&mut generator, &mut roots);
+--- a/crates/airk-core/src/service.rs
++++ b/crates/airk-core/src/service.rs
+@@ -165,6 +165,12 @@
+     },
+     Arbiter {
+         request: crate::arbiter::ManagementRequest,
++    },
++    ArbiterDeviceRead {
++        worker: WorkerIdentity,
++        authority: ScopedReadRef,
++        publication: crate::evidence::RevisionEnvelope,
++        read_attempt: crate::read_attempt::ReadAttemptBudget,
+     },
+     ArbiterApplication {
+         worker: WorkerIdentity,
+@@ -808,7 +814,7 @@
+             Self::ValidateCombinedDelivery {context_bindings,..} if !context_bindings.is_empty()=> {
+                 return Some("console_private_setup_forbidden");
+             }
+-            Self::Arbiter { .. } | Self::ArbiterApplication { .. } | Self::ArbiterNextRead { .. } | Self::ArbiterContextAction { .. } | Self::ArbiterFocusApplication { .. } | Self::ArbiterFocusRank { .. } | Self::ArbiterImport { .. } | Self::ArbiterImportDevice { .. } => {
++            Self::Arbiter { .. } | Self::ArbiterDeviceRead { .. } | Self::ArbiterApplication { .. } | Self::ArbiterNextRead { .. } | Self::ArbiterContextAction { .. } | Self::ArbiterFocusApplication { .. } | Self::ArbiterFocusRank { .. } | Self::ArbiterImport { .. } | Self::ArbiterImportDevice { .. } => {
+                 return Some("console_private_setup_forbidden");
+             }
+             Self::Connect { .. } | Self::ConnectScoped { .. } => {
+@@ -1282,6 +1288,7 @@
+     pub fn response_frame_budget(&self) -> usize {
+         match self {
+             Self::Arbiter { .. }
++            | Self::ArbiterDeviceRead { .. }
+             | Self::ArbiterFocusApplication { .. }
+             | Self::ArbiterFocusRank { .. }
+             | Self::ArbiterImport { .. }
+@@ -1408,6 +1415,9 @@
+     AdminNativeClosed {},
+     Arbiter {
+         observation: Box<crate::arbiter::Status>,
++    },
++    ArbiterDeviceRead {
++        observation: Box<crate::arbiter::device::ScopedDeviceStatus>,
+     },
+     ArbiterApplication {
+         application: Box<crate::arbiter::IndexApplication>,
+--- a/crates/airk-https/src/admin_plane/mutations.rs
++++ b/crates/airk-https/src/admin_plane/mutations.rs
+@@ -575,6 +575,7 @@
+         | ControlResponse::ExplorerOffline { .. }
+         | ControlResponse::Arbiter { .. }
+         | ControlResponse::ArbiterDevice { .. }
++        | ControlResponse::ArbiterDeviceRead { .. }
+         | ControlResponse::ArbiterApplication { .. }
+         | ControlResponse::ArbiterAdvice { .. }
+         | ControlResponse::ArbiterContextActionAdvice { .. }
+--- a/crates/airk-ipc/CONTRACT.md
++++ b/crates/airk-ipc/CONTRACT.md
+@@ -264,3 +264,29 @@
+ configuration/3 before atomic replacement; no read/missing-state inspection
+ performs migration or model acquisition. Core/Store own the migration, actual
+ DeviceCatalog/source binding and assets/4 plus partial/4 custody.
++
++
++## G4 scoped device diagnostics (additive read contract)
++
++Canonical airk_diagnostics may carry scoped_device_status, schema
++airk.arbiter.scoped-device-status/1. Its exact ScopeBinding and per-stage
++IndexApplication distinguish this index's eligibility from complete native
++DeviceStageStatus residency/selection observations. No configuration document or
++global enrollment list is serialized. Typed unavailable uses revision0 and no
++invented stage/model state. Observations are descriptive, never execution or
++qualification capabilities. Scalar status and Search/Answer schemas are unchanged.
++
++The native read-only ArbiterDeviceRead method carries actual worker/scope, pinned
++publication and original ReadAttemptBudget; response uses the same typed name.
++Service repeats actual scope gates and original monotonic budget before/after;
++Kernel repeats actual scope/publication fences. Only strict current4 reads and
++metadata snapshots are permitted: no migration/CAS/rebind, model/device load or
++probe, downloads or native continuation. Default absent controller/original
++attempt omits the optional observation. Native absent/retained/corrupt4 yields
++truthful unavailable, never fake disabled/current configuration.
++
++Combined diagnostics keeps the complete observation under each corresponding
++member.result; it never fuses authorities or global enrollment state. Complete
++copy/export retains precision, native fallback reasons and all variant metadata.
++The additional observation is bounded256KiB inside unchanged original reply/frame
++ceilings. No retries or replacement clock are introduced.
+--- a/crates/airk-kernel/src/arbiter/CONTRACT.md
++++ b/crates/airk-kernel/src/arbiter/CONTRACT.md
+@@ -119,3 +119,29 @@
+ of one charge without forgetting distinct unresolved charges. NativeConfiguration
+ selection equality retains the complete typed document and selected descriptions;
+ it never narrows configuration4 to a CPU model-only identity.
++
++
++## G4 scoped device diagnostics (additive read contract)
++
++Canonical airk_diagnostics may carry scoped_device_status, schema
++airk.arbiter.scoped-device-status/1. Its exact ScopeBinding and per-stage
++IndexApplication distinguish this index's eligibility from complete native
++DeviceStageStatus residency/selection observations. No configuration document or
++global enrollment list is serialized. Typed unavailable uses revision0 and no
++invented stage/model state. Observations are descriptive, never execution or
++qualification capabilities. Scalar status and Search/Answer schemas are unchanged.
++
++The native read-only ArbiterDeviceRead method carries actual worker/scope, pinned
++publication and original ReadAttemptBudget; response uses the same typed name.
++Service repeats actual scope gates and original monotonic budget before/after;
++Kernel repeats actual scope/publication fences. Only strict current4 reads and
++metadata snapshots are permitted: no migration/CAS/rebind, model/device load or
++probe, downloads or native continuation. Default absent controller/original
++attempt omits the optional observation. Native absent/retained/corrupt4 yields
++truthful unavailable, never fake disabled/current configuration.
++
++Combined diagnostics keeps the complete observation under each corresponding
++member.result; it never fuses authorities or global enrollment state. Complete
++copy/export retains precision, native fallback reasons and all variant metadata.
++The additional observation is bounded256KiB inside unchanged original reply/frame
++ceilings. No retries or replacement clock are introduced.
+--- a/crates/airk-kernel/src/arbiter.rs
++++ b/crates/airk-kernel/src/arbiter.rs
+@@ -18,6 +18,17 @@
+ /// Service composition supplies the native owner. No public fingerprint or
+ /// downloaded model descriptor constructs this controller.
+ pub trait NativeController: Send + Sync {
++    fn device_read_status(
++        &self,
++        _worker: airk_core::service::WorkerIdentity,
++        _authority: airk_core::service::ScopedReadRef,
++        _publication: &airk_core::evidence::RevisionEnvelope,
++        _attempt: airk_core::read_attempt::ReadAttemptBudget,
++        _deadline: Instant,
++    ) -> Result<Option<device::ScopedDeviceStatus>> {
++        Ok(None)
++    }
++
+     fn focus_application(
+         &self,
+         _worker: airk_core::service::WorkerIdentity,
+@@ -128,6 +139,52 @@
+     }
+ }
+ impl crate::Kernel {
++    /// Read-only scoped diagnostics. No native owner/original attempt means no observation.
++    pub fn scoped_device_status(
++        &self,
++        deadline: Option<Instant>,
++    ) -> Result<Option<device::ScopedDeviceStatus>> {
++        let Some(context) = &self.arbiter_context else {
++            return Ok(None);
++        };
++        let (Some(attempt), Some(deadline)) = (context.attempt, deadline) else {
++            return Ok(None);
++        };
++        ensure!(
++            Instant::now() < deadline,
++            "original device observation deadline exhausted"
++        );
++        self.require_source_policy_scope()?;
++        let authority = self.scoped_read_fingerprint()?;
++        let publication = self.arbiter_publication()?;
++        let observed = context.owner.device_read_status(
++            context.worker,
++            context.authority,
++            &publication,
++            attempt,
++            deadline,
++        )?;
++        self.require_source_policy_scope()?;
++        ensure!(
++            self.scoped_read_fingerprint()? == authority
++                && self.arbiter_publication()? == publication,
++            airk_core::scoped_reads::ScopeReadRefused
++        );
++        ensure!(
++            Instant::now() < deadline,
++            "original device observation deadline exhausted"
++        );
++        if let Some(value) = &observed {
++            ensure!(
++                value.scope.index_id == context.authority.index_id
++                    && value.scope.authorization == context.authority.fingerprint
++                    && value.scope.publication == publication,
++                airk_core::scoped_reads::ScopeReadRefused
++            );
++            value.validate()?;
++        }
++        Ok(observed)
++    }
+     fn arbiter_publication(&self) -> Result<airk_core::evidence::RevisionEnvelope> {
+         // Published identity only; a partial scope must never request whole
+         // index status/counts merely to bind its own evidence reads.
+--- a/crates/airk-mcp/src/lib.rs
++++ b/crates/airk-mcp/src/lib.rs
+@@ -51,6 +51,8 @@
+ mod context_action_capture_tests;
+ #[cfg(test)]
+ mod focus_handler_tests;
++#[cfg(test)]
++mod scoped_device_diagnostics_tests;
+ #[cfg(test)]
+ mod scoped_observation_tests;
+ #[cfg(test)]
+@@ -1095,6 +1097,7 @@
+         args.response.include_status = true;
+         let runtime = self.runtime.read().ok().and_then(|runtime| runtime.clone());
+         let work = self.work.read().ok().and_then(|work| work.clone());
++        let deadline = self.read_attempt.as_ref().map(|context| context.deadline());
+         self.execute_response(UsageOperation::Status, args.response, move |kernel| {
+             let mut status = match kernel.status() {
+                 Ok(status) => {
+@@ -1121,6 +1124,9 @@
+             );
+             status["work"] = work
+                 .unwrap_or_else(|| serde_json::json!({"error":"native_work_context_unavailable"}));
++            if let Some(observation) = kernel.scoped_device_status(deadline)? {
++                status["scoped_device_status"] = serde_json::to_value(observation)?;
++            }
+             if status.get("rebuild").is_none() && status.get("rebuild_unavailable").is_none() {
+                 status = kernel.attach_rebuild_observation(status)?;
+             }
+--- a/crates/airk-mcp/src/local.rs
++++ b/crates/airk-mcp/src/local.rs
+@@ -213,6 +213,8 @@
+             && matches!(
+                 name.as_str(),
+                 "airk_answer" | "answer" | "airk_search" | "search"
++            | "airk_diagnostics"
++                    | "diagnostics"
+             )
+         {
+             server.kernel = match context.context_partition() {
+--- a/crates/airk-mcp/src/response/CONTRACT.md
++++ b/crates/airk-mcp/src/response/CONTRACT.md
+@@ -28,3 +28,29 @@
+ Canonical unit tests compare complete expected results. HTTP backend tests
+ prove per-factory-session isolation with injected hooks; the actual CLI HTTPS
+ terse-status regression and real-transport parity suite remain separate gates.
++
++
++## G4 scoped device diagnostics (additive read contract)
++
++Canonical airk_diagnostics may carry scoped_device_status, schema
++airk.arbiter.scoped-device-status/1. Its exact ScopeBinding and per-stage
++IndexApplication distinguish this index's eligibility from complete native
++DeviceStageStatus residency/selection observations. No configuration document or
++global enrollment list is serialized. Typed unavailable uses revision0 and no
++invented stage/model state. Observations are descriptive, never execution or
++qualification capabilities. Scalar status and Search/Answer schemas are unchanged.
++
++The native read-only ArbiterDeviceRead method carries actual worker/scope, pinned
++publication and original ReadAttemptBudget; response uses the same typed name.
++Service repeats actual scope gates and original monotonic budget before/after;
++Kernel repeats actual scope/publication fences. Only strict current4 reads and
++metadata snapshots are permitted: no migration/CAS/rebind, model/device load or
++probe, downloads or native continuation. Default absent controller/original
++attempt omits the optional observation. Native absent/retained/corrupt4 yields
++truthful unavailable, never fake disabled/current configuration.
++
++Combined diagnostics keeps the complete observation under each corresponding
++member.result; it never fuses authorities or global enrollment state. Complete
++copy/export retains precision, native fallback reasons and all variant metadata.
++The additional observation is bounded256KiB inside unchanged original reply/frame
++ceilings. No retries or replacement clock are introduced.
+--- a/crates/airk-mcp/src/scoped_device_diagnostics_tests.rs
++++ b/crates/airk-mcp/src/scoped_device_diagnostics_tests.rs
+@@ -0,0 +1,231 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Canonical SDK diagnostics with synthetic native metadata; no model qualification.
++use super::*;
++use airk_core::{
++    arbiter::{device::*, *},
++    identity::{Incarnation, Sha256Digest},
++    read_attempt::{ReadAttemptBudget, ReadClock},
++    service::{ScopedReadRef, WorkerIdentity},
++};
++use airk_kernel::arbiter::NativeController;
++use anyhow::{Context, Result};
++use std::{
++    sync::{
++        Arc,
++        atomic::{AtomicUsize, Ordering},
++    },
++    time::{Duration, Instant},
++};
++struct SnapshotOwner {
++    calls: AtomicUsize,
++    refuse: bool,
++    foreign: bool,
++}
++impl NativeController for SnapshotOwner {
++    fn application(
++        &self,
++        worker: WorkerIdentity,
++        authority: ScopedReadRef,
++        publication: &airk_core::evidence::RevisionEnvelope,
++    ) -> Result<IndexApplication> {
++        NativeController::application(
++            &crate::arbiter_handler_tests::Disabled,
++            worker,
++            authority,
++            publication,
++        )
++    }
++    fn device_read_status(
++        &self,
++        _: WorkerIdentity,
++        authority: ScopedReadRef,
++        publication: &airk_core::evidence::RevisionEnvelope,
++        attempt: ReadAttemptBudget,
++        deadline: Instant,
++    ) -> Result<Option<ScopedDeviceStatus>> {
++        self.calls.fetch_add(1, Ordering::SeqCst);
++        if self.refuse {
++            return Err(airk_core::scoped_reads::ScopeReadRefused.into());
++        }
++        anyhow::ensure!(
++            deadline > Instant::now() && attempt.request_id == Incarnation::from_bytes([31; 16]),
++            "original read clock changed"
++        );
++        let cases: serde_json::Value = serde_json::from_slice(include_bytes!(
++            "../../../fixtures/split/arbiter/device_cases.json"
++        ))?;
++        let status: DeviceStatus = serde_json::from_value(cases["cases"][4]["status"].clone())?;
++        let scope = ScopeBinding {
++            installation: status.configuration.installation,
++            catalog: status.configuration.catalog,
++            index_id: authority.index_id,
++            authorization: authority.fingerprint,
++            configuration_revision: status.configuration.revision,
++            publication: publication.clone(),
++        };
++        let mut value = ScopedDeviceStatus::from_status(status, scope)?;
++        if self.foreign {
++            value.scope.authorization = Sha256Digest::from_bytes([99; 32]);
++        }
++        Ok(Some(value))
++    }
++}
++fn attempt(expired: bool) -> Result<read_attempt::ReadAttemptContext> {
++    let now = Instant::now();
++    let deadline = if expired {
++        now
++    } else {
++        now + Duration::from_secs(30)
++    };
++    read_attempt::ReadAttemptContext::new(deadline, Default::default()).with_wire_attempt(
++        ReadAttemptBudget {
++            schema: 1,
++            request_id: Incarnation::from_bytes([31; 16]),
++            clock: if cfg!(windows) {
++                ReadClock::WindowsPerformanceCounter
++            } else {
++                ReadClock::UnixMonotonic
++            },
++            expires_monotonic_ns: 30_000_000_000,
++            remaining_ns: 30_000_000_000,
++            native_retry_expires_monotonic_ns: None,
++        },
++    )
++}
++fn fixture(owner: Arc<dyn NativeController>) -> Result<(tempfile::TempDir, Kernel)> {
++    let directory = tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?;
++    let root = directory.path().join("source");
++    std::fs::create_dir_all(root.join("public"))?;
++    std::fs::write(
++        root.join("public/read.txt"),
++        "original scoped diagnostic source\n",
++    )?;
++    let base = Kernel::open(&root, Some(directory.path().join("data")))?;
++    base.configure_vectors(false)?;
++    base.index()?;
++    let mut authority = crate::scoped_observation_tests::authority(&base)?;
++    authority.grant.memberships[0].membership.scope[0]
++        .path
++        .clear();
++    let kernel = base.with_scoped_reads(authority.clone())?;
++    let reference = ScopedReadRef {
++        schema: 1,
++        lease_generation: 1,
++        index_id: authority.index_id,
++        grant_id: Some(authority.grant.id),
++        grant_revision: Some(authority.grant.revision),
++        selection: None,
++        fingerprint: kernel.scoped_read_fingerprint()?.context("scope absent")?,
++    };
++    let worker = WorkerIdentity {
++        service: Incarnation::from_bytes([8; 16]),
++        worker: Incarnation::from_bytes([9; 16]),
++        project: authority.backing,
++        fencing_generation: 1,
++    };
++    Ok((
++        directory,
++        kernel.with_native_arbiter(worker, reference, owner)?,
++    ))
++}
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn diagnostics_sdk_keeps_complete_precision_fallback_while_scalar_status_never_calls_owner()
++-> Result<()> {
++    let owner = Arc::new(SnapshotOwner {
++        calls: AtomicUsize::new(0),
++        refuse: false,
++        foreign: false,
++    });
++    let (root, kernel) = fixture(owner.clone())?;
++    let mut tools = local::LocalTools::new(kernel).await?;
++    let args = serde_json::json!({"response_mode":"full"})
++        .as_object()
++        .unwrap()
++        .clone();
++    let scalar = tools
++        .call_with_read_context("airk_status".into(), args.clone(), attempt(false)?)
++        .await?;
++    assert!(
++        crate::arbiter_handler_tests::body(&scalar)?
++            .get("scoped_device_status")
++            .is_none()
++    );
++    assert_eq!(owner.calls.load(Ordering::SeqCst), 0);
++    let reply = tools
++        .call_with_read_context("airk_diagnostics".into(), args, attempt(false)?)
++        .await?;
++    let body = crate::arbiter_handler_tests::body(&reply)?;
++    let cases: serde_json::Value = serde_json::from_slice(include_bytes!(
++        "../../../fixtures/split/arbiter/device_cases.json"
++    ))?;
++    for stage in ["focus", "context"] {
++        assert_eq!(
++            body["scoped_device_status"]["observation"][stage]["status"],
++            cases["cases"][4]["status"][stage]
++        );
++    }
++    assert_eq!(owner.calls.load(Ordering::SeqCst), 1);
++    assert_eq!(
++        std::fs::read_to_string(root.path().join("source/public/read.txt"))?,
++        "original scoped diagnostic source\n"
++    );
++    tools.close().await?;
++    Ok(())
++}
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn diagnostics_sdk_preserves_scope_refusal_and_rejects_foreign_snapshot() -> Result<()> {
++    for (refuse, foreign) in [(true, false), (false, true)] {
++        let owner = Arc::new(SnapshotOwner {
++            calls: AtomicUsize::new(0),
++            refuse,
++            foreign,
++        });
++        let (_root, kernel) = fixture(owner.clone())?;
++        let mut tools = local::LocalTools::new(kernel).await?;
++        let reply = tools
++            .call_with_read_context(
++                "airk_diagnostics".into(),
++                serde_json::json!({"response_mode":"full"})
++                    .as_object()
++                    .unwrap()
++                    .clone(),
++                attempt(false)?,
++            )
++            .await?;
++        assert_eq!(reply.is_error, Some(true));
++        let refusal: serde_json::Value = serde_json::from_str(
++            &reply.content[0]
++                .as_text()
++                .context("missing exact native refusal")?
++                .text,
++        )?;
++        assert_eq!(
++            refusal["error"],
++            serde_json::json!({"schema":1,"code":"scoped_read_unavailable","retryable":false})
++        );
++        assert_eq!(owner.calls.load(Ordering::SeqCst), 1);
++        tools.close().await?;
++    }
++    Ok(())
++}
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn diagnostics_expired_original_attempt_never_submits_native_snapshot() -> Result<()> {
++    let owner = Arc::new(SnapshotOwner {
++        calls: AtomicUsize::new(0),
++        refuse: false,
++        foreign: false,
++    });
++    let (_root, kernel) = fixture(owner.clone())?;
++    let mut tools = local::LocalTools::new(kernel).await?;
++    let reply = tools
++        .call_with_read_context(
++            "airk_diagnostics".into(),
++            Default::default(),
++            attempt(true)?,
++        )
++        .await?;
++    assert_eq!(reply.is_error, Some(true));
++    assert_eq!(owner.calls.load(Ordering::SeqCst), 0);
++    tools.close().await?;
++    Ok(())
++}
+--- a/crates/airk-service/src/service_management.rs
++++ b/crates/airk-service/src/service_management.rs
+@@ -1210,6 +1210,7 @@
+         | ControlMethod::EmbeddingStatus
+         | ControlMethod::SourceStatus
+         | ControlMethod::Arbiter { .. }
++        | ControlMethod::ArbiterDeviceRead { .. }
+         | ControlMethod::ArbiterApplication { .. }
+         | ControlMethod::ArbiterNextRead { .. }
+         | ControlMethod::ArbiterContextAction { .. }
+--- a/crates/airk-service/src/service_runtime/arbiter/CONTRACT.md
++++ b/crates/airk-service/src/service_runtime/arbiter/CONTRACT.md
+@@ -567,3 +567,31 @@
+ no compatibility exception. Raw Profile metadata or a manifest-specific branch
+ cannot grant this admission. All source/deadline/native-session/delivery fences
+ remain as before.
++
++
++## G4 scoped device diagnostics (additive read contract)
++
++Canonical airk_diagnostics may carry scoped_device_status, schema
++airk.arbiter.scoped-device-status/1. Its exact ScopeBinding and per-stage
++IndexApplication distinguish this index's eligibility from complete native
++DeviceStageStatus residency/selection observations. No configuration document or
++global enrollment list is serialized. Typed unavailable uses revision0 and no
++invented stage/model state. Observations are descriptive, never execution or
++qualification capabilities. Scalar status and Search/Answer schemas are unchanged.
++
++The native read-only ArbiterDeviceRead method carries actual worker/scope, pinned
++publication and original ReadAttemptBudget; response uses the same typed name.
++Service repeats actual scope gates and original monotonic budget before/after;
++Kernel repeats actual scope/publication fences. Only strict current4 reads and
++metadata snapshots are permitted: no migration/CAS/rebind, model/device load or
++probe, downloads or native continuation. Default absent controller/original
++attempt omits the optional observation. Native absent/retained/corrupt4 yields
++truthful unavailable, never fake disabled/current configuration.
++
++Combined diagnostics keeps the complete observation under each corresponding
++member.result; it never fuses authorities or global enrollment state. Complete
++copy/export retains precision, native fallback reasons and all variant metadata.
++The additional observation is bounded256KiB inside unchanged original reply/frame
++ceilings. No retries or replacement clock are introduced.
++
++Diagnostics additionally requires positive physical current4 binding observations before/after each strict read (canonical raw SHA, revision and native catalog binding), repeated around the complete stage snapshot. Management load() synthesized disabled defaults are never accepted as physical current4. Both stages also require equal read-only Shared selection/residency stamps before/after: actual generation, cached document, selected manifests/reasons, ready and intent maps, eligibility and cached/native epoch/poison state. Changed selection/eligibility yields unavailable. This does not claim atomic unrelated download or work-progress counters. No CUDA probe is permitted.
+--- a/crates/airk-service/src/service_runtime/arbiter/device_management.rs
++++ b/crates/airk-service/src/service_runtime/arbiter/device_management.rs
+@@ -207,7 +207,7 @@
+     }
+ }
+ #[cfg(feature = "local-inference")]
+-fn binding() -> Result<DeviceCatalogBinding> {
++pub(super) fn binding() -> Result<DeviceCatalogBinding> {
+     let catalog = runtime::device_catalog()?;
+     let profiles = runtime::catalog_profiles()?;
+     catalog.binding(runtime::catalog_source_digest(), |id| {
+@@ -703,7 +703,8 @@
+ }
+ #[cfg(feature = "local-inference")]
+ impl StageOwner {
+-    fn device_stage_status(&self, document: &DeviceConfiguration) -> Result<DeviceStageStatus> {
++    pub(super) fn device_stage_status(&self, document: &DeviceConfiguration,
++    ) -> Result<DeviceStageStatus> {
+         let profiles = runtime::catalog_profiles()?;
+         let requested = document.stage(self.stage);
+         let life = self
+--- a/crates/airk-service/src/service_runtime/arbiter/read_device_status/tests.rs
++++ b/crates/airk-service/src/service_runtime/arbiter/read_device_status/tests.rs
+@@ -0,0 +1,142 @@
++// SPDX-License-Identifier: Apache-2.0
++use super::*;
++use airk_core::identity::{Incarnation, Sha256Digest};
++#[test]
++fn strict_diagnostic_configuration_reads_never_initialize_migrate_or_repair_bytes() -> Result<()> {
++    let root = tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?;
++    let lease = Arc::new(airk_store::service::ServiceLease::acquire(root.path())?);
++    let store = airk_store::service::arbiter::ConfigurationStore::open(
++        lease,
++        Sha256Digest::from_bytes([1; 32]),
++        Incarnation::from_bytes([2; 16]),
++    )?;
++    let binding = DeviceCatalogBinding {
++        catalog: Sha256Digest::from_bytes([3; 32]),
++        source: Sha256Digest::from_bytes([4; 32]),
++    };
++    assert!(strict_current_configuration(&store.device(binding.clone()))?.is_none());
++    assert!(!root.path().join("arbiter-v3").exists());
++    store.initialize_checked(None, || Ok(()))?;
++    let path = root.path().join("arbiter-v3/configuration.json");
++    let old = std::fs::read(&path)?;
++    assert!(strict_current_configuration(&store.device(binding.clone()))?.is_none());
++    assert_eq!(std::fs::read(&path)?, old);
++    assert_eq!(std::fs::read_dir(path.parent().unwrap())?.count(), 1);
++    std::fs::write(&path, b"original corrupt current document")?;
++    assert!(strict_current_configuration(&store.device(binding)).is_err());
++    assert_eq!(std::fs::read(&path)?, b"original corrupt current document");
++    assert_eq!(std::fs::read_dir(path.parent().unwrap())?.count(), 1);
++    Ok(())
++}
++#[test]
++fn diagnostic_clock_refuses_expiry_wrong_clock_and_oversized_parent() -> Result<()> {
++    let clock = if cfg!(windows) {
++        ReadClock::WindowsPerformanceCounter
++    } else {
++        ReadClock::UnixMonotonic
++    };
++    let mut attempt = ReadAttemptBudget {
++        schema: 1,
++        request_id: Incarnation::from_bytes([1; 16]),
++        clock,
++        expires_monotonic_ns: 0,
++        remaining_ns: 1,
++        native_retry_expires_monotonic_ns: None,
++    };
++    assert!(live(attempt).is_err());
++    attempt.expires_monotonic_ns = u64::MAX;
++    attempt.remaining_ns = 126_000_000_000;
++    assert!(live(attempt).is_err());
++    attempt.remaining_ns = 1;
++    attempt.clock = if cfg!(windows) {
++        ReadClock::UnixMonotonic
++    } else {
++        ReadClock::WindowsPerformanceCounter
++    };
++    assert!(live(attempt).is_err());
++    Ok(())
++}
++
++#[test]
++fn strict_diagnostic_current4_requires_a_real_file_and_exact_binding_without_recreating_missing_file()
++-> Result<()> {
++    let root = tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?;
++    let lease = Arc::new(airk_store::service::ServiceLease::acquire(root.path())?);
++    let store = airk_store::service::arbiter::ConfigurationStore::open(
++        lease,
++        Sha256Digest::from_bytes([1; 32]),
++        Incarnation::from_bytes([2; 16]),
++    )?;
++    let binding = DeviceCatalogBinding {
++        catalog: Sha256Digest::from_bytes([3; 32]),
++        source: Sha256Digest::from_bytes([4; 32]),
++    };
++    let document = store
++        .device(binding.clone())
++        .initialize_checked(None, || Ok(()))?;
++    let path = root.path().join("arbiter-v3/configuration.json");
++    let bytes = std::fs::read(&path)?;
++    assert_eq!(
++        strict_current_configuration(&store.device(binding.clone()))?,
++        Some(document)
++    );
++    assert_eq!(std::fs::read(&path)?, bytes);
++    let wrong = DeviceCatalogBinding {
++        catalog: Sha256Digest::from_bytes([9; 32]),
++        ..binding.clone()
++    };
++    assert!(strict_current_configuration(&store.device(wrong)).is_err());
++    assert_eq!(std::fs::read(&path)?, bytes);
++    // Remove only this test's just-created current file. Its native directory and
++    // lock remain, exercising the separate missing-file management fallback.
++    std::fs::remove_file(&path)?;
++    let names = || -> Result<Vec<_>> {
++        let mut out = std::fs::read_dir(path.parent().unwrap())?
++            .map(|row| row.map(|v| v.file_name()))
++            .collect::<std::io::Result<Vec<_>>>()?;
++        out.sort();
++        Ok(out)
++    };
++    let before = names()?;
++    assert!(strict_current_configuration(&store.device(binding))?.is_none());
++    assert!(!path.exists());
++    assert_eq!(names()?, before);
++    Ok(())
++}
++#[test]
++fn same_revision_selection_generation_epoch_ready_intent_and_reason_changes_refuse_partial_snapshot()
++-> Result<()> {
++    use std::cell::Cell;
++    // Independent injected native stamp components; the persisted revision stays5.
++    let stamp = Cell::new((7u64, 11u64, 11u64, false, true, 13u64, 17u64));
++    let revision = Cell::new(5u64);
++    let original = stamp.get();
++    assert_eq!(
++        with_selection_snapshot(|| Ok(stamp.get()), || Ok("complete snapshot"))?,
++        "complete snapshot"
++    );
++    for changed in [
++        (8, 11, 11, false, true, 13, 17),
++        (7, 12, 11, false, true, 13, 17),
++        (7, 11, 12, false, true, 13, 17),
++        (7, 11, 11, true, true, 13, 17),
++        (7, 11, 11, false, false, 13, 17),
++        (7, 11, 11, false, true, 14, 17),
++        (7, 11, 11, false, true, 13, 18),
++    ] {
++        stamp.set(original);
++        let observed = Cell::new(false);
++        let output = with_selection_snapshot(
++            || Ok(stamp.get()),
++            || {
++                observed.set(true);
++                stamp.set(changed);
++                Ok("must not deliver partial snapshot")
++            },
++        );
++        assert!(output.is_err());
++        assert!(observed.get());
++        assert_eq!(revision.get(), 5);
++    }
++    Ok(())
++}
+--- a/crates/airk-service/src/service_runtime/arbiter/read_device_status.rs
++++ b/crates/airk-service/src/service_runtime/arbiter/read_device_status.rs
+@@ -0,0 +1,154 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Read-only current4 device diagnostics; never an acquisition or migration path.
++use super::*;
++use airk_core::{
++    arbiter::device::*,
++    read_attempt::{ReadAttemptBudget, ReadClock},
++};
++fn live(attempt: ReadAttemptBudget) -> Result<()> {
++    let clock = if cfg!(windows) {
++        ReadClock::WindowsPerformanceCounter
++    } else {
++        ReadClock::UnixMonotonic
++    };
++    ensure!(
++        !attempt
++            .remaining_at(clock, airk_process::monotonic::now_ns()?)?
++            .is_zero(),
++        "original device observation deadline exhausted"
++    );
++    Ok(())
++}
++impl Owner {
++    pub(in crate::service_runtime) fn device_read_status(
++        &self,
++        worker: WorkerIdentity,
++        authority: ScopedReadRef,
++        publication: airk_core::evidence::RevisionEnvelope,
++        attempt: ReadAttemptBudget,
++    ) -> Result<ScopedDeviceStatus> {
++        live(attempt)?;
++        self.context.validate_scope(worker, authority)?;
++        self.focus.validate_scope(worker, authority)?;
++        let scope = ScopeBinding {
++            installation: self.context.installation,
++            catalog: self.context.namespace,
++            index_id: authority.index_id,
++            authorization: authority.fingerprint,
++            configuration_revision: 0,
++            publication,
++        };
++        #[cfg(feature = "local-inference")]
++        let value = self.read_current_device_snapshot(scope.clone());
++        #[cfg(not(feature = "local-inference"))]
++        let value = ScopedDeviceStatus::unavailable(
++            scope.clone(),
++            "Native optional inference is not present in this image.",
++        );
++        self.context.validate_scope(worker, authority)?;
++        self.focus.validate_scope(worker, authority)?;
++        live(attempt)?;
++        value
++    }
++    #[cfg(feature = "local-inference")]
++    fn read_current_device_snapshot(&self, scope: ScopeBinding) -> Result<ScopedDeviceStatus> {
++        // load is a read-only strict decoder. NEVER call load_or_migrate or the
++        // management current_device_configuration accessor on an evidence read.
++        let store = self.configuration.device(device_management::binding()?);
++        let document = match strict_current_configuration(&store) {
++            Ok(Some(document)) => document,
++            Ok(None) | Err(_) => {
++                return ScopedDeviceStatus::unavailable(
++                    scope,
++                    "Current device configuration4 is absent, retained, or unavailable; no migration was performed.",
++                );
++            }
++        };
++        let snapshot = with_selection_snapshot(
++            || {
++                Ok((
++                    self.focus.devices.read_diagnostic_stamp()?,
++                    self.context.devices.read_diagnostic_stamp()?,
++                ))
++            },
++            || -> Result<_> {
++                let focus = self.focus.device_stage_status(&document)?;
++                let context = self.context.device_stage_status(&document)?;
++                let snapshot = DeviceStatus {
++                    schema: "airk.arbiter.status/3".into(),
++                    initialization: None,
++                    configuration: document.clone(),
++                    focus,
++                    context,
++                };
++                snapshot.validate()?;
++                ensure!(
++                    strict_current_configuration(&store)? == Some(document.clone()),
++                    "device snapshot changed"
++                );
++                ScopedDeviceStatus::from_status(snapshot, scope.clone())
++            },
++        );
++        snapshot.or_else(|error| {
++            if error.is::<airk_core::scoped_reads::ScopeReadRefused>() {
++                return Err(error);
++            }
++            ScopedDeviceStatus::unavailable(
++                scope,
++                "Native device snapshot is unavailable or changed; no model operation was started.",
++            )
++        })
++    }
++}
++
++#[cfg(feature = "local-inference")]
++fn strict_current_configuration(
++    store: &airk_store::service::arbiter::device::DeviceConfigurationStore<'_>,
++) -> Result<Option<DeviceConfiguration>> {
++    use airk_store::service::arbiter::device::StoredConfiguration;
++    use sha2::{Digest, Sha256};
++    // Management load intentionally synthesizes disabled current state on absence.
++    // Evidence must first prove an actual canonical current4 file exists.
++    let Some(before) = store.inspect_device_binding()? else {
++        return Ok(None);
++    };
++    let StoredConfiguration::Device(value) = store.load()? else {
++        return Ok(None);
++    };
++    let raw_sha = airk_core::identity::Sha256Digest::from_bytes(
++        Sha256::digest(value.canonical_bytes()?).into(),
++    );
++    ensure!(
++        before.binding == value.device_catalog
++            && before.revision == value.revision
++            && before.configuration_sha256 == raw_sha,
++        "current4 changed after physical binding observation"
++    );
++    let after = store
++        .inspect_device_binding()?
++        .context("current4 disappeared during diagnostic read")?;
++    ensure!(
++        after.binding == before.binding
++            && after.revision == before.revision
++            && after.configuration_sha256 == before.configuration_sha256,
++        "current4 binding changed during diagnostic read"
++    );
++    Ok(Some(value))
++}
++/// One bounded read-only selection/residency observation. Work progress need not
++/// be atomic; a changed native selection or eligibility never delivers a pair.
++#[cfg(feature = "local-inference")]
++fn with_selection_snapshot<S: PartialEq, T>(
++    sample: impl Fn() -> Result<S>,
++    observe: impl FnOnce() -> Result<T>,
++) -> Result<T> {
++    let before = sample()?;
++    let value = observe()?;
++    ensure!(
++        sample()? == before,
++        "native selection/residency changed during scoped device observation"
++    );
++    Ok(value)
++}
++#[cfg(all(test, feature = "local-inference"))]
++mod tests;
+--- a/crates/airk-service/src/service_runtime/arbiter.rs
++++ b/crates/airk-service/src/service_runtime/arbiter.rs
+@@ -27,6 +27,7 @@
+ #[cfg(feature = "local-inference")]
+ mod lifecycle;
+ pub(super) mod policy_delivery;
++mod read_device_status;
+ mod scoring;
+ #[cfg(all(test, feature = "local-inference", feature = "test-support"))]
+ pub(super) mod warm_observer;
+--- a/crates/airk-service/src/service_runtime.rs
++++ b/crates/airk-service/src/service_runtime.rs
+@@ -944,6 +944,24 @@
+                     },
+                     Err(error) => arbiter::failure(error),
+                 },
++                None => ControlResponse::Failure {
++                    code: "arbiter_catalog_required".into(),
++                },
++            },
++            ControlMethod::ArbiterDeviceRead {
++                worker,
++                authority,
++                publication,
++                read_attempt,
++            } => match &state.arbiter {
++                Some(owner) => {
++                    match owner.device_read_status(worker, authority, publication, read_attempt) {
++                        Ok(observation) => ControlResponse::ArbiterDeviceRead {
++                            observation: Box::new(observation),
++                        },
++                        Err(error) => arbiter::failure(error),
++                    }
++                }
+                 None => ControlResponse::Failure {
+                     code: "arbiter_catalog_required".into(),
+                 },
+--- a/crates/airk-supervisor/src/runtime_metadata/arbiter.rs
++++ b/crates/airk-supervisor/src/runtime_metadata/arbiter.rs
+@@ -106,6 +106,41 @@
+ 
+ struct Controller(PathBuf);
+ impl NativeController for Controller {
++    fn device_read_status(
++        &self,
++        worker: WorkerIdentity,
++        authority: ScopedReadRef,
++        publication: &airk_core::evidence::RevisionEnvelope,
++        read_attempt: airk_core::read_attempt::ReadAttemptBudget,
++        deadline: Instant,
++    ) -> Result<Option<device::ScopedDeviceStatus>> {
++        let response = drive_control(|| {
++            clipped(
++                deadline,
++                "scoped device status",
++                airk_installer::control_client::request_for_version_and_instance(
++                    &self.0,
++                    ControlMethod::ArbiterDeviceRead {
++                        worker,
++                        authority,
++                        publication: publication.clone(),
++                        read_attempt,
++                    },
++                    env!("CARGO_PKG_VERSION"),
++                    worker.service,
++                ),
++            )
++        })?;
++        match response {
++            ControlResponse::ArbiterDeviceRead { observation } => Ok(Some(*observation)),
++            ControlResponse::Failure { code } if code == "scoped_read_unavailable" => {
++                Err(airk_core::scoped_reads::ScopeReadRefused.into())
++            }
++            ControlResponse::Failure { code } if code == "arbiter_catalog_required" => Ok(None),
++            _ => anyhow::bail!("scoped device observation unavailable"),
++        }
++    }
++
+     fn focus_clock(&self) -> Result<Option<(airk_core::read_attempt::ReadClock, u64)>> {
+         let clock = if cfg!(windows) {
+             airk_core::read_attempt::ReadClock::WindowsPerformanceCounter
+--- a/fixtures/split/i3/admin_operations.json
++++ b/fixtures/split/i3/admin_operations.json
+@@ -2317,6 +2317,7 @@
+   {
+    "item": "native_arbiter_scope",
+    "methods": [
++    "ArbiterDeviceRead",
+     "ArbiterApplication",
+     "ArbiterNextRead",
+     "ArbiterContextAction",
+--- a/fixtures/split/i3/admission_cases.py
++++ b/fixtures/split/i3/admission_cases.py
+@@ -720,7 +720,7 @@
+ 
+ 
+ NEVER = [
+-    {"item": "native_arbiter_scope", "methods": ["ArbiterApplication", "ArbiterNextRead", "ArbiterContextAction", "ArbiterFocusApplication", "ArbiterFocusRank", "ArbiterImport", "ArbiterImportDevice"],
++    {"item": "native_arbiter_scope", "methods": ["ArbiterDeviceRead", "ArbiterApplication", "ArbiterNextRead", "ArbiterContextAction", "ArbiterFocusApplication", "ArbiterFocusRank", "ArbiterImport", "ArbiterImportDevice"],
+      "reason": "Actual native worker and redeemed source authority are owner-pipe internal only."},
+     {"item": "bearer_credentials", "methods": [],
+      "reason": "Bearer tokens and credential files never leave the owner plane."},

@@ -1,0 +1,3275 @@
+--- /dev/null
++++ executable/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification/CONTRACT.md
+@@ -0,0 +1,61 @@
++# Private native CUDA component qualification
++
++These ignored test-support/gpu-cuda selectors reuse the actual private-control
++ServiceLease, NativeInferenceOwner and ServiceComputeScope. No new process,
++crate, public wire/DTO, product selector or actor authority is introduced.
++RuntimeAssemblyInput and the request tagged airk.private.cuda-component-probe-request/1
++are Rust-owned private diagnostic input. A request is data, never a permit.
++
++The request emitter consumes explicit path/SHA/name-list/bound environment
++scalars and serializes native requests. Assembly observes held authenticated
++producer/DLL/PE bytes with no DLL activation; output is fits-empty and
++unapproved. It works without compiled activation pins. Metadata preparation
++uses current native CPU policies, original Focus5072/Compactc79/Largef8 graphs,
++raw RuntimeManifest pin and new native raw-only calibration. It creates a
++fresh directory with Profile, exact new CAL, updated opaque ResourceRunInput,
++Probe request and literal native executable commands. No old profile/CAL or
++reference bytes are overwritten. Native current-policy /3 and Core unavailable
++/2 dependencies must be applied before generating those inputs.
++
++The three component score selectors consume only the emitted Probe variant.
++Context17/128 retain the complete three-row original numeric denominator and
++execute the selected exact native tensor row only; they do not establish8192.
++Focus consumes all twelve genuine512-token reference cases, including their
++original padding/hostile/model-view cases. Each selected row requires both
++complete finite independent references and pinned producer/original asset
++roster before load. Reference arrays and tensors remain immutable; new native
++results never transfer prior CPU verdicts or qualify product advice. Numeric
++limits are the maintained same-artifact raw.001/mass.00001(Focus) or.05(Context),
++original-FP32 raw.25(Focus) or.001(Context), mass.05 and exact argmax.
++
++One original Core GpuProbeReservation expiry (<=120000ms) starts before request
++parsing; all preflight, load, scores, synchronization, drop and posthash share
++it. The maintained operation journal has additive create_until with the exact
++fixed native-monotonic expiry; historical relative operations are unchanged.
++The external owned-process watchdog remains required for unreturned FFI.
++
++Before GPU activation, actual Windows Job process/job limits and kill-on-close
++must equal the explicit request. A real Kernel Resources optional reservation
++charges the full declared host bound with actual fresh OS headroom and retained
++release observer. This is an isolated component resource owner, not product
++lane admission. Host CPU fit and source/weight limits remain unchanged. Actual
++CUDA device cold/warm claims observe free memory under the native broker; no
++measured device peak is invented (null until the separate real peak observer).
++
++The scorer uses the actual same-lease EvaluationCatalog, native device witness,
++TF32-off strict provider, actual final all-subgraph placement and explicit
++score_with_deadline/sync. Failure retains partial rows and complete actual
++placement refusal. Unknown completion, including pre-device admission failures,
++retains actual Session/device buffers plus native owner, lease, full host charge,
++source map and private control root. Scorer drop precedes the final poison
++observation, so late teardown uncertainty also prevents release. Known settled
++failures remain failures; there is no retry, fallback, threshold change or
++qualification claim. Exact request/profile/source/fixture/producer/model/runtime
++pins are rechecked after actual teardown.
++
++Native elapsed_us_to_final_report_start deliberately excludes final report
++retention; original expiry is checked after retention and refuses if exceeded.
++Whole owned-process duration/hashes/Job settlement remain the parent's genuine
++receipt. This component proof does not replace G4 full8192/resource20/coexistence,
++G5 FP16 dispatch/math, semantic labels, public provenance/package or product
++Auto/future-request recovery qualification.
+--- r4/crates/airk-retrieval/src/arbiter/runtime/cuda/CONTRACT.md
++++ executable/crates/airk-retrieval/src/arbiter/runtime/cuda/CONTRACT.md
+@@ -163,3 +163,19 @@
+ Likewise the current producer sidecar is private fixture provenance. Do not ship
+ raw private build paths/log records; a Rust-owned public projection + approved
+ package contract is still required before distributable activation.
++
++The first executable component scope additionally admits the unchanged selected
++Focus5072 W8 graph with FP32 activations/static512/no-yes raw binary output.
++Its fresh uncalibrated relevance metadata comes from the existing native
++qualification owner, extracted once with unchanged serialization field order
++and values. This is raw scoring only; no learned probability/action confidence
++or CPU evidence transfers. Context still requires the native all-Unsupported
++/2 artifact. Public CPU Focus legacy compatibility is a separate closed native
++source witness, not GPU qualification or a Context policy exception.
++
++Executable ignored selectors live in Inference software_v2/cuda_qualification,
++which owns real ServiceLease/NativeInferenceOwner and optional host reservation.
++Retrieval adds no dependency edge to Kernel/Store. process_poisoned is a read-only
++actual native poison observation for failures before a device could be returned;
++it never permits execution. The fixed-absolute operation journal and component
++contract preserve genuine owned-process timing/custody requirements.
+--- /dev/null
++++ executable/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2.rs
+@@ -0,0 +1,815 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Additive native software-v2 observations; historical /1 owners stay unchanged.
++use super::{peak_rss, private_control};
++use airk_core::{
++    arbiter::{Asset, AssetRole, ModelChoice, Profile, Stage, resource_policy::*},
++    identity::{Sha256Digest, framed_digest},
++};
++use airk_retrieval::arbiter::{
++    compiler::{Candidate, CompiledInput, Compiler},
++    runtime::{AssetSource, ExecutionProfile, Scorer, current_target},
++};
++use anyhow::{Context, Result, ensure};
++use serde::{Deserialize, Serialize};
++use serde_json::{Value, json};
++use sha2::{Digest, Sha256};
++use std::{
++    collections::{BTreeMap, BTreeSet},
++    fs::{File, OpenOptions},
++    io::{Read, Seek, SeekFrom, Write},
++    path::{Path, PathBuf},
++    sync::Arc,
++};
++
++struct Files(BTreeMap<String, String>);
++impl AssetSource for Files {
++    fn read_asset(&self, asset: &Asset) -> Result<Vec<u8>> {
++        let path = self
++            .0
++            .get(&asset.name)
++            .context("unmapped software-v2 native asset")?;
++        let bytes = small(Path::new(path), asset.bytes)?;
++        ensure!(
++            bytes.len() as u64 == asset.bytes && sha(&bytes) == asset.sha256,
++            "consumed native resource asset bytes differ"
++        );
++        Ok(bytes)
++    }
++}
++fn sha(bytes: &[u8]) -> Sha256Digest {
++    Sha256Digest::from_bytes(Sha256::digest(bytes).into())
++}
++fn small(path: &Path, maximum: u64) -> Result<Vec<u8>> {
++    let metadata = std::fs::symlink_metadata(path)?;
++    ensure!(
++        metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() <= maximum,
++        "native resource file type/size differs"
++    );
++    #[cfg(windows)]
++    {
++        use std::os::windows::fs::MetadataExt;
++        ensure!(
++            metadata.file_attributes() & 0x400 == 0,
++            "resource reparse point refused"
++        );
++    }
++    let limit = maximum.checked_add(1).context("file bound overflow")?;
++    let length = usize::try_from(metadata.len()).context("native resource length overflow")?;
++    let mut bytes = Vec::new();
++    // Match production PinnedAssets::read: reserve the actual authenticated
++    // metadata length, not geometric growth and not the larger caller ceiling.
++    bytes
++        .try_reserve_exact(length)
++        .context("native resource allocation unavailable")?;
++    File::open(path)?.take(limit).read_to_end(&mut bytes)?;
++    ensure!(
++        bytes.len() as u64 <= maximum,
++        "native resource file grew beyond bound"
++    );
++    Ok(bytes)
++}
++fn pinned(pin: &ResourceFilePin, maximum: u64) -> Result<Vec<u8>> {
++    pin.validate()?;
++    let bytes = small(Path::new(&pin.path), maximum)?;
++    ensure!(
++        sha(&bytes) == pin.sha256,
++        "pinned software-v2 metadata changed"
++    );
++    Ok(bytes)
++}
++fn file_hash(path: &Path) -> Result<Sha256Digest> {
++    let mut file = File::open(path)?;
++    let mut hash = Sha256::new();
++    let mut buffer = vec![0u8; 4 << 20];
++    loop {
++        let count = file.read(&mut buffer)?;
++        if count == 0 {
++            break;
++        }
++        hash.update(&buffer[..count]);
++    }
++    Ok(Sha256Digest::from_bytes(hash.finalize().into()))
++}
++fn verify_files(files: &Files, profile: &Profile) -> Result<()> {
++    for asset in &profile.assets {
++        let path = Path::new(
++            files
++                .0
++                .get(&asset.name)
++                .context("native asset map incomplete")?,
++        );
++        let metadata = std::fs::symlink_metadata(path)?;
++        ensure!(
++            metadata.is_file()
++                && !metadata.file_type().is_symlink()
++                && metadata.len() == asset.bytes,
++            "native resource asset type/length differs"
++        );
++        #[cfg(windows)]
++        {
++            use std::os::windows::fs::MetadataExt;
++            ensure!(
++                metadata.file_attributes() & 0x400 == 0,
++                "native resource reparse asset refused"
++            );
++        }
++        ensure!(
++            file_hash(path)? == asset.sha256,
++            "native resource asset hash differs"
++        );
++    }
++    Ok(())
++}
++fn inputs() -> Result<(ResourceRunInput, Profile, Files, Sha256Digest)> {
++    let path = PathBuf::from(std::env::var("AIRK_SOFTWARE_V2_NATIVE_INPUT")?);
++    let expected: Sha256Digest = std::env::var("AIRK_SOFTWARE_V2_NATIVE_INPUT_SHA256")?.parse()?;
++    inputs_from(&ResourceFilePin {
++        path: path.to_str().context("native request path")?.into(),
++        sha256: expected,
++    })
++}
++fn inputs_from(pin: &ResourceFilePin) -> Result<(ResourceRunInput, Profile, Files, Sha256Digest)> {
++    let raw = pinned(pin, 1 << 20)?;
++    let expected = pin.sha256;
++    let input: ResourceRunInput = serde_json::from_slice(&raw)?;
++    input.validate()?;
++    pinned(&input.source_manifest, 16 << 20)?;
++    let raw_profile = pinned(&input.profile, 1 << 20)?;
++    let profile: Profile = serde_json::from_slice(&raw_profile)?;
++    profile.validate()?;
++    let stage = profile
++        .model
++        .stage()
++        .context("only selected native stage models")?;
++    let (width, reservation) = match profile.model {
++        ModelChoice::FocusQwenReranker06B => (512, 4u64 << 30),
++        ModelChoice::ContextQwenCompact => (8192, 16u64 << 30),
++        ModelChoice::ContextQwenLarge => (8192, 40u64 << 30),
++        _ => anyhow::bail!("historical model cannot inherit software-v2 evidence"),
++    };
++    ensure!(
++        profile.max_tokens == width
++            && profile.memory_reservation_bytes == reservation
++            && profile.stage == Some(stage)
++            && profile.qualification.is_none()
++            && profile.qualified_targets.is_empty()
++            && profile.downloads.is_empty()
++            && (stage == Stage::Focus || profile.max_candidates == 8),
++        "resource profile is not the exact unqualified software-v2 candidate"
++    );
++    ensure!(
++        input.files.keys().collect::<BTreeSet<_>>()
++            == profile
++                .assets
++                .iter()
++                .map(|asset| &asset.name)
++                .collect::<BTreeSet<_>>(),
++        "exact native resource asset roster required"
++    );
++    let files = Files(input.files.clone());
++    Ok((input, profile, files, expected))
++}
++#[derive(Debug)]
++struct ObservedNativeFailure {
++    elapsed_us: u64,
++    peak_process_rss_bytes: u64,
++}
++impl std::fmt::Display for ObservedNativeFailure {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.write_str("native score returned a known failure after measured work")
++    }
++}
++impl std::error::Error for ObservedNativeFailure {}
++fn flush(file: &mut File, receipt: &Value) -> Result<()> {
++    let bytes = serde_json::to_vec_pretty(receipt)?;
++    file.seek(SeekFrom::Start(0))?;
++    file.write_all(&bytes)?;
++    file.set_len(bytes.len() as u64)?;
++    file.flush()?;
++    file.sync_data()?;
++    Ok(())
++}
++fn isa() -> Value {
++    #[cfg(target_arch = "x86_64")]
++    {
++        json!({"architecture":"x86_64",
++        "avx":std::arch::is_x86_feature_detected!("avx"),"avx2":std::arch::is_x86_feature_detected!("avx2"),
++        "fma":std::arch::is_x86_feature_detected!("fma")})
++    }
++    #[cfg(target_arch = "aarch64")]
++    {
++        json!({"architecture":"aarch64",
++        "neon":std::arch::is_aarch64_feature_detected!("neon")})
++    }
++    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
++    {
++        json!({"architecture":std::env::consts::ARCH})
++    }
++}
++fn resource_input(
++    profile: &Profile,
++    files: &Files,
++    mut compile: impl FnMut(&str, &str, &[Candidate]) -> Result<CompiledInput>,
++) -> Result<CompiledInput> {
++    if profile.model == ModelChoice::FocusQwenReranker06B {
++        for asset in profile
++            .assets
++            .iter()
++            .filter(|asset| asset.role == AssetRole::Fixture)
++        {
++            ensure!(
++                asset.bytes <= 4 << 20,
++                "bounded resource source fixture required"
++            );
++            let fixture: Value = serde_json::from_slice(&files.read_asset(asset)?)?;
++            if let Some(row) = fixture
++                .get("rows")
++                .and_then(Value::as_array)
++                .and_then(|rows| {
++                    rows.iter()
++                        .find(|row| row["id"] == "long-maintenance-synthetic")
++                })
++            {
++                let option = Candidate {
++                    id: row["id"]
++                        .as_str()
++                        .context("Focus resource source id")?
++                        .into(),
++                    text: row["original_document"]
++                        .as_str()
++                        .context("Focus resource source document")?
++                        .into(),
++                };
++                let input = compile(
++                    "",
++                    row["original_query"]
++                        .as_str()
++                        .context("Focus resource source query")?,
++                    &[option],
++                )?;
++                ensure!(
++                    input.input_ids.len() == 512
++                        && input.attention_mask.iter().sum::<i64>() >= 480
++                        && input.candidate_positions == [2152, 9693],
++                    "actual full static512 near-cap Focus source required"
++                );
++                return Ok(input);
++            }
++        }
++        anyhow::bail!("authenticated near-cap Focus source fixture unavailable");
++    }
++    let options = (0..8)
++        .map(|index| Candidate {
++            id: format!("resource-option-{index}"),
++            text: format!("Synthetic whole option {index}; no source or task-truth authority."),
++        })
++        .collect::<Vec<_>>();
++    let (mut low, mut high) = (0usize, 16384usize);
++    let mut maximum = None;
++    while low <= high {
++        let middle = low + (high - low) / 2;
++        match compile(
++            &" source".repeat(middle),
++            "Select one complete synthetic option.",
++            &options,
++        ) {
++            Ok(input) => {
++                maximum = Some(input);
++                low = middle + 1;
++            }
++            Err(_) => {
++                if middle == 0 {
++                    break;
++                }
++                high = middle - 1;
++            }
++        }
++    }
++    let input = maximum.context("native maximum-input compiler could not admit a case")?;
++    ensure!(
++        input.input_ids.len() == 8192
++            && input.candidate_positions.len() == 8
++            && input.option_mask == [true; 8]
++            && input.attention_mask == vec![1; 8192],
++        "exact native T8192/N8/all-live input required; no shortened substitution"
++    );
++    Ok(input)
++}
++fn observe_series(
++    series: &mut ResourceSeries,
++    policy: &ResourcePolicy,
++    mut observe: impl FnMut() -> Result<ResourceSample>,
++    mut retain: impl FnMut(&ResourceSeries) -> Result<()>,
++) -> Result<()> {
++    for _ in 0..policy.required_warm_samples {
++        series.begin_sample(policy)?;
++        match observe() {
++            Ok(sample) => {
++                let outcome = series.finish_sample(sample, policy);
++                retain(series)?;
++                outcome?;
++            }
++            Err(error) => {
++                series.fail_native(policy)?;
++                retain(series)?;
++                return Err(error);
++            }
++        }
++    }
++    series.require_complete(policy)
++}
++
++#[test]
++#[ignore = "actual selected assets, frozen software-v2 request and exclusive native resource window required"]
++fn software_v2_selected_native_resources() -> Result<()> {
++    let (input, profile, files, input_hash) = inputs()?;
++    let output = PathBuf::from(std::env::var("AIRK_SOFTWARE_V2_NATIVE_OUTPUT")?);
++    let mut file = OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .open(&output)?;
++    let binary_sha256 = file_hash(&std::env::current_exe()?)?;
++    let mut receipt = json!({"schema":"airk.arbiter.native-resource/2","complete":false,
++        "evaluation":true,"release_qualified":false,"candidate_resource_passed":false,
++        "input_sha256":input_hash,"source_manifest":input.source_manifest,
++        "profile":profile.manifest,"profile_source_sha256":input.profile.sha256,
++        "resource_policy":input.policy,"resource_policy_digest":input.policy_digest,
++        "model":profile.model,"target":current_target(),"isa":isa(),"cpu_fit":profile.cpu_fit,
++        "process_id":std::process::id(),"execution_user":airk_ipc::endpoint::current_user()?,
++        "native_binary_sha256":binary_sha256,"resource":ResourceSeries::new(profile.memory_reservation_bytes)?,
++        "operation_journal":output.with_extension("operations.jsonl"),
++        "measurement_identity":"native-original-operation-start-to-post-end-retention/1",
++        "numeric_status":"unavailable_in_resource_only_run",
++        "scope":"Actual service-lease native score-return/clock/process-lifetime-RSS observations only. No task quality, composed service admission, cold end-to-end, calibrated action, platform transfer or publication claim."});
++    flush(&mut file, &receipt)?;
++    let mut operations = operation::Journal::create(
++        &output,
++        operation::Identity {
++            input_sha256: input_hash,
++            profile: profile.manifest,
++            process_id: std::process::id(),
++            native_binary_sha256: binary_sha256,
++        },
++        input.policy.deadline_ms,
++    )?;
++    let (_parent, control) = private_control()?;
++    let owner = airk_kernel::inference_owner::NativeInferenceOwner::admit(Arc::new(
++        airk_store::service::ServiceLease::acquire(&control)?,
++    ))?;
++    let run = owner.run(|| -> Result<()> {
++        verify_files(&files, &profile)?;
++        let loaded = operations.observe(operation::Kind::Load, 0, None, || {
++            Scorer::open(
++                ExecutionProfile::for_qualification(profile.clone())?,
++                &files,
++            )
++        })?;
++        receipt["load_us"] = json!(loaded.elapsed_us);
++        receipt["load_native_call_us"] = json!(loaded.native_call_elapsed_us);
++        receipt["load_peak_process_rss_bytes"] = json!(peak_rss());
++        flush(&mut file, &receipt)?;
++        ensure!(
++            loaded.within_deadline,
++            "original native load deadline exceeded"
++        );
++        let scorer = loaded.value?;
++        receipt["execution_identity"] = serde_json::to_value(scorer.execution_identity()?)?;
++        let compiled = resource_input(&profile, &files, |state, question, candidates| {
++            scorer.compile(state, question, candidates)
++        })?;
++        receipt["input"] = serde_json::to_value(&compiled)?;
++        let warmed = operations.observe(
++            operation::Kind::Warmup,
++            0,
++            Some(compiled.input_digest),
++            || scorer.score(&compiled),
++        )?;
++        let peak = peak_rss().context("actual native process peak RSS unavailable")?;
++        receipt["warmup"] = json!({"elapsed_us":warmed.elapsed_us,
++            "native_call_elapsed_us":warmed.native_call_elapsed_us,"peak_process_rss_bytes":peak,
++            "returned":true,"success":warmed.value.is_ok()});
++        flush(&mut file, &receipt)?;
++        ensure!(
++            warmed.within_deadline,
++            "original native warmup deadline exceeded"
++        );
++        warmed.value?;
++        ensure!(
++            warmed.elapsed_us <= input.policy.p95_limit_us
++                && peak <= profile.memory_reservation_bytes,
++            "first warmup exceeded frozen native resource bound; no measured forward admitted"
++        );
++        let mut series = ResourceSeries::new(profile.memory_reservation_bytes)?;
++        let mut ordinal = 0;
++        let result = observe_series(
++            &mut series,
++            &input.policy,
++            || {
++                ordinal += 1;
++                let scored = operations.observe(
++                    operation::Kind::Sample,
++                    ordinal,
++                    Some(compiled.input_digest),
++                    || scorer.score(&compiled),
++                )?;
++                let elapsed_us = scored.elapsed_us;
++                let peak_process_rss_bytes = peak_rss().context("actual native RSS unavailable")?;
++                scored.value.map_err(|error| {
++                    error.context(ObservedNativeFailure {
++                        elapsed_us,
++                        peak_process_rss_bytes,
++                    })
++                })?;
++                // Original operation time includes both durable observer publications.
++                // A late return therefore enters the real partial series as overrun,
++                // and Core refuses the next forward without inventing a zero sample.
++                Ok(ResourceSample {
++                    elapsed_us,
++                    peak_process_rss_bytes,
++                })
++            },
++            |series| {
++                receipt["resource"] = serde_json::to_value(series)?;
++                flush(&mut file, &receipt)
++            },
++        );
++        receipt["resource"] = serde_json::to_value(&series)?;
++        result?;
++        drop(scorer);
++        verify_files(&files, &profile)?;
++        pinned(&input.source_manifest, 16 << 20)?;
++        receipt["candidate_resource_passed"] = true.into();
++        receipt["complete"] = true.into();
++        Ok(())
++    });
++    let result = run.and_then(std::convert::identity);
++    if let Err(error) = &result {
++        receipt["error"] = format!("{error:#}").into();
++        if let Some(observed) = error.downcast_ref::<ObservedNativeFailure>() {
++            receipt["native_failure_observation"] = json!({"native_return_observed":true,
++                "elapsed_us":observed.elapsed_us,"peak_process_rss_bytes":observed.peak_process_rss_bytes});
++        }
++    }
++    flush(&mut file, &receipt)?;
++    result
++}
++
++#[derive(Clone, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct NumericCase {
++    name: String,
++    input: CompiledInput,
++    reference_same_artifact: Option<Vec<f32>>,
++    reference_original_fp32: Option<Vec<f32>>,
++}
++#[derive(Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct NumericFixture {
++    schema: String,
++    model: ModelChoice,
++    compiler: Sha256Digest,
++    resource_policy: Sha256Digest,
++    reference_producer: Option<ResourceFilePin>,
++    original_reference_assets: Vec<Asset>,
++    rows: Vec<NumericCase>,
++}
++fn diagnostic(row: &Value, fixture: Sha256Digest) -> Result<CompiledInput> {
++    let input = &row["input"];
++    Ok(CompiledInput {
++        prompt: String::new(),
++        input_ids: serde_json::from_value(input["input_ids"].clone())?,
++        attention_mask: serde_json::from_value(input["attention_mask"].clone())?,
++        position_ids: serde_json::from_value(input["position_ids"].clone())?,
++        decision_position: input["decision_position"]
++            .as_i64()
++            .context("native diagnostic decision")?,
++        candidate_positions: serde_json::from_value(input["candidate_positions"].clone())?,
++        option_mask: serde_json::from_value(input["option_mask"].clone())?,
++        input_digest: framed_digest(
++            b"airk.private-context-numeric-probe/2",
++            &[fixture.as_bytes(), &serde_json::to_vec(row)?],
++        ),
++    })
++}
++fn softmax(values: &[f32]) -> Result<Vec<f64>> {
++    ensure!(
++        !values.is_empty() && values.iter().all(|value| value.is_finite()),
++        "finite native numeric scores required"
++    );
++    let peak = values.iter().copied().fold(f32::NEG_INFINITY, f32::max);
++    let values = values
++        .iter()
++        .map(|value| (f64::from(*value) - f64::from(peak)).exp())
++        .collect::<Vec<_>>();
++    let total: f64 = values.iter().sum();
++    Ok(values.into_iter().map(|value| value / total).collect())
++}
++fn comparison(actual: &[f32], expected: &[f32]) -> Result<(f64, f64, bool)> {
++    ensure!(
++        actual.len() == expected.len(),
++        "native numeric reference cardinality differs"
++    );
++    let a = softmax(actual)?;
++    let b = softmax(expected)?;
++    let winner = |scores: &[f32]| {
++        scores.iter().enumerate().fold(
++            0,
++            |best, (index, value)| if *value > scores[best] { index } else { best },
++        )
++    };
++    Ok((
++        actual
++            .iter()
++            .zip(expected)
++            .map(|(a, b)| (f64::from(*a) - f64::from(*b)).abs())
++            .fold(0f64, f64::max),
++        a.iter()
++            .zip(b)
++            .map(|(a, b)| (a - b).abs())
++            .fold(0f64, f64::max),
++        winner(actual) == winner(expected),
++    ))
++}
++fn numeric_shape(
++    fixture: &NumericFixture,
++    profile: &Profile,
++    policy: &ResourcePolicy,
++) -> Result<()> {
++    ensure!(
++        fixture.schema == "airk.arbiter.native-numeric/2"
++            && fixture.model == profile.model
++            && fixture.compiler == profile.compiler
++            && fixture.resource_policy == policy.digest()?,
++        "numeric fixture is not the exact current compiler/model/resource identity"
++    );
++    let focus = profile.model == ModelChoice::FocusQwenReranker06B;
++    ensure!(
++        fixture.rows.len() == if focus { 12 } else { 3 },
++        "complete independent native numeric roster required"
++    );
++    ensure!(
++        fixture
++            .rows
++            .iter()
++            .map(|row| &row.name)
++            .collect::<BTreeSet<_>>()
++            .len()
++            == fixture.rows.len(),
++        "numeric case identities must be distinct"
++    );
++    for (index, row) in fixture.rows.iter().enumerate() {
++        let (tokens, options) = if focus {
++            (512, 2)
++        } else {
++            [(17, 3), (128, 8), (8192, 8)][index]
++        };
++        ensure!(
++            !row.name.is_empty()
++                && row.name.len() <= 128
++                && row.input.input_ids.len() == tokens
++                && row.input.input_ids.iter().all(|token| *token >= 0)
++                && row.input.attention_mask.len() == tokens
++                && row.input.position_ids.len() == tokens
++                && row.input.position_ids.iter().copied().eq(0..tokens as i64)
++                && row.input.decision_position == tokens as i64 - 1
++                && row.input.candidate_positions.len() == options
++                && row
++                    .input
++                    .candidate_positions
++                    .iter()
++                    .all(|token| *token >= 0)
++                && row.input.option_mask == vec![true; options]
++                && if focus {
++                    // Focus keeps its genuine static-width left padding. The
++                    // Context resource claim instead requires every token live.
++                    row.input
++                        .attention_mask
++                        .iter()
++                        .all(|mask| matches!(mask, 0 | 1))
++                        && row.input.attention_mask.last() == Some(&1)
++                        && row
++                            .input
++                            .attention_mask
++                            .windows(2)
++                            .all(|pair| pair[0] <= pair[1])
++                } else {
++                    row.input.attention_mask.iter().all(|mask| *mask == 1)
++                },
++            "current all-live numeric input shape differs; historical2048 cannot satisfy8192"
++        );
++    }
++    Ok(())
++}
++
++#[test]
++#[ignore = "independently produced same-artifact/original-FP32 references at current8192 width required"]
++fn software_v2_selected_native_numeric() -> Result<()> {
++    let (input, profile, files, input_hash) = inputs()?;
++    let pin = input
++        .numeric_fixture
++        .as_ref()
++        .context("current independent numeric reference unavailable")?;
++    let raw = pinned(pin, 16 << 20)?;
++    let fixture: NumericFixture = serde_json::from_slice(&raw)?;
++    numeric_shape(&fixture, &profile, &input.policy)?;
++    let producer = fixture
++        .reference_producer
++        .as_ref()
++        .context("independent reference producer pin required")?;
++    pinned(producer, 16 << 20)?;
++    ensure!(
++        !fixture.original_reference_assets.is_empty(),
++        "original-reference artifact identities required"
++    );
++    for row in &fixture.rows {
++        for reference in [&row.reference_same_artifact, &row.reference_original_fp32] {
++            let reference = reference
++                .as_ref()
++                .context("current independent numeric reference unavailable")?;
++            ensure!(
++                reference.len() == row.input.candidate_positions.len()
++                    && reference.iter().all(|value| value.is_finite()),
++                "complete finite independent reference required before native load"
++            );
++        }
++    }
++    let output = PathBuf::from(std::env::var("AIRK_SOFTWARE_V2_NATIVE_OUTPUT")?);
++    let mut file = OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .open(&output)?;
++    let binary_sha256 = file_hash(&std::env::current_exe()?)?;
++    let mut receipt = json!({"schema":"airk.arbiter.native-numeric-result/2","complete":false,"evaluation":true,
++        "release_qualified":false,"input_sha256":input_hash,"profile":profile.manifest,
++        "profile_source_sha256":input.profile.sha256,"fixture":pin,"source_manifest":input.source_manifest,
++        "reference_producer":producer,"original_reference_assets":fixture.original_reference_assets,
++        "resource_policy_digest":input.policy_digest,"resource_policy":input.policy,
++        "model":profile.model,"target":current_target(),"isa":isa(),"cpu_fit":profile.cpu_fit,
++        "process_id":std::process::id(),"execution_user":airk_ipc::endpoint::current_user()?,
++        "native_binary_sha256":binary_sha256,"operation_journal":output.with_extension("operations.jsonl"),
++        "measurement_identity":"native-original-operation-start-to-post-end-retention/1",
++        "rows":[],"scope":"Actual native raw-logit/mass/argmax comparisons with separately pinned independent references; no semantic/calibration/composed-path/publication qualification."});
++    flush(&mut file, &receipt)?;
++    let mut operations = operation::Journal::create(
++        &output,
++        operation::Identity {
++            input_sha256: input_hash,
++            profile: profile.manifest,
++            process_id: std::process::id(),
++            native_binary_sha256: binary_sha256,
++        },
++        input.policy.deadline_ms,
++    )?;
++    let (_parent, control) = private_control()?;
++    let owner = airk_kernel::inference_owner::NativeInferenceOwner::admit(Arc::new(
++        airk_store::service::ServiceLease::acquire(&control)?,
++    ))?;
++    let run=owner.run(||->Result<()>{verify_files(&files,&profile)?;
++        let loaded=operations.observe(operation::Kind::Load,0,None,|| {
++            Scorer::open(ExecutionProfile::for_qualification(profile.clone())?,&files)
++        })?;
++        receipt["load_us"]=json!(loaded.elapsed_us);
++        receipt["load_native_call_us"]=json!(loaded.native_call_elapsed_us);
++        receipt["load_peak_process_rss_bytes"]=json!(peak_rss());
++        flush(&mut file,&receipt)?;
++        ensure!(loaded.within_deadline,"original native numeric load deadline exceeded");
++        let scorer=loaded.value?;
++        receipt["execution_identity"]=serde_json::to_value(scorer.execution_identity()?)?;
++        for (ordinal,row) in fixture.rows.iter().enumerate() {
++            let scored=operations.observe(operation::Kind::Numeric,ordinal+1,Some(row.input.input_digest),||scorer.score(&row.input))?;
++            let elapsed_us=scored.elapsed_us;
++            let native_call_elapsed_us=scored.native_call_elapsed_us;
++            let within_deadline=scored.within_deadline;
++            let actual=scored.value?;
++            let(same_raw,same_mass,same_argmax)=comparison(&actual,row.reference_same_artifact.as_ref().context("same-artifact reference")?)?;
++            let(original_raw,original_mass,original_argmax)=comparison(&actual,row.reference_original_fp32.as_ref().context("original FP32 reference")?)?;
++            receipt["rows"].as_array_mut().context("numeric result rows")?.push(json!({"name":row.name,
++                "input_digest":row.input.input_digest,"tokens":row.input.input_ids.len(),"options":row.input.candidate_positions.len(),
++                "raw_scores":actual,"elapsed_us":elapsed_us,"native_call_elapsed_us":native_call_elapsed_us,"same_artifact_raw_error":same_raw,"same_artifact_mass_error":same_mass,
++                "original_fp32_raw_error":original_raw,"original_fp32_mass_error":original_mass,"argmax_matches":same_argmax&&original_argmax}));
++            flush(&mut file,&receipt)?;
++            ensure!(within_deadline,"original native numeric score deadline exceeded; exact returned partial rows retained");
++            let focus=profile.model==ModelChoice::FocusQwenReranker06B;
++            ensure!(same_raw<=0.001&&same_mass<=if focus{0.00001}else{0.05}
++                &&original_raw<=if focus{0.25}else{0.001}&&original_mass<=0.05&&same_argmax&&original_argmax,
++                "frozen native numeric tolerance refused; exact observed partial rows retained");
++        } drop(scorer);verify_files(&files,&profile)?;Ok(())
++    });
++    let result = run.and_then(std::convert::identity);
++    receipt["complete"] = json!(result.is_ok());
++    if let Err(error) = &result {
++        receipt["error"] = format!("{error:#}").into();
++    }
++    flush(&mut file, &receipt)?;
++    result
++}
++
++#[test]
++#[ignore = "native current compiler/assets and fresh private numeric-template output required; no NN"]
++fn emit_software_v2_native_numeric_template() -> Result<()> {
++    let (input, profile, files, _) = inputs()?;
++    let compiler_asset = profile
++        .assets
++        .iter()
++        .find(|asset| asset.role == AssetRole::Compiler)
++        .context("native compiler asset")?;
++    let tokenizer_asset = profile
++        .assets
++        .iter()
++        .find(|asset| asset.role == AssetRole::Tokenizer)
++        .context("native tokenizer asset")?;
++    let compiler = Compiler::from_verified(
++        &files.read_asset(compiler_asset)?,
++        &files.read_asset(tokenizer_asset)?,
++    )?;
++    let mut rows = Vec::new();
++    for asset in profile
++        .assets
++        .iter()
++        .filter(|asset| asset.role == AssetRole::Fixture)
++    {
++        ensure!(
++            asset.bytes <= 4 << 20,
++            "bounded original native fixture required"
++        );
++        let raw = files.read_asset(asset)?;
++        let fixture: Value = serde_json::from_slice(&raw)?;
++        if let Some(old) = fixture.get("rows").and_then(Value::as_array) {
++            if profile.model == ModelChoice::FocusQwenReranker06B {
++                for row in old {
++                    let expected = &row["expected"];
++                    let input = CompiledInput {
++                        prompt: expected["prompt"].as_str().context("Focus prompt")?.into(),
++                        input_ids: serde_json::from_value(expected["input_ids"].clone())?,
++                        attention_mask: serde_json::from_value(expected["attention_mask"].clone())?,
++                        position_ids: serde_json::from_value(expected["position_ids"].clone())?,
++                        decision_position: expected["decision_position"]
++                            .as_i64()
++                            .context("Focus decision")?,
++                        candidate_positions: serde_json::from_value(
++                            expected["candidate_positions"].clone(),
++                        )?,
++                        option_mask: serde_json::from_value(expected["option_mask"].clone())?,
++                        input_digest: framed_digest(
++                            b"airk.private-focus-publisher-diagnostic/2",
++                            &[asset.sha256.as_bytes(), &serde_json::to_vec(row)?],
++                        ),
++                    };
++                    rows.push(NumericCase {
++                        name: row["id"].as_str().context("Focus case id")?.into(),
++                        input,
++                        reference_same_artifact: None,
++                        reference_original_fp32: None,
++                    });
++                }
++            } else if old.len() >= 2 {
++                for (index, row) in old.iter().take(2).enumerate() {
++                    rows.push(NumericCase {
++                        name: format!("all-live-{index}"),
++                        input: diagnostic(row, asset.sha256)?,
++                        reference_same_artifact: None,
++                        reference_original_fp32: None,
++                    });
++                }
++                rows.push(NumericCase {
++                    name: "native-all-live-8192".into(),
++                    input: resource_input(&profile, &files, |state, question, options| {
++                        compiler.compile(state, question, options)
++                    })?,
++                    reference_same_artifact: None,
++                    reference_original_fp32: None,
++                });
++            }
++            break;
++        }
++    }
++    let fixture = NumericFixture {
++        schema: "airk.arbiter.native-numeric/2".into(),
++        model: profile.model,
++        compiler: profile.compiler,
++        resource_policy: input.policy_digest,
++        reference_producer: None,
++        original_reference_assets: vec![],
++        rows,
++    };
++    numeric_shape(&fixture, &profile, &input.policy)?;
++    let output = PathBuf::from(std::env::var("AIRK_SOFTWARE_V2_NATIVE_OUTPUT")?);
++    let mut file = OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .open(output)?;
++    file.write_all(&serde_json::to_vec_pretty(&fixture)?)?;
++    file.sync_all()?;
++    Ok(())
++}
++
++mod operation;
++mod original_sources;
++
++#[cfg(test)]
++mod tests;
++
++mod attention_diagnostic;
++
++#[cfg(feature = "gpu-cuda")]
++mod cuda_qualification;
+--- /dev/null
++++ executable/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification.rs
+@@ -0,0 +1,602 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Explicit component probes. No product admission or qualified GPU fit follows.
++use super::*;
++use airk_core::{
++    arbiter::device::GpuProbeReservation,
++    identity::Incarnation,
++    service_resources::{ResourceConfiguration, ResourcePreset},
++};
++use airk_retrieval::arbiter::runtime::cuda::{self, DeviceCapacityPlan, RuntimeAssemblyInput};
++use std::time::{Duration, Instant};
++
++#[derive(Serialize, Deserialize)]
++#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
++enum Request {
++    Assembly {
++        schema: String,
++        assembly: RuntimeAssemblyInput,
++        deadline_ms: u64,
++    },
++    Prepare {
++        schema: String,
++        cpu_input: ResourceFilePin,
++        runtime_manifest: ResourceFilePin,
++        bounds: GpuProbeReservation,
++        cold_bytes: u64,
++        warm_bytes: u64,
++        headroom_bytes: u64,
++        job_limit_bytes: u64,
++    },
++    Probe {
++        schema: String,
++        gpu_input: ResourceFilePin,
++        runtime_manifest: ResourceFilePin,
++        bounds: GpuProbeReservation,
++        cold_bytes: u64,
++        warm_bytes: u64,
++        headroom_bytes: u64,
++        job_limit_bytes: u64,
++    },
++}
++const SCHEMA: &str = "airk.private.cuda-component-probe-request/1";
++fn text(key: &str) -> Result<String> {
++    std::env::var(key).with_context(|| format!("missing {key}"))
++}
++fn number(key: &str) -> Result<u64> {
++    Ok(text(key)?.parse()?)
++}
++fn env_pin(path: &str, hash: &str) -> Result<ResourceFilePin> {
++    let pin = ResourceFilePin {
++        path: text(path)?,
++        sha256: text(hash)?.parse()?,
++    };
++    pin.validate()?;
++    Ok(pin)
++}
++fn list(key: &str) -> Result<Vec<String>> {
++    let value = text(key)?;
++    if value.is_empty() {
++        return Ok(vec![]);
++    }
++    let rows = value.split(';').map(str::to_owned).collect::<Vec<_>>();
++    ensure!(
++        rows.len() <= 256 && rows.iter().all(|r| !r.is_empty()),
++        "native request name-list bound"
++    );
++    Ok(rows)
++}
++fn output() -> Result<PathBuf> {
++    Ok(PathBuf::from(text("AIRK_CUDA_QUALIFICATION_OUTPUT")?))
++}
++fn write_new(path: &Path, bytes: &[u8]) -> Result<ResourceFilePin> {
++    ensure!(bytes.len() <= 16 << 20, "CUDA component output cap");
++    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
++    file.write_all(bytes)?;
++    file.sync_all()?;
++    Ok(ResourceFilePin {
++        path: path.to_str().context("native output UTF8 path")?.into(),
++        sha256: sha(bytes),
++    })
++}
++fn write_json(path: &Path, value: &impl Serialize) -> Result<ResourceFilePin> {
++    let mut bytes = serde_json::to_vec_pretty(value)?;
++    bytes.push(b'\n');
++    write_new(path, &bytes)
++}
++fn request() -> Result<(Request, ResourceFilePin)> {
++    let pin = env_pin(
++        "AIRK_CUDA_QUALIFICATION_INPUT",
++        "AIRK_CUDA_QUALIFICATION_INPUT_SHA256",
++    )?;
++    let raw = pinned(&pin, 1 << 20)?;
++    Ok((serde_json::from_slice(&raw)?, pin))
++}
++fn bounds_validate(
++    bounds: &GpuProbeReservation,
++    cold: u64,
++    warm: u64,
++    headroom: u64,
++    job: u64,
++    profile_peak: u64,
++) -> Result<DeviceCapacityPlan> {
++    bounds.validate()?;
++    ensure!(
++        bounds.host_limit_bytes >= profile_peak
++            && job >= bounds.host_limit_bytes
++            && job
++                <= bounds
++                    .host_limit_bytes
++                    .checked_add(8 << 30)
++                    .context("Job limit overflow")?,
++        "original explicit component host/Job bounds differ"
++    );
++    ensure!(
++        cold.checked_add(headroom)
++            .is_some_and(|v| v <= bounds.device_limit_bytes),
++        "device planning bound exceeds explicit reservation"
++    );
++    DeviceCapacityPlan::probe(cold, warm, headroom)
++}
++#[derive(Clone, Copy)]
++enum CaseKind {
++    Context17,
++    Context128,
++    Focus512,
++}
++fn selected_rows(
++    kind: CaseKind,
++    profile: &Profile,
++    fixture: &NumericFixture,
++) -> Result<Vec<usize>> {
++    match kind {
++        CaseKind::Context17 | CaseKind::Context128 => {
++            ensure!(
++                matches!(
++                    profile.model,
++                    ModelChoice::ContextQwenCompact | ModelChoice::ContextQwenLarge
++                ),
++                "Context selector cannot consume Focus"
++            );
++            let index = if matches!(kind, CaseKind::Context17) {
++                0
++            } else {
++                1
++            };
++            let width = if index == 0 { 17 } else { 128 };
++            ensure!(
++                fixture.rows.len() == 3 && fixture.rows[index].input.input_ids.len() == width,
++                "literal native Context row differs"
++            );
++            Ok(vec![index])
++        }
++        CaseKind::Focus512 => {
++            ensure!(
++                profile.model == ModelChoice::FocusQwenReranker06B
++                    && fixture.rows.len() == 12
++                    && fixture.rows.iter().all(|r| r.input.input_ids.len() == 512),
++                "full twelve-case static512 Focus roster required"
++            );
++            Ok((0..12).collect())
++        }
++    }
++}
++#[cfg(windows)]
++fn job_limits(host: u64, job: u64) -> Result<serde_json::Value> {
++    use windows_sys::Win32::System::JobObjects::*;
++    let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
++    let ok = unsafe {
++        QueryInformationJobObject(
++            std::ptr::null_mut(),
++            JobObjectExtendedLimitInformation,
++            (&mut info as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
++            std::mem::size_of_val(&info) as u32,
++            std::ptr::null_mut(),
++        )
++    };
++    ensure!(ok != 0, "actual outer Job information unavailable");
++    let flags = info.BasicLimitInformation.LimitFlags;
++    ensure!(
++        flags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE != 0
++            && flags & JOB_OBJECT_LIMIT_PROCESS_MEMORY != 0
++            && flags & JOB_OBJECT_LIMIT_JOB_MEMORY != 0
++            && info.ProcessMemoryLimit as u64 == host
++            && info.JobMemoryLimit as u64 == job,
++        "actual owned-process memory/Job bounds differ from reviewed request"
++    );
++    Ok(
++        json!({"process_memory_limit_bytes":info.ProcessMemoryLimit,"job_memory_limit_bytes":info.JobMemoryLimit,"flags":flags}),
++    )
++}
++#[cfg(not(windows))]
++fn job_limits(_: u64, _: u64) -> Result<Value> {
++    anyhow::bail!("CUDA component probe requires real Windows Job limits")
++}
++struct Custody<'a> {
++    scorer: Option<Scorer>,
++    device: Option<Arc<cuda::CudaDevice>>,
++    owner: Arc<airk_kernel::inference_owner::NativeInferenceOwner>,
++    lease: Arc<airk_store::service::ServiceLease>,
++    charge: Option<Arc<airk_kernel::service_resources::OptionalReservation>>,
++    control: &'a mut Option<tempfile::TempDir>,
++    files: Option<Files>,
++}
++impl Drop for Custody<'_> {
++    fn drop(&mut self) {
++        drop(self.scorer.take());
++        if cuda::process_poisoned() || self.device.as_ref().is_some_and(|d| d.poisoned()) {
++            std::mem::forget(self.owner.clone());
++            std::mem::forget(self.lease.clone());
++            if let Some(value) = self.charge.take() {
++                std::mem::forget(value);
++            }
++            if let Some(value) = self.control.take() {
++                std::mem::forget(value);
++            }
++            if let Some(value) = self.files.take() {
++                std::mem::forget(value);
++            }
++        }
++    }
++}
++
++#[test]
++#[ignore = "metadata only: actual reviewed paths/pins/scalars required; emits owning Rust request DTO"]
++fn emit_cuda_component_probe_request() -> Result<()> {
++    let mode = text("AIRK_CUDA_REQUEST_KIND")?;
++    let value = if mode == "assembly" {
++        Request::Assembly {
++            schema: SCHEMA.into(),
++            assembly: RuntimeAssemblyInput {
++                directory: PathBuf::from(text("AIRK_CUDA_RUNTIME_ROOT")?),
++                producer_name: text("AIRK_CUDA_PRODUCER_NAME")?,
++                producer_sha256: text("AIRK_CUDA_PRODUCER_SHA256")?.parse()?,
++                module_names: list("AIRK_CUDA_MODULE_NAMES")?,
++                load_order: list("AIRK_CUDA_LOAD_ORDER")?,
++                system_imports: list("AIRK_CUDA_SYSTEM_IMPORTS")?.into_iter().collect(),
++            },
++            deadline_ms: number("AIRK_CUDA_DEADLINE_MS")?,
++        }
++    } else {
++        ensure!(mode == "prepare", "unknown native request kind");
++        let cpu_input = env_pin(
++            "AIRK_SOFTWARE_V2_NATIVE_INPUT",
++            "AIRK_SOFTWARE_V2_NATIVE_INPUT_SHA256",
++        )?;
++        let (_, profile, _, _) = inputs_from(&cpu_input)?;
++        let bounds = GpuProbeReservation {
++            schema: "airk.arbiter.gpu-probe-reservation/1".into(),
++            host_limit_bytes: number("AIRK_CUDA_HOST_LIMIT_BYTES")?,
++            device_limit_bytes: number("AIRK_CUDA_DEVICE_LIMIT_BYTES")?,
++            deadline_ms: number("AIRK_CUDA_DEADLINE_MS")?,
++        };
++        let (cold_bytes, warm_bytes, headroom_bytes, job_limit_bytes) = (
++            number("AIRK_CUDA_COLD_BYTES")?,
++            number("AIRK_CUDA_WARM_BYTES")?,
++            number("AIRK_CUDA_HEADROOM_BYTES")?,
++            number("AIRK_CUDA_JOB_LIMIT_BYTES")?,
++        );
++        bounds_validate(
++            &bounds,
++            cold_bytes,
++            warm_bytes,
++            headroom_bytes,
++            job_limit_bytes,
++            profile.memory_reservation_bytes,
++        )?;
++        Request::Prepare {
++            schema: SCHEMA.into(),
++            cpu_input,
++            runtime_manifest: env_pin(
++                "AIRK_CUDA_RUNTIME_MANIFEST",
++                "AIRK_CUDA_RUNTIME_MANIFEST_SHA256",
++            )?,
++            bounds,
++            cold_bytes,
++            warm_bytes,
++            headroom_bytes,
++            job_limit_bytes,
++        }
++    };
++    let path = PathBuf::from(text("AIRK_CUDA_REQUEST_OUTPUT")?);
++    write_json(&path, &value)?;
++    Ok(())
++}
++
++#[test]
++#[ignore = "NN0 requires exact reviewed producer+staged DLLs; emits UNAPPROVED fits-empty native manifest"]
++fn emit_cuda_runtime_manifest_from_held_native_closure() -> Result<()> {
++    let started = Instant::now();
++    let (request, pin) = request()?;
++    let Request::Assembly {
++        schema,
++        assembly,
++        deadline_ms,
++    } = request
++    else {
++        anyhow::bail!("assembly request required")
++    };
++    ensure!(
++        schema == SCHEMA && (1..=120000).contains(&deadline_ms),
++        "assembly schema/deadline differs"
++    );
++    let deadline = started + Duration::from_millis(deadline_ms);
++    let (_parent, control) = private_control()?;
++    let lease = Arc::new(airk_store::service::ServiceLease::acquire(&control)?);
++    let owner = airk_kernel::inference_owner::NativeInferenceOwner::admit(lease.clone())?;
++    let bytes = owner.run(|| -> Result<Vec<u8>> {
++        // SAFETY: the erased Arc is this exact actual exclusive lease, and run owns
++        // the existing real ServiceComputeScope throughout metadata observation.
++        unsafe { cuda::observe_runtime_assembly(lease.clone(), assembly, deadline) }
++    })??;
++    ensure!(
++        Instant::now() < deadline,
++        "original metadata deadline exceeded"
++    );
++    let path = output()?;
++    let manifest = write_new(&path, &bytes)?;
++    write_json(
++        &path.with_extension("receipt.json"),
++        &json!({"schema":"airk.private.cuda-runtime-assembly-emission/1","input":pin,"manifest":manifest,"pid":std::process::id(),"execution_user":airk_ipc::endpoint::current_user()?,"elapsed_us":started.elapsed().as_micros(),"model_requests_dispatched":false,"runtime_admission_dispatched":false,"forward_count_observed":null,"approved":false,"fits_empty":true,"scope":"Actual held native assembly metadata only; no compiled runtime approval or GPU execution capability"}),
++    )?;
++    Ok(())
++}
++
++#[test]
++#[ignore = "NN0 uses current native CPU source metadata + actual raw RuntimeManifest; creates fresh GPU Profile/CAL/request"]
++fn emit_cuda_fp32_probe_metadata() -> Result<()> {
++    let started = Instant::now();
++    let (request, request_pin) = request()?;
++    let Request::Prepare {
++        schema,
++        cpu_input,
++        runtime_manifest,
++        bounds,
++        cold_bytes,
++        warm_bytes,
++        headroom_bytes,
++        job_limit_bytes,
++    } = request
++    else {
++        anyhow::bail!("prepare request required")
++    };
++    ensure!(schema == SCHEMA, "unknown metadata schema");
++    let (mut input, profile, files, _) = inputs_from(&cpu_input)?;
++    let plan = bounds_validate(
++        &bounds,
++        cold_bytes,
++        warm_bytes,
++        headroom_bytes,
++        job_limit_bytes,
++        profile.memory_reservation_bytes,
++    )?;
++    let deadline = started + Duration::from_millis(bounds.deadline_ms);
++    let raw = pinned(&runtime_manifest, 128 << 10)?;
++    let prepared =
++        cuda::prepare_fp32_probe_profile(&profile, &files, &raw, runtime_manifest.sha256, plan)?;
++    ensure!(
++        Instant::now() < deadline,
++        "original metadata expiry reached"
++    );
++    let directory = PathBuf::from(text("AIRK_CUDA_METADATA_DIRECTORY")?);
++    std::fs::create_dir(&directory)?;
++    let calibration = write_new(
++        &directory.join(&prepared.calibration_name),
++        &prepared.calibration_bytes,
++    )?;
++    let profile_pin = write_json(&directory.join("profile.json"), &prepared.profile)?;
++    input.profile = profile_pin;
++    input
++        .files
++        .insert(prepared.calibration_name, calibration.path);
++    input.validate()?;
++    let gpu_input = write_json(&directory.join("native-input.json"), &input)?;
++    let probe = Request::Probe {
++        schema: SCHEMA.into(),
++        gpu_input,
++        runtime_manifest,
++        bounds,
++        cold_bytes,
++        warm_bytes,
++        headroom_bytes,
++        job_limit_bytes,
++    };
++    let probe_pin = write_json(&directory.join("probe-request.json"), &probe)?;
++    let selectors = if profile.model == ModelChoice::FocusQwenReranker06B {
++        vec!["cuda_selected_focus_fp32_512_component"]
++    } else {
++        vec![
++            "cuda_original_context_fp32_t17_component",
++            "cuda_original_context_fp32_t128_component",
++        ]
++    };
++    let prefix =
++        "inference_engine::pool::arbiter::qualification::software_v2::cuda_qualification::";
++    let commands=selectors.into_iter().map(|selector|json!({"program":std::env::current_exe().ok(),"args":["--exact",format!("{prefix}{selector}"),"--ignored","--nocapture"],"env":{"AIRK_CUDA_QUALIFICATION_INPUT":probe_pin.path,"AIRK_CUDA_QUALIFICATION_INPUT_SHA256":probe_pin.sha256},"requires":"fresh explicit AIRK_CUDA_QUALIFICATION_OUTPUT and reviewed same-human bounded owner; no native run authorized by this data"})).collect::<Vec<_>>();
++    write_json(&directory.join("commands.json"), &commands)?;
++    write_json(
++        &directory.join("metadata-receipt.json"),
++        &json!({"schema":"airk.private.cuda-probe-metadata/1","request":request_pin,"probe_request":probe_pin,"cpu_input":cpu_input,"model":profile.model,"profile":prepared.profile.manifest,"model_requests_dispatched":false,"forward_count_observed":null,"qualified":false,"elapsed_us":started.elapsed().as_micros()}),
++    )?;
++    ensure!(
++        Instant::now() < deadline,
++        "original metadata deadline exceeded during retention"
++    );
++    Ok(())
++}
++
++fn probe(kind: CaseKind) -> Result<()> {
++    let started_ns = airk_process::monotonic::now_ns()?;
++    let started = Instant::now();
++    let (request, request_pin) = request()?;
++    let Request::Probe {
++        schema,
++        gpu_input,
++        runtime_manifest,
++        bounds,
++        cold_bytes,
++        warm_bytes,
++        headroom_bytes,
++        job_limit_bytes,
++    } = request
++    else {
++        anyhow::bail!("native-emitted probe request required")
++    };
++    ensure!(schema == SCHEMA, "unknown probe schema");
++    bounds.validate()?;
++    let deadline = started + Duration::from_millis(bounds.deadline_ms);
++    let expires_ns = started_ns
++        .checked_add(bounds.deadline_ms * 1_000_000)
++        .context("absolute probe expiry overflow")?;
++    let (input, profile, files, _) = inputs_from(&gpu_input)?;
++    let plan = bounds_validate(
++        &bounds,
++        cold_bytes,
++        warm_bytes,
++        headroom_bytes,
++        job_limit_bytes,
++        profile.memory_reservation_bytes,
++    )?;
++    let manifest_bytes = pinned(&runtime_manifest, 128 << 10)?;
++    let _ = manifest_bytes;
++    ensure!(
++        profile.device_execution.is_some() && profile.cpu_fit.is_none(),
++        "new GPU metadata required"
++    );
++    let fixture_pin = input
++        .numeric_fixture
++        .as_ref()
++        .context("pinned independent numeric fixture required")?;
++    let fixture: NumericFixture = serde_json::from_slice(&pinned(fixture_pin, 16 << 20)?)?;
++    numeric_shape(&fixture, &profile, &input.policy)?;
++    let producer = fixture
++        .reference_producer
++        .as_ref()
++        .context("independent producer closure pin required")?;
++    pinned(producer, 16 << 20)?;
++    ensure!(
++        !fixture.original_reference_assets.is_empty(),
++        "independent original source asset roster missing"
++    );
++    let selected = selected_rows(kind, &profile, &fixture)?;
++    for &index in &selected {
++        for reference in [
++            &fixture.rows[index].reference_same_artifact,
++            &fixture.rows[index].reference_original_fp32,
++        ] {
++            let scores = reference
++                .as_ref()
++                .context("both exact independent reference arrays required before model load")?;
++            ensure!(
++                scores.len() == fixture.rows[index].input.candidate_positions.len()
++                    && scores.iter().all(|v| v.is_finite()),
++                "numeric reference shape/finite mismatch"
++            );
++        }
++    }
++    let actual_job = job_limits(bounds.host_limit_bytes, job_limit_bytes)?;
++    let mut resources = airk_kernel::service_resources::Resources::detect(ResourceConfiguration {
++        preset: ResourcePreset::Throughput,
++        ..ResourceConfiguration::default()
++    })?;
++    let available = airk_kernel::service_resource_observations::available_memory();
++    resources.observe(
++        airk_kernel::service_resource_observations::rss(std::process::id()),
++        available,
++        true,
++    );
++    let incarnation = Incarnation::from_bytes(request_pin.sha256.as_bytes()[..16].try_into()?);
++    let charge =
++        Arc::new(resources.reserve_optional(incarnation, bounds.host_limit_bytes, available)?);
++    let charge_release = charge.release_observer();
++    let resource_snapshot = resources.snapshot();
++    let (parent, control) = private_control()?;
++    let mut control_parent = Some(parent);
++    let lease = Arc::new(airk_store::service::ServiceLease::acquire(&control)?);
++    let owner = Arc::new(airk_kernel::inference_owner::NativeInferenceOwner::admit(
++        lease.clone(),
++    )?);
++    let output = output()?;
++    let mut file = OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .open(&output)?;
++    let binary = file_hash(&std::env::current_exe()?)?;
++    let mut receipt = json!({"schema":"airk.private.cuda-component-result/1","complete":false,"qualified":false,"product_admission":false,"measured_peak_device_bytes":null,"request":request_pin,"native_input":gpu_input,"profile":profile.manifest,"model":profile.model,"fixture":fixture_pin,"reference_producer":producer,"source_manifest":input.source_manifest,"runtime_manifest":runtime_manifest,"pid":std::process::id(),"native_binary_sha256":binary,"execution_user":airk_ipc::endpoint::current_user()?,"bounds":bounds,"actual_job":actual_job,"native_host_reservation_bytes":charge.bytes(),"resource_snapshot":resource_snapshot,"original_expires_monotonic_ns":expires_ns,"rows":[],"scope":"Actual component CUDA score, final placement and exact independent references at stated rows only; no full8192, resources20, semantic/CAL, product lane or public qualification"});
++    flush(&mut file, &receipt)?;
++    let mut operations = operation::Journal::create_until(
++        &output,
++        operation::Identity {
++            input_sha256: request_pin.sha256,
++            profile: profile.manifest,
++            process_id: std::process::id(),
++            native_binary_sha256: binary,
++        },
++        expires_ns,
++    )?;
++    let run=owner.run(||->Result<()>{
++  let mut custody=Custody{scorer:None,device:None,owner:owner.clone(),lease:lease.clone(),charge:Some(charge),control:&mut control_parent,files:Some(files)};
++  ensure!(Instant::now()<deadline,"original probe deadline expired before preflight");verify_files(custody.files.as_ref().unwrap(),&profile)?;
++  let(root,manifest)=airk_host::gpu_runtime::installed_paths()?;ensure!(manifest==PathBuf::from(&runtime_manifest.path),"probe manifest differs from authenticated installed runtime path");
++  let runtime=airk_host::gpu_runtime::admit(lease.clone(),&root,&manifest,deadline)?;ensure!(runtime.manifest_identity()==runtime_manifest.sha256,"actual runtime manifest differs from frozen request");
++  let adapters=runtime.adapters(deadline)?;ensure!(adapters.len()==1,"first scientific component probe requires exactly one observed adapter");let device=runtime.device(adapters[0].uuid,deadline)?;custody.device=Some(device.clone());receipt["adapter_before"]=serde_json::to_value(device.observation(deadline)?)?;flush(&mut file,&receipt)?;
++  let catalog=airk_kernel::inference_owner::evaluation_catalog(lease.clone(),vec![profile.clone()])?;let execution=catalog.execution_profile(profile.manifest)?.bind_cuda_probe(device.clone(),plan,deadline)?;
++  let loaded=operations.observe(operation::Kind::Load,0,None,||Scorer::open(execution,custody.files.as_ref().unwrap()))?;receipt["load_us"]=json!(loaded.elapsed_us);flush(&mut file,&receipt)?;custody.scorer=Some(loaded.value?);ensure!(loaded.within_deadline,"original CUDA load expiry exceeded");
++  let scorer=custody.scorer.as_ref().unwrap();receipt["execution_identity"]=json!(scorer.execution_identity()?);receipt["final_placement"]=serde_json::to_value(scorer.device_placement()?.context("actual final SessionState map missing")?)?;flush(&mut file,&receipt)?;
++  for index in selected{
++   let row=&fixture.rows[index];let scored=operations.observe(operation::Kind::Numeric,index+1,Some(row.input.input_digest),||scorer.score_with_deadline(&row.input,deadline))?;let actual=scored.value?;
++   let(same_raw,same_mass,same_argmax)=comparison(&actual,row.reference_same_artifact.as_ref().unwrap())?;let(original_raw,original_mass,original_argmax)=comparison(&actual,row.reference_original_fp32.as_ref().unwrap())?;
++   receipt["rows"].as_array_mut().unwrap().push(json!({"name":row.name,"tokens":row.input.input_ids.len(),"input_digest":row.input.input_digest,"raw_scores":actual,"elapsed_us":scored.elapsed_us,"native_call_elapsed_us":scored.native_call_elapsed_us,"same_artifact_raw_error":same_raw,"same_artifact_mass_error":same_mass,"original_fp32_raw_error":original_raw,"original_fp32_mass_error":original_mass,"argmax_matches":same_argmax&&original_argmax}));flush(&mut file,&receipt)?;
++   let focus=profile.model==ModelChoice::FocusQwenReranker06B;ensure!(scored.within_deadline&&same_raw<=0.001&&same_mass<=if focus{0.00001}else{0.05}&&original_raw<=if focus{0.25}else{0.001}&&original_mass<=0.05&&same_argmax&&original_argmax,"original absolute timing/numeric tolerance refused");
++   ensure!(peak_rss().is_some_and(|v|v<=bounds.host_limit_bytes),"actual component host peak unavailable/exceeds original bound");
++  }
++  scorer.synchronize(deadline)?;ensure!(scorer.device_settled(),"CUDA work remains unsettled");receipt["adapter_after"]=serde_json::to_value(device.observation(deadline)?)?;
++  drop(custody.scorer.take());ensure!(!device.poisoned(),"native session teardown settlement unknown");verify_files(custody.files.as_ref().unwrap(),&profile)?;pinned(&runtime_manifest,128<<10)?;pinned(&request_pin,1<<20)?;pinned(&gpu_input,1<<20)?;pinned(&input.profile,1<<20)?;pinned(&input.source_manifest,16<<20)?;pinned(fixture_pin,16<<20)?;pinned(producer,16<<20)?;ensure!(Instant::now()<deadline,"original component expiry exceeded during teardown/posthash");Ok(())
++ });
++    let result = run.and_then(std::convert::identity);
++    drop(owner);
++    drop(lease);
++    let control_retained = control_parent.is_none();
++    let cleanup = control_parent
++        .take()
++        .map(tempfile::TempDir::close)
++        .transpose();
++    receipt["native_control_retained_for_unknown_cuda"] = json!(control_retained);
++    receipt["native_control_cleanup_observed"] = json!(matches!(&cleanup, Ok(Some(()))));
++    receipt["native_control_cleanup_error"] =
++        json!(cleanup.as_ref().err().map(ToString::to_string));
++    let mut released = std::pin::pin!(charge_release.wait());
++    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
++    let host_released = matches!(
++        std::future::Future::poll(released.as_mut(), &mut cx),
++        std::task::Poll::Ready(Ok(()))
++    );
++    receipt["native_host_charge_release_observed"] = json!(host_released);
++    let result = match (result, cleanup) {
++        (Ok(()), Ok(_)) if host_released => Ok(()),
++        (Ok(()), Ok(_)) => Err(anyhow::anyhow!(
++            "native host charge release remains unknown"
++        )),
++        (Err(error), _) => Err(error),
++        (Ok(()), Err(error)) => Err(error.into()),
++    };
++    receipt["complete"] = json!(result.is_ok());
++    receipt["elapsed_us_to_final_report_start"] = json!(started.elapsed().as_micros());
++    receipt["peak_process_rss_bytes"] = json!(peak_rss());
++    receipt["process_cuda_poisoned"] = json!(cuda::process_poisoned());
++    if let Err(error) = &result {
++        receipt["error"] = json!(format!("{error:#}"));
++        if let Some(refusal) = error.downcast_ref::<cuda::PlacementRefusal>() {
++            receipt["placement_refusal"] = json!(&refusal.observation);
++        }
++    }
++    flush(&mut file, &receipt)?;
++    if Instant::now() >= deadline {
++        receipt["complete"] = json!(false);
++        receipt["final_report_retention_exceeded_original_deadline"] = json!(true);
++        flush(&mut file, &receipt)?;
++        return result.and_then(|_| {
++            Err(anyhow::anyhow!(
++                "original CUDA component deadline exceeded during final report retention"
++            ))
++        });
++    }
++    result
++}
++#[test]
++#[ignore = "actual approved CUDA runtime + current native metadata + exact independent references; original120s/host/device/Job caps"]
++fn cuda_original_context_fp32_t17_component() -> Result<()> {
++    probe(CaseKind::Context17)
++}
++#[test]
++#[ignore = "actual approved CUDA runtime + current native metadata + exact independent references; original120s/host/device/Job caps"]
++fn cuda_original_context_fp32_t128_component() -> Result<()> {
++    probe(CaseKind::Context128)
++}
++#[test]
++#[ignore = "actual approved CUDA runtime + current native Focus512 metadata + all twelve independent cases; original120s/caps"]
++fn cuda_selected_focus_fp32_512_component() -> Result<()> {
++    probe(CaseKind::Focus512)
++}
++
++#[cfg(test)]
++mod tests;
+--- /dev/null
++++ executable/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification/tests.rs
+@@ -0,0 +1,97 @@
++// SPDX-License-Identifier: Apache-2.0
++use super::*;
++fn bounds() -> GpuProbeReservation {
++    GpuProbeReservation {
++        schema: "airk.arbiter.gpu-probe-reservation/1".into(),
++        host_limit_bytes: 16 << 30,
++        device_limit_bytes: 24 << 30,
++        deadline_ms: 120000,
++    }
++}
++#[test]
++fn unqualified_component_bounds_do_not_replace_observed_capacity_or_host_charge() -> Result<()> {
++    let b = bounds();
++    let plan = bounds_validate(&b, 12 << 30, 1 << 30, 2 << 30, 24 << 30, 16 << 30)?;
++    assert_eq!(plan.cold_peak_bytes(), 12 << 30);
++    assert!(bounds_validate(&b, 24 << 30, 1 << 30, 2 << 30, 24 << 30, 16 << 30).is_err());
++    assert!(bounds_validate(&b, 12 << 30, 13 << 30, 2 << 30, 24 << 30, 16 << 30).is_err());
++    assert!(bounds_validate(&b, 12 << 30, 1 << 30, 2 << 30, 25 << 30, 16 << 30).is_err());
++    let mut bad = b;
++    bad.deadline_ms = 120001;
++    assert!(bounds_validate(&bad, 12 << 30, 1 << 30, 2 << 30, 24 << 30, 16 << 30).is_err());
++    Ok(())
++}
++#[test]
++fn native_component_requests_deny_unknown_fields_and_do_not_deserialize_runtime_witnesses() {
++    let raw = r#"{"kind":"assembly","schema":"airk.private.cuda-component-probe-request/1","assembly":{"directory":"C:/private","producer_name":"receipt.json","producer_sha256":"2222222222222222222222222222222222222222222222222222222222222222","module_names":[],"load_order":[],"system_imports":[]},"deadline_ms":120000}"#;
++    assert!(serde_json::from_str::<Request>(raw).is_ok());
++    assert!(
++        serde_json::from_str::<Request>(&raw.replace(
++            "\"deadline_ms\":120000",
++            "\"deadline_ms\":120000,\"qualified\":true"
++        ))
++        .is_err()
++    );
++}
++
++fn fixture(profile: &Profile, widths: &[usize]) -> NumericFixture {
++    NumericFixture {
++        schema: "airk.arbiter.native-numeric/2".into(),
++        model: profile.model,
++        compiler: profile.compiler,
++        resource_policy: Sha256Digest::from_bytes([1; 32]),
++        reference_producer: None,
++        original_reference_assets: vec![],
++        rows: widths
++            .iter()
++            .enumerate()
++            .map(|(index, &tokens)| NumericCase {
++                name: format!("literal-{index}"),
++                input: CompiledInput {
++                    prompt: String::new(),
++                    input_ids: vec![0; tokens],
++                    attention_mask: vec![1; tokens],
++                    position_ids: (0..tokens as i64).collect(),
++                    decision_position: tokens as i64 - 1,
++                    candidate_positions: vec![32, 33],
++                    option_mask: vec![true; 2],
++                    input_digest: Sha256Digest::from_bytes([2; 32]),
++                },
++                reference_same_artifact: None,
++                reference_original_fp32: None,
++            })
++            .collect(),
++    }
++}
++#[test]
++fn component_selector_keeps_complete_original_denominator_and_literal_widths() -> Result<()> {
++    let profiles = airk_retrieval::arbiter::runtime::catalog_profiles()?;
++    let focus = profiles
++        .iter()
++        .find(|v| v.model == ModelChoice::FocusQwenReranker06B)
++        .unwrap();
++    let context = profiles
++        .iter()
++        .find(|v| v.model == ModelChoice::ContextQwenCompact)
++        .unwrap();
++    let rows = fixture(context, &[17, 128, 8192]);
++    assert_eq!(selected_rows(CaseKind::Context17, context, &rows)?, [0]);
++    assert_eq!(selected_rows(CaseKind::Context128, context, &rows)?, [1]);
++    assert!(selected_rows(CaseKind::Focus512, context, &rows).is_err());
++    let rows = fixture(focus, &[512; 12]);
++    assert_eq!(
++        selected_rows(CaseKind::Focus512, focus, &rows)?,
++        (0..12).collect::<Vec<_>>()
++    );
++    assert!(selected_rows(CaseKind::Context17, focus, &rows).is_err());
++    assert!(selected_rows(CaseKind::Focus512, focus, &fixture(focus, &[512; 11])).is_err());
++    assert!(
++        selected_rows(
++            CaseKind::Context128,
++            context,
++            &fixture(context, &[17, 127, 8192])
++        )
++        .is_err()
++    );
++    Ok(())
++}
+--- /dev/null
++++ executable/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/operation.rs
+@@ -0,0 +1,259 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Private qualification-only original-operation observations; never Scorer policy.
++use airk_core::{identity::Sha256Digest, read_attempt::ReadClock};
++use anyhow::{Context, Result, ensure};
++use serde::Serialize;
++use std::{
++    fs::{File, OpenOptions},
++    io::Write,
++    path::Path,
++};
++
++#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub(super) enum Kind {
++    Load,
++    Warmup,
++    Sample,
++    Numeric,
++}
++#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++enum Phase {
++    Started,
++    Returned,
++    NotDispatched,
++}
++#[derive(Clone, Debug, Serialize)]
++pub(super) struct Identity {
++    pub input_sha256: Sha256Digest,
++    pub profile: Sha256Digest,
++    pub process_id: u32,
++    pub native_binary_sha256: Sha256Digest,
++}
++#[derive(Clone, Debug, Serialize)]
++pub(super) struct Event {
++    schema: &'static str,
++    sequence: u64,
++    identity: Identity,
++    kind: Kind,
++    ordinal: usize,
++    operation_input_digest: Option<Sha256Digest>,
++    phase: Phase,
++    clock: ReadClock,
++    started_monotonic_ns: u64,
++    expires_monotonic_ns: u64,
++    observed_monotonic_ns: u64,
++    native_call_elapsed_us: Option<u64>,
++    native_success: Option<bool>,
++}
++pub(super) struct Returned<T> {
++    pub value: Result<T>,
++    pub elapsed_us: u64,
++    pub native_call_elapsed_us: u64,
++    pub within_deadline: bool,
++}
++fn native_clock() -> ReadClock {
++    #[cfg(windows)]
++    {
++        ReadClock::WindowsPerformanceCounter
++    }
++    #[cfg(unix)]
++    {
++        ReadClock::UnixMonotonic
++    }
++}
++struct Attempt<'a> {
++    identity: &'a Identity,
++    kind: Kind,
++    ordinal: usize,
++    input: Option<Sha256Digest>,
++    deadline_ms: u64,
++    absolute_expires_ns: Option<u64>,
++}
++fn observe<T>(
++    attempt: Attempt<'_>,
++    sequence: &mut u64,
++    clock: &mut impl FnMut() -> Result<u64>,
++    publish: &mut impl FnMut(&Event) -> Result<()>,
++    call: impl FnOnce() -> Result<T>,
++) -> Result<Returned<T>> {
++    let Attempt {
++        identity,
++        kind,
++        ordinal,
++        input,
++        deadline_ms,
++        absolute_expires_ns,
++    } = attempt;
++    ensure!(
++        (1..=120_000).contains(&deadline_ms),
++        "invalid original native operation allowance"
++    );
++    ensure!(
++        match kind {
++            Kind::Load | Kind::Warmup => ordinal == 0,
++            Kind::Sample => (1..=20).contains(&ordinal),
++            Kind::Numeric => (1..=12).contains(&ordinal),
++        },
++        "native operation ordinal differs"
++    );
++    ensure!(
++        (kind == Kind::Load) == input.is_none(),
++        "native operation input identity differs"
++    );
++    let started = clock()?;
++    let relative_expires = started
++        .checked_add(
++            deadline_ms
++                .checked_mul(1_000_000)
++                .context("operation duration overflow")?,
++        )
++        .context("operation deadline overflow")?;
++    let expires = absolute_expires_ns.unwrap_or(relative_expires);
++    ensure!(
++        expires <= relative_expires,
++        "absolute operation expiry exceeds original allowed span"
++    );
++    *sequence = sequence
++        .checked_add(1)
++        .context("operation sequence overflow")?;
++    let mut event = Event {
++        schema: "airk.arbiter.native-operation/1",
++        sequence: *sequence,
++        identity: identity.clone(),
++        kind,
++        ordinal,
++        operation_input_digest: input,
++        phase: Phase::Started,
++        clock: native_clock(),
++        started_monotonic_ns: started,
++        expires_monotonic_ns: expires,
++        observed_monotonic_ns: started,
++        native_call_elapsed_us: None,
++        native_success: None,
++    };
++    // The start is durable BEFORE the native operation. Publishing consumes the
++    // original allowance and can never renew the absolute expiry.
++    publish(&event)?;
++    let native_start = clock()?;
++    ensure!(native_start >= started, "operation clock moved backwards");
++    if native_start >= expires {
++        *sequence = sequence
++            .checked_add(1)
++            .context("operation sequence overflow")?;
++        event.sequence = *sequence;
++        event.phase = Phase::NotDispatched;
++        event.observed_monotonic_ns = native_start;
++        publish(&event)?;
++        anyhow::bail!("original native operation expired before dispatch");
++    }
++    let value = call();
++    let observation = (|| -> Result<(u64, u64)> {
++        let returned = clock()?;
++        ensure!(
++            returned >= native_start,
++            "operation return clock moved backwards"
++        );
++        let native_call_elapsed_us = (returned - native_start) / 1000;
++        *sequence = sequence
++            .checked_add(1)
++            .context("operation sequence overflow")?;
++        event.sequence = *sequence;
++        event.phase = Phase::Returned;
++        event.observed_monotonic_ns = returned;
++        event.native_call_elapsed_us = Some(native_call_elapsed_us);
++        event.native_success = Some(value.is_ok());
++        // A returned native error remains the primary typed cause if its
++        // retention also fails. No observer failure can admit another call.
++        publish(&event)?;
++        let retained = clock()?;
++        ensure!(
++            retained >= returned,
++            "operation retention clock moved backwards"
++        );
++        Ok((native_call_elapsed_us, retained))
++    })();
++    match observation {
++        Ok((native_call_elapsed_us, retained)) => Ok(Returned {
++            value,
++            elapsed_us: (retained - started).div_ceil(1000),
++            native_call_elapsed_us,
++            within_deadline: retained <= expires,
++        }),
++        Err(observation_error) => Err(match value {
++            Err(native_error) => native_error.context(format!(
++                "after-call observation also failed: {observation_error:#}"
++            )),
++            Ok(_) => observation_error.context(
++                "native operation returned successfully before after-call observation failed",
++            ),
++        }),
++    }
++}
++pub(super) struct Journal {
++    file: File,
++    identity: Identity,
++    deadline_ms: u64,
++    sequence: u64,
++    absolute_expires_ns: Option<u64>,
++}
++impl Journal {
++    pub fn create(output: &Path, identity: Identity, deadline_ms: u64) -> Result<Self> {
++        Ok(Self {
++            file: OpenOptions::new()
++                .write(true)
++                .create_new(true)
++                .open(output.with_extension("operations.jsonl"))?,
++            identity,
++            deadline_ms,
++            sequence: 0,
++            absolute_expires_ns: None,
++        })
++    }
++    /// Additive component probe: all operations share the original native clock
++    /// expiry. Historical create/relative behavior and event schema stay exact.
++    #[cfg(feature = "gpu-cuda")]
++    pub fn create_until(output: &Path, identity: Identity, expires_ns: u64) -> Result<Self> {
++        let now = airk_process::monotonic::now_ns()?;
++        ensure!(
++            expires_ns > now && expires_ns - now <= 120_000_000_000,
++            "invalid original native CUDA expiry"
++        );
++        let mut journal = Self::create(output, identity, 120_000)?;
++        journal.absolute_expires_ns = Some(expires_ns);
++        Ok(journal)
++    }
++    pub fn observe<T>(
++        &mut self,
++        kind: Kind,
++        ordinal: usize,
++        input: Option<Sha256Digest>,
++        call: impl FnOnce() -> Result<T>,
++    ) -> Result<Returned<T>> {
++        let file = &mut self.file;
++        observe(
++            Attempt {
++                identity: &self.identity,
++                kind,
++                ordinal,
++                input,
++                deadline_ms: self.deadline_ms,
++                absolute_expires_ns: self.absolute_expires_ns,
++            },
++            &mut self.sequence,
++            &mut airk_process::monotonic::now_ns,
++            &mut |event| {
++                let bytes = serde_json::to_vec(event)?;
++                file.write_all(&bytes)?;
++                file.write_all(b"\n")?;
++                file.flush()?;
++                file.sync_data()?;
++                Ok(())
++            },
++            call,
++        )
++    }
++}
++#[cfg(test)]
++mod tests;
+--- /dev/null
++++ executable/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/operation/tests.rs
+@@ -0,0 +1,390 @@
++// SPDX-License-Identifier: Apache-2.0
++use super::*;
++use airk_core::arbiter::resource_policy::{
++    ResourceFailure, ResourcePolicy, ResourceSample, ResourceSeries,
++};
++use std::cell::Cell;
++fn identity() -> Identity {
++    Identity {
++        input_sha256: Sha256Digest::from_bytes([1; 32]),
++        profile: Sha256Digest::from_bytes([2; 32]),
++        process_id: 7,
++        native_binary_sha256: Sha256Digest::from_bytes([3; 32]),
++    }
++}
++fn attempt(identity: &Identity, kind: Kind, ordinal: usize) -> Attempt<'_> {
++    Attempt {
++        identity,
++        kind,
++        ordinal,
++        input: (kind != Kind::Load).then_some(Sha256Digest::from_bytes([4; 32])),
++        deadline_ms: 10,
++        absolute_expires_ns: None,
++    }
++}
++#[test]
++fn native_operation_starts_before_call_with_one_original_expiry() -> Result<()> {
++    let identity = identity();
++    let mut sequence = 0;
++    let mut times = [1000, 2000, 7_000_001, 8_000_001].into_iter();
++    let mut events = Vec::new();
++    let called = Cell::new(false);
++    let observed = observe(
++        attempt(&identity, Kind::Sample, 1),
++        &mut sequence,
++        &mut || Ok(times.next().unwrap()),
++        &mut |event| {
++            assert!(!called.get() || event.phase == Phase::Returned);
++            events.push(event.clone());
++            Ok(())
++        },
++        || {
++            called.set(true);
++            Ok(17)
++        },
++    )?;
++    assert_eq!(observed.value?, 17);
++    assert_eq!(observed.elapsed_us, 8000);
++    assert_eq!(observed.native_call_elapsed_us, 6998);
++    assert!(observed.within_deadline);
++    assert_eq!(events.len(), 2);
++    assert_eq!(sequence, 2);
++    assert_eq!(events[0].sequence, 1);
++    assert_eq!(events[0].phase, Phase::Started);
++    assert_eq!(events[1].sequence, 2);
++    assert_eq!(events[1].phase, Phase::Returned);
++    assert_eq!(events[0].started_monotonic_ns, 1000);
++    assert_eq!(events[0].expires_monotonic_ns, 10_001_000);
++    assert_eq!(events[1].expires_monotonic_ns, 10_001_000);
++    assert_eq!(events[1].native_success, Some(true));
++    if let Some(path) = std::env::var_os("AIRK_SOFTWARE_V2_OPERATION_CASES_OUTPUT") {
++        let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
++        serde_json::to_writer_pretty(&mut file, &events)?;
++        file.write_all(b"\n")?;
++        file.sync_data()?;
++    }
++    Ok(())
++}
++#[test]
++fn native_operation_start_observer_failure_never_dispatches() {
++    let identity = identity();
++    let called = Cell::new(false);
++    let mut sequence = 0;
++    let result = observe(
++        attempt(&identity, Kind::Load, 0),
++        &mut sequence,
++        &mut || Ok(100),
++        &mut |_| anyhow::bail!("actual start observer refused"),
++        || {
++            called.set(true);
++            Ok(())
++        },
++    );
++    assert!(result.is_err());
++    assert!(!called.get());
++    assert_eq!(sequence, 1);
++}
++#[test]
++fn native_operation_startup_expiry_is_retained_without_dispatch() {
++    let identity = identity();
++    let called = Cell::new(false);
++    let mut sequence = 0;
++    let mut times = [100, 10_000_100].into_iter();
++    let mut events = Vec::new();
++    let result = observe(
++        attempt(&identity, Kind::Load, 0),
++        &mut sequence,
++        &mut || Ok(times.next().unwrap()),
++        &mut |event| {
++            events.push(event.clone());
++            Ok(())
++        },
++        || {
++            called.set(true);
++            Ok(())
++        },
++    );
++    assert!(result.is_err());
++    assert!(!called.get());
++    assert_eq!(events.len(), 2);
++    assert_eq!(events[1].phase, Phase::NotDispatched);
++    assert_eq!(events[1].native_success, None);
++    assert_eq!(events[1].expires_monotonic_ns, 10_000_100);
++}
++#[test]
++fn native_operation_known_error_retains_actual_end_without_renewal() -> Result<()> {
++    let identity = identity();
++    let mut sequence = 0;
++    let mut times = [100, 200, 300, 400].into_iter();
++    let mut events = Vec::new();
++    let result = observe(
++        attempt(&identity, Kind::Numeric, 3),
++        &mut sequence,
++        &mut || Ok(times.next().unwrap()),
++        &mut |event| {
++            events.push(event.clone());
++            Ok(())
++        },
++        || anyhow::bail!("actual score returned error"),
++    )?;
++    let error: Result<()> = result.value;
++    assert!(error.is_err());
++    assert_eq!(events.len(), 2);
++    assert_eq!(events[1].phase, Phase::Returned);
++    assert_eq!(events[1].native_success, Some(false));
++    assert_eq!(events[1].expires_monotonic_ns, 10_000_100);
++    assert_eq!(result.elapsed_us, 1);
++    Ok(())
++}
++#[test]
++fn native_operation_first_expired_return_stops_core_series_with_exact_partial_sample() -> Result<()>
++{
++    let identity = identity();
++    let policy = ResourcePolicy::software_v2();
++    let mut series = ResourceSeries::new(100)?;
++    let mut sequence = 0;
++    let mut times = [100, 200, 120_000_000_099, 120_000_000_101].into_iter();
++    let mut events = Vec::new();
++    let calls = Cell::new(0);
++    let mut retained = None;
++    let result = super::super::observe_series(
++        &mut series,
++        &policy,
++        || {
++            let mut original = attempt(&identity, Kind::Sample, 1);
++            original.deadline_ms = policy.deadline_ms;
++            let observed = observe(
++                original,
++                &mut sequence,
++                &mut || Ok(times.next().unwrap()),
++                &mut |event| {
++                    events.push(event.clone());
++                    Ok(())
++                },
++                || {
++                    calls.set(calls.get() + 1);
++                    Ok(())
++                },
++            )?;
++            observed.value?;
++            assert!(!observed.within_deadline);
++            Ok(ResourceSample {
++                elapsed_us: observed.elapsed_us,
++                peak_process_rss_bytes: 10,
++            })
++        },
++        |series| {
++            retained = Some(series.clone());
++            Ok(())
++        },
++    );
++    assert!(result.is_err());
++    assert_eq!(calls.get(), 1);
++    assert_eq!(events.len(), 2);
++    let retained = retained.unwrap();
++    assert_eq!(retained.attempted_samples, 1);
++    assert_eq!(retained.samples.len(), 1);
++    assert_eq!(retained.samples[0].elapsed_us, 120_000_001);
++    assert_eq!(retained.failure, Some(ResourceFailure::DeadlineOverrun));
++    assert!(!retained.complete);
++    assert_eq!(retained.nearest_rank_p95_us, None);
++    assert_eq!(retained.maximum_us, None);
++    Ok(())
++}
++#[test]
++fn native_operation_exact_boundary_end_succeeds_and_end_observer_failure_refuses() -> Result<()> {
++    let identity = identity();
++    let mut sequence = 0;
++    let mut times = [100, 200, 10_000_099, 10_000_100].into_iter();
++    let value = observe(
++        attempt(&identity, Kind::Warmup, 0),
++        &mut sequence,
++        &mut || Ok(times.next().unwrap()),
++        &mut |_| Ok(()),
++        || Ok(()),
++    )?;
++    value.value?;
++    assert!(value.within_deadline);
++    assert_eq!(value.elapsed_us, 10000);
++    let called = Cell::new(0);
++    let mut times = [100, 200, 300].into_iter();
++    let result = observe(
++        attempt(&identity, Kind::Numeric, 12),
++        &mut sequence,
++        &mut || Ok(times.next().unwrap()),
++        &mut |event| {
++            if event.phase == Phase::Returned {
++                anyhow::bail!("end observer refused")
++            }
++            Ok(())
++        },
++        || {
++            called.set(called.get() + 1);
++            Ok(())
++        },
++    );
++    assert!(result.is_err());
++    assert_eq!(called.get(), 1);
++    Ok(())
++}
++#[test]
++fn native_operation_wrong_ordinals_and_backwards_clocks_never_gain_time() {
++    let identity = identity();
++    for (kind, ordinal) in [
++        (Kind::Load, 1),
++        (Kind::Warmup, 1),
++        (Kind::Sample, 0),
++        (Kind::Sample, 21),
++        (Kind::Numeric, 0),
++        (Kind::Numeric, 13),
++    ] {
++        let mut sequence = 0;
++        let called = Cell::new(false);
++        assert!(
++            observe(
++                attempt(&identity, kind, ordinal),
++                &mut sequence,
++                &mut || Ok(100),
++                &mut |_| Ok(()),
++                || {
++                    called.set(true);
++                    Ok(())
++                }
++            )
++            .is_err()
++        );
++        assert!(!called.get());
++        assert_eq!(sequence, 0);
++    }
++    let mut sequence = 0;
++    let mut times = [100, 99].into_iter();
++    let called = Cell::new(false);
++    assert!(
++        observe(
++            attempt(&identity, Kind::Load, 0),
++            &mut sequence,
++            &mut || Ok(times.next().unwrap()),
++            &mut |_| Ok(()),
++            || {
++                called.set(true);
++                Ok(())
++            }
++        )
++        .is_err()
++    );
++    assert!(!called.get());
++}
++
++#[test]
++fn native_operation_retains_original_native_error_when_any_after_call_observer_fails() {
++    #[derive(Debug)]
++    struct ActualNativeFailure;
++    impl std::fmt::Display for ActualNativeFailure {
++        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++            f.write_str("actual native failure marker")
++        }
++    }
++    impl std::error::Error for ActualNativeFailure {}
++    let cases = [
++        (
++            vec![Some(100), Some(200), None],
++            false,
++            0,
++            "injected clock read failure",
++        ),
++        (
++            vec![Some(100), Some(200), Some(199)],
++            false,
++            0,
++            "return clock moved backwards",
++        ),
++        (
++            vec![Some(100), Some(200), Some(300)],
++            true,
++            0,
++            "injected end retention failure",
++        ),
++        (
++            vec![Some(100), Some(200), Some(300), None],
++            false,
++            0,
++            "injected clock read failure",
++        ),
++        (
++            vec![Some(100), Some(200), Some(300), Some(299)],
++            false,
++            0,
++            "retention clock moved backwards",
++        ),
++        (
++            vec![Some(100), Some(200), Some(300)],
++            false,
++            u64::MAX - 1,
++            "operation sequence overflow",
++        ),
++    ];
++    for (times, end_fails, mut sequence, expected_observer_error) in cases {
++        let identity = identity();
++        let mut times = times.into_iter();
++        let called = Cell::new(0);
++        let result: Result<Returned<()>> = observe(
++            attempt(&identity, Kind::Numeric, 1),
++            &mut sequence,
++            &mut || {
++                times
++                    .next()
++                    .unwrap()
++                    .ok_or_else(|| anyhow::anyhow!("injected clock read failure"))
++            },
++            &mut |event| {
++                if end_fails && event.phase == Phase::Returned {
++                    anyhow::bail!("injected end retention failure");
++                }
++                Ok(())
++            },
++            || {
++                called.set(called.get() + 1);
++                Err(ActualNativeFailure.into())
++            },
++        );
++        let error = result
++            .err()
++            .expect("after-call observation must fail closed");
++        assert!(
++            error.downcast_ref::<ActualNativeFailure>().is_some(),
++            "lost original typed native error"
++        );
++        let display = format!("{error:#}");
++        assert!(display.contains("actual native failure marker"));
++        assert!(display.contains(expected_observer_error), "{display}");
++        assert_eq!(
++            called.get(),
++            1,
++            "observer failure admitted another native call"
++        );
++    }
++}
++
++#[test]
++fn absolute_component_deadline_is_not_renewed_by_later_operation_start() -> Result<()> {
++    let identity = identity();
++    let mut sequence = 0;
++    let mut times = [9_000_000, 9_000_001, 10_000_001, 10_000_002].into_iter();
++    let mut events = Vec::new();
++    let mut request = attempt(&identity, Kind::Numeric, 1);
++    request.absolute_expires_ns = Some(10_000_000);
++    let result = observe(
++        request,
++        &mut sequence,
++        &mut || Ok(times.next().unwrap()),
++        &mut |event| {
++            events.push(event.clone());
++            Ok(())
++        },
++        || Ok(1),
++    )?;
++    assert!(!result.within_deadline);
++    assert_eq!(result.value?, 1);
++    assert!(events.iter().all(|v| v.expires_monotonic_ns == 10_000_000));
++    Ok(())
++}
+--- r4/crates/airk-retrieval/src/arbiter/runtime.rs
++++ executable/crates/airk-retrieval/src/arbiter/runtime.rs
+@@ -23,6 +23,7 @@
+     sync::{Arc, Mutex},
+ };
+ 
++mod cpu_source_transition;
+ #[cfg(feature = "gpu-cuda")]
+ pub mod cuda;
+ #[cfg(test)]
+@@ -144,6 +145,7 @@
+     description: Profile,
+     release: bool,
+     evaluation: Option<Arc<dyn Send + Sync>>,
++    source_transition: Option<cpu_source_transition::CpuSourceTransition>,
+     #[cfg(feature = "gpu-cuda")]
+     gpu: Option<cuda::Binding>,
+ }
+@@ -171,7 +173,43 @@
+     }
+     Ok(catalog.profiles)
+ }
++fn admit_source_transition(
++    profile: &Profile,
++) -> Result<Option<cpu_source_transition::CpuSourceTransition>> {
++    match validate_selected_policies(profile) {
++        Ok(()) => Ok(None),
++        Err(current_error) => match cpu_source_transition::CpuSourceTransition::admit(profile) {
++            Ok(witness) => Ok(Some(witness)),
++            Err(_) => Err(current_error),
++        },
++    }
++}
+ impl ExecutionProfile {
++    fn validate_native_source(&self) -> Result<()> {
++        match &self.source_transition {
++            Some(witness) => witness.validate(&self.description),
++            None => validate_selected_policies(&self.description),
++        }
++    }
++    /// Return this exact admitted profile's declared task identity, only after
++    /// current source or the closed native CPU witness has been revalidated.
++    pub fn validated_task_policy(&self, task: Task) -> Result<Sha256Digest> {
++        self.validate_native_source()?;
++        self.description
++            .task_policies
++            .get(&task)
++            .copied()
++            .context("task not in admitted native profile")
++    }
++    pub fn source_transition_record(&self) -> Result<Option<serde_json::Value>> {
++        self.validate_native_source()?;
++        if let Some(witness) = &self.source_transition {
++            return Ok(Some(serde_json::to_value(
++                witness.record(&self.description)?,
++            )?));
++        }
++        Ok(None)
++    }
+     pub fn from_release(manifest: Sha256Digest) -> Result<Self> {
+         let description = catalog_profiles()?
+             .into_iter()
+@@ -183,7 +221,7 @@
+             "GPU release requires actual native device witness"
+         );
+         description.validate_release_downloads()?;
+-        validate_selected_policies(&description)?;
++        let source_transition = admit_source_transition(&description)?;
+         release_qualification_gate(&description, env!("CARGO_PKG_VERSION"))?;
+         if description.tasks.contains(&Task::ContextNextRead) {
+             ensure!(
+@@ -201,8 +239,9 @@
+         }
+         if description.tasks.contains(&Task::FocusRank) {
+             ensure!(
+-                description.task_policies.get(&Task::FocusRank)
+-                    == Some(&super::compiler::focus::policy_digest()?),
++                source_transition.is_some()
++                    || description.task_policies.get(&Task::FocusRank)
++                        == Some(&super::compiler::focus::policy_digest()?),
+                 "Arbiter Focus source policy differs from qualified profile"
+             );
+         }
+@@ -210,6 +249,7 @@
+             description,
+             release: true,
+             evaluation: None,
++            source_transition,
+             #[cfg(feature = "gpu-cuda")]
+             gpu: None,
+         })
+@@ -221,6 +261,7 @@
+             description,
+             release: false,
+             evaluation: None,
++            source_transition: None,
+             #[cfg(feature = "gpu-cuda")]
+             gpu: None,
+         })
+@@ -262,7 +303,7 @@
+         let mut seen = BTreeSet::new();
+         for profile in &profiles {
+             profile.validate()?;
+-            validate_selected_policies(profile)?;
++            admit_source_transition(profile)?;
+             ensure!(
+                 profile.qualification.is_none(),
+                 "evaluation cannot mint final qualification"
+@@ -287,6 +328,7 @@
+             .find(|p| p.manifest == manifest)
+             .context("profile outside private evaluation catalog")?
+             .clone();
++        let source_transition = admit_source_transition(&description)?;
+         if description.tasks.contains(&Task::ContextNextRead) {
+             ensure!(
+                 description.task_policies.get(&Task::ContextNextRead)
+@@ -303,8 +345,9 @@
+         }
+         if description.tasks.contains(&Task::FocusRank) {
+             ensure!(
+-                description.task_policies.get(&Task::FocusRank)
+-                    == Some(&super::compiler::focus::policy_digest()?),
++                source_transition.is_some()
++                    || description.task_policies.get(&Task::FocusRank)
++                        == Some(&super::compiler::focus::policy_digest()?),
+                 "evaluation Focus source policy differs from native constructor"
+             );
+         }
+@@ -312,6 +355,7 @@
+             description,
+             release: false,
+             evaluation: Some(self.lease.clone()),
++            source_transition,
+             #[cfg(feature = "gpu-cuda")]
+             gpu: None,
+         })
+@@ -367,7 +411,7 @@
+     ) -> Result<Self> {
+         crate::native_inference::require_service_compute()?;
+         profile.description.validate()?;
+-        validate_selected_policies(profile.description())?;
++        profile.validate_native_source()?;
+         #[cfg(feature = "gpu-cuda")]
+         let gpu = profile.gpu.clone();
+         #[cfg(feature = "gpu-cuda")]
+@@ -739,7 +783,23 @@
+         question: &str,
+         candidates: &[super::compiler::Candidate],
+     ) -> Result<CompiledInput> {
++        self.profile.validate_native_source()?;
+         self.compiler.compile(state, question, candidates)
++    }
++    pub fn source_transition_record(&self) -> Result<Option<serde_json::Value>> {
++        self.profile.source_transition_record()
++    }
++    pub fn source_transition_input(
++        &self,
++        input: &CompiledInput,
++    ) -> Result<Option<serde_json::Value>> {
++        self.profile.validate_native_source()?;
++        if let Some(witness) = &self.profile.source_transition {
++            return Ok(Some(serde_json::to_value(
++                witness.bind_input(self.profile.description(), input.input_digest)?,
++            )?));
++        }
++        Ok(None)
+     }
+     pub fn score(&self, input: &CompiledInput) -> Result<Vec<f32>> {
+         #[cfg(feature = "gpu-cuda")]
+@@ -766,6 +826,7 @@
+         deadline: Option<std::time::Instant>,
+     ) -> Result<Vec<f32>> {
+         crate::native_inference::require_service_compute()?;
++        self.profile.validate_native_source()?;
+         #[cfg(not(feature = "gpu-cuda"))]
+         let _ = deadline;
+         let tokens = input.input_ids.len();
+@@ -1246,6 +1307,7 @@
+             description,
+             release: true,
+             evaluation: None,
++            source_transition: None,
+             gpu: None,
+         }
+         .bind_cuda_device(device, deadline)
+@@ -1285,7 +1347,7 @@
+         .context("profile is outside compiled release catalog")?;
+     profile.validate()?;
+     profile.validate_release_downloads()?;
+-    validate_selected_policies(&profile)?;
++    admit_source_transition(&profile)?;
+     if profile.device_execution.is_some() {
+         ensure!(
+             profile.qualification.is_some()
+--- r4/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
++++ executable/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
+@@ -35,7 +35,20 @@
+ #[cfg(all(windows, target_arch = "x86_64"))]
+ mod windows;
+ static NEXT_EPOCH: AtomicU64 = AtomicU64::new(1);
+-fn in_time(deadline: Instant) -> Result<()> {
++/// Actual native poison observation, including admission failures before a
++/// CudaDevice could be returned. This never grants execution authority.
++pub fn process_poisoned() -> bool {
++    #[cfg(all(windows, target_arch = "x86_64"))]
++    {
++        windows::runtime_poisoned()
++    }
++    #[cfg(not(all(windows, target_arch = "x86_64")))]
++    {
++        false
++    }
++}
++
++pub(super) fn in_time(deadline: Instant) -> Result<()> {
+     ensure!(
+         Instant::now() < deadline,
+         "original GPU operation deadline expired"
+@@ -578,6 +591,8 @@
+ /// Metadata-only native factory input. Its output is unapproved until the
+ /// genuine receipt/PE closure is reviewed and its exact SHA is compiled.
+ #[cfg(feature = "test-support")]
++#[derive(Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
+ pub struct RuntimeAssemblyInput {
+     pub directory: std::path::PathBuf,
+     pub producer_name: String,
+@@ -759,10 +774,20 @@
+     cpu.validate()?;
+     super::validate_selected_policies(cpu)?;
+     ensure!(
+-        cpu.device_execution.is_none() && cpu.max_tokens == 8192 && cpu.max_candidates == 8,
++        cpu.device_execution.is_none()
++            && if cpu.model == ModelChoice::FocusQwenReranker06B {
++                cpu.max_tokens == 512 && cpu.max_candidates == 4
++            } else {
++                cpu.max_tokens == 8192 && cpu.max_candidates == 8
++            },
+         "probe requires current native8192/N8 CPU description"
+     );
+     let (name, graph, threads) = match cpu.model {
++        ModelChoice::FocusQwenReranker06B => (
++            "private-cuda-fp32-focus-probe-v1",
++            "5072c663bb8fbc587208dea2564c8ad27880177875e62633f12ea64250ec2738",
++            4,
++        ),
+         ModelChoice::ContextQwenCompact => (
+             "private-cuda-fp32-context-compact-probe-v1",
+             "c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4",
+@@ -790,19 +815,27 @@
+         .filter(|a| a.role == AssetRole::Calibration)
+         .collect::<Vec<_>>();
+     ensure!(calibrations.len() == 1, "native raw calibration missing");
+-    let mut calibration =
+-        airk_core::arbiter::context_action::calibration::JointCalibration::parse_and_validate(
+-            &super::bytes(source, calibrations[0], 64 << 10)?,
++    let raw_calibration = super::bytes(source, calibrations[0], 64 << 10)?;
++    let mut calibration_bytes = if cpu.model == ModelChoice::FocusQwenReranker06B {
++        // Fresh native raw relevance metadata, not learned calibration or a
++        // Context action policy. The authenticated old bytes are not reused.
++        super::qualification::focus_raw_metadata(
+             cpu,
+-            crate::arbiter::context_action::policy_digest()?,
+-        )?;
+-    // Parse the exact native CPU input, then create new unavailable calibration
+-    // bytes. Neither its CPU rules nor class qualification transfers to CUDA.
+-    calibration.schema =
+-        airk_core::arbiter::context_action::calibration::CALIBRATION_SCHEMA_V2.into();
+-    calibration.rules.clear();
+-    calibration.class_support = Some(unavailable_classes());
+-    let mut calibration_bytes = serde_json::to_vec_pretty(&calibration)?;
++            cpu.task_policies[&airk_core::arbiter::Task::FocusRank],
++        )?
++    } else {
++        let mut calibration =
++            airk_core::arbiter::context_action::calibration::JointCalibration::parse_and_validate(
++                &raw_calibration,
++                cpu,
++                crate::arbiter::context_action::policy_digest()?,
++            )?;
++        calibration.schema =
++            airk_core::arbiter::context_action::calibration::CALIBRATION_SCHEMA_V2.into();
++        calibration.rules.clear();
++        calibration.class_support = Some(unavailable_classes());
++        serde_json::to_vec_pretty(&calibration)?
++    };
+     calibration_bytes.push(b'\n');
+     let calibration_sha = Sha256Digest::from_bytes(Sha256::digest(&calibration_bytes).into());
+     let calibration_name = calibrations[0].name.clone();
+@@ -857,11 +890,13 @@
+     );
+     profile.validate()?;
+     super::validate_selected_policies(&profile)?;
+-    airk_core::arbiter::context_action::calibration::JointCalibration::parse_and_validate(
+-        &calibration_bytes,
+-        &profile,
+-        crate::arbiter::context_action::policy_digest()?,
+-    )?;
++    if profile.model != ModelChoice::FocusQwenReranker06B {
++        airk_core::arbiter::context_action::calibration::JointCalibration::parse_and_validate(
++            &calibration_bytes,
++            &profile,
++            crate::arbiter::context_action::policy_digest()?,
++        )?;
++    }
+     Ok(PreparedFp32ProbeProfile {
+         profile,
+         calibration_name,
+--- r4/crates/airk-retrieval/src/arbiter/runtime/cuda/tests.rs
++++ executable/crates/airk-retrieval/src/arbiter/runtime/cuda/tests.rs
+@@ -206,3 +206,156 @@
+     assert!(probe_runtime_identity(&oversized, pin).is_err());
+     Ok(())
+ }
++
++#[cfg(feature = "test-support")]
++#[test]
++fn shared_native_focus_probe_metadata_keeps_literal_raw_binary_readout() -> Result<()> {
++    let profile = super::super::catalog_profiles()?
++        .into_iter()
++        .find(|p| p.model == airk_core::arbiter::ModelChoice::FocusQwenReranker06B)
++        .context("Focus descriptor")?;
++    let policy = profile.task_policies[&airk_core::arbiter::Task::FocusRank];
++    let raw = super::super::qualification::focus_raw_metadata(&profile, policy)?;
++    let value: serde_json::Value = serde_json::from_slice(&raw)?;
++    assert_eq!(value["schema"], "airk.private.focus-relevance-metadata/1");
++    assert_eq!(value["readout_order"], serde_json::json!(["no", "yes"]));
++    assert_eq!(value["readout_tokens"], serde_json::json!([2152, 9693]));
++    assert_eq!(value["learned_probability_calibration"], false);
++    assert_eq!(value["release_qualified"], false);
++    Ok(())
++}
++
++#[cfg(feature = "test-support")]
++#[test]
++fn native_probe_builder_returns_new_bound_unavailable_cal_without_old_rules() -> Result<()> {
++    use airk_core::arbiter::{
++        AssetRole, ModelChoice, Stage, Task, context_action::calibration::*, context_action::*,
++    };
++    let mut cpu = super::super::catalog_profiles()?
++        .into_iter()
++        .find(|p| p.model == ModelChoice::ContextQwenCompact)
++        .context("Compact descriptor")?;
++    cpu.profile_id = "private-synthetic-cuda-metadata-control".into();
++    cpu.manifest = Sha256Digest::from_bytes([8; 32]);
++    cpu.max_tokens = 8192;
++    cpu.max_candidates = 8;
++    cpu.stage = Some(Stage::Context);
++    cpu.tasks = BTreeSet::from([Task::ContextAction]);
++    cpu.policy = crate::arbiter::compiler::qwen::policy_digest()?;
++    let task = crate::arbiter::context_action::policy_digest()?;
++    cpu.task_policies = BTreeMap::from([(Task::ContextAction, task)]);
++    cpu.downloads.clear();
++    cpu.qualified_targets.clear();
++    cpu.qualification = None;
++    let original = JointCalibration {
++        schema: CALIBRATION_SCHEMA.into(),
++        model: cpu.model,
++        compiler: cpu.compiler,
++        task_policy: task,
++        score_abi: cpu.abi.clone(),
++        assets: cpu
++            .assets
++            .iter()
++            .filter(|a| {
++                matches!(
++                    a.role,
++                    AssetRole::Model | AssetRole::ExternalWeights | AssetRole::Tokenizer
++                )
++            })
++            .map(|a| {
++                (
++                    a.name.clone(),
++                    JointAssetBinding {
++                        role: a.role.clone(),
++                        sha256: a.sha256,
++                    },
++                )
++            })
++            .collect(),
++        rules: vec![JointRule {
++            action: ContextActionClass::Read,
++            allowed_gaps: vec![Gap::Unsupported],
++            allowed_reasons: vec![ContextReason::AdditionalEvidenceMayHelp],
++            allowed_roles: vec![EvidenceRole::Unknown],
++            allowed_relevance: vec![RelevanceHypothesis::Uncertain],
++            minimum_raw_margin: f32::MAX,
++        }],
++        class_support: None,
++    };
++    let raw = serde_json::to_vec_pretty(&original)?;
++    let digest = Sha256Digest::from_bytes(Sha256::digest(&raw).into());
++    let asset = cpu
++        .assets
++        .iter_mut()
++        .find(|a| a.role == AssetRole::Calibration)
++        .unwrap();
++    asset.bytes = raw.len() as u64;
++    asset.sha256 = digest;
++    cpu.calibration = digest;
++    cpu.validate()?;
++    original.validate(&cpu, task)?;
++    struct CalibrationOnly(Vec<u8>);
++    impl super::super::AssetSource for CalibrationOnly {
++        fn read_asset(&self, asset: &airk_core::arbiter::Asset) -> Result<Vec<u8>> {
++            ensure!(
++                asset.role == AssetRole::Calibration,
++                "pure metadata control must not read neural assets"
++            );
++            Ok(self.0.clone())
++        }
++    }
++    let source = CalibrationOnly(raw.clone());
++    let runtime = serde_json::to_vec(&manifest())?;
++    let runtime_pin = Sha256Digest::from_bytes(Sha256::digest(&runtime).into());
++    let plan = DeviceCapacityPlan::probe(12 << 30, 1 << 30, 2 << 30)?;
++    let result = prepare_fp32_probe_profile(&cpu, &source, &runtime, runtime_pin, plan)?;
++    let cal =
++        JointCalibration::parse_and_validate(&result.calibration_bytes, &result.profile, task)?;
++    assert_eq!(source.0, raw);
++    assert_eq!(original.rules.len(), 1);
++    assert!(cal.rules.is_empty());
++    assert_eq!(cal.class_support.as_ref().unwrap().len(), 4);
++    assert!(
++        cal.class_support
++            .unwrap()
++            .iter()
++            .all(|r| matches!(r.support, ClassSupport::Unsupported { .. }))
++    );
++    let pin = Sha256Digest::from_bytes(Sha256::digest(&result.calibration_bytes).into());
++    assert_eq!(result.profile.calibration, pin);
++    assert_ne!(pin, cpu.calibration);
++    let asset = result
++        .profile
++        .assets
++        .iter()
++        .find(|a| a.role == AssetRole::Calibration)
++        .unwrap();
++    assert_eq!(asset.sha256, pin);
++    assert_eq!(asset.bytes, result.calibration_bytes.len() as u64);
++    assert_eq!(asset.name, result.calibration_name);
++    assert_ne!(result.profile.manifest, cpu.manifest);
++    assert!(
++        result.profile.qualification.is_none()
++            && result.profile.qualified_targets.is_empty()
++            && result.profile.downloads.is_empty()
++    );
++    assert_eq!(
++        result
++            .profile
++            .assets
++            .iter()
++            .filter(|a| a.role != AssetRole::Calibration)
++            .collect::<Vec<_>>(),
++        cpu.assets
++            .iter()
++            .filter(|a| a.role != AssetRole::Calibration)
++            .collect::<Vec<_>>()
++    );
++    cpu.assets
++        .iter_mut()
++        .find(|a| a.role == AssetRole::Model)
++        .unwrap()
++        .sha256 = Sha256Digest::from_bytes([9; 32]);
++    assert!(prepare_fp32_probe_profile(&cpu, &source, &runtime, runtime_pin, plan).is_err());
++    Ok(())
++}
+--- /dev/null
++++ executable/crates/airk-retrieval/src/arbiter/runtime/qualification.rs
+@@ -0,0 +1,541 @@
++// SPDX-License-Identifier: Apache-2.0
++//! One Rust-owned experimental descriptor builder. Never release authority.
++use airk_core::{
++    arbiter::context_action::{ContextReason, RelevanceHypothesis, calibration::*},
++    arbiter::resource_policy::ResourcePolicy,
++    arbiter::*,
++    identity::{Sha256Digest, framed_digest},
++};
++use anyhow::{Context, Result, ensure};
++use sha2::{Digest, Sha256};
++use std::{
++    collections::{BTreeMap, BTreeSet},
++    fs,
++    io::Read,
++    path::{Path, PathBuf},
++};
++
++/// The existing Core asset type is reused; no second Profile/asset DTO exists.
++pub struct AssetInput {
++    pub asset: Asset,
++    pub path: PathBuf,
++}
++pub enum CalibrationInput {
++    NumericRawOnly,
++    SuppliedUnqualified(AssetInput),
++}
++pub struct ProfileInput {
++    pub model: ModelChoice,
++    pub profile_id: String,
++    pub assets: Vec<AssetInput>,
++    pub cpu_fit: CpuFit,
++    pub memory_reservation_bytes: u64,
++    pub peak_disk_bytes: u64,
++    pub maximum_candidates: usize,
++    pub calibration: CalibrationInput,
++}
++pub struct PreparedProfile {
++    pub profile: Profile,
++    pub files: BTreeMap<String, PathBuf>,
++    pub numeric_raw_only: bool,
++    pub resource_policy: Option<ResourcePolicy>,
++}
++
++fn sha(bytes: &[u8]) -> Sha256Digest {
++    Sha256Digest::from_bytes(Sha256::digest(bytes).into())
++}
++
++/// Caller supplies already reviewed identities; actual bytes are reauthenticated.
++fn authenticate(input: &AssetInput) -> Result<()> {
++    ensure!(
++        input.asset.bytes > 0 && input.asset.bytes <= 16_u64 << 30,
++        "experimental asset byte bound"
++    );
++    if matches!(input.asset.role, AssetRole::Model | AssetRole::Tokenizer) {
++        ensure!(
++            input.asset.bytes <= 64 << 20,
++            "experimental model/tokenizer byte bound"
++        );
++    }
++    if matches!(
++        input.asset.role,
++        AssetRole::Compiler | AssetRole::Calibration
++    ) {
++        ensure!(
++            input.asset.bytes <= 64 << 10,
++            "experimental compiler/calibration byte bound"
++        );
++    }
++    let metadata = fs::symlink_metadata(&input.path)?;
++    ensure!(
++        metadata.is_file()
++            && !metadata.file_type().is_symlink()
++            && metadata.len() == input.asset.bytes,
++        "experimental asset type or length differs"
++    );
++    #[cfg(windows)]
++    {
++        use std::os::windows::fs::MetadataExt;
++        ensure!(
++            metadata.file_attributes() & 0x400 == 0,
++            "experimental asset reparse point refused"
++        );
++    }
++    let mut stream = fs::File::open(&input.path)?;
++    let digest = hash_bounded(&mut stream, input.asset.bytes)?;
++    ensure!(
++        stream.metadata()?.len() == input.asset.bytes && digest == input.asset.sha256,
++        "experimental asset hash or final length differs"
++    );
++    Ok(())
++}
++fn hash_bounded(reader: impl Read, expected: u64) -> Result<Sha256Digest> {
++    let mut stream = reader.take(expected.checked_add(1).context("asset bound overflow")?);
++    let mut hash = Sha256::new();
++    let mut total = 0_u64;
++    let mut buffer = vec![0_u8; 4 << 20];
++    loop {
++        let count = stream.read(&mut buffer)?;
++        if count == 0 {
++            break;
++        }
++        total += count as u64;
++        hash.update(&buffer[..count]);
++    }
++    ensure!(total == expected, "experimental streamed length differs");
++    Ok(Sha256Digest::from_bytes(hash.finalize().into()))
++}
++fn verified_small(input: &AssetInput, maximum: u64) -> Result<Vec<u8>> {
++    ensure!(
++        input.asset.bytes <= maximum,
++        "small experimental asset byte limit"
++    );
++    authenticate(input)?;
++    let mut bytes = Vec::with_capacity(usize::try_from(input.asset.bytes)?);
++    fs::File::open(&input.path)?
++        .take(input.asset.bytes + 1)
++        .read_to_end(&mut bytes)?;
++    ensure!(
++        bytes.len() as u64 == input.asset.bytes && sha(&bytes) == input.asset.sha256,
++        "consumed small asset bytes differ from authenticated identity"
++    );
++    Ok(bytes)
++}
++
++fn abi(focus: bool) -> ScoreAbi {
++    let mut inputs = ["input_ids", "attention_mask", "position_ids"]
++        .into_iter()
++        .map(|name| TensorContract {
++            name: name.into(),
++            element: TensorType::Int64,
++            axes: vec![
++                if focus { "batch" } else { "batch_1" }.into(),
++                "tokens".into(),
++            ],
++        })
++        .collect::<Vec<_>>();
++    if !focus {
++        inputs.extend([
++            TensorContract {
++                name: "decision_positions".into(),
++                element: TensorType::Int64,
++                axes: vec!["batch_1".into()],
++            },
++            TensorContract {
++                name: "candidate_positions".into(),
++                element: TensorType::Int64,
++                axes: vec!["batch_1".into(), "options".into()],
++            },
++            TensorContract {
++                name: "option_mask".into(),
++                element: TensorType::Bool,
++                axes: vec!["batch_1".into(), "options".into()],
++            },
++        ]);
++    }
++    ScoreAbi {
++        readout: if focus {
++            Readout::FocusYesNo
++        } else {
++            Readout::DecisionSymbol
++        },
++        inputs,
++        output: TensorContract {
++            name: if focus { "logits" } else { "scores" }.into(),
++            element: TensorType::Float32,
++            axes: vec![
++                if focus { "batch" } else { "batch_1" }.into(),
++                if focus { "labels" } else { "options" }.into(),
++            ],
++        },
++    }
++}
++
++fn structural_calibration(profile: &Profile, policy: Sha256Digest) -> JointCalibration {
++    JointCalibration {
++        schema: CALIBRATION_SCHEMA.into(),
++        class_support: None,
++        model: profile.model,
++        compiler: profile.compiler,
++        task_policy: policy,
++        score_abi: profile.abi.clone(),
++        assets: trained_assets(profile),
++        // Structural input for raw-score collection only; never a fitted rule.
++        rules: vec![JointRule {
++            action: ContextActionClass::Read,
++            allowed_gaps: vec![Gap::Unsupported],
++            allowed_reasons: vec![ContextReason::AdditionalEvidenceMayHelp],
++            allowed_roles: vec![EvidenceRole::Unknown],
++            allowed_relevance: vec![RelevanceHypothesis::Uncertain],
++            minimum_raw_margin: f32::MAX,
++        }],
++    }
++}
++fn trained_assets(profile: &Profile) -> BTreeMap<String, JointAssetBinding> {
++    profile
++        .assets
++        .iter()
++        .filter(|asset| {
++            matches!(
++                asset.role,
++                AssetRole::Model | AssetRole::ExternalWeights | AssetRole::Tokenizer
++            )
++        })
++        .map(|asset| {
++            (
++                asset.name.clone(),
++                JointAssetBinding {
++                    role: asset.role.clone(),
++                    sha256: asset.sha256,
++                },
++            )
++        })
++        .collect()
++}
++
++/// Build only an unqualified native evaluation descriptor. Resource inputs are
++/// declared experiment reservations; this function does not claim measured fit.
++pub fn prepare(input: ProfileInput, output: &Path) -> Result<PreparedProfile> {
++    prepare_declared(input, output, None)
++}
++
++/// Native uncalibrated Focus metadata shared by CPU and private GPU probes.
++pub(super) fn focus_raw_metadata(profile: &Profile, policy: Sha256Digest) -> Result<Vec<u8>> {
++    #[derive(serde::Serialize)]
++    struct RelevanceMetadata {
++        schema: &'static str,
++        model: ModelChoice,
++        compiler: Sha256Digest,
++        task_policy: Sha256Digest,
++        score_abi: ScoreAbi,
++        assets: BTreeMap<String, JointAssetBinding>,
++        readout_order: [&'static str; 2],
++        readout_tokens: [u32; 2],
++        interpretation: &'static str,
++        learned_probability_calibration: bool,
++        release_qualified: bool,
++    }
++    let metadata = RelevanceMetadata {
++        schema: "airk.private.focus-relevance-metadata/1",
++        model: profile.model,
++        compiler: profile.compiler,
++        task_policy: policy,
++        score_abi: profile.abi.clone(),
++        assets: trained_assets(&profile),
++        readout_order: ["no", "yes"],
++        readout_tokens: [2152, 9693],
++        interpretation: "Uncalibrated relative relevance: exp(yes-max)/(exp(no-max)+exp(yes-max)); no action/sufficiency confidence",
++        learned_probability_calibration: false,
++        release_qualified: false,
++    };
++    Ok(serde_json::to_vec_pretty(&metadata)?)
++}
++
++/// Additive software-v2 metadata only. Historical prepare keeps its 2048 Context
++/// compiler and /1 private identity; this path binds the separately frozen /2
++/// resource policy without claiming that the graph or host has measured fit.
++pub fn prepare_with_limits(
++    input: ProfileInput,
++    policy: &ResourcePolicy,
++    output: &Path,
++) -> Result<PreparedProfile> {
++    policy.validate()?;
++    prepare_declared(input, output, Some(policy))
++}
++
++fn compiler_with_limits(bytes: &[u8], focus: bool, policy: &ResourcePolicy) -> Result<Vec<u8>> {
++    policy.validate()?;
++    let mut profile: CompilerProfile = serde_json::from_slice(bytes)?;
++    profile.validate()?;
++    ensure!(
++        profile.recipe
++            == if focus {
++                CompilerRecipe::QwenRerankYesNoV1
++            } else {
++                CompilerRecipe::QwenSingleChoiceV1
++            },
++        "resource width requires the selected native compiler recipe"
++    );
++    if focus {
++        ensure!(
++            profile.max_tokens == policy.focus_pair_input_tokens,
++            "Focus resource policy cannot widen its static graph"
++        );
++        return Ok(bytes.to_vec());
++    }
++    profile.max_tokens = policy.context_input_tokens;
++    profile.validate()?;
++    let mut bytes = serde_json::to_vec_pretty(&profile)?;
++    bytes.push(b'\n');
++    Ok(bytes)
++}
++
++fn prepare_declared(
++    input: ProfileInput,
++    output: &Path,
++    resource_policy: Option<&ResourcePolicy>,
++) -> Result<PreparedProfile> {
++    ensure!(
++        !output.exists()
++            && input.profile_id.starts_with("private-")
++            && input.profile_id.len() <= 128,
++        "fresh private experimental profile output/identity required"
++    );
++    let stage = input
++        .model
++        .stage()
++        .context("historical model is not a selected stage")?;
++    input.cpu_fit.validate()?;
++    let focus = stage == Stage::Focus;
++    if focus {
++        ensure!(
++            input.cpu_fit.minimum_physical_cores == 4 && input.cpu_fit.intra_threads == 4,
++            "selected Focus baseline requires the reviewed CPU4 tier"
++        );
++    }
++    ensure!(
++        (1..=if focus { 64 } else { 8 }).contains(&input.maximum_candidates)
++            && input.memory_reservation_bytes > 0
++            && input.peak_disk_bytes > 0
++            && input.assets.len() <= 126,
++        "experimental resource/cardinality bounds required"
++    );
++    ensure!(
++        focus || input.maximum_candidates == 8,
++        "canonical Context compiler requires all eight native option slots"
++    );
++    let mut names = BTreeSet::new();
++    for item in &input.assets {
++        ensure!(
++            names.insert(item.asset.name.clone())
++                && !matches!(
++                    item.asset.role,
++                    AssetRole::Compiler | AssetRole::Calibration
++                )
++                && !matches!(
++                    item.asset.name.as_str(),
++                    "compiler.json"
++                        | "numeric-raw-only-calibration.json"
++                        | "focus-relevance-metadata.json"
++                        | "supplied-calibration.json"
++                ),
++            "duplicate or constructor-owned experimental asset"
++        );
++    }
++    for role in [AssetRole::Model, AssetRole::Tokenizer] {
++        ensure!(
++            input
++                .assets
++                .iter()
++                .filter(|item| item.asset.role == role)
++                .count()
++                == 1,
++            "singleton model/tokenizer required"
++        );
++    }
++    for role in [
++        AssetRole::ExternalWeights,
++        AssetRole::Notice,
++        AssetRole::Fixture,
++    ] {
++        ensure!(
++            input.assets.iter().any(|item| item.asset.role == role),
++            "complete trained/notice/probe closure required"
++        );
++    }
++    for item in &input.assets {
++        authenticate(item)?;
++    }
++    let tokenizer = input
++        .assets
++        .iter()
++        .find(|item| item.asset.role == AssetRole::Tokenizer)
++        .context("tokenizer")?;
++    let tokenizer_bytes = verified_small(tokenizer, 64 << 20)?;
++    let compiler_bytes = if focus {
++        crate::arbiter::compiler::focus::compiler_profile(&tokenizer_bytes)?
++    } else {
++        crate::arbiter::compiler::qwen::compiler_profile(&tokenizer_bytes)?
++    };
++    let compiler_bytes = if let Some(policy) = resource_policy {
++        let bytes = compiler_with_limits(&compiler_bytes, focus, policy)?;
++        // Re-admit exact serialized metadata through the existing unchanged
++        // token/recipe owner, rather than inferring support from Core's ceiling.
++        crate::arbiter::compiler::Compiler::from_verified(&bytes, &tokenizer_bytes)?;
++        bytes
++    } else {
++        compiler_bytes
++    };
++    let (task, policy) = if focus {
++        (
++            Task::FocusRank,
++            crate::arbiter::compiler::focus::policy_digest()?,
++        )
++    } else {
++        (
++            Task::ContextAction,
++            crate::arbiter::context_action::policy_digest()?,
++        )
++    };
++    let mut files = input
++        .assets
++        .iter()
++        .map(|item| (item.asset.name.clone(), item.path.clone()))
++        .collect::<BTreeMap<_, _>>();
++    let mut profile = Profile {
++        stage: Some(stage),
++        task_policies: BTreeMap::from([(task, policy)]),
++        qualified_targets: vec![],
++        cpu_fit: Some(input.cpu_fit),
++        downloads: vec![],
++        model: input.model,
++        profile_id: input.profile_id,
++        manifest: Sha256Digest::from_bytes([0; 32]),
++        runtime: RUNTIME.into(),
++        compiler: sha(&compiler_bytes),
++        calibration: Sha256Digest::from_bytes([0; 32]),
++        policy: if focus {
++            policy
++        } else {
++            crate::arbiter::compiler::qwen::policy_digest()?
++        },
++        qualification: None,
++        tasks: BTreeSet::from([task]),
++        abi: abi(focus),
++        max_tokens: resource_policy.map_or(if focus { 512 } else { 2048 }, |policy| {
++            if focus {
++                policy.focus_pair_input_tokens
++            } else {
++                policy.context_input_tokens
++            }
++        }),
++        max_candidates: input.maximum_candidates,
++        memory_reservation_bytes: input.memory_reservation_bytes,
++        peak_disk_bytes: input.peak_disk_bytes,
++        assets: input.assets.iter().map(|item| item.asset.clone()).collect(),
++    };
++    let numeric_raw_only = matches!(&input.calibration, CalibrationInput::NumericRawOnly);
++    let (calibration_name, calibration_bytes) = if focus {
++        ensure!(
++            numeric_raw_only,
++            "Focus cannot consume a Context/learned-decision calibration"
++        );
++        (
++            "focus-relevance-metadata.json",
++            focus_raw_metadata(&profile, policy)?,
++        )
++    } else {
++        match input.calibration {
++            CalibrationInput::NumericRawOnly => (
++                "numeric-raw-only-calibration.json",
++                serde_json::to_vec_pretty(&structural_calibration(&profile, policy))?,
++            ),
++            CalibrationInput::SuppliedUnqualified(item) => {
++                ensure!(
++                    item.asset.role == AssetRole::Calibration,
++                    "supplied calibration role differs"
++                );
++                authenticate(&item)?;
++                (
++                    "supplied-calibration.json",
++                    verified_small(&item, 64 << 10)?,
++                )
++            }
++        }
++    };
++    profile.calibration = sha(&calibration_bytes);
++    for (name, role, bytes) in [
++        ("compiler.json", AssetRole::Compiler, &compiler_bytes),
++        (calibration_name, AssetRole::Calibration, &calibration_bytes),
++    ] {
++        profile.assets.push(Asset {
++            name: name.into(),
++            role,
++            bytes: bytes.len() as u64,
++            sha256: sha(bytes),
++        });
++    }
++    profile
++        .assets
++        .sort_by(|left, right| left.name.cmp(&right.name));
++    let logical = profile
++        .assets
++        .iter()
++        .try_fold(0_u64, |total, asset| total.checked_add(asset.bytes))
++        .context("asset size overflow")?;
++    ensure!(
++        profile.peak_disk_bytes >= logical,
++        "declared disk reservation below actual logical assets"
++    );
++    profile.validate()?;
++    super::validate_selected_policies(&profile)?;
++    if !focus {
++        JointCalibration::parse_and_validate(&calibration_bytes, &profile, policy)?;
++    }
++    // Test-support identity only, explicitly distinct from a qualified release.
++    profile.manifest = if let Some(policy) = resource_policy {
++        framed_digest(
++            b"airk.private.selected-stage-evaluation-profile/2",
++            &[&serde_json::to_vec(&profile)?, &policy.canonical_bytes()?],
++        )
++    } else {
++        framed_digest(
++            b"airk.private.selected-stage-evaluation-profile/1",
++            &[&serde_json::to_vec(&profile)?],
++        )
++    };
++    fs::create_dir(output)?;
++    fs::write(output.join("compiler.json"), &compiler_bytes)?;
++    if let Some(policy) = resource_policy {
++        fs::write(
++            output.join("resource-policy.json"),
++            policy.canonical_bytes()?,
++        )?;
++    }
++    fs::write(output.join(calibration_name), &calibration_bytes)?;
++    fs::write(
++        output.join("experimental-profile.json"),
++        serde_json::to_vec_pretty(&profile)?,
++    )?;
++    files.insert("compiler.json".into(), output.join("compiler.json"));
++    files.insert(calibration_name.into(), output.join(calibration_name));
++    fs::write(
++        output.join("asset-files.private.json"),
++        serde_json::to_vec_pretty(&files)?,
++    )?;
++    Ok(PreparedProfile {
++        profile,
++        files,
++        numeric_raw_only,
++        resource_policy: resource_policy.cloned(),
++    })
++}
++
++#[cfg(test)]
++mod tests;
++
++#[cfg(test)]
++mod resource_tests;
++
++#[cfg(test)]
++mod regeneration;

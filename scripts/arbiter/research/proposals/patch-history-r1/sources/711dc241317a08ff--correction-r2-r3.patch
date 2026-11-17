@@ -1,0 +1,1338 @@
+--- R2/crates/airk-inference/src/inference_engine/pool/arbiter/CONTRACT.md
++++ R3/crates/airk-inference/src/inference_engine/pool/arbiter/CONTRACT.md
+@@ -513,3 +513,12 @@
+ product selection/status Ready. Runtime/model qualification is still absent
+ until actual numeric/resource/placement evidence and the owning promoter pass.
+ The no-GPU build creates no device witness; it preserves the admitted CPU path.
++
++
++Native device fault circuit identity excludes ephemeral witness generations.
++Epoch remains mandatory for dispatch/reuse freshness, while actual UUID, driver,
++static runtime build, execution profile and current document/source identity
++retain the fault across wrapper recreation. A known settled fault can notify only
++the bounded future-management owner; no current score retry or budget reset is
++introduced. Evaluation probes require the actual matching ServiceLease, explicit
++host/device bounds and the original deadline; generated metadata is no permit.
+--- R2/crates/airk-kernel/src/arbiter/CONTRACT.md
++++ R3/crates/airk-kernel/src/arbiter/CONTRACT.md
+@@ -112,3 +112,10 @@
+ GPU reservations cover future, unallocated work only; real resident device
+ usage is already reflected in actual driver free memory and is not subtracted
+ again. A GPU capacity reservation never authorizes a model or runtime.
++
++
++Release-observer equivalence is exact Arc identity of the authentic reservation
++release state, not manifest equality. Service may deduplicate repeated borrowing
++of one charge without forgetting distinct unresolved charges. NativeConfiguration
++selection equality retains the complete typed document and selected descriptions;
++it never narrows configuration4 to a CPU model-only identity.
+--- R2/crates/airk-service/src/service_runtime/arbiter/CONTRACT.md
++++ R3/crates/airk-service/src/service_runtime/arbiter/CONTRACT.md
+@@ -515,5 +515,41 @@
+ Unknown native work retains all pins/charges and cannot trigger an automatic
+ score replay. Pre-work unsupported/runtime/initialization/capacity failure may
+ try the next admitted variant under the same original budget and current
+-consent. Post-work fallback requires actual synchronization/settlement and
+-remaining original budget; otherwise only a future request can choose CPU.
++consent. Post-work fallback is future-only after actual synchronization and settlement.
++The failed read remains failed and is never replayed or given a fresh budget.
++
++
++### Native device lifecycle review boundaries
++
++A successful retained resident activation and a cold activation use the same
++Ready commit: exact current document/selected profile, live source and original
++cancellation, authentic lane observation and existing host reservation, and the
++retained device epoch must validate before Ready. Reinstalling a selection clears
++Ready until that commit. Repeated borrowing of one actual reservation deduplicates
++its release observer by the reservation's unique Arc identity. Distinct unresolved
++charges are retained even when their manifests match; successful actual release
++is the only pruning proof.
++
++InitializeDevice itself holds both stage admission mutexes, in Focus then Context
++order, through the Store checked mutation and every original liveness callback.
++Busy, pending, draining, resident, queued, running, stopping or unreleased work
++refuses; a previously rendered disabled status grants no mutation authority.
++Lock order is lifecycle admission -> Store configuration -> native selection ->
++source/credential/native delivery gates. Selection install never enters Store,
++lifecycle or native gates while holding selection. The final Store checked
++commit holds that same native selection mutex through the real delivery effect;
++a sampled atomic generation alone is not a serialization fence.
++
++CancelDevice invalidates the stage continuation generation, removes its bounded
++pending device command, and cancels the current notifier token even when idle.
++Final native operation admission checks that generation while holding the same
++stage lifecycle mutex, so an already-popped command cannot start after Cancel.
++Actual active/warming stage profiles are asked to release through their native
++owner; unknown work and charges remain held. Other stages are not canceled.
++
++Fault circuits use actual adapter UUID, signed driver identity/API, runtime build,
++profile execution identity, configuration revision and catalog/source identity.
++An ephemeral wrapper/device dispatch epoch is freshness evidence and cannot
++clear a circuit merely because the wrapper was dropped or reprobed. Actual epoch
++checks still fence resident reuse and delivery. No advisory fallback helper can
++authorize replay of the failed current request.
+--- R2/crates/airk-inference/src/inference_engine/pool/arbiter.rs
++++ R3/crates/airk-inference/src/inference_engine/pool/arbiter.rs
+@@ -389,6 +389,10 @@
+     /// Unqualified native evaluation only: the exact original lease, explicit
+     /// Core bounds and actual resource reservation are required independently.
+     #[cfg(all(feature = "test-support", feature = "gpu-cuda"))]
++    #[allow(
++        clippy::too_many_arguments,
++        reason = "native evaluation requires independent lease, resource, device and original-deadline witnesses"
++    )]
+     pub fn probe_evaluation_device(
+         &self,
+         lease: Arc<airk_store::service::ServiceLease>,
+--- R2/crates/airk-inference/src/inference_engine/pool/arbiter/device.rs
++++ R3/crates/airk-inference/src/inference_engine/pool/arbiter/device.rs
+@@ -362,7 +362,6 @@
+     pub adapter: [u8; 16],
+     pub driver_api_version: i32,
+     pub driver_image_sha256: Sha256Digest,
+-    pub device_epoch: u64,
+     pub configuration_revision: u64,
+     pub device_catalog: Sha256Digest,
+     pub catalog_source: Sha256Digest,
+@@ -427,18 +426,20 @@
+         !device.poisoned() && device.epoch() > 0,
+         "device settlement/epoch unavailable"
+     );
+-    Ok(DeviceFaultKey {
+-        profile: profile.manifest,
+-        execution_identity: profile.device_execution_identity()?,
+-        runtime_build: execution.runtime_build,
+-        adapter: device.uuid(),
+-        driver_api_version: device.driver_api_version(),
+-        driver_image_sha256: device.driver_image_sha256(),
+-        device_epoch: device.epoch(),
+-        configuration_revision: document.revision,
+-        device_catalog: document.device_catalog.catalog,
+-        catalog_source: document.device_catalog.source,
+-    })
++    stable_circuit_key(
++        DeviceFaultKey {
++            profile: profile.manifest,
++            execution_identity: profile.device_execution_identity()?,
++            runtime_build: execution.runtime_build,
++            adapter: device.uuid(),
++            driver_api_version: device.driver_api_version(),
++            driver_image_sha256: device.driver_image_sha256(),
++            configuration_revision: document.revision,
++            device_catalog: document.device_catalog.catalog,
++            catalog_source: document.device_catalog.source,
++        },
++        device.epoch(),
++    )
+ }
+ pub(super) fn known_fault(
+     result: &Result<Scored>,
+@@ -555,3 +556,12 @@
+     );
+     Ok(())
+ }
++
++fn stable_circuit_key(key: DeviceFaultKey, dispatch_epoch: u64) -> Result<DeviceFaultKey> {
++    ensure!(
++        dispatch_epoch > 0,
++        "device witness generation is unavailable"
++    );
++    // A wrapper/dispatch epoch is freshness evidence, never a circuit reset.
++    Ok(key)
++}
+--- R2/crates/airk-inference/src/inference_engine/pool/arbiter/device/tests.rs
++++ R3/crates/airk-inference/src/inference_engine/pool/arbiter/device/tests.rs
+@@ -269,3 +269,37 @@
+     assert!(shared.queue.lock().unwrap().probes.is_empty());
+     Ok(())
+ }
++
++#[test]
++fn gpu_fault_circuit_survives_wrapper_epoch_churn_but_real_runtime_identity_changes_do_not_match()
++-> Result<()> {
++    let key = DeviceFaultKey {
++        profile: Sha256Digest::from_bytes([1; 32]),
++        execution_identity: "native-synthetic-execution".into(),
++        runtime_build: Sha256Digest::from_bytes([2; 32]),
++        adapter: [3; 16],
++        driver_api_version: 13000,
++        driver_image_sha256: Sha256Digest::from_bytes([4; 32]),
++        configuration_revision: 7,
++        device_catalog: Sha256Digest::from_bytes([5; 32]),
++        catalog_source: Sha256Digest::from_bytes([6; 32]),
++    };
++    assert_eq!(
++        stable_circuit_key(key.clone(), 1)?,
++        stable_circuit_key(key.clone(), 29)?
++    );
++    assert!(stable_circuit_key(key.clone(), 0).is_err());
++    let mut changed = key.clone();
++    changed.driver_image_sha256 = Sha256Digest::from_bytes([8; 32]);
++    assert_ne!(stable_circuit_key(changed, 29)?, key);
++    let mut changed = key.clone();
++    changed.profile = Sha256Digest::from_bytes([9; 32]);
++    assert_ne!(stable_circuit_key(changed, 29)?, key);
++    let mut changed = key.clone();
++    changed.configuration_revision += 1;
++    assert_ne!(stable_circuit_key(changed, 29)?, key);
++    let mut changed = key.clone();
++    changed.catalog_source = Sha256Digest::from_bytes([10; 32]);
++    assert_ne!(stable_circuit_key(changed, 29)?, key);
++    Ok(())
++}
+--- R2/crates/airk-kernel/src/service_resources.rs
++++ R3/crates/airk-kernel/src/service_resources.rs
+@@ -78,6 +78,10 @@
+     registration: Option<u64>,
+ }
+ impl OptionalRelease {
++    /// Exact native charge identity, not a manifest, counter or completion claim.
++    pub fn same_charge(&self, other: &Self) -> bool {
++        Arc::ptr_eq(&self.0, &other.0)
++    }
+     pub fn wait(&self) -> OptionalReleaseWait {
+         OptionalReleaseWait {
+             state: self.0.clone(),
+--- R2/crates/airk-service/src/service_runtime/arbiter.rs
++++ R3/crates/airk-service/src/service_runtime/arbiter.rs
+@@ -312,7 +312,7 @@
+             };
+             limits.validate()?;
+             ensure!(
+-                self.context.read_configuration()? == current,
++                self.context.read_configuration()?.same_selection(&current),
+                 "Focus allocation configuration changed"
+             );
+             Ok(Some(limits))
+--- R2/crates/airk-service/src/service_runtime/arbiter/device_management.rs
++++ R3/crates/airk-service/src/service_runtime/arbiter/device_management.rs
+@@ -49,6 +49,7 @@
+     pending: BTreeMap<Stage, (Launch, DeviceAction)>,
+     runners: std::collections::BTreeSet<Stage>,
+     circuits: std::collections::BTreeSet<DeviceFaultKey>,
++    intent_generation: BTreeMap<Stage, u64>,
+     document: Option<DeviceConfiguration>,
+     selected: BTreeMap<Stage, Profile>,
+     ready: std::collections::BTreeSet<Stage>,
+@@ -92,6 +93,10 @@
+         }
+         NativeConfiguration::device(current, state.selected.values().cloned().collect())
+     }
++    #[allow(
++        clippy::too_many_arguments,
++        reason = "one bounded native transition; witnesses are not serialized control data"
++    )]
+     fn install(
+         &self,
+         document: DeviceConfiguration,
+@@ -106,53 +111,91 @@
+             .state
+             .lock()
+             .map_err(|_| anyhow::anyhow!("native device selection unavailable"))?;
+-        if state.document.as_ref().is_some_and(|old| old != &document) {
+-            // Preserve the other stage only when its exact requested fields stayed current.
+-            let preserve = state
+-                .document
+-                .as_ref()
+-                .is_some_and(|old| old.stage(other(stage)) == document.stage(other(stage)));
+-            if !preserve {
+-                state.selected.remove(&other(stage));
+-                state.ready.remove(&other(stage));
+-                state.devices.remove(&other(stage));
+-                state.warm_extra.remove(&other(stage));
+-                state.selection.remove(&other(stage));
+-            }
+-        }
++        let mut selected = state.selected.clone();
++        let mut ready = state.ready.clone();
++        let mut devices = state.devices.clone();
++        let mut warm_extra = state.warm_extra.clone();
++        let mut selections = state.selection.clone();
++        let mut evidences = state.evidence.clone();
++        if state.document.as_ref().is_some_and(|old| {
++            old != &document && old.stage(other(stage)) != document.stage(other(stage))
++        }) {
++            selected.remove(&other(stage));
++            ready.remove(&other(stage));
++            devices.remove(&other(stage));
++            warm_extra.remove(&other(stage));
++            selections.remove(&other(stage));
++        }
++        selected.remove(&stage);
++        ready.remove(&stage);
++        devices.remove(&stage);
++        warm_extra.remove(&stage);
++        selections.remove(&stage);
++        if let Some(profile) = profile {
++            if let Some(evidence) = evidence {
++                evidences.insert(profile.manifest, evidence);
++            }
++            selected.insert(stage, profile);
++        }
++        if let Some(selection) = selection {
++            selections.insert(stage, selection);
++        }
++        if let Some(device) = device {
++            ensure!(!device.poisoned(), "cannot activate poisoned native device");
++            let epoch = device.epoch();
++            devices.insert(stage, (device, epoch));
++        }
++        if let Some(extra) = extra {
++            warm_extra.insert(stage, extra);
++        }
++        // Validate the complete proposed policy BEFORE changing any owner state.
++        let policy =
++            NativeConfiguration::device(document.clone(), selected.values().cloned().collect())?;
+         state.circuits.retain(|key| {
+             key.configuration_revision == document.revision
+                 && key.device_catalog == document.device_catalog.catalog
+                 && key.catalog_source == document.device_catalog.source
+         });
+-        state.document = Some(document.clone());
+-        state.selected.remove(&stage);
+-        state.ready.remove(&stage);
+-        state.devices.remove(&stage);
+-        state.warm_extra.remove(&stage);
+-        state.selection.remove(&stage);
+-        if let Some(profile) = profile {
+-            if let Some(evidence) = evidence {
+-                state.evidence.insert(profile.manifest, evidence);
+-            }
+-            state.selected.insert(stage, profile);
+-        }
+-        if let Some(selection) = selection {
+-            state.selection.insert(stage, selection);
+-        }
+-        if let Some(device) = device {
+-            let epoch = device.epoch();
+-            ensure!(!device.poisoned(), "cannot activate poisoned native device");
+-            state.devices.insert(stage, (device, epoch));
+-        }
+-        if let Some(extra) = extra {
+-            state.warm_extra.insert(stage, extra);
+-        }
+-        let policy =
+-            NativeConfiguration::device(document, state.selected.values().cloned().collect())?;
++        state.document = Some(document);
++        state.selected = selected;
++        state.ready = ready;
++        state.devices = devices;
++        state.warm_extra = warm_extra;
++        state.selection = selections;
++        state.evidence = evidences;
+         self.generation
+             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+         Ok(policy)
++    }
++    fn finish_activation(
++        &self,
++        document: &DeviceConfiguration,
++        stage: Stage,
++        profile: &Profile,
++        validate: impl FnOnce() -> Result<()>,
++    ) -> Result<()> {
++        validate()?;
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| anyhow::anyhow!("native ready observation unavailable"))?;
++        ensure!(
++            state.document.as_ref() == Some(document)
++                && state
++                    .selected
++                    .get(&stage)
++                    .is_some_and(|actual| actual.manifest == profile.manifest),
++            "native selection changed before ready commit"
++        );
++        ensure!(
++            state
++                .devices
++                .get(&stage)
++                .is_none_or(|(device, epoch)| !device.poisoned() && device.epoch() == *epoch),
++            "native device epoch changed before ready commit"
++        );
++        state.ready.insert(stage);
++        Ok(())
+     }
+ }
+ #[cfg(feature = "local-inference")]
+@@ -404,9 +447,17 @@
+             ManagementRequest::InitializeDevice {
+                 expected_legacy_configuration,
+             } => {
+-                store.initialize_checked(expected_legacy_configuration, || {
+-                    catalog_live(&self.context, effect.as_ref())
+-                })?;
++                with_initialization_fence(
++                    &self.focus.lifecycle,
++                    &self.context.lifecycle,
++                    &self.context.devices,
++                    || catalog_live(&self.context, effect.as_ref()),
++                    |live| {
++                        store
++                            .initialize_checked(expected_legacy_configuration, live)
++                            .map(|_| ())
++                    },
++                )?;
+             }
+             ManagementRequest::MigrateDevice {
+                 expected_revision,
+@@ -524,9 +575,19 @@
+                     "device cancel revision changed"
+                 );
+                 catalog_live(owner, effect.as_ref())?;
+-                super::lifecycle::cancel_current(&mut state);
+-                if let (Some(handle), Some(profile)) = (&state.handle, state.profile) {
+-                    handle.release_profile(profile)?;
++                cancel_device_stage(&mut state, &owner.devices, stage)?;
++                if let Some(handle) = &state.handle {
++                    let actual = handle.observation_for(stage)?;
++                    let mut profiles =
++                        [state.profile, actual.active_profile, actual.warming_profile]
++                            .into_iter()
++                            .flatten()
++                            .collect::<Vec<_>>();
++                    profiles.sort();
++                    profiles.dedup();
++                    for profile in profiles {
++                        handle.release_profile(profile)?;
++                    }
+                 }
+             }
+             ManagementRequest::RemoveDevice {
+@@ -669,16 +730,13 @@
+                 .as_ref()
+                 .is_some_and(|handle| handle.resident(profile).is_ok())
+         });
+-        let resident = selected
+-            && state.ready.contains(&self.stage)
+-            && actual_resident
+-            && epoch_live
+-            && requested.enabled
+-            && active.is_some()
+-            && active == state.selected.get(&self.stage).map(|p| p.manifest)
+-            && observation
+-                .as_ref()
+-                .is_some_and(|v| v.configuration_revision == Some(document.revision));
++        let resident = ready_from_observation(
++            &state,
++            document,
++            self.stage,
++            observation.as_ref(),
++            actual_resident,
++        );
+         let models = match self.stage {
+             Stage::Focus => vec![SelectedModel::Focus],
+             Stage::Context => vec![SelectedModel::ContextCompact, SelectedModel::ContextLarge],
+@@ -728,10 +786,14 @@
+                     )
+                 })
+                 .collect::<Result<Vec<_>>>()?;
+-            let tasks = variants
+-                .iter()
+-                .flat_map(|variant| variant.tasks.iter().copied())
+-                .collect();
++            let tasks = if variants.is_empty() {
++                model.supported_tasks()
++            } else {
++                variants
++                    .iter()
++                    .flat_map(|variant| variant.tasks.iter().copied())
++                    .collect()
++            };
+             let ready = variants
+                 .iter()
+                 .any(|variant| variant.availability == Availability::Ready);
+@@ -766,6 +828,12 @@
+         .collect::<Result<Vec<_>>>()?;
+         let draining = !epoch_live
+             || life.phase == Availability::Draining
++            || (life.cancel.is_cancelled()
++                && observation.as_ref().is_some_and(|actual| {
++                    actual.active_profile.is_some()
++                        || actual.warming_profile.is_some()
++                        || actual.running > 0
++                }))
+             || observation.as_ref().is_some_and(|v| {
+                 !requested.enabled
+                     && (v.active_profile.is_some() || v.warming_profile.is_some() || v.running > 0)
+@@ -858,6 +926,7 @@
+ #[derive(Clone)]
+ struct Launch {
+     stage: Stage,
++    intent_generation: u64,
+     document: DeviceConfiguration,
+     binding: DeviceCatalogBinding,
+     configuration: Arc<airk_store::service::arbiter::ConfigurationStore>,
+@@ -884,6 +953,16 @@
+             cancel.is_none_or(|v| !v.is_cancelled()),
+             "original device lifecycle canceled"
+         );
++        continuation_current(
++            &self
++                .devices
++                .state
++                .lock()
++                .map_err(|_| anyhow::anyhow!("device intent unavailable"))?
++                .intent_generation,
++            self.stage,
++            self.intent_generation,
++        )?;
+         ensure!(
+             self.gate
+                 .catalog_clock()
+@@ -955,8 +1034,18 @@
+         );
+         let assets =
+             AssetStore::open_device(self.ownership.clone(), self.installation, self.namespace)?;
++        let intent_generation = self
++            .devices
++            .state
++            .lock()
++            .map_err(|_| anyhow::anyhow!("device intent unavailable"))?
++            .intent_generation
++            .get(&self.stage)
++            .copied()
++            .unwrap_or(0);
+         let context = Launch {
+             stage: self.stage,
++            intent_generation,
+             document,
+             binding,
+             configuration: self.configuration.clone(),
+@@ -987,6 +1076,13 @@
+             .state
+             .lock()
+             .map_err(|_| anyhow::anyhow!("device continuation unavailable"))?;
++        continuation_current(&state.intent_generation, stage, self.intent_generation)?;
++        // An internal fault continuation cannot replace accepted user work.
++        if matches!(&action, DeviceAction::RecoverAfterFault { .. })
++            && state.pending.contains_key(&stage)
++        {
++            return Ok(());
++        }
+         // One pending command per stage, replacing only work not yet admitted.
+         state.pending.insert(stage, (self, action));
+         if !state.runners.insert(stage) {
+@@ -1079,10 +1175,48 @@
+                 .map(|p| p.manifest)
+                 .unwrap_or(airk_core::identity::Sha256Digest::from_bytes([0; 32])),
+         };
+-        let (serial, cancel) = super::lifecycle::start(&self.lifecycle, manifest, None)?;
++        let (serial, cancel) =
++            super::lifecycle::start_checked(&self.lifecycle, manifest, None, || {
++                self.current(None)
++            })?;
+         let result = self.execute(action, serial, &cancel).await;
+         super::lifecycle::complete(&self.lifecycle, serial, &result);
+         result
++    }
++    fn finish_resident_activation(
++        &self,
++        handle: &Handle,
++        profile: &Profile,
++        cancel: &CancellationToken,
++    ) -> Result<()> {
++        self.devices
++            .finish_activation(&self.document, self.stage, profile, || {
++                self.current(Some(cancel))?;
++                let observed = handle.observation_for(self.stage)?;
++                ensure!(
++                    observed.active_profile == Some(profile.manifest)
++                        && observed.configuration_revision == Some(self.document.revision),
++                    "exact native resident/configuration not observed"
++                );
++                let resident = handle.resident(profile.manifest)?;
++                ensure!(
++                    resident.reservation().bytes() >= profile.memory_reservation_bytes,
++                    "actual native resident charge is insufficient"
++                );
++                {
++                    let mut lifecycle = self
++                        .lifecycle
++                        .lock()
++                        .map_err(|_| anyhow::anyhow!("native lifecycle unavailable"))?;
++                    ensure!(
++                        !lifecycle.stopping && !cancel.is_cancelled(),
++                        "native activation canceled"
++                    );
++                    lifecycle.profile = Some(profile.manifest);
++                }
++                self.fault_notifier(handle, profile, cancel)?;
++                self.current(Some(cancel))
++            })
+     }
+     fn fault_notifier(
+         &self,
+@@ -1615,7 +1749,7 @@
+                 {
+                     match (&candidate.device,state.devices.get(&self.stage)) {
+                         (None,None)=>Some(None),
+-                        (Some(candidate_device),Some((actual,epoch))) if !actual.poisoned()&&actual.epoch()==*epoch
++                        (Some(candidate_device),Some((actual,epoch))) if !actual.poisoned()&&actual.epoch()==*epoch&&actual.epoch()==candidate_device.epoch()
+                             &&airk_inference::inference_engine::pool::arbiter::circuit_key(&profile,actual,&self.document)?==airk_inference::inference_engine::pool::arbiter::circuit_key(&profile,candidate_device,&self.document)?=>Some(Some(actual.clone())),
+                         _=>None,
+                     }
+@@ -1638,7 +1772,7 @@
+                         evidence.clone(),
+                     )?;
+                     handle.configure_native(policy)?;
+-                    self.fault_notifier(&handle, &profile, cancel)?;
++                    self.finish_resident_activation(&handle, &profile, cancel)?;
+                     return super::lifecycle::phase(
+                         &self.lifecycle,
+                         serial,
+@@ -1739,13 +1873,7 @@
+                         ),
+                         "device epoch changed after native load"
+                     );
+-                    self.fault_notifier(&handle, &profile, cancel)?;
+-                    self.devices
+-                        .state
+-                        .lock()
+-                        .map_err(|_| anyhow::anyhow!("native ready observation unavailable"))?
+-                        .ready
+-                        .insert(self.stage);
++                    self.finish_resident_activation(&handle, &profile, cancel)?;
+                     return super::lifecycle::phase(
+                         &self.lifecycle,
+                         serial,
+@@ -1759,7 +1887,16 @@
+                         },
+                     );
+                 }
+-                _ => {
++                failure => {
++                    let error = match failure {
++                        Ok(Ok(Err(error))) => error,
++                        Ok(Err(error)) => anyhow::anyhow!(error)
++                            .context("original native warm response owner closed"),
++                        Err(error) => {
++                            anyhow::anyhow!(error).context("original native warm deadline expired")
++                        }
++                        Ok(Ok(Ok(()))) => unreachable!("successful activation handled above"),
++                    };
+                     super::lifecycle::phase(
+                         &self.lifecycle,
+                         serial,
+@@ -1781,6 +1918,34 @@
+                         "device settlement unknown; automatic fallback refused"
+                     );
+                     self.current(Some(cancel))?;
++                    // Source/input/cancellation/deadline/owner errors are not device
++                    // faults and cannot be relabeled as a fallback authorization.
++                    if !runtime::is_native_device_failure(&error) {
++                        return Err(
++                            error.context("non-device warm failure; automatic fallback refused")
++                        );
++                    }
++                    if let Some(device) = &candidate.device {
++                        let key = airk_inference::inference_engine::pool::arbiter::circuit_key(
++                            &profile,
++                            device,
++                            &self.document,
++                        )?;
++                        let mut state = self
++                            .devices
++                            .state
++                            .lock()
++                            .map_err(|_| anyhow::anyhow!("device fault circuit unavailable"))?;
++                        ensure!(
++                            state.document.as_ref() == Some(&self.document),
++                            "source/configuration changed before fault circuit commit"
++                        );
++                        ensure!(
++                            state.circuits.contains(&key) || state.circuits.len() < 16,
++                            "device fault circuit capacity occupied"
++                        );
++                        state.circuits.insert(key);
++                    }
+                     rejections.push(CandidateRejection {
+                         manifest: Some(profile.manifest),
+                         adapter_key: Some(candidate.adapter),
+@@ -1842,6 +2007,35 @@
+             "device configuration changed before delivery"
+         );
+         Ok(())
++    }
++    pub fn with_selection<T>(
++        &self,
++        current: &DeviceConfiguration,
++        effect: impl FnOnce() -> Result<T>,
++    ) -> Result<T> {
++        // Lock order: Store configuration -> native selection -> credential/source/IO.
++        // install never calls Store, native gates or lifecycle while holding state.
++        let state = self
++            .shared
++            .state
++            .try_lock()
++            .map_err(|_| anyhow::anyhow!("native selection commit is busy"))?;
++        self.current(current)?;
++        ensure!(
++            state.document.as_ref() == Some(current),
++            "native selected document changed before commit"
++        );
++        let actual = NativeConfiguration::device(
++            current.clone(),
++            state.selected.values().cloned().collect(),
++        )?;
++        ensure!(
++            actual.same_selection(&self.policy),
++            "native selected variant changed before commit"
++        );
++        let result = effect();
++        drop(state);
++        result
+     }
+ }
+ #[cfg(feature = "local-inference")]
+@@ -1931,49 +2125,161 @@
+ #[cfg(feature = "local-inference")]
+ impl StageOwner {
+     fn require_initialization_idle(&self) -> Result<()> {
+-        use std::{
+-            future::Future,
+-            task::{Context as TaskContext, Poll, Waker},
+-        };
+         let state = self
+             .lifecycle
+             .lock()
+             .map_err(|_| anyhow::anyhow!("native lifecycle observation unavailable"))?;
++        initialization_idle_state(&state, self.stage, &self.devices)
++    }
++}
++#[cfg(feature = "local-inference")]
++fn initialization_idle_state(
++    state: &super::lifecycle::State,
++    stage: Stage,
++    devices: &Shared,
++) -> Result<()> {
++    use std::{
++        future::Future,
++        task::{Context as TaskContext, Poll, Waker},
++    };
++    ensure!(
++        !state.stopping
++            && !state.busy
++            && state.device_tasks == 0
++            && state.phase != Availability::Draining,
++        "actual lifecycle/native work prevents initialization"
++    );
++    // Release selection before querying the native queue; no selection -> queue lock inversion.
++    ensure!(
++        !devices
++            .state
++            .lock()
++            .map_err(|_| anyhow::anyhow!("native device continuation unavailable"))?
++            .pending
++            .contains_key(&stage),
++        "pending device intent prevents initialization"
++    );
++    if let Some(handle) = &state.handle {
++        let observed = handle.observation_for(stage)?;
+         ensure!(
+-            !state.busy && state.device_tasks == 0 && state.phase != Availability::Draining,
+-            "actual lifecycle/native work prevents disabled initialization view"
++            observed.active_profile.is_none()
++                && observed.warming_profile.is_none()
++                && observed.running == 0
++                && observed.queued == 0,
++            "actual resident/pending work prevents initialization"
+         );
+-        if let Some(handle) = &state.handle {
+-            let observed = handle.observation_for(self.stage)?;
+-            ensure!(
+-                observed.active_profile.is_none()
+-                    && observed.warming_profile.is_none()
+-                    && observed.running == 0
+-                    && observed.queued == 0,
+-                "actual resident/pending work prevents disabled initialization view"
+-            );
+-        }
+-        for (_, charge) in &state.charges {
+-            let mut wait = Box::pin(charge.wait());
+-            ensure!(
+-                matches!(
+-                    wait.as_mut()
+-                        .poll(&mut TaskContext::from_waker(Waker::noop())),
+-                    Poll::Ready(Ok(()))
+-                ),
+-                "actual unreleased host charge prevents initialization view"
+-            );
+-        }
++    }
++    for (_, charge) in &state.charges {
++        let mut wait = Box::pin(charge.wait());
+         ensure!(
+-            !self
+-                .devices
+-                .state
+-                .lock()
+-                .map_err(|_| anyhow::anyhow!("native device continuation unavailable"))?
+-                .pending
+-                .contains_key(&self.stage),
+-            "pending device intent prevents initialization view"
++            matches!(
++                wait.as_mut()
++                    .poll(&mut TaskContext::from_waker(Waker::noop())),
++                Poll::Ready(Ok(()))
++            ),
++            "actual unreleased host charge prevents initialization"
+         );
+-        Ok(())
+-    }
+-}
++    }
++    Ok(())
++}
++#[cfg(feature = "local-inference")]
++fn with_initialization_fence<T>(
++    focus: &Mutex<super::lifecycle::State>,
++    context: &Mutex<super::lifecycle::State>,
++    devices: &Shared,
++    live: impl Fn() -> Result<()>,
++    effect: impl FnOnce(&dyn Fn() -> Result<()>) -> Result<T>,
++) -> Result<T> {
++    // Same stage admission mutexes as launch/configure/cancel, held through the
++    // Store mutation. Fixed order Focus -> Context -> Store -> selection/native.
++    let focus = focus
++        .lock()
++        .map_err(|_| anyhow::anyhow!("focus initialization fence unavailable"))?;
++    let context = context
++        .lock()
++        .map_err(|_| anyhow::anyhow!("context initialization fence unavailable"))?;
++    let check = || {
++        live()?;
++        initialization_idle_state(&focus, Stage::Focus, devices)?;
++        initialization_idle_state(&context, Stage::Context, devices)
++    };
++    check()?;
++    let value = effect(&check)?;
++    check()?;
++    Ok(value)
++}
++
++#[cfg(feature = "local-inference")]
++fn ready_from_observation(
++    state: &DeviceState,
++    document: &DeviceConfiguration,
++    stage: Stage,
++    observed: Option<&airk_inference::inference_engine::pool::arbiter::Observation>,
++    charged_resident: bool,
++) -> bool {
++    state.document.as_ref() == Some(document)
++        && state.ready.contains(&stage)
++        && document.stage(stage).enabled
++        && charged_resident
++        && state
++            .devices
++            .get(&stage)
++            .is_none_or(|(device, epoch)| !device.poisoned() && device.epoch() == *epoch)
++        && observed.is_some_and(|actual| {
++            actual.configuration_revision == Some(document.revision)
++                && actual.active_profile.is_some()
++                && actual.active_profile
++                    == state.selected.get(&stage).map(|profile| profile.manifest)
++        })
++}
++#[cfg(feature = "local-inference")]
++fn cancel_device_stage(
++    lifecycle: &mut super::lifecycle::State,
++    shared: &Shared,
++    stage: Stage,
++) -> Result<()> {
++    // Existing order: stage lifecycle -> device continuation/selection.
++    let mut state = shared
++        .state
++        .lock()
++        .map_err(|_| anyhow::anyhow!("device cancellation fence unavailable"))?;
++    let DeviceState {
++        pending,
++        intent_generation,
++        ..
++    } = &mut *state;
++    cancel_continuations(pending, intent_generation, stage)?;
++    state.ready.remove(&stage);
++    super::lifecycle::cancel_current(lifecycle);
++    lifecycle.cancel.cancel();
++    Ok(())
++}
++
++#[cfg(feature = "local-inference")]
++fn continuation_current(
++    generations: &BTreeMap<Stage, u64>,
++    stage: Stage,
++    original: u64,
++) -> Result<()> {
++    ensure!(
++        generations.get(&stage).copied().unwrap_or(0) == original,
++        "device continuation was explicitly canceled"
++    );
++    Ok(())
++}
++#[cfg(feature = "local-inference")]
++fn cancel_continuations<T>(
++    pending: &mut BTreeMap<Stage, T>,
++    generations: &mut BTreeMap<Stage, u64>,
++    stage: Stage,
++) -> Result<()> {
++    let next = generations
++        .get(&stage)
++        .copied()
++        .unwrap_or(0)
++        .checked_add(1)
++        .context("device continuation generation exhausted")?;
++    generations.insert(stage, next);
++    pending.remove(&stage);
++    Ok(())
++}
+--- R2/crates/airk-service/src/service_runtime/arbiter/device_management/tests.rs
++++ R3/crates/airk-service/src/service_runtime/arbiter/device_management/tests.rs
+@@ -114,3 +114,292 @@
+     );
+     Ok(())
+ }
++
++#[cfg(feature = "local-inference")]
++#[test]
++fn retained_same_resident_reactivation_restores_ready_only_after_exact_validation() -> Result<()> {
++    use airk_inference::inference_engine::pool::arbiter::Observation;
++    let profile = runtime::catalog_profiles()?
++        .into_iter()
++        .find(|p| p.model == ModelChoice::ContextQwenCompact)
++        .context("compiled Compact description absent")?;
++    let mut doc = document();
++    doc.context.enabled = true;
++    doc.context.selected_model = Some(SelectedModel::ContextCompact);
++    doc.context.indexes = vec![airk_core::arbiter::Enrollment {
++        index_id: airk_core::index_catalog::IndexId::from_identity(
++            airk_core::identity::Incarnation::from_bytes([31; 16]),
++        ),
++        tasks: profile.tasks.clone(),
++    }];
++    let shared = Shared::default();
++    let actual = Observation {
++        configuration_revision: Some(doc.revision),
++        active_profile: Some(profile.manifest),
++        warming_profile: None,
++        queued: 0,
++        running: 0,
++    };
++    for _ in 0..3 {
++        shared.install(
++            doc.clone(),
++            Stage::Context,
++            Some(profile.clone()),
++            None,
++            None,
++            None,
++            None,
++        )?;
++        assert!(!ready_from_observation(
++            &shared.state.lock().unwrap(),
++            &doc,
++            Stage::Context,
++            Some(&actual),
++            true
++        ));
++        assert!(
++            shared
++                .finish_activation(&doc, Stage::Context, &profile, || anyhow::bail!(
++                    "retained native validation failed"
++                ))
++                .is_err()
++        );
++        assert!(!shared.state.lock().unwrap().ready.contains(&Stage::Context));
++        shared.finish_activation(&doc, Stage::Context, &profile, || Ok(()))?;
++        assert!(ready_from_observation(
++            &shared.state.lock().unwrap(),
++            &doc,
++            Stage::Context,
++            Some(&actual),
++            true
++        ));
++        assert!(!ready_from_observation(
++            &shared.state.lock().unwrap(),
++            &doc,
++            Stage::Context,
++            Some(&actual),
++            false
++        ));
++        let changed = Observation {
++            configuration_revision: Some(doc.revision + 1),
++            active_profile: Some(profile.manifest),
++            warming_profile: None,
++            queued: 0,
++            running: 0,
++        };
++        assert!(!ready_from_observation(
++            &shared.state.lock().unwrap(),
++            &doc,
++            Stage::Context,
++            Some(&changed),
++            true
++        ));
++    }
++    Ok(())
++}
++#[cfg(feature = "local-inference")]
++#[test]
++fn device_selection_install_cannot_cross_final_effect_and_later_commit_refuses() -> Result<()> {
++    let doc = document();
++    let shared = Arc::new(Shared::default());
++    let policy = shared.install(doc.clone(), Stage::Context, None, None, None, None, None)?;
++    let delivery = Delivery {
++        binding: doc.device_catalog.clone(),
++        policy,
++        shared: shared.clone(),
++        generation: shared.generation.load(std::sync::atomic::Ordering::Acquire),
++        devices: vec![],
++    };
++    std::thread::scope(|threads| -> Result<()> {
++        let (entered, observed) = std::sync::mpsc::channel();
++        let install = delivery.with_selection(&doc, || {
++            assert!(
++                shared.state.try_lock().is_err(),
++                "selection owner lock must survive the last sample through the effect"
++            );
++            let shared = shared.clone();
++            let doc = doc.clone();
++            let thread = threads.spawn(move || -> Result<()> {
++                entered.send(shared.state.try_lock().is_err())?;
++                shared.install(doc, Stage::Context, None, None, None, None, None)?;
++                Ok(())
++            });
++            assert!(observed.recv_timeout(Duration::from_secs(5))?);
++            Ok(thread)
++        })?;
++        install
++            .join()
++            .map_err(|_| anyhow::anyhow!("selection installer panicked"))??;
++        Ok(())
++    })?;
++    let effects = std::cell::Cell::new(0);
++    assert!(
++        delivery
++            .with_selection(&doc, || {
++                effects.set(effects.get() + 1);
++                Ok(())
++            })
++            .is_err()
++    );
++    assert_eq!(effects.get(), 0);
++    Ok(())
++}
++#[cfg(feature = "local-inference")]
++#[test]
++fn initialization_mutation_owns_both_stage_admission_fences_and_refuses_pending_unknown_or_source_race()
++-> Result<()> {
++    let focus = Mutex::new(super::super::lifecycle::State::default());
++    let context = Mutex::new(super::super::lifecycle::State::default());
++    let devices = Shared::default();
++    let effects = std::cell::Cell::new(0);
++    context.lock().unwrap().device_tasks = 1;
++    assert!(
++        with_initialization_fence(
++            &focus,
++            &context,
++            &devices,
++            || Ok(()),
++            |_| {
++                effects.set(1);
++                Ok(())
++            }
++        )
++        .is_err()
++    );
++    assert_eq!(effects.get(), 0);
++    context.lock().unwrap().device_tasks = 0;
++    context.lock().unwrap().phase = Availability::Draining;
++    assert!(
++        with_initialization_fence(
++            &focus,
++            &context,
++            &devices,
++            || Ok(()),
++            |_| {
++                effects.set(1);
++                Ok(())
++            }
++        )
++        .is_err()
++    );
++    assert_eq!(effects.get(), 0);
++    context.lock().unwrap().phase = Availability::Disabled;
++    let resources = airk_kernel::service_resources::Resources::new(
++        airk_core::service_resources::ResourceConfiguration::default(),
++        8,
++        Some(64 << 30),
++    )?;
++    let charge = resources.reserve_optional(
++        airk_core::identity::Incarnation::from_bytes([67; 16]),
++        1,
++        Some(8 << 30),
++    )?;
++    context.lock().unwrap().charges.push((
++        airk_core::identity::Sha256Digest::from_bytes([68; 32]),
++        charge.release_observer(),
++    ));
++    assert!(
++        with_initialization_fence(
++            &focus,
++            &context,
++            &devices,
++            || Ok(()),
++            |_| {
++                effects.set(1);
++                Ok(())
++            }
++        )
++        .is_err()
++    );
++    assert_eq!(effects.get(), 0);
++    drop(charge);
++    let source_live = std::cell::Cell::new(true);
++    assert!(
++        with_initialization_fence(
++            &focus,
++            &context,
++            &devices,
++            || {
++                ensure!(source_live.get(), "actual source revoked");
++                Ok(())
++            },
++            |check| {
++                assert!(focus.try_lock().is_err());
++                assert!(context.try_lock().is_err());
++                check()?;
++                source_live.set(false);
++                check()?;
++                effects.set(1);
++                Ok(())
++            }
++        )
++        .is_err()
++    );
++    assert_eq!(effects.get(), 0);
++    with_initialization_fence(
++        &focus,
++        &context,
++        &devices,
++        || Ok(()),
++        |check| {
++            check()?;
++            effects.set(1);
++            Ok(())
++        },
++    )?;
++    assert_eq!(effects.get(), 1);
++    Ok(())
++}
++#[cfg(feature = "local-inference")]
++#[test]
++fn cancel_clears_queued_command_and_revokes_idle_fault_notifier_without_restarting_after_settlement()
++-> Result<()> {
++    // This same generic bounded map transition is used on the actual Launch slot.
++    let mut pending = BTreeMap::from([(Stage::Context, "queued B"), (Stage::Focus, "other stage")]);
++    let mut generations = BTreeMap::new();
++    continuation_current(&generations, Stage::Context, 0)?;
++    cancel_continuations(&mut pending, &mut generations, Stage::Context)?;
++    assert_eq!(
++        pending.remove(&Stage::Context),
++        None,
++        "A settling cannot discover B"
++    );
++    assert_eq!(pending.get(&Stage::Focus), Some(&"other stage"));
++    assert!(
++        continuation_current(&generations, Stage::Context, 0).is_err(),
++        "popped old command/notifier cannot requeue or start"
++    );
++    let shared = Shared::default();
++    let mut idle = super::super::lifecycle::State::default();
++    let old_notifier = idle.cancel.clone();
++    cancel_device_stage(&mut idle, &shared, Stage::Context)?;
++    assert!(old_notifier.is_cancelled());
++    assert!(!idle.busy);
++    assert!(
++        continuation_current(
++            &shared.state.lock().unwrap().intent_generation,
++            Stage::Context,
++            0
++        )
++        .is_err()
++    );
++    let lifecycle = Arc::new(Mutex::new(idle));
++    assert!(
++        super::super::lifecycle::start_checked(
++            &lifecycle,
++            airk_core::identity::Sha256Digest::from_bytes([51; 32]),
++            None,
++            || continuation_current(
++                &shared.state.lock().unwrap().intent_generation,
++                Stage::Context,
++                0
++            )
++        )
++        .is_err()
++    );
++    assert!(
++        !lifecycle.lock().unwrap().busy,
++        "refused canceled command never becomes active"
++    );
++    Ok(())
++}
+--- R2/crates/airk-service/src/service_runtime/arbiter/lifecycle.rs
++++ R3/crates/airk-service/src/service_runtime/arbiter/lifecycle.rs
+@@ -84,6 +84,14 @@
+     profile: Sha256Digest,
+     effect_check: Option<&airk_https::admin_plane::NativeDispatchCheck>,
+ ) -> Result<(u64, CancellationToken)> {
++    start_checked(shared, profile, effect_check, || Ok(()))
++}
++pub(super) fn start_checked(
++    shared: &Arc<Mutex<State>>,
++    profile: Sha256Digest,
++    effect_check: Option<&airk_https::admin_plane::NativeDispatchCheck>,
++    admit: impl FnOnce() -> Result<()>,
++) -> Result<(u64, CancellationToken)> {
+     let mut state = shared
+         .lock()
+         .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
+@@ -93,6 +101,7 @@
+         "Arbiter lifecycle operation remains active; cancel or wait for its original result"
+     );
+     super::super::native_admin::check_effect(effect_check)?;
++    admit()?;
+     state.serial = state
+         .serial
+         .checked_add(1)
+@@ -335,6 +344,16 @@
+                 std::task::Poll::Ready(Ok(()))
+             )
+         });
++        if let Some((current, _)) = state
++            .charges
++            .iter_mut()
++            .find(|(_, known)| known.same_charge(&charge))
++        {
++            // One runtime-init charge can transfer to the actual selected warm.
++            // Update its target association without adding/releasing an observer.
++            *current = manifest;
++            return std::task::Poll::Ready(Ok(()));
++        }
+         if state.charges.len() >= airk_kernel::service_resources::MAX_OPTIONAL_RESERVATIONS {
+             return std::task::Poll::Ready(Err(anyhow::anyhow!(
+                 "Actual optional charge observation capacity remains occupied"
+--- R2/crates/airk-service/src/service_runtime/arbiter/lifecycle/shutdown_tests.rs
++++ R3/crates/airk-service/src/service_runtime/arbiter/lifecycle/shutdown_tests.rs
+@@ -318,12 +318,19 @@
+         .map(|(manifest, _)| *manifest)
+         .collect::<Vec<_>>();
+     assert_eq!(before.len(), 16);
+-    // Even an authentic extra observation cannot displace an unfinished one.
++    // A distinct authentic seventeenth charge cannot displace an unfinished
++    // owner. A repeated observer of an existing charge is intentionally deduped.
++    let independent_resources = airk_kernel::service_resources::Resources::new(
++        airk_core::service_resources::ResourceConfiguration::default(),
++        32,
++        Some(128 << 30),
++    )?;
++    let seventeenth = actual_reservation(&independent_resources, 99)?;
+     assert!(
+         remember_charge(
+             &shared,
+             Sha256Digest::from_bytes([99; 32]),
+-            actual[0].release_observer()
++            seventeenth.release_observer()
+         )
+         .await
+         .is_err()
+@@ -372,3 +379,69 @@
+     ));
+     Ok(())
+ }
++
++#[tokio::test(flavor = "current_thread")]
++async fn repeated_borrowed_probe_observation_deduplicates_actual_charge_and_preserves_distinct_unresolved_owners()
++-> Result<()> {
++    use std::{
++        future::Future,
++        task::{Context as TaskContext, Poll, Waker},
++    };
++    let shared = Arc::new(Mutex::new(State::default()));
++    let resources = airk_kernel::service_resources::Resources::new(
++        airk_core::service_resources::ResourceConfiguration::default(),
++        8,
++        Some(64 << 30),
++    )?;
++    let manifest = Sha256Digest::from_bytes([73; 32]);
++    let first = Arc::new(resources.reserve_optional(
++        airk_core::identity::Incarnation::from_bytes([71; 16]),
++        1,
++        Some(8 << 30),
++    )?);
++    let release = first.release_observer();
++    for _ in 0..64 {
++        remember_charge(&shared, manifest, release.clone()).await?;
++    }
++    assert_eq!(shared.lock().unwrap().charges.len(), 1);
++    let other = resources.reserve_optional(
++        airk_core::identity::Incarnation::from_bytes([72; 16]),
++        1,
++        Some(8 << 30),
++    )?;
++    assert!(!release.same_charge(&other.release_observer()));
++    remember_charge(&shared, manifest, other.release_observer()).await?;
++    assert_eq!(
++        shared.lock().unwrap().charges.len(),
++        2,
++        "same manifest never collapses distinct unresolved charges"
++    );
++    let actual_owner = first.clone();
++    drop(first);
++    let mut waiting = Box::pin(release.wait());
++    assert!(matches!(
++        waiting
++            .as_mut()
++            .poll(&mut TaskContext::from_waker(Waker::noop())),
++        Poll::Pending
++    ));
++    for _ in 0..64 {
++        remember_charge(&shared, manifest, other.release_observer()).await?;
++    }
++    assert_eq!(shared.lock().unwrap().charges.len(), 2);
++    drop(actual_owner);
++    assert!(matches!(
++        waiting
++            .as_mut()
++            .poll(&mut TaskContext::from_waker(Waker::noop())),
++        Poll::Ready(Ok(()))
++    ));
++    remember_charge(&shared, manifest, other.release_observer()).await?;
++    assert_eq!(
++        shared.lock().unwrap().charges.len(),
++        1,
++        "only actual released charge is pruned"
++    );
++    drop(other);
++    Ok(())
++}
+--- R2/crates/airk-service/src/service_runtime/arbiter/policy_delivery.rs
++++ R3/crates/airk-service/src/service_runtime/arbiter/policy_delivery.rs
+@@ -73,10 +73,11 @@
+                 .with_current(
+                     || self.live(),
+                     |current| {
+-                        device.current(current)?;
+-                        validate_native_policy(&device.policy, &self.expected)?;
+-                        self.live()?;
+-                        Ok(effect())
++                        device.with_selection(current, || {
++                            validate_native_policy(&device.policy, &self.expected)?;
++                            self.live()?;
++                            Ok(effect())
++                        })
+                     },
+                 )
+                 .unwrap_or_else(|_| refused());

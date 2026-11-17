@@ -1,0 +1,692 @@
+diff --git a/crates/airk-cli/tests/combined_reads/retention.rs b/crates/airk-cli/tests/combined_reads/retention.rs
+--- a/crates/airk-cli/tests/combined_reads/retention.rs
++++ b/crates/airk-cli/tests/combined_reads/retention.rs
+@@ -252,6 +252,69 @@
+             &body(&native)?,
+             &body(&actual["result"])?,
+         )?;
++        // The same real migrated provider must expose the new per-file report
++        // through native, actual CLI call and actual stdio MCP, with full data.
++        let mut reported: Option<Value> = None;
++        for (call_id, reply_detail) in [(11, "lean"), (12, "rich")] {
++            let info_args = json!({"path":"api/policy.md","reply_detail":reply_detail,"include_profile_families":true,"project_ids":[f.projects[2]],"index_ids":[f.indexes[2]],"member_availability":"require","verification":"off","response_mode":"full"});
++            let info = native_read(backend.as_ref(), "airk_file_info", &info_args).await?;
++            let cli = f.cli("airk_file_info", &info_args).await?;
++            let wire = mcp.call(call_id, "file_info", info_args)?;
++            ensure!(
++                info["isError"] != true
++                    && cli["isError"] != true
++                    && wire["result"]["isError"] != true,
++                "selected profile FileInfo transport refused: native={info},cli={cli},mcp={wire}"
++            );
++            let complete = body(&info)?;
++            assert_parity("selected FileInfo actual CLI", &complete, &body(&cli)?)?;
++            assert_parity(
++                "selected FileInfo actual MCP",
++                &complete,
++                &body(&wire["result"])?,
++            )?;
++            let members = complete["members"]
++                .as_array()
++                .context("selected FileInfo members absent")?;
++            ensure!(
++                members.len() == 1
++                    && members[0]["index_id"] == json!(f.indexes[2])
++                    && members[0]["is_error"] == false,
++                "selected FileInfo returned wrong member"
++            );
++            let file = member_body(&complete, &members[0])?;
++            let report = &file["content"]["profile_families"];
++            ensure!(
++                report["applied_file"]["applied_retention"]["profile"] == json!(target)
++                    && report["applied_file"].get("legacy_detail").is_none(),
++                "new retention was omitted or reinterpreted as legacy: {report}"
++            );
++            ensure!(
++                report["families"]
++                    .as_array()
++                    .is_some_and(|rows| rows.len() == 18)
++                    && report["live_source_checked"] == false,
++                "selected report lost bounded family/saved-source basis"
++            );
++            ensure!(
++                report["configured_collection_policy"]["revision"]["retained_profile"]
++                    == json!(target)
++                    && report["published_collection_policy"]["revision"]["retained_profile"]
++                        == json!(target),
++                "collection and applied selected profiles differ: {report}"
++            );
++            if let Some(previous) = &reported {
++                assert_eq!(
++                    report, previous,
++                    "reply projection changed effective retained profile metadata"
++                );
++            } else {
++                reported = Some(report.clone());
++            }
++        }
++        drop(mcp);
++        backend.close();
++        backend.shutdown().await?;
+     }
+     // A repeated selected profile completes Configure but does not schedule source/model work.
+     fixture_pause(&f, 2, false).await?;
+diff --git a/crates/airk-core/src/profile_families.rs b/crates/airk-core/src/profile_families.rs
+--- a/crates/airk-core/src/profile_families.rs
++++ b/crates/airk-core/src/profile_families.rs
+@@ -4,6 +4,7 @@
+ use crate::{
+     extraction::{ExtractionProfile, IndexDetail},
+     identity::{RevisionToken, Sha256Digest},
++    retention::{AppliedRetention, RetainedFamily, RetainedProfile},
+ };
+ use anyhow::{Result, ensure};
+ use serde::{Deserialize, Serialize};
+@@ -87,8 +88,27 @@
+ #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+ #[serde(deny_unknown_fields)]
+ pub struct CollectionPolicyRevision {
+-    pub detail: IndexDetail,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub detail: Option<IndexDetail>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub retained_profile: Option<RetainedProfile>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub legacy_fallback_detail: Option<IndexDetail>,
+     pub policy_digest: Sha256Digest,
++}
++impl CollectionPolicyRevision {
++    pub fn from_selection(
++        target: Option<RetainedProfile>,
++        fallback: IndexDetail,
++        policy_digest: Sha256Digest,
++    ) -> Self {
++        Self {
++            detail: target.is_none().then_some(fallback),
++            retained_profile: target,
++            legacy_fallback_detail: target.map(|_| fallback),
++            policy_digest,
++        }
++    }
+ }
+ #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+ #[serde(rename_all = "snake_case")]
+@@ -120,8 +140,12 @@
+     pub adapter_id: String,
+     pub adapter_version: String,
+     pub effective_profile_digest: Sha256Digest,
+-    pub legacy_detail: IndexDetail,
+-    pub legacy_detail_was_absent: bool,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub applied_retention: Option<AppliedRetention>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub legacy_detail: Option<IndexDetail>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub legacy_detail_was_absent: Option<bool>,
+ }
+ #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+ #[serde(deny_unknown_fields)]
+@@ -158,7 +182,7 @@
+     pub live_source_checked: bool,
+     pub families: Vec<FamilyObservation>,
+ }
+-fn retention(family: Family, detail: IndexDetail) -> Retention {
++fn legacy_retention(family: Family, detail: IndexDetail) -> Retention {
+     use Family::*;
+     use IndexDetail::*;
+     use Retention::*;
+@@ -180,6 +204,32 @@
+         ManifestPackagesDependencies | StandaloneDatesBounds if detail == AgentLean => NotRetained,
+         FrameworkStructure if detail == AgentLean => Selected,
+         _ => Retained,
++    }
++}
++
++fn retention(family: Family, applied: &AppliedRetention) -> Retention {
++    match applied {
++        AppliedRetention::Legacy { detail, .. } => legacy_retention(family, *detail),
++        AppliedRetention::Selected {
++            profile: RetainedProfile::Rich,
++            ..
++        } => legacy_retention(family, IndexDetail::Detailed),
++        AppliedRetention::Selected {
++            family: RetainedFamily::Manifest,
++            ..
++        } => match family {
++            Family::SavedIdentity
++            | Family::SavedText
++            | Family::LexicalCandidates
++            | Family::ManifestPackagesDependencies
++            | Family::HeadingsSections => Retention::Retained,
++            Family::Vectors
++            | Family::MappedRegions
++            | Family::ImportedAssertions
++            | Family::OcrTextFacts => Retention::Unknown,
++            _ => Retention::NotRetained,
++        },
++        AppliedRetention::Selected { .. } => legacy_retention(family, IndexDetail::AgentLean),
+     }
+ }
+ 
+@@ -205,7 +255,14 @@
+                 && value.bytes().all(|byte| byte.is_ascii_graphic())),
+         "invalid bounded adapter identity"
+     );
+-    let detail = IndexDetail::from_profile(profile)?;
++    let applied = AppliedRetention::from_profile(profile)?;
++    let (legacy_detail, legacy_detail_was_absent) = match &applied {
++        AppliedRetention::Legacy {
++            detail,
++            index_detail_was_absent,
++        } => (Some(*detail), Some(*index_detail_was_absent)),
++        AppliedRetention::Selected { .. } => (None, None),
++    };
+     let value = ProfileFamilyReport {
+         schema: "airk.profile-families/1".into(),
+         basis: "metadata_only".into(),
+@@ -214,15 +271,17 @@
+             adapter_id: profile.adapter_id.clone(),
+             adapter_version: profile.adapter_version.clone(),
+             effective_profile_digest: profile.identity()?,
+-            legacy_detail: detail,
+-            legacy_detail_was_absent: !profile.options.contains_key("index_detail"),
++            applied_retention: matches!(&applied, AppliedRetention::Selected { .. })
++                .then(|| applied.clone()),
++            legacy_detail,
++            legacy_detail_was_absent,
+         },
+         configured_collection_policy: configured,
+         published_collection_policy: published,
+         pending_collection_reindex: configured
+             .known()
+             .zip(published.known())
+-            .map(|(configured, published)| configured != published),
++            .map(|(configured, published)| configured.policy_digest != published.policy_digest),
+         configured_file_profile: ConfiguredFileProfileObservation::UnknownSourceInputsMayBeRequired,
+         retention_basis: "policy_eligibility_not_record_presence_or_completeness".into(),
+         live_source_checked: false,
+@@ -231,7 +290,7 @@
+             .map(|family| FamilyObservation {
+                 family,
+                 support: support.get(&family).copied().unwrap_or(Support::Unknown),
+-                retention: retention(family, detail),
++                retention: retention(family, &applied),
+                 reply_inclusion: reply
+                     .get(&family)
+                     .copied()
+@@ -298,11 +357,15 @@
+                 Some(ReplyInclusion::Omitted),
+             ] {
+                 let configured = CollectionPolicyRevision {
+-                    detail: IndexDetail::Detailed,
++                    detail: Some(IndexDetail::Detailed),
++                    retained_profile: None,
++                    legacy_fallback_detail: None,
+                     policy_digest: Sha256Digest::from_bytes([4; 32]),
+                 };
+                 let published = CollectionPolicyRevision {
+-                    detail,
++                    detail: Some(detail),
++                    retained_profile: None,
++                    legacy_fallback_detail: None,
+                     policy_digest: Sha256Digest::from_bytes([5; 32]),
+                 };
+                 let mut replies = reply
+@@ -407,7 +470,9 @@
+     fn missing_historical_detail_is_detailed_without_rewriting_profile_identity() -> Result<()> {
+         let profile = profile(None);
+         let policy = CollectionPolicyRevision {
+-            detail: IndexDetail::AgentLean,
++            detail: Some(IndexDetail::AgentLean),
++            retained_profile: None,
++            legacy_fallback_detail: None,
+             policy_digest: Sha256Digest::from_bytes([9; 32]),
+         };
+         let value = report(
+@@ -418,8 +483,11 @@
+             &BTreeMap::new(),
+             &BTreeMap::new(),
+         )?;
+-        assert_eq!(value.applied_file.legacy_detail, IndexDetail::Detailed);
+-        assert!(value.applied_file.legacy_detail_was_absent);
++        assert_eq!(
++            value.applied_file.legacy_detail,
++            Some(IndexDetail::Detailed)
++        );
++        assert_eq!(value.applied_file.legacy_detail_was_absent, Some(true));
+         assert_eq!(
+             value.applied_file.effective_profile_digest,
+             profile.identity()?
+@@ -435,7 +503,9 @@
+             reason: CollectionPolicyUnavailable::SelectedScope,
+         };
+         let known = CollectionPolicyRevision {
+-            detail: IndexDetail::Detailed,
++            detail: Some(IndexDetail::Detailed),
++            retained_profile: None,
++            legacy_fallback_detail: None,
+             policy_digest: Sha256Digest::from_bytes([8; 32]),
+         };
+         let value = report(
+@@ -455,4 +525,95 @@
+         assert_eq!(value.families.len(), 18);
+         Ok(())
+     }
+-}
++    #[test]
++    fn selected_retention_reports_effective_file_separately_from_collection_and_reply() -> Result<()>
++    {
++        for target in [RetainedProfile::Lean, RetainedProfile::Rich] {
++            let selected = AppliedRetention::bind(
++                &profile(Some(IndexDetail::Detailed)),
++                target,
++                RetainedFamily::Manifest,
++            )?;
++            let configured = CollectionPolicyRevision::from_selection(
++                Some(RetainedProfile::Rich),
++                IndexDetail::AgentLean,
++                Sha256Digest::from_bytes([11; 32]),
++            );
++            let published = CollectionPolicyRevision::from_selection(
++                Some(RetainedProfile::Lean),
++                IndexDetail::AgentLean,
++                Sha256Digest::from_bytes([12; 32]),
++            );
++            let reply = BTreeMap::from([(
++                Family::ManifestPackagesDependencies,
++                ReplyInclusion::Omitted,
++            )]);
++            let value = report(
++                file(),
++                &selected,
++                configured.into(),
++                published.into(),
++                &BTreeMap::new(),
++                &reply,
++            )?;
++            assert_eq!(
++                value.applied_file.effective_profile_digest,
++                selected.identity()?
++            );
++            assert!(
++                matches!(&value.applied_file.applied_retention,Some(AppliedRetention::Selected{profile,..}) if *profile==target)
++            );
++            assert!(value.applied_file.legacy_detail.is_none());
++            assert!(value.applied_file.legacy_detail_was_absent.is_none());
++            assert_eq!(
++                row(&value, Family::ManifestPackagesDependencies).retention,
++                Retention::Retained
++            );
++            assert_eq!(
++                row(&value, Family::ManifestPackagesDependencies).reply_inclusion,
++                ReplyInclusion::Omitted
++            );
++            assert_eq!(value.pending_collection_reindex, Some(true));
++            assert_eq!(value.families.len(), 18);
++            assert!(!value.live_source_checked);
++            let json = serde_json::to_value(&value)?;
++            assert!(json["applied_file"].get("legacy_detail").is_none());
++            assert!(
++                json["configured_collection_policy"]["revision"]
++                    .get("detail")
++                    .is_none()
++            );
++            assert_eq!(
++                json["configured_collection_policy"]["revision"]["legacy_fallback_detail"],
++                "agent_lean"
++            );
++        }
++        Ok(())
++    }
++    #[test]
++    fn legacy_report_fields_keep_their_exact_serialized_shape() -> Result<()> {
++        let legacy = profile(None);
++        let policy = CollectionPolicyRevision::from_selection(
++            None,
++            IndexDetail::Detailed,
++            Sha256Digest::from_bytes([13; 32]),
++        );
++        let value = report(
++            file(),
++            &legacy,
++            policy.into(),
++            policy.into(),
++            &BTreeMap::new(),
++            &BTreeMap::new(),
++        )?;
++        assert_eq!(
++            serde_json::to_value(&value.applied_file)?,
++            serde_json::json!({"adapter_id":legacy.adapter_id.clone(),"adapter_version":legacy.adapter_version.clone(),"effective_profile_digest":legacy.identity()?,"legacy_detail":"detailed","legacy_detail_was_absent":true})
++        );
++        assert_eq!(
++            serde_json::to_value(policy)?,
++            serde_json::json!({"detail":"detailed","policy_digest":policy.policy_digest})
++        );
++        Ok(())
++    }
++}
+diff --git a/crates/airk-ingest/src/adapters/registry.rs b/crates/airk-ingest/src/adapters/registry.rs
+--- a/crates/airk-ingest/src/adapters/registry.rs
++++ b/crates/airk-ingest/src/adapters/registry.rs
+@@ -745,6 +745,16 @@
+         );
+         Ok(())
+     }
++    /// Pure exact effective producer qualification for metadata reports. Unknown
++    /// historical versions/options stay unknown; no adapter/source input executes.
++    pub fn effective_capabilities(
++        &self,
++        path: &str,
++        profile: &ExtractionProfile,
++    ) -> Option<&AdapterCapabilities> {
++        self.validate_effective_profile(path, profile).ok()?;
++        Some(&self.get(&profile.adapter_id)?.capabilities)
++    }
+     pub fn descriptors(&self) -> impl Iterator<Item = &AdapterDescriptor> {
+         self.entries.values()
+     }
+@@ -1201,3 +1211,36 @@
+         Ok(())
+     }
+ }
++
++#[cfg(test)]
++mod effective_capability_report_tests {
++    use super::*;
++    #[test]
++    fn metadata_support_requires_complete_known_producer_and_never_opens_source()
++    -> anyhow::Result<()> {
++        let registry = AdapterRegistry::baseline();
++        let path = "missing/deleted.rs";
++        let base = registry.effective_profile(path, "rust")?;
++        assert!(registry.effective_capabilities(path, &base).is_some());
++        let mut changed = base.clone();
++        changed.mapping_version += 1;
++        assert!(registry.effective_capabilities(path, &changed).is_none());
++        changed = base.clone();
++        changed.grammar_identity = Some("different-observed-grammar".into());
++        assert!(registry.effective_capabilities(path, &changed).is_none());
++        let crate::retention::Selection::Qualified { retained, .. } =
++            crate::retention::select_profile(
++                path,
++                &base,
++                airk_core::retention::RetainedProfile::Rich,
++            )?
++        else {
++            anyhow::bail!("current Rust not qualified");
++        };
++        assert_eq!(
++            registry.effective_capabilities(path, &retained),
++            registry.effective_capabilities(path, &base)
++        );
++        Ok(())
++    }
++}
+diff --git a/crates/airk-kernel/src/profile_families.rs b/crates/airk-kernel/src/profile_families.rs
+--- a/crates/airk-kernel/src/profile_families.rs
++++ b/crates/airk-kernel/src/profile_families.rs
+@@ -29,20 +29,24 @@
+                 let policy = match self.store.extraction_policy_bytes(&self.root_id())? {
+                     Some(bytes) => crate::extraction::ExtractionPolicy::parse(&bytes, &registry)?,
+                     None => crate::extraction::ExtractionPolicy {
++                        retained_profile: None,
++                        legacy_fallback_detail: None,
+                         version: 3,
+                         detail: Some(configuration.index_detail),
+                         rules: vec![],
+                     },
+                 };
+                 (
+-                    CollectionPolicyObservation::from(CollectionPolicyRevision {
+-                        detail: policy.detail.unwrap_or_default(),
+-                        policy_digest: crate::extraction::policy_digest(&policy)?,
+-                    }),
+-                    CollectionPolicyObservation::from(CollectionPolicyRevision {
+-                        detail: configuration.index_detail,
+-                        policy_digest: configuration.extraction_policy_digest,
+-                    }),
++                    CollectionPolicyObservation::from(CollectionPolicyRevision::from_selection(
++                        policy.retained_profile,
++                        policy.legacy_detail(),
++                        crate::extraction::policy_digest(&policy)?,
++                    )),
++                    CollectionPolicyObservation::from(CollectionPolicyRevision::from_selection(
++                        configuration.retained_profile,
++                        configuration.index_detail,
++                        configuration.extraction_policy_digest,
++                    )),
+                 )
+             }
+             Err(error) if error.is::<airk_core::scoped_reads::ScopeReadRefused>() => {
+@@ -54,10 +58,7 @@
+             Err(error) => return Err(error),
+         };
+         let mut support = BTreeMap::from([(Family::SavedIdentity, Support::Supported)]);
+-        if let Some(descriptor) = registry
+-            .get(&profile.adapter_id)
+-            .filter(|descriptor| descriptor.profile.adapter_version == profile.adapter_version)
+-        {
++        if let Some(capabilities) = registry.effective_capabilities(path, profile) {
+             let observed = |value| {
+                 if value {
+                     Support::Supported
+@@ -65,19 +66,10 @@
+                     Support::Unsupported
+                 }
+             };
+-            support.insert(
+-                Family::LexicalCandidates,
+-                observed(descriptor.capabilities.lexical),
+-            );
+-            support.insert(
+-                Family::Declarations,
+-                observed(descriptor.capabilities.definitions),
+-            );
+-            support.insert(Family::Imports, observed(descriptor.capabilities.imports));
+-            support.insert(
+-                Family::WrittenCalls,
+-                observed(descriptor.capabilities.call_candidates),
+-            );
++            support.insert(Family::LexicalCandidates, observed(capabilities.lexical));
++            support.insert(Family::Declarations, observed(capabilities.definitions));
++            support.insert(Family::Imports, observed(capabilities.imports));
++            support.insert(Family::WrittenCalls, observed(capabilities.call_candidates));
+         }
+         // FileInfo carries metadata/counts, never underlying facts/text/vectors.
+         // Final renderer identity projection is unobserved here; keep it unknown.
+@@ -163,7 +155,10 @@
+             let info = kernel.file_info_with_profile_families(path, true)?;
+             let report = info.profile_families.context("opt-in report absent")?;
+             assert_eq!(report.file.publication, publication);
+-            assert_eq!(report.applied_file.legacy_detail, IndexDetail::AgentLean);
++            assert_eq!(
++                report.applied_file.legacy_detail,
++                Some(IndexDetail::AgentLean)
++            );
+             assert_eq!(
+                 report
+                     .configured_collection_policy
+@@ -174,7 +169,7 @@
+             );
+             assert_eq!(
+                 report.configured_collection_policy.known().unwrap().detail,
+-                IndexDetail::Detailed
++                Some(IndexDetail::Detailed)
+             );
+             assert_eq!(report.pending_collection_reindex, Some(true));
+             assert_eq!(report.families.len(), 18);
+@@ -234,6 +229,14 @@
+     #[test]
+     fn authorized_partial_scope_report_skips_private_policy_bytes_and_keeps_file_identity()
+     -> Result<()> {
++        partial_scope_report(None)
++    }
++    #[test]
++    fn selected_partial_scope_report_keeps_profile3_without_private_policy_authority() -> Result<()>
++    {
++        partial_scope_report(Some(airk_core::retention::RetainedProfile::Lean))
++    }
++    fn partial_scope_report(target: Option<airk_core::retention::RetainedProfile>) -> Result<()> {
+         use airk_core::{
+             grant_provenance::GrantProvenance,
+             identity::{Incarnation, Sha256Digest},
+@@ -250,6 +253,11 @@
+         let kernel = Kernel::open_service_collection(&root, Some(data), "scoped-families")?;
+         kernel.configure_vectors(false)?;
+         kernel.index_service_sources()?;
++        if let Some(target) = target {
++            let review = kernel.preview_retained_migration(target)?;
++            kernel.configure_retained_migration(&review)?;
++            kernel.index_service_sources()?;
++        }
+         let read = kernel.current_reader()?;
+         let token = crate::current::runtime::revision(read.token()?);
+         let artifact = read
+@@ -344,6 +352,13 @@
+         assert_eq!(report.published_collection_policy, unavailable);
+         assert_eq!(report.pending_collection_reindex, None);
+         assert_eq!(report.applied_file.effective_profile_digest, expected);
++        if let Some(target) = target {
++            assert!(
++                matches!(&report.applied_file.applied_retention,Some(airk_core::retention::AppliedRetention::Selected{profile,..}) if *profile==target)
++            );
++            assert!(report.applied_file.legacy_detail.is_none());
++        }
++
+         assert_eq!(report.file.publication, token);
+         assert_eq!(report.file.source_hash, hash);
+         assert_eq!(report.file.path, "public/one.rs");
+@@ -365,4 +380,110 @@
+         assert!(error.is::<ScopeReadRefused>());
+         Ok(())
+     }
++    #[test]
++    fn selected_file_report_keeps_actual_identity_and_private_policy_separate_without_source_io()
++    -> Result<()> {
++        use airk_core::retention::{AppliedRetention, RetainedFamily, RetainedProfile};
++        let temporary = tempfile::tempdir()?;
++        let base = temporary.path().canonicalize()?;
++        let root = base.join("source");
++        let data = base.join("data");
++        std::fs::create_dir(&root)?;
++        std::fs::write(root.join("Cargo.toml"),b"[package]\nname=\"profile-families\"\nversion=\"0.1.0\"\n[dependencies]\nserde=\"1\"\n")?;
++        let kernel = Kernel::open_service_collection(&root, Some(data), "selected-families")?;
++        kernel.configure_vectors(false)?;
++        kernel.index_service_sources()?;
++        let review = kernel.preview_retained_migration(RetainedProfile::Lean)?;
++        kernel.configure_retained_migration(&review)?;
++        kernel.index_service_sources()?;
++        let actual = kernel
++            .file_info_with_profile_families("Cargo.toml", true)?
++            .profile_families
++            .context("selected report missing")?;
++        assert!(matches!(
++            &actual.applied_file.applied_retention,
++            Some(AppliedRetention::Selected {
++                profile: RetainedProfile::Lean,
++                family: RetainedFamily::Manifest,
++                ..
++            })
++        ));
++        assert!(actual.applied_file.legacy_detail.is_none());
++        assert!(actual.applied_file.legacy_detail_was_absent.is_none());
++        assert_eq!(
++            actual
++                .published_collection_policy
++                .known()
++                .unwrap()
++                .retained_profile,
++            Some(RetainedProfile::Lean)
++        );
++        assert_eq!(actual.pending_collection_reindex, Some(false));
++        assert_eq!(
++            actual
++                .families
++                .iter()
++                .find(|r| r.family == Family::ManifestPackagesDependencies)
++                .unwrap()
++                .retention,
++            profile_families::Retention::Retained
++        );
++        let rich = kernel.preview_retained_migration(RetainedProfile::Rich)?;
++        kernel.configure_retained_migration(&rich)?;
++        let changed = kernel.file_info_conditional_with_profile_families(
++            "Cargo.toml",
++            &Default::default(),
++            true,
++        )?;
++        let report = changed
++            .content
++            .as_ref()
++            .unwrap()
++            .profile_families
++            .as_ref()
++            .unwrap();
++        assert_eq!(report.applied_file, actual.applied_file);
++        assert_eq!(
++            report
++                .configured_collection_policy
++                .known()
++                .unwrap()
++                .retained_profile,
++            Some(RetainedProfile::Rich)
++        );
++        assert_eq!(
++            report
++                .published_collection_policy
++                .known()
++                .unwrap()
++                .retained_profile,
++            Some(RetainedProfile::Lean)
++        );
++        assert_eq!(report.pending_collection_reindex, Some(true));
++        std::fs::rename(&root, base.join("unavailable-originals"))?;
++        let quota = kernel.collection_quota()?;
++        let before = quota.status()?;
++        let repeated = kernel.file_info_conditional_with_profile_families(
++            "Cargo.toml",
++            &EvidenceReadOptions {
++                if_evidence: changed.read.validator,
++                ..Default::default()
++            },
++            true,
++        )?;
++        assert_eq!(repeated.read.status, EvidenceReadStatus::NotModified);
++        let missing = kernel.file_info_conditional_with_profile_families(
++            "Cargo.toml",
++            &Default::default(),
++            true,
++        )?;
++        assert_eq!(
++            serde_json::to_value(missing.content)?,
++            serde_json::to_value(changed.content)?
++        );
++        let after = quota.status()?;
++        assert_eq!(after.used_bytes, before.used_bytes);
++        assert_eq!(after.reserved_bytes, before.reserved_bytes);
++        Ok(())
++    }
+ }
+diff --git a/packages/vscode/src/test/profileFamilies.test.ts b/packages/vscode/src/test/profileFamilies.test.ts
+--- a/packages/vscode/src/test/profileFamilies.test.ts
++++ b/packages/vscode/src/test/profileFamilies.test.ts
+@@ -45,3 +45,19 @@
+         for(const format of ['json','markdown'] as const)assert.ok(renderExport(restored,format).includes('preserve opaque metadata'));
+     }finally{await fs.rm(directory,{recursive:true,force:true});}
+ });
++
++
++test('Selected retained identity and collection fallback survive full/selected details and exports without a legacy alias',()=>{
++    const entry=turn(),value=object(report()),applied=object(value.applied_file);
++    delete applied.legacy_detail;delete applied.legacy_detail_was_absent;
++    applied.applied_retention={kind:'selected',profile:'rich',family:'manifest',algorithm:'airk/file-aware-retention/1'};
++    value.configured_collection_policy={state:'known',revision:{retained_profile:'rich',legacy_fallback_detail:'agent_lean',policy_digest:'ab'.repeat(32)}};
++    value.published_collection_policy={state:'known',revision:{retained_profile:'lean',legacy_fallback_detail:'agent_lean',policy_digest:'cd'.repeat(32)}};value.pending_collection_reindex=true;
++    const step=object((entry.envelope!.steps as Record<string,unknown>[])[0]);object(object(step.result).content).profile_families=value;
++    const session=newSession('ab'.repeat(32));session.turns=[entry];
++    assert.deepEqual(discoveryDetails(entry.envelope!)[0].profileFamilies,value);
++    for(const format of ['json','markdown'] as const)for(const selected of [undefined,['record-0']]){
++        const output=renderExport(session,format,entry.id,selected);assert.ok(output.includes('airk/file-aware-retention/1'));assert.ok(output.includes('legacy_fallback_detail'));assert.ok(output.includes('pending_collection_reindex'));assert.ok(output.includes('rich'));assert.ok(output.includes('lean'));
++    }
++    assert.equal(object(value.applied_file).legacy_detail,undefined);
++});

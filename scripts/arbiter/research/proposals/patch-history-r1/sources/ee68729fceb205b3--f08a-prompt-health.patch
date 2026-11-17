@@ -1,0 +1,318 @@
+--- a/packages/vscode/src/serviceConsoleController.ts
++++ b/packages/vscode/src/serviceConsoleController.ts
+@@ -180,6 +180,9 @@
+         try{
+             const value=await this.rpc('health','health');
+             this.state.health={state:'live',value,checkedAt:Date.now()};this.state.connected=true;
++            // Health is independently usable while optional observations continue.
++            // This reports the authenticated service, not index or inference readiness.
++            this.authorized();this.publish();
+         }catch(error){
+             this.state.health={...this.state.health,state:'failed',code:code(error),checkedAt:Date.now()};
+             this.disconnected();this.client?.dispose();this.client=undefined;
+--- a/packages/vscode/src/explorerController.ts
++++ b/packages/vscode/src/explorerController.ts
+@@ -166,7 +166,7 @@
+             ...(this.selected ? { selectedProject: this.selected } : {}),
+             ...(this.selected && this.host.trusted() && this.sourceFiles.get(this.selected) ? { sourceFile: this.sourceFiles.get(this.selected) } : {}),
+             selectionEpoch: this.selectionEpoch,
+-            ...(this.status && this.statusFor === this.selected ? { status: this.status } : {}),
++            ...(this.host.trusted() && this.status && this.statusFor === this.selected ? { status: this.status } : {}),
+             features: FEATURES,
+             ...(this.notice ? { notice: this.notice } : {}),
+             ...(this.control.message() ? { controlMessage: this.control.message()!.slice(0, 600) } : {}),
+@@ -278,17 +278,26 @@
+         if (this.statusLoading || this.disposed) { return this.statusLoading ?? Promise.resolve(); }
+         const project = this.selected;
+         const epoch = this.selectionEpoch;
+-        if (!project || !this.host.trusted()) { return Promise.resolve(); }
++        const spec = this.host.specs().find(entry => entry.service?.project === project);
++        if (!project || !this.host.trusted() || !spec) { return Promise.resolve(); }
++        const binding = JSON.stringify(spec), generation = this.panel.generation;
++        const bound = () => !this.disposed && this.host.trusted() && project === this.selected
++            && epoch === this.selectionEpoch
++            && JSON.stringify(this.host.specs().find(entry => entry.service?.project === project)) === binding;
++        const current = () => bound() && this.panel.open && generation === this.panel.generation;
+         this.statusLoading = (async () => {
+             try {
+                 const result = await this.session().call('airk_diagnostics', { response_mode: 'full' }, { timeout: 90000, supersede: 'status' });
+-                if (epoch === this.selectionEpoch) { this.status = statusSummary(result.payload); this.statusFor = project; this.notice = undefined; }
++                if (current()) { this.status = statusSummary(result.payload); this.statusFor = project; this.notice = undefined; }
+             } catch (error) {
+-                // A transient missing registration is not a user-facing failure; the next refresh retries.
+-                if (epoch === this.selectionEpoch && failure(error).code !== 'NO_PROJECT') { this.notice = failure(error); }
++                if (current() && failure(error).code !== 'NO_PROJECT') { this.notice = failure(error); }
+             } finally {
+-                this.statusLoading = undefined; this.publish();
+-                if (!this.disposed && epoch !== this.selectionEpoch) { void this.loadStatus(); }
++                this.statusLoading = undefined;
++                if (current()) { this.publish(); }
++                // A new visible recipient/binding gets its OWN observation. Do
++                // not publish the old response into a recreated panel or trust scope.
++                if (!this.disposed && this.host.trusted() && this.retained && this.panel.open
++                    && (!bound() || generation !== this.panel.generation)) { void this.loadStatus(); }
+             }
+         })();
+         return this.statusLoading;
+--- a/packages/vscode/src/test/serviceConsole.test.ts
++++ b/packages/vscode/src/test/serviceConsole.test.ts
+@@ -612,3 +612,98 @@
+         assert.equal(f.controller.state.inactiveProjects,true);
+     }finally{f.controller.dispose();}
+ });
++
++
++// F08a draft: run the actual controller and ServiceClient path; defer only transport replies.
++test('verified health is published before every optional console probe finishes',async()=>{
++    for(const blockedMethod of ['resources','embedding_status','source_status','logs','request_epoch','console','workers','events']){
++        const f=fixture(),base=f.host.runtime.client({} as any),snapshots:ServiceConsoleState[]=[];
++        let release!:()=>void,entered!:()=>void;
++        const gate=new Promise<void>(resolve=>{release=resolve;});
++        const blocked=new Promise<void>(resolve=>{entered=resolve;});
++        // Capture values at publication time. Holding mutable state references would
++        // incorrectly turn an old disconnected observation into a later healthy one.
++        f.host.changed=state=>snapshots.push(structuredClone(state));
++        f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
++            const name=typeof method==='string'?method:Object.keys(method as object)[0];
++            if(name===blockedMethod){entered();await gate;}
++            return base.transport.request(method);
++        }});
++        const poll=f.controller.refresh();
++        try{
++            await blocked;
++            const early=snapshots.find(state=>state.connected&&state.health.state==='live'&&state.busy);
++            assert.ok(early,`health must publish before ${blockedMethod}`);
++            assert.equal(early!.health.value?.status,'health');
++            assert.equal(f.controller.state.busy,true);
++            const immutable=structuredClone(early);
++            release();await poll;
++            assert.equal(f.controller.state.connected,true);
++            assert.equal(f.controller.state.busy,false);
++            assert.deepEqual(early,immutable,'later optional observations cannot rewrite captured publications');
++        }finally{release();await poll;f.controller.dispose();}
++    }
++});
++
++test('early verified health does not manufacture health after a native refusal',async()=>{
++    const f=fixture(),snapshots:ServiceConsoleState[]=[],methods:string[]=[];
++    f.host.changed=state=>snapshots.push(structuredClone(state));
++    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
++        const name=typeof method==='string'?method:Object.keys(method as object)[0];methods.push(name);
++        if(name==='health')throw new ServiceError('service_explicitly_stopped');
++        throw new Error('Optional probes must not run after failed health');
++    }});
++    try{
++        await f.controller.refresh();
++        assert.deepEqual(methods,['health']);
++        assert.ok(!snapshots.some(state=>state.connected));
++        assert.equal(f.controller.state.connected,false);
++        assert.equal(f.controller.state.health.state,'failed');
++        assert.equal(f.controller.state.health.code,'service_explicitly_stopped');
++    }finally{f.controller.dispose();}
++});
++
++test('trust revocation and disposal reject a delayed health reply before early publication',async()=>{
++    for(const cancel of ['trust','dispose'] as const){
++        const f=fixture(),base=f.host.runtime.client({} as any),snapshots:ServiceConsoleState[]=[];
++        let release!:()=>void,entered!:()=>void;
++        const gate=new Promise<void>(resolve=>{release=resolve;});
++        const blocked=new Promise<void>(resolve=>{entered=resolve;});
++        f.host.changed=state=>snapshots.push(structuredClone(state));
++        f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
++            if(method==='health'){entered();await gate;}
++            return base.transport.request(method);
++        }});
++        const poll=f.controller.refresh();
++        try{
++            await blocked;
++            if(cancel==='trust')f.setTrusted(false);else f.controller.dispose();
++            const before=snapshots.length;release();await poll;
++            assert.ok(!snapshots.some(state=>state.connected));
++            if(cancel==='dispose')assert.equal(snapshots.length,before,'disposed controller cannot publish late health');
++            else assert.equal(snapshots.at(-1)!.trusted,false);
++        }finally{release();await poll;f.controller.dispose();}
++    }
++});
++
++test('optional failure retains genuine early health and records the failed observation',async()=>{
++    const f=fixture(),base=f.host.runtime.client({} as any),snapshots:ServiceConsoleState[]=[];
++    let release!:()=>void,entered!:()=>void;
++    const gate=new Promise<void>(resolve=>{release=resolve;});
++    const blocked=new Promise<void>(resolve=>{entered=resolve;});
++    f.host.changed=state=>snapshots.push(structuredClone(state));
++    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
++        if(method==='resources'){entered();await gate;throw new ServiceError('resource_observation_failed');}
++        return base.transport.request(method);
++    }});
++    const poll=f.controller.refresh();
++    try{
++        await blocked;const early=snapshots.find(state=>state.connected&&state.busy)!;
++        assert.ok(early);assert.equal(early.resources.state,'unavailable');
++        release();await poll;
++        assert.equal(early.resources.state,'unavailable','captured early snapshot stays immutable');
++        assert.equal(f.controller.state.resources.state,'failed');
++        assert.equal(f.controller.state.resources.code,'resource_observation_failed');
++        assert.equal(f.controller.state.connected,true);
++    }finally{release();await poll;f.controller.dispose();}
++});
+--- a/packages/vscode/src/test/explorerShell.test.ts
++++ b/packages/vscode/src/test/explorerShell.test.ts
+@@ -26,7 +26,7 @@
+             let closed: () => void = () => undefined;
+             const panel = {
+                 options, posted: [] as any[], disposed: false,
+-                webview: { html: '', cspSource: 'vscode-resource:', asWebviewUri: (uri: any) => uri, postMessage: async (message: unknown) => { panel.posted.push(message); return true; },
++                webview: { html: '', cspSource: 'vscode-resource:', asWebviewUri: (uri: any) => uri, postMessage: async (message: unknown) => { panel.posted.push(structuredClone(message)); return true; },
+                     onDidReceiveMessage: (handler: (value: unknown) => void) => { receive = handler; return disposable; } },
+                 onDidChangeViewState: () => disposable,
+                 onDidDispose: (handler: () => void) => { closed = handler; return disposable; },
+@@ -530,3 +530,149 @@
+     assert.ok(panel.posted.some((message: any) => message.type === 'inbox'));
+     explorer.dispose();
+ });
++
++
++// Actual console -> event -> ExplorerController -> cloned panel-message path.
++// Only the native control transport and evidence boundary are deferred fixtures.
++const { ServiceConsoleController } = require('../serviceConsoleController') as typeof import('../serviceConsoleController');
++const { ServiceClient } = require('../serviceClient') as typeof import('../serviceClient');
++const { EvidenceClient } = require('../explorerEvidence') as typeof import('../explorerEvidence');
++function f08Deferred<T>() {
++    let resolve!: (value:T)=>void;
++    const promise=new Promise<T>(done=>{resolve=done;});
++    return {promise,resolve};
++}
++function promptFeedbackHost(context:any,blockedMethod='resources') {
++    const other='cd'.repeat(32),namespace='12'.repeat(16),instance='34'.repeat(16),version='1.8.0';
++    let trusted=true,retained=0,current!:InstanceType<typeof ServiceConsoleController>;
++    const changed=new Set<(state:any)=>void>(),specChanges=new Set<()=>void>(),values=new Map<string,unknown>();
++    const clientSignals:Array<ReturnType<typeof f08Deferred<void>>>=[],gates:Array<{entered:ReturnType<typeof f08Deferred<void>>;release:ReturnType<typeof f08Deferred<void>>}>=[];
++    const evidenceSignals:Array<ReturnType<typeof f08Deferred<void>>>=[],evidence:Array<{project:string;spec:any;result:ReturnType<typeof f08Deferred<any>>}>=[];
++    const polls:Promise<void>[]=[],consoleSnapshots:any[]=[];
++    let specs=[project,other].map((binding,index)=>({command:'/launcher',root:`/src/prompt-${index}`,dataDir:`/data/${index}`,collection:`prompt-${index}`,name:`prompt-${index}`,service:{installDir:'/install',project:binding}}));
++    const page={revision:1,cached:true,observed_unix_ms:1,after:null,projects:specs.map(spec=>({project:{registration:{binding:spec.service.project,root:spec.root,data_root:spec.dataDir,collection:spec.collection},paused:false,fencing_generation:1},progress:null,inspection:null}))};
++    const binding={installDir:'/install',controlDir:'/control',executable:'/main',launcher:null,runtimeSha256:'56'.repeat(32),version,lifecycle:'on-demand',verificationBasis:'trusted_distribution'};
++    const runtime:any={
++        discover:async()=>({bundle:{main:'/main',helper:'/helper',source:'/bundle',digest:binding.runtimeSha256,version,platform:'test'},installDir:'/install',installed:true,location:{},inspection:{control_dir:'/control',registry_namespace:namespace,approval:{version},console:page}}),
++        binding:()=>binding,ensure:async()=>binding,snapshot:async()=>({}),repair:async()=>({}),prepareConfiguration:async()=>({}),reviewTransition:async()=>({}),transition:async()=>({}),
++        client:()=>{
++            const index=gates.length,gate={entered:f08Deferred<void>(),release:f08Deferred<void>()};gates.push(gate);
++            (clientSignals[index]??=f08Deferred<void>()).resolve();
++            return new ServiceClient({dispose(){},async request(method:any){
++                const name=typeof method==='string'?method:Object.keys(method)[0];
++                if(name===blockedMethod){gate.entered.resolve();await gate.release.promise;}
++                switch(name){
++                    case 'health':return {status:'health',observation:{instance,version,policy:{accepting:true}}};
++                    case 'resources':return {status:'resources',observation:{configuration:{preset:'balanced'}}};
++                    case 'embedding_status':return {status:'embedding_status',available:false,loads:0};
++                    case 'source_status':return {status:'source_status',available:false};
++                    case 'request_epoch':return {status:'request_epoch',namespace,epoch:1};
++                    case 'console':case 'inactive_console':return {status:'console',page};
++                    case 'workers':return {status:'workers',observations:page.projects.map(row=>({project:row.project.registration.binding,identity:null,restarting:false,automatic_start_blocked:false})),age_ms:1};
++                    case 'events':return {status:'events',page:{namespace,retained_prefix_lost:false,events:[],next:null,tail:{namespace,project:null,after:0,through:null}}};
++                    case 'logs':return {status:'logs',page:{schema:1,records:[]}};
++                    default:throw new Error(`Unexpected prompt-feedback metadata operation ${name}`);
++                }
++            }});
++        },
++    };
++    const consoleHost:any={version,authority:'local-test',runtime,
++        storage:{keys:()=>[...values.keys()],get:(key:string)=>values.get(key),update:async(key:string,value:unknown)=>{values.set(key,value);}},
++        trusted:()=>trusted,changed:(state:any)=>{consoleSnapshots.push(structuredClone(state));for(const listener of changed)listener(state);},
++        confirm:async()=>true,copy:async()=>{},logs:async()=>{},resources:async()=>undefined,lifecycle:async()=>({})};
++    current=new ServiceConsoleController(consoleHost);
++    const startPoll=()=>{const poll=current.refresh();polls.push(poll);return poll;};
++    const source={get controller(){return current;},
++        run:async(action:string)=>{const selected=current;if(!await selected.whenIdle())return;await selected.action({type:'service',revision:selected.state.revision,action});},
++        retain:()=>{if(++retained===1)void startPoll();let released=false;return {dispose(){if(!released){released=true;retained--;}}};},
++        onDidChangeState:(listener:(state:any)=>void)=>{changed.add(listener);return {dispose(){changed.delete(listener);}};}};
++    const suggestions=new SuggestionStore({binding:()=> 'ab12ab12ab12ab12',revisions:()=>({}),publication:()=>undefined,ttlMs:()=>3600_000});
++    const host:any={extensionUri:{path:'/ext'},version,trusted:()=>trusted,specs:()=>specs,activeProject:()=>project,
++        onDidChangeSpecs:(listener:()=>void)=>{specChanges.add(listener);return {dispose(){specChanges.delete(listener);}};},
++        log(){},setStatusBar(){},workspaceState:{get:(_key:string,fallback:unknown)=>fallback,update:async()=>{}},suggestions,control:source};
++    context.mock.method(EvidenceClient.prototype,'call',function(this:InstanceType<typeof EvidenceClient>,tool:string){
++        assert.equal(tool,'airk_diagnostics');
++        const index=evidence.length;
++        const pending={project:this.project,spec:structuredClone(this.spec),result:f08Deferred<any>()};evidence.push(pending);
++        (evidenceSignals[index]??=f08Deferred<void>()).resolve();return pending.result.promise;
++    });
++    const explorer=new ExplorerController(host);
++    const unavailable={payload:{index_state:'unavailable',publication:null,files:null,chunks:null,index_error:{code:'index_status_unavailable'}}};
++    return {explorer,host,source,evidence,consoleSnapshots,
++        get console(){return current;},
++        async blocked(index=0){await(clientSignals[index]??=f08Deferred<void>()).promise;await gates[index].entered.promise;},
++        release(index=0){gates[index].release.resolve();},
++        async requested(index=0){await(evidenceSignals[index]??=f08Deferred<void>()).promise;return evidence[index];},
++        finish(index=0,result:any=unavailable){evidence[index].result.resolve(result);},
++        trust(value:boolean){trusted=value;},
++        changeSpec(){specs=specs.map((spec,index)=>index?spec:{...spec,command:'/new-approved-launcher'});for(const listener of specChanges)listener();},
++        reset(){current.dispose();current=new ServiceConsoleController(consoleHost);if(retained)void startPoll();},
++        async cleanup(){explorer.dispose();current.dispose();for(const gate of gates)gate.release.resolve();for(const request of evidence)request.result.resolve(unavailable);await Promise.all(polls);},
++    };
++}
++
++test('actual Explorer publishes authenticated health while optional metadata is blocked without claiming an index',async context=>{
++    for(const blocked of ['resources','logs']){
++        const f=promptFeedbackHost(context,blocked);
++        try{
++            f.explorer.open('#search/query');const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});
++            await f.blocked();await f.requested();
++            const early=panel.posted.filter((entry:any)=>entry.type==='state'&&entry.state.connection==='ready').at(-1)?.state;
++            assert.ok(early,`verified connection must reach the real Explorer before ${blocked}`);
++            assert.equal(early.selectedProject,project);assert.equal(early.projects.length,2);
++            assert.equal(early.status,undefined,'deferred detailed evidence is not fabricated from healthy service');
++            assert.ok(early.projects.every((entry:any)=>entry.publication===undefined&&entry.indexedFiles===undefined));
++            assert.equal(f.console.state.busy,true);
++            const captured=structuredClone(early);
++            f.release();await f.console.whenIdle();f.finish();await flush();
++            assert.deepEqual(early,captured,'captured postMessage value does not change when later controller fields change');
++            const final=panel.posted.filter((entry:any)=>entry.type==='state').at(-1).state;
++            assert.equal(final.status.indexState,'unavailable');assert.equal(final.status.publication,undefined);
++        }finally{await f.cleanup();context.mock.restoreAll();}
++    }
++});
++
++test('actual Explorer ignores delayed old health from reset and from revoked trust',async context=>{
++    for(const stop of ['reset','trust'] as const){
++        const f=promptFeedbackHost(context,'health');
++        try{
++            f.explorer.open();const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await f.blocked();
++            if(stop==='reset'){f.reset();await f.blocked(1);}else f.trust(false);
++            const before=panel.posted.length;f.release(0);await flush();
++            assert.ok(!panel.posted.slice(before).some((entry:any)=>entry.type==='state'&&entry.state.connection==='ready'));
++            assert.equal(f.console.state.connected,false);
++            if(stop==='reset'){f.release(1);await f.console.whenIdle();assert.equal(f.console.state.connected,true);}
++            else assert.equal(f.console.state.trusted,false);
++        }finally{await f.cleanup();context.mock.restoreAll();}
++    }
++});
++
++test('actual Explorer fences delayed detailed evidence by current project and immutable launch spec',async context=>{
++    for(const change of ['project','spec'] as const){
++        const f=promptFeedbackHost(context);
++        try{
++            f.explorer.open();const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await f.blocked();const old=await f.requested();
++            if(change==='project')panel.send({v:1,type:'project.select',requestId:'select',project:'cd'.repeat(32)});else f.changeSpec();
++            f.finish(0,{payload:{index_state:'available',publication:{token:'old-unaccepted-publication'},files:99,chunks:99}});
++            const replacement=await f.requested(1);assert.notDeepEqual(replacement.spec,old.spec);
++            assert.ok(!panel.posted.some((entry:any)=>entry.type==='state'&&entry.state.status?.publication==='old-unaccepted-publication'));
++            f.finish(1);f.release();await f.console.whenIdle();await flush();
++            assert.equal(f.explorer.snapshot().status?.indexState,'unavailable');
++        }finally{await f.cleanup();context.mock.restoreAll();}
++    }
++});
++
++test('actual Explorer does not publish old status into recreated panel or revoked trust',async context=>{
++    for(const change of ['panel','trust'] as const){
++        const f=promptFeedbackHost(context);
++        try{
++            f.explorer.open();const first=panels.at(-1);first.send({v:1,type:'ready',requestId:'ready'});await f.blocked();await f.requested();
++            if(change==='panel'){first.dispose();f.explorer.open();panels.at(-1).send({v:1,type:'ready',requestId:'new-ready'});}else f.trust(false);
++            const recipient=panels.at(-1),before=recipient.posted.length;
++            f.finish(0,{payload:{index_state:'available',publication:{token:'old-panel-or-trust-publication'},files:99,chunks:99}});await flush();
++            assert.ok(!recipient.posted.slice(before).some((entry:any)=>entry.type==='state'&&entry.state.status?.publication==='old-panel-or-trust-publication'));
++            if(change==='panel'){await f.requested(1);f.finish(1);}else assert.equal(f.explorer.snapshot().status,undefined);
++            f.release();await f.console.whenIdle();
++        }finally{await f.cleanup();context.mock.restoreAll();}
++    }
++});

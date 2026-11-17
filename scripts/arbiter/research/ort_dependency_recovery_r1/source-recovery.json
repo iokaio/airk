@@ -1,0 +1,3106 @@
+{
+  "code": [
+    {
+      "bytes": 6377,
+      "path": "scripts/arbiter/analysis/upstream_ort/capture_recovery.py",
+      "sha256": "f5dc44b21b7d0f4422e1bdef3187122da03ba5b5780c41da2b78b1c73fc2cba4"
+    },
+    {
+      "bytes": 2911,
+      "path": "scripts/arbiter/analysis/upstream_ort/recovery.py",
+      "sha256": "70ed2eda0d7cd53714e5600e805efb5db61e263fc105c63f662dca42349fa6b7"
+    },
+    {
+      "bytes": 18444,
+      "path": "scripts/arbiter/analysis/upstream_ort/project.py",
+      "sha256": "016c343125a606949b402ceed9c30291d840f26b137a8a1ad4784515674407c0"
+    },
+    {
+      "bytes": 7826,
+      "path": "scripts/arbiter/analysis/upstream_ort/project_patches.py",
+      "sha256": "566dcc48050de52d2c51bea0bf50032bc643adf17580ad67f77797093d5e3249"
+    }
+  ],
+  "diagnostic": {
+    "bytes": 204352,
+    "path": "artifacts/v190/final-plan/exec-20261116T052942Z/ort-patch-replay-r2.json",
+    "sha256": "5bfdf201f51d522617a21b71fffdac29c7896ec249074a1e1f95fc7003a89739"
+  },
+  "files": [
+    {
+      "base": {
+        "archive": {
+          "bytes": 3194036,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/abseil_cpp.zip",
+          "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff"
+        },
+        "bytes": 37086,
+        "member": "absl/container/internal/btree_container.h",
+        "sha256": "c642eb0a0888708a4265853421d639bdf062197f2566f16f2abc61baece4f78d"
+      },
+      "dependency": "abseil_cpp",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1503,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_windows.patch",
+          "sha256": "bcd5bf031f6a6e050f9dd1f3c70ee9dadf66744bfe532bb342050333bc0d362c"
+        },
+        {
+          "bytes": 2295,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda_warnings.patch",
+          "sha256": "dfc09be4b38a1ff5a4e19fe3781ec86d32196581f644b85a43f4fa851bcc8151"
+        },
+        {
+          "bytes": 3708,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda13_member_template.patch",
+          "sha256": "c9677fbb8d25cdcc0e8e1b3f158930fd8e77639d1b0098da9396381be81de733"
+        },
+        {
+          "bytes": 736,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_msvc_unreachable_code.patch",
+          "sha256": "b6b69eb9cec0c15fd2b1c29c6aedc1e7bbe4e9974035db0b9902176d8ea0abc3"
+        }
+      ],
+      "inserted_bytes": 312,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "abseil-cpp-20250814.0/AUTHORS",
+          "bytes": 295,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee.txt",
+          "sha256": "1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee"
+        },
+        {
+          "archive_member": "abseil-cpp-20250814.0/LICENSE",
+          "bytes": 11361,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "recovery": {
+        "bytes": 1247,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/317226e8cb1e996837ae10b32d0942cc787fda05fcad54717aebc138cc32d58a.json",
+        "sha256": "317226e8cb1e996837ae10b32d0942cc787fda05fcad54717aebc138cc32d58a"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r3/b/Release/_deps/abseil_cpp-src/absl/container/internal/btree_container.h",
+      "source_bytes": 37078,
+      "source_sha256": "42b6fa9c2c974dc6ff32879ccfe5981183cb1ef5945ed8dbf05444020767d4a1"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3194036,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/abseil_cpp.zip",
+          "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff"
+        },
+        "bytes": 7223,
+        "member": "absl/container/internal/common.h",
+        "sha256": "a2c818cbe6d139e844734b6bcabe5eb34337f71c87e17de9769657c4bf857b81"
+      },
+      "dependency": "abseil_cpp",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1503,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_windows.patch",
+          "sha256": "bcd5bf031f6a6e050f9dd1f3c70ee9dadf66744bfe532bb342050333bc0d362c"
+        },
+        {
+          "bytes": 2295,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda_warnings.patch",
+          "sha256": "dfc09be4b38a1ff5a4e19fe3781ec86d32196581f644b85a43f4fa851bcc8151"
+        },
+        {
+          "bytes": 3708,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda13_member_template.patch",
+          "sha256": "c9677fbb8d25cdcc0e8e1b3f158930fd8e77639d1b0098da9396381be81de733"
+        },
+        {
+          "bytes": 736,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_msvc_unreachable_code.patch",
+          "sha256": "b6b69eb9cec0c15fd2b1c29c6aedc1e7bbe4e9974035db0b9902176d8ea0abc3"
+        }
+      ],
+      "inserted_bytes": 633,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "abseil-cpp-20250814.0/AUTHORS",
+          "bytes": 295,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee.txt",
+          "sha256": "1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee"
+        },
+        {
+          "archive_member": "abseil-cpp-20250814.0/LICENSE",
+          "bytes": 11361,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "recovery": {
+        "bytes": 1302,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/ee4ea4d0b0edfb275c4fae9b3137aa4f28399e7e2fe45d9b050f431f1216d7a8.json",
+        "sha256": "ee4ea4d0b0edfb275c4fae9b3137aa4f28399e7e2fe45d9b050f431f1216d7a8"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r3/b/Release/_deps/abseil_cpp-src/absl/container/internal/common.h",
+      "source_bytes": 7856,
+      "source_sha256": "1fde0aebba3d65672fb7f3edd10a6a702d6728e23cfb7c06f3b0cedde8e439d5"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3194036,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/abseil_cpp.zip",
+          "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff"
+        },
+        "bytes": 21109,
+        "member": "absl/container/internal/container_memory.h",
+        "sha256": "18cb31bdb53d4adeff31230a31512a10276dc109fb9d247b081080d4820eba75"
+      },
+      "dependency": "abseil_cpp",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1503,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_windows.patch",
+          "sha256": "bcd5bf031f6a6e050f9dd1f3c70ee9dadf66744bfe532bb342050333bc0d362c"
+        },
+        {
+          "bytes": 2295,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda_warnings.patch",
+          "sha256": "dfc09be4b38a1ff5a4e19fe3781ec86d32196581f644b85a43f4fa851bcc8151"
+        },
+        {
+          "bytes": 3708,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda13_member_template.patch",
+          "sha256": "c9677fbb8d25cdcc0e8e1b3f158930fd8e77639d1b0098da9396381be81de733"
+        },
+        {
+          "bytes": 736,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_msvc_unreachable_code.patch",
+          "sha256": "b6b69eb9cec0c15fd2b1c29c6aedc1e7bbe4e9974035db0b9902176d8ea0abc3"
+        }
+      ],
+      "inserted_bytes": 102,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "abseil-cpp-20250814.0/AUTHORS",
+          "bytes": 295,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee.txt",
+          "sha256": "1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee"
+        },
+        {
+          "archive_member": "abseil-cpp-20250814.0/LICENSE",
+          "bytes": 11361,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "recovery": {
+        "bytes": 777,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/27523fb0cb34b69d983c3f86f11e69877900c9db97cb31dd037e1353f04e8157.json",
+        "sha256": "27523fb0cb34b69d983c3f86f11e69877900c9db97cb31dd037e1353f04e8157"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r3/b/Release/_deps/abseil_cpp-src/absl/container/internal/container_memory.h",
+      "source_bytes": 21126,
+      "source_sha256": "93102cafa831fa61011a77650ab948e771f5639bdee0f9622f068326591c96ea"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3194036,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/abseil_cpp.zip",
+          "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff"
+        },
+        "bytes": 17405,
+        "member": "absl/container/internal/raw_hash_map.h",
+        "sha256": "5fd8221e4a3336156435a5135308429b552f559d98000ff963ea6f2b6c36a634"
+      },
+      "dependency": "abseil_cpp",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1503,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_windows.patch",
+          "sha256": "bcd5bf031f6a6e050f9dd1f3c70ee9dadf66744bfe532bb342050333bc0d362c"
+        },
+        {
+          "bytes": 2295,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda_warnings.patch",
+          "sha256": "dfc09be4b38a1ff5a4e19fe3781ec86d32196581f644b85a43f4fa851bcc8151"
+        },
+        {
+          "bytes": 3708,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda13_member_template.patch",
+          "sha256": "c9677fbb8d25cdcc0e8e1b3f158930fd8e77639d1b0098da9396381be81de733"
+        },
+        {
+          "bytes": 736,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_msvc_unreachable_code.patch",
+          "sha256": "b6b69eb9cec0c15fd2b1c29c6aedc1e7bbe4e9974035db0b9902176d8ea0abc3"
+        }
+      ],
+      "inserted_bytes": 158,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "abseil-cpp-20250814.0/AUTHORS",
+          "bytes": 295,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee.txt",
+          "sha256": "1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee"
+        },
+        {
+          "archive_member": "abseil-cpp-20250814.0/LICENSE",
+          "bytes": 11361,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "recovery": {
+        "bytes": 674,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/e208e5622ef2d07a051dce9988a1b095ff59e5926bbd9bbd65e8c5f352ae6472.json",
+        "sha256": "e208e5622ef2d07a051dce9988a1b095ff59e5926bbd9bbd65e8c5f352ae6472"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r3/b/Release/_deps/abseil_cpp-src/absl/container/internal/raw_hash_map.h",
+      "source_bytes": 17401,
+      "source_sha256": "cbb505803b0d4da09cade70de934fe6e8241d97eeba3c4ca5174dcc7e6a035eb"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3194036,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/abseil_cpp.zip",
+          "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff"
+        },
+        "bytes": 150867,
+        "member": "absl/container/internal/raw_hash_set.h",
+        "sha256": "664a2991e24a3b879d7ba75a36039a01a1a31739807904576d6dcd2a90cad2e2"
+      },
+      "dependency": "abseil_cpp",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1503,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_windows.patch",
+          "sha256": "bcd5bf031f6a6e050f9dd1f3c70ee9dadf66744bfe532bb342050333bc0d362c"
+        },
+        {
+          "bytes": 2295,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda_warnings.patch",
+          "sha256": "dfc09be4b38a1ff5a4e19fe3781ec86d32196581f644b85a43f4fa851bcc8151"
+        },
+        {
+          "bytes": 3708,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda13_member_template.patch",
+          "sha256": "c9677fbb8d25cdcc0e8e1b3f158930fd8e77639d1b0098da9396381be81de733"
+        },
+        {
+          "bytes": 736,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_msvc_unreachable_code.patch",
+          "sha256": "b6b69eb9cec0c15fd2b1c29c6aedc1e7bbe4e9974035db0b9902176d8ea0abc3"
+        }
+      ],
+      "inserted_bytes": 194,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "abseil-cpp-20250814.0/AUTHORS",
+          "bytes": 295,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee.txt",
+          "sha256": "1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee"
+        },
+        {
+          "archive_member": "abseil-cpp-20250814.0/LICENSE",
+          "bytes": 11361,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "recovery": {
+        "bytes": 1627,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/efe77789a63ff190fd4d40a0a1f2adbcab7543b16d9295de804da2e916e0de2c.json",
+        "sha256": "efe77789a63ff190fd4d40a0a1f2adbcab7543b16d9295de804da2e916e0de2c"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r3/b/Release/_deps/abseil_cpp-src/absl/container/internal/raw_hash_set.h",
+      "source_bytes": 150956,
+      "source_sha256": "0650217577257a5dd90cb1eec585113d49a5476cb57add084939adebab74b83a"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3194036,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/abseil_cpp.zip",
+          "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff"
+        },
+        "bytes": 18428,
+        "member": "absl/hash/hash.h",
+        "sha256": "32e9baa333c51bc677105849f26e34fbe4e99ac882ebe8f759fc75251d969125"
+      },
+      "dependency": "abseil_cpp",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1503,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_windows.patch",
+          "sha256": "bcd5bf031f6a6e050f9dd1f3c70ee9dadf66744bfe532bb342050333bc0d362c"
+        },
+        {
+          "bytes": 2295,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda_warnings.patch",
+          "sha256": "dfc09be4b38a1ff5a4e19fe3781ec86d32196581f644b85a43f4fa851bcc8151"
+        },
+        {
+          "bytes": 3708,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda13_member_template.patch",
+          "sha256": "c9677fbb8d25cdcc0e8e1b3f158930fd8e77639d1b0098da9396381be81de733"
+        },
+        {
+          "bytes": 736,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_msvc_unreachable_code.patch",
+          "sha256": "b6b69eb9cec0c15fd2b1c29c6aedc1e7bbe4e9974035db0b9902176d8ea0abc3"
+        }
+      ],
+      "inserted_bytes": 91,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "abseil-cpp-20250814.0/AUTHORS",
+          "bytes": 295,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee.txt",
+          "sha256": "1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee"
+        },
+        {
+          "archive_member": "abseil-cpp-20250814.0/LICENSE",
+          "bytes": 11361,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "recovery": {
+        "bytes": 766,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/b54d82c61410ddf4930bbbc1ba66e183ec9a09d1476ea460ae3a7288db63726f.json",
+        "sha256": "b54d82c61410ddf4930bbbc1ba66e183ec9a09d1476ea460ae3a7288db63726f"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r3/b/Release/_deps/abseil_cpp-src/absl/hash/hash.h",
+      "source_bytes": 18461,
+      "source_sha256": "aa21a7c953fd6d93d0338ecd2e555aee647b6409d5e7db87b5a7ae74e1a4584e"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3194036,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/abseil_cpp.zip",
+          "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff"
+        },
+        "bytes": 58053,
+        "member": "absl/hash/internal/hash.h",
+        "sha256": "4caf885c90c977da17d65775bdbd8ca8bbc4581987685f1ead0589df24861376"
+      },
+      "dependency": "abseil_cpp",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1503,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_windows.patch",
+          "sha256": "bcd5bf031f6a6e050f9dd1f3c70ee9dadf66744bfe532bb342050333bc0d362c"
+        },
+        {
+          "bytes": 2295,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda_warnings.patch",
+          "sha256": "dfc09be4b38a1ff5a4e19fe3781ec86d32196581f644b85a43f4fa851bcc8151"
+        },
+        {
+          "bytes": 3708,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda13_member_template.patch",
+          "sha256": "c9677fbb8d25cdcc0e8e1b3f158930fd8e77639d1b0098da9396381be81de733"
+        },
+        {
+          "bytes": 736,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_msvc_unreachable_code.patch",
+          "sha256": "b6b69eb9cec0c15fd2b1c29c6aedc1e7bbe4e9974035db0b9902176d8ea0abc3"
+        }
+      ],
+      "inserted_bytes": 78,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "abseil-cpp-20250814.0/AUTHORS",
+          "bytes": 295,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee.txt",
+          "sha256": "1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee"
+        },
+        {
+          "archive_member": "abseil-cpp-20250814.0/LICENSE",
+          "bytes": 11361,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "recovery": {
+        "bytes": 750,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/252b93f658193fbd4763b4b295f7a0e0b18e085296e9ed1364553ba1e6daf34b.json",
+        "sha256": "252b93f658193fbd4763b4b295f7a0e0b18e085296e9ed1364553ba1e6daf34b"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r3/b/Release/_deps/abseil_cpp-src/absl/hash/internal/hash.h",
+      "source_bytes": 58061,
+      "source_sha256": "8c0bc2a3ad7e501285965d80c36b9fa5ad03f30fb4974408cabf7a170b356da1"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3194036,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/abseil_cpp.zip",
+          "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff"
+        },
+        "bytes": 37086,
+        "member": "absl/container/internal/btree_container.h",
+        "sha256": "c642eb0a0888708a4265853421d639bdf062197f2566f16f2abc61baece4f78d"
+      },
+      "dependency": "abseil_cpp",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1503,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_windows.patch",
+          "sha256": "bcd5bf031f6a6e050f9dd1f3c70ee9dadf66744bfe532bb342050333bc0d362c"
+        },
+        {
+          "bytes": 2295,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda_warnings.patch",
+          "sha256": "dfc09be4b38a1ff5a4e19fe3781ec86d32196581f644b85a43f4fa851bcc8151"
+        },
+        {
+          "bytes": 3708,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda13_member_template.patch",
+          "sha256": "c9677fbb8d25cdcc0e8e1b3f158930fd8e77639d1b0098da9396381be81de733"
+        },
+        {
+          "bytes": 736,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_msvc_unreachable_code.patch",
+          "sha256": "b6b69eb9cec0c15fd2b1c29c6aedc1e7bbe4e9974035db0b9902176d8ea0abc3"
+        }
+      ],
+      "inserted_bytes": 312,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "abseil-cpp-20250814.0/AUTHORS",
+          "bytes": 295,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee.txt",
+          "sha256": "1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee"
+        },
+        {
+          "archive_member": "abseil-cpp-20250814.0/LICENSE",
+          "bytes": 11361,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "recovery": {
+        "bytes": 1247,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/317226e8cb1e996837ae10b32d0942cc787fda05fcad54717aebc138cc32d58a.json",
+        "sha256": "317226e8cb1e996837ae10b32d0942cc787fda05fcad54717aebc138cc32d58a"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r5/b/Release/_deps/abseil_cpp-src/absl/container/internal/btree_container.h",
+      "source_bytes": 37078,
+      "source_sha256": "42b6fa9c2c974dc6ff32879ccfe5981183cb1ef5945ed8dbf05444020767d4a1"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3194036,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/abseil_cpp.zip",
+          "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff"
+        },
+        "bytes": 7223,
+        "member": "absl/container/internal/common.h",
+        "sha256": "a2c818cbe6d139e844734b6bcabe5eb34337f71c87e17de9769657c4bf857b81"
+      },
+      "dependency": "abseil_cpp",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1503,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_windows.patch",
+          "sha256": "bcd5bf031f6a6e050f9dd1f3c70ee9dadf66744bfe532bb342050333bc0d362c"
+        },
+        {
+          "bytes": 2295,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda_warnings.patch",
+          "sha256": "dfc09be4b38a1ff5a4e19fe3781ec86d32196581f644b85a43f4fa851bcc8151"
+        },
+        {
+          "bytes": 3708,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda13_member_template.patch",
+          "sha256": "c9677fbb8d25cdcc0e8e1b3f158930fd8e77639d1b0098da9396381be81de733"
+        },
+        {
+          "bytes": 736,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_msvc_unreachable_code.patch",
+          "sha256": "b6b69eb9cec0c15fd2b1c29c6aedc1e7bbe4e9974035db0b9902176d8ea0abc3"
+        }
+      ],
+      "inserted_bytes": 633,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "abseil-cpp-20250814.0/AUTHORS",
+          "bytes": 295,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee.txt",
+          "sha256": "1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee"
+        },
+        {
+          "archive_member": "abseil-cpp-20250814.0/LICENSE",
+          "bytes": 11361,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "recovery": {
+        "bytes": 1302,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/ee4ea4d0b0edfb275c4fae9b3137aa4f28399e7e2fe45d9b050f431f1216d7a8.json",
+        "sha256": "ee4ea4d0b0edfb275c4fae9b3137aa4f28399e7e2fe45d9b050f431f1216d7a8"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r5/b/Release/_deps/abseil_cpp-src/absl/container/internal/common.h",
+      "source_bytes": 7856,
+      "source_sha256": "1fde0aebba3d65672fb7f3edd10a6a702d6728e23cfb7c06f3b0cedde8e439d5"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3194036,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/abseil_cpp.zip",
+          "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff"
+        },
+        "bytes": 21109,
+        "member": "absl/container/internal/container_memory.h",
+        "sha256": "18cb31bdb53d4adeff31230a31512a10276dc109fb9d247b081080d4820eba75"
+      },
+      "dependency": "abseil_cpp",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1503,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_windows.patch",
+          "sha256": "bcd5bf031f6a6e050f9dd1f3c70ee9dadf66744bfe532bb342050333bc0d362c"
+        },
+        {
+          "bytes": 2295,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda_warnings.patch",
+          "sha256": "dfc09be4b38a1ff5a4e19fe3781ec86d32196581f644b85a43f4fa851bcc8151"
+        },
+        {
+          "bytes": 3708,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda13_member_template.patch",
+          "sha256": "c9677fbb8d25cdcc0e8e1b3f158930fd8e77639d1b0098da9396381be81de733"
+        },
+        {
+          "bytes": 736,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_msvc_unreachable_code.patch",
+          "sha256": "b6b69eb9cec0c15fd2b1c29c6aedc1e7bbe4e9974035db0b9902176d8ea0abc3"
+        }
+      ],
+      "inserted_bytes": 102,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "abseil-cpp-20250814.0/AUTHORS",
+          "bytes": 295,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee.txt",
+          "sha256": "1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee"
+        },
+        {
+          "archive_member": "abseil-cpp-20250814.0/LICENSE",
+          "bytes": 11361,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "recovery": {
+        "bytes": 777,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/27523fb0cb34b69d983c3f86f11e69877900c9db97cb31dd037e1353f04e8157.json",
+        "sha256": "27523fb0cb34b69d983c3f86f11e69877900c9db97cb31dd037e1353f04e8157"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r5/b/Release/_deps/abseil_cpp-src/absl/container/internal/container_memory.h",
+      "source_bytes": 21126,
+      "source_sha256": "93102cafa831fa61011a77650ab948e771f5639bdee0f9622f068326591c96ea"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3194036,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/abseil_cpp.zip",
+          "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff"
+        },
+        "bytes": 17405,
+        "member": "absl/container/internal/raw_hash_map.h",
+        "sha256": "5fd8221e4a3336156435a5135308429b552f559d98000ff963ea6f2b6c36a634"
+      },
+      "dependency": "abseil_cpp",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1503,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_windows.patch",
+          "sha256": "bcd5bf031f6a6e050f9dd1f3c70ee9dadf66744bfe532bb342050333bc0d362c"
+        },
+        {
+          "bytes": 2295,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda_warnings.patch",
+          "sha256": "dfc09be4b38a1ff5a4e19fe3781ec86d32196581f644b85a43f4fa851bcc8151"
+        },
+        {
+          "bytes": 3708,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda13_member_template.patch",
+          "sha256": "c9677fbb8d25cdcc0e8e1b3f158930fd8e77639d1b0098da9396381be81de733"
+        },
+        {
+          "bytes": 736,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_msvc_unreachable_code.patch",
+          "sha256": "b6b69eb9cec0c15fd2b1c29c6aedc1e7bbe4e9974035db0b9902176d8ea0abc3"
+        }
+      ],
+      "inserted_bytes": 158,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "abseil-cpp-20250814.0/AUTHORS",
+          "bytes": 295,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee.txt",
+          "sha256": "1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee"
+        },
+        {
+          "archive_member": "abseil-cpp-20250814.0/LICENSE",
+          "bytes": 11361,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "recovery": {
+        "bytes": 674,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/e208e5622ef2d07a051dce9988a1b095ff59e5926bbd9bbd65e8c5f352ae6472.json",
+        "sha256": "e208e5622ef2d07a051dce9988a1b095ff59e5926bbd9bbd65e8c5f352ae6472"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r5/b/Release/_deps/abseil_cpp-src/absl/container/internal/raw_hash_map.h",
+      "source_bytes": 17401,
+      "source_sha256": "cbb505803b0d4da09cade70de934fe6e8241d97eeba3c4ca5174dcc7e6a035eb"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3194036,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/abseil_cpp.zip",
+          "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff"
+        },
+        "bytes": 150867,
+        "member": "absl/container/internal/raw_hash_set.h",
+        "sha256": "664a2991e24a3b879d7ba75a36039a01a1a31739807904576d6dcd2a90cad2e2"
+      },
+      "dependency": "abseil_cpp",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1503,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_windows.patch",
+          "sha256": "bcd5bf031f6a6e050f9dd1f3c70ee9dadf66744bfe532bb342050333bc0d362c"
+        },
+        {
+          "bytes": 2295,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda_warnings.patch",
+          "sha256": "dfc09be4b38a1ff5a4e19fe3781ec86d32196581f644b85a43f4fa851bcc8151"
+        },
+        {
+          "bytes": 3708,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda13_member_template.patch",
+          "sha256": "c9677fbb8d25cdcc0e8e1b3f158930fd8e77639d1b0098da9396381be81de733"
+        },
+        {
+          "bytes": 736,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_msvc_unreachable_code.patch",
+          "sha256": "b6b69eb9cec0c15fd2b1c29c6aedc1e7bbe4e9974035db0b9902176d8ea0abc3"
+        }
+      ],
+      "inserted_bytes": 194,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "abseil-cpp-20250814.0/AUTHORS",
+          "bytes": 295,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee.txt",
+          "sha256": "1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee"
+        },
+        {
+          "archive_member": "abseil-cpp-20250814.0/LICENSE",
+          "bytes": 11361,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "recovery": {
+        "bytes": 1627,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/efe77789a63ff190fd4d40a0a1f2adbcab7543b16d9295de804da2e916e0de2c.json",
+        "sha256": "efe77789a63ff190fd4d40a0a1f2adbcab7543b16d9295de804da2e916e0de2c"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r5/b/Release/_deps/abseil_cpp-src/absl/container/internal/raw_hash_set.h",
+      "source_bytes": 150956,
+      "source_sha256": "0650217577257a5dd90cb1eec585113d49a5476cb57add084939adebab74b83a"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3194036,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/abseil_cpp.zip",
+          "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff"
+        },
+        "bytes": 18428,
+        "member": "absl/hash/hash.h",
+        "sha256": "32e9baa333c51bc677105849f26e34fbe4e99ac882ebe8f759fc75251d969125"
+      },
+      "dependency": "abseil_cpp",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1503,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_windows.patch",
+          "sha256": "bcd5bf031f6a6e050f9dd1f3c70ee9dadf66744bfe532bb342050333bc0d362c"
+        },
+        {
+          "bytes": 2295,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda_warnings.patch",
+          "sha256": "dfc09be4b38a1ff5a4e19fe3781ec86d32196581f644b85a43f4fa851bcc8151"
+        },
+        {
+          "bytes": 3708,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda13_member_template.patch",
+          "sha256": "c9677fbb8d25cdcc0e8e1b3f158930fd8e77639d1b0098da9396381be81de733"
+        },
+        {
+          "bytes": 736,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_msvc_unreachable_code.patch",
+          "sha256": "b6b69eb9cec0c15fd2b1c29c6aedc1e7bbe4e9974035db0b9902176d8ea0abc3"
+        }
+      ],
+      "inserted_bytes": 91,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "abseil-cpp-20250814.0/AUTHORS",
+          "bytes": 295,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee.txt",
+          "sha256": "1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee"
+        },
+        {
+          "archive_member": "abseil-cpp-20250814.0/LICENSE",
+          "bytes": 11361,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "recovery": {
+        "bytes": 766,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/b54d82c61410ddf4930bbbc1ba66e183ec9a09d1476ea460ae3a7288db63726f.json",
+        "sha256": "b54d82c61410ddf4930bbbc1ba66e183ec9a09d1476ea460ae3a7288db63726f"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r5/b/Release/_deps/abseil_cpp-src/absl/hash/hash.h",
+      "source_bytes": 18461,
+      "source_sha256": "aa21a7c953fd6d93d0338ecd2e555aee647b6409d5e7db87b5a7ae74e1a4584e"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3194036,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/abseil_cpp.zip",
+          "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff"
+        },
+        "bytes": 58053,
+        "member": "absl/hash/internal/hash.h",
+        "sha256": "4caf885c90c977da17d65775bdbd8ca8bbc4581987685f1ead0589df24861376"
+      },
+      "dependency": "abseil_cpp",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1503,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_windows.patch",
+          "sha256": "bcd5bf031f6a6e050f9dd1f3c70ee9dadf66744bfe532bb342050333bc0d362c"
+        },
+        {
+          "bytes": 2295,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda_warnings.patch",
+          "sha256": "dfc09be4b38a1ff5a4e19fe3781ec86d32196581f644b85a43f4fa851bcc8151"
+        },
+        {
+          "bytes": 3708,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda13_member_template.patch",
+          "sha256": "c9677fbb8d25cdcc0e8e1b3f158930fd8e77639d1b0098da9396381be81de733"
+        },
+        {
+          "bytes": 736,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_msvc_unreachable_code.patch",
+          "sha256": "b6b69eb9cec0c15fd2b1c29c6aedc1e7bbe4e9974035db0b9902176d8ea0abc3"
+        }
+      ],
+      "inserted_bytes": 78,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "abseil-cpp-20250814.0/AUTHORS",
+          "bytes": 295,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee.txt",
+          "sha256": "1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee"
+        },
+        {
+          "archive_member": "abseil-cpp-20250814.0/LICENSE",
+          "bytes": 11361,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "recovery": {
+        "bytes": 750,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/252b93f658193fbd4763b4b295f7a0e0b18e085296e9ed1364553ba1e6daf34b.json",
+        "sha256": "252b93f658193fbd4763b4b295f7a0e0b18e085296e9ed1364553ba1e6daf34b"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r5/b/Release/_deps/abseil_cpp-src/absl/hash/internal/hash.h",
+      "source_bytes": 58061,
+      "source_sha256": "8c0bc2a3ad7e501285965d80c36b9fa5ad03f30fb4974408cabf7a170b356da1"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3194036,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/abseil_cpp.zip",
+          "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff"
+        },
+        "bytes": 37086,
+        "member": "absl/container/internal/btree_container.h",
+        "sha256": "c642eb0a0888708a4265853421d639bdf062197f2566f16f2abc61baece4f78d"
+      },
+      "dependency": "abseil_cpp",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1503,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_windows.patch",
+          "sha256": "bcd5bf031f6a6e050f9dd1f3c70ee9dadf66744bfe532bb342050333bc0d362c"
+        },
+        {
+          "bytes": 2295,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda_warnings.patch",
+          "sha256": "dfc09be4b38a1ff5a4e19fe3781ec86d32196581f644b85a43f4fa851bcc8151"
+        },
+        {
+          "bytes": 3708,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda13_member_template.patch",
+          "sha256": "c9677fbb8d25cdcc0e8e1b3f158930fd8e77639d1b0098da9396381be81de733"
+        },
+        {
+          "bytes": 736,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_msvc_unreachable_code.patch",
+          "sha256": "b6b69eb9cec0c15fd2b1c29c6aedc1e7bbe4e9974035db0b9902176d8ea0abc3"
+        }
+      ],
+      "inserted_bytes": 312,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "abseil-cpp-20250814.0/AUTHORS",
+          "bytes": 295,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee.txt",
+          "sha256": "1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee"
+        },
+        {
+          "archive_member": "abseil-cpp-20250814.0/LICENSE",
+          "bytes": 11361,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "recovery": {
+        "bytes": 1247,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/317226e8cb1e996837ae10b32d0942cc787fda05fcad54717aebc138cc32d58a.json",
+        "sha256": "317226e8cb1e996837ae10b32d0942cc787fda05fcad54717aebc138cc32d58a"
+      },
+      "source": "artifacts/advanced-split/ort130-x64/b/Release/_deps/abseil_cpp-src/absl/container/internal/btree_container.h",
+      "source_bytes": 37078,
+      "source_sha256": "42b6fa9c2c974dc6ff32879ccfe5981183cb1ef5945ed8dbf05444020767d4a1"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3194036,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/abseil_cpp.zip",
+          "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff"
+        },
+        "bytes": 7223,
+        "member": "absl/container/internal/common.h",
+        "sha256": "a2c818cbe6d139e844734b6bcabe5eb34337f71c87e17de9769657c4bf857b81"
+      },
+      "dependency": "abseil_cpp",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1503,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_windows.patch",
+          "sha256": "bcd5bf031f6a6e050f9dd1f3c70ee9dadf66744bfe532bb342050333bc0d362c"
+        },
+        {
+          "bytes": 2295,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda_warnings.patch",
+          "sha256": "dfc09be4b38a1ff5a4e19fe3781ec86d32196581f644b85a43f4fa851bcc8151"
+        },
+        {
+          "bytes": 3708,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda13_member_template.patch",
+          "sha256": "c9677fbb8d25cdcc0e8e1b3f158930fd8e77639d1b0098da9396381be81de733"
+        },
+        {
+          "bytes": 736,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_msvc_unreachable_code.patch",
+          "sha256": "b6b69eb9cec0c15fd2b1c29c6aedc1e7bbe4e9974035db0b9902176d8ea0abc3"
+        }
+      ],
+      "inserted_bytes": 633,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "abseil-cpp-20250814.0/AUTHORS",
+          "bytes": 295,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee.txt",
+          "sha256": "1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee"
+        },
+        {
+          "archive_member": "abseil-cpp-20250814.0/LICENSE",
+          "bytes": 11361,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "recovery": {
+        "bytes": 1302,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/ee4ea4d0b0edfb275c4fae9b3137aa4f28399e7e2fe45d9b050f431f1216d7a8.json",
+        "sha256": "ee4ea4d0b0edfb275c4fae9b3137aa4f28399e7e2fe45d9b050f431f1216d7a8"
+      },
+      "source": "artifacts/advanced-split/ort130-x64/b/Release/_deps/abseil_cpp-src/absl/container/internal/common.h",
+      "source_bytes": 7856,
+      "source_sha256": "1fde0aebba3d65672fb7f3edd10a6a702d6728e23cfb7c06f3b0cedde8e439d5"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3194036,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/abseil_cpp.zip",
+          "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff"
+        },
+        "bytes": 21109,
+        "member": "absl/container/internal/container_memory.h",
+        "sha256": "18cb31bdb53d4adeff31230a31512a10276dc109fb9d247b081080d4820eba75"
+      },
+      "dependency": "abseil_cpp",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1503,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_windows.patch",
+          "sha256": "bcd5bf031f6a6e050f9dd1f3c70ee9dadf66744bfe532bb342050333bc0d362c"
+        },
+        {
+          "bytes": 2295,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda_warnings.patch",
+          "sha256": "dfc09be4b38a1ff5a4e19fe3781ec86d32196581f644b85a43f4fa851bcc8151"
+        },
+        {
+          "bytes": 3708,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda13_member_template.patch",
+          "sha256": "c9677fbb8d25cdcc0e8e1b3f158930fd8e77639d1b0098da9396381be81de733"
+        },
+        {
+          "bytes": 736,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_msvc_unreachable_code.patch",
+          "sha256": "b6b69eb9cec0c15fd2b1c29c6aedc1e7bbe4e9974035db0b9902176d8ea0abc3"
+        }
+      ],
+      "inserted_bytes": 102,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "abseil-cpp-20250814.0/AUTHORS",
+          "bytes": 295,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee.txt",
+          "sha256": "1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee"
+        },
+        {
+          "archive_member": "abseil-cpp-20250814.0/LICENSE",
+          "bytes": 11361,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "recovery": {
+        "bytes": 777,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/27523fb0cb34b69d983c3f86f11e69877900c9db97cb31dd037e1353f04e8157.json",
+        "sha256": "27523fb0cb34b69d983c3f86f11e69877900c9db97cb31dd037e1353f04e8157"
+      },
+      "source": "artifacts/advanced-split/ort130-x64/b/Release/_deps/abseil_cpp-src/absl/container/internal/container_memory.h",
+      "source_bytes": 21126,
+      "source_sha256": "93102cafa831fa61011a77650ab948e771f5639bdee0f9622f068326591c96ea"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3194036,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/abseil_cpp.zip",
+          "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff"
+        },
+        "bytes": 17405,
+        "member": "absl/container/internal/raw_hash_map.h",
+        "sha256": "5fd8221e4a3336156435a5135308429b552f559d98000ff963ea6f2b6c36a634"
+      },
+      "dependency": "abseil_cpp",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1503,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_windows.patch",
+          "sha256": "bcd5bf031f6a6e050f9dd1f3c70ee9dadf66744bfe532bb342050333bc0d362c"
+        },
+        {
+          "bytes": 2295,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda_warnings.patch",
+          "sha256": "dfc09be4b38a1ff5a4e19fe3781ec86d32196581f644b85a43f4fa851bcc8151"
+        },
+        {
+          "bytes": 3708,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda13_member_template.patch",
+          "sha256": "c9677fbb8d25cdcc0e8e1b3f158930fd8e77639d1b0098da9396381be81de733"
+        },
+        {
+          "bytes": 736,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_msvc_unreachable_code.patch",
+          "sha256": "b6b69eb9cec0c15fd2b1c29c6aedc1e7bbe4e9974035db0b9902176d8ea0abc3"
+        }
+      ],
+      "inserted_bytes": 158,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "abseil-cpp-20250814.0/AUTHORS",
+          "bytes": 295,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee.txt",
+          "sha256": "1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee"
+        },
+        {
+          "archive_member": "abseil-cpp-20250814.0/LICENSE",
+          "bytes": 11361,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "recovery": {
+        "bytes": 674,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/e208e5622ef2d07a051dce9988a1b095ff59e5926bbd9bbd65e8c5f352ae6472.json",
+        "sha256": "e208e5622ef2d07a051dce9988a1b095ff59e5926bbd9bbd65e8c5f352ae6472"
+      },
+      "source": "artifacts/advanced-split/ort130-x64/b/Release/_deps/abseil_cpp-src/absl/container/internal/raw_hash_map.h",
+      "source_bytes": 17401,
+      "source_sha256": "cbb505803b0d4da09cade70de934fe6e8241d97eeba3c4ca5174dcc7e6a035eb"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3194036,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/abseil_cpp.zip",
+          "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff"
+        },
+        "bytes": 150867,
+        "member": "absl/container/internal/raw_hash_set.h",
+        "sha256": "664a2991e24a3b879d7ba75a36039a01a1a31739807904576d6dcd2a90cad2e2"
+      },
+      "dependency": "abseil_cpp",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1503,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_windows.patch",
+          "sha256": "bcd5bf031f6a6e050f9dd1f3c70ee9dadf66744bfe532bb342050333bc0d362c"
+        },
+        {
+          "bytes": 2295,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda_warnings.patch",
+          "sha256": "dfc09be4b38a1ff5a4e19fe3781ec86d32196581f644b85a43f4fa851bcc8151"
+        },
+        {
+          "bytes": 3708,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda13_member_template.patch",
+          "sha256": "c9677fbb8d25cdcc0e8e1b3f158930fd8e77639d1b0098da9396381be81de733"
+        },
+        {
+          "bytes": 736,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_msvc_unreachable_code.patch",
+          "sha256": "b6b69eb9cec0c15fd2b1c29c6aedc1e7bbe4e9974035db0b9902176d8ea0abc3"
+        }
+      ],
+      "inserted_bytes": 194,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "abseil-cpp-20250814.0/AUTHORS",
+          "bytes": 295,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee.txt",
+          "sha256": "1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee"
+        },
+        {
+          "archive_member": "abseil-cpp-20250814.0/LICENSE",
+          "bytes": 11361,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "recovery": {
+        "bytes": 1627,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/efe77789a63ff190fd4d40a0a1f2adbcab7543b16d9295de804da2e916e0de2c.json",
+        "sha256": "efe77789a63ff190fd4d40a0a1f2adbcab7543b16d9295de804da2e916e0de2c"
+      },
+      "source": "artifacts/advanced-split/ort130-x64/b/Release/_deps/abseil_cpp-src/absl/container/internal/raw_hash_set.h",
+      "source_bytes": 150956,
+      "source_sha256": "0650217577257a5dd90cb1eec585113d49a5476cb57add084939adebab74b83a"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3194036,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/abseil_cpp.zip",
+          "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff"
+        },
+        "bytes": 18428,
+        "member": "absl/hash/hash.h",
+        "sha256": "32e9baa333c51bc677105849f26e34fbe4e99ac882ebe8f759fc75251d969125"
+      },
+      "dependency": "abseil_cpp",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1503,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_windows.patch",
+          "sha256": "bcd5bf031f6a6e050f9dd1f3c70ee9dadf66744bfe532bb342050333bc0d362c"
+        },
+        {
+          "bytes": 2295,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda_warnings.patch",
+          "sha256": "dfc09be4b38a1ff5a4e19fe3781ec86d32196581f644b85a43f4fa851bcc8151"
+        },
+        {
+          "bytes": 3708,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda13_member_template.patch",
+          "sha256": "c9677fbb8d25cdcc0e8e1b3f158930fd8e77639d1b0098da9396381be81de733"
+        },
+        {
+          "bytes": 736,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_msvc_unreachable_code.patch",
+          "sha256": "b6b69eb9cec0c15fd2b1c29c6aedc1e7bbe4e9974035db0b9902176d8ea0abc3"
+        }
+      ],
+      "inserted_bytes": 91,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "abseil-cpp-20250814.0/AUTHORS",
+          "bytes": 295,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee.txt",
+          "sha256": "1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee"
+        },
+        {
+          "archive_member": "abseil-cpp-20250814.0/LICENSE",
+          "bytes": 11361,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "recovery": {
+        "bytes": 766,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/b54d82c61410ddf4930bbbc1ba66e183ec9a09d1476ea460ae3a7288db63726f.json",
+        "sha256": "b54d82c61410ddf4930bbbc1ba66e183ec9a09d1476ea460ae3a7288db63726f"
+      },
+      "source": "artifacts/advanced-split/ort130-x64/b/Release/_deps/abseil_cpp-src/absl/hash/hash.h",
+      "source_bytes": 18461,
+      "source_sha256": "aa21a7c953fd6d93d0338ecd2e555aee647b6409d5e7db87b5a7ae74e1a4584e"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3194036,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/abseil_cpp.zip",
+          "sha256": "b2bdcf6682d8cb53df365bcc5d6c318a22e55821d9978a10fdb61404c026daff"
+        },
+        "bytes": 58053,
+        "member": "absl/hash/internal/hash.h",
+        "sha256": "4caf885c90c977da17d65775bdbd8ca8bbc4581987685f1ead0589df24861376"
+      },
+      "dependency": "abseil_cpp",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1503,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_windows.patch",
+          "sha256": "bcd5bf031f6a6e050f9dd1f3c70ee9dadf66744bfe532bb342050333bc0d362c"
+        },
+        {
+          "bytes": 2295,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda_warnings.patch",
+          "sha256": "dfc09be4b38a1ff5a4e19fe3781ec86d32196581f644b85a43f4fa851bcc8151"
+        },
+        {
+          "bytes": 3708,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_cuda13_member_template.patch",
+          "sha256": "c9677fbb8d25cdcc0e8e1b3f158930fd8e77639d1b0098da9396381be81de733"
+        },
+        {
+          "bytes": 736,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/vcpkg-ports/abseil/absl_msvc_unreachable_code.patch",
+          "sha256": "b6b69eb9cec0c15fd2b1c29c6aedc1e7bbe4e9974035db0b9902176d8ea0abc3"
+        }
+      ],
+      "inserted_bytes": 78,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "abseil-cpp-20250814.0/AUTHORS",
+          "bytes": 295,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee.txt",
+          "sha256": "1fd39030c119b4c97014f59e0ad0ed65f23475bbdf55a52740f31eb82b34b4ee"
+        },
+        {
+          "archive_member": "abseil-cpp-20250814.0/LICENSE",
+          "bytes": 11361,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "recovery": {
+        "bytes": 750,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/252b93f658193fbd4763b4b295f7a0e0b18e085296e9ed1364553ba1e6daf34b.json",
+        "sha256": "252b93f658193fbd4763b4b295f7a0e0b18e085296e9ed1364553ba1e6daf34b"
+      },
+      "source": "artifacts/advanced-split/ort130-x64/b/Release/_deps/abseil_cpp-src/absl/hash/internal/hash.h",
+      "source_bytes": 58061,
+      "source_sha256": "8c0bc2a3ad7e501285965d80c36b9fa5ad03f30fb4974408cabf7a170b356da1"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 941286,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/date.zip",
+          "sha256": "f4300b96f7a304d4ef9bf6e0fa3ded72159f7f2d0f605bdde3e030a0dba7cf9f"
+        },
+        "bytes": 10773,
+        "member": "CMakeLists.txt",
+        "sha256": "db478097b8ec1446df8b271f422de2c1f764f373d173474471111f5c54fe1a98"
+      },
+      "dependency": "date",
+      "historical_upstream_patches": [
+        {
+          "bytes": 685,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/date/date.patch",
+          "sha256": "19fa16e45c7fa52373f922f47ea66591eec52d48d5c9bb7bc5302f0dcacd70de"
+        }
+      ],
+      "inserted_bytes": 150,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "date-3.0.1/LICENSE.txt",
+          "bytes": 1637,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c90f6c00fb961170560299cbda28ca2d45804913aa8b2a9f36dbb8e0028d6930.txt",
+          "sha256": "c90f6c00fb961170560299cbda28ca2d45804913aa8b2a9f36dbb8e0028d6930"
+        }
+      ],
+      "recovery": {
+        "bytes": 661,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/8ecf4988fa56a73952918809df3f5177d23ccbc1b1c78b18cbaaf5f23af09af7.json",
+        "sha256": "8ecf4988fa56a73952918809df3f5177d23ccbc1b1c78b18cbaaf5f23af09af7"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r3/b/Release/_deps/date-src/CMakeLists.txt",
+      "source_bytes": 10787,
+      "source_sha256": "3df635cd90fc46a726ad5db0a73d4d350af40599af3d858f683ef733654ee090"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 941286,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/date.zip",
+          "sha256": "f4300b96f7a304d4ef9bf6e0fa3ded72159f7f2d0f605bdde3e030a0dba7cf9f"
+        },
+        "bytes": 10773,
+        "member": "CMakeLists.txt",
+        "sha256": "db478097b8ec1446df8b271f422de2c1f764f373d173474471111f5c54fe1a98"
+      },
+      "dependency": "date",
+      "historical_upstream_patches": [
+        {
+          "bytes": 685,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/date/date.patch",
+          "sha256": "19fa16e45c7fa52373f922f47ea66591eec52d48d5c9bb7bc5302f0dcacd70de"
+        }
+      ],
+      "inserted_bytes": 150,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "date-3.0.1/LICENSE.txt",
+          "bytes": 1637,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c90f6c00fb961170560299cbda28ca2d45804913aa8b2a9f36dbb8e0028d6930.txt",
+          "sha256": "c90f6c00fb961170560299cbda28ca2d45804913aa8b2a9f36dbb8e0028d6930"
+        }
+      ],
+      "recovery": {
+        "bytes": 661,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/8ecf4988fa56a73952918809df3f5177d23ccbc1b1c78b18cbaaf5f23af09af7.json",
+        "sha256": "8ecf4988fa56a73952918809df3f5177d23ccbc1b1c78b18cbaaf5f23af09af7"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r5/b/Release/_deps/date-src/CMakeLists.txt",
+      "source_bytes": 10787,
+      "source_sha256": "3df635cd90fc46a726ad5db0a73d4d350af40599af3d858f683ef733654ee090"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 941286,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/date.zip",
+          "sha256": "f4300b96f7a304d4ef9bf6e0fa3ded72159f7f2d0f605bdde3e030a0dba7cf9f"
+        },
+        "bytes": 10773,
+        "member": "CMakeLists.txt",
+        "sha256": "db478097b8ec1446df8b271f422de2c1f764f373d173474471111f5c54fe1a98"
+      },
+      "dependency": "date",
+      "historical_upstream_patches": [
+        {
+          "bytes": 685,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/date/date.patch",
+          "sha256": "19fa16e45c7fa52373f922f47ea66591eec52d48d5c9bb7bc5302f0dcacd70de"
+        }
+      ],
+      "inserted_bytes": 150,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "date-3.0.1/LICENSE.txt",
+          "bytes": 1637,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c90f6c00fb961170560299cbda28ca2d45804913aa8b2a9f36dbb8e0028d6930.txt",
+          "sha256": "c90f6c00fb961170560299cbda28ca2d45804913aa8b2a9f36dbb8e0028d6930"
+        }
+      ],
+      "recovery": {
+        "bytes": 661,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/8ecf4988fa56a73952918809df3f5177d23ccbc1b1c78b18cbaaf5f23af09af7.json",
+        "sha256": "8ecf4988fa56a73952918809df3f5177d23ccbc1b1c78b18cbaaf5f23af09af7"
+      },
+      "source": "artifacts/advanced-split/ort130-x64/b/Release/_deps/date-src/CMakeLists.txt",
+      "source_bytes": 10787,
+      "source_sha256": "3df635cd90fc46a726ad5db0a73d4d350af40599af3d858f683ef733654ee090"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 4075744,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/eigen.zip",
+          "sha256": "6a60d76351f97132669daeeb721d6bf14b008101883ad2d687a3201c5c461eb0"
+        },
+        "bytes": 10781,
+        "member": "Eigen/src/Core/RandomImpl.h",
+        "sha256": "b9756b1033c5f535ea551572220f0e4ef03de1b38d9167388c88d6cb4dd116b1"
+      },
+      "dependency": "eigen",
+      "historical_upstream_patches": [
+        {
+          "bytes": 17794,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build.patch",
+          "sha256": "6d41f4504f665bc591336c668a1aa16ffc5e0f02fe9c2f9c46c6f5660b54c849"
+        },
+        {
+          "bytes": 610,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build-werror.patch",
+          "sha256": "a1a7b0ca8382cb00542587b6bc725f59abd59ad5bb491825f7876ad6e344ef0b"
+        }
+      ],
+      "inserted_bytes": 267,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.APACHE",
+          "bytes": 11362,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7.txt",
+          "sha256": "03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.BSD",
+          "bytes": 1517,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb.txt",
+          "sha256": "51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MINPACK",
+          "bytes": 2193,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0.txt",
+          "sha256": "c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MPL2",
+          "bytes": 16727,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172.txt",
+          "sha256": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.README",
+          "bytes": 264,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644.txt",
+          "sha256": "db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/LICENSE",
+          "bytes": 16725,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5.txt",
+          "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+        }
+      ],
+      "recovery": {
+        "bytes": 998,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/a15ff7b59787ec1457632ca70653cdebcd5abca7ddc25a5e4079de6b87c6623d.json",
+        "sha256": "a15ff7b59787ec1457632ca70653cdebcd5abca7ddc25a5e4079de6b87c6623d"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r3/b/Release/_deps/eigen3-src/Eigen/src/Core/RandomImpl.h",
+      "source_bytes": 11048,
+      "source_sha256": "4457a9ace6ff2ac291b8d3986fc33f44df0625bd75f515fe7acf21cddf18e537"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 4075744,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/eigen.zip",
+          "sha256": "6a60d76351f97132669daeeb721d6bf14b008101883ad2d687a3201c5c461eb0"
+        },
+        "bytes": 17352,
+        "member": "Eigen/src/Core/arch/ZVector/Complex.h",
+        "sha256": "e5a226601e6eb2e87f4cdd821f14ff24fff8a8ca6aec6ae33afda2608c4ccd50"
+      },
+      "dependency": "eigen",
+      "historical_upstream_patches": [
+        {
+          "bytes": 17794,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build.patch",
+          "sha256": "6d41f4504f665bc591336c668a1aa16ffc5e0f02fe9c2f9c46c6f5660b54c849"
+        },
+        {
+          "bytes": 610,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build-werror.patch",
+          "sha256": "a1a7b0ca8382cb00542587b6bc725f59abd59ad5bb491825f7876ad6e344ef0b"
+        }
+      ],
+      "inserted_bytes": 787,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.APACHE",
+          "bytes": 11362,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7.txt",
+          "sha256": "03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.BSD",
+          "bytes": 1517,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb.txt",
+          "sha256": "51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MINPACK",
+          "bytes": 2193,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0.txt",
+          "sha256": "c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MPL2",
+          "bytes": 16727,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172.txt",
+          "sha256": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.README",
+          "bytes": 264,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644.txt",
+          "sha256": "db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/LICENSE",
+          "bytes": 16725,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5.txt",
+          "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+        }
+      ],
+      "recovery": {
+        "bytes": 2057,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/0cbfc1fd3b97303bcd46f795fb66db287f0e309121dc89b10a144ca29c09cd33.json",
+        "sha256": "0cbfc1fd3b97303bcd46f795fb66db287f0e309121dc89b10a144ca29c09cd33"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r3/b/Release/_deps/eigen3-src/Eigen/src/Core/arch/ZVector/Complex.h",
+      "source_bytes": 17560,
+      "source_sha256": "8e9921cf76e23ba38975cf9c88e1396f81270ec063eb58326cb1f6b20204f804"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 4075744,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/eigen.zip",
+          "sha256": "6a60d76351f97132669daeeb721d6bf14b008101883ad2d687a3201c5c461eb0"
+        },
+        "bytes": 7894,
+        "member": "Eigen/src/Core/arch/ZVector/MathFunctions.h",
+        "sha256": "7ccfdd9cbdfe8f1feccf70ac1e5a8aca2d537d1ee5d9d8ff0f04b22fe9e2b2ba"
+      },
+      "dependency": "eigen",
+      "historical_upstream_patches": [
+        {
+          "bytes": 17794,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build.patch",
+          "sha256": "6d41f4504f665bc591336c668a1aa16ffc5e0f02fe9c2f9c46c6f5660b54c849"
+        },
+        {
+          "bytes": 610,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build-werror.patch",
+          "sha256": "a1a7b0ca8382cb00542587b6bc725f59abd59ad5bb491825f7876ad6e344ef0b"
+        }
+      ],
+      "inserted_bytes": 566,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.APACHE",
+          "bytes": 11362,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7.txt",
+          "sha256": "03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.BSD",
+          "bytes": 1517,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb.txt",
+          "sha256": "51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MINPACK",
+          "bytes": 2193,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0.txt",
+          "sha256": "c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MPL2",
+          "bytes": 16727,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172.txt",
+          "sha256": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.README",
+          "bytes": 264,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644.txt",
+          "sha256": "db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/LICENSE",
+          "bytes": 16725,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5.txt",
+          "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+        }
+      ],
+      "recovery": {
+        "bytes": 1396,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/31d623918c0ce9a5822d6277f808c114d511475bf5360b742c3484849d306537.json",
+        "sha256": "31d623918c0ce9a5822d6277f808c114d511475bf5360b742c3484849d306537"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r3/b/Release/_deps/eigen3-src/Eigen/src/Core/arch/ZVector/MathFunctions.h",
+      "source_bytes": 8391,
+      "source_sha256": "4a2f9b0763cbac50962399e9c2293ddb73c7a4090276b72bb3e46010cedd7882"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 4075744,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/eigen.zip",
+          "sha256": "6a60d76351f97132669daeeb721d6bf14b008101883ad2d687a3201c5c461eb0"
+        },
+        "bytes": 37093,
+        "member": "Eigen/src/Core/arch/ZVector/PacketMath.h",
+        "sha256": "491c984ffe93ebc10291477f0f16d1f8c25ad94a12cd4182a5293ea70cb6a4c9"
+      },
+      "dependency": "eigen",
+      "historical_upstream_patches": [
+        {
+          "bytes": 17794,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build.patch",
+          "sha256": "6d41f4504f665bc591336c668a1aa16ffc5e0f02fe9c2f9c46c6f5660b54c849"
+        },
+        {
+          "bytes": 610,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build-werror.patch",
+          "sha256": "a1a7b0ca8382cb00542587b6bc725f59abd59ad5bb491825f7876ad6e344ef0b"
+        }
+      ],
+      "inserted_bytes": 5038,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.APACHE",
+          "bytes": 11362,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7.txt",
+          "sha256": "03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.BSD",
+          "bytes": 1517,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb.txt",
+          "sha256": "51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MINPACK",
+          "bytes": 2193,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0.txt",
+          "sha256": "c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MPL2",
+          "bytes": 16727,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172.txt",
+          "sha256": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.README",
+          "bytes": 264,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644.txt",
+          "sha256": "db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/LICENSE",
+          "bytes": 16725,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5.txt",
+          "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+        }
+      ],
+      "recovery": {
+        "bytes": 10790,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/a4b9fffa7d8daa61eda31fc9819e1af03781bcfa1452b1b7f961a6dc26959290.json",
+        "sha256": "a4b9fffa7d8daa61eda31fc9819e1af03781bcfa1452b1b7f961a6dc26959290"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r3/b/Release/_deps/eigen3-src/Eigen/src/Core/arch/ZVector/PacketMath.h",
+      "source_bytes": 41407,
+      "source_sha256": "71d988350401dbff8cf3f7d0d39ed11f793c7279b41696bdf4401f4a26bdad5c"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 4075744,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/eigen.zip",
+          "sha256": "6a60d76351f97132669daeeb721d6bf14b008101883ad2d687a3201c5c461eb0"
+        },
+        "bytes": 10781,
+        "member": "Eigen/src/Core/RandomImpl.h",
+        "sha256": "b9756b1033c5f535ea551572220f0e4ef03de1b38d9167388c88d6cb4dd116b1"
+      },
+      "dependency": "eigen",
+      "historical_upstream_patches": [
+        {
+          "bytes": 17794,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build.patch",
+          "sha256": "6d41f4504f665bc591336c668a1aa16ffc5e0f02fe9c2f9c46c6f5660b54c849"
+        },
+        {
+          "bytes": 610,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build-werror.patch",
+          "sha256": "a1a7b0ca8382cb00542587b6bc725f59abd59ad5bb491825f7876ad6e344ef0b"
+        }
+      ],
+      "inserted_bytes": 267,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.APACHE",
+          "bytes": 11362,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7.txt",
+          "sha256": "03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.BSD",
+          "bytes": 1517,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb.txt",
+          "sha256": "51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MINPACK",
+          "bytes": 2193,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0.txt",
+          "sha256": "c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MPL2",
+          "bytes": 16727,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172.txt",
+          "sha256": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.README",
+          "bytes": 264,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644.txt",
+          "sha256": "db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/LICENSE",
+          "bytes": 16725,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5.txt",
+          "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+        }
+      ],
+      "recovery": {
+        "bytes": 998,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/a15ff7b59787ec1457632ca70653cdebcd5abca7ddc25a5e4079de6b87c6623d.json",
+        "sha256": "a15ff7b59787ec1457632ca70653cdebcd5abca7ddc25a5e4079de6b87c6623d"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r5/b/Release/_deps/eigen3-src/Eigen/src/Core/RandomImpl.h",
+      "source_bytes": 11048,
+      "source_sha256": "4457a9ace6ff2ac291b8d3986fc33f44df0625bd75f515fe7acf21cddf18e537"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 4075744,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/eigen.zip",
+          "sha256": "6a60d76351f97132669daeeb721d6bf14b008101883ad2d687a3201c5c461eb0"
+        },
+        "bytes": 17352,
+        "member": "Eigen/src/Core/arch/ZVector/Complex.h",
+        "sha256": "e5a226601e6eb2e87f4cdd821f14ff24fff8a8ca6aec6ae33afda2608c4ccd50"
+      },
+      "dependency": "eigen",
+      "historical_upstream_patches": [
+        {
+          "bytes": 17794,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build.patch",
+          "sha256": "6d41f4504f665bc591336c668a1aa16ffc5e0f02fe9c2f9c46c6f5660b54c849"
+        },
+        {
+          "bytes": 610,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build-werror.patch",
+          "sha256": "a1a7b0ca8382cb00542587b6bc725f59abd59ad5bb491825f7876ad6e344ef0b"
+        }
+      ],
+      "inserted_bytes": 787,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.APACHE",
+          "bytes": 11362,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7.txt",
+          "sha256": "03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.BSD",
+          "bytes": 1517,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb.txt",
+          "sha256": "51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MINPACK",
+          "bytes": 2193,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0.txt",
+          "sha256": "c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MPL2",
+          "bytes": 16727,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172.txt",
+          "sha256": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.README",
+          "bytes": 264,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644.txt",
+          "sha256": "db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/LICENSE",
+          "bytes": 16725,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5.txt",
+          "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+        }
+      ],
+      "recovery": {
+        "bytes": 2057,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/0cbfc1fd3b97303bcd46f795fb66db287f0e309121dc89b10a144ca29c09cd33.json",
+        "sha256": "0cbfc1fd3b97303bcd46f795fb66db287f0e309121dc89b10a144ca29c09cd33"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r5/b/Release/_deps/eigen3-src/Eigen/src/Core/arch/ZVector/Complex.h",
+      "source_bytes": 17560,
+      "source_sha256": "8e9921cf76e23ba38975cf9c88e1396f81270ec063eb58326cb1f6b20204f804"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 4075744,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/eigen.zip",
+          "sha256": "6a60d76351f97132669daeeb721d6bf14b008101883ad2d687a3201c5c461eb0"
+        },
+        "bytes": 7894,
+        "member": "Eigen/src/Core/arch/ZVector/MathFunctions.h",
+        "sha256": "7ccfdd9cbdfe8f1feccf70ac1e5a8aca2d537d1ee5d9d8ff0f04b22fe9e2b2ba"
+      },
+      "dependency": "eigen",
+      "historical_upstream_patches": [
+        {
+          "bytes": 17794,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build.patch",
+          "sha256": "6d41f4504f665bc591336c668a1aa16ffc5e0f02fe9c2f9c46c6f5660b54c849"
+        },
+        {
+          "bytes": 610,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build-werror.patch",
+          "sha256": "a1a7b0ca8382cb00542587b6bc725f59abd59ad5bb491825f7876ad6e344ef0b"
+        }
+      ],
+      "inserted_bytes": 566,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.APACHE",
+          "bytes": 11362,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7.txt",
+          "sha256": "03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.BSD",
+          "bytes": 1517,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb.txt",
+          "sha256": "51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MINPACK",
+          "bytes": 2193,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0.txt",
+          "sha256": "c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MPL2",
+          "bytes": 16727,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172.txt",
+          "sha256": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.README",
+          "bytes": 264,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644.txt",
+          "sha256": "db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/LICENSE",
+          "bytes": 16725,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5.txt",
+          "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+        }
+      ],
+      "recovery": {
+        "bytes": 1396,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/31d623918c0ce9a5822d6277f808c114d511475bf5360b742c3484849d306537.json",
+        "sha256": "31d623918c0ce9a5822d6277f808c114d511475bf5360b742c3484849d306537"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r5/b/Release/_deps/eigen3-src/Eigen/src/Core/arch/ZVector/MathFunctions.h",
+      "source_bytes": 8391,
+      "source_sha256": "4a2f9b0763cbac50962399e9c2293ddb73c7a4090276b72bb3e46010cedd7882"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 4075744,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/eigen.zip",
+          "sha256": "6a60d76351f97132669daeeb721d6bf14b008101883ad2d687a3201c5c461eb0"
+        },
+        "bytes": 37093,
+        "member": "Eigen/src/Core/arch/ZVector/PacketMath.h",
+        "sha256": "491c984ffe93ebc10291477f0f16d1f8c25ad94a12cd4182a5293ea70cb6a4c9"
+      },
+      "dependency": "eigen",
+      "historical_upstream_patches": [
+        {
+          "bytes": 17794,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build.patch",
+          "sha256": "6d41f4504f665bc591336c668a1aa16ffc5e0f02fe9c2f9c46c6f5660b54c849"
+        },
+        {
+          "bytes": 610,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build-werror.patch",
+          "sha256": "a1a7b0ca8382cb00542587b6bc725f59abd59ad5bb491825f7876ad6e344ef0b"
+        }
+      ],
+      "inserted_bytes": 5038,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.APACHE",
+          "bytes": 11362,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7.txt",
+          "sha256": "03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.BSD",
+          "bytes": 1517,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb.txt",
+          "sha256": "51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MINPACK",
+          "bytes": 2193,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0.txt",
+          "sha256": "c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MPL2",
+          "bytes": 16727,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172.txt",
+          "sha256": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.README",
+          "bytes": 264,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644.txt",
+          "sha256": "db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/LICENSE",
+          "bytes": 16725,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5.txt",
+          "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+        }
+      ],
+      "recovery": {
+        "bytes": 10790,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/a4b9fffa7d8daa61eda31fc9819e1af03781bcfa1452b1b7f961a6dc26959290.json",
+        "sha256": "a4b9fffa7d8daa61eda31fc9819e1af03781bcfa1452b1b7f961a6dc26959290"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r5/b/Release/_deps/eigen3-src/Eigen/src/Core/arch/ZVector/PacketMath.h",
+      "source_bytes": 41407,
+      "source_sha256": "71d988350401dbff8cf3f7d0d39ed11f793c7279b41696bdf4401f4a26bdad5c"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 4075744,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/eigen.zip",
+          "sha256": "6a60d76351f97132669daeeb721d6bf14b008101883ad2d687a3201c5c461eb0"
+        },
+        "bytes": 10781,
+        "member": "Eigen/src/Core/RandomImpl.h",
+        "sha256": "b9756b1033c5f535ea551572220f0e4ef03de1b38d9167388c88d6cb4dd116b1"
+      },
+      "dependency": "eigen",
+      "historical_upstream_patches": [
+        {
+          "bytes": 17794,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build.patch",
+          "sha256": "6d41f4504f665bc591336c668a1aa16ffc5e0f02fe9c2f9c46c6f5660b54c849"
+        },
+        {
+          "bytes": 610,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build-werror.patch",
+          "sha256": "a1a7b0ca8382cb00542587b6bc725f59abd59ad5bb491825f7876ad6e344ef0b"
+        }
+      ],
+      "inserted_bytes": 267,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.APACHE",
+          "bytes": 11362,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7.txt",
+          "sha256": "03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.BSD",
+          "bytes": 1517,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb.txt",
+          "sha256": "51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MINPACK",
+          "bytes": 2193,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0.txt",
+          "sha256": "c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MPL2",
+          "bytes": 16727,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172.txt",
+          "sha256": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.README",
+          "bytes": 264,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644.txt",
+          "sha256": "db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/LICENSE",
+          "bytes": 16725,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5.txt",
+          "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+        }
+      ],
+      "recovery": {
+        "bytes": 998,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/a15ff7b59787ec1457632ca70653cdebcd5abca7ddc25a5e4079de6b87c6623d.json",
+        "sha256": "a15ff7b59787ec1457632ca70653cdebcd5abca7ddc25a5e4079de6b87c6623d"
+      },
+      "source": "artifacts/advanced-split/ort130-x64/b/Release/_deps/eigen3-src/Eigen/src/Core/RandomImpl.h",
+      "source_bytes": 11048,
+      "source_sha256": "4457a9ace6ff2ac291b8d3986fc33f44df0625bd75f515fe7acf21cddf18e537"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 4075744,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/eigen.zip",
+          "sha256": "6a60d76351f97132669daeeb721d6bf14b008101883ad2d687a3201c5c461eb0"
+        },
+        "bytes": 17352,
+        "member": "Eigen/src/Core/arch/ZVector/Complex.h",
+        "sha256": "e5a226601e6eb2e87f4cdd821f14ff24fff8a8ca6aec6ae33afda2608c4ccd50"
+      },
+      "dependency": "eigen",
+      "historical_upstream_patches": [
+        {
+          "bytes": 17794,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build.patch",
+          "sha256": "6d41f4504f665bc591336c668a1aa16ffc5e0f02fe9c2f9c46c6f5660b54c849"
+        },
+        {
+          "bytes": 610,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build-werror.patch",
+          "sha256": "a1a7b0ca8382cb00542587b6bc725f59abd59ad5bb491825f7876ad6e344ef0b"
+        }
+      ],
+      "inserted_bytes": 787,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.APACHE",
+          "bytes": 11362,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7.txt",
+          "sha256": "03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.BSD",
+          "bytes": 1517,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb.txt",
+          "sha256": "51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MINPACK",
+          "bytes": 2193,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0.txt",
+          "sha256": "c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MPL2",
+          "bytes": 16727,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172.txt",
+          "sha256": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.README",
+          "bytes": 264,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644.txt",
+          "sha256": "db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/LICENSE",
+          "bytes": 16725,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5.txt",
+          "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+        }
+      ],
+      "recovery": {
+        "bytes": 2057,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/0cbfc1fd3b97303bcd46f795fb66db287f0e309121dc89b10a144ca29c09cd33.json",
+        "sha256": "0cbfc1fd3b97303bcd46f795fb66db287f0e309121dc89b10a144ca29c09cd33"
+      },
+      "source": "artifacts/advanced-split/ort130-x64/b/Release/_deps/eigen3-src/Eigen/src/Core/arch/ZVector/Complex.h",
+      "source_bytes": 17560,
+      "source_sha256": "8e9921cf76e23ba38975cf9c88e1396f81270ec063eb58326cb1f6b20204f804"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 4075744,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/eigen.zip",
+          "sha256": "6a60d76351f97132669daeeb721d6bf14b008101883ad2d687a3201c5c461eb0"
+        },
+        "bytes": 7894,
+        "member": "Eigen/src/Core/arch/ZVector/MathFunctions.h",
+        "sha256": "7ccfdd9cbdfe8f1feccf70ac1e5a8aca2d537d1ee5d9d8ff0f04b22fe9e2b2ba"
+      },
+      "dependency": "eigen",
+      "historical_upstream_patches": [
+        {
+          "bytes": 17794,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build.patch",
+          "sha256": "6d41f4504f665bc591336c668a1aa16ffc5e0f02fe9c2f9c46c6f5660b54c849"
+        },
+        {
+          "bytes": 610,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build-werror.patch",
+          "sha256": "a1a7b0ca8382cb00542587b6bc725f59abd59ad5bb491825f7876ad6e344ef0b"
+        }
+      ],
+      "inserted_bytes": 566,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.APACHE",
+          "bytes": 11362,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7.txt",
+          "sha256": "03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.BSD",
+          "bytes": 1517,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb.txt",
+          "sha256": "51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MINPACK",
+          "bytes": 2193,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0.txt",
+          "sha256": "c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MPL2",
+          "bytes": 16727,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172.txt",
+          "sha256": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.README",
+          "bytes": 264,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644.txt",
+          "sha256": "db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/LICENSE",
+          "bytes": 16725,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5.txt",
+          "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+        }
+      ],
+      "recovery": {
+        "bytes": 1396,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/31d623918c0ce9a5822d6277f808c114d511475bf5360b742c3484849d306537.json",
+        "sha256": "31d623918c0ce9a5822d6277f808c114d511475bf5360b742c3484849d306537"
+      },
+      "source": "artifacts/advanced-split/ort130-x64/b/Release/_deps/eigen3-src/Eigen/src/Core/arch/ZVector/MathFunctions.h",
+      "source_bytes": 8391,
+      "source_sha256": "4a2f9b0763cbac50962399e9c2293ddb73c7a4090276b72bb3e46010cedd7882"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 4075744,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/eigen.zip",
+          "sha256": "6a60d76351f97132669daeeb721d6bf14b008101883ad2d687a3201c5c461eb0"
+        },
+        "bytes": 37093,
+        "member": "Eigen/src/Core/arch/ZVector/PacketMath.h",
+        "sha256": "491c984ffe93ebc10291477f0f16d1f8c25ad94a12cd4182a5293ea70cb6a4c9"
+      },
+      "dependency": "eigen",
+      "historical_upstream_patches": [
+        {
+          "bytes": 17794,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build.patch",
+          "sha256": "6d41f4504f665bc591336c668a1aa16ffc5e0f02fe9c2f9c46c6f5660b54c849"
+        },
+        {
+          "bytes": 610,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/eigen/s390x-build-werror.patch",
+          "sha256": "a1a7b0ca8382cb00542587b6bc725f59abd59ad5bb491825f7876ad6e344ef0b"
+        }
+      ],
+      "inserted_bytes": 5038,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.APACHE",
+          "bytes": 11362,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7.txt",
+          "sha256": "03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.BSD",
+          "bytes": 1517,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb.txt",
+          "sha256": "51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MINPACK",
+          "bytes": 2193,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0.txt",
+          "sha256": "c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.MPL2",
+          "bytes": 16727,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172.txt",
+          "sha256": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/COPYING.README",
+          "bytes": 264,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644.txt",
+          "sha256": "db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644"
+        },
+        {
+          "archive_member": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33/LICENSE",
+          "bytes": 16725,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5.txt",
+          "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+        }
+      ],
+      "recovery": {
+        "bytes": 10790,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/a4b9fffa7d8daa61eda31fc9819e1af03781bcfa1452b1b7f961a6dc26959290.json",
+        "sha256": "a4b9fffa7d8daa61eda31fc9819e1af03781bcfa1452b1b7f961a6dc26959290"
+      },
+      "source": "artifacts/advanced-split/ort130-x64/b/Release/_deps/eigen3-src/Eigen/src/Core/arch/ZVector/PacketMath.h",
+      "source_bytes": 41407,
+      "source_sha256": "71d988350401dbff8cf3f7d0d39ed11f793c7279b41696bdf4401f4a26bdad5c"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3209602,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/flatbuffers.zip",
+          "sha256": "57bd580c0772fd1a726c34ab8bf05325293bc5f9c165060a898afa1feeeb95e1"
+        },
+        "bytes": 23660,
+        "member": "CMakeLists.txt",
+        "sha256": "8b29bd0b59edbe62aa20b8a9818d8acb879a79a0c82562dfa1f887f4d09d245f"
+      },
+      "dependency": "flatbuffers",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1190,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/flatbuffers/flatbuffers.patch",
+          "sha256": "9c597b79b3b35302a19b31a42b4680c4e36f9c3934a5b1b988ddd5a36c68ee33"
+        }
+      ],
+      "inserted_bytes": 98,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "flatbuffers-23.5.26/LICENSE",
+          "bytes": 11358,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ],
+      "recovery": {
+        "bytes": 593,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/1fe1556909712d6b07e79042f3baebaaa4689e42f97338ed2bd9ed7db5826be9.json",
+        "sha256": "1fe1556909712d6b07e79042f3baebaaa4689e42f97338ed2bd9ed7db5826be9"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r3/b/Release/_deps/flatbuffers-src/CMakeLists.txt",
+      "source_bytes": 23689,
+      "source_sha256": "2bca31a7370e907250fa6e4af661d4b3d7f09970e781541366c130ad154977e6"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3209602,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/flatbuffers.zip",
+          "sha256": "57bd580c0772fd1a726c34ab8bf05325293bc5f9c165060a898afa1feeeb95e1"
+        },
+        "bytes": 10774,
+        "member": "include/flatbuffers/flatbuffers.h",
+        "sha256": "a00ce9610586dac436efe0b6d27b3aa12eaaf397c04c17c7c7452d5afabd0144"
+      },
+      "dependency": "flatbuffers",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1190,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/flatbuffers/flatbuffers.patch",
+          "sha256": "9c597b79b3b35302a19b31a42b4680c4e36f9c3934a5b1b988ddd5a36c68ee33"
+        }
+      ],
+      "inserted_bytes": 90,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "flatbuffers-23.5.26/LICENSE",
+          "bytes": 11358,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ],
+      "recovery": {
+        "bytes": 581,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/0fca95a9e6c10b3ac16bf71466663b67a2124ecfb0fefad28edbcb2ab9bf656d.json",
+        "sha256": "0fca95a9e6c10b3ac16bf71466663b67a2124ecfb0fefad28edbcb2ab9bf656d"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r3/b/Release/_deps/flatbuffers-src/include/flatbuffers/flatbuffers.h",
+      "source_bytes": 10846,
+      "source_sha256": "b0116eca530026e2d235f909143b171b3d5788c7232aaacf26ea3e83292845db"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3209602,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/flatbuffers.zip",
+          "sha256": "57bd580c0772fd1a726c34ab8bf05325293bc5f9c165060a898afa1feeeb95e1"
+        },
+        "bytes": 23660,
+        "member": "CMakeLists.txt",
+        "sha256": "8b29bd0b59edbe62aa20b8a9818d8acb879a79a0c82562dfa1f887f4d09d245f"
+      },
+      "dependency": "flatbuffers",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1190,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/flatbuffers/flatbuffers.patch",
+          "sha256": "9c597b79b3b35302a19b31a42b4680c4e36f9c3934a5b1b988ddd5a36c68ee33"
+        }
+      ],
+      "inserted_bytes": 98,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "flatbuffers-23.5.26/LICENSE",
+          "bytes": 11358,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ],
+      "recovery": {
+        "bytes": 593,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/1fe1556909712d6b07e79042f3baebaaa4689e42f97338ed2bd9ed7db5826be9.json",
+        "sha256": "1fe1556909712d6b07e79042f3baebaaa4689e42f97338ed2bd9ed7db5826be9"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r5/b/Release/_deps/flatbuffers-src/CMakeLists.txt",
+      "source_bytes": 23689,
+      "source_sha256": "2bca31a7370e907250fa6e4af661d4b3d7f09970e781541366c130ad154977e6"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3209602,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/flatbuffers.zip",
+          "sha256": "57bd580c0772fd1a726c34ab8bf05325293bc5f9c165060a898afa1feeeb95e1"
+        },
+        "bytes": 10774,
+        "member": "include/flatbuffers/flatbuffers.h",
+        "sha256": "a00ce9610586dac436efe0b6d27b3aa12eaaf397c04c17c7c7452d5afabd0144"
+      },
+      "dependency": "flatbuffers",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1190,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/flatbuffers/flatbuffers.patch",
+          "sha256": "9c597b79b3b35302a19b31a42b4680c4e36f9c3934a5b1b988ddd5a36c68ee33"
+        }
+      ],
+      "inserted_bytes": 90,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "flatbuffers-23.5.26/LICENSE",
+          "bytes": 11358,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ],
+      "recovery": {
+        "bytes": 581,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/0fca95a9e6c10b3ac16bf71466663b67a2124ecfb0fefad28edbcb2ab9bf656d.json",
+        "sha256": "0fca95a9e6c10b3ac16bf71466663b67a2124ecfb0fefad28edbcb2ab9bf656d"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r5/b/Release/_deps/flatbuffers-src/include/flatbuffers/flatbuffers.h",
+      "source_bytes": 10846,
+      "source_sha256": "b0116eca530026e2d235f909143b171b3d5788c7232aaacf26ea3e83292845db"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3209602,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/flatbuffers.zip",
+          "sha256": "57bd580c0772fd1a726c34ab8bf05325293bc5f9c165060a898afa1feeeb95e1"
+        },
+        "bytes": 23660,
+        "member": "CMakeLists.txt",
+        "sha256": "8b29bd0b59edbe62aa20b8a9818d8acb879a79a0c82562dfa1f887f4d09d245f"
+      },
+      "dependency": "flatbuffers",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1190,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/flatbuffers/flatbuffers.patch",
+          "sha256": "9c597b79b3b35302a19b31a42b4680c4e36f9c3934a5b1b988ddd5a36c68ee33"
+        }
+      ],
+      "inserted_bytes": 98,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "flatbuffers-23.5.26/LICENSE",
+          "bytes": 11358,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ],
+      "recovery": {
+        "bytes": 593,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/1fe1556909712d6b07e79042f3baebaaa4689e42f97338ed2bd9ed7db5826be9.json",
+        "sha256": "1fe1556909712d6b07e79042f3baebaaa4689e42f97338ed2bd9ed7db5826be9"
+      },
+      "source": "artifacts/advanced-split/ort130-x64/b/Release/_deps/flatbuffers-src/CMakeLists.txt",
+      "source_bytes": 23689,
+      "source_sha256": "2bca31a7370e907250fa6e4af661d4b3d7f09970e781541366c130ad154977e6"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3209602,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/flatbuffers.zip",
+          "sha256": "57bd580c0772fd1a726c34ab8bf05325293bc5f9c165060a898afa1feeeb95e1"
+        },
+        "bytes": 10774,
+        "member": "include/flatbuffers/flatbuffers.h",
+        "sha256": "a00ce9610586dac436efe0b6d27b3aa12eaaf397c04c17c7c7452d5afabd0144"
+      },
+      "dependency": "flatbuffers",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1190,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/flatbuffers/flatbuffers.patch",
+          "sha256": "9c597b79b3b35302a19b31a42b4680c4e36f9c3934a5b1b988ddd5a36c68ee33"
+        }
+      ],
+      "inserted_bytes": 90,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "flatbuffers-23.5.26/LICENSE",
+          "bytes": 11358,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ],
+      "recovery": {
+        "bytes": 581,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/0fca95a9e6c10b3ac16bf71466663b67a2124ecfb0fefad28edbcb2ab9bf656d.json",
+        "sha256": "0fca95a9e6c10b3ac16bf71466663b67a2124ecfb0fefad28edbcb2ab9bf656d"
+      },
+      "source": "artifacts/advanced-split/ort130-x64/b/Release/_deps/flatbuffers-src/include/flatbuffers/flatbuffers.h",
+      "source_bytes": 10846,
+      "source_sha256": "b0116eca530026e2d235f909143b171b3d5788c7232aaacf26ea3e83292845db"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 6888932,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/protobuf.zip",
+          "sha256": "16498d7dc7967e9b100632138babd4b86b61592beeccdd556f67539d9c231355"
+        },
+        "bytes": 1985,
+        "member": "cmake/libprotobuf-lite.cmake",
+        "sha256": "f1ac1702b7f780631a348818375ded3c12ab7f063921d60a8ee1362ccc29ef45"
+      },
+      "dependency": "protobuf",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1270,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/protobuf/protobuf_android_log.patch",
+          "sha256": "06a7ba4b722da15ad83a94c7041d6d75d2be26192e3fd1b219e44a4d69c61b12"
+        },
+        {
+          "bytes": 507,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/protobuf/protobuf_msvc_unreachable_code.patch",
+          "sha256": "64e4198385583448ca485bbee893365a3a0095acbe6c28f80fa5de54d2dbad3e"
+        },
+        {
+          "bytes": 893,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/protobuf/protobuf_msvc_map_unreachable_code.patch",
+          "sha256": "6dc772e30cf07995a85086b1a25ce2f888a3d1e1a47e22f4bd1be7976f5bba13"
+        },
+        {
+          "bytes": 807,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/protobuf/protobuf_compiler_incomplete_type.patch",
+          "sha256": "e662ff2f7fd1986b0e866d04d6544917d05261acc1ca238ddb0b6c23b0b04454"
+        }
+      ],
+      "inserted_bytes": 117,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "protobuf-33.6/LICENSE",
+          "bytes": 1732,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d.txt",
+          "sha256": "6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d"
+        }
+      ],
+      "recovery": {
+        "bytes": 797,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/f15905a24640539dbfd45005a3d3f4f376e62a3752f89475857389975959b783.json",
+        "sha256": "f15905a24640539dbfd45005a3d3f4f376e62a3752f89475857389975959b783"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r3/b/Release/_deps/protobuf-src/cmake/libprotobuf-lite.cmake",
+      "source_bytes": 1986,
+      "source_sha256": "46945cf96f654f193f50879e9d4af6a1f3f6e3aae1e5cc6dbd6864ff1c1d8bc1"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 6888932,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/protobuf.zip",
+          "sha256": "16498d7dc7967e9b100632138babd4b86b61592beeccdd556f67539d9c231355"
+        },
+        "bytes": 1985,
+        "member": "cmake/libprotobuf-lite.cmake",
+        "sha256": "f1ac1702b7f780631a348818375ded3c12ab7f063921d60a8ee1362ccc29ef45"
+      },
+      "dependency": "protobuf",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1270,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/protobuf/protobuf_android_log.patch",
+          "sha256": "06a7ba4b722da15ad83a94c7041d6d75d2be26192e3fd1b219e44a4d69c61b12"
+        },
+        {
+          "bytes": 507,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/protobuf/protobuf_msvc_unreachable_code.patch",
+          "sha256": "64e4198385583448ca485bbee893365a3a0095acbe6c28f80fa5de54d2dbad3e"
+        },
+        {
+          "bytes": 893,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/protobuf/protobuf_msvc_map_unreachable_code.patch",
+          "sha256": "6dc772e30cf07995a85086b1a25ce2f888a3d1e1a47e22f4bd1be7976f5bba13"
+        },
+        {
+          "bytes": 807,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/protobuf/protobuf_compiler_incomplete_type.patch",
+          "sha256": "e662ff2f7fd1986b0e866d04d6544917d05261acc1ca238ddb0b6c23b0b04454"
+        }
+      ],
+      "inserted_bytes": 117,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "protobuf-33.6/LICENSE",
+          "bytes": 1732,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d.txt",
+          "sha256": "6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d"
+        }
+      ],
+      "recovery": {
+        "bytes": 797,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/f15905a24640539dbfd45005a3d3f4f376e62a3752f89475857389975959b783.json",
+        "sha256": "f15905a24640539dbfd45005a3d3f4f376e62a3752f89475857389975959b783"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r5/b/Release/_deps/protobuf-src/cmake/libprotobuf-lite.cmake",
+      "source_bytes": 1986,
+      "source_sha256": "46945cf96f654f193f50879e9d4af6a1f3f6e3aae1e5cc6dbd6864ff1c1d8bc1"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 6888932,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/protobuf.zip",
+          "sha256": "16498d7dc7967e9b100632138babd4b86b61592beeccdd556f67539d9c231355"
+        },
+        "bytes": 1985,
+        "member": "cmake/libprotobuf-lite.cmake",
+        "sha256": "f1ac1702b7f780631a348818375ded3c12ab7f063921d60a8ee1362ccc29ef45"
+      },
+      "dependency": "protobuf",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1270,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/protobuf/protobuf_android_log.patch",
+          "sha256": "06a7ba4b722da15ad83a94c7041d6d75d2be26192e3fd1b219e44a4d69c61b12"
+        },
+        {
+          "bytes": 507,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/protobuf/protobuf_msvc_unreachable_code.patch",
+          "sha256": "64e4198385583448ca485bbee893365a3a0095acbe6c28f80fa5de54d2dbad3e"
+        },
+        {
+          "bytes": 893,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/protobuf/protobuf_msvc_map_unreachable_code.patch",
+          "sha256": "6dc772e30cf07995a85086b1a25ce2f888a3d1e1a47e22f4bd1be7976f5bba13"
+        },
+        {
+          "bytes": 807,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/protobuf/protobuf_compiler_incomplete_type.patch",
+          "sha256": "e662ff2f7fd1986b0e866d04d6544917d05261acc1ca238ddb0b6c23b0b04454"
+        }
+      ],
+      "inserted_bytes": 117,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "protobuf-33.6/LICENSE",
+          "bytes": 1732,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d.txt",
+          "sha256": "6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d"
+        }
+      ],
+      "recovery": {
+        "bytes": 797,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/f15905a24640539dbfd45005a3d3f4f376e62a3752f89475857389975959b783.json",
+        "sha256": "f15905a24640539dbfd45005a3d3f4f376e62a3752f89475857389975959b783"
+      },
+      "source": "artifacts/advanced-split/ort130-x64/b/Release/_deps/protobuf-src/cmake/libprotobuf-lite.cmake",
+      "source_bytes": 1986,
+      "source_sha256": "46945cf96f654f193f50879e9d4af6a1f3f6e3aae1e5cc6dbd6864ff1c1d8bc1"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3857141,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/pytorch_cpuinfo.zip",
+          "sha256": "b93044263ee072e9be3577bda52f48d5a4dd9fcb80091529471c8d2bfe59219d"
+        },
+        "bytes": 29924,
+        "member": "src/arm/windows/init-by-logical-sys-info.c",
+        "sha256": "a6e9be17442afb4ef6f997dc2e7872b8757c352d9e46c8cd50df17668b4601da"
+      },
+      "dependency": "pytorch_cpuinfo",
+      "historical_upstream_patches": [
+        {
+          "bytes": 21154,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/cpuinfo/enable_deinit_refcounting.patch",
+          "sha256": "fdd1754381c06135d4317cca32133b91a1def4ce42c822763a0bdddd60671836"
+        }
+      ],
+      "inserted_bytes": 1507,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "cpuinfo-66ee79c038d70dad9f08705b2c9b3e58f6d8f512/LICENSE",
+          "bytes": 1424,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/8e7e60636c3aa0cb03571a1a841ce5697f9551ff92b3c426c2561613d15ade70.txt",
+          "sha256": "8e7e60636c3aa0cb03571a1a841ce5697f9551ff92b3c426c2561613d15ade70"
+        }
+      ],
+      "recovery": {
+        "bytes": 3737,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/c5a5e57d4e83a8d44827f315029895cf8eb248baf79b3c3c21170fd0f5c5dbfb.json",
+        "sha256": "c5a5e57d4e83a8d44827f315029895cf8eb248baf79b3c3c21170fd0f5c5dbfb"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r3/b/Release/_deps/pytorch_cpuinfo-src/src/arm/windows/init-by-logical-sys-info.c",
+      "source_bytes": 31037,
+      "source_sha256": "ac901791a1718abb0d2c25a26e442b36e0ba33474ae41d4c99a6fa07c7e8519d"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3857141,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/pytorch_cpuinfo.zip",
+          "sha256": "b93044263ee072e9be3577bda52f48d5a4dd9fcb80091529471c8d2bfe59219d"
+        },
+        "bytes": 9765,
+        "member": "src/arm/windows/init.c",
+        "sha256": "c1141f78d6079276861b46cb97b201525016ccc420be270512b9f369f5d56d08"
+      },
+      "dependency": "pytorch_cpuinfo",
+      "historical_upstream_patches": [
+        {
+          "bytes": 21154,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/cpuinfo/enable_deinit_refcounting.patch",
+          "sha256": "fdd1754381c06135d4317cca32133b91a1def4ce42c822763a0bdddd60671836"
+        }
+      ],
+      "inserted_bytes": 392,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "cpuinfo-66ee79c038d70dad9f08705b2c9b3e58f6d8f512/LICENSE",
+          "bytes": 1424,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/8e7e60636c3aa0cb03571a1a841ce5697f9551ff92b3c426c2561613d15ade70.txt",
+          "sha256": "8e7e60636c3aa0cb03571a1a841ce5697f9551ff92b3c426c2561613d15ade70"
+        }
+      ],
+      "recovery": {
+        "bytes": 1879,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/d1f7f938974852bd93c7766b4f463553975fbb61c4a7d0fa910d7fbb0cde156b.json",
+        "sha256": "d1f7f938974852bd93c7766b4f463553975fbb61c4a7d0fa910d7fbb0cde156b"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r3/b/Release/_deps/pytorch_cpuinfo-src/src/arm/windows/init.c",
+      "source_bytes": 10157,
+      "source_sha256": "1f92891e0315eea859d5437d169718a4e64aee17f014112bd6493cc870a927b6"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3857141,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/pytorch_cpuinfo.zip",
+          "sha256": "b93044263ee072e9be3577bda52f48d5a4dd9fcb80091529471c8d2bfe59219d"
+        },
+        "bytes": 29924,
+        "member": "src/arm/windows/init-by-logical-sys-info.c",
+        "sha256": "a6e9be17442afb4ef6f997dc2e7872b8757c352d9e46c8cd50df17668b4601da"
+      },
+      "dependency": "pytorch_cpuinfo",
+      "historical_upstream_patches": [
+        {
+          "bytes": 21154,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/cpuinfo/enable_deinit_refcounting.patch",
+          "sha256": "fdd1754381c06135d4317cca32133b91a1def4ce42c822763a0bdddd60671836"
+        }
+      ],
+      "inserted_bytes": 1507,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "cpuinfo-66ee79c038d70dad9f08705b2c9b3e58f6d8f512/LICENSE",
+          "bytes": 1424,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/8e7e60636c3aa0cb03571a1a841ce5697f9551ff92b3c426c2561613d15ade70.txt",
+          "sha256": "8e7e60636c3aa0cb03571a1a841ce5697f9551ff92b3c426c2561613d15ade70"
+        }
+      ],
+      "recovery": {
+        "bytes": 3737,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/c5a5e57d4e83a8d44827f315029895cf8eb248baf79b3c3c21170fd0f5c5dbfb.json",
+        "sha256": "c5a5e57d4e83a8d44827f315029895cf8eb248baf79b3c3c21170fd0f5c5dbfb"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r5/b/Release/_deps/pytorch_cpuinfo-src/src/arm/windows/init-by-logical-sys-info.c",
+      "source_bytes": 31037,
+      "source_sha256": "ac901791a1718abb0d2c25a26e442b36e0ba33474ae41d4c99a6fa07c7e8519d"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3857141,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/pytorch_cpuinfo.zip",
+          "sha256": "b93044263ee072e9be3577bda52f48d5a4dd9fcb80091529471c8d2bfe59219d"
+        },
+        "bytes": 9765,
+        "member": "src/arm/windows/init.c",
+        "sha256": "c1141f78d6079276861b46cb97b201525016ccc420be270512b9f369f5d56d08"
+      },
+      "dependency": "pytorch_cpuinfo",
+      "historical_upstream_patches": [
+        {
+          "bytes": 21154,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/cpuinfo/enable_deinit_refcounting.patch",
+          "sha256": "fdd1754381c06135d4317cca32133b91a1def4ce42c822763a0bdddd60671836"
+        }
+      ],
+      "inserted_bytes": 392,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "cpuinfo-66ee79c038d70dad9f08705b2c9b3e58f6d8f512/LICENSE",
+          "bytes": 1424,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/8e7e60636c3aa0cb03571a1a841ce5697f9551ff92b3c426c2561613d15ade70.txt",
+          "sha256": "8e7e60636c3aa0cb03571a1a841ce5697f9551ff92b3c426c2561613d15ade70"
+        }
+      ],
+      "recovery": {
+        "bytes": 1879,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/d1f7f938974852bd93c7766b4f463553975fbb61c4a7d0fa910d7fbb0cde156b.json",
+        "sha256": "d1f7f938974852bd93c7766b4f463553975fbb61c4a7d0fa910d7fbb0cde156b"
+      },
+      "source": "artifacts/advanced-split/ort130-x64-owned-r5/b/Release/_deps/pytorch_cpuinfo-src/src/arm/windows/init.c",
+      "source_bytes": 10157,
+      "source_sha256": "1f92891e0315eea859d5437d169718a4e64aee17f014112bd6493cc870a927b6"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3857141,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/pytorch_cpuinfo.zip",
+          "sha256": "b93044263ee072e9be3577bda52f48d5a4dd9fcb80091529471c8d2bfe59219d"
+        },
+        "bytes": 29924,
+        "member": "src/arm/windows/init-by-logical-sys-info.c",
+        "sha256": "a6e9be17442afb4ef6f997dc2e7872b8757c352d9e46c8cd50df17668b4601da"
+      },
+      "dependency": "pytorch_cpuinfo",
+      "historical_upstream_patches": [
+        {
+          "bytes": 21154,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/cpuinfo/enable_deinit_refcounting.patch",
+          "sha256": "fdd1754381c06135d4317cca32133b91a1def4ce42c822763a0bdddd60671836"
+        }
+      ],
+      "inserted_bytes": 1507,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "cpuinfo-66ee79c038d70dad9f08705b2c9b3e58f6d8f512/LICENSE",
+          "bytes": 1424,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/8e7e60636c3aa0cb03571a1a841ce5697f9551ff92b3c426c2561613d15ade70.txt",
+          "sha256": "8e7e60636c3aa0cb03571a1a841ce5697f9551ff92b3c426c2561613d15ade70"
+        }
+      ],
+      "recovery": {
+        "bytes": 3737,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/c5a5e57d4e83a8d44827f315029895cf8eb248baf79b3c3c21170fd0f5c5dbfb.json",
+        "sha256": "c5a5e57d4e83a8d44827f315029895cf8eb248baf79b3c3c21170fd0f5c5dbfb"
+      },
+      "source": "artifacts/advanced-split/ort130-x64/b/Release/_deps/pytorch_cpuinfo-src/src/arm/windows/init-by-logical-sys-info.c",
+      "source_bytes": 31037,
+      "source_sha256": "ac901791a1718abb0d2c25a26e442b36e0ba33474ae41d4c99a6fa07c7e8519d"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3857141,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/downloads/pytorch_cpuinfo.zip",
+          "sha256": "b93044263ee072e9be3577bda52f48d5a4dd9fcb80091529471c8d2bfe59219d"
+        },
+        "bytes": 9765,
+        "member": "src/arm/windows/init.c",
+        "sha256": "c1141f78d6079276861b46cb97b201525016ccc420be270512b9f369f5d56d08"
+      },
+      "dependency": "pytorch_cpuinfo",
+      "historical_upstream_patches": [
+        {
+          "bytes": 21154,
+          "path": "artifacts/advanced-split/ort130-x64-owned-r5/source/cmake/patches/cpuinfo/enable_deinit_refcounting.patch",
+          "sha256": "fdd1754381c06135d4317cca32133b91a1def4ce42c822763a0bdddd60671836"
+        }
+      ],
+      "inserted_bytes": 392,
+      "legacy": false,
+      "notices": [
+        {
+          "archive_member": "cpuinfo-66ee79c038d70dad9f08705b2c9b3e58f6d8f512/LICENSE",
+          "bytes": 1424,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/8e7e60636c3aa0cb03571a1a841ce5697f9551ff92b3c426c2561613d15ade70.txt",
+          "sha256": "8e7e60636c3aa0cb03571a1a841ce5697f9551ff92b3c426c2561613d15ade70"
+        }
+      ],
+      "recovery": {
+        "bytes": 1879,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/d1f7f938974852bd93c7766b4f463553975fbb61c4a7d0fa910d7fbb0cde156b.json",
+        "sha256": "d1f7f938974852bd93c7766b4f463553975fbb61c4a7d0fa910d7fbb0cde156b"
+      },
+      "source": "artifacts/advanced-split/ort130-x64/b/Release/_deps/pytorch_cpuinfo-src/src/arm/windows/init.c",
+      "source_bytes": 10157,
+      "source_sha256": "1f92891e0315eea859d5437d169718a4e64aee17f014112bd6493cc870a927b6"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3209602,
+          "path": "artifacts/local/one-airk-1.8.14/dependency-mirror/github.com/google/flatbuffers/archive/refs/tags/v23.5.26.zip",
+          "sha256": "57bd580c0772fd1a726c34ab8bf05325293bc5f9c165060a898afa1feeeb95e1"
+        },
+        "bytes": 23660,
+        "member": "CMakeLists.txt",
+        "sha256": "8b29bd0b59edbe62aa20b8a9818d8acb879a79a0c82562dfa1f887f4d09d245f"
+      },
+      "dependency": "flatbuffers",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1190,
+          "path": "artifacts/local/one-airk-1.8.14/onnxruntime-source/cmake/patches/flatbuffers/flatbuffers.patch",
+          "sha256": "9c597b79b3b35302a19b31a42b4680c4e36f9c3934a5b1b988ddd5a36c68ee33"
+        }
+      ],
+      "inserted_bytes": 98,
+      "legacy": true,
+      "notices": [
+        {
+          "archive_member": "flatbuffers-23.5.26/LICENSE",
+          "bytes": 11358,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ],
+      "recovery": {
+        "bytes": 593,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/1fe1556909712d6b07e79042f3baebaaa4689e42f97338ed2bd9ed7db5826be9.json",
+        "sha256": "1fe1556909712d6b07e79042f3baebaaa4689e42f97338ed2bd9ed7db5826be9"
+      },
+      "source": "artifacts/local/one-airk-1.8.14/b/Release/_deps/flatbuffers-src/CMakeLists.txt",
+      "source_bytes": 23689,
+      "source_sha256": "2bca31a7370e907250fa6e4af661d4b3d7f09970e781541366c130ad154977e6"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 3209602,
+          "path": "artifacts/local/one-airk-1.8.14/dependency-mirror/github.com/google/flatbuffers/archive/refs/tags/v23.5.26.zip",
+          "sha256": "57bd580c0772fd1a726c34ab8bf05325293bc5f9c165060a898afa1feeeb95e1"
+        },
+        "bytes": 10774,
+        "member": "include/flatbuffers/flatbuffers.h",
+        "sha256": "a00ce9610586dac436efe0b6d27b3aa12eaaf397c04c17c7c7452d5afabd0144"
+      },
+      "dependency": "flatbuffers",
+      "historical_upstream_patches": [
+        {
+          "bytes": 1190,
+          "path": "artifacts/local/one-airk-1.8.14/onnxruntime-source/cmake/patches/flatbuffers/flatbuffers.patch",
+          "sha256": "9c597b79b3b35302a19b31a42b4680c4e36f9c3934a5b1b988ddd5a36c68ee33"
+        }
+      ],
+      "inserted_bytes": 90,
+      "legacy": true,
+      "notices": [
+        {
+          "archive_member": "flatbuffers-23.5.26/LICENSE",
+          "bytes": 11358,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ],
+      "recovery": {
+        "bytes": 581,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/0fca95a9e6c10b3ac16bf71466663b67a2124ecfb0fefad28edbcb2ab9bf656d.json",
+        "sha256": "0fca95a9e6c10b3ac16bf71466663b67a2124ecfb0fefad28edbcb2ab9bf656d"
+      },
+      "source": "artifacts/local/one-airk-1.8.14/b/Release/_deps/flatbuffers-src/include/flatbuffers/flatbuffers.h",
+      "source_bytes": 10846,
+      "source_sha256": "b0116eca530026e2d235f909143b171b3d5788c7232aaacf26ea3e83292845db"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 15767281,
+          "path": "artifacts/local/one-airk-1.8.14/dependency-mirror/github.com/onnx/onnx/archive/refs/tags/v1.17.0.zip",
+          "sha256": "54ab63aec98693c8a021aa708aad046183a0d166808733429fde7f644c84d637"
+        },
+        "bytes": 28943,
+        "member": "CMakeLists.txt",
+        "sha256": "3d1c8d9844282e80f14daecdfc58e92eb0c146c6fe9096c0cfc610d08d06f065"
+      },
+      "dependency": "onnx",
+      "historical_upstream_patches": [
+        {
+          "bytes": 3293,
+          "path": "artifacts/local/one-airk-1.8.14/onnxruntime-source/cmake/patches/onnx/onnx.patch",
+          "sha256": "f8b364cee8a617add78ab577cfe9d5b61084c8829fe9e95fd638d125bf9f1553"
+        }
+      ],
+      "inserted_bytes": 43,
+      "legacy": true,
+      "notices": [
+        {
+          "archive_member": "onnx-1.17.0/LICENSE",
+          "bytes": 11358,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ],
+      "recovery": {
+        "bytes": 883,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/fbc178a7c2ee81f485cb14def2f7f5004a3803e5dc4ec242afa940a5094e6737.json",
+        "sha256": "fbc178a7c2ee81f485cb14def2f7f5004a3803e5dc4ec242afa940a5094e6737"
+      },
+      "source": "artifacts/local/one-airk-1.8.14/b/Release/_deps/onnx-src/CMakeLists.txt",
+      "source_bytes": 28192,
+      "source_sha256": "572796ecf73c7c29154dd464f5d4f0afd742bdd70d721b351315c3b5b3d77b28"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 15767281,
+          "path": "artifacts/local/one-airk-1.8.14/dependency-mirror/github.com/onnx/onnx/archive/refs/tags/v1.17.0.zip",
+          "sha256": "54ab63aec98693c8a021aa708aad046183a0d166808733429fde7f644c84d637"
+        },
+        "bytes": 962,
+        "member": "onnx/common/file_utils.h",
+        "sha256": "b91f9e77e8cb452eefb4540acbc9749fe0c740c326b4124675b941bfb184e920"
+      },
+      "dependency": "onnx",
+      "historical_upstream_patches": [
+        {
+          "bytes": 3293,
+          "path": "artifacts/local/one-airk-1.8.14/onnxruntime-source/cmake/patches/onnx/onnx.patch",
+          "sha256": "f8b364cee8a617add78ab577cfe9d5b61084c8829fe9e95fd638d125bf9f1553"
+        }
+      ],
+      "inserted_bytes": 74,
+      "legacy": true,
+      "notices": [
+        {
+          "archive_member": "onnx-1.17.0/LICENSE",
+          "bytes": 11358,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ],
+      "recovery": {
+        "bytes": 735,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/57673817d8f318bdc7be774f9687ab9f2838d40e3b9bede7c00adaa25ea845fb.json",
+        "sha256": "57673817d8f318bdc7be774f9687ab9f2838d40e3b9bede7c00adaa25ea845fb"
+      },
+      "source": "artifacts/local/one-airk-1.8.14/b/Release/_deps/onnx-src/onnx/common/file_utils.h",
+      "source_bytes": 860,
+      "source_sha256": "fe407416a3e5bf3bfb99c80fa0dd7a2efd6e1dd1751a34991b7340f154e0c1a7"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 15767281,
+          "path": "artifacts/local/one-airk-1.8.14/dependency-mirror/github.com/onnx/onnx/archive/refs/tags/v1.17.0.zip",
+          "sha256": "54ab63aec98693c8a021aa708aad046183a0d166808733429fde7f644c84d637"
+        },
+        "bytes": 1715,
+        "member": "onnx/onnx_pb.h",
+        "sha256": "7228e03949a34952ca0a61e7eb52fb6f6b396aa55e53ac477ea662a9d6781c78"
+      },
+      "dependency": "onnx",
+      "historical_upstream_patches": [
+        {
+          "bytes": 3293,
+          "path": "artifacts/local/one-airk-1.8.14/onnxruntime-source/cmake/patches/onnx/onnx.patch",
+          "sha256": "f8b364cee8a617add78ab577cfe9d5b61084c8829fe9e95fd638d125bf9f1553"
+        }
+      ],
+      "inserted_bytes": 547,
+      "legacy": true,
+      "notices": [
+        {
+          "archive_member": "onnx-1.17.0/LICENSE",
+          "bytes": 11358,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ],
+      "recovery": {
+        "bytes": 1368,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/5c299cf83a33f3ac739cff71b077fb611732e87f146c2080bc364f0e174b210a.json",
+        "sha256": "5c299cf83a33f3ac739cff71b077fb611732e87f146c2080bc364f0e174b210a"
+      },
+      "source": "artifacts/local/one-airk-1.8.14/b/Release/_deps/onnx-src/onnx/onnx_pb.h",
+      "source_bytes": 2262,
+      "source_sha256": "f5fab29038e1bdba7aaaa9b08319aaa5ac11bd5fb56671b704fe1a632a63d336"
+    },
+    {
+      "base": {
+        "archive": {
+          "bytes": 7180794,
+          "path": "artifacts/local/one-airk-1.8.14/dependency-mirror/github.com/protocolbuffers/protobuf/archive/refs/tags/v21.12.zip",
+          "sha256": "6a31b662deaeb0ac35e6287bda2f3369b19836e6c9f8828d4da444346f420298"
+        },
+        "bytes": 13371,
+        "member": "CMakeLists.txt",
+        "sha256": "ceca9c9757f279109ba37c5e88e7c1f69e124e1ca2bd424405ea8d93b4fc931f"
+      },
+      "dependency": "protobuf",
+      "historical_upstream_patches": [
+        {
+          "bytes": 2299,
+          "path": "artifacts/local/one-airk-1.8.14/onnxruntime-source/cmake/patches/protobuf/protobuf_cmake.patch",
+          "sha256": "15c25dc027cdae5fabe907d1ca9d9372c654277e82c50c3c706d4f5946a6933d"
+        }
+      ],
+      "inserted_bytes": 54,
+      "legacy": true,
+      "notices": [
+        {
+          "archive_member": "protobuf-21.12/LICENSE",
+          "bytes": 1732,
+          "path": "scripts/arbiter/research/ort_dependency_recovery_r1/notices/6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d.txt",
+          "sha256": "6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d"
+        }
+      ],
+      "recovery": {
+        "bytes": 1071,
+        "path": "scripts/arbiter/research/ort_dependency_recovery_r1/records/103f40b00a971e63c73d334a307d08c6f8fb3fa7bee96f87a7f3eeb96729cf85.json",
+        "sha256": "103f40b00a971e63c73d334a307d08c6f8fb3fa7bee96f87a7f3eeb96729cf85"
+      },
+      "source": "artifacts/local/one-airk-1.8.14/b/Release/_deps/protobuf-src/CMakeLists.txt",
+      "source_bytes": 13194,
+      "source_sha256": "55df1826401ea4f33c2c3af41d8cd530bdfa94b45cb7fc76c6199b3170e9a19a"
+    }
+  ],
+  "schema": "airk.observed-source-recovery/1",
+  "scope": "Exact observed dependency changes, attribution unchanged; no build selection or historical execution claim.",
+  "whole_directory_coverage": false
+}

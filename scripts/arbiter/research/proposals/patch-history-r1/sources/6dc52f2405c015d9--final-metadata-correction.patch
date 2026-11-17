@@ -1,0 +1,75 @@
+--- a/crates/airk-core/src/arbiter/CONTRACT.md
++++ b/crates/airk-core/src/arbiter/CONTRACT.md
+@@ -1023,3 +1023,5 @@
+ DeviceVariantStatus preserves every prior ProfileStatus datum: cpu_fit, qualified_targets, tasks, download_bytes and memory_reservation_bytes, in addition to exact manifest/execution/backend/precision/lifecycle/admission/device-evidence fields. from_description is descriptive copying only: exact immutable native Profile metadata, checked sum of logical asset bytes, no inferred permission or qualification. Per-model summary retains availability/reason/tasks even with no variants. Native owner sets model Requested only for admitted enable-intent without an actual Ready variant, Ready only for an actual Ready variant, Unqualified if none admitted; transient runtime/assets/fit failures remain in variants/stage. This is a UI affordance observation, never an execution permit. Frontends never invent task, fit, target, byte or admission facts.
+ 
+ Rust-native semantic cases cover independent stages, all three model slots, requested vs actual FP32/FP16/CPU fallback, typed refusals, local candidate vs qualification, every lifecycle availability, eight current management operations, twelve disabled configuration combinations and exact legacy raw-SHA/revision migration input. All fixture cases explicitly qualification=false; synthetic evidence hashes do not qualify hardware/models. Actual absence is ordinary disabled configurable state without InitializationStatus; retained v1/v2 may have a positively proven non-writable initialization observation. Ambiguous/corrupt/unresolved current state is typed failure, never fake disabled current revision1.
++
++Empty-variant model summaries retain Rust-owned supported model-family task roles (FocusRank or ContextAction), even when availability remains Unqualified. SelectedModel::supported_tasks is descriptive only, never model/device admission. Frontend enrollment controls consume native metadata; they never infer roles from labels. Nonempty variants retain the union of actual immutable descriptions.
+--- a/crates/airk-core/src/arbiter/device/state/tests.rs
++++ b/crates/airk-core/src/arbiter/device/state/tests.rs
+@@ -14,7 +14,7 @@
+     )
+ }
+ fn stage(stage: Stage, configuration: &DeviceStageConfiguration) -> DeviceStageStatus {
+-    DeviceStageStatus {
++    let mut value = DeviceStageStatus {
+         selected_model: configuration.selected_model,
+         device_policy: configuration.device_policy,
+         gpu_precision: configuration.gpu_precision,
+@@ -49,7 +49,15 @@
+                 },
+             ],
+         },
+-    }
++    };
++    for model in &mut value.models {
++        model.tasks = crate::arbiter::stage_tests::profile_status(
++            model.model.model(),
++            Availability::Unqualified,
++        )
++        .tasks;
++    }
++    value
+ }
+ fn status() -> DeviceStatus {
+     let configuration = configuration();
+@@ -764,3 +772,22 @@
+     }
+     Ok(())
+ }
++
++#[test]
++fn empty_variant_model_metadata_retains_native_supported_tasks_without_admission() -> Result<()> {
++    let value = status();
++    value.validate()?;
++    for model in value.focus.models.iter().chain(&value.context.models) {
++        assert!(model.variants.is_empty());
++        assert_eq!(model.availability, Availability::Unqualified);
++        assert_eq!(model.tasks, model.model.supported_tasks());
++        assert!(!model.tasks.is_empty());
++        assert!(
++            model
++                .tasks
++                .iter()
++                .all(|task| model.model.stage().permits(*task))
++        );
++    }
++    Ok(())
++}
+--- a/crates/airk-core/src/arbiter/device.rs
++++ b/crates/airk-core/src/arbiter/device.rs
+@@ -26,6 +26,13 @@
+     ContextLarge,
+ }
+ impl SelectedModel {
++    /// Supported model-family roles are descriptive metadata, not admission.
++    pub fn supported_tasks(self) -> BTreeSet<Task> {
++        match self {
++            Self::Focus => BTreeSet::from([Task::FocusRank]),
++            Self::ContextCompact | Self::ContextLarge => BTreeSet::from([Task::ContextAction]),
++        }
++    }
+     pub fn model(self) -> ModelChoice {
+         match self {
+             Self::Focus => ModelChoice::FocusQwenReranker06B,

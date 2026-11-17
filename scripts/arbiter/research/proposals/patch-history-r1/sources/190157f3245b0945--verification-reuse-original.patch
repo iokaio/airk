@@ -1,0 +1,385 @@
+--- a/crates/airk-cli/src/runtime_activation.rs
++++ b/crates/airk-cli/src/runtime_activation.rs
+@@ -217,6 +217,33 @@
+             tokio::time::Instant::now() < until,
+             "OS-managed runtime did not report exact healthy payload within 60 seconds"
+         );
++        tokio::time::sleep(Duration::from_millis(100)).await;
++    }
++}
++
++/// Ordinary settled election only. The legacy activation/probe/rollback/startup
++/// routes retain their existing independent verification and saved identities.
++pub(super) async fn start_verified(verified: &VerifiedSelection<'_>) -> Result<ServiceHealth> {
++    let root = verified.authority.root;
++    ensure!(verified.selection.active == verified.approval.manifest_sha256,
++        "runtime selection identity mismatch");
++    let manager = crate::service_manager::ServiceManager::for_runtime(root)?;
++    if !manager.owns_restart()? {
++        return start_with_digest(root, &verified.approval, &verified.main, true,
++            Some(&verified.main_sha256)).await;
++    }
++    // OS ownership is still authoritative; never start a competing detached child.
++    if let Ok(observation) = health(root, &verified.approval, &verified.main_sha256).await {
++        return Ok(observation);
++    }
++    manager.start()?;
++    let until = tokio::time::Instant::now() + Duration::from_secs(60);
++    loop {
++        if let Ok(observation) = health(root, &verified.approval, &verified.main_sha256).await {
++            return Ok(observation);
++        }
++        ensure!(tokio::time::Instant::now() < until,
++            "OS-managed runtime did not report exact healthy payload within 60 seconds");
+         tokio::time::sleep(Duration::from_millis(100)).await;
+     }
+ }
+--- a/crates/airk-cli/src/runtime_install.rs
++++ b/crates/airk-cli/src/runtime_install.rs
+@@ -797,6 +797,16 @@
+ }
+ 
+ fn manifest(root: &Path, approved: &str) -> Result<(Vec<u8>, InstallManifest)> {
++    manifest_with_hasher(root, approved, runtime_pair::digest_file)
++}
++
++// Test injection counts actual inventory hash operations without process-global
++// mutable state; production always supplies the existing guarded file hasher.
++fn manifest_with_hasher(
++    root: &Path,
++    approved: &str,
++    mut hash: impl FnMut(&Path) -> Result<String>,
++) -> Result<(Vec<u8>, InstallManifest)> {
+     digest(approved)?;
+     let bytes = read_bounded(&root.join("airk-install.json"), MAX_MANIFEST)?;
+     ensure!(
+@@ -882,11 +892,19 @@
+             .context("runtime payload byte overflow")?;
+         ensure!(total <= MAX_PAYLOAD, "runtime payload exceeds disk budget");
+         ensure!(
+-            runtime_pair::digest_file(&file)? == *expected,
++            hash(&file)? == *expected,
+             "runtime payload digest mismatch: {name}"
+         );
+     }
+-    runtime_pair::verify_installed_pair(&root.join(main_name()), &manifest.version)?;
++    // Both actual images (and the pair receipt) were just hashed against the
++    // independently approved inventory. Retain pair topology/ancestor/host/version
++    // checks without reading the same main/helper bytes a second time.
++    let (_, _, pair) = runtime_pair::read_installed_pair(&root.join(main_name()), &manifest.version)?;
++    ensure!(
++        pair.airk_sha256 == manifest.files[main_name()]
++            && pair.embed_sha256 == manifest.files[helper_name()],
++        "runtime executable pair digest mismatch"
++    );
+     Ok((bytes, manifest))
+ }
+ 
+@@ -971,6 +989,14 @@
+ }
+ 
+ pub fn verify_runtime(root: &Path, identity: &str) -> Result<(PathBuf, Approval)> {
++    let (main, approval, _) = verify_runtime_inventory(root, identity)?;
++    Ok((main, approval))
++}
++
++fn verify_runtime_inventory(
++    root: &Path,
++    identity: &str,
++) -> Result<(PathBuf, Approval, InstallManifest)> {
+     digest(identity)?;
+     ensure!(root.is_dir(), "runtime installation is missing");
+     local_ipc::prepare_root(root)?;
+@@ -979,11 +1005,11 @@
+             policy.approval.manifest_sha256 == identity,
+             "managed runtime is pinned to another approved identity"
+         );
+-        return policy.verify();
++        return policy.verify_inventory();
+     }
+     let (main, approval, inventory) = owned_inventory(root, identity)?;
+     managed::verify_topology(runtime_pair::payload_root(&main)?, &inventory, true)?;
+-    Ok((main, approval))
++    Ok((main, approval, inventory))
+ }
+ 
+ /// Ownership proof for bounded retirement. Unknown files still prevent execution,
+@@ -1010,6 +1036,11 @@
+ }
+ 
+ pub fn selected(root: &Path) -> Result<(Selection, PathBuf, Approval)> {
++    let (selection, main, approval, _) = selected_inventory(root)?;
++    Ok((selection, main, approval))
++}
++
++fn selected_inventory(root: &Path) -> Result<(Selection, PathBuf, Approval, InstallManifest)> {
+     payload_repair::require_settled(root)?;
+     ensure!(root.is_dir(), "runtime installation is missing");
+     local_ipc::prepare_root(root)?;
+@@ -1018,8 +1049,8 @@
+         "runtime uninstall is in progress; resume uninstall before installing or launching"
+     );
+     let selection = selection_record(root)?;
+-    let (main, approval) = verify_runtime(root, &selection.active)?;
+-    Ok((selection, main, approval))
++    let (main, approval, inventory) = verify_runtime_inventory(root, &selection.active)?;
++    Ok((selection, main, approval, inventory))
+ }
+ 
+ /// A private selection record protects active/rollback identities during cleanup;
+@@ -1169,9 +1200,22 @@
+     main: &Path,
+     enforce_backoff: bool,
+ ) -> Result<ServiceHealth> {
++    start_with_digest(root, approval, main, enforce_backoff, None).await
++}
++
++async fn start_with_digest(
++    root: &Path,
++    approval: &Approval,
++    main: &Path,
++    enforce_backoff: bool,
++    verified_digest: Option<&str>,
++) -> Result<ServiceHealth> {
+     let control = layout::control(root)?;
+     local_ipc::prepare_root(&control)?;
+-    let expected_sha256 = runtime_pair::digest_file(main)?;
++    let expected_sha256 = match verified_digest {
++        Some(digest) => digest.to_owned(),
++        None => runtime_pair::digest_file(main)?,
++    };
+     if let Ok(observation) = health(root, approval, &expected_sha256).await {
+         if observation.uptime_ms >= 60_000 {
+             replace_json(
+@@ -1268,8 +1312,37 @@
+     }
+ }
+ 
++// This capability is deliberately neither Clone nor serializable. Its borrow
++// keeps the exact installer lock/root authority alive until startup completes.
++// It is minted only after full current inventory AND topology verification.
++struct InstallerAuthority<'a> {
++    root: &'a Path,
++    _lock: &'a File,
++}
++struct VerifiedSelection<'a> {
++    authority: &'a InstallerAuthority<'a>,
++    selection: Selection,
++    main: PathBuf,
++    approval: Approval,
++    main_sha256: String,
++}
++fn selected_verified<'a>(authority: &'a InstallerAuthority<'a>) -> Result<VerifiedSelection<'a>> {
++    let (selection, main, approval, inventory) = selected_inventory(authority.root)?;
++    ensure!(selection.active == approval.manifest_sha256, "runtime selection identity mismatch");
++    let main_sha256 = inventory.files[main_name()].clone();
++    Ok(VerifiedSelection { authority, selection, main, approval, main_sha256 })
++}
++
+ pub async fn ensure_running(root: &Path) -> Result<ServiceHealth> {
+-    let _lock = connection_install_lock(root, Duration::from_secs(60)).await?;
++    let lock = connection_install_lock(root, Duration::from_secs(60)).await?;
++    let authority = InstallerAuthority { root, _lock: &lock };
++    ensure_running_locked(&authority).await
++}
++
++async fn ensure_running_locked(authority: &InstallerAuthority<'_>) -> Result<ServiceHealth> {
++    let root = authority.root;
++    // Preserve direct callers' settlement order: a pending STOP authenticates
++    // saved identity and must not require a runnable payload just to drain it.
+     payload_repair::require_settled(root)?;
+     lifecycle::settle(root).await?;
+     if managed::read(root)?.is_some() {
+@@ -1279,8 +1352,8 @@
+         activation::resume(root).await?;
+     }
+     launcher_repair::require_settled(root)?;
+-    let (_, main, approval) = selected(root)?;
+-    activation::start_selected(root, &approval, &main, None).await
++    let verified = selected_verified(authority)?;
++    activation::start_verified(&verified).await
+ }
+ 
+ pub(crate) fn startup_selected(root: &Path) -> Result<(PathBuf, Approval)> {
+--- a/crates/airk-cli/src/runtime_install_tests.rs
++++ b/crates/airk-cli/src/runtime_install_tests.rs
+@@ -456,3 +456,120 @@
+     assert!(!directory.join("LICENSE").exists());
+     Ok(())
+ }
++
++
++#[test]
++fn manifest_hashes_every_inventory_file_once_and_still_checks_pair_fields() -> Result<()> {
++    let (_owner, root, identity) = unselected_fixture()?;
++    let payload = root.join("runtimes").join(&identity);
++    let mut hashes = BTreeMap::<PathBuf, usize>::new();
++    let (_, inventory) = manifest_with_hasher(&payload, &identity, |path| {
++        *hashes.entry(path.to_path_buf()).or_default() += 1;
++        runtime_pair::digest_file(path)
++    })?;
++    assert_eq!(hashes.len(), inventory.files.len());
++    for name in inventory.files.keys() {
++        assert_eq!(hashes.get(&payload.join(name)), Some(&1), "{name}");
++    }
++    assert_eq!(hashes.get(&payload.join(main_name())), Some(&1));
++    assert_eq!(hashes.get(&payload.join(helper_name())), Some(&1));
++    // Authenticate a deliberately inconsistent pair receipt through a new
++    // manifest; successful file hashes alone must not qualify this pair.
++    let mut pair: runtime_pair::RuntimePair = serde_json::from_slice(&fs::read(payload.join("airk-runtime.json"))?)?;
++    pair.embed_sha256 = "a".repeat(64);
++    fs::write(payload.join("airk-runtime.json"), serde_json::to_vec(&pair)?)?;
++    let mut changed = inventory;
++    changed.files.insert("airk-runtime.json".into(), runtime_pair::digest_file(&payload.join("airk-runtime.json"))?);
++    let approved = write_manifest(&payload, &changed)?;
++    let error = manifest(&payload, &approved).err().context("inconsistent pair was accepted")?;
++    assert!(error.to_string().contains("runtime executable pair digest mismatch"));
++    Ok(())
++}
++
++#[test]
++fn locked_selection_keeps_full_topology_and_distinct_role_verification() -> Result<()> {
++    let (_owner, root, identity) = unselected_fixture()?;
++    replace_json(&root, "selected.json", &Selection { schema: 1, active: identity.clone(), previous: None })?;
++    let main = root.join("runtimes").join(&identity).join(main_name());
++    crate::process_roles::install(&main)?;
++    let lock = install_lock(&root)?;
++    let authority = InstallerAuthority { root: &root, _lock: &lock };
++    let verified = selected_verified(&authority)?;
++    assert_eq!(verified.main_sha256, runtime_pair::digest_file(&main)?);
++    let role = crate::process_roles::executable(&verified.main, crate::process_roles::Role::Service)?;
++    assert_ne!(role, verified.main);
++    fs::write(&role, b"modified independent service alias")?;
++    assert!(crate::process_roles::executable(&verified.main, crate::process_roles::Role::Service).is_err());
++    assert!(selected_verified(&authority).is_err(), "topology must still hash an independently modified alias");
++    Ok(())
++}
++
++#[test]
++fn locked_selection_still_refuses_unlisted_and_tampered_payload_files() -> Result<()> {
++    let (_owner, root, identity) = unselected_fixture()?;
++    replace_json(&root, "selected.json", &Selection { schema: 1, active: identity.clone(), previous: None })?;
++    let payload = root.join("runtimes").join(&identity);
++    let lock = install_lock(&root)?;
++    let authority = InstallerAuthority { root: &root, _lock: &lock };
++    assert!(selected_verified(&authority).is_ok());
++    let unknown = payload.join("unlisted-neighbor.bin");
++    fs::write(&unknown, b"original unknown neighboring fixture")?;
++    assert!(selected_verified(&authority).is_err());
++    fs::remove_file(unknown)?;
++    fs::write(payload.join(helper_name()), b"modified helper fixture")?;
++    assert!(selected_verified(&authority).is_err());
++    Ok(())
++}
++
++#[tokio::test]
++async fn selection_after_installer_wait_is_fully_current_not_the_pre_wait_identity() -> Result<()> {
++    let (_owner, root, first) = unselected_fixture()?;
++    replace_json(&root, "selected.json", &Selection { schema: 1, active: first.clone(), previous: None })?;
++    let pre_wait = selected(&root)?.2;
++    let lock = install_lock(&root)?;
++    let next = root.join("next-original-fixture");
++    local_ipc::prepare_root(&next)?;
++    fixture(&next)?;
++    fs::write(next.join("LICENSE"), b"Different original license fixture")?;
++    let mut inventory: InstallManifest = serde_json::from_slice(&fs::read(next.join("airk-install.json"))?)?;
++    inventory.files.insert("LICENSE".into(), runtime_pair::digest_file(&next.join("LICENSE"))?);
++    let second = write_manifest(&next, &inventory)?;
++    replace_json(&next, "approval.json", &Approval { schema: 1, manifest_sha256: second.clone(),
++        version: env!("CARGO_PKG_VERSION").into(), verification_basis: VerificationBasis::OrganizationDigest })?;
++    fs::rename(&next, root.join("runtimes").join(&second))?;
++    let (entered, blocked) = tokio::sync::oneshot::channel();
++    let waiting_root = root.clone();
++    let waiter = tokio::spawn(async move {
++        let _ = entered.send(());
++        let lock = connection_install_lock(&waiting_root, Duration::from_secs(5)).await?;
++        let authority = InstallerAuthority { root: &waiting_root, _lock: &lock };
++        let verified = selected_verified(&authority)?;
++        Ok::<_, anyhow::Error>((verified.approval.manifest_sha256.clone(), verified.main_sha256.clone()))
++    });
++    blocked.await?;
++    replace_json(&root, "selected.json", &Selection { schema: 1, active: second.clone(), previous: Some(first) })?;
++    drop(lock);
++    let (observed, _) = waiter.await??;
++    assert_eq!(observed, second);
++    assert_ne!(observed, pre_wait.manifest_sha256, "installed_control must retain its reconnect guard rather than accept another selection");
++    Ok(())
++}
++
++#[tokio::test]
++async fn direct_stopped_ensure_refuses_start_before_qualifying_a_missing_payload() -> Result<()> {
++    let (_owner, root, identity) = unselected_fixture()?;
++    replace_json(&root, "selected.json", &Selection { schema: 1, active: identity.clone(), previous: None })?;
++    let control = layout::control(&root)?;
++    local_ipc::prepare_root(&control)?;
++    drop(airk_store::service::registry::ServiceRegistry::open(&control, airk_kernel::service_broker::new_instance_id()?)?);
++    let database = control.join("service-1.4.sqlite3");
++    let connection = rusqlite::Connection::open(&database)?;
++    connection.execute("UPDATE service_lifecycle_state SET stopped=1 WHERE id=1", [])?;
++    drop(connection);
++    fs::remove_file(root.join("runtimes").join(&identity).join(main_name()))?;
++    let error = ensure_running(&root).await.err().context("stopped service was started")?;
++    assert!(error.to_string().contains("service_explicitly_stopped"));
++    assert!(!root.join("bootstrap.json").exists());
++    assert!(!root.join(format!("startup-{identity}.json")).exists());
++    Ok(())
++}
+--- a/crates/airk-cli/src/runtime_managed.rs
++++ b/crates/airk-cli/src/runtime_managed.rs
+@@ -84,6 +84,10 @@
+         &self.executable_sha256
+     }
+     pub(super) fn verify(&self) -> Result<(PathBuf, Approval)> {
++        let (main, approval, _) = self.verify_inventory()?;
++        Ok((main, approval))
++    }
++    pub(super) fn verify_inventory(&self) -> Result<(PathBuf, Approval, InstallManifest)> {
+         ensure!(
+             self.source.canonicalize()? == self.source,
+             "managed payload was redirected"
+@@ -95,7 +99,7 @@
+             "managed payload version or executable identity changed"
+         );
+         verify_topology(&self.source, &inventory, false)?;
+-        Ok((self.source.join(main_name()), self.approval.clone()))
++        Ok((self.source.join(main_name()), self.approval.clone(), inventory))
+     }
+ }
+ 
+--- a/crates/airk-cli/src/runtime_pair.rs
++++ b/crates/airk-cli/src/runtime_pair.rs
+@@ -227,6 +227,21 @@
+ 
+ /// A stable launcher can validate a later selected runtime without adopting its version.
+ pub fn verify_installed_pair(main: &Path, expected_version: &str) -> Result<PathBuf> {
++    let (main, helper, pair) = read_installed_pair(main, expected_version)?;
++    ensure!(
++        digest_file(&main)? == pair.airk_sha256 && digest_file(&helper)? == pair.embed_sha256,
++        "runtime executable pair digest mismatch"
++    );
++    Ok(helper)
++}
++
++/// Structural metadata read only: this does NOT verify executable bytes or
++/// authorize execution. The installer compares these fields only after its full
++/// approved inventory hash pass; standalone callers retain verify_installed_pair.
++pub(crate) fn read_installed_pair(
++    main: &Path,
++    expected_version: &str,
++) -> Result<(PathBuf, PathBuf, RuntimePair)> {
+     let image = crate::process_roles::main_image(main)?;
+     let main = image.as_path();
+     let parent = main.parent().context("runtime directory missing")?;
+@@ -270,11 +285,7 @@
+     } else {
+         "airk-embed"
+     });
+-    ensure!(
+-        digest_file(main)? == pair.airk_sha256 && digest_file(&helper)? == pair.embed_sha256,
+-        "runtime executable pair digest mismatch"
+-    );
+-    Ok(helper)
++    Ok((main.to_path_buf(), helper, pair))
+ }
+ 
+ #[cfg(test)]

@@ -1,0 +1,1356 @@
+--- old/src/transport/streamable_http_server/tower.rs
+
++++ new/src/transport/streamable_http_server/tower.rs
+
+@@ -29,10 +29,9 @@
+
+         ErrorData, GetExtensions, GetMeta, Implementation, InitializeRequest,
+         InitializeRequestParams, InitializedNotification, JsonObject, JsonRpcError,
+-        ProtocolVersion, RequestId, ServerInfo, ServerJsonRpcMessage, ServerResult,
++        ProtocolVersion, RequestId, ServerConfig, ServerJsonRpcMessage, ServerResult,
+     },
+-    serve_server,
+     service::{
+         NotificationContext, RequestContext, Service, negotiate_protocol_version,
+-        serve_directly_with_ct, uses_legacy_lifecycle,
++        serve_directly_with_ct, serve_server_with_ct, uses_legacy_lifecycle,
+     },
+     transport::{
+@@ -40,11 +39,11 @@
+
+         common::{
+             http_header::{
+-                EVENT_STREAM_MIME_TYPE, HEADER_LAST_EVENT_ID, HEADER_MCP_PROTOCOL_VERSION,
+-                HEADER_SESSION_ID, JSON_MIME_TYPE,
++                EVENT_STREAM_MIME_TYPE, HEADER_LAST_EVENT_ID, HEADER_MCP_METHOD,
++                HEADER_MCP_PROTOCOL_VERSION, HEADER_SESSION_ID, JSON_MIME_TYPE,
+             },
+             mcp_headers,
+             server_side_http::{
+                 BoxResponse, ServerSseMessage, accepted_response, expect_json,
+-                internal_error_response, sse_stream_response, unexpected_message_response,
++                internal_error_response, session_id_required_response, sse_stream_response,
+             },
+         },
+@@ -55,4 +54,164 @@
+
+ pub(crate) const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 4 * 1024 * 1024;
+ const STATELESS_STREAM_CHANNEL_CAPACITY: usize = 16;
++
++// HTTP lists and parameter lists may contain delimiters in quoted strings.
++// A quoted-pair keeps an escaped quote from ending the string.
++fn split_unquoted(value: &str, delimiter: char) -> impl Iterator<Item = &str> {
++    let mut quoted = false;
++    let mut escaped = false;
++    value.split(move |character| {
++        if escaped {
++            escaped = false;
++        } else if quoted && character == '\\' {
++            escaped = true;
++        } else if character == '"' {
++            quoted = !quoted;
++        } else if !quoted && character == delimiter {
++            return true;
++        }
++        false
++    })
++}
++
++// Yield quality-filtered essences; callers apply MCP's explicit media-type policy.
++fn accepted_media_types(headers: &HeaderMap) -> impl Iterator<Item = &str> {
++    headers
++        .get_all(http::header::ACCEPT)
++        .iter()
++        .filter_map(|value| value.to_str().ok())
++        .flat_map(|value| split_unquoted(value, ','))
++        .filter_map(|entry| {
++            let mut parts = split_unquoted(entry, ';');
++            let essence = parts.next()?.trim();
++            parts
++                .all(|parameter| {
++                    let Some((name, value)) = parameter.split_once('=') else {
++                        return true;
++                    };
++                    !name.trim().eq_ignore_ascii_case("q") || quality_is_acceptable(value.trim())
++                })
++                .then_some(essence)
++        })
++}
++
++// RFC 9110 section 12.4.2 permits up to three fractional digits. A weight
++// that fails that grammar is ignored rather than excluding the media range,
++// so a client that lists the media type with a malformed quality value keeps
++// getting served; only an explicitly zero weight excludes the range.
++fn quality_is_acceptable(quality: &str) -> bool {
++    let (whole, fraction) = quality.split_once('.').unwrap_or((quality, ""));
++    if fraction.len() > 3 || !fraction.bytes().all(|digit| digit.is_ascii_digit()) {
++        return true;
++    }
++    whole != "0" || fraction.bytes().any(|digit| digit != b'0')
++}
++
++#[cfg(test)]
++mod media_type_parsing_tests {
++    use super::{accepted_media_types, quality_is_acceptable, split_unquoted};
++
++    #[test]
++    fn explicit_zero_weights_exclude_the_media_range() {
++        assert!(!quality_is_acceptable("0"));
++        assert!(!quality_is_acceptable("0."));
++        assert!(!quality_is_acceptable("0.0"));
++        assert!(!quality_is_acceptable("0.000"));
++    }
++
++    #[test]
++    fn zero_fraction_digits_may_be_omitted_or_partial() {
++        assert!(quality_is_acceptable("0.5"));
++        assert!(quality_is_acceptable("0.001"));
++    }
++
++    #[test]
++    fn one_and_its_spellings_stay_acceptable() {
++        assert!(quality_is_acceptable("1"));
++        assert!(quality_is_acceptable("1."));
++        assert!(quality_is_acceptable("1.0"));
++        assert!(quality_is_acceptable("1.000"));
++    }
++
++    #[test]
++    fn malformed_weights_are_ignored() {
++        // Values RFC 9110 does not admit no longer drop the media range.
++        assert!(quality_is_acceptable(".5"));
++        assert!(quality_is_acceptable("1.001"));
++        assert!(quality_is_acceptable("1.5"));
++        assert!(quality_is_acceptable("2"));
++        assert!(quality_is_acceptable("-0.1"));
++        assert!(quality_is_acceptable("0.0001"));
++        assert!(quality_is_acceptable("abc"));
++        assert!(quality_is_acceptable(""));
++        assert!(quality_is_acceptable("0.1.2"));
++    }
++
++    #[test]
++    fn split_unquoted_keeps_delimiters_inside_quotes() {
++        assert_eq!(
++            split_unquoted(r#"a,b"c,d"e;f"#, ',').collect::<Vec<_>>(),
++            vec![r#"a"#, r#"b"c,d"e;f"#]
++        );
++        assert_eq!(
++            split_unquoted(r#"a;b"c;d"e"#, ';').collect::<Vec<_>>(),
++            vec!["a", r#"b"c;d"e"#]
++        );
++    }
++
++    #[test]
++    fn split_unquoted_honors_escaped_quotes() {
++        assert_eq!(
++            split_unquoted(r#"a;b"c\";d"e"#, ';').collect::<Vec<_>>(),
++            vec!["a", r#"b"c\";d"e"#]
++        );
++        assert_eq!(
++            split_unquoted(r#""a\",b""#, ',').collect::<Vec<_>>(),
++            vec![r#""a\",b""#]
++        );
++    }
++
++    #[test]
++    fn accepted_media_types_drops_only_zero_weighted_entries() {
++        let mut headers = http::HeaderMap::new();
++        headers.append(
++            http::header::ACCEPT,
++            http::HeaderValue::from_static(
++                r#"text/plain;q=0, application/json;profile="a;q=0", text/event-stream;q=abc"#,
++            ),
++        );
++        headers.append(
++            http::header::ACCEPT,
++            http::HeaderValue::from_static("application/xml, */*;q=0.5"),
++        );
++        let accepted: Vec<&str> = accepted_media_types(&headers).collect();
++        assert_eq!(
++            accepted,
++            vec![
++                "application/json",
++                "text/event-stream",
++                "application/xml",
++                "*/*"
++            ]
++        );
++    }
++}
++
++struct ErrorResponse(Box<BoxResponse>);
++
++impl ErrorResponse {
++    fn into_response(self) -> BoxResponse {
++        *self.0
++    }
++}
++
++impl From<BoxResponse> for ErrorResponse {
++    fn from(response: BoxResponse) -> Self {
++        Self(Box::new(response))
++    }
++}
++
++type HttpResult<T> = Result<T, ErrorResponse>;
++type RestoreResultSender = tokio::sync::watch::Sender<Option<bool>>;
++type PendingRestores = Arc<tokio::sync::RwLock<HashMap<SessionId, RestoreResultSender>>>;
+ 
+ #[non_exhaustive]
+@@ -93,11 +252,24 @@
+
+     /// Allowed browser origins for inbound `Origin` validation.
+     ///
+-    /// Defaults to an empty list, which disables Origin validation. When
+-    /// non-empty, requests carrying an `Origin` header must match per RFC 6454
+-    /// `(scheme, host, port)`; missing-`Origin` requests still pass. Entries
+-    /// must include a scheme; `"null"` matches the browser's `Origin: null`.
++    /// Defaults to an empty list, which disables Origin validation for backward
++    /// compatibility. A non-empty list enables validation. Requests carrying
++    /// an `Origin` header must match per RFC 6454 `(scheme, host, port)`;
++    /// missing-`Origin` requests still pass. Entries must include a scheme;
++    /// `"null"` matches the browser's `Origin: null`.
++    ///
++    /// Ports:
++    /// - `:*` matches any port.
++    /// - An explicit port matches only that port. An `Origin` without a port
++    ///   uses the scheme default (443 for `https`, 80 for `http`).
++    /// - An entry without a port currently matches any port. This is
++    ///   deprecated: a future release will match only the scheme default
++    ///   port. Use `:*` or an explicit port instead.
++    ///
++    /// Call [`StreamableHttpServerConfig::enforce_origin_validation`] to enable
++    /// validation with an empty list, rejecting every present Origin value.
+     /// examples:
+-    ///     allowed_origins = ["https://app.example.com", "http://localhost:8080"]
++    ///     allowed_origins = ["https://app.example.com:443", "http://localhost:*"]
+     pub allowed_origins: Vec<String>,
++    validate_empty_origin_allowlist: bool,
+     /// Optional external session store for cross-instance recovery.
+     ///
+@@ -172,4 +344,5 @@
+
+             allowed_hosts: vec!["localhost".into(), "127.0.0.1".into(), "::1".into()],
+             allowed_origins: vec![],
++            validate_empty_origin_allowlist: false,
+             session_store: None,
+             max_request_body_bytes: DEFAULT_MAX_REQUEST_BODY_BYTES,
+@@ -199,7 +372,13 @@
+
+         self
+     }
+-    /// Disable Origin validation, reverting to the default ignore-Origin behavior.
++    /// Enable Origin validation, including when the allowed Origins list is empty.
++    pub fn enforce_origin_validation(mut self) -> Self {
++        self.validate_empty_origin_allowlist = true;
++        self
++    }
++    /// Disable Origin validation, allowing requests with any `Origin` header.
+     pub fn disable_allowed_origins(mut self) -> Self {
+         self.allowed_origins.clear();
++        self.validate_empty_origin_allowlist = false;
+         self
+     }
+@@ -248,8 +427,4 @@
+
+ }
+ 
+-#[expect(
+-    clippy::result_large_err,
+-    reason = "BoxResponse is intentionally large; matches other handlers in this file"
+-)]
+ /// Validates the `MCP-Protocol-Version` header on incoming HTTP requests.
+ ///
+@@ -260,5 +435,5 @@
+
+     headers: &http::HeaderMap,
+     allow_unknown: bool,
+-) -> Result<(), BoxResponse> {
++) -> HttpResult<()> {
+     if let Some(value) = headers.get(HEADER_MCP_PROTOCOL_VERSION) {
+         let version_str = value.to_str().map_err(|_| {
+@@ -285,5 +460,6 @@
+
+                     .boxed(),
+                 )
+-                .expect("valid response"));
++                .expect("valid response")
++                .into());
+         }
+     }
+@@ -341,5 +517,5 @@
+
+     }
+ 
+-    fn get_info(&self) -> ServerInfo {
++    fn get_info(&self) -> ServerConfig {
+         self.0.get_info()
+     }
+@@ -350,8 +526,4 @@
+
+ }
+ 
+-#[expect(
+-    clippy::result_large_err,
+-    reason = "BoxResponse is intentionally large; matches other handlers in this file"
+-)]
+ // SEP-2567: sessions are removed from the discover lifecycle. Validate
+ // protocol-version consistency, then classify the request with the shared
+@@ -360,16 +532,16 @@
+
+     message: Option<&ClientJsonRpcMessage>,
+     headers: &HeaderMap,
+-) -> Result<bool, BoxResponse> {
++) -> HttpResult<bool> {
+     let has_per_request_version = message.is_some_and(message_has_per_request_protocol_version);
+     validate_protocol_version_header(headers, has_per_request_version)?;
+     if let Some(message) = message {
+-        if let ClientJsonRpcMessage::Request(req) = message {
+-            if let ClientRequest::InitializeRequest(init) = &req.request {
+-                validate_header_matches_init_body(
+-                    headers,
+-                    init.params.protocol_version.as_str(),
+-                    Some(req.id.clone()),
+-                )?;
+-            }
++        if let ClientJsonRpcMessage::Request(req) = message
++            && let ClientRequest::InitializeRequest(init) = &req.request
++        {
++            validate_header_matches_init_body(
++                headers,
++                init.params.protocol_version.as_str(),
++                Some(req.id.clone()),
++            )?;
+         }
+         validate_request_protocol_version_meta(headers, message)?;
+@@ -431,8 +603,8 @@
+
+ ) -> Result<(), EventStoreError> {
+     event.event_id = Some(event_store.store_event(stream_id, &event).await?);
+-    if let Some(sender) = output {
+-        if sender.send(event).await.is_err() {
+-            *output = None;
+-        }
++    if let Some(sender) = output
++        && sender.send(event).await.is_err()
++    {
++        *output = None;
+     }
+     Ok(())
+@@ -465,8 +637,4 @@
+
+ }
+ 
+-#[expect(
+-    clippy::result_large_err,
+-    reason = "BoxResponse is intentionally large; matches other handlers in this file"
+-)]
+ /// Absent header is allowed; the first initialize round-trip may legitimately omit it.
+ fn validate_header_matches_init_body(
+@@ -474,5 +642,5 @@
+
+     body_version: &str,
+     request_id: Option<RequestId>,
+-) -> Result<(), BoxResponse> {
++) -> HttpResult<()> {
+     let Some(header_value) = headers.get(HEADER_MCP_PROTOCOL_VERSION) else {
+         return Ok(());
+@@ -495,17 +663,14 @@
+
+                 "Invalid Request: MCP-Protocol-Version header ({header_str}) does not match initialize params.protocolVersion ({body_version})"
+             ),
+-        ));
++        )
++        .into());
+     }
+     Ok(())
+ }
+ 
+-#[expect(
+-    clippy::result_large_err,
+-    reason = "BoxResponse is intentionally large; matches other handlers in this file"
+-)]
+ fn validate_request_protocol_version_meta(
+     headers: &HeaderMap,
+     message: &ClientJsonRpcMessage,
+-) -> Result<(), BoxResponse> {
++) -> HttpResult<()> {
+     let ClientJsonRpcMessage::Request(request) = message else {
+         return Ok(());
+@@ -531,5 +696,6 @@
+
+                     missing.join(", ")
+                 ),
+-            ));
++            )
++            .into());
+         }
+         return Ok(());
+@@ -539,5 +705,6 @@
+
+             Some(request.id.clone()),
+             "request _meta protocolVersion requires MCP-Protocol-Version header",
+-        ));
++        )
++        .into());
+     };
+     if header_version != meta_version.as_str() {
+@@ -547,5 +714,6 @@
+
+                 "MCP-Protocol-Version header ({header_version}) does not match request _meta protocolVersion ({meta_version})"
+             ),
+-        ));
++        )
++        .into());
+     }
+     Ok(())
+@@ -558,13 +726,9 @@
+
+ /// is included so the seam aligns with the per-POST header contract; its
+ /// body-metadata rule is preserved unchanged.
+-#[expect(
+-    clippy::result_large_err,
+-    reason = "BoxResponse is intentionally large; matches other handlers in this file"
+-)]
+ fn validate_required_protocol_header(
+     config: &StreamableHttpServerConfig,
+     headers: &HeaderMap,
+     message: &ClientJsonRpcMessage,
+-) -> Result<(), BoxResponse> {
++) -> HttpResult<()> {
+     if !config.stateless_protocol_metadata_required {
+         return Ok(());
+@@ -584,5 +748,6 @@
+
+         Some(request.id.clone()),
+         "Missing MCP-Protocol-Version header for request requiring per-request protocol metadata",
+-    ))
++    )
++    .into())
+ }
+ 
+@@ -594,12 +759,8 @@
+
+ /// `validate_request_protocol_version_meta`), notifications, and other message
+ /// kinds are exempt.
+-#[expect(
+-    clippy::result_large_err,
+-    reason = "BoxResponse is intentionally large; matches other handlers in this file"
+-)]
+ fn validate_required_protocol_meta(
+     config: &StreamableHttpServerConfig,
+     message: &ClientJsonRpcMessage,
+-) -> Result<(), BoxResponse> {
++) -> HttpResult<()> {
+     if !config.stateless_protocol_metadata_required {
+         return Ok(());
+@@ -620,17 +781,23 @@
+
+         Some(request.id.clone()),
+         "Invalid params: request requires protocolVersion in request _meta",
+-    ))
+-}
+-
+-fn jsonrpc_http_status(message: &ServerJsonRpcMessage) -> http::StatusCode {
++    )
++    .into())
++}
++
++/// `request_meta_malformed` marks a request missing required `_meta` fields;
++/// only then is `-32602` a malformed-request 400 rather than an in-band error.
++fn jsonrpc_http_status(
++    message: &ServerJsonRpcMessage,
++    request_meta_malformed: bool,
++) -> http::StatusCode {
+     let ServerJsonRpcMessage::Error(error) = message else {
+         return http::StatusCode::OK;
+     };
+-    // Modern per-request HTTP treats invalid params as a malformed request.
+     // Legacy requests bypass this mapper and retain HTTP 200 JSON-RPC errors.
+     match error.error.code {
+         ErrorCode::UNSUPPORTED_PROTOCOL_VERSION
+         | ErrorCode::MISSING_REQUIRED_CLIENT_CAPABILITY
+-        | ErrorCode::INVALID_PARAMS => http::StatusCode::BAD_REQUEST,
++        | ErrorCode::HEADER_MISMATCH => http::StatusCode::BAD_REQUEST,
++        ErrorCode::INVALID_PARAMS if request_meta_malformed => http::StatusCode::BAD_REQUEST,
+         ErrorCode::METHOD_NOT_FOUND => http::StatusCode::NOT_FOUND,
+         _ => http::StatusCode::OK,
+@@ -638,13 +805,156 @@
+
+ }
+ 
++#[cfg(test)]
++mod jsonrpc_http_status_tests {
++    use super::*;
++
++    fn error_message(code: ErrorCode) -> ServerJsonRpcMessage {
++        ServerJsonRpcMessage::Error(JsonRpcError::new(
++            Some(RequestId::Number(1)),
++            ErrorData::new(code, "test error", None),
++        ))
++    }
++
++    /// A handler returning `ErrorData::header_mismatch(..)` on the modern per-request path
++    /// must map to HTTP 400, not the default HTTP 200. Regression test for
++    /// https://github.com/modelcontextprotocol/rust-sdk/issues/1225
++    #[test]
++    fn header_mismatch_maps_to_bad_request() {
++        assert_eq!(
++            jsonrpc_http_status(&error_message(ErrorCode::HEADER_MISMATCH), false),
++            http::StatusCode::BAD_REQUEST
++        );
++    }
++
++    #[test]
++    fn method_not_found_maps_to_not_found() {
++        assert_eq!(
++            jsonrpc_http_status(&error_message(ErrorCode::METHOD_NOT_FOUND), false),
++            http::StatusCode::NOT_FOUND
++        );
++    }
++
++    #[test]
++    fn invalid_params_for_malformed_request_meta_maps_to_bad_request() {
++        assert_eq!(
++            jsonrpc_http_status(&error_message(ErrorCode::INVALID_PARAMS), true),
++            http::StatusCode::BAD_REQUEST
++        );
++    }
++
++    #[test]
++    fn invalid_params_for_well_formed_request_meta_maps_to_ok() {
++        assert_eq!(
++            jsonrpc_http_status(&error_message(ErrorCode::INVALID_PARAMS), false),
++            http::StatusCode::OK
++        );
++    }
++
++    #[test]
++    fn unmapped_error_defaults_to_ok() {
++        assert_eq!(
++            jsonrpc_http_status(&error_message(ErrorCode::INTERNAL_ERROR), false),
++            http::StatusCode::OK
++        );
++    }
++}
++
++#[cfg(test)]
++mod standard_header_init_tests {
++    use super::*;
++
++    fn initialize_message() -> ClientJsonRpcMessage {
++        ClientJsonRpcMessage::request(
++            ClientRequest::InitializeRequest(InitializeRequest {
++                params: InitializeRequestParams {
++                    protocol_version: ProtocolVersion::STANDARD_HEADERS,
++                    ..Default::default()
++                },
++                ..Default::default()
++            }),
++            RequestId::Number(1),
++        )
++    }
++
++    fn headers_with(mcp_method: Option<&str>) -> HeaderMap {
++        let mut headers = HeaderMap::new();
++        headers.insert(
++            HEADER_MCP_PROTOCOL_VERSION,
++            http::HeaderValue::from_static(ProtocolVersion::STANDARD_HEADERS.as_str()),
++        );
++        if let Some(method) = mcp_method {
++            headers.insert(
++                HEADER_MCP_METHOD,
++                method.parse::<http::HeaderValue>().unwrap(),
++            );
++        }
++        headers
++    }
++
++    fn no_tool_schema(_: &str) -> Option<Arc<JsonObject>> {
++        None
++    }
++
++    /// A supplied Mcp-Method header contradicting an initialize body must be
++    /// rejected at >= STANDARD_HEADERS. Regression test for
++    /// https://github.com/modelcontextprotocol/rust-sdk/issues/1271
++    #[test]
++    fn initialize_rejects_contradicting_mcp_method_header() {
++        let headers = headers_with(Some("tools/list"));
++        assert!(
++            validate_standard_headers(&headers, &initialize_message(), no_tool_schema).is_err()
++        );
++    }
++
++    /// Absence of the Mcp-Method header on initialize stays accepted: clients
++    /// emit SEP-2243 headers only after the version has been negotiated.
++    #[test]
++    fn initialize_accepts_missing_mcp_method_header() {
++        let headers = headers_with(None);
++        assert!(validate_standard_headers(&headers, &initialize_message(), no_tool_schema).is_ok());
++    }
++
++    /// A supplied Mcp-Method header matching the initialize body is accepted.
++    #[test]
++    fn initialize_accepts_matching_mcp_method_header() {
++        let headers = headers_with(Some("initialize"));
++        assert!(validate_standard_headers(&headers, &initialize_message(), no_tool_schema).is_ok());
++    }
++
++    /// Conflicting duplicate Mcp-Method values are rejected in both orders:
++    /// only the first value used to be checked, so an appended contradictory
++    /// value passed silently. Duplicate values are rejected explicitly.
++    #[test]
++    fn initialize_rejects_conflicting_duplicates_in_both_orders() {
++        for (first, second) in [("initialize", "tools/list"), ("tools/list", "initialize")] {
++            let mut headers = headers_with(Some(first));
++            headers.append(
++                HEADER_MCP_METHOD,
++                http::HeaderValue::from_str(second).unwrap(),
++            );
++            assert!(
++                validate_standard_headers(&headers, &initialize_message(), no_tool_schema).is_err()
++            );
++        }
++    }
++
++    /// A present but non-UTF8 Mcp-Method value is rejected: it must not be
++    /// silently treated as an absent header.
++    #[test]
++    fn initialize_rejects_present_non_text_method() {
++        let mut headers = headers_with(None);
++        let value = http::HeaderValue::from_bytes(&[0xff]).unwrap();
++        assert!(value.to_str().is_err());
++        headers.insert(HEADER_MCP_METHOD, value);
++        assert!(
++            validate_standard_headers(&headers, &initialize_message(), no_tool_schema).is_err()
++        );
++    }
++}
++
+ fn jsonrpc_message_response(
+     message: ServerJsonRpcMessage,
+-    map_protocol_status: bool,
+-) -> Result<BoxResponse, BoxResponse> {
+-    let status = if map_protocol_status {
+-        jsonrpc_http_status(&message)
+-    } else {
+-        http::StatusCode::OK
+-    };
++    status: http::StatusCode,
++) -> HttpResult<BoxResponse> {
+     let body =
+         serde_json::to_vec(&message).map_err(internal_error_response("serialize json response"))?;
+@@ -672,16 +982,15 @@
+
+ ///
+ /// Only enforced when the request declares a protocol version `>= STANDARD_HEADERS`.
+-/// The `initialize` handshake is exempt: clients emit these headers only after the
+-/// version has been negotiated. `tool_schema` supplies the called tool's input schema
++/// The `initialize` handshake is exempt from *requiring* them: clients emit these
++/// headers only after the version has been negotiated. But like
++/// `validate_header_matches_init_body`, a *supplied* `Mcp-Method` header that
++/// contradicts the body is rejected — middleboxes route on the header without
++/// parsing the body. `tool_schema` supplies the called tool's input schema
+ /// so annotated `Mcp-Param-*` headers can be checked (no schema => those are skipped).
+-#[expect(
+-    clippy::result_large_err,
+-    reason = "BoxResponse is intentionally large; matches other handlers in this file"
+-)]
+ fn validate_standard_headers(
+     headers: &HeaderMap,
+     message: &ClientJsonRpcMessage,
+     tool_schema: impl Fn(&str) -> Option<Arc<JsonObject>>,
+-) -> Result<(), BoxResponse> {
++) -> HttpResult<()> {
+     let version_requires_headers = headers
+         .get(HEADER_MCP_PROTOCOL_VERSION)
+@@ -695,4 +1004,33 @@
+
+         ClientJsonRpcMessage::Request(req) => {
+             if matches!(&req.request, ClientRequest::InitializeRequest(_)) {
++                // The handshake may omit SEP-2243 headers, but a supplied
++                // Mcp-Method header must still agree with the body: middleboxes
++                // route on the header without parsing the body. `get_all` is
++                // used so every supplied value is inspected: a contradictory
++                // duplicate must not hide behind a matching first value, and a
++                // present-but-non-UTF8 value is rejected rather than silently
++                // treated as absent. Duplicates (even identical ones) are
++                // rejected explicitly instead of passing by accident.
++                let mut method_values = headers.get_all(HEADER_MCP_METHOD).iter();
++                let Some(first) = method_values.next() else {
++                    return Ok(());
++                };
++                if method_values.next().is_some() {
++                    return Err(header_mismatch_jsonrpc_response(
++                        Some(req.id.clone()),
++                        "multiple Mcp-Method header values supplied; initialize requires exactly one",
++                    )
++                    .into());
++                }
++                if first != http::HeaderValue::from_static("initialize") {
++                    return Err(header_mismatch_jsonrpc_response(
++                        Some(req.id.clone()),
++                        format!(
++                            "Mcp-Method header `{}` does not match body method `initialize`",
++                            String::from_utf8_lossy(first.as_bytes())
++                        ),
++                    )
++                    .into());
++                }
+                 return Ok(());
+             }
+@@ -716,5 +1054,5 @@
+
+         .and_then(tool_schema);
+     if let Err(reason) = mcp_headers::validate_request_headers(headers, &value, schema.as_deref()) {
+-        return Err(header_mismatch_jsonrpc_response(request_id, reason));
++        return Err(header_mismatch_jsonrpc_response(request_id, reason).into());
+     }
+     Ok(())
+@@ -805,15 +1143,77 @@
+
+ }
+ 
++/// The port a scheme implies when an origin serialization omits it (RFC 6454 §4).
++fn default_port(scheme: &str) -> Option<u16> {
++    match scheme {
++        "http" => Some(80),
++        "https" => Some(443),
++        _ => None,
++    }
++}
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++enum AllowedPort {
++    /// `:*`
++    Any,
++    /// No port in the entry. Matches any port until the deprecation ends.
++    Unspecified,
++    Exact(u16),
++}
++
++impl AllowedPort {
++    fn matches(self, scheme: &str, port: Option<u16>) -> bool {
++        match self {
++            AllowedPort::Any | AllowedPort::Unspecified => true,
++            // RFC 6454 §6.2 omits the default port when serializing an origin.
++            AllowedPort::Exact(allowed) => port.or_else(|| default_port(scheme)) == Some(allowed),
++        }
++    }
++}
++
++#[derive(Debug, Clone, PartialEq, Eq)]
++enum AllowedOrigin {
++    Null,
++    Tuple {
++        scheme: String,
++        host: String,
++        port: AllowedPort,
++    },
++}
++
++fn parse_allowed_origin(value: &str) -> Option<AllowedOrigin> {
++    let value = value.trim();
++    if let Some(base) = value.strip_suffix(":*") {
++        let NormalizedOrigin::Tuple {
++            scheme,
++            host,
++            port: None,
++        } = parse_origin_value(base)?
++        else {
++            return None;
++        };
++        return Some(AllowedOrigin::Tuple {
++            scheme,
++            host,
++            port: AllowedPort::Any,
++        });
++    }
++    Some(match parse_origin_value(value)? {
++        NormalizedOrigin::Null => AllowedOrigin::Null,
++        NormalizedOrigin::Tuple { scheme, host, port } => AllowedOrigin::Tuple {
++            scheme,
++            host,
++            port: port.map_or(AllowedPort::Unspecified, AllowedPort::Exact),
++        },
++    })
++}
++
+ fn origin_is_allowed(origin: &NormalizedOrigin, allowed_origins: &[String]) -> bool {
+-    if allowed_origins.is_empty() {
+-        return true;
+-    }
+     allowed_origins
+         .iter()
+-        .filter_map(|raw| parse_origin_value(raw))
++        .filter_map(|raw| parse_allowed_origin(raw))
+         .any(|allowed| match (&allowed, origin) {
+-            (NormalizedOrigin::Null, NormalizedOrigin::Null) => true,
++            (AllowedOrigin::Null, NormalizedOrigin::Null) => true,
+             (
+-                NormalizedOrigin::Tuple {
++                AllowedOrigin::Tuple {
+                     scheme: a_scheme,
+                     host: a_host,
+@@ -825,7 +1225,78 @@
+
+                     port: o_port,
+                 },
+-            ) => a_scheme == o_scheme && a_host == o_host && (a_port.is_none() || a_port == o_port),
++            ) => a_scheme == o_scheme && a_host == o_host && a_port.matches(o_scheme, *o_port),
+             _ => false,
+         })
++}
++
++fn warn_on_portless_allowed_origins(allowed_origins: &[String]) {
++    for raw in allowed_origins {
++        if let Some(AllowedOrigin::Tuple {
++            port: AllowedPort::Unspecified,
++            ..
++        }) = parse_allowed_origin(raw)
++        {
++            tracing::warn!(
++                allowed_origin = raw.as_str(),
++                "allowed origin without a port matches any port; a future release will match \
++                 only the scheme default port. Use `:*` or an explicit port instead",
++            );
++        }
++    }
++}
++
++#[cfg(test)]
++mod parse_allowed_origin_tests {
++    use super::*;
++
++    fn tuple(scheme: &str, host: &str, port: AllowedPort) -> Option<AllowedOrigin> {
++        Some(AllowedOrigin::Tuple {
++            scheme: scheme.to_string(),
++            host: host.to_string(),
++            port,
++        })
++    }
++
++    #[test]
++    fn wildcard_port_parses_as_any() {
++        assert_eq!(
++            parse_allowed_origin("https://client.example:*"),
++            tuple("https", "client.example", AllowedPort::Any)
++        );
++    }
++
++    #[test]
++    fn wildcard_port_on_ipv6_host_parses_as_any() {
++        assert_eq!(
++            parse_allowed_origin("http://[::1]:*"),
++            tuple("http", "::1", AllowedPort::Any)
++        );
++    }
++
++    #[test]
++    fn portless_entry_parses_as_unspecified() {
++        assert_eq!(
++            parse_allowed_origin("https://client.example"),
++            tuple("https", "client.example", AllowedPort::Unspecified)
++        );
++    }
++
++    #[test]
++    fn explicit_port_parses_as_exact() {
++        assert_eq!(
++            parse_allowed_origin("https://client.example:8443"),
++            tuple("https", "client.example", AllowedPort::Exact(8443))
++        );
++    }
++
++    #[test]
++    fn wildcard_after_explicit_port_is_rejected() {
++        assert_eq!(parse_allowed_origin("https://client.example:443:*"), None);
++    }
++
++    #[test]
++    fn wildcard_on_null_is_rejected() {
++        assert_eq!(parse_allowed_origin("null:*"), None);
++    }
+ }
+ 
+@@ -840,8 +1311,5 @@
+
+ }
+ 
+-fn parse_host_header(
+-    uri: &http::Uri,
+-    headers: &HeaderMap,
+-) -> Result<NormalizedAuthority, BoxResponse> {
++fn parse_host_header(uri: &http::Uri, headers: &HeaderMap) -> HttpResult<NormalizedAuthority> {
+     if let Some(host) = headers.get(http::header::HOST) {
+         let host_str = host
+@@ -874,5 +1342,5 @@
+
+     headers: &HeaderMap,
+     config: &StreamableHttpServerConfig,
+-) -> Result<(), BoxResponse> {
++) -> HttpResult<()> {
+     let host = parse_host_header(uri, headers)?;
+     if !host_is_allowed(&host, &config.allowed_hosts) {
+@@ -881,7 +1349,7 @@
+
+             "rejected request with disallowed Host header (possible DNS rebinding attempt)",
+         );
+-        return Err(forbidden_response("Forbidden: Host header is not allowed"));
+-    }
+-    validate_origin_header(headers, &config.allowed_origins)?;
++        return Err(forbidden_response("Forbidden: Host header is not allowed").into());
++    }
++    validate_origin_header(headers, config)?;
+     Ok(())
+ }
+@@ -889,7 +1357,7 @@
+
+ fn validate_origin_header(
+     headers: &HeaderMap,
+-    allowed_origins: &[String],
+-) -> Result<(), BoxResponse> {
+-    if allowed_origins.is_empty() {
++    config: &StreamableHttpServerConfig,
++) -> HttpResult<()> {
++    if !config.validate_empty_origin_allowlist && config.allowed_origins.is_empty() {
+         return Ok(());
+     }
+@@ -902,5 +1370,5 @@
+
+             tracing::warn!(origin = ?origin_header, "rejected request with non-UTF-8 Origin header");
+         })
+-        .map_err(|_| bad_request_response("Bad Request: Invalid Origin header encoding"))?;
++        .map_err(|_| forbidden_response("Forbidden: Invalid Origin header encoding"))?;
+     let origin = parse_origin_value(origin_str).ok_or_else(|| {
+         tracing::warn!(
+@@ -908,14 +1376,12 @@
+
+             "rejected request with malformed Origin header",
+         );
+-        bad_request_response("Bad Request: Invalid Origin header")
++        forbidden_response("Forbidden: Invalid Origin header")
+     })?;
+-    if !origin_is_allowed(&origin, allowed_origins) {
++    if !origin_is_allowed(&origin, &config.allowed_origins) {
+         tracing::warn!(
+             origin = ?origin,
+             "rejected request with disallowed Origin header (possible cross-origin attack)",
+         );
+-        return Err(forbidden_response(
+-            "Forbidden: Origin header is not allowed",
+-        ));
++        return Err(forbidden_response("Forbidden: Origin header is not allowed").into());
+     }
+     Ok(())
+@@ -1013,11 +1479,5 @@
+
+     /// than racing to replay the initialize handshake. `None` when no external
+     /// session store is configured (avoids allocating the map).
+-    pending_restores: Option<
+-        Arc<tokio::sync::RwLock<HashMap<SessionId, tokio::sync::watch::Sender<Option<bool>>>>>,
+-    >,
+-    /// Caches tool input schemas by name for SEP-2243 `Mcp-Param-*` validation.
+-    /// Populated lazily via `get_tool` so the service factory runs at most once
+-    /// per tool name. `None` value means the tool exposes no schema.
+-    tool_schemas: Arc<std::sync::RwLock<HashMap<String, Option<Arc<JsonObject>>>>>,
++    pending_restores: Option<PendingRestores>,
+ }
+ 
+@@ -1029,5 +1489,4 @@
+
+             service_factory: self.service_factory.clone(),
+             pending_restores: self.pending_restores.clone(),
+-            tool_schemas: self.tool_schemas.clone(),
+         }
+     }
+@@ -1068,8 +1527,7 @@
+
+ /// needs to set it to `true` before returning.
+ struct PendingRestoreGuard {
+-    pending_restores:
+-        Arc<tokio::sync::RwLock<HashMap<SessionId, tokio::sync::watch::Sender<Option<bool>>>>>,
++    pending_restores: PendingRestores,
+     session_id: SessionId,
+-    watch_tx: tokio::sync::watch::Sender<Option<bool>>,
++    watch_tx: RestoreResultSender,
+     /// The value that will be broadcast to waiting tasks on drop.
+     result: bool,
+@@ -1099,10 +1557,9 @@
+
+         config: StreamableHttpServerConfig,
+     ) -> Self {
+-        let pending_restores = config.session_store.is_some().then(|| {
+-            Arc::new(tokio::sync::RwLock::new(HashMap::<
+-                SessionId,
+-                tokio::sync::watch::Sender<Option<bool>>,
+-            >::new()))
+-        });
++        warn_on_portless_allowed_origins(&config.allowed_origins);
++        let pending_restores = config
++            .session_store
++            .is_some()
++            .then(|| Arc::new(tokio::sync::RwLock::new(HashMap::new())));
+         Self {
+             config,
+@@ -1110,5 +1567,4 @@
+
+             service_factory: Arc::new(service_factory),
+             pending_restores,
+-            tool_schemas: Arc::new(std::sync::RwLock::new(HashMap::new())),
+         }
+     }
+@@ -1131,6 +1587,6 @@
+
+         tokio::spawn(async move {
+             let mut sender = Some(sender);
+-            if let Some(retry) = retry {
+-                if let Err(error) = persist_and_forward_event(
++            if let Some(retry) = retry
++                && let Err(error) = persist_and_forward_event(
+                     event_store.as_ref(),
+                     &stream_id,
+@@ -1139,9 +1595,8 @@
+
+                 )
+                 .await
+-                {
+-                    tracing::error!(%stream_id, %error, "failed to persist SSE priming event");
+-                    request_ct.cancel();
+-                    return;
+-                }
++            {
++                tracing::error!(%stream_id, %error, "failed to persist SSE priming event");
++                request_ct.cancel();
++                return;
+             }
+ 
+@@ -1215,5 +1670,10 @@
+
+         mut request: crate::model::JsonRpcRequest<ClientRequest>,
+         parts: http::request::Parts,
+-    ) -> Result<BoxResponse, BoxResponse> {
++    ) -> HttpResult<BoxResponse> {
++        let request_meta_malformed = !request
++            .request
++            .get_meta()
++            .missing_required_keys(&ProtocolVersion::V_2026_07_28)
++            .is_empty();
+         let peer_info = Self::peer_info_for_stateless_request(&request, &parts.headers);
+         request.request.extensions_mut().insert(parts);
+@@ -1260,7 +1720,6 @@
+
+             ServerJsonRpcMessage::Response(_) | ServerJsonRpcMessage::Error(_)
+         );
+-        if terminal
+-            && (self.config.json_response || jsonrpc_http_status(&first) != http::StatusCode::OK)
+-        {
++        let status = jsonrpc_http_status(&first, request_meta_malformed);
++        if terminal && (self.config.json_response || status != http::StatusCode::OK) {
+             // This message is the whole reply, so `receiver` is dropped here and
+             // anything the handler emits afterwards is undeliverable. Cancel it so
+@@ -1270,5 +1729,5 @@
+
+             // handler already completed.
+             request_ct.cancel();
+-            return jsonrpc_message_response(first, true);
++            return jsonrpc_message_response(first, status);
+         }
+ 
+@@ -1276,31 +1735,22 @@
+
+     }
+ 
+-    /// Returns the cached input schema for `name`, constructing a service once
+-    /// per name to read its `ServerHandler::get_tool` definition. Used to
+-    /// validate SEP-2243 `Mcp-Param-*` headers against the request body.
++    /// Looks up `name`'s input schema for SEP-2243 `Mcp-Param-*` validation.
+     fn tool_schema(&self, name: &str) -> Option<Arc<JsonObject>> {
+-        if let Ok(cache) = self.tool_schemas.read() {
+-            if let Some(schema) = cache.get(name) {
+-                return schema.clone();
+-            }
+-        }
+-        let schema = self
+-            .get_service()
+-            .ok()
+-            .and_then(|service| service.get_tool(name))
+-            .map(|tool| tool.input_schema);
+-        if let Ok(mut cache) = self.tool_schemas.write() {
+-            cache.insert(name.to_owned(), schema.clone());
+-        }
+-        schema
+-    }
+-
+-    /// Spawn a task that runs `serve_server` for the given session, waits for
+-    /// it to finish, and then calls `close_session`.
++        self.get_service()
++            .ok()?
++            .get_tool(name)
++            .map(|tool| tool.input_schema)
++    }
++
++    /// Spawn a task that runs `serve_server_with_ct` for the given session,
++    /// waits for it to finish, and then calls `close_session`.
+     ///
+-    /// `init_done_tx`: when `Some`, the sender is fired after `serve_server`
+-    /// returns successfully, signalling to the caller that the MCP handshake
+-    /// is complete. Used by `try_restore_from_store` to synchronise with the
+-    /// restore `initialize` replay; `handle_post` passes `None`.
++    /// The session inherits the server's cancellation token so cancelling the
++    /// server terminates stateful sessions as well as their response streams.
++    ///
++    /// `init_done_tx`: when `Some`, the sender is fired after the handshake
++    /// completes successfully, signalling to the caller that the session is
++    /// ready. Used by `try_restore_from_store` to synchronise with the restore
++    /// `initialize` replay; `handle_post` passes `None`.
+     fn spawn_session_worker(
+         session_manager: Arc<M>,
+@@ -1309,4 +1759,5 @@
+
+         transport: M::Transport,
+         init_done_tx: Option<tokio::sync::oneshot::Sender<()>>,
++        cancellation_token: CancellationToken,
+     ) where
+         S: crate::ServerHandler + Send + 'static,
+@@ -1314,7 +1765,10 @@
+
+     {
+         tokio::spawn(async move {
+-            let svc =
+-                serve_server::<S, M::Transport, _, TransportAdapterIdentity>(service, transport)
+-                    .await;
++            let svc = serve_server_with_ct::<S, M::Transport, _, TransportAdapterIdentity>(
++                service,
++                transport,
++                cancellation_token,
++            )
++            .await;
+             match svc {
+                 Ok(svc) => {
+@@ -1471,23 +1925,16 @@
+
+             transport,
+             Some(init_done_tx),
+-        );
+-
+-        if let Err(e) = self
+-            .session_manager
++            self.config.cancellation_token.child_token(),
++        );
++
++        self.session_manager
+             .initialize_session(session_id, restore_init)
+             .await
+-            .map_err(|e| std::io::Error::other(e.to_string()))
+-        {
+-            return Err(e);
+-        }
+-
+-        if let Err(e) = self
+-            .session_manager
++            .map_err(|e| std::io::Error::other(e.to_string()))?;
++
++        self.session_manager
+             .accept_message(session_id, restore_initialized)
+             .await
+-            .map_err(|e| std::io::Error::other(e.to_string()))
+-        {
+-            return Err(e);
+-        }
++            .map_err(|e| std::io::Error::other(e.to_string()))?;
+ 
+         if init_done_rx.await.is_err() {
+@@ -1514,5 +1961,5 @@
+
+             validate_dns_rebinding_headers(request.uri(), request.headers(), &self.config)
+         {
+-            return response;
++            return response.into_response();
+         }
+         let method = request.method().clone();
+@@ -1541,8 +1988,8 @@
+
+         match result {
+             Ok(response) => response,
+-            Err(response) => response,
+-        }
+-    }
+-    async fn handle_get<B>(&self, request: Request<B>) -> Result<BoxResponse, BoxResponse>
++            Err(response) => response.into_response(),
++        }
++    }
++    async fn handle_get<B>(&self, request: Request<B>) -> HttpResult<BoxResponse>
+     where
+         B: Body + Send + 'static,
+@@ -1550,9 +1997,6 @@
+
+     {
+         // check accept header
+-        if !request
+-            .headers()
+-            .get(http::header::ACCEPT)
+-            .and_then(|header| header.to_str().ok())
+-            .is_some_and(|header| header.contains(EVENT_STREAM_MIME_TYPE))
++        if !accepted_media_types(request.headers())
++            .any(|essence| essence.eq_ignore_ascii_case(EVENT_STREAM_MIME_TYPE))
+         {
+             return Ok(Response::builder()
+@@ -1599,9 +2043,5 @@
+
+             .map(|s| s.to_owned().into());
+         let Some(session_id) = session_id else {
+-            // MCP spec: servers that require a session ID SHOULD respond with 400 Bad Request
+-            return Ok(Response::builder()
+-                .status(http::StatusCode::BAD_REQUEST)
+-                .body(Full::new(Bytes::from("Bad Request: Session ID is required")).boxed())
+-                .expect("valid response"));
++            return Ok(session_id_required_response());
+         };
+         // check if session exists
+@@ -1687,5 +2127,5 @@
+
+     }
+ 
+-    async fn handle_post<B>(&self, request: Request<B>) -> Result<BoxResponse, BoxResponse>
++    async fn handle_post<B>(&self, request: Request<B>) -> HttpResult<BoxResponse>
+     where
+         B: Body + Send + 'static,
+@@ -1693,12 +2133,11 @@
+
+     {
+         // check accept header
+-        if !request
+-            .headers()
+-            .get(http::header::ACCEPT)
+-            .and_then(|header| header.to_str().ok())
+-            .is_some_and(|header| {
+-                header.contains(JSON_MIME_TYPE) && header.contains(EVENT_STREAM_MIME_TYPE)
+-            })
+-        {
++        let mut accepts_json = false;
++        let mut accepts_sse = false;
++        for essence in accepted_media_types(request.headers()) {
++            accepts_json |= essence.eq_ignore_ascii_case(JSON_MIME_TYPE);
++            accepts_sse |= essence.eq_ignore_ascii_case(EVENT_STREAM_MIME_TYPE);
++        }
++        if !accepts_json || !accepts_sse {
+             return Ok(Response::builder()
+                 .status(http::StatusCode::NOT_ACCEPTABLE)
+@@ -1712,5 +2151,10 @@
+
+             .get(http::header::CONTENT_TYPE)
+             .and_then(|header| header.to_str().ok())
+-            .is_some_and(|header| header.starts_with(JSON_MIME_TYPE))
++            .is_some_and(|header| {
++                let essence = header
++                    .split_once(';')
++                    .map_or(header, |(essence, _)| essence);
++                essence.trim().eq_ignore_ascii_case(JSON_MIME_TYPE)
++            })
+         {
+             return Ok(Response::builder()
+@@ -1834,4 +2278,9 @@
+
+                         .await;
+                 }
++                // SEP-2243: run the standard-header validator on the initialize
++                // handshake before a session is created for it — a supplied
++                // Mcp-Method header contradicting the body must be rejected
++                // here, not answered with HTTP 200 and a fresh session.
++                validate_standard_headers(&part.headers, &message, |name| self.tool_schema(name))?;
+                 // Capture init params for external store persistence before
+                 // extensions are injected (which would require Clone).
+@@ -1839,5 +2288,5 @@
+
+                     ClientJsonRpcMessage::Request(req) => {
+                         let ClientRequest::InitializeRequest(init_req) = &req.request else {
+-                            return Err(unexpected_message_response("initialize request"));
++                            return Err(session_id_required_response().into());
+                         };
+                         // Reject mismatched MCP-Protocol-Version header before binding the session to anything.
+@@ -1857,5 +2306,5 @@
+
+                     }
+                     _ => {
+-                        return Err(unexpected_message_response("initialize request"));
++                        return Err(session_id_required_response().into());
+                     }
+                 };
+@@ -1875,4 +2324,5 @@
+
+                     transport,
+                     None,
++                    self.config.cancellation_token.child_token(),
+                 );
+                 // get initialize response
+@@ -1949,11 +2399,13 @@
+
+                 }
+             }
+-            // Validate SEP-2243 standard headers against the body
+-            validate_standard_headers(&part.headers, &message, |name| self.tool_schema(name))?;
+-            validate_request_protocol_version_meta(&part.headers, &message)?;
+-            validate_required_protocol_meta(&self.config, &message)?;
+             let service = self
+                 .get_service()
+                 .map_err(internal_error_response("get service"))?;
++            // Validate SEP-2243 standard headers against the body
++            validate_standard_headers(&part.headers, &message, |name| {
++                service.get_tool(name).map(|tool| tool.input_schema)
++            })?;
++            validate_request_protocol_version_meta(&part.headers, &message)?;
++            validate_required_protocol_meta(&self.config, &message)?;
+             match message {
+                 ClientJsonRpcMessage::Request(mut request) => {
+@@ -2014,5 +2466,6 @@
+
+                                     "no response message received from handler",
+                                 ),
+-                            ));
++                            )
++                            .into());
+                         };
+                         tracing::trace!(?message);
+@@ -2040,11 +2493,16 @@
+
+                     Ok(accepted_response())
+                 }
+-                ClientJsonRpcMessage::Response(_json_rpc_response) => Ok(accepted_response()),
+-                ClientJsonRpcMessage::Error(_json_rpc_error) => Ok(accepted_response()),
++                // A stateless request has no pending server-to-client request to answer.
++                ClientJsonRpcMessage::Response(_) | ClientJsonRpcMessage::Error(_) => {
++                    Ok(invalid_request_jsonrpc_response(
++                        None,
++                        "stateless server does not accept JSON-RPC responses",
++                    ))
++                }
+             }
+         }
+     }
+ 
+-    async fn handle_delete<B>(&self, request: Request<B>) -> Result<BoxResponse, BoxResponse>
++    async fn handle_delete<B>(&self, request: Request<B>) -> HttpResult<BoxResponse>
+     where
+         B: Body + Send + 'static,
+@@ -2061,9 +2519,5 @@
+
+             .map(|s| s.to_owned().into());
+         let Some(session_id) = session_id else {
+-            // MCP spec: servers that require a session ID SHOULD respond with 400 Bad Request
+-            return Ok(Response::builder()
+-                .status(http::StatusCode::BAD_REQUEST)
+-                .body(Full::new(Bytes::from("Bad Request: Session ID is required")).boxed())
+-                .expect("valid response"));
++            return Ok(session_id_required_response());
+         };
+         // Validate MCP-Protocol-Version header (per 2025-06-18 spec)
+@@ -2084,5 +2538,5 @@
+
+     }
+ 
+-    /// Build a `ClientInfo` (peer_info) for a stateless request so that
++    /// Build a `InitializeRequestParams` (peer_info) for a stateless request so that
+     /// `context.protocol_version()` returns the correct value inside handlers.
+     ///

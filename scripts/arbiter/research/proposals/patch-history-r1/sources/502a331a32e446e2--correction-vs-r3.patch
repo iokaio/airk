@@ -1,0 +1,232 @@
+--- a/provision_cuda_runtime.py
++++ b/provision_cuda_runtime.py
+@@ -77,6 +77,24 @@
+    o.plain(p,regular=True)
+  return {'excluded_inert_link':skipped,'raw_archive':row,'files_before_patches':o.source_inventory(output)}
+ 
++def verify_input_closure(o,rows):
++ seen=set()
++ for row in rows:
++  path=o.plain(row['path'],regular=True);key=os.path.normcase(str(path))
++  if key in seen:raise ValueError('duplicate frozen input path')
++  seen.add(key);o.verify_file(path,row)
++ return len(seen)
++
++def verify_mirror_closure(o,root,expected):
++ if o.source_inventory(root)!=sorted(expected,key=lambda r:r['path']):raise ValueError('exact copied mirror closure drift')
++
++def after_patch_target_checks(o,root,targets,dispatch):
++ if not targets:raise ValueError('patch needs declared before targets')
++ for row in targets:
++  target=o.plain(o.child(root,row['path']),regular=True)
++  if digest(target)!=row['before_sha256']:raise ValueError('patch target before SHA256 differs: '+row['path'])
++ return dispatch()
++
+ def main():
+  ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('--destination',type=Path,required=True);ap.add_argument('--approved-script-sha256',required=True);ap.add_argument('--approved-lock-sha256',required=True);ap.add_argument('--execute-build',action='store_true');ap.add_argument('--timeout-seconds',type=int,default=10800);a=ap.parse_args()
+  if digest(Path(__file__))!=a.approved_script_sha256 or digest(LOCK)!=a.approved_lock_sha256:raise ValueError('reviewed producer/lock bytes differ')
+@@ -92,16 +110,25 @@
+   with (INPUT/'cuda-source-dependencies'/(r['name']+'.zip')).open('rb') as f:
+    if o.stream_digest(f,'sha1').hexdigest()!=r['upstream_sha1']:raise ValueError('upstream CUDA dependency SHA1 differs')
+  if digest(BASE/'ort-windows-loader-proposal-r2.patch')!=lock['loader_patch_sha256'] or digest(HERE/'offline-helper.patch')!=lock['offline_helper']['patch_sha256'] or digest(HERE/'frontend-authenticated-imports.patch')!=lock['frontend_final']['patch_sha256']:raise ValueError('reviewed input patch drift')
++ original_inputs=[{'path':str((CPU/'downloads/source.tar.gz').absolute()),'bytes':o.LOCK['source']['bytes'],'sha256':o.LOCK['source']['sha256']}]
++ for row in o.selected_dependencies('x86_64-pc-windows-msvc'):
++  original_inputs.append({'path':str((CPU/'downloads'/(row['name']+'.zip')).absolute()),'bytes':row['bytes'],'sha256':row['sha256']})
++ for row in lock['dependencies']:
++  original_inputs.append({'path':str((INPUT/'cuda-source-dependencies'/(row['name']+'.zip')).absolute()),'bytes':row['bytes'],'sha256':row['sha256']})
++ original_inputs.append({'path':str(INPUT/'cudnn-windows-x86_64-9.10.2.21_cuda12-archive.zip'),'bytes':lock['cudnn']['bytes'],'sha256':lock['cudnn']['sha256']})
++ verify_input_closure(o,original_inputs)
+  dest.mkdir();write(dest/'owner.json',{'schema':'airk.private.cuda-runtime-producer/1','sid':SID,'cpu_source_owner':str(CPU),'script_sha256':a.approved_script_sha256,'lock_sha256':a.approved_lock_sha256,'output_parent_policy':policy,'qualification':False})
+  start=time.monotonic();deadline=start+a.timeout_seconds;receipt={'status':'RUNNING','commands':[],'policy':{'one_static_core':True,'optional_shared_cuda_provider':True,'runtime_version':'1.30.0','SM':86,'compiled_flash_attention':True,'compiled_memory_efficient_attention':True,'first_model_gate':'FP32-unfused-TF32off','fp16_model_admission':'separate-later-G5-unqualified','cpu_qualification_transferred':False},'source_inputs':[]}
+  try:
+   # Canonical extraction verifies complete original source census; never copy a warm build tree.
+   o.verify_file(CPU/'downloads/source.tar.gz',o.LOCK['source']);o.extract_source(CPU/'downloads/source.tar.gz',dest,o.LOCK['source'])
++  mirrors=[]
+   for r in o.selected_dependencies('x86_64-pc-windows-msvc')+lock['dependencies']:
+    source=CPU/'downloads'/(r['name']+'.zip') if r['name'] not in ('cutlass','cudnn_frontend') else INPUT/'cuda-source-dependencies'/(r['name']+'.zip')
+    o.verify_file(source,r);target=o.child(dest/'source/mirror',o.mirror_relative(r));target.parent.mkdir(parents=True,exist_ok=True)
+    with source.open('rb') as f,target.open('xb') as g:shutil.copyfileobj(f,g,1024*1024)
+    o.verify_file(target,r);receipt['source_inputs'].append({'name':r['name'],'bytes':r['bytes'],'sha256':r['sha256']})
++   mirrors.append({'path':target.relative_to(dest/'source/mirror').as_posix(),'bytes':r['bytes'],'sha256':r['sha256']})
+   # Hash complete toolkit build inputs to prevent ambient CUDA/NVCC selection or drift.
+   cuda_rows=[]
+   for name in ('bin','include','lib','nvvm'):
+@@ -110,6 +137,8 @@
+   if json.loads((CUDA/'version.json').read_text())['cuda']['version']!='12.8.1':raise ValueError('CUDA toolkit version differs')
+   tools_args=argparse.Namespace(vs_root=Path('C:/Program Files/Microsoft Visual Studio/2022/Community'),cmake=Path('D:/code/Github/airk/artifacts/advanced-split/ort130-x64-owned-r3/tools/cmake/bin/cmake.exe'),ninja=Path('D:/code/Github/airk/artifacts/advanced-split/ort130-x64-owned-r3/tools/ninja-build/ninja.exe'),patch=Path('C:/Program Files/Git/usr/bin/patch.exe'),msvc_toolset='14.44.35207',windows_sdk='10.0.26100.0')
+   tools=o.toolchain(tools_args,dest,'x86_64-pc-windows-msvc');receipt['toolchain']=tools
++  tool_inputs=[{key:tools[name][key] for key in ('path','bytes','sha256')} for name in ('compiler','cmake','ninja','patch','python','vcvars')]
++  verify_input_closure(o,tool_inputs)
+   environment=dict(os.environ)
+   forbidden={'CC','CXX','CFLAGS','CXXFLAGS','CPPFLAGS','LDFLAGS','CUDAFLAGS','CUDACXX','CUDAHOSTCXX','CUDAARCHS','NVCC_PREPEND_FLAGS','NVCC_APPEND_FLAGS','CL','_CL_','LINK','LIB','LIBPATH','INCLUDE','PYTHONPATH','PYTHONHOME','CUDNN_FRONTEND_CUDART_LIB_NAME'}
+   for key in list(environment):
+@@ -127,20 +156,22 @@
+    str((HERE/'offline-helper.patch').absolute()):lock['offline_helper']['patch_sha256'],
+    str((HERE/'frontend-authenticated-imports.patch').absolute()):lock['frontend_final']['patch_sha256'],
+    str((dest/'source/cmake/patches/cudnn_frontend/cudnn_frontend_win_arm64_compat.patch').absolute()):lock['frontend_upstream_arm64']['patch_sha256']}
+-  def patch(path,cwd,name):
+-   o.plain(path,regular=True);expected=pinned_patches[str(path.absolute())]
+-   target=dest/'patch-inputs'/(name+'.patch');target.parent.mkdir(exist_ok=True)
+-   with path.open('rb') as f,target.open('xb') as g:shutil.copyfileobj(f,g,1024*1024)
+-   if digest(target)!=expected:raise ValueError('protected patch input snapshot differs')
+-   run([tools['patch']['path'],'--batch','--forward','--fuzz=0','--binary','--ignore-whitespace','-p1','--input='+str(target.absolute())],cwd,name)
+-  patch(BASE/'ort-windows-loader-proposal-r2.patch',dest/'source','loader-patch')
+-  patch(HERE/'offline-helper.patch',dest/'source','offline-patch')
++  def patch(path,cwd,name,targets):
++   def dispatch():
++    o.plain(path,regular=True);expected=pinned_patches[str(path.absolute())]
++    target=dest/'patch-inputs'/(name+'.patch');target.parent.mkdir(exist_ok=True)
++    with path.open('rb') as f,target.open('xb') as g:shutil.copyfileobj(f,g,1024*1024)
++    if digest(target)!=expected:raise ValueError('protected patch input snapshot differs')
++    run([tools['patch']['path'],'--batch','--forward','--fuzz=0','--binary','--ignore-whitespace','-p1','--input='+str(target.absolute())],cwd,name)
++   return after_patch_target_checks(o,cwd,targets,dispatch)
++  patch(BASE/'ort-windows-loader-proposal-r2.patch',dest/'source','loader-patch',lock['loader_files'])
++  patch(HERE/'offline-helper.patch',dest/'source','offline-patch',[lock['offline_helper']])
+   for r in lock['loader_files']:
+    if digest(dest/'source'/r['path'])!=r['proposed_sha256']:raise ValueError('loader output source differs')
+   if digest(dest/'source'/lock['offline_helper']['path'])!=lock['offline_helper']['after_sha256']:raise ValueError('offline helper output differs')
+   frontend=dest/'frontend';frontend_proof=safe_frontend(o,INPUT/'cuda-source-dependencies/cudnn_frontend.zip',frontend,lock);write(dest/'frontend-source-before.json',frontend_proof)
+-  patch(dest/'source/cmake/patches/cudnn_frontend/cudnn_frontend_win_arm64_compat.patch',frontend,'frontend-arm64')
+-  patch(HERE/'frontend-authenticated-imports.patch',frontend,'frontend-auth-imports')
++  patch(dest/'source/cmake/patches/cudnn_frontend/cudnn_frontend_win_arm64_compat.patch',frontend,'frontend-arm64',[lock['frontend_upstream_arm64']])
++  patch(HERE/'frontend-authenticated-imports.patch',frontend,'frontend-auth-imports',[lock['frontend_final']])
+   for key in ('frontend_upstream_arm64','frontend_final'):
+    r=lock[key]
+    if digest(frontend/r['path'])!=r['after_sha256']:raise ValueError('exact frontend transformed source differs')
+@@ -150,6 +181,12 @@
+   syntax.write_text('#include <cudnn_frontend.h>\nstatic_assert(CUDNN_MAJOR == 9 && CUDNN_MINOR == 10 && CUDNN_PATCHLEVEL == 2);\n',encoding='utf8')
+   syntax_command=[tools['compiler']['path'],'/nologo','/Zs','/std:c++17','/EHsc','/MD','/DNV_CUDNN_FRONTEND_USE_DYNAMIC_LOADING','/I'+str(frontend/'include'),'/I'+str(frontend/'include/cudnn_frontend/thirdparty'),'/I'+str(CUDA/'include'),'/I'+str(INPUT/'cudnn-dev/include'),str(syntax)]
+   receipt['header_probe_source_sha256']=digest(syntax);receipt['header_probe_argv']=syntax_command;run(syntax_command,dest,'frontend-header-probe',True)
++  closure=original_inputs+tool_inputs
++  for row in mirrors:closure.append({'path':str((dest/'source/mirror'/row['path']).absolute()),'bytes':row['bytes'],'sha256':row['sha256']})
++  for path in [ROOT/'scripts/provision-static-onnx-runtime.py',ROOT/'scripts/static-onnx-runtime-lock.json',INPUT/'extraction.json',CUDA/'version.json']:
++   closure.append({'path':str(path.absolute()),'bytes':path.stat().st_size,'sha256':digest(path)})
++  verify_input_closure(o,closure);verify_mirror_closure(o,dest/'source/mirror',mirrors)
++  write(dest/'frozen-input-closure.json',closure);receipt['frozen_input_closure_sha256']=digest(dest/'frozen-input-closure.json')
+   command=gpu_command(o,dest,tools,frontend);receipt['configure_argv']=command;run(command,dest,'configure',True)
+   o.verify_cmake_cache(dest/'b/Release/CMakeCache.txt',command)
+   build=[tools['cmake']['path'],'--build',str(dest/'b/Release'),'--config','Release','--target','all','re2','--parallel','2'];receipt['build_argv']=build;run(build,dest,'build',True)
+@@ -168,6 +205,9 @@
+    if len(found)!=1:raise ValueError('exact same-build provider output missing/ambiguous')
+    p=o.plain(found[0],regular=True);dlls.append({'path':p.relative_to(dest).as_posix(),'bytes':p.stat().st_size,'sha256':digest(p)})
+   if list((dest/'b').rglob('onnxruntime.dll')):raise ValueError('second dynamic ORT core output refused')
++  receipt['reopened_frozen_input_count']=verify_input_closure(o,closure)
++  verify_mirror_closure(o,dest/'source/mirror',mirrors)
++  if digest(dest/'frozen-input-closure.json')!=receipt['frozen_input_closure_sha256']:raise ValueError('frozen closure record drift')
+   if digest(Path(__file__))!=a.approved_script_sha256 or digest(LOCK)!=a.approved_lock_sha256:raise ValueError('producer or lock changed during build')
+   receipt.update(status='PASS_PRODUCER_ONLY_UNQUALIFIED',libraries=libraries,provider_dlls=dlls,source_inventory_sha256=digest(dest/'gpu-source-files.json'),frontend_inventory_sha256=digest(dest/'frontend-source-files.json'),cuda_inventory_sha256=digest(dest/'cuda-toolkit-inputs.json'))
+  except BaseException as e:
+--- a/cuda-runtime-producer-lock.json
++++ b/cuda-runtime-producer-lock.json
+@@ -42,8 +42,8 @@
+   "frontend_final": {
+     "path": "include/cudnn_frontend_shim.h",
+     "before_sha256": "ddaca0914107d628cc6c8b0fa0b6dd86d241f65cafd7b602140d2b5ccf184d62",
+-    "after_sha256": "107cb2fbec586ce0a7f9ff274a502c1540ccd5733115542977aebb67fb75ed73",
+-    "patch_sha256": "64184c036be6bbc9ac62919d1bb76dfb923526c973e7c5e38c90af9860d710c1"
++    "after_sha256": "bdb68afc228002dcc7812316b293beb6ec0f65c2b9135cf9b8552264fe5e584c",
++    "patch_sha256": "e7cdaa124a816f5a69b37cf2a147845219168a981dfdc6b8f20748ded6930e0b"
+   },
+   "excluded_link": {
+     "path": ".claude/skills",
+--- a/frontend-authenticated-imports.patch
++++ b/frontend-authenticated-imports.patch
+@@ -45,15 +45,23 @@
+  }
+  
+  inline void *
+-@@ -212,9 +232,9 @@
++@@ -211,10 +231,19 @@
++ 
+  #if defined NV_CUDNN_FRONTEND_USE_DYNAMIC_LOADING
+  
+++#ifdef _WIN32
+++#define NV_FE_CALL_TO_CUDA(function_name, cuda_symbol, ...) \
+++    return cuda_symbol(__VA_ARGS__);
+++#define NV_FE_CALL_TO_CU(function_name, cuda_symbol, ...) \
+++    return cuda_symbol(__VA_ARGS__);
+++
+++#else
+  #define NV_FE_CALL_TO_CUDA(function_name, cuda_symbol, ...) \
+--    return reinterpret_cast<decltype(function_name) *>(get_cuda_symbol(CudaLibrary::CUDART, #cuda_symbol))(__VA_ARGS__);
+-+    return cuda_symbol(__VA_ARGS__);
++     return reinterpret_cast<decltype(function_name) *>(get_cuda_symbol(CudaLibrary::CUDART, #cuda_symbol))(__VA_ARGS__);
+  #define NV_FE_CALL_TO_CU(function_name, cuda_symbol, ...) \
+--    return reinterpret_cast<decltype(function_name) *>(get_cuda_symbol(CudaLibrary::CUDA, #cuda_symbol))(__VA_ARGS__);
+-+    return cuda_symbol(__VA_ARGS__);
++     return reinterpret_cast<decltype(function_name) *>(get_cuda_symbol(CudaLibrary::CUDA, #cuda_symbol))(__VA_ARGS__);
+++
+++#endif
+  
+  #else
+  
+--- a/CONTRACT.md
++++ b/CONTRACT.md
+@@ -17,3 +17,9 @@
+ Campaign deadline is72hours total from original T0:2026-11-19T05:29:42Z (Wednesday18November22:29America/Denver). The producer's own shared10800-second build observer cap is unchanged; model120-second limits are unchanged.
+ 
+ R3 uses a short fresh direct child `cu3` of the already approved protected parent, not a junction/SUBST/global path workaround. CMAKE_OBJECT_PATH_MAX=240 asks CMake to hash deep object paths; per-build TEMP/TMP/TMPDIR use `cu3/t` and CUDAcache `cu3/cc`. No unsupported-compiler override is used. These measures reduce generated path length; actual NVCC compatibility remains a build gate rather than an assumed pass.
++
++## R4 operational review corrections
++
++The direct CUDA/CU frontend macros are Windows-only. The exact original nonWindows dynamic macros remain in the nonWindows branch. Before each of the four patch invocations, validate every affected target against its declared lock.before_sha256, including all three loader files; mismatch stops before patch-child dispatch. Whole-file after hashes remain required.
++
++Before PASS, reauthenticate all16copied mirror archives and their exact path census, all18original archives, the32cuDNN development files, CUDAtoolkit inventory, original recorded compiler/CMake/Ninja/patch/Python/vcvars bytes and remaining frozen producer/lock/source inputs. Recorded policy is not a substitute for reopened bytes. Preserve first failure; no retry or qualification transfer. Independent controls must reject same-size closure drift and wrong-before targets before dispatch.
+--- a/test_provision_cuda_runtime.py
++++ b/test_provision_cuda_runtime.py
+@@ -41,4 +41,38 @@
+    root=Path(t);arc,lock=self.fixture(root);arc.write_bytes(arc.read_bytes()+b'drift');dst=root/'out'
+    with self.assertRaises(ValueError):g.safe_frontend(cpu,arc,dst,lock)
+    self.assertFalse(dst.exists())
++ def test_wrong_before_refuses_before_patch_dispatch(self):
++  with tempfile.TemporaryDirectory(dir=HERE) as t:
++   root=Path(t);(root/'first.cc').write_bytes(b'trusted one');(root/'second.cc').write_bytes(b'changed two');calls=[]
++   guards=[{'path':'first.cc','before_sha256':hashlib.sha256(b'trusted one').hexdigest()},{'path':'second.cc','before_sha256':hashlib.sha256(b'trusted two').hexdigest()}]
++   with self.assertRaises(ValueError):g.after_patch_target_checks(cpu,root,guards,lambda:calls.append('launch'))
++   self.assertEqual(calls,[])
++ def test_all_declared_before_targets_allow_one_dispatch(self):
++  with tempfile.TemporaryDirectory(dir=HERE) as t:
++   root=Path(t);(root/'file.cc').write_bytes(b'trusted');calls=[]
++   result=g.after_patch_target_checks(cpu,root,[{'path':'file.cc','before_sha256':hashlib.sha256(b'trusted').hexdigest()}],lambda:(calls.append('launch'),'done')[1])
++   self.assertEqual(result,'done');self.assertEqual(calls,['launch'])
++ def test_exact_input_closure_same_size_drift_refused(self):
++  with tempfile.TemporaryDirectory(dir=HERE) as t:
++   root=Path(t);rows=[]
++   for name in ['original-cuda-source.zip','copied-mirror.zip','recorded-compiler.exe']:
++    f=root/name;f.write_bytes(b'trusted-input');rows.append({'path':str(f),'bytes':13,'sha256':hashlib.sha256(b'trusted-input').hexdigest()})
++   self.assertEqual(g.verify_input_closure(cpu,rows),3)
++   for row in rows:
++    with self.subTest(role=Path(row['path']).name):
++     f=Path(row['path']);f.write_bytes(b'changed-input')
++     with self.assertRaises(ValueError):g.verify_input_closure(cpu,rows)
++     f.write_bytes(b'trusted-input')
++ def test_exact_mirror_roster_refuses_extra_archive(self):
++  with tempfile.TemporaryDirectory(dir=HERE) as t:
++   root=Path(t);(root/'declared.zip').write_bytes(b'trusted');expected=[{'path':'declared.zip','bytes':7,'sha256':hashlib.sha256(b'trusted').hexdigest()}]
++   g.verify_mirror_closure(cpu,root,expected);(root/'extra.zip').write_bytes(b'unknown')
++   with self.assertRaises(ValueError):g.verify_mirror_closure(cpu,root,expected)
++ def test_nonwindows_dynamic_macros_preserved_byte_exact(self):
++  with zipfile.ZipFile(g.INPUT/'cuda-source-dependencies/cudnn_frontend.zip') as z:original=z.read('cudnn-frontend-1.27.0/include/cudnn_frontend_shim.h').decode('utf8')
++  key='#define NV_FE_CALL_TO_CUDA';i=original.index(key);j=original.index('\n#else\n',i);expected=original[i:j]
++  after=(HERE/'frontend-shim.after').read_text(encoding='utf8');i=after.index(key);j=after.index('\n#else\n',i);k=after.index(key,j);end=after.index('\n#endif\n',k)
++  self.assertEqual(after[k:end],expected)
++  self.assertIn('#ifdef _WIN32',after[max(0,i-30):i]);self.assertIn('return cuda_symbol(__VA_ARGS__);',after[i:j])
++
+ if __name__=='__main__':unittest.main()
+--- a/README.md
++++ b/README.md
+@@ -1,9 +1,9 @@
+-# GPU producer R3 review handoff
++# GPU producer R4 review handoff
+ 
+-R3 preserves unexecuted R2 and all acquired inputs. The only execution-policy additions are one combined Flash+memory-efficient-capable CUDA build, explicit FlashNVCCthreads1 and truthful compiled-capability metadata. NormalCUDA/SM86, sharedparallel2, NVCCthreads2, exact upstream1.30.0/ort rc10 path, patches, offline mirror, protected inputs and ownership remain. No DLL/core mixing, precision conversion, model call, C++ build or Cargo has run.
++R3 remains immutable and unexecuted. R4 closes the three operational review findings together: frontend direct CUDA/CU macros are Windows-only with byte-exact original nonWindows dynamic macros; every loader/offline/ARM64/frontend patch validates all lock.before_sha256 targets before any patch-child dispatch; final PASS reopens all18original archives, all16copied mirror archives/exact roster and six recorded compiler/CMake/Ninja/patch/Python/vcvars file pins, in addition to existing source/CUDA/cuDNN/producer/lock checks. The frozen closure is itself SHA-bound and rechecked. No legacy CPU validator is changed or bypassed.
+ 
+-The first model gate stays FP32 original unfused/TF32off. FP16 efficient-attention graph/export and mask-equivalence/admission are later G5 work and get distinct variant evidence. Kernel availability is not qualification. No BF16 goal or other research branch is added. This follows the Root-selected combined-flavor assessment SHA2905ba7d... and the authoritative72-hour total deadline2026-11-19T05:29:42Z; original model120-second budgets stay unchanged.
++Eleven Python controls pass, including original/mirror/compiler same-size drift, added mirror archive, wrong-before refusal without dispatch and exact nonWindows macro preservation. These are helper/source controls, not C++ or GPU execution evidence. The C++ header syntax stage still precedes full configure/build. All18source/developer archives were reopened for the final R4 freeze. The official developer/source acquisition, OSnegative controls and all earlier evidence remain under original identities.
+ 
+-All R2 safety corrections persist: the broken upstream frontend dynamic patch is replaced by the exact reviewed rebased Windows imported-module policy, original nonWindows bodies retained; only the exact inert9-byte .claude/skills link is omitted; source and patch identities are explicit; no ambient URL/DLL discovery or unknown negative evidence is accepted. C++ /Zs frontend/header compatibility runs before full configure/build and stops on first failure. Producer receipt remains unqualified and cannot pass the existing CPU-only validator or substitute for native GPU aggregate/runtime/package/placement/numeric/resource/product gates.
++The selected combined runtime policy is unchanged: one static ORT1.30.0 core, normalCUDA/SM86, Flash+memory-efficient compiledON, FlashNVCCthreads1/NVCCthreads2/sharedparallel2, optional same-build providers only. Short protected outputcu4/private temp/CMakeobject-path240 reduce generated Windows path length without aliases or compiler-bypass flags. Initial model gate stays FP32 original unfused/TF32off. FP16 efficient-attention masks/export/admission remain separate later G5 work. No BF16 goal, graph conversion, model execution, build, Cargo, install or publication occurs in this preparation.
+ 
+-Cheap controls are measured in controls-r3.json. Prior source-preparation and test-path failures stay in R1/R2 history. build-card-r3.json is a concrete unexecuted command requiring Root primary/independent review and explicit build authorization. It does not authorize model work.
++build-card-r4.json is an unexecuted bounded command requiring Root final review/authorization and the owned outer10800-second observer. The producer emits only a private unqualified build receipt, not a Rust RuntimeManifest, PE import census, admitted static-core identity or model qualification. Actual new Rust GPU aggregate/runtime/package owners must bind the later real output and complete dependency/placement proofs; no output hashes or authority are fabricated before a build.

@@ -1,0 +1,481 @@
+diff --git a/packages/vscode/src/explorerWebview/indexing.tsx b/packages/vscode/src/explorerWebview/indexing.tsx
+index c6774ea..a84ba6a 100644
+--- a/packages/vscode/src/explorerWebview/indexing.tsx
++++ b/packages/vscode/src/explorerWebview/indexing.tsx
+@@ -1,14 +1,18 @@
+ // SPDX-License-Identifier: Apache-2.0
+-import { useEffect, useState } from 'preact/hooks';
++import { useEffect, useRef, useState } from 'preact/hooks';
+ import { CatalogObject, CatalogScopeAtom, CatalogView, catalogExport, catalogItems, catalogMembershipDraft, catalogObject, catalogReviewPreview, catalogWindowAssociation, sourceChangeObservation, validateCatalogScope } from '../indexingCatalog';
+ import type { ScreenProps } from './workspaces';
+ import { request } from './api';
+ import { IndexSplitPanel } from './indexingSplit';
++import { upgradePending } from './runtimeUpgrade';
+ import { canReviewPolicyUnblock, policyStatusLabels, validatePolicyImpact } from '../indexingCatalog';
+ 
+ /** Native metadata is rendered as escaped Preact text; complete replies stay available in details/export. */
+ export function IndexingScreen(props: ScreenProps) {
+     const view=props.state.indexing??{generation:0,busy:false};
++    const [indexTask,setIndexTask]=useState<'sources'|'split'|'memberships'|'settings'>('sources');
++    const selectedPanel=useRef<HTMLElement>(null);
++    const automaticRead=useRef('');
+     const [error,setError]=useState(''),[name,setName]=useState(''),[filter,setFilter]=useState('');
+     const [index,setIndex]=useState(''),[memberRevision,setMemberRevision]=useState('');
+     const [scopeAtoms,setScopeAtoms]=useState<CatalogScopeAtom[]>([{source_root_id:'',kind:'subtree',path:''}]);
+@@ -28,8 +32,10 @@ export function IndexingScreen(props: ScreenProps) {
+     useEffect(()=>{setWindowProjects(Array.isArray(savedContext?.project_ids)?savedContext.project_ids.join(', '):'');setWindowIndexes(Array.isArray(savedContext?.index_ids)?savedContext.index_ids.join(', '):'');},[contextToken]);
+     const run=async(work:()=>Promise<unknown>)=>{setError('');try{await work();}catch(failure){setError(failure instanceof Error?failure.message:String(failure));}};
+     const preview=(operation:CatalogObject)=>run(()=>request('indexing.preview',{operation,generation:view.generation}));
+-    const disabled=view.busy||!props.state.trusted||props.state.nativeExecutionEnabled===false;
+-    const rows=catalogItems(view.page), detail=catalogItems(view.detail,'detail')[0];
++    const disabled=view.busy||!props.state.trusted||props.state.nativeExecutionEnabled===false||upgradePending(props.state.runtimeUpgrade);
++    const tab=props.route.tab;
++    const rows=catalogItems(view.page), retainedDetail=catalogItems(view.detail,'detail')[0];
++    const detail=(tab==='library'&&retainedDetail?.kind==='index'||tab==='projects'&&retainedDetail?.kind==='project')?retainedDetail:undefined;
+     const project=detail?.kind==='project'?detail.value:undefined, selectedIndex=detail?.kind==='index'?detail.value:undefined;
+     useEffect(()=>{setPolicyRoot('');setPolicyPath('');setUnblockRule('');},[selectedIndex?.id]);
+     const policySnapshot=view.policyStatus?.snapshot?catalogObject(view.policyStatus.snapshot):undefined;
+@@ -38,52 +44,44 @@ export function IndexingScreen(props: ScreenProps) {
+     const policyDenies=Array.isArray(policy?.denies)?policy.denies.map(catalogObject):[];
+     const policyImpact=view.review?.request.operation.operation==='change_index_policy'?validatePolicyImpact(catalogReviewPreview(view.review).source_policy_impact):undefined;
+     const adviceSelection=view.recommendations?.schema==='airk.recommendations/1'?catalogObject(view.recommendations.selected):undefined;
+-    const canSaveAdviceDefault=project&&Array.isArray(adviceSelection?.project_ids)&&adviceSelection.project_ids.length===1&&adviceSelection.project_ids[0]===project.id;
+     const grantRow=catalogItems(view.grantDetail,'detail')[0],selectedGrant=grantRow?catalogObject(grantRow.value.grant):undefined;
+     const sourceStatus=view.sourceObservation?sourceChangeObservation(view.sourceObservation):undefined,sourceJob=sourceStatus?.job?catalogObject(sourceStatus.job):undefined;
+     const sourceBegin=sourceStatus?String(catalogObject(catalogObject(sourceStatus.begin).metadata).operation_id):undefined;
+     useEffect(()=>{if(sourceBegin)setBeginOperation(sourceBegin);},[sourceBegin]);
+     useEffect(()=>{if(view.submittedReview?.request.operation.operation==='begin_index_source_change'&&view.outcome?.status==='catalog_applied'){const receipt=catalogObject(view.outcome.receipt);if(typeof receipt.operation_id==='string')setBeginOperation(receipt.operation_id);}},[view.outcome]);
+-    const pageKind=rows[0]?.kind;
+-    const expectedKind=props.route.tab==='projects'?'project':'index';
+-    const visibleRows=pageKind===expectedKind||rows.length===0?rows:[];
++    const pageKind=view.pageKind??(rows[0]?.kind==='project'?'projects':rows[0]?.kind==='index'?'indexes':undefined);
++    const expectedPage=tab==='projects'?'projects':'indexes';
++    const pageLoaded=!!view.page&&pageKind===expectedPage;
++    const visibleRows=pageLoaded?rows:[];
+     const next=(response?:CatalogObject)=>!!response&&!!catalogObject(response.page).continuation;
+     const page=(kind:'projects'|'indexes'|'sources'|'memberships'|'grants',more=false,idx?:string,prj?:string)=>run(()=>request('indexing.page',{kind,next:more,...(idx?{index:idx}:{}),...(prj?{project:prj}:{})}));
++    const readOwner=JSON.stringify([tab,props.state.selectedProject,props.state.selectionEpoch,props.state.trusted,props.state.nativeExecutionEnabled]);
++    useEffect(()=>{
++        if(disabled||automaticRead.current===readOwner)return;
++        if(tab==='window'){
++            if(!view.context&&!view.hostContext&&(view.canReadWindowContext||view.windowDescriptor)){automaticRead.current=readOwner;void run(()=>request('indexing.context.read',{}));}
++        }else{
++            automaticRead.current=readOwner;
++            if(!pageLoaded&&!detail)void page(expectedPage);
++        }
++    },[readOwner,disabled,pageLoaded,detail,view.canReadWindowContext,view.windowDescriptor,view.context,view.hostContext]);
++    useEffect(()=>{setFilter('');},[tab]);
++    useEffect(()=>{setIndexTask(view.splitFormOpen?'split':'sources');},[selectedIndex?.id,view.splitFormOpen]);
++    useEffect(()=>{selectedPanel.current?.scrollIntoView?.({block:'start',behavior:'smooth'});},[detail?.value.id,indexTask]);
+     const editAtom=(at:number,change:Partial<CatalogScopeAtom>)=>setScopeAtoms(rows=>rows.map((row,i)=>i===at?{...row,...change}:row));
+     const editMembership=(member:CatalogObject)=>{const draft=catalogMembershipDraft(member);setIndex(draft.index);setMemberRevision(draft.revision);setScopeAtoms(draft.scope);};
+-    return <section>
+-        <article class="card" id="recommendations"><h2>Recommendations</h2>
+-            <p>Choose what to reuse and query using authorized saved metadata. Readiness and costs without dated observations remain unknown. This read starts no source scan, evidence query or model.</p>
+-            <form onSubmit={event=>{event.preventDefault();void run(()=>request('indexing.recommendations',{arguments:{situation,...(adviceProjects.trim()||adviceIndexes.trim()?{selection:{project_ids:adviceProjects.split(',').map(v=>v.trim()).filter(Boolean),index_ids:adviceIndexes.split(',').map(v=>v.trim()).filter(Boolean)}}:{})}}));}}>
+-                <label>Situation<select value={situation} onChange={event=>setSituation(event.currentTarget.value)}>
+-                    <option value="keep">Keep this layout</option><option value="reuse">Reuse existing evidence</option><option value="focused_task">One application or package</option><option value="shared_dependencies">Shared code or specifications</option><option value="different_lifecycles">Different lifecycle or policy needs</option><option value="overlap">Possible overlapping indexes</option><option value="irrelevant_path">Path irrelevant to this task</option><option value="never_index_path">Path should never be indexed</option>
+-                </select></label>
+-                <label>Query Project IDs (comma separated)<input value={adviceProjects} onInput={event=>setAdviceProjects(event.currentTarget.value)} /></label>
+-                <label>Query index IDs (comma separated)<input value={adviceIndexes} onInput={event=>setAdviceIndexes(event.currentTarget.value)} /></label>
+-                <p>Leave both blank to inspect the active connection. Otherwise provide both explicit subsets. Selecting all or widening is a deliberate choice within the active grant.</p>
+-                <button disabled={disabled}>Read recommendations</button>
+-            </form>
+-            {view.recommendations&&(view.recommendations.schema==='airk.recommendations/1'?<>
+-                <p>Available to this connection: {Array.isArray(view.recommendations.available)?view.recommendations.available.length:0} unique indexes. Selected for this query: {Array.isArray(catalogObject(view.recommendations.selected).index_ids)?(catalogObject(view.recommendations.selected).index_ids as unknown[]).length:0}.</p>
+-                <p>Omitted indexes: {JSON.stringify(view.recommendations.omitted_index_ids)}. Observation: {String(catalogObject(view.recommendations.observation).source)} at {new Date(Number(view.recommendations.observed_unix_ms)).toLocaleString()}. Connection scope only; machine library coverage is incomplete.</p>
+-                <details><summary>Available indexes, Project names, selected source and prefix boundaries</summary><pre>{JSON.stringify({available:view.recommendations.available,projects:view.recommendations.projects,source_boundaries:view.recommendations.source_boundaries,selected_scope:view.recommendations.selected_scope},null,2)}</pre></details>
+-                {Array.isArray(view.recommendations.cards)&&view.recommendations.cards.map((item,at)=>{const card=catalogObject(item);return <article key={at}><h3>{actionLabels[String(card.action)]??String(card.action)}</h3><p>{String(card.reason)}</p><p>{String(card.expected_benefit)}</p><p>{String(card.tradeoff)}</p>{card.action==='review_split'&&view.canReviewSplit&&Array.isArray(adviceSelection?.index_ids)&&adviceSelection.index_ids.map(id=><button key={String(id)} disabled={disabled} onClick={()=>void run(()=>request('indexing.split.open',{index:String(id),generation:view.generation}))}>Open split review for {String(id)}</button>)}</article>;})}
+-                <button disabled={disabled} onClick={()=>void run(()=>request('indexing.recommendations.use',{}))}>Use this query scope</button>
+-                <button disabled={disabled} onClick={()=>void run(()=>request('indexing.recommendations.copy',{}))}>Copy agent scope instructions</button>
+-                <p>Use this query scope prefills a temporary Workbench form. Review it before running. It does not change an agent connection or replace saved session choices automatically.</p>
+-                {canSaveAdviceDefault&&<button disabled={disabled} onClick={()=>void preview({operation:'set_project_defaults',project_id:project!.id,expected_defaults_revision:project!.defaults_revision,index_ids:adviceSelection!.index_ids})}>Review saving as Project default</button>}
+-                <p>To save a single-Project scope, inspect that Project and review its native defaults change. For a combined scope, use each Project's defaults form below; a query index may belong to only one selected Project. Reuse opens existing membership review. Split recommendations open a native review only when this connection reports split capability; applying a split requires its separate complete review. Recommendations do not prefill permanent-removal jobs; open index Sources and prepare an explicit native review below.</p>
+-                <button disabled={disabled} onClick={()=>props.go({workspace:'indexing',tab:'projects'})}>Review reuse or Project defaults</button>
+-                <details><summary>Complete Recommendations response</summary><pre>{JSON.stringify(view.recommendations,null,2)}</pre></details>
+-            </>:<p>Recommendations unavailable on this connection. Review the complete native response: <code>{JSON.stringify(view.recommendations)}</code></p>)}
+-            <button disabled={disabled} onClick={()=>void run(()=>request('indexing.recommendations.dismiss',{}))}>Keep this layout / Dismiss</button>
+-        </article>
+-        {props.route.tab==='window'?<article class="card"><h2>This window</h2>
++    return <section class="indexing-screen">
++        <p class="indexing-intro">{tab==='window'?'Choose which Projects and indexes this window uses. Manage access and saved preferences here.':tab==='projects'?'Group existing indexes into Projects and choose their default search scope.':'Manage indexes on this machine. Open an index to change its sources, split it, or review which Projects use it.'}</p>
++        {(error||view.error)&&<p class="notice" role="alert">{error||view.error}</p>}
++        {view.busy&&<p role="status">Loading native catalog details…</p>}
++        {!props.state.trusted&&<p class="notice">Trust this workspace to load and manage indexes.</p>}
++        {props.state.nativeExecutionEnabled===false&&<p class="notice">Enable native execution in AIRK settings to load and manage indexes.</p>}
++        {props.route.tab==='window'?<><article class="card"><h2>This window</h2>
+             <p>Saved window associations are preferences. Saving or deleting an association does not grant access, switch an evidence session or change a coding agent's configured scope.</p>
+             {view.windowDescriptor||view.canReadWindowContext?<>{view.windowDescriptor&&<p>{view.windowDescriptor.name} · {view.windowDescriptor.kind}</p>}
+                 <button disabled={disabled||windowReadBusy} onClick={()=>{setWindowReadBusy(true);void run(()=>request('indexing.context.read',{})).finally(()=>setWindowReadBusy(false));}}>{windowReadBusy?'Reading saved association…':'Read saved association'}</button>
+                 {(view.context||view.hostContext)&&<><p>{savedContext?`Saved association ${String(savedContext.id)}, revision ${String(savedContext.revision)}`:'No saved association for this window.'}</p>
+-                    <form onSubmit={event=>{event.preventDefault();void run(()=>request('indexing.context.preview',{generation:view.generation,selection:{
++                    <details><summary>Change saved window preferences</summary><form onSubmit={event=>{event.preventDefault();void run(()=>request('indexing.context.preview',{generation:view.generation,selection:{
+                         project_ids:windowProjects.split(',').map(value=>value.trim()).filter(Boolean),index_ids:windowIndexes.split(',').map(value=>value.trim()).filter(Boolean),
+                     }}));}}>
+                         <label>Project IDs (comma separated; blank selects zero Projects)<input value={windowProjects} onInput={event=>setWindowProjects(event.currentTarget.value)} /></label>
+@@ -91,19 +89,19 @@ export function IndexingScreen(props: ScreenProps) {
+                         <p class="muted">Up to 32 unique Projects and 32 unique indexes. Default indexes must belong to the selected Projects; zero Projects requires zero index defaults. The native preview remains authoritative.</p>
+                         <button disabled={disabled}>Preview saved association</button>
+                     </form>
+-                    {savedContext&&<button disabled={disabled} onClick={()=>void run(()=>request('indexing.context.delete',{generation:view.generation}))}>Preview delete association</button>}
++                    {savedContext&&<button disabled={disabled} onClick={()=>void run(()=>request('indexing.context.delete',{generation:view.generation}))}>Preview delete association</button>}</details>
+                 </>}
+             </>:<p>Window association controls are unavailable because the trusted host has not supplied this window's canonical identity. No association is inferred from open folders.</p>}
+             {view.windowDescriptor?.kind==='empty'&&<p class="muted">This empty window uses a transient private identity. A new empty window or restarted window does not promise to restore this association.</p>}
+-            {view.canReviewGrant?<form onSubmit={event=>{event.preventDefault();void run(()=>request('indexing.grant.draft',{generation:view.generation,selection:{
++            {view.canReviewGrant?<details><summary>Create an access grant</summary><form onSubmit={event=>{event.preventDefault();void run(()=>request('indexing.grant.draft',{generation:view.generation,selection:{
+                 project_ids:grantProjects.split(',').map(value=>value.trim()).filter(Boolean),index_ids:grantIndexes.trim()?grantIndexes.split(',').map(value=>value.trim()).filter(Boolean):null,
+             }}));}}><h3>Review a new access grant</h3><p>Choose Projects explicitly. The native service freezes the actual memberships, sources and policy for review. Preparing a draft issues no access and changes no evidence session.</p>
+                 <label>Project IDs (1–32, comma separated)<input required value={grantProjects} onInput={event=>setGrantProjects(event.currentTarget.value)} /></label>
+                 <label>Optional index subset (1–32 IDs; blank asks native to include the selected Projects' memberships)<input value={grantIndexes} onInput={event=>setGrantIndexes(event.currentTarget.value)} /></label>
+                 {!view.hostContext&&<p class="muted">Read the current window association before preparing a grant. Saved preferences do not select this grant automatically.</p>}
+                 <button disabled={disabled||!view.hostContext}>Prepare native grant review</button>
+-            </form>:<p>Native access-grant review is unavailable on this connection.</p>}
+-            <h3>Saved access grants</h3><p>Inspect a native grant before selecting an index and Projects. Listing, inspecting or revoking a grant does not select another grant.</p>
++            </form></details>:<p>Native access-grant review is unavailable on this connection.</p>}
++            <h3>Choose access for this window</h3><p>Inspect a native grant before selecting an index and Projects. Listing, inspecting or revoking a grant does not select another grant.</p>
+             <button disabled={disabled} onClick={()=>void page('grants')}>Read grants</button>
+             {catalogItems(view.grants).map(row=>{const grant=catalogObject(row.value.grant),provenance=catalogObject(row.value.provenance);return <article key={String(grant.id)}><p><code>{String(grant.id)}</code> · revision {String(grant.revision)} · {grant.revoked?'Revoked':'Unrevoked'} · {String(provenance.kind)}</p><button disabled={disabled} onClick={()=>void run(()=>request('indexing.detail',{kind:'grant',id:String(grant.id)}))}>Inspect grant</button></article>;})}
+             {next(view.grants)&&<button disabled={disabled} onClick={()=>void page('grants',true)}>Next grants page</button>}
+@@ -117,21 +115,50 @@ export function IndexingScreen(props: ScreenProps) {
+                 </form>:<p>This grant cannot be selected here. Imported compatibility grants remain attached to their existing legacy connections.</p>}
+             </article>}
+             <p>Persisting a reviewed grant does not activate a connection or change existing agent configuration. Existing single-index connections continue to use their configured source scope.</p>
+-            <button onClick={()=>props.go({workspace:'indexing',tab:'library'})}>Open Index library</button>
+-        </article>:<>
++            <div class="actions"><button onClick={()=>props.go({workspace:'indexing',tab:'library'})}>Manage indexes</button><button onClick={()=>props.go({workspace:'indexing',tab:'projects'})}>Manage Projects</button></div>
++        </article>
++        <details class="card" id="recommendations"><summary>Help me choose indexes</summary><h2>Recommendations</h2>
++            <p>Choose what to reuse and query using authorized saved metadata. Readiness and costs without dated observations remain unknown. This read starts no source scan, evidence query or model.</p>
++            <form onSubmit={event=>{event.preventDefault();void run(()=>request('indexing.recommendations',{arguments:{situation,...(adviceProjects.trim()||adviceIndexes.trim()?{selection:{project_ids:adviceProjects.split(',').map(v=>v.trim()).filter(Boolean),index_ids:adviceIndexes.split(',').map(v=>v.trim()).filter(Boolean)}}:{})}}));}}>
++                <label>Situation<select value={situation} onChange={event=>setSituation(event.currentTarget.value)}>
++                    <option value="keep">Keep this layout</option><option value="reuse">Reuse existing evidence</option><option value="focused_task">One application or package</option><option value="shared_dependencies">Shared code or specifications</option><option value="different_lifecycles">Different lifecycle or policy needs</option><option value="overlap">Possible overlapping indexes</option><option value="irrelevant_path">Path irrelevant to this task</option><option value="never_index_path">Path should never be indexed</option>
++                </select></label>
++                <label>Query Project IDs (comma separated)<input value={adviceProjects} onInput={event=>setAdviceProjects(event.currentTarget.value)} /></label>
++                <label>Query index IDs (comma separated)<input value={adviceIndexes} onInput={event=>setAdviceIndexes(event.currentTarget.value)} /></label>
++                <p>Leave both blank to inspect the active connection. Otherwise provide both explicit subsets. Selecting all or widening is a deliberate choice within the active grant.</p>
++                <button disabled={disabled}>Read recommendations</button>
++            </form>
++            {view.recommendations&&(view.recommendations.schema==='airk.recommendations/1'?<>
++                <p>Available to this connection: {Array.isArray(view.recommendations.available)?view.recommendations.available.length:0} unique indexes. Selected for this query: {Array.isArray(catalogObject(view.recommendations.selected).index_ids)?(catalogObject(view.recommendations.selected).index_ids as unknown[]).length:0}.</p>
++                <p>Omitted indexes: {JSON.stringify(view.recommendations.omitted_index_ids)}. Observation: {String(catalogObject(view.recommendations.observation).source)} at {new Date(Number(view.recommendations.observed_unix_ms)).toLocaleString()}. Connection scope only; machine library coverage is incomplete.</p>
++                <details><summary>Available indexes, Project names, selected source and prefix boundaries</summary><pre>{JSON.stringify({available:view.recommendations.available,projects:view.recommendations.projects,source_boundaries:view.recommendations.source_boundaries,selected_scope:view.recommendations.selected_scope},null,2)}</pre></details>
++                {Array.isArray(view.recommendations.cards)&&view.recommendations.cards.map((item,at)=>{const card=catalogObject(item);return <article key={at}><h3>{actionLabels[String(card.action)]??String(card.action)}</h3><p>{String(card.reason)}</p><p>{String(card.expected_benefit)}</p><p>{String(card.tradeoff)}</p>{card.action==='review_split'&&view.canReviewSplit&&Array.isArray(adviceSelection?.index_ids)&&adviceSelection.index_ids.map(id=><button key={String(id)} disabled={disabled} onClick={()=>void run(async()=>{await request('indexing.split.open',{index:String(id),generation:view.generation});props.go({workspace:'indexing',tab:'library'});})}>Open split review for {String(id)}</button>)}</article>;})}
++                <button disabled={disabled} onClick={()=>void run(()=>request('indexing.recommendations.use',{}))}>Use this query scope</button>
++                <button disabled={disabled} onClick={()=>void run(()=>request('indexing.recommendations.copy',{}))}>Copy agent scope instructions</button>
++                <p>Use this query scope prefills a temporary Workbench form. Review it before running. It does not change an agent connection or replace saved session choices automatically.</p>
++                <p>To save a single-Project scope, inspect that Project and review its native defaults change. For a combined scope, open the Projects tab and use each Project's defaults form; a query index may belong to only one selected Project. Reuse opens existing membership review. Split recommendations open a native review only when this connection reports split capability; applying a split requires its separate complete review. Recommendations do not prefill permanent-removal jobs; open an index in the Index library and choose Sources and exclusions.</p>
++                <button disabled={disabled} onClick={()=>props.go({workspace:'indexing',tab:'projects'})}>Review reuse or Project defaults</button>
++                <details><summary>Complete Recommendations response</summary><pre>{JSON.stringify(view.recommendations,null,2)}</pre></details>
++            </>:<p>Recommendations unavailable on this connection. Review the complete native response: <code>{JSON.stringify(view.recommendations)}</code></p>)}
++            <button disabled={disabled} onClick={()=>void run(()=>request('indexing.recommendations.dismiss',{}))}>Keep this layout / Dismiss</button>
++        </details>
++        </>:<>
+         <article class="card"><h2>{props.route.tab==='projects'?'Projects':'Index library'}</h2>
+-            <p>Metadata on this AIRK host. A library entry or Project membership does not grant access to source evidence.</p>
++            <p>{tab==='projects'?'Projects organize index memberships and default search choices.':'Select an index below. Splitting creates an independent index and leaves the original as the remainder.'} A library entry or Project membership does not grant source access.</p>
+             <button disabled={disabled} onClick={()=>void page(props.route.tab==='projects'?'projects':'indexes')}>Refresh {props.route.tab==='projects'?'Projects':'indexes'}</button>
+             <label>Filter displayed page<input value={filter} onInput={event=>setFilter(event.currentTarget.value)} /></label>
+             <p class="muted">Each native page contains up to 16 entries within 48 KiB. The filter applies only to this displayed page.</p>
+             {visibleRows.filter(row=>JSON.stringify(row.value).toLocaleLowerCase().includes(filter.toLocaleLowerCase())).map(row=><article class="card" key={String(row.value.id)}><strong>{String(row.value.name??row.value.id)}</strong><p><code>{String(row.value.id)}</code></p>
+                 {row.kind==='index'&&<p>{String(catalogObject(row.value.backing).root??'Source location is in complete details')}</p>}
+-                <button disabled={disabled} onClick={()=>void run(()=>request('indexing.detail',{kind:row.kind==='project'?'project':'index',id:String(row.value.id)}))}>Inspect</button></article>)}
+-            {view.page&&pageKind===expectedKind&&next(view.page)&&<button disabled={disabled} onClick={()=>void page(props.route.tab==='projects'?'projects':'indexes',true)}>Next page</button>}
+-            {view.page&&rows.length===0&&<p>No entries on this native page.</p>}
+-            {!view.page&&<p>Refresh to read the native catalog. An inactive or unsupported catalog reports its native failure; it is not an empty library.</p>}
+-            {props.route.tab==='projects'&&<form onSubmit={event=>{event.preventDefault();void run(()=>request('indexing.create',{name,generation:view.generation}));}}><label>New Project name<input required maxLength={256} value={name} onInput={event=>setName(event.currentTarget.value)} /></label><button disabled={disabled||!view.revision}>Preview create Project</button></form>}
+-            {props.route.tab==='library'&&(view.canReviewSetup?<form onSubmit={event=>{event.preventDefault();void run(()=>request('indexing.setup.draft',{generation:view.generation,selection:{name:setupName,primary_root:setupPrimary,data_root:setupData,collection:setupCollection,additional_roots:setupRoots,setup_watch:setupWatch}}));}}>
++                <div class="actions"><button disabled={disabled} onClick={()=>void run(()=>request('indexing.detail',{kind:row.kind==='project'?'project':'index',id:String(row.value.id)}))}>{row.kind==='project'?'Open Project':'Open index'}</button>
++                {row.kind==='index'&&row.value.tombstone===false&&<button disabled={disabled||!view.canReviewSplit} onClick={()=>void run(()=>request('indexing.split.open',{index:String(row.value.id),generation:view.generation}))}>Split index</button>}</div>
++                {row.kind==='index'&&row.value.tombstone===true&&<p>Retired index</p>}</article>)}
++            {pageLoaded&&next(view.page)&&<button disabled={disabled} onClick={()=>void page(props.route.tab==='projects'?'projects':'indexes',true)}>Next page</button>}
++            {pageLoaded&&rows.length===0&&<p>No {tab==='projects'?'Projects':'indexes'} on this catalog page.</p>}
++            {pageLoaded&&rows.length>0&&visibleRows.every(row=>!JSON.stringify(row.value).toLocaleLowerCase().includes(filter.toLocaleLowerCase()))&&<p>No matches on this page. Clear the filter or read the next page.</p>}
++            {!pageLoaded&&!view.busy&&<p>The {tab==='projects'?'Project list':'index library'} has not loaded. Use Refresh above to retry. A failed read does not mean the library is empty.</p>}
++            {props.route.tab==='projects'&&<details><summary>Create a Project</summary><form onSubmit={event=>{event.preventDefault();void run(()=>request('indexing.create',{name,generation:view.generation}));}}><label>New Project name<input required maxLength={256} value={name} onInput={event=>setName(event.currentTarget.value)} /></label><button disabled={disabled||!view.revision}>Preview create Project</button></form></details>}
++            {props.route.tab==='library'&&<details><summary>Set up a new index</summary>{view.canReviewSetup?<form onSubmit={event=>{event.preventDefault();void run(()=>request('indexing.setup.draft',{generation:view.generation,selection:{name:setupName,primary_root:setupPrimary,data_root:setupData,collection:setupCollection,additional_roots:setupRoots,setup_watch:setupWatch}}));}}>
+                 <h3>Set up a new index</h3><p>Choose source and index-storage locations explicitly. Native review resolves their actual locations and storage ownership. Preparing a review creates no index and grants no access.</p>
+                 <label>Index name<input required value={setupName} onInput={event=>setSetupName(event.currentTarget.value)} /></label>
+                 <label>Primary source location<input required value={setupPrimary} onInput={event=>setSetupPrimary(event.currentTarget.value)} /></label>
+@@ -146,12 +173,17 @@ export function IndexingScreen(props: ScreenProps) {
+                 <label><input type="checkbox" checked={setupWatch} onChange={event=>setSetupWatch(event.currentTarget.checked)} />Enable native watching after setup</label>
+                 {!view.revision&&<p>Refresh the index library before preparing setup.</p>}
+                 <button disabled={disabled||!view.revision}>Prepare native setup review</button>
+-            </form>:<p>Native index setup is unavailable on this connection.</p>)}
++            </form>:<p>Native index setup is unavailable on this connection.</p>}</details>}
+         </article>
+-        {detail&&<article class="card"><h2>{detail.kind==='project'?'Project':'Index'}: {String(detail.value.name)}</h2><p><code>{String(detail.value.id)}</code></p>
+-            <form onSubmit={event=>{event.preventDefault();void preview({operation:detail.kind==='project'?'rename_project':'rename_index',id:detail.value.id,expected_definition_revision:detail.value.definition_revision,name});}}><label>New name<input required maxLength={256} value={name} onInput={event=>setName(event.currentTarget.value)} /></label><button disabled={disabled}>Preview rename</button></form>
+-            {selectedIndex&&<button disabled={disabled} onClick={()=>void page('sources',false,String(selectedIndex.id))}>Read Sources</button>}
+-            {selectedIndex&&(view.canReviewSource?<article><h3>Manage index sources</h3><p>Native review freezes actual source identities, configuration and policy. Preparing a draft makes no changes. Applying a root change begins a native configuration job; a begin receipt does not mean the root update has completed.</p>
++        {detail&&<article class="card indexing-detail" ref={selectedPanel}><h2>{detail.kind==='project'?'Project':'Index'}: {String(detail.value.name)}</h2><p><code>{String(detail.value.id)}</code></p>
++            {selectedIndex&&<nav class="actions indexing-tasks" aria-label="Selected index actions">
++                {([['sources','Sources and exclusions'],['split','Split index'],['memberships','Projects using this index'],['settings','Index settings']] as const).map(([task,label])=><button type="button" aria-pressed={indexTask===task} onClick={()=>setIndexTask(task)}>{label}</button>)}
++            </nav>}
++            {selectedIndex&&<div hidden={indexTask!=='split'}><IndexSplitPanel key={String(selectedIndex.id)} view={view} index={selectedIndex} disabled={disabled} run={run} upgrade={props.state.runtimeUpgrade}/></div>}
++            {(!selectedIndex||indexTask==='settings')&&<details><summary>Rename {selectedIndex?'index':'Project'}</summary>
++            <form onSubmit={event=>{event.preventDefault();void preview({operation:detail.kind==='project'?'rename_project':'rename_index',id:detail.value.id,expected_definition_revision:detail.value.definition_revision,name});}}><label>New name<input required maxLength={256} value={name} onInput={event=>setName(event.currentTarget.value)} /></label><button disabled={disabled}>Preview rename</button></form></details>}
++            {selectedIndex&&indexTask==='sources'&&<button disabled={disabled} onClick={()=>void page('sources',false,String(selectedIndex.id))}>Read Sources</button>}
++            {selectedIndex&&indexTask==='sources'&&(view.canReviewSource?<article><h3>Manage index sources</h3><p>Native review freezes actual source identities, configuration and policy. Preparing a draft makes no changes. Applying a root change begins a native configuration job; a begin receipt does not mean the root update has completed.</p>
+                 {view.canReadPendingSource?<button disabled={disabled} onClick={()=>void run(()=>request('indexing.source.pending',{generation:view.generation}))}>Read pending source change for this index</button>:<p class="muted">Current-change lookup by index is unavailable on this connection. A known native begin operation ID can be read below; no operation history is inferred from source status.</p>}
+                 <form onSubmit={event=>{event.preventDefault();void run(()=>request('indexing.source.draft',{generation:view.generation,change:{operation:'add_root',alias:sourceAlias,path:sourcePath}}));}}>
+                     <label>Additional source alias<input required value={sourceAlias} onInput={event=>setSourceAlias(event.currentTarget.value)} /></label><label>Source location<input required value={sourcePath} onInput={event=>setSourcePath(event.currentTarget.value)} /></label>
+@@ -187,7 +219,7 @@ export function IndexingScreen(props: ScreenProps) {
+                     <p>Preparing a review changes nothing. A completed native policy receipt establishes the exclusion; removal and physical cleanup are reported separately. Cleanup states retain their observation time; later background cleanup is not inferred. Previously delivered results, exports and upgrade backups cannot be recalled. Physical cleanup is not secure erasure.</p>
+                 </article>}
+             </article>:<p>Native source mutation and retirement review are unavailable on this connection.</p>)}
+-            <button disabled={disabled} onClick={()=>void page('memberships',false,selectedIndex?String(selectedIndex.id):undefined,project?String(project.id):undefined)}>Read memberships</button>
++            {(!selectedIndex||indexTask==='memberships')&&<button disabled={disabled} onClick={()=>void page('memberships',false,selectedIndex?String(selectedIndex.id):undefined,project?String(project.id):undefined)}>Load Project memberships</button>}
+             {project&&<>
+                 <p>Default indexes: {Array.isArray(project.default_indexes)?project.default_indexes.join(', '):'Unknown'}</p>
+                 <form onSubmit={event=>{event.preventDefault();void preview({operation:'set_project_defaults',project_id:project.id,expected_defaults_revision:project.defaults_revision,index_ids:defaults.split(',').map(value=>value.trim()).filter(Boolean)});}}><label>Default index IDs (comma separated; blank clears defaults)<input value={defaults} onInput={event=>setDefaults(event.currentTarget.value)} /></label><button disabled={disabled}>Preview defaults</button></form>
+@@ -211,13 +243,13 @@ export function IndexingScreen(props: ScreenProps) {
+                 <p class="muted">Deleting a Project removes its metadata and memberships. The native preview describes affected defaults and grants. Source files remain read-only.</p>
+             </>}
+         </article>}
+-        {view.sources&&detail&&<article class="card"><h3>Sources</h3>{catalogItems(view.sources).map(row=><p key={String(row.value.id)}><code>{String(row.value.id)}</code> {String(row.value.canonical_path)} · {row.value.enabled?'Enabled':'Disabled'}</p>)}{next(view.sources)&&<button disabled={disabled} onClick={()=>void page('sources',true,selectedIndex?String(selectedIndex.id):index)}>Next Sources page</button>}</article>}
+-        {view.memberships&&detail&&<article class="card"><h3>Memberships</h3>{catalogItems(view.memberships).map(row=><article key={`${row.value.project_id}/${row.value.index_id}`}><p><code>{String(row.value.project_id)} / {String(row.value.index_id)}</code> · revision {String(row.value.revision)}</p><pre>{JSON.stringify(row.value.scope,null,2)}</pre>
++        {view.sources&&detail&&(!selectedIndex||indexTask==='sources')&&<article class="card"><h3>Sources</h3>{catalogItems(view.sources).map(row=><p key={String(row.value.id)}><code>{String(row.value.id)}</code> {String(row.value.canonical_path)} · {row.value.enabled?'Enabled':'Disabled'}</p>)}{next(view.sources)&&<button disabled={disabled} onClick={()=>void page('sources',true,selectedIndex?String(selectedIndex.id):index)}>Next Sources page</button>}</article>}
++        {view.memberships&&detail&&(!selectedIndex||indexTask==='memberships')&&<article class="card"><h3>Memberships</h3>{catalogItems(view.memberships).map(row=><article key={`${row.value.project_id}/${row.value.index_id}`}><p><code>{String(row.value.project_id)} / {String(row.value.index_id)}</code> · revision {String(row.value.revision)}</p><pre>{JSON.stringify(row.value.scope,null,2)}</pre>
+             {project&&<><button disabled={disabled} onClick={()=>editMembership(row.value)}>Edit all membership scopes</button><button disabled={disabled} onClick={()=>void preview({operation:'remove_membership',project_id:project.id,index_id:row.value.index_id,expected_scope_revision:project.scope_revision,expected_membership_revision:row.value.revision})}>Preview remove membership</button></>}</article>)}{next(view.memberships)&&<button disabled={disabled} onClick={()=>void page('memberships',true,selectedIndex?String(selectedIndex.id):undefined,project?String(project.id):undefined)}>Next membership page</button>}</article>}
+         </>}
+-        {(error||view.error)&&<p class="notice" role="alert">{error||view.error}</p>}
+-        {view.busy&&<p role="status">Waiting for native catalog response…</p>}
+-        <IndexSplitPanel view={view} index={selectedIndex} disabled={disabled} run={run}/>
++        <details class="card indexing-recovery" open={!!view.pending?.length||!!view.retirementReview}><summary>Operation status and recovery{view.pending?.length?` · ${view.pending.length} unconfirmed requests`:""}</summary>
++            <p>Look up work that was already submitted. Status reads do not start or repeat an operation.</p>
++            <IndexSplitPanel view={view} disabled={disabled} run={run} upgrade={props.state.runtimeUpgrade} recoveryOnly/>
+         <article class="card"><h2>Source-change outcome</h2><p>Read the recorded native operation explicitly. Job history and metadata completion are separate; resolving metadata never rewrites a failed job as successful.</p>
+             {view.sourceObservation?.status==='catalog_pending_source_change'&&view.sourceObservation.observation===null&&<p>No current source-change observation was returned for this index. This does not establish readiness or settle another request.</p>}
+             <form onSubmit={event=>{event.preventDefault();void run(()=>request('indexing.source.read',{begin:beginOperation,generation:view.generation}));}}><label>Native begin operation ID<input required pattern="[0-9a-f]{32}" value={beginOperation} onInput={event=>setBeginOperation(event.currentTarget.value)} /></label><button disabled={disabled||!view.namespace}>Read native source-change observation</button></form>
+@@ -232,6 +264,7 @@ export function IndexingScreen(props: ScreenProps) {
+         </article>)}
+         {view.canReviewRetirement&&view.pendingDetails?.filter(row=>{const intent=catalogObject(row.intent);return 'catalog_index_setup_apply' in intent||'catalog_source_change_resolve' in intent;}).map(row=><article class="card" key={`retirement-${String(row.id)}`}><h3>Check retirement recovery</h3><p>If this index was explicitly retired, read its full native retirement proof before stopping local tracking. This does not complete setup, resolve the failed job, or remove files. A missing proof keeps the original request tracked.</p><button disabled={disabled} onClick={()=>void run(()=>request('indexing.retirement.read',{id:String(row.id),generation:view.generation}))}>Read native retirement evidence</button></article>)}
+         {view.retirementReview&&<article class="card"><h2>Review native retirement evidence</h2><pre>{JSON.stringify(view.retirementReview,null,2)}</pre>{view.retirementReview.response.evidence===null?<p>No matching native retirement evidence was returned. The original request remains tracked.</p>:<><p>Stop tracking only this superseded local request. Its original setup or source resolution is not reported as successful. No native work or file cleanup is issued.</p><button disabled={disabled} onClick={()=>void run(()=>request('indexing.retirement.stopTracking',{generation:view.generation}))}>Stop local tracking after verified retirement</button></>}</article>}
++        </details>
+         {view.review&&<article class="card"><h2>Review native changes</h2><p>Review the complete native preview, including before/after state, file-data effects and authority fences.</p><pre>{JSON.stringify(view.review.response,null,2)}</pre>
+             {policyImpact&&<article><h3>Permanent-exclusion impact</h3>
+                 <p>Reviewed source root: <code>{String(policyImpact.canonical_root)}</code>. Path: <code>{String(catalogObject(policyImpact.target).path)||'(entire source root)'}</code> · {catalogObject(policyImpact.target).kind==='exact'?'Exact file':'Directory and descendants'}.</p>
+@@ -253,9 +286,9 @@ export function IndexingScreen(props: ScreenProps) {
+             {view.submittedReview?.request.operation.operation==='begin_index_source_change'&&view.outcome.status==='catalog_applied'&&<p>The native source-change begin was accepted. Read its source-change observation for the recorded configuration job and actual metadata completion.</p>}
+             {view.submittedReview?.request.operation.operation==='change_index_policy'&&view.outcome.status==='catalog_applied'&&<p>The reviewed policy change was accepted. Read permanent exclusions and cleanup status for the recorded removal publication and physical cleanup outcome.</p>}
+             <pre>{JSON.stringify(view.outcome,null,2)}</pre></article>}
+-        <article class="card"><h2>Complete catalog details</h2><p>Includes the complete retained native page, detail, window association, Sources, memberships, preview and outcome. Each page replaces the previously displayed page; exports describe only retained pages.</p>
++        <details class="card"><summary>Complete catalog details and exports</summary><h2>Complete catalog details</h2><p>Includes the complete retained native page, detail, window association, Sources, memberships, preview and outcome. Each page replaces the previously displayed page; exports describe only retained pages.</p>
+             <button disabled={disabled} onClick={()=>void run(()=>request('indexing.export',{format:'copy'}))}>Copy complete JSON</button><button disabled={disabled} onClick={()=>void run(()=>request('indexing.export',{format:'json'}))}>Export JSON…</button><button disabled={disabled} onClick={()=>void run(()=>request('indexing.export',{format:'copy_markdown'}))}>Copy complete Markdown</button><button disabled={disabled} onClick={()=>void run(()=>request('indexing.export',{format:'markdown'}))}>Export Markdown…</button>
+             <details><summary>Complete response</summary><pre>{catalogExport(view as CatalogView)}</pre></details>
+-        </article>
++        </details>
+     </section>;
+ }
+diff --git a/packages/vscode/src/explorerWebview/indexingSplit.tsx b/packages/vscode/src/explorerWebview/indexingSplit.tsx
+index 18376f2..5c5e08d 100644
+--- a/packages/vscode/src/explorerWebview/indexingSplit.tsx
++++ b/packages/vscode/src/explorerWebview/indexingSplit.tsx
+@@ -3,10 +3,13 @@ import { useEffect, useState } from 'preact/hooks';
+ import { CatalogObject, CatalogScopeAtom, CatalogView, catalogItems, catalogObject } from '../indexingCatalog';
+ import { splitTerminal, validateSplitSelection } from '../indexingSplit';
+ import { request } from './api';
++import type { ExplorerViewState } from '../explorerContracts';
++import { SplitAvailability, upgradePending } from './runtimeUpgrade';
+ 
+ interface ProjectChoice { project_id:string; retain_original:boolean; destination:'omit'|'preserve_reviewed_scope'|'selected'; scope:string }
+ /** Review and explicit native management only; opening this form starts no job. */
+-export function IndexSplitPanel({view,index,disabled,run}:{view:CatalogView;index?:CatalogObject;disabled:boolean;run:(work:()=>Promise<unknown>)=>Promise<void>}) {
++export function IndexSplitPanel({view,index,disabled,run,upgrade,recoveryOnly=false}:{view:CatalogView;index?:CatalogObject;disabled:boolean;run:(work:()=>Promise<unknown>)=>Promise<void>;upgrade?:ExplorerViewState['runtimeUpgrade'];recoveryOnly?:boolean}) {
++    disabled = disabled || upgradePending(upgrade);
+     const [name,setName]=useState(''),[dataRoot,setDataRoot]=useState(''),[collection,setCollection]=useState('');
+     const [atoms,setAtoms]=useState<CatalogScopeAtom[]>([{source_root_id:'',kind:'subtree',path:''}]);
+     const [projects,setProjects]=useState<ProjectChoice[]>([]),[growth,setGrowth]=useState(''),[temporary,setTemporary]=useState('0'),[rewrite,setRewrite]=useState('0'),[cleanup,setCleanup]=useState('');
+@@ -27,30 +30,31 @@ export function IndexSplitPanel({view,index,disabled,run}:{view:CatalogView;inde
+     },[view.splitSourceState]);
+     const update=(at:number,change:Partial<CatalogScopeAtom>)=>setAtoms(prior=>prior.map((value,i)=>i===at?{...value,...change}:value));
+     const updateProject=(at:number,change:Partial<ProjectChoice>)=>setProjects(prior=>prior.map((value,i)=>i===at?{...value,...change}:value));
+-    return <article class="card" id="split-review"><h2>Split an index</h2>
++    return <article class="card" id={recoveryOnly?"split-recovery":"split-review"}>{!recoveryOnly&&<><h2>Split an index</h2>
+         <p>Build one independent destination and leave the original as the remainder. Exact files stay exact; subtrees include future descendants. Existing permanent exclusions remain authoritative in both. Preparing a review reads native metadata only.</p>
+-        {!view.canReviewSplit?<p>Split is unavailable until this connection explicitly reports native policy contract 2. Method names and version labels do not establish capability.</p>:index&&index.tombstone===false?<form onSubmit={event=>{event.preventDefault();void run(async()=>{
++        {!view.canReviewSplit||upgradePending(upgrade)?<SplitAvailability view={view} upgrade={upgrade}/>:index&&index.tombstone===false?<form onSubmit={event=>{event.preventDefault();void run(async()=>{
+             const selection=validateSplitSelection({selectors:atoms,destination_name:name,destination_data_root:dataRoot,destination_collection:collection,
+                 projects:projects.map(project=>({project_id:project.project_id,retain_original:project.retain_original,membership:project.destination==='selected'?{destination:'selected',scope:JSON.parse(project.scope)}:{destination:project.destination}})),
+                 capacity:{destination_growth:Number(growth),destination_temporary:Number(temporary),original_rewrite:Number(rewrite),cleanup_allowance:Number(cleanup)},require_semantic_ready:semantic,destination_watch_enabled:watch});
+             await request('indexing.split.draft',{selection,generation:view.generation});
+         });}}>
+-            <p>Original index: <code>{String(index.id)}</code>. The reviewed native response includes every affected Project, exact source mappings, inherited denies, storage action and capacity requirements. No membership choice issues an evidence grant or changes saved defaults.</p>
++            <h3>1. Load the source folders</h3><p>Original index: <code>{String(index.id)}</code>. The reviewed native response includes every affected Project, exact source mappings, inherited denies, storage action and capacity requirements. No membership choice issues an evidence grant or changes saved defaults.</p>
+             <button type="button" disabled={disabled} onClick={()=>void run(()=>request('indexing.split.sourceRead',{generation:view.generation}))}>Read complete native split baseline</button>
+             <p>The canonical native baseline supplies all roots, policy and affected Projects. Paged library rows do not establish a complete census. Refresh it after a catalog revision changes.</p>
+             {sourceState&&<details><summary>Complete native source baseline and capabilities</summary><pre>{JSON.stringify(view.splitSourceState,null,2)}</pre></details>}
+-            <datalist id="split-source-options">{sources.map(row=><option key={String(row.id)} value={String(row.id)}>{String(row.canonical_path)}</option>)}</datalist>
++            {sourceState&&<><h3>2. Choose what moves to the new index</h3><p>Paths are relative to the selected source folder. For example, choose Subtree and enter <code>docs</code> to transfer eligible documents under that folder. A blank subtree path selects the entire source root.</p>
+             {atoms.map((atom,at)=><fieldset key={at} disabled={disabled}><legend>Transferred source scope {at+1}</legend>
+-                <label>Source ID<input required list="split-source-options" value={atom.source_root_id} onInput={event=>update(at,{source_root_id:event.currentTarget.value})}/></label>
+-                <label>Canonical relative path<input value={atom.path} onInput={event=>update(at,{path:event.currentTarget.value})}/></label>
++                <label>Source folder<select required value={atom.source_root_id} onChange={event=>update(at,{source_root_id:event.currentTarget.value})}><option value="">Choose a source folder</option>{sources.map(row=><option key={String(row.id)} value={String(row.id)}>{String(row.canonical_path)} ({String(row.id)})</option>)}</select></label>
++                <label>Path inside this source folder<input placeholder="docs or src/app.ts" required={atom.kind==='exact'} value={atom.path} onInput={event=>update(at,{path:event.currentTarget.value})}/></label>
+                 <label>Selection<select value={atom.kind} onChange={event=>update(at,{kind:event.currentTarget.value==='exact'?'exact':'subtree'})}><option value="subtree">Subtree</option><option value="exact">Exact file</option></select></label>
+                 <button type="button" onClick={()=>setAtoms(prior=>prior.filter((_,i)=>i!==at))}>Remove scope</button>
+             </fieldset>)}
+             <button type="button" disabled={disabled||atoms.length>=128} onClick={()=>setAtoms(prior=>[...prior,{source_root_id:'',kind:'subtree',path:''}])}>Add transferred scope</button>
++            <h3>3. Choose the destination and review limits</h3><p>Give the new index its own storage location and collection name. Your original documents stay in place.</p>
+             <label>Destination name<input required value={name} onInput={event=>setName(event.currentTarget.value)}/></label>
+             <label>Destination data root (absolute path)<input required value={dataRoot} onInput={event=>setDataRoot(event.currentTarget.value)}/></label>
+             <label>Destination collection<input required value={collection} onInput={event=>setCollection(event.currentTarget.value)}/></label>
+-            <h3>Reviewed Project effects</h3><p>Native review supplies the complete affected-Project census. Unchosen Projects keep only the original remainder. Add deliberate destination memberships here; preserve reviewed scope or provide explicit scopes using original source IDs.</p>
++            <details><summary>Project memberships for the destination</summary><h3>Reviewed Project effects</h3><p>Native review supplies the complete affected-Project census. Unchosen Projects keep only the original remainder. Add deliberate destination memberships here; preserve reviewed scope or provide explicit scopes using original source IDs.</p>
+             {projects.map((project,at)=><fieldset key={at} disabled={disabled}><legend>Project choice {at+1}</legend>
+                 <label>Project ID<input required value={project.project_id} onInput={event=>updateProject(at,{project_id:event.currentTarget.value})}/></label>
+                 <label><input type="checkbox" checked={project.retain_original} onChange={event=>updateProject(at,{retain_original:event.currentTarget.checked})}/>Retain original remainder membership</label>
+@@ -58,7 +62,7 @@ export function IndexSplitPanel({view,index,disabled,run}:{view:CatalogView;inde
+                 {project.destination==='selected'&&<label>Exact source scopes (JSON array)<textarea required value={project.scope} onInput={event=>updateProject(at,{scope:event.currentTarget.value})}/></label>}
+                 <button type="button" onClick={()=>setProjects(prior=>prior.filter((_,i)=>i!==at))}>Remove Project choice</button>
+             </fieldset>)}
+-            <button type="button" disabled={disabled||projects.length>=32} onClick={()=>setProjects(prior=>[...prior,{project_id:'',retain_original:true,destination:'omit',scope:'[]'}])}>Add explicit Project choice</button>
++            <button type="button" disabled={disabled||projects.length>=32} onClick={()=>setProjects(prior=>[...prior,{project_id:'',retain_original:true,destination:'omit',scope:'[]'}])}>Add explicit Project choice</button></details>
+             <h3>Peak growth ceilings</h3><p>Enter byte ceilings explicitly. These are admission limits, not measured file sizes or already reserved space. Native review binds both quota policies; admission reserves destination, temporary, original rewrite and cleanup capacity before build.</p>
+             <label>Destination growth bytes<input required type="number" min="1" step="1" value={growth} onInput={event=>setGrowth(event.currentTarget.value)}/></label>
+             <label>Destination temporary bytes<input required type="number" min="0" step="1" value={temporary} onInput={event=>setTemporary(event.currentTarget.value)}/></label>
+@@ -66,11 +70,12 @@ export function IndexSplitPanel({view,index,disabled,run}:{view:CatalogView;inde
+             <label>Cleanup allowance bytes<input required type="number" min="1" step="1" value={cleanup} onInput={event=>setCleanup(event.currentTarget.value)}/></label>
+             <label><input type="checkbox" checked={semantic} onChange={event=>setSemantic(event.currentTarget.checked)}/>Require semantic readiness before transfer</label>
+             <label><input type="checkbox" checked={watch} onChange={event=>setWatch(event.currentTarget.checked)}/>Enable destination watching after reviewed activation</label>
+-            <button disabled={disabled||!sourceState}>Prepare complete native split review</button>
++            <button disabled={disabled||!sourceState}>Prepare complete native split review</button></>}
+         </form>:<p>Inspect a live index in the native library before choosing split inputs.</p>}
+         {view.splitReview&&<section><h3>Review the complete native split</h3><p>Read the selected and remainder policies, inherited exclusions, complete Project changes, capacity ceilings and control dependencies. Ancestor/global ignore controls and declared configurations may be read outside positive document selection; they do not become indexed siblings.</p><pre>{JSON.stringify(view.splitReview.response,null,2)}</pre><button disabled={disabled} onClick={()=>void run(()=>request('indexing.split.apply',{generation:view.generation}))}>Apply reviewed split</button></section>}
+         {view.submittedSplitReview&&<details><summary>Exact submitted native split review</summary><pre>{JSON.stringify(view.submittedSplitReview,null,2)}</pre></details>}
+-        <h3>Read current split state</h3><p>Receipt lookup and status reads never repeat a mutation. A missing or expired receipt leaves its outcome unknown. Current state may be newer than an accepted historical recovery acknowledgment.</p>
++        </>}
++        {(recoveryOnly||status||view.submittedSplitReview)&&<><h3>Read current split state</h3><p>Receipt lookup and status reads never repeat a mutation. A missing or expired receipt leaves its outcome unknown. Current state may be newer than an accepted historical recovery acknowledgment.</p>
+         <form onSubmit={event=>{event.preventDefault();void run(()=>request('indexing.split.read',{operation,generation:view.generation}));}}><label>Native operation ID<input required pattern="[0-9a-f]{32}" value={operation} onInput={event=>setOperation(event.currentTarget.value)}/></label><button disabled={disabled||!view.canReviewSplit}>Read native split status</button></form>
+         {snapshot&&<p>Destination retained evidence: {catalogObject(catalogObject(snapshot).request).extraction_policy==null?'legacy Agent Lean default':`${String(catalogObject(catalogObject(catalogObject(snapshot).request).extraction_policy).retained_profile)} with unchanged legacy fallback`}. Original retention is preserved. OCR remains an explicit operation.</p>}
+         {status&&(snapshot?<><p>Current stage: <strong>{String(receipt?.stage)}</strong>. State: {String(state?.state)}. Receipt revision: {String(receipt?.revision)}.</p><p>{postFence?'The original transfer fence is active. Cancellation cannot restore transferred evidence; resume the recorded restrictive completion.':'The original remains admitted under its existing policy until the exact transfer fence. Before that fence, cancellation cleans only the owned destination.'}</p><p>{receipt?.physical_cleanup_authorization?'Physical cleanup authorization recorded.':'Physical cleanup not yet authorized.'} Funding releases: {Object.keys(catalogObject(receipt?.funding_release_receipts)).length}; completion requires all owned funding and cleanup to settle.</p><pre>{JSON.stringify(status,null,2)}</pre>
+@@ -80,5 +85,6 @@ export function IndexSplitPanel({view,index,disabled,run}:{view:CatalogView;inde
+         </>:<p>No current native snapshot was returned. This does not prove completion, cancellation or no effects.</p>)}
+         {view.reviewedSplitStatus&&<details><summary>Historical status used for the exact recovery request</summary><pre>{JSON.stringify(view.reviewedSplitStatus,null,2)}</pre></details>}
+         {!!view.pendingDetails?.some(row=>{const intent=catalogObject(row.intent);return 'catalog_split_apply'in intent||'catalog_split_recover'in intent;})&&<details><summary>Tracked exact split requests, immutable recovery acknowledgments and later observations</summary><pre>{JSON.stringify(view.pendingDetails.filter(row=>{const intent=catalogObject(row.intent);return 'catalog_split_apply'in intent||'catalog_split_recover'in intent;}),null,2)}</pre><button disabled={disabled} onClick={()=>void run(()=>request('indexing.reconcile',{}))}>Read exact native receipts</button></details>}
++        </>}
+     </article>;
+ }
+diff --git a/packages/vscode/src/explorerWebview/styles.css b/packages/vscode/src/explorerWebview/styles.css
+index a93c095..4b5d7fb 100644
+--- a/packages/vscode/src/explorerWebview/styles.css
++++ b/packages/vscode/src/explorerWebview/styles.css
+@@ -378,3 +378,19 @@ body.vscode-light:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .a
+ 
+ .progress-stages .active { color: var(--vscode-button-foreground); background: var(--vscode-button-background); border-color: var(--vscode-focusBorder); }
+ .manage > .actions { margin-block: .8rem; }
++
++/* Indexing keeps each task in its tab and gives forms a readable narrow layout. */
++.indexing-screen { display: grid; gap: var(--airk-gap); }
++.indexing-screen .indexing-intro { margin: 0; max-width: 75ch; color: var(--airk-muted); }
++.indexing-screen h2 { margin-top: 0; }
++.indexing-screen form { display: flex; flex-direction: column; align-items: flex-start; gap: 0.8rem; margin-block: 1rem; }
++.indexing-screen label { display: flex; flex-direction: column; gap: 0.35rem; width: min(100%, 42rem); }
++.indexing-screen label:has(input[type='checkbox']) { flex-direction: row; align-items: center; }
++.indexing-screen input:not([type='checkbox']), .indexing-screen select, .indexing-screen textarea { width: 100%; min-width: 0; box-sizing: border-box; }
++.indexing-screen fieldset { display: flex; flex-direction: column; gap: 0.8rem; width: min(100%, 44rem); min-inline-size: 0; box-sizing: border-box; border: 1px solid var(--airk-border); padding: 1rem; }
++.indexing-screen details > summary { cursor: pointer; font-weight: 600; padding-block: 0.3rem; }
++.indexing-screen .indexing-tasks { margin-block: 1rem; padding-block: 0.5rem; border-block: 1px solid var(--airk-border); }
++.indexing-screen .indexing-tasks [aria-pressed='true'] { outline: 2px solid var(--vscode-focusBorder, var(--airk-accent)); outline-offset: 2px; }
++.indexing-screen .indexing-detail { scroll-margin-top: 1rem; }
++.indexing-screen .card .card { margin-block: 1rem; }
++.indexing-screen pre { max-height: 32rem; overflow: auto; }
+diff --git a/packages/vscode/src/indexingCatalog.ts b/packages/vscode/src/indexingCatalog.ts
+index 28359ca..7a6d14e 100644
+--- a/packages/vscode/src/indexingCatalog.ts
++++ b/packages/vscode/src/indexingCatalog.ts
+@@ -30,7 +30,7 @@ export interface CatalogView {
+     splitStatus?:CatalogObject; reviewedSplitStatus?:CatalogObject;
+     recommendations?: CatalogObject;
+     generation: number; busy: boolean; error?: string; namespace?: string; revision?: number;
+-    page?: CatalogObject; detail?: CatalogObject; sources?: CatalogObject; memberships?: CatalogObject;
++    page?: CatalogObject; pageKind?: CatalogKind; detail?: CatalogObject; sources?: CatalogObject; memberships?: CatalogObject;
+     review?: CatalogReview; outcome?: CatalogObject; pending?: readonly string[];
+     submittedReview?: CatalogReview;
+     windowDescriptor?: WindowContextDescriptor; context?: CatalogObject;
+diff --git a/packages/vscode/src/indexingCatalogController.ts b/packages/vscode/src/indexingCatalogController.ts
+index 14b5346..12a7b0a 100644
+--- a/packages/vscode/src/indexingCatalogController.ts
++++ b/packages/vscode/src/indexingCatalogController.ts
+@@ -61,10 +61,15 @@ export class IndexingCatalogController {
+         this.grantRequest=undefined;
+     }
+     private sync(): void {
+-        let native:unknown;
+-        try{const observed=this.host.windowContextObservation?.()?.descriptor;if(observed&&typeof observed==='object'&&!Array.isArray(observed)){const value=observed as CatalogObject;native=[value.namespace,value.host,value.key,value.catalog_revision];}}catch{/* An unavailable producer cannot retain a prior authority identity. */}
++        let native:unknown,capabilities:CatalogObject|undefined;
++        try{const observation=this.host.windowContextObservation?.(),observed=observation?.descriptor;if(observed&&typeof observed==='object'&&!Array.isArray(observed)){const value=validateNativeHostContext(observed);native=[value.namespace,value.host,value.key,value.catalog_revision];
++            if(observation?.status==='catalog_host_context'&&observation.capabilities&&typeof observation.capabilities==='object')capabilities=catalogObject(observation.capabilities);
++        }}catch{/* An unavailable producer cannot retain a prior authority identity. */}
+         const owner = JSON.stringify([this.host.authorized(),this.host.identity(),this.descriptor(),native]);
+         if (owner !== this.owner) { this.owner = owner; this.invalidate(); }
++        // Automatic connection observations establish capability without loading
++        // library rows, changing membership, restoring a grant or starting work.
++        if(capabilities&&this.view.capabilities===undefined)this.view={...this.view,capabilities};
+     }
+     private descriptor(): WindowContextDescriptor | undefined {
+         try{const value=this.host.windowContext?.();return value===undefined?undefined:validateWindowContext(value);}catch{return undefined;}
+@@ -115,7 +120,7 @@ export class IndexingCatalogController {
+                 const cursor=catalogObject(continuation);
+                 if(cursor.namespace!==body.namespace||cursor.revision!==body.revision||cursor.kind!==kind||cursor.index_id!==request.index_id||cursor.project_id!==request.project_id)throw new Error('crossed_catalog_continuation');
+             }
+-            this.view = { ...this.view, [field]: response, review: undefined,setupReview:undefined, ...(field === 'page' ? { detail: undefined, sources: undefined, memberships: undefined,policyStatus:undefined } : {}) };
++            this.view = { ...this.view, [field]: response, review: undefined,setupReview:undefined, ...(field === 'page' ? { pageKind:kind, detail: undefined, sources: undefined, memberships: undefined,policyStatus:undefined,splitFormOpen:undefined,splitSourceState:undefined,splitReview:undefined } : {}) };
+             if (field === 'page') { this.pageRequest = request; } else if (field === 'sources') { this.sourceRequest = request; } else if(field==='grants'){this.grantRequest=request;}else { this.membershipRequest = request; }
+             this.view.generation++;
+         });
+@@ -127,7 +132,7 @@ export class IndexingCatalogController {
+             const response = await control.catalogRead({ catalog_detail: { entity: { kind, id }, expected_catalog_revision: expected ?? null } });
+             current(); this.accept(response, 'detail', expected);
+             const item=catalogItems(response,'detail')[0];if(item&&(item.kind!==kind||(kind==='grant'?catalogObject(item.value.grant).id:item.value.id)!==id))throw new Error('crossed_catalog_detail');
+-            this.view = { ...this.view, ...(kind==='grant'?{grantDetail:response}:{detail:response,sources:undefined,memberships:undefined,policyStatus:undefined}), review: undefined,setupReview:undefined, generation: this.view.generation + 1 };
++            this.view = { ...this.view, ...(kind==='grant'?{grantDetail:response}:{detail:response,sources:undefined,memberships:undefined,policyStatus:undefined,splitFormOpen:undefined,splitSourceState:undefined,splitReview:undefined}), review: undefined,setupReview:undefined, generation: this.view.generation + 1 };
+         });
+     }
+     preview(operation: CatalogObject, generation: number): Promise<CatalogView> {
+@@ -157,7 +162,7 @@ export class IndexingCatalogController {
+             current();this.accept(response,'detail');
+             const item=catalogItems(response,'detail')[0];
+             if(item&&(item.kind!=='context'||item.value.host!==descriptor.host||item.value.key!==descriptor.key)){this.invalidate();throw new Error('crossed_window_context');}
+-            this.view={generation:this.view.generation+1,busy:true,namespace:this.view.namespace,revision:this.view.revision,context:response};
++            this.view={generation:this.view.generation+1,busy:true,namespace:this.view.namespace,revision:this.view.revision,capabilities:this.view.capabilities,context:response};
+         });
+     }
+     adoptHostContext(): Promise<CatalogView> {
+@@ -166,7 +171,10 @@ export class IndexingCatalogController {
+             if(!response||!descriptor||response.status!=='catalog_host_context')throw new Error('native_window_context_unavailable');
+             const native=validateNativeHostContext(response.descriptor);current();
+             if(native.host!==descriptor.host||native.key!==descriptor.key)throw new Error('crossed_window_context');
+-            this.view={generation:this.view.generation+1,busy:true,namespace:native.namespace,revision:native.catalog_revision,hostContext:response};
++            // Capabilities belong to this exact authenticated observation, not a
++            // package version or a prior connection that happened to support split.
++            this.view={generation:this.view.generation+1,busy:true,namespace:native.namespace,revision:native.catalog_revision,
++                ...(response.capabilities&&typeof response.capabilities==='object'?{capabilities:catalogObject(response.capabilities)}:{}),hostContext:response};
+         });
+     }
+     previewContext(selection: CatalogObject, generation: number, remove=false): Promise<CatalogView> {
+@@ -208,6 +216,7 @@ export class IndexingCatalogController {
+     }
+     setupDraft(selection:CatalogObject,generation:number):Promise<CatalogView>{
+         return this.run(async(control,current)=>{
++            if(this.host.canReadWindowContext?.()&&(!this.descriptor()||this.host.windowContextObservation?.()?.status!=='catalog_host_context'))throw new Error('read_native_window_context_before_setup_review');
+             if(generation!==this.view.generation||!this.view.revision||!this.view.namespace)throw new Error('read_current_catalog_before_setup');
+             if(!control.catalogIndexSetupDraft)throw new Error('native_index_setup_unavailable');
+             if(control.catalogPending().length)throw new Error('catalog_outcome_unconfirmed_reconcile_first');
+@@ -342,10 +351,13 @@ export class IndexingCatalogController {
+         return this.run(async(control,current)=>{
+             if(generation!==this.view.generation||!hasSplitCapability(this.view.capabilities)||!this.view.revision)throw new Error('split_capability_or_review_stale');
+             const advice=this.view.recommendations;
+-            if(!advice||advice.schema!=='airk.recommendations/1'||!Array.isArray(catalogObject(advice.selected).index_ids)||!(catalogObject(advice.selected).index_ids as unknown[]).includes(index))throw new Error('select_an_advised_index_for_split_review');
++            const advised=advice?.schema==='airk.recommendations/1'&&Array.isArray(catalogObject(advice.selected).index_ids)&&(catalogObject(advice.selected).index_ids as unknown[]).includes(index);
++            const listed=this.view.pageKind==='indexes'&&catalogItems(this.view.page).some(row=>row.kind==='index'&&row.value.id===index&&row.value.tombstone===false);
++            if(!advised&&!listed)throw new Error('select_a_listed_or_advised_index_for_split_review');
+             catalogId(index,'idx_');const response=await control.catalogRead({catalog_detail:{entity:{kind:'index',id:index},expected_catalog_revision:this.view.revision}});current();this.accept(response,'detail',this.view.revision);
+             const item=catalogItems(response,'detail')[0];if(item?.kind!=='index'||item.value.id!==index)throw new Error('crossed_split_index');
+-            this.view={...this.view,detail:response,splitFormOpen:true,splitReview:undefined,review:undefined,setupReview:undefined,generation:this.view.generation+1};
++            if(item.value.tombstone!==false)throw new Error('split_requires_live_index');
++            this.view={...this.view,detail:response,sources:undefined,memberships:undefined,policyStatus:undefined,splitSourceState:undefined,splitFormOpen:true,splitReview:undefined,review:undefined,setupReview:undefined,generation:this.view.generation+1};
+         });
+     }
+     splitDraft(selection:CatalogObject,generation:number):Promise<CatalogView>{

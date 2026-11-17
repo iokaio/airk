@@ -1,0 +1,74 @@
+--- a/crates/airk-cli/src/unified_mcp.rs
++++ b/crates/airk-cli/src/unified_mcp.rs
+@@ -64,6 +64,7 @@
+ }
+ struct ReadinessAttempt {
+     started: Instant,
++    completed:std::sync::OnceLock<Instant>,
+     status_deadline: tokio::sync::watch::Sender<bool>,
+     result: tokio::sync::watch::Receiver<Option<SharedReadiness>>,
+     driver_result: tokio::sync::OnceCell<SharedReadiness>,
+@@ -212,6 +213,7 @@
+         F: FnOnce(Option<Arc<crate::runtime_install::SetupCancellation>>) -> Fut,
+         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+     {
++        let waiter_started=Instant::now();
+         let attempt = {
+             let mut state = self.state.lock().await;
+             ensure!(
+@@ -235,6 +237,7 @@
+                     let started = Instant::now();
+                     let attempt = Arc::new(ReadinessAttempt {
+                         started,
++                        completed:Default::default(),
+                         status_deadline,
+                         result,
+                         driver_result: tokio::sync::OnceCell::new(),
+@@ -266,6 +269,9 @@
+                                 }
+                             }
+                         };
++                        // Publish the completion time before the shared outcome;
++                        // delayed waiters must not infer it from their own poll time.
++                        let _=owner.completed.set(Instant::now());
+                         let _ = sender.send_replace(Some(outcome));
+                     });
+                     let _ = attempt.abort.set(task.abort_handle());
+@@ -317,6 +323,14 @@
+             if matches!(*state, ReadinessState::Closed) {
+                 anyhow::bail!("runtime readiness session closed");
+             }
++        }
++        let deadline=attempt.started+Duration::from_secs(10);
++        if status && waiter_started<deadline
++            && attempt.completed.get().is_some_and(|finished|*finished>=deadline){
++            // Settle the real outcome first, retaining physical failure/success.
++            // An original status waiter still receives its expired budget even
++            // if timeout_at polls a prompt cancellation completion first.
++            return Err(airk_mcp::remote::PreparationExpired.into());
+         }
+         outcome.map_err(|error| anyhow::Error::new(SharedReadinessError(error)))
+     }
+@@ -1022,12 +1036,13 @@
+         release
+             .send(())
+             .map_err(|_| anyhow::anyhow!("accepted worker was dropped"))?;
++        await_published_readiness(&ready).await?;
+         tokio::time::timeout(
+             Duration::from_secs(5),
+             ready.run_inner_status(
+                 |_| async { anyhow::bail!("replacement setup admitted") },
+                 true,
+-                false,
++                true,
+             ),
+         )
+         .await??;
+@@ -1151,6 +1166,7 @@
+             let (_sender, result) = tokio::sync::watch::channel(None);
+             let attempt = Arc::new(ReadinessAttempt {
+                 started: Instant::now(),
++                completed:Default::default(),
+                 status_deadline: tokio::sync::watch::channel(false).0,
+                 result,
+                 driver_result: tokio::sync::OnceCell::new(),

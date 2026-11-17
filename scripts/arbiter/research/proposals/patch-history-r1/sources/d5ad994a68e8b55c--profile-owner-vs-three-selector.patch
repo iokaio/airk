@@ -1,0 +1,113 @@
+--- three-selector/run_metadata_nn0.py
++++ prepare-profile/run_profile_nn0.py
+@@ -1,4 +1,4 @@
+-"""Exactly three owning CUDA metadata selectors under retained actual process custody."""
++"""Exactly two owning prepare/profile metadata selectors under retained actual process custody."""
+ import argparse,datetime,importlib.util,json,os,sys,time
+ from pathlib import Path
+ sys.dont_write_bytecode=True
+@@ -6,41 +6,41 @@
+ BASE_SHA='3c8b58d663c7aa016c2c68ffbe8a9fb65e48d00e875139ac02b25946339659fe'
+ ANCHOR=Path('C:/Users/tdotn/AppData/Local/airk-final-exec-20261116T052942Z')
+ PREFIX='inference_engine::pool::arbiter::qualification::software_v2::cuda_qualification::'
+-SELECTORS={'custody':PREFIX+'emit_cuda_metadata_custody_inputs','request':PREFIX+'emit_cuda_component_probe_request','assembly':PREFIX+'emit_cuda_runtime_manifest_from_held_native_closure'}
++SELECTORS={'request':PREFIX+'emit_cuda_component_probe_request','metadata':PREFIX+'emit_cuda_fp32_probe_metadata'}
+ def owner():
+  import hashlib
+  with BASE.open('rb') as f:
+   if hashlib.file_digest(f,'sha256').hexdigest()!=BASE_SHA:raise ValueError('reviewed original custody owner changed')
+  s=importlib.util.spec_from_file_location('three_selector_original_owner',BASE);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);return m
+-def output_paths(plan):
++def output_paths(plan,*,before):
+  e=plan['environment'];kind=next((k for k,v in SELECTORS.items() if v==plan['selector']),None)
+- if kind is None:raise ValueError('only three explicit NN0 selectors allowed')
+- if kind=='custody':paths=[Path(e['AIRK_CUDA_CUSTODY_OUTPUT_DIRECTORY'])/x for x in ['metadata-custody.json','historical-tool-custody.json','custody-emission.json']]
+- elif kind=='request':
+-  if e.get('AIRK_CUDA_REQUEST_KIND')!='assembly':raise ValueError('request kind must be assembly only')
+-  paths=[Path(e['AIRK_CUDA_REQUEST_OUTPUT'])]
++ if kind is None:raise ValueError('only dedicated prepare/profile metadata selectors allowed')
++ if kind=='request':
++  if e.get('AIRK_CUDA_REQUEST_KIND')!='prepare':raise ValueError('request kind must be prepare only')
++  paths=[Path(e['AIRK_CUDA_REQUEST_OUTPUT'])];anchor=paths[0].parent
+  else:
+-  p=Path(e['AIRK_CUDA_QUALIFICATION_OUTPUT']);paths=[p,p.with_suffix('.receipt.json')]
+- if [str(p) for p in paths]!=plan['output_pins_expected']:raise ValueError('exact native output paths differ')
+- for p in paths:
+-  if not p.is_absolute() or not p.is_relative_to(ANCHOR) or p.parent.resolve(strict=True)!=p.parent or not p.parent.is_dir():raise ValueError('existing protected output parent required')
+-  for a in [p.parent,*p.parent.parents]:
+-   if a.is_symlink() or getattr(a.lstat(),'st_file_attributes',0)&0x400:raise ValueError('output parent alias refused')
++  directory=Path(e['AIRK_CUDA_METADATA_DIRECTORY']);anchor=directory.parent
++  if before and directory.exists():raise ValueError('native metadata directory must be fresh absent')
++  paths=[directory/x for x in ['profile.json','native-input.json','probe-request.json','commands.json','metadata-receipt.json']]
++ if [str(p) for p in paths]!=plan['output_pins_expected']:raise ValueError('exact native metadata output paths differ')
++ if not anchor.is_absolute() or not anchor.is_relative_to(ANCHOR) or anchor.resolve(strict=True)!=anchor or not anchor.is_dir():raise ValueError('existing protected output ancestor required')
++ for p in [anchor,*anchor.parents]:
++  if p.is_symlink() or getattr(p.lstat(),'st_file_attributes',0)&0x400:raise ValueError('output ancestor alias refused')
++ if kind=='metadata' and not before:
++  if directory.resolve(strict=True)!=directory or not directory.is_dir() or directory.is_symlink() or getattr(directory.lstat(),'st_file_attributes',0)&0x400:raise ValueError('native metadata output directory changed')
+  return kind,paths
+ 
+ def preflight(plan,b,*,before):
+- if plan.get('schema')!='airk.private.cuda-assembly-nn0-plan/1' or plan.get('human_sid')!=b.SID or plan.get('limits')!={'wall_seconds':120,'host_committed_bytes':8<<30,'log_bytes':64<<20}:raise ValueError('exact three-selector metadata plan/bounds required')
++ if plan.get('schema')!='airk.private.cuda-profile-nn0-plan/1' or plan.get('human_sid')!=b.SID or plan.get('limits')!={'wall_seconds':120,'host_committed_bytes':8<<30,'log_bytes':64<<20}:raise ValueError('exact prepare/profile metadata plan/bounds required')
+  if plan['wrapper']['sha256']!=b.digest(__file__) or plan['custody_owner']!={'path':str(BASE),'bytes':BASE.stat().st_size,'sha256':BASE_SHA}:raise ValueError('reviewed exact parent/custody sources required')
+- kind,paths=output_paths(plan);e=plan['environment'];common={'AIRK_CUDA_DEADLINE_MS','AIRK_PRIVATE_CENSUS_BASE','TEMP','TMP','TMPDIR'}
+- keys={'custody':{'AIRK_CUDA_CUSTODY_LOCATORS','AIRK_CUDA_CUSTODY_LOCATORS_SHA256','AIRK_CUDA_CUSTODY_OUTPUT_DIRECTORY'},'request':{'AIRK_CUDA_REQUEST_KIND','AIRK_CUDA_RUNTIME_ROOT','AIRK_CUDA_PRODUCER_NAME','AIRK_CUDA_PRODUCER_SHA256','AIRK_CUDA_CHECKPOINTED_PROOF','AIRK_CUDA_CHECKPOINTED_PROOF_SHA256','AIRK_CUDA_METADATA_CUSTODY','AIRK_CUDA_METADATA_CUSTODY_SHA256','AIRK_CUDA_HISTORICAL_TOOL_CUSTODY','AIRK_CUDA_HISTORICAL_TOOL_CUSTODY_SHA256','AIRK_CUDA_MODULE_NAMES','AIRK_CUDA_LOAD_ORDER','AIRK_CUDA_SYSTEM_IMPORTS','AIRK_CUDA_REQUEST_OUTPUT'},'assembly':{'AIRK_CUDA_QUALIFICATION_INPUT','AIRK_CUDA_QUALIFICATION_INPUT_SHA256','AIRK_CUDA_QUALIFICATION_OUTPUT'}}
++ kind,paths=output_paths(plan,before=before);e=plan['environment'];common={'AIRK_CUDA_DEADLINE_MS','AIRK_PRIVATE_CENSUS_BASE','TEMP','TMP','TMPDIR'}
++ keys={'request':{'AIRK_CUDA_REQUEST_KIND','AIRK_SOFTWARE_V2_NATIVE_INPUT','AIRK_SOFTWARE_V2_NATIVE_INPUT_SHA256','AIRK_CUDA_RUNTIME_MANIFEST','AIRK_CUDA_RUNTIME_MANIFEST_SHA256','AIRK_CUDA_HOST_LIMIT_BYTES','AIRK_CUDA_DEVICE_LIMIT_BYTES','AIRK_CUDA_COLD_BYTES','AIRK_CUDA_WARM_BYTES','AIRK_CUDA_HEADROOM_BYTES','AIRK_CUDA_JOB_LIMIT_BYTES','AIRK_CUDA_REQUEST_OUTPUT'},'metadata':{'AIRK_CUDA_QUALIFICATION_INPUT','AIRK_CUDA_QUALIFICATION_INPUT_SHA256','AIRK_CUDA_METADATA_DIRECTORY'}}
+  if set(e)-common-keys[kind] or e.get('AIRK_CUDA_DEADLINE_MS')!='120000' or any(not isinstance(k,str) or not isinstance(v,str) or '\0' in k+v for k,v in e.items()):raise ValueError('metadata-only explicit environment required')
+  for key,value in e.items():
+   if key.endswith('_SHA256') and key[:-7] in e:
+    path=str(Path(e[key[:-7]]))
+    if plan['input_seals'].get(path)!=value:raise ValueError('native environment input pin omitted from original seals')
+- if kind=='request':
+-  path=str(Path(e['AIRK_CUDA_RUNTIME_ROOT'])/e['AIRK_CUDA_PRODUCER_NAME'])
+-  if plan['input_seals'].get(path)!=e['AIRK_CUDA_PRODUCER_SHA256']:raise ValueError('actual producer seal differs')
++
+  if before and any(p.exists() for p in paths):raise ValueError('native create-new outputs already exist')
+  b.source_image(plan)
+  required=[plan[k] for k in ['wrapper','custody_owner','native_image','image_packet','native_build_receipt','parent_python','output_guard','output_guard_lock']]
+@@ -58,19 +58,22 @@
+  return kind,paths
+ 
+ def native_output(kind,paths,plan,receipt,b):
+- pins=[b.pin(p) for p in paths]
++ if kind=='request':
++  value=b.read(paths[0])
++  if value.get('kind')!='prepare' or value.get('schema')!='airk.private.cuda-component-probe-request/1':raise ValueError('owning Rust output must remain a prepare request')
++  pins=[b.pin(paths[0])]
++ else:
++  directory=paths[0].parent;profile=b.read(paths[0]);cal=[asset for asset in profile.get('assets',[]) if asset.get('role')=='calibration']
++  if len(cal)!=1 or not isinstance(cal[0].get('name'),str) or Path(cal[0]['name']).name!=cal[0]['name'] or cal[0]['name'] in ('.','..') or '/' in cal[0]['name'] or '\\' in cal[0]['name']:raise ValueError('one native emitted flat calibration asset required')
++  actual=b.census(directory);expected={str(p) for p in paths}|{str(directory/cal[0]['name'])}
++  if {r['path'] for r in actual}!=expected or len(actual)!=6:raise ValueError('exact native six-file metadata roster required')
++  pins=[b.pin(p) for p in paths]+[b.pin(directory/cal[0]['name'])];cal_pin=pins[-1]
++  if (cal_pin['bytes'],cal_pin['sha256'])!=(cal[0].get('bytes'),cal[0].get('sha256')):raise ValueError('native calibration asset pin differs')
++  v=b.read(paths[-1]);e=plan['environment'];source={'path':e['AIRK_CUDA_QUALIFICATION_INPUT'],'sha256':e['AIRK_CUDA_QUALIFICATION_INPUT_SHA256']}
++  if v.get('schema')!='airk.private.cuda-probe-metadata/1' or v.get('qualified') is not False or v.get('model_requests_dispatched') is not False or v.get('forward_count_observed','missing') is not None or not b.core_pin_matches(v.get('request'),source) or not b.core_pin_matches(v.get('probe_request'),pins[2]) or v.get('profile')!=profile.get('manifest') or type(v.get('elapsed_us')) is not int or not 0<=v['elapsed_us']<120000000:raise ValueError('native metadata receipt/pins/scope differs')
++  native_input=b.read(paths[1]);probe=b.read(paths[2])
++  if not b.core_pin_matches(native_input.get('profile'),pins[0]) or probe.get('kind')!='probe' or probe.get('schema')!='airk.private.cuda-component-probe-request/1' or not b.core_pin_matches(probe.get('gpu_input'),pins[1]):raise ValueError('native emitted opaque profile/input/probe links differ')
+  if any(p['bytes']>16<<20 for p in pins):raise ValueError('bounded native metadata outputs required')
+- if kind=='request':
+-  value=b.read(paths[0]);
+-  if value.get('kind')!='assembly' or value.get('schema')!='airk.private.cuda-component-probe-request/1':raise ValueError('owning Rust output must remain an assembly request')
+- else:
+-  value=b.read(paths[-1]);schema='airk.private.cuda-custody-input-emission/1' if kind=='custody' else 'airk.private.cuda-runtime-assembly-emission/1'
+-  if value.get('schema')!=schema or value.get('pid')!=receipt['owned']['owned_leader_pid'] or value.get('execution_user')!=b.SID or value.get('model_requests_dispatched') is not False or value.get('runtime_admission_dispatched') is not False or value.get('forward_count_observed','missing') is not None or type(value.get('elapsed_us')) is not int or not 0<=value['elapsed_us']<120000000:raise ValueError('actual native metadata emission/PID/SID/budget scope differs')
+-  input_key='AIRK_CUDA_CUSTODY_LOCATORS' if kind=='custody' else 'AIRK_CUDA_QUALIFICATION_INPUT';source={'path':plan['environment'][input_key],'sha256':plan['environment'][input_key+'_SHA256']}
+-  if not b.core_pin_matches(value.get('input'),source):raise ValueError('original native opaque input pin differs')
+-  mapping=[('metadata',pins[0]),('historical',pins[1])] if kind=='custody' else [('manifest',pins[0])]
+-  if any(not b.core_pin_matches(value.get(k),p) for k,p in mapping):raise ValueError('actual native emitted file pins differ')
+-  if kind=='assembly' and (value.get('approved') is not False or value.get('fits_empty') is not True):raise ValueError('assembly must remain UNAPPROVED fits-empty')
+  return pins
+ 
+ def run(plan_path,expected):
+@@ -83,7 +86,7 @@
+  for key in list(env):
+   if key.upper().startswith(('AIRK_','ORT_','PYTHON','CUDA_','CUDNN_')):env.pop(key)
+  env.update(plan['environment']);env.update({'PATH':'C:/Windows/System32;C:/Windows','TEMP':str(out/'temp'),'TMP':str(out/'temp'),'TMPDIR':str(out/'temp')})
+- receipt={'schema':'airk.private.owned-cuda-assembly-nn0/1','plan':b.pin(pp),'selector':plan['selector'],'kind':kind,'command':argv,'input_seals':dict(plan['input_seals'],**{str(pp):expected}),'execution_user_sid':b.SID,'parent_pid':os.getpid(),'parent_python':b.pin(sys.executable),'output_policy':policy,'complete':False,'failure':None,'post_input_drift':[],'whole_phase_deadline_not_refreshed':True,'whole_phase_expired':False,'activation':False,'qualification':False}
++ receipt={'schema':'airk.private.owned-cuda-profile-nn0/1','plan':b.pin(pp),'selector':plan['selector'],'kind':kind,'command':argv,'input_seals':dict(plan['input_seals'],**{str(pp):expected}),'execution_user_sid':b.SID,'parent_pid':os.getpid(),'parent_python':b.pin(sys.executable),'output_policy':policy,'complete':False,'failure':None,'post_input_drift':[],'whole_phase_deadline_not_refreshed':True,'whole_phase_expired':False,'activation':False,'qualification':False}
+  try:
+   def authenticate(api,job,info,child_deadline):return parent.suspended_authentication(api,info,deadline,child_deadline,b.SID,plan['native_image'],primitive.image_proof)
+   with (out/'stdin.txt').open('xb') as f:f.flush()

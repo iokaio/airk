@@ -1,0 +1,128 @@
+--- original-retained-trainer
++++ prospective-finite-private-trainer
+@@ -5,9 +5,38 @@
+ import json
+ import os
+ import types
++import sys
++import time
++import math
++from train_output_paths import validate_training_output
++
++PROGRESS=None
++PROGRESS_PATH=None
++
++def write_progress(error=None):
++    if PROGRESS_PATH is None:return
++    value=dict(PROGRESS)
++    if error is not None:value.update(complete=False,error=str(error),exception_type=type(error).__name__)
++    torch=sys.modules.get("torch")
++    if torch is not None and torch.cuda.is_initialized():
++        value.update(peak_cuda_allocated_bytes=torch.cuda.max_memory_allocated(),peak_cuda_reserved_bytes=torch.cuda.max_memory_reserved())
++    temporary=PROGRESS_PATH.with_suffix(".new")
++    temporary.write_text(json.dumps(value,indent=2)+"\n",encoding="utf-8")
++    os.replace(temporary,PROGRESS_PATH)
++
++def require_finite_tensors(named_tensors,phase):
++    import torch
++    for name,value in named_tensors:
++        if value is not None and not bool(torch.isfinite(value).all()):
++            raise ValueError("nonfinite "+phase+": "+name)
++
++def finite_optimizer(optimizer,phase):
++    import torch
++    require_finite_tensors(((str(ordinal)+":"+str(name),value) for ordinal,state in enumerate(optimizer.state.values()) for name,value in state.items() if torch.is_tensor(value)),phase)
+ 
+ ROOT=Path(__file__).resolve().parents[4]
+-HERE=Path(__file__).resolve().parent
++HERE=ROOT/'artifacts/advanced-split/models/native-parent-bag-candidate-r1'
++PREP=Path(__file__).resolve().parent
+ 
+ def sha(raw):return hashlib.sha256(raw).hexdigest()
+ def sealed(path,pin):
+@@ -21,7 +50,12 @@
+     p.add_argument('--output',type=Path,required=True)
+     p.add_argument('--execution-seal',type=Path,required=True)
+     p.add_argument('--execution-seal-sha256',required=True)
++    p.add_argument('--primary-release',type=Path,required=True)
++    p.add_argument('--primary-release-sha256',required=True)
+     args=p.parse_args()
++    release_raw=sealed(args.primary_release,args.primary_release_sha256);release=json.loads(release_raw)
++    if (release.get('action')!='epoch1-native-parent-bag-training' or release.get('trainer_sha256')!=sha(Path(__file__).read_bytes()) or release.get('output')!=str(args.output.resolve()) or release.get('protocol_sha256')!='eb6f60be6af095c2c00ec091a0afb1668dc5e02af0cb5049a4b2a1540bcfaa2a'):
++        raise ValueError('separate primary epoch1 training release required')
+     owner_path=ROOT/'tools/retrieval-train/training_execution.py'
+     owner=types.ModuleType('_sealed_training_owner');owner.__file__=str(owner_path)
+     exec(compile(sealed(owner_path,'d363913b2424321822f9eee189f999eabb807a43c7d0c46fab567531dd1bd975'),str(owner_path),'exec'),owner.__dict__)
+@@ -58,6 +92,15 @@
+         unit=units[identifier];e=tokenizer.encode(unit['input']);t=unit['native_input_tensors']
+         if unit['embedding_admission']!='embeddable' or e.ids!=t['input_ids'][0] or e.attention_mask!=t['attention_mask'][0] or e.type_ids!=t['token_type_ids'][0]:
+             raise ValueError('native actual tokens differ from candidate encoder')
++    # All original data/token admissions precede output creation and encoder work.
++    global PROGRESS,PROGRESS_PATH
++    private_protocol=json.loads(sealed(PREP/'protocol.json','eb6f60be6af095c2c00ec091a0afb1668dc5e02af0cb5049a4b2a1540bcfaa2a'))
++    private_anchor=PREP.parent/'native-parent-bag-training-anchor-r2'
++    output_admission=validate_training_output(private_anchor,args.output,[PREP,*[Path(path).parent for path in private_protocol['pins']]])
++    args.output.mkdir()
++    PROGRESS_PATH=args.output/'training-progress.json'
++    PROGRESS={'schema':'airk.private-native-parent-bag-training-progress/1','complete':False,'rows':315,'eligible_rows':99,'expected_steps':13,'completed_steps':0,'losses':[],'phase':'before_model_construction','original_trainer_sha256':'5dc7398adbbc4d07c4099c26140163787b37ce9ebdb9c1aebef9d86d34a622f8','finite_guarded_trainer_sha256':sha(Path(__file__).read_bytes()),'primary_release_sha256':sha(release_raw),'recipe_sha256':sha(recipe_raw),'master_sha256':sha(master_raw),'native_units_sha256':sha(units_raw),'batches_sha256':sha(batches_raw),'fragment_positive_labels':False,'release_qualified':False,'output_admission':output_admission}
++    write_progress()
+     # Allocation cap is per device allocator; owned Job independently caps aggregate host.
+     torch.cuda.set_per_process_memory_fraction((4*1024**3)/torch.cuda.get_device_properties(0).total_memory)
+     torch.set_num_threads(2);torch.manual_seed(1908);torch.cuda.manual_seed_all(1908)
+@@ -66,6 +109,7 @@
+     model=BertModel(BertConfig.from_dict(json.loads(config_raw)),add_pooling_layer=False)
+     weights={k:v for k,v in load_tensors(base).items() if not k.startswith('pooler.') and k!='embeddings.position_ids'}
+     model.load_state_dict(weights,strict=True);del weights,base
++    require_finite_tensors(model.named_parameters(),'initial weights')
+     device=torch.device('cuda');model.to(device);model.train()
+     optimizer=torch.optim.AdamW(model.parameters(),lr=2e-5,weight_decay=.01)
+     def tensor_batch(values):
+@@ -77,7 +121,9 @@
+         pooled=(hidden*masks.unsqueeze(-1)).sum(1)/masks.sum(1,keepdim=True).clamp_min(1)
+         return torch.nn.functional.normalize(pooled.float(),p=2,dim=1)
+     torch.cuda.reset_peak_memory_stats();losses=[]
+-    for batch in batches:
++    started=time.monotonic()
++    for step,batch in enumerate(batches,1):
++        PROGRESS.update(phase='before_step',current_step=step);write_progress()
+         active=[rows[i] for i in batch['rows']]
+         if len(active)>8 or any(r['status']!='ADMITTED' for r in active):raise ValueError('batch admission changed')
+         ids=batch['unit_ids']
+@@ -101,14 +147,33 @@
+         queries=encode(*tensor_batch([query_inputs[r['ordinal']] for r in active]))
+         passages=loss_module.encode_checkpointed(encode,tensor_batch(values),microbatch=8,checkpointed=True)
+         value=loss_module.loss(queries,passages,bags,mask,torch.arange(len(active),device=device))
+-        value.backward();torch.nn.utils.clip_grad_norm_(model.parameters(),1.);optimizer.step()
++        require_finite_tensors([('loss',value)],'loss before backward')
++        value.backward()
++        require_finite_tensors(((name,p.grad) for name,p in model.named_parameters()),'gradients before clipping')
++        norm=torch.nn.utils.clip_grad_norm_(model.parameters(),1.)
++        require_finite_tensors([('clipped_norm',norm)],'gradient norm')
++        require_finite_tensors(((name,p.grad) for name,p in model.named_parameters()),'gradients after clipping')
++        optimizer.step()
++        require_finite_tensors(model.named_parameters(),'weights after optimizer')
++        finite_optimizer(optimizer,'optimizer state')
+         losses.append(float(value.detach().cpu()))
+-    args.output.mkdir(parents=True);checkpoint=args.output/'epoch-1';model.eval();model.save_pretrained(checkpoint,safe_serialization=True)
++        PROGRESS.update(phase='completed_step',completed_steps=step,losses=list(losses),training_loop_elapsed_seconds=time.monotonic()-started);write_progress()
++    if len(losses)!=13 or not all(math.isfinite(value) for value in losses):raise ValueError('exact13 finite steps required before checkpoint')
++    require_finite_tensors(model.named_parameters(),'weights before checkpoint');finite_optimizer(optimizer,'optimizer before checkpoint')
++    PROGRESS.update(phase='before_checkpoint');write_progress()
++    checkpoint=args.output/'epoch-1';model.eval();model.save_pretrained(checkpoint,safe_serialization=True)
+     (checkpoint/'tokenizer.json').write_bytes(tok_raw)
+     owner.verify_seal(args.execution_seal,args.execution_seal_sha256)
+     receipt={'schema':'airk.private-native-parent-bag-training/1','epoch':1,'preselected_epoch':1,'rows':315,'eligible_rows':99,'steps':len(losses),'losses':losses,
+         'model_sha256':sha((checkpoint/'model.safetensors').read_bytes()),'recipe_sha256':sha(recipe_raw),'master_sha256':sha(master_raw),'native_units_sha256':sha(units_raw),
+-        'peak_cuda_allocated_bytes':torch.cuda.max_memory_allocated(),'weak_parent_bags':True,'fragment_positive_labels':False,'release_qualified':False}
++        'peak_cuda_allocated_bytes':torch.cuda.max_memory_allocated(),'peak_cuda_reserved_bytes':torch.cuda.max_memory_reserved(),'original_trainer_sha256':'5dc7398adbbc4d07c4099c26140163787b37ce9ebdb9c1aebef9d86d34a622f8','finite_guarded_trainer_sha256':sha(Path(__file__).read_bytes()),'primary_release_sha256':sha(release_raw),'finite_loss_gradients_weights_optimizer_each_step':True,'weak_parent_bags':True,'fragment_positive_labels':False,'release_qualified':False}
++    PROGRESS.update(phase='complete',complete=True,completed_steps=13);write_progress()
+     (args.output/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n',encoding='utf-8');print(json.dumps(receipt),flush=True)
+ 
+-if __name__=='__main__':main()
++if __name__=='__main__':
++    try:main()
++    except BaseException as error:
++        try:write_progress(error)
++        except BaseException as progress_error:
++            print(json.dumps({'primary_error':str(error),'progress_write_error':str(progress_error)}),file=sys.stderr,flush=True)
++        raise

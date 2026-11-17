@@ -1,0 +1,1261 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 3d98af9..858105c 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -131,13 +131,21 @@ jobs:
+       - run: npm test --prefix packages/vscode
+       - name: Verify compiled extension staging and listing contracts
+         run: python -m unittest discover -s scripts/tests -p test_package_extension.py -v
+-  native:
++  native-build:
+     needs: [plan, quick, contracts, extension]
+     if: ${{ !cancelled() && needs.plan.outputs.native == 'true' && needs.quick.result == 'success' && (needs.contracts.result == 'success' || needs.contracts.result == 'skipped') && (needs.extension.result == 'success' || needs.extension.result == 'skipped') }}
+     env:
+       CARGO_BUILD_JOBS: ${{ matrix.cargo_jobs }}
+       NEXTEST_TEST_THREADS: ${{ matrix.test_threads }}
+-    name: Native / ${{ matrix.target }}
++      # Test images retain symbols/backtraces but omit costly DWARF/PDB data.
++      # These settings do not change the release profile or shipped payloads.
++      CARGO_PROFILE_DEV_DEBUG: '0'
++      CARGO_PROFILE_TEST_DEBUG: '0'
++      AIRK_QUALIFICATION: ${{ inputs.qualification || false }}
++    permissions:
++      contents: read
++      actions: read
++    name: Native build / ${{ matrix.target }}
+     strategy:
+       fail-fast: false
+       max-parallel: 4
+@@ -153,61 +161,136 @@ jobs:
+       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+         with:
+           python-version: '3.11'
++      - name: Reuse a successful build from this exact run when rerunning validation
++        id: resume
++        if: ${{ !inputs.fresh_build }}
++        env:
++          GH_TOKEN: ${{ github.token }}
++        run: python scripts/ci-runtime.py resume --target ${{ matrix.target }} --runtime-dir artifacts/runtime/${{ matrix.target }} --transfer artifacts/runtime-transfer/${{ matrix.target }}
+       - name: Install pinned compiler and checks
++        if: steps.resume.outputs.restored != 'true'
+         run: rustup show
+       - name: Restore dependency compiler cache
+-        if: ${{ !inputs.fresh_build }}
++        if: ${{ !inputs.fresh_build && steps.resume.outputs.restored != 'true' }}
+         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+         timeout-minutes: 8
+         with:
+-          shared-key: native-${{ matrix.target }}
++          shared-key: native-${{ matrix.target }}-debug0
+           cache-workspace-crates: false
+           cache-on-failure: false
+           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+       - name: Install pinned process-isolated test runner
++        if: steps.resume.outputs.restored != 'true'
+         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+         with:
+           tool: cargo-nextest@0.9.148
+       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
++        if: steps.resume.outputs.restored != 'true'
+         with:
+           node-version: '24.15.0'
+           package-manager-cache: false
+-      - name: Restore locked extension build tools
+-        run: npm ci --ignore-scripts --no-audit --no-fund --prefix packages/vscode
+-      - name: Check release version when requested
+-        env:
+-          AIRK_EXPECTED_VERSION: ${{ inputs.expected_version }}
+-        run: node -e "const p=require('./packages/vscode/package.json'); const v=process.env.AIRK_EXPECTED_VERSION; if(v && p.version!==v) throw Error('Requested version differs from package.json')"
++      - name: Record runner capacity before native compilation
++        run: python scripts/ci-diagnostics.py --output artifacts/ci/runner-before.json
+       - name: Prepare pinned bundled model build inputs
++        if: steps.resume.outputs.restored != 'true'
+         run: python scripts/provision-local-model.py --destination target/local-vector-model --download
+       - name: Prepare pinned offline inference libraries
++        if: steps.resume.outputs.restored != 'true'
+         run: python scripts/provision-onnx-runtime.py --download
+       - name: Verify native child ownership before workspace qualification
++        if: steps.resume.outputs.restored != 'true'
+         run: cargo nextest run --profile ci -p airk-process --locked --target ${{ matrix.target }}
+       - name: Native platform ownership and retrieval regressions
+-        if: ${{ matrix.os != 'ubuntu-24.04' && !inputs.qualification }}
++        if: ${{ steps.resume.outputs.restored != 'true' && matrix.os != 'ubuntu-24.04' && !inputs.qualification }}
+         env:
+           AIRK_PROCESS_DIAGNOSTICS: '1'
+         run: python scripts/ci-metrics.py run --name platform-regressions -- cargo nextest run --profile ci --test-threads 2 -p airk-cli --lib --test native_read_retry --test legacy_native --test pdf_worker --test unix_guardian --test native_worker_storage --test explorer_assistance --locked --target ${{ matrix.target }}
+       - name: Clippy for this native platform
+-        if: ${{ matrix.os == 'ubuntu-24.04' || inputs.qualification }}
++        if: ${{ steps.resume.outputs.restored != 'true' && (matrix.os == 'ubuntu-24.04' || inputs.qualification) }}
+         run: python scripts/ci-metrics.py run --name clippy -- cargo clippy --workspace --all-targets --all-features --locked --target ${{ matrix.target }} -- -D warnings
+       - name: Compile workspace tests
+-        if: ${{ matrix.os == 'ubuntu-24.04' || inputs.qualification }}
++        if: ${{ steps.resume.outputs.restored != 'true' && (matrix.os == 'ubuntu-24.04' || inputs.qualification) }}
+         run: python scripts/ci-metrics.py run --name test-compile -- cargo nextest run --profile ci --workspace --all-features --locked --target ${{ matrix.target }} --no-run
+       - name: Run isolated workspace tests
+-        if: ${{ matrix.os == 'ubuntu-24.04' || inputs.qualification }}
++        if: ${{ steps.resume.outputs.restored != 'true' && (matrix.os == 'ubuntu-24.04' || inputs.qualification) }}
+         run: python scripts/ci-metrics.py run --name test-execution -- cargo nextest run --profile ci --workspace --all-features --locked --target ${{ matrix.target }} ${{ inputs.qualification && '--ignore-default-filter' || '' }}
+       - name: Run documentation tests
+-        if: ${{ matrix.os == 'ubuntu-24.04' || inputs.qualification }}
++        if: ${{ steps.resume.outputs.restored != 'true' && (matrix.os == 'ubuntu-24.04' || inputs.qualification) }}
+         run: python scripts/ci-metrics.py run --name doctests -- cargo test --doc --workspace --locked --target ${{ matrix.target }}
+       - name: Kernel real-model cache and incremental-work regressions
+-        if: ${{ inputs.qualification }}
++        if: ${{ steps.resume.outputs.restored != 'true' && inputs.qualification }}
+         env:
+           AIRK_TEST_MODEL_DIR: ${{ github.workspace }}/target/local-vector-model/minilm-l6-v2-u8-v1
+         run: cargo test -p airk-kernel --features local-inference --test vector_performance --locked --target ${{ matrix.target }} -- --ignored --test-threads=1
+       - name: Build pinned native candidate
++        if: steps.resume.outputs.restored != 'true'
+         run: python scripts/ci-metrics.py run --name release-pair -- python scripts/build-service-runtime.py --profile release --destination artifacts/runtime/${{ matrix.target }}
++      - name: Seal the exact runtime handoff
++        if: steps.resume.outputs.restored != 'true'
++        run: python scripts/ci-runtime.py seal --target ${{ matrix.target }} --runtime-dir artifacts/runtime/${{ matrix.target }} --transfer artifacts/runtime-transfer/${{ matrix.target }}
++      - name: Retain build output for validation and same-run reruns
++        if: steps.resume.outputs.restored != 'true'
++        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
++        with:
++          name: airk-runtime-${{ matrix.target }}-${{ github.sha }}-${{ github.run_id }}
++          path: artifacts/runtime-transfer/${{ matrix.target }}/
++          if-no-files-found: error
++          retention-days: 7
++          compression-level: 0
++          overwrite: true
++      - name: Summarize build phase durations and slow tests
++        if: always()
++        run: python scripts/ci-metrics.py summary
++      - name: Record runner capacity after a build failure
++        if: failure()
++        run: python scripts/ci-diagnostics.py --output artifacts/ci/runner-failure.json
++      - name: Retain build timing evidence even on failure
++        if: always()
++        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
++        with:
++          name: airk-ci-build-timings-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
++          path: |
++            artifacts/ci/
++            target/nextest/ci/junit.xml
++          if-no-files-found: warn
++          retention-days: 7
++  native:
++    needs: [plan, native-build]
++    if: ${{ !cancelled() && needs.plan.outputs.native == 'true' && needs.native-build.result == 'success' }}
++    name: Native / ${{ matrix.target }}
++    strategy:
++      fail-fast: false
++      max-parallel: 4
++      matrix: ${{ fromJSON(needs.plan.outputs.native_matrix) }}
++    runs-on: ${{ matrix.os }}
++    timeout-minutes: ${{ matrix.timeout_minutes || 90 }}
++    env:
++      AIRK_QUALIFICATION: ${{ inputs.qualification || false }}
++      AIRK_PROCESS_DIAGNOSTICS: '1'
++      AIRK_NATIVE_DIAGNOSTIC_DIR: ${{ github.workspace }}/artifacts/ci/native-failures
++    steps:
++      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
++        with:
++          persist-credentials: false
++      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
++        with:
++          python-version: '3.11'
++      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
++        with:
++          node-version: '24.15.0'
++          package-manager-cache: false
++      - name: Restore locked extension build tools
++        run: npm ci --ignore-scripts --no-audit --no-fund --prefix packages/vscode
++      - name: Install pinned compiler for package provenance (no native compilation)
++        run: rustup show
++      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
++        with:
++          name: airk-runtime-${{ matrix.target }}-${{ github.sha }}-${{ github.run_id }}
++          path: artifacts/runtime-transfer/${{ matrix.target }}
++      - name: Verify source and complete payload before executing the transferred runtime
++        run: python scripts/ci-runtime.py restore --target ${{ matrix.target }} --runtime-dir artifacts/runtime/${{ matrix.target }} --transfer artifacts/runtime-transfer/${{ matrix.target }}
++      - name: Record runner capacity before native validation
++        run: python scripts/ci-diagnostics.py --output artifacts/ci/runner-before.json
+       - name: Native direct clients, retained reads and shared offline inference
+         run: python scripts/check-service-clients.py --runtime-dir artifacts/runtime/${{ matrix.target }} --files 16 --model --report artifacts/benchmarks/${{ matrix.target }}-clients.json
+       - name: Installed process roles and client lifetime
+@@ -232,24 +315,31 @@ jobs:
+       - name: Abrupt process termination preserves a coherent published revision
+         if: ${{ inputs.qualification }}
+         run: python scripts/check-publication-faults.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }} --attempts 3 --output artifacts/benchmarks/${{ matrix.target }}-faults.json
+-      - name: Managed installation and registered native MCP smoke (repeated for deadline races)
+-        if: ${{ !inputs.qualification }}
+-        shell: bash
+-        env:
+-          AIRK_TEST_BINARY: ${{ github.workspace }}/artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }}
+-        # Cold-verification and admission races depend on runner speed. Three
+-        # independent passes, never retries, make them visible before merge.
+-        run: |
+-          npm run compile --prefix packages/vscode
+-          for pass in 1 2 3; do
+-            echo "Native MCP smoke pass $pass of 3"
+-            node --test packages/vscode/out/test/nativeSmoke.test.js
+-          done
+       - name: Full extension and native lifecycle qualification
+         if: ${{ inputs.qualification }}
+         env:
+           AIRK_TEST_BINARY: ${{ github.workspace }}/artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }}
+         run: npm test --prefix packages/vscode
++      - name: Managed MCP smoke and cold-client regression repetitions
++        shell: bash
++        env:
++          AIRK_TEST_BINARY: ${{ github.workspace }}/artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }}
++        # One full routine pass. Preserve three cold-client observations until
++        # the Intel connection failure is diagnosed; qualification repeats all.
++        # Each failed command stops the step; no failed pass is retried.
++        run: |
++          # Qualification's full suite above already supplies its first pass.
++          if [ "$AIRK_QUALIFICATION" != "true" ]; then
++            npm run compile --prefix packages/vscode
++            python scripts/ci-metrics.py run --name mcp-smoke-1 -- node --test packages/vscode/out/test/nativeSmoke.test.js
++          fi
++          for pass in 2 3; do
++            if [ "$AIRK_QUALIFICATION" = "true" ]; then
++              python scripts/ci-metrics.py run --name "mcp-smoke-$pass" -- node --test packages/vscode/out/test/nativeSmoke.test.js
++            else
++              python scripts/ci-metrics.py run --name "cold-clients-$pass" -- node --test --test-name-pattern '^four cold (pinned|source) clients observe first status without diagnostic warmup$' packages/vscode/out/test/nativeSmoke.test.js
++            fi
++          done
+       - name: Package and verify allowlisted native payload
+         run: python scripts/package-native.py --target ${{ matrix.target }} --runtime-dir artifacts/runtime/${{ matrix.target }}
+       - name: Package and verify platform VSIX
+@@ -287,6 +377,9 @@ jobs:
+       - name: Summarize phase durations and slow tests
+         if: always()
+         run: python scripts/ci-metrics.py summary
++      - name: Record runner capacity after a native validation failure
++        if: failure()
++        run: python scripts/ci-diagnostics.py --output artifacts/ci/runner-failure.json
+       - name: Retain timing evidence even on failure
+         if: always()
+         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index d8db1c4..9411b20 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -28,9 +28,9 @@ git diff --check
+ 
+ Routine Linux CI uses pinned cargo-nextest 0.9.148 with the checked-in `ci` profile and all features, followed by serial `cargo test --doc --workspace --locked`; local `cargo test` remains supported. Windows and macOS run focused process, CLI library, installer and retrieval regressions with the lightweight default feature set and two test processes. The five native integration binaries share a one-slot nextest group; their internal concurrency and deadlines remain unchanged, while library cases can run in parallel. Existing process diagnostics are retained on failure. Full workspace Clippy/tests/doctests on those hosts are opt-in qualification. Feature-enabled tests exercise the helper; the runtime builder separately verifies the lightweight main and inference payload. Kernel inference/cache performance regressions now live in `crates/airk-kernel/tests/vector_performance.rs`: run that target with `--features local-inference -- --ignored --test-threads=1` and `AIRK_TEST_MODEL_DIR` set to the absolute directory of verified offline assets; Cargo starts integration tests from the crate directory. They are component measurements, separate from the native client and helper qualification scripts. CI builds/tests native binaries on Windows, macOS and Linux and checks the container recipe on Linux. Report what actually ran, including unavailable checks. The local Windows result alone does not qualify all platforms. See [CI and downloadable native candidates](docs/ci-and-builds.md) for the explicit architecture matrix, build credentials and spending controls.
+ 
+-PR CI builds and tests native candidates on Linux x64, Windows x64 and Apple Silicon, plus the container, extension and contract checks. macOS Intel runs after merge on main. When the main tree is identical to the merged PR's tested merge ref, main promotes that PR run's three native candidates and builds only Intel. A main push that changes dependency, toolchain, Docker, nextest or CI inputs, or that cannot authenticate the PR producer, rebuilds all four targets. The managed-install/MCP smoke runs three independent passes on every native host, with no retries.
++PR CI builds and tests native candidates on Linux x64, Windows x64 and Apple Silicon, plus the container, extension and contract checks. macOS Intel runs after merge on main. When the main tree is identical to the merged PR's tested merge ref, main promotes that PR run's three native candidates and builds only Intel. A main push that changes dependency, toolchain, Docker, nextest or CI inputs, or that cannot authenticate the PR producer, rebuilds all four targets. Native builds and runtime validation use separate jobs with a verified same-run payload handoff. Routine managed MCP validation runs one full pass plus two extra cold-client regression passes while the Intel failure remains unresolved; qualification runs three full passes. Failed passes are not retried. Rerun all CI jobs for a complete release attempt: successful build jobs can reuse their exact earlier payload and passed regression evidence in that run; `fresh_build` disables reuse. See [native build reuse](docs/ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics).
+ 
+-Hosted runners have four logical processors, so deadline races that hosted CI exposes may not appear on a high-core workstation. Before a PR that touches native service, MCP, installer or smoke-test code, run `pwsh -File scripts/ci-local.ps1` on Windows. It builds a fresh release pair, then repeats the managed MCP, native-client and installed-process smokes five times while every child process is restricted to four processors. `-Cores`, `-Repeat`, `-Load` and `-Suites` adjust it; `-SkipBuild` reuses `artifacts/runtime/x86_64-pc-windows-msvc`; add `-RuntimeDir <path>` to select a separately staged pair without replacing that default. Its logs stay in ignored `artifacts/ci-local/`. Native test reads must use the shared typed-retry helpers in `packages/vscode/src/test/nativeReadRetry.ts`. A raw MCP call that must run exactly once, such as a deliberate negative test, needs a `// native read:` comment that gives the reason. Every native error assertion includes the reply. `scripts/tests/test_native_read_contract.py` enforces these rules.
++The local hosted-runner reproduction defaults to four logical processors. Standard Apple Silicon runners have three cores and 7 GB RAM; see [runner specifications](https://docs.github.com/en/actions/reference/runners/github-hosted-runners). Deadline races and memory pressure on those hosts may not appear on a high-core workstation. Before a PR that touches native service, MCP, installer or smoke-test code, run `pwsh -File scripts/ci-local.ps1` on Windows. It builds a fresh release pair, then repeats the managed MCP, native-client and installed-process smokes five times while every child process is restricted to four processors. `-Cores`, `-Repeat`, `-Load` and `-Suites` adjust it; `-SkipBuild` reuses `artifacts/runtime/x86_64-pc-windows-msvc`; add `-RuntimeDir <path>` to select a separately staged pair without replacing that default. Its logs stay in ignored `artifacts/ci-local/`. Native test reads must use the shared typed-retry helpers in `packages/vscode/src/test/nativeReadRetry.ts`. A raw MCP call that must run exactly once, such as a deliberate negative test, needs a `// native read:` comment that gives the reason. Every native error assertion includes the reply. `scripts/tests/test_native_read_contract.py` enforces these rules.
+ 
+ Routine CI excludes four long workload/measurement tests through the nextest profile's default filter. An explicit **CI** dispatch with `qualification` enabled restores the full workspace on every native host, container workspace tests, the full installed-runtime extension lifecycle/multi-project suite, and extended campaigns. Routine container builds run image smoke without duplicating the Linux workspace suite; use `--build-arg AIRK_QUALIFICATION=true` for local container qualification. To run the complete non-ignored suite locally with nextest, add `--ignore-default-filter`; ordinary `cargo test` remains unfiltered. All native release builds, managed-install/MCP smoke and package verification remain routine gates. Record manual multi-project/multi-editor release checks separately from automated qualification.
+ 
+diff --git a/README.md b/README.md
+index 3828d92..24e0ef4 100644
+--- a/README.md
++++ b/README.md
+@@ -184,7 +184,7 @@ Storage uses independent collection ownership, admitted publication/replacement
+ 
+ Developer references: [every MCP tool: purpose, contracts and examples](docs/mcp-developer-guide.md) and [every CLI command: behavior and implementation](docs/cli-developer-guide.md). The guides explain the 28-tool unified MCP catalog versus the 18-tool native CLI catalog and link to each other for navigation.
+ 
+-Read [CONTRIBUTING.md](CONTRIBUTING.md), [architecture and dependency boundaries](docs/architecture.md) and the [documentation index](docs/README.md). The runtime builder stages a host-native executable pair without creating a VSIX. Formatting, Clippy, workspace tests, repository checks and exact artifact verification remain release gates. Installed-platform evidence is recorded separately from development fixtures.
++Read [CONTRIBUTING.md](CONTRIBUTING.md), [architecture and dependency boundaries](docs/architecture.md) and the [documentation index](docs/README.md). The runtime builder stages a host-native executable pair without creating a VSIX. Formatting, Clippy, workspace tests, repository checks and exact artifact verification remain release gates. Installed-platform evidence is recorded separately from development fixtures. The unreleased [CI follow-up](docs/ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics) separates builds from validation, reuses verified same-run payloads and adds bounded Darwin failure diagnostics; hosted performance and the Intel cold-client failure remain unqualified.
+ 
+ [Semantic index optimization](docs/semantic-index-optimization.md) explains the
+ 1.6.0 switch to two bundled INT8 MiniLM exports: lower helper memory and CPU cost,
+diff --git a/crates/airk-cli/src/lib.rs b/crates/airk-cli/src/lib.rs
+index 9354082..1b1b666 100644
+--- a/crates/airk-cli/src/lib.rs
++++ b/crates/airk-cli/src/lib.rs
+@@ -39,6 +39,7 @@ mod child_job;
+ 
+ pub mod client_owner;
+ mod native_process;
++mod process_diagnostics;
+ mod process_roles;
+ 
+ pub mod source_protocol;
+diff --git a/crates/airk-cli/src/process_diagnostics.rs b/crates/airk-cli/src/process_diagnostics.rs
+new file mode 100644
+index 0000000..1b4c029
+--- /dev/null
++++ b/crates/airk-cli/src/process_diagnostics.rs
+@@ -0,0 +1,192 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Opt-in CI worker stderr tails. Never archive service databases or source trees.
++use anyhow::{Context, Result};
++use std::{
++    fs::{File, OpenOptions},
++    io::{Read, Seek, SeekFrom, Write},
++    path::{Path, PathBuf},
++    process::Child,
++    sync::{Arc, Mutex},
++    thread::JoinHandle,
++};
++
++const TAIL_BYTES: usize = 4096;
++
++pub(crate) fn directory() -> Option<PathBuf> {
++    (std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").as_deref() == Some(std::ffi::OsStr::new("1")))
++        .then(|| std::env::var_os("AIRK_NATIVE_DIAGNOSTIC_DIR").map(PathBuf::from))
++        .flatten()
++}
++
++struct Tail {
++    file: File,
++    bytes: Vec<u8>,
++    pid: u32,
++    dropped: u64,
++    exit: Option<String>,
++    read_failed: bool,
++    stderr_eof: bool,
++}
++
++impl Tail {
++    fn save(&mut self) -> std::io::Result<()> {
++        let bytes = serde_json::to_vec(&serde_json::json!({
++            "schema": "airk-worker-stderr/1", "pid": self.pid,
++            "stderr": String::from_utf8_lossy(&self.bytes), "dropped_bytes": self.dropped,
++            "exit": self.exit, "read_failed": self.read_failed, "stderr_eof": self.stderr_eof,
++        }))?;
++        self.file.seek(SeekFrom::Start(0))?;
++        self.file.write_all(&bytes)?;
++        self.file.set_len(bytes.len() as u64)?;
++        self.file.flush()
++    }
++
++    fn append(&mut self, bytes: &[u8]) {
++        self.bytes.extend_from_slice(bytes);
++        if self.bytes.len() > TAIL_BYTES {
++            let excess = self.bytes.len() - TAIL_BYTES;
++            self.bytes.drain(..excess);
++            self.dropped += excess as u64;
++        }
++    }
++}
++
++pub(crate) struct WorkerStderr {
++    tail: Arc<Mutex<Tail>>,
++    reader: JoinHandle<()>,
++}
++
++impl WorkerStderr {
++    pub(crate) fn start(child: &mut Child, role: &str, parent: &Path) -> Result<Self> {
++        std::fs::create_dir_all(parent)?;
++        // Exclusive files under the explicitly supplied CI destination. The
++        // opaque worker role prevents PID reuse from overwriting prior evidence.
++        let file = OpenOptions::new()
++            .write(true)
++            .create_new(true)
++            .open(parent.join(format!("worker-{}-{role}.json", child.id())))?;
++        let tail = Arc::new(Mutex::new(Tail {
++            file,
++            bytes: Vec::with_capacity(TAIL_BYTES),
++            pid: child.id(),
++            dropped: 0,
++            exit: None,
++            read_failed: false,
++            stderr_eof: false,
++        }));
++        tail.lock()
++            .map_err(|_| anyhow::anyhow!("worker diagnostic lock poisoned"))?
++            .save()?;
++        let mut stderr = child
++            .stderr
++            .take()
++            .context("worker diagnostic stderr missing")?;
++        let target = Arc::clone(&tail);
++        let reader = std::thread::Builder::new()
++            .name("airk-worker-stderr".into())
++            .spawn(move || {
++                let mut buffer = [0; 4096];
++                loop {
++                    let read = stderr.read(&mut buffer);
++                    let Ok(mut tail) = target.lock() else { return };
++                    match read {
++                        Ok(0) => {
++                            tail.stderr_eof = true;
++                            let _ = tail.save();
++                            break;
++                        }
++                        Ok(count) => tail.append(&buffer[..count]),
++                        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
++                        Err(_) => {
++                            tail.read_failed = true;
++                            let _ = tail.save();
++                            break;
++                        }
++                    }
++                    // A diagnostic write failure never stops draining the pipe.
++                    let _ = tail.save();
++                }
++            })?;
++        Ok(Self { tail, reader })
++    }
++
++    /// Called after the existing native owner has drained the worker/children.
++    pub(crate) fn finish(self, child: &mut Child) {
++        // An inherited stderr descriptor must not extend native shutdown. The
++        // bounded collector can finish independently; EOF remains explicit.
++        if self.reader.is_finished() {
++            let _ = self.reader.join();
++        }
++        if let Ok(mut tail) = self.tail.lock() {
++            tail.exit = child
++                .try_wait()
++                .ok()
++                .flatten()
++                .map(|status| status.to_string());
++            let _ = tail.save();
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn tail_bounds_noisy_worker_output_and_records_its_exit() -> Result<()> {
++        let directory = tempfile::tempdir()?;
++        let mut child = std::process::Command::new(std::env::current_exe()?)
++            .args([
++                "--exact",
++                "process_diagnostics::tests::stderr_child",
++                "--nocapture",
++            ])
++            .env("AIRK_TEST_STDERR_CHILD", "1")
++            .stdin(std::process::Stdio::null())
++            .stdout(std::process::Stdio::null())
++            .stderr(std::process::Stdio::piped())
++            .spawn()?;
++        let capture = WorkerStderr::start(&mut child, "fixture", directory.path())?;
++        let pid = child.id();
++        let status = child.wait()?;
++        assert_eq!(status.code(), Some(7));
++        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
++        while !capture.reader.is_finished() && std::time::Instant::now() < deadline {
++            std::thread::sleep(std::time::Duration::from_millis(1));
++        }
++        assert!(
++            capture.reader.is_finished(),
++            "stderr collector did not drain the exited fixture"
++        );
++        capture.finish(&mut child);
++        let bytes = std::fs::read(directory.path().join(format!("worker-{pid}-fixture.json")))?;
++        assert!(bytes.len() < 8192);
++        let report: serde_json::Value = serde_json::from_slice(&bytes)?;
++        assert_eq!(report["stderr"].as_str().unwrap().len(), TAIL_BYTES);
++        assert!(
++            report["stderr"]
++                .as_str()
++                .unwrap()
++                .ends_with("worker failure")
++        );
++        assert_eq!(report["dropped_bytes"], 64 * 4096 + 14 - TAIL_BYTES);
++        assert_eq!(report["exit"], status.to_string());
++        assert_eq!(report["pid"], pid);
++        assert_eq!(report["read_failed"], false);
++        assert_eq!(report["stderr_eof"], true);
++        Ok(())
++    }
++
++    #[test]
++    fn stderr_child() {
++        if std::env::var_os("AIRK_TEST_STDERR_CHILD").is_some() {
++            let mut stderr = std::io::stderr().lock();
++            for _ in 0..64 {
++                stderr.write_all(&[b'x'; 4096]).unwrap();
++            }
++            stderr.write_all(b"worker failure").unwrap();
++            stderr.flush().unwrap();
++            std::process::exit(7);
++        }
++    }
++}
+diff --git a/crates/airk-cli/src/project_supervisor.rs b/crates/airk-cli/src/project_supervisor.rs
+index 09778b2..11ca9fc 100644
+--- a/crates/airk-cli/src/project_supervisor.rs
++++ b/crates/airk-cli/src/project_supervisor.rs
+@@ -32,6 +32,7 @@ struct ChildWorker {
+     input: Option<ChildStdin>,
+     output: Receiver<Reply>,
+     reader: Option<std::thread::JoinHandle<()>>,
++    stderr: Option<crate::process_diagnostics::WorkerStderr>,
+     identity: Option<WorkerIdentity>,
+     role: String,
+     runtime: PathBuf,
+@@ -100,6 +101,9 @@ impl Drop for ChildWorker {
+         if let Some(reader) = self.reader.take() {
+             let _ = reader.join();
+         }
++        if let Some(stderr) = self.stderr.take() {
++            stderr.finish(&mut self.child);
++        }
+     }
+ }
+ 
+@@ -115,6 +119,7 @@ impl ChildWorker {
+             crate::process_roles::Role::Index,
+         )?;
+         let worker = new_instance_id()?;
++        let diagnostic_directory = crate::process_diagnostics::directory();
+         let mut command = Command::new(executable);
+         command
+             .arg(if derived {
+@@ -124,7 +129,11 @@ impl ChildWorker {
+             })
+             .stdin(Stdio::piped())
+             .stdout(Stdio::piped())
+-            .stderr(Stdio::null());
++            .stderr(if diagnostic_directory.is_some() {
++                Stdio::piped()
++            } else {
++                Stdio::null()
++            });
+         #[cfg(windows)]
+         {
+             use std::os::windows::process::CommandExt;
+@@ -143,6 +152,7 @@ impl ChildWorker {
+             input: Some(input),
+             output: receiver,
+             reader: None,
++            stderr: None,
+             identity: None,
+             role: protocol::role(worker),
+             runtime: root.into(),
+@@ -152,6 +162,13 @@ impl ChildWorker {
+             last_status: Instant::now(),
+             waiting: None,
+         };
++        if let Some(directory) = diagnostic_directory {
++            process.stderr = Some(crate::process_diagnostics::WorkerStderr::start(
++                &mut process.child,
++                &process.role,
++                &directory,
++            )?);
++        }
+         process.reader = Some(
+             std::thread::Builder::new()
+                 .name("airk-project-replies".into())
+diff --git a/crates/airk-mcp/src/remote.rs b/crates/airk-mcp/src/remote.rs
+index 7d8c86b..4cf4ab3 100644
+--- a/crates/airk-mcp/src/remote.rs
++++ b/crates/airk-mcp/src/remote.rs
+@@ -240,7 +240,17 @@ impl ServerHandler for Bridge {
+             query_concurrency,
+         )
+         .await;
+-        Ok(result.unwrap_or_else(|_|CallToolResult::error(vec![ContentBlock::text("AIRK direct project connection failed. Retry through fresh brokerage with the same revision selector; use the service console for indexing or repair.")])).into())
++        Ok(result.unwrap_or_else(|error| {
++            if std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").as_deref()
++                == Some(std::ffi::OsStr::new("1"))
++            {
++                // Explicit local/CI diagnostics only: keep the bounded cause on
++                // stderr without changing the public reply or retry authority.
++                let detail: String = format!("{error:#}").chars().take(4096).collect();
++                eprintln!("AIRK direct project connection failed: {detail}");
++            }
++            CallToolResult::error(vec![ContentBlock::text("AIRK direct project connection failed. Retry through fresh brokerage with the same revision selector; use the service console for indexing or repair.")])
++        }).into())
+     }
+ }
+ 
+diff --git a/docs/README.md b/docs/README.md
+index e7d7674..e64d87f 100644
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -2,6 +2,8 @@
+ 
+ **1.8.7:** CLI and Workbench reads use the MCP handlers and retain their full results, including configured `query_concurrency` in status/diagnostics. This release consolidates all unpublished 1.8.0-1.8.6 storage, startup, retrieval, concurrency and Workbench improvements. See the [consolidated release notes](releases/release-1.8.7.md) for current behavior and dated validation.
+ 
++Unreleased developer workflow: [native build reuse and Darwin failure diagnostics](ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics) describes the separate build/validation jobs, complete-attempt release rule, focused repetitions and remaining Intel failure. Product versions remain synchronized at 1.8.7.
++
+ Developer references: [MCP tools](mcp-developer-guide.md) covers all 28 public tools with inputs, examples, evidence limits and implementation/test links. [CLI commands](cli-developer-guide.md) covers each command, its purpose, native ownership and guarded workflows. Both explain why `airk tools list` has 18 native tools while unified MCP has 28, and map the remaining capabilities to separate terminal commands.
+ 
+ The [CLI/MCP/Workbench parity audit](read-interface-parity.md) maps every native read, complete response/input contracts, conditional/continuity options and full versus selected exports. [Installed MCP checks](mcp-improvements-test-results.md#installed-187-acceptance--november-1-2026) record the 78-check Windows campaign, its permitted retry and the remaining navigation limits. Earlier 20-scenario investigations remain explicitly historical.
+diff --git a/docs/architecture.md b/docs/architecture.md
+index e2e3078..183f52e 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -2,6 +2,8 @@
+ 
+ **1.8.7 release candidate:** MCP `status` and `diagnostics` return `query_concurrency`, the configured evidence request limit observed at admission. It reuses the existing policy read, including for cached status; it is a capacity limit, not a count of free slots. This release includes the preceding unpublished MCP, Workbench and concurrent-request improvements. See the [1.8.7 release record](releases/release-1.8.7.md) for behavior and validation.
+ 
++The unreleased CI diagnostic adapter stays in `airk-cli`: an explicitly enabled worker-stderr collector drains bounded tails under the existing child owner and records observed exit after native containment drains. The MCP transport can emit a bounded underlying connection failure on stderr; public read results and retry authority remain unchanged. CI tooling owns source-bound build handoffs and numeric runner reports; no scheduler or dependency enters Core, Store or Kernel. See [the CI follow-up](ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics).
++
+ In 1.8.5, Core defines the validated 4/8/16/32/64 concurrency contract (default 16); the existing CLI service resource adapter persists it. Management → Service edits that policy. MCP admission observes it before each request, and the CLI leases independent authenticated channels from a bounded pool. The supervisor grants the same evidence concurrency plus one status/control slot to each worker and acknowledges live updates before saving them. Worker-local broker admission bounds actual requests across clients. The shared materialization lifetime gate retains accepted blocking work through rendering/accounting and cancellation under a finite 65-slot ceiling; the broker supplies the configured limit. Shrinking capacity drains accepted charges. Read-only manifest selection shares a validated ownership-file lock, allowing concurrent readers while retaining exclusive manifest replacement and original request-held object leases. Collection scope, native authority and publication contracts are preserved.
+ 
+ CLI owns the 1.8.4 distinction between scalar status invalidation and authenticated scope/worker retirement. A completed same-authority status snapshot survives scalar invalidation with an explicit supersession note; its original evidence and age remain attached, and it neither refreshes the current cache nor advances its receipt. Scope, worker authority, authorization expiry and EOF remain separate fences. No kernel/store evidence revision contract or concurrency limit changes.
+diff --git a/docs/ci-and-builds.md b/docs/ci-and-builds.md
+index 35e6b54..ef417d8 100644
+--- a/docs/ci-and-builds.md
++++ b/docs/ci-and-builds.md
+@@ -47,7 +47,7 @@ Jobs install the repository-pinned Rust compiler/components, Python 3.11 and Nod
+ 
+ - Linux runs workspace Clippy, all-feature workspace tests with the `ci` default filter, and doctests once. The separate extension job runs its mocked contracts; Python packaging/protocol contracts run on each host.
+ - Every native host runs the short `airk-process` ownership regressions. Windows and both Macs compile only the CLI library plus `native_read_retry`, `legacy_native`, `pdf_worker`, `unix_guardian` and `native_worker_storage` integration binaries, plus the lightweight `explorer_assistance` adapter tests. These use the default lightweight-main features and at most two test processes. The selected targets do not require inference/model features; the earlier Windows inventory before the new storage worker fixture contained the same 157 default/all-feature test identities (156 runnable, one ignored). These cover installer behavior, typed contention, source preservation and the native process regressions without compiling the entire workspace test matrix.
+-- All four hosts build the release executable pair, exercise short direct-client/shared offline-model and DOCX/XLSX smoke, verify managed installation and registered MCP before first publication, and verify native archives and platform VSIX packages. The VSIX includes digest-verified listing illustrations. The managed-install/MCP smoke runs three independent passes per host with no retries, so cold-verification and admission races surface before merge.
++- All four hosts build the release executable pair, exercise short direct-client/shared offline-model and DOCX/XLSX smoke, verify managed installation and registered MCP before first publication, and verify native archives and platform VSIX packages. The VSIX includes digest-verified listing illustrations. The managed-install/MCP smoke runs once per host, followed by two extra cold-client regression passes while the Intel connection failure remains unresolved. Qualification runs three full passes; no failed pass is retried.
+ - PR CI runs the Linux x64, Windows x64 and Apple Silicon native jobs. macOS Intel runs on main after merge. The [plan script](../scripts/ci-plan.py) emits the native matrix; manual and qualification dispatches always cover all four hosts.
+ - The Linux container job builds the runtime image and runs the one-container collection smoke. It does not repeat workspace compilation/tests in routine builds. Container timing reports explicitly record this scope and contain no synthetic test results.
+ 
+@@ -57,6 +57,26 @@ On October 29, 2026, at the repository owner's request, main stopped rebuilding
+ 
+ This policy changed on October 26, 2026 at the repository owner's request after per-platform workspace execution alone took 16-25 minutes on the Windows/macOS runners, in addition to test compilation and release builds. Dated pilot measurements below describe earlier policies. Exact-main candidate authentication, all four native artifact sets, version agreement and publication provenance remain mandatory. Routine CI does not claim the optional qualification campaigns or manual multi-project/multi-editor acceptance ran.
+ 
++## Native build reuse and Darwin failure diagnostics
++
++**Unreleased CI follow-up, November 1, 2026.** Native compilation/regressions and runtime validation are separate jobs on the same selected host matrix. `Native build / <target>` runs the existing selected native checks, builds the release pair and seals a complete allowlisted payload. `Native / <target>` downloads that handoff, verifies the exact commit/tree, source identity, run, target, qualification mode, release profile and every payload hash before executing it, then runs the existing client/model, installer, document and MCP gates and packages the native/VSIX candidates. Release optimization, supported targets, assertions, deadlines and release provenance checks remain intact.
++
++The intermediate artifact is `airk-runtime-<target>-<commit>-<run-id>` and contains only `runtime.zip` and `transfer.json`. It is an **unqualified build handoff**, not a release candidate. The nested ZIP preserves executable modes across GitHub's artifact transport. Full install inventory, source/build receipts and both executable hashes are verified again after extraction. It contains no test state, sources, indexes or credentials. It expires after seven days.
++
++A failed validation job can rerun against the retained build without compiling again. For a releasable candidate, retain the existing complete-attempt rule: **rerun all CI jobs** after a partial failure. The build jobs now reuse an earlier successful build in that same run after authenticating the GitHub artifact digest, run origin, its creation inside one successful build job's interval, the original build attempt and all local source/payload checks. They explicitly skip already-passed compile/regression work; validation and packaging run again. Missing/expired handoffs and uploads bound only to a failed/cancelled build rebuild normally; ambiguous, corrupt or mismatched evidence fails closed. `fresh_build` disables this reuse as well as compiler/Docker cache restores. No cross-run or changed-source reuse is introduced, and failed tests are never converted into successful observations. Existing final candidate names and per-attempt release authentication remain unchanged.
++
++CI dev/test compilation sets `CARGO_PROFILE_DEV_DEBUG=0` and `CARGO_PROFILE_TEST_DEBUG=0`, with a separate `debug0` native dependency-cache key. This omits debug information while preserving the test selection and symbol-based backtraces; release settings are unchanged. Build and validation jobs retain separate timing artifacts. This is a build-cost trial, not a measured Darwin speedup.
++
++Routine validation runs one full seven-test MCP smoke and two additional passes of the two four-cold-client tests. The extra cold-client observations preserve the failure-sensitive coverage until the Intel failure is diagnosed; this temporarily saves less work than moving every repetition to qualification. Explicit qualification runs the full installed-runtime extension suite (which supplies its first MCP pass), followed by two full MCP passes, for three in total. Every pass is independent, stops on failure and retains the original first-status and typed-retry assertions.
++
++The motivating Intel run [41380069062, attempt 1](https://github.com/iokaio/airk/actions/runs/41380069062/job/125069025091) passed 311 platform regressions (382.1 seconds including compilation) and its release build (812.3 seconds), then failed the four cold source-client test in smoke pass three. The first two full passes passed; Apple Silicon passed its native job. The reported error was a generic direct-project connection failure, not an observed OOM, disk exhaustion or job timeout. The root cause remains unresolved; a passing rerun does not erase that observation. In [attempt 2](https://github.com/iokaio/airk/actions/runs/41380069062/job/125080184647), both pinned and source-bound four-cold-client tests failed in the first full smoke pass with the same generic connection error; the other native hosts passed. This is recurring failure evidence, not a diagnosed runner limit.
++
++When both `AIRK_PROCESS_DIAGNOSTICS=1` and `AIRK_NATIVE_DIAGNOSTIC_DIR` are set for disposable fixtures, project/derived worker stderr is continuously drained into a 4 KiB tail, with dropped-byte counts, an explicit stderr-EOF observation and the observed exit status after the existing owner drains the child. An inherited diagnostic descriptor never extends native shutdown; incomplete stderr drain remains visible. The MCP frontend records a bounded underlying connection error chain on stderr without changing its public result or retry authority. Failed smoke fixtures retain bounded frontend stderr, child PID/exit/signal, the original failure and numeric memory/disk observations before cleanup. Native build/validation jobs also retain runner memory, disk and process-count snapshots; unavailable observations remain explicit. No service databases, source trees, full command lines or environment values are uploaded. These diagnostics are opt-in and may contain fictional fixture paths. They do not warm the first status call or authorize another read.
++
++The worker exit text uses the host's native `ExitStatus` display, whose wording differs between Windows and Unix. The collector regression independently requires numeric exit code 7 and an exact match with that child's displayed status; it does not assume Windows wording on macOS/Linux. PR #56's first Apple Silicon build exposed that assertion portability bug (312 passed, one failed), before release-pair construction or runtime validation. That failure is separate from the Intel cold-client connection failure.
++
++The related process-return/error-message audit covers native adapters/tests, extension process helpers/tests and CI scripts. Numeric exit codes and typed OS error kinds remain the comparison boundary; AIRK-owned display strings have their own stable contracts. OS-specific service command output stays within its platform branch. No other confirmed Windows return-wording assumption was found in that scoped audit.
++
+ ## Storage concurrency and fixture capacity
+ 
+ The `native_read_retry`, `legacy_native`, `pdf_worker`, `unix_guardian` and `native_worker_storage` binaries contain complete owned service/process fixtures. CI assigns them a nextest group with one slot, preserving concurrency exercised inside each test and leaving unrelated library cases parallel. The one-slot group also applies to these five binaries in Linux and full qualification; only the focused Windows/macOS step has the two-process global cap. Existing timeouts, exact registration/read assertions and zero automatic retries remain in force. The focused step enables existing process/fixture phase diagnostics for failure output. All-feature coverage remains on Linux and in explicit qualification; every native release still builds and exercises the real inference helper.
+@@ -157,7 +177,7 @@ The 1.7.3 GitHub-release candidate promotes CI native and compiled VSIX artifact
+ 
+ - Branch pushes outside main use PR validation; newer commits cancel superseded runs for that PR. There is no schedule.
+ - Each native target is built and tested once per merged change: Linux, Windows and Apple Silicon in PR CI, macOS Intel on main. Main records the identical-tree PR producer and its own Intel build as one candidate (`airk-ci-producer/2`), or builds all four itself when promotion does not apply (`airk-ci-producer/1`). GitHub and Marketplace release workflows authenticate and promote those exact artifacts instead of invoking the Rust matrix again. A separate tag workflow verifies published release provenance; unverified tags fail with an instruction to validate a main candidate.
+-- The native matrix runs together. Compiler concurrency is four on x64 and remains two on Apple Silicon for memory headroom. Test scheduling is independently bounded. Platform clippy checks remain; formatting runs once. Intel's existing 120-minute job ceiling remains until hosted measurements justify reducing it; other full jobs retain 90 minutes.
++- The native matrix runs together. Compiler concurrency is four on x64 and remains two on Apple Silicon for memory headroom. Test scheduling is independently bounded. Routine Clippy remains on Linux; Windows/macOS workspace Clippy is opt-in qualification. Formatting runs once. Intel's existing 120-minute job ceiling remains until hosted measurements justify reducing it; other full jobs retain 90 minutes.
+ - SHA-pinned `rust-cache` keeps dependency outputs, excludes workspace crates and writes only from main push CI. PRs may restore main caches but cannot update them. Incremental compilation remains disabled; runtime/release optimization settings are unchanged.
+ - Docker tests precede optimized compilation. BuildKit layer caching is supplemented by explicit registry/git/target cache-mount injection and extraction. Workspace outputs are pruned before exporting dependency caches. PR builds do not write shared Docker caches. A cache miss performs the same required checks.
+ - Docker dependency cache keys separate the Linux x64/toolchain/Dockerfile/pruning configuration from Cargo manifests and the lockfile. If a version or dependency change misses the exact key, a fallback restores the newest cache with the same configuration prefix. Cargo still checks fingerprints and the locked graph, rebuilding changed dependencies; main saves the updated cache under the new exact key. There is no fallback across toolchain or Dockerfile changes. The first run in the `v3` namespace is cold, and `fresh_build` still disables restores and saves.
+diff --git a/docs/releases/release-1.8.7.md b/docs/releases/release-1.8.7.md
+index 3f5b4cf..7489315 100644
+--- a/docs/releases/release-1.8.7.md
++++ b/docs/releases/release-1.8.7.md
+@@ -16,6 +16,18 @@ The extension's Marketplace summary and README now describe complete cited resul
+ 
+ See the [complete CLI/MCP/Workbench audit](../read-interface-parity.md) for command mappings, options, result contracts and regression coverage. Both `AGENTS.md` and `CLAUDE.md` now require shared implementations, complete response/input parity and native/transport regressions for future read-contract changes.
+ 
++## Unreleased CI follow-up — November 1, 2026
++
++The review branch separates native build/regression jobs from runtime validation, with source-bound same-run handoffs and reuse of successful builds on rerun. Routine MCP validation runs one full pass plus two focused cold-client repetitions; qualification retains three full passes. CI test builds omit debug information; shipped release optimization is unchanged. Bounded worker/frontend failure and runner-capacity reports preserve evidence without copying test databases or sources. The existing complete-attempt release/provenance gates remain in place. See [the CI policy and motivating failure](../ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics).
++
++The first hosted Apple Silicon build of this follow-up passed 312 platform regressions and failed the new stderr collector test because its assertion hard-coded Windows's `exit code: 7` wording; macOS reports `exit status: 7`. The correction retains the independent numeric exit-code assertion and compares the recorded text with the actual child `ExitStatus` display. Production collection and its recorded format are unchanged. Hosted verification of the correction remains pending. Both pinned and source-bound cold-client failures previously recurred on Intel in CI attempt 2; that separate underlying cause remains unresolved. No release, version bump or measured hosted speedup is claimed. The owner explicitly retained the unpublished 1.8.7 build version.
++
++Linux's corresponding run passed 1,811 workspace tests and failed only the same assertion, with 36 explicit skips. The Windows platform-regression step passed. The correction passed both focused diagnostic tests, CLI library Clippy with all features and warnings denied, formatting, repository, version and whitespace checks locally. A scoped audit of process-return and OS-error-message assertions across native adapters/tests, extension process helpers/tests and CI scripts found no other confirmed Windows wording assumptions: AIRK-owned error formatting remains an explicit cross-platform contract, while service-manager OS output is parsed only in its matching platform branch. The primary explicitly reviewed the combined correction and validation evidence before pushing; no independent review is claimed.
++
++Local review checks passed: formatting, all-target/all-feature workspace Clippy with warnings denied, actionlint, repository/whitespace/version checks, Python contracts (296 total, six skipped), extension tests (541 passed, 19 skipped), and the focused CI plan/producer/transfer contracts after final workflow edits. A real Windows release pair passed the complete seal/restore handoff and both cold-client tests under four-core affinity, with opt-in worker diagnostics enabled. The actual-process noisy-stderr collector regression also passed.
++
++The initial all-feature workspace attempt stopped on three native-owner recovery cases because the default temporary namespace did not qualify as a private boundary. Those exact three cases passed with one declared helper ignore in a newly created owner-only fixture base. The full rerun was stopped to keep this CI change's final validation focused; no complete workspace pass is claimed. An initial paired-build attempt rejected a source change during compilation without publishing staging; the subsequent stable-source paired build and transfer checks passed. These are local Windows observations, not Darwin or hosted workflow qualification. The primary performed an explicit review of the complete diff and validation evidence; no independent review is claimed.
++
+ ## Included branch improvements
+ 
+ - Installed startup and lightweight status ownership, separate cold-setup and observation deadlines, typed contention/retry receipts and cached observations with exact publication and age metadata.
+diff --git a/packages/vscode/src/mcpStdioSession.ts b/packages/vscode/src/mcpStdioSession.ts
+index 08a3b98..86009af 100644
+--- a/packages/vscode/src/mcpStdioSession.ts
++++ b/packages/vscode/src/mcpStdioSession.ts
+@@ -92,6 +92,12 @@ export class McpStdioSession {
+         this.fail(new McpSessionError('closed', 'AIRK MCP session closed.'));
+     }
+ 
++    /** Bounded transport facts for an explicitly requested local failure report. No RPC or source reads. */
++    diagnosticSnapshot(): {pid:number|null;exitCode:number|null;signalCode:NodeJS.Signals|null;closed:boolean;stderr:string} {
++        return {pid:this.child.pid??null,exitCode:this.child.exitCode,signalCode:this.child.signalCode,
++            closed:this.closed,stderr:this.stderr};
++    }
++
+     private write(message: unknown): void {
+         this.child.stdin.write(JSON.stringify(message) + '\n');
+     }
+diff --git a/packages/vscode/src/test/mcpStdioSession.test.ts b/packages/vscode/src/test/mcpStdioSession.test.ts
+index 830efc8..f7730b3 100644
+--- a/packages/vscode/src/test/mcpStdioSession.test.ts
++++ b/packages/vscode/src/test/mcpStdioSession.test.ts
+@@ -19,6 +19,7 @@ rl.on('line', line => {
+     case 'invalid': process.stdout.write('{not json\\n'); break;
+     case 'big': send({ jsonrpc: '2.0', id: m.id, result: 'x'.repeat(m.params.bytes) }); break;
+     case 'exit': process.exit(3);
++    case 'diagnostic': process.stderr.write('x'.repeat(8192)+'fixture worker cause'); send({ jsonrpc: '2.0', id: m.id, result: true }); break;
+   }
+ });`;
+ function open(maxMessageBytes?: number) {
+@@ -88,3 +89,21 @@ test('a silent handshake timeout retains bounded launcher diagnostics and the fa
+         assert.match(error.message,/initialize.*1000 ms/);assert.match(error.message,/waiting for runtime lock/);return true;
+     });
+ });
++
++test('diagnostic snapshots retain bounded stderr and actual child exit without another request',async()=>{
++    const {session}=await open();
++    try{
++        assert.ok(session.diagnosticSnapshot().pid);
++        await session.request('diagnostic',{});
++        const deadline=performance.now()+5000;
++        while(!session.diagnosticSnapshot().stderr.endsWith('fixture worker cause')&&performance.now()<deadline){
++            await new Promise(resolve=>setTimeout(resolve,10));
++        }
++        const live=session.diagnosticSnapshot();
++        assert.equal(live.stderr.length,4096);assert.ok(live.stderr.endsWith('fixture worker cause'));
++        assert.equal(live.exitCode,null);assert.equal(live.closed,false);
++        await assert.rejects(session.request('exit',{}));
++        const exited=session.diagnosticSnapshot();
++        assert.equal(exited.exitCode,3);assert.equal(exited.closed,true);assert.equal(exited.stderr,live.stderr);
++    }finally{session.close();}
++});
+diff --git a/packages/vscode/src/test/nativeServiceFixture.ts b/packages/vscode/src/test/nativeServiceFixture.ts
+index 59840b1..c1f9de0 100644
+--- a/packages/vscode/src/test/nativeServiceFixture.ts
++++ b/packages/vscode/src/test/nativeServiceFixture.ts
+@@ -7,6 +7,7 @@ import * as os from 'node:os';
+ import * as path from 'node:path';
+ import {LaunchSpec,launchArgs} from '../model';
+ import {runText} from '../native';
++import {McpStdioSession} from '../mcpStdioSession';
+ import {boundedReply,readNative} from './nativeReadRetry';
+ import {NativeControlTransport,RecordValue,ServiceClient,record,JobKind,ServiceError} from '../serviceClient';
+ 
+@@ -84,6 +85,7 @@ export class NativeServiceFixture {
+             fixture.client=new ServiceClient(new NativeControlTransport(fixture.binary,['service','console','--runtime-dir',fixture.control],60000));
+             return fixture;
+         }catch(error){
++            await fixture.retainFailure(error);
+             try{await fixture.dispose();}catch(cleanup){throw new AggregateError([error,cleanup],'Native fixture setup and cleanup failed');}
+             throw error;
+         }
+@@ -208,6 +210,26 @@ export class NativeServiceFixture {
+         await this.client!.rpc({plan_execute:{id,preview:reviewed.preview_digest,allow_fallback:false}},'plan');
+         const completed=await wait('finished');assert.equal(completed.outcome,'succeeded',JSON.stringify(completed));return completed;
+     }
++    async retainFailure(error:unknown,sessions:readonly McpStdioSession[]=[]):Promise<void>{
++        const parent=process.env.AIRK_NATIVE_DIAGNOSTIC_DIR;
++        if(!parent)return;
++        try{
++            // Reports contain only fictional fixture failures and transport
++            // stderr. Never copy fixture databases, source, control or logs.
++            await fs.mkdir(parent,{recursive:true});
++            const directory=await fs.mkdtemp(path.join(parent,'failure-'));
++            const disk=await fs.statfs(this.owner).catch(()=>undefined);
++            const report={schema:'airk-native-test-failure/1',observed_utc:new Date().toISOString(),
++                error:String(error).slice(0,8192),memory:{total_bytes:os.totalmem(),free_bytes:os.freemem()},
++                disk:disk?{available_bytes:disk.bavail*disk.bsize,total_bytes:disk.blocks*disk.bsize}:null,
++                sessions:sessions.slice(0,16).map(session=>session.diagnosticSnapshot())};
++            await fs.writeFile(path.join(directory,'failure.json'),JSON.stringify(report,null,2)+'\n',{flag:'wx'});
++            process.stderr.write(`[native fixture] retained bounded failure report: ${directory}\n`);
++        }catch(diagnostic){
++            // Preserve the original failure even when diagnostic storage fails.
++            process.stderr.write(`[native fixture] failure report unavailable: ${String(diagnostic).slice(0,1024)}\n`);
++        }
++    }
+     async dispose():Promise<void>{
+         this.client?.transport.dispose();this.client=undefined;
+         // Native uninstall authenticates and drains only this fixture's approved
+diff --git a/packages/vscode/src/test/nativeSmoke.test.ts b/packages/vscode/src/test/nativeSmoke.test.ts
+index a2fdb0f..5b31b62 100644
+--- a/packages/vscode/src/test/nativeSmoke.test.ts
++++ b/packages/vscode/src/test/nativeSmoke.test.ts
+@@ -41,7 +41,7 @@ test('one root-scoped MCP session survives late registration and rejects ambiguo
+         assert.equal(search.isError,true);assert.equal(body(search).error.code,'PROJECT_AMBIGUOUS');
+         assert.equal((await fixture.embedding()).loads,0,'metadata and rejected reads do not start inference');
+         assert.ok(spec.service!.project);
+-    }finally{session?.close();await fixture.dispose();}
++    }catch(error){await fixture.retainFailure(error,session?[session]:[]);throw error;}finally{session?.close();await fixture.dispose();}
+ });
+ 
+ test('registered native MCP verifies before the first publication without starting inference', {skip:!process.env.AIRK_TEST_BINARY,timeout:240000}, async()=>{
+@@ -56,7 +56,7 @@ test('registered native MCP verifies before the first publication without starti
+         assert.equal(status.index_state,'unavailable');assert.equal(status.files,null);
+         const embedding=await fixture.embedding();
+         assert.equal(embedding.loads,0);assert.equal(embedding.sessions,0);
+-    }finally{await fixture.dispose();}
++    }catch(error){await fixture.retainFailure(error);throw error;}finally{await fixture.dispose();}
+ });
+ 
+ test('pinned MCP quick status completes cold verification without diagnostics or inference',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async t=>{
+@@ -73,7 +73,7 @@ test('pinned MCP quick status completes cold verification without diagnostics or
+         const status=await quickStatus(session,observe);assert.equal(status.project,spec.service!.project);
+         assert.equal(status.index_state,'unavailable');assert.equal(status.files,null);assert.equal(status.publication,null);
+         const embedding=await fixture.embedding();assert.equal(embedding.loads,0);assert.equal(embedding.sessions,0);
+-    }finally{
++    }catch(error){await fixture.retainFailure(error,session?[session]:[]);throw error;}finally{
+         t.diagnostic(JSON.stringify({quickStatus:{attempts,confirmed:confirmed??null,dropped,nativeStageCounts:'unmeasured',hashCounts:'unmeasured'}}));
+         session?.close();await fixture.dispose();
+     }
+@@ -110,7 +110,7 @@ test('basic status includes version and health, caches snapshots and diagnostics
+         for(const value of [first,primedTerse,full,cached,legacy,terse,included,includedHit,beforeDetail]){assert.equal(value.query_concurrency,16,JSON.stringify(value));assert.equal(value.runtime,undefined);assert.equal(value.work,undefined);assert.equal(value.explorer,undefined);assert.ok(Buffer.byteLength(JSON.stringify(value))<1024);}
+         for(const name of ['diagnostics','airk_diagnostics']){const detail=await read(name);assert.equal(detail.query_concurrency,16,JSON.stringify(detail));assert.ok(detail.runtime);assert.ok(detail.work);}
+         const after=await read('status',{response_mode:'terse'});assert.equal(after.cached,false);assert.ok(after.observed_unix_ms>=first.observed_unix_ms);
+-    }finally{session?.close();await fixture.dispose();}
++    }catch(error){await fixture.retainFailure(error,session?[session]:[]);throw error;}finally{session?.close();await fixture.dispose();}
+ });
+ 
+ for(const binding of ['pinned','source'] as const){
+@@ -140,7 +140,7 @@ for(const binding of ['pinned','source'] as const){
+                 assert.equal(observation.files,null);assert.equal(observation.publication,null);
+             }
+             assert.equal((await fixture.embedding()).loads,0,'first status does not start inference');
+-        }finally{for(const session of sessions)session.close();await fixture.dispose();}
++        }catch(error){await fixture.retainFailure(error,sessions);throw error;}finally{for(const session of sessions)session.close();await fixture.dispose();}
+     });
+ }
+ 
+@@ -202,5 +202,5 @@ test('mixed four-call batches honor status snapshots and typed read admission',{
+             }
+         }
+         process.stderr.write(`[native fixture] mixed batches: ${JSON.stringify({bindings:2,batches:12,logical_reads:48,unsubmitted_refusals:refusals})}\n`);
+-    }finally{for(const session of sessions)session.close();await fixture.dispose();}
++    }catch(error){await fixture.retainFailure(error,sessions);throw error;}finally{for(const session of sessions)session.close();await fixture.dispose();}
+ });
+diff --git a/scripts/ci-diagnostics.py b/scripts/ci-diagnostics.py
+new file mode 100644
+index 0000000..941ae5e
+--- /dev/null
++++ b/scripts/ci-diagnostics.py
+@@ -0,0 +1,81 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Bounded runner capacity observations; never collect command lines or private state."""
++import argparse
++import ctypes
++from datetime import datetime, timezone
++import json
++import os
++from pathlib import Path
++import platform
++import shutil
++import subprocess
++
++
++def command(arguments):
++    try:
++        result = subprocess.run(arguments, text=True, encoding="utf-8", errors="replace",
++                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10, check=False)
++        return result.stdout if result.returncode == 0 else None
++    except (OSError, subprocess.TimeoutExpired):
++        return None
++
++
++def snapshot():
++    disk = shutil.disk_usage(Path.cwd())
++    report = dict(schema="airk-ci-capacity/1", observed_utc=datetime.now(timezone.utc).isoformat(),
++                  os=platform.system(), architecture=platform.machine(), logical_cpus=os.cpu_count(),
++                  disk_total_bytes=disk.total, disk_free_bytes=disk.free,
++                  memory=None, process_count=None, native_processes=[], native_processes_truncated=False)
++    if os.name == "nt":
++        class MemoryStatus(ctypes.Structure):
++            _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong),
++                        *[(name, ctypes.c_ulonglong) for name in
++                          ("total", "available", "page_total", "page_available", "virtual_total", "virtual_available", "extended")]]
++        memory = MemoryStatus()
++        memory.length = ctypes.sizeof(memory)
++        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(memory)):
++            report["memory"] = dict(total_bytes=memory.total, available_bytes=memory.available)
++        # No executable paths, arguments, user identities or environment values.
++        raw = command(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
++                       "$p=@(Get-Process); [pscustomobject]@{process_count=$p.Count; "
++                       "native_processes=@($p | Where-Object {$_.ProcessName -match '^airk($|-)'} | "
++                       "Select-Object -First 65 | ForEach-Object {"
++                       "@{pid=$_.Id;name=$_.ProcessName;rss_bytes=$_.WorkingSet64}})} | ConvertTo-Json -Depth 4 -Compress"])
++        if raw is not None:
++            report.update(json.loads(raw))
++    else:
++        raw = command(["ps", "-axo", "pid=,ppid=,rss=,comm="])
++        if raw is not None:
++            rows = [line.split(None, 3) for line in raw.splitlines() if line.strip()]
++            report["process_count"] = len(rows)
++            for row in rows:
++                if len(row) == 4 and Path(row[3]).name.startswith("airk"):
++                    report["native_processes"].append(dict(pid=int(row[0]), ppid=int(row[1]),
++                                                          rss_bytes=int(row[2]) * 1024, name=Path(row[3]).name))
++        if platform.system() == "Darwin":
++            raw = command(["vm_stat"])
++            # Fixed kernel counters only; absence remains explicit.
++            if raw is not None:
++                report["memory"] = {"vm_stat": raw[:4096]}
++        else:
++            try:
++                fields = dict(line.split(":", 1) for line in Path("/proc/meminfo").read_text().splitlines())
++                report["memory"] = {"total_bytes": int(fields["MemTotal"].split()[0]) * 1024,
++                                    "available_bytes": int(fields["MemAvailable"].split()[0]) * 1024}
++            except (OSError, KeyError, ValueError):
++                pass
++    report["native_processes_truncated"] = len(report["native_processes"]) > 64
++    report["native_processes"] = report["native_processes"][:64]
++    return report
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--output", type=Path, required=True)
++    args = parser.parse_args()
++    args.output.parent.mkdir(parents=True, exist_ok=True)
++    args.output.write_text(json.dumps(snapshot(), indent=2) + "\n", encoding="utf-8")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/scripts/ci-runtime.py b/scripts/ci-runtime.py
+new file mode 100644
+index 0000000..08eceb6
+--- /dev/null
++++ b/scripts/ci-runtime.py
+@@ -0,0 +1,173 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Transfer an exact release pair between jobs; reuse only successful builds in this CI run."""
++import argparse
++from datetime import datetime
++import importlib.util
++import json
++import os
++from pathlib import Path, PurePosixPath
++import re
++import shutil
++import tempfile
++import tomllib
++import zipfile
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++def load(name):
++    spec = importlib.util.spec_from_file_location(name.replace("-", "_"), ROOT / "scripts" / f"{name}.py")
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module
++
++
++package = load("package-native")
++
++
++def identity(target):
++    commit = package.capture("git", "rev-parse", "HEAD")
++    if commit != os.environ["GITHUB_SHA"] or not re.fullmatch(r"[0-9a-f]{40}", commit):
++        raise ValueError("Transfer requires the exact CI checkout")
++    for key in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"):
++        if not re.fullmatch(r"[1-9][0-9]*", os.environ[key]):
++            raise ValueError("Invalid CI run identity")
++    return dict(commit=commit, tree=package.capture("git", "rev-parse", "HEAD^{tree}"),
++                run_id=os.environ["GITHUB_RUN_ID"], target=target,
++                qualification=os.environ.get("AIRK_QUALIFICATION", "false").lower() == "true")
++
++
++def artifact_name(expected):
++    return f"airk-runtime-{expected['target']}-{expected['commit']}-{expected['run_id']}"
++
++
++def validate(runtime, target):
++    version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
++    source = package.runtime_builder().source_identity()
++    files, executables = package.validate_runtime(runtime, version, target, source)
++    build = package.bounded_json(runtime / "airk-build.json", 65_536)
++    if build.get("profile") != "release" or "host: " + target not in build.get("rustc", "").splitlines():
++        raise ValueError("Transfer is not a release pair for this native host")
++    return files, executables
++
++
++def seal(runtime, transfer, target):
++    expected = identity(target)
++    files, executables = validate(runtime, target)
++    transfer.mkdir(parents=True, exist_ok=False)
++    archive = transfer / "runtime.zip"
++    package.write_archive(runtime, archive, files, executables)
++    receipt = dict(schema="airk-ci-runtime/1", **expected, build_attempt=int(os.environ["GITHUB_RUN_ATTEMPT"]),
++                   payload=files, archive_sha256=package.sha256(archive))
++    (transfer / "transfer.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
++
++
++def payload_names(payload):
++    if not isinstance(payload, dict) or not payload or len(payload) > package.MAX_PAYLOAD_FILES:
++        raise ValueError("Transfer inventory exceeds budget")
++    for name, digest in payload.items():
++        if (not isinstance(name, str) or not name or "\\" in name or ":" in name
++                or PurePosixPath(name).is_absolute() or any(part in ("", ".", "..") for part in name.split("/"))
++                or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)):
++            raise ValueError("Unsafe transfer inventory")
++
++
++def restore(transfer, runtime, target):
++    expected = identity(target)
++    if set(path.name for path in transfer.iterdir()) != {"runtime.zip", "transfer.json"}:
++        raise ValueError("Unexpected runtime transfer entries")
++    receipt = package.bounded_json(transfer / "transfer.json", 524_288)
++    if (receipt.get("schema") != "airk-ci-runtime/1" or any(receipt.get(key) != value for key, value in expected.items())
++            or type(receipt.get("build_attempt")) is not int
++            or not 1 <= receipt["build_attempt"] <= int(os.environ["GITHUB_RUN_ATTEMPT"])):
++        raise ValueError("Runtime transfer belongs to another source, target, run or qualification")
++    payload_names(receipt.get("payload"))
++    archive = transfer / "runtime.zip"
++    if archive.is_symlink() or package.sha256(archive) != receipt.get("archive_sha256"):
++        raise ValueError("Runtime transfer archive digest differs")
++    # Authenticate every entry before extraction or execution. The existing
++    # packager enforces exact inventory, per-file hashes and executable modes.
++    operating_system = "windows" if "windows" in target else "macos" if "apple" in target else "linux"
++    executables = package.runtime_builder().runtime_names(operating_system)
++    with zipfile.ZipFile(archive) as zipped:
++        if sum(info.file_size for info in zipped.infolist()) > package.MAX_PAYLOAD_BYTES:
++            raise ValueError("Transfer payload exceeds installer budget")
++    package.verify_archive(archive, receipt["payload"], executables)
++    if runtime.exists() or runtime.is_symlink():
++        raise ValueError("Runtime destination must be fresh")
++    runtime.parent.mkdir(parents=True, exist_ok=True)
++    with tempfile.TemporaryDirectory(prefix=".ci-runtime-", dir=runtime.parent) as temporary:
++        staging = Path(temporary) / "runtime"
++        staging.mkdir()
++        with zipfile.ZipFile(archive) as zipped:
++            for name in receipt["payload"]:
++                destination = staging / name
++                destination.parent.mkdir(parents=True, exist_ok=True)
++                with zipped.open(name) as source, destination.open("xb") as output:
++                    shutil.copyfileobj(source, output, length=1_048_576)
++                destination.chmod(0o755 if name in executables else 0o644)
++        files, _ = validate(staging, target)
++        if files != receipt["payload"]:
++            raise ValueError("Restored runtime differs from transfer inventory")
++        staging.rename(runtime)
++    return receipt
++
++
++def resume(transfer, runtime, target):
++    expected = identity(target)
++    candidates = load("ci-candidates")
++    artifacts = [a for a in candidates.run_artifacts(expected["run_id"]) if a.get("name") == artifact_name(expected)]
++    if not artifacts or (len(artifacts) == 1 and artifacts[0].get("expired") is True):
++        return False
++    if len(artifacts) != 1:
++        raise ValueError("Ambiguous runtime transfer")
++    artifact = artifacts[0]
++    if artifact.get("workflow_run", {}).get("id") != int(expected["run_id"]) or artifact.get("expired") is not False:
++        raise ValueError("Runtime transfer origin differs")
++    jobs = [job for page in candidates.api(f"actions/runs/{expected['run_id']}/jobs?filter=all&per_page=100", True)
++            for job in page["jobs"]]
++    matches = []
++    failed_uploads = []
++    for job in jobs:
++        if job.get("name") != f"Native build / {target}" or job.get("conclusion") not in ("success", "failure", "cancelled"):
++            continue
++        if not 1 <= candidates.positive(job.get("run_attempt")) < int(os.environ["GITHUB_RUN_ATTEMPT"]):
++            continue
++        started, created, completed = (datetime.fromisoformat(value.replace("Z", "+00:00"))
++                                      for value in (job["started_at"], artifact["created_at"], job["completed_at"]))
++        if all(value.tzinfo is not None for value in (started, created, completed)) and started <= created <= completed:
++            (matches if job["conclusion"] == "success" else failed_uploads).append(job)
++    if not matches and len(failed_uploads) == 1:
++        # Upload can precede a failed/cancelled post-job cache step. Never reuse
++        # that build, but allow a new build to replace its unqualified handoff.
++        print("Earlier runtime upload belongs to a failed build; rebuilding")
++        return False
++    if len(matches) != 1:
++        raise ValueError("Runtime transfer is not bound to one successful earlier build job")
++    candidates.download(dict(id=candidates.positive(artifact["id"]), digest=artifact.get("digest", "")), transfer)
++    receipt = restore(transfer, runtime, target)
++    if receipt["build_attempt"] != matches[0]["run_attempt"]:
++        raise ValueError("Transfer receipt and successful build attempt differ")
++    print(f"Reused successful native build attempt {receipt['build_attempt']}; validation still runs")
++    return True
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("command", choices=("seal", "restore", "resume"))
++    parser.add_argument("--target", choices=package.TARGETS, required=True)
++    parser.add_argument("--runtime-dir", type=Path, required=True)
++    parser.add_argument("--transfer", type=Path, required=True)
++    args = parser.parse_args()
++    if args.command == "seal":
++        seal(args.runtime_dir, args.transfer, args.target)
++    elif args.command == "restore":
++        restore(args.transfer, args.runtime_dir, args.target)
++    else:
++        restored = resume(args.transfer, args.runtime_dir, args.target)
++        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
++            output.write(f"restored={str(restored).lower()}\n")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/scripts/tests/test_ci_runtime.py b/scripts/tests/test_ci_runtime.py
+new file mode 100644
+index 0000000..da8d778
+--- /dev/null
++++ b/scripts/tests/test_ci_runtime.py
+@@ -0,0 +1,176 @@
++# SPDX-License-Identifier: Apache-2.0
++import copy
++import importlib.util
++import json
++import os
++from pathlib import Path
++import shutil
++import tempfile
++import unittest
++from unittest.mock import patch
++import zipfile
++
++spec = importlib.util.spec_from_file_location("ci_runtime", Path(__file__).parents[1] / "ci-runtime.py")
++runtime = importlib.util.module_from_spec(spec)
++spec.loader.exec_module(runtime)
++candidates_module = runtime.load("ci-candidates")
++TARGET = "x86_64-unknown-linux-gnu"
++IDENTITY = dict(commit="a" * 40, tree="b" * 40, run_id="123", target=TARGET, qualification=False)
++
++
++class RuntimeTransferTests(unittest.TestCase):
++    def setUp(self):
++        self.temporary = tempfile.TemporaryDirectory()
++        self.addCleanup(self.temporary.cleanup)
++        self.root = Path(self.temporary.name)
++        self.source = {"sha256": "1" * 64, "files": 4}
++        (self.root / "Cargo.toml").write_text('[workspace.package]\nversion="1.4.0"\n', encoding="utf-8")
++        self.builder = runtime.package.runtime_builder()
++        self.builder.source_identity = lambda: self.source
++        for mock in (patch.object(runtime, "ROOT", self.root),
++                     patch.object(runtime, "identity", return_value=IDENTITY),
++                     patch.object(runtime.package, "runtime_builder", return_value=self.builder),
++                     patch.dict(os.environ, GITHUB_RUN_ATTEMPT="1")):
++            mock.start()
++            self.addCleanup(mock.stop)
++        self.original = self.root / "original"
++        self.original.mkdir()
++        for name in ("airk", "airk-embed", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md",
++                     "notices/bom.cdx.json", "notices/all-MiniLM-L6-v2/LICENSE", "notices/all-MiniLM-L6-v2/provenance.json"):
++            destination = self.original / name
++            destination.parent.mkdir(parents=True, exist_ok=True)
++            destination.write_bytes(b"original fictional fixture")
++        (self.original / "notices/inventory.json").write_text("[]", encoding="utf-8")
++        pair = dict(schema=1, version="1.4.0", os="linux", arch="x86_64",
++                    airk_sha256=runtime.package.sha256(self.original / "airk"),
++                    embed_sha256=runtime.package.sha256(self.original / "airk-embed"))
++        (self.original / "airk-runtime.json").write_text(json.dumps(pair), encoding="utf-8")
++        (self.original / "airk-build.json").write_text(json.dumps(dict(schema=1, source=self.source, runtime=pair,
++                                                                      profile="release", rustc="host: " + TARGET)), encoding="utf-8")
++        install = {key: pair[key] for key in ("schema", "version", "os", "arch")}
++        install["files"] = runtime.package.inventory(self.original)
++        (self.original / "airk-install.json").write_text(json.dumps(install), encoding="utf-8")
++        self.transfer = self.root / "transfer"
++        runtime.seal(self.original, self.transfer, TARGET)
++
++    def receipt(self):
++        return json.loads((self.transfer / "transfer.json").read_text(encoding="utf-8"))
++
++    def write_receipt(self, receipt):
++        (self.transfer / "transfer.json").write_text(json.dumps(receipt), encoding="utf-8")
++
++    def test_actual_archive_round_trip_keeps_full_payload_and_executable_modes(self):
++        with patch.dict(os.environ, GITHUB_RUN_ATTEMPT="2"):
++            runtime.restore(self.transfer, self.root / "restored", TARGET)
++        self.assertEqual(runtime.package.inventory(self.original), runtime.package.inventory(self.root / "restored"))
++        with zipfile.ZipFile(self.transfer / "runtime.zip") as archive:
++            for name in ("airk", "airk-embed"):
++                self.assertEqual((archive.getinfo(name).external_attr >> 16) & 0o777, 0o755)
++        if os.name != "nt":
++            self.assertEqual((self.root / "restored/airk").stat().st_mode & 0o777, 0o755)
++        with self.assertRaisesRegex(ValueError, "fresh"):
++            runtime.restore(self.transfer, self.root / "restored", TARGET)
++
++    def test_other_source_target_run_qualification_and_future_attempt_are_refused(self):
++        original = self.receipt()
++        for key, value in (("commit", "c" * 40), ("tree", "c" * 40), ("run_id", "124"),
++                           ("target", "aarch64-apple-darwin"), ("qualification", True), ("build_attempt", 2),
++                           ("build_attempt", True), ("schema", "unknown")):
++            with self.subTest(key=key, value=value), self.assertRaisesRegex(ValueError, "another source"):
++                self.write_receipt({**original, key: value})
++                runtime.restore(self.transfer, self.root / "refused", TARGET)
++            self.assertFalse((self.root / "refused").exists())
++        self.write_receipt(original)
++        self.source = {"sha256": "2" * 64, "files": 4}
++        with self.assertRaisesRegex(ValueError, "source/pair"):
++            runtime.restore(self.transfer, self.root / "changed-source", TARGET)
++        self.assertFalse((self.root / "changed-source").exists())
++
++    def test_archive_corruption_unexpected_files_and_unsafe_names_fail_before_extraction(self):
++        archive = self.transfer / "runtime.zip"
++        original = archive.read_bytes()
++        archive.write_bytes(original + b"changed")
++        with self.assertRaisesRegex(ValueError, "digest differs"):
++            runtime.restore(self.transfer, self.root / "bad", TARGET)
++        archive.write_bytes(original)
++        with zipfile.ZipFile(archive, "a") as zipped:
++            zipped.writestr("unexpected", b"not in inventory")
++        receipt = self.receipt()
++        receipt["archive_sha256"] = runtime.package.sha256(archive)
++        self.write_receipt(receipt)
++        with self.assertRaisesRegex(ValueError, "entries differ"):
++            runtime.restore(self.transfer, self.root / "bad", TARGET)
++        for name in ("../escape", "/absolute", "a\\b", "a/./b", "C:/escape", "a//b"):
++            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "Unsafe"):
++                runtime.payload_names({name: "a" * 64})
++        self.assertFalse((self.root / "bad").exists())
++
++    def test_resume_requires_exact_successful_job_upload_interval_and_authenticated_download(self):
++        candidates = candidates_module
++        artifact = dict(id=7, name=runtime.artifact_name(IDENTITY), expired=False, digest="sha256:" + "d" * 64,
++                        workflow_run=dict(id=123), created_at="2026-11-01T01:00:30Z")
++        job = dict(name=f"Native build / {TARGET}", conclusion="success", run_attempt=1,
++                   started_at="2026-11-01T01:00:00Z", completed_at="2026-11-01T01:01:00Z")
++        def download(selected, destination):
++            self.assertEqual(selected, dict(id=7, digest=artifact["digest"]))
++            shutil.copytree(self.transfer, destination)
++        for corruption in (None, "missing", "expired", "duplicate", "failed", "current", "late", "origin", "receipt_attempt"):
++            artifacts, jobs = [copy.deepcopy(artifact)], [copy.deepcopy(job)]
++            if corruption == "missing":
++                artifacts = []
++            elif corruption == "expired":
++                artifacts[0]["expired"] = True
++            elif corruption == "duplicate":
++                artifacts.append(artifacts[0])
++            elif corruption == "failed":
++                jobs[0]["conclusion"] = "failure"
++            elif corruption == "current":
++                jobs[0]["run_attempt"] = 2
++            elif corruption == "late":
++                artifacts[0]["created_at"] = "2026-11-01T02:00:00Z"
++            elif corruption == "origin":
++                artifacts[0]["workflow_run"]["id"] = 124
++            elif corruption == "receipt_attempt":
++                self.write_receipt({**self.receipt(), "build_attempt": 2})
++            with self.subTest(corruption=corruption), patch.dict(os.environ, GITHUB_RUN_ATTEMPT="2"), \
++                    patch.object(runtime, "load", return_value=candidates), \
++                    patch.object(candidates, "run_artifacts", return_value=artifacts), \
++                    patch.object(candidates, "api", return_value=[dict(jobs=jobs)]), \
++                    patch.object(candidates, "download", side_effect=download) as downloaded:
++                transfer, destination = self.root / f"download-{corruption}", self.root / f"restored-{corruption}"
++                if corruption is None:
++                    self.assertTrue(runtime.resume(transfer, destination, TARGET))
++                    downloaded.assert_called_once()
++                elif corruption in ("missing", "expired", "failed"):
++                    self.assertFalse(runtime.resume(transfer, destination, TARGET))
++                    downloaded.assert_not_called()
++                else:
++                    with self.assertRaises(ValueError):
++                        runtime.resume(transfer, destination, TARGET)
++
++
++class WorkflowSplitTests(unittest.TestCase):
++    def test_validation_needs_successful_build_and_cannot_rebuild_or_publish_before_smoke(self):
++        workflow = (Path(__file__).parents[2] / ".github/workflows/ci.yml").read_text(encoding="utf-8")
++        build = workflow.split("\n  native-build:\n")[1].split("\n  native:\n")[0]
++        validation = workflow.split("\n  native:\n")[1].split("\n  container:\n")[0]
++        self.assertIn("needs: [plan, native-build]", validation)
++        self.assertIn("needs.native-build.result == 'success'", validation)
++        for command in ("cargo build", "cargo test", "cargo nextest", "build-service-runtime.py"):
++            self.assertNotIn(command, validation)
++        self.assertLess(validation.index("ci-runtime.py restore"), validation.index("check-service-clients.py"))
++        self.assertLess(validation.index("mcp-smoke-1"), validation.index("package-native.py"))
++        self.assertIn("--test-name-pattern '^four cold (pinned|source)", validation)
++        self.assertIn('if [ "$AIRK_QUALIFICATION" = "true" ]', validation)
++        self.assertIn("CARGO_PROFILE_DEV_DEBUG: '0'", build)
++        self.assertIn("CARGO_PROFILE_TEST_DEBUG: '0'", build)
++        self.assertNotIn("CARGO_PROFILE_RELEASE", workflow)
++        self.assertIn("if: ${{ !inputs.fresh_build }}", build)
++        self.assertNotIn("continue-on-error", build + validation)
++        for step in build.split("      - ")[1:]:
++            if any(command in step for command in ("cargo nextest", "cargo clippy", "cargo test", "build-service-runtime.py")):
++                self.assertIn("steps.resume.outputs.restored != 'true'", step)
++
++
++if __name__ == "__main__":
++    unittest.main()

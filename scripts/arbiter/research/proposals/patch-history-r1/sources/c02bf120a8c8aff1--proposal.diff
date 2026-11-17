@@ -1,0 +1,348 @@
+--- base/crates\airk-retrieval\src\arbiter\runtime\cuda\fp16\CONTRACT.md
++++ proposed/crates\airk-retrieval\src\arbiter\runtime\cuda\fp16\CONTRACT.md
+@@ -19,3 +19,15 @@
+ Exact CPU compatibility supplement is owned by cpu_source_transition/CONTRACT.md: current9e -> dde source row, full inverse byte replay plus CPU/F32 conditional-path review, new literal activationcontrol and all old literal refusals retained. No CPUprofile/history/CAL verdict retag.
+ 
+ Root refined the debug requirement before activation: GEMM2 and immutable preORT capture/current equality are mandatory for allG5. Debug1 is mandatory for unqualified scientific/proof bindings and the attention-backend-plan proof accessor; qualified product execution may retain debugunset/disabled without forcing user stdoutlogging. This is not a precision/algorithm fallback: same qualified graph/sdpa/math policy, TF32off and actual artifact backend evidence remain. Startup recording never changes processenv. CurrentNone -> late1 debugchange stillrefuses by snapshot mismatch.
++
++## Proposed metadata-only streaming source
++
++Fp16ProbeSource adds the originaldeadline and a protected-reader visitor only to
++G5 metadata construction. Existing AssetSource/read_asset stays unchanged.
++External weights stream through qualification::hash_bounded_checked, with one
++4MiBbuffer, exact length and fullSHA comparison. Missing/duplicate invocation,
++swallowed reader error, wrongdigest or originalexpiry refuse. The emitter must
++retain protected File/parent custody and recheck identity+length before/after
++visitation; no hash-only witness or materializing fallback is permitted.
++Graph64MiB/CAL64KiB reads stay bounded and use the same originaldeadline.
++This is metadata authentication only, not device/resource/numeric qualification.
+--- base/crates\airk-retrieval\src\arbiter\runtime\cuda\fp16\tests.rs
++++ proposed/crates\airk-retrieval\src\arbiter\runtime\cuda\fp16\tests.rs
+@@ -173,3 +173,71 @@
+     assert!(check_environment(&allowed, &allowed, false).is_ok());
+     assert!(check_environment(&allowed, &allowed, true).is_err());
+ }
++
++#[cfg(feature = "test-support")]
++fn streamed_asset() -> airk_core::arbiter::Asset {
++    airk_core::arbiter::Asset {
++        name: "weights.bin".into(),
++        role: airk_core::arbiter::AssetRole::ExternalWeights,
++        bytes: 3,
++        sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
++            .parse()
++            .unwrap(),
++    }
++}
++#[cfg(feature = "test-support")]
++#[test]
++fn streamed_external_requires_one_full_matching_reader() -> Result<()> {
++    let asset = streamed_asset();
++    let deadline = Instant::now() + std::time::Duration::from_secs(120);
++    stream_external_asset(&asset, deadline, &mut |actual, expires, consume| {
++        assert_eq!(actual.name, "weights.bin");
++        assert_eq!(expires, deadline);
++        consume(&mut &b"abc"[..])
++    })?;
++    assert!(stream_external_asset(&asset, deadline, &mut |_, _, _| Ok(())).is_err());
++    assert!(
++        stream_external_asset(&asset, deadline, &mut |_, _, consume| {
++            consume(&mut &b"abc"[..])?;
++            let _ignored = consume(&mut &b"abc"[..]);
++            Ok(())
++        })
++        .is_err()
++    );
++    assert!(
++        stream_external_asset(&asset, deadline, &mut |_, _, consume| {
++            let _ignored = consume(&mut &b"ab"[..]);
++            Ok(())
++        })
++        .is_err()
++    );
++    assert!(
++        stream_external_asset(&asset, deadline, &mut |_, _, consume| {
++            consume(&mut &b"abd"[..])
++        })
++        .is_err()
++    );
++    Ok(())
++}
++#[cfg(feature = "test-support")]
++#[test]
++fn streamed_external_original_expiry_and_custody_failure_refuse() {
++    let asset = streamed_asset();
++    let mut called = false;
++    assert!(
++        stream_external_asset(&asset, Instant::now(), &mut |_, _, _| {
++            called = true;
++            Ok(())
++        })
++        .is_err()
++    );
++    assert!(!called);
++    let deadline = Instant::now() + std::time::Duration::from_secs(120);
++    assert!(
++        stream_external_asset(&asset, deadline, &mut |_, _, consume| {
++            consume(&mut &b"abc"[..])?;
++            anyhow::bail!("held identity changed during final custody check")
++        })
++        .is_err()
++    );
++}
+--- base/crates\airk-retrieval\src\arbiter\runtime\cuda\fp16.rs
++++ proposed/crates\airk-retrieval\src\arbiter\runtime\cuda\fp16.rs
+@@ -226,9 +226,62 @@
+     pub attention_plan: serde_json::Value,
+ }
+ #[cfg(feature = "test-support")]
++pub type Fp16ExternalReader<'a> = dyn FnMut(
++        &airk_core::arbiter::Asset,
++        Instant,
++        &mut dyn FnMut(&mut dyn std::io::Read) -> Result<()>,
++    ) -> Result<()>
++    + 'a;
++/// G5-only metadata source; the emitter retains protected handle/parent custody.
++#[cfg(feature = "test-support")]
++pub struct Fp16ProbeSource<'a> {
++    pub small: &'a dyn super::super::AssetSource,
++    pub deadline: Instant,
++    pub external: &'a mut Fp16ExternalReader<'a>,
++}
++#[cfg(feature = "test-support")]
++fn stream_external_asset(
++    asset: &airk_core::arbiter::Asset,
++    deadline: Instant,
++    with_reader: &mut Fp16ExternalReader<'_>,
++) -> Result<()> {
++    ensure!(
++        asset.bytes > 0 && asset.bytes <= 16u64 << 30,
++        "G5 external asset byte bound"
++    );
++    let check = || -> Result<()> {
++        ensure!(
++            Instant::now() < deadline,
++            "original G5 metadata expiry exceeded"
++        );
++        Ok(())
++    };
++    check()?;
++    let mut calls = 0usize;
++    let mut digest = None;
++    with_reader(asset, deadline, &mut |reader| {
++        calls = calls
++            .checked_add(1)
++            .context("G5 reader invocation overflow")?;
++        ensure!(calls == 1, "G5 reader invoked more than once");
++        digest = Some(super::super::qualification::hash_bounded_checked(
++            reader,
++            asset.bytes,
++            check,
++        )?);
++        Ok(())
++    })?;
++    check()?;
++    ensure!(
++        calls == 1 && digest == Some(asset.sha256),
++        "G5 external reader missing, failed or digest differs"
++    );
++    Ok(())
++}
++#[cfg(feature = "test-support")]
+ pub fn prepare_fp16_probe_profile(
+     cpu: &Profile,
+-    source: &dyn super::super::AssetSource,
++    source: Fp16ProbeSource<'_>,
+     assets: Vec<airk_core::arbiter::Asset>,
+     original_graph: Sha256Digest,
+     runtime_manifest: &[u8],
+@@ -236,6 +289,10 @@
+     plan: DeviceCapacityPlan,
+ ) -> Result<PreparedFp16ProbeProfile> {
+     use airk_core::arbiter::{AssetRole, Task};
++    ensure!(
++        Instant::now() < source.deadline,
++        "original G5 metadata expiry exceeded"
++    );
+     let runtime_build = probe_runtime_identity(runtime_manifest, runtime_manifest_sha256)?;
+     cpu.validate()?;
+     super::super::validate_selected_policies(cpu)?;
+@@ -288,7 +345,15 @@
+         .filter(|a| a.role == AssetRole::Model)
+         .collect::<Vec<_>>();
+     ensure!(models.len() == 1, "G5 singleton graph required");
+-    let graph = super::super::bytes(source, models[0], 64 << 20)?;
++    ensure!(
++        Instant::now() < source.deadline,
++        "original G5 metadata expiry exceeded"
++    );
++    let graph = super::super::bytes(source.small, models[0], 64 << 20)?;
++    ensure!(
++        Instant::now() < source.deadline,
++        "original G5 metadata expiry exceeded"
++    );
+     let external = assets
+         .iter()
+         .filter(|a| a.role == AssetRole::ExternalWeights)
+@@ -300,7 +365,7 @@
+         .iter()
+         .filter(|a| a.role == AssetRole::ExternalWeights)
+     {
+-        super::super::bytes(source, a, 16u64 << 30)?;
++        stream_external_asset(a, source.deadline, &mut *source.external)?;
+     }
+     let calibrations = cpu
+         .assets
+@@ -311,7 +376,15 @@
+         calibrations.len() == 1,
+         "G5 current native calibration missing"
+     );
+-    let raw = super::super::bytes(source, calibrations[0], 64 << 10)?;
++    ensure!(
++        Instant::now() < source.deadline,
++        "original G5 metadata expiry exceeded"
++    );
++    let raw = super::super::bytes(source.small, calibrations[0], 64 << 10)?;
++    ensure!(
++        Instant::now() < source.deadline,
++        "original G5 metadata expiry exceeded"
++    );
+     let mut calibration_bytes = if cpu.model == ModelChoice::FocusQwenReranker06B {
+         super::super::qualification::focus_raw_metadata(cpu, cpu.task_policies[&Task::FocusRank])?
+     } else {
+@@ -403,6 +476,10 @@
+             crate::arbiter::context_action::policy_digest()?,
+         )?;
+     }
++    ensure!(
++        Instant::now() < source.deadline,
++        "original G5 metadata expiry exceeded"
++    );
+     Ok(PreparedFp16ProbeProfile {
+         profile,
+         calibration_name,
+--- base/crates\airk-retrieval\src\arbiter\runtime\cuda.rs
++++ proposed/crates\airk-retrieval\src\arbiter\runtime\cuda.rs
+@@ -29,7 +29,9 @@
+ pub(super) use fp16::AttentionPlan;
+ pub(crate) use fp16::capture_at_runtime_init;
+ #[cfg(feature = "test-support")]
+-pub use fp16::{PreparedFp16ProbeProfile, prepare_fp16_probe_profile};
++pub use fp16::{
++    Fp16ExternalReader, Fp16ProbeSource, PreparedFp16ProbeProfile, prepare_fp16_probe_profile,
++};
+ pub use fp16::{fp16_math_policy_digest, fp16_provider_options_digest};
+ mod manifest;
+ mod numeric;
+--- base/crates\airk-retrieval\src\arbiter\runtime\qualification\CONTRACT.md
++++ proposed/crates\airk-retrieval\src\arbiter\runtime\qualification\CONTRACT.md
+@@ -218,3 +218,12 @@
+ reviewed exact native ExecutionProfile-owned row; metadata regeneration alone
+ cannot bypass current policy or CAL validation. Historical evidence retains its
+ original policies and hashes.
++
++## G5 streamed metadata authentication proposal
++
++The additive hash_bounded_checked helper retains the existing4MiB expected+one
++stream bound and exact length/SHA256 result. Its injected check runs before
++allocation, before/after every read, after each hash update and after finalization.
++The original hash_bounded wrapper uses a no-op check and preserves existing CPU
++metadata behavior. G5 supplies its original expiry; no helper creates a new clock.
++The caller retains protected handle/parent custody and verifies identity/length.
+--- base/crates\airk-retrieval\src\arbiter\runtime\qualification\tests.rs
++++ proposed/crates\airk-retrieval\src\arbiter\runtime\qualification\tests.rs
+@@ -261,3 +261,56 @@
+     )?;
+     Ok(())
+ }
++
++#[test]
++fn checked_stream_retains_literal_sha_and_exact_length() -> Result<()> {
++    let digest = hash_bounded_checked(&b"abc"[..], 3, || Ok(()))?;
++    assert_eq!(
++        digest.to_string(),
++        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
++    );
++    assert!(hash_bounded_checked(&b"ab"[..], 3, || Ok(())).is_err());
++    assert!(hash_bounded_checked(&b"abcd"[..], 3, || Ok(())).is_err());
++    assert!(hash_bounded_checked(&b""[..], u64::MAX, || Ok(())).is_err());
++    Ok(())
++}
++#[test]
++fn checked_stream_refuses_every_observed_expiry_boundary() {
++    // abc has one data read and one EOF read: seven explicit deadline checks.
++    for expires_at in 1..=7 {
++        let mut checks = 0;
++        let result = hash_bounded_checked(&b"abc"[..], 3, || {
++            checks += 1;
++            ensure!(checks < expires_at, "injected original expiry");
++            Ok(())
++        });
++        assert!(result.is_err(), "expiry boundary {expires_at}");
++        assert_eq!(checks, expires_at);
++    }
++}
++#[test]
++fn checked_stream_read_failure_and_post_read_expiry_refuse() {
++    struct Failed;
++    impl Read for Failed {
++        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
++            Err(std::io::Error::other("injected read failure"))
++        }
++    }
++    assert!(hash_bounded_checked(Failed, 3, || Ok(())).is_err());
++    let read = std::cell::Cell::new(false);
++    struct One<'a>(&'a std::cell::Cell<bool>);
++    impl Read for One<'_> {
++        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
++            self.0.set(true);
++            buffer[0] = 1;
++            Ok(1)
++        }
++    }
++    assert!(
++        hash_bounded_checked(One(&read), 1, || {
++            ensure!(!read.get(), "expired while read was blocked");
++            Ok(())
++        })
++        .is_err()
++    );
++}
+--- base/crates\airk-retrieval\src\arbiter\runtime\qualification.rs
++++ proposed/crates\airk-retrieval\src\arbiter\runtime\qualification.rs
+@@ -90,20 +90,34 @@
+     Ok(())
+ }
+ fn hash_bounded(reader: impl Read, expected: u64) -> Result<Sha256Digest> {
++    hash_bounded_checked(reader, expected, || Ok(()))
++}
++/// Deadline/custody observation belongs to the caller; hashing remains one owner.
++pub(super) fn hash_bounded_checked(
++    reader: impl Read,
++    expected: u64,
++    mut check: impl FnMut() -> Result<()>,
++) -> Result<Sha256Digest> {
++    check()?;
+     let mut stream = reader.take(expected.checked_add(1).context("asset bound overflow")?);
+     let mut hash = Sha256::new();
+     let mut total = 0_u64;
+     let mut buffer = vec![0_u8; 4 << 20];
+     loop {
++        check()?;
+         let count = stream.read(&mut buffer)?;
++        check()?;
+         if count == 0 {
+             break;
+         }
+         total += count as u64;
+         hash.update(&buffer[..count]);
++        check()?;
+     }
+     ensure!(total == expected, "experimental streamed length differs");
+-    Ok(Sha256Digest::from_bytes(hash.finalize().into()))
++    let digest = Sha256Digest::from_bytes(hash.finalize().into());
++    check()?;
++    Ok(digest)
+ }
+ fn verified_small(input: &AssetInput, maximum: u64) -> Result<Vec<u8>> {
+     ensure!(

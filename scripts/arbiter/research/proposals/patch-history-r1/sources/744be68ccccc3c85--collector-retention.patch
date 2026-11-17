@@ -1,0 +1,96 @@
+--- a/artifacts/advanced-split/models/selected-native-goal-driver-r1/source/capture_selected_service_cal.py
++++ b/artifacts/advanced-split/models/selected-native-goal-driver-r1/source/capture_selected_service_cal.py
+@@ -12,6 +12,7 @@
+ from audit_sources import audit_pass
+ from native_goal_client import NativeGoalClient,require_normal_session_close
+ from aggregate_native_retrieval import scope_key
++from selected_cal_refusals import canonical_refusal,refusal_row
+ 
+ def sha(path):
+     with Path(path).open('rb')as stream:return hashlib.file_digest(stream,'sha256').hexdigest()
+@@ -76,12 +77,20 @@
+         for question in questions:
+             previous={p.name for p in args.admission_directory.glob('record-*.json')}
+             arguments=dict(template);arguments['question']=question['question']
+-            answer_call=client.call('answer',arguments,30);answer=checked_reply(answer_call)
+-            need(answer['schema']=='airk.arbiter.context/2','actual native Context2 required')
++            answer_call=client.call('answer',arguments,30)
+             new=[p for p in args.admission_directory.glob('record-*.json')if p.name not in previous]
+             need(len(new)<=1,'unexpected extra native assessment')
++            if canonical_refusal(answer_call):
++                orphans=[{'path':str(p),'sha256':sha(p),'association':'UNDELIVERED_NOT_A_REQUEST_OR_LABEL'}for p in new]
++                record['rows'].append(refusal_row(question,answer_call,orphans));save()
++                print(json.dumps({'completed_questions':len(record['rows']),'planned_questions':100,'canonical_refusals_retained':True}),flush=True)
++                continue
+             item={'id':question['id'],'split':'calibration','question':question['question'],'answer_call':answer_call,
+-                  'request':None,'native_capture_status':'no_native_assessment_request','counterfactual_choices':[],'admission':None}
++                  'request':None,'native_capture_status':'pending_delivery_validation','counterfactual_choices':[],'counterfactual_refusals':[],'admission':None}
++            record['rows'].append(item);save()
++            answer=checked_reply(answer_call)
++            need(answer['schema']=='airk.arbiter.context/2','actual native Context2 required')
++            item['native_capture_status']='no_native_assessment_request'
+             if new:
+                 raw=new[0].read_bytes();admission=json.loads(raw)
+                 request=associate(admission,answer,question,release)
+@@ -89,17 +98,21 @@
+                             admission_file=str(new[0]),admission_sha256=hashlib.sha256(raw).hexdigest())
+                 for probe in admission['verified_probe_requests']:
+                     # Never reconstruct, expand or refill a model-generated operation.
+-                    reply=client.call(probe['tool'],probe['arguments'],30);value=checked_reply(reply)
++                    reply=client.call(probe['tool'],probe['arguments'],30)
++                    if canonical_refusal(reply):
++                        item['counterfactual_refusals'].append({'choice':probe['choice'],'tool':probe['tool'],'arguments':probe['arguments'],'actual_call':reply,'classification':'UNKNOWN','semantic_negative':False});save();continue
++                    value=checked_reply(reply)
+                     need(value['publication']==probe['publication'],'counterfactual actual publication changed')
+                     item['counterfactual_choices'].append({'choice':probe['choice'],'arguments':probe['arguments'],
+                         'tool':probe['tool'],'canonical_result':value,'actual_call':reply})
+                 need(len(item['counterfactual_choices'])<=5,'original scored read count exceeded')
+-            record['rows'].append(item);save()
++            save()
+             print(json.dumps({'completed_questions':len(record['rows']),'planned_questions':100}),flush=True)
+         record['stage_after']=client.observe_stage_status(args.output/'stage-status','after',release['Context_bootstrap_profile'],release['Focus_profile'])
+         need(record['stage_after']['full_native_response']['configuration']==status['configuration'],'actual stage configuration changed')
+         need(audit_pass(args.fixture,manifest)==before,'frozen source bytes changed')
+         for path,digest in release['input_pins'].items():need(sha(path)==digest,'capture source/artifact drift')
++        need(len(record['rows'])==100 and [row['id']for row in record['rows']]==[q['id']for q in questions],'fixed complete ordered CAL100 census required')
+         preparation_succeeded=True
+     except Exception as error:
+         record['failure_class']=type(error).__name__;raise
+--- a/artifacts/advanced-split/models/selected-native-goal-driver-r1/source/prepare_selected_cal_reference_certificates.py
++++ b/artifacts/advanced-split/models/selected-native-goal-driver-r1/source/prepare_selected_cal_reference_certificates.py
+@@ -60,7 +60,7 @@
+                      'request':request,'native_capture_status':row['native_capture_status'],
+                      'compiler_census':row['admission']['compiler_census'] if row['admission']else [],
+                      'remaining_ms_at_observation':min(request['remaining_ms'],row['admission']['remaining_ns_at_observation']//1000000) if request else None,
+-                     'reference_proxies':{'valid_reference_proxy_whole_cards':certified,'counterfactual_reference_progress':progress},
++                     'reference_proxies':{'valid_reference_proxy_whole_cards':certified,'counterfactual_reference_progress':progress,'counterfactual_unresolved':row.get('counterfactual_refusals',[]),'undelivered_observations_are_not_scored':row.get('undelivered_native_observations',[])},
+                      'human_semantic_gold':False,'semantic_negative':False})
+     need(seen==set(tasks),'CAL capture silently omitted questions')
+     need(all(sha(p)==h for p,h in zip(paths,expected)),'CAL source changed during certification')
+--- /dev/null
++++ b/artifacts/advanced-split/models/selected-native-goal-driver-r1/source/selected_cal_refusals.py
+@@ -0,0 +1,24 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Retain authenticated canonical budget refusals as UNKNOWN; never delivery evidence."""
++def canonical_refusal(call):
++    value=call.get('full_canonical_value');envelope=call.get('envelope');exchange=call.get('session_exchange')or {}
++    error=value.get('error')if isinstance(value,dict)else None
++    return bool(call.get('schema')=='airk.development-native-goal-call/1'
++        and call.get('identity_error')is None and call.get('parse_error')is None
++        and call.get('timed_out')is False and call.get('returncode')==1
++        and call.get('validated')is False and call.get('actual_service_identity')
++        and call.get('native_binding_sha256')and len(call.get('actual_health_observations',[]))==2
++        and exchange.get('kind')=='invoked'and exchange.get('launch_count')==1
++        and exchange.get('arguments_sha256')==call.get('arguments_sha256')
++        and exchange.get('result',{}).get('exitCode')==1
++        and isinstance(envelope,dict)and envelope.get('isError')is True
++        and isinstance(error,dict)and isinstance(error.get('code'),str)and error['code']
++        and isinstance(error.get('message'),str)and type(error.get('retryable'))is bool)
++
++def refusal_row(question,call,orphans):
++    if not canonical_refusal(call):raise ValueError('Only authenticated canonical refusal may continue')
++    return {'id':question['id'],'split':'calibration','question':question['question'],'answer_call':call,
++        'request':None,'admission':None,'counterfactual_choices':[],'counterfactual_refusals':[],
++        'native_capture_status':'canonical_refusal_no_delivered_assessment',
++        'undelivered_native_observations':orphans,'semantic_negative':False,'human_semantic_gold':False,
++        'delivery':'No Context2 delivered; private admission observations cannot establish a scored request.'}

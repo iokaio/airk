@@ -1,0 +1,64 @@
+--- a/crates/airk-kernel/src/inference_owner/evaluation_tests/train_units/public_human_visibility.rs
++++ b/crates/airk-kernel/src/inference_owner/evaluation_tests/train_units/public_human_visibility.rs
+@@ -205,6 +205,20 @@
+ }
+ fn positive_span_visible(label: u64, parent: &LocalSpan, spans: &[LocalSpan]) -> bool {
+     label == 1 && covered(parent, spans)
++}
++fn unit_stats_value(
++    ordinal: usize,
++    total: usize,
++    stats: &airk_retrieval::vector_units::VectorUnitStats,
++    elapsed_ns: u128,
++) -> Result<Value> {
++    ensure!(
++        ordinal <= total && total <= 100_000 && stats.units <= 100_000,
++        "bounded returned unit statistics required"
++    );
++    Ok(
++        json!({"ordinal":ordinal,"total":total,"units":stats.units,"body_bytes":stats.body_bytes,"planning_us":stats.planning_us,"file_elapsed_ns":elapsed_ns}),
++    )
+ }
+ fn planned_unit_records(
+     model: &EmbeddingModel,
+@@ -237,7 +251,7 @@
+             )?;
+             continue;
+         }
+-        visit_vector_units(&retained.payload, model, |unit| {
++        let stats = visit_vector_units(&retained.payload, model, |unit| {
+             ensure!(
+                 units.len() < 100_000,
+                 "visibility unit census bound exceeded"
+@@ -263,6 +277,14 @@
+             units.push(json!({"id":units.len(),"file":retained.artifact.path,"input":unit.input,"members":unit.members,"context_prefix":prefix,"context_prefix_bytes":prefix.len(),"native_tokens":tokens,"native_input_tensors":unit_tensors(model,&unit.input)?,"source_sha256":retained.artifact.content_hash,"payload_sha256":retained.payload_digest,"extraction_profile_sha256":retained.profile.identity()?,"published":false}));
+             Ok(())
+         })?;
++        let value = unit_stats_value(
++            ordinal + 1,
++            extracted.len(),
++            &stats,
++            file_started.elapsed().as_nanos(),
++        )?;
++        eprintln!("PUBLIC_HUMAN_UNIT_STATS {value}");
++        std::io::stderr().flush()?;
+         visibility_progress(
+             "unit_file_after",
+             ordinal + 1,
+@@ -633,6 +655,16 @@
+         progress_value("unit_file_after", 2, 3, 7, 11)?,
+         json!({"stage":"unit_file_after","ordinal":2,"total":3,"observed":7,"elapsed_ns":11})
+     );
++    let stats = airk_retrieval::vector_units::VectorUnitStats {
++        units: 7,
++        body_bytes: 19,
++        planning_us: 23,
++    };
++    assert_eq!(
++        unit_stats_value(2, 3, &stats, 29_000)?,
++        json!({"ordinal":2,"total":3,"units":7,"body_bytes":19,"planning_us":23,"file_elapsed_ns":29_000})
++    );
++    assert!(unit_stats_value(3, 2, &stats, 29_000).is_err());
+     assert!(progress_value("source contents", 0, 0, 0, 0).is_err());
+     assert!(progress_value("row_mapping", 3, 2, 1, 0).is_err());
+     assert!(progress_value("row_mapping", 1, 2, 100_001, 0).is_err());

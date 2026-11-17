@@ -1,0 +1,11 @@
+--- R1/crates/airk-inference/src/inference_engine/pool/arbiter/device.rs
++++ R2/crates/airk-inference/src/inference_engine/pool/arbiter/device.rs
+@@ -219,7 +219,7 @@
+                         device: device.clone(),
+                         _private: (),
+                     },
+-                    uuid: uuid,
++                    uuid,
+                     epoch: device.epoch(),
+                     host_warm_extra_bytes: extra,
+                 });

@@ -1,0 +1,47 @@
+diff --git a/crates/airk-cli/tests/service_runtime.rs b/crates/airk-cli/tests/service_runtime.rs
+--- a/crates/airk-cli/tests/service_runtime.rs
++++ b/crates/airk-cli/tests/service_runtime.rs
+@@ -3688,7 +3688,7 @@
+         let private = serde_json::from_value(draft)?;
+         let refused = airk_cli::service_runtime::request(&root, private).await?;
+         ensure!(
+-            matches!(&refused, Response::Failure { code } if code == "invalid_registry_request"),
++            matches!(&refused, Response::Failure { code } if code == "index_setup_paths_overlap"),
+             "native log location was admitted as source or refused for an unrelated reason: {}", serde_json::to_string(&refused)?
+         );
+         airk_cli::service_runtime::request(&root, Method::Shutdown).await?;
+diff --git a/crates/airk-installer/src/service_manager.rs b/crates/airk-installer/src/service_manager.rs
+--- a/crates/airk-installer/src/service_manager.rs
++++ b/crates/airk-installer/src/service_manager.rs
+@@ -1694,9 +1694,13 @@
+         matches!(channel, "stable" | "preview"),
+         "invalid Mac channel"
+     );
+-    let plist = bundle
+-        .join("Contents/Library/LaunchAgents")
+-        .join(format!("io.iokaio.airk.service.{channel}.plist"));
++    // This verifies a macOS observation, including in tests on other hosts.
++    // Build its POSIX path without importing the test host's separator rules.
++    let bundle = bundle.to_str().context("Mac bundle path is not UTF-8")?;
++    let plist = PathBuf::from(format!(
++        "{}/Contents/Library/LaunchAgents/io.iokaio.airk.service.{channel}.plist",
++        bundle.trim_end_matches('/'),
++    ));
+     crate::runtime_install::macos_login::verify_job_scope(
+         text,
+         main,
+diff --git a/crates/airk-installer/src/runtime_install/replacement/operation.rs b/crates/airk-installer/src/runtime_install/replacement/operation.rs
+--- a/crates/airk-installer/src/runtime_install/replacement/operation.rs
++++ b/crates/airk-installer/src/runtime_install/replacement/operation.rs
+@@ -734,7 +734,10 @@
+         .as_ref()
+         .filter(|control| control.join("service-1.4.sqlite3").exists())
+     {
+-        let registry_owner = saved.indexes.recover_stopped()?;
++        let registry_owner = saved
++            .indexes
++            .recover_stopped()
++            .context("replacement_resume_control_unproven")?;
+         ensure!(
+             IndexLocations::capture_control(control)
+                 .context("replacement_resume_control_unproven")?

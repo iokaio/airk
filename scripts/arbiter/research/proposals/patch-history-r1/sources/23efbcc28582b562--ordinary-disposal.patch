@@ -1,0 +1,211 @@
+--- a/crates/airk-store/src/quota/retired.rs
++++ b/crates/airk-store/src/quota/retired.rs
+@@ -9,6 +9,29 @@
+ use airk_core::identity::Incarnation;
+ use airk_core::service::ProjectRegistration;
+ use std::ffi::{OsStr, OsString};
++
++const ORDINARY_RETIREMENT_SUFFIX: &str = ".retired";
++/// A complete original ordinary record, atomically renamed under native custody.
++/// This is never a partially written scratch or independently created authority.
++pub(super) fn retained_ordinary_record(name: &str) -> Result<Option<&str>> {
++    let Some(original) = name.strip_suffix(ORDINARY_RETIREMENT_SUFFIX) else {
++        return Ok(None);
++    };
++    ensure!(
++        name.len() <= 128 && original.starts_with("r-") && original.len() > 2
++            && original.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'),
++        "invalid retained ordinary reservation identity"
++    );
++    Ok(Some(original))
++}
++struct OrdinaryDisposal {
++    name: OsString,
++    row: File,
++    retired: OsString,
++    already_retired: bool,
++    lease_name: OsString,
++    lease: Option<File>,
++}
+ 
+ /// Internal native custody, not serde/Clone or a caller-provided absence flag.
+ /// The registry keeps this through its exact retired cleanup transaction.
+@@ -149,6 +172,7 @@
+         )?;
+         let reservations = proof.control.open_dir(OsStr::new("reservations"))?;
+         let mut ordinary = Vec::new();
++        let mut ordinary_names = std::collections::BTreeSet::new();
+         for (visited, entry) in reservations.entries()?.enumerate() {
+             ensure!(
+                 visited < MAX_RESERVATIONS * 2 + 2,
+@@ -173,9 +197,12 @@
+                 );
+                 continue;
+             }
+-            ensure!(
+-                !text.contains('.') && row.metadata()?.len() <= RECORD_MAX,
+-                "invalid reservation record"
++            let retained = retained_ordinary_record(text)?;
++            let original = retained.unwrap_or(text);
++            ensure!(
++                !original.contains('.') && row.metadata()?.len() <= RECORD_MAX
++                    && ordinary_names.insert(original.to_owned()),
++                "invalid or duplicate reservation record"
+             );
+             let mut bytes = Vec::new();
+             row.try_clone()?
+@@ -190,15 +217,27 @@
+             if record.collection != proof.collection {
+                 continue;
+             }
+-            let lease_name = OsString::from(format!("{text}.lease"));
+-            let held = reservations.open_file(&lease_name, SetupFileMode::ReadWrite)?;
+-            ensure!(
+-                held.metadata()?.len() == 0,
+-                "unknown selected reservation lease"
+-            );
+-            held.try_lock()
+-                .context("retired collection still has a live ordinary reservation")?;
+-            ordinary.push((name, row, lease_name, held));
++            let already_retired = retained.is_some();
++            let retired = OsString::from(format!("{original}{ORDINARY_RETIREMENT_SUFFIX}"));
++            ensure!(retired.len() <= 128, "retired reservation name exceeds bound");
++            if !already_retired {
++                match reservations.open_file(&retired, SetupFileMode::Read) {
++                    Err(error) if absent(&error) => (),
++                    Err(error) => return Err(error),
++                    Ok(_) => anyhow::bail!("retirement record destination already exists"),
++                }
++            }
++            let lease_name = OsString::from(format!("{original}.lease"));
++            let held = match reservations.open_file(&lease_name, SetupFileMode::ReadWrite) {
++                Ok(held) => {
++                    ensure!(held.metadata()?.len() == 0, "unknown selected reservation lease");
++                    held.try_lock().context("retired collection still has a live ordinary reservation")?;
++                    Some(held)
++                }
++                Err(error) if already_retired && absent(&error) => None,
++                Err(error) => return Err(error),
++            };
++            ordinary.push(OrdinaryDisposal { name, row, retired, already_retired, lease_name, lease: held });
+         }
+         let grants = match proof.control.open_dir(OsStr::new("current-grants")) {
+             Ok(directory) => {
+@@ -224,10 +263,19 @@
+             }
+             directory.sync()?;
+         }
+-        for (name, row, lease_name, held) in &ordinary {
+-            reservations.unlink_file_if_identity(name, row)?;
++        for row in &ordinary {
++            if !row.already_retired {
++                // Preserve the original complete record and its exact file identity
++                // until its lease unlink is durable. No fresh owner is created.
++                reservations.publish_no_replace(&row.name, &row.row, &reservations, &row.retired)?;
++            }
+             checkpoint(SettlementPoint::AfterReservationRecord)?;
+-            reservations.unlink_file_if_identity(lease_name, held)?;
++            if let Some(held) = &row.lease {
++                reservations.unlink_file_if_identity(&row.lease_name, held)?;
++                reservations.sync()?;
++            }
++            checkpoint(SettlementPoint::AfterReservationLease)?;
++            reservations.unlink_file_if_identity(&row.retired, &row.row)?;
+         }
+         reservations.sync()?;
+         proof.revalidate()?;
+@@ -305,6 +353,7 @@
+     BeforeUnlink,
+     AfterGrant,
+     AfterReservationRecord,
++    AfterReservationLease,
+ }
+ #[cfg(test)]
+ #[path = "retired_tests.rs"]
+--- a/crates/airk-store/src/quota.rs
++++ b/crates/airk-store/src/quota.rs
+@@ -1042,6 +1042,16 @@
+                 .extension()
+                 .is_some_and(|extension| extension == "lease")
+             {
++                continue;
++            }
++            if retired::retained_ordinary_record(&name)?.is_some() {
++                // Explicit retirement owns this complete renamed record. Ordinary
++                // accounting remains conservative; only the actual retired-project
++                // custody/absence proof may finish it. Never infer staging authority.
++                let record: Record = json_read(&path, RECORD_MAX)?;
++                crate::validate_collection(&record.collection)?;
++                ensure!(record.bytes > 0, "invalid retained ordinary reservation credit");
++                live.push(LiveRecord { record });
+                 continue;
+             }
+             let lease_path = path.with_extension("lease");
+--- a/crates/airk-store/src/quota/retired_tests.rs
++++ b/crates/airk-store/src/quota/retired_tests.rs
+@@ -324,3 +324,65 @@
+     f.assert_sources()?;
+     Ok(())
+ }
++
++#[test]
++fn ordinary_disposal_retains_attribution_through_record_and_lease_interruptions() -> Result<()> {
++    let f = Fixture::new()?;
++    let retired = f.quota.reserve(&f.registration.collection, 4096)?;
++    let healthy = f.quota.reserve(&f.healthy.collection, 4096)?;
++    let record = retired.0.record_path.clone();
++    let lease_path = retired.0.lease_path.clone();
++    let original = fs::read(&record)?;
++    let original_pin = File::open(&record)?;
++    let retained = record.with_file_name(format!("{}.retired", record.file_name().unwrap().to_str().unwrap()));
++    let healthy_record = healthy.0.record_path.clone();
++    let healthy_bytes = fs::read(&healthy_record)?;
++    let healthy_grants = f.grants(&f.healthy.collection)?;
++    let original_grants = f.grants(&f.registration.collection)?;
++    // Actual reservation admission created the record/lease. A real held ledger
++    // prevents Drop cleanup, then releases both OS handles as after process exit.
++    let ledger = f.quota.lock()?;
++    drop(retired);
++    drop(ledger);
++    assert!(record.exists() && lease_path.exists());
++    fs::remove_dir_all(f.directory())?;
++    let project = f.lease()?;
++    // A foreign collision is never replaced, adopted or skipped.
++    fs::write(&retained, b"foreign retirement-name occupant")?;
++    assert!(AbsentCollectionSettlement::settle(&f.registration, &project, &f.control, f.namespace).is_err());
++    assert_eq!(fs::read(&retained)?, b"foreign retirement-name occupant");
++    assert_eq!(fs::read(&record)?, original);
++    assert_eq!(f.grants(&f.registration.collection)?, original_grants);
++    fs::remove_file(&retained)?;
++    for interrupt in [SettlementPoint::AfterReservationRecord, SettlementPoint::AfterReservationLease] {
++        let mut observed = false;
++        assert!(AbsentCollectionSettlement::settle_with_hook(&f.registration, &project, &f.control, f.namespace, |point| {
++            if point == interrupt { observed = true; anyhow::bail!("injected exact ordinary disposal boundary"); }
++            Ok(())
++        }).is_err());
++        assert!(observed, "failed before the requested durable boundary");
++        assert!(!record.exists());
++        assert_eq!(fs::read(&retained)?, original);
++        assert_eq!(file_identity(&File::open(&retained)?)?, file_identity(&original_pin)?);
++        assert_eq!(lease_path.exists(), interrupt == SettlementPoint::AfterReservationRecord);
++        assert_eq!(fs::read(&healthy_record)?, healthy_bytes);
++        assert_eq!(f.grants(&f.healthy.collection)?, healthy_grants);
++        // Normal accounting must not reject or garbage-collect the exact retained
++        // record, even after its lease is gone. Healthy B remains admissible.
++        f.quota.status()?;
++        assert!(retained.exists());
++        drop(f.quota.reserve(&f.healthy.collection, 1024)?);
++        assert_eq!(fs::read(&healthy_record)?, healthy_bytes);
++    }
++    drop(AbsentCollectionSettlement::settle(&f.registration, &project, &f.control, f.namespace)?);
++    assert!(!record.exists() && !retained.exists() && !lease_path.exists());
++    let reservations = f.quota.control_path().join("reservations");
++    let names = fs::read_dir(&reservations)?.map(|entry| Ok(entry?.path())).collect::<Result<Vec<_>>>()?;
++    assert_eq!(names.len(), 2, "selected A left quota inventory that could exhaust B's bounded ledger");
++    assert!(names.contains(&healthy_record) && names.contains(&healthy.0.lease_path));
++    assert_eq!(fs::read(&healthy_record)?, healthy_bytes);
++    assert_eq!(f.grants(&f.healthy.collection)?, healthy_grants);
++    drop(f.quota.reserve(&f.healthy.collection, 1024)?);
++    f.assert_sources()?;
++    Ok(())
++}

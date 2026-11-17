@@ -1,0 +1,237 @@
+--- a/crates/airk-core/src/lib.rs
++++ b/crates/airk-core/src/lib.rs
+@@ -31,6 +31,7 @@
+ pub mod mapped_binding;
+ pub mod model_objects;
+ pub mod native_reads;
++pub mod profile_families;
+ pub mod publication;
+ pub mod readiness;
+ pub mod references;
+--- /dev/null
++++ b/crates/airk-core/src/profile_families.rs
+@@ -0,0 +1,224 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Metadata-only family observations. These describe policy, never query counts
++//! or live-source equality. Filesystem and renderer observations belong to callers.
++use crate::{extraction::IndexDetail, identity::Sha256Digest, reply::ReplyDetail};
++use anyhow::{Result, ensure};
++use serde::{Deserialize, Serialize};
++use std::collections::BTreeMap;
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum Family {
++    SavedIdentity,
++    SavedText,
++    LexicalCandidates,
++    Vectors,
++    Declarations,
++    Imports,
++    WrittenCalls,
++    FrameworkStructure,
++    ManifestPackagesDependencies,
++    RequirementsDesignDecisions,
++    HeadingsSections,
++    StandaloneDatesBounds,
++    TablesRows,
++    MappedRegions,
++    DeclarationContinuity,
++    DocumentUnitContinuity,
++    ImportedAssertions,
++    OcrTextFacts,
++}
++impl Family {
++    pub const ALL: [Self; 18] = [
++        Self::SavedIdentity, Self::SavedText, Self::LexicalCandidates, Self::Vectors,
++        Self::Declarations, Self::Imports, Self::WrittenCalls, Self::FrameworkStructure,
++        Self::ManifestPackagesDependencies, Self::RequirementsDesignDecisions,
++        Self::HeadingsSections, Self::StandaloneDatesBounds, Self::TablesRows,
++        Self::MappedRegions, Self::DeclarationContinuity, Self::DocumentUnitContinuity,
++        Self::ImportedAssertions, Self::OcrTextFacts,
++    ];
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum Support { Supported, Unsupported, Unknown }
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum Retention { Retained, Selected, NotRetained, Unknown }
++
++/// Observe the actual renderer contract independently of the requested mode.
++/// A selected subset of fields is not an omitted family. Missing observations
++/// remain unknown, including the transport's historical absent-mode behavior.
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum ReplyInclusion { Included, Selected, Omitted, Unknown }
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct ProfileRevision {
++    pub detail: IndexDetail,
++    pub digest: Sha256Digest,
++}
++
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct FamilyObservation {
++    pub family: Family,
++    pub support: Support,
++    pub retention: Retention,
++    pub reply_inclusion: ReplyInclusion,
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum ObservationBasis { MetadataOnly }
++
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct ProfileFamilyReport {
++    pub schema: String,
++    pub basis: ObservationBasis,
++    pub adapter_id: String,
++    pub adapter_version: String,
++    pub configured: Option<ProfileRevision>,
++    pub applied: Option<ProfileRevision>,
++    pub configured_label: Option<String>,
++    pub applied_label: Option<String>,
++    pub pending_change: bool,
++    pub requested_reply: Option<ReplyDetail>,
++    pub families: Vec<FamilyObservation>,
++}
++
++fn label(detail: IndexDetail) -> &'static str {
++    match detail {
++        IndexDetail::Essential => "Search Only (essential)",
++        IndexDetail::AgentLean => "Agent Lean (legacy agent_lean)",
++        IndexDetail::Balanced => "Rich Structure (legacy balanced)",
++        IndexDetail::Detailed => "Detailed (legacy detailed)",
++    }
++}
++
++/// Published policy selection, not a claim that any record exists. Adapter
++/// support is a separate dimension. Independent producers/mappings/vectors
++/// require their own metadata and cannot be inferred from native fact retention.
++fn retention(family: Family, detail: IndexDetail) -> Retention {
++    use Family::*;
++    use IndexDetail::*;
++    use Retention::*;
++    match family {
++        SavedIdentity | SavedText | LexicalCandidates => Retained,
++        Vectors | MappedRegions | ImportedAssertions | OcrTextFacts => Unknown,
++        DeclarationContinuity => match detail {
++            Essential | AgentLean => NotRetained,
++            Balanced | Detailed => Selected,
++        },
++        DocumentUnitContinuity => if detail == Detailed { Selected } else { NotRetained },
++        _ if detail == Essential => NotRetained,
++        ManifestPackagesDependencies | StandaloneDatesBounds if detail == AgentLean => NotRetained,
++        FrameworkStructure if detail == AgentLean => Selected,
++        _ => Retained,
++    }
++}
++
++/// Pure projection over already authenticated metadata. No path, source bytes,
++/// storage reader, callback, iterator over files or query result is accepted.
++/// Support must come from versioned fine-family metadata; a broad adapter
++/// structural-facts flag is insufficient. Unknown entries stay unknown.
++pub fn report(
++    adapter_id: &str,
++    adapter_version: &str,
++    configured: Option<ProfileRevision>,
++    applied: Option<ProfileRevision>,
++    requested_reply: Option<ReplyDetail>,
++    support: &BTreeMap<Family, Support>,
++    reply_inclusion: &BTreeMap<Family, ReplyInclusion>,
++) -> Result<ProfileFamilyReport> {
++    ensure!(
++        [adapter_id, adapter_version].into_iter().all(|value|
++            !value.is_empty() && value.len() <= 128
++                && value.bytes().all(|byte| byte.is_ascii_graphic())),
++        "invalid bounded adapter metadata identity"
++    );
++    Ok(ProfileFamilyReport {
++        schema: "airk.profile-families/1".into(),
++        basis: ObservationBasis::MetadataOnly,
++        adapter_id: adapter_id.into(), adapter_version: adapter_version.into(),
++        configured, applied,
++        configured_label: configured.map(|value| label(value.detail).into()),
++        applied_label: applied.map(|value| label(value.detail).into()),
++        pending_change: configured != applied,
++        requested_reply,
++        families: Family::ALL.into_iter().map(|family| FamilyObservation {
++            family,
++            support: support.get(&family).copied().unwrap_or(Support::Unknown),
++            retention: applied.map_or(Retention::Unknown, |value| retention(family, value.detail)),
++            reply_inclusion: reply_inclusion.get(&family).copied().unwrap_or(ReplyInclusion::Unknown),
++        }).collect(),
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn revision(detail: IndexDetail, byte: u8) -> ProfileRevision {
++        ProfileRevision { detail, digest: Sha256Digest::from_bytes([byte; 32]) }
++    }
++    fn row(report: &ProfileFamilyReport, family: Family) -> &FamilyObservation {
++        report.families.iter().find(|value| value.family == family).unwrap()
++    }
++    #[test]
++    fn configured_profile_cannot_reinterpret_applied_manifest_retention() -> Result<()> {
++        let configured = revision(IndexDetail::Detailed, 1);
++        let applied = revision(IndexDetail::AgentLean, 2);
++        let supports = BTreeMap::from([(Family::ManifestPackagesDependencies, Support::Supported)]);
++        let replies = BTreeMap::from([(Family::ManifestPackagesDependencies, ReplyInclusion::Included)]);
++        for reply in [None, Some(ReplyDetail::Lean), Some(ReplyDetail::Rich)] {
++            let value = report("cargo-manifest", "1", Some(configured), Some(applied), reply, &supports, &replies)?;
++            assert!(value.pending_change);
++            let manifest = row(&value, Family::ManifestPackagesDependencies);
++            assert_eq!(manifest.support, Support::Supported);
++            assert_eq!(manifest.retention, Retention::NotRetained);
++            assert_eq!(manifest.reply_inclusion, ReplyInclusion::Included);
++            assert_eq!(row(&value, Family::ImportedAssertions).retention, Retention::Unknown);
++            assert_eq!(row(&value, Family::OcrTextFacts).retention, Retention::Unknown);
++        }
++        Ok(())
++    }
++    #[test]
++    fn legacy_continuity_and_partial_reply_remain_independent() -> Result<()> {
++        let replies = BTreeMap::from([(Family::Declarations, ReplyInclusion::Selected)]);
++        for detail in [IndexDetail::Essential, IndexDetail::AgentLean, IndexDetail::Balanced, IndexDetail::Detailed] {
++            let applied = revision(detail, 1);
++            let supports = BTreeMap::from([(Family::Declarations, Support::Unsupported)]);
++            let value = report("fixture", "1", Some(applied), Some(applied), Some(ReplyDetail::Lean), &supports, &replies)?;
++            assert!(!value.pending_change);
++            assert_eq!(row(&value, Family::Declarations).support, Support::Unsupported);
++            assert_eq!(row(&value, Family::Declarations).reply_inclusion, ReplyInclusion::Selected);
++            assert_eq!(row(&value, Family::DocumentUnitContinuity).retention,
++                if detail == IndexDetail::Detailed { Retention::Selected } else { Retention::NotRetained });
++            if detail == IndexDetail::Balanced {
++                assert_eq!(value.applied_label.as_deref(), Some("Rich Structure (legacy balanced)"));
++                assert_eq!(row(&value, Family::DeclarationContinuity).retention, Retention::Selected);
++            }
++        }
++        Ok(())
++    }
++    #[test]
++    fn unknown_publication_has_complete_bounded_catalog_without_invented_counts() -> Result<()> {
++        let value = report("unknown", "1", None, None, None, &BTreeMap::new(), &BTreeMap::new())?;
++        assert_eq!(value.families.len(), 18);
++        for item in &value.families {
++            assert_eq!(item.support, Support::Unknown);
++            assert_eq!(item.retention, Retention::Unknown);
++            assert_eq!(item.reply_inclusion, ReplyInclusion::Unknown);
++        }
++        let encoded = serde_json::to_value(&value)?;
++        assert_eq!(encoded["basis"], "metadata_only");
++        assert!(encoded.get("record_count").is_none());
++        assert!(serde_json::to_vec(&value)?.len() < 8192);
++        assert_eq!(serde_json::from_value::<ProfileFamilyReport>(encoded)?, value);
++        assert!(report(&"a".repeat(129), "1", None, None, None, &BTreeMap::new(), &BTreeMap::new()).is_err());
++        Ok(())
++    }
++}

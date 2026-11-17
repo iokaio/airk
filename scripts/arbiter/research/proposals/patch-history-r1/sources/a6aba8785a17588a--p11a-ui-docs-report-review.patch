@@ -1,0 +1,300 @@
+--- a/packages/vscode/src/workbenchContracts.ts
++++ b/packages/vscode/src/workbenchContracts.ts
+@@ -89,7 +89,7 @@
+     name:string;label:string;type:'string'|'integer'|'boolean'|'json';required:boolean;
+     values?:string[];description?:string;defaultValue?:string|number|boolean;minimum?:number;maximum?:number;minLength?:number;maxLength?:number;
+ }
+-const fieldLabels:Record<string,string>={project_ids:'Project IDs (JSON array)',index_ids:'Index subset (JSON array)',member_availability:'Member availability',path_prefix:'Path prefix',exclude_path_prefix:'Exclude path prefix',evidence_kind:'Evidence type',name_match:'Name matching',reply_detail:'Reply detail',verification:'Saved-source verification',verification_max_sources:'Maximum sources to check',verification_max_bytes:'Raw-source byte budget',verification_deadline_ms:'Verification deadline (ms)',compact:'Compact results',include_count:'Show count precision',include_files:'Summarize files',max_bytes:'Response byte budget'};
++const fieldLabels:Record<string,string>={project_ids:'Project IDs (JSON array)',index_ids:'Index subset (JSON array)',member_availability:'Member availability',path_prefix:'Path prefix',exclude_path_prefix:'Exclude path prefix',evidence_kind:'Evidence type',name_match:'Name matching',reply_detail:'Reply detail',verification:'Saved-source verification',verification_max_sources:'Maximum sources to check',verification_max_bytes:'Raw-source byte budget',verification_deadline_ms:'Verification deadline (ms)',compact:'Compact results',include_profile_families:'Include effective profile families',include_count:'Show count precision',include_files:'Summarize files',max_bytes:'Response byte budget'};
+ /** Resolve only bundled local schema alternatives; no remote schema loading. */
+ function fieldSchema(raw:unknown,root:Value,depth=0):Value {
+     const schema=object(raw);if(depth>4)return {};
+--- a/packages/vscode/src/workbenchRender.ts
++++ b/packages/vscode/src/workbenchRender.ts
+@@ -48,6 +48,7 @@
+     replyDetail?:'lean'|'rich';
+     guidance?:Value;
+     readGuidance?:Value;
++    profileFamilies?:Value;
+     recommendations?:Value;
+     sourceVerification?:Value;
+     execution?:Value;semanticReadiness?:Value;discoveryReadiness?:Value;readError?:Value;scopeObservation?:Value;
+@@ -120,6 +121,7 @@
+         reply_detail:['lean','rich'].includes(String(source.reply_detail))?source.reply_detail:undefined,
+         guidance:guidanceMetadata(source.guidance??evidence.guidance),
+         read_guidance:Object.keys(object(source.read_guidance)).length?source.read_guidance:undefined,
++        profile_families:Object.keys(object(source.profile_families)).length?source.profile_families:undefined,
+         recommendations:source.schema==='airk.recommendations/1'?source:undefined,
+         source_verification:nativeVerification(source.source_verification),
+         execution:source.execution??evidence.execution,
+@@ -150,6 +152,7 @@
+             ...(metadata.reply_detail==='lean'||metadata.reply_detail==='rich'?{replyDetail:metadata.reply_detail}:{}),
+             ...(metadata.guidance?{guidance:object(metadata.guidance)}:{}),
+             ...(metadata.read_guidance?{readGuidance:object(metadata.read_guidance)}:{}),
++            ...(metadata.profile_families?{profileFamilies:object(metadata.profile_families)}:{}),
+             ...(metadata.recommendations?{recommendations:object(metadata.recommendations)}:{}),
+             ...(metadata.source_verification?{sourceVerification:object(metadata.source_verification)}:{}),
+             ...(Object.keys(object(metadata.execution)).length?{execution:object(metadata.execution)}:{}),
+@@ -303,7 +306,7 @@
+         // These observations qualify the selected evidence's original request,
+         // not merely its saved bytes. Retain complete native objects, including
+         // unknown future fields, without deriving a fresh availability claim.
+-        for(const key of ['execution','semantic_readiness','discovery_readiness','error','requested_mode','publication','read_guidance','scope_observation']){
++        for(const key of ['execution','semantic_readiness','discovery_readiness','error','requested_mode','publication','read_guidance','profile_families','scope_observation']){
+             if(metadata[key]!==undefined)qualification[key]=metadata[key];
+         }
+         return Object.keys(qualification).length?[{step:report.id,tool:typeof report.tool==='string'?report.tool:'',scope:'original_source_request',...qualification}]:[];
+--- a/packages/vscode/src/workbenchWebview/main.tsx
++++ b/packages/vscode/src/workbenchWebview/main.tsx
+@@ -64,6 +64,7 @@
+         {(step.semanticReadiness||step.discoveryReadiness)&&<details><summary>Indexed coverage observations</summary><p class="note">These observations describe the retained index and are independent of this search's execution outcome.</p><pre>{canonical({...(step.semanticReadiness?{semantic_readiness:step.semanticReadiness}:{}),...(step.discoveryReadiness?{discovery_readiness:step.discoveryReadiness}:{})})}</pre></details>}
+         {step.replyDetail&&<p class="note">Reply detail: {step.replyDetail==='lean'?'Lean':'Rich'}</p>}
+         {step.readGuidance&&<details><summary>Guidance vocabulary and limits</summary><pre>{canonical(step.readGuidance)}</pre></details>}
++        {step.profileFamilies&&<details open><summary>Effective profile families (metadata only)</summary><p class="note">Support, retention eligibility and reply inclusion are separate observations. Unavailable collection settings and unknown pending state remain unknown. This report does not establish fact counts, completeness or live-source equality.</p><pre>{canonical(step.profileFamilies)}</pre></details>}
+         {step.recommendations&&<details open><summary>Recommendations and scope instructions</summary><pre>{canonical(step.recommendations)}</pre></details>}
+         {step.guidance&&<details open><summary>Evidence guidance</summary><ul>{(Array.isArray(step.guidance.observations)?step.guidance.observations:[]).map((raw,i)=>{const row=object(raw);return <li key={i}><strong>{String(row.reason).replaceAll('_',' ')} ({String(row.subject).replaceAll('_',' ')}): </strong>{String(row.message)} <small>Next read: {String(row.next_read).replaceAll('_',' ')}. Basis: {String(row.basis)}.</small></li>;})}</ul>{step.guidance.truncated===true&&<p class="note">Additional guidance was omitted. Original status and coverage remain in the full response.</p>}<p class="note">Suggestions do not run tools or change indexing. Keep the original authorized scope.</p></details>}
+         {!step.canFollow&&(step.definitions.length>0||step.suggestions.length>0)&&<p class="note">Re-run this investigation to enable follow-up actions from completed, publication-matched evidence.</p>}
+--- a/packages/vscode/src/test/workbenchClientLifetime.test.ts
++++ b/packages/vscode/src/test/workbenchClientLifetime.test.ts
+@@ -43,7 +43,7 @@
+         cancel():void{this.canceled++;}
+         dispose():void{this.disposed++;}
+     }
+-    const stub={EventEmitter:Emitter,ViewColumn:{Active:1},workspace:{
++    const stub={env:{clipboard:{writeText:async(value:string)=>{exports.push(Buffer.from(value));}}},EventEmitter:Emitter,ViewColumn:{Active:1},workspace:{
+         getConfiguration:()=>({get:(_key:string,fallback:unknown)=>fallback,inspect:()=>({globalValue:native})}),
+         onDidChangeConfiguration:configuration.event,fs:{writeFile:async(_uri:unknown,bytes:Uint8Array)=>{exports.push(Buffer.from(bytes));}},
+     },window:{showWarningMessage:()=>confirm(),showSaveDialog:async()=>({fsPath:'/fixture/export.json'})},commands:{executeCommand:async()=>undefined},
+@@ -748,3 +748,22 @@
+         }
+     }finally{await fs.rm(root,{recursive:true,force:true});}
+ });
++
++test('actual Workbench host forwards opt-in form plan and preserves complete report in copies and exports',async()=>{
++    const report={schema:'airk.profile-families/1',file:{path:'api/policy.md',publication:'one-head',source_hash:'ab'.repeat(32)},applied_file:{adapter_id:'markdown',effective_profile_digest:'cd'.repeat(32)},configured_collection_policy:{state:'unavailable',reason:'selected_scope'},published_collection_policy:{state:'unavailable',reason:'selected_scope'},pending_collection_reindex:null,
++        families:Array.from({length:18},(_,i)=>({family:`family-${i}`,support:'unknown',retention:'selected',reply_inclusion:'omitted'})),future_native_field:{complete:'keep-all-fields'}};
++    const envelope={status:'complete',executed:true,publication:'one-head',calls:1,steps:[{id:'info',tool:'file_info',status:'complete',result:{read:{status:'content'},content:{path:'api/policy.md',profile_families:report}}}],evidence:[]};
++    const f=fixture(true);
++    try{
++        f.respond(async tool=>({payload:tool==='airk_parse'?envelope:{}}));
++        await f.state.select(A);
++        await f.state.message({type:'run',input:'Inspect profile families',prepare:false,plan:{steps:[{id:'info',tool:'file_info',args:{path:'api/policy.md',include_profile_families:true}}]}});
++        const call=f.created.flatMap(client=>client.requests).find(call=>call.tool==='airk_parse'&&object(call.args.plan).steps);
++        assert.equal(object((object(call?.args.plan).steps as Value[])[0].args).include_profile_families,true);
++        const turn=f.state.session!.turns.at(-1)!;
++        assert.deepEqual(object(object((turn.envelope!.steps as Value[])[0].result).content).profile_families,report);
++        for(const type of ['copy','export'])for(const format of ['json','markdown'])await f.state.message({type,turn:turn.id,format});
++        assert.equal(f.exports.length,4);
++        for(const output of f.exports){assert.ok(output.includes('keep-all-fields'));assert.ok(output.includes('family-17'));assert.ok(output.includes('selected_scope'));}
++    }finally{f.provider.dispose();}
++});
+--- /dev/null
++++ b/packages/vscode/src/test/profileFamilies.test.ts
+@@ -0,0 +1,47 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Supplemental consumer checks; native transport producer parity is covered
++//! by airk-cli/tests/combined_reads/profile_families.rs, not inferred here.
++import {strict as assert} from 'node:assert';
++import {test} from 'node:test';
++import * as fs from 'node:fs/promises';
++import * as os from 'node:os';
++import * as path from 'node:path';
++import {object,toolFormArguments,toolFormFields,type WorkbenchTurn} from '../workbenchContracts';
++import {discoveryDetails,renderExport} from '../workbenchRender';
++import {newSession,SessionStore} from '../workbenchSessions';
++
++const families=['saved_identity','saved_text','lexical_candidates','vectors','declarations','imports','written_calls','framework_structure','manifest_packages_dependencies','requirements_design_decisions','headings_sections','standalone_dates_bounds','tables_rows','mapped_regions','declaration_continuity','document_unit_continuity','imported_assertions','ocr_text_facts'];
++function report(){return {schema:'airk.profile-families/1',basis:'metadata_only',file:{publication:'one-head',path:'src/a.rs',source_hash:'ab'.repeat(32)},applied_file:{adapter_id:'rust',adapter_version:'fixture',effective_profile_digest:'cd'.repeat(32),legacy_detail:'agent_lean'},configured_collection_policy:{state:'unavailable',reason:'selected_scope'},published_collection_policy:{state:'unavailable',reason:'selected_scope'},pending_collection_reindex:null,families:families.map(family=>({family,support:'unknown',retention:family==='manifest_packages_dependencies'?'not_retained':'selected',reply_inclusion:'omitted'})),future_native_field:{identity:'preserve opaque metadata'}};}
++function turn():WorkbenchTurn{return {id:'families',at:1,input:'/info src/a.rs --include-profile-families',format:'structured',request:{plan:{steps:[{id:'info',tool:'file_info',args:{path:'src/a.rs',include_profile_families:true}}]}},envelope:{status:'complete',executed:true,publication:'one-head',steps:[{id:'info',tool:'file_info',status:'complete',result:{read:{status:'content'},content:{path:'src/a.rs',profile_families:report()}}}],evidence:[{step:'info',text:'selected evidence',publication:'one-head',citation:{path:'src/a.rs',start_line:1,end_line:1,content_hash:'ab'.repeat(32)}}]}};}
++
++test('native-schema form keeps Default absent and explicit false/true typed',()=>{
++    const schema={type:'object',required:['path'],properties:{path:{type:'string'},include_profile_families:{type:'boolean',default:false,description:'Native metadata-only family report'}}};
++    const field=toolFormFields(schema).find(field=>field.name==='include_profile_families')!;
++    assert.equal(field.type,'boolean');assert.equal(field.required,false);assert.equal(field.defaultValue,false);
++    assert.deepEqual(toolFormArguments(schema,{path:'src/a.rs',include_profile_families:''}),{path:'src/a.rs'});
++    for(const choice of ['false','true'])assert.equal(toolFormArguments(schema,{path:'src/a.rs',include_profile_families:choice}).include_profile_families,choice==='true');
++    assert.throws(()=>toolFormArguments(schema,{path:'src/a.rs',include_profile_families:'yes'}));
++});
++test('structured details and full/selected JSON and Markdown preserve every family and unknown field',()=>{
++    const entry=turn(),session=newSession('ab'.repeat(32));session.turns=[entry];const original=structuredClone(entry.envelope);
++    assert.deepEqual(discoveryDetails(entry.envelope!)[0].profileFamilies,report());
++    for(const format of ['json','markdown'] as const)for(const selected of [undefined,['record-0']]){
++        const output=renderExport(session,format,entry.id,selected);
++        for(const family of families)assert.ok(output.includes(family));
++        assert.ok(output.includes('preserve opaque metadata'));assert.ok(output.includes('selected_scope'));assert.ok(output.includes('not_retained'));assert.ok(output.includes('omitted'));
++        if(format==='json'&&selected){const coverage=JSON.parse(output).turns[0].envelope.source_coverage;assert.deepEqual(coverage[0].profile_families,report());}
++    }
++    assert.deepEqual(entry.envelope,original);
++    const legacy=turn();delete object(object((legacy.envelope!.steps as Record<string,unknown>[])[0].result).content).profile_families;
++    assert.equal(discoveryDetails(legacy.envelope!)[0].profileFamilies,undefined);
++});
++test('actual session save/load preserves opt-in draft and full report without rebuilding it',async()=>{
++    const directory=await fs.mkdtemp(path.join(os.tmpdir(),'airk-family-session-'));
++    try{
++        const store=new SessionStore(directory),session=newSession('ab'.repeat(32));session.turns=[turn()];
++        session.formDraft={activeTool:'file_info',values:{file_info:{path:'src/a.rs',include_profile_families:'true'}},revision:1,scope:'',recipe:''};
++        await store.save(session,true);const restored=await store.load(session.project,session.id);
++        assert.deepEqual(restored.turns[0].envelope,session.turns[0].envelope);assert.deepEqual(restored.formDraft,session.formDraft);
++        for(const format of ['json','markdown'] as const)assert.ok(renderExport(restored,format).includes('preserve opaque metadata'));
++    }finally{await fs.rm(directory,{recursive:true,force:true});}
++});
+--- /dev/null
++++ b/docs/profile-family-reporting.md
+@@ -0,0 +1,101 @@
++# Per-file profile family reporting — P11a candidate
++
++This is the **unaccepted P11a candidate** in the unpublished 1.8.8 working build.
++It depends on sequential P10 acceptance. Implementation, native/CLI/MCP/Workbench
++parity and frozen qualification must pass before acceptance; the existence of
++this guide is not validation evidence. No new extraction profile is introduced.
++
++Opt in on the existing file-information read:
++
++```sh
++airk info src/example.rs --include-profile-families --verification off
++airk tools call airk_file_info --args '{"path":"src/example.rs","include_profile_families":true,"verification":"off"}'
++```
++
++MCP uses `include_profile_families: true` on `airk_file_info` or its public
++`file_info` alias. Workbench's File info form uses **Include effective profile
++families**: Default omits the input, No explicitly selects false, and Yes selects
++true. Default/false retain the old result shape and evidence validator. A report
++has its own conditional representation: a validator for old reduced FileInfo
++cannot suppress a newly requested report. Existing revision, hash, origin and
++follow-move checks still apply. Full/Terse response modes and Lean/Rich reply
++choices preserve the complete report;
++Rich does not recreate facts that were never retained.
++
++Reporting itself uses one authenticated current reader and the requested file's
++retained profile metadata. It does not reopen originals, rerun header selection,
++walk the corpus, extract content, load models or invoke producers. Existing
++[saved-source verification](source-verification.md) remains independent: the
++examples explicitly select Off to request metadata only. A family report is not
++a live-file equality, extraction-quality or completeness claim.
++
++## Independent identities and observations
++
++The report binds the exact file path, source hash and publication. Its applied
++file `effective_profile_digest` comes from that retained `ExtractionProfile`,
++including adapter ID/version and legacy detail. Configured/published collection
++`policy_digest` values have a different meaning and different identity framing.
++Saving a new collection policy does not reinterpret an old file profile.
++Configured effective per-file selection remains unknown when fresh source or
++header inputs would be required. Mixed indexes have no universal file adapter.
++
++Authorized partial Project scopes still receive the file report. Collection
++policy observations are explicitly `unavailable` with reason `selected_scope`;
++`pending_collection_reindex: null` means unknown, not false. Private policy bytes
++are not read in that branch. Real I/O/integrity failures retain normal errors.
++
++Each of the following eighteen families independently reports adapter support
++(`supported`, `unsupported`, `unknown`), retention eligibility (`retained`,
++`selected`, `not_retained`, `unknown`) and actual operation payload inclusion
++(`included`, `selected`, `omitted`, `unknown`):
++
++| Family | Qualification |
++| --- | --- |
++| Saved identity | Retained file/profile/native-source identity, not live equality |
++| Saved text | Eligibility does not promise complete extraction |
++| Lexical candidates | Written token candidates, not resolved references |
++| Vectors | Independent selection/model/pipeline metadata |
++| Declarations | Exact versioned adapter support |
++| Imports | Written imports, not universal resolution |
++| Written calls | Syntax candidates, not resolved call graphs |
++| Framework structure | Fine-family support can remain unknown |
++| Manifest packages/dependencies | Legacy Agent Lean omits native package kinds |
++| Requirements/design/decisions | Independent from standalone dates |
++| Headings/sections | Adapter and original-location limits remain |
++| Standalone dates/bounds | Legacy Agent Lean does not retain these kinds |
++| Tables/rows | Legacy Agent Lean retains eligible table kinds |
++| Mapped regions | Needs independent mapping metadata |
++| Declaration continuity | Legacy Balanced/Detailed policy remains distinct |
++| Document-unit continuity | Legacy Detailed eligibility differs from Balanced |
++| Imported assertions | Independent producer/build/source provenance |
++| OCR text/facts | Independent explicit OCR evidence and limitations |
++
++Zero matches cannot establish unsupported/not-retained status. Fine support
++without versioned registry evidence stays unknown; broad structural capability
++flags do not certify every family. FileInfo returns metadata/counts rather than
++the underlying facts/text/vectors, so those payload families are omitted even
++when eligible for retention. Saved-identity final renderer inclusion may remain
++unknown. A partial field selection is not a wholly omitted family.
++
++Missing historical profile detail keeps its existing Detailed meaning. Legacy
++Agent Lean, Balanced and Detailed profile IDs are preserved; Balanced declaration
++continuity is not Detailed document-unit continuity. OCR/model adapters and their
++dependencies, retained evidence and ranking remain unchanged.
++
++## Workbench details, copies and persistence
++
++Structured step details show the complete opaque native report, including unknown
++future fields. JSON/Markdown copies and exports preserve it; selected exports
++retain the qualifying metadata for their selected source steps and disclose the
++subset. Session restoration preserves the original envelope and opt-in form
++choice. Saved-result privacy settings may remove an entire result as documented;
++they do not silently rewrite family rows.
++
++Automatic Inspector/source-open/checker calls keep absent opt-in behavior. Use the
++Workbench File info form for this candidate report. Strategy conversion refuses
++unsupported native inputs and directs users to Save export rather than dropping
++the flag or reducing the result.
++
++These proposed checks supplement actual native transport tests; renderer mocks
++alone do not establish CLI/MCP/Workbench parity. Full qualification and manual
++acceptance remain pending in the [implementation ledger](research/implementation-v190.md).
+--- a/README.md
++++ b/README.md
+@@ -1,4 +1,6 @@
+ # AIRK: Local Search for Coding Agents
++
++P11a’s [per-file profile family reporting candidate](docs/profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P11a is **unaccepted**; sequential P10 acceptance and native/CLI/MCP/Workbench qualification remain prerequisites.
+ 
+ The unpublished **1.8.8 P10 candidate** implements [reviewed index splitting](docs/index-splitting.md): independent destination storage, inherited source restrictions, sealed build, reviewed Project cutover and exact recovery through cleanup and funding acknowledgment. P10 is **not accepted**: focused Windows component, hard-crash recovery, actual process/provider cutover and concurrent-query checks passed on their recorded development inputs. Final frozen release, Neo and full qualification gates remain pending. See the [dated evidence and limits](docs/research/implementation-v190.md#p10--isolated-candidate-and-focused-windows-evidence-5-november-2026).
+ 
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -1,4 +1,6 @@
+ # AIRK documentation
++
++P11a’s [per-file profile family reporting candidate](profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P11a is **unaccepted**; sequential P10 acceptance and native/CLI/MCP/Workbench qualification remain prerequisites.
+ 
+ [Permanent source exclusions](source-policy.md) describes P9's reviewed deny,
+ native enforcement, removal and separate cleanup observations. Windows workspace/
+--- a/packages/vscode/README.md
++++ b/packages/vscode/README.md
+@@ -1,4 +1,6 @@
+ # AIRK: Local Search for Coding Agents
++
++P11a’s [per-file profile family reporting candidate](https://github.com/iokaio/airk/blob/main/docs/profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P11a is **unaccepted**; sequential P10 acceptance and native/CLI/MCP/Workbench qualification remain prerequisites.
+ 
+ The unpublished **1.8.8 P10 candidate** implements [reviewed index splitting](https://github.com/iokaio/airk/blob/main/docs/index-splitting.md): independent destination storage, inherited source restrictions, sealed build, reviewed Project cutover and exact recovery through cleanup and funding acknowledgment. P10 is **not accepted**: focused Windows component, hard-crash recovery, actual process/provider cutover and concurrent-query checks passed on their recorded development inputs. Final frozen release, Neo and full qualification gates remain pending. See the [dated evidence and limits](https://github.com/iokaio/airk/blob/main/docs/research/implementation-v190.md#p10--isolated-candidate-and-focused-windows-evidence-5-november-2026).
+ 
+--- a/docs/releases/release-1.8.8.md
++++ b/docs/releases/release-1.8.8.md
+@@ -1,4 +1,6 @@
+ # AIRK 1.8.8 manual-test working build
++
++P11a’s [per-file profile family reporting candidate](../profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P11a is **unaccepted**; sequential P10 acceptance and native/CLI/MCP/Workbench qualification remain prerequisites.
+ 
+ P10's isolated [reviewed split candidate](../index-splitting.md) adds independent
+ partitions, sealed build, complete Project review and exact recovery through
+--- a/docs/reply-detail.md
++++ b/docs/reply-detail.md
+@@ -94,3 +94,7 @@
+ P2b independently adds [evidence guidance](evidence-guidance.md) when existing
+ metadata reports a limitation or an empty query. That optional metadata can grow
+ a reply; it does not change P2a's projection defaults or legacy evidence encoding.
++
++## P11a candidate: explicit per-file family metadata
++
++The unaccepted [family-reporting candidate](profile-family-reporting.md) uses `include_profile_families` on existing FileInfo reads. Default/false retain the old representation and validator. Workbench’s schema-driven File info form offers an explicit choice; complete native report metadata survives structured details, JSON/Markdown copies/exports and session restore. Reporting adds no source reads or profile migration; existing verification remains independent. Full qualification and sequential phase acceptance remain pending.
+--- a/docs/workbench/implementation.md
++++ b/docs/workbench/implementation.md
+@@ -151,3 +151,7 @@
+ ![Workbench results](images/workbench-1.7.1-results.png)
+ 
+ The [CLI, MCP and Workbench parity audit](../read-interface-parity.md) maps all read operations and records complete-data, observation, budget and export contracts for 1.8.7.
++
++## P11a candidate: explicit per-file family metadata
++
++The unaccepted [family-reporting candidate](../profile-family-reporting.md) uses `include_profile_families` on existing FileInfo reads. Default/false retain the old representation and validator. Workbench’s schema-driven File info form offers an explicit choice; complete native report metadata survives structured details, JSON/Markdown copies/exports and session restore. Reporting adds no source reads or profile migration; existing verification remains independent. Full qualification and sequential phase acceptance remain pending.

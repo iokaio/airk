@@ -1,0 +1,569 @@
+--- a/crates/airk-service/src/service_runtime/arbiter/lifecycle.rs
++++ b/crates/airk-service/src/service_runtime/arbiter/lifecycle.rs
+@@ -7,6 +7,9 @@
+ use airk_store::service::arbiter_assets::{AssetStore, Phase, PinnedAssets};
+ use airk_supervisor::project_supervisor::{ArbiterManagement, Supervisor};
+ use tokio_util::sync::CancellationToken;
++
++#[cfg(all(test, feature = "test-support"))]
++pub(in crate::service_runtime) mod acquisition_fixture;
+ 
+ pub(super) struct State {
+     serial: u64,
+--- a/crates/airk-service/src/service_runtime/arbiter/evaluation.rs
++++ b/crates/airk-service/src/service_runtime/arbiter/evaluation.rs
+@@ -197,6 +197,35 @@
+         transaction.finish()?;
+         Ok(EvaluationResult::new(()))
+     }
++    /// Native ignored regression only. The opaque owner supplies the SAME
++    /// private execution capability, lease and stage state as the live service.
++    #[cfg(test)]
++    pub(in crate::service_runtime) fn actual_acquisition_fixture(
++        &self,
++        manifest: Sha256Digest,
++        source: Option<&mut dyn FnMut(&Asset) -> Result<File>>,
++    ) -> Result<super::lifecycle::acquisition_fixture::AcquisitionFixture> {
++        let execution = self.owner.context.execution_profile(manifest)?;
++        ensure!(
++            execution.evaluation() && !execution.release_qualified(),
++            "actual acquisition regression requires an opaque private evaluation capability"
++        );
++        let profile = execution.description().clone();
++        let sources = if let Some(source) = source {
++            let mut files = std::collections::BTreeMap::new();
++            for asset in &profile.assets {
++                files.insert(asset.name.clone(), source(asset)?);
++            }
++            Some(files)
++        } else {
++            None
++        };
++        super::lifecycle::acquisition_fixture::AcquisitionFixture::capture(
++            &self.owner.context,
++            profile,
++            sources,
++        )
++    }
+     pub async fn manage(
+         &self,
+         request: ManagementRequest,
+--- a/crates/airk-service/src/service_runtime/evaluation_fixture_tests.rs
++++ b/crates/airk-service/src/service_runtime/evaluation_fixture_tests.rs
+@@ -17,6 +17,7 @@
+     path::PathBuf,
+ };
+ 
++mod acquisition;
+ mod execution_observer;
+ mod restart;
+ mod warm_journal;
+--- a/crates/airk-service/src/service_runtime/arbiter/assets/CONTRACT.md
++++ b/crates/airk-service/src/service_runtime/arbiter/assets/CONTRACT.md
+@@ -59,3 +59,31 @@
+ No fixed sleeps, retry, longer frame deadline or fabricated cleanup is allowed.
+ Actual loaded-model, ABI/resource, installed and platform evidence remains
+ separate from these ownership regressions.
++
++
++## Actual private Large storage/control regression
++
++The ignored `actual_large_finalization_and_cached_verification_keep_native_control_and_lease_custody`
++selector requires an explicit SHA-pinned current three-profile input and fresh
++protected work root. Its opaque same-lease EvaluationOwner selects only private
++Large storage work while both stages remain disabled. One genuine native
++AssetWriter publication copies the already sealed source descriptors; real
++Transaction::finish hashes the complete16GB closure. A same-owner restart then
++runs real AssetStore::pin over the resulting native custody. Neither operation
++loads a model, supplies URLs, changes qualification or admits public Provision
++or OfflineImport.
++
++Both actual Store calls run through the production joined owned-asset boundary.
++Observed channels gate entry after authentic service Health. The test requires
++actual I1 Health and Cancel complete while the real hash remains active, Cancel
++retain unfinished custody, and actual I1 Shutdown/service component exit plus
++exclusive ServiceLease reacquisition follow real worker return. The service's
++original30-second Draining cutoff is unchanged; timeout/refusal stays failed or
++unknown and cannot emit a successful closure. No detached worker, abort, process
++kill or fixed sleep supplies evidence. I1 Stopping is acceptance; this fixture
++has no managed installer and never claims durable ManagedStopComplete. Native
++test process exit is a separate external runner observation.
++
++This qualifies only the actual private storage/control boundary under its
++recorded inputs. Public source availability, release admission, inference and
++model resource/numerical qualification remain separate and may be blocked.
+--- a/crates/airk-service/src/service_runtime/evaluation_fixture_tests/CONTRACT.md
++++ b/crates/airk-service/src/service_runtime/evaluation_fixture_tests/CONTRACT.md
+@@ -27,3 +27,31 @@
+ original synthetic selector preserves its historical2048/30 Answer template.
+ Only the question is filled from this native emitter's fixed synthetic prompt;
+ no Python layer reconstructs or rewrites the request contract or model budget.
++
++
++## Actual private Large storage/control regression
++
++The ignored `actual_large_finalization_and_cached_verification_keep_native_control_and_lease_custody`
++selector requires an explicit SHA-pinned current three-profile input and fresh
++protected work root. Its opaque same-lease EvaluationOwner selects only private
++Large storage work while both stages remain disabled. One genuine native
++AssetWriter publication copies the already sealed source descriptors; real
++Transaction::finish hashes the complete16GB closure. A same-owner restart then
++runs real AssetStore::pin over the resulting native custody. Neither operation
++loads a model, supplies URLs, changes qualification or admits public Provision
++or OfflineImport.
++
++Both actual Store calls run through the production joined owned-asset boundary.
++Observed channels gate entry after authentic service Health. The test requires
++actual I1 Health and Cancel complete while the real hash remains active, Cancel
++retain unfinished custody, and actual I1 Shutdown/service component exit plus
++exclusive ServiceLease reacquisition follow real worker return. The service's
++original30-second Draining cutoff is unchanged; timeout/refusal stays failed or
++unknown and cannot emit a successful closure. No detached worker, abort, process
++kill or fixed sleep supplies evidence. I1 Stopping is acceptance; this fixture
++has no managed installer and never claims durable ManagedStopComplete. Native
++test process exit is a separate external runner observation.
++
++This qualifies only the actual private storage/control boundary under its
++recorded inputs. Public source availability, release admission, inference and
++model resource/numerical qualification remain separate and may be blocked.
+--- /dev/null
++++ b/crates/airk-service/src/service_runtime/arbiter/lifecycle/acquisition_fixture.rs
+@@ -0,0 +1,170 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Actual private asset work; no public acquisition or release authority.
++use super::*;
++use std::{
++    collections::BTreeMap,
++    fs::File,
++    io::{Read, Seek, SeekFrom, Write},
++    sync::atomic::{AtomicBool, Ordering},
++};
++use tokio::sync::oneshot;
++
++/// Captured only by an opaque EvaluationOwner retaining this actual lease/gate.
++pub(in crate::service_runtime) struct AcquisitionFixture {
++    store: Arc<AssetStore>,
++    configuration: Arc<airk_store::service::arbiter::ConfigurationStore>,
++    shared: Arc<Mutex<State>>,
++    profile: Profile,
++    expected: Configuration,
++    sources: Option<BTreeMap<String, File>>,
++}
++#[derive(serde::Serialize)]
++pub(in crate::service_runtime) struct Finished {
++    pub elapsed_us: u64,
++    pub original_cancellation_observed: bool,
++    pub io_succeeded: bool,
++    pub io_error: Option<String>,
++    pub actual_phase: Option<Phase>,
++}
++struct Active(Arc<AtomicBool>);
++impl Drop for Active {
++    fn drop(&mut self) {
++        self.0.store(false, Ordering::Release);
++    }
++}
++impl AcquisitionFixture {
++    pub(in crate::service_runtime::arbiter) fn capture(
++        stage: &StageOwner,
++        profile: Profile,
++        sources: Option<BTreeMap<String, File>>,
++    ) -> Result<Self> {
++        let expected = stage.configuration()?;
++        ensure!(
++            stage.stage == Stage::Context && !expected.context.enabled,
++            "actual acquisition fixture must keep Context disabled"
++        );
++        profile.validate_stage(Stage::Context)?;
++        ensure!(
++            profile.model == ModelChoice::ContextQwenLarge && profile.qualification.is_none(),
++            "actual acquisition fixture requires current private Large"
++        );
++        ensure!(
++            sources.is_some() || stage.assets.phase(&profile)? == Some(Phase::Ready),
++            "actual cached verification requires the original native Ready receipt"
++        );
++        if sources.is_some() {
++            ensure!(
++                stage.assets.phase(&profile)?.is_none(),
++                "actual finalization requires a fresh native asset transaction"
++            );
++        }
++        Ok(Self {
++            store: stage.assets.clone(),
++            configuration: stage.configuration.clone(),
++            shared: stage.lifecycle.clone(),
++            profile,
++            expected,
++            sources,
++        })
++    }
++    pub(in crate::service_runtime) async fn run(
++        self,
++        prepared: oneshot::Sender<()>,
++        release: oneshot::Receiver<()>,
++        entered: oneshot::Sender<()>,
++        finished: oneshot::Sender<Finished>,
++        active: Arc<AtomicBool>,
++    ) -> Result<()> {
++        let (serial, cancel) = start(&self.shared, self.profile.manifest, None)?;
++        let shared = self.shared.clone();
++        let result = super::super::assets::owned_asset_operation(async move {
++            current(&self.configuration, &self.expected, Stage::Context, &cancel)?;
++            let transaction = if let Some(mut sources) = self.sources {
++                phase(
++                    &self.shared,
++                    serial,
++                    Availability::Verifying,
++                    "Private actual asset publication; not release qualified.",
++                )?;
++                let transaction = self.store.begin(&self.profile, self.expected.revision)?;
++                let mut buffer = [0_u8; 65536];
++                for asset in &self.profile.assets {
++                    current(&self.configuration, &self.expected, Stage::Context, &cancel)?;
++                    let mut writer = transaction
++                        .asset(asset)?
++                        .context("fresh acquisition fixture reused a published object")?;
++                    let mut input = sources
++                        .remove(&asset.name)
++                        .context("private source descriptor missing")?;
++                    ensure!(
++                        input.metadata()?.is_file() && input.metadata()?.len() == asset.bytes,
++                        "private source length differs"
++                    );
++                    input.seek(SeekFrom::Start(0))?;
++                    let mut remaining = asset.bytes;
++                    while remaining > 0 {
++                        current(&self.configuration, &self.expected, Stage::Context, &cancel)?;
++                        let limit = usize::try_from(remaining.min(buffer.len() as u64))?;
++                        let read = input.read(&mut buffer[..limit])?;
++                        ensure!(read > 0, "private source shortened");
++                        writer.write_all(&buffer[..read])?;
++                        remaining -= u64::try_from(read)?;
++                    }
++                    let mut extra = [0_u8; 1];
++                    ensure!(
++                        input.read(&mut extra)? == 0 && input.metadata()?.len() == asset.bytes,
++                        "private source changed"
++                    );
++                    transaction.publish(writer)?;
++                }
++                ensure!(
++                    sources.is_empty(),
++                    "private source roster has extra objects"
++                );
++                Some(transaction)
++            } else {
++                None
++            };
++            prepared
++                .send(())
++                .map_err(|_| anyhow::anyhow!("actual acquisition preparation observer closed"))?;
++            release
++                .await
++                .context("actual acquisition entry gate closed")?;
++            current(&self.configuration, &self.expected, Stage::Context, &cancel)?;
++            active.store(true, Ordering::Release);
++            let active_guard = Active(active);
++            entered
++                .send(())
++                .map_err(|_| anyhow::anyhow!("actual acquisition entry observer closed"))?;
++            // No await or simulated delay lies between the entry event and the
++            // actual complete 16GB Store hash. The caller observes real I1 Health
++            // while Active remains true, then the actual native return event.
++            let began = Instant::now();
++            let io_result = match transaction {
++                Some(transaction) => transaction.finish(),
++                None => self.store.pin(&self.profile).map(drop),
++            };
++            let elapsed_us = u64::try_from(began.elapsed().as_micros())?;
++            drop(active_guard);
++            let actual_phase = self.store.phase(&self.profile)?;
++            let observation = Finished {
++                elapsed_us,
++                original_cancellation_observed: cancel.is_cancelled(),
++                io_succeeded: io_result.is_ok(),
++                io_error: io_result.as_ref().err().map(|error| format!("{error:#}")),
++                actual_phase,
++            };
++            finished
++                .send(observation)
++                .map_err(|_| anyhow::anyhow!("actual acquisition return observer closed"))?;
++            io_result?;
++            // Storage can become Ready after a cancellation during its synchronous
++            // hash. That authentic storage result never authorizes activation.
++            current(&self.configuration, &self.expected, Stage::Context, &cancel)
++        })
++        .await;
++        complete(&shared, serial, &result);
++        result
++    }
++}
+--- /dev/null
++++ b/crates/airk-service/src/service_runtime/evaluation_fixture_tests/acquisition.rs
+@@ -0,0 +1,265 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Private real-data Store finalization/cache verification and actual I1 controls.
++use super::*;
++use std::sync::{
++    Arc,
++    atomic::{AtomicBool, Ordering},
++};
++
++async fn control(
++    control: &Path,
++    instance: Option<airk_core::identity::Incarnation>,
++    method: ControlMethod,
++    work: &Path,
++    label: &str,
++) -> Result<ControlResponse> {
++    write(work, &format!("{label}-request.json"), &method)?;
++    // The actual owning IPC adapter supplies its original operation/transport
++    // deadlines. No fixture timeout replaces or refreshes those deadlines.
++    let result =
++        crate::ipc::control::request_once(control, method, env!("CARGO_PKG_VERSION"), instance)
++            .await;
++    match &result {
++        Ok(response) => write(work, &format!("{label}-response.json"), response)?,
++        Err(error) => write(
++            work,
++            &format!("{label}-error.json"),
++            &serde_json::json!({"error":format!("{error:#}")}),
++        )?,
++    }
++    result
++}
++
++#[tokio::test(flavor = "current_thread")]
++#[ignore = "actual current private Large assets, fresh protected work root and exclusive Root-owned disk/CPU window; NN0"]
++async fn actual_large_finalization_and_cached_verification_keep_native_control_and_lease_custody()
++-> Result<()> {
++    let input = PathBuf::from(
++        std::env::var_os("AIRK_ACTUAL_ACQUISITION_INPUTS")
++            .context("AIRK_ACTUAL_ACQUISITION_INPUTS missing")?,
++    );
++    let expected: Sha256Digest = std::env::var("AIRK_ACTUAL_ACQUISITION_INPUTS_SHA256")?.parse()?;
++    let original = PathBuf::from(
++        std::env::var_os("AIRK_ACTUAL_ACQUISITION_WORK")
++            .context("AIRK_ACTUAL_ACQUISITION_WORK missing")?,
++    );
++    ensure!(
++        original.is_absolute() && !original.try_exists()?,
++        "actual acquisition work must be fresh and absolute"
++    );
++    let parent = original
++        .parent()
++        .context("work parent missing")?
++        .canonicalize()?;
++    let parent_pin = OpenedDirectory::open(&parent)?;
++    let work = parent.join(original.file_name().context("work name missing")?);
++    let work_pin = crate::ipc::endpoint::create_root_at(
++        &parent_pin,
++        original.file_name().context("work name missing")?,
++    )?;
++    let _control_pin = crate::ipc::endpoint::create_root_at(&work_pin, OsStr::new("control"))?;
++    let control_root = work.join("control");
++    let (inputs, prepared) = prepare(&input, expected)?;
++    write(
++        &work,
++        "inputs.json",
++        &serde_json::from_slice::<serde_json::Value>(&inputs)?,
++    )?;
++    let prepared = Arc::new(prepared);
++    let large = prepared
++        .iter()
++        .find(|item| item.profile.model == ModelChoice::ContextQwenLarge)
++        .context("current Large absent")?;
++    ensure!(
++        large
++            .profile
++            .assets
++            .iter()
++            .any(|asset| asset.name == "model.onnx.data" && asset.bytes >= 16_000_000_000),
++        "actual Large closure was replaced by a small fixture"
++    );
++    write(&work, "actual-profile.json", &large.profile)?;
++    let manifest = large.profile.manifest;
++    let lease = airk_store::service::ServiceLease::acquire(&control_root)?;
++    drop(first_start::ensure_catalog(lease)?);
++    let mut saved: Option<airk_core::arbiter::Configuration> = None;
++    for (ordinal, finalize) in [true, false].into_iter().enumerate() {
++        let phase_name = if finalize { "finalize" } else { "cached-pin" };
++        let phase_root = work.join(phase_name);
++        let _phase_pin = crate::ipc::endpoint::create_root_at(&work_pin, OsStr::new(phase_name))?;
++        let source = prepared.clone();
++        let prior = saved.clone();
++        let restart_configuration = prior.clone();
++        let (captured, ready) = tokio::sync::oneshot::channel();
++        let factory: EvaluationFactory = Box::new(move |lease, gate| {
++            let owner = if let Some(configuration) = &prior {
++                EvaluationOwner::reopen_same_configuration(
++                    lease,
++                    gate,
++                    source.iter().map(|entry| entry.profile.clone()).collect(),
++                    configuration,
++                )?
++            } else {
++                EvaluationOwner::new(
++                    lease,
++                    gate,
++                    source.iter().map(|entry| entry.profile.clone()).collect(),
++                )?
++            };
++            let configuration = owner.configuration()?.into_result();
++            let large = source
++                .iter()
++                .find(|entry| entry.profile.manifest == manifest)
++                .context("Large manifest changed")?;
++            let mut descriptors = |asset: &airk_core::arbiter::Asset| -> Result<File> {
++                large
++                    .sources
++                    .get(&asset.name)
++                    .context("retained original source descriptor missing")?
++                    .try_clone()
++                    .map_err(Into::into)
++            };
++            let operation = owner.actual_acquisition_fixture(
++                manifest,
++                if finalize {
++                    Some(&mut descriptors)
++                } else {
++                    None
++                },
++            )?;
++            captured
++                .send((operation, configuration))
++                .map_err(|_| anyhow::anyhow!("actual acquisition fixture observer closed"))?;
++            Ok(owner)
++        });
++        let root = control_root.clone();
++        let mut service = tokio::spawn(async move {
++            if let Some(configuration) = restart_configuration {
++                let guard: EvaluationStartupGuard = Box::new(move |lease| {
++                    EvaluationOwner::verify_restart_settled(lease)?;
++                    let store = airk_store::service::arbiter::ConfigurationStore::open(
++                        lease.clone(),
++                        configuration.installation,
++                        configuration.catalog,
++                    )?;
++                    ensure!(
++                        store.load()? == configuration,
++                        "actual acquisition restart configuration changed"
++                    );
++                    Ok(())
++                });
++                serve_restarted_evaluation_fixture(&root, factory, guard).await
++            } else {
++                serve_evaluation_fixture(&root, factory).await
++            }
++        });
++        let mut observed_exit = false;
++        let mut shutdown_dispatched = false;
++        let mut instance = None;
++        let mut worker = None;
++        let mut release = None;
++        let mut retained = serde_json::json!({"evaluation":true,"release_qualified":false,"phase":phase_name,"ordinal":ordinal,"passed":false,"native_process_id":std::process::id(),"managed_stop_complete_claimed":false,"service_component_exited":false});
++        let outcome: Result<()> = async {
++            let (operation, configuration) = tokio::select! {
++                value=ready=>value.context("actual acquisition factory closed")?,
++                value=&mut service=>{observed_exit=true;value??;bail!("service exited before acquisition factory")},
++            };
++            saved = Some(configuration.clone());
++            let health = control(&control_root, None, ControlMethod::Health, &phase_root, "health-before").await?;
++            let ControlResponse::Health { observation } = health else { bail!("actual Health refused") };
++            ensure!(observation.version == env!("CARGO_PKG_VERSION") && observation.user == local_ipc::current_user()? && observation.process_id == std::process::id() && observation.executable_sha256 == airk_host::runtime_pair::current_executable_sha256()?, "actual Health differs from native test process");
++            ensure!(observation.catalog_clock.is_some_and(|clock|clock.namespace==configuration.catalog), "actual catalog differs");
++            instance = Some(observation.instance);
++            let active = Arc::new(AtomicBool::new(false));
++            let (prepared_tx, prepared_rx) = tokio::sync::oneshot::channel();
++            let (release_tx, release_rx) = tokio::sync::oneshot::channel();
++            let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
++            let (finished_tx, finished_rx) = tokio::sync::oneshot::channel();
++            release = Some(release_tx);
++            worker = Some(tokio::spawn(operation.run(prepared_tx,release_rx,entered_tx,finished_tx,active.clone())));
++            // Fixture preparation has one original 900s bound; no HTTP/model
++            // allowance is changed. After expiry we still join actual work.
++            let preparation_deadline = tokio::time::Instant::now() + Duration::from_secs(900);
++            tokio::time::timeout_at(preparation_deadline, prepared_rx).await.context("actual preparation exceeded original fixture bound")??;
++            release.take().context("entry gate missing")?.send(()).map_err(|_|anyhow::anyhow!("actual worker closed before entry"))?;
++            entered_rx.await.context("actual hash entry absent")?;
++            let began = Instant::now();
++            let reply = control(&control_root, instance, ControlMethod::Health, &phase_root, "health-during").await?;
++            ensure!(matches!(reply, ControlResponse::Health { .. }) && active.load(Ordering::Acquire), "actual Health did not complete during full Store hashing");
++            retained["health_overlap_elapsed_us"] = u64::try_from(began.elapsed().as_micros())?.into();
++            ensure!(airk_store::service::ServiceLease::acquire(&control_root).is_err(), "actual lease escaped during hashing");
++            let canceled = control(&control_root, instance, ControlMethod::Arbiter { request:airk_core::arbiter::ManagementRequest::Cancel { expected_revision:configuration.revision,stage:airk_core::arbiter::Stage::Context } }, &phase_root, "cancel-during").await?;
++            ensure!(matches!(canceled, ControlResponse::Arbiter { .. }) && active.load(Ordering::Acquire), "actual cancellation did not overlap real native hashing");
++            ensure!(!worker.as_ref().context("worker missing")?.is_finished(), "Cancel fabricated worker settlement");
++            ensure!(airk_store::service::ServiceLease::acquire(&control_root).is_err(), "Cancel released actual lease");
++            // Native service Draining captures its existing absolute30s cutoff.
++            // Stopping is request acceptance, never ManagedStopComplete.
++            shutdown_dispatched = true;
++            let shutdown_began = Instant::now();
++            let stopped = control(&control_root, instance, ControlMethod::Shutdown, &phase_root, "shutdown-during").await?;
++            ensure!(matches!(stopped, ControlResponse::Stopping), "actual Shutdown refused");
++            let finished = finished_rx.await.context("actual full Store return absent")?;
++            write(&phase_root,"actual-store-return.json",&finished)?;
++            ensure!(finished.io_succeeded && finished.original_cancellation_observed && finished.actual_phase == Some(airk_store::service::arbiter_assets::Phase::Ready), "actual Store verification failed");
++            let joined = worker.take().context("worker missing")?.await?;
++            let canceled = joined.err().context("canceled acquisition could activate after full hash")?;
++            ensure!(canceled.to_string() == "Arbiter operation canceled", "worker failed for another reason instead of original cancellation: {canceled:#}");
++            retained["actual_worker_joined"] = true.into();
++            let exit = (&mut service).await;
++            observed_exit = true;
++            exit??;
++            retained["service_component_exited"] = true.into();
++            retained["shutdown_observation_elapsed_us"] = u64::try_from(shutdown_began.elapsed().as_micros())?.into();
++            let lease = airk_store::service::ServiceLease::acquire(&control_root)?;
++            drop(lease);
++            retained["service_lease_reacquired"] = true.into();
++            retained["passed"] = true.into();
++            Ok(())
++        }.await;
++        // Preserve actual custody on every failure. No abort, kill, detached
++        // blocking hash or manufactured durable lifecycle completion is allowed.
++        if let Some(gate) = release.take() {
++            let _ = gate.send(());
++        }
++        if outcome.is_err() && !shutdown_dispatched && !observed_exit {
++            let _ = control(
++                &control_root,
++                instance,
++                ControlMethod::Shutdown,
++                &phase_root,
++                "failure-shutdown",
++            )
++            .await;
++        }
++        if let Some(work) = worker.take() {
++            let result = work.await;
++            retained["worker_join_after_failure"] = match result {
++                Ok(Ok(())) => serde_json::json!({"joined":true,"operation_succeeded":true}),
++                Ok(Err(error)) => {
++                    serde_json::json!({"joined":true,"operation_succeeded":false,"error":format!("{error:#}")})
++                }
++                Err(error) => serde_json::json!({"joined":true,"task_error":error.to_string()}),
++            };
++        }
++        if !observed_exit {
++            let exit = (&mut service).await;
++            retained["service_component_exit_after_failure"] =
++                serde_json::json!({"joined":true,"success":matches!(exit,Ok(Ok(())))});
++        }
++        if let Err(error) = &outcome {
++            retained["error"] = format!("{error:#}").into();
++            retained["lease_reacquisition_after_failed_outcome"] =
++                airk_store::service::ServiceLease::acquire(&control_root)
++                    .is_ok()
++                    .into();
++        }
++        write(&phase_root, "result.json", &retained)?;
++        outcome?;
++    }
++    write(
++        &work,
++        "complete.json",
++        &serde_json::json!({"evaluation":true,"release_qualified":false,"phases":2,"fresh_large_copies":1,"no_model_operation_request_dispatched":true,"model_forward_invocations_observed":null,"service_component_exit_and_lease_reacquisition":true,"managed_stop_complete_claimed":false,"native_process_exit_requires_external_runner_observation":true}),
++    )?;
++    Ok(())
++}

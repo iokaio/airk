@@ -1,0 +1,87 @@
+{
+  "schema": "airk.upstream-tool-archives/1",
+  "archives": [
+    {
+      "name": "cmake-3.31.6",
+      "format": "zip",
+      "repository": "Kitware/CMake",
+      "revision": "v3.31.6",
+      "archive": {
+        "path": "artifacts/advanced-split/ort130-x64/tools/downloads/cmake-3.31.6-windows-x86_64.zip",
+        "sha256": "d163cd3ab4959b0a53fa8988f2ddbd2e6c501658201e6a154386bad9dbe4f836",
+        "bytes": 46473549
+      },
+      "authority": {
+        "path": "scripts/static-onnx-tools-lock.json",
+        "sha256": "d3e3492574fabc58c81371a2197e4b18f76276072bce84b76715bc1972f31b8f",
+        "bytes": 1748
+      },
+      "authority_selector": [
+        "cmake",
+        "Windows",
+        "sha256"
+      ],
+      "archive_prefix": "cmake-3.31.6-windows-x86_64/",
+      "roots": [
+        "artifacts/advanced-split/ort130-x64/tools/cmake",
+        "artifacts/advanced-split/ort130-x64-owned-r1/tools/cmake",
+        "artifacts/advanced-split/ort130-x64-owned-r2/tools/cmake",
+        "artifacts/advanced-split/ort130-x64-owned-r3/tools/cmake",
+        "artifacts/advanced-split/ort130-x64-owned-r4/tools/cmake"
+      ]
+    },
+    {
+      "name": "ninja-1.12.1",
+      "format": "tar.gz",
+      "repository": "ninja-build/ninja",
+      "revision": "2daa09ba270b0a43e1929d29b073348aa985dfaa",
+      "archive": {
+        "path": "artifacts/advanced-split/ort130-x64/tools/downloads/ninja-source.tar.gz",
+        "sha256": "373bb33a8db2769b825a771e5d25b11d79ef5e41a934b870487257c27b187180",
+        "bytes": 240689
+      },
+      "authority": {
+        "path": "scripts/static-onnx-tools-lock.json",
+        "sha256": "d3e3492574fabc58c81371a2197e4b18f76276072bce84b76715bc1972f31b8f",
+        "bytes": 1748
+      },
+      "authority_selector": [
+        "ninja",
+        "sha256"
+      ],
+      "archive_prefix": "ninja-2daa09ba270b0a43e1929d29b073348aa985dfaa/",
+      "roots": [
+        "artifacts/advanced-split/ort130-x64/tools/ninja-source",
+        "artifacts/advanced-split/ort130-x64-owned-r1/tools/ninja-source",
+        "artifacts/advanced-split/ort130-x64-owned-r2/tools/ninja-source",
+        "artifacts/advanced-split/ort130-x64-owned-r3/tools/ninja-source",
+        "artifacts/advanced-split/ort130-x64-owned-r4/tools/ninja-source"
+      ]
+    },
+    {
+      "name": "vscode-1.145.0",
+      "format": "zip",
+      "repository": "microsoft/vscode",
+      "revision": "a717861c07586a53d83b80d742cd3f59b20a6273",
+      "archive": {
+        "path": "artifacts/tools/vscode-1.145.0-a717-r1/official.zip",
+        "sha256": "79cf4cc5b17357cc64abdd22a2d7d4884d05f07b3f0defbf5fc0d67fe03d9dc4",
+        "bytes": 368900951
+      },
+      "authority": {
+        "path": "artifacts/tools/vscode-1.145.0-a717-r1/official-metadata.json",
+        "sha256": "5cad2c6d6662cf46f13f73f006ba6b1262cd15cd887a0d8f3a826447a8ec5a34",
+        "bytes": 425
+      },
+      "authority_selector": [
+        "sha256hash"
+      ],
+      "archive_prefix": "",
+      "roots": [
+        "artifacts/tools/vscode-1.145.0-a717-r1/runtime",
+        "artifacts/tools/vscode-1.145.0-a717-r2/runtime"
+      ],
+      "askpass_member_prefix": "a717861c07/resources/app/extensions/git/dist/"
+    }
+  ]
+}

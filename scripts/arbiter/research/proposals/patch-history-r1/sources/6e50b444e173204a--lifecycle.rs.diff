@@ -1,0 +1,91 @@
+--- crates/airk-service/src/service_runtime/arbiter/lifecycle.rs
++++ crates/airk-service/src/service_runtime/arbiter/lifecycle.rs
+@@ -18,7 +18,7 @@
+     cancel: CancellationToken,
+     handle: Option<Handle>,
+     pending: Option<PreparedLaunch>,
+-    #[cfg(feature = "test-support")]
++    #[cfg(all(test, feature = "test-support"))]
+     warm_observer: Option<super::warm_observer::Observer>,
+ }
+ impl Default for State {
+@@ -33,7 +33,7 @@
+             cancel: CancellationToken::new(),
+             handle: None,
+             pending: None,
+-            #[cfg(feature = "test-support")]
++            #[cfg(all(test, feature = "test-support"))]
+             warm_observer: None,
+         }
+     }
+@@ -282,7 +282,7 @@
+     source: Box<dyn airk_retrieval::arbiter::runtime::AssetSource + Send>,
+     context: WarmContext<'_>,
+ ) -> Result<()> {
+-    #[cfg(feature = "test-support")]
++    #[cfg(all(test, feature = "test-support"))]
+     let mut observation = WarmCapture::capture(&context, profile.description().manifest);
+     let result = async {
+     let WarmContext {
+@@ -324,7 +324,7 @@
+             state.handle = Some(handle.clone());
+             drop(state);
+             admitted_current(configuration, expected, stage, cancel, admission)?;
+-            #[cfg(feature = "test-support")]
++            #[cfg(all(test, feature = "test-support"))]
+             if let Some(observation) = observation.as_mut() {
+                 observation.activation_path = super::warm_observer::ActivationPath::RetainedResident;
+                 observation.native_profile = retained_observation.active_profile;
+@@ -404,14 +404,14 @@
+     )?;
+     admitted_current(configuration, expected, stage, cancel, admission)?;
+     let receiver = handle.warm(profile, source, reservation)?;
+-    #[cfg(feature = "test-support")]
++    #[cfg(all(test, feature = "test-support"))]
+     if let Some(observation) = observation.as_mut() { observation.activation_path = super::warm_observer::ActivationPath::NativeWarmAdmitted; }
+     let result=async {
+         tokio::select!{biased;_ = cancel.cancelled()=>anyhow::bail!("Arbiter warm canceled"),value=receiver=>value.context("Arbiter warm delivery closed")??};
+         admitted_current(configuration,expected,stage,cancel,admission)?;
+         ensure!(configuration.load()? == *expected,"Native warm configuration changed before activation");
+         let observed=handle.observation_for(stage)?;
+-        #[cfg(feature = "test-support")]
++        #[cfg(all(test, feature = "test-support"))]
+         if let Some(observation) = observation.as_mut() {
+             observation.native_profile=observed.active_profile;
+             observation.native_revision=observed.configuration_revision;
+@@ -445,7 +445,7 @@
+     }
+     Ok(())
+     }.await;
+-    #[cfg(feature = "test-support")]
++    #[cfg(all(test, feature = "test-support"))]
+     if let Some(observation) = observation {
+         observation.finish(&result);
+     }
+@@ -2173,7 +2173,7 @@
+     }
+ }
+ 
+-#[cfg(feature = "test-support")]
++#[cfg(all(test, feature = "test-support"))]
+ pub(super) fn observe_warm(
+     shared: &Arc<Mutex<State>>,
+     observer: super::warm_observer::Observer,
+@@ -2184,7 +2184,7 @@
+         .warm_observer = Some(observer);
+     Ok(())
+ }
+-#[cfg(feature = "test-support")]
++#[cfg(all(test, feature = "test-support"))]
+ struct WarmCapture {
+     observer: super::warm_observer::Observer,
+     stage: Stage,
+@@ -2199,7 +2199,7 @@
+     captured_configure_revision: u64,
+     _guard: super::warm_observer::Guard,
+ }
+-#[cfg(feature = "test-support")]
++#[cfg(all(test, feature = "test-support"))]
+ impl WarmCapture {
+     fn capture(context: &WarmContext<'_>, manifest: Sha256Digest) -> Option<Self> {
+         let state = context.shared.lock().ok()?;

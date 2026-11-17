@@ -1,0 +1,947 @@
+--- a/crates/airk-store/src/service_collection_integrity.rs
++++ b/crates/airk-store/src/service_collection_integrity.rs
+@@ -58,6 +58,10 @@
+     pub known_damage: Vec<KnownDamage>,
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub verify: Option<verify::VerifyProgress>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub(crate) verify_recovery: Option<verify::RecoveryContext>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub verify_history: Option<verify::VerifyHistory>,
+ }
+ 
+ pub(super) fn owned_scratch(path: &Path, owner: Sha256Digest) -> bool {
+@@ -227,6 +231,12 @@
+         );
+         let previous = self.load(namespace)?;
+         let verify = previous.as_ref().and_then(|value| value.verify.clone());
++        let verify_recovery = previous
++            .as_ref()
++            .and_then(|value| value.verify_recovery.clone());
++        let verify_history = previous
++            .as_ref()
++            .and_then(|value| value.verify_history.clone());
+         let mut known_damage = previous.map_or_else(Vec::new, |value| value.known_damage);
+         if let Some(damage) = damage {
+             if !known_damage.iter().any(|old| {
+@@ -250,6 +260,8 @@
+             physical_audit: PhysicalAudit::Unknown,
+             privacy,
+             verify,
++            verify_recovery,
++            verify_history,
+         };
+         // Same lease/root fence immediately before durable metadata publication.
+         ensure!(
+--- a/crates/airk-store/src/service_collection_native_owner.rs
++++ b/crates/airk-store/src/service_collection_native_owner.rs
+@@ -93,6 +93,9 @@
+ }
+ impl IntegrityOwner<'_> {
+     fn locked_native(&self) -> Result<LockedPublication> {
++        self.locked_native_inner(false)
++    }
++    fn locked_native_inner(&self, recovery: bool) -> Result<LockedPublication> {
+         self.check()?;
+         let preliminary = self.collection.select_existing_locked()?;
+         let directory = preliminary.store.directory().canonicalize()?;
+@@ -119,7 +122,7 @@
+                 && head.scope.collection == self.collection.owner.collection,
+             "foreign native selected scope"
+         );
+-        self.native_no_damage(&head)?;
++        self.native_no_damage(&head, recovery)?;
+         Ok(LockedPublication {
+             _selection: selection,
+             _writer: writer,
+@@ -128,7 +131,7 @@
+             head,
+         })
+     }
+-    fn native_no_damage(&self, head: &CurrentHead) -> Result<()> {
++    fn native_no_damage(&self, head: &CurrentHead, recovery: bool) -> Result<()> {
+         let fence = self.check()?;
+         ensure!(
+             !self.bound.native_integrity_revoked(),
+@@ -153,10 +156,11 @@
+             "native collection has durable known damage"
+         );
+         ensure!(
+-            !matches!(
+-                self.registry.integrity_audit_state(self.lease)?,
+-                IntegrityAuditState::Unresolved { .. }
+-            ),
++            recovery
++                || !matches!(
++                    self.registry.integrity_audit_state(self.lease)?,
++                    IntegrityAuditState::Unresolved { .. }
++                ),
+             "native collection audit is unresolved"
+         );
+         Ok(())
+@@ -260,7 +264,7 @@
+         bound: &BoundDataRoot,
+         identity: WorkerIdentity,
+         job: Sha256Digest,
+-        proof: &super::verify::AuditCompletionProof,
++        proof: &super::verify::EnabledComponentAuditProof,
+     ) -> Result<()> {
+         let owner = self.integrity_owner(registry, lease, bound)?;
+         let fence = owner.check()?;
+@@ -270,9 +274,13 @@
+                 && identity.fencing_generation == fence.1,
+             "foreign native recovery owner"
+         );
+-        let locked = owner.locked_native()?;
+-        ensure!(
+-            proof.exact_head() == &locked.head,
++        let locked = owner.locked_native_inner(true)?;
++        ensure!(
++            proof.epoch().worker == identity.worker
++                && proof.epoch().worker_epoch == fence.1
++                && proof.epoch().root == digest(b"native-root/1", &locked.root.id()?)?
++                && proof.epoch().selected == digest(b"native-selected/1", &locked.selected.id()?)?
++                && proof.exact_head() == &locked.head,
+             "native recovery physical components changed"
+         );
+         let previous = registry
+@@ -342,3 +350,41 @@
+         Ok(())
+     }
+ }
++
++impl Collection {
++    pub fn begin_native_recovery(
++        &self,
++        registry: &ServiceRegistry,
++        lease: &ProjectLease,
++        bound: &BoundDataRoot,
++        identity: WorkerIdentity,
++        job: Sha256Digest,
++    ) -> Result<super::verify::RecoveryEpoch> {
++        let owner = self.integrity_owner(registry, lease, bound)?;
++        let fence = owner.check()?;
++        ensure!(
++            identity.service == fence.0
++                && identity.project == lease.identity().0
++                && identity.fencing_generation == fence.1,
++            "foreign native recovery owner"
++        );
++        let locked = owner.locked_native_inner(true)?;
++        let previous = registry
++            .load_owner_session(lease)?
++            .context("exceptional owner session missing")?;
++        let context = super::verify::RecoveryContext {
++            namespace: fence.0,
++            project: identity.project,
++            worker: identity.worker,
++            worker_epoch: fence.1,
++            job,
++            inherited: digest(b"native-recovery-owner/1", &previous.0)?,
++            head: locked.head.token()?,
++            root: digest(b"native-root/1", &locked.root.id()?)?,
++            selected: digest(b"native-selected/1", &locked.selected.id()?)?,
++            profile: super::verify::NATIVE_RECOVERY_PROFILE,
++        };
++        registry.require_recovery_epoch(lease, &context)?;
++        Ok(super::verify::RecoveryEpoch { context })
++    }
++}
+--- a/crates/airk-store/src/service_collection_tests.rs
++++ b/crates/airk-store/src/service_collection_tests.rs
+@@ -1931,22 +1931,30 @@
+         let read = store.current_read(&scope)?;
+         owner.anchor(&read)?;
+         drop(read);
++        let recovery_epoch =
++            collection.begin_native_recovery(&registry, &lease, &bound, identity, job.id)?;
+         let mut writer = store.lock()?;
+-        let turn = owner.verify_turn(&mut writer, job.id, 32, 64 << 20, 200, || Ok(()))?;
+-        turn.completed
+-            .context("actual full physical completion missing")?
++        let turn =
++            owner
++                .verify_recovery_turn(&mut writer, &recovery_epoch, 32, 64 << 20, 200, || Ok(()))?;
++        (
++            turn.completed
++                .context("actual full physical completion missing")?,
++            turn.recovery_completed
++                .context("actual fresh recovery coverage missing")?,
++        )
+     };
+     registry.complete_job_with_maintenance_and_audit_at(
+         &lease,
+         job.id,
+         JobOutcome::Succeeded {
+-            revision: Some(proof.revision()?),
++            revision: Some(proof.0.revision()?),
+         },
+         300,
+         None,
+-        Some(AuditEvidence::Complete(&proof)),
+-    )?;
+-    collection.recover_native_owner(&mut registry, &lease, &bound, identity, job.id, &proof)?;
++        Some(AuditEvidence::Complete(&proof.0)),
++    )?;
++    collection.recover_native_owner(&mut registry, &lease, &bound, identity, job.id, &proof.1)?;
+     let owner = collection.arm_native_owner(&mut registry, lease, &bound, identity)?;
+     owner.settle_after_owned_drain(&mut registry)?;
+     Ok(())
+@@ -2138,3 +2146,424 @@
+     );
+     Ok(())
+ }
++#[cfg(windows)]
++#[test]
++fn recovery_epoch_rechecks_behind_cursor_after_both_damage_stores_failed() -> Result<()> {
++    use crate::service::{data_scope, registry::ServiceRegistry};
++    use airk_core::service::{JobKind, RequestKey, WorkerIdentity};
++    let (temporary, collection, mut registry, bound, lease, store, scope) = integrity_fixture()?;
++    let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
++    {
++        let writer = store.lock()?;
++        for (path, text) in [("a.txt", "first checked source"), ("b.txt", "later source")] {
++            let input = audit_retained_input(&store, &writer, &quota, &scope, path, text)?;
++            let mut current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
++            let token = current.head()?.token()?;
++            current.commit_artifact(&token, path, Some(&input))?;
++        }
++    }
++    let lease = std::sync::Arc::new(lease);
++    let identity = WorkerIdentity {
++        service: registry.incarnation()?,
++        project: lease.identity().0,
++        worker: Incarnation::from_bytes([111; 16]),
++        fencing_generation: lease.identity().1.context("worker epoch")?,
++    };
++    drop(collection.arm_native_owner(&mut registry, lease.clone(), &bound, identity)?);
++    let (namespace, epoch) = registry.saved_request_epoch()?;
++    let job = registry.enqueue(
++        identity.project,
++        namespace,
++        &RequestKey {
++            namespace,
++            epoch,
++            nonce: Incarnation::from_bytes([112; 16]),
++        },
++        JobKind::Verify,
++    )?;
++    registry
++        .claim_job_id(&lease, job.id)?
++        .context("audit claim")?;
++    let historical = {
++        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++        let read = store.current_read(&scope)?;
++        owner.anchor(&read)?;
++        drop(read);
++        let mut writer = store.lock()?;
++        let turn = owner.verify_turn(&mut writer, job.id, 1, 1 << 20, 100, || Ok(()))?;
++        assert_eq!(turn.verified_files, 1);
++        assert!(!turn.progress.complete());
++        serde_json::to_value(&turn.progress)?
++    };
++    let receipt = collection.directory.join("integrity-observation.json");
++    let saved = fs::read(&receipt)?;
++    let component = {
++        let read = store.current_read(&scope)?;
++        let artifact = read.artifact("a.txt")?.context("first artifact")?;
++        let object = store
++            .directory()
++            .join("objects/sources")
++            .join(&artifact.content_hash);
++        let mut bytes = fs::read(&object)?;
++        assert!(!bytes.is_empty());
++        bytes[0] ^= 1;
++        fs::write(&object, bytes)?;
++        read.token()?.digest
++    };
++    // Both actual durable detection adapters fail. Active is the only reliable
++    // surviving exposure marker; neither absence of damage nor old cursor is proof.
++    registry.test_refuse_integrity_damage(true)?;
++    fs::remove_file(&receipt)?;
++    fs::create_dir(&receipt)?;
++    {
++        let read = store.current_read(&scope)?;
++        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++        let error = owner
++            .record_damage(&read, component, 101)
++            .err()
++            .context("both stores unexpectedly succeeded")?;
++        assert!(format!("{error:#}").contains("neither damage store confirmed persistence"));
++    }
++    fs::remove_dir(&receipt)?;
++    fs::write(&receipt, &saved)?;
++    registry.test_refuse_integrity_damage(false)?;
++    assert!(registry.recorded_integrity_damage(&lease)?.is_empty());
++    drop(lease);
++    drop(registry);
++    let control = temporary.path().canonicalize()?.join("control");
++    let mut registry = ServiceRegistry::open(&control, namespace)?;
++    let mut lease = ProjectLease::acquire(&control, identity.project)?;
++    registry.admit_worker(&mut lease)?;
++    registry.recover_jobs(&lease)?;
++    registry
++        .claim_job_id(&lease, job.id)?
++        .context("same audit reclaimed")?;
++    let bound = data_scope::bind(Path::new(&collection.owner.data_root), &control, namespace)?;
++    let replacement = WorkerIdentity {
++        worker: Incarnation::from_bytes([113; 16]),
++        fencing_generation: lease.identity().1.context("new worker epoch")?,
++        ..identity
++    };
++    let recovery =
++        collection.begin_native_recovery(&registry, &lease, &bound, replacement, job.id)?;
++    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++    let mut writer = store.lock()?;
++    assert!(
++        owner
++            .verify_recovery_turn(&mut writer, &recovery, 1, 1 << 20, 200, || Ok(()))
++            .is_err(),
++        "fresh recovery skipped damaged a.txt behind historical cursor"
++    );
++    let state: serde_json::Value = serde_json::from_slice(&fs::read(&receipt)?)?;
++    assert_verify_history(&state["verify_history"], &historical)?;
++    assert_eq!(state["verify"]["checked_files"], 0);
++    assert!(state["verify"]["unresolved"].as_bool().unwrap());
++    assert!(
++        owner
++            .load(namespace)?
++            .context("saved recovery")?
++            .verify_recovery
++            .is_some()
++    );
++    Ok(())
++}
++
++#[cfg(windows)]
++#[test]
++fn recovery_second_admitted_epoch_restarts_required_pages_but_preserves_ordinary_history()
++-> Result<()> {
++    use crate::service::{
++        data_scope,
++        registry::{AuditEvidence, ServiceRegistry},
++    };
++    use airk_core::service::{JobKind, JobOutcome, RequestKey, WorkerIdentity};
++    let (temporary, collection, mut registry, bound, lease, store, scope) = integrity_fixture()?;
++    let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
++    {
++        let writer = store.lock()?;
++        for (path, text) in [
++            ("a.txt", "clean first source"),
++            ("b.txt", "clean second source"),
++        ] {
++            let input = audit_retained_input(&store, &writer, &quota, &scope, path, text)?;
++            let mut current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
++            let token = current.head()?.token()?;
++            current.commit_artifact(&token, path, Some(&input))?;
++        }
++    }
++    let lease = std::sync::Arc::new(lease);
++    let identity = WorkerIdentity {
++        service: registry.incarnation()?,
++        project: lease.identity().0,
++        worker: Incarnation::from_bytes([114; 16]),
++        fencing_generation: lease.identity().1.context("epoch")?,
++    };
++    drop(collection.arm_native_owner(&mut registry, lease.clone(), &bound, identity)?);
++    let (namespace, epoch) = registry.saved_request_epoch()?;
++    let job = registry.enqueue(
++        identity.project,
++        namespace,
++        &RequestKey {
++            namespace,
++            epoch,
++            nonce: Incarnation::from_bytes([115; 16]),
++        },
++        JobKind::Verify,
++    )?;
++    registry.claim_job_id(&lease, job.id)?.context("claim")?;
++    let recovery = collection.begin_native_recovery(&registry, &lease, &bound, identity, job.id)?;
++    let history = {
++        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++        let read = store.current_read(&scope)?;
++        owner.anchor(&read)?;
++        drop(read);
++        let mut writer = store.lock()?;
++        let ordinary = owner.verify_turn(&mut writer, job.id, 1, 1 << 20, 100, || Ok(()))?;
++        let partial =
++            owner.verify_recovery_turn(&mut writer, &recovery, 1, 1 << 20, 200, || Ok(()))?;
++        assert_eq!(partial.verified_files, 1);
++        assert!(!partial.progress.complete());
++        assert!(partial.recovery_completed.is_none());
++        let ordinary = serde_json::to_value(ordinary.progress)?;
++        let saved = owner.load(namespace)?.context("first supersession")?;
++        assert_verify_history(
++            &serde_json::to_value(saved.verify_history.context("summary")?)?,
++            &ordinary,
++        )?;
++        serde_json::to_value(partial.progress)?
++    };
++    drop(lease);
++    drop(registry);
++    let control = temporary.path().canonicalize()?.join("control");
++    let mut registry = ServiceRegistry::open(&control, namespace)?;
++    let mut lease = ProjectLease::acquire(&control, identity.project)?;
++    registry.admit_worker(&mut lease)?;
++    registry.recover_jobs(&lease)?;
++    registry
++        .claim_job_id(&lease, job.id)?
++        .context("reclaimed")?;
++    let lease = std::sync::Arc::new(lease);
++    let bound = data_scope::bind(Path::new(&collection.owner.data_root), &control, namespace)?;
++    let identity = WorkerIdentity {
++        worker: Incarnation::from_bytes([116; 16]),
++        fencing_generation: lease.identity().1.context("replacement epoch")?,
++        ..identity
++    };
++    let replacement =
++        collection.begin_native_recovery(&registry, &lease, &bound, identity, job.id)?;
++    let proofs = {
++        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++        let mut writer = store.lock()?;
++        assert!(
++            owner
++                .verify_recovery_turn(&mut writer, &recovery, 1, 1 << 20, 299, || Ok(()))
++                .is_err()
++        );
++        let fresh =
++            owner.verify_recovery_turn(&mut writer, &replacement, 1, 1 << 20, 300, || Ok(()))?;
++        assert_eq!(fresh.verified_files, 1);
++        assert!(
++            !fresh.progress.complete(),
++            "old recovery page was promoted to new epoch"
++        );
++        let state = serde_json::to_value(&fresh.progress)?;
++        assert_eq!(state["checked_files"], 1);
++        assert_eq!(state["started_unix_ms"], 300);
++        assert_eq!(state["lexical_observed_unix_ms"], 300);
++        let finished =
++            owner.verify_recovery_turn(&mut writer, &replacement, 1, 1 << 20, 301, || Ok(()))?;
++        assert_eq!(finished.verified_files, 1);
++        (
++            finished.completed.context("global baseline completion")?,
++            finished
++                .recovery_completed
++                .context("fresh required completion")?,
++        )
++    };
++    collection.recover_native_owner(&mut registry, &lease, &bound, identity, job.id, &proofs.1)?;
++    registry.complete_job_with_maintenance_and_audit_at(
++        &lease,
++        job.id,
++        JobOutcome::Succeeded {
++            revision: Some(proofs.0.revision()?),
++        },
++        302,
++        None,
++        Some(AuditEvidence::Complete(&proofs.0)),
++    )?;
++    let state = collection
++        .integrity_owner(&registry, &lease, &bound)?
++        .load(namespace)?
++        .context("receipt")?;
++    assert_verify_history(
++        &serde_json::to_value(state.verify_history.context("summary")?)?,
++        &history,
++    )?;
++    // Returning to ordinary Verify also supersedes the recovery purpose. Only
++    // one full cursor remains, and ordinary resumption then retains its dates.
++    let (namespace, epoch) = registry.saved_request_epoch()?;
++    let normal = registry.enqueue(
++        identity.project,
++        namespace,
++        &RequestKey {
++            namespace,
++            epoch,
++            nonce: Incarnation::from_bytes([117; 16]),
++        },
++        JobKind::Verify,
++    )?;
++    registry
++        .claim_job_id(&lease, normal.id)?
++        .context("normal audit")?;
++    let normal_complete = {
++        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++        let mut writer = store.lock()?;
++        let first = owner.verify_turn(&mut writer, normal.id, 1, 1 << 20, 400, || Ok(()))?;
++        assert_eq!(first.verified_files, 1);
++        assert!(!first.progress.complete());
++        let saved = serde_json::to_value(owner.load(namespace)?.context("normal saved")?)?;
++        assert!(saved.get("verify_recovery").is_none());
++        assert!(saved.get("recovery_verify").is_none());
++        assert!(saved["verify_history"].get("after").is_none());
++        assert_eq!(saved["verify_history"]["checked_files"], 2);
++        let next = owner.verify_turn(&mut writer, normal.id, 1, 1 << 20, 401, || Ok(()))?;
++        assert_eq!(next.verified_files, 1);
++        assert_eq!(
++            serde_json::to_value(&next.progress)?["started_unix_ms"],
++            400
++        );
++        next.completed.context("normal resumed completion")?
++    };
++    registry.complete_job_with_maintenance_and_audit_at(
++        &lease,
++        normal.id,
++        JobOutcome::Succeeded {
++            revision: Some(normal_complete.revision()?),
++        },
++        402,
++        None,
++        Some(AuditEvidence::Complete(&normal_complete)),
++    )?;
++    let owner = collection.arm_native_owner(&mut registry, lease, &bound, identity)?;
++    owner.settle_after_owned_drain(&mut registry)?;
++    Ok(())
++}
++
++#[cfg(windows)]
++fn assert_verify_history(summary: &serde_json::Value, original: &serde_json::Value) -> Result<()> {
++    for field in [
++        "job",
++        "artifact_root",
++        "lexical_commit",
++        "lexical_observed_unix_ms",
++        "started_unix_ms",
++        "through_unix_ms",
++        "checked_files",
++        "checked_bytes",
++        "objects_complete",
++        "unresolved",
++    ] {
++        assert_eq!(
++            summary[field], original[field],
++            "historical field {field} changed"
++        );
++    }
++    let scope = airk_core::identity::framed_digest(
++        b"verify-history-scope/1",
++        &[&serde_json::to_vec(&serde_json::from_value::<
++            crate::current::CurrentScope,
++        >(original["scope"].clone())?)?],
++    );
++    assert_eq!(summary["scope"], serde_json::to_value(scope)?);
++    let cursor = original["after"].as_str().map(|path| {
++        airk_core::identity::framed_digest(b"verify-history-cursor/1", &[path.as_bytes()])
++    });
++    assert_eq!(summary["superseded_cursor"], serde_json::to_value(cursor)?);
++    assert!(summary.get("after").is_none());
++    Ok(())
++}
++
++#[cfg(windows)]
++#[test]
++fn single_cursor_receipt_admits_full_8192_byte_path_and_bounds_summary_without_quota_raise()
++-> Result<()> {
++    use airk_core::service::{JobKind, WorkerIdentity};
++    let (_temporary, collection, mut registry, bound, lease, store, scope) = integrity_fixture()?;
++    let lease = std::sync::Arc::new(lease);
++    let identity = WorkerIdentity {
++        service: registry.incarnation()?,
++        project: lease.identity().0,
++        worker: Incarnation::from_bytes([118; 16]),
++        fencing_generation: lease.identity().1.context("epoch")?,
++    };
++    drop(collection.arm_native_owner(&mut registry, lease.clone(), &bound, identity)?);
++    let job = registry.enqueue_internal(
++        identity.project,
++        identity.service,
++        JobKind::Verify,
++        Incarnation::from_bytes([119; 16]),
++    )?;
++    registry.claim_job_id(&lease, job.id)?.context("claim")?;
++    {
++        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++        let read = store.current_read(&scope)?;
++        owner.anchor(&read)?;
++        drop(read);
++        let mut writer = store.lock()?;
++        owner.verify_turn(&mut writer, job.id, 1, 1 << 20, 100, || Ok(()))?;
++    }
++    let recovery = collection.begin_native_recovery(&registry, &lease, &bound, identity, job.id)?;
++    {
++        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++        let mut writer = store.lock()?;
++        owner.verify_recovery_turn(&mut writer, &recovery, 1, 1 << 20, 200, || Ok(()))?;
++    }
++    // Byte-admission fixture, not a claim that this synthetic cursor is coverage.
++    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
++    let mut encoded = serde_json::to_value(owner.load(identity.service)?.context("saved")?)?;
++    assert!(encoded["verify_history"].get("after").is_none());
++    for section in ["verify", "verify_history"] {
++        for field in [
++            "started_unix_ms",
++            "through_unix_ms",
++            "checked_files",
++            "checked_bytes",
++        ] {
++            encoded[section][field] = serde_json::json!(u64::MAX);
++        }
++        encoded[section]["lexical_observed_unix_ms"] = serde_json::json!(u64::MAX);
++    }
++    assert!(serde_json::to_vec(&encoded["verify_history"])?.len() <= 1024);
++    let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
++    let policy = quota.policy()?;
++    for cursor in ["a".repeat(8192), "é".repeat(4096)] {
++        assert_eq!(cursor.len(), 8192);
++        encoded["verify"]["after"] = serde_json::json!(cursor);
++        let state: super::integrity::IntegrityObservation =
++            serde_json::from_value(encoded.clone())?;
++        assert!(serde_json::to_vec(&state)?.len() <= MAX_METADATA);
++        write(&collection, "integrity-observation.json", &state)?;
++        let read: super::integrity::IntegrityObservation =
++            json(&collection.directory.join("integrity-observation.json"))?;
++        assert_eq!(
++            serde_json::to_value(read)?["verify"]["after"],
++            encoded["verify"]["after"]
++        );
++    }
++    let before = fs::read(collection.directory.join("integrity-observation.json"))?;
++    // The existing whole-encoding cap remains authoritative even when a path's
++    // JSON escaping exceeds it. Refusal happens before reserve/write, no cap raise.
++    encoded["verify"]["after"] = serde_json::json!("\"".repeat(8192));
++    let oversized: super::integrity::IntegrityObservation = serde_json::from_value(encoded)?;
++    assert!(serde_json::to_vec(&oversized)?.len() > MAX_METADATA);
++    assert!(write(&collection, "integrity-observation.json", &oversized).is_err());
++    assert_eq!(
++        fs::read(collection.directory.join("integrity-observation.json"))?,
++        before
++    );
++    assert_eq!(
++        serde_json::to_value(quota.policy()?)?,
++        serde_json::to_value(policy)?
++    );
++    Ok(())
++}
+--- a/crates/airk-store/src/service_collection_verify.rs
++++ b/crates/airk-store/src/service_collection_verify.rs
+@@ -96,10 +96,118 @@
+         })
+     }
+ }
++/// Fixed native consumer policy. Projected coverage cannot be minted by this
++/// baseline producer; F13 must add its actual predicates before enabling it.
++#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub(crate) enum RecoveryProfile {
++    BaselineV1,
++    ProjectedV1,
++}
++pub(crate) const NATIVE_RECOVERY_PROFILE: RecoveryProfile = RecoveryProfile::BaselineV1;
++
++/// Opaque owning recovery purpose. Serialized only as saved audit context, never
++/// accepted as authority from a caller. Its live instance comes from the owner.
++#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub(crate) struct RecoveryContext {
++    pub(crate) namespace: Incarnation,
++    pub(crate) project: airk_core::service::ProjectBinding,
++    pub(crate) worker: Incarnation,
++    pub(crate) worker_epoch: u64,
++    pub(crate) job: Sha256Digest,
++    pub(crate) inherited: Sha256Digest,
++    pub(crate) head: CurrentToken,
++    pub(crate) root: Sha256Digest,
++    pub(crate) selected: Sha256Digest,
++    pub(crate) profile: RecoveryProfile,
++}
++/// Live purpose has no Deserialize constructor. Persisted context is only
++/// continuation data and must be checked against this newly minted live value.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct RecoveryEpoch {
++    pub(crate) context: RecoveryContext,
++}
++/// Fixed last-superseded observation; never a resumable cursor or proof.
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct VerifyHistory {
++    version: u32,
++    job: Sha256Digest,
++    scope: Sha256Digest,
++    artifact_root: Sha256Digest,
++    lexical_commit: Sha256Digest,
++    lexical_observed_unix_ms: Option<u64>,
++    started_unix_ms: u64,
++    through_unix_ms: u64,
++    checked_files: u64,
++    checked_bytes: u64,
++    objects_complete: bool,
++    unresolved: bool,
++    superseded_cursor: Option<Sha256Digest>,
++    recovery_purpose: Option<Sha256Digest>,
++}
++impl VerifyHistory {
++    fn from_progress(
++        progress: &VerifyProgress,
++        recovery: Option<&RecoveryContext>,
++    ) -> Result<Self> {
++        Ok(Self {
++            version: 1,
++            job: progress.job,
++            scope: airk_core::identity::framed_digest(
++                b"verify-history-scope/1",
++                &[&serde_json::to_vec(&progress.scope)?],
++            ),
++            artifact_root: progress.artifact_root,
++            lexical_commit: progress.lexical_commit,
++            lexical_observed_unix_ms: progress.lexical_observed_unix_ms,
++            started_unix_ms: progress.started_unix_ms,
++            through_unix_ms: progress.through_unix_ms,
++            checked_files: progress.checked_files,
++            checked_bytes: progress.checked_bytes,
++            objects_complete: progress.objects_complete,
++            unresolved: progress.unresolved,
++            superseded_cursor: progress.after.as_ref().map(|path| {
++                airk_core::identity::framed_digest(b"verify-history-cursor/1", &[path.as_bytes()])
++            }),
++            recovery_purpose: recovery.map(serde_json::to_vec).transpose()?.map(|bytes| {
++                airk_core::identity::framed_digest(b"verify-history-recovery/1", &[&bytes])
++            }),
++        })
++    }
++}
++/// Actual post-epoch coverage, not ordinary historical/global job completion.
++/// No constructor, Clone or Deserialize is exposed for physical evidence.
++pub struct EnabledComponentAuditProof {
++    drained: crate::service::registry::AuditDrainProof,
++    epoch: RecoveryContext,
++    head: CurrentHead,
++}
++impl EnabledComponentAuditProof {
++    pub(crate) fn exact_head(&self) -> &CurrentHead {
++        &self.head
++    }
++    pub(crate) fn epoch(&self) -> &RecoveryContext {
++        &self.epoch
++    }
++    pub(crate) fn matches(
++        &self,
++        connection: &rusqlite::Connection,
++        job: &airk_core::service::JobRecord,
++    ) -> Result<bool> {
++        Ok(self.drained.matches(connection, job)?
++            && self.epoch.job == job.id
++            && self.epoch.profile == NATIVE_RECOVERY_PROFILE
++            && self.epoch.head == self.head.token()?
++            && crate::service::registry::owner_session::recovery_matches(connection, &self.epoch)?)
++    }
++}
+ pub struct VerifyTurn {
+     pub verified_files: u64,
+     pub progress: VerifyProgress,
+     pub completed: Option<AuditCompletionProof>,
++    pub recovery_completed: Option<EnabledComponentAuditProof>,
+     pub blocked_large: bool,
+     pub drained: Option<crate::service::registry::AuditDrainProof>,
+ }
+@@ -117,6 +225,39 @@
+         now: u64,
+         checkpoint: impl Fn() -> Result<()>,
+     ) -> Result<VerifyTurn> {
++        self.verify_turn_inner(writer, job, max_files, max_bytes, now, checkpoint, None)
++    }
++    /// Exceptional owner recovery only. Ordinary Verify retains its dated cursor.
++    pub fn verify_recovery_turn(
++        &self,
++        writer: &mut crate::WriterLock,
++        epoch: &RecoveryEpoch,
++        max_files: usize,
++        max_bytes: u64,
++        now: u64,
++        checkpoint: impl Fn() -> Result<()>,
++    ) -> Result<VerifyTurn> {
++        self.verify_turn_inner(
++            writer,
++            epoch.context.job,
++            max_files,
++            max_bytes,
++            now,
++            checkpoint,
++            Some(epoch),
++        )
++    }
++    fn verify_turn_inner(
++        &self,
++        writer: &mut crate::WriterLock,
++        job: Sha256Digest,
++        max_files: usize,
++        max_bytes: u64,
++        now: u64,
++        checkpoint: impl Fn() -> Result<()>,
++        recovery: Option<&RecoveryEpoch>,
++    ) -> Result<VerifyTurn> {
++        let recovery = recovery.map(|epoch| &epoch.context);
+         ensure!(
+             (1..=128).contains(&max_files) && (1..=512 << 20).contains(&max_bytes),
+             "invalid off-query verification bounds"
+@@ -156,7 +297,20 @@
+             let _lock = manifest_lock(&self.collection.directory)?;
+             self.load(fence.0)?
+         };
+-        let old = observation.as_mut().and_then(|value| value.verify.take());
++        if let Some(epoch) = recovery {
++            self.registry.require_recovery_epoch(self.lease, epoch)?;
++            ensure!(epoch.head == head.token()?, "recovery publication changed");
++        }
++        // There is exactly one full cursor. An explicit purpose change replaces
++        // it, retaining only one bounded historical summary (never a history chain).
++        let same_purpose = observation
++            .as_ref()
++            .is_some_and(|state| state.verify_recovery.as_ref() == recovery);
++        let old = if same_purpose {
++            observation.as_mut().and_then(|state| state.verify.take())
++        } else {
++            None
++        };
+         if let Some(saved) = &old {
+             saved.scope.validate()?;
+             ensure!(
+@@ -299,7 +453,19 @@
+                 // actual complete recheck; never clears either sticky damage list.
+                 progress.unresolved = false;
+             }
++            if let Some(epoch) = recovery {
++                self.registry.require_recovery_epoch(self.lease, epoch)?;
++            }
++            if state.verify_recovery.as_ref() != recovery {
++                if let Some(previous) = &state.verify {
++                    state.verify_history = Some(VerifyHistory::from_progress(
++                        previous,
++                        state.verify_recovery.as_ref(),
++                    )?);
++                }
++            }
+             state.verify = Some(progress.clone());
++            state.verify_recovery = recovery.cloned();
+             state.head = head;
+             state.worker_epoch = fence.1;
+             write(self.collection, RECEIPT, &state)?;
+@@ -346,8 +512,27 @@
+                     self.bound,
+                     job,
+                 )?,
+-                head: state_head_for_completion,
++                head: state_head_for_completion.clone(),
+             })
++        } else {
++            None
++        };
++        let recovery_completed = if progress.complete() && !blocked_large {
++            if let Some(epoch) = recovery {
++                self.registry.require_recovery_epoch(self.lease, epoch)?;
++                Some(EnabledComponentAuditProof {
++                    drained: crate::service::registry::AuditDrainProof::new(
++                        self.registry,
++                        self.lease,
++                        self.bound,
++                        job,
++                    )?,
++                    epoch: epoch.clone(),
++                    head: state_head_for_completion,
++                })
++            } else {
++                None
++            }
+         } else {
+             None
+         };
+@@ -357,6 +542,7 @@
+             blocked_large,
+             drained,
+             completed,
++            recovery_completed,
+         })
+     }
+ }
+--- a/crates/airk-store/src/service_owner_session.rs
++++ b/crates/airk-store/src/service_owner_session.rs
+@@ -88,7 +88,7 @@
+         expected: &str,
+         next: &OwnerSession,
+         job: Sha256Digest,
+-        proof: &crate::service::collection::integrity::verify::AuditCompletionProof,
++        proof: &crate::service::collection::integrity::verify::EnabledComponentAuditProof,
+     ) -> Result<()> {
+         self.compare_owner_session_checked(lease, Some(expected), next, Some((job, proof)))
+     }
+@@ -110,7 +110,7 @@
+         next: &OwnerSession,
+         audit: Option<(
+             Sha256Digest,
+-            &crate::service::collection::integrity::verify::AuditCompletionProof,
++            &crate::service::collection::integrity::verify::EnabledComponentAuditProof,
+         )>,
+     ) -> Result<()> {
+         let encoded = serde_json::to_string(next)?;
+@@ -161,8 +161,72 @@
+             observed.as_ref().map(|(raw, _)| raw.as_str()) == expected,
+             "owner session changed during observation"
+         );
++        if let Some((job, _)) = audit {
++            // Separate exact enabled-policy recovery transition; generic success
++            // and clean partial drain still cannot clear an inherited veto.
++            transaction.execute(
++                "DELETE FROM service_recovery_budget WHERE scope=?1 AND engine=?2",
++                params![format!("integrity:{}", next.project), job.to_string()],
++            )?;
++        }
+         transaction.execute("INSERT INTO service_recovery_budget VALUES(?1,?2,0,0,0,1) ON CONFLICT(scope) DO UPDATE SET engine=excluded.engine,failures=0,started_ms=0,next_ms=0,suppressed=1",params![scope(next.project),encoded])?;
+         transaction.commit()?;
++        Ok(())
++    }
++}
++
++pub(crate) fn recovery_matches(
++    connection: &Connection,
++    epoch: &crate::service::collection::integrity::verify::RecoveryContext,
++) -> Result<bool> {
++    let Some((raw, _)) = load(connection, epoch.project)? else {
++        return Ok(false);
++    };
++    let inherited = airk_core::identity::framed_digest(
++        b"native-recovery-owner/1",
++        &[&serde_json::to_vec(&raw)?],
++    );
++    let namespace: String = connection.query_row(
++        "SELECT incarnation FROM service_meta WHERE id=1",
++        [],
++        |row| row.get(0),
++    )?;
++    Ok(inherited == epoch.inherited
++        && namespace.parse::<Incarnation>()? == epoch.namespace
++        && epoch.profile == crate::service::collection::integrity::verify::NATIVE_RECOVERY_PROFILE)
++}
++impl ServiceRegistry {
++    pub(crate) fn require_recovery_epoch(
++        &self,
++        lease: &ProjectLease,
++        epoch: &crate::service::collection::integrity::verify::RecoveryContext,
++    ) -> Result<()> {
++        let admitted = jobs::worker_epoch(&self.connection, &self.root, lease)?;
++        let job = self.job(epoch.job)?;
++        ensure!(
++            epoch.project == lease.identity().0
++                && epoch.worker_epoch == admitted
++                && job.project == epoch.project
++                && job.state == airk_core::service::JobState::Running
++                && job.fencing_generation == admitted
++                && self.integrity_audit_veto(lease)? == Some(epoch.job)
++                && recovery_matches(&self.connection, epoch)?,
++            "stale native recovery epoch"
++        );
++        Ok(())
++    }
++}
++
++/// Fixed owned-fixture failure only; does not expose registry SQL authority.
++#[cfg(test)]
++impl ServiceRegistry {
++    pub(crate) fn test_refuse_integrity_damage(&self, refuse: bool) -> Result<()> {
++        if refuse {
++            self.connection.execute_batch("CREATE TEMP TRIGGER refuse_recovery_damage BEFORE INSERT ON service_recovery_budget WHEN NEW.scope LIKE 'integrity_damage:%' BEGIN SELECT RAISE(ABORT,'owned damage failure'); END")?;
++        } else {
++            self.connection
++                .execute_batch("DROP TRIGGER refuse_recovery_damage")?;
++        }
+         Ok(())
+     }
+ }

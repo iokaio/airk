@@ -1,0 +1,109 @@
+diff --git a/crates/airk-ingest/src/adapters/registry.rs b/crates/airk-ingest/src/adapters/registry.rs
+--- a/crates/airk-ingest/src/adapters/registry.rs
++++ b/crates/airk-ingest/src/adapters/registry.rs
+@@ -741,6 +741,16 @@
+         );
+         Ok(())
+     }
++    /// Pure metadata qualification against the complete supported effective producer.
++    /// Unknown historical grammar/options remain unknown; no source inputs execute.
++    pub fn effective_capabilities(
++        &self,
++        path: &str,
++        profile: &ExtractionProfile,
++    ) -> Option<&AdapterCapabilities> {
++        self.validate_effective_profile(path, profile).ok()?;
++        Some(&self.get(&profile.adapter_id)?.capabilities)
++    }
+     pub fn descriptors(&self) -> impl Iterator<Item = &AdapterDescriptor> {
+         self.entries.values()
+     }
+@@ -1197,3 +1207,49 @@
+         Ok(())
+     }
+ }
++
++#[cfg(test)]
++mod effective_capability_report_tests {
++    use super::*;
++    #[test]
++    fn metadata_support_requires_complete_producer_without_source_io() -> anyhow::Result<()> {
++        let registry = AdapterRegistry::baseline();
++        let path = "missing/deleted.rs";
++        let base = registry.effective_profile(path, "rust")?;
++        assert!(registry.effective_capabilities(path, &base).is_some());
++        let mut variants = Vec::new();
++        let mut changed = base.clone();
++        changed.grammar_identity = Some("different-supported-history".into());
++        variants.push(changed);
++        let mut changed = base.clone();
++        changed.mapping_version += 1;
++        variants.push(changed);
++        let mut changed = base.clone();
++        changed.chunk_version += 1;
++        variants.push(changed);
++        let mut changed = base.clone();
++        changed.options.insert("unknown_history".into(), "1".into());
++        variants.push(changed);
++        let mut changed = base.clone();
++        changed
++            .configuration_inputs
++            .insert("missing/compiler.json".into(), "ab".repeat(32).parse()?);
++        variants.push(changed);
++        for changed in variants {
++            assert_eq!(changed.adapter_id, base.adapter_id);
++            assert_eq!(changed.adapter_version, base.adapter_version);
++            changed.identity()?;
++            assert!(registry.effective_capabilities(path, &changed).is_none());
++        }
++        // Historical detail is a retention observation, not a producer change.
++        let mut retained = base.clone();
++        retained
++            .options
++            .insert("index_detail".into(), "agent_lean".into());
++        assert_eq!(
++            registry.effective_capabilities(path, &retained),
++            registry.effective_capabilities(path, &base)
++        );
++        Ok(())
++    }
++}
+diff --git a/crates/airk-kernel/src/profile_families.rs b/crates/airk-kernel/src/profile_families.rs
+--- a/crates/airk-kernel/src/profile_families.rs
++++ b/crates/airk-kernel/src/profile_families.rs
+@@ -54,10 +54,7 @@
+             Err(error) => return Err(error),
+         };
+         let mut support = BTreeMap::from([(Family::SavedIdentity, Support::Supported)]);
+-        if let Some(descriptor) = registry
+-            .get(&profile.adapter_id)
+-            .filter(|descriptor| descriptor.profile.adapter_version == profile.adapter_version)
+-        {
++        if let Some(capabilities) = registry.effective_capabilities(path, profile) {
+             let observed = |value| {
+                 if value {
+                     Support::Supported
+@@ -65,19 +62,10 @@
+                     Support::Unsupported
+                 }
+             };
+-            support.insert(
+-                Family::LexicalCandidates,
+-                observed(descriptor.capabilities.lexical),
+-            );
+-            support.insert(
+-                Family::Declarations,
+-                observed(descriptor.capabilities.definitions),
+-            );
+-            support.insert(Family::Imports, observed(descriptor.capabilities.imports));
+-            support.insert(
+-                Family::WrittenCalls,
+-                observed(descriptor.capabilities.call_candidates),
+-            );
++            support.insert(Family::LexicalCandidates, observed(capabilities.lexical));
++            support.insert(Family::Declarations, observed(capabilities.definitions));
++            support.insert(Family::Imports, observed(capabilities.imports));
++            support.insert(Family::WrittenCalls, observed(capabilities.call_candidates));
+         }
+         // FileInfo carries metadata/counts, never underlying facts/text/vectors.
+         // Final renderer identity projection is unobserved here; keep it unknown.

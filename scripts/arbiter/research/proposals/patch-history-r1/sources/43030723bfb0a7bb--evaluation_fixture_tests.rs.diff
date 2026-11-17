@@ -1,0 +1,61 @@
+--- a/crates/airk-service/src/service_runtime/evaluation_fixture_tests.rs
++++ b/crates/airk-service/src/service_runtime/evaluation_fixture_tests.rs
+@@ -19,6 +19,7 @@
+ 
+ mod acquisition;
+ mod execution_observer;
++mod readable_selection;
+ mod restart;
+ mod warm_journal;
+ 
+@@ -1391,6 +1392,17 @@
+         _ => bail!("private membership page contains a foreign entity"),
+     })
+     .collect::<Result<Vec<_>>>()?;
++    let reviewed_selections = if let Some(raw) = value.get("reviewed_selections") {
++        let selections: Vec<airk_core::service::ScopedConnectRequest> = serde_json::from_value(raw.clone())?;
++        ensure!(selections.len() == expected_roots.len(), "explicit private selection/source roster differs");
++        let mut selected = BTreeMap::new();
++        for request in selections {
++            request.validate()?;
++            ensure!(selected.insert(request.index_id, request).is_none(), "duplicate explicit private index selection");
++        }
++        Some(selected)
++    } else { None };
++    let mut reviewed_authorities = Vec::new();
+     let census = registry.catalog_clean_break_sources(catalog.revision)?;
+     let mut bindings = BTreeMap::new();
+     let mut ids = BTreeSet::new();
+@@ -1404,12 +1416,22 @@
+                 Path::new(&definition.backing.root).canonicalize()? == canonical,
+                 "private index has a foreign backing root"
+             );
++            let readable_project = if let Some(selections) = &reviewed_selections {
++                let request = selections.get(&definition.id).context("explicit private selection is missing this immutable index")?;
++                let (project, authority) = readable_selection::qualify(
++                    &mut registry, request, &catalog, &definition, &roots, &projects, &memberships,
++                )?;
++                reviewed_authorities.push(serde_json::json!({"selection":request,"authority":authority}));
++                project
++            } else {
+             let readable_project = readable_fixture_project(
+                 definition.id,
+                 &roots.iter().map(|root| root.id).collect::<Vec<_>>(),
+                 &projects,
+                 &memberships,
+             )?;
++                readable_project
++            };
+             ensure!(
+                 bindings
+                     .insert(
+@@ -1449,6 +1471,9 @@
+                 .all(|value| value.is_ascii_alphanumeric() || matches!(value, b'-' | b'_')),
+         "private control output prefix invalid"
+     );
++    if reviewed_selections.is_some() {
++        write(&work, &format!("{prefix}.reviewed-authorities.private.json"), &reviewed_authorities)?;
++    }
+     for (ordinal, binding) in bindings.values_mut().enumerate() {
+         let result = crate::ipc::control::request_once(
+             &ready.control_root,

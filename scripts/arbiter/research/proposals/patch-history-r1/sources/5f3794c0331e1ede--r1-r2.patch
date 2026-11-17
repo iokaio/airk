@@ -1,0 +1,261 @@
+--- r1/DESIGN.md
++++ r2/DESIGN.md
+@@ -16,7 +16,7 @@
+    task/provider/math/placement/resource identities, genuinely passed G4 and
+    applicable G5 evidence, and an authenticated independent validation bundle.
+    A runtime provider list, schema flag or successful allocation is insufficient.
+-3. Current user's live DeviceAcceptance: created only by the owning native
++3. Current user's live DeviceEligibility: created only by the owning native
+    service lane from real adapter/driver/module observations and actual bounded
+    validation. No Deserialize, public constructor or persisted permit.
+ 
+@@ -33,10 +33,14 @@
+ ## Exact version/encoding decision proposed for Root
+ 
+ Keep airk.native.cuda-runtime-manifest/1 unchanged for the scientific path.
+-Add /2 for product admission, with the SAME runtime closure fields
+-(schema,ort_version,static_core_build,producer_name,producer_bytes,
+-producer_sha256,files,load_order,system_imports), and `requirements` replacing
+-`fits`. Reject mixed fits/requirements and all unknown fields. No /1 fit is
++Add /2 for product admission with exact fields `schema,ort_version,
++static_core_build,provenance,files,load_order,system_imports,requirements`.
++`provenance` is the existing Core Asset type with role=Notice and one direct
++protected basename/bytes/SHA, resolving the separate Rust-owned distributable
++provenance projection. Its native validator reconciles the safe opaque genuine
++build-parent digest with static_core_build/compiled build identity. It never
++requires or ships raw private producer receipts. /1 retains its original raw
++producer fields for scientific/staging use. `requirements` replaces `fits`. Reject mixed fits/requirements and all unknown fields. No /1 fit is
+ reinterpreted as /2. A new exact approved manifest SHA and compatibility-policy
+ digest/2 are required; GPU Profile manifests/execution identities change.
+ CPU descriptors, Config/4 and Status/3 encodings remain unchanged.
+@@ -94,42 +98,69 @@
+ numeric fixtures and all original arrays remain unchanged, without verdict
+ transfer. FP16 needs its own independent same-artifact references and G5 proof.
+ 
+-## Local acceptance and budget
++## Bounded per-host eligibility, not another qualification campaign
+ 
+-Before a product GPU variant becomes Ready, the existing native lane must
+-replay the applicable hardware-dependent G4 checks on the actual user device:
+-full cold load, all numerical shapes/cases, actual final optimized all-subgraph
+-placement, full-width warm samples20/nearest-rank19th p95<=120s, measured host/
+-device/workspace peaks and headroom, and the enabled joint residency set with
+-MiniLM/other service work. Reuse existing native comparison, resource, placement
+-and custody owners. No model export, training, labels or calibration is involved.
++Release/variant G4 and applicable G5 evidence retain their actual tested-hardware
++scope. The product does not rerun G4,20 warm samples,p95,peak/coexistence
++benchmarks or semantic/CAL qualification at each user's startup. The initial
++compatibility class and qualified conservative declared cold/warm/host/headroom
++bounds come from the authenticated release variant. Those bounds are admission
++requirements, not measurements or universal performance promises on a user's card.
+ 
+-Use the existing bounded management/qualification work owner, separate from an
+-Answer request. Each load/score/sample keeps its original<=120000ms allowance;
+-the entire explicit enrollment has a frozen bounded original cutoff and output/
+-memory caps derived from the applicable existing G4 card before dispatch. This
+-proposal creates no new unbounded or user-configurable budget. No enrollment
+-replay starts within or renews an Answer budget. If the existing G4 owner cannot
+-be used in the product lane without changing its contract, stop that consumer
+-until the exact bounded owner delta is reviewed. While local acceptance is
+-missing, Auto uses an independently qualified fitting same-model CPU variant
+-or reports unavailable; it never announces GPU Ready from reference evidence.
++For each new product GPU resident, use the existing management warm/probe's
++original absolute deadline (<=120000ms), real host/device charges and source/
++configuration authority. Within that SAME existing budget, without per-row
++renewal, do exactly:
+ 
+-A lighter one-row startup smoke test may diagnose compatibility but cannot
+-replace this acceptance. No A6000 peak, p95, placement or driver observation
+-counts as the user's measurement. If a real device-peak/workspace observer is
+-not available, local fit is unknown. Provider arena limits and free-memory
+-snapshots do not fabricate an all-allocation peak. No optional dependencies
+-or self-check are loaded on explicit CPU selection.
++1. Authenticate exact runtime/model/independent fixture assets; observe actual
++   supported SM86,dedicated-memory type and signed driver API/image/module
++   identity. A newer driver or different UUID alone is neither qualification
++   nor refusal. Other SM remains qualified-fitting same-model CPU/unavailable.
++2. Recheck actual usable free capacity against the qualified conservative cold
++   requirement+headroom and existing unbacked reservations. Keep actual backed
++   residents and other work in native accounting, without double charging.
++3. Actually load the exact graph under the qualified provider/math/placement
++   policy and native host/device budget; collect its COMPLETE final optimized
++   all-subgraph placement and refuse unexpected CPU compute/incomplete maps.
++4. Execute ONE pass of the fixed independently referenced synthetic numeric
++   roster: Context17/128/8192,N3/N8/N8 or all twelve Focus512 pairs. Keep exact
++   tensors/padding/positions/readout and existing same-artifact/original FP32
++   tolerances+argmax. There is no warm20 benchmark, user-provided expectation,
++   model conversion, new dataset or new execution budget.
++5. Synchronize real work, check original deadline/authority/free capacity
++   again and retain the actual session/device/source/charges as the live
++   DeviceEligibility witness before publishing Ready. If any step fails or
++   cannot finish under the existing bound, this device/variant is ineligible
++   for that attempt. Current user requests are not replayed.
+ 
+-An acceptance witness binds actual UUID, signed driver SHA/API, runtime manifest/
+-module identities, model/graph/precision/options/math/placement/fixture/catalog
+-and configuration/joint-residency identities. It retains actual host/device
+-charges, live lease and device context. Its local numerical/resource/placement
+-receipts are distinct and bind the compiled artifact parents. Existing
+-DeviceEvidence can expose those exact native local receipt digests; stored
+-observations alone never recreate the witness after restart. Native freshness
+-and actual free capacity are checked again before every dispatch.
++While eligibility is absent/checking/failed, a user request may select only a
++separately qualified fitting same-model CPU variant BEFORE its work, or
++unavailable. The synthetic check is distinct management work; it is never hidden
++inside an Answer or granted a fresh timeout after an Answer starts. Explicit
++CPU performs no GPU enrollment/check or optional DLL activation. Repeated
++unchanged failures must not create a probe loop; reuse native stable failure
++state and existing reviewed explicit/relevant-change recheck rules.
++
++Successful local eligibility proves only those actual observations/load/complete
++placement/synthetic scores/synchronization within stated declared bounds. It
++does not prove local p95,20-sample performance,all-allocation peak,semantic
++quality or any other GPU's measurements. Actual local peak fields are null
++when unobserved; provider arena limits/free snapshots are not fabricated peak
++measurements. Release G4's real measured bounds are still required, and genuine
++OOM/driver/allocation races remain strict actual request failures. New /2
++artifact identities also retain all applicable task/CAL/confirmation promotion
++gates; this hardware self-check supplies no semantic labels or old approvals.
++
++The native non-Deserialize witness binds actual UUID,signed driver SHA/API,
++module/runtime/model/graph/precision/options/math/placement/fixture/catalog/
++configuration/joint-set identities and retains real residency/charges/lease.
++No user input, copied reference-card proof or persisted observation can create
++or restore it. Reacquire eligibility for a new resident/invalidated key.
++DeviceEvidence continues to identify the compiled release/variant proof with
++its actual scientific scope; do NOT overwrite its resources digest with a
++startup self-check and call that G4. A separate native local eligibility record
++is diagnostic, not a serialized permit or new public schema field. Existing
++Status/3 availability/reason/actual adapter-key/epoch can report the distinction.
+ 
+ Cold claims account for full declared cold need before residency. Warm work
+ charges only explicit incremental extra/headroom while the real resident remains
+@@ -148,13 +179,13 @@
+ 
+ Retrieval cuda/manifest.rs owns strict /2 requirements; a new private
+ cuda/acceptance.rs owns the non-Deserialize live witness and validator. cuda.rs
+-product qualified_plan/Binding requires that witness; /1 scientific methods
++product qualified_plan/Binding requires that live eligibility witness; /1 scientific methods
+ remain separate and unchanged. Windows owner supplies actual memory-pool facts
+ using typed CUDA driver APIs, keeps held/signed module custody and actual
+ UUID/driver observations. Native manifest/fixture emitters remain Rust-owned.
+ 
+-Inference existing device lane runs bounded acceptance before selecting a
+-product GPU candidate and keeps residency/resource/cancellation barriers.
++Inference existing device lane runs the bounded one-pass eligibility check before
++selecting a product GPU candidate and keeps residency/resource/cancellation barriers.
+ Service uses existing Availability/reason and DeviceEvidence fields; no raw
+ Profile exception or new public eligibility boolean. Core's existing advisory
+ selector, Config/4, Status/3 and I2/I3 generation remain data-only. If additional
+@@ -163,6 +194,6 @@
+ private producer/measurement paths are not payload. No new crate, edge, sidecar,
+ process, provider or persisted permit is proposed.
+ 
+-The design intentionally leaves GPU unavailable until genuine G2/G4/G5 and
+-local acceptance exist. It removes a universal physical-card identity rule
++The design leaves GPU unavailable until genuine release-variant G2/G4 and applicable G5 evidence
++and the bounded local eligibility check exist. It removes a universal physical-card identity rule
+ without inventing qualification on another card or silently enlarging support.
+--- r1/RETRIEVAL-CONTRACT-APPEND.md
++++ r2/RETRIEVAL-CONTRACT-APPEND.md
+@@ -1,22 +1,32 @@
+-## G3: product compatibility and actual local acceptance (proposed)
++## G3: product compatibility and actual local eligibility (proposed)
+ 
+ Scientific RuntimeManifest/1 VariantFit and exact reference UUID/driver pins
+-retain their original scope/bytes. Product RuntimeManifest/2 has the same
+-authenticated closure fields and strict `requirements` rows described by the
+-G3 decision. It accepts no `fits`, adapter UUID or driver-image equality rule.
++retain their original scope/bytes. Product RuntimeManifest/2 has the explicit authenticated closure/requirements
++fields from the G3 decision and a Core Notice Asset pin to the separately
++Rust-owned public provenance projection; it does not ship the private raw
++producer sidecar. It accepts no `fits`, adapter UUID or driver-image equality rule.
+ A new approved manifest/policy digest and GPU Profile identity are mandatory.
+ Unknown schema/target/SM/build/provider/math/placement/resource/source rows
+ refuse; initial actual supported class is Windows x64/SM86 only. Signed held
+ System32 driver identity remains mandatory actual observation, not a reference
+ card's universal allowlist. CPU encoding/execution and forced CPU remain intact.
+ 
+-A non-Deserialize DeviceAcceptance may be constructed only by actual native
+-owner completion of the applicable G4 hardware replay on this user's device,
+-using authenticated independent device-acceptance-input/1 tensors/reference
+-assets and unchanged numeric/resource/placement/time gates. Product binding
+-requires it plus real source, service lease, capacity and resident witnesses.
+-No raw JSON/flags/downloaded proof/persisted observation/reference A6000 result
+-can construct or restore it. Missing measured peaks or local checks refuse Ready.
++A non-Deserialize DeviceEligibility is created only by actual native owner
++completion of bounded per-host admission under the existing management
++warm/probe original<=120000ms deadline: authenticate exact artifacts/actual
++SM86+signed driver/modules; check real free capacity against qualified
++conservative requirements and actual charges; native load; complete final
++all-subgraph placement; one pass of independently referenced Context17/128/8192
++or all twelve Focus512 cases; real synchronization and final deadline/authority/
++capacity recheck. No per-user20/p95/peak/coexistence or semantic requalification
++benchmark is introduced. Release/variant G4/G5 remains tied to tested hardware.
++
++A different user UUID/driver-image hash is not itself a refusal or a passing
++qualification. Neither raw JSON, saved receipt, reference A6000 evidence nor
++metadata flags construct the live witness. Actual user peak/p95 stay unobserved
++unless genuinely measured; these checks do not assert those quantities.
++DeviceEvidence keeps its genuine release/variant scope; local diagnostics are
++not rebranded as G4. No persisted permit/public config/status field is added.
+ 
+ The witness binds actual UUID/driver API+signed image/module/runtime/model/math/
+ fixture/catalog/configuration/joint-set identity. Recheck actual free capacity
+--- r1/INFERENCE-SERVICE-CONTRACT-APPEND.md
++++ r2/INFERENCE-SERVICE-CONTRACT-APPEND.md
+@@ -2,20 +2,28 @@
+ 
+ Compiled artifact evidence and compatibility requirements do not assert a
+ user's hardware measurements. The existing native lane requires live
+-Retrieval DeviceAcceptance for the exact selected variant, actual UUID/driver/
++Retrieval DeviceEligibility for the exact selected variant, actual UUID/driver/
+ module identities and current configuration/joint residency before GPU Ready.
+ Initial other-SM, missing/untrusted runtime, stale/unknown/failed acceptance,
+-missing real peak measurement or insufficient capacity selects only a
++missing qualified conservative requirements or insufficient capacity selects only a
+ separately qualified fitting same-model CPU variant before work, or unavailable.
+ Explicit CPU never loads optional GPU libraries or schedules acceptance.
+ 
+-Local acceptance reuses bounded existing G4 native management owners/cases,
+-full-width numerical/placement/load/resource20/peak/coexistence gates with
+-original limits. It is not hidden replay inside an Answer and never resets an
+-Answer deadline. While it is pending the stage is not GPU Ready. Existing
+-Status/3 reason/evidence fields expose actual local native receipt identities;
+-reference-card receipts retain their exact scientific scope. No client metadata
+-constructs an acceptance capability and no persisted permit is added.
++Local eligibility reuses the existing management warm/probe owner and original
++absolute<=120000ms budget, no new budget or per-row renewal. It checks actual
++compatibility/free capacity, native load/full placement, one fixed independently
++referenced Context17/128/8192 or twelve Focus512 pass and synchronization, while
++retaining the real qualified conservative bounds/reservations. It does not run
++a per-user G4/20-warm/p95/peak/coexistence benchmark or semantic qualification.
++The release/variant evidence stays tied truthfully to its tested hardware;
++existing DeviceEvidence is not replaced with a startup test. Actual local
++UUID/driver/module facts and eligibility outcome remain native observations.
++
++Checking/absent/failed eligibility does not mean GPU Ready. User requests may
++select qualified fitting same-model CPU before work or unavailable. No hidden
++Answer check/replay/reset; explicit CPU performs no GPU self-check. Native
++stable failure state prevents unchanged retry loops. No stored observation or
++client input recreates the live witness.
+ 
+ Actual device/driver/runtime/catalog/config/joint-set changes invalidate the
+ witness. Recreated dispatch epochs cannot clear stable fault circuits. Once
+--- r1/CONTROL-MATRIX.md
++++ r2/CONTROL-MATRIX.md
+@@ -10,10 +10,10 @@
+ | Local proof | typed-less JSON, saved prior-process receipt, copied A6000 evidence or only one/two shapes cannot grant acceptance |
+ | Numeric | exact three Context/all twelve Focus inputs, all references, unchanged tolerances and argmax; padded/short/full-roster substitutions refuse |
+ | Placement | complete final all-subgraph map; unapproved CPU compute/subgraph/missing/capped map refuses |
+-| Resources | missing/late/excess actual host/device/workspace peak, insufficient free/pending/headroom or false resident subtraction refuse |
+-| Warm samples |19/21 samples, p95 nearest-rank error or one120s overrun refuse |
+-| Joint set | enabling another stage or changing actual resident set invalidates prior isolated proof |
+-| Deadline | original expiry survives observers/queues/preflight/output/sync; no hidden Answer enrollment/replay |
++| Capacity | missing qualified conservative bounds, insufficient actual free/pending/headroom, unknown pool type or false resident subtraction refuse; no invented local peak |
++| Scope | one-pass eligibility cannot claim per-user warm20/p95/peak/G4; release qualification retains its own unmodified gates |
++| Joint set | changed actual/configured residency invalidates stale admission/capacity witness; recheck under existing budget, no independent startup benchmark |
++| Deadline | one original existing-management<=120000ms cutoff covers load/all required rows/map/sync; no row renewal or hidden Answer replay |
+ | Custody | post-drop poison/unknown wait retains buffers/source/charge/lease; no recovery before real release |
+ | Cache/circuit | same UUID/API but different driver binary invalidates; wrapper epoch recreation does not reset failure |
+ | Public payload | private paths/data/producer receipt or unapproved reference/provenance projection refuse packaging |

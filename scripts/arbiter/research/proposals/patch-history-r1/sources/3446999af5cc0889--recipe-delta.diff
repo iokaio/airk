@@ -1,0 +1,72 @@
+--- capacity/preserve_current.py
++++ profile-only/preserve_current.py
+@@ -1,15 +1,15 @@
+-"""One reviewed current four-library image preservation; no native execution or build."""
++"""One reviewed profile-only four-library plus real combined_reads image preservation; no native execution or build."""
+ from pathlib import Path
+-import hashlib,json,os,shutil,struct,datetime
++import hashlib,json,os,shutil,struct,datetime,subprocess
+ B=Path(__file__).resolve().parent
+ R=Path(r'D:\code\Github\airk')
+ E=R/'artifacts/v190/final-plan/exec-20261116T052942Z'
+-RECEIPT=E/'current-capacity-lib-images-cargo-json-r1.json'
+-LOG=E/'current-capacity-lib-images-cargo-json-r1.log'
++RECEIPT=E/'controlled-wholeworkspace-incremental0-r1.json'
++LOG=E/'controlled-wholeworkspace-incremental0-r1.log'
+ SID='S-1-5-21-3678370870-3858642417-826968105-1002'
+-GROUP='a469d6e189e70bd8abe41c07ea2d548cd6141145e33eea3f6e958c731ca12fdf'
++GROUP='6ad5bb91a03111541424d47438e25b9d0895ff46cc32e912ea78528d949bb91b'
+ COMMIT='c547e6547b1312c2e113bd1ddc9ab84969c229c0'
+-PACKAGES=['airk-service','airk-inference','airk-retrieval','airk-kernel']
++PACKAGES=['airk-service','airk-inference','airk-retrieval','airk-kernel','airk-cli::combined_reads']
+ def sha(p):
+     with Path(p).open('rb') as f:return hashlib.file_digest(f,'sha256').hexdigest()
+ def pin(p):return {'path':str(p),'bytes':p.stat().st_size,'sha256':sha(p)}
+@@ -25,9 +25,9 @@
+ assert receipt['schema']=='airk-readiness-command/1' and receipt['status']=='completed' and receipt['passed'] is True
+ assert receipt['exit_code']==receipt['runner_exit_code']==0
+ for key in ('inputs_unchanged','runner_unchanged','runtime_unchanged','command_inputs_unchanged'):assert receipt[key] is True
+-assert receipt['changed_groups']==[] and receipt['groups']['native']['sha256']==GROUP
++assert receipt['changed_groups']==[] and receipt['groups']['native']['sha256']==GROUP and receipt['incremental']=='0'
+ assert receipt['log']==LOG.name
+-assert receipt['command'][1:]==['test','-p','airk-kernel','-p','airk-inference','-p','airk-retrieval','-p','airk-service','--lib','--all-features','--no-run','--message-format=json','--locked','--timings']
++assert receipt['command'][1:]==['test','--workspace','--all-features','--no-run','--message-format=json','--locked','--timings']
+ rows=[]
+ for line in LOG.read_text(encoding='utf-8').splitlines():
+     if line.lstrip().startswith('{'):rows.append(json.loads(line))
+@@ -43,7 +43,13 @@
+     assert len(matches)==1,(package,len(matches))
+     row=matches[0];assert rows.count(row)==1
+     selected.append((package,row))
+-owners={r['path']:r['owner_sid'] for r in json.loads((B/'source-owners.json').read_text(encoding='utf-8'))}
++def owner_policy(path):
++    command="$a=Get-Acl -LiteralPath '"+str(path).replace("'","''")+"'; @{owner=$a.Owner;owner_sid=([Security.Principal.NTAccount]$a.Owner).Translate([Security.Principal.SecurityIdentifier]).Value;sddl=$a.Sddl}|ConvertTo-Json -Compress"
++    return json.loads(subprocess.check_output(['pwsh','-NoProfile','-Command',command],text=True))
++source_policies={row['executable']:owner_policy(Path(row['executable'])) for package,row in selected}
++owners={path:policy['owner_sid'] for path,policy in source_policies.items()}
++assert owner_policy(B)['owner_sid']==SID and owner_policy(B.parent)['owner_sid']==SID
++
+ # Validate every original before creating any preserved image.
+ for package,row in selected:
+     p=Path(row['executable']);s=p.stat();assert owners[str(p)]==SID and p.is_file() and not p.is_symlink()
+@@ -60,14 +66,15 @@
+     machine=pe(target)
+     image={'binary_id':package,'path':str(target),'bytes':target.stat().st_size,'sha256':observed,
+        'original_path':str(original),'original_file_owner_sid':owners[str(original)],'preserved_file_owner_sid':SID}
+-    result.append(image);bindings.append({'materialized_image':image,'actual_cargo_artifact':row,'pe':machine})
++    result.append(image);bindings.append({'materialized_image':image,'actual_cargo_artifact':row,'pe':machine,'original_owner_policy':source_policies[str(original)],'preserved_owner_policy':target_policy,'source_stat_unchanged':True,'independent_file_ids':True,'source_and_dest_nlink1':True})
+     print(json.dumps({'preserved':package,'path':str(target),'sha256':observed}),flush=True)
+ assert sha(RECEIPT)==pin(RECEIPT)['sha256']
+ inventory={'schema':'airk.preserved-native-test-images/1','utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+  'source_commit':COMMIT,'native_group':GROUP,'actual_build_receipt':{'path':str(RECEIPT),'sha256':sha(RECEIPT)},
+- 'images':result,'source_dirty':True,'reviewed_delta':'Three private software-v2 reader/contract/control files differ from Git HEAD c547; exact native source group is a469, not clean c547 source.','scope':'Actual all-feature Cargo no-run test-image inventory and unchanged byte copies; no testcase counts inferred, selected model execution, qualification, signing or publication.'}
+-(B/'native-test-images-capacity-r1.json').write_text(json.dumps(inventory,indent=2)+'\n',encoding='utf-8')
+-side={'schema':'airk.private-current-image-preservation-binding/1','inventory':pin(B/'native-test-images-capacity-r1.json'),
++ 'images':result,'source_dirty':True,'reviewed_delta':'Current profiling and reviewed observer source is exact native6ad5; checkoutcommit is ancestry only, not clean-source equivalence. Original failed e206/a469 records are unchanged.','scope':'Actual all-feature Cargo no-run test-image inventory and unchanged byte copies; no testcase counts inferred, selected model execution, qualification, signing or publication.'}
++(B/'native-test-images-profile-only-r1.json').write_text(json.dumps(inventory,indent=2)+'\n',encoding='utf-8')
++side={'schema':'airk.private-current-image-preservation-binding/1','inventory':pin(B/'native-test-images-profile-only-r1.json'),
+  'build_receipt':pin(RECEIPT),'cargo_json':pin(LOG),'actual_static_ORT_rows':ort,'images':bindings,
+- 'testcases_listed_or_run':False,'NN_invocations':0,'artifact_or_target_approval':'pending explicit Root review; none invented'}
++ 'testcases_listed_or_run':False,'native_model_request_dispatched':False,'preserver_source':pin(Path(__file__).resolve()),'creation_policy':'Fresh protected human1002 parent inheritance; no existing owner/ACL changes. Copy occurs only after actual completed PASS with unchangedinputs and exact currentCargoJSON.','artifact_or_target_approval':'pending explicit Root review; none invented'}
++(B/'source-owners.json').write_text(json.dumps([{'path':path,**policy} for path,policy in source_policies.items()],indent=2)+'\n',encoding='utf-8')
+ (B/'cargo-image-bindings.json').write_text(json.dumps(side,indent=2)+'\n',encoding='utf-8')

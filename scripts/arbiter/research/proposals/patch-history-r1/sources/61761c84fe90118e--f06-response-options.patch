@@ -1,0 +1,272 @@
+--- a/crates/airk-cli/src/project_client.rs
++++ b/crates/airk-cli/src/project_client.rs
+@@ -1061,6 +1061,7 @@
+         control_calls: Arc<AtomicUsize>,
+         handshakes: Arc<AtomicUsize>,
+         received_receipts: Arc<std::sync::Mutex<Vec<airk_mcp::response::StatusReceipt>>>,
++        received_options:Arc<std::sync::Mutex<Vec<serde_json::Map<String,serde_json::Value>>>>,
+     }
+     fn fence(generation: u64, revision: u64) -> SourceFence {
+         SourceFence {
+@@ -1079,6 +1080,9 @@
+         pause_broker: bool,
+         pause_reply: bool,
+     ) -> Result<Peer> {
++        peer_with_options(root,old,generation,pause_broker,pause_reply,false)
++    }
++    fn peer_with_options(root:&Path,old:SourceFence,generation:u64,pause_broker:bool,pause_reply:bool,render_options:bool)->Result<Peer>{
+         local_ipc::prepare_root(root)?;
+         let mut control = local_ipc::Listener::bind(&local_ipc::endpoint(root, "control")?)?;
+         let identity = WorkerIdentity {
+@@ -1175,6 +1179,7 @@
+             serde_json::from_value(serde_json::json!({"freshness":"ef".repeat(32)}))?;
+         let received_receipts = Arc::new(std::sync::Mutex::new(Vec::new()));
+         let recorded_receipts = received_receipts.clone();
++        let received_options=Arc::new(std::sync::Mutex::new(Vec::new()));let recorded_options=received_options.clone();
+         let handshakes = Arc::new(AtomicUsize::new(0));
+         let counted_handshakes = handshakes.clone();
+         let worker = tokio::spawn(async move {
+@@ -1191,13 +1196,20 @@
+                 local_ipc::read_message::<_, Query>(&mut stream, Duration::from_secs(5)).await?
+             {
+                 recorded_receipts.lock().unwrap().push(query.status_receipt);
++                recorded_options.lock().unwrap().push(query.arguments.clone());
+                 counted.fetch_add(1, Ordering::SeqCst);
+                 began.notify_one();
+                 if pause_reply {
+                     release.notified().await;
+                 }
++                // Distinct wire fixtures exercise the owner's rendering key;
++                // native response-policy tests establish the real generation rule.
++                let mut rendered=serde_json::json!({"index_state":"available","publication":{"token":"original-query"}});
++                if render_options&&query.arguments.get("response_mode").and_then(|value|value.as_str())==Some("full"){
++                    rendered["generation"]=17.into();
++                }
+                 local_ipc::write_message(&mut stream,&protocol::QueryResult {
+-                    result:airk_mcp::unified::success(serde_json::json!({"index_state":"available","publication":{"token":"original-query"}})),
++                    result:airk_mcp::unified::success(rendered),
+                     status_receipt:receipt,rebind:false },Duration::from_secs(5)).await?;
+             }
+             Ok(())
+@@ -1212,6 +1224,7 @@
+             queries,
+             receipt,
+             received_receipts,
++            received_options,
+             control_calls,
+             handshakes,
+         })
+@@ -1552,4 +1565,40 @@
+         second.worker.await??;
+         Ok(())
+     }
+-}
++    #[tokio::test]
++    async fn source_and_pinned_status_cache_keys_rendered_options_and_reuses_transport()->Result<()> {
++        use airk_core::service::ProjectRegistration;
++        use airk_store::service::registry::ServiceRegistry;
++        for pinned in [false,true]{
++            let owner=tempfile::tempdir()?;let root=owner.path().join("runtime");local_ipc::prepare_root(&root)?;
++            let mut observed=fence(0,9);
++            if pinned{
++                let project=ProjectRegistration::new("/option-source".into(),"/option-data".into(),"fixture".into())?;
++                let mut registry=ServiceRegistry::open(&root,observed.namespace)?;registry.register(&project)?;observed.project=project.binding;
++            }
++            let peer=peer_with_options(&root,observed,2,false,false,true)?;
++            let backend=source_tools(root,observed.project);
++            if !pinned{backend.status.source_scope(observed);}
++            let options=[serde_json::json!({}),serde_json::json!({"response_mode":"full"}),
++                serde_json::json!({}),serde_json::json!({"include_status":true}),serde_json::json!({"include_status":true})];
++            let mut captured=None;
++            for (index,options) in options.iter().enumerate(){
++                let arguments=options.as_object().unwrap().clone();
++                let reply=if pinned{airk_mcp::remote::RemoteTools::call(&*backend,"airk_status".into(),arguments).await?}
++                    else{backend.call_observed("airk_status".into(),arguments,observed).await?};
++                let value=body(&reply)?;
++                assert_eq!(value["index_state"],"available");
++                assert_eq!(value.get("generation").is_some(),index==1,"wrong rendered mode at request {index}");
++                assert_eq!(value["cached"],index==4,"option changes must genuinely observe, same options must hit");
++                if index==3{captured=Some(value["observed_unix_ms"].clone());}
++                if index==4{assert_eq!(Some(value["observed_unix_ms"].clone()),captured);}
++            }
++            assert_eq!(&*peer.received_options.lock().unwrap(),&options[..4].iter().map(|value|value.as_object().unwrap().clone()).collect::<Vec<_>>());
++            assert_eq!(peer.control_calls.load(Ordering::SeqCst),2);
++            assert_eq!(peer.handshakes.load(Ordering::SeqCst),1);
++            assert_eq!(peer.queries.load(Ordering::SeqCst),4);
++            backend.status.shutdown().await?;drop(backend);peer.broker.await??;peer.worker.await??;
++        }Ok(())
++    }
++
++}
+--- a/crates/airk-cli/src/status_observation.rs
++++ b/crates/airk-cli/src/status_observation.rs
+@@ -29,6 +29,7 @@
+     args: serde_json::Value,
+ }
+ struct Snapshot {
++    options:serde_json::Value,
+     scope: CacheScope,
+     epoch: u64,
+     result: serde_json::Value,
+@@ -339,6 +340,7 @@
+             let cached = self.cache.lock().unwrap_or_else(|e| e.into_inner()).clone();
+             if let Some(cached) = cached.filter(|cached| {
+                 cached.scope == CacheScope::Source(fence)
++                    &&cached.options==key.args
+                     && cached.cached.as_ref().is_some_and(|snapshot| {
+                         snapshot.scope == cached.scope
+                             && Instant::now().saturating_duration_since(snapshot.captured)
+@@ -460,6 +462,7 @@
+         expires: Option<Instant>,
+         client: airk_core::usage::ClientFamily,
+     ) -> Result<Snapshot> {
++        let request_args=serde_json::Value::Object(args.clone());
+         let before = self.receipt_fence();
+         let scope = match source {
+             Some(fence) => Some(CacheScope::Source(fence)),
+@@ -470,6 +473,7 @@
+         };
+         if source.is_none() && !self.install_pinned_scope(before, scope) {
+             return Ok(Snapshot {
++            options:request_args.clone(),
+                 scope,
+                 epoch: self.epoch.load(Ordering::Acquire),
+                 result: source_scope_superseded(),
+@@ -481,6 +485,7 @@
+         }
+         if *self.scope.lock().unwrap_or_else(|e| e.into_inner()) != Some(scope) {
+             return Ok(Snapshot {
++            options:request_args.clone(),
+                 scope,
+                 epoch: self.epoch.load(Ordering::Acquire),
+                 result: source_scope_superseded(),
+@@ -494,6 +499,7 @@
+         ensure!(!self.closed.load(Ordering::Acquire), "status owner closed");
+         if expires.is_some_and(|until| Instant::now() >= until) {
+             return Ok(Snapshot {
++            options:request_args.clone(),
+                 scope,
+                 epoch,
+                 result: source_scope_superseded(),
+@@ -510,6 +516,7 @@
+             .clone()
+             .filter(|cached| {
+                 cached.scope == scope
++                    &&cached.options==request_args
+                     && cached.epoch == epoch
+                     && cached.cached.as_ref().is_some_and(|value| {
+                         value.scope == scope
+@@ -519,6 +526,7 @@
+             })
+         {
+             return Ok(Snapshot {
++            options:request_args.clone(),
+                 scope,
+                 epoch,
+                 result: cached.result.clone(),
+@@ -539,6 +547,7 @@
+             || *self.scope.lock().unwrap_or_else(|e| e.into_inner()) != Some(scope)
+         {
+             return Ok(Snapshot {
++            options:request_args.clone(),
+                 scope,
+                 epoch,
+                 result: source_scope_superseded(),
+@@ -565,6 +574,7 @@
+                     "index_error":{"code":"index_worker_unavailable","message":"No index query was submitted. Call diagnostics for service and queued-job diagnosis."}}),
+                         );
+                         return Ok(Snapshot {
++            options:request_args.clone(),
+                             scope,
+                             epoch,
+                             result,
+@@ -579,6 +589,7 @@
+         };
+         if expires.is_some_and(|until| Instant::now() >= until) {
+             return Ok(Snapshot {
++            options:request_args.clone(),
+                 scope,
+                 epoch,
+                 result: source_scope_superseded(),
+@@ -593,6 +604,7 @@
+             || *self.scope.lock().unwrap_or_else(|e| e.into_inner()) != Some(scope)
+         {
+             return Ok(Snapshot {
++            options:request_args.clone(),
+                 scope,
+                 epoch,
+                 result: source_scope_superseded(),
+@@ -616,6 +628,7 @@
+             *channel = Some((scope, connection));
+         }
+         let snapshot = Snapshot {
++            options:request_args.clone(),
+             scope,
+             epoch,
+             cached: CachedStatus::new(scope, &result),
+@@ -632,6 +645,7 @@
+         {
+             // Immutable logical observation only: no stream/read/transaction retained.
+             let saved = Snapshot {
++            options:request_args.clone(),
+                 scope,
+                 epoch,
+                 result: serde_json::Value::Null,
+@@ -654,6 +668,7 @@
+         self.set_scope(cached.scope);
+         let epoch = self.epoch.load(Ordering::Acquire);
+         *self.cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(Snapshot {
++            options:serde_json::json!({}),
+             scope: cached.scope,
+             epoch,
+             result: serde_json::Value::Null,
+@@ -836,6 +851,7 @@
+                     .call("airk_status".into(), Default::default())
+                     .await?;
+                 Ok(Snapshot {
++            options:serde_json::json!({}),
+                     scope,
+                     epoch,
+                     result,
+@@ -960,6 +976,7 @@
+         let result = owner
+             .observe(key, None, move |_| async move {
+                 Ok(Snapshot {
++            options:serde_json::json!({}),
+                     scope: CacheScope::Source(fence),
+                     epoch,
+                     result: serde_json::json!({"recovered":true}),
+@@ -1062,6 +1079,7 @@
+         };
+         owner.source_scope(fence);
+         let snapshot = Snapshot {
++            options:serde_json::json!({}),
+             scope: CacheScope::Source(fence),
+             epoch: owner.epoch.load(Ordering::Acquire),
+             result: serde_json::Value::Null,
+--- a/packages/vscode/src/test/nativeSmoke.test.ts
++++ b/packages/vscode/src/test/nativeSmoke.test.ts
+@@ -92,12 +92,20 @@
+         const expectedVersion=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../package.json'),'utf8')).version;
+         const first=await quickStatus(session);assert.equal(first.version,expectedVersion);assert.ok(['ok','updating','paused','unknown','needs_attention'].includes(first.health));
+         assert.equal(first.files,1);assert.equal(first.cached,false);assert.ok(first.observed_unix_ms>0);
++        assert.equal(first.generation,undefined,'terse status omits generation');
++        const full=await read('status',{response_mode:'full'});
++        assert.equal(full.cached,false,'full rendering requires a distinct observation');assert.ok(Number.isInteger(full.generation));
++        assert.ok(full.observed_unix_ms>=first.observed_unix_ms);assert.equal(full.publication.token,first.publication.token);
+         const cached=await read('status',{response_mode:'full'});assert.equal(cached.cached,true);assert.ok(cached.cache_age_ms<5000);
+-        assert.equal(cached.observed_unix_ms,first.observed_unix_ms);assert.equal(cached.publication.token,first.publication.token);
++        assert.equal(cached.observed_unix_ms,full.observed_unix_ms);assert.equal(cached.generation,full.generation);
+         const legacy=await read('airk_status',{response_mode:'full'});
+-        assert.equal(legacy.cached,true);assert.equal(legacy.observed_unix_ms,first.observed_unix_ms);
++        assert.equal(legacy.cached,true);assert.equal(legacy.observed_unix_ms,full.observed_unix_ms);
+         assert.equal(legacy.publication.token,first.publication.token);assert.equal(legacy.project,first.project);
+-        for(const value of [first,cached,legacy]){assert.equal(value.runtime,undefined);assert.equal(value.work,undefined);assert.equal(value.explorer,undefined);assert.ok(Buffer.byteLength(JSON.stringify(value))<1024);}
++        const terse=await read('status');assert.equal(terse.cached,false);assert.equal(terse.generation,undefined,'full cache must not leak generation into terse');
++        const included=await read('status',{include_status:true});assert.equal(included.cached,false);assert.equal(included.generation,undefined);assert.ok(included.freshness);
++        const includedHit=await read('status',{include_status:true});assert.equal(includedHit.cached,true);assert.equal(includedHit.observed_unix_ms,included.observed_unix_ms);
++        const beforeDetail=await read('status');assert.equal(beforeDetail.cached,false);assert.equal((await read('status')).cached,true);
++        for(const value of [first,full,cached,legacy,terse,included,includedHit,beforeDetail]){assert.equal(value.runtime,undefined);assert.equal(value.work,undefined);assert.equal(value.explorer,undefined);assert.ok(Buffer.byteLength(JSON.stringify(value))<1024);}
+         const detail=await read('diagnostics');assert.ok(detail.runtime);assert.ok(detail.work);
+         const after=await read('status');assert.equal(after.cached,false);assert.ok(after.observed_unix_ms>=first.observed_unix_ms);
+     }finally{session?.close();await fixture.dispose();}

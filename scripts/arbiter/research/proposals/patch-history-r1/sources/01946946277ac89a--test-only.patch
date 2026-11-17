@@ -1,0 +1,51 @@
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/checkpoint/tests.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/checkpoint/tests.rs
+@@ -125,7 +125,16 @@
+         let start = format!("2026-11-17T{hour:02}:00:00Z");
+         let end = format!("2026-11-17T{hour:02}:00:10Z");
+         let cutoff = format!("2026-11-17T{:02}:00:00Z", hour + 3);
+-        let mut v = json!({"schema":"airk.private.cuda-checkpoint-section/1","status":"PASS_TARGET_SECTION_ONLY_UNQUALIFIED","qualification":false,"cold_build_qualified":false,"section_id":id,"section_index":i,"plan":plan,"runner":if i==0{&first_runner}else{&next_runner},"input_contract":if i==0{&first_input}else{&next_input},"predecessor":prior,"failed_ancestry":[{"path":failed.path,"bytes":failed.bytes,"sha256":failed.sha256,"status":"FAILED_PRESERVED_NO_RETRY","scope":"synthetic original failure remains failed","never_relabelled":true}],"native_argv":plan_value["sections"][i]["argv"],"original_command_argv":["cmd.exe","/c","synthetic"],"warm_checkpoint_before":prior_warm,"warm_checkpoint_after":after_warm,"source_manifest_before":manifest,"source_manifest_after":manifest,"ninja_log_before":prior_log,"ninja_deps_before":prior_deps,"ninja_log_after":after_log,"ninja_deps_after":after_deps,"started_utc":start,"completed_utc":end,"absolute_cutoff_utc":cutoff,"global_campaign_cutoff_utc":"2026-11-19T05:29:42Z","original_section_seconds":10800,"elapsed_seconds":10,"observed_monotonic_seconds":100000+i*20000,"converted_monotonic_deadline":110800+i*20000,"command":{"exit_code":0,"timed_out":false,"log_oversized":false,"owned_descendants_settled":true,"owned_job_forced_termination":false,"owned_job_final_active_processes":0,"owned_job_final_member_pids":[],"actual_tree_result":{"schema":"airk.private.process-tree-result/1","exit_code":0,"wait":"Start-Process-Wait-process-and-descendants","command_pid":41,"wrapper_pid":42,"start_utc":start,"finished_utc":end}}});
++        let mut v = json!({"schema":"airk.private.cuda-checkpoint-section/1","status":"PASS_TARGET_SECTION_ONLY_UNQUALIFIED","qualification":false,"cold_build_qualified":false,"section_id":id,"section_index":i,"plan":plan,"runner":if i==0{&first_runner}else{&next_runner}});
++        v.as_object_mut().unwrap().extend(
++            json!({"input_contract":if i==0{&first_input}else{&next_input},"predecessor":prior,"failed_ancestry":[{"path":failed.path,"bytes":failed.bytes,"sha256":failed.sha256,"status":"FAILED_PRESERVED_NO_RETRY","scope":"synthetic original failure remains failed","never_relabelled":true}],"native_argv":plan_value["sections"][i]["argv"],"original_command_argv":["cmd.exe","/c","synthetic"],"warm_checkpoint_before":prior_warm,"warm_checkpoint_after":after_warm,"source_manifest_before":manifest}).as_object().unwrap().clone(),
++        );
++        v.as_object_mut().unwrap().extend(
++            json!({"source_manifest_after":manifest,"ninja_log_before":prior_log,"ninja_deps_before":prior_deps,"ninja_log_after":after_log,"ninja_deps_after":after_deps,"started_utc":start,"completed_utc":end,"absolute_cutoff_utc":cutoff}).as_object().unwrap().clone(),
++        );
++        v.as_object_mut().unwrap().extend(
++            json!({"global_campaign_cutoff_utc":"2026-11-19T05:29:42Z","original_section_seconds":10800,"elapsed_seconds":10,"observed_monotonic_seconds":100000+i*20000,"converted_monotonic_deadline":110800+i*20000,"command":{"exit_code":0,"timed_out":false,"log_oversized":false,"owned_descendants_settled":true,"owned_job_forced_termination":false,"owned_job_final_active_processes":0,"owned_job_final_member_pids":[],"actual_tree_result":{"schema":"airk.private.process-tree-result/1","exit_code":0,"wait":"Start-Process-Wait-process-and-descendants","command_pid":41,"wrapper_pid":42,"start_utc":start,"finished_utc":end}}}).as_object().unwrap().clone(),
++        );
+         if i == 0 {
+             v["flash_outputs_completed"] = json!(48);
+         } else {
+@@ -163,8 +172,28 @@
+         bytes: 999,
+         sha256: Sha256Digest::from_bytes([31; 32]),
+     }];
+-    let raw=m.json("composite",json!({"schema":"airk.private.cuda-checkpointed-build/1","status":"PASS_CHECKPOINTED_PRODUCER_ONLY_UNQUALIFIED","mode":"checkpointed-warm","qualification":false,"cold_build_qualified":false,"plan":plan,"producer_source":composer,"input_contract":composer_input,"original_failed_build":failed,"failed_ancestry":[failed],"warm_baseline":warm,"warm_final":prior_warm,"sections":section_rows,"source_manifest":manifest,"actual_build_root":root,"source_inventory_sha256":source_inventory.sha256,"frontend_inventory_sha256":frontend.sha256,"cuda_inventory_sha256":cuda.sha256,"frozen_original_inputs_sha256":inputs.sha256,"ninja_sha256":ninja.sha256,"target_closure_sha256":target_hash,"configure_argv":configure,"configured_preflight":preflight,"toolchain":tools,"policy":policy,"libraries":libraries,"provider_dlls":dlls,"original_attempt_started_utc":"2026-11-17T05:27:32Z","completed_utc":"2026-11-17T11:00:11Z","global_campaign_cutoff_utc":"2026-11-19T05:29:42Z","total_active_section_seconds":30,"wall_since_first_attempt_seconds":19959,"output_policy":{"owner":"synthetic-only"},"metadata_composition_seconds":1}));
+-    let proof=m.json("proof",json!({"schema":"airk.cuda-static-build-proof/2","target":"x86_64-pc-windows-msvc","ort_version":"1.30.0","build_receipt":raw,"producer_source":composer,"approved_plan_sha256":plan.sha256,"original_failed_R12":failed,"failed_ancestry":[failed],"sections":section_rows,"source_manifest":manifest,"source_inventory_sha256":source_inventory.sha256,"frontend_inventory_sha256":frontend.sha256,"cuda_inventory_sha256":cuda.sha256,"frozen_input_closure_sha256":inputs.sha256,"ninja":ninja,"static_target_closure":{"sha256":target_hash,"count":96},"libraries":libraries,"provider_dlls":dlls,"toolchain_pins":tool_pins,"qualification":false,"activation_pins_available":false}));
++    let mut raw_value = json!({"schema":"airk.private.cuda-checkpointed-build/1","status":"PASS_CHECKPOINTED_PRODUCER_ONLY_UNQUALIFIED","mode":"checkpointed-warm","qualification":false,"cold_build_qualified":false,"plan":plan,"producer_source":composer,"input_contract":composer_input});
++    raw_value.as_object_mut().unwrap().extend(
++        json!({"original_failed_build":failed,"failed_ancestry":[failed],"warm_baseline":warm,"warm_final":prior_warm,"sections":section_rows,"source_manifest":manifest,"actual_build_root":root,"source_inventory_sha256":source_inventory.sha256}).as_object().unwrap().clone(),
++    );
++    raw_value.as_object_mut().unwrap().extend(
++        json!({"frontend_inventory_sha256":frontend.sha256,"cuda_inventory_sha256":cuda.sha256,"frozen_original_inputs_sha256":inputs.sha256,"ninja_sha256":ninja.sha256,"target_closure_sha256":target_hash,"configure_argv":configure,"configured_preflight":preflight,"toolchain":tools}).as_object().unwrap().clone(),
++    );
++    raw_value.as_object_mut().unwrap().extend(
++        json!({"policy":policy,"libraries":libraries,"provider_dlls":dlls,"original_attempt_started_utc":"2026-11-17T05:27:32Z","completed_utc":"2026-11-17T11:00:11Z","global_campaign_cutoff_utc":"2026-11-19T05:29:42Z","total_active_section_seconds":30,"wall_since_first_attempt_seconds":19959}).as_object().unwrap().clone(),
++    );
++    raw_value.as_object_mut().unwrap().extend(
++        json!({"output_policy":{"owner":"synthetic-only"},"metadata_composition_seconds":1}).as_object().unwrap().clone(),
++    );
++    let raw = m.json("composite", raw_value);
++    let mut proof_value = json!({"schema":"airk.cuda-static-build-proof/2","target":"x86_64-pc-windows-msvc","ort_version":"1.30.0","build_receipt":raw,"producer_source":composer,"approved_plan_sha256":plan.sha256,"original_failed_R12":failed,"failed_ancestry":[failed]});
++    proof_value.as_object_mut().unwrap().extend(
++        json!({"sections":section_rows,"source_manifest":manifest,"source_inventory_sha256":source_inventory.sha256,"frontend_inventory_sha256":frontend.sha256,"cuda_inventory_sha256":cuda.sha256,"frozen_input_closure_sha256":inputs.sha256,"ninja":ninja,"static_target_closure":{"sha256":target_hash,"count":96}}).as_object().unwrap().clone(),
++    );
++    proof_value.as_object_mut().unwrap().extend(
++        json!({"libraries":libraries,"provider_dlls":dlls,"toolchain_pins":tool_pins,"qualification":false,"activation_pins_available":false}).as_object().unwrap().clone(),
++    );
++    let proof = m.json("proof", proof_value);
+     let authority = Authority {
+         plan: plan.sha256,
+         failed: failed.sha256,

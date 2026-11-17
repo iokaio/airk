@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Test-only driver for the exact entry revision's original Store handlers.
+use anyhow::{Context, Result, ensure};
+use std::{path::PathBuf,time::{Duration,Instant}};
+
+#[test]
+fn p9_pre_policy_owner_probe() -> Result<()> {
+    let value=|name:&str| std::env::var(name).with_context(||format!("missing owned-fixture input {name}"));
+    let base=PathBuf::from(value("AIRK_PRIVATE_CENSUS_BASE")?).canonicalize()?;
+    let root=PathBuf::from(value("AIRK_PRE_POLICY_ROOT")?).canonicalize()?;
+    let data=PathBuf::from(value("AIRK_PRE_POLICY_DATA")?).canonicalize()?;
+    let control=PathBuf::from(value("AIRK_PRE_POLICY_CONTROL")?).canonicalize()?;
+    ensure!(root.starts_with(&base)&&data.starts_with(&base)&&control.starts_with(&base),"probe inputs must stay inside the owned fixture base");
+    let name=value("AIRK_PRE_POLICY_COLLECTION")?;
+    let registration=airk_core::service::ProjectRegistration::new(root.to_str().context("UTF-8 root")?.into(),data.to_str().context("UTF-8 data")?.into(),name.clone())?;
+    let refused=|error:anyhow::Error| -> Result<()> {
+        ensure!(format!("{error:#}").contains("unknown field `required_source_policy`"),"pre-policy handler refused for a different reason: {error:#}");
+        Ok(())
+    };
+    match value("AIRK_PRE_POLICY_EXPECT")?.as_str() {
+        "read_works"=>{
+            let collection=crate::service::collection::Collection::existing(&data,&registration.root,&name)?;
+            let store=collection.selected_store()?;
+            let scope=store.current_scope(&registration.root,&name)?.context("positive fixture lacks current evidence")?;
+            ensure!(store.current_read(&scope)?.collection_state()?.is_some(),"positive fixture lacks collection metadata");
+        }
+        "read_refused"=>{
+            let result=crate::service::collection::Collection::existing(&data,&registration.root,&name);
+            let error=match result {Ok(_)=>anyhow::bail!("pre-policy collection constructor accepted a required policy"),Err(error)=>error};
+            refused(error)?;
+        }
+        "purge_refused"=>{
+            let deadline=Instant::now()+Duration::from_secs(5);
+            let lease=loop {
+                match crate::service::ProjectLease::acquire(&control,registration.binding) {
+                    Ok(lease)=>break lease,
+                    Err(error) if matches!(error.downcast_ref::<std::fs::TryLockError>(),Some(std::fs::TryLockError::WouldBlock))&&Instant::now()<deadline=>std::thread::sleep(Duration::from_millis(10)),
+                    Err(error)=>return Err(error),
+                }
+            };
+            let error=crate::service::collection::Collection::purge_removed_turn(&registration,&lease).err().context("pre-policy purge accepted a required policy")?;
+            refused(error)?;
+        }
+        _=>anyhow::bail!("unknown explicit probe expectation"),
+    }
+    Ok(())
+}

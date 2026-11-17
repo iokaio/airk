@@ -1,0 +1,11 @@
+--- r1/half_reference.py
++++ r2/half_reference.py
+@@ -200,7 +200,7 @@
+    initializer=nodes[route].input[1]
+   elif head:
+    route='/MatMul';need(route in nodes and nodes[route].op_type=='MatMul' and len(nodes[route].input)==2,'actual trained head differs');initializer=nodes[route].input[1]
+-  else:route=None;initializer=prefix+'.'+name
++  else:route=None;initializer=('base.' if reference.focus else 'scorer.text.')+name
+   need(initializer in tensors and initializer not in used,'missing/duplicate actual learned initializer');used.add(initializer);tensor=tensors[initializer]
+   expected_shape=list(reversed(record['shape'])) if projection or head else record['shape']
+   protected=record['protected_fp32'];expected_dtype=1 if protected else 10

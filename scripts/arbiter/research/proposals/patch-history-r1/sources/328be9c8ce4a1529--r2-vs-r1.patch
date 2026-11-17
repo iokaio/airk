@@ -1,0 +1,131 @@
+--- r1/half_reference.py
++++ r2/half_reference.py
+@@ -89,6 +89,7 @@
+  need(positions==list(range(len(ids))) and all(type(x) is int for x in positions),'native positions differ')
+  start=live_start(mask)
+  if focus:
++  need(all(type(x) is int for x in candidates) and all(type(x) is bool for x in options),'native Focus candidate/option dtype differs')
+   need(len(ids)==512 and row['decision_position']==511 and candidates==[2152,9693] and options==[True,True],'native Focus512/readout differs')
+  else:
+   need(start==0 and len(ids)<=8192 and row['decision_position']==len(ids)-1,'Context all-live/final decision differs')
+@@ -200,7 +201,7 @@
+    initializer=nodes[route].input[1]
+   elif head:
+    route='/MatMul';need(route in nodes and nodes[route].op_type=='MatMul' and len(nodes[route].input)==2,'actual trained head differs');initializer=nodes[route].input[1]
+-  else:route=None;initializer=prefix+'.'+name
++  else:route=None;initializer=('base.' if reference.focus else 'scorer.text.')+name
+   need(initializer in tensors and initializer not in used,'missing/duplicate actual learned initializer');used.add(initializer);tensor=tensors[initializer]
+   expected_shape=list(reversed(record['shape'])) if projection or head else record['shape']
+   protected=record['protected_fp32'];expected_dtype=1 if protected else 10
+--- r1/test_half_reference.py
++++ r2/test_half_reference.py
+@@ -120,7 +120,7 @@
+   for i,record in enumerate(reference.parameter_census()):
+    name=record['parameter'];projection=name.endswith('_proj.weight');head=name=='trained_readout_rows_2152_9693';value=reference.head if head else reference.weights[name]
+    if projection or head:value=value.transpose(0,1)
+-   raw=value.contiguous().numpy().tobytes();initializer='linear_'+str(i) if projection or head else prefix+'.'+name
++   raw=value.contiguous().numpy().tobytes();initializer='linear_'+str(i) if projection or head else ('base.' if reference.focus else 'scorer.text.')+name
+    tensor=T();tensor.name=initializer;tensor.data_type=T.FLOAT if record['protected_fp32'] else T.FLOAT16;tensor.dims.extend(list(value.shape));tensor.data_location=1
+    for key,val in [('location','weights.bin'),('offset',str(offset)),('length',str(len(raw)))]:entry=tensor.external_data.add();entry.key=key;entry.value=val
+    initial.append(tensor);blob.extend(raw);offset+=len(raw)
+@@ -142,4 +142,68 @@
+    onnx,path,files=self.candidate(reference,pathlib.Path(folder));weights=pathlib.Path(files['weights.bin']);raw=bytearray(weights.read_bytes());raw[0]^=1;weights.write_bytes(raw)
+    with self.assertRaisesRegex(ValueError,'actual candidate bytes differ'):r.verify_actual_half_parameters(reference,path,onnx,files)
+ 
++
++class StrictFocusAbiControls(unittest.TestCase):
++ def test_focus_rejects_float_candidate_ids_and_integer_option_masks(self):
++  for field,value in [('candidate_positions',[2152.0,9693.0]),('option_mask',[1,1])]:
++   row=native(True);row[field]=value
++   with self.subTest(field=field),self.assertRaisesRegex(ValueError,'dtype differs'):r.validate_native(t,config(),True,row)
++
++class AuthenticContextNamespaceControls(unittest.TestCase):
++ def fixture(self,root):
++  # Invoke only make_wrapper with literal1-layer arrays, never load_authenticated.
++  # This is the actual pinned original class hierarchy, including Scorer.text.
++  import importlib.util
++  from onnx import helper as h,TensorProto as T
++  import onnx
++  source=pathlib.Path('D:/code/Github/airk/artifacts/advanced-split/models/qwen3-challengers-r1/qwen3_reference_r2.py')
++  self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(),'4c6f43d0d81539cfc6bf7b6ddf5ae69273e61508d0db3d22a5e7488c60560b6b')
++  spec=importlib.util.spec_from_file_location('actual_original_context_owner_literal',source);owner=importlib.util.module_from_spec(spec);spec.loader.exec_module(owner)
++  c=config();literal=state(c);literal['embed_tokens.weight'][1,0]=1+2**-11;literal['norm.weight'][0]=1.0003
++  scorer=owner.make_wrapper(c,literal)
++  original=scorer.text.state_dict();reference=r.HalfReference(t,c,original,False,'cpu')
++  initial=[];nodes=[];blob=bytearray()
++  # Candidate bytes/names derive from actual original module and independent
++  # struct IEEE encoding, NOT reference.weights/parameter_census/exporter report.
++  for index,(qualified,value) in enumerate(scorer.named_parameters()):
++   self.assertTrue(qualified.startswith('text.'));name=qualified[len('text.'):];projection=name.endswith('_proj.weight');protected=name.endswith(('norm.weight','layernorm.weight'))
++   v=value.detach().cpu();v=v.transpose(0,1) if projection else v;values=v.contiguous().flatten().tolist();raw=b''.join(struct.pack('<f' if protected else '<e',x) for x in values)
++   initializer='actual_projection_'+str(index) if projection else 'scorer.'+qualified
++   tensor=T();tensor.name=initializer;tensor.data_type=T.FLOAT if protected else T.FLOAT16;tensor.dims.extend(list(v.shape));tensor.data_location=1
++   for key,val in [('location','weights.bin'),('offset',str(len(blob))),('length',str(len(raw)))]:entry=tensor.external_data.add();entry.key=key;entry.value=val
++   initial.append(tensor);blob.extend(raw)
++   if projection:
++    parts=name.split('.');route='/scorer/layers.'+parts[1]+'/'+parts[2]+'/'+parts[3]+'/MatMul'
++    nodes.append(h.make_node('Cast',['literal_fp32'],['literal_half_'+str(index)],name='literal_cast16_'+str(index),to=T.FLOAT16))
++    nodes.append(h.make_node('MatMul',['literal_half_'+str(index),initializer],['literal_result16_'+str(index)],name=route))
++    nodes.append(h.make_node('Cast',['literal_result16_'+str(index)],['literal_result32_'+str(index)],name='literal_cast32_'+str(index),to=T.FLOAT))
++  path=root/'model.onnx';graph=h.make_model(h.make_graph(nodes,'authentic-context-name-only-fixture',[],[],initial));path.write_bytes(graph.SerializeToString());(root/'weights.bin').write_bytes(blob)
++  return reference,onnx,path,{'weights.bin':str(root/'weights.bin')},original
++ def test_actual_original_nested_embedding_and_all_norm_classes_bind(self):
++  with tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).parent) as folder:
++   reference,onnx,path,files,original=self.fixture(pathlib.Path(folder));bindings=r.verify_actual_half_parameters(reference,path,onnx,files);by={x['parameter']:x for x in bindings}
++   wanted=['embed_tokens.weight','norm.weight','layers.0.input_layernorm.weight','layers.0.post_attention_layernorm.weight','layers.0.self_attn.q_norm.weight','layers.0.self_attn.k_norm.weight']
++   for name in wanted:self.assertEqual(by[name]['initializer'],'scorer.text.'+name)
++   self.assertEqual(len(bindings),13);self.assertEqual(by['layers.0.self_attn.q_proj.weight']['node'],'/scorer/layers.0/self_attn/q_proj/MatMul')
++   self.assertEqual(by['embed_tokens.weight']['actual_initializer_sha256'],hashlib.sha256(b''.join(struct.pack('<e',x) for x in original['embed_tokens.weight'].flatten().tolist())).hexdigest())
++   self.assertEqual(by['norm.weight']['actual_initializer_sha256'],hashlib.sha256(b''.join(struct.pack('<f',x) for x in original['norm.weight'].flatten().tolist())).hexdigest())
++ def test_missing_or_flattened_context_namespace_refuses(self):
++  for missing in [False,True]:
++   with self.subTest(missing=missing),tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).parent) as folder:
++    reference,onnx,path,files,_=self.fixture(pathlib.Path(folder));graph=onnx.load_model(str(path),load_external_data=False)
++    target=next(v for v in graph.graph.initializer if v.name=='scorer.text.embed_tokens.weight')
++    if missing:graph.graph.initializer.remove(target)
++    else:target.name='scorer.embed_tokens.weight'
++    path.write_bytes(graph.SerializeToString())
++    with self.assertRaisesRegex(ValueError,'missing/duplicate actual learned initializer'):r.verify_actual_half_parameters(reference,path,onnx,files)
++ def test_actual_half_protected_dtypes_and_changed_bytes_refuse(self):
++  for mutate in ['half_dtype','protected_dtype','bytes']:
++   with self.subTest(mutate=mutate),tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).parent) as folder:
++    reference,onnx,path,files,_=self.fixture(pathlib.Path(folder));graph=onnx.load_model(str(path),load_external_data=False)
++    if mutate=='bytes':
++     raw=bytearray(pathlib.Path(files['weights.bin']).read_bytes());raw[0]^=1;pathlib.Path(files['weights.bin']).write_bytes(raw)
++    else:
++     name='scorer.text.embed_tokens.weight' if mutate=='half_dtype' else 'scorer.text.norm.weight';v=next(v for v in graph.graph.initializer if v.name==name);v.data_type=onnx.TensorProto.FLOAT if mutate=='half_dtype' else onnx.TensorProto.FLOAT16;path.write_bytes(graph.SerializeToString())
++    with self.assertRaises(ValueError):r.verify_actual_half_parameters(reference,path,onnx,files)
++
+ if __name__=='__main__':unittest.main()
+--- r1/CONTRACT.md
++++ r2/CONTRACT.md
+@@ -16,4 +16,12 @@
+ 
+ Complete parameter census includes independently decoded logical original FP32 SHA and ONNX-layout FP32 SHA for every learned projection, plus rounded dtype/layout SHA. Digesting uses bounded <=4MiB contiguous row chunks, including transposed matrices; do not construct multi-GiB temporary byte arrays merely to hash. This census proves actual source/rounding correspondence only when an authorized real run emits it and native owner compares the actual exported initializer closure.
+ 
+-The independent actual-candidate byte binder maps complete publisher parameter names to actual graph initializer consumers, reads/hashes actual half/protected ranges in bounded chunks, checks dtype/shape/no-overlap/complete floating census and compares against independently rounded publisher bytes (including transpose). Exporter-reported range digests are not accepted as observations. Actual source/graph/process fences and native graph-math admission remain with the native owner; no model inference occurs in byte binding.
++The independent actual-candidate byte binder maps complete publisher parameter names to actual graph initializer consumers, reads/hashes actual half/protected ranges in bounded chunks, checks dtype/shape/no-overlap for every expected learned tensor and the F32/F16 initializer census and compares against independently rounded publisher bytes (including transpose). Exporter-reported range digests are not accepted as observations. Actual source/graph/process fences and native graph-math admission remain with the native owner; no model inference occurs in byte binding.
++
++## R2 exact Context namespace and Focus ABI correction
++
++Live original source qwen3_reference_r2.py SHA4c6f43d0 constructs Scorer.text; scores-only exporter83b9b86b wraps it as ScoresOnly.scorer. Actual pinned original Compact C79 graph protobuf metadata (external weights NOT loaded) confirms scorer.text.embed_tokens.weight, scorer.text.norm.weight, and scorer.text.layers.0.{input_layernorm,post_attention_layernorm,self_attn.q_norm,self_attn.k_norm}.weight. Those nonprojection initializers bind to scorer.text.+publisher text-state name. MatMul node routes remain /scorer/layers.N/{self_attn|mlp}/{member}/MatMul, and their actual second-input initializer is looked up independently. Focus base.* initializer/MatMul names and all math/tolerances remain unchanged. Focus candidate IDs must now be exact Python ints and option masks exact bools, matching the existing Context discipline rather than permissive numeric equality.
++
++The new fixture invokes ONLY the pinned original make_wrapper with synthetic1-layerH2 state, without load_authenticated, publisher checkpoint arrays or selected model forward. Actual nested module names provide embedding/all five norm classes/seven projections; candidate half/protected bytes are independently encoded with struct IEEE formats from original module arrays, not copied from reference.weights or exporter-reported hashes. Missing/flattened namespace, dtype changes and byte changes refuse. Whole batch28/28 CPU-only controls passed; CUDA stayed uninitialized. R1 files and24-control receipts are historical and unchanged.
++
++The learned-parameter binder is NOT whole-graph/cast authority: its floating-initializer extra check covers F32/F16 only; other dtypes, Constant attribute tensors, Cast targets/placement and complete actual DAG still require the separate owning native G5 graph/math gate. No exporter-reported range hash can replace actual bytes or that gate. No actual half numerical drift, efficient kernel, resource fit, placement, qualification or activation is established by these controls.
+--- r1/README.md
++++ r2/README.md
+@@ -6,8 +6,12 @@
+ 
+ Complete census records natural source FP32 SHA, source ONNX-layout SHA, rounded dtype/shape/SHA and rounded transpose SHA. Hashing streams bounded4MiB row chunks rather than allocating full transposed multi-GiB arrays. Independent actual-candidate binder then maps original publisher parameter names to actual candidate initializer consumers, validates complete dtype/shape/ranges/no-overlap/floating census and streams ACTUAL bytes before comparing with independently predicted half/protected bytes. Exporter-supplied range hashes alone never count as actual observations. Native owner must still authenticate full graph/source/weights and graph-math/cast policy.
+ 
+-Final grouped CPU-only controls24/24 PASS1.420s, process4.066664s; zero failures/skips. Torch2.10.0+cu128, CUDA_VISIBLE_DEVICES empty, GPU_INITIALIZED False before/after. Only literal tensors and a synthetic1-layerH2 fixture were used, including complete tiny Focus512/readout and Context sparse score/mask, independent IEEE bit literals, RMS/RoPE scalar oracles, source/rounded/transposed hash oracles, actual tiny synthetic candidate weights and mutation refusal. Zero selected models/checkpoints/NN/native/GPU calls. Earlier21/22-control source identities are retained in source-before-* directories and receipts; final24 is current code.
++R1 grouped CPU-only controls24/24 PASS1.420s, process4.066664s; zero failures/skips. Torch2.10.0+cu128, CUDA_VISIBLE_DEVICES empty, GPU_INITIALIZED False before/after. Only literal tensors and a synthetic1-layerH2 fixture were used, including complete tiny Focus512/readout and Context sparse score/mask, independent IEEE bit literals, RMS/RoPE scalar oracles, source/rounded/transposed hash oracles, actual tiny synthetic candidate weights and mutation refusal. Zero selected models/checkpoints/NN/native/GPU calls. Earlier21/22-control source identities are retained in source-before-* directories and receipts; final24 is current code.
+ 
+ Future owning-runner integration after Root release: preserve original deadline/identity/Job/HANDLE/custody; decode actual native G5 template and opaque native input/profile; call from_authenticated_original with pinned original source owner; call verify_actual_half_parameters against the actual new candidate graph/files; score every exact native row with forward(row.input); retain full inputs/raw scores/census/bindings/original source proofs through the existing reference parent/assembler. This recipe does not fabricate parent receipts or a positive execution. That owning invocation/data-recording adaptation still needs review before actual selected runs. Full-model Torch host/device bounds are lifecycle-owned; do not assume the8GiB graph-export job permits loading Large publisher FP32 arrays. No hardware fit/performance claim.
+ 
+ Original-FP32 references may reuse ONLY the already audited complete18-row data/provenance match, and fresh G5 templates must repeat that equality gate. Keep original fixture/producer/source identities unchanged; no old numeric/resource/CAL/task/placement/GPU/latency verdicts transfer. Frozen tolerances stay matching raw<=.001, mass Focus<=.00001/Context<=.05, original-FP32 raw Focus<=.25/Context<=.001, original mass<=.05, finite +same argmax. Native G5 policy, numerical, observed full Flash/MEA roster, Resource20/coexistence and Answer120s gates remain independent and unpassed.
++
++R2 corrects Context nonprojection initializer namespace to actual scorer.text.* while leaving /scorer/layers.N MatMul routes unchanged. It also rejects non-int Focus candidate IDs and non-bool Focus option masks. Fresh grouped CPU-only controls28/28 PASS15.3457485s, no errors/skips and CUDA uninitialized before/after. The added real pinned wrapper is instantiated only with tiny synthetic1-layerH2 arrays; no selected checkpoint or external weight values are read. Actual C79 protobuf metadata and both original source hashes were validated before correction. R1 remains immutable.
++
++Parameter-byte/dtype binding does not establish complete graph/cast closure. The native G5 gate still must validate all tensor/Constant dtypes, Casts, whole DAG and actual efficient dispatch; no backend/precision-loss/fit verdict exists from this packet.

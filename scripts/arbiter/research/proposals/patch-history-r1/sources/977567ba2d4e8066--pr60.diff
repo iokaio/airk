@@ -1,0 +1,420 @@
+diff --git a/docs/vscode-extension.md b/docs/vscode-extension.md
+index 1fe5b7f0..667cefc9 100644
+--- a/docs/vscode-extension.md
++++ b/docs/vscode-extension.md
+@@ -194,12 +194,12 @@ If Windows locks a running CLI during an update, the previous executable remains
+ 
+ **AIRK: Remove Terminal Command** removes AIRK-owned PATH integration from external shells now: the exact `# AIRK CLI PATH` blocks it wrote, or the matching user PATH entries on Windows. It also sets `airk.cli.shellIntegration` to `off` so later setup does not add them again. The wrapper stays so that VS Code terminals keep working. A block you edited, or a redirected or hard-linked profile, is preserved and reported.
+ 
+-Uninstalling the extension runs its `vscode:uninstall` hook the next time VS Code starts. The hook copies the verified engine to a private temporary `airk-uninstall-*` directory and starts a detached cleanup worker. It prints that directory, which holds `cleanup.log`, `result.json` and `README.txt`. The worker:
++Uninstalling the extension runs its `vscode:uninstall` hook when VS Code completes the removal at a later start. After `code --uninstall-extension`, the first restart can only mark the extension as removed, and the hook then runs at the next start. Until the hook runs, the service, the PATH blocks and the runtime stay. If no `airk-uninstall-*` directory exists after one restart, restart VS Code again. The hook copies the verified engine to a private temporary `airk-uninstall-*` directory and starts a detached cleanup worker. It prints that directory, which holds `cleanup.log`, `result.json` and `README.txt`. The worker:
+ 
+ - first records `state: started`;
+ - removes recorded AIRK agent entries in project files;
+ - runs `airk runtime uninstall`, which stops the service and removes the runtime payloads and the launcher;
+-- removes the AIRK-owned PATH entries, profile blocks and wrapper, and the Workbench sessions;
++- removes the AIRK-owned PATH entries, profile blocks and wrapper, deletes a startup file that AIRK created when nothing else remains in it, and removes the Workbench sessions;
+ - writes `complete` or `needs_attention`.
+ 
+ The result is also mirrored to `extension-uninstall/last-result.json` in the native state directory, which survives uninstall. A `started` result with no running worker means the cleanup was interrupted; it is never reported as success. Reinstall AIRK and run **AIRK: Show Last Uninstall Result**, or read the files above. A later activation warns once when the last cleanup needs attention.
+diff --git a/packages/vscode/package.json b/packages/vscode/package.json
+index ec116ee6..68136d72 100644
+--- a/packages/vscode/package.json
++++ b/packages/vscode/package.json
+@@ -550,7 +550,7 @@
+           "airk.service.installDir": {
+             "type": "string",
+             "default": "",
+-            "markdownDescription": "Absolute user installation directory on this execution host. Empty uses native account defaults. Workspace values are ignored.",
++            "markdownDescription": "Absolute user installation directory on this execution host. Empty uses native account defaults. On macOS and Linux, an existing directory must belong to you and be owner-only (`chmod 700`); setup creates a missing directory that way. Workspace values are ignored.",
+             "scope": "machine"
+           },
+           "airk.service.managedSource": {
+diff --git a/packages/vscode/src/cliRemove.ts b/packages/vscode/src/cliRemove.ts
+index 38f1d0c4..076231c0 100644
+--- a/packages/vscode/src/cliRemove.ts
++++ b/packages/vscode/src/cliRemove.ts
+@@ -125,7 +125,10 @@ export async function removeShellIntegration(storage: string, profiles: readonly
+         if (removed > 0) { result.removed.push(`Removed ${removed} AIRK entr${removed === 1 ? 'y' : 'ies'} from the user PATH.`); }
+     } else {
+         const blocks = directories.flatMap(directory => [posixBlock(directory), fishBlock(directory)]);
+-        for (const { file, created } of profiles) {
++        // One pass per file: a later receipt that AIRK created the file must not lose to an earlier default candidate.
++        const owned = new Map<string, boolean>();
++        for (const { file, created } of profiles) { owned.set(file, (owned.get(file) ?? false) || created); }
++        for (const [file, created] of owned) {
+             try {
+                 const { changed, message } = await removeProfileBlocks(file, blocks, created);
+                 if (changed) { result.removed.push(`Removed AIRK PATH block from ${file}`); }
+diff --git a/packages/vscode/src/serviceBootstrap.ts b/packages/vscode/src/serviceBootstrap.ts
+index fbc29d34..385858c7 100644
+--- a/packages/vscode/src/serviceBootstrap.ts
++++ b/packages/vscode/src/serviceBootstrap.ts
+@@ -178,6 +178,13 @@ export async function verifyBundledRuntime(extensionPath:string,version:string,
+     if(payload[main]!==files[main]||payload[helper]!==files[helper]||!files[main]||!files[helper]){throw new ServiceError('runtime_pair_missing');}
+     return {main:path.join(source,main),helper:path.join(source,helper),source,digest,version,platform};
+ }
++/** An existing install folder that the native runtime will refuse. The message names the folder and the fix. */
++export class InstallFolderPermissionError extends ServiceError {
++    constructor(readonly directory:string,mode:number){
++        super('runtime_install_dir_not_owner_only');
++        this.message=`The AIRK install folder ${directory} must belong to you and be owner-only (mode 700); it has mode ${(mode&0o777).toString(8)}. Run chmod 700 '${directory.replace(/'/g,`'\\''`)}', or set airk.service.installDir to a folder that does not exist yet`;
++    }
++}
+ export class RuntimeHost {
+     private bundle?:Promise<VerifiedBundle>;
+     private preparing?:Promise<RuntimeBinding>;
+@@ -266,7 +273,9 @@ export class RuntimeHost {
+         if(location.protocol!==1){throw new ServiceError('runtime_locator_protocol_mismatch');}
+         const installDir=this.options.installDir??safePath(location.install_dir);
+         const observation:BootstrapObservation={bundle,installDir,location,installed:false};
+-        try {const metadata=await fs.lstat(installDir);if(!metadata.isDirectory()||metadata.isSymbolicLink()){throw new ServiceError('unsafe_runtime_install_location');}}
++        try {const metadata=await fs.lstat(installDir);if(!metadata.isDirectory()||metadata.isSymbolicLink()){throw new ServiceError('unsafe_runtime_install_location');}
++            // The native runtime refuses an existing install root that is not owned by this user and owner-only; report it before setup starts.
++            if(process.platform!=='win32'&&((metadata.mode&0o077)!==0||(typeof process.geteuid==='function'&&metadata.uid!==process.geteuid())))throw new InstallFolderPermissionError(installDir,metadata.mode);}
+         catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return observation;throw error;}
+         observation.installed=true;
+         try {observation.inspection=await this.invoke(bundle.main,['runtime','inspect','--install-dir',installDir]);}
+diff --git a/packages/vscode/src/serviceConsoleController.ts b/packages/vscode/src/serviceConsoleController.ts
+index 24eab52d..228fc4bb 100644
+--- a/packages/vscode/src/serviceConsoleController.ts
++++ b/packages/vscode/src/serviceConsoleController.ts
+@@ -178,6 +178,9 @@ export class ServiceConsoleController {
+                 this.lastPollFailure=code(error);void this.host.diagnosticFailure?.('status_poll',error,this.bootstrap).catch(()=>{});
+             }
+             this.state.message=code(error);
++            // An untrusted workspace is a wait for the user, not a connection failure; the bootstrap code keeps the detail.
++            // The same code can come from a runtime host that cannot continue, so the trust text needs an untrusted workspace.
++            if(code(error)==='runtime_client_no_longer_authorized'&&!this.host.trusted())this.state.message='Waiting for workspace trust. AIRK connects after the workspace is trusted and setup finishes.';
+             if(code(error)==='status_poll_timed_out'){
+                 this.disconnected();this.state.health={...this.state.health,state:'failed',code:'status_poll_timed_out'};
+                 this.state.message='Status check timed out. Reconnecting automatically; current indexing progress is unconfirmed.';
+diff --git a/packages/vscode/src/serviceExtension.ts b/packages/vscode/src/serviceExtension.ts
+index 16b5b4e0..6a7f8a32 100644
+--- a/packages/vscode/src/serviceExtension.ts
++++ b/packages/vscode/src/serviceExtension.ts
+@@ -31,6 +31,9 @@ import { rememberShellIntegration, rememberUninstallTarget, shellProfiles } from
+ import { recordDiagnosticFailure } from './diagnosticLogs';
+ import { nativeExecutionAllowed, NativeExecutionDisabled, setNativeExecutionGate } from './nativeGate';
+ 
++/** Status bar text while the last setup attempt failed; the output and the error notification keep the details. */
++const SETUP_FAILED_STATUS='$(warning) AIRK: setup failed';
++
+ /** User-scope only: a workspace cannot turn native execution back on. */
+ function nativeExecutionSetting():boolean{
+     return vscode.workspace.getConfiguration('airk').inspect<boolean>('runtime.nativeExecution')?.globalValue!==false;
+@@ -127,6 +130,13 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
+         }
+         return !!this.extensionUpdate;
+     }
++    /** A completed setup replaces any earlier failed startup; reportInstall keeps only its message. */
++    private setupSucceeded():void{if(this.startup){this.startup=undefined;this.treeChanges.fire();}}
++    /** Status for a refresh that found no usable runtime: show a failed setup instead of the neutral text. */
++    private renderSetupFailed():boolean{
++        if(!this.installationFailed)return false;
++        this.status.text=SETUP_FAILED_STATUS;return true;
++    }
+     private renderUpdateStatus():boolean{
+         if(!this.extensionUpdate)return false;
+         this.status.text='$(sync) AIRK: Reload to finish update';this.status.command='airk.reloadUpdatedExtension';
+@@ -261,7 +271,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
+             }
+             this.trusted();
+             if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');
+-            if(!observation.inspection||observation.inspection.payload_verified===false||observation.inspection.metadata_only===true){clear();this.status.text='AIRK: setup';return;}
++            if(!observation.inspection||observation.inspection.payload_verified===false||observation.inspection.metadata_only===true){clear();if(!this.renderSetupFailed())this.status.text='AIRK: setup';return;}
+             const binding=this.runtime().binding(observation.inspection,observation.installDir);
+             if(binding.version!==this.runningVersion)throw new ServiceError('explicit_runtime_upgrade_or_matching_extension_required');
+             const lifecycle=record(observation.inspection.lifecycle??{}),recovery=record(observation.inspection.connection_observation??{});
+@@ -290,7 +300,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
+             }
+             if(this.selectedEligible&&this.selectedFence(this.selectedEligible)){
+                 this.status.text='AIRK: selected project ready';this.output.appendLine(`Other workspace preparation needs attention: ${String(error)}`);
+-            }else{clear();this.status.text='AIRK: inspect service';this.output.appendLine(String(error));}
++            }else{clear();if(!this.renderSetupFailed())this.status.text='AIRK: inspect service';this.output.appendLine(String(error));}
+         }}
+         finally{if(!this.disposed&&generation===this.generation){this.treeChanges.fire();if(previous!==JSON.stringify(this.specs.map(spec=>[spec.command,launchArgs(spec)])))this.definitions.fire();}}
+     }
+@@ -736,6 +746,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
+                     await this.prepareWorkspaceProjects(binding,installed);
+                     await this.refresh(installed);
+                     this.reportInstall('Connected to AIRK. Saved project work remains with the service.');
++                    this.setupSucceeded();
+                     await this.openWorkbenchAfterSetup();
+                     if(this.installationWarnings)this.output.appendLine('Some agent connections need review in Management > Agents.');
+                     return;
+@@ -770,6 +781,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
+             const completed=await this.runtime().discover();
+             await this.prepareWorkspaceProjects(binding,completed);await this.refresh(completed);
+             this.reportInstall(this.installationWarnings?'Runtime installation finished with issues to review.':'Runtime ready. Project indexing continues in Management.');
++            this.setupSucceeded();
+             await this.openWorkbenchAfterSetup();
+             if(notify)await this.installationComplete();
+             },progressTitle);
+@@ -808,6 +820,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
+                 return;
+             }
+             this.reportInstall('Installation did not complete. See AIRK output for the failure and retry instructions.');
++            if(!this.renderUpdateStatus())this.status.text=SETUP_FAILED_STATUS;
+             void vscode.window.showErrorMessage(`AIRK installation needs attention: ${error instanceof Error?error.message:String(error)}. Use AIRK: Install or Repair CLI to retry.`);}
+     }
+     private async projectDataRoot(observation:BootstrapObservation):Promise<string>{
+diff --git a/packages/vscode/src/test/cliRemove.test.ts b/packages/vscode/src/test/cliRemove.test.ts
+index eade3953..d048c42e 100644
+--- a/packages/vscode/src/test/cliRemove.test.ts
++++ b/packages/vscode/src/test/cliRemove.test.ts
+@@ -89,3 +89,17 @@ test('Windows removal calls PowerShell through the system runner, never the AIRK
+     assert.equal(system.mock.callCount(), 1); assert.equal(airk.mock.callCount(), 0);
+     assert.deepEqual(result.removed, ['Removed 1 AIRK entry from the user PATH.']);
+ });
++
++test('uninstall order with default candidates first still deletes startup files that AIRK created', async context => {
++    const root = await fixture(context), home = path.join(root, 'home'), storage = path.join(path.sep, 'opt', 'airk-fixture-storage');
++    await fs.mkdir(home);
++    const [current] = ownedCommandDirectories(storage);
++    const touched: ShellTouch[] = [];
++    const env = { SHELL: '/bin/zsh', XDG_CONFIG_HOME: path.join(home, '.config') };
++    assert.deepEqual(await configureShellPath(current, home, env, 'all', touched), []);
++    const created = touched.filter(entry => entry.created).map(entry => entry.file);
++    assert.ok(created.includes(path.join(home, '.profile')) && created.includes(path.join(home, '.zshrc')), 'setup records the files it created');
++    // extensionUninstall lists the default candidates (created: false) before the setup receipts.
++    await removeShellIntegration(storage, [...defaultProfiles(home, env), ...touched], 'linux', { wrappers: false });
++    for (const file of created) { await assert.rejects(fs.access(file), /ENOENT/, `an emptied file that AIRK created is removed: ${file}`); }
++});
+diff --git a/packages/vscode/src/test/serviceBootstrap.test.ts b/packages/vscode/src/test/serviceBootstrap.test.ts
+index d8235c1d..94fc5af1 100644
+--- a/packages/vscode/src/test/serviceBootstrap.test.ts
++++ b/packages/vscode/src/test/serviceBootstrap.test.ts
+@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
+ import * as fs from 'node:fs/promises';
+ import * as os from 'node:os';
+ import * as path from 'node:path';
+-import { automaticUpgrade, NativeRunner, RuntimeHost, RuntimeOptions, verifyBundledRuntime } from '../serviceBootstrap';
++import { automaticUpgrade, InstallFolderPermissionError, NativeRunner, RuntimeHost, RuntimeOptions, verifyBundledRuntime } from '../serviceBootstrap';
+ import { RecordValue, ServiceClient, ServiceError, record } from '../serviceClient';
+ import { nativePayloadDirectory } from './nativeServiceFixture';
+ const sha=(bytes:Buffer|string)=>createHash('sha256').update(bytes).digest('hex');
+@@ -136,7 +136,7 @@ test('Mac bundle verification resolves the same two native roles and refuses an
+ });
+ 
+ async function transitionFixture(version='1.4.0'){
+-    const f=await fixture(undefined,version),install=path.join(f.root,'install');await fs.mkdir(install);
++    const f=await fixture(undefined,version),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});
+     await fs.mkdir(path.join(install,'control'));
+     const calls:string[][]=[];let active='ab'.repeat(32),pending:RecordValue|null=null,candidateVersion=version,selectedVersion=version;
+     const inspection=()=>({selection:{active,previous:'cd'.repeat(32)},executable:path.join(install,'runtimes',active,f.main),launcher:path.join(install,'airk-launcher'),
+@@ -329,7 +329,7 @@ test('invalid trusted payloads fail before any native invocation or user install
+ });
+ 
+ test('damaged selected payload exposes saved metadata but cannot be launched or silently restaged',async()=>{
+-    const f=await fixture(),install=path.join(f.root,'install'),calls:string[][]=[];await fs.mkdir(install);
++    const f=await fixture(),install=path.join(f.root,'install'),calls:string[][]=[];await fs.mkdir(install,{mode:0o700});
+     const run:NativeRunner=async(command,args)=>{
+         assert.equal(command,path.join(f.source,f.main),'only the verified distribution runs');calls.push(args);
+         switch(args[1]){
+@@ -378,7 +378,7 @@ test('discovery does not install/start and concurrent first use shares one appro
+     const run:NativeRunner=async(_command,args)=>{calls.push([...args]);switch(args[1]){
+         case'self-test':return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+         case'location':return {protocol:1,install_dir:install};
+-        case'stage':assert.equal(args[args.indexOf('--approved-sha256')+1],f.digest);await fs.mkdir(install);return {};
++        case'stage':assert.equal(args[args.indexOf('--approved-sha256')+1],f.digest);await fs.mkdir(install,{mode:0o700});return {};
+         case'activate':selected=true;return {};
+         case'inspect':assert.ok(selected);return inspection();
+         case'diagnose':return {live_service_health:'not_checked'};
+@@ -405,7 +405,7 @@ test('runtime bootstrap rechecks authorization after asynchronous native observa
+     }finally {await f.cleanup();}
+ });
+ test('managed policy conflicts do not stage payloads, change a pin or start a competing owner',async()=>{
+-    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);const calls:string[][]=[];
++    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});const calls:string[][]=[];
+     const options:RuntimeOptions={channel:'stable',installDir:install,managed:{source:f.source,approvedSha256:f.digest,lifecycle:'external'}};
+     const run:NativeRunner=async(_command,args)=>{calls.push(args);if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+         if(args[1]==='location')return {protocol:1,install_dir:install};if(args[1]==='inspect')return {selection:{active:f.digest},managed_policy:null};return {};};
+@@ -418,7 +418,7 @@ test('managed policy conflicts do not stage payloads, change a pin or start a co
+ });
+ 
+ test('automatic bootstrap respects an approved same-version pin and a persistent explicit stop',async()=>{
+-    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
++    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});
+     const pinned='ef'.repeat(32),calls:string[][]=[];let stopped=true;
+     const run:NativeRunner=async(_command,args)=>{
+         calls.push(args);switch(args[1]){
+@@ -444,7 +444,7 @@ test('automatic bootstrap respects an approved same-version pin and a persistent
+ });
+ 
+ test('managed agent setup prepares a user client launcher while preserving external lifecycle ownership',async()=>{
+-    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
++    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});
+     const calls:string[][]=[];let launcher:string|null=null;
+     const approval={version:'1.4.0',manifest_sha256:f.digest,verification_basis:'organization_digest'};
+     const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install,
+@@ -496,7 +496,7 @@ test('activation admits supported forward upgrades and rejects downgrades, unkno
+ 
+ 
+ test('healthy authenticated connection discovery does not wait for optional diagnostics', {timeout:30000},async()=>{
+-    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
++    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});
+     const inspection={selection:{active:f.digest},approval:{manifest_sha256:f.digest,version:'1.4.0',verification_basis:'trusted_distribution'},
+         executable:path.join(f.source,f.main),launcher:path.join(install,'launcher'),control_dir:path.join(install,'control'),payload_verified:true,
+         lifecycle:{explicitly_stopped:false,pending:null},payload_repair:{phase:'none'},registry_namespace:'12'.repeat(16),
+@@ -533,7 +533,7 @@ test('connection discovery refuses mandatory self-test failure before diagnostic
+ 
+ test('pending or unavailable current recovery observation keeps diagnostics in the connection barrier',{timeout:30000},async()=>{
+     for(const connection_observation of [undefined,{schema:1,activation_pending:true,launcher_repair_pending:false}]){
+-        const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
++        const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});
+         let release!:()=>void,entered!:()=>void,done=false,health=0;
+         const held=new Promise<void>(resolve=>{release=resolve;}),began=new Promise<void>(resolve=>{entered=resolve;});
+         const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},async(_command,args)=>{
+@@ -554,7 +554,7 @@ test('pending or unavailable current recovery observation keeps diagnostics in t
+ 
+ 
+ test('explicit Stop refuses the connection shortcut while optional diagnose is still blocked',{timeout:30000},async()=>{
+-    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);let release!:()=>void,entered!:()=>void;
++    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});let release!:()=>void,entered!:()=>void;
+     const held=new Promise<void>(resolve=>{release=resolve;}),began=new Promise<void>(resolve=>{entered=resolve;});
+     const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},async(_command,args)=>{
+         if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+@@ -573,7 +573,7 @@ test('explicit Stop refuses the connection shortcut while optional diagnose is s
+ 
+ function lazySignal<T>(){let resolve!:(value:T)=>void;const promise=new Promise<T>(done=>{resolve=done;});return {promise,resolve};}
+ async function lazyDiscoveryFixture(){
+-    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
++    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});
+     const calls:string[][]=[];let healthCalls=0,disposed=0;
+     const state={failSelfTest:false,stopped:false,healthError:undefined as Error|undefined,
+         health:undefined as undefined|((number:number)=>Promise<void>)};
+@@ -637,3 +637,31 @@ test('connection waiters share mandatory work until the last health completes ev
+         await f.host.discover();assert.equal(f.count('inspect'),2);assert.equal(f.count('diagnose'),2);
+     }finally{release.forEach(gate=>gate.resolve());await Promise.allSettled([first,second,third]);await f.cleanup();}
+ });
++
++test('an existing install folder that other users can reach fails before setup with the folder and the fix',{skip:process.platform==='win32'},async()=>{
++    const f=await fixture(),install=path.join(f.root,'install');
++    try{
++        await fs.mkdir(install,{mode:0o755});await fs.chmod(install,0o755);
++        const run:NativeRunner=async(_command,args)=>{
++            if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
++            if(args[0]==='runtime'&&args[1]==='location')return {protocol:1,install_dir:install};
++            throw new Error(`Unexpected native call: ${args.join(' ')}`);
++        };
++        const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},run);
++        await assert.rejects(host.discover(),(error:any)=>error instanceof ServiceError&&error.code==='runtime_install_dir_not_owner_only'
++            &&error.message.includes(install)&&error.message.includes('chmod 700')&&error.message.includes('755'));
++        await fs.chmod(install,0o700);
++        const fresh=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},async(command,args,timeout,input)=>{
++            if(args[0]==='runtime'&&args[1]==='inspect')throw new ServiceError('runtime_selection_unavailable');
++            if(args[0]==='runtime'&&args[1]==='snapshot')return {};
++            return run(command,args,timeout,input);
++        });
++        assert.equal((await fresh.discover()).installed,true,'an owner-only folder passes the check');
++    }finally{await f.cleanup();}
++});
++
++test('the install folder fix quotes the folder for a POSIX shell',()=>{
++    const message=new InstallFolderPermissionError("/tmp/AIRK's runtime",0o40755).message;
++    assert.ok(message.includes(`chmod 700 '/tmp/AIRK'\\''s runtime'`),message);
++    assert.ok(message.includes('mode 755'),message);
++});
+diff --git a/packages/vscode/src/test/serviceConsole.test.ts b/packages/vscode/src/test/serviceConsole.test.ts
+index bc857818..d0d34675 100644
+--- a/packages/vscode/src/test/serviceConsole.test.ts
++++ b/packages/vscode/src/test/serviceConsole.test.ts
+@@ -804,3 +804,22 @@ test('optional failure retains genuine early health and records the failed obser
+         assert.equal(f.controller.state.connected,true);
+     }finally{release();await poll;f.controller.dispose();}
+ });
++
++test('a status poll while the workspace is untrusted explains the wait instead of the raw authorization code',async()=>{
++    const f=fixture();
++    f.setTrusted(false);await f.controller.refresh();
++    assert.notEqual(f.controller.state.message,'runtime_client_no_longer_authorized');
++    assert.match(f.controller.state.message!,/workspace trust/i);
++    assert.equal(f.controller.state.bootstrap.code,'runtime_client_no_longer_authorized','the code stays available for diagnosis');
++    f.setTrusted(true);await f.controller.refresh();
++    assert.equal(f.controller.state.connected,true,'the poll connects after trust');
++    f.controller.dispose();
++});
++
++test('an authorization code in a trusted workspace keeps the code instead of the trust text',async()=>{
++    const f=fixture();
++    f.host.runtime.discover=async()=>{throw new ServiceError('runtime_client_no_longer_authorized');};
++    await f.controller.refresh();
++    assert.equal(f.controller.state.message,'runtime_client_no_longer_authorized');
++    f.controller.dispose();
++});
+diff --git a/packages/vscode/src/test/serviceOnboarding.test.ts b/packages/vscode/src/test/serviceOnboarding.test.ts
+index 8af55e13..775c87a3 100644
+--- a/packages/vscode/src/test/serviceOnboarding.test.ts
++++ b/packages/vscode/src/test/serviceOnboarding.test.ts
+@@ -3,7 +3,7 @@ import { strict as assert } from 'node:assert';
+ import { test } from 'node:test';
+ import { serviceTestHost } from './serviceTestHost';
+ import { renderServiceDashboard } from '../serviceDashboard';
+-import { RuntimeHost } from '../serviceBootstrap';
++import { InstallFolderPermissionError, RuntimeHost } from '../serviceBootstrap';
+ import { ServiceError } from '../serviceClient';
+ import * as path from 'node:path';
+ 
+@@ -471,3 +471,48 @@ for(const change of ['size','mtime'] as const)test(`a same-version VSIX ${change
+         assert.equal(f.calls.includes('workbench.action.reloadWindow'),false,'reload remains an explicit user action');
+     }finally{await f.close();}
+ });
++
++test('a successful Set Up after a failed automatic setup clears the startup warning',async context=>{
++    let release!:()=>void;
++    const discoveryGate=new Promise<void>(resolve=>{release=resolve;});
++    const f=await serviceTestHost(context,{automatic:true,deferStartup:true,discoveryGate});
++    try{
++        f.state.down=true;release();await f.api.whenReady();
++        assert.ok(f.calls.some(line=>line.startsWith('Automatic installation failed:')));
++        await f.commands.get('airk.explorer.open')!();
++        const panel=f.panels.find(panel=>panel.viewType==='airk.explorer');
++        const latest=async(requestId:string)=>{await panel.send({v:1,type:'ready',requestId});return (panel.posted.filter((entry:any)=>entry.type==='state').at(-1) as any)?.state;};
++        assert.equal((await latest('before-repair'))?.startup?.failed,true,'the failed automatic setup shows the warning');
++        f.state.down=false;await f.commands.get('airk.setUp')!();
++        assert.ok(f.calls.every(line=>!line.startsWith('Automatic installation failed:'))||f.state.ensured>1,'Set Up runs the installation again');
++        assert.equal((await latest('after-repair'))?.startup,undefined,'a ready runtime must not keep the failed startup banner');
++    }finally{release();await f.close();}
++});
++
++test('a failed setup shows in the status bar until a later setup succeeds',async context=>{
++    const f=await serviceTestHost(context,{automatic:false,fresh:true});
++    try{
++        f.state.down=true;await f.commands.get('airk.setUp')!();
++        assert.ok(f.calls.some(line=>line.startsWith('Automatic installation failed:')));
++        assert.match(f.statusBar.text,/setup failed/);
++        f.state.down=false;await f.commands.get('airk.setUp')!();
++        assert.doesNotMatch(f.statusBar.text,/setup failed/);
++    }finally{await f.close();}
++});
++
++test('an automatic reconnect after a failed project preparation clears the startup warning',async context=>{
++    let release!:()=>void;
++    const discoveryGate=new Promise<void>(resolve=>{release=resolve;});
++    const f=await serviceTestHost(context,{automatic:true,deferStartup:true,discoveryGate,registered:false});
++    try{
++        const review=context.mock.method(RuntimeHost.prototype,'reviewProject',async()=>{throw new ServiceError('source_unavailable');});
++        release();await f.api.whenReady();
++        await f.commands.get('airk.explorer.open')!();
++        const panel=f.panels.find(panel=>panel.viewType==='airk.explorer');
++        const latest=async(requestId:string)=>{await panel.send({v:1,type:'ready',requestId});return (panel.posted.filter((entry:any)=>entry.type==='state').at(-1) as any)?.state;};
++        assert.equal((await latest('after-failure'))?.startup?.failed,true,'the failed project preparation shows the warning');
++        review.mock.restore();await f.refreshFolders();
++        assert.ok(f.calls.some(line=>line.includes('Connected to AIRK')),'the reconnect path ran');
++        assert.equal((await latest('after-reconnect'))?.startup,undefined);
++    }finally{release();await f.close();}
++});
+diff --git a/packages/vscode/src/workbenchWebview/main.tsx b/packages/vscode/src/workbenchWebview/main.tsx
+index aab006ae..c853766f 100644
+--- a/packages/vscode/src/workbenchWebview/main.tsx
++++ b/packages/vscode/src/workbenchWebview/main.tsx
+@@ -171,7 +171,7 @@ function App(){
+             <button class="icon-button" title="New session" aria-label="New session" onClick={()=>{action({type:'new'});setInput('');composer.current?.focus();}}><Icon name="new"/></button>
+         </header>
+         {state.notice&&<p class="notice" role="status">{state.notice}</p>}
+-        <div class="transcript" ref={transcript}>{!state.session?.turns.length?<section class="welcome"><h1>Explore your project</h1><p>Search indexed files and collect cited evidence.</p><div class="suggestions">{['/search retry --mode lexical','/symbols EvidenceClient','/files'].map(example=><button onClick={()=>{setInput(example);composer.current?.focus();}}>{example}</button>)}</div>{!state.projects.length&&<p>Open a trusted workspace to get started. <button onClick={()=>action({type:'manage'})}>Open Management</button></p>}</section>:state.session.turns.map(turn=><Turn key={turn.id} turn={turn} state={state}/>)}</div>
++        <div class="transcript" ref={transcript}>{!state.session?.turns.length?<section class="welcome"><h1>Explore your project</h1><p>Search indexed files and collect cited evidence.</p><div class="suggestions">{['/search retry --mode lexical','/symbols EvidenceClient','/files'].map(example=><button onClick={()=>{setInput(example);composer.current?.focus();}}>{example}</button>)}</div>{!state.projects.length&&<p>No AIRK project is ready in this window. Trust the workspace and finish AIRK setup, then review projects in Management. <button onClick={()=>action({type:'manage'})}>Open Management</button></p>}</section>:state.session.turns.map(turn=><Turn key={turn.id} turn={turn} state={state}/>)}</div>
+         <div class="composer">
+             {(scope||recipe)&&<div class="compose-context">{scope&&<button title="Clear scope" onClick={()=>setScope('')}>{scope} ×</button>}{recipe&&<button title="Clear recipe" onClick={()=>setRecipe('')}>{RECIPES.find(([id])=>id===recipe)?.[1]} ×</button>}</div>}
+             {input.startsWith('/')&&!input.includes(' ')&&<div class="commands" aria-label="Commands">{COMMANDS.filter(c=>c.startsWith(input)).map(c=><button onClick={()=>{setInput(`${c} `);composer.current?.focus();}}>{c}</button>)}</div>}

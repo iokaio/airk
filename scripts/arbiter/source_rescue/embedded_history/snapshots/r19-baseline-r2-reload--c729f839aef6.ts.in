@@ -1,0 +1,61 @@
+// SPDX-License-Identifier: Apache-2.0
+{
+    const byBinding = new Map<string, IndexInfo>();
+    let after: unknown = null;
+    let pages = 0;
+    let more = false;
+    do {
+      const expected = after === null ? null : num(rec(after)?.revision);
+      const result = await runCatalog(OPS.catalogPage, body.catalogPage('indexes', {}, after, expected));
+      const page = rec(okValue(result)?.page);
+      if (page === null) break;
+      for (const item of arr(page.items)) {
+        const value = rec(rec(item)?.value);
+        const binding = str(rec(value?.backing)?.binding);
+        if (value === null || binding === null) continue;
+        byBinding.set(binding, {
+          binding,
+          name: str(value.name),
+          id: str(value.id),
+          paused: null,
+          retired: value.tombstone === true,
+          registered: false,
+        });
+      }
+      after = page.continuation ?? null;
+      pages++;
+      more = after !== null && pages >= MAX_NAME_PAGES;
+    } while (after !== null && pages < MAX_NAME_PAGES);
+    // Registered indexes in pages of 32 (the registry's bound), continuing
+    // with the first page's revision.
+    let projectAfter: string | null = null;
+    let revision: number | null = null;
+    let projectPages = 0;
+    let projectsIncomplete = false;
+    do {
+      const registered = await runProjects(
+        OPS.indexesList,
+        body.indexesList(projectAfter, MAX_INDEX_LIST_LIMIT, projectAfter === null ? null : revision),
+      );
+      const page = rec(okValue(registered)?.page);
+      if (page === null) {
+        projectsIncomplete = true;
+        break;
+      }
+      revision = num(page.revision);
+      for (const project of arr(page.projects)) {
+        const p = rec(project);
+        const binding = str(rec(p?.registration)?.binding);
+        if (p === null || binding === null) continue;
+        const known = byBinding.get(binding);
+        const paused = typeof p.paused === 'boolean' ? p.paused : null;
+        byBinding.set(binding, known ? { ...known, paused, registered: true } : { binding, name: null, id: null, paused, retired: false, registered: true });
+      }
+      projectAfter = str(page.after);
+      projectPages++;
+    } while (projectAfter !== null && projectPages < MAX_PROJECT_PAGES);
+    if (projectAfter !== null) projectsIncomplete = true;
+    setRegistryKnown(!projectsIncomplete);
+    setPartial(more || projectsIncomplete);
+    setIndexes([...byBinding.values()].sort((a, b) => (a.name ?? '~').localeCompare(b.name ?? '~')));
+  }

@@ -1,0 +1,31 @@
+--- reviewed-r2-normalized.py
++++ root_only_mac_r3_batch.py
+@@ -1,10 +1,10 @@
+-"""ROOT ONLY: current eac7 Mac scoped platform batch; this file is preparation."""
++"""ROOT ONLY: current eac7 Mac R3 cargo-test scoped batch; preparation only."""
+ from pathlib import Path
+ import hashlib,importlib.util,json,os,platform,shutil,subprocess,sys,time
+ SOURCE=Path('/Users/tylerjensen/airk-builds/advanced-split-local-delivery-r2/source')
+ BASE=SOURCE.parent
+ TARGET=SOURCE/'artifacts/v190/p10-target'
+-OUT=BASE/'receipts/native-platform-r2'
++OUT=BASE/'receipts/native-platform-r3'
+ PREREQS=Path('/Users/tylerjensen/airk-builds/advanced-split-local-delivery-prerequisites-r1')
+ PYTHON=Path('/Users/tylerjensen/Code/airk/artifacts/tools/neo-python-3.13.18/bin/python3.13')
+ CARGO=Path('/Users/tylerjensen/.cargo/bin/cargo')
+@@ -39,13 +39,11 @@
+  env.pop('CARGO_BUILD_TARGET',None)  # Verified arm64 native host; no inherited cross target
+  static=load('mac_recovery_static_owner',SOURCE/'scripts/static-runtime-environment.py')
+  env.update(static.load_environment_file(STATIC))
+- nextest=subprocess.check_output([str(CARGO),'nextest','--version'],env=env,text=True).strip()
+- assert nextest.split()[1]=='0.9.148',nextest
+  cargo_started=False;rows=[];primary=None;cleanup=None;started=time.monotonic()
+  stages=[
+   ('scoped-clippy',[str(CARGO),'clippy','-p','airk-service','-p','airk-supervisor','-p','airk-kernel','--all-targets','--all-features','--locked','--timings','--','-D','warnings'],None),
+-  ('bridge-six',[str(CARGO),'nextest','run','--profile','ci','-p','airk-service','-p','airk-supervisor','-p','airk-kernel','--all-features','--locked','--timings','-E','test(runtime_metadata::arbiter::tests::sync_control_)'],6),
+-  ('matched-pair-model-smoke',[str(PYTHON),'-I','-B','scripts/build-service-runtime.py','--destination',str(BASE/'artifacts/runtime-recovery-r2'),'--profile','release-local','--admin-inventory',str(INVENTORY)],None),
++  ('bridge-six',[str(CARGO),'test','-p','airk-service','-p','airk-supervisor','-p','airk-kernel','--all-features','--lib','--locked','--timings','runtime_metadata::arbiter::tests::sync_control_','--','--test-threads=2'],6),
++  ('matched-pair-model-smoke',[str(PYTHON),'-I','-B','scripts/build-service-runtime.py','--destination',str(BASE/'artifacts/runtime-recovery-r3'),'--profile','release-local','--admin-inventory',str(INVENTORY)],None),
+  ]
+  try:
+   for name,command,expected in stages:

@@ -1,0 +1,203 @@
+--- r5/crates/airk-inference/src/inference_engine/pool/arbiter/eligibility.rs
++++ r6/crates/airk-inference/src/inference_engine/pool/arbiter/eligibility.rs
+@@ -445,31 +445,38 @@
+                             cause,
+                         })
+                     });
+-                if resident.scorer().device_settled() {
+-                    shared
++                let completion = if resident.scorer().device_settled() {
++                    let observed = shared
+                         .queue
+                         .lock()
+                         .map_err(|_| {
+                             anyhow::anyhow!("native eligibility completion observation unavailable")
+-                        })?
+-                        .running_stage = None;
++                        })
++                        .map(|mut queue| queue.running_stage = None);
+                     shared.changed.notify_waiters();
+-                }
+-                if let Err(error) = &returned {
+-                    remember_native_failure(
+-                        shared,
+-                        resident.scorer().profile(),
+-                        resident.native_device(),
+-                        Some(&configuration),
+-                        error,
+-                        Some(original),
+-                        Some(authority.as_ref()),
+-                    )
+-                    .map_err(|memo| {
+-                        memo.context(format!("original resident eligibility refusal: {error:#}"))
+-                    })?;
+-                }
+-                let provider = returned?;
++                    observed
++                } else {
++                    Ok(())
++                };
++                let provider = match returned {
++                    Ok(provider) => {
++                        completion?;
++                        provider
++                    }
++                    Err(error) => {
++                        let error = retain_native_failure(error, completion);
++                        let memo = remember_native_failure(
++                            shared,
++                            resident.scorer().profile(),
++                            resident.native_device(),
++                            Some(&configuration),
++                            &error,
++                            Some(original),
++                            Some(authority.as_ref()),
++                        );
++                        return Err(retain_native_failure(error, memo));
++                    }
++                };
+                 ensure!(
+                     resident.scorer().device_settled(),
+                     "native eligibility settlement remains unknown"
+@@ -520,6 +527,15 @@
+ #[cfg(test)]
+ mod tests;
+ 
++#[cfg(any(feature = "gpu-cuda", test))]
++fn retain_native_failure(error: anyhow::Error, secondary: Result<()>) -> anyhow::Error {
++    match secondary {
++        Ok(()) => error,
++        Err(guard) => error.context(format!(
++            "secondary native failure recording refused: {guard:#}"
++        )),
++    }
++}
+ #[cfg(feature = "gpu-cuda")]
+ pub(super) fn require_memo_open(
+     shared: &Arc<Shared>,
+@@ -668,12 +684,7 @@
+                 warm.deadline,
+                 warm.authority.as_deref(),
+             );
+-            Err(match memo {
+-                Ok(()) => error,
+-                Err(memo) => {
+-                    error.context(format!("native warm failure memo also refused: {memo:#}"))
+-                }
+-            })
++            Err(retain_native_failure(error, memo))
+         }
+         value => value,
+     };
+--- r5/crates/airk-inference/src/inference_engine/pool/arbiter/eligibility/tests.rs
++++ r6/crates/airk-inference/src/inference_engine/pool/arbiter/eligibility/tests.rs
+@@ -334,3 +334,32 @@
+     state.failures.require_open(&fault_key(18))?;
+     Ok(())
+ }
++
++#[test]
++fn memo_saturation_preserves_original_resident_profile_and_typed_cause() -> Result<()> {
++    #[derive(Debug)]
++    struct NativeCause;
++    impl std::fmt::Display for NativeCause {
++        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++            f.write_str("original typed native refusal")
++        }
++    }
++    impl std::error::Error for NativeCause {}
++    let profile = Sha256Digest::from_bytes([99; 32]);
++    let original = anyhow::Error::new(ResidentRefusal {
++        profile,
++        cause: anyhow::Error::new(NativeCause),
++    });
++    let mut memo = FailureMemo::default();
++    for n in 1..=16 {
++        memo.returned_failure(fault_key(n), true, true)?;
++    }
++    let secondary = memo.returned_failure(fault_key(17), true, true);
++    assert!(secondary.is_err());
++    let error = retain_native_failure(original, secondary);
++    assert_eq!(failed_profile(&error), Some(profile));
++    assert!(error.chain().any(|cause| cause.is::<NativeCause>()));
++    assert!(error.chain().any(|cause| cause.is::<ResidentRefusal>()));
++    assert!(format!("{error:#}").contains("memo capacity occupied"));
++    Ok(())
++}
+--- r5/crates/airk-service/src/service_runtime/arbiter/device_management.rs
++++ r6/crates/airk-service/src/service_runtime/arbiter/device_management.rs
+@@ -1998,12 +1998,11 @@
+                     .context("original retained eligibility cutoff exhausted")?
+                     .context("retained eligibility owner closed without an observed outcome")?;
+                     if let Err(error) = returned {
+-                        self.record_prework_fault(&handle, profile.manifest, &error, cancel)
+-                            .map_err(|guard| {
+-                                guard.context(format!(
+-                                    "original retained eligibility refusal: {error:#}"
+-                                ))
+-                            })?;
++                        if let Err(guard) =
++                            self.record_prework_fault(&handle, profile.manifest, &error, cancel)
++                        {
++                            return Err(secondary_fault_error(error, guard));
++                        }
+                         return Err(error.context("retained local eligibility failed; original management attempt stops without replay"));
+                     }
+                     self.current(Some(cancel))?;
+@@ -2156,11 +2155,15 @@
+                     self.current(Some(cancel))?;
+                     // Source/input/cancellation/deadline/owner errors are not device
+                     // faults and cannot be relabeled as a fallback authorization.
+-                    let recorded = self
+-                        .record_prework_fault(&handle, profile.manifest, &error, cancel)
+-                        .map_err(|guard| {
+-                            guard.context(format!("original native warm refusal: {error:#}"))
+-                        })?;
++                    let recorded = match self.record_prework_fault(
++                        &handle,
++                        profile.manifest,
++                        &error,
++                        cancel,
++                    ) {
++                        Ok(recorded) => recorded,
++                        Err(guard) => return Err(secondary_fault_error(error, guard)),
++                    };
+                     match recorded {
+                         Some(failed) if failed==profile.manifest=>{},
+                         Some(_)=>return Err(error.context("a retained GPU resident failed eligibility; current candidate is not declared unfit and the original attempt stops")),
+@@ -2623,3 +2626,10 @@
+         })
+         .collect()
+ }
++
++#[cfg(feature = "local-inference")]
++fn secondary_fault_error(error: anyhow::Error, secondary: anyhow::Error) -> anyhow::Error {
++    error.context(format!(
++        "secondary native fault recorder refused: {secondary:#}"
++    ))
++}
+--- r5/crates/airk-service/src/service_runtime/arbiter/device_management/tests.rs
++++ r6/crates/airk-service/src/service_runtime/arbiter/device_management/tests.rs
+@@ -553,3 +553,22 @@
+         .is_empty()
+     );
+ }
++
++#[cfg(feature = "local-inference")]
++#[test]
++fn secondary_fault_recorder_error_keeps_original_typed_cause() {
++    #[derive(Debug)]
++    struct NativeCause;
++    impl std::fmt::Display for NativeCause {
++        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++            f.write_str("actual native cause")
++        }
++    }
++    impl std::error::Error for NativeCause {}
++    let error = secondary_fault_error(
++        anyhow::Error::new(NativeCause),
++        anyhow::anyhow!("recorder lock poisoned"),
++    );
++    assert!(error.downcast_ref::<NativeCause>().is_some());
++    assert!(format!("{error:#}").contains("recorder lock poisoned"));
++}

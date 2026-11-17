@@ -1,0 +1,278 @@
+--- crates/airk-service/src/service_runtime/evaluation_fixture_tests.rs
++++ crates/airk-service/src/service_runtime/evaluation_fixture_tests.rs
+@@ -338,6 +338,12 @@
+     let lease = first_start::ensure_catalog(lease)?;
+     drop(lease);
+     let prepared = Arc::new(prepared);
++    let context_observer = match std::env::var("AIRK_SELECTED_CONTEXT_CAL_OBSERVER") {
++        Ok(value) if value == "true" => Some(selected_cal_observer(prepared.clone(), &work)?),
++        Ok(value) if value == "false" => None,
++        Err(std::env::VarError::NotPresent) => None,
++        _ => bail!("private CAL observer mode must be explicit true/false"),
++    };
+     let source = prepared.clone();
+     let (seeded, seed_ready) = tokio::sync::oneshot::channel();
+     let factory: EvaluationFactory = Box::new(move |lease, gate| {
+@@ -345,7 +351,7 @@
+             .catalog_clock()
+             .context("actual fixture catalog clock missing")?
+             .namespace;
+-        let owner = EvaluationOwner::new(
++        let mut owner = EvaluationOwner::new(
+             lease,
+             gate,
+             source.iter().map(|entry| entry.profile.clone()).collect(),
+@@ -367,6 +373,9 @@
+             },
+             "private fixture must start disabled"
+         );
++        if let Some(observer) = context_observer {
++            owner = owner.observe_context(observer);
++        }
+         seeded
+             .send(namespace)
+             .map_err(|_| anyhow::anyhow!("private fixture observer disappeared"))?;
+@@ -1266,3 +1275,243 @@
+     )?;
+     Ok(())
+ }
++
++/// Only the ignored actual private fixture can attach this observer capability.
++fn selected_cal_observer(
++    prepared: Arc<Vec<Prepared>>,
++    work: &Path,
++) -> Result<arbiter::evaluation::ContextObservationSink> {
++    use airk_core::arbiter::{
++        AssetRole, NativeRead,
++        focus::{FocusObservation, search_record_observation},
++    };
++    use airk_retrieval::arbiter::{compiler::Compiler, context_action};
++    use std::io::{Seek, SeekFrom};
++    let expected_pipeline: Sha256Digest =
++        std::env::var("AIRK_SELECTED_CONTEXT_MINILM_PIPELINE")?.parse()?;
++    let focus_profile = prepared
++        .iter()
++        .find(|entry| entry.profile.model == ModelChoice::FocusQwenReranker06B)
++        .context("selected Focus profile missing")?
++        .profile
++        .manifest;
++    let mut compilers = Vec::new();
++    for entry in prepared
++        .iter()
++        .filter(|entry| entry.profile.model.stage() == Some(airk_core::arbiter::Stage::Context))
++    {
++        let read = |role| -> Result<Vec<u8>> {
++            let asset = entry
++                .profile
++                .assets
++                .iter()
++                .find(|asset| asset.role == role)
++                .context("compiler census asset missing")?;
++            ensure!(asset.bytes <= 64 << 20, "compiler census byte limit");
++            let mut file = entry
++                .sources
++                .get(&asset.name)
++                .context("retained compiler census descriptor missing")?
++                .try_clone()?;
++            file.seek(SeekFrom::Start(0))?;
++            let mut raw = Vec::new();
++            file.take(asset.bytes + 1).read_to_end(&mut raw)?;
++            ensure!(
++                raw.len() as u64 == asset.bytes && sha(&raw) == asset.sha256,
++                "compiler census asset drift"
++            );
++            Ok(raw)
++        };
++        compilers.push((
++            entry.profile.model,
++            entry.profile.manifest,
++            Compiler::from_verified(&read(AssetRole::Compiler)?, &read(AssetRole::Tokenizer)?)?,
++        ));
++    }
++    ensure!(
++        compilers.len() == 2,
++        "two Context compiler censuses required"
++    );
++    let directory = work.join("context-cal-admissions");
++    std::fs::create_dir(&directory)?;
++    let work = directory;
++    let state = Arc::new(std::sync::Mutex::new((BTreeSet::new(), compilers, 0usize)));
++    Ok(Arc::new(move |request, profile| {
++        let mut state = state
++            .lock()
++            .map_err(|_| anyhow::anyhow!("private admission recorder poisoned"))?;
++        let key = (
++            request.read_attempt.request_id,
++            request.scope.index_id,
++            request.ordinal,
++        );
++        ensure!(
++            state.0.insert(key) && state.2 < 100,
++            "duplicate/excess selected CAL observation"
++        );
++        ensure!(
++            profile.model.stage() == Some(airk_core::arbiter::Stage::Context),
++            "foreign captured stage"
++        );
++        let prompt = context_action::prompt(request)?;
++        let mut focus = Vec::new();
++        let mut known_focus_tokens = 0usize;
++        let mut actual_focus_forward = false;
++        for record in request
++            .records
++            .iter()
++            .filter(|record| record.operation == NativeRead::Search)
++        {
++            let search: airk_core::SearchResponse =
++                serde_json::from_value(record.canonical_result.clone())?;
++            ensure!(
++                search
++                    .execution
++                    .as_ref()
++                    .is_some_and(|execution| execution.served_mode
++                        == airk_core::search_execution::ServedMode::Hybrid
++                        && !execution.incomplete)
++                    && search
++                        .semantic_readiness
++                        .as_ref()
++                        .is_some_and(|semantic| semantic.state
++                            == airk_core::readiness::SemanticState::Ready
++                            && semantic.pipeline_digest == Some(expected_pipeline)),
++                "selected MiniLM actual hybrid/pipeline identity differs"
++            );
++            let observation = search_record_observation(record)?
++                .context("FocusON actual Search observation omitted")?;
++            if let FocusObservation::Receipt { receipt } = &observation {
++                if let Some(identity) = &receipt.identity {
++                    ensure!(
++                        identity.profile == focus_profile,
++                        "selected Focus actual profile differs"
++                    );
++                }
++                ensure!(
++                    receipt.observed_input_tokens.is_some(),
++                    "unknown Focus work cannot enter selected Context CAL"
++                );
++                known_focus_tokens = known_focus_tokens
++                    .checked_add(receipt.work.input_tokens)
++                    .context("Focus census overflow")?;
++                actual_focus_forward |= receipt.applied && receipt.work.input_tokens > 0;
++            }
++            focus.push(observation);
++        }
++        ensure!(
++            !focus.is_empty()
++                && known_focus_tokens + request.remaining_input_tokens
++                    <= request.parent_budget.input_tokens,
++            "combined original Focus/Context input allowance differs"
++        );
++        let mut census = Vec::new();
++        for (model, manifest, compiler) in &state.1 {
++            let started = std::time::Instant::now();
++            let compiled = compiler.compile(&prompt.state, &prompt.question, &prompt.candidates);
++            census.push(match compiled {
++                Ok(compiled)=>serde_json::json!({"model":model,"profile":manifest,"compile_us":started.elapsed().as_micros(),
++                    "fits_remaining_allowance":compiled.input_ids.len()<=request.remaining_input_tokens,
++                    "input_tokens":compiled.input_ids.len(),"compiled":compiled,"NN_invocations":0}),
++                Err(error)=>serde_json::json!({"model":model,"profile":manifest,"compile_us":started.elapsed().as_micros(),
++                    "fits_remaining_allowance":false,"compiler_refusal":format!("{error:#}"),"NN_invocations":0}),
++            });
++        }
++        state.2 += 1;
++        let remaining_ns = request
++            .read_attempt
++            .remaining_at(
++                request.read_attempt.clock,
++                airk_process::monotonic::now_ns()?,
++            )?
++            .as_nanos();
++        write(
++            &work,
++            &format!("record-{:04}.json", state.2),
++            &serde_json::json!({
++            "schema":"airk.private-selected-Context-native-admission-observation/1","ordinal_in_private_run":state.2,
++            "request":request,"planned_input_digest":airk_core::identity::framed_digest(b"airk.arbiter.planned-task-input/1", &[&serde_json::to_vec(&prompt)?]),"actual_Context_profile":profile,"Context_NN_dispatch":false,
++            "actual_Focus_profile":focus_profile,"MiniLM_pipeline":expected_pipeline,"Focus_configuration":"ON",
++            "actual_Focus_forward_observed":actual_focus_forward,"Focus_observations":focus,"known_Focus_input_tokens":known_focus_tokens,
++            "remaining_ns_at_observation":remaining_ns,"compiler_census":census,"verified_probe_requests":selected_verified_probe_requests(request)?,
++            "custody":"Prechecked private snapshot; canonical caller must also complete original fixed-issue, source/configuration/profile/deadline postchecks. Recorder I/O is outside native gate; retained bytes alone are not a qualified or delivered result.",
++            "qualification":"Actual ready service admission plus separate pure compiler census only. No Context score/action or positive CAL qualification. Known Focus fallbacks retained."}),
++        )?;
++        Ok(())
++    }))
++}
++
++fn selected_verified_probe_requests(
++    request: &airk_core::native_context_action::NativeContextActionRequest,
++) -> Result<Vec<serde_json::Value>> {
++    use airk_core::arbiter::{NativeRead, literal::SourceLiteral};
++    let max_bytes = (request.parent_budget.max_bytes / 8).clamp(1024, 4096);
++    let mut probes = Vec::new();
++    for choice in request.choices.iter().filter(|choice| {
++        request
++            .roster
++            .basis
++            .read_choices_scored
++            .contains(&choice.id)
++    }) {
++        let (tool, args) = match choice.operation {
++            NativeRead::Search => {
++                let literal = SourceLiteral::parse(&choice.target)?
++                    .context("offered search lacks verified source literal")?;
++                let record = request
++                    .records
++                    .iter()
++                    .find(|record| record.id == literal.record)
++                    .context("offered literal source missing")?;
++                let valid = record.canonical_result["hits"]
++                    .as_array()
++                    .context("literal source hits missing")?
++                    .iter()
++                    .map(|value| serde_json::from_value::<airk_core::Hit>(value.clone()))
++                    .collect::<std::result::Result<Vec<_>, _>>()?
++                    .iter()
++                    .any(|hit| literal.matches(record.id, hit));
++                ensure!(
++                    valid,
++                    "offered literal no longer matches actual returned source bytes"
++                );
++                let args = serde_json::json!({"query":literal.query,"limit":4,"max_bytes":max_bytes,"full_chunks":true,"response_mode":"full","include_status":true});
++                let _: airk_mcp::SearchArgs = serde_json::from_value(args.clone())?;
++                ("search", args)
++            }
++            NativeRead::Context => {
++                let (path, range) = choice
++                    .target
++                    .rsplit_once(':')
++                    .context("offered context target missing")?;
++                let (line, _) = range
++                    .split_once('-')
++                    .context("offered context line missing")?;
++                let line = line.parse::<usize>()?;
++                let mut grounded = false;
++                for record in &request.records {
++                    if let Some(hits) = record.canonical_result["hits"].as_array() {
++                        for value in hits {
++                            let hit: airk_core::Hit = serde_json::from_value(value.clone())?;
++                            grounded |= hit.citation.path == path
++                                && line >= hit.citation.start_line
++                                && line <= hit.citation.end_line;
++                        }
++                    }
++                }
++                ensure!(
++                    grounded,
++                    "offered context target not grounded in actual citation"
++                );
++                let args = serde_json::json!({"path":path,"line":line,"before":0,"after":32,"max_bytes":max_bytes,"revision":request.scope.publication.token.to_string(),"response_mode":"full","include_status":true});
++                let _: airk_mcp::ContextArgs = serde_json::from_value(args.clone())?;
++                ("context", args)
++            }
++            _ => bail!("unsupported offered probe operation"),
++        };
++        probes.push(serde_json::json!({"choice":choice,"tool":tool,"arguments":args,
++            "publication":request.scope.publication,"scope":"Independent canonical source-reference counterfactual only; not an actuated learned trajectory or a fresh allowance in the captured user request."}));
++    }
++    ensure!(probes.len() <= 5, "offered whole-card probe bound");
++    Ok(probes)
++}

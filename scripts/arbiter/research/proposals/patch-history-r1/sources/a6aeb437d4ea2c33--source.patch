@@ -1,0 +1,213 @@
+--- crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/checkpoint/CONTRACT.md
++++ crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/checkpoint/CONTRACT.md
+@@ -11,3 +11,7 @@
+ Exact composer096a/inpute610 adds output_policy (opaque private custody observation) and metadata_composition_seconds (finite0..300s) explicitly to the raw composite. These remain private and are never public authority. Maintained proof toolchain_pins MUST project exact path/bytes/sha256 only, excluding raw version/probe/timing data. The public history is descriptive, omitted for historical output, and carries no timing/cold-build claim. Historical CMake/Ninja protected-file custody remains an explicit actual-run prerequisite until Root approves a distinct bounded evidence-only reading contract; aliases/executable authentication are not weakened here.
+ 
+ Root approved separate inert historical tool evidence custody. A new optional omitted-empty historical_tool_copies list uses actual shared HistoricalToolCustodyCopy Rust types. Only exact sealed original R12 CMake/Ninja basename/path/size/SHA may bind protected identical independent copies, never execute/load them or claim original ACL protection. Source.authenticate_historical_tool has a direct-authenticate default; Windows owner performs exact known-named evidence mapping and final unused check. The fixed historical compiler/cmake/ninja/python/patch/vcvars plus archiver/NVCC observations call this method; only CMake/Ninja can alias. Aggregate, runtime/DLL/payload and active PE authentication remain generic and direct; build.ninja remains bounded inert metadata. No receipt rewrite and no generic code redirect. Actual before/after producer/maintained seals and known tool identities remain mandatory.
++
++## Overall first attempt and R12 are distinct clocks
++
++The exact composer096a inpute610 authenticates first_attempt_start (Core-like FilePin path/bytes/SHA) for airk.private.combined-cuda-runtime-execution/1. Native validation opens that exact additional metadata pin under the existing held Source/custody/deadline before reading its started_utc. The raw composite overall origin must equal this first-all-attempt origin; it must not equal the later R12-specific original_start_utc. Native retains first-all origin <=R12 origin <=first successful checkpoint section start <=section completion <=composition completion <=campaign cutoff. All original10800s per-section clocks, actual whole-tree/Job settlement, finite totals and ceilings remain unchanged. Raw first start remains passedfalse and failedR12 stays failed; no cold3h claim or receipt rewrite. New Source metadata closure is45 files (previous44), using the approved protected inert copy when the original logical start path is unprotected. No source/hash/path authority is synthesized. Existing input fields are preserved/read-only, no schema alias or broad unknown-key admission.
+--- crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/checkpoint/tests.rs
++++ crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/checkpoint/tests.rs
+@@ -59,7 +59,11 @@
+     let first_input = m.bytes("first-input", b"synthetic first input".to_vec());
+     let next_input = m.bytes("next-input", b"synthetic next input".to_vec());
+     let composer = m.bytes("composer.py", b"synthetic composer".to_vec());
+-    let composer_input = m.bytes("composer-input", b"synthetic composer input".to_vec());
++    let origin=m.json("first-attempt-start",json!({"schema":"airk.private.combined-cuda-runtime-execution/1","started_utc":"2026-11-17T04:08:52.667055Z","argv":["python","-S","-B","literal-producer"],"actual_destination":"literal-first-destination","destination_decision":"literal first attempt remains historical","producer_preparation_sha256":Sha256Digest::from_bytes([62;32]),"first_model_gate":"FP32 first; no model run","combined_kernels_available_not_FP16_qualification":true,"outer_timeout_seconds":10800,"passed":false}));
++    let composer_input = m.json(
++        "composer-input",
++        json!({"schema":"airk.private.checkpoint-composer-input/1","first_attempt_start":origin}),
++    );
+     let ninja = m.bytes("b/Release/build.ninja", b"synthetic Ninja graph".to_vec());
+     let source_inventory = m.json(
+         "source.json",
+@@ -186,7 +190,7 @@
+         json!({"frontend_inventory_sha256":frontend.sha256,"cuda_inventory_sha256":cuda.sha256,"frozen_original_inputs_sha256":inputs.sha256,"ninja_sha256":ninja.sha256,"target_closure_sha256":target_hash,"configure_argv":configure,"configured_preflight":preflight,"toolchain":tools}).as_object().unwrap().clone(),
+     );
+     raw_value.as_object_mut().unwrap().extend(
+-        json!({"policy":policy,"libraries":libraries,"provider_dlls":dlls,"original_attempt_started_utc":"2026-11-17T05:27:32Z","completed_utc":"2026-11-17T11:00:11Z","global_campaign_cutoff_utc":"2026-11-19T05:29:42Z","total_active_section_seconds":30,"wall_since_first_attempt_seconds":19959}).as_object().unwrap().clone(),
++        json!({"policy":policy,"libraries":libraries,"provider_dlls":dlls,"original_attempt_started_utc":"2026-11-17T04:08:52.667055Z","completed_utc":"2026-11-17T11:00:11Z","global_campaign_cutoff_utc":"2026-11-19T05:29:42Z","total_active_section_seconds":30,"wall_since_first_attempt_seconds":24678.332945}).as_object().unwrap().clone(),
+     );
+     raw_value.as_object_mut().unwrap().extend(
+         json!({"output_policy":{"owner":"synthetic-only"},"metadata_composition_seconds":1})
+@@ -368,3 +372,81 @@
+     assert!(canonical_sha(&json!({"elapsed_seconds":1.5})).is_err());
+     Ok(())
+ }
++
++#[test]
++fn all_attempt_origin_is_distinct_from_later_r12_and_cannot_be_relabelled() -> Result<()> {
++    let (mut m, r, p, a) = fixture()?;
++    let raw = json(&m, &r)?;
++    assert_eq!(
++        raw["original_attempt_started_utc"],
++        "2026-11-17T04:08:52.667055Z"
++    );
++    let r12 = pin(&raw["original_failed_build"])?.json(&m)?;
++    assert_eq!(r12["original_start_utc"], "2026-11-17T05:27:32Z");
++    validate_with_authority(&m, &r, &p, &a)?;
++    let mut changed = raw;
++    changed["original_attempt_started_utc"] = r12["original_start_utc"].clone();
++    let proof = json(&m, &p)?;
++    let (r, p) = reseal(&mut m, changed, proof);
++    refuse(
++        validate_with_authority(&m, &r, &p, &a)
++            .err()
++            .context("expected origin refusal")?,
++        "checkpoint composition timing refused",
++    );
++    Ok(())
++}
++#[test]
++fn first_origin_pin_and_unknown_fields_are_closed() -> Result<()> {
++    let (mut m, r, _, _) = fixture()?;
++    let raw = json(&m, &r)?;
++    let input = pin(&raw["input_contract"])?.json(&m)?;
++    assert_eq!(
++        first_attempt_start(&m, &input)?,
++        utc("2026-11-17T04:08:52.667055Z")?
++    );
++    let mut wrong = input.clone();
++    wrong["first_attempt_start"]["sha256"] = json!(Sha256Digest::from_bytes([99; 32]));
++    refuse(
++        first_attempt_start(&m, &wrong).unwrap_err(),
++        "pinned private projection input differs",
++    );
++    let mut unknown = input.clone();
++    unknown["schema"] = json!("airk.private.checkpoint-composer-input/2");
++    refuse(
++        first_attempt_start(&m, &unknown).unwrap_err(),
++        "unknown checkpoint composer input schema",
++    );
++    let mut first = pin(&input["first_attempt_start"])?.json(&m)?;
++    first["unknown"] = json!(true);
++    let next = m.json("unknown-first-attempt", first);
++    let mut unknown = input.clone();
++    unknown["first_attempt_start"] = serde_json::to_value(next)?;
++    refuse(
++        first_attempt_start(&m, &unknown).unwrap_err(),
++        "unknown field",
++    );
++    Ok(())
++}
++#[test]
++fn actual_recorded_section_floats_preserve_the_existing_sum_and_limits() -> Result<()> {
++    let actual=strict::parse(br#"{"total":4072.3191043999977,"sections":[2911.4371581999585,796.2035699000116,364.6783763000276],"wall":22970.575546,"metadata":26.443864800035954}"#)?;
++    let sum = rows(&actual["sections"])?
++        .iter()
++        .map(finite)
++        .collect::<Result<Vec<_>>>()?
++        .iter()
++        .sum::<f64>();
++    let total = finite(&actual["total"])?;
++    let wall = finite(&actual["wall"])?;
++    assert!(
++        total >= sum,
++        "actual total {total:?} ({:x}) vs parsed section sum {sum:?} ({:x})",
++        total.to_bits(),
++        sum.to_bits()
++    );
++    assert!(
++        total <= 32400.0 && wall >= sum && (0.0..=300.0).contains(&finite(&actual["metadata"])?)
++    );
++    Ok(())
++}
+--- crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/checkpoint.rs
++++ crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/checkpoint.rs
+@@ -141,6 +141,47 @@
+     output_policy: Value,
+     metadata_composition_seconds: f64,
+ }
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct FirstAttemptStart {
++    schema: String,
++    started_utc: String,
++    argv: Vec<String>,
++    actual_destination: String,
++    destination_decision: String,
++    producer_preparation_sha256: Sha256Digest,
++    first_model_gate: String,
++    #[serde(rename = "combined_kernels_available_not_FP16_qualification")]
++    combined_kernels_available_not_fp16_qualification: bool,
++    outer_timeout_seconds: u64,
++    passed: bool,
++}
++fn first_attempt_start(source: &dyn Source, input: &Value) -> Result<i128> {
++    ensure!(
++        input["schema"] == "airk.private.checkpoint-composer-input/1",
++        "unknown checkpoint composer input schema"
++    );
++    let origin = pin(&input["first_attempt_start"])?.json(source)?;
++    let start: FirstAttemptStart = typed(&origin)?;
++    ensure!(
++        start.schema == "airk.private.combined-cuda-runtime-execution/1"
++            && !start.passed
++            && start.combined_kernels_available_not_fp16_qualification
++            && start.outer_timeout_seconds == 10800
++            && !start.argv.is_empty()
++            && start.argv.len() <= 128
++            && start.argv.iter().all(|s| !s.is_empty() && s.len() <= 8192)
++            && !start.actual_destination.is_empty()
++            && start.actual_destination.len() <= 4096
++            && !start.destination_decision.is_empty()
++            && start.destination_decision.len() <= 4096
++            && nonzero(start.producer_preparation_sha256)
++            && !start.first_model_gate.is_empty()
++            && start.first_model_gate.len() <= 4096,
++        "checkpoint first-attempt start identity/history differs"
++    );
++    utc(&start.started_utc)
++}
+ pub(in crate::arbiter::runtime::cuda) struct CheckpointedProducer {
+     pub static_core_build: Sha256Digest,
+     pub provider_dlls: Vec<PublicFile>,
+@@ -490,7 +531,8 @@
+         "checkpoint composer/input is not reviewed authority"
+     );
+     p.producer_source.read(source)?;
+-    p.input_contract.read(source)?;
++    let composer_input = p.input_contract.json(source)?;
++    let overall_origin = first_attempt_start(source, &composer_input)?;
+     let failed = p.original_failed_build.json(source)?;
+     let last = rows(&failed["commands"])?
+         .last()
+@@ -608,6 +650,7 @@
+     let mut history = Vec::new();
+     let mut elapsed = 0.0;
+     let mut previous_end = None;
++    let mut first_section_start = None;
+     let mut previous_receipt = None;
+     let mut previous_warm = None;
+     for (index, row) in p.sections.iter().enumerate() {
+@@ -683,6 +726,9 @@
+         );
+         natural(&v["command"])?;
+         let (started, finished, seconds) = clocks(&v)?;
++        if index == 0 {
++            first_section_start = Some(started);
++        }
+         ensure!(
+             previous_end.is_none_or(|end| end <= started),
+             "checkpoint sections overlap or reorder"
+@@ -758,10 +804,15 @@
+     let complete = utc(&p.completed_utc)?;
+     let campaign = utc(&p.global_campaign_cutoff_utc)?;
+     ensure!(
+-        first
+-            == utc(failed["original_start_utc"]
++        first == overall_origin
++            && first
++                <= utc(failed["original_start_utc"]
++                    .as_str()
++                    .context("R12 attempt start absent")?)?
++            && utc(failed["original_start_utc"]
+                 .as_str()
+-                .context("original attempt start absent")?)?
++                .context("R12 attempt start absent")?)?
++                <= first_section_start.context("first checkpoint section absent")?
+             && campaign == utc("2026-11-19T05:29:42Z")?
+             && first <= previous_end.context("last section absent")?
+             && previous_end.is_some_and(|end| end <= complete)

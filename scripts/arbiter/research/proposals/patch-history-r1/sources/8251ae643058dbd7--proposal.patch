@@ -1,0 +1,62 @@
+--- a/scripts/static-onnx-aggregate.py
++++ b/scripts/static-onnx-aggregate.py
+@@ -134,7 +134,9 @@
+         text = "\n".join(paths) + "\n"
+         argv = [str(tool), "-static", "-o", str(destination / "aggregate/libonnxruntime.a"), "-filelist", str(response)]
+     elif system == "Linux":
+-        tool = Path("/usr/bin/ar")
++        # Resolve the fixed OS executable selector; owned artifact paths keep
++        # the strict no-link checks in core.plain unchanged.
++        tool = Path("/usr/bin/ar").resolve(strict=True)
+         response = destination / "aggregate/inputs.mri"
+         output = str(destination / "aggregate/libonnxruntime.a")
+         if any(character.isspace() for path in [output, *paths] for character in path):
+--- a/scripts/tests/test_static_ort_aggregate.py
++++ b/scripts/tests/test_static_ort_aggregate.py
+@@ -4,7 +4,7 @@
+ from pathlib import Path
+ import unittest
+ from types import SimpleNamespace
+-from unittest.mock import Mock
++from unittest.mock import Mock, patch
+ 
+ ROOT = Path(__file__).resolve().parents[2]
+ 
+@@ -65,14 +65,34 @@
+ 
+     def test_linux_uses_real_ar_mri_with_fixed_literal_shell_arguments(self):
+         fake = SimpleNamespace(TARGETS={"linux":("Linux","x86_64")},child=lambda root,name:root/name)
+-        request = MODULE.invocation(Path("owned"),"linux",{}, {"inputs":[{"path":"b/Release/libonnxruntime_session.a"}]},fake)
++        canonical = Path("canonical-system-bin/gnu-ar").absolute()
++        with patch.object(Path,"resolve",return_value=canonical) as resolve:
++            request = MODULE.invocation(Path("owned"),"linux",{}, {"inputs":[{"path":"b/Release/libonnxruntime_session.a"}]},fake)
++        resolve.assert_called_once_with(strict=True)
+         self.assertEqual(request["argv"][:4],["/bin/sh","-c",'exec "$1" -M < "$2"',"airk-static-aggregate"])
+-        self.assertEqual(request["argv"][4],str(Path("/usr/bin/ar")))
++        self.assertEqual(request["argv"][4],str(canonical))
++        self.assertEqual(request["tool"],canonical)
+         self.assertTrue(request["text"].startswith("CREATE "))
+         self.assertIn("\nADDLIB ",request["text"])
+         self.assertTrue(request["text"].endswith("\nSAVE\nEND\n"))
+-        with self.assertRaisesRegex(ValueError,"whitespace"):
++        with patch.object(Path,"resolve",return_value=canonical), self.assertRaisesRegex(ValueError,"whitespace"):
+             MODULE.invocation(Path("owned space"),"linux",{}, {"inputs":[]},fake)
++
++    def test_linux_fixed_tool_alias_is_resolved_without_normalizing_any_artifact(self):
++        fake = SimpleNamespace(TARGETS={"linux":("Linux","x86_64")},child=lambda root,name:root/name)
++        canonical = Path("canonical-system-bin/real-gnu-ar").absolute()
++        with patch.object(Path,"resolve",autospec=True,return_value=canonical) as resolve:
++            request = MODULE.invocation(Path("owned"),"linux",{}, {"inputs":[{"path":"b/Release/original.a"}]},fake)
++        resolve.assert_called_once_with(Path("/usr/bin/ar"),strict=True)
++        self.assertEqual(request["tool"],canonical)
++        self.assertEqual(request["argv"][-2:], [str(canonical),str(Path("owned/aggregate/inputs.mri"))])
++        self.assertIn("ADDLIB "+str(Path("owned/b/Release/original.a")),request["text"])
++
++    def test_linux_missing_or_looping_system_alias_refuses_without_fallback(self):
++        fake = SimpleNamespace(TARGETS={"linux":("Linux","x86_64")},child=lambda root,name:root/name)
++        for error in [FileNotFoundError("missing fixed OS executable"), OSError(40,"alias loop")]:
++            with self.subTest(error=type(error).__name__), patch.object(Path,"resolve",side_effect=error), self.assertRaises(type(error)):
++                MODULE.invocation(Path("owned"),"linux",{}, {"inputs":[]},fake)
+ 
+     def test_posix_static_graph_keeps_same_runtime_dependency_semantics(self):
+         text = graph().replace(".lib",".a")

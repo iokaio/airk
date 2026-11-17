@@ -1,0 +1,128 @@
+--- a/crates/airk-retrieval/src/arbiter/runtime.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime.rs
+@@ -692,14 +692,53 @@
+     }
+ }
+ 
++/// Literal selected attention dimensions for test-support diagnostics only.
++/// Large query_width4096 is distinct from its backbone hidden width2560.
++#[cfg(any(test, feature = "test-support"))]
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct SelectedGqaModel {
++    pub model: ModelChoice,
++    pub query_width: usize,
++    pub query_heads: usize,
++    pub kv_heads: usize,
++    pub head_size: usize,
++    pub layers: usize,
++    pub cpu_threads: usize,
++    pub memory_reservation_bytes: u64,
++}
++#[cfg(any(test, feature = "test-support"))]
++pub fn selected_gqa_model(model: ModelChoice) -> Result<SelectedGqaModel> {
++    let (query_width, query_heads, layers, cpu_threads, memory_reservation_bytes) = match model {
++        ModelChoice::ContextQwenCompact => (2048, 16, 28, 4, 16u64 << 30),
++        ModelChoice::ContextQwenLarge => (4096, 32, 36, 16, 40u64 << 30),
++        _ => anyhow::bail!("selected Context GQA diagnostic model required"),
++    };
++    Ok(SelectedGqaModel { model, query_width, query_heads, kv_heads: 8,
++        head_size: 128, layers, cpu_threads, memory_reservation_bytes })
++}
++
++/// Historical Compact synthetic control; its caller and receipt identity remain unchanged.
++#[cfg(any(test, feature = "test-support"))]
++pub fn synthetic_gqa_profile(
++    graph: &[u8], tokens: usize, profiling_prefix: &std::path::Path,
++    optimized_model: &std::path::Path,
++) -> Result<serde_json::Value> {
++    synthetic_gqa_profile_for_model(ModelChoice::ContextQwenCompact, graph, tokens,
++        profiling_prefix, optimized_model)
++}
++
+ /// Synthetic GQA operator control only; no model weights or execution profile.
+ #[cfg(any(test, feature = "test-support"))]
+-pub fn synthetic_gqa_profile(
++pub fn synthetic_gqa_profile_for_model(
++    model: ModelChoice,
+     graph: &[u8],
+     tokens: usize,
+     profiling_prefix: &std::path::Path,
+     optimized_model: &std::path::Path,
+ ) -> Result<serde_json::Value> {
++    let selected = selected_gqa_model(model)?;
++    let kv_width = selected.kv_heads * selected.head_size;
++    let query_group = selected.query_heads / selected.kv_heads;
+     crate::native_inference::require_service_compute()?;
+     ensure!(
+         matches!(tokens, 17 | 8192) && graph.len() <= 65536,
+@@ -708,13 +747,13 @@
+     ensure!(
+         airk_process::cpu_fit::usable_physical_cores()
+             .context("usable physical-core observation unavailable")?
+-            >= 4,
+-        "native CPU4 refused"
++            >= selected.cpu_threads,
++        "selected native CPU fit refused"
+     );
+     crate::onnx::initialize_runtime()?;
+     let _environment = crate::onnx::acquire_session_environment()?;
+     let mut session = Session::builder()?
+-        .with_intra_threads(4)?
++        .with_intra_threads(selected.cpu_threads)?
+         .with_inter_threads(1)?
+         .with_optimization_level(GraphOptimizationLevel::Level3)?
+         .with_parallel_execution(false)?
+@@ -749,13 +788,13 @@
+                 == ["context"],
+         "synthetic control ABI differs; cache must remain private"
+     );
+-    let q = vec![0f32; tokens * 2048];
+-    let k = vec![0f32; tokens * 1024];
+-    let mut v = vec![0f32; tokens * 1024];
++    let q = vec![0f32; tokens * selected.query_width];
++    let k = vec![0f32; tokens * kv_width];
++    let mut v = vec![0f32; tokens * kv_width];
+     for t in 0..tokens {
+-        for h in 0..8 {
+-            for d in 0..128 {
+-                v[t * 1024 + h * 128 + d] = (h * 128 + d) as f32 / 1024. + t as f32 / 8192.;
++        for h in 0..selected.kv_heads {
++            for d in 0..selected.head_size {
++                v[t * kv_width + h * selected.head_size + d] = (h * selected.head_size + d) as f32 / kv_width as f32 + t as f32 / 8192.;
+             }
+         }
+     }
+@@ -768,9 +807,9 @@
+     let options = RunOptions::new()?.with_outputs(OutputSelector::no_default().with("context"));
+     let outputs = session.run_with_options(
+         ort::inputs![
+-            "query"=>Tensor::from_array(([1,tokens,2048],q))?,
+-            "key"=>Tensor::from_array(([1,tokens,1024],k))?,
+-            "value"=>Tensor::from_array(([1,tokens,1024],v))?,
++            "query"=>Tensor::from_array(([1,tokens,selected.query_width],q))?,
++            "key"=>Tensor::from_array(([1,tokens,kv_width],k))?,
++            "value"=>Tensor::from_array(([1,tokens,kv_width],v))?,
+             "bias"=>Tensor::from_array(([1,1,tokens,tokens],bias))?,
+             "seqlens_k"=>Tensor::from_array(([1],vec![tokens as i32-1]))?,
+             "total_sequence_length"=>Tensor::from_array(([1],vec![tokens as i32]))?,
+@@ -779,15 +818,15 @@
+     )?;
+     let (shape, actual) = outputs["context"].try_extract_tensor::<f32>()?;
+     ensure!(
+-        shape.as_ref() == [1, tokens as i64, 2048],
++        shape.as_ref() == [1, tokens as i64, selected.query_width as i64],
+         "actual synthetic context shape differs"
+     );
+     let mut maximum_error = 0f32;
+     for t in 0..tokens {
+-        for h in 0..16 {
+-            for d in 0..128 {
+-                let expected = ((h / 2) * 128 + d) as f32 / 1024. + t as f32 / 16384.;
+-                let value = actual[t * 2048 + h * 128 + d];
++        for h in 0..selected.query_heads {
++            for d in 0..selected.head_size {
++                let expected = ((h / query_group) * selected.head_size + d) as f32 / kv_width as f32 + t as f32 / 16384.;
++                let value = actual[t * selected.query_width + h * selected.head_size + d];
+                 ensure!(value.is_finite(), "nonfinite synthetic GQA value");
+                 maximum_error = maximum_error.max((value - expected).abs());
+             }

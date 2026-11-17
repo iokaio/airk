@@ -1,0 +1,158 @@
+// SPDX-License-Identifier: Apache-2.0
+// A shared ticket keeps one attempt's failure available to every admitted waiter.
+type SharedReadiness = std::result::Result<(), Arc<anyhow::Error>>;
+
+#[derive(Debug)]
+struct SharedReadinessError(Arc<anyhow::Error>);
+impl std::fmt::Display for SharedReadinessError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+impl std::error::Error for SharedReadinessError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.0.as_ref().as_ref())
+    }
+}
+
+#[derive(Default)]
+struct RuntimeReadiness {
+    state: tokio::sync::Mutex<ReadinessState>,
+    shutdown_gate: tokio::sync::Mutex<()>,
+    closing: std::sync::atomic::AtomicBool,
+}
+#[derive(Default)]
+enum ReadinessState {
+    #[default]
+    Idle,
+    Running(Arc<ReadinessAttempt>),
+    Ready,
+    Closed,
+}
+struct ReadinessAttempt {
+    result: tokio::sync::watch::Receiver<Option<SharedReadiness>>,
+    join_failure: tokio::sync::OnceCell<SharedReadiness>,
+    task: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+impl Drop for ReadinessAttempt {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.get_mut().as_ref() {
+            task.abort();
+        }
+    }
+}
+impl ReadinessAttempt {
+    async fn failed_join(&self) -> SharedReadiness {
+        self.join_failure.get_or_init(|| async {
+            let mut slot = self.task.lock().await;
+            let error = if let Some(task) = slot.as_mut() {
+                match task.await {
+                    Err(error) => anyhow::Error::from(error)
+                        .context("installed runtime verification task failed"),
+                    Ok(()) => anyhow::anyhow!("installed runtime verification task ended without result"),
+                }
+            } else {
+                anyhow::anyhow!("runtime readiness session closed")
+            };
+            *slot = None;
+            Err(Arc::new(error))
+        }).await.clone()
+    }
+}
+impl RuntimeReadiness {
+    async fn ensure(&self, install: &std::path::Path, control: &std::path::Path) -> Result<()> {
+        let install = install.to_path_buf();
+        let control = control.to_path_buf();
+        self.run(move || async move {
+            let observed = crate::runtime_install::installed_control(&install).await?;
+            ensure!(observed == control, "selected service control changed");
+            Ok(())
+        }).await
+    }
+
+    async fn run<F, Fut>(&self, initialize: F) -> Result<()>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+    {
+        let attempt = {
+            let mut state = self.state.lock().await;
+            ensure!(!self.closing.load(std::sync::atomic::Ordering::Acquire), "runtime readiness session closed");
+            match &*state {
+                ReadinessState::Ready => return Ok(()),
+                ReadinessState::Closed => anyhow::bail!("runtime readiness session closed"),
+                ReadinessState::Running(attempt) => attempt.clone(),
+                ReadinessState::Idle => {
+                    let (sender, result) = tokio::sync::watch::channel(None);
+                    let future = initialize();
+                    let task = tokio::spawn(async move {
+                        let outcome = future.await.map_err(Arc::new);
+                        let _ = sender.send_replace(Some(outcome));
+                    });
+                    let attempt = Arc::new(ReadinessAttempt {
+                        result,
+                        join_failure: tokio::sync::OnceCell::new(),
+                        task: tokio::sync::Mutex::new(Some(task)),
+                    });
+                    *state = ReadinessState::Running(attempt.clone());
+                    attempt
+                }
+            }
+        };
+        let mut ticket = attempt.result.clone();
+        let outcome = loop {
+            if let Some(outcome) = ticket.borrow_and_update().clone() {
+                break outcome;
+            }
+            if ticket.changed().await.is_err() {
+                break attempt.failed_join().await;
+            }
+        };
+        {
+            let mut state = self.state.lock().await;
+            ensure!(!self.closing.load(std::sync::atomic::Ordering::Acquire), "runtime readiness session closed");
+            // Arc identity is the attempt generation fence; an old ticket cannot reset a later attempt.
+            if matches!(&*state, ReadinessState::Running(current) if Arc::ptr_eq(current, &attempt)) {
+                *state = if outcome.is_ok() { ReadinessState::Ready } else { ReadinessState::Idle };
+            }
+            if matches!(*state, ReadinessState::Closed) {
+                anyhow::bail!("runtime readiness session closed");
+            }
+        }
+        outcome.map_err(|error| anyhow::Error::new(SharedReadinessError(error)))
+    }
+
+    /// Explicit EOF path: close admission, abort the async owner and join it.
+    /// No timeout detaches a potentially effectful task. Synchronous verification
+    /// remains nonpreemptible until the separate blocking/cancellation adapter lands.
+    async fn shutdown(&self) -> Result<()> {
+        let _shutdown = self.shutdown_gate.lock().await;
+        self.closing.store(true, std::sync::atomic::Ordering::Release);
+        let attempt = {
+            let state = self.state.lock().await;
+            match &*state {
+                ReadinessState::Running(attempt) => Some(attempt.clone()),
+                _ => None,
+            }
+        };
+        let mut joined = Ok(());
+        if let Some(attempt) = attempt {
+            // Keep the handle in owner state while awaiting: cancelling shutdown
+            // does not detach it, and the next shutdown can continue draining.
+            let mut slot = attempt.task.lock().await;
+            if let Some(task) = slot.as_mut() {
+                task.abort();
+                joined = match task.await {
+                    Ok(()) => Ok(()),
+                    Err(error) if error.is_cancelled() => Ok(()),
+                    Err(error) => Err(anyhow::Error::from(error)
+                        .context("runtime readiness owner shutdown failed")),
+                };
+            }
+            *slot = None;
+        }
+        *self.state.lock().await = ReadinessState::Closed;
+        joined?;
+        Ok(())
+    }
+}

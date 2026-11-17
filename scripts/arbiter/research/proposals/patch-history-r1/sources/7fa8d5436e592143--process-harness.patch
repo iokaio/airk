@@ -1,0 +1,524 @@
+diff --git a/scripts/check-runtime-legacy-retirement.py b/scripts/check-runtime-legacy-retirement.py
+new file mode 100644
+--- /dev/null
++++ b/scripts/check-runtime-legacy-retirement.py
+@@ -0,0 +1,519 @@
++# SPDX-License-Identifier: Apache-2.0
++"""INERT proposal: real installed-extension 1.8.7 to reviewed legacy retirement.
++
++Run only after P14 acceptance and after the recovery owners/adapters are built.
++Every invocation creates its own two-index installation. No production state is
++copied. Failure retains that installation and all command streams for recovery.
++"""
++import argparse
++from contextlib import ExitStack, closing
++import hashlib
++import importlib.util
++import json
++import os
++from pathlib import Path, PurePosixPath
++import queue
++import shutil
++import sqlite3
++import subprocess
++import sys
++import threading
++import time
++import uuid
++
++OLD_MANIFEST = "b185f0980631b319968dbd209c14970020f11048c47a46412a57d6f1e7d1fb61"
++OLD_MAIN = "03f7d6059c0a86f84d385811e81f0ba3da447bdbb61cb6f41abac974900a45d7"
++OLD_EMBED = "584126658a83353cdf2d758b2e01f52155706db72d90ead80984580d3c940edc"
++MAX_FRAME = 65536
++
++
++def load(name, path):
++    spec = importlib.util.spec_from_file_location(name, path)
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module
++
++
++def sha(path):
++    with path.open("rb") as stream:
++        return hashlib.file_digest(stream, "sha256").hexdigest()
++
++
++def plain(path):
++    info = path.lstat()
++    if path.is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400:
++        raise AssertionError(f"Linked/reparse fixture entry refused: {path}")
++
++
++def contained(owner, path, *, exists=True):
++    owner = owner.resolve(strict=True)
++    path = path.absolute()
++    if path == owner or not path.is_relative_to(owner):
++        raise AssertionError("Fixture operation escaped exact owned directory")
++    for component in (path, *path.parents):
++        if component == owner:
++            break
++        if component.exists():
++            plain(component)
++    resolved = path.resolve(strict=exists)
++    if resolved != path or not resolved.is_relative_to(owner):
++        raise AssertionError("Fixture operation redirected")
++    return path
++
++
++def seal(runtime):
++    manifest = runtime / "airk-install.json"
++    value = json.loads(manifest.read_text(encoding="utf-8"))
++    assert value["schema"] == 1 and value["os"] == "windows" and value["arch"] == "x86_64"
++    assert isinstance(value["files"], dict) and 1 <= len(value["files"]) <= 4096
++    hashes = {}
++    for relative, expected in value["files"].items():
++        item = PurePosixPath(relative)
++        assert not item.is_absolute() and ".." not in item.parts and "\\" not in relative
++        path = runtime.joinpath(*item.parts)
++        for component in (path, *path.parents):
++            plain(component)
++            if component == runtime:
++                break
++        assert sha(path) == expected, f"Changed public payload: {relative}"
++        hashes[relative] = expected
++    return {"manifest_sha256": sha(manifest), "version": value["version"], "files": hashes}
++
++
++def immutable_upgrade(control):
++    path = control / "index-catalog-upgrade.json"
++    assert path.stat().st_size <= 32 * 1024 * 1024
++    journal = json.loads(path.read_text(encoding="utf-8"))
++    backups = {}
++    for entry in journal["backups"]:
++        if entry["complete"]:
++            backup = control / f"catalog-schema11-{journal['plan']['id']}-{entry['slot']}.sqlite3"
++            assert sha(backup) == entry["sha256"] and backup.stat().st_size == entry["bytes"]
++            backups[backup.name] = entry["sha256"]
++    assert backups, "No actual immutable native backup"
++    return {"plan": journal["plan"], "plan_digest": journal["plan_digest"], "backups": backups}
++
++
++def publication(value):
++    found = []
++    def visit(item):
++        if isinstance(item, dict):
++            pub = item.get("publication")
++            if isinstance(pub, dict) and isinstance(pub.get("token"), str):
++                found.append(pub["token"])
++            for entry in item.values():
++                visit(entry)
++        elif isinstance(item, list):
++            for entry in item:
++                visit(entry)
++    visit(value)
++    assert found and len(set(found)) == 1, "Missing/ambiguous exact retained publication"
++    return found[0]
++
++
++def success_flag(envelope):
++    assert isinstance(envelope, dict)
++    assert "isError" not in envelope or envelope["isError"] is False, envelope
++
++
++class Mcp:
++    """One exact owned stdio child, bounded lines/queue/wait; never a PID lookup."""
++    def __init__(self, fixture, binary, project):
++        self.fixture = fixture
++        self.log = (fixture.root / f"mcp-{uuid.uuid4().hex}.stderr").open("wb")
++        self.child = subprocess.Popen([str(binary), *fixture.project_args(project), "mcp"],
++            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log,
++            env=fixture.environment, creationflags=fixture.flags)
++        self.lines = queue.Queue(maxsize=8)
++        self.counter = 0
++        def receive():
++            try:
++                while True:
++                    line = self.child.stdout.readline(MAX_FRAME + 1)
++                    if not line:
++                        break
++                    if len(line) > MAX_FRAME:
++                        raise AssertionError("MCP frame exceeds public bound")
++                    self.lines.put(line, timeout=5)
++            except Exception as error:
++                self.lines.put(error, timeout=5)
++            finally:
++                try:
++                    self.lines.put(None, timeout=5)
++                except queue.Full:
++                    pass
++        self.reader = threading.Thread(target=receive, daemon=True)
++        self.reader.start()
++        try:
++            reply = self.call("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
++                "clientInfo": {"name": "legacy-retirement-fixture", "version": "1"}})
++            assert reply["serverInfo"]["name"] == "airk"
++            self.write({"jsonrpc": "2.0", "method": "notifications/initialized"})
++        except BaseException:
++            self.close()
++            raise
++
++    def write(self, value):
++        raw = (json.dumps(value, ensure_ascii=False) + "\n").encode("utf-8")
++        assert len(raw) <= MAX_FRAME
++        self.child.stdin.write(raw)
++        self.child.stdin.flush()
++
++    def call(self, method, params):
++        self.counter += 1
++        self.write({"jsonrpc": "2.0", "id": self.counter, "method": method, "params": params})
++        line = self.lines.get(timeout=60)
++        if line is None or isinstance(line, Exception):
++            raise AssertionError(f"Owned MCP reader failed: {line}")
++        reply = json.loads(line)
++        assert reply.get("id") == self.counter and "error" not in reply, reply
++        return reply["result"]
++
++    def close(self):
++        self.child.stdin.close()
++        try:
++            self.child.wait(timeout=15)
++        except subprocess.TimeoutExpired:
++            self.child.kill()  # Exact Popen child only; service roles drain separately.
++            self.child.wait(timeout=15)
++            raise AssertionError("Owned MCP child failed to exit")
++        finally:
++            self.child.stdout.close()
++            self.log.close()
++
++
++class Fixture:
++    def __init__(self, args, helpers, clients):
++        self.helpers, self.clients = helpers, clients
++        self.temporary = helpers.owned_temporary(args.fixture_parent.resolve(strict=True))
++        self.root = Path(self.temporary.name).resolve(strict=True)
++        self.install, self.state = self.root / "install", self.root / "state"
++        self.control = self.state / "control"
++        self.environment = dict(os.environ, AIRK_MCP_RESPONSE_MODE="full",
++            HTTP_PROXY="http://127.0.0.1:1", HTTPS_PROXY="http://127.0.0.1:1")
++        self.flags = subprocess.CREATE_NO_WINDOW
++        self.commands = []
++        self.old, self.new = args.previous_runtime.resolve(strict=True), args.runtime.resolve(strict=True)
++        self.old_seal, self.new_seal = seal(self.old), seal(self.new)
++        assert self.old_seal["manifest_sha256"] == OLD_MANIFEST
++        assert self.old_seal["version"] == "1.8.7" and len(self.old_seal["files"]) == 674
++        assert self.old_seal["files"]["airk.exe"] == OLD_MAIN
++        assert self.old_seal["files"]["airk-embed.exe"] == OLD_EMBED
++        assert self.new_seal["version"] == "1.8.8" and self.new_seal != self.old_seal
++        self.projects = {}
++
++    def command(self, binary, *arguments, body=None, check=True):
++        result = self.helpers.record_native_command(self.root, self.commands, binary, arguments,
++            input=None if body is None else json.dumps(body), flags=self.flags, environment=self.environment)
++        if check and result.returncode:
++            raise AssertionError(f"Native fixture command failed: {result.stderr[-4096:]}")
++        return result
++
++    def invoke(self, binary, *arguments, body=None):
++        return json.loads(self.command(binary, *arguments, body=body).stdout)
++
++    def rpc(self, binary, body):
++        return self.invoke(binary, "service", "rpc", "--runtime-dir", self.control, "--stdin", body=body)
++
++    def project_args(self, project):
++        return ["--service-runtime-dir", str(self.control), "--service-project", project["binding"],
++            "--root", project["root"], "--data-dir", project["data_root"], "--collection", project["collection"]]
++
++    def wait(self, binary, receipt):
++        identity = receipt["job"]["id"]
++        deadline = time.monotonic() + 180
++        while True:
++            job = self.rpc(binary, {"job": {"id": identity}})["job"]
++            assert job["id"] == identity
++            if job["state"] in ("succeeded", "failed", "canceled"):
++                assert job["state"] == "succeeded", job
++                return job
++            assert time.monotonic() < deadline, "Job deadline; mutation is never resubmitted"
++            time.sleep(0.05)
++
++    def stage(self, directory, old=None):
++        binary = directory / "airk.exe"
++        identity = sha(directory / "airk-install.json")
++        self.invoke(binary, "runtime", "stage", "--source", directory, "--install-dir", self.install,
++            "--state-dir", self.state, "--approved-sha256", identity,
++            "--verification-basis", "organization-digest")
++        args = ["runtime", "activate", "--install-dir", self.install, "--runtime-sha256", identity]
++        if old is not None:
++            args += ["--expected-active", old]
++        return self.command(binary, *args, check=False)
++
++    def drain(self, binary):
++        # Do not use lifecycle Stop: that persists a separate startup prohibition.
++        # First request ordinary shutdown, then wait using EXISTING advisory files.
++        health = self.invoke(binary, "service", "health", "--runtime-dir", self.control)
++        selected = json.loads((self.install / "selected.json").read_text(encoding="utf-8"))
++        assert health["status"] == "health" and health["observation"]["runtime_sha256"] == selected["active"]
++        assert health["observation"]["executable_sha256"] == sha(binary)
++        reply = self.invoke(binary, "service", "shutdown", "--runtime-dir", self.control)
++        assert reply["status"] == "stopping", reply
++        names = ["instance-1.4.lock", "embedding-1.4.lock", "source-watch-1.4.lock"]
++        names += [f"worker-1.4-{p['binding']}.lock" for p in self.projects.values()]
++        deadline = time.monotonic() + 60
++        import msvcrt
++        while True:
++            try:
++                with ExitStack() as stack:
++                    for name in names:
++                        # Optional helpers may never have started in this lexical
++                        # fixture. Do not create files to manufacture absence.
++                        if not (self.control / name).exists() and name in {
++                            "embedding-1.4.lock", "source-watch-1.4.lock"}:
++                            continue
++                        path = contained(self.root, self.control / name)
++                        stream = stack.enter_context(path.open("r+b"))  # NEVER creates a lock.
++                        msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
++                        stack.callback(lambda f=stream: (f.seek(0), msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)))
++                break
++            except OSError:
++                assert time.monotonic() < deadline, "Existing owner leases did not drain"
++                time.sleep(0.05)
++        # One successful owning native call is the final all-role proof, including
++        # the native embedding-pool census. This edits only this fixture launcher.
++        proof = self.invoke(binary, "runtime", "repair-launcher", "--install-dir", self.install)
++        assert proof["launcher_repaired"] is True
++        return proof
++
++    def query(self, binary, project):
++        args = {"query": "legacyhealthyneedle", "mode": "lexical", "limit": 4,
++            "verification": "off", "response_mode": "full"}
++        def read(_):
++            result = self.command(binary, *self.project_args(project), "tools", "call", "airk_search",
++                "--args", json.dumps(args), check=False)
++            assert result.returncode in (0, 1)
++            envelope = json.loads(result.stdout)
++            assert result.returncode == 0 or self.clients.read_retry_delay(envelope) is not None, envelope
++            return envelope
++        cli, _ = self.clients.read_envelope(read, time.monotonic() + 60)
++        success_flag(cli)
++        body = self.clients.tool_value(cli)
++        assert body["collection"] == project["collection"]
++        assert isinstance(body["generation"], int) and not isinstance(body["generation"], bool)
++        assert len(body["hits"]) == 1 and body["truncated"] is False, body
++        hit = body["hits"][0]
++        assert hit["citation"]["path"] == "README.md"
++        assert hit["citation"]["content_hash"] == sha(Path(project["root"]) / "README.md")
++        assert "legacyhealthyneedle" in hit["text"] and hit["truncated"] is False
++        mcp = Mcp(self, binary, project)
++        try:
++            wire, _ = self.clients.read_envelope(lambda _: mcp.call("tools/call",
++                {"name": "search", "arguments": args}), time.monotonic() + 60)
++        finally:
++            mcp.close()
++        success_flag(wire)
++        other = self.clients.tool_value(wire)
++        # Ordinary single-index legacy tool replies, not combined hashed envelopes.
++        # Only documented request IDs and dated observation timing are normalized.
++        def stable(value):
++            if isinstance(value, dict):
++                return {k: stable(v) for k, v in value.items() if k not in {
++                    "request_id", "observed_unix_ms", "observed_from_unix_ms", "observed_to_unix_ms",
++                    "cache_age_ms", "cached", "elapsed_ms"}}
++            if isinstance(value, list):
++                return [stable(v) for v in value]
++            return value
++        assert stable(body) == stable(other), "Complete CLI/MCP legacy-body mismatch"
++        observation = uuid.uuid4().hex
++        for suffix, value in (("cli", cli), ("mcp", wire)):
++            with (self.root / f"search-{observation}-{suffix}.json").open("x", encoding="utf-8") as stream:
++                json.dump(value, stream, indent=2)
++                stream.write("\n")
++        # Explicit retained-data projection across versions: preserve ALL literal
++        # hit/citation/text/location/truncation fields plus the exact publication.
++        # Newly disclosed execution/readiness/version metadata is not projected.
++        return {"publication": body["publication"], "token": publication(body),
++            "collection": body["collection"], "generation": body["generation"],
++            "original_root": project["root"], "hits": body["hits"], "truncated": body["truncated"]}
++
++    def admin(self, action, body=None, *extra, check=True):
++        return self.command(self.new / "airk.exe", "runtime", "legacy-retirement-" + action,
++            "--install-dir", self.install, *extra, body=body, check=check)
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--runtime", type=Path, required=True)
++    parser.add_argument("--previous-runtime", type=Path, required=True)
++    parser.add_argument("--fixture-parent", type=Path, required=True,
++        help="Existing qualified owner-only synthetic fixture base; no ACL changes")
++    parser.add_argument("--scenario", choices=("source-only", "deleted", "returned", "foreign-return"), required=True)
++    parser.add_argument("--output", type=Path, required=True)
++    args = parser.parse_args()
++    assert os.name == "nt", "Actual retained 1.8.7 payload is Windows x86_64 only"
++    args.output.parent.mkdir(parents=True, exist_ok=True)
++    # Reserve a NEW receipt before any native work. Never overwrite old evidence,
++    # even if another process races the initial path-existence observation.
++    output_stream = args.output.open("x", encoding="utf-8")
++    scripts = Path(__file__).resolve().parent
++    helpers = load("legacy_upgrade_helpers", scripts / "check-runtime-upgrade.py")
++    clients = load("legacy_client_helpers", scripts / "check-service-clients.py")
++    fixture = None
++    receipt = {"schema": 1, "scenario": args.scenario, "status": "failed", "executed": True,
++        "qualification": "actual installed-extension 1.8.7 payload; not Git-tag equivalence",
++        "raw_direct_evidence_connection_parity": "not exercised by this Python harness"}
++    try:
++        fixture = f = Fixture(args, helpers, clients)
++        receipt["fixture"] = str(f.root)
++        receipt["old_payload"], receipt["new_payload"] = f.old_seal, f.new_seal
++        first = f.stage(f.old)
++        assert first.returncode == 0
++        original = b"legacyhealthyneedle original fictional bytes\n"
++        for name in ("a", "b"):
++            ancestor = f.root / name
++            source, data = ancestor / "source", ancestor / "data"
++            source.mkdir(parents=True)
++            data.mkdir()
++            (source / "README.md").write_bytes(original)
++            p = f.invoke(f.old / "airk.exe", "--root", source, "--data-dir", data,
++                "--collection", "legacy-" + name, "service", "prepare-registration")
++            assert Path(p["root"]).samefile(source) and Path(p["data_root"]).samefile(data)
++            assert p["collection"] == "legacy-" + name
++            registered = f.rpc(f.old / "airk.exe", {"register": {"project": p}})
++            assert registered["status"] == "registered"
++            f.projects[name] = p
++            # Explicit old-fixture actions: migration never invents these facts.
++            configured = f.invoke(f.old / "airk.exe", *f.project_args(p), "configure", "--stdin",
++                body={"operation": "vectors", "enabled": False})
++            f.wait(f.old / "airk.exe", configured)
++            f.wait(f.old / "airk.exe", f.invoke(f.old / "airk.exe", *f.project_args(p), "index"))
++        before = f.query(f.old / "airk.exe", f.projects["b"])
++        with closing(sqlite3.connect((f.control / "service-1.4.sqlite3").as_uri() + "?mode=ro", uri=True)) as db:
++            db.execute("PRAGMA query_only=ON")
++            receipt["actual_predecessor_user_version"] = db.execute("PRAGMA user_version").fetchone()[0]
++        receipt["predecessor_quiescence"] = f.drain(f.old / "airk.exe")
++        ancestor = contained(f.root, f.root / "a")
++        source = contained(f.root, ancestor / "source")
++        offline = contained(f.root, f.root / "a-offline", exists=False)
++        identity = (ancestor.stat().st_dev, ancestor.stat().st_ino)
++        if args.scenario == "source-only":
++            shutil.rmtree(source)
++        elif args.scenario == "returned":
++            ancestor.rename(offline)
++        else:
++            shutil.rmtree(ancestor)
++        assert not source.exists()
++        activated = f.stage(f.new, OLD_MANIFEST)
++        old_hash = f.old_seal["manifest_sha256"]
++        assert old_hash == OLD_MANIFEST
++        if args.scenario == "source-only":
++            assert activated.returncode == 0, activated.stderr
++            assert f.query(f.new / "airk.exe", f.projects["b"]) == before
++            # Ordinary canonical native RetireIndex review, never the upgrade lane.
++            binding = f.rpc(f.new / "airk.exe", {"catalog_legacy_binding": {
++                "project": f.projects["a"]["binding"], "expected_catalog_revision": None}})["observation"]
++            index = binding["eligibility"]["grant"]["grant"]["memberships"][0]["membership"]["index_id"]
++            epoch = f.rpc(f.new / "airk.exe", "request_epoch")
++            draft = f.rpc(f.new / "airk.exe", {"catalog_source_mutation_draft": {"selection": {
++                "key": {"namespace": epoch["namespace"], "epoch": epoch["epoch"], "nonce": uuid.uuid4().hex},
++                "expected_catalog_revision": binding["catalog_revision"], "index_id": index,
++                "change": {"operation": "retire_index"}}}})["draft"]
++            applied = f.rpc(f.new / "airk.exe", {"catalog_apply": {
++                "request": draft["request"], "preview_digest": draft["preview_digest"]}})
++            assert applied["status"] == "catalog_applied", applied
++        else:
++            assert activated.returncode != 0 and "legacy_compatibility_recovery_required" in activated.stderr
++            assert "ConfigurationUnavailable" in activated.stderr
++            immutable = immutable_upgrade(f.control)
++            receipt["immutable_original"] = immutable
++            assert len(immutable["plan"]["indexes"]) == 2
++            page = json.loads(f.admin("candidates").stdout)
++            assert page["schema"] == 1 and page["total_eligible"] == 1
++            assert page["continuation"] is None and len(page["items"]) == 1
++            candidate = page["items"][0]
++            assert candidate["registration"] == f.projects["a"]
++            assert candidate["source_import"] == "pending_metadata"
++            review = json.loads(f.admin("review", None, "--index-id", candidate["index_id"]).stdout)
++            assert review["status"] == "review", review
++            request = review["preview"]["request"]
++            crossed = json.loads(json.dumps(review))
++            crossed["preview"]["request"]["registration"] = f.projects["b"]
++            assert f.admin("authorize", {"preview": crossed["preview"],
++                "review_digest": crossed["review_digest"]}, check=False).returncode != 0
++            if args.scenario == "returned":
++                # Same genuine directory identities, before confirmation: the
++                # reviewed Unknown precondition has changed and MUST refuse.
++                offline.rename(contained(f.root, ancestor, exists=False))
++                assert (ancestor.stat().st_dev, ancestor.stat().st_ino) == identity
++                assert f.admin("authorize", {"preview": review["preview"],
++                    "review_digest": review["review_digest"]}, check=False).returncode != 0
++                ancestor.rename(contained(f.root, offline, exists=False))
++                review = json.loads(f.admin("review", None, "--index-id", candidate["index_id"]).stdout)
++                request = review["preview"]["request"]
++            authorized = json.loads(f.admin("authorize", {"preview": review["preview"],
++                "review_digest": review["review_digest"]}).stdout)
++            assert authorized["status"] == "authorized", authorized
++            assert json.loads(f.admin("authorize", {"preview": review["preview"],
++                "review_digest": review["review_digest"]}).stdout) == authorized
++            assert immutable_upgrade(f.control) == immutable
++            observed = json.loads(f.admin("receipt", request).stdout)
++            assert observed["observation"] == authorized
++            if args.scenario == "returned":
++                contained(f.root, offline).rename(contained(f.root, ancestor, exists=False))
++                assert (ancestor.stat().st_dev, ancestor.stat().st_ino) == identity
++            elif args.scenario == "foreign-return":
++                data = contained(f.root, ancestor / "data", exists=False)
++                data.mkdir(parents=True)
++                (data / "foreign-sentinel").write_bytes(b"never-owned-by-old-index\n")
++            applied = json.loads(f.admin("resume", request).stdout)
++            assert applied["status"] == "applied", applied
++            assert applied["receipt"]["cleanup"] == "pending"
++            assert json.loads(f.admin("receipt", request).stdout)["observation"] == applied
++            assert json.loads(f.admin("resume", request).stdout) == applied
++            assert immutable_upgrade(f.control) == immutable
++            if args.scenario == "foreign-return":
++                assert (ancestor / "data/foreign-sentinel").read_bytes() == b"never-owned-by-old-index\n"
++            if args.scenario == "deleted":
++                assert not ancestor.exists(), "Logical retirement recreated absent source/data"
++        assert (f.root / "b/source/README.md").read_bytes() == original
++        assert f.query(f.new / "airk.exe", f.projects["b"]) == before
++        healthy_binding = f.rpc(f.new / "airk.exe", {"catalog_legacy_binding": {
++            "project": f.projects["b"]["binding"], "expected_catalog_revision": None}})["observation"]
++        assert healthy_binding["eligibility"]["kind"] == "imported_snapshot"
++        assert healthy_binding["eligibility"]["registration"] == f.projects["b"]
++        healthy_plan = immutable_upgrade(f.control)["plan"]
++        b_index = next(index for index in healthy_plan["indexes"] if index["registration"] == f.projects["b"])
++        memberships = healthy_binding["eligibility"]["grant"]["grant"]["memberships"]
++        assert len(memberships) == 1 and memberships[0]["membership"]["index_id"] == b_index["index_id"]
++        receipt["healthy_native_binding"] = healthy_binding
++        if args.scenario == "foreign-return":
++            assert (ancestor / "data/foreign-sentinel").read_bytes() == b"never-owned-by-old-index\n"
++        if args.scenario == "deleted":
++            assert not ancestor.exists(), "Healthy B read recreated retired A paths"
++        with closing(sqlite3.connect((f.control / "service-1.4.sqlite3").as_uri() + "?mode=ro", uri=True)) as db:
++            db.execute("PRAGMA query_only=ON")
++            a = db.execute("SELECT registered,paused FROM projects WHERE binding=?", (f.projects["a"]["binding"],)).fetchone()
++            assert a is None or a == (0, 1), "Accepted A retirement is not logical unregistration"
++            assert db.execute("SELECT count(*) FROM service_jobs WHERE project=? AND state IN('pending','running')",
++                (f.projects["a"]["binding"],)).fetchone()[0] == 0, "Retired A retains runnable work"
++            row = db.execute("SELECT substr(payload,1,20481),registered FROM projects WHERE binding=?", (f.projects["b"]["binding"],)).fetchone()
++            assert row is not None and row[1] == 1
++            assert json.loads(row[0]) == f.projects["b"], "Healthy B registration changed"
++        assert seal(f.old) == f.old_seal and seal(f.new) == f.new_seal
++        receipt.update(status="passed", healthy_retained_projection_unchanged=before, healthy_source_unchanged=True)
++    except BaseException as error:
++        receipt["primary_error"] = repr(error)
++    finally:
++        if fixture is not None:
++            # Retain even successful synthetic fixtures: ordinary physical cleanup
++            # is a separate owner proof, not implied by logical Applied.
++            receipt["fixture_retained"] = True
++            try:
++                receipt["final_quiescence"] = fixture.drain(fixture.new / "airk.exe")
++            except Exception as error:
++                receipt["stop_error"] = repr(error)
++                receipt["status"] = "failed"
++        try:
++            output_stream.write(json.dumps(receipt, indent=2) + "\n")
++            output_stream.flush()
++            os.fsync(output_stream.fileno())
++        finally:
++            output_stream.close()
++    return 0 if receipt["status"] == "passed" else 1
++
++
++if __name__ == "__main__":
++    sys.exit(main())

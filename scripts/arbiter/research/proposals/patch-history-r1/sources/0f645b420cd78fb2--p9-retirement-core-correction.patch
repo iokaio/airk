@@ -1,0 +1,169 @@
+*** Begin Patch
+*** Update File: D:/code/Github/airk/crates/airk-store/src/current/policy_capsule.rs
+@@
+ impl PolicyCapsule {
++    pub(crate) fn validate_registration(
++        &self,
++        registration: &airk_core::service::ProjectRegistration,
++    ) -> Result<()> {
++        self.validate()?;
++        ensure!(
++            self.policy.owner_binding == registration.binding
++                && self.policy.collection == registration.collection
++                && self.policy.roots.iter().filter(|root| root.owner).count() == 1
++                && self.policy.roots.iter().any(|root| root.owner && root.canonical_path == registration.root),
++            "retained source policy belongs to another registration"
++        );
++        Ok(())
++    }
++
++    /// The owning retirement lease must remain held. Missing application bytes
++    /// cannot be reconstructed from a registry report: preserve a pending deny.
++    pub(crate) fn retirement_copy(
++        directory: &Path,
++        registration: &airk_core::service::ProjectRegistration,
++        snapshot: &airk_core::catalog_policy::PolicySnapshot,
++    ) -> Result<Option<Self>> {
++        snapshot.validate()?;
++        if let Some(existing) = Self::load(directory)? {
++            existing.validate_registration(registration)?;
++            if existing.policy == snapshot.policy && existing.operation_id == snapshot.operation_id {
++                return Ok(None);
++            }
++        }
++        let copy = Self {
++            schema: 1,
++            policy: snapshot.policy.clone(),
++            operation_id: snapshot.operation_id,
++            application: None,
++            planned_removal: None,
++        };
++        copy.validate_registration(registration)?;
++        Ok(Some(copy))
++    }
++
+     pub fn validate(&self) -> Result<()> {
+*** Update File: D:/code/Github/airk/crates/airk-store/src/service_collection_purge.rs
+@@
+         ensure!(
+             plain(&directory)?.is_dir(),
+             "invalid removed collection directory"
+         );
++        let policy = crate::current::policy_capsule::PolicyCapsule::load(&directory)?;
++        if let Some(policy) = &policy {
++            policy.validate_registration(registration)?;
++        }
+         // Owner is deleted last. A crash after that point may leave only an empty directory.
+         if !directory.join("service-owner.json").try_exists()? {
++            if policy.is_some() {
++                for entry in fs::read_dir(&directory)? {
++                    ensure!(entry?.file_name() == "source-policy.json", "unowned removal state is preserved");
++                }
++                return Ok(true);
++            }
+@@
+             if name == "incarnations" || name == ".current-gates" {
+@@
+                 continue;
+             }
++            if name == "source-policy.json" && policy.is_some() {
++                ensure!(plain(&path)?.is_file(), "invalid retained source policy");
++                continue;
++            }
+@@
+         for path in top {
++            if policy.is_some() && path.file_name().is_some_and(|name| name == "service-owner.json") {
++                continue;
++            }
+             fs::remove_file(path)?;
+         }
+-        fs::remove_dir(&directory)?;
++        if policy.is_none() {
++            fs::remove_dir(&directory)?;
++        }
+         Ok(true)
+*** Update File: D:/code/Github/airk/crates/airk-store/src/service_catalog_policy.rs
+@@
+-impl ServiceRegistry {
++/// Selected retired backing only; no library scan and no legacy policy table.
++pub(in crate::service::registry) fn retired_for_binding(
++    db: &Connection,
++    binding: airk_core::service::ProjectBinding,
++) -> Result<Option<PolicySnapshot>> {
++    let version: u32 = db.pragma_query_value(None, "user_version", |row| row.get(0))?;
++    if version == 11 {
++        return Ok(None);
++    }
++    super::validate_existing(db)?;
++    if super::state(db)?.policy_contract == 0 {
++        return Ok(None);
++    }
++    let id: Option<String> = db.query_row(
++        "SELECT id FROM index_definitions WHERE legacy_binding=?1 AND active_registration=?1 AND tombstone=1",
++        [binding.to_string()], |row| row.get(0),
++    ).optional()?;
++    id.map(|id| snapshot(db, id.parse()?)).transpose().map(Option::flatten)
++}
++
++impl ServiceRegistry {
+@@
+         if let Some(accepted) = accepted {
+@@
+             return Ok(current);
+         }
++        ensure!(
++            !index_record(&tx, id)?.tombstone,
++            "retired index cannot admit source policy cleanup work"
++        );
+         let (namespace, epoch): (String, i64) = tx.query_row(
+*** Update File: D:/code/Github/airk/crates/airk-store/src/service_project_removal.rs
+@@
+         let registration = self.retained_project(project)?.registration;
++        let policy = super::catalog::policy::retired_for_binding(&self.connection, project)?;
+@@
+-        if present {
++        if present || policy.is_some() {
+@@
+                 quota.configure_if_current(policy, Some(&previous))?;
+             }
++            if let Some(snapshot) = &policy {
++                let job = self.job(snapshot.job)?;
++                ensure!(
++                    matches!(job.state, airk_core::service::JobState::Succeeded | airk_core::service::JobState::Failed | airk_core::service::JobState::Canceled),
++                    "retirement must settle the current policy job before cleanup"
++                );
++                if let Some(copy) = crate::current::policy_capsule::PolicyCapsule::retirement_copy(&directory, &registration, snapshot)? {
++                    let bytes = u64::try_from(serde_json::to_vec(&copy)?.len())?;
++                    let reservation = quota.reserve(&registration.collection, bytes)?;
++                    reservation.charge(bytes)?;
++                    copy.save(&directory)?;
++                }
++            }
+             if !crate::service::collection::Collection::purge_removed_turn(&registration, &lease)? {
+@@
+         tx.execute(
+-            "DELETE FROM service_jobs WHERE project=?1",
+-            [project.to_string()],
++            "DELETE FROM service_jobs WHERE project=?1 AND (?2 IS NULL OR id<>?2)",
++            params![project.to_string(), policy.as_ref().map(|snapshot| snapshot.job.to_string())],
+@@
+-        tx.execute(
+-            "DELETE FROM projects WHERE binding=?1",
+-            [project.to_string()],
+-        )?;
++        if policy.is_some() {
++            // The tombstone's exact policy job has a registration FK. Retain
++            // only that inactive identity and stop polling completed cleanup.
++            tx.execute("UPDATE projects SET cleanup_guard=NULL WHERE binding=?1 AND registered=0", [project.to_string()])?;
++        } else {
++            tx.execute("DELETE FROM projects WHERE binding=?1", [project.to_string()])?;
++        }
+*** Update File: D:/code/Github/airk/packages/vscode/src/indexingCatalogController.ts
+@@
+-            if(!observation||generation!==this.view.generation||item?.kind!=='index'||observation.index_id!==item.value.id||!control.catalogPolicyResume)throw new Error('read_current_native_policy_observation');
++            if(!observation||generation!==this.view.generation||item?.kind!=='index'||item.value.tombstone===true||observation.index_id!==item.value.id||!control.catalogPolicyResume)throw new Error('read_current_native_policy_observation');
+*** Update File: D:/code/Github/airk/packages/vscode/src/explorerWebview/indexing.tsx
+@@
+-                        {view.canResumePolicy&&view.policyStatus.job&&(['failed','canceled'].includes(String(catalogObject(view.policyStatus.job).state))||catalogObject(view.policyStatus.job).state==='succeeded'&&policyApplication?.physical_cleanup_pending===true)&&<button disabled={disabled||!!view.pending?.length} onClick={()=>void run(()=>request('indexing.policy.resume',{generation:view.generation}))}>Review resuming recorded cleanup</button>}
++                        {view.canResumePolicy&&selectedIndex.tombstone!==true&&view.policyStatus.job&&(['failed','canceled'].includes(String(catalogObject(view.policyStatus.job).state))||catalogObject(view.policyStatus.job).state==='succeeded'&&policyApplication?.physical_cleanup_pending===true)&&<button disabled={disabled||!!view.pending?.length} onClick={()=>void run(()=>request('indexing.policy.resume',{generation:view.generation}))}>Review resuming recorded cleanup</button>}
+*** End Patch

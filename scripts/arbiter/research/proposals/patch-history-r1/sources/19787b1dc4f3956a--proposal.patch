@@ -1,0 +1,229 @@
+--- a/crates/airk-inference/src/inference_engine/pool/arbiter/CONTRACT.md
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/CONTRACT.md
+@@ -607,3 +607,18 @@
+ This shares the actual installed loader owner without a new dependency or
+ production filename literal. The lower descriptive/scientific accessor remains
+ generic; no metadata roster can accidentally stage an unusable descriptor name.
++
++
++The private ignored emit_cuda_metadata_custody_inputs selector accepts a pinned
++UTF8 locator file of six TAB-separated fields per nonempty row: class
++(metadata|historical), role (-|named historical tool), original absolute path,
++existing protected-copy absolute path, expected SHA256, exact byte count.
++This is data location input, not a second native DTO. Existing Retrieval types
++and owning encode/validation routines emit both custody envelopes. The owner
++reopens each concrete original/copy with bounded no-reparse metadata readers,
++checks expected SHA/length before and after serialization under one <=120s
++original deadline, and writes only fresh output files. No copy, runtime/DLL/
++provider activation or capability is created; the real held Source repeats
++protected custody checks at consumption. Incorrect role, duplicate/cross-class
++mapping, mismatch and expired deadline refuse. The process receipt records only
++this actual metadata scope, not future parent Job settlement or observed NN0.
+--- a/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification.rs
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification.rs
+@@ -778,3 +778,156 @@
+     assert!(require_installed_descriptor_name(Path::new("")).is_err());
+     Ok(())
+ }
++
++fn custody_locator_rows(
++    raw: &[u8],
++) -> Result<(
++    Vec<cuda::MetadataCustodyCopy>,
++    Vec<cuda::HistoricalToolCustodyCopy>,
++)> {
++    ensure!(raw.len() <= 1 << 20, "custody locator input cap");
++    let text = std::str::from_utf8(raw)?;
++    let mut metadata = Vec::new();
++    let mut historical = Vec::new();
++    for line in text.lines() {
++        if line.is_empty() {
++            continue;
++        }
++        let fields = line.split('\t').collect::<Vec<_>>();
++        ensure!(fields.len() == 6, "six custody locator fields required");
++        let original = ResourceFilePin {
++            path: fields[2].into(),
++            sha256: fields[4].parse()?,
++        };
++        let copy = ResourceFilePin {
++            path: fields[3].into(),
++            sha256: original.sha256,
++        };
++        let bytes = fields[5].parse()?;
++        match fields[0] {
++            "metadata" => {
++                ensure!(fields[1] == "-", "metadata has no historical role");
++                metadata.push(cuda::MetadataCustodyCopy {
++                    original,
++                    copy,
++                    bytes,
++                });
++            }
++            "historical" => historical.push(cuda::HistoricalToolCustodyCopy {
++                tool: fields[1].into(),
++                original,
++                copy,
++                bytes,
++            }),
++            _ => anyhow::bail!("unknown custody locator class"),
++        }
++    }
++    cuda::validate_custody_compatibility(&metadata, &historical)?;
++    Ok((metadata, historical))
++}
++fn check_custody_file(pin: &ResourceFilePin, expected_bytes: u64, deadline: Instant) -> Result<()> {
++    ensure!(
++        Instant::now() < deadline,
++        "original custody emission deadline expired"
++    );
++    let bytes = pinned(pin, 16 << 20)?;
++    ensure!(
++        bytes.len() as u64 == expected_bytes,
++        "custody locator byte count differs from actual file"
++    );
++    ensure!(
++        Instant::now() < deadline,
++        "original custody emission deadline expired"
++    );
++    Ok(())
++}
++#[test]
++#[ignore = "NN0: actual reviewed locator rows and byte-identical existing copies; emits owning Rust custody inputs only"]
++fn emit_cuda_metadata_custody_inputs() -> Result<()> {
++    let started = Instant::now();
++    let limit = number("AIRK_CUDA_DEADLINE_MS")?;
++    ensure!(
++        (1..=120000).contains(&limit),
++        "custody original metadata budget differs"
++    );
++    let deadline = started + Duration::from_millis(limit);
++    let locator = env_pin(
++        "AIRK_CUDA_CUSTODY_LOCATORS",
++        "AIRK_CUDA_CUSTODY_LOCATORS_SHA256",
++    )?;
++    let (metadata, historical) = custody_locator_rows(&pinned(&locator, 1 << 20)?)?;
++    for row in &metadata {
++        check_custody_file(&row.original, row.bytes, deadline)?;
++        check_custody_file(&row.copy, row.bytes, deadline)?;
++    }
++    for row in &historical {
++        check_custody_file(&row.original, row.bytes, deadline)?;
++        check_custody_file(&row.copy, row.bytes, deadline)?;
++    }
++    let a = cuda::encode_metadata_custody(&metadata)?;
++    let b = cuda::encode_historical_tool_custody(&historical)?;
++    let directory = PathBuf::from(text("AIRK_CUDA_CUSTODY_OUTPUT_DIRECTORY")?);
++    ensure!(
++        std::fs::symlink_metadata(&directory)?.is_dir(),
++        "existing approved custody output directory required"
++    );
++    ensure!(
++        Instant::now() < deadline,
++        "original custody emission deadline expired"
++    );
++    let metadata_pin = write_new(&directory.join("metadata-custody.json"), &a)?;
++    let historical_pin = write_new(&directory.join("historical-tool-custody.json"), &b)?;
++    // Reopen the concrete original/copy pins after serialization; no mutable
++    // file becomes an execution/protected-custody permit through this data.
++    for row in &metadata {
++        check_custody_file(&row.original, row.bytes, deadline)?;
++        check_custody_file(&row.copy, row.bytes, deadline)?;
++    }
++    for row in &historical {
++        check_custody_file(&row.original, row.bytes, deadline)?;
++        check_custody_file(&row.copy, row.bytes, deadline)?;
++    }
++    ensure!(
++        Instant::now() < deadline,
++        "original custody emission deadline expired"
++    );
++    write_json(
++        &directory.join("custody-emission.json"),
++        &json!({"schema":"airk.private.cuda-custody-input-emission/1","input":locator,"metadata":metadata_pin,"historical":historical_pin,"pid":std::process::id(),"execution_user":airk_ipc::endpoint::current_user()?,"elapsed_us":started.elapsed().as_micros(),"scope":"actual file hash/size metadata only; protected held Source revalidates before use; no copies or activation","runtime_admission_dispatched":false,"model_requests_dispatched":false,"forward_count_observed":null}),
++    )?;
++    Ok(())
++}
++#[test]
++fn custody_locator_parser_emits_owned_envelopes_and_refuses_unknown_duplicate_or_mismatched_rows()
++-> Result<()> {
++    let base = std::env::temp_dir();
++    let original = base.join("literal-original.json");
++    let copy = base.join("literal-copy.json");
++    let line = format!(
++        "metadata\t-\t{}\t{}\t{}\t3\n",
++        original.display(),
++        copy.display(),
++        "01".repeat(32)
++    );
++    let (metadata, historical) = custody_locator_rows(line.as_bytes())?;
++    let raw = cuda::encode_metadata_custody(&metadata)?;
++    let value: serde_json::Value = serde_json::from_slice(&raw)?;
++    assert_eq!(value["schema"], "airk.native.cuda-metadata-custody/1");
++    assert_eq!(value["copies"].as_array().unwrap().len(), 1);
++    assert_eq!(cuda::decode_metadata_custody(&raw)?.len(), 1);
++    assert!(
++        cuda::decode_historical_tool_custody(&cuda::encode_historical_tool_custody(&historical)?)?
++            .is_empty()
++    );
++    assert!(custody_locator_rows((line.clone() + &line).as_bytes()).is_err());
++    assert!(custody_locator_rows(line.replace("metadata\t-", "executable\t-").as_bytes()).is_err());
++    assert!(
++        custody_locator_rows(line.replace("metadata\t-", "metadata\tninja").as_bytes()).is_err()
++    );
++    assert!(
++        custody_locator_rows(line.replace("metadata\t-", "historical\tninja").as_bytes()).is_err()
++    );
++    assert!(custody_locator_rows(line.replace("\t3\n", "\t0\n").as_bytes()).is_err());
++    assert!(custody_locator_rows(b"metadata\t-\ttoo-few").is_err());
++    Ok(())
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/custody.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/custody.rs
+@@ -152,7 +152,7 @@
+     pub copy: ResourceFilePin,
+     pub bytes: u64,
+ }
+-#[derive(Deserialize)]
++#[derive(Serialize, Deserialize)]
+ #[serde(deny_unknown_fields)]
+ struct HistoricalEnvelope {
+     schema: String,
+@@ -272,3 +272,24 @@
+         self.book.recheck()
+     }
+ }
++
++/// Metadata data only; the actual Source owner still checks protected custody.
++pub fn encode_metadata_custody(copies: &[MetadataCustodyCopy]) -> Result<Vec<u8>> {
++    validate_metadata_custody(copies)?;
++    let raw = serde_json::to_vec_pretty(&Envelope {
++        schema: "airk.native.cuda-metadata-custody/1".into(),
++        copies: copies.to_vec(),
++    })?;
++    ensure!(raw.len() <= 1 << 20, "metadata custody request cap");
++    Ok(raw)
++}
++/// Historical evidence data only; never an executable or activation capability.
++pub fn encode_historical_tool_custody(copies: &[HistoricalToolCustodyCopy]) -> Result<Vec<u8>> {
++    validate_historical_tool_custody(copies)?;
++    let raw = serde_json::to_vec_pretty(&HistoricalEnvelope {
++        schema: "airk.native.cuda-historical-tool-custody/1".into(),
++        copies: copies.to_vec(),
++    })?;
++    ensure!(raw.len() <= 1 << 20, "historical tool evidence input cap");
++    Ok(raw)
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
+@@ -21,8 +21,8 @@
+ #[cfg(feature = "test-support")]
+ pub use custody::{
+     HistoricalToolCustodyCopy, MetadataCustodyCopy, decode_historical_tool_custody,
+-    decode_metadata_custody, validate_custody_compatibility, validate_historical_tool_custody,
+-    validate_metadata_custody,
++    decode_metadata_custody, encode_historical_tool_custody, encode_metadata_custody,
++    validate_custody_compatibility, validate_historical_tool_custody, validate_metadata_custody,
+ };
+ mod eligibility;
+ mod manifest;

@@ -1,0 +1,168 @@
+--- a/crates/airk-store/src/current/lexical.rs
++++ b/crates/airk-store/src/current/lexical.rs
+@@ -22,6 +22,40 @@
+ pub const MAX_PATH_DOCUMENTS: usize = 8192;
+ const MAX_ROW_BYTES: usize = 64 << 20;
+ const MAX_INDEX_BYTES: u64 = 1 << 40;
++// Experimental S1 candidate; not a storage/FTS format change or BM25 score.
++const RANKING_POOL_MULTIPLIER: usize = 8;
++const MAX_RANKING_POOL: usize = 800;
++const MAX_RANKING_METADATA_BYTES: usize = 8 << 20;
++
++fn charge_ranking_metadata(used: usize, path_bytes: usize, payload_bytes: usize) -> Result<usize> {
++    let fixed = std::mem::size_of::<CurrentLexicalCandidate>()
++        + std::mem::size_of::<(std::cmp::Reverse<usize>, Sha256Digest, usize)>();
++    let charged = used
++        .checked_add(path_bytes)
++        .and_then(|bytes| bytes.checked_add(payload_bytes))
++        .and_then(|bytes| bytes.checked_add(fixed))
++        .context("lexical ranking metadata byte overflow")?;
++    ensure!(
++        payload_bytes <= MAX_ROW_BYTES && charged <= MAX_RANKING_METADATA_BYTES,
++        "lexical ranking metadata budget exceeded"
++    );
++    Ok(charged)
++}
++
++fn path_term_affinity(path: &str, wanted: &std::collections::BTreeSet<String>) -> usize {
++    terms(path).intersection(wanted).count()
++}
++fn rank_lexical_pool(
++    values: &mut [CurrentLexicalCandidate],
++    wanted: &std::collections::BTreeSet<String>,
++) {
++    values.sort_by_cached_key(|candidate| {
++        (
++            std::cmp::Reverse(path_term_affinity(&candidate.citation.path, wanted)),
++            candidate.stable_id,
++        )
++    });
++}
+ const SCHEMA: &str = "CREATE TABLE current_lexical_docs(id INTEGER PRIMARY KEY,path TEXT NOT NULL,local INTEGER NOT NULL,stable_id TEXT NOT NULL UNIQUE,payload TEXT NOT NULL,terms TEXT NOT NULL);
+ CREATE INDEX current_lexical_paths ON current_lexical_docs(path);
+ CREATE VIRTUAL TABLE current_fts USING fts5(terms,content='current_lexical_docs',content_rowid='id',tokenize='ascii tokenchars ''_''',detail=none,columnsize=0);
+@@ -256,24 +290,38 @@
+             paths.as_ref().is_none_or(|paths| paths.len() <= 4 << 20),
+             "filtered lexical path selector exceeds byte budget"
+         );
++        // Every scope, alias, prefix and metadata predicate remains inside
++        // the existing SQL WHERE before this expanded bounded first cutoff.
++        let pool_limit = query
++            .limit
++            .saturating_mul(RANKING_POOL_MULTIPLIER)
++            .min(MAX_RANKING_POOL);
+         let result = self.with_connection(|connection| {
+             let sql = if scope.is_some() { "SELECT d.path,d.local,d.stable_id,d.payload FROM current_fts JOIN current_lexical_docs AS d NOT INDEXED ON d.id=current_fts.rowid WHERE current_fts MATCH ?1 AND (?2 IS NULL OR substr(d.path,1,length(?2))=?2 COLLATE BINARY) AND (?4 IS NULL OR d.path IN (SELECT value FROM json_each(?4))) AND (?5 IS NULL OR EXISTS (SELECT 1 FROM json_each(?5) AS a WHERE NOT EXISTS (SELECT 1 FROM json_each(?6) AS alias WHERE ((d.path='@'||alias.value COLLATE BINARY OR substr(d.path,1,length(alias.value)+2)='@'||alias.value||'/' COLLATE BINARY) != (json_extract(a.value,'$.path')='@'||alias.value COLLATE BINARY OR substr(json_extract(a.value,'$.path'),1,length(alias.value)+2)='@'||alias.value||'/' COLLATE BINARY))) AND (d.path=json_extract(a.value,'$.path') COLLATE BINARY OR (json_extract(a.value,'$.kind')='subtree' AND (json_extract(a.value,'$.path')='' OR substr(d.path,1,length(json_extract(a.value,'$.path'))+1)=json_extract(a.value,'$.path')||'/' COLLATE BINARY))))) ORDER BY d.stable_id LIMIT ?3" } else { "SELECT d.path,d.local,d.stable_id,d.payload FROM current_fts JOIN current_lexical_docs AS d NOT INDEXED ON d.id=current_fts.rowid WHERE current_fts MATCH ?1 AND (?2 IS NULL OR substr(d.path,1,length(?2))=?2 COLLATE BINARY) AND (?4 IS NULL OR d.path IN (SELECT value FROM json_each(?4))) ORDER BY d.stable_id LIMIT ?3" };
+             let mut statement = connection.prepare(sql)?;
+-            let mut rows = if scope.is_some() { statement.query(params![expression,query.path_prefix,(query.limit + 1) as i64,paths,scope,scope_aliases])? } else { statement.query(params![expression,query.path_prefix,(query.limit + 1) as i64,paths])? };
++            let mut rows = if scope.is_some() { statement.query(params![expression,query.path_prefix,(pool_limit + 1) as i64,paths,scope,scope_aliases])? } else { statement.query(params![expression,query.path_prefix,(pool_limit + 1) as i64,paths])? };
+             let mut values = Vec::new();
+             let mut incomplete = false;
++            let mut ranking_bytes = 0usize;
+             while let Some(row) = rows.next()? {
+-                if values.len() == query.limit { incomplete = true; break; }
+-                let path: String = row.get(0)?;
++                if values.len() == pool_limit { incomplete = true; break; }
++                // Inspect borrowed SQLite text before allocating the path or
++                // deserializing citation strings. This budget charges serialized
++                // metadata plus fixed candidate/key storage, not total RSS or
++                // SQLite's existing page/sort buffers.
++                let path = row.get_ref(0)?.as_str()?;
++                let payload = row.get_ref(3)?.as_str()?;
++                ranking_bytes = charge_ranking_metadata(ranking_bytes, path.len(), payload.len())?;
+                 let local = u64::try_from(row.get::<_, i64>(1)?)?;
+-                let stable_id: Sha256Digest = row.get::<_, String>(2)?.parse()?;
+-                ensure!(stable_id == self::stable_id(&path,local)?, "FTS5 candidate identity mismatch");
+-                let payload: String = row.get(3)?;
+-                ensure!(payload.len() <= MAX_ROW_BYTES, "FTS5 candidate byte bound exceeded");
+-                let citation: Citation = serde_json::from_str(&payload)?;
++                let stable_id: Sha256Digest = row.get_ref(2)?.as_str()?.parse()?;
++                ensure!(stable_id == self::stable_id(path,local)?, "FTS5 candidate identity mismatch");
++                let citation: Citation = serde_json::from_str(payload)?;
+                 ensure!(citation.path == path, "invalid FTS5 candidate citation");
+                 values.push(CurrentLexicalCandidate { stable_id, local, citation });
+             }
++            rank_lexical_pool(&mut values, &query_terms);
++            incomplete |= values.len() > query.limit;
++            values.truncate(query.limit);
+             Ok(CurrentLexicalCandidates { manifest_digest: self.head().lexical_commit, values, incomplete })
+         });
+         let result = self.observe_private_integrity(result)?;
+@@ -285,6 +333,59 @@
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++    #[test]
++    fn experimental_metadata_charge_refuses_cap_and_overflow_before_decoding() -> Result<()> {
++        let overhead = charge_ranking_metadata(0, 0, 0)?;
++        assert_eq!(
++            charge_ranking_metadata(MAX_RANKING_METADATA_BYTES - overhead, 0, 0)?,
++            MAX_RANKING_METADATA_BYTES
++        );
++        assert!(charge_ranking_metadata(MAX_RANKING_METADATA_BYTES - overhead, 0, 1).is_err());
++        assert!(charge_ranking_metadata(usize::MAX, 1, 1).is_err());
++        Ok(())
++    }
++    #[test]
++    fn experimental_path_affinity_matches_tokens_not_substrings() {
++        let wanted = terms("authorize_refund");
++        assert!(
++            path_term_affinity("src/authorize_refund.rs", &wanted)
++                > path_term_affinity("docs/guide.md", &wanted)
++        );
++        assert_eq!(
++            path_term_affinity("src/authorizer.rs", &terms("authorize")),
++            0
++        );
++        assert_eq!(path_term_affinity("@specs/refund.md", &terms("refund")), 1);
++    }
++    #[test]
++    fn experimental_equal_affinity_uses_stable_identity_despite_input_order() -> Result<()> {
++        let make = |path: &str| -> Result<CurrentLexicalCandidate> {
++            Ok(CurrentLexicalCandidate {
++                stable_id: stable_id(path, 0)?,
++                local: 0,
++                citation: Citation {
++                    path: path.into(),
++                    content_hash: "fixture".into(),
++                    start_line: 1,
++                    end_line: 1,
++                    location: airk_core::DocumentLocation::Lines { start: 1, end: 1 },
++                },
++            })
++        };
++        let mut left = vec![make("src/a.rs")?, make("src/b.rs")?];
++        let mut right = left.iter().rev().cloned().collect::<Vec<_>>();
++        rank_lexical_pool(&mut left, &terms("unmatched"));
++        rank_lexical_pool(&mut right, &terms("unmatched"));
++        assert_eq!(
++            left.iter().map(|value| value.stable_id).collect::<Vec<_>>(),
++            right
++                .iter()
++                .map(|value| value.stable_id)
++                .collect::<Vec<_>>()
++        );
++        assert!(left[0].stable_id < left[1].stable_id);
++        Ok(())
++    }
+     #[test]
+     fn flush_rollback_and_replay_have_identical_seals() -> Result<()> {
+         let mut c = Connection::open_in_memory()?;
+@@ -298,7 +399,7 @@
+             chunks: vec![airk_core::Chunk {
+                 start_line: 1,
+                 end_line: 1,
+-                text: "CamelCase café λ".into(),
++                text: "CamelCase cafÃ© Î»".into(),
+                 location: airk_core::DocumentLocation::Lines { start: 1, end: 1 },
+             }],
+             language: "csharp".into(),
+@@ -350,7 +451,7 @@
+                         continue;
+                     }
+                     let text = format!(
+-                        "CamelCase snake_case café λ {} {}",
++                        "CamelCase snake_case cafÃ© Î» {} {}",
+                         "z".repeat(9000),
+                         (0..100)
+                             .map(|n| format!("word{batch}item{n}"))

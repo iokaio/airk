@@ -1,0 +1,163 @@
+--- a/crates/airk-retrieval/src/arbiter/runtime.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime.rs
+@@ -751,14 +751,97 @@
+     profiling_prefix: &std::path::Path,
+     optimized_model: &std::path::Path,
+ ) -> Result<serde_json::Value> {
++    synthetic_gqa_profile_with_bias(
++        model,
++        graph,
++        tokens,
++        profiling_prefix,
++        optimized_model,
++        None,
++    )
++}
++
++/// Test-support values only; this enum has no serialization or public protocol.
++#[cfg(any(test, feature = "test-support"))]
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum SyntheticDenseMask {
++    CausalPrefix,
++    Unmasked,
++    CausalWithMaskedKeyOne,
++}
++#[cfg(any(test, feature = "test-support"))]
++impl SyntheticDenseMask {
++    fn masks(self, query: usize, key: usize) -> bool {
++        match self {
++            Self::CausalPrefix => key > query,
++            Self::Unmasked => false,
++            Self::CausalWithMaskedKeyOne => key > query || key == 1,
++        }
++    }
++    fn time_component(self, tokens: usize, query: usize) -> f32 {
++        match self {
++            Self::CausalPrefix => query as f32 / 16384.,
++            Self::Unmasked => (tokens - 1) as f32 / 16384.,
++            Self::CausalWithMaskedKeyOne if query < 2 => 0.,
++            Self::CausalWithMaskedKeyOne => {
++                ((query * (query + 1) / 2 - 1) as f32 / query as f32) / 8192.
++            }
++        }
++    }
++}
++#[cfg(any(test, feature = "test-support"))]
++fn synthetic_control_bounds(
++    model: ModelChoice,
++    tokens: usize,
++    graph_bytes: usize,
++    dense: bool,
++) -> Result<()> {
++    ensure!(graph_bytes <= 65536, "bounded synthetic graph required");
++    if dense {
++        ensure!(
++            model == ModelChoice::ContextQwenLarge && matches!(tokens, 17 | 128),
++            "Large explicit-mask dense tiny controls require17/128 only"
++        );
++    } else {
++        ensure!(
++            matches!(tokens, 17 | 8192),
++            "original synthetic GQA17/8192 control required"
++        );
++    }
++    Ok(())
++}
++/// Separate bounded dense-kernel controls; historical flash controls remain distinct.
++#[cfg(any(test, feature = "test-support"))]
++pub fn synthetic_large_dense_gqa_profile(
++    graph: &[u8],
++    tokens: usize,
++    profiling_prefix: &std::path::Path,
++    optimized_model: &std::path::Path,
++    mask: SyntheticDenseMask,
++) -> Result<serde_json::Value> {
++    synthetic_gqa_profile_with_bias(
++        ModelChoice::ContextQwenLarge,
++        graph,
++        tokens,
++        profiling_prefix,
++        optimized_model,
++        Some(mask),
++    )
++}
++#[cfg(any(test, feature = "test-support"))]
++fn synthetic_gqa_profile_with_bias(
++    model: ModelChoice,
++    graph: &[u8],
++    tokens: usize,
++    profiling_prefix: &std::path::Path,
++    optimized_model: &std::path::Path,
++    dense_mask: Option<SyntheticDenseMask>,
++) -> Result<serde_json::Value> {
+     let selected = selected_gqa_model(model)?;
+     let kv_width = selected.kv_heads * selected.head_size;
+     let query_group = selected.query_heads / selected.kv_heads;
+     crate::native_inference::require_service_compute()?;
+-    ensure!(
+-        matches!(tokens, 17 | 8192) && graph.len() <= 65536,
+-        "bounded synthetic GQA control required"
+-    );
++    synthetic_control_bounds(model, tokens, graph.len(), dense_mask.is_some())?;
+     ensure!(
+         airk_process::cpu_fit::usable_physical_cores()
+             .context("usable physical-core observation unavailable")?
+@@ -815,9 +898,19 @@
+         }
+     }
+     let mut bias = vec![0f32; tokens * tokens];
+-    for t in 0..tokens {
+-        for future in t + 1..tokens {
+-            bias[t * tokens + future] = f32::MIN;
++    if let Some(mask) = dense_mask {
++        for query in 0..tokens {
++            for key in 0..tokens {
++                if mask.masks(query, key) {
++                    bias[query * tokens + key] = f32::MIN;
++                }
++            }
++        }
++    } else {
++        for t in 0..tokens {
++            for future in t + 1..tokens {
++                bias[t * tokens + future] = f32::MIN;
++            }
+         }
+     }
+     let options = RunOptions::new()?.with_outputs(OutputSelector::no_default().with("context"));
+@@ -843,7 +936,7 @@
+             for d in 0..selected.head_size {
+                 let expected = ((h / query_group) * selected.head_size + d) as f32
+                     / kv_width as f32
+-                    + t as f32 / 16384.;
++                    + dense_mask.map_or(t as f32 / 16384., |mask| mask.time_component(tokens, t));
+                 let value = actual[t * selected.query_width + h * selected.head_size + d];
+                 ensure!(value.is_finite(), "nonfinite synthetic GQA value");
+                 maximum_error = maximum_error.max((value - expected).abs());
+@@ -856,10 +949,21 @@
+         maximum_error <= 0.0001,
+         "synthetic causal/GQA value check refused"
+     );
+-    Ok(
+-        serde_json::json!({"tokens":tokens,"profiling_path":profiling,
++    let mut result = serde_json::json!({"tokens":tokens,"profiling_path":profiling,
+         "optimized_graph_path":optimized_model,"maximum_error":maximum_error,
+         "graph_outputs":["context"],"model_weights_loaded":false,
+-        "scope":"actual synthetic CPU GQA kernel only; no model/task qualification"}),
+-    )
+-}
++        "scope":"actual synthetic CPU GQA kernel only; no model/task qualification"});
++    if let Some(mask) = dense_mask {
++        result["attention_mode"] = serde_json::json!("explicit_mask_dense");
++        result["mask_control"] = serde_json::json!(match mask {
++            SyntheticDenseMask::CausalPrefix => "explicit_causal_prefix_mean",
++            SyntheticDenseMask::Unmasked => "zero_bias_full_mean_refuses_implicit_causal",
++            SyntheticDenseMask::CausalWithMaskedKeyOne =>
++                "explicit_causal_and_key_one_padding_mean",
++        });
++    }
++    Ok(result)
++}
++
++#[cfg(test)]
++mod dense_synthetic_tests;

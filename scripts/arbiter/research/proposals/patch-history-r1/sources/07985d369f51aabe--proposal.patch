@@ -1,0 +1,627 @@
+--- /dev/null
++++ b/private-g5-exporter/CONTRACT.md
+@@ -0,0 +1,21 @@
++# Private G5 exporter implementation proposal
++
++This proposal does not authorize graph conversion, weight reads, native/GPU execution, or qualification. Root must first accept the actual FP32 gate and land the new native G5 math/provider authority. The module has no executable entry point. Original source graphs and external files remain immutable; exports create a new directory and fail closed, retaining partial output on error.
++
++## Sources and tensors
++
++Only the authenticated original full-FP32 Focus static512 graph (19b20ad4...), Compact c79c6725..., and Large f8ba5d3e... are accepted. Focus W8 and failed GQA/Dense candidates are rejected. Context publisher checkpoints are BF16, losslessly expanded to FP32 by the authenticated original exporter; this is not publisher FP32 storage. Conversion starts from those authenticated logical FP32 arrays and must later be checked against an independent publisher decode. Every source external file requires an exact SHA/size pin. All initializers are counted and classified; unknown weights, biases, quantization, aliases/overlapping external ranges, functions, graph mutations and unexpected topology refuse. Norm scale weights and Focus two-row head remain FP32. All embeddings and seven learned projections per layer become binary16, round-to-nearest-even, with no clipping. NaN/Inf and finite overflow refuse. Every range and converted output is digested. Original small Constant tensor data are retained FP32, including the static Focus mask.
++
++## Math boundaries and ABI
++
++Projection/embedding storage and GEMM outputs are half. Casts restore FP32 before original residual, RMSNorm, Q/K norm, RoPE, SiLU, multiplication and readout nodes. Context candidate rows come from the SAME rounded half embedding and only the gathered rows become FP32; no full FP32 embedding duplicate. Focus original two-row FP32 head and both output logits remain exact. The external three-input Focus and six-input Context native ABIs and output declarations remain unchanged. Native compiler input validation remains mandatory; this graph does not invent a second compiler.
++
++Replace only the reviewed original causal attention chains. Context uses half GroupQueryAttention, source scale bits, causal=1, do_rotary=0, no bias/cache and current all-live sequential positions. Focus repeats each KV head consecutively, uses half MultiHeadAttention causal=1, no bias/cache and packed mask [live,pad,512,pad,512]. Native Focus input remains a nonempty left-padded suffix with position_ids=0..511. Where replaces undefined padded query outputs with half zero BEFORE output projection/residual; multiplication by zero is forbidden. Whole reachable source causal masks disappear only because no consumer remains. Every retained source node is byte-identical except classified learned-weight consumers. Unknown attention topology refuses.
++
++## Runtime and acceptance remain held
++
++sdpa_kernel is a CUDA provider option, NOT an ONNX attribute. Native G5 must bind Context Flash-only=1 or Focus MEA-only=2, ORT_CUDA_GEMM_OPTIONS=2 before singleton creation, TF32 off, compute32F, and no reduced-precision reduction. SM86 only for this scientific path. Actual node/dtype/kernel observations must prove Flash or MEA; flags alone prove nothing. No within-call fallback or old profile retagging. New graph/profile/compiler/math identities and full external-data/ABI native admission are required.
++
++Frozen limits remain matching raw<=.001, matching mass Focus<=.00001/Context<=.05, original-FP32 raw Focus<=.25/Context<=.001, original mass<=.05, finite and identical argmax. Independent Torch original and half recipes, full native tensor provenance, genuine process settlement, numerical/resources/placement and full Answer latency gates remain required. Literal controls qualify only exporter mechanics, never selected models or GPU execution.
++
++The selected original graphs have no learned projection bias. Unexpected learned bias refuses rather than silently converting an unreviewed add/broadcast boundary. The implementation does not expose a command that bypasses the existing native admission owner. export_after_owner_admission is a library API for a future reviewed owner, not evidence that such admission currently exists. Original source closure authentication precedes conversion and is repeated afterward; the caller owns the immutable input/process/identity fence and the single absolute deadline.
+--- /dev/null
++++ b/private-g5-exporter/export_half.py
+@@ -0,0 +1,353 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Private G5 proposal. No CLI, Torch, ORT, GPU or implicit graph execution.
++Caller must own the reviewed FP32 release, native G5 policy, deadline and output.
++ONNX/numpy are injected so import of this module performs no third-party work.
++"""
++import copy, hashlib, heapq, math, re, struct, time
++from pathlib import Path
++
++ORIGINAL = {
++    'focus': '19b20ad4e39e173f6da602094b9c1583726a65fa76742553f97ec6f0f58436a1',
++    'compact': 'c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4',
++    'large': 'f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94',
++}
++GEOMETRY = {'focus': (28, 16, 8, 1024), 'compact': (28, 16, 8, 2048), 'large': (36, 32, 8, 2560)}
++NS = '/airk_g5/'
++PROJECTIONS = {'q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj'}
++
++def require(ok, message):
++    if not ok: raise ValueError(message)
++
++def sha(raw): return hashlib.sha256(raw).hexdigest()
++
++def half_literal(raw):
++    """Independent small-reference encoder; production uses bounded numpy chunks."""
++    require(len(raw) % 4 == 0, 'unaligned FP32')
++    out = bytearray()
++    for (value,) in struct.iter_unpack('<f', raw):
++        require(math.isfinite(value), 'nonfinite FP32')
++        try: out.extend(struct.pack('<e', value))
++        except OverflowError as exc: raise ValueError('binary16 overflow') from exc
++    return bytes(out)
++
++def half_chunk(raw, np):
++    require(len(raw) % 4 == 0, 'unaligned FP32')
++    values = np.frombuffer(raw, dtype='<f4')
++    require(bool(np.isfinite(values).all()), 'nonfinite FP32')
++    with np.errstate(over='ignore', invalid='ignore'):
++        converted = values.astype('<f2')
++    require(bool(np.isfinite(converted).all()), 'binary16 overflow')
++    return converted.tobytes()
++
++def validate_inputs(model, mask, positions):
++    require(model in GEOMETRY, 'unknown model')
++    require(all(type(x) is int and x in (0, 1) for x in mask), 'binary mask required')
++    require(positions == list(range(len(mask))) and all(type(x) is int for x in positions), 'position rule differs')
++    if model == 'focus':
++        require(len(mask) == 512 and 1 in mask, 'Focus static nonempty512 required')
++        pad = mask.index(1); live = 512 - pad
++        require(mask == [0] * pad + [1] * live, 'holes/right padding forbidden')
++        return [live, pad, 512, pad, 512]
++    require(0 < len(mask) <= 8192 and all(mask), 'Context all-live1..8192 required')
++    return [len(mask)-1], [len(mask)]
++
++def attributes(node, onnx):
++    return {a.name: onnx.helper.get_attribute_value(a) for a in node.attribute}
++
++def classify(model, key):
++    """Complete role census from exact original graph; unknown weights refuse."""
++    layers, heads, kv, hidden = GEOMETRY[key]
++    uses = {}
++    for n in model.graph.node:
++        for i, v in enumerate(n.input): uses.setdefault(v, []).append((n, i))
++    result = {}; projections = set(); norms = 0; embeddings = 0; readouts = 0
++    for t in model.graph.initializer:
++        require(t.name not in result and t.data_type == 1, 'duplicate/non-FP32 initializer')
++        consumers = uses.get(t.name, [])
++        require(consumers, 'unused source initializer')
++        if t.name.endswith('embed_tokens.weight'):
++            require(len(t.dims) == 2 and t.dims[1] == hidden and all(n.op_type == 'Gather' and i == 0 for n,i in consumers), 'embedding role differs')
++            role = 'embedding_half'; embeddings += 1
++        elif t.name.endswith(('norm.weight', 'layernorm.weight')):
++            require(len(t.dims) == 1 and all(n.op_type == 'Mul' for n,i in consumers), 'norm role differs')
++            role = 'norm_fp32'; norms += 1
++        elif key == 'focus' and list(t.dims) == [hidden, 2]:
++            require(len(consumers) == 1 and consumers[0][0].name == '/MatMul' and consumers[0][1] == 1, 'Focus head differs')
++            role = 'readout_fp32'; readouts += 1
++        else:
++            require(len(consumers) == 1, 'aliased learned projection')
++            n, i = consumers[0]
++            match = re.fullmatch(r'/(?:base|scorer)/layers\.(\d+)/(?:self_attn|mlp)/(\w+)/MatMul', n.name)
++            require(match is not None and n.op_type == 'MatMul' and i == 1 and len(t.dims) == 2, 'unknown learned parameter/bias')
++            layer, projection = int(match[1]), match[2]
++            require(layer < layers and projection in PROJECTIONS and (layer,projection) not in projections, 'projection census differs')
++            projections.add((layer,projection)); role = 'projection_half'
++        result[t.name] = role
++    require(len(projections) == layers*7 and norms == layers*4+1 and embeddings == 1 and readouts == (key=='focus'), 'incomplete parameter census')
++    require(len(result) == layers*11+2+(key=='focus'), 'initializer count differs')
++    return result
++
++def reachable(nodes, outputs, known):
++    names = {}; produced = {}
++    for n in nodes:
++        require(n.name and n.name not in names, 'duplicate node name')
++        names[n.name] = n
++        for v in n.output:
++            if v:
++                require(v not in produced and v not in known, 'duplicate producer')
++                produced[v] = n.name
++    wanted = set(); todo = list(outputs)
++    while todo:
++        v = todo.pop()
++        if not v or v in known: continue
++        require(v in produced, 'unbound tensor '+v)
++        name = produced[v]
++        if name not in wanted: wanted.add(name); todo.extend(names[name].input)
++    deps = {n:{produced[v] for v in names[n].input if v in produced} for n in wanted}
++    children = {n:[] for n in wanted}
++    for n, parents in deps.items():
++        for parent in parents: children[parent].append(n)
++    queue = [n for n in wanted if not deps[n]]; heapq.heapify(queue); ordered=[]
++    while queue:
++        name=heapq.heappop(queue); ordered.append(names[name])
++        for child in children[name]:
++            deps[child].remove(name)
++            if not deps[child]: heapq.heappush(queue,child)
++    require(len(ordered)==len(wanted), 'cycle')
++    return ordered
++
++def rewrite(model, key, onnx):
++    """Metadata-only transformation; external arrays are converted separately."""
++    require(key in GEOMETRY and not model.functions and not model.graph.sparse_initializer, 'unsupported graph')
++    original=copy.deepcopy(model); g=model.graph; h=onnx.helper; T=onnx.TensorProto
++    expected=['input_ids','attention_mask','position_ids']
++    if key!='focus': expected+=['decision_positions','candidate_positions','option_mask']
++    require([x.name for x in g.input]==expected and [x.name for x in g.output]==(['logits'] if key=='focus' else ['scores']), 'ABI differs')
++    require(all(x.type.tensor_type.elem_type==T.INT64 for x in g.input[:3]) and all(x.type.tensor_type.elem_type==T.FLOAT for x in g.output), 'ABI types differ')
++    require(not any(n.name.startswith(NS) or n.domain or any(a.type in (5,10) for a in n.attribute) for n in g.node), 'foreign namespace/custom source operator/subgraph')
++    roles=classify(model,key); layers,heads,kv,hidden=GEOMETRY[key]
++    nodes={n.name:n for n in g.node}; producers={v:n for n in g.node for v in n.output}
++    require(len(nodes)==len(g.node) and len(producers)==sum(len(n.output) for n in g.node), 'duplicate source nodes/outputs')
++    added=[]; constants=[]; modified=set(); removed=set(); scales=[]
++    def const(name, dtype, dims, values):
++        name=NS+name; constants.append(h.make_tensor(name,dtype,dims,values)); return name
++    def node(op,inputs,name,**attrs):
++        name=NS+name; added.append(h.make_node(op,inputs,[name],name=name,**attrs)); return name
++    zero16=const('half_zero',T.FLOAT16,[],[0.0])
++    axis1=const('axis1',T.INT64,[1],[1]); one=const('one',T.INT64,[1],[1]); axis2=const('axis2',T.INT64,[1],[2])
++    shape=node('Shape',['attention_mask'],'input_shape'); total=node('Gather',[shape,axis1],'T',axis=0)
++    total32=node('Cast',[total],'T32',to=T.INT32)
++    if key=='focus':
++        mask32=node('Cast',['attention_mask'],'mask32',to=T.INT32)
++        live=node('ReduceSum',[mask32,axis1],'live',keepdims=0)
++        pad=node('Sub',[total32,live],'pad')
++        packed=node('Concat',[live,pad,total32,pad,total32],'packed_mask',axis=0)
++        maskbool=node('Cast',['attention_mask'],'maskbool',to=T.BOOL)
++        livequeries=node('Unsqueeze',[maskbool,axis2],'live_queries')
++    else:
++        before=node('Sub',[total,one],'Tminus1')
++        seqlens=node('Cast',[before],'seqlens32',to=T.INT32)
++    # Keep every original FP32 math node; only learned consumers gain half boundaries.
++    for t in g.initializer:
++        if not roles[t.name].endswith('_half'): continue
++        t.data_type=T.FLOAT16
++        consumers=[n for n in g.node if t.name in n.input]
++        for n in consumers:
++            original_output=n.output[0]; require(len(n.output)==1,'multi-output weight consumer')
++            if n.op_type=='MatMul':
++                value=node('Cast',[n.input[0]],'weight/'+n.name+'/input16',to=T.FLOAT16)
++                n.input[0]=value
++            else: require(n.op_type=='Gather' and n.input[0]==t.name, 'unreviewed half consumer')
++            n.output[0]=NS+'weight/'+n.name+'/output16'
++            added.append(h.make_node('Cast',[n.output[0]],[original_output],name=NS+'weight/'+n.name+'/output32',to=T.FLOAT))
++            modified.add(n.name)
++    for i in range(layers):
++        prefix=('/base/' if key=='focus' else '/scorer/')+f'layers.{i}/self_attn/'
++        qk=nodes[prefix+'MatMul']; soft=nodes[prefix+'Softmax']; masked=nodes[prefix+'Add_2']; av=nodes[prefix+'MatMul_1']
++        mul=nodes[prefix+('Mul_6' if key=='focus' else 'Mul_8')]
++        sink=nodes[prefix+('Reshape_5' if key=='focus' else 'Reshape_7')]
++        require(qk.op_type=='MatMul' and qk.input[0]==prefix+'Add_output_0' and mul.op_type=='Mul' and mul.input[0]==qk.output[0], 'QK/scale topology differs')
++        c=producers[mul.input[1]]; require(c.op_type=='Constant','nonliteral scale')
++        tensor=next(a.t for a in c.attribute if a.name=='value')
++        scale=onnx.numpy_helper.to_array(tensor)
++        require(tensor.data_type==T.FLOAT and scale.size==1, 'scale dtype/shape differs')
++        scale=float(scale.reshape(-1)[0]); require(math.isfinite(scale) and scale>0,'invalid scale')
++        scales.append(struct.pack('<f',scale).hex())
++        require(masked.op_type=='Add' and list(masked.input)==[mul.output[0],('/Where_output_0' if key=='focus' else '/scorer/Where_output_0')], 'mask differs')
++        require(soft.op_type=='Softmax' and list(soft.input)==list(masked.output) and attributes(soft,onnx)=={'axis':-1}, 'softmax differs')
++        require(av.op_type=='MatMul' and sink.op_type=='Reshape' and nodes[prefix+'Add_1'].op_type=='Add', 'attention output boundary differs')
++        tag=f'attention/{i}/'
++        q=node('Transpose',[prefix+'Add_output_0'],tag+'q_btnh',perm=[0,2,1,3])
++        k=node('Transpose',[prefix+'Add_1_output_0'],tag+'k_btkh',perm=[0,2,1,3])
++        v=prefix+'v_proj/MatMul_output_0'
++        if key=='focus':
++            # Gather the KV-head axis with [0,0,1,1,...], never tile [0,1,...].
++            kvshape=const(tag+'kv_shape',T.INT64,[4],[0,0,kv,128])
++            repeats=const(tag+'kv_indices',T.INT64,[heads],[j//(heads//kv) for j in range(heads)])
++            k=node('Gather',[k,repeats],tag+'k_repeated',axis=2)
++            v=node('Reshape',[v,kvshape],tag+'v_btkh')
++            v=node('Gather',[v,repeats],tag+'v_repeated',axis=2)
++        qshape=const(tag+'q_shape',T.INT64,[3],[0,0,heads*128])
++        kshape=const(tag+'k_shape',T.INT64,[3],[0,0,(heads if key=='focus' else kv)*128])
++        q=node('Reshape',[q,qshape],tag+'q_flat')
++        k=node('Reshape',[k,kshape],tag+'k_flat')
++        if key=='focus': v=node('Reshape',[v,qshape],tag+'v_flat')
++        q=node('Cast',[q],tag+'q16',to=T.FLOAT16)
++        k=node('Cast',[k],tag+'k16',to=T.FLOAT16)
++        v=node('Cast',[v],tag+'v16',to=T.FLOAT16)
++        out=NS+tag+'raw16'
++        if key=='focus':
++            added.append(h.make_node('MultiHeadAttention',[q,k,v,'',packed],[out],name=NS+tag+'efficient',domain='com.microsoft',num_heads=heads,unidirectional=1,scale=scale))
++            out=node('Where',[livequeries,out,zero16],tag+'zero_padded_queries')
++        else:
++            added.append(h.make_node('GroupQueryAttention',[q,k,v,'','',seqlens,total32],[out],name=NS+tag+'efficient',domain='com.microsoft',num_heads=heads,kv_num_heads=kv,causal=1,local_window_size=-1,do_rotary=0,scale=scale))
++        added.append(h.make_node('Cast',[out],list(sink.output),name=NS+tag+'output32',to=T.FLOAT)); removed.add(sink.name)
++    known={x.name for x in g.input}|{x.name for x in g.initializer}|{x.name for x in constants}
++    ordered=reachable([n for n in g.node if n.name not in removed]+added,[x.name for x in g.output],known)
++    require(not any(n.op_type=='Softmax' for n in ordered),'dense attention survived')
++    retained={n.name:n for n in ordered}
++    for n in original.graph.node:
++        if n.name in retained and n.name not in modified:
++            require(n.SerializeToString(deterministic=True)==retained[n.name].SerializeToString(deterministic=True),'protected math modified')
++    require(all(t.name in {v for n in ordered for v in n.input} for t in g.initializer),'learned weight dropped')
++    del g.node[:];g.node.extend(ordered);g.initializer.extend(constants)
++    # Original intermediate dtype declarations describe FP32; replaced values receive fresh names.
++    old_names={v for n in original.graph.node for v in n.output}
++    saved=[v for v in g.value_info if v.name in old_names and v.name in {o for n in ordered for o in n.output}]
++    del g.value_info[:];g.value_info.extend(saved)
++    imports={x.domain:x.version for x in model.opset_import};require(imports.get('com.microsoft',1)==1,'custom opset differs')
++    if 'com.microsoft' not in imports:model.opset_import.append(h.make_opsetid('com.microsoft',1))
++    require([x.SerializeToString() for x in original.graph.input]==[x.SerializeToString() for x in g.input] and [x.SerializeToString() for x in original.graph.output]==[x.SerializeToString() for x in g.output], 'ABI mutation')
++    return {'roles':roles,'scale_bits':scales,'required_native_sdpa_kernel':2 if key=='focus' else 1,'required_gemm_options':2,'qualification':False}
++
++def source_bytes(tensor, directory):
++    """Return a bounded source descriptor, never follow an external path alias."""
++    length=math.prod(tensor.dims)*4
++    if tensor.data_location==1:
++        fields={x.key:x.value for x in tensor.external_data}
++        require(len(fields)==len(tensor.external_data) and set(fields)<= {'location','offset','length','checksum'}, 'external fields differ')
++        location=fields.get('location',''); p=Path(location)
++        require(location not in ('','.','..') and not p.is_absolute() and len(p.parts)==1 and ':' not in location and '\\' not in location, 'unsafe external location')
++        path=directory/p;require(not path.is_symlink() and not path.is_junction() and path.is_file() and path.resolve().parent==directory.resolve(), 'aliased external file')
++        offset=int(fields.get('offset','0'));size=int(fields.get('length',str(length)))
++        require(offset>=0 and size==length and offset+size<=path.stat().st_size,'external range differs')
++        return path,offset,length,None
++    require(not tensor.external_data and tensor.data_type==1,'unsupported inline tensor')
++    if tensor.raw_data: raw=bytes(tensor.raw_data)
++    else:raw=struct.pack('<'+'f'*len(tensor.float_data),*tensor.float_data)
++    require(len(raw)==length,'inline tensor byte length differs')
++    return None,0,length,raw
++
++def convert_arrays(original, candidate, roles, directory, sidecar, np, deadline, clock=time.monotonic):
++    """Stream actual arrays only when the owning future export runner invokes this.
++    Caller MUST first authenticate all source files against original closure pins.
++    This function never authenticates provenance by trusting its own output.
++    """
++    require(not sidecar.exists() and sidecar.parent.is_dir(), 'fresh sidecar required')
++    source={t.name:t for t in original.graph.initializer}; dest={t.name:t for t in candidate.graph.initializer}
++    descriptors={name:source_bytes(t,directory) for name,t in source.items()}
++    ranges={}
++    for node in candidate.graph.node:
++        for attr in node.attribute:
++            tensors=[attr.t] if attr.type==4 else list(attr.tensors) if attr.type==9 else []
++            for t in tensors:
++                if t.data_location==1:
++                    require(t.data_type==1,'external Constant dtype differs')
++                    path,offset,length,_=source_bytes(t,directory)
++                    require(length<=4*1024*1024,'large unexpected Constant')
++                    ranges.setdefault(path,[]).append((offset,offset+length,'Constant:'+node.name))
++    for name,(path,offset,length,raw) in descriptors.items():
++        if path is not None:ranges.setdefault(path,[]).append((offset,offset+length,name))
++    for entries in ranges.values():
++        entries.sort()
++        require(all(a[1]<=b[0] for a,b in zip(entries,entries[1:])), 'overlapping external ranges')
++    records=[]
++    with sidecar.open('xb') as out:
++        for name,src in source.items():
++            require(clock()<deadline,'original export deadline expired')
++            path,offset,length,raw=descriptors[name]; before=out.tell(); ih=hashlib.sha256();oh=hashlib.sha256();half=roles[name].endswith('_half')
++            handle=path.open('rb') if path else None
++            try:
++                if handle:handle.seek(offset)
++                pos=0
++                while pos<length:
++                    require(clock()<deadline,'original export deadline expired')
++                    size=min(4*1024*1024,length-pos)
++                    chunk=handle.read(size) if handle else raw[pos:pos+size]
++                    require(len(chunk)==size,'short initializer read'); ih.update(chunk)
++                    data=half_chunk(chunk,np) if half else chunk
++                    out.write(data);oh.update(data);pos+=size
++            finally:
++                if handle:handle.close()
++            t=dest[name];t.ClearField('raw_data');t.ClearField('float_data');t.ClearField('external_data');t.data_location=1
++            for key,value in [('location',sidecar.name),('offset',str(before)),('length',str(out.tell()-before))]:
++                entry=t.external_data.add();entry.key=key;entry.value=value
++            records.append({'name':name,'role':roles[name],'shape':list(src.dims),'source_offset':offset,'source_bytes':length,'source_sha256':ih.hexdigest(),'output_offset':before,'output_bytes':out.tell()-before,'output_sha256':oh.hexdigest(),'source_dtype':'float32','output_dtype':'float16' if half else 'float32'})
++    # Static Focus has external Constant tensor(s); retain exact small FP32 data,
++    # never leave a candidate referencing an unsealed original external file.
++    for node in candidate.graph.node:
++        for attr in node.attribute:
++            tensors=[attr.t] if attr.type==4 else list(attr.tensors) if attr.type==9 else []
++            for t in tensors:
++                if t.data_location==1:
++                    require(t.data_type==1,'external Constant dtype differs')
++                    path,offset,length,_=source_bytes(t,directory);require(length<=4*1024*1024,'large unexpected Constant')
++                    require(clock()<deadline,'original export deadline expired')
++                    with path.open('rb') as handle:handle.seek(offset);raw=handle.read(length)
++                    require(len(raw)==length,'short Constant read')
++                    t.ClearField('external_data');t.data_location=0;t.raw_data=raw
++                    records.append({'constant':node.name,'source_sha256':sha(raw),'source_bytes':length,'retained_fp32':True})
++    require(clock()<deadline,'original export deadline expired')
++    return records
++
++
++def export_after_owner_admission(source_path, key, source_file_pins, output, onnx, np, deadline, clock=time.monotonic):
++    """Actual exporter API, held until Root's FP32 and native G5 admission.
++    It does not create or consume a handwritten native qualification DTO. The
++    existing owner must establish authority BEFORE invoking this function.
++    source_file_pins is the original exporter closure's external-file SHA/size
++    map, not a map synthesized from candidate arrays. Deadline is absolute.
++    """
++    require(key in ORIGINAL and clock()<deadline,'unknown model/expired original deadline')
++    source_path=Path(source_path);directory=source_path.parent;output=Path(output)
++    require(source_path.is_file() and not source_path.is_symlink(),'aliased/missing source graph')
++    raw=source_path.read_bytes();require(sha(raw)==ORIGINAL[key],'not original full-FP32 graph')
++    original=onnx.load_model_from_string(raw)
++    # Never onnx.load(...load_external_data=True): all large arrays stay streamed.
++    external=set()
++    tensors=list(original.graph.initializer)
++    for node in original.graph.node:
++        for attr in node.attribute:
++            tensors+=([attr.t] if attr.type==4 else list(attr.tensors) if attr.type==9 else [])
++    for tensor in tensors:
++        if tensor.data_location==1:
++            fields={x.key:x.value for x in tensor.external_data}
++            external.add(fields.get('location',''))
++    require(set(source_file_pins)==external,'missing/extra original closure pins')
++    def authenticate():
++        for name,pin in sorted(source_file_pins.items()):
++            require(clock()<deadline,'original export deadline expired')
++            path=directory/name
++            require(name not in ('','.','..') and len(Path(name).parts)==1 and ':' not in name and '\\' not in name and not path.is_symlink() and not path.is_junction() and path.is_file() and path.resolve().parent==directory.resolve(),'unsafe original closure location')
++            require(set(pin)=={'sha256','bytes'} and path.stat().st_size==pin['bytes'],'source closure size differs')
++            hasher=hashlib.sha256()
++            with path.open('rb') as handle:
++                while chunk:=handle.read(4*1024*1024):
++                    require(clock()<deadline,'original export deadline expired');hasher.update(chunk)
++            require(hasher.hexdigest()==pin['sha256'],'source closure digest differs')
++    authenticate()
++    candidate=copy.deepcopy(original);report=rewrite(candidate,key,onnx)
++    require(clock()<deadline,'original export deadline expired')
++    require(not output.exists() and output.parent.is_dir() and not output.parent.is_symlink() and not output.parent.is_junction(),'fresh approved output directory required')
++    output.mkdir(exist_ok=False)
++    arrays=convert_arrays(original,candidate,report['roles'],directory,output/'weights.bin',np,deadline,clock)
++    authenticate();require(sha(source_path.read_bytes())==ORIGINAL[key],'original graph changed')
++    require(clock()<deadline,'original export deadline expired')
++    # Checker validates schema without loading large data; it does not establish
++    # numerical correctness, CUDA placement or actual Flash/MEA dispatch.
++    target=output/'model.onnx'
++    with target.open('xb') as handle:handle.write(candidate.SerializeToString(deterministic=True))
++    onnx.checker.check_model(str(target),full_check=False)
++    require(clock()<deadline,'original export deadline expired')
++    report.update({'source_graph':ORIGINAL[key],'source_files':source_file_pins,'initializers':arrays,'graph_sha256':sha(target.read_bytes()),'qualification':False,'native_execution':False})
++    return report
+--- /dev/null
++++ b/private-g5-exporter/test_export_half.py
+@@ -0,0 +1,226 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Literal exporter mechanics only. No selected graphs, weights or runtimes."""
++import copy, importlib.util, math, pathlib, struct, tempfile, unittest
++import numpy as np
++import onnx
++from onnx import helper as h, TensorProto as T
++import export_half as e
++
++class ScalarControls(unittest.TestCase):
++    def test_half_literal_bits(self):
++        # Independent IEEE754 encodings, including tie-even and signed subnormal.
++        values=[0.0,-0.0,1.0,-2.0,65504.0,2**-24,-2**-24,2**-25,1+2**-11,1+3*2**-11]
++        expected=bytes.fromhex('00000080003c00c0ff7b010001800000003c023c')
++        raw=struct.pack('<10f',*values)
++        self.assertEqual(e.half_literal(raw),expected)
++        self.assertEqual(e.half_chunk(raw,np),expected)
++    def test_chunk_independent_bit_corpus(self):
++        # A deterministic spread of FP32 bit patterns; expected uses CPython's
++        # independent binary16 implementation, not numpy or candidate weights.
++        words=[(x*2654435761)&0xffffffff for x in range(4096)]
++        raw=b''.join(struct.pack('<I',x) for x in words if math.isfinite(struct.unpack('<f',struct.pack('<I',x))[0]) and abs(struct.unpack('<f',struct.pack('<I',x))[0])<=65504)
++        self.assertEqual(e.half_chunk(raw,np),e.half_literal(raw))
++    def test_nonfinite_overflow_refuse(self):
++        for value in [float('nan'),float('inf'),-float('inf'),70000.0]:
++            for function in [e.half_literal,lambda b:e.half_chunk(b,np)]:
++                with self.subTest(value=value), self.assertRaises(ValueError):function(struct.pack('<f',value))
++    def test_unaligned_refuse(self):
++        with self.assertRaises(ValueError):e.half_chunk(b'123',np)
++    def test_focus_mask(self):
++        self.assertEqual(e.validate_inputs('focus',[0]*510+[1,1],list(range(512))),[2,510,512,510,512])
++        self.assertEqual(e.validate_inputs('focus',[1]*512,list(range(512))),[512,0,512,0,512])
++    def test_invalid_focus_masks(self):
++        for mask in [[0]*512,[1]*511+[0],[0]*509+[1,0,1],[1]*511]:
++            with self.subTest(mask=mask[-4:]),self.assertRaises(ValueError):e.validate_inputs('focus',mask,list(range(len(mask))))
++    def test_positions_cannot_skip_pad(self):
++        with self.assertRaises(ValueError):e.validate_inputs('focus',[0]*510+[1,1],[0]*510+[0,1])
++    def test_context_inputs(self):
++        self.assertEqual(e.validate_inputs('compact',[1,1,1],[0,1,2]),([2],[3]))
++        for mask,pos in [([1,0],[0,1]),([1,1],[1,2]),([],[]),([1]*8193,list(range(8193)))]:
++            with self.assertRaises(ValueError):e.validate_inputs('large',mask,pos)
++    def test_literal_causal_head_group_and_nan_padding(self):
++        # Literal attention with Q=K=0 means exact uniform causal averages.
++        # K/V heads A=[2,4], B=[10,14], repeated consecutively => [A,A,B,B].
++        expected=[[2,2,10,10],[3,3,12,12]]
++        values=[[2,4],[10,14]]
++        actual=[[sum(values[head//2][:row+1])/(row+1) for head in range(4)] for row in range(2)]
++        self.assertEqual(actual,expected)
++        # Where must select zero even if padded output is uninitialized NaN.
++        raw=[float('nan'),2,3];live=[False,True,True]
++        safe=np.where(np.asarray(live),np.asarray(raw,dtype=np.float16),np.float16(0))
++        self.assertEqual(safe.tolist(),[0,2,3])
++        self.assertTrue(math.isnan(raw[0]*0))
++
++# Tiny synthetic graph with complete selected-model metadata geometry. No huge
++# tensors allocated; rewrite exercises metadata only, not checker/inference.
++def fixture(key):
++    layers,heads,kv,hidden=e.GEOMETRY[key];prefix='/base/' if key=='focus' else '/scorer/'
++    nodes=[];initial=[]
++    def init(name,dims):
++        t=T();t.name=name;t.data_type=T.FLOAT;t.dims.extend(dims);t.raw_data=struct.pack('<f',1);initial.append(t);return name
++    def node(op,inputs,name,**attrs):
++        nodes.append(h.make_node(op,inputs,[name+'_output_0'],name=name,**attrs));return name+'_output_0'
++    embed=init(prefix[1:-1]+'.embed_tokens.weight',[4,hidden]);x=node('Gather',[embed,'input_ids'],prefix+'embed',axis=0)
++    for i in range(layers):
++        root=prefix+f'layers.{i}/';att=root+'self_attn/'
++        for label in ['input_layernorm','post_attention_layernorm','self_attn/q_norm','self_attn/k_norm']:
++            weight=init(root[1:].replace('/','.')+label.replace('/','.')+'.weight',[128 if label.endswith(('q_norm','k_norm')) else hidden])
++            x=node('Mul',[x,weight],root+label+'/Mul_1')
++        projections={}
++        for label in ['q_proj','k_proj','v_proj']:
++            weight=init(f'weight_{i}_{label}',[hidden,heads*128 if label=='q_proj' else kv*128]);projections[label]=node('MatMul',[x,weight],att+label+'/MatMul')
++        q=node('Add',[projections['q_proj'],projections['q_proj']],att+'Add')
++        k=node('Add',[projections['k_proj'],projections['k_proj']],att+'Add_1')
++        qk=node('MatMul',[q,k],att+'MatMul')
++        scale=node('Constant',[],att+'source_scale',value=h.make_tensor('s',T.FLOAT,[],[.125]))
++        scaled=node('Mul',[qk,scale],att+('Mul_6' if key=='focus' else 'Mul_8'))
++        # Literal source masks are shared but disconnected once attention rewrites.
++        maskname='/Where_output_0' if key=='focus' else '/scorer/Where_output_0'
++        masked=node('Add',[scaled,maskname],att+'Add_2')
++        soft=node('Softmax',[masked],att+'Softmax',axis=-1)
++        av=node('MatMul',[soft,projections['v_proj']],att+'MatMul_1')
++        shape=node('Constant',[],att+'shape',value=h.make_tensor('sh',T.INT64,[3],[1,512,heads*128]))
++        x=node('Reshape',[av,shape],att+('Reshape_5' if key=='focus' else 'Reshape_7'))
++        for label in ['o_proj','gate_proj','up_proj','down_proj']:
++            location=att if label=='o_proj' else root+'mlp/'
++            weight=init(f'weight_{i}_{label}',[1,1]);x=node('MatMul',[x,weight],location+label+'/MatMul')
++    weight=init(prefix[1:-1]+'.norm.weight',[hidden]);x=node('Mul',[x,weight],prefix+'norm/Mul')
++    if key=='focus':
++        head=init('head_weight',[hidden,2]);out=node('MatMul',[x,head],'/MatMul');name='logits'
++    else:
++        rows=node('Gather',[embed,'candidate_positions'],'/candidate_rows',axis=0)
++        out=node('Mul',[x,rows],'/sparse_score');name='scores'
++    nodes.append(h.make_node('Identity',[out],[name],name='/result'))
++    # Dead dense mask placeholder proves reachability removes unused masks.
++    nodes.append(h.make_node('Constant',[],[maskname],name='/source_mask',value=h.make_tensor('mask',T.FLOAT,[],[0])))
++    inputs=['input_ids','attention_mask','position_ids']+([] if key=='focus' else ['decision_positions','candidate_positions','option_mask'])
++    return h.make_model(h.make_graph(nodes,'literal',[h.make_tensor_value_info(v,T.INT64,[1,512]) for v in inputs],[h.make_tensor_value_info(name,T.FLOAT,[1,2])],initial),opset_imports=[h.make_opsetid('',18)])
++
++class GraphControls(unittest.TestCase):
++    def test_context_all_layers_and_preserved_abi(self):
++        for key,count,qheads in [('compact',28,16),('large',36,32)]:
++            m=fixture(key);original=copy.deepcopy(m);report=e.rewrite(m,key,onnx)
++            attention=[n for n in m.graph.node if n.op_type=='GroupQueryAttention']
++            self.assertEqual(len(attention),count)
++            for n in attention:
++                self.assertEqual(len(n.input),7);attrs=e.attributes(n,onnx)
++                self.assertEqual(attrs,{'num_heads':qheads,'kv_num_heads':8,'causal':1,'local_window_size':-1,'do_rotary':0,'scale':.125})
++                self.assertNotIn('sdpa_kernel',attrs)
++            self.assertEqual(report['required_native_sdpa_kernel'],1)
++            self.assertEqual([x.SerializeToString() for x in m.graph.input],[x.SerializeToString() for x in original.graph.input])
++            self.assertEqual([x.SerializeToString() for x in m.graph.output],[x.SerializeToString() for x in original.graph.output])
++            self.assertFalse(any(n.op_type=='Softmax' or n.name=='/source_mask' for n in m.graph.node))
++    def test_focus_mask_zero_and_head_census(self):
++        m=fixture('focus');report=e.rewrite(m,'focus',onnx);initial={t.name:t for t in m.graph.initializer}
++        self.assertEqual(report['required_native_sdpa_kernel'],2)
++        self.assertEqual(len([n for n in m.graph.node if n.op_type=='MultiHeadAttention']),28)
++        for n in m.graph.node:
++            if n.op_type=='MultiHeadAttention':
++                self.assertEqual(len(n.input),5);self.assertEqual(n.input[3],'')
++                self.assertEqual(e.attributes(n,onnx),{'num_heads':16,'unidirectional':1,'scale':.125})
++        indices=onnx.numpy_helper.to_array(initial[e.NS+'attention/0/kv_indices']).tolist()
++        self.assertEqual(indices,[0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7])
++        wheres=[n for n in m.graph.node if n.op_type=='Where']
++        self.assertEqual(len(wheres),28)
++        for n in wheres:self.assertEqual(n.input[2],e.NS+'half_zero')
++        self.assertEqual(initial['head_weight'].data_type,T.FLOAT)
++        self.assertEqual(initial['base.embed_tokens.weight'].data_type,T.FLOAT16)
++        protected=[t for t in m.graph.initializer if t.name.endswith('norm.weight')]
++        self.assertEqual(len(protected),113);self.assertTrue(all(t.data_type==T.FLOAT for t in protected))
++    def test_sparse_readout_same_half_embedding(self):
++        m=fixture('compact');e.rewrite(m,'compact',onnx)
++        n=next(n for n in m.graph.node if n.name=='/candidate_rows')
++        self.assertEqual(n.input[0],'scorer.embed_tokens.weight')
++        cast=next(n for n in m.graph.node if '/candidate_rows/output32' in n.name)
++        self.assertEqual(e.attributes(cast,onnx),{'to':T.FLOAT})
++        self.assertEqual(len([t for t in m.graph.initializer if t.name.endswith('embed_tokens.weight')]),1)
++    def test_complete_weights_and_protected_node_bytes(self):
++        for key in ['focus','compact','large']:
++            m=fixture(key);before={n.name:n.SerializeToString(deterministic=True) for n in m.graph.node};report=e.rewrite(m,key,onnx)
++            roles=report['roles'];layers=e.GEOMETRY[key][0]
++            self.assertEqual(sum(r=='projection_half' for r in roles.values()),layers*7)
++            self.assertEqual(sum(r=='embedding_half' for r in roles.values()),1)
++            self.assertEqual(sum(r=='norm_fp32' for r in roles.values()),layers*4+1)
++            for n in m.graph.node:
++                if n.name in before and n.op_type=='Mul':self.assertEqual(n.SerializeToString(deterministic=True),before[n.name])
++    def test_refuse_unknown_weight(self):
++        m=fixture('compact');m.graph.initializer[0].name='unreviewed_embedding'
++        with self.assertRaises(ValueError):e.rewrite(m,'compact',onnx)
++    def test_refuse_unknown_bias(self):
++        m=fixture('compact');m.graph.initializer.append(h.make_tensor('bias',T.FLOAT,[1],[1]))
++        with self.assertRaises(ValueError):e.rewrite(m,'compact',onnx)
++    def test_refuse_wrong_source_scale_chain(self):
++        m=fixture('compact');n=next(n for n in m.graph.node if n.name.endswith('/self_attn/Mul_8'));n.input[0]='input_ids'
++        with self.assertRaises(ValueError):e.rewrite(m,'compact',onnx)
++    def test_refuse_foreign_op(self):
++        m=fixture('compact');m.graph.node[0].domain='foreign'
++        with self.assertRaises(ValueError):e.rewrite(m,'compact',onnx)
++    def test_refuse_abi_change(self):
++        m=fixture('compact');m.graph.output[0].name='hidden'
++        with self.assertRaises(ValueError):e.rewrite(m,'compact',onnx)
++
++class ArrayControls(unittest.TestCase):
++    def test_real_tiny_stream_arrays(self):
++        with tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).parent) as tmp:
++            root=pathlib.Path(tmp);t=h.make_tensor('weight',T.FLOAT,[4],[1,-2,2**-24,-0.0]);n=h.make_tensor('norm',T.FLOAT,[2],[1.25,2])
++            original=h.make_model(h.make_graph([],'tiny',[],[],[t,n]));candidate=copy.deepcopy(original);candidate.graph.initializer[0].data_type=T.FLOAT16
++            report=e.convert_arrays(original,candidate,{'weight':'projection_half','norm':'norm_fp32'},root,root/'weights.bin',np,999,clock=lambda:0)
++            expected=bytes.fromhex('003c00c001000080')+struct.pack('<2f',1.25,2)
++            self.assertEqual((root/'weights.bin').read_bytes(),expected)
++            self.assertEqual(report[0]['output_sha256'],e.sha(bytes.fromhex('003c00c001000080')))
++            self.assertEqual(report[1]['source_sha256'],report[1]['output_sha256'])
++            self.assertEqual(original.graph.initializer[0].data_type,T.FLOAT)
++    def test_external_source_and_constant_are_retained(self):
++        with tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).parent) as tmp:
++            root=pathlib.Path(tmp);(root/'source.bin').write_bytes(struct.pack('<3f',1,-2,3.25))
++            def external(name,offset,count):
++                t=T();t.name=name;t.data_type=T.FLOAT;t.dims.extend([count]);t.data_location=1
++                for k,v in [('location','source.bin'),('offset',str(offset)),('length',str(count*4))]:a=t.external_data.add();a.key=k;a.value=v
++                return t
++            t=external('x',0,2);constant=external('constant',8,1)
++            m=h.make_model(h.make_graph([h.make_node('Constant',[],['c'],name='c',value=constant)],'x',[],[],[t]));candidate=copy.deepcopy(m);candidate.graph.initializer[0].data_type=T.FLOAT16
++            report=e.convert_arrays(m,candidate,{'x':'projection_half'},root,root/'weights.bin',np,100,clock=lambda:0)
++            self.assertEqual((root/'weights.bin').read_bytes(),bytes.fromhex('003c00c0'))
++            c=candidate.graph.node[0].attribute[0].t
++            self.assertEqual(c.data_location,0);self.assertEqual(c.raw_data,struct.pack('<f',3.25))
++            self.assertEqual(report[1]['source_sha256'],e.sha(struct.pack('<f',3.25)))
++            self.assertEqual((root/'source.bin').read_bytes(),struct.pack('<3f',1,-2,3.25))
++    def test_external_overlap_refuses_before_output(self):
++        with tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).parent) as tmp:
++            root=pathlib.Path(tmp);(root/'source').write_bytes(struct.pack('<2f',1,2));initial=[]
++            for name in ['a','b']:
++                t=T();t.name=name;t.data_type=T.FLOAT;t.dims.extend([2]);t.data_location=1
++                for k,v in [('location','source'),('length','8')]:a=t.external_data.add();a.key=k;a.value=v
++                initial.append(t)
++            m=h.make_model(h.make_graph([],'x',[],[],initial))
++            with self.assertRaisesRegex(ValueError,'overlapping'):e.convert_arrays(m,copy.deepcopy(m),{'a':'projection_half','b':'projection_half'},root,root/'weights.bin',np,10,clock=lambda:0)
++            self.assertFalse((root/'weights.bin').exists())
++    def test_mid_operation_expiry_keeps_partial_truth(self):
++        with tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).parent) as tmp:
++            root=pathlib.Path(tmp);t=h.make_tensor('x',T.FLOAT,[1],[1]);m=h.make_model(h.make_graph([],'x',[],[],[t]));ticks=iter([0,10])
++            with self.assertRaisesRegex(ValueError,'deadline'):e.convert_arrays(m,copy.deepcopy(m),{'x':'embedding_half'},root,root/'weights.bin',np,10,clock=lambda:next(ticks))
++            self.assertEqual((root/'weights.bin').stat().st_size,0)
++    def test_nonfinite_stream_keeps_source(self):
++        with tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).parent) as tmp:
++            root=pathlib.Path(tmp);t=h.make_tensor('x',T.FLOAT,[1],[float('inf')]);m=h.make_model(h.make_graph([],'x',[],[],[t]));before=m.SerializeToString()
++            with self.assertRaisesRegex(ValueError,'nonfinite'):e.convert_arrays(m,copy.deepcopy(m),{'x':'embedding_half'},root,root/'weights.bin',np,10,clock=lambda:0)
++            self.assertEqual(m.SerializeToString(),before)
++    def test_external_range_and_path_refusal(self):
++        with tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).parent) as tmp:
++            root=pathlib.Path(tmp);(root/'data').write_bytes(struct.pack('<2f',1,2))
++            t=h.make_tensor('x',T.FLOAT,[1],[0]);t.ClearField('float_data');t.data_location=1
++            for k,v in [('location','../data'),('length','4')]:x=t.external_data.add();x.key=k;x.value=v
++            with self.assertRaises(ValueError):e.source_bytes(t,root)
++            t.external_data[0].value='data';t.external_data[1].value='8'
++            with self.assertRaises(ValueError):e.source_bytes(t,root)
++    def test_deadline_never_refreshed(self):
++        with tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).parent) as tmp:
++            root=pathlib.Path(tmp);t=h.make_tensor('x',T.FLOAT,[1],[1]);m=h.make_model(h.make_graph([],'x',[],[],[t]))
++            with self.assertRaises(ValueError):e.convert_arrays(m,copy.deepcopy(m),{'x':'embedding_half'},root,root/'weights.bin',np,10,clock=lambda:10)
++    def test_graph_authorization_requires_original(self):
++        with tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).parent) as tmp:
++            root=pathlib.Path(tmp);p=root/'model.onnx';p.write_bytes(b'W8/failed graph')
++            with self.assertRaises(ValueError):e.export_after_owner_admission(p,'focus',{},root/'out',onnx,np,10,clock=lambda:0)
++            self.assertFalse((root/'out').exists())
++
++if __name__=='__main__':unittest.main()
+--- /dev/null
++++ b/private-g5-exporter/README.md
+@@ -0,0 +1,15 @@
++# G5 full-half exporter: private implementation proposal
++
++No selected graph was transformed, no selected external weights were read or converted, and no Torch/ORT session, GPU, native model or Cargo process ran. This is actual exporter code plus synthetic mechanical evidence, not G5 qualification.
++
++`export_half.py` has no CLI. A future reviewed native/export owner invokes `export_after_owner_admission` only after the genuine first FP32 gate passes and new G5 math/admission policy exists. The caller owns same-human identity, immutable source/process/descriptor custody, existing original compiler tensors, native input validation, output policy and one absolute deadline. This module does not create an admission receipt or mirror native DTOs.
++
++The API accepts only original full-FP32 protobuf SHAs and exact original external closure pins. Focus starts from original static512 export19b20ad4, never the shipped W8 graph5072. Compact starts c79c and Large f8ba. Context publisher files are BF16 expanded losslessly by the authenticated original exporter. Both half recipes must be independently compared with those publisher logical arrays; no actual publisher/graph-weight equality was re-established by these synthetic tests.
++
++Implementation: complete learned weight census; finite IEEE754 binary16 conversion in bounded4MiB chunks; FP32 norm scales/Focus two-row head; explicit half GEMM and embedding boundaries around retained FP32 math; same rounded Context embedding for sparse readout; source-scale exact-bit causal half GQA or packed-mask MHA; Where-zero undefined padded Focus queries. No learned bias exists in selected originals; unknown bias refuses. Protected original nodes/ABIs retain bytes. Outputs are create-new and partial failure artifacts remain truthful. Source external files are fully authenticated before and after conversion; all converted ranges have separate source/output digests.
++
++Native work still required: exact FP16 external-array/compiler/profile admission; G5 math identity; CUDA provider sdpa_kernel1(Context Flash)/2(Focus MEA), GEMM options2/FP32 accumulation/noTF32 before singleton; actual per-node half kernel observations. sdpa_kernel is NOT an ONNX attribute. Runtime flags alone do not qualify efficient attention. Existing R3/native GPU policy does not become permission for this new graph. SM86 scientific scope only.
++
++The final grouped literal suite passed26/26 in2.848s (process3.202s), zero skips/failures. Tests use independent IEEE754 bit literals and CPython half conversion vs numpy, synthetic complete-layer metadata, exact mask/head/index assertions, tiny real array streaming, source preservation, overlap/path refusal and original deadline expiry. Synthetic graph tensors deliberately contain only tiny placeholder data and are never inferred; this proves rewrite structure, not selected-graph schema/shape execution. No selected graph checker, model quality, placement, numeric/resource/latency or end-to-end Answer claim is made. Original-FP32/half independent Torch, native full tensor comparisons, frozen tolerances, actual Flash/MEA observations and new profiles remain required.
++
++First mechanical run:21/21, prioridentity retained. Self-review then added external Constant overlap/junction/subgraph hardening and five failure/full-census controls; final26/26 is the current source identity. Root must review combined code before any actual export. No original source, graph or weight file changed.

@@ -1,0 +1,45 @@
+--- reviewed-six-phase-owner.py
++++ three-independent-diagnostic-phases.py
+@@ -1,6 +1,6 @@
+ # Prepared only. Root must review exact packet before executing; this preparation never runs Cargo.
+ from pathlib import Path
+-import os,sys,json,time,hashlib,stat,subprocess,importlib.util,resource,shutil
++import os,sys,json,time,hashlib,stat,subprocess,importlib.util,resource,shutil,re
+ from datetime import datetime,timezone
+ C=None
+ 
+@@ -11,8 +11,17 @@
+  assert value['commit']!='dda749cbdf77b3e2106003ff10a683ec3aec3202', 'unchanged failed DDA input cannot replay'
+  seal=value.get('raw_c7');assert isinstance(seal,dict) and isinstance(seal.get('files'),int) and seal['files']>0
+  digest=seal.get('sha256');assert isinstance(digest,str) and len(digest)==64 and all(c in '0123456789abcdef' for c in digest)
+- assert [x['name'] for x in value.get('commands',[])]==['installer-clippy', 'legacy-process-tests', 'exact-cli-replacement', 'workspace-clippy', 'workspace-tests', 'doctests']
++ assert [x['name'] for x in value.get('commands',[])]==['scoped-clippy', 'exact-cli-replacement', 'exact-reference-refresh']
+  return value
++
++def completed_diagnostic_failure(name,natural,result,receipt):
++ if name not in ('exact-cli-replacement','exact-reference-refresh') or not natural:return False
++ if result.get('exit_code')!=101 or result.get('timed_out') or result.get('log_oversized') or result.get('cleanup_errors'):return False
++ if receipt.get('status')!='completed' or receipt.get('exit_code')!=101 or receipt.get('runner_exit_code')!=101:return False
++ if receipt.get('selected_tests')!=1 or receipt.get('interrupted') or receipt.get('evidence_errors')!=[]:return False
++ if not all(receipt.get(k) is True for k in ('inputs_unchanged','runner_unchanged','runtime_unchanged','command_inputs_unchanged')):return False
++ return any(re.fullmatch(r'test result: FAILED\. 0 passed; 1 failed; 0 ignored; 0 measured; [0-9]+ filtered out; finished in [0-9.]+s',line) for line in receipt.get('test_summaries',[]))
++
+ 
+ def read_config():
+  actor();assert len(sys.argv)==2, 'one frozen Root config path required'
+@@ -72,8 +81,13 @@
+    ok=owner.successful(result) and natural
+    record={'phase':name,'result':result,'natural_unix_settlement':natural,'passed':ok};records.append(record);fresh(out/(name+'-outer-result.json'),record)
+    print(json.dumps({'phase':name,'passed':ok,'result':result}),flush=True)
+-   if not ok:raise RuntimeError('failed '+name+'; remaining phases stopped, no replay')
+-  passed=True
++   if not ok:
++    receipt_path=out/'receipts'/(command['receipt_stage']+'.json');metadata=receipt_path.lstat()
++    assert stat.S_ISREG(metadata.st_mode) and metadata.st_uid==501 and metadata.st_nlink==1 and not receipt_path.is_symlink() and metadata.st_size<=4*1024*1024
++    receipt=json.loads(receipt_path.read_bytes())
++    if not completed_diagnostic_failure(name,natural,result,receipt):raise RuntimeError('failed '+name+' without a completed isolated diagnostic witness; remaining phases stopped, no replay')
++    fresh(out/(name+'-independent-continuation.json'),{'phase':name,'receipt_sha256':sha(receipt_path),'known_case_executed_once':True,'passed':False,'reason':'Actual one-case failure retained; settled ownership and unchanged inputs allow the other independent diagnostic. No replay or failure waiver.'})
++  passed=all(row['passed'] for row in records)
+  except BaseException as failure:
+   error={'type':type(failure).__name__,'message':str(failure)};passed=False
+  finally:

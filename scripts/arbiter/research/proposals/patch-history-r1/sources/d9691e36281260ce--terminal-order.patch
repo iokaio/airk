@@ -1,0 +1,177 @@
+--- a/crates/airk-store/src/service_catalog_upgrade_recovery.rs
++++ b/crates/airk-store/src/service_catalog_upgrade_recovery.rs
+@@ -667,7 +667,7 @@
+         drop(old_a);
+         let owner = CatalogUpgrade::acquire(&control)?;
+         let a_index = IndexId::from_identity(Incarnation::from_bytes([6; 16]));
+-        let indexes = [
++        let mut indexes = [
+             (&a, a_index, 7),
+             (
+                 &b,
+@@ -693,8 +693,20 @@
+             })
+         })
+         .collect::<Result<Vec<_>>>()?;
+-        assert_eq!(indexes[0].source_import, SourceImportState::PendingMetadata);
+-        assert_eq!(indexes[1].source_import, SourceImportState::Complete);
++        // Native plan admission requires binding order, independent of the
++        // temporary source paths from which A/B bindings are derived.
++        indexes.sort_by_key(|index| index.registration.binding);
++        for (registration, expected) in [
++            (&a, SourceImportState::PendingMetadata),
++            (&b, SourceImportState::Complete),
++        ] {
++            let index = indexes
++                .iter()
++                .find(|index| index.registration.binding == registration.binding)
++                .context("fixture role missing from canonical plan")?;
++            assert_eq!(index.registration, *registration);
++            assert_eq!(index.source_import, expected);
++        }
+         let plan = UpgradePlan {
+             schema: 1,
+             id: Incarnation::from_bytes([30; 16]),
+@@ -944,16 +956,22 @@
+         let original_plan = serde_json::to_vec(&original.plan)?;
+         let backup = serde_json::to_value(fixture.owner.qualified_backup(&original)?)?;
+         let control = fixture.owner.control().to_path_buf();
++        let reached = std::cell::Cell::new(false);
++        let interrupted = terminal::settle_owned(&fixture.owner, host, |stage| {
++            if stage == "before_recovery_terminal_commit" {
++                reached.set(true);
++            }
++            ensure!(
++                stage != "before_recovery_terminal_commit",
++                "owned SQL rollback checkpoint"
++            );
++            Ok(())
++        });
+         assert!(
+-            terminal::settle_owned(&fixture.owner, host, |stage| {
+-                ensure!(
+-                    stage != "before_recovery_terminal_commit",
+-                    "owned SQL rollback checkpoint"
+-                );
+-                Ok(())
+-            })
+-            .is_err()
+-        );
++            reached.get(),
++            "intended before_recovery_terminal_commit checkpoint not reached: {interrupted:?}"
++        );
++        assert!(interrupted.is_err());
+         assert!(legacy_retirement_receipt(&control, &request)?.is_none());
+         assert_eq!(
+             catalog::backup::legacy_data_digest(&registry_read(&control)?)?,
+@@ -1002,16 +1020,22 @@
+         let mut fixture = fixture()?;
+         let (request, host) = authorize_and_qualify(&fixture)?;
+         let control = fixture.owner.control().to_path_buf();
++        let reached = std::cell::Cell::new(false);
++        let interrupted = terminal::settle_owned(&fixture.owner, host, |stage| {
++            if stage == "after_recovery_terminal_commit" {
++                reached.set(true);
++            }
++            ensure!(
++                stage != "after_recovery_terminal_commit",
++                "committed terminal receipt gap"
++            );
++            Ok(())
++        });
+         assert!(
+-            terminal::settle_owned(&fixture.owner, host, |stage| {
+-                ensure!(
+-                    stage != "after_recovery_terminal_commit",
+-                    "committed terminal receipt gap"
+-                );
+-                Ok(())
+-            })
+-            .is_err()
+-        );
++            reached.get(),
++            "intended after_recovery_terminal_commit checkpoint not reached: {interrupted:?}"
++        );
++        assert!(interrupted.is_err());
+         let result =
+             legacy_retirement_receipt(&control, &request)?.context("committed receipt missing")?;
+         assert!(
+@@ -1035,16 +1059,22 @@
+         let mut fixture = fixture()?;
+         let (request, host) = authorize_and_qualify(&fixture)?;
+         let control = fixture.owner.control().to_path_buf();
++        let reached = std::cell::Cell::new(false);
++        let interrupted = terminal::settle_owned(&fixture.owner, host, |stage| {
++            if stage == "after_recovery_admission_clear" {
++                reached.set(true);
++            }
++            ensure!(
++                stage != "after_recovery_admission_clear",
++                "postclear receipt gap"
++            );
++            Ok(())
++        });
+         assert!(
+-            terminal::settle_owned(&fixture.owner, host, |stage| {
+-                ensure!(
+-                    stage != "after_recovery_admission_clear",
+-                    "postclear receipt gap"
+-                );
+-                Ok(())
+-            })
+-            .is_err()
+-        );
++            reached.get(),
++            "intended after_recovery_admission_clear checkpoint not reached: {interrupted:?}"
++        );
++        assert!(interrupted.is_err());
+         let result =
+             legacy_retirement_receipt(&control, &request)?.context("committed outcome missing")?;
+         let mut registry = ServiceRegistry::open(&control, fixture.owner.namespace())?;
+@@ -1072,16 +1102,22 @@
+         let fixture = fixture()?;
+         let (request, host) = authorize_and_qualify(&fixture)?;
+         let control = fixture.owner.control().to_path_buf();
++        let reached = std::cell::Cell::new(false);
++        let interrupted = terminal::settle_owned(&fixture.owner, host, |stage| {
++            if stage == "after_recovery_terminal_commit" {
++                reached.set(true);
++            }
++            ensure!(
++                stage != "after_recovery_terminal_commit",
++                "terminal receipt gap"
++            );
++            Ok(())
++        });
+         assert!(
+-            terminal::settle_owned(&fixture.owner, host, |stage| {
+-                ensure!(
+-                    stage != "after_recovery_terminal_commit",
+-                    "terminal receipt gap"
+-                );
+-                Ok(())
+-            })
+-            .is_err()
+-        );
++            reached.get(),
++            "intended after_recovery_terminal_commit checkpoint not reached: {interrupted:?}"
++        );
++        assert!(interrupted.is_err());
+         let db = Connection::open(control.join(DATABASE))?;
+         db.execute(
+             "UPDATE index_operation_receipts SET payload=?1 WHERE id=?2",
+--- a/crates/airk-store/src/service_catalog_upgrade_retirement_terminal.rs
++++ b/crates/airk-store/src/service_catalog_upgrade_retirement_terminal.rs
+@@ -498,7 +498,11 @@
+             current_revision == revision,
+             "retirement revision census changed"
+         );
+-        ensure!(tx.execute("UPDATE index_catalog_meta SET revision=?1,accepted_new_writes=1 WHERE id=1 AND activated=1 AND accepted_new_writes=0 AND revision=?2",
++        // Canonical retirement updates ordinary registry/catalog rows, whose
++        // existing catalog_write triggers set accepted_new_writes once activated.
++        // These are this transaction's authorized writes under all native leases;
++        // never reset that durable marker or mistake it for a competing writer.
++        ensure!(tx.execute("UPDATE index_catalog_meta SET revision=?1,accepted_new_writes=1 WHERE id=1 AND activated=1 AND accepted_new_writes=1 AND revision=?2",
+             params![i64::try_from(revision.get())?, i64::try_from(state.revision.get())?])? == 1,
+             "retirement terminal new-write marker changed");
+         catalog::validate_existing(&tx)?;

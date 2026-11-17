@@ -1,0 +1,82 @@
+--- a/scripts/editor-ui.cjs
++++ b/scripts/editor-ui.cjs
+@@ -14,6 +14,14 @@
+     return {ready:`(()=>{${lookup}return true;})()`,
+         apply:`(()=>{${lookup}for(const {node,value}of fields){const proto=node.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,node.type==='checkbox'?'checked':'value').set.call(node,value);node.dispatchEvent(new Event(node.tagName==='SELECT'||node.type==='checkbox'?'change':'input',{bubbles:true}));}return true;})()`,
+         readback:`(()=>{${lookup}return fields.every(({node,value})=>(node.type==='checkbox'?node.checked:node.value)===value);})()`};
++}
++async function openUsageAdministration(request,actions){
++    // The native combined selection opens a picker even for one selected Index.
++    // Bind the explicit choice to the exact fixture Index ID, never a row order.
++    if(!/^idx_[a-f0-9]{32}$/.test(request.index??'')||typeof request.collection!=='string'||!request.collection.length||request.collection.length>4096)throw new Error('Invalid exact usage administration selection');
++    await actions.open();
++    await actions.choose(request.index,'Choose an index for administration');
++    return actions.observe();
+ }
+ const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+ async function until(action,label,timeout=180000){const end=Date.now()+timeout;while(Date.now()<end){const value=await action();if(value)return value;await delay(120);}throw new Error(`Editor UI timeout: ${label}`);}
+@@ -135,7 +143,7 @@
+                 const result=await until(async()=>(await report(scoped,"({text:document.body.innerText,writeControls:document.querySelectorAll('[data-usage=clear],[data-usage=recording],[data-usage=import]').length})"))?.value,'scoped usage unavailable');
+                 if(result.writeControls!==0)throw new Error('Scoped Usage exposed administration without explicit choice');return result;
+             }
+-            if(request.action==='usageAdmin'){await reportClick(scoped,'openIndexAdministration');return until(async()=>(await report(admin,'({text:document.body.innerText})'))?.value,'explicit broad Index administration');}
++            if(request.action==='usageAdmin')return openUsageAdministration(request,{open:()=>reportClick(scoped,'openIndexAdministration'),choose:quickPick,observe:()=>until(async()=>(await report(admin,'({text:document.body.innerText})'))?.value,'explicit broad Index administration')});
+             if(request.action==='usageJson'){await reportClick(admin,'json');return {requested:true};}
+             if(request.action==='usageClear'){
+                 await reportClick(admin,'clear');await confirm('Clear history',['Clear all usage history',request.name,'source files and index stay intact']);
+@@ -211,4 +219,4 @@
+     }
+     return {dispatch,dispatchReceipts:()=>structuredClone(dispatchLog),document,workbench,service,quickPick,confirm,indexing,catalog,click,approveRepair,responseMode,until,close(){for(const client of clients.values())client.close();}};
+ }
+-module.exports={editorUi,until,formFillExpressions,privateEditorEnvironment};
++module.exports={editorUi,until,formFillExpressions,privateEditorEnvironment,openUsageAdministration};
+--- a/scripts/tests/editor-ui.test.cjs
++++ b/scripts/tests/editor-ui.test.cjs
+@@ -1,6 +1,6 @@
+ // SPDX-License-Identifier: Apache-2.0
+ const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),path=require('node:path');
+-const {formFillExpressions,privateEditorEnvironment}=require('../editor-ui.cjs');
++const {formFillExpressions,privateEditorEnvironment,openUsageAdministration}=require('../editor-ui.cjs');
+ const label='Optional index subset from this grant (1–32 IDs; blank includes all permitted members)';
+ function fixture(specs){
+     const writes=[],events=[];
+@@ -51,3 +51,28 @@
+     assert.equal(child.PATH,parent.PATH);assert.equal(child.AIRK_EDITOR_SCENARIOS,'same');assert.equal(child.AIRK_PRIVATE_CENSUS_BASE,'fictional-private');
+     assert.equal({...child,ELECTRON_RUN_AS_NODE:'1'}.ELECTRON_RUN_AS_NODE,'1','explicit CLI role remains possible per canonical caller');
+ });
++
++const exactUsage={index:'idx_'+'a'.repeat(32),collection:'fixture-b'};
++test('usage administration explicitly chooses exact native combined Index before observing report',async()=>{
++    const calls=[],result={text:'qualified entire-Index report'};
++    const actual=await openUsageAdministration(exactUsage,{open:async()=>calls.push('open'),choose:async(id,title)=>calls.push({id,title}),observe:async()=>{calls.push('observe');return result;}});
++    assert.equal(actual,result);assert.deepEqual(calls,['open',{id:exactUsage.index,title:'Choose an index for administration'},'observe']);
++    const host=fs.readFileSync(path.resolve(__dirname,'../../packages/vscode/src/serviceExtension.ts'),'utf8');assert.ok(host.includes("title:'Choose an index for administration'"));
++    const driver=fs.readFileSync(path.resolve(__dirname,'../../packages/vscode/src/test/installedEditor.ts'),'utf8');assert.ok(driver.includes("ui('usageAdmin',{index:target.index,collection:target.backing.collection})"));
++    assert.ok(driver.includes('value?.administrative_scope?.index_id===target.index'),'actual generated native report still checks exact Index');
++});
++test('invalid usage selection refuses before any UI action',async()=>{
++    for(const request of [{collection:'fixture-b'},{index:'fixture-b',collection:'fixture-b'},{index:exactUsage.index,collection:''}]){
++        let calls=0;await assert.rejects(openUsageAdministration(request,{open:async()=>calls++,choose:async()=>calls++,observe:async()=>calls++}),/Invalid exact usage/);assert.equal(calls,0);
++    }
++});
++test('unknown usage picker outcome is not replayed or replaced with report observation',async()=>{
++    let opens=0,picks=0,observes=0;const failure=new Error('unknown picker outcome');
++    await assert.rejects(openUsageAdministration(exactUsage,{open:async()=>opens++,choose:async()=>{picks++;throw failure;},observe:async()=>observes++}),error=>error===failure);
++    assert.deepEqual([opens,picks,observes],[1,1,0]);
++});
++test('usage report failure preserves exact error without reopening or choosing again',async()=>{
++    let opens=0,picks=0,observes=0;const failure=new Error('missing actual report');
++    await assert.rejects(openUsageAdministration(exactUsage,{open:async()=>opens++,choose:async()=>picks++,observe:async()=>{observes++;throw failure;}}),error=>error===failure);
++    assert.deepEqual([opens,picks,observes],[1,1,1]);
++});
+--- a/packages/vscode/src/test/installedEditor.ts
++++ b/packages/vscode/src/test/installedEditor.ts
+@@ -394,7 +394,7 @@
+                 const previous=vscode.window.tabGroups.all.flatMap(group=>group.tabs).filter(tab=>tab.input instanceof vscode.TabInputWebview&&tab.input.viewType.includes('airk.usage'));
+                 if(previous.length)assert.equal(await vscode.window.tabGroups.close(previous,true),true);
+                 await use(target);await vscode.commands.executeCommand('airk.usage');await ui('usageScoped');
+-                await ui('usageAdmin',{collection:target.backing.collection});await ui('usageJson',{collection:target.backing.collection});
++                await ui('usageAdmin',{index:target.index,collection:target.backing.collection});await ui('usageJson',{collection:target.backing.collection});
+                 const end=Math.min(Date.now()+30000,sharedDeadline);let value:any;
+                 do{try{value=JSON.parse(vscode.window.activeTextEditor?.document.getText()??'');}catch{}if(value?.administrative_scope?.index_id===target.index)break;assert.ok(Date.now()<end);await sleep(100);}while(true);
+                 assert.equal(value.administrative_scope.label,'Entire Index history and shared data-root totals');

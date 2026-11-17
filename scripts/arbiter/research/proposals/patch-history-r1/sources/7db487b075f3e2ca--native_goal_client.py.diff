@@ -1,0 +1,59 @@
+--- artifacts\advanced-split\models\selected-native-goal-driver-r1\source\native_goal_client.py
++++ artifacts\advanced-split\models\selected-native-goal-driver-r1\chunked-cal-r1\collector\native_goal_client.py
+@@ -66,7 +66,7 @@
+ class PinnedSession:
+     """Existing generated Node I2 client; opaque native W4 selection, no DTO mirror."""
+     def __init__(self,client,timeout):
+-        root=Path(__file__).resolve().parents[5]
++        root=Path(__file__).resolve().parents[6]
+         helper=Path(__file__).with_name('native_eval_session.cjs')
+         self.lines=queue.Queue(maxsize=4);self.closed=False
+         node=shutil.which('node')
+@@ -114,6 +114,14 @@
+         if result.get('kind')!='invoked' or result.get('id')!=identifier:raise ValueError('native persistent invocation identity differs')
+         return result
+ 
++    def refresh_scope(self, identifier, after_question_id, timeout):
++        request={'kind':'refresh_scope','id':identifier,'after_question_id':after_question_id}
++        self.process.stdin.write((json.dumps(request)+'\n').encode());self.process.stdin.flush()
++        result=self.message(timeout)
++        if result.get('kind')!='scope_refreshed' or result.get('id')!=identifier:
++            raise ValueError('explicit native same-scope refresh identity differs')
++        return result
++
+     def close(self):
+         if self.closed:return
+         self.closed=True
+@@ -135,7 +143,7 @@
+     def __init__(self,runtime_pair,control_root,index_id,output,fixture_ready=None,process_observer=None,*,index_bindings=None,session_factory=None):
+         self.pair=Path(runtime_pair).resolve();self.control=Path(control_root).resolve();self.index_id=index_id
+         self.output=Path(output).resolve()
+-        root=Path(__file__).resolve().parents[5]/'artifacts'
++        root=Path(__file__).resolve().parents[6]/'artifacts'
+         if self.output.exists() or not self.output.is_relative_to(root):raise ValueError('fresh private native call directory required')
+         self.binding=ResidentBinding(index_bindings,index_id=index_id) if index_bindings is not None else None
+         if fixture_ready and self.binding is None:raise ValueError('resident evaluation requires original native index bindings')
+@@ -231,6 +239,23 @@
+                 'stdout_sha256':hashlib.sha256(reply.stdout).hexdigest(),'stderr_sha256':hashlib.sha256(reply.stderr).hexdigest()}
+         (directory/(phase+'.json')).write_text(json.dumps(result,indent=2)+'\n')
+         return result
++
++    def prepare_question(self, after_question_id, timeout):
++        if not 0<timeout<=20:raise ValueError('original management ceiling exceeded')
++        self.verify();started=time.time_ns()//1000000
++        if self.session is None:
++            if after_question_id is not None:raise ValueError('new phase must start with initial scope grant')
++            self.session=self.session_factory(self,timeout)
++            grant=self.session.ready
++        else:
++            if after_question_id is None:raise ValueError('same-scope regrant requires a known completed question')
++            grant=self.session.refresh_scope('scope-after-'+after_question_id,after_question_id,timeout)
++        self.verify()
++        if grant.get('scope_result',{}).get('status')!='scope' or grant.get('launch_count')!=1:
++            raise ValueError('actual native same-scope grant absent')
++        return {'after_question_id':after_question_id,'started_unix_ms':started,
++                'completed_unix_ms':time.time_ns()//1000000,'original_native_scope_result':grant,
++                'management_deadline_seconds':timeout,'canonical_read':False}
+ 
+     def call(self,tool,arguments,remaining_canonical_seconds):
+         adapter_started=time.monotonic()

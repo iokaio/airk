@@ -1,0 +1,85 @@
+--- a/packages/vscode/src/test/explorerAssistanceNative.test.ts
++++ b/packages/vscode/src/test/explorerAssistanceNative.test.ts
+@@ -9,7 +9,7 @@
+ import { AssistanceIpcHost } from '../explorerAssistanceHost';
+ import { HandoffStore } from '../explorerHandoffs';
+ import { SuggestionStore } from '../explorerSuggestions';
+-import { McpStdioSession } from '../mcpStdioSession';
++import { McpStdioSession,McpSessionError } from '../mcpStdioSession';
+ import { assistanceEntry, unifiedEntry, UNIFIED_TOOLS } from '../model';
+ import { probeAssistance, probeMcp } from '../native';
+ import { NativeServiceFixture,NativeTestFailure } from './nativeServiceFixture';
+@@ -28,12 +28,16 @@
+     let phase='assistance setup';
+     try {
+         await fixture.requireResidentProjects(2);
+-        const spec = await fixture.register('assistance');
++        const catalogSpec = await fixture.register('assistance');
++        // This scenario qualifies legacy root discovery while stopped and
++        // multi-root routing; a reviewed catalog grant is a different contract.
++        const spec = {...catalogSpec,catalogSession:undefined};
+         const version = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'package.json'), 'utf8')).version;
+         // Node stands in for the editor's runtime here; the forwarder treats both the same apart from ELECTRON_RUN_AS_NODE.
+         await writeLaunchDescriptor(storage, extensionRoot, version, { path: process.execPath, electron: false });
+         const legacy = assistanceEntry(spec, launchDescriptorPath(storage))!;
+         const entry = unifiedEntry(spec, launchDescriptorPath(storage));
++        const catalogEntry = unifiedEntry(catalogSpec,launchDescriptorPath(storage));
+         const result = await probeAssistance(legacy, spec.root, 'native-test');
+         assert.deepEqual(result.tools, [...ASSISTANCE_TOOLS]);
+         assert.equal(result.version, version);
+@@ -54,6 +58,16 @@
+         phase='explicit Stop';
+         await fixture.run(['runtime','lifecycle','--install-dir',fixture.install],180000,
+             JSON.stringify({caller:key.caller,key:key.key,action:'stop',expected_instance:health.instance,runtime:health.runtime_sha256}));
++        phase='catalog entry refusal after Stop';
++        await assert.rejects(McpStdioSession.open({command:catalogEntry.command,args:[...catalogEntry.args],
++            cwd:catalogSpec.root,clientName:'native-test',clientVersion:version}),error=>{
++            assert.ok(error instanceof McpSessionError);assert.equal(error.code,'exited');
++            assert.match(error.message,/service_explicitly_stopped/);return true;
++        });
++        const stoppedInspection=await fixture.run(['runtime','inspect','--install-dir',fixture.install]);
++        assert.equal(record(stoppedInspection.lifecycle).explicitly_stopped,true);
++        assert.equal(record(stoppedInspection.lifecycle).pending,null);
++        assert.equal(record(stoppedInspection.selection).active,health.runtime_sha256);
+         phase='open unified endpoint after Stop';
+         session = (await McpStdioSession.open({ command: entry.command, args: [...entry.args], cwd: spec.root, clientName: 'native-test', clientVersion: version })).session;
+         const call = async (name: string, args = {}) => {
+@@ -95,7 +109,9 @@
+         assert.ok((await call('airk_search',{query:'cobaltmarker',mode:'lexical'})).hits.length>0,'hidden native alias remains callable');
+         assert.equal(inbox.list().length,1,'only the approved navigation proposal reached the Inbox');
+ 
+-        const other=await fixture.register('other');
++        const catalogOther=await fixture.register('other');
++        const other={...catalogOther,catalogSession:undefined};
++        assert.throws(()=>unifiedEntry(catalogSpec,undefined,[catalogOther]),/Catalog sessions support one explicit native selection/);
+         fs.writeFileSync(path.join(other.root,'other.txt'),'berylmarker isolated evidence');
+         await fixture.configure(other,{operation:'vectors',enabled:false});await fixture.job(other);
+         const multiple=unifiedEntry(spec,undefined,[other]);
+--- a/packages/vscode/src/test/native.test.ts
++++ b/packages/vscode/src/test/native.test.ts
+@@ -318,8 +318,23 @@
+         assert.equal((await fixture.publishedStatus(b)).files,1);
+         assert.equal(await fs.readFile(path.join(a.root,'a.py'),'utf8'),'def authenticate_fixture():\n    return True\n');
+         assert.equal(await fs.readFile(path.join(b.root,'b.py'),'utf8'),'def second_fixture():\n    return False\n');
+-        phase='usage report';
+-        const usage=record(JSON.parse(await capturedNativeText(a.command,[...launchArgs(a,'usage'),'report'],path.dirname(a.command),120000)));
++        phase='catalog-scoped usage refusal';
++        await assert.rejects(capturedNativeText(a.command,[...launchArgs(a,'usage'),'report'],path.dirname(a.command),120000),error=>{
++            assert.ok(error instanceof NativeProcessError);
++            assert.equal(error.code,1);assert.equal(error.killed,false);assert.equal(error.signal,null);
++            const refusal=record(JSON.parse(String(nativeFailureDetail(error).stdout)));
++            assert.deepEqual(refusal.error,{schema:1,code:'scoped_read_unavailable',retryable:false});
++            const scope=record(refusal.scope_observation),selected=a.catalogSession!;
++            assert.equal(scope.schema,1);assert.equal(scope.qualifier,'selected_subset');
++            assert.equal(scope.provenance,'user_reviewed_project_grant');
++            assert.deepEqual(scope.grant,{id:selected.grant_id,revision:selected.expected_grant_revision});
++            assert.deepEqual(scope,rebuilt.scope_observation,'refusal preserves the complete actual selected scope');
++            return true;
++        });
++        // The complete usage ledger requires explicit trusted Project administration.
++        // Keep the reviewed evidence selector's refusal above; do not broaden it.
++        phase='administrative usage report';
++        const usage=record(JSON.parse(await capturedNativeText(a.command,[...launchArgs({...a,catalogSession:undefined},'usage'),'report'],path.dirname(a.command),120000)));
+         assert.ok(Number(record(usage.report).calls)>0);
+         assert.equal(record((await fixture.run(['runtime','inspect','--install-dir',fixture.install])).managed_policy).lifecycle,'user_on_demand');
+     }catch(error){failure={error,context:{phase}};}finally{await fixture.dispose(failure);}

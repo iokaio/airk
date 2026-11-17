@@ -1,0 +1,38 @@
+--- reviewed-r3
++++ next-candidate
+@@ -2,7 +2,25 @@
+ from pathlib import Path
+ import os,sys,json,time,hashlib,stat,subprocess,importlib.util,resource,shutil
+ from datetime import datetime,timezone
+-C={'base': '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1', 'source': '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/source', 'out': '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/evidence/platform-integrated-dda749cb-r1', 'target': '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/source/target', 'commit': 'dda749cbdf77b3e2106003ff10a683ec3aec3202', 'raw_c7': {'sha256': 'b2ec68bd5157e3f72ba0f1ca9a7d695070b4dcd9b73308cdbdd222059a9454b6', 'files': 1928}, 'tree': 'dcc3a2c4afd876e58b8272d440e143fc96366dc0', 'manifest': '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/transfer/bridge-dda749cb-r1/source-bridge-manifest.json', 'manifest_sha256': '515a03c9236d262f95c19bfa39c5c139e08395669f2abdb465362560e4205d94', 'static_environment': '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/evidence/static-environment-r1.json', 'static_sha256': 'e811e5facb90d2f919dd18ae78326ca05e1497e59e004c562a6e36616897d9fa', 'python': '/Users/tylerjensen/airk-builds/timing-1.6.4.PutU1P/python/cpython-3.13.18-macos-aarch64-none/bin/python3.13', 'node': '/Users/tylerjensen/airk-builds/timing-1.6.4.PutU1P/tools/node-v24.15.0-darwin-arm64/bin/node', 'commands': [{'name': 'clippy', 'argv': ['/Users/tylerjensen/airk-builds/timing-1.6.4.PutU1P/python/cpython-3.13.18-macos-aarch64-none/bin/python3.13', '-B', '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/source/scripts/dev/receipt_runner.py', '--groups', 'native,harness,fixtures', '--tier', 'T3', '--out', '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/evidence/platform-integrated-dda749cb-r1/receipts', '--target-dir', '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/source/target', '--fixture-base', '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/evidence/platform-integrated-dda749cb-r1/fixtures/clippy', '--node', '/Users/tylerjensen/airk-builds/timing-1.6.4.PutU1P/tools/node-v24.15.0-darwin-arm64/bin/node', '--static-environment', '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/evidence/static-environment-r1.json', 'neo-dda749cb-clippy-r1', 'cargo', 'clippy', '--workspace', '--all-targets', '--all-features', '--locked', '--timings', '--', '-D', 'warnings']}, {'name': 'workspace-tests', 'argv': ['/Users/tylerjensen/airk-builds/timing-1.6.4.PutU1P/python/cpython-3.13.18-macos-aarch64-none/bin/python3.13', '-B', '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/source/scripts/dev/receipt_runner.py', '--groups', 'native,harness,fixtures', '--tier', 'T3', '--out', '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/evidence/platform-integrated-dda749cb-r1/receipts', '--target-dir', '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/source/target', '--fixture-base', '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/evidence/platform-integrated-dda749cb-r1/fixtures/workspace-tests', '--node', '/Users/tylerjensen/airk-builds/timing-1.6.4.PutU1P/tools/node-v24.15.0-darwin-arm64/bin/node', '--static-environment', '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/evidence/static-environment-r1.json', 'neo-dda749cb-workspace-tests-r1', 'cargo', 'test', '--workspace', '--all-features', '--locked', '--timings', '--tests', '--', '--test-threads=2']}, {'name': 'doctests', 'argv': ['/Users/tylerjensen/airk-builds/timing-1.6.4.PutU1P/python/cpython-3.13.18-macos-aarch64-none/bin/python3.13', '-B', '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/source/scripts/dev/receipt_runner.py', '--groups', 'native,harness,fixtures', '--tier', 'T3', '--out', '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/evidence/platform-integrated-dda749cb-r1/receipts', '--target-dir', '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/source/target', '--fixture-base', '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/evidence/platform-integrated-dda749cb-r1/fixtures/doctests', '--node', '/Users/tylerjensen/airk-builds/timing-1.6.4.PutU1P/tools/node-v24.15.0-darwin-arm64/bin/node', '--static-environment', '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/evidence/static-environment-r1.json', 'neo-dda749cb-doctests-r1', 'cargo', 'test', '--doc', '--workspace', '--all-features', '--locked', '--timings', '--', '--test-threads=2']}], 'cleanup': ['cargo', 'clean', '--manifest-path', '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/source/Cargo.toml', '--target-dir', '/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/source/target']}
++C=None
++
++def validate_config(value):
++ assert isinstance(value,dict) and value.get('status')=='frozen_root_commit'
++ for field,size in (('commit',40),('tree',40),('manifest_sha256',64),('static_sha256',64)):
++  item=value.get(field);assert isinstance(item,str) and len(item)==size and all(c in '0123456789abcdef' for c in item)
++ assert value['commit']!='dda749cbdf77b3e2106003ff10a683ec3aec3202', 'unchanged failed DDA input cannot replay'
++ seal=value.get('raw_c7');assert isinstance(seal,dict) and isinstance(seal.get('files'),int) and seal['files']>0
++ digest=seal.get('sha256');assert isinstance(digest,str) and len(digest)==64 and all(c in '0123456789abcdef' for c in digest)
++ assert [x['name'] for x in value.get('commands',[])]==['scoped-clippy','exact-admin-tls','workspace-tests','doctests']
++ return value
++
++def read_config():
++ actor();assert len(sys.argv)==2, 'one frozen Root config path required'
++ path=Path(sys.argv[1]);metadata=path.lstat()
++ assert path.is_absolute() and not path.is_symlink() and stat.S_ISREG(metadata.st_mode) and metadata.st_uid==501 and metadata.st_nlink==1 and metadata.st_size<=65536
++ with path.open('rb') as source:raw=source.read(65537)
++ assert len(raw)<=65536
++ return validate_config(json.loads(raw))
+ 
+ def actor():
+  assert os.getuid()==501==os.geteuid()==os.stat('/dev/console').st_uid and os.getuid()!=0
+@@ -31,6 +49,8 @@
+  return source,base
+ 
+ def main():
++ global C
++ C=read_config()
+  source,base=preflight();out=Path(C['out']);target=Path(C['target'])
+  assert not out.exists() and not target.exists();os.umask(0o077);out.mkdir(mode=0o700);(out/'logs').mkdir();(out/'receipts').mkdir();(out/'fixtures').mkdir()
+  soft,hard=resource.getrlimit(resource.RLIMIT_NOFILE);assert hard==resource.RLIM_INFINITY or hard>=4096

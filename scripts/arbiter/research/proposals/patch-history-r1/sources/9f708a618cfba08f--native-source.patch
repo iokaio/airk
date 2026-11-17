@@ -1,0 +1,798 @@
+--- a/crates/airk-retrieval/src/arbiter/compiler/CONTRACT.md
++++ b/crates/airk-retrieval/src/arbiter/compiler/CONTRACT.md
+@@ -75,3 +75,47 @@
+ and literal-backslash collision cases. Raw publisher delimiter controls alone
+ prove no escaped-caller parity. Relevance scores grant no sufficiency or source
+ authority.
++
++
++## Private F1/F2 exact-human-pair experiments
++
++The test-support Focus experiment owner exposes exactly publisher F0 and one
++software-evidence instruction F1. This is a private recipe enumeration, not a
++new production CompilerRecipe, profile, wire/state format or execution grant.
++Production compile_focus still selects the original publisher instruction.
++Both experiments call the same injective quoting, independently tokenized
++prefix/body/suffix, closed no2152/yes9693 catalog and no-crop static512 owner.
++The full original tuple and recipe/instruction/native-source identity bind
++every emitted model view. Changing the instruction requires a new census;
++old publisher512 fit/quality results do not transfer. Editing this source
++changes the existing full-source policy digest and requires fresh bindings.
++
++The emitter reads the pinned original Rust visibility report and frozen role/
++rights roster, checks all original question/function hashes and labels, and
++retains every denominator row for both recipes as compiled or explicit refusal.
++UNKNOWN rights and original overflow remain excluded from loss; fitting a
++prompt never grants human-label, rights or training authority. A paired
++comparison uses only the declared intersection with both refusal rosters
++reported, never refills or recrops. Original DATA/exposure/FINAL restrictions
++remain. Replay windows require the exact source/span/question/annotation and
++accepted private-rights claims; compiler fit cannot adjudicate those claims.
++
++Actual raw no/yes score observation calls an existing Scorer under the actual
++service-compute owner and the caller original deadline. It retains both raw
++finite logits and their bits, input/recipe identities and timings. It mints no
++query permit, native runtime admission, learned cutoff, probability calibration,
++terminal/evidence-role gold or qualification. An error after submission stops;
++no replay, refund or new deadline is permitted.
++
++Private training consumes only native-emitted prompt/tensor records, with full
++vocabulary CE applied to the authentic last-prefix position and original human
++yes/no target. Prompt tokens have no separate loss. Native inference width512,
++left padding/positions and source bytes stay unchanged. LoRA adapts only q/k/v/o
++projections under the frozen rank/rate/batch/epoch/seed/replay and original
++owned-process/GPU/time caps. Reference checkpoint/head remain complete; merge
++into a full checkpoint precedes a separate native export/numerical comparison.
++Pre-score instruction selection, measured resource probe and replay acceptance
++remain required. This code-only exploratory arm cannot establish broad Step8
++mixture, fresh FINAL, ranking/retention quality or promotion.
++
++General QASPER replay retains the original publisher instruction; only software code rows use the DEV-selected instruction. Both are native-emitted. Code comparisons use the identical selected instruction for original/adapted weights; replay is original human paragraph relevance, never complete evidence.
+--- a/crates/airk-retrieval/src/arbiter/compiler/focus/experiment/tests/emission.rs
++++ b/crates/airk-retrieval/src/arbiter/compiler/focus/experiment/tests/emission.rs
+@@ -0,0 +1,293 @@
++// SPDX-License-Identifier: Apache-2.0
++use super::*;
++use anyhow::Context;
++use std::{
++    collections::BTreeMap,
++    fs::{self, OpenOptions},
++    io::{Read, Write},
++    path::{Path, PathBuf},
++};
++#[derive(Deserialize)]
++struct Original {
++    id: String,
++    question: String,
++    document: String,
++    question_sha256: Sha256Digest,
++    document_sha256: Sha256Digest,
++    published_human_relevance_label: u8,
++}
++#[derive(Deserialize)]
++struct OldFocus {
++    compiled: Option<CompiledInput>,
++}
++#[derive(Deserialize)]
++struct NativeRow {
++    original: Original,
++    focus: OldFocus,
++}
++#[derive(Deserialize)]
++struct NativeReport {
++    schema: String,
++    complete: bool,
++    original_denominator: usize,
++    rows: Vec<NativeRow>,
++}
++#[derive(Deserialize)]
++struct Role {
++    id: String,
++    label: u8,
++    role: String,
++    rights_review: String,
++    eligibility: String,
++    question_sha256: Sha256Digest,
++    function_sha256: Sha256Digest,
++}
++fn env(name: &str) -> Result<String> {
++    Ok(std::env::var(name).with_context(|| format!("missing {name}"))?)
++}
++fn file(name: &str, max: u64) -> Result<(Vec<u8>, Sha256Digest)> {
++    let path = PathBuf::from(env(name)?);
++    ensure!(path.is_absolute(), "absolute sealed path required");
++    let meta = fs::symlink_metadata(&path)?;
++    ensure!(
++        meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= max,
++        "sealed native input type/size refused"
++    );
++    #[cfg(windows)]
++    {
++        use std::os::windows::fs::MetadataExt;
++        ensure!(
++            meta.file_attributes() & 0x400 == 0,
++            "native input reparse refused"
++        );
++    }
++    let mut bytes = Vec::new();
++    fs::File::open(path)?
++        .take(max + 1)
++        .read_to_end(&mut bytes)?;
++    ensure!(
++        bytes.len() as u64 == meta.len(),
++        "sealed native input length changed"
++    );
++    let digest = Sha256Digest::from_bytes(Sha256::digest(&bytes).into());
++    ensure!(
++        digest == env(&format!("{name}_SHA256"))?.parse()?,
++        "sealed native input hash differs"
++    );
++    Ok((bytes, digest))
++}
++fn same_view(a: &CompiledInput, b: &CompiledInput) -> bool {
++    a.prompt == b.prompt
++        && a.input_ids == b.input_ids
++        && a.attention_mask == b.attention_mask
++        && a.position_ids == b.position_ids
++        && a.decision_position == b.decision_position
++        && a.candidate_positions == b.candidate_positions
++        && a.option_mask == b.option_mask
++}
++fn replay_pairs(raw: &[u8]) -> Result<Vec<Pair>> {
++    let document: serde_json::Value = serde_json::from_slice(raw)?;
++    let rows = document
++        .as_array()
++        .or_else(|| document.get("rows").and_then(serde_json::Value::as_array))
++        .context("replay rows absent")?;
++    ensure!(
++        rows.len() == 45,
++        "entire fixed45replay candidate roster required; no refill"
++    );
++    rows.iter()
++        .map(|row| {
++            let text = |name: &str| -> Result<&str> {
++                row[name]
++                    .as_str()
++                    .with_context(|| format!("replay {name} absent"))
++            };
++            ensure!(
++                row["label"].as_u64() == Some(1)
++                    && text("rights_review")? == "PERMITTED_PRIVATE_RESEARCH_SCOPE",
++                "original reviewed positive replay required"
++            );
++            ensure!(
++                row["human_claim"]["complete_evidence_or_terminal_label"].as_bool() == Some(false),
++                "replay cannot claim complete evidence/terminal gold"
++            );
++            let source = &row["source_pin"];
++            let path = Path::new(source["path"].as_str().context("replay source path")?);
++            let size = source["bytes"].as_u64().context("replay source bytes")?;
++            ensure!(
++                path.is_absolute() && size <= 8 * 1024 * 1024,
++                "bounded absolute replay source required"
++            );
++            let meta = fs::symlink_metadata(path)?;
++            ensure!(
++                meta.is_file() && !meta.file_type().is_symlink() && meta.len() == size,
++                "replay source type/size differs"
++            );
++            #[cfg(windows)]
++            {
++                use std::os::windows::fs::MetadataExt;
++                ensure!(
++                    meta.file_attributes() & 0x400 == 0,
++                    "replay source reparse refused"
++                );
++            }
++            let mut bytes = Vec::new();
++            fs::File::open(path)?
++                .take(size + 1)
++                .read_to_end(&mut bytes)?;
++            ensure!(bytes.len() as u64 == size, "replay source grew");
++            let digest = Sha256Digest::from_bytes(Sha256::digest(&bytes).into());
++            ensure!(
++                digest
++                    == source["sha256"]
++                        .as_str()
++                        .context("replay source SHA")?
++                        .parse()?,
++                "replay source hash differs"
++            );
++            let start = usize::try_from(row["span"]["start"].as_u64().context("replay start")?)?;
++            let end = usize::try_from(row["span"]["end"].as_u64().context("replay end")?)?;
++            let window = std::str::from_utf8(&bytes)?
++                .get(start..end)
++                .context("original UTF8 replay span differs")?;
++            let window_sha256 = Sha256Digest::from_bytes(Sha256::digest(window.as_bytes()).into());
++            ensure!(
++                window_sha256 == text("window_sha256")?.parse()?,
++                "original replay window hash differs"
++            );
++            Ok(Pair {
++                id: text("id")?.into(),
++                question: text("question")?.into(),
++                document: window.into(),
++                question_sha256: text("question_sha256")?.parse()?,
++                document_sha256: window_sha256,
++                label: 1,
++                role: "REPLAY".into(),
++                rights_scope: text("rights_review")?.into(),
++            })
++        })
++        .collect()
++}
++#[test]
++#[ignore = "NN0 original1955human roster+actual selectedtokenizer+optional fixed45replay; compiler census only, no model"]
++fn emit_original_human_pair_instruction_census() -> Result<()> {
++    let started = Instant::now();
++    let deadline = started + Duration::from_secs(120);
++    let (report, report_sha) = file("AIRK_F2_NATIVE_REPORT", 256 * 1024 * 1024)?;
++    let native: NativeReport = serde_json::from_slice(&report)?;
++    ensure!(
++        native.schema == "airk.private.public-human-native-visibility-result/1"
++            && native.complete
++            && native.original_denominator == 1955
++            && native.rows.len() == 1955,
++        "complete original1955native report required"
++    );
++    let (roster, roster_sha) = file("AIRK_F2_ROSTER", 8 * 1024 * 1024)?;
++    let roles: Vec<Role> = serde_json::from_slice(&roster)?;
++    ensure!(
++        roles.len() == 1955,
++        "full frozen1955role denominator required"
++    );
++    let roles = roles
++        .into_iter()
++        .map(|x| (x.id.clone(), x))
++        .collect::<BTreeMap<_, _>>();
++    ensure!(roles.len() == 1955, "duplicate role identity");
++    let (tokenizer, tokenizer_sha) = file("AIRK_F2_TOKENIZER", 64 * 1024 * 1024)?;
++    let profile = super::super::super::compiler_profile(&tokenizer)?;
++    let compiler = Compiler::from_verified(&profile, &tokenizer)?;
++    let mut pairs = Vec::new();
++    let mut expected = Vec::new();
++    for row in native.rows {
++        let original = row.original;
++        let role = roles
++            .get(&original.id)
++            .context("original missing frozenrole")?;
++        ensure!(
++            role.label == original.published_human_relevance_label
++                && role.question_sha256 == original.question_sha256
++                && role.function_sha256 == original.document_sha256,
++            "original human label/question/function changed"
++        );
++        if role.eligibility == "NATIVE_FIT_SUPPORTED_PAIR" {
++            ensure!(
++                role.rights_review == "PERMITTED_PRIVATE_RESEARCH_SCOPE"
++                    && row.focus.compiled.is_some(),
++                "role native/rightsfit differs"
++            );
++        }
++        pairs.push(Pair {
++            id: original.id,
++            question: original.question,
++            document: original.document,
++            question_sha256: original.question_sha256,
++            document_sha256: original.document_sha256,
++            label: role.label,
++            role: role.role.clone(),
++            rights_scope: role.rights_review.clone(),
++        });
++        expected.push(row.focus.compiled);
++    }
++    let replay_pin = match (
++        std::env::var_os("AIRK_F2_REPLAY"),
++        std::env::var_os("AIRK_F2_REPLAY_SHA256"),
++    ) {
++        (None, None) => None,
++        (Some(_), Some(_)) => {
++            let (raw, pin) = file("AIRK_F2_REPLAY", 8 * 1024 * 1024)?;
++            pairs.extend(replay_pairs(&raw)?);
++            Some(pin)
++        }
++        _ => anyhow::bail!("replay path/hash must be supplied together"),
++    };
++    let census = census(&compiler, pairs, deadline)?;
++    for (row, old) in census.rows.iter().zip(&expected) {
++        match (row.publisher.input(), old.as_ref()) {
++            (Some(new), Some(old)) => ensure!(
++                same_view(new, old),
++                "publisher full native input view changed: {}",
++                row.pair.id
++            ),
++            (None, None) => (),
++            _ => anyhow::bail!("publisher original refusal status changed: {}", row.pair.id),
++        }
++    }
++    ensure!(
++        Instant::now() < deadline,
++        "original120scensus deadline expired"
++    );
++    let image = std::env::current_exe()?;
++    let mut hasher = Sha256::new();
++    let mut image_file = fs::File::open(&image)?;
++    let mut chunk = [0_u8; 1024 * 1024];
++    loop {
++        let n = image_file.read(&mut chunk)?;
++        if n == 0 {
++            break;
++        }
++        hasher.update(&chunk[..n]);
++        ensure!(
++            Instant::now() < deadline,
++            "original deadline expired hashing own image"
++        );
++    }
++    let image_sha = Sha256Digest::from_bytes(hasher.finalize().into());
++    let output = PathBuf::from(env("AIRK_F2_CENSUS_OUTPUT")?);
++    ensure!(output.is_absolute(), "absolute fresh output required");
++    let result = serde_json::json!({"schema":"airk.private.focus-instruction-emission/1","native_report":report_sha,"frozen_role_roster":roster_sha,"replay_roster":replay_pin,"tokenizer":tokenizer_sha,"native_image":{"path":image,"sha256":image_sha},"package_version":env!("CARGO_PKG_VERSION"),"compiler":profile,"census":census,"elapsed_us":started.elapsed().as_micros(),"model_requests_dispatched":false,"training_gradients":false,"qualification":false});
++    let bytes = serde_json::to_vec(&result)?;
++    ensure!(
++        bytes.len() <= 128 * 1024 * 1024 && Instant::now() < deadline,
++        "bounded original-deadline output required"
++    );
++    OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .open(output)?
++        .write_all(&bytes)?;
++    ensure!(
++        Instant::now() < deadline,
++        "original census deadline expired retaining output"
++    );
++    Ok(())
++}
+--- a/crates/airk-retrieval/src/arbiter/compiler/focus/experiment/tests.rs
++++ b/crates/airk-retrieval/src/arbiter/compiler/focus/experiment/tests.rs
+@@ -0,0 +1,128 @@
++// SPDX-License-Identifier: Apache-2.0
++use super::*;
++use std::time::Duration;
++fn compiler() -> Result<Compiler> {
++    let tokenizer = br#"{"version":"1.0","truncation":null,"padding":null,"added_tokens":[],"normalizer":null,"pre_tokenizer":null,"post_processor":null,"decoder":null,"model":{"type":"WordLevel","vocab":{"[UNK]":0,"no":2152,"yes":9693,"<|endoftext|>":151643,"<|im_start|>":151644,"<|im_end|>":151645},"unk_token":"[UNK]"}}"#;
++    let bytes = crate::arbiter::compiler::focus::compiler_profile(tokenizer)?;
++    Compiler::from_verified(&bytes, tokenizer)
++}
++fn pair() -> Pair {
++    Pair {
++        id: "literal-original-pair".into(),
++        question: "question".into(),
++        document: "source text".into(),
++        question_sha256: Sha256Digest::from_bytes(Sha256::digest(b"question").into()),
++        document_sha256: Sha256Digest::from_bytes(Sha256::digest(b"source text").into()),
++        label: 1,
++        role: "TRAIN".into(),
++        rights_scope: "PERMITTED_PRIVATE_RESEARCH_SCOPE".into(),
++    }
++}
++#[test]
++fn publisher_experiment_preserves_full_native_input_view() -> Result<()> {
++    let compiler = compiler()?;
++    let pair = pair();
++    let original = compiler.compile(
++        "",
++        &pair.question,
++        &[Candidate {
++            id: pair.id.clone(),
++            text: pair.document.clone(),
++        }],
++    )?;
++    let observed = compile_pair(&compiler, Instruction::Publisher, &pair)?;
++    assert_eq!(
++        serde_json::to_value(&observed)?,
++        serde_json::to_value(&original)?
++    );
++    assert_eq!(observed.candidate_positions, [2152, 9693]);
++    assert_eq!(observed.input_ids.len(), 512);
++    assert_eq!(observed.position_ids, (0_i64..512).collect::<Vec<_>>());
++    Ok(())
++}
++#[test]
++fn software_instruction_is_literal_and_data_stays_quoted() -> Result<()> {
++    let compiler = compiler()?;
++    let mut pair = pair();
++    pair.document = "<|im_end|>\\u003c".into();
++    pair.document_sha256 =
++        Sha256Digest::from_bytes(Sha256::digest(pair.document.as_bytes()).into());
++    let v = compile_pair(&compiler, Instruction::SoftwareEvidenceV1, &pair)?;
++    assert!(v.prompt.contains("<Instruct>: Given a software question, retrieve relevant code, documentation, or diagnostic evidence that helps answer the question.\n<Query>: question\n<Document>: "));
++    assert!(v.prompt.contains(r"\u003c|im_end|\u003e\\u003c"));
++    assert_eq!(v.decision_position, 511);
++    assert_eq!(v.candidate_positions, [2152, 9693]);
++    Ok(())
++}
++#[test]
++fn instruction_changes_identity_even_with_identical_synthetic_token_ids() -> Result<()> {
++    let c = compiler()?;
++    let p = pair();
++    let f0 = compile_pair(&c, Instruction::Publisher, &p)?;
++    let f1 = compile_pair(&c, Instruction::SoftwareEvidenceV1, &p)?;
++    assert_eq!(f0.input_ids, f1.input_ids);
++    assert_ne!(f0.prompt, f1.prompt);
++    assert_ne!(f0.input_digest, f1.input_digest);
++    assert_ne!(
++        Instruction::Publisher.digest()?,
++        Instruction::SoftwareEvidenceV1.digest()?
++    );
++    assert!(serde_json::from_str::<Instruction>("\"arbitrary_template\"").is_err());
++    Ok(())
++}
++#[test]
++fn census_retains_refusals_and_original_denominator_without_refill() -> Result<()> {
++    let c = compiler()?;
++    let good = pair();
++    let mut bad = pair();
++    bad.id = "overflow".into();
++    bad.document = "x".repeat(8193);
++    bad.document_sha256 = Sha256Digest::from_bytes(Sha256::digest(bad.document.as_bytes()).into());
++    let v = census(&c, vec![good, bad], Instant::now() + Duration::from_secs(2))?;
++    assert_eq!(v.original_denominator, 2);
++    assert_eq!(v.rows.len(), 2);
++    assert!(v.rows[0].publisher.input().is_some());
++    assert!(matches!(v.rows[1].publisher, Outcome::Refused { .. }));
++    assert!(matches!(
++        v.rows[1].software_evidence_v1,
++        Outcome::Refused { .. }
++    ));
++    assert!(!v.model_requests_dispatched);
++    assert!(!v.qualification);
++    Ok(())
++}
++#[test]
++fn duplicate_changed_unknown_and_expired_inputs_refuse() -> Result<()> {
++    let c = compiler()?;
++    let p = pair();
++    assert!(
++        census(
++            &c,
++            vec![p.clone(), p.clone()],
++            Instant::now() + Duration::from_secs(2)
++        )
++        .is_err()
++    );
++    let mut bad = p.clone();
++    bad.label = 2;
++    assert!(compile_pair(&c, Instruction::Publisher, &bad).is_err());
++    let mut bad = p.clone();
++    bad.question.push('x');
++    assert!(compile_pair(&c, Instruction::Publisher, &bad).is_err());
++    assert!(census(&c, vec![p], Instant::now() - Duration::from_secs(1)).is_err());
++    Ok(())
++}
++#[test]
++fn raw_no_yes_readout_preserves_order_signed_zero_and_finite_bits() -> Result<()> {
++    let c = compiler()?;
++    let input = compile_pair(&c, Instruction::Publisher, &pair())?;
++    let v = raw_scores(&input, Instruction::Publisher, &[-0.0, 3.25], 7)?;
++    assert_eq!(v.no_bits, 0x80000000);
++    assert_eq!(v.yes_bits, 3.25_f32.to_bits());
++    assert_eq!(v.elapsed_us, 7);
++    assert!(raw_scores(&input, Instruction::Publisher, &[1.0], 0).is_err());
++    assert!(raw_scores(&input, Instruction::Publisher, &[f32::NAN, 1.0], 0).is_err());
++    Ok(())
++}
++
++mod emission;
+--- a/crates/airk-retrieval/src/arbiter/compiler/focus/experiment.rs
++++ b/crates/airk-retrieval/src/arbiter/compiler/focus/experiment.rs
+@@ -0,0 +1,283 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Private test-support prompt experiments. No product recipe/admission is added.
++use super::{Candidate, CompiledInput, Compiler, INSTRUCTION};
++use airk_core::{
++    arbiter::{Readout, Stage},
++    identity::{Sha256Digest, framed_digest},
++};
++use anyhow::{Result, ensure};
++use serde::{Deserialize, Serialize};
++use sha2::{Digest, Sha256};
++use std::{collections::BTreeSet, time::Instant};
++
++pub const SCHEMA: &str = "airk.private.focus-instruction-census/1";
++const SOFTWARE: &str = "Given a software question, retrieve relevant code, documentation, or diagnostic evidence that helps answer the question.";
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum Instruction {
++    Publisher,
++    SoftwareEvidenceV1,
++}
++impl Instruction {
++    pub fn text(self) -> &'static str {
++        match self {
++            Self::Publisher => INSTRUCTION,
++            Self::SoftwareEvidenceV1 => SOFTWARE,
++        }
++    }
++    pub fn digest(self) -> Result<Sha256Digest> {
++        let source = std::str::from_utf8(include_bytes!("experiment.rs"))?.replace("\r\n", "\n");
++        ensure!(!source.contains('\r'), "lone CR in experiment source");
++        Ok(framed_digest(
++            b"airk.private.focus-instruction-recipe/1",
++            &[
++                &serde_json::to_vec(&self)?,
++                self.text().as_bytes(),
++                source.as_bytes(),
++                super::policy_digest()?.as_bytes(),
++            ],
++        ))
++    }
++}
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct Pair {
++    pub id: String,
++    pub question: String,
++    pub document: String,
++    pub question_sha256: Sha256Digest,
++    pub document_sha256: Sha256Digest,
++    pub label: u8,
++    pub role: String,
++    pub rights_scope: String,
++}
++impl Pair {
++    fn validate(&self) -> Result<()> {
++        ensure!(self.label <= 1, "unknown relevance is not a negative");
++        ensure!(
++            Sha256Digest::from_bytes(Sha256::digest(self.question.as_bytes()).into())
++                == self.question_sha256
++                && Sha256Digest::from_bytes(Sha256::digest(self.document.as_bytes()).into())
++                    == self.document_sha256,
++            "original human question/window hash differs"
++        );
++        ensure!(
++            [
++                "TRAIN",
++                "DEV",
++                "CAL_RESERVED",
++                "CONFIRMATION_RESERVED",
++                "RESEARCH_TEST_RESERVED",
++                "QUARANTINE_SOURCE_PARSE_OR_EXPOSURE",
++                "NO_ADMITTED_COMPONENT",
++                "REPLAY"
++            ]
++            .contains(&self.role.as_str()),
++            "unknown frozen experiment role"
++        );
++        ensure!(
++            !self.rights_scope.is_empty() && self.rights_scope.len() <= 128,
++            "rights scope absent"
++        );
++        Ok(())
++    }
++}
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
++pub enum Outcome {
++    Compiled { input: CompiledInput },
++    Refused { reason: String },
++}
++impl Outcome {
++    pub fn input(&self) -> Option<&CompiledInput> {
++        match self {
++            Self::Compiled { input } => Some(input),
++            Self::Refused { .. } => None,
++        }
++    }
++}
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct Observation {
++    pub pair: Pair,
++    pub publisher: Outcome,
++    pub software_evidence_v1: Outcome,
++}
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct Census {
++    pub schema: String,
++    pub publisher_recipe: Sha256Digest,
++    pub software_recipe: Sha256Digest,
++    pub compiler_sha256: Sha256Digest,
++    pub tokenizer_sha256: Sha256Digest,
++    pub original_denominator: usize,
++    pub rows: Vec<Observation>,
++    pub qualification: bool,
++    pub model_requests_dispatched: bool,
++}
++
++pub fn compile_pair(
++    compiler: &Compiler,
++    instruction: Instruction,
++    pair: &Pair,
++) -> Result<CompiledInput> {
++    pair.validate()?;
++    ensure!(
++        compiler.limits() == (512, 2),
++        "experiment requires exact native512 profile"
++    );
++    compiler.compile_focus_instruction(
++        "",
++        &pair.question,
++        &[Candidate {
++            id: pair.id.clone(),
++            text: pair.document.clone(),
++        }],
++        instruction.text(),
++    )
++}
++
++pub fn census(compiler: &Compiler, pairs: Vec<Pair>, deadline: Instant) -> Result<Census> {
++    ensure!(
++        !pairs.is_empty() && pairs.len() <= 4000,
++        "full bounded original population required"
++    );
++    let mut ids = BTreeSet::new();
++    for pair in &pairs {
++        ensure!(
++            ids.insert(pair.id.clone()),
++            "duplicate original experiment identity"
++        );
++        pair.validate()?;
++    }
++    let observe = |pair: &Pair, recipe| -> Result<Outcome> {
++        ensure!(
++            Instant::now() < deadline,
++            "original census deadline expired"
++        );
++        let result = match compile_pair(compiler, recipe, pair) {
++            Ok(input) => Outcome::Compiled { input },
++            Err(error) => Outcome::Refused {
++                reason: format!("{error:#}"),
++            },
++        };
++        ensure!(
++            Instant::now() < deadline,
++            "original census deadline expired after compilation"
++        );
++        Ok(result)
++    };
++    let mut rows = Vec::with_capacity(pairs.len());
++    for pair in pairs {
++        let publisher = observe(&pair, Instruction::Publisher)?;
++        let software_evidence_v1 = observe(&pair, Instruction::SoftwareEvidenceV1)?;
++        rows.push(Observation {
++            pair,
++            publisher,
++            software_evidence_v1,
++        });
++    }
++    let result = Census {
++        schema: SCHEMA.into(),
++        publisher_recipe: Instruction::Publisher.digest()?,
++        software_recipe: Instruction::SoftwareEvidenceV1.digest()?,
++        compiler_sha256: Sha256Digest::from_bytes(Sha256::digest(&compiler.profile_bytes).into()),
++        tokenizer_sha256: compiler.profile.tokenizer,
++        original_denominator: rows.len(),
++        rows,
++        qualification: false,
++        model_requests_dispatched: false,
++    };
++    ensure!(
++        Instant::now() < deadline,
++        "original census deadline expired retaining recipe identity"
++    );
++    Ok(result)
++}
++
++#[derive(Clone, Debug, Serialize)]
++pub struct RawScores {
++    pub input_digest: Sha256Digest,
++    pub instruction: Instruction,
++    pub recipe: Sha256Digest,
++    pub no_logit: f32,
++    pub yes_logit: f32,
++    pub no_bits: u32,
++    pub yes_bits: u32,
++    pub elapsed_us: u64,
++}
++fn raw_scores(
++    input: &CompiledInput,
++    instruction: Instruction,
++    scores: &[f32],
++    elapsed_us: u64,
++) -> Result<RawScores> {
++    ensure!(
++        input.input_ids.len() == 512
++            && input.candidate_positions == [2152, 9693]
++            && input.option_mask == [true, true]
++            && input.decision_position == 511,
++        "raw experiment readout differs from native512 no/yes ABI"
++    );
++    ensure!(
++        scores.len() == 2 && scores.iter().all(|x| x.is_finite()),
++        "raw finite no/yes logits required"
++    );
++    Ok(RawScores {
++        input_digest: input.input_digest,
++        instruction,
++        recipe: instruction.digest()?,
++        no_logit: scores[0],
++        yes_logit: scores[1],
++        no_bits: scores[0].to_bits(),
++        yes_bits: scores[1].to_bits(),
++        elapsed_us,
++    })
++}
++/// Caller retains actual native ServiceComputeScope and the admitted Scorer.
++/// No error is retried and no serialized record constructs runtime authority.
++pub fn score_raw(
++    scorer: &crate::arbiter::runtime::Scorer,
++    compiler: &Compiler,
++    pair: &Pair,
++    instruction: Instruction,
++    deadline: Instant,
++) -> Result<RawScores> {
++    ensure!(
++        scorer.profile().stage == Some(Stage::Focus)
++            && scorer.profile().abi.readout == Readout::FocusYesNo,
++        "actual Focus scorer required"
++    );
++    ensure!(Instant::now() < deadline, "original score deadline expired");
++    ensure!(
++        Sha256Digest::from_bytes(Sha256::digest(&compiler.profile_bytes).into())
++            == scorer.profile().compiler,
++        "experiment compiler differs from actual scorer compiler asset"
++    );
++    let input = compile_pair(compiler, instruction, pair)?;
++    ensure!(
++        Instant::now() < deadline,
++        "original score deadline expired during compilation"
++    );
++    let started = Instant::now();
++    let scores = scorer.score_with_deadline(&input, deadline)?;
++    ensure!(
++        Instant::now() < deadline,
++        "original score deadline expired after submission"
++    );
++    let result = raw_scores(
++        &input,
++        instruction,
++        &scores,
++        u64::try_from(started.elapsed().as_micros())?,
++    )?;
++    ensure!(
++        Instant::now() < deadline,
++        "original score deadline expired during observation"
++    );
++    Ok(result)
++}
++
++#[cfg(test)]
++mod tests;
+--- a/crates/airk-retrieval/src/arbiter/compiler/focus.rs
++++ b/crates/airk-retrieval/src/arbiter/compiler/focus.rs
+@@ -108,6 +108,16 @@
+         question: &str,
+         options: &[Candidate],
+     ) -> Result<CompiledInput> {
++        self.compile_focus_instruction(state, question, options, INSTRUCTION)
++    }
++
++    fn compile_focus_instruction(
++        &self,
++        state: &str,
++        question: &str,
++        options: &[Candidate],
++        instruction: &str,
++    ) -> Result<CompiledInput> {
+         validate_profile(&self.profile)?;
+         ensure!(
+             state.is_empty() && options.len() == 1,
+@@ -126,7 +136,7 @@
+         );
+         let original = serde_json::to_vec(&(state, question, options))?;
+         let body = format!(
+-            "<Instruct>: {INSTRUCTION}\n<Query>: {}\n<Document>: {}",
++            "<Instruct>: {instruction}\n<Query>: {}\n<Document>: {}",
+             model_view(question),
+             model_view(&option.text)
+         );
+@@ -203,3 +213,6 @@
+ 
+ #[cfg(test)]
+ mod tests;
++
++#[cfg(any(test, feature = "test-support"))]
++pub mod experiment;

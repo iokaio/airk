@@ -1,0 +1,141 @@
+--- crates\airk-service\src\service_runtime\arbiter\lifecycle.rs
++++ crates\airk-service\src\service_runtime\arbiter\lifecycle.rs
+@@ -18,6 +18,8 @@
+     cancel: CancellationToken,
+     handle: Option<Handle>,
+     pending: Option<PreparedLaunch>,
++    #[cfg(feature = "test-support")]
++    warm_observer: Option<super::warm_observer::Observer>,
+ }
+ impl Default for State {
+     fn default() -> Self {
+@@ -31,6 +33,8 @@
+             cancel: CancellationToken::new(),
+             handle: None,
+             pending: None,
++            #[cfg(feature = "test-support")]
++            warm_observer: None,
+         }
+     }
+ }
+@@ -278,6 +282,9 @@
+     source: Box<dyn airk_retrieval::arbiter::runtime::AssetSource + Send>,
+     context: WarmContext<'_>,
+ ) -> Result<()> {
++    #[cfg(feature = "test-support")]
++    let observation = WarmCapture::capture(&context, profile.description().manifest);
++    let result = async {
+     let WarmContext {
+         stage,
+         expected,
+@@ -423,6 +430,12 @@
+         return Err(error);
+     }
+     Ok(())
++    }.await;
++    #[cfg(feature = "test-support")]
++    if let Some(observation) = observation {
++        observation.finish(&result);
++    }
++    result
+ }
+ 
+ fn cached_intent_eligible(
+@@ -2145,3 +2158,97 @@
+         Ok(())
+     }
+ }
++
++#[cfg(feature = "test-support")]
++pub(super) fn observe_warm(
++    shared: &Arc<Mutex<State>>,
++    observer: super::warm_observer::Observer,
++) -> Result<()> {
++    shared
++        .lock()
++        .map_err(|_| anyhow::anyhow!("warm observer lifecycle unavailable"))?
++        .warm_observer = Some(observer);
++    Ok(())
++}
++#[cfg(feature = "test-support")]
++struct WarmCapture {
++    observer: super::warm_observer::Observer,
++    stage: Stage,
++    expected: Configuration,
++    manifest: Sha256Digest,
++    serial: u64,
++    shared: Arc<Mutex<State>>,
++    configuration: Arc<airk_store::service::arbiter::ConfigurationStore>,
++    cancel: CancellationToken,
++    captured_configure_revision: u64,
++    _guard: super::warm_observer::Guard,
++}
++#[cfg(feature = "test-support")]
++impl WarmCapture {
++    fn capture(context: &WarmContext<'_>, manifest: Sha256Digest) -> Option<Self> {
++        let state = context.shared.lock().ok()?;
++        let observer = state.warm_observer.clone()?;
++        let captured_configure_revision = state.accepted_configure_revision;
++        drop(state);
++        let guard = observer.begin()?;
++        Some(Self {
++            observer,
++            stage: context.stage,
++            expected: context.expected.clone(),
++            manifest,
++            serial: context.serial,
++            shared: context.shared.clone(),
++            configuration: context.configuration.clone(),
++            cancel: context.cancel.clone(),
++            captured_configure_revision,
++            _guard: guard,
++        })
++    }
++    fn finish(self, result: &Result<()>) {
++        let actual = self.configuration.load().ok();
++        let Ok(state) = self.shared.lock() else {
++            self.observer.lost();
++            return;
++        };
++        let (current, accepted, phase, handle) = (
++            state.serial,
++            state.accepted_configure_revision,
++            state.phase,
++            state.handle.clone(),
++        );
++        drop(state);
++        let native = handle.and_then(|handle| handle.observation_for(self.stage).ok());
++        let observed = std::time::SystemTime::now()
++            .duration_since(std::time::UNIX_EPOCH)
++            .ok()
++            .and_then(|duration| u64::try_from(duration.as_millis()).ok());
++        let Some(observed) = observed else {
++            self.observer.lost();
++            return;
++        };
++        self.observer.emit(super::warm_observer::Record {
++            schema: "airk.private.arbiter-warm-completion/1".into(),
++            observer_id: self.observer.id(),
++            sequence: 0,
++            observed_unix_ms: observed,
++            stage: self.stage,
++            profile_manifest: self.manifest,
++            expected_configuration: self.expected,
++            actual_configuration: actual,
++            lifecycle_serial: self.serial,
++            current_lifecycle_serial: current,
++            accepted_configure_revision: accepted,
++            phase,
++            captured_configure_revision: self.captured_configure_revision,
++            active_profile: native.as_ref().and_then(|value| value.active_profile),
++            native_configuration_revision: native.and_then(|value| value.configuration_revision),
++            canceled: self.cancel.is_cancelled(),
++            operation_succeeded: result.is_ok(),
++            outcome: super::warm_observer::Outcome::Failed,
++            error: result
++                .as_ref()
++                .err()
++                .map(|error| format!("{error:#}").chars().take(1024).collect()),
++        });
++    }
++}

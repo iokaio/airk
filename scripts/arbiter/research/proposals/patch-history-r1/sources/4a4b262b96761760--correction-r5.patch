@@ -1,0 +1,120 @@
+--- r4/check_shapes.py
++++ r5/check_shapes.py
+@@ -20,6 +20,13 @@
+     from onnxruntime.tools.symbolic_shape_infer import SymbolicShapeInference
+     from transformer import NS
+     original=model
++    # Pinned Compact metadata: external tensors are learned Float weights,
++    # never shape-value constants. Keep dtype/dims, prohibit external value IO.
++    external_names={v.name for v in original.graph.initializer if v.data_location==onnx.TensorProto.EXTERNAL}
++    need(len(external_names)==254 and all(v.data_type==onnx.TensorProto.FLOAT and all(d>0 for d in v.dims)
++        for v in original.graph.initializer if v.name in external_names),'Exact external learned-weight metadata required')
++    need(not any(a.HasField('t') and a.t.data_location==onnx.TensorProto.EXTERNAL
++        for n in original.graph.node for a in n.attribute),'External Constant attribute values not supported')
+     by_name={n.name:n for n in model.graph.node}
+     gqa=[n for n in model.graph.node if n.op_type=='GroupQueryAttention']
+     need(len(gqa)==28 and [n.name for n in model.graph.output]==['scores'],'Exact internal GQA/scores-only boundary required')
+@@ -41,7 +48,7 @@
+         # Extend the instance dispatcher only on an inference copy. The pinned
+         # official no-past handler omits cache types; resolve them BEFORE its
+         # enclosing global all-output completeness check, never after failure.
+-        from gate_protocol import cache_contract,dispatch_with_cache,infer_complete
++        from gate_protocol import cache_contract,dispatch_with_cache,infer_complete,install_external_value_guard
+         engine=SymbolicShapeInference(2**31-1,False,False,0)
+         stock=engine.dispatcher_['GroupQueryAttention']
+         def infer_gqa(node):
+@@ -55,6 +62,7 @@
+             dispatch_with_cache(contract,lambda:stock(node),publish)
+         engine.dispatcher_['GroupQueryAttention']=infer_gqa
+         engine._preprocess(candidate)
++        value_policy=install_external_value_guard(engine,external_names)
+         inferred=infer_complete(engine)
+         known={v.name:v for v in list(inferred.graph.input)+list(inferred.graph.value_info)+list(inferred.graph.output)}
+         witnesses=[]
+@@ -79,5 +87,5 @@
+                 'cache_shapes_resolved_by_pinned_cpu_compute':[cache,cache],
+                 'actual_allocation_proof':'pending native profiling; annotations are not allocation'})
+         need(shape(known['scores'])==(onnx.TensorProto.FLOAT,[1,options]),'Final trained readout shape unresolved/wrong')
+-        result.append({'tokens':tokens,'options':options,'all28_resolved':len(witnesses)==28,'witnesses':witnesses})
++        result.append({'tokens':tokens,'options':options,'all28_resolved':len(witnesses)==28,'external_weight_value_policy':value_policy,'witnesses':witnesses})
+     return result
+--- r4/gate_protocol.py
++++ r5/gate_protocol.py
+@@ -68,3 +68,24 @@
+         and len(user['inputs'])==2 and user['inputs'][1]==outputs[0]
+         and user['name'] in removed,'Constant must be axis of removed attention-only Unsqueeze')
+     return int(match.group(1))
++
++def install_external_value_guard(engine,external_names):
++    """Keep true tensor metadata; optional external values are unknown, never read."""
++    external_names=frozenset(external_names)
++    need(all(name in engine.initializers_ and name in engine.known_vi_ for name in external_names),
++         'External weight roster must retain actual initializer and shape metadata')
++    stock_get=engine._get_value;stock_try=engine._try_get_value
++    observed={'external_optional_values_unknown':0,'external_required_values_refused':0}
++    def get_value(node,index):
++        name=node.input[index]
++        if name in external_names:
++            observed['external_required_values_refused']+=1
++            raise ValueError('Shape inference requires unavailable external weight VALUE: '+name+' at '+node.name)
++        return stock_get(node,index)
++    def try_value(node,index):
++        if index<len(node.input) and node.input[index] in external_names:
++            observed['external_optional_values_unknown']+=1
++            return None
++        return stock_try(node,index)
++    engine._get_value=get_value;engine._try_get_value=try_value
++    return observed
+--- /dev/null
++++ r5/test_external_values.py
+@@ -0,0 +1,50 @@
++"""Literal external initializer value controls; no learned values or neural imports."""
++import unittest
++from types import SimpleNamespace
++from gate_protocol import install_external_value_guard,infer_complete
++
++class ExternalValues(unittest.TestCase):
++    def engine(self):
++        e=SimpleNamespace(initializers_={'scorer.text.layers.0.input_layernorm.weight':object(),'shape_literal':object()},
++            known_vi_={'scorer.text.layers.0.input_layernorm.weight':(1,[2048]),'shape_literal':(7,[1])},reads=[])
++        def get(node,i):
++            name=node.input[i];e.reads.append(name)
++            if name=='scorer.text.layers.0.input_layernorm.weight':raise FileNotFoundError('model.onnx.data absent in fresh shape CWD')
++            return [17]
++        def optional(node,i):
++            if i>=len(node.input):return None
++            if node.input[i] in e.initializers_:return e._get_value(node,i)
++            return None
++        e._get_value=get;e._try_get_value=optional
++        return e
++    def test_original_optional_lookup_attempts_missing_external_file(self):
++        e=self.engine();node=SimpleNamespace(name='/scorer/layers.0/input_layernorm/Mul',input=['activation','scorer.text.layers.0.input_layernorm.weight'])
++        with self.assertRaises(FileNotFoundError):e._try_get_value(node,1)
++    def test_optional_unknown_preserves_true_shapes_and_skips_value_compute(self):
++        e=self.engine();original=e.known_vi_;policy=install_external_value_guard(e,{'scorer.text.layers.0.input_layernorm.weight'})
++        node=SimpleNamespace(name='/scorer/layers.0/input_layernorm/Mul',input=['activation','scorer.text.layers.0.input_layernorm.weight'])
++        values=[e._try_get_value(node,i) for i in range(2)]
++        self.assertEqual(values,[None,None]);self.assertFalse(all(v is not None for v in values))
++        self.assertEqual(e.reads,[]);self.assertIs(e.known_vi_,original)
++        self.assertEqual(e.known_vi_['scorer.text.layers.0.input_layernorm.weight'],(1,[2048]))
++        self.assertEqual(policy,{'external_optional_values_unknown':1,'external_required_values_refused':0})
++    def test_required_external_expand_value_refuses_before_read(self):
++        e=self.engine();policy=install_external_value_guard(e,{'scorer.text.layers.0.input_layernorm.weight'})
++        node=SimpleNamespace(name='Expand',input=['data','scorer.text.layers.0.input_layernorm.weight'])
++        with self.assertRaisesRegex(ValueError,'requires unavailable external weight VALUE'):e._get_value(node,1)
++        self.assertEqual(e.reads,[]);self.assertEqual(policy['external_required_values_refused'],1)
++    def test_inline_shape_values_and_missing_optional_inputs_are_unchanged(self):
++        e=self.engine();install_external_value_guard(e,{'scorer.text.layers.0.input_layernorm.weight'})
++        node=SimpleNamespace(name='Reshape',input=['data','shape_literal'])
++        self.assertEqual(e._try_get_value(node,1),[17]);self.assertEqual(e._get_value(node,1),[17])
++        self.assertIsNone(e._try_get_value(node,2));self.assertEqual(e.reads,['shape_literal','shape_literal'])
++    def test_external_roster_requires_retained_shape_metadata(self):
++        e=self.engine();del e.known_vi_['scorer.text.layers.0.input_layernorm.weight']
++        with self.assertRaises(ValueError):install_external_value_guard(e,{'scorer.text.layers.0.input_layernorm.weight'})
++    def test_unresolved_global_shape_still_refuses(self):
++        e=self.engine();install_external_value_guard(e,{'scorer.text.layers.0.input_layernorm.weight'})
++        e.run_=True;e.out_mp_='inference copy'
++        def step():e.run_=False;return False
++        e._infer_impl=step;e._update_output_from_vi=lambda:None
++        with self.assertRaisesRegex(ValueError,'Incomplete'):infer_complete(e)
++if __name__=='__main__':unittest.main()

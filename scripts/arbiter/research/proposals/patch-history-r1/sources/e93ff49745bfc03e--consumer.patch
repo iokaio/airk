@@ -1,0 +1,737 @@
+--- a/crates/airk-retrieval/src/arbiter/publication/CONTRACT.md
++++ b/crates/airk-retrieval/src/arbiter/publication/CONTRACT.md
+@@ -0,0 +1,33 @@
++# Selected compiled publication source projection
++
++The immutable compiled catalog remains the authority for the complete exact
++three selected profiles, their native policies, final qualification/task/target
++and CPU fit, logical assets and all Core-validated immutable source locations.
++The compiled catalog SHA authenticates HF authority even though the legacy
++GitHub publication file map does not repeat those files.
++
++Publication keeps schema airk.arbiter.publication/1 and exactly three qualified
++model slots. Its assets map contains ONLY files whose approved part primary or
++actual declared backup is an official GitHub release location at the requested
++native release tag. HF-only parts add no GitHub filename. A GitHub backup counts
++regardless of primary origin. Duplicate GitHub filenames must have equal byte
++length/hash; a foreign GitHub tag or Core-rejected origin/backup refuses. The
++public github_part_filenames hook is the same owner used by Service final-source
++slice projection; consumers never guess filenames or promote source URLs.
++
++There is no empty-catalog/count relaxation, no synthetic qualification transfer,
++no changed task/ABI/policy rules and no source or download-availability claim.
++The new Core origin/backup decision and Rust semantic fixtures must pass before
++these consumers mount. Synthetic profiles and URLs in tests are structural
++controls only and are explicitly not public artifact availability evidence.
++
++The existing positive/negative selected-three fixture assertions survive through
++a private test-helper extraction. Additional controls cover three HF-only
++profiles (zero GH assets/full catalog hash), GH backup projection, foreign-tag
++backup refusal, missing selected slot and unapproved backup. Actual production
++fixture emission remains ignored until the three profiles genuinely qualify.
++
++The new projection test can emit the native hypothetical semantic fixture using
++AIRK_ARBITER_PUBLICATION_SOURCE_CASES_OUTPUT. It records HF primary with zero GH
++files and HF primary with a declared GH backup, plus tag/slot refusals. No actual
++fixture emission has occurred during private preparation.
+--- a/crates/airk-retrieval/src/arbiter/publication/source_tests.rs
++++ b/crates/airk-retrieval/src/arbiter/publication/source_tests.rs
+@@ -0,0 +1,94 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Synthetic source metadata only; no URL availability or model qualification.
++use super::*;
++const HF: &str = "https://huggingface.co/Qwen/Qwen3-1.7B/resolve/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e4/tokenizer.json";
++#[test]
++fn publication_hf_primary_has_no_fictitious_github_asset_but_real_backup_is_projected() -> Result<()>
++{
++    let mut profiles = super::tests::selected_profiles()?;
++    for profile in &mut profiles {
++        for download in &mut profile.downloads {
++            for (index, part) in download.parts.iter_mut().enumerate() {
++                part.url = format!(
++                    "https://huggingface.co/Qwen/Qwen3-1.7B/resolve/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e4/{}-{}.bin",
++                    download.asset_name, index
++                );
++                part.backup_urls.clear();
++            }
++        }
++    }
++    let catalog = serde_json::json!({"schema":CATALOG_SCHEMA,"profiles":profiles});
++    let bytes = serde_json::to_vec(&catalog)?;
++    let primary = project(&bytes, "v1.9.0")?;
++    assert_eq!(primary.profiles.len(), 3);
++    assert!(primary.assets.is_empty());
++    assert_eq!(
++        primary.compiled_catalog_sha256,
++        Sha256Digest::from_bytes(Sha256::digest(&bytes).into())
++    );
++    let mut backed = catalog.clone();
++    let part = &mut backed["profiles"][0]["downloads"][0]["parts"][0];
++    part["backup_urls"] = serde_json::json!([
++        "https://github.com/iokaio/airk/releases/download/v1.9.0/real-metadata-fixture.bin"
++    ]);
++    // All parts of this asset require a matching backup roster.
++    let count = backed["profiles"][0]["downloads"][0]["parts"]
++        .as_array()
++        .unwrap()
++        .len();
++    for index in 1..count {
++        backed["profiles"][0]["downloads"][0]["parts"][index]["backup_urls"] = serde_json::json!([
++            format!(
++                "https://github.com/iokaio/airk/releases/download/v1.9.0/real-metadata-fixture-{index}.bin"
++            )
++        ]);
++    }
++    let with_backup = project(&serde_json::to_vec(&backed)?, "v1.9.0")?;
++    assert_eq!(with_backup.assets.len(), count);
++    assert!(with_backup.assets.contains_key("real-metadata-fixture.bin"));
++    assert_ne!(
++        primary.compiled_catalog_sha256,
++        with_backup.compiled_catalog_sha256
++    );
++    backed["profiles"][0]["downloads"][0]["parts"][0]["backup_urls"] =
++        serde_json::json!(["https://github.com/iokaio/airk/releases/download/v0.0.0/foreign.bin"]);
++    assert!(project(&serde_json::to_vec(&backed)?, "v1.9.0").is_err());
++    let mut missing = catalog;
++    missing["profiles"].as_array_mut().unwrap().pop();
++    assert!(project(&serde_json::to_vec(&missing)?, "v1.9.0").is_err());
++    if let Some(path) = std::env::var_os("AIRK_ARBITER_PUBLICATION_SOURCE_CASES_OUTPUT") {
++        std::fs::write(
++            path,
++            serde_json::to_vec_pretty(&serde_json::json!({
++                "schema":"airk.arbiter.publication-source-cases/1",
++                "hypothetical":true,"actual_source_availability_claimed":false,
++                "cases":[
++                    {"name":"hf_primary_without_github_file","accepted":true,"projection":primary},
++                    {"name":"hf_primary_with_declared_github_backup","accepted":true,"projection":with_backup},
++                    {"name":"foreign_github_backup_tag","accepted":false},
++                    {"name":"missing_selected_profile","accepted":false}
++                ]
++            }))?,
++        )?;
++    }
++    Ok(())
++}
++#[test]
++fn github_projection_classifies_every_location_and_refuses_unapproved_backup() -> Result<()> {
++    let mut part = AssetPart {
++        url: HF.into(),
++        backup_urls: vec![],
++        bytes: 1,
++        sha256: Sha256Digest::from_bytes([1; 32]),
++    };
++    assert!(github_part_filenames(&part, "v1.9.0")?.is_empty());
++    part.backup_urls =
++        vec!["https://github.com/iokaio/airk/releases/download/v1.9.0/backup.bin".into()];
++    assert_eq!(
++        github_part_filenames(&part, "v1.9.0")?,
++        BTreeSet::from(["backup.bin".into()])
++    );
++    part.backup_urls = vec!["https://example.invalid/backup.bin".into()];
++    assert!(github_part_filenames(&part, "v1.9.0").is_err());
++    Ok(())
++}
+--- a/crates/airk-retrieval/src/arbiter/publication.rs
++++ b/crates/airk-retrieval/src/arbiter/publication.rs
+@@ -40,6 +40,33 @@
+ #[cfg(feature = "test-support")]
+ pub fn project_distribution_candidate(bytes: &[u8], tag: &str) -> Result<Publication> {
+     project(bytes, tag)
++}
++/// Actual GitHub files named by a validated part, including real backup locations.
++/// HF locations remain authenticated in the complete compiled catalog, not this
++/// GitHub release-file projection. This validates metadata, not availability.
++pub fn github_part_filenames(part: &AssetPart, tag: &str) -> Result<BTreeSet<String>> {
++    part.validate()?;
++    let prefix = format!("https://github.com/iokaio/airk/releases/download/{tag}/");
++    let mut names = BTreeSet::new();
++    for ordinal in 0..=part.backup_urls.len() {
++        let source = part
++            .source_url(ordinal)
++            .context("complete part source roster")?;
++        match download_origin(source)? {
++            DownloadOrigin::HuggingFace => continue,
++            DownloadOrigin::GitHubRelease => {
++                let filename = source
++                    .strip_prefix(&prefix)
++                    .context("asset tag differs from final release")?;
++                ensure!(
++                    !filename.is_empty() && !filename.contains('/'),
++                    "invalid release filename"
++                );
++                names.insert(filename.to_owned());
++            }
++        }
++    }
++    Ok(names)
+ }
+ fn project(bytes: &[u8], tag: &str) -> Result<Publication> {
+     #[derive(Deserialize)]
+@@ -64,7 +91,6 @@
+     let mut models = BTreeSet::new();
+     let mut manifests = BTreeSet::new();
+     let mut assets = BTreeMap::new();
+-    let prefix = format!("https://github.com/iokaio/airk/releases/download/{tag}/");
+     for profile in catalog.profiles {
+         profile.validate_release_downloads()?;
+         super::runtime::validate_selected_policies(&profile)?;
+@@ -103,20 +129,14 @@
+         );
+         for download in profile.downloads {
+             for part in download.parts {
+-                let filename = part
+-                    .url
+-                    .strip_prefix(&prefix)
+-                    .ok_or_else(|| anyhow::anyhow!("asset tag differs from final release"))?;
+-                ensure!(
+-                    !filename.is_empty() && !filename.contains('/'),
+-                    "invalid release filename"
+-                );
+-                let pin = PublishedAsset {
+-                    bytes: part.bytes,
+-                    sha256: part.sha256,
+-                };
+-                if let Some(previous) = assets.insert(filename.to_owned(), pin.clone()) {
+-                    ensure!(previous == pin, "conflicting release asset pins");
++                for filename in github_part_filenames(&part, tag)? {
++                    let pin = PublishedAsset {
++                        bytes: part.bytes,
++                        sha256: part.sha256,
++                    };
++                    if let Some(previous) = assets.insert(filename, pin.clone()) {
++                        ensure!(previous == pin, "conflicting release asset pins");
++                    }
+                 }
+             }
+         }
+@@ -177,8 +197,7 @@
+         );
+         Ok(())
+     }
+-    #[test]
+-    fn publication_requires_all_final_slots_and_consistent_final_asset_pins() -> Result<()> {
++    pub(super) fn selected_profiles() -> Result<Vec<Profile>> {
+         let base: Profile = serde_json::from_slice(include_bytes!(
+             "../../../../fixtures/arbiter/profile-downloads.json"
+         ))?;
+@@ -289,6 +308,11 @@
+             }
+             profiles.push(profile);
+         }
++        Ok(profiles)
++    }
++    #[test]
++    fn publication_requires_all_final_slots_and_consistent_final_asset_pins() -> Result<()> {
++        let profiles = selected_profiles()?;
+         let input = serde_json::json!({"schema":CATALOG_SCHEMA,"profiles":profiles});
+         let positive = project(&serde_json::to_vec(&input)?, "v1.9.0")?;
+         assert_eq!(positive.profiles.len(), 3);
+@@ -368,3 +392,6 @@
+         Ok(())
+     }
+ }
++
++#[cfg(test)]
++mod source_tests;
+--- a/crates/airk-service/src/service_runtime/arbiter/final_distribution/CONTRACT.md
++++ b/crates/airk-service/src/service_runtime/arbiter/final_distribution/CONTRACT.md
+@@ -1,4 +1,4 @@
+-# Final selected-profile promotion and offline distribution
++# Final selected-profile promotion and approved-source distribution
+ 
+ Private preparation only. Root must record and freeze this proof decision and
+ Rust-emitted refusal cases before consumers mount. There is no new crate,
+@@ -43,10 +43,17 @@
+ Only the Core qualification digest, qualified-target proof pins, reviewed release
+ transport roster and release manifest identity are added. The new release
+ manifest uses the recorded domain `airk.arbiter.release-profile/1` over the final
+-Rust Profile with only its manifest field zeroed. Release part names derive from
+-the selected model and asset SHA, avoiding a manifest/URL digest cycle. Each part
+-is at most 1GiB; complete logical files remain bounded by Core. Root must approve
+-that identity recipe before any actual qualified emission.
++Rust Profile with only its manifest field zeroed. The promoter never creates
++URLs or filenames from a tag, model or digest. Candidate.download_sources is a
++required PinnedFile containing the Core-owned Vec<AssetDownload>; the separate
++RecordedDecision.approved_download_source_maps must explicitly approve that
++exact file SHA. Missing/unapproved maps refuse before acquiring any delivery
++authority. The exact asset/file census, Core source/backup roster and every
++ordered part length/hash are checked against bounded local reads, followed by
++the complete logical asset length/hash. Origin trust stays Core-owned; no
++unreviewed repository or source fallback is admitted. Each part remains at most
++1GiB and complete logical files retain Core bounds. A validated metadata map is
++not a claim that a remote payload has been published or downloaded.
+ 
+ The native owner emits catalog/2 plus an offline file projection with schema
+ `airk.arbiter.offline-bundle-plan/1`. It includes the exact catalog SHA, release
+@@ -54,6 +61,18 @@
+ manifest and each logical file's name/length/SHA. A separately pinned PRIVATE
+ source map supplies actual original filenames. It is not shipped. The existing
+ compiled publication projection independently checks final release-part pins.
++Publication.assets and private Sources.parts contain only GitHub files actually
++present as primary or backup locations in the approved map and matching the
++requested release tag. HF-only locations do not invent a GitHub file; complete
++immutable HF origin/revision/filename and backup authority remains authenticated
++by the compiled catalog/profile hash. A real GitHub backup is projected even
++when the primary is HF. Duplicate filenames require identical pins. Exact three
++selected qualified models remain mandatory even when there are zero GitHub
++files. No release publication or availability follows from projection.
++
++The offline plan remains a secondary manual-import option. Optional Arbiter
++weights are not installer/VSIX payloads; app-owned explicit on-demand acquisition
++is primary, subject to actual source availability and all qualification gates.
+ 
+ The stager requires those exact native output pins, a fresh named output under
+ an explicit artifact anchor and reviewed licensed sources. It copies only the
+@@ -224,3 +243,15 @@
+ actual delivery refusal, settlement and explicit subsequent stage disable/final
+ charge release remain required. Canonical authority fields are never removed
+ to make an unaffected-read comparison pass.
++
++
++Source-map consumer controls (Core download-origin gate required first)
++
++The private changes consume Core AssetPart.backup_urls, source_url and
++AssetDownload.source_count; they cannot mount before the recorded Core decision
++and actual native fixture gate. Synthetic controls exercise missing/unapproved
++map, omitted required Candidate field, duplicate/foreign/missing logical asset,
++extra local mapping, changed same-length source, wrong part/full hash, reordered
++slices, wrong lengths/origin/backup roster, HF-only projection and actual declared
++GitHub backup/tag handling. These are inert metadata/file controls, not model,
++remote-availability or release qualification. Root alone executes Cargo/NN.
+--- a/crates/airk-service/src/service_runtime/arbiter/final_distribution/source_map_tests.rs
++++ b/crates/airk-service/src/service_runtime/arbiter/final_distribution/source_map_tests.rs
+@@ -0,0 +1,181 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Inert actual-file controls for approved delivery maps; never an evidence gate pass.
++use super::*;
++fn part(url: &str, raw: &[u8]) -> AssetPart {
++    AssetPart {
++        url: url.into(),
++        backup_urls: vec![],
++        bytes: raw.len() as u64,
++        sha256: sha(raw),
++    }
++}
++fn decision(approved: BTreeSet<Sha256Digest>) -> Result<RecordedDecision> {
++    Ok(serde_json::from_value(
++        serde_json::json!({"schema":"airk.private-recorded-stage-promotion/1","decision":"synthetic-not-a-release","approved_final_proofs":[],"approved_download_source_maps":approved}),
++    )?)
++}
++fn fixture() -> Result<(tempfile::TempDir, Profile, Candidate, RecordedDecision)> {
++    let directory = tempfile::tempdir()?;
++    let mut profile: Profile = serde_json::from_slice(include_bytes!(
++        "../../../../../../fixtures/arbiter/profile-downloads.json"
++    ))?;
++    let mut files = BTreeMap::new();
++    let mut downloads = Vec::new();
++    for asset in &mut profile.assets {
++        let raw = format!("synthetic-local-{}", asset.name).into_bytes();
++        asset.bytes = raw.len() as u64;
++        asset.sha256 = sha(&raw);
++        let path = directory.path().join(&asset.name);
++        fs::write(&path, &raw)?;
++        files.insert(asset.name.clone(), path);
++        if asset.role == AssetRole::Compiler {
++            profile.compiler = asset.sha256;
++        }
++        if asset.role == AssetRole::Calibration {
++            profile.calibration = asset.sha256;
++        }
++        downloads.push(AssetDownload {
++            asset_name: asset.name.clone(),
++            parts: vec![part(
++                &format!(
++                    "https://github.com/iokaio/airk/releases/download/v1.9.0/{}",
++                    asset.name
++                ),
++                &raw,
++            )],
++        });
++    }
++    profile.downloads.clear();
++    profile.validate()?;
++    let map = directory.path().join("source-map.json");
++    let raw = serde_json::to_vec(&downloads)?;
++    fs::write(&map, &raw)?;
++    let pin = PinnedFile {
++        path: map,
++        bytes: raw.len() as u64,
++        sha256: sha(&raw),
++    };
++    let candidate = Candidate {
++        profile: pin.clone(),
++        final_proof: pin.clone(),
++        download_sources: pin.clone(),
++        files,
++    };
++    let approval = decision(BTreeSet::from([pin.sha256]))?;
++    Ok((directory, profile, candidate, approval))
++}
++fn write_map(
++    candidate: &mut Candidate,
++    decision: &mut RecordedDecision,
++    downloads: &[AssetDownload],
++) -> Result<()> {
++    let raw = serde_json::to_vec(downloads)?;
++    fs::write(&candidate.download_sources.path, &raw)?;
++    candidate.download_sources.bytes = raw.len() as u64;
++    candidate.download_sources.sha256 = sha(&raw);
++    decision.approved_download_source_maps = BTreeSet::from([candidate.download_sources.sha256]);
++    Ok(())
++}
++#[test]
++fn final_source_maps_require_recorded_approval_and_exact_native_census() -> Result<()> {
++    let (_dir, profile, mut candidate, mut approved) = fixture()?;
++    let original = verified_download_sources(&profile, &candidate, &approved)?;
++    assert_eq!(original.len(), profile.assets.len());
++    let mut canonical = original.clone();
++    canonical[0].parts[0].backup_urls = vec![canonical[0].parts[0].url.clone()];
++    canonical[0].parts[0].url = "https://huggingface.co/Qwen/Qwen3-1.7B/resolve/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e4/tokenizer.json".into();
++    write_map(&mut candidate, &mut approved, &canonical)?;
++    let preserved = verified_download_sources(&profile, &candidate, &approved)?;
++    assert_eq!(preserved[0].parts[0].url, canonical[0].parts[0].url);
++    assert_eq!(
++        preserved[0].parts[0].backup_urls,
++        canonical[0].parts[0].backup_urls
++    );
++    write_map(&mut candidate, &mut approved, &original)?;
++    assert!(verified_download_sources(&profile, &candidate, &decision(BTreeSet::new())?).is_err());
++    let mut missing = original.clone();
++    missing.pop();
++    write_map(&mut candidate, &mut approved, &missing)?;
++    assert!(verified_download_sources(&profile, &candidate, &approved).is_err());
++    let mut duplicate = original.clone();
++    duplicate[1] = duplicate[0].clone();
++    write_map(&mut candidate, &mut approved, &duplicate)?;
++    assert!(verified_download_sources(&profile, &candidate, &approved).is_err());
++    let mut foreign = original.clone();
++    foreign[0].asset_name = "foreign.bin".into();
++    write_map(&mut candidate, &mut approved, &foreign)?;
++    assert!(verified_download_sources(&profile, &candidate, &approved).is_err());
++    write_map(&mut candidate, &mut approved, &original)?;
++    candidate.files.insert(
++        "extra.bin".into(),
++        candidate.files.values().next().unwrap().clone(),
++    );
++    assert!(verified_download_sources(&profile, &candidate, &approved).is_err());
++    Ok(())
++}
++#[test]
++fn approved_map_cannot_hide_wrong_local_hash_part_order_length_origin_or_backups() -> Result<()> {
++    let (_dir, profile, mut candidate, mut approval) = fixture()?;
++    let original = verified_download_sources(&profile, &candidate, &approval)?;
++    for change in ["part_hash", "part_length", "origin", "backup"] {
++        let mut changed = original.clone();
++        let p = &mut changed[0].parts[0];
++        match change {
++            "part_hash" => p.sha256 = Sha256Digest::from_bytes([0; 32]),
++            "part_length" => p.bytes += 1,
++            "origin" => p.url = "https://example.invalid/wrong".into(),
++            _ => p.backup_urls = vec![p.url.clone()],
++        };
++        write_map(&mut candidate, &mut approval, &changed)?;
++        assert!(
++            verified_download_sources(&profile, &candidate, &approval).is_err(),
++            "{change}"
++        );
++    }
++    let source = candidate.files.values().next().unwrap();
++    let length = fs::metadata(source)?.len() as usize;
++    fs::write(source, vec![b'x'; length])?;
++    write_map(&mut candidate, &mut approval, &original)?;
++    assert!(verified_download_sources(&profile, &candidate, &approval).is_err());
++    let dir = tempfile::tempdir()?;
++    let path = dir.path().join("slices.bin");
++    fs::write(&path, b"abcdef")?;
++    let asset = Asset {
++        name: "slices.bin".into(),
++        role: AssetRole::ExternalWeights,
++        bytes: 6,
++        sha256: sha(b"abcdef"),
++    };
++    let mut download = AssetDownload {
++        asset_name: asset.name.clone(),
++        parts: vec![
++            part(
++                "https://github.com/iokaio/airk/releases/download/v1.9.0/a.bin",
++                b"ab",
++            ),
++            part(
++                "https://github.com/iokaio/airk/releases/download/v1.9.0/b.bin",
++                b"cdef",
++            ),
++        ],
++    };
++    logical_asset(&asset, &path, &download)?;
++    let mut wrong_full = asset.clone();
++    wrong_full.sha256 = Sha256Digest::from_bytes([0; 32]);
++    assert!(logical_asset(&wrong_full, &path, &download).is_err());
++    download.parts.swap(0, 1);
++    assert!(logical_asset(&asset, &path, &download).is_err());
++    Ok(())
++}
++#[test]
++fn candidate_missing_source_map_is_a_decode_refusal() -> Result<()> {
++    let pin =
++        serde_json::json!({"path":"unused","bytes":1,"sha256":Sha256Digest::from_bytes([1;32])});
++    assert!(
++        serde_json::from_value::<Candidate>(
++            serde_json::json!({"profile":pin,"final_proof":pin,"files":{}})
++        )
++        .is_err()
++    );
++    Ok(())
++}
+--- a/crates/airk-service/src/service_runtime/arbiter/final_distribution.rs
++++ b/crates/airk-service/src/service_runtime/arbiter/final_distribution.rs
+@@ -97,12 +97,15 @@
+     pub approved_calibration_component_equivalences: BTreeSet<Sha256Digest>,
+     #[serde(default)]
+     pub approved_component_target_provenances: BTreeSet<Sha256Digest>,
++    #[serde(default)]
++    pub approved_download_source_maps: BTreeSet<Sha256Digest>,
+ }
+ #[derive(Deserialize)]
+ #[serde(deny_unknown_fields)]
+ pub struct Candidate {
+     pub profile: PinnedFile,
+     pub final_proof: PinnedFile,
++    pub download_sources: PinnedFile,
+     pub files: BTreeMap<String, PathBuf>,
+ }
+ #[derive(Serialize)]
+@@ -1524,60 +1527,111 @@
+     // reports remain unmodified; a raw numeric/resource/CAL/A6 bool is insufficient.
+     Ok((proof, candidate.final_proof.sha256))
+ }
+-fn logical_asset(
+-    profile: &Profile,
+-    asset: &Asset,
+-    path: &Path,
+-    tag: &str,
+-) -> Result<AssetDownload> {
++fn logical_asset(asset: &Asset, path: &Path, download: &AssetDownload) -> Result<()> {
++    ensure!(
++        download.asset_name == asset.name,
++        "source map asset identity differs"
++    );
++    download.source_count()?; // Core owns origin, part bounds and complete backups.
+     let meta = fs::symlink_metadata(path)?;
+     ensure!(
+         meta.is_file() && !meta.file_type().is_symlink() && meta.len() == asset.bytes,
+         "logical source object differs"
+     );
++    #[cfg(windows)]
++    {
++        use std::os::windows::fs::MetadataExt;
++        ensure!(
++            meta.file_attributes() & 0x400 == 0,
++            "logical source reparse refused"
++        );
++    }
+     let mut file = fs::File::open(path)?;
+     let mut full = Sha256::new();
+-    let mut consumed = 0u64;
+-    let mut parts = Vec::new();
+-    let model = serde_json::to_value(profile.model)?
+-        .as_str()
+-        .context("model identity")?
+-        .to_owned();
+-    let mut buffer = vec![0u8; 4 << 20];
+-    while consumed < asset.bytes {
+-        let length = (asset.bytes - consumed).min(1 << 30);
+-        let mut remaining = length;
+-        let mut part = Sha256::new();
++    let mut consumed = 0_u64;
++    let mut buffer = vec![0_u8; 4 << 20];
++    for part in &download.parts {
++        let mut remaining = part.bytes;
++        let mut digest = Sha256::new();
+         while remaining > 0 {
+             let wanted = usize::try_from(remaining.min(buffer.len() as u64))?;
+             let count = file.read(&mut buffer[..wanted])?;
+             ensure!(count > 0, "logical source shortened");
+-            part.update(&buffer[..count]);
++            digest.update(&buffer[..count]);
+             full.update(&buffer[..count]);
+-            consumed += count as u64;
++            consumed = consumed
++                .checked_add(count as u64)
++                .context("source byte overflow")?;
+             remaining -= count as u64;
+         }
+-        parts.push(AssetPart {
+-            url: format!(
+-                "https://github.com/iokaio/airk/releases/download/{tag}/{model}-{}.part{:02}",
+-                asset.sha256,
+-                parts.len() + 1
+-            ),
+-            bytes: length,
+-            sha256: Sha256Digest::from_bytes(part.finalize().into()),
+-        });
+-    }
+-    let mut extra = [0u8; 1];
+-    ensure!(
+-        file.read(&mut extra)? == 0
++        ensure!(
++            Sha256Digest::from_bytes(digest.finalize().into()) == part.sha256,
++            "approved ordered local part digest differs"
++        );
++    }
++    let mut extra = [0_u8; 1];
++    ensure!(
++        consumed == asset.bytes
++            && file.read(&mut extra)? == 0
+             && file.metadata()?.len() == asset.bytes
+             && Sha256Digest::from_bytes(full.finalize().into()) == asset.sha256,
+         "complete logical asset source changed"
+     );
+-    Ok(AssetDownload {
+-        asset_name: asset.name.clone(),
+-        parts,
+-    })
++    Ok(())
++}
++fn verified_download_sources(
++    profile: &Profile,
++    candidate: &Candidate,
++    decision: &RecordedDecision,
++) -> Result<Vec<AssetDownload>> {
++    ensure!(
++        decision
++            .approved_download_source_maps
++            .contains(&candidate.download_sources.sha256),
++        "download source map absent from recorded approval"
++    );
++    ensure!(
++        candidate.files.keys().collect::<BTreeSet<_>>()
++            == profile
++                .assets
++                .iter()
++                .map(|a| &a.name)
++                .collect::<BTreeSet<_>>(),
++        "local source map census differs"
++    );
++    let downloads: Vec<AssetDownload> =
++        serde_json::from_slice(&pinned(&candidate.download_sources)?)?;
++    ensure!(
++        downloads.len() == profile.assets.len()
++            && downloads
++                .iter()
++                .map(|d| &d.asset_name)
++                .collect::<BTreeSet<_>>()
++                == profile
++                    .assets
++                    .iter()
++                    .map(|a| &a.name)
++                    .collect::<BTreeSet<_>>(),
++        "approved source map has missing/duplicate/foreign logical assets"
++    );
++    let mut proposed = profile.clone();
++    proposed.downloads = downloads.clone();
++    proposed.validate_release_downloads()?;
++    for asset in &profile.assets {
++        let download = downloads
++            .iter()
++            .find(|d| d.asset_name == asset.name)
++            .context("approved asset source missing")?;
++        logical_asset(
++            asset,
++            candidate
++                .files
++                .get(&asset.name)
++                .context("local logical asset source missing")?,
++            download,
++        )?;
++    }
++    Ok(downloads)
+ }
+ fn validate_task_scope(profile: &Profile, files: &BTreeMap<String, PathBuf>) -> Result<()> {
+     if profile.declared_stage() == Some(Stage::Context) {
+@@ -1645,6 +1699,12 @@
+                 && models.insert(profile.model),
+             "already-promoted/duplicate candidate"
+         );
++        ensure!(
++            decision
++                .approved_download_source_maps
++                .contains(&candidate.download_sources.sha256),
++            "download source map absent from recorded approval"
++        );
+         let (proof, proof_sha) = verify_proof(&profile, candidate, &decision)?;
+         ensure!(
+             candidate.files.keys().cloned().collect::<BTreeSet<_>>()
+@@ -1656,16 +1716,7 @@
+             "incomplete/extraneous source map"
+         );
+         validate_task_scope(&profile, &candidate.files)?;
+-        let mut downloads = Vec::new();
+-        for asset in &profile.assets {
+-            downloads.push(logical_asset(
+-                &profile,
+-                asset,
+-                &candidate.files[&asset.name],
+-                tag,
+-            )?);
+-        }
+-        profile.downloads = downloads;
++        profile.downloads = verified_download_sources(&profile, candidate, &decision)?;
+         profile.qualification = Some(proof_sha);
+         profile.qualified_targets = vec![QualifiedTarget {
+             target: proof.binding.target,
+@@ -1693,28 +1744,26 @@
+         for download in &profile.downloads {
+             let mut offset = 0u64;
+             for part in &download.parts {
+-                let filename = part
+-                    .url
+-                    .rsplit('/')
+-                    .next()
+-                    .context("native release part filename")?
+-                    .to_owned();
+-                if let Some(old) = parts.get(&filename) {
+-                    ensure!(
+-                        old.bytes == part.bytes && old.sha256 == part.sha256,
+-                        "conflicting native part slice"
+-                    );
+-                } else {
+-                    parts.insert(
+-                        filename,
+-                        PartSource {
+-                            profile: profile.manifest,
+-                            asset_name: download.asset_name.clone(),
+-                            offset,
+-                            bytes: part.bytes,
+-                            sha256: part.sha256,
+-                        },
+-                    );
++                for filename in
++                    airk_retrieval::arbiter::publication::github_part_filenames(part, tag)?
++                {
++                    if let Some(old) = parts.get(&filename) {
++                        ensure!(
++                            old.bytes == part.bytes && old.sha256 == part.sha256,
++                            "conflicting native part slice"
++                        );
++                    } else {
++                        parts.insert(
++                            filename,
++                            PartSource {
++                                profile: profile.manifest,
++                                asset_name: download.asset_name.clone(),
++                                offset,
++                                bytes: part.bytes,
++                                sha256: part.sha256,
++                            },
++                        );
++                    }
+                 }
+                 offset = offset
+                     .checked_add(part.bytes)
+@@ -2228,3 +2277,6 @@
+         Ok(())
+     }
+ }
++
++#[cfg(test)]
++mod source_map_tests;

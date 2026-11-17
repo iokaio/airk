@@ -5,6 +5,7 @@ from contextlib import nullcontext
 import hashlib
 import importlib.util
 import io
+import json
 from pathlib import Path
 import stat
 from types import SimpleNamespace
@@ -39,6 +40,12 @@ class Hashing(unittest.TestCase):
             result = m.source_hashes(path, 'sha1')
         self.assertEqual(result['git_blob_oid'], 'ce013625030ba8dba906f756967f9e9ca394464a')
         self.assertEqual(result['source_sha256'], '5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03')
+
+    def test_archive_evidence_stream_and_cap(self):
+        path,before=self.file()
+        with patch.object(m.os,'fstat',return_value=before):
+            self.assertEqual(m.evidence_hashes(path,'sha1')['source_sha256'],'5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03')
+        with self.assertRaises(ValueError):m.evidence_hashes(path,'sha1',max_bytes=5)
 
     def test_sha256_git_format_uses_blob_header(self):
         path, before = self.file()
@@ -215,6 +222,25 @@ class NormalizationAndMigration(unittest.TestCase):
             with self.subTest(key=key,bad=bad),patch.object(Path,'lstat',return_value=info()),self.assertRaises(ValueError):
                 m.verify_migration_row(row,Path.cwd()/'literal-repo','sha1',self.observe)
 
+    def test_range_inverse_indexes_extracted_body_not_whole_container(self):
+        import copy
+        raw=b'header\nprint(1)\nfooter';body=b'print(1)\n';prefix='# SPDX-License-Identifier: Apache-2.0\n';target=prefix.encode()+body
+        row={'source':'artifacts/runbook.md','destination':'scripts/arbiter/probe.py.in','original_sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw),'maintained_sha256':hashlib.sha256(target).hexdigest(),'maintained_bytes':len(target),'disposition':'reviewed-diagnostic-byte-range',
+             'changes':[{'kind':'byte-range-extraction','offset':7,'bytes':len(body),'extracted_sha256':hashlib.sha256(body).hexdigest()},{'kind':'spdx-prefix','prefix':prefix}]}
+        def observe(path,fmt):
+            data=raw if path.name=='runbook.md' else target
+            return {'source_sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data)}
+        with patch.object(Path,'lstat',return_value=info()),patch.object(Path,'read_bytes',return_value=raw):
+            result=m.verify_migration_row(row,Path.cwd(),'sha1',observe)
+            self.assertEqual(result['original_sha256'],hashlib.sha256(body).hexdigest());self.assertNotEqual(result['original_sha256'],row['original_sha256']);self.assertEqual(result['container_sha256'],row['original_sha256'])
+            for key,value in [('offset',True),('offset',-1),('offset',len(raw)),('bytes',0),('bytes',True),('bytes',len(raw)),('extracted_sha256','f'*64),('kind','byte-range-unchecked')]:
+                bad=copy.deepcopy(row);bad['changes'][0][key]=value
+                with self.assertRaises(ValueError):m.verify_migration_row(bad,Path.cwd(),'sha1',observe)
+            for changes in [row['changes'][::-1],row['changes'][:1],row['changes']+[{}],[row['changes'][0],{'kind':'spdx-prefix','prefix':prefix+'extra'}]]:
+                with self.assertRaises(ValueError):m.verify_migration_row({**row,'changes':changes},Path.cwd(),'sha1',observe)
+            with self.assertRaises(ValueError):m.verify_migration_row({**row,'bytes':len(raw)+1},Path.cwd(),'sha1',observe)
+        with patch.object(Path,'lstat',return_value=info()),patch.object(Path,'read_bytes',return_value=raw+b'drift'),self.assertRaises(ValueError):m.verify_migration_row(row,Path.cwd(),'sha1',observe)
+
     def test_corpus_payload_requires_exact_declared_bytes(self):
         repo=Path.cwd()/'literal-repo';path='artifacts/data/source-tree/third_party.py'
         row={'path':path,'bytes':10,'source_sha256':'a'*64,'classification':'remaining_implementation_candidate'}
@@ -244,6 +270,74 @@ class NormalizationAndMigration(unittest.TestCase):
         self.assertEqual(value['migration_gap_distinct_hashes'],2)
         self.assertEqual(value['migration_gap_list_omitted'],1)
         self.assertEqual(value['migration_gap_review'][0]['path_count'],2)
+
+
+class EmbeddedSource(unittest.TestCase):
+    def test_decoded_pointer_and_target_body_are_independently_pinned(self):
+        raw=b'print(1)\n';prefix='# SPDX-License-Identifier: Apache-2.0\n';maintained=prefix.encode()+raw
+        row={'container':'artifacts/proposal.json','container_sha256':'a'*64,'container_bytes':100,'json_pointer':'/scripts/a~1b',
+             'decoded_sha256':hashlib.sha256(raw).hexdigest(),'decoded_bytes':len(raw),'destination':'scripts/arbiter/history/tool.py',
+             'maintained_sha256':hashlib.sha256(maintained).hexdigest(),'maintained_bytes':len(maintained),'prefix':prefix}
+        with patch.object(Path,'lstat',return_value=info()),patch.object(m,'verified_json',return_value=({'scripts':{'a/b':raw.decode()}},{'source_sha256':'a'*64,'bytes':100})),patch.object(m,'source_hashes',return_value={'source_sha256':row['maintained_sha256'],'bytes':len(maintained)}):
+            self.assertTrue(m.verify_embedded_row(row,Path.cwd(),'sha1')['embedded_source'])
+            for destination in ['packages/vscode/src/owner.ts','crates/test/src/owner.rs','tools/test/owner.py']:
+                self.assertTrue(m.verify_embedded_row({**row,'destination':destination},Path.cwd(),'sha1')['embedded_source'])
+            for destination in ['artifacts/copy.py','packages/../artifacts/copy.py']:
+                with self.assertRaises(ValueError):m.verify_embedded_row({**row,'destination':destination},Path.cwd(),'sha1')
+            row['decoded_sha256']='f'*64
+            with self.assertRaises(ValueError):m.verify_embedded_row(row,Path.cwd(),'sha1')
+
+
+class EncodedSource(unittest.TestCase):
+    def test_text_container_exact_pin_pointer_format_and_utf8_refusals(self):
+        raw=b"trace b64decode('cHJpbnQoMSkK')";body=b'print(1)\n'
+        row={'container':'artifacts/stderr.txt','container_format':'utf8-text','container_sha256':hashlib.sha256(raw).hexdigest(),'container_bytes':len(raw),'json_pointer':'',
+             'decoded_sha256':hashlib.sha256(body).hexdigest(),'decoded_bytes':len(body),'destination':'scripts/arbiter/history/tool.py','maintained_sha256':hashlib.sha256(body).hexdigest(),'maintained_bytes':len(body),
+             'encoded_field_sha256':hashlib.sha256(raw).hexdigest(),'encoded_field_bytes':len(raw),'decode_method':'single-python-b64decode-literal/1'}
+        def observe(path,fmt):
+            data=raw if path.name=='stderr.txt' else body
+            return {'source_sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data)}
+        with patch.object(Path,'lstat',return_value=info()),patch.object(Path,'read_bytes',new=lambda path:raw),patch.object(m,'source_hashes',side_effect=observe):
+            self.assertTrue(m.verify_embedded_row(row,Path.cwd(),'sha1',encoded=True)['embedded_source'])
+            for key,value in [('json_pointer','/stderr'),('container_format','arbitrary'),('container_sha256','f'*64),('container_bytes',len(raw)+1)]:
+                bad={**row,key:value}
+                with self.assertRaises(ValueError):m.verify_embedded_row(bad,Path.cwd(),'sha1',encoded=True)
+            with self.assertRaises(ValueError):m.verify_embedded_row(row,Path.cwd(),'sha1',encoded=False)
+            raw=b'\xff'
+            with self.assertRaises(UnicodeDecodeError):m.verify_embedded_row(row,Path.cwd(),'sha1',encoded=True)
+
+    def test_strict_single_literal_method_field_and_utf8_refusals(self):
+        import base64
+        body=b'print(1)\n';prefix='# SPDX-License-Identifier: Apache-2.0\n'
+        def verify(field,method='single-python-b64decode-literal/1',override_hash=None,expected=body):
+            maintained=prefix.encode()+expected
+            row={'container':'artifacts/proposal.json','container_sha256':'a'*64,'container_bytes':100,'json_pointer':'/stderr',
+                'decoded_sha256':hashlib.sha256(expected).hexdigest(),'decoded_bytes':len(expected),'destination':'scripts/arbiter/history/tool.py',
+                'maintained_sha256':hashlib.sha256(maintained).hexdigest(),'maintained_bytes':len(maintained),'prefix':prefix,
+                'encoded_field_sha256':override_hash or hashlib.sha256(field.encode()).hexdigest(),'encoded_field_bytes':len(field.encode()),'decode_method':method}
+            with patch.object(Path,'lstat',return_value=info()),patch.object(m,'verified_json',return_value=({'stderr':field},{'source_sha256':'a'*64,'bytes':100})),patch.object(m,'source_hashes',return_value={'source_sha256':row['maintained_sha256'],'bytes':len(maintained)}):
+                return m.verify_embedded_row(row,Path.cwd(),'sha1',encoded=True)
+        field="b64decode('"+base64.b64encode(body).decode()+"')"
+        self.assertTrue(verify(field)['embedded_source'])
+        for bad in [field+' '+field,field+' b64decode("unsupported")',"b64decode('a===')"]:
+            with self.assertRaises(ValueError):verify(bad)
+        with self.assertRaises(ValueError):verify(field,method='arbitrary-decoder')
+        with self.assertRaises(ValueError):verify(field,override_hash='f'*64)
+        with self.assertRaises(UnicodeDecodeError):verify("b64decode('/w==')",expected=b'\xff')
+
+
+class BroadRouting(unittest.TestCase):
+    def test_patch_precedence_and_disjoint_review_lanes(self):
+        spec=importlib.util.spec_from_file_location('delta',Path(__file__).with_name('delta.py'))
+        d=importlib.util.module_from_spec(spec);spec.loader.exec_module(d)
+        for path,expected in [
+            ('artifacts/advanced-split/ort130-x64/source/fix.patch','fp16_readiness'),
+            ('artifacts/advanced-split/ort130-x64/tools/cmake/run.py','artifact_code_audit'),
+            ('artifacts/advanced-split/ort130-x64/source/session.cc','platform_inventory'),
+            ('artifacts/advanced-split/models/example/Cargo.toml','focus_review'),
+            ('artifacts/advanced-split/models/example/grade.py','graph_emitter'),
+            ('artifacts/v190/runtime/run.py','component_review')]:
+            self.assertEqual(d.broad_lane({'path':path}),expected)
 
 
 class Routing(unittest.TestCase):
@@ -285,6 +379,12 @@ class EvidenceDisposition(unittest.TestCase):
         self.assertFalse(self.verify()['qualification'])
         self.row['evidence'][0]['sha256']='c'*64
         with self.assertRaises(ValueError):self.verify()
+    def test_external_map_requires_exact_explicit_pin(self):
+        path,digest=self.d.parse_map_pin('private/map.json='+'a'*64)
+        self.assertTrue(path.is_absolute());self.assertEqual(digest,'a'*64)
+        for value in ['private/map.json','private/map.json=passed','private/map.json='+'A'*64,'='+'a'*64]:
+            with self.assertRaises(ValueError):self.d.parse_map_pin(value)
+
     def test_missing_or_boolean_source_size_refuses(self):
         for value in [None,True,-1]:
             self.row['source_bytes']=value
@@ -307,6 +407,207 @@ class EvidenceDisposition(unittest.TestCase):
         del self.row['generated']['source_version']['maintained_path']
         with self.assertRaises(ValueError):self.verify()
 
+    def test_fixed_commit_path_cache_rechecks_each_row_and_rejects_bad_locator(self):
+        raw=b'const x = 1;\n';retained=raw.replace(b'\n',b'\r\n');oid=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+        self.row['disposition']='generated_from_maintained_typescript'
+        version={'path':'artifacts/build/source.ts','sha256':hashlib.sha256(retained).hexdigest(),'bytes':len(retained),'git_commit':'c'*40,'git_path':'packages/source.ts','normalization':'CRLF to LF only','git_blob_oid':oid}
+        self.row['generated']={'compiler':{'path':'packages/typescript.js','sha256':'a'*64,'bytes':10},'source_version':version,'options':{},'method':'exact retained replay','reproduced_js_sha256':'a'*64}
+        cache={};calls=[]
+        def observe(path,fmt):
+            return {'source_sha256':hashlib.sha256(retained).hexdigest(),'bytes':len(retained)} if path.name=='source.ts' else self.observe(path,fmt)
+        oversized=False
+        def git(args):
+            calls.append(args)
+            if 'rev-parse' in args:return (oid+'\n').encode()
+            if '-s' in args:return str((16<<20)+1 if oversized else len(raw)).encode()
+            return raw
+        def verify():return self.d.verify_disposition_row(self.row,Path.cwd(),observe,m.checked_relative,git_cache=cache)
+        with patch.object(Path,'lstat',return_value=info()),patch.object(Path,'read_bytes',new=lambda path:retained),patch.object(self.d.subprocess,'check_output',side_effect=git):
+            verify();verify();self.assertEqual(len(calls),3)
+            version['normalization']='none'
+            with self.assertRaises(ValueError):verify()
+            version['normalization']='CRLF to LF only';version['sha256']='f'*64
+            with self.assertRaises(ValueError):verify()
+            version['sha256']=hashlib.sha256(retained).hexdigest();version['git_blob_oid']='f'*40
+            with self.assertRaises(ValueError):verify()
+            version['git_blob_oid']=oid
+            for key,bad in [('git_commit','HEAD'),('git_path','../escape.ts'),('git_path','packages/source.ts:stream')]:
+                old=version[key];version[key]=bad
+                with self.assertRaises(ValueError):verify()
+                version[key]=old
+            version['git_commit']='d'*40;verify();self.assertEqual(len(calls),6)
+            version['git_path']='packages/other.ts';verify();self.assertEqual(len(calls),9)
+            self.row['generated']['reproduced_js_sha256']='f'*64
+            with self.assertRaises(ValueError):verify()
+
+            self.row['generated']['reproduced_js_sha256']='a'*64;version['git_commit']='e'*40;oversized=True
+            with self.assertRaises(ValueError):verify()
+            self.assertEqual(len(calls),11);self.assertIn('-s',calls[-1])
+
+    def test_typescript_shared_proof_cache_preserves_source_cap_and_fresh_output(self):
+        self.row['disposition']='generated_from_maintained_typescript'
+        self.row['generated']={'compiler':{'path':'packages/admin/node_modules/typescript/lib/typescript.js','sha256':'a'*64,'bytes':10},
+            'source_version':{'path':'packages/admin/source.ts','sha256':'a'*64,'bytes':10},'options':{},'method':'exact replay','reproduced_js_sha256':'a'*64}
+        seen=[];cache={}
+        def fresh(path,fmt):seen.append(str(path));return self.observe(path,fmt)
+        def shared(path,fmt):
+            if str(path) not in cache:cache[str(path)]=fresh(path,fmt)
+            return cache[str(path)]
+        with patch.object(Path,'lstat',return_value=info()):
+            for _ in range(2):self.d.verify_disposition_row(self.row,Path.cwd(),fresh,m.checked_relative,shared)
+            self.assertEqual(sum(p.endswith('code.py') for p in seen),2)
+            self.assertEqual(sum(p.endswith('typescript.js') for p in seen),1)
+            self.assertEqual(sum(p.endswith('source.ts') for p in seen),1)
+            for value in [True,-1,(16<<20)+1]:
+                self.row['generated']['compiler']['bytes']=value
+                with self.assertRaises(ValueError):self.d.verify_disposition_row(self.row,Path.cwd(),fresh,m.checked_relative,shared)
+
+    def test_javascript_fixture_requires_exact_ast_owner_span_tag_and_output(self):
+        import copy
+        rows=[{'kind':'service_static_template','start':5,'end':12,'value':'body'}]
+        fixture={'source':{'path':'scripts/check-extension-update-editor.cjs'},'literal':{'kind':'service_static_template','start_utf16':5,'end_utf16':12},'tag':'updated'}
+        body=b'const TAG="updated";body';source={'sha256':hashlib.sha256(body).hexdigest(),'bytes':len(body)}
+        verify=lambda f=fixture,r=rows,s=source:self.d.verify_javascript_fixture_literal(r,f,s)
+        self.assertTrue(verify()['exact_output_reproduced']);self.assertFalse(verify()['generator_executed'])
+        for field,value in [('start_utf16',True),('end_utf16',13),('kind','arbitrary')]:
+            bad=copy.deepcopy(fixture);bad['literal'][field]=value
+            with self.assertRaises(ValueError):verify(f=bad)
+        for tag in ['arbitrary',None]:
+            with self.assertRaises(ValueError):verify(f={**fixture,'tag':tag})
+        with self.assertRaises(ValueError):verify(r=rows*2)
+        with self.assertRaises(ValueError):verify(f={**fixture,'source':{'path':'artifacts/untrusted.js'}})
+        with self.assertRaises(ValueError):verify(s={'sha256':'f'*64,'bytes':len(body)})
+        direct={'source':{'path':'packages/vscode/src/test/extensionUpdateLoader.test.ts'},'literal':{'kind':'literal_output_property','start_utf16':2,'end_utf16':8,'output':'out/entry.js'},'tag':None}
+        literal=[{'kind':'literal_output_property','start':2,'end':8,'output':'out/entry.js','value':'body'}]
+        self.assertTrue(verify(f=direct,r=literal,s={'sha256':hashlib.sha256(b'body').hexdigest(),'bytes':4})['exact_output_reproduced'])
+        with self.assertRaises(ValueError):verify(f={**direct,'tag':'updated'},r=literal)
+
+    def test_recovery_exact_base_edits_target_and_archive_identity(self):
+        import copy
+        spec=importlib.util.spec_from_file_location('recovery_test_owner',Path(__file__).parents[1]/'upstream_ort/recovery.py');owner=importlib.util.module_from_spec(spec);spec.loader.exec_module(owner)
+        base={'archive':{'path':'artifacts/base.zip','sha256':hashlib.sha256(b'PK\x03\x04raw').hexdigest(),'bytes':7},'member':'x.txt','sha256':hashlib.sha256(b'abc').hexdigest(),'bytes':3}
+        target={'sha256':hashlib.sha256(b'aZc').hexdigest(),'bytes':3}
+        record={'schema':'airk.exact-byte-recovery/1','base_sha256':base['sha256'],'base_bytes':3,'target_sha256':target['sha256'],'target_bytes':3,'edits':[{'offset':1,'delete_bytes':1,'deleted_sha256':hashlib.sha256(b'b').hexdigest(),'insert_base64':'Wg=='}]}
+        select=lambda raw,names,tar:{'x.txt':b'abc'}
+        def verify(b=base,t=target,r=record):return self.d.verify_recovery_payload(b'PK\x03\x04raw',json.dumps(r).encode(),b,t,select,owner.recover)
+        self.assertTrue(verify()['exact_output_reproduced']);self.assertFalse(verify()['historical_application_verified']);self.assertFalse(verify()['airk_authorship'])
+        for key,value in [('sha256','f'*64),('bytes',4),('member','../x.txt')]:
+            bad=copy.deepcopy(base);bad[key]=value
+            with self.assertRaises(ValueError):verify(b=bad)
+        bad=copy.deepcopy(base);bad['archive']['sha256']='f'*64
+        with self.assertRaises(ValueError):verify(b=bad)
+        with self.assertRaises(ValueError):verify(t={'sha256':'f'*64,'bytes':3})
+        bad=copy.deepcopy(record);bad['edits'][0]['deleted_sha256']='f'*64
+        with self.assertRaises(ValueError):verify(r=bad)
+
+    def test_upstream_build_raw_and_normalized_identity_distinct(self):
+        self.row['disposition']='upstream_build_input';self.row['representation']='raw'
+        self.row['upstream']['source_sha256']='a'*64
+        self.assertFalse(self.verify()['qualification'])
+        self.row['upstream']['source_sha256']='c'*64
+        with self.assertRaises(ValueError):self.verify()
+        raw=b'hello\r\n';self.row['source_sha256']=hashlib.sha256(raw).hexdigest();self.row['source_bytes']=len(raw)
+        self.row['representation']='CRLF-to-LF';self.row['upstream']['git_blob_oid']='ce013625030ba8dba906f756967f9e9ca394464a'
+        def observe(path,fmt):
+            return {'source_sha256':self.row['source_sha256'],'bytes':len(raw)} if path.name=='code.py' else {'source_sha256':'b'*64,'bytes':10}
+        with patch.object(self,'observe',observe),patch.object(Path,'read_bytes',return_value=raw):
+            self.assertFalse(self.verify()['qualification'])
+            self.row['upstream']['git_blob_oid']='f'*40
+            with self.assertRaises(ValueError):self.verify()
+
+    def test_reference_document_requires_content_pin_and_explicit_gap(self):
+        self.row['disposition']='upstream_reference_document'
+        self.row['reference']={'url':'https://example.org/article','content_sha256':'a'*64,'provenance_gap':'Acquisition receipt unavailable; companion metadata retained.'}
+        self.assertFalse(self.verify()['qualification'])
+        del self.row['reference']['provenance_gap']
+        with self.assertRaises(ValueError):self.verify()
+        self.row['reference']['provenance_gap']=None;self.row['reference']['content_sha256']='c'*64
+        with self.assertRaises(ValueError):self.verify()
+
+    def test_generated_literal_exact_argument_and_js_escape_subset(self):
+        import subprocess
+        def run(literal,body,anchor=None,actual_head='d'*40):
+            anchor=anchor or "await fs.writeFile(path.join(a.root,'a.py'),"+literal+");"
+            raw=(anchor+'\n').encode();oid='e'*40;head='d'*40
+            self.row.update(source='artifacts/project-a/a.py',source_sha256=hashlib.sha256(body).hexdigest(),source_bytes=len(body),disposition='generated_literal')
+            self.row['generated']={'git_generator':{'commit':'c'*40,'path':'packages/vscode/src/test/native.test.ts','blob_oid':oid,'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw),'reachable_ref':'refs/heads/retained','reachable_head':head},
+                'literal_lexeme':literal,'source_anchor':anchor,'reproduced_sha256':self.row['source_sha256']}
+            def output(args):
+                if '--verify' in args:return (actual_head+'\n').encode()
+                if 'show' in args:return raw
+                return (oid+'\n').encode()
+            def observe(path,fmt):return {'source_sha256':self.row['source_sha256'],'bytes':len(body)} if path.name=='a.py' else {'source_sha256':'b'*64,'bytes':10}
+            with patch.object(self,'observe',observe),patch.object(Path,'read_bytes',return_value=body),patch.object(subprocess,'run'),patch.object(subprocess,'check_output',side_effect=output):return self.verify()
+        literal="'ok\\n'"
+        self.assertFalse(run(literal,b'ok\n')['qualification'])
+        unrelated="const nearby="+literal+"; await fs.writeFile(path.join(a.root,'a.py'),'different');"
+        with self.assertRaises(ValueError):run(literal,b'ok\n',unrelated)
+        with self.assertRaises(ValueError):run("'\\U00000041'",b'A')
+        with self.assertRaises(ValueError):run(literal,b'ok\n',actual_head='f'*40)
+
+    def test_observed_tool_input_requires_installed_identity_and_bound_private_home(self):
+        repo=Path.cwd();profile=repo.parent/'human';relative='skills/.system/tool/a.py';private=repo/'artifacts/private'
+        log=(str(private)+'\n').encode()
+        self.row.update(source='artifacts/private/'+relative,disposition='observed_tool_input')
+        self.row['tool_input']={'installed':{'absolute_path':str(profile/'.codex'/relative),'sha256':'a'*64,'bytes':10},
+            'producer':{'path':'scripts/producer.py','sha256':'a'*64,'bytes':10},'private_home':'artifacts/private','relative_path':relative,
+            'bindings':[{'path':'artifacts/log.txt','sha256':hashlib.sha256(log).hexdigest(),'bytes':len(log)}]}
+        def observe(path,fmt):
+            if path.name=='log.txt':return {'source_sha256':hashlib.sha256(log).hexdigest(),'bytes':len(log)}
+            return {'source_sha256':('b' if path.name=='inventory.json' else 'a')*64,'bytes':10}
+        with patch.object(self,'observe',observe),patch.object(Path,'home',return_value=profile),patch.object(Path,'read_text',return_value='CODEX_HOME'),patch.object(Path,'read_bytes',new=lambda path:log):
+            self.assertFalse(self.verify()['upstream_release_verified'])
+            self.row['tool_input']['installed']['absolute_path']=str(repo.parent/'another-user'/'.codex'/relative)
+            with self.assertRaises(ValueError):self.verify()
+            self.row['tool_input']['installed']['absolute_path']=str(profile/'.codex'/relative)
+            log=b'no private home binding'
+            self.row['tool_input']['bindings'][0].update(sha256=hashlib.sha256(log).hexdigest(),bytes=len(log))
+            with self.assertRaises(ValueError):self.verify()
+
+    def test_private_fixture_requires_concrete_origin_or_exact_historical_index(self):
+        repo=Path.cwd();origin=repo.parent/'external-bookbuilder';documents={}
+        def doc(name,value):
+            raw=json.dumps(value).encode();documents[name]=raw
+            return {'path':'artifacts/'+name,'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw)}
+        inputs=doc('input.json',{'workspaces':[{'label':'bookbuilder','root':str(origin)}]})
+        summary=doc('summary.json',{'original_workspaces_unchanged':True,'runs':[{'workspace':'bookbuilder','isolation_and_citations_passed':True}]})
+        self.row.update(source='artifacts/copies/bookbuilder/code.py',disposition='private_fixture_source',fixture={
+            'producer':{'path':'scripts/benchmark-detail.py','sha256':'a'*64,'bytes':10},'input':inputs,'summary':summary,
+            'copy_root':'artifacts/copies/bookbuilder','copy_relative_path':'code.py','label':'bookbuilder',
+            'original':{'path':str(origin/'code.py'),'status':'matches','sha256':'a'*64,'bytes':10}})
+        drift=False
+        def observe(path,fmt):
+            if path.name in documents:return {'source_sha256':hashlib.sha256(documents[path.name]).hexdigest(),'bytes':len(documents[path.name])}
+            if path==origin/'code.py' and drift:return {'source_sha256':'c'*64,'bytes':10}
+            return {'source_sha256':('b' if path.name=='inventory.json' else 'a')*64,'bytes':10}
+        def read(path):return documents[path.name]
+        with patch.object(self,'observe',observe),patch.object(Path,'read_bytes',read):
+            self.assertEqual(self.verify()['ultimate_original']['status'],'matches')
+            drift=True
+            self.row['fixture']['original'].update(status='differs',sha256='c'*64)
+            with self.assertRaises(ValueError):self.verify()
+            self.row['fixture']['identity_gap']='No exact historical hash witness; source role established by pinned copy chain'
+            self.assertFalse(self.verify()['historical_identity_complete'])
+            del self.row['fixture']['identity_gap']
+            inv=doc('native-inventory.json',{'root':str(origin),'files':{'code.py':{'state':{'source_hash':'a'*64},'source_bytes':10}}})
+            manifest=doc('manifest.json',{'inventory_digest':inv['sha256']})
+            self.row['fixture']['historical_index']={'inventory':inv,'manifest':manifest,'relative_path':'code.py','source_sha256':'a'*64,'source_bytes':10}
+            self.assertTrue(self.verify()['historical_input_verified'])
+            self.row['fixture']['historical_index']['source_sha256']='d'*64
+            with self.assertRaises(ValueError):self.verify()
+
+    def test_reachable_git_typescript_source_requires_actual_blob_content(self):
+        raw=b'hello\n';sha=hashlib.sha256(raw).hexdigest();oid='ce013625030ba8dba906f756967f9e9ca394464a';head='c'*40
+        self.row['disposition']='generated_from_maintained_typescript'
+        self.row['generated']={'compiler':{'path':'packages/admin/typescript.js','sha256':'a'*64,'bytes':10},
+            'source_version':{'git_blob_oid':oid,'reachable_head':head,'sha256':sha,'bytes':6},
+            'options':{},'method':'exact observed emission','reproduced_js_sha256':'a'*64}
+        import subprocess
+        with patch.object(subprocess,'check_output',side_effect=[(oid+' label.ts\n').encode(),raw]):
+            self.assertFalse(self.verify()['qualification'])
+        self.row['generated']['source_version']['sha256']='f'*64
+        with patch.object(subprocess,'check_output',side_effect=[(oid+' label.ts\n').encode(),raw]),self.assertRaises(ValueError):self.verify()
+
     def test_generated_fixture_requires_exact_generator_and_reproduced_hash(self):
         self.row['disposition']='generated_fixture'
         self.row['generated']={'generator':{'path':'tools/tests/generator.py','sha256':'a'*64,'bytes':10},
@@ -327,6 +628,25 @@ class EvidenceDisposition(unittest.TestCase):
 
 
 class Reconciliation(unittest.TestCase):
+    def test_frozen_inventory_union_preserves_evidence_and_refuses_conflicts(self):
+        import sys,copy
+        ds=importlib.util.spec_from_file_location('disposition',Path(__file__).with_name('disposition.py'));d=importlib.util.module_from_spec(ds);ds.loader.exec_module(d)
+        rs=importlib.util.spec_from_file_location('reconcile',Path(__file__).with_name('reconcile.py'));r=importlib.util.module_from_spec(rs)
+        with patch.dict(sys.modules,{'inventory':m,'disposition':d}):rs.loader.exec_module(r)
+        row={'path':'artifacts/a.py','source_sha256':'a'*64,'bytes':1,'git_blob_oid':'b'*40,'tracked_worktree_matches':['scripts/a.py']}
+        first={'schema':'airk.private.source-inventory/1','repository':'repo','head':'c'*40,'object_format':'sha1','candidates':[row],'errors':[{'path':'denied'}],'excluded':[{'path':'vendor'}],'reported_prior_scan_notes':['prior'],'roots':['artifacts/a']}
+        second=copy.deepcopy(first);second['candidates'][0]['tracked_worktree_matches']=['scripts/b.py'];second['roots']=['artifacts/b']
+        merged=r.merge_inventories([first,second])
+        self.assertEqual(len(merged['candidates']),1);self.assertEqual(merged['candidates'][0]['tracked_worktree_matches'],['scripts/a.py','scripts/b.py'])
+        self.assertEqual(merged['errors'],first['errors']*2);self.assertEqual(merged['excluded'],first['excluded']*2);self.assertEqual(merged['reported_prior_scan_notes'],['prior','prior']);self.assertEqual(merged['roots'],['artifacts/a','artifacts/b'])
+        self.assertEqual(first['candidates'][0]['tracked_worktree_matches'],['scripts/a.py'])
+        for key in ['repository','head','object_format','schema']:
+            bad=copy.deepcopy(second);bad[key]='different'
+            with self.assertRaises(ValueError):r.merge_inventories([first,bad])
+        for key,value in [('source_sha256','f'*64),('bytes',2),('git_blob_oid','d'*40),('normalized_text_git_blob_oid','e'*40)]:
+            bad=copy.deepcopy(second);bad['candidates'][0][key]=value
+            with self.assertRaises(ValueError):r.merge_inventories([first,bad])
+
     def test_missing_evidence_stays_unresolved_and_map_pins_preserved(self):
         import sys
         ds=importlib.util.spec_from_file_location('disposition',Path(__file__).with_name('disposition.py'))
@@ -347,6 +667,13 @@ class Reconciliation(unittest.TestCase):
         self.assertEqual(r.resolve(row,{}, {}, tracked_current={'b'*64:[{'path':'scripts/old.py'}]})['status'],'unresolved')
         self.assertEqual(r.resolve(row,{}, {}, tracked_current={})['status'],'unresolved')
         self.assertEqual(r.resolve(row,{}, {}, tracked_current={'a'*64:[{'path':'scripts/old.py','sha256':'a'*64,'bytes':1}]})['status'],'current_tracked_worktree_identity')
+        cache={'proof.json':{'source_sha256':'a'*64,'bytes':10}}
+        self.assertEqual(r.recheck_evidence(cache,'sha1',lambda path,fmt:{'source_sha256':'a'*64,'bytes':10}),[])
+        errors=r.recheck_evidence(cache,'sha1',lambda path,fmt:{'source_sha256':'b'*64,'bytes':10})
+        self.assertEqual(errors[0]['stage'],'evidence_final_recheck')
+        def missing(path,fmt):raise FileNotFoundError('proof removed')
+        self.assertEqual(r.recheck_evidence(cache,'sha1',missing)[0]['type'],'FileNotFoundError')
+
 
 
 if __name__ == '__main__':

@@ -1,0 +1,12 @@
+--- a/crates/airk-kernel/src/current/enrichment.rs
++++ b/crates/airk-kernel/src/current/enrichment.rs
+@@ -987,9 +987,6 @@
+                 });
+             }
+             selected.truncate(batch_len);
+-            selected.sort_unstable_by(|left, right| {
+-                (left.0, left.1, &left.2.path).cmp(&(right.0, right.1, &right.2.path))
+-            });
+             let mut selected: Vec<_> = selected
+                 .into_iter()
+                 .map(|(_, _, pending)| pending.clone())

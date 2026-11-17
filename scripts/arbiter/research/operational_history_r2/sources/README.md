@@ -1,0 +1,7 @@
+# Historical operational implementations
+
+These are the versioned AIRK runner, preparation, analysis and platform helpers described in the parent README. Full original SHA-256 prefixes distinguish source versions; source-map.json preserves every originating path and any added license prefix. Repeated bodies share one owner even when historical basenames differed.
+
+P8/P9 replay drivers exercise the frozen predecessor upgrade and E0 workload; the P6f builder creates an unsealed test-owner pair. Other families dispatch scoped build/tests, inspect installer/package/process outcomes, transfer Mac Neo sources, or analyze retained receipts. Their private inputs and outputs are enumerated by the historical code and parent purpose table. They are retained source, not executable instructions for the current environment. Do not run them, provision dependencies, use alternate identities or invoke their release/install actions merely because they are present here.
+
+Final scoped roster: 2413 original paths, 2047 distinct new retained source copies, and seven origin aliases reusing existing maintained owners. The full receiving-folder test rejects unmapped extra files. Eighteen build CMD wrappers remain explicitly labelled historical generated copies with retained producer candidates; exact parameter reconstruction is a separate proof, not a prerequisite for preserving their already reviewed source. The map is a source-preservation result, not a broad all-artifacts completion claim.

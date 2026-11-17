@@ -1,0 +1,156 @@
+--- run_retained_restart_r2.py
++++ run_retained_restart_r3.py
+@@ -50,14 +50,51 @@
+     prior_proof_values(card['native'],value('stop'),value('exit'),value('owner_receipt')['owner'])
+ 
+ 
++
++def verify_immutable_pins(card):
++    # These are immutable inputs only. The retained mutable control/state
++    # census is an ingress preimage and MUST NOT be rechecked after restart.
++    require(0<len(card['pins'])<=4096,'pin bound')
++    names=[os.path.normcase(str(Path(r['path']).resolve(strict=True))) for r in card['pins']]
++    require(len(names)==len(set(names)),'duplicate pin')
++    for row in card['pins']:
++        require(sha(row['path'])==row['sha256'],'pinned input changed: '+row['path'])
++
++
++def final_observation(report,began,cutoff,candidate,postcheck):
++    try:
++        postcheck()
++        report['postverification_passed']=True
++    except BaseException as error:
++        failure={'type':type(error).__name__,'message':str(error)}
++        if 'failure' not in report:report['failure']=failure
++        else:report.setdefault('secondary_failures',[]).append({'stage':'postverification',**failure})
++        report['postverification_passed']=False
++    # One final clock, after all proofs/hashes/handle cleanup. No renewal.
++    finished=time.monotonic()
++    report['elapsed_seconds']=finished-began
++    report['completion_observed_before_cutoff']=finished<cutoff
++    if finished>=cutoff and 'failure' not in report:
++        report['failure']={'type':'TimeoutError','message':'original retained restart phase cutoff expired at final observation'}
++    report['passed']=bool(candidate and finished<cutoff and report['postverification_passed']
++        and 'failure' not in report and 'cleanup_failure' not in report)
++    return report['passed']
++
++
++def require_restarted_identity(health,native,handle):
++    require(health['user']==SID and health['executable_sha256']==native['airk_sha256']
++        and health['runtime_sha256']==native['runtime_sha256'] and health['version']=='1.8.207'
++        and health['instance']!=native['previous_instance'] and handle.pid==health['process_id']
++        and handle.handle is not None,'same-image new native lease/instance/handle absent')
++    # A numeric PID may be legitimately reused. Original handle exit is proved
++    # separately by prior_proof; a new instance and retained new handle bind this run.
++
++
+ def validate(card):
+     require(card['schema']=='airk.private-retained-r5-restart-card/1' and card['phase_seconds']==600
+         and card['native_seconds']==120 and card['cleanup_seconds']==5,'unreviewed restart policy')
+     require(card['scope']=='separate isolated U93 explicit restart; original R5 remains failed','restart scope differs')
+-    require(0<len(card['pins'])<=4096,'pin bound')
+-    names=[os.path.normcase(str(Path(r['path']).resolve(strict=True))) for r in card['pins']]
+-    require(len(names)==len(set(names)),'duplicate pin')
+-    for row in card['pins']:require(sha(row['path'])==row['sha256'],'pinned input changed: '+row['path'])
++    verify_immutable_pins(card)
+     prior_proof(card)
+     verify_census(json.loads(Path(card['census']).read_text(encoding='utf-8')))
+     return card
+@@ -105,7 +142,7 @@
+         'release_qualified':False,'scope':card['scope'],'steps':[],'focus_work_repeated':False}
+     def record(label,value):
+         write(output/(f'{len(report["steps"]):03d}-'+label+'.json'),value);report['steps'].append(label)
+-    began=time.monotonic();fixture=None;health=None;handle=None;settled=False;attempted=False;stop_cutoff=None
++    began=time.monotonic();fixture=None;health=None;handle=None;settled=False;attempted=False;stop_cutoff=None;candidate=False;primary=None
+     r5=Path(card['r5_recipe']);R=load('retained_r5_helpers',r5/'run_public_focus_r5.py')
+     A=load('retained_assertions',r5/'public_focus_evidence_r5.py')
+     E=load('retained_evidence',r5/'public-focus-r5-helper-source/scripts/combined_evidence.py')
+@@ -144,10 +181,7 @@
+         record('actual-start',health)
+         handle=R.ProcessExit(health['process_id'])
+         A.require_health_source(health,SID,card['native']['source_sha256'])
+-        require(health['executable_sha256']==card['native']['airk_sha256']
+-            and health['runtime_sha256']==card['native']['runtime_sha256']
+-            and health['version']=='1.8.207' and health['instance']!=card['native']['previous_instance']
+-            and health['process_id']!=card['native']['previous_pid'],'same-image new native lease/instance absent')
++        require_restarted_identity(health,card['native'],handle)
+         fixture.managed_health=health;fixture.managed_started=True
+         status=R.capture_status(lambda:fixture.run('--service-runtime-dir',fixture.control,'arbiter','status',check=False,
+             timeout=min(120,left(cutoff))),record)
+@@ -177,15 +211,32 @@
+         exited=handle.wait(stop_cutoff);record('actual-original-process-exit',exited)
+         report['actual_original_process_exit']=exited;settled=True
+         report['source_files_unchanged']=True;report['actual_new_instance_same_image_lease_reacquisition']=True
+-        report['ordinary_minilm_reads']=2;report['passed']=True
++        report['ordinary_minilm_reads']=2;candidate=True
+     except BaseException as error:
+-        report['failure']={'type':type(error).__name__,'message':str(error)};raise
++        primary=error;report['failure']={'type':type(error).__name__,'message':str(error)};raise
+     finally:
+-        stop_cutoff=cleanup(fixture,health,settled,attempted,stop_cutoff,cutoff,record,report)
+-        if handle is not None:
+-            report['cleanup_process_exit']=R.retain_original_exit(handle,stop_cutoff if stop_cutoff is not None else cutoff);handle.close()
+-        if fixture is not None:fixture.log.close()
+-        report['elapsed_seconds']=time.monotonic()-began;write(output/'receipt.json',report)
++        try:
++            stop_cutoff=cleanup(fixture,health,settled,attempted,stop_cutoff,cutoff,record,report)
++            if handle is not None:
++                report['cleanup_process_exit']=R.retain_original_exit(handle,stop_cutoff if stop_cutoff is not None else cutoff)
++        except BaseException as error:
++            failure={'type':type(error).__name__,'message':str(error)}
++            if 'failure' not in report:report['failure']=failure
++            else:report.setdefault('secondary_failures',[]).append({'stage':'native_cleanup',**failure})
++        finally:
++            for stage,close_handle in ([('original_process_handle',handle.close)] if handle is not None else [])+([('controller_log',fixture.log.close)] if fixture is not None else []):
++                try:close_handle()
++                except BaseException as error:
++                    failure={'type':type(error).__name__,'message':str(error)}
++                    if 'failure' not in report:report['failure']=failure
++                    else:report.setdefault('secondary_failures',[]).append({'stage':stage,**failure})
++        def post_source_proof():
++            require(all(sha(r['path'])==r['sha256'] for r in card['read_only_sources']),
++                'original source/request bytes changed after native cleanup')
++        final_observation(report,began,cutoff,candidate,post_source_proof)
++        write(output/'receipt.json',report)
++        if primary is None and not report['passed']:
++            raise RuntimeError('retained restart phase failed final observation: '+str(report.get('failure') or report.get('cleanup_failure')))
+ 
+ 
+ def outer(card_path,expected):
+@@ -196,13 +247,17 @@
+     output=Path(card['outer_output']);require(not output.exists(),'fresh outer output required');output.mkdir()
+     report={'schema':'airk.private-retained-r5-restart-owner/1','passed':False,'original_R5_whole_journey_passed':False,
+         'scope':card['scope'],'execution_card':{'path':str(card_path),'sha256':expected}}
++    candidate=False;primary=None
+     try:
+         owner=load('retained_multichild_owner',card['owner_source'])
+         argv=[card['python'],'-B',str(Path(__file__).resolve()),'--card',str(card_path),'--card-sha256',expected,
+             '--owned-child','--whole-cutoff',str(cutoff)]
+         result=owner.run_owned(argv,card['repository'],output/'owned-child.log',left(cutoff),{**os.environ,**card['environment']})
+         report['owner']=result
+-        result_path=Path(card['child_output'])/'receipt.json';receipt=json.loads(result_path.read_text(encoding='utf-8')) if result_path.is_file() else None
++        result_path=Path(card['child_output'])/'receipt.json'
++        child_bytes=result_path.read_bytes() if result_path.is_file() else None
++        report['child_receipt_sha256']=hashlib.sha256(child_bytes).hexdigest() if child_bytes is not None else None
++        receipt=json.loads(child_bytes) if child_bytes is not None else None
+         report['child_receipt_observation']=receipt
+         R=load('retained_owner_acceptance',Path(card['r5_recipe'])/'run_owned_public_focus_r5.py')
+         require(R.natural_owner(result),'owned restart child/Job did not naturally settle')
+@@ -210,11 +265,14 @@
+             and receipt['actual_original_process_exit']['process_handle_signaled'] is True
+             and receipt['actual_original_process_exit']['exit_code']==0
+             and receipt['actual_native_stop']['record']['phase']=='complete','actual native restart/Stop/exit proof absent')
+-        report['passed']=True;report['child_receipt_sha256']=sha(result_path)
++        candidate=True
+     except BaseException as error:
+-        report['failure']={'type':type(error).__name__,'message':str(error)};raise
++        primary=error;report['failure']={'type':type(error).__name__,'message':str(error)};raise
+     finally:
+-        report['elapsed_seconds']=time.monotonic()-began;write(output/'receipt.json',report)
++        final_observation(report,began,cutoff,candidate,lambda:verify_immutable_pins(card))
++        write(output/'receipt.json',report)
++        if primary is None and not report['passed']:
++            raise RuntimeError('retained restart owner failed final observation: '+str(report.get('failure')))
+ 
+ if __name__=='__main__':
+     ap=argparse.ArgumentParser();ap.add_argument('--card',type=Path,required=True);ap.add_argument('--card-sha256',required=True)

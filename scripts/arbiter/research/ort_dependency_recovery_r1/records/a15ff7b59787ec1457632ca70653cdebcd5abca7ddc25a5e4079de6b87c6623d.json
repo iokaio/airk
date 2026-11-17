@@ -1,0 +1,21 @@
+{
+  "base_bytes": 10781,
+  "base_sha256": "b9756b1033c5f535ea551572220f0e4ef03de1b38d9167388c88d6cb4dd116b1",
+  "edits": [
+    {
+      "delete_bytes": 0,
+      "deleted_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "insert_base64": "I2lmIF9fQllURV9PUkRFUl9fID09IF9fT1JERVJfTElUVExFX0VORElBTl9fCg==",
+      "offset": 5609
+    },
+    {
+      "delete_bytes": 0,
+      "deleted_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "insert_base64": "I2VsaWYgX19CWVRFX09SREVSX18gPT0gX19PUkRFUl9CSUdfRU5ESUFOX18KICAgIHJhbmRvbUJpdHNbMF0gfD0gZ2V0UmFuZG9tQml0czx1aW50NjRfdD4obnVtSGlnaEJpdHMpOwogICAgcmFuZG9tQml0c1sxXSB8PSBnZXRSYW5kb21CaXRzPHVpbnQ2NF90PihudW1Mb3dCaXRzKTsKI2Vsc2UKI2Vycm9yIFVuZXhwZWN0ZWQgb3IgdW5kZWZpbmVkIF9fQllURV9PUkRFUl9fCiNlbmRpZgo=",
+      "offset": 5726
+    }
+  ],
+  "schema": "airk.exact-byte-recovery/1",
+  "target_bytes": 11048,
+  "target_sha256": "4457a9ace6ff2ac291b8d3986fc33f44df0625bd75f515fe7acf21cddf18e537"
+}

@@ -1,0 +1,181 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Inert actual-file controls for approved delivery maps; never an evidence gate pass.
+use super::*;
+fn part(url: &str, raw: &[u8]) -> AssetPart {
+    AssetPart {
+        url: url.into(),
+        backup_urls: vec![],
+        bytes: raw.len() as u64,
+        sha256: sha(raw),
+    }
+}
+fn decision(approved: BTreeSet<Sha256Digest>) -> Result<RecordedDecision> {
+    Ok(serde_json::from_value(
+        serde_json::json!({"schema":"airk.private-recorded-stage-promotion/1","decision":"synthetic-not-a-release","approved_final_proofs":[],"approved_download_source_maps":approved}),
+    )?)
+}
+fn fixture() -> Result<(tempfile::TempDir, Profile, Candidate, RecordedDecision)> {
+    let directory = tempfile::tempdir()?;
+    let mut profile: Profile = serde_json::from_slice(include_bytes!(
+        "../../../../../../fixtures/arbiter/profile-downloads.json"
+    ))?;
+    let mut files = BTreeMap::new();
+    let mut downloads = Vec::new();
+    for asset in &mut profile.assets {
+        let raw = format!("synthetic-local-{}", asset.name).into_bytes();
+        asset.bytes = raw.len() as u64;
+        asset.sha256 = sha(&raw);
+        let path = directory.path().join(&asset.name);
+        fs::write(&path, &raw)?;
+        files.insert(asset.name.clone(), path);
+        if asset.role == AssetRole::Compiler {
+            profile.compiler = asset.sha256;
+        }
+        if asset.role == AssetRole::Calibration {
+            profile.calibration = asset.sha256;
+        }
+        downloads.push(AssetDownload {
+            asset_name: asset.name.clone(),
+            parts: vec![part(
+                &format!(
+                    "https://github.com/iokaio/airk/releases/download/v1.9.0/{}",
+                    asset.name
+                ),
+                &raw,
+            )],
+        });
+    }
+    profile.downloads.clear();
+    profile.validate()?;
+    let map = directory.path().join("source-map.json");
+    let raw = serde_json::to_vec(&downloads)?;
+    fs::write(&map, &raw)?;
+    let pin = PinnedFile {
+        path: map,
+        bytes: raw.len() as u64,
+        sha256: sha(&raw),
+    };
+    let candidate = Candidate {
+        profile: pin.clone(),
+        final_proof: pin.clone(),
+        download_sources: pin.clone(),
+        files,
+    };
+    let approval = decision(BTreeSet::from([pin.sha256]))?;
+    Ok((directory, profile, candidate, approval))
+}
+fn write_map(
+    candidate: &mut Candidate,
+    decision: &mut RecordedDecision,
+    downloads: &[AssetDownload],
+) -> Result<()> {
+    let raw = serde_json::to_vec(downloads)?;
+    fs::write(&candidate.download_sources.path, &raw)?;
+    candidate.download_sources.bytes = raw.len() as u64;
+    candidate.download_sources.sha256 = sha(&raw);
+    decision.approved_download_source_maps = BTreeSet::from([candidate.download_sources.sha256]);
+    Ok(())
+}
+#[test]
+fn final_source_maps_require_recorded_approval_and_exact_native_census() -> Result<()> {
+    let (_dir, profile, mut candidate, mut approved) = fixture()?;
+    let original = verified_download_sources(&profile, &candidate, &approved)?;
+    assert_eq!(original.len(), profile.assets.len());
+    let mut canonical = original.clone();
+    canonical[0].parts[0].backup_urls = vec![canonical[0].parts[0].url.clone()];
+    canonical[0].parts[0].url = "https://huggingface.co/Qwen/Qwen3-1.7B/resolve/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e4/tokenizer.json".into();
+    write_map(&mut candidate, &mut approved, &canonical)?;
+    let preserved = verified_download_sources(&profile, &candidate, &approved)?;
+    assert_eq!(preserved[0].parts[0].url, canonical[0].parts[0].url);
+    assert_eq!(
+        preserved[0].parts[0].backup_urls,
+        canonical[0].parts[0].backup_urls
+    );
+    write_map(&mut candidate, &mut approved, &original)?;
+    assert!(verified_download_sources(&profile, &candidate, &decision(BTreeSet::new())?).is_err());
+    let mut missing = original.clone();
+    missing.pop();
+    write_map(&mut candidate, &mut approved, &missing)?;
+    assert!(verified_download_sources(&profile, &candidate, &approved).is_err());
+    let mut duplicate = original.clone();
+    duplicate[1] = duplicate[0].clone();
+    write_map(&mut candidate, &mut approved, &duplicate)?;
+    assert!(verified_download_sources(&profile, &candidate, &approved).is_err());
+    let mut foreign = original.clone();
+    foreign[0].asset_name = "foreign.bin".into();
+    write_map(&mut candidate, &mut approved, &foreign)?;
+    assert!(verified_download_sources(&profile, &candidate, &approved).is_err());
+    write_map(&mut candidate, &mut approved, &original)?;
+    candidate.files.insert(
+        "extra.bin".into(),
+        candidate.files.values().next().unwrap().clone(),
+    );
+    assert!(verified_download_sources(&profile, &candidate, &approved).is_err());
+    Ok(())
+}
+#[test]
+fn approved_map_cannot_hide_wrong_local_hash_part_order_length_origin_or_backups() -> Result<()> {
+    let (_dir, profile, mut candidate, mut approval) = fixture()?;
+    let original = verified_download_sources(&profile, &candidate, &approval)?;
+    for change in ["part_hash", "part_length", "origin", "backup"] {
+        let mut changed = original.clone();
+        let p = &mut changed[0].parts[0];
+        match change {
+            "part_hash" => p.sha256 = Sha256Digest::from_bytes([0; 32]),
+            "part_length" => p.bytes += 1,
+            "origin" => p.url = "https://example.invalid/wrong".into(),
+            _ => p.backup_urls = vec![p.url.clone()],
+        };
+        write_map(&mut candidate, &mut approval, &changed)?;
+        assert!(
+            verified_download_sources(&profile, &candidate, &approval).is_err(),
+            "{change}"
+        );
+    }
+    let source = candidate.files.values().next().unwrap();
+    let length = fs::metadata(source)?.len() as usize;
+    fs::write(source, vec![b'x'; length])?;
+    write_map(&mut candidate, &mut approval, &original)?;
+    assert!(verified_download_sources(&profile, &candidate, &approval).is_err());
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("slices.bin");
+    fs::write(&path, b"abcdef")?;
+    let asset = Asset {
+        name: "slices.bin".into(),
+        role: AssetRole::ExternalWeights,
+        bytes: 6,
+        sha256: sha(b"abcdef"),
+    };
+    let mut download = AssetDownload {
+        asset_name: asset.name.clone(),
+        parts: vec![
+            part(
+                "https://github.com/iokaio/airk/releases/download/v1.9.0/a.bin",
+                b"ab",
+            ),
+            part(
+                "https://github.com/iokaio/airk/releases/download/v1.9.0/b.bin",
+                b"cdef",
+            ),
+        ],
+    };
+    logical_asset(&asset, &path, &download)?;
+    let mut wrong_full = asset.clone();
+    wrong_full.sha256 = Sha256Digest::from_bytes([0; 32]);
+    assert!(logical_asset(&wrong_full, &path, &download).is_err());
+    download.parts.swap(0, 1);
+    assert!(logical_asset(&asset, &path, &download).is_err());
+    Ok(())
+}
+#[test]
+fn candidate_missing_source_map_is_a_decode_refusal() -> Result<()> {
+    let pin =
+        serde_json::json!({"path":"unused","bytes":1,"sha256":Sha256Digest::from_bytes([1;32])});
+    assert!(
+        serde_json::from_value::<Candidate>(
+            serde_json::json!({"profile":pin,"final_proof":pin,"files":{}})
+        )
+        .is_err()
+    );
+    Ok(())
+}

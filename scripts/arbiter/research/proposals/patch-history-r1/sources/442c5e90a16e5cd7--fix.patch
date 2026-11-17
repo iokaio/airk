@@ -1,0 +1,261 @@
+--- a/crates/airk-store/src/service_project_removal.rs
++++ b/crates/airk-store/src/service_project_removal.rs
+@@ -144,7 +144,12 @@
+                 "retirement must settle the current policy job before cleanup"
+             );
+         }
+-        let absent_collection = if !present && absent_data.is_none() {
++        let uninitialized_data = if !present && absent_data.is_none() {
++            RetiredUninitializedData::capture(Path::new(&registration.data_root))?
++        } else {
++            None
++        };
++        let absent_collection = if !present && absent_data.is_none() && uninitialized_data.is_none() {
+             match crate::quota::AbsentCollectionSettlement::settle(
+                 &registration,
+                 &lease,
+@@ -229,6 +234,9 @@
+         }
+         if let Some(absent) = &absent_collection {
+             absent.revalidate()?;
++        }
++        if let Some(uninitialized) = &uninitialized_data {
++            uninitialized.revalidate()?;
+         }
+         // Child metadata is removed before its FK parents. Other projects/plans remain.
+         for table in [
+@@ -295,6 +303,9 @@
+         if let Some(absent) = &absent_collection {
+             absent.revalidate()?;
+         }
++        if let Some(uninitialized) = &uninitialized_data {
++            uninitialized.revalidate()?;
++        }
+         bump(&tx)?;
+         tx.commit()?;
+         Ok(true)
+@@ -303,6 +314,53 @@
+ 
+ pub(super) fn removed_root_identity(root: &str) -> airk_core::identity::Sha256Digest {
+     airk_core::identity::framed_digest(b"airk-removed-source/1", &[root.as_bytes()])
++}
++
++// Metadata-only registration does not initialize or claim its data root. This
++// proof authorizes only dropping already retired registry references: no file,
++// allowance, ownership receipt or advisory is created, removed or adopted.
++struct RetiredUninitializedData {
++    path: std::path::PathBuf,
++    root: super::catalog::setup::storage::SetupDirectory,
++}
++impl RetiredUninitializedData {
++    fn capture(data: &Path) -> Result<Option<Self>> {
++        let root = super::catalog::setup::storage::SetupDirectory::open_canonical(data)?;
++        match root.open_entry(std::ffi::OsStr::new(super::super::data_scope::OWNER)) {
++            Ok(_) => return Ok(None),
++            Err(error) if missing_entry(&error) => (),
++            Err(error) => return Err(error),
++        }
++        let proof = Self { path: data.to_path_buf(), root };
++        proof.revalidate()?;
++        Ok(Some(proof))
++    }
++    fn revalidate(&self) -> Result<()> {
++        use std::ffi::OsStr;
++        ensure!(super::catalog::setup::storage::SetupDirectory::open_canonical(&self.path)?
++            .identity()? == self.root.identity()?, "uninitialized retired data root changed");
++        // Any native ownership/claim/quota state requires the ordinary complete
++        // ownership-aware cleanup. Unrelated user/legacy files are untouched.
++        for name in [super::super::data_scope::OWNER, super::super::data_scope::PART,
++            super::super::data_scope::LOCK, ".quota-1.4", ".lifecycle-1.4.lock"] {
++            match self.root.open_entry(OsStr::new(name)) {
++                Err(error) if missing_entry(&error) => (),
++                Err(error) => return Err(error),
++                Ok(_) => anyhow::bail!("uninitialized retired data root contains native state"),
++            }
++        }
++        match self.root.open_dir(OsStr::new("collections-1.4")) {
++            Err(error) if missing_entry(&error) => (),
++            Err(error) => return Err(error),
++            Ok(directory) => ensure!(directory.entries()?.next().transpose()?.is_none(),
++                "unbound retired collection namespace is not empty"),
++        }
++        Ok(())
++    }
++}
++fn missing_entry(error: &anyhow::Error) -> bool {
++    error.downcast_ref::<std::io::Error>()
++        .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+ }
+ 
+ // Native-only, nonserializable proof. No source path, quota opener, marker or
+@@ -393,4 +451,58 @@
+         assert!(RetiredDataAbsence::capture(&path)?.is_none());
+         Ok(())
+     }
+-}
++    #[test]
++    fn metadata_only_registration_retires_without_claiming_uninitialized_storage() -> Result<()> {
++        let owner = tempfile::tempdir()?;
++        let base = owner.path().canonicalize()?;
++        let data = base.join("data"); let source = base.join("source"); let control = base.join("control");
++        for path in [&data, &source, &control] { std::fs::create_dir(path)?; }
++        std::fs::write(source.join("source.md"), b"preserved source")?;
++        std::fs::write(data.join("unrelated-user-data"), b"preserved user data")?;
++        std::fs::create_dir(data.join("collections-1.4"))?;
++        let registration = ProjectRegistration::new(source.to_str().unwrap().into(),
++            data.to_str().unwrap().into(), "never-started".into())?;
++        let mut registry = ServiceRegistry::open(&control,
++            airk_core::identity::Incarnation::from_bytes([61; 16]))?;
++        registry.register(&registration)?;
++        std::fs::rename(&source, base.join("offline-source"))?;
++        let epoch = registry.get(registration.binding)?.fencing_generation;
++        assert!(registry.retire_missing_source(registration.binding, epoch, 0)?);
++        assert!(registry.purge_removed_project_turn(registration.binding)?);
++        assert!(registry.project_was_removed(registration.binding)?);
++        assert!(registry.retained_project(registration.binding).is_err());
++        assert_eq!(std::fs::read(data.join("unrelated-user-data"))?, b"preserved user data");
++        assert_eq!(std::fs::read(base.join("offline-source/source.md"))?, b"preserved source");
++        let mut names = std::fs::read_dir(&data)?.map(|e| e.map(|e| e.file_name()))
++            .collect::<std::io::Result<Vec<_>>>()?; names.sort();
++        assert_eq!(names, vec![std::ffi::OsString::from("collections-1.4"),
++            std::ffi::OsString::from("unrelated-user-data")]);
++        assert!(std::fs::read_dir(data.join("collections-1.4"))?.next().is_none());
++        registry.register(&registration)?;
++        assert_eq!(registry.get(registration.binding)?.registration, registration);
++        Ok(())
++    }
++    #[test]
++    fn uninitialized_retirement_proof_refuses_native_state_and_replaced_root() -> Result<()> {
++        let owner = tempfile::tempdir()?; let base = owner.path().canonicalize()?;
++        let data = base.join("data"); std::fs::create_dir(&data)?;
++        let proof = RetiredUninitializedData::capture(&data)?.context("fresh proof missing")?;
++        for name in [super::super::super::data_scope::PART, super::super::super::data_scope::LOCK,
++            ".quota-1.4", ".lifecycle-1.4.lock"] {
++            std::fs::write(data.join(name), b"unknown native state")?;
++            assert!(proof.revalidate().is_err());
++            assert!(RetiredUninitializedData::capture(&data).is_err());
++            assert_eq!(std::fs::read(data.join(name))?, b"unknown native state");
++            std::fs::remove_file(data.join(name))?;
++        }
++        std::fs::create_dir(data.join("collections-1.4"))?;
++        std::fs::write(data.join("collections-1.4/unknown"), b"unknown collection")?;
++        assert!(proof.revalidate().is_err());
++        std::fs::remove_file(data.join("collections-1.4/unknown"))?;
++        std::fs::rename(&data, base.join("old-data"))?;
++        std::fs::create_dir(&data)?;
++        assert!(proof.revalidate().is_err());
++        Ok(())
++    }
++
++}
+--- a/crates/airk-store/src/quota/retired.rs
++++ b/crates/airk-store/src/quota/retired.rs
+@@ -25,7 +25,7 @@
+     bound_owner: File,
+     bound_owner_bytes: Vec<u8>,
+     lifecycle: File,
+-    advisory: File,
++    advisory: Option<File>,
+     ledger: File,
+ }
+ impl<'a> AbsentCollectionSettlement<'a> {
+@@ -72,15 +72,16 @@
+         ensure_current_root(&root_path)?;
+         let collections = root.open_dir(OsStr::new(Namespace::Service.collections()))?;
+         let locks = collections.open_dir(OsStr::new(".writer-locks"))?;
+-        let advisory = locks.open_file(
+-            OsStr::new(&registration.collection),
+-            SetupFileMode::ReadWrite,
+-        )?;
+-        ensure!(
+-            advisory.metadata()?.len() == 0,
+-            "unknown collection advisory"
+-        );
+-        advisory.try_lock()?;
++        let advisory = match locks.open_file(
++            OsStr::new(&registration.collection), SetupFileMode::ReadWrite) {
++            Ok(advisory) => {
++                ensure!(advisory.metadata()?.len() == 0, "unknown collection advisory");
++                advisory.try_lock()?;
++                Some(advisory)
++            }
++            Err(error) if absent(&error) => None,
++            Err(error) => return Err(error),
++        };
+         let ledger_control = root.open_dir(OsStr::new(Namespace::Service.control()))?;
+         let ledger =
+             ledger_control.open_file(OsStr::new("ledger.lock"), SetupFileMode::ReadWrite)?;
+@@ -208,6 +209,13 @@
+             Err(error) if absent(&error) => None,
+             Err(error) => return Err(error),
+         };
++        // An activated sibling may own this shared root before this metadata-only
++        // registration ever opened a writer. Missing advisory authorizes NO
++        // selected-credit disposal, even if someone removed an old advisory.
++        ensure!(proof.advisory.is_some()
++            || (terminal_current.is_none() && ordinary.is_empty()
++                && grants.as_ref().is_none_or(|(_, rows)| rows.is_empty())),
++            "selected retired credit requires its actual collection advisory");
+         // Every target lease and row is held and every inventory validated before
+         // the first effect. Complete logical absence proves ALL selected current
+         // journals, database payloads and stages disposed; never synthesize Ready.
+@@ -278,7 +286,6 @@
+                 &self.bound_owner,
+             ),
+             (&self.root, Namespace::Service.lifecycle(), &self.lifecycle),
+-            (&self.locks, self.collection.as_str(), &self.advisory),
+             (&self.control, "ledger.lock", &self.ledger),
+         ] {
+             ensure!(
+@@ -286,6 +293,16 @@
+                     == file_identity(retained)?,
+                 "retired quota owner changed"
+             );
++        }
++        match &self.advisory {
++            Some(advisory) => ensure!(file_identity(&self.locks.open_file(
++                OsStr::new(&self.collection), SetupFileMode::Read)?)? == file_identity(advisory)?,
++                "retired collection advisory changed"),
++            None => match self.locks.open_entry(OsStr::new(&self.collection)) {
++                Err(error) if absent(&error) => (),
++                Err(error) => return Err(error),
++                Ok(_) => anyhow::bail!("retired collection advisory appeared"),
++            },
+         }
+         match self.namespace.open_dir(OsStr::new(&self.collection)) {
+             Err(error) if absent(&error) => Ok(()),
+--- a/crates/airk-store/src/quota/retired_tests.rs
++++ b/crates/airk-store/src/quota/retired_tests.rs
+@@ -377,3 +377,32 @@
+     f.assert_sources()?;
+     Ok(())
+ }
++
++#[test]
++fn metadata_only_shared_root_retirement_never_disposes_credit_without_advisory() -> Result<()> {
++    let f = Fixture::new()?;
++    let healthy = f.grants(&f.healthy.collection)?;
++    let selected = f.grants(&f.registration.collection)?;
++    fs::remove_dir_all(f.directory())?;
++    let advisory = f.quota.root.join("collections-1.4/.writer-locks")
++        .join(&f.registration.collection);
++    fs::remove_file(&advisory)?;
++    let lease = f.lease()?;
++    // Actual selected native credits still require actual advisory custody.
++    assert!(AbsentCollectionSettlement::settle(&f.registration, &lease, &f.control, f.namespace).is_err());
++    assert_eq!(f.grants(&f.registration.collection)?, selected);
++    assert_eq!(f.grants(&f.healthy.collection)?, healthy);
++    drop(lease);
++    // A genuinely never-activated sibling has neither advisory nor credits.
++    let mut unstarted = f.registration.clone();
++    unstarted.collection = "never-activated".into();
++    unstarted = ProjectRegistration::new(unstarted.root, unstarted.data_root, unstarted.collection)?;
++    let lease = ProjectLease::acquire(&f.control, unstarted.binding)?;
++    let proof = AbsentCollectionSettlement::settle(&unstarted, &lease, &f.control, f.namespace)?;
++    proof.revalidate()?;
++    assert!(!f.quota.root.join("collections-1.4/.writer-locks/never-activated").exists());
++    assert_eq!(f.grants(&f.registration.collection)?, selected);
++    assert_eq!(f.grants(&f.healthy.collection)?, healthy);
++    f.assert_sources()?;
++    Ok(())
++}

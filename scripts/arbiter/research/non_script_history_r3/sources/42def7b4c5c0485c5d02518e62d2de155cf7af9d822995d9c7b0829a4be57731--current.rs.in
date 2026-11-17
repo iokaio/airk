@@ -1,0 +1,801 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Crash-surviving current-publication allowances. Never recover a collection under ledger.lock.
+use super::*;
+use airk_core::identity::{Incarnation, Sha256Digest, framed_digest};
+use std::io::Write;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CurrentGrantScope {
+    pub collection: String,
+    pub incarnation: Incarnation,
+    pub transaction: Sha256Digest,
+}
+
+impl CurrentGrantScope {
+    fn filename(&self) -> String {
+        let digest = framed_digest(
+            b"current-quota-grant/1",
+            &[
+                self.collection.as_bytes(),
+                self.incarnation.as_bytes(),
+                self.transaction.as_bytes(),
+            ],
+        );
+        format!("g-{digest}.json")
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DurableRecord {
+    version: u32,
+    scope: CurrentGrantScope,
+    bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    allocation: Option<CurrentGrantScope>,
+}
+impl DurableRecord {
+    fn filename(&self) -> String {
+        self.allocation.as_ref().unwrap_or(&self.scope).filename()
+    }
+}
+
+/// Dropping a handle intentionally preserves its allowance. Only the owning
+/// collection writer, after checking its journal under the exclusive gate, retires it.
+pub struct CurrentGrant {
+    quota: Quota,
+    record: DurableRecord,
+    funded: Option<funding::FundedChildRef>,
+}
+
+impl CurrentGrant {
+    pub fn scope(&self) -> &CurrentGrantScope {
+        &self.record.scope
+    }
+    pub fn capacity(&self) -> u64 {
+        self.record.bytes
+    }
+
+    /// Replace the outstanding phase allowance. Already written database/object
+    /// bytes are measured separately; callers supply remaining growth plus scratch.
+    pub fn resize(&mut self, writer: &crate::WriterLock, bytes: u64) -> Result<()> {
+        validate_writer(&self.quota, writer, &self.record.scope.collection)?;
+        ensure!(bytes > 0, "current quota grant must be positive");
+        let _lock = self.quota.lock()?;
+        if let Some(funded) = &self.funded {
+            self.require_current()?;
+            funding::resize_current(&self.quota, funded, bytes)?;
+            self.record.bytes = bytes;
+            return Ok(());
+        }
+        self.require_current()?;
+        if bytes > self.record.bytes {
+            admit(
+                &self.quota,
+                &self.record.scope.collection,
+                bytes - self.record.bytes,
+                false,
+            )?;
+        }
+        let mut next = self.record.clone();
+        next.bytes = bytes;
+        persist(&self.quota, &next, false)?;
+        self.record = next;
+        Ok(())
+    }
+
+    /// Requires the caller's exclusive current gate and a settled/absent pending
+    /// transaction. No active SQLite transaction or connection mutex may be held here.
+    pub fn release(self, writer: &crate::WriterLock) -> Result<()> {
+        validate_writer(&self.quota, writer, &self.record.scope.collection)?;
+        let _lock = self.quota.lock()?;
+        if let Some(funded) = &self.funded {
+            self.require_current()?;
+            return funding::release_current(&self.quota, funded);
+        }
+        self.require_current()?;
+        let directory = self.quota.control_path().join("current-grants");
+        fs::remove_file(directory.join(self.record.filename()))?;
+        crate::maintenance::sync_parent(&directory)?;
+        Ok(())
+    }
+
+    /// Atomically bind an admitted preparation allocation to its exact final
+    /// transaction. Its physical allocation name remains stable for recovery;
+    /// no release gap or duplicate reserved capacity is introduced.
+    pub(crate) fn rebind(
+        mut self,
+        writer: &crate::WriterLock,
+        scope: CurrentGrantScope,
+    ) -> Result<Self> {
+        validate_writer(&self.quota, writer, &scope.collection)?;
+        ensure!(
+            scope.collection == self.record.scope.collection
+                && scope.incarnation == self.record.scope.incarnation,
+            "current grant scope changed"
+        );
+        if scope == self.record.scope {
+            return Ok(self);
+        }
+        let _lock = self.quota.lock()?;
+        if let Some(funded) = &self.funded {
+            self.require_current()?;
+            funding::rebind_current(&self.quota, funded, &scope)?;
+            self.record
+                .allocation
+                .get_or_insert_with(|| self.record.scope.clone());
+            self.record.scope = scope;
+            self.record.version = 2;
+            return Ok(self);
+        }
+        self.require_current()?;
+        ensure!(
+            !read_records(&self.quota, false, None)?
+                .iter()
+                .any(|record| record.scope == scope),
+            "replacement current grant exists"
+        );
+        let mut next = self.record.clone();
+        next.version = 2;
+        next.allocation.get_or_insert_with(|| next.scope.clone());
+        next.scope = scope;
+        persist(&self.quota, &next, false)?;
+        self.record = next;
+        Ok(self)
+    }
+
+    fn require_current(&self) -> Result<()> {
+        if let Some(funded) = &self.funded {
+            let (scope, _, capacity) = funding::current_state(&self.quota, funded)?;
+            ensure!(
+                scope == self.record.scope && capacity == self.record.bytes,
+                "funded current grant changed"
+            );
+            return Ok(());
+        }
+        let path = self
+            .quota
+            .control_path()
+            .join("current-grants")
+            .join(self.record.filename());
+        let current = read_record(&path)?;
+        ensure!(
+            current == self.record,
+            "current quota grant changed; reacquire it under the writer"
+        );
+        Ok(())
+    }
+}
+
+impl Quota {
+    /// Same durable allowance validation as ordinary CurrentRead, without
+    /// creating/repairing quota ownership files or sweeping policy state.
+    pub(crate) fn verify_existing_current_allowance(
+        store: &crate::FileStore,
+        scope: &CurrentGrantScope,
+        minimum: u64,
+    ) -> Result<u64> {
+        let managed = store.managed_path()?;
+        ensure!(
+            managed.namespace == "collections-1.4",
+            "existing WAL allowance requires service namespace"
+        );
+        ensure_current_root(managed.root)?;
+        let quota = Self {
+            root: managed.root.canonicalize()?,
+            namespace: Namespace::Service,
+            funding: None,
+        };
+        let _lifecycle = super::existing_service_lifecycle_lease(&quota.root)?;
+        let control = quota.control_path();
+        ensure!(control.is_dir(), "existing quota control directory missing");
+        unlinked(&control)?;
+        let _ledger = crate::service::acquire_existing_file(&control, "ledger.lock")?;
+        let record = allowance_record(&quota, scope)?;
+        ensure!(
+            record.scope == *scope && record.bytes >= minimum,
+            "missing or insufficient service WAL recovery allowance"
+        );
+        Ok(record.bytes)
+    }
+
+    pub(crate) fn verify_current_allowance(
+        &self,
+        scope: &CurrentGrantScope,
+        minimum: u64,
+    ) -> Result<u64> {
+        let _lock = self.lock()?;
+        let record = allowance_record(self, scope)?;
+        ensure!(
+            record.scope == *scope && record.bytes >= minimum,
+            "missing or insufficient service WAL recovery allowance"
+        );
+        Ok(record.bytes)
+    }
+    /// Call under lifecycle -> collection writer -> exclusive current gate. The
+    /// ledger lock is released before callers start any SQLite transaction.
+    pub fn reserve_current(
+        &self,
+        writer: &crate::WriterLock,
+        scope: CurrentGrantScope,
+        bytes: u64,
+    ) -> Result<CurrentGrant> {
+        validate_writer(self, writer, &scope.collection)?;
+        ensure!(bytes > 0, "current quota grant must be positive");
+        let _lock = self.lock()?;
+        if let Some(owner) = &self.funding {
+            let reference = funding::reserve_current(self, owner, scope.clone(), bytes)?;
+            return funded_handle(self, reference);
+        }
+        let path = self
+            .control_path()
+            .join("current-grants")
+            .join(scope.filename());
+        ensure!(
+            !path.try_exists()?,
+            "current quota grant already exists; adopt it for recovery"
+        );
+        admit(self, &scope.collection, bytes, true)?;
+        let record = DurableRecord {
+            version: 1,
+            scope,
+            bytes,
+            allocation: None,
+        };
+        persist(self, &record, true)?;
+        Ok(CurrentGrant {
+            quota: self.clone(),
+            record,
+            funded: None,
+        })
+    }
+
+    pub fn current_grant(
+        &self,
+        writer: &crate::WriterLock,
+        scope: &CurrentGrantScope,
+    ) -> Result<Option<CurrentGrant>> {
+        validate_writer(self, writer, &scope.collection)?;
+        let _lock = self.lock()?;
+        let funded = funding::find_current(self, scope)?;
+        if let Some(reference) = funded {
+            ensure!(
+                !read_records(self, false, None)?
+                    .iter()
+                    .any(|record| &record.scope == scope),
+                "duplicate standalone and funded current scope"
+            );
+            return Ok(Some(funded_handle(self, reference)?));
+        }
+        let path = self
+            .control_path()
+            .join("current-grants")
+            .join(scope.filename());
+        let record = if path.try_exists()? {
+            let record = read_record(&path)?;
+            if &record.scope == scope {
+                Some(record)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let record = match record {
+            Some(record) => record,
+            None => {
+                let mut matching = read_records(self, false, None)?
+                    .into_iter()
+                    .filter(|record| &record.scope == scope);
+                let Some(record) = matching.next() else {
+                    return Ok(None);
+                };
+                ensure!(
+                    matching.next().is_none(),
+                    "duplicate current quota grant scope"
+                );
+                record
+            }
+        };
+        ensure!(&record.scope == scope, "current quota grant scope mismatch");
+        Ok(Some(CurrentGrant {
+            quota: self.clone(),
+            record,
+            funded: None,
+        }))
+    }
+
+    /// Conservative orphan discovery. The collection journal, inspected outside
+    /// the ledger lock, decides whether each grant is adopted or explicitly retired.
+    pub fn current_grants(&self, writer: &crate::WriterLock) -> Result<Vec<CurrentGrant>> {
+        let directory = writer
+            .path
+            .parent()
+            .context("invalid current grant writer")?;
+        let managed = crate::managed_collection::ManagedPath::parse(directory)?;
+        let collection = managed.collection;
+        validate_writer(self, writer, collection)?;
+        let _lock = self.lock()?;
+        let mut grants = read_records(self, true, None)?
+            .into_iter()
+            .filter(|record| record.scope.collection == collection)
+            .map(|record| CurrentGrant {
+                quota: self.clone(),
+                record,
+                funded: None,
+            })
+            .collect::<Vec<_>>();
+        for reference in funding::current_references(self)? {
+            if funding::current_state(self, &reference)?.0.collection == collection {
+                let funded = funded_handle(self, reference)?;
+                ensure!(
+                    !grants.iter().any(|grant| grant.scope() == funded.scope()),
+                    "duplicate current funding scope"
+                );
+                grants.push(funded);
+            }
+        }
+        Ok(grants)
+    }
+}
+
+fn funded_handle(quota: &Quota, reference: funding::FundedChildRef) -> Result<CurrentGrant> {
+    let (scope, allocation, bytes) = funding::current_state(quota, &reference)?;
+    Ok(CurrentGrant {
+        quota: quota.clone(),
+        record: DurableRecord {
+            version: 2,
+            scope,
+            bytes,
+            allocation: Some(allocation),
+        },
+        funded: Some(reference),
+    })
+}
+
+fn allowance_record(quota: &Quota, scope: &CurrentGrantScope) -> Result<DurableRecord> {
+    let standalone = read_records(quota, false, None)?
+        .into_iter()
+        .filter(|record| &record.scope == scope)
+        .collect::<Vec<_>>();
+    let funded = funding::find_current(quota, scope)?;
+    ensure!(
+        standalone.len() + usize::from(funded.is_some()) == 1,
+        "current recovery allowance missing or duplicated"
+    );
+    match funded {
+        Some(reference) => Ok(funded_handle(quota, reference)?.record),
+        None => Ok(standalone.into_iter().next().unwrap()),
+    }
+}
+
+impl CurrentGrant {
+    pub(crate) fn require_release_authority(&self) -> Result<()> {
+        if let Some(reference) = &self.funded {
+            funding::require_current_authority(&self.quota, reference)?;
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn validate_writer(
+    quota: &Quota,
+    writer: &crate::WriterLock,
+    collection: &str,
+) -> Result<()> {
+    crate::validate_collection(collection)?;
+    let directory = writer.path.parent().context("writer directory missing")?;
+    let store = crate::FileStore::new(directory);
+    ensure!(
+        store.collection_namespace()? == quota.collection_namespace(),
+        "current quota writer namespace mismatch"
+    );
+    let expected = quota
+        .root
+        .join(store.collection_namespace()?)
+        .join(collection);
+    unlinked(&expected)?;
+    ensure!(
+        store.managed_path()?.logical.canonicalize()? == expected.canonicalize()?
+            && store.managed_path()?.collection == collection,
+        "current quota grant requires its collection writer"
+    );
+    Ok(())
+}
+
+pub(super) fn admit(
+    quota: &Quota,
+    collection: &str,
+    additional: u64,
+    new_record: bool,
+) -> Result<()> {
+    let records = quota.live_records()?;
+    ensure!(
+        !new_record || records.len() < MAX_RESERVATIONS,
+        "quota reservation count exhausted"
+    );
+    let policy = quota.read_policy()?;
+    let report = quota.measure(&policy, &records, None)?;
+    let root_available = policy
+        .root_bytes
+        .saturating_sub(checked_add(report.used_bytes, report.reserved_bytes)?);
+    if additional > root_available {
+        return Err(QuotaPressure {
+            scope: PressureScope::Root,
+            required_bytes: additional,
+            available_bytes: root_available,
+            protected_bytes: None,
+        }
+        .into());
+    }
+    let used = report.collections.get(collection).map_or(Ok(0), |item| {
+        checked_add(item.used_bytes, item.reserved_bytes)
+    })?;
+    let collection_available = policy.limit(collection).saturating_sub(used);
+    if additional > collection_available {
+        return Err(QuotaPressure {
+            scope: PressureScope::Collection,
+            required_bytes: additional,
+            available_bytes: collection_available,
+            protected_bytes: None,
+        }
+        .into());
+    }
+    crate::capacity::require_growth(&quota.root, additional)?;
+    Ok(())
+}
+
+fn read_record(path: &Path) -> Result<DurableRecord> {
+    unlinked(
+        path.parent()
+            .context("current quota grant has no directory")?,
+    )?;
+    unlinked(path)?;
+    let mut bytes = Vec::new();
+    File::open(path)?
+        .take(RECORD_MAX + 1)
+        .read_to_end(&mut bytes)?;
+    decode_record(path.file_name(), &bytes)
+}
+
+fn decode_record(name: Option<&std::ffi::OsStr>, bytes: &[u8]) -> Result<DurableRecord> {
+    ensure!(
+        bytes.len() as u64 <= RECORD_MAX,
+        "quota metadata exceeds bounded size"
+    );
+    let record: DurableRecord = serde_json::from_slice(bytes)?;
+    crate::validate_collection(&record.scope.collection)?;
+    ensure!(
+        ((record.version == 1 && record.allocation.is_none())
+            || (record.version == 2
+                && record
+                    .allocation
+                    .as_ref()
+                    .is_some_and(
+                        |allocation| allocation.collection == record.scope.collection
+                            && allocation.incarnation == record.scope.incarnation
+                    )))
+            && record.bytes > 0
+            && name.and_then(|name| name.to_str()) == Some(record.filename().as_str()),
+        "invalid durable current quota grant"
+    );
+    Ok(record)
+}
+
+#[cfg(any(unix, windows))]
+pub(super) fn decode_inventory_record(name: &std::ffi::OsStr, bytes: &[u8]) -> Result<LiveRecord> {
+    let record = decode_record(Some(name), bytes)?;
+    Ok(LiveRecord {
+        record: Record {
+            collection: record.scope.collection,
+            bytes: record.bytes,
+        },
+    })
+}
+
+fn read_records(
+    quota: &Quota,
+    cleanup: bool,
+    deadline: Option<Instant>,
+) -> Result<Vec<DurableRecord>> {
+    let directory = quota.control_path().join("current-grants");
+    let entries = match fs::read_dir(&directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(error) => return Err(error.into()),
+    };
+    unlinked(&directory)?;
+    let mut result = vec![];
+    for (visited, entry) in entries.enumerate() {
+        within_deadline(deadline)?;
+        ensure!(
+            visited < MAX_RESERVATIONS * 2 + 2,
+            "excessive current quota grant state"
+        );
+        let entry = entry?;
+        let path = entry.path();
+        unlinked(&path)?;
+        ensure!(
+            entry.file_type()?.is_file(),
+            "invalid current quota grant entry"
+        );
+        let name = entry.file_name();
+        let name = name.to_str().context("invalid current quota grant name")?;
+        if name.starts_with("grant-") && name.len() <= 128 {
+            // Atomic-write scratch exists only under this ledger lock. A leftover
+            // cannot own a pending transaction: its grant was never published.
+            ensure!(
+                entry.metadata()?.len() <= RECORD_MAX,
+                "oversized current grant scratch"
+            );
+            if cleanup {
+                fs::remove_file(&path)?;
+            }
+            continue;
+        }
+        result.push(read_record(&path)?);
+        ensure!(
+            result.len() <= MAX_RESERVATIONS,
+            "current quota grant count exhausted"
+        );
+    }
+    Ok(result)
+}
+
+pub(super) fn records(
+    quota: &Quota,
+    cleanup: bool,
+    deadline: Option<Instant>,
+) -> Result<Vec<LiveRecord>> {
+    Ok(read_records(quota, cleanup, deadline)?
+        .into_iter()
+        .map(|record| LiveRecord {
+            record: Record {
+                collection: record.scope.collection,
+                bytes: record.bytes,
+            },
+        })
+        .collect())
+}
+
+fn persist(quota: &Quota, record: &DurableRecord, create: bool) -> Result<()> {
+    let directory = quota.control_path().join("current-grants");
+    fs::create_dir_all(&directory)?;
+    unlinked(&directory)?;
+    crate::maintenance::sync_parent(&quota.control_path())?;
+    let path = directory.join(record.filename());
+    if create {
+        ensure!(!path.try_exists()?, "current quota grant already exists");
+    } else {
+        unlinked(&path)?;
+    }
+    let bytes = serde_json::to_vec(record)?;
+    ensure!(
+        bytes.len() as u64 <= RECORD_MAX,
+        "current quota grant exceeds metadata bound"
+    );
+    crate::capacity::require_growth(&quota.root, RECORD_MAX)?;
+    let mut temporary = tempfile::Builder::new()
+        .prefix("grant-")
+        .tempfile_in(&directory)?;
+    temporary.write_all(&bytes)?;
+    crate::durability::persist_synced(temporary, &path)?;
+    crate::maintenance::sync_parent(&directory)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::FileStore;
+
+    fn scope() -> CurrentGrantScope {
+        CurrentGrantScope {
+            collection: "fixture".into(),
+            incarnation: Incarnation::from_bytes([1; 16]),
+            transaction: Sha256Digest::from_bytes([2; 32]),
+        }
+    }
+
+    #[test]
+    fn preparation_rebind_preserves_accounting_and_exact_recovery_identity() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let quota = Quota::open(root.path())?;
+        let store = FileStore::new(quota.root.join("collections-1.2/fixture"));
+        let writer = store.lock()?;
+        let original = scope();
+        let grant = quota.reserve_current(&writer, original.clone(), 65536)?;
+        let mut final_scope = original.clone();
+        final_scope.transaction = Sha256Digest::from_bytes([7; 32]);
+        let grant = grant.rebind(&writer, final_scope.clone())?;
+        assert_eq!(quota.status()?.reserved_bytes, 65536);
+        assert!(quota.current_grant(&writer, &original)?.is_none());
+        drop(grant);
+        let grant = quota
+            .current_grant(&writer, &final_scope)?
+            .context("durable rebind missing")?;
+        assert_eq!(grant.capacity(), 65536);
+        grant.release(&writer)?;
+        assert_eq!(quota.status()?.reserved_bytes, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn dropped_grants_survive_accounting_and_resize_without_accumulating_scratch() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let quota = Quota::open(root.path())?;
+        let store = FileStore::new(quota.root.join("collections-1.2/fixture"));
+        let writer = store.lock()?;
+        let grant = quota.reserve_current(&writer, scope(), 64 * 1024)?;
+        assert_eq!(grant.capacity(), 64 * 1024);
+        drop(grant);
+        assert_eq!(quota.status()?.reserved_bytes, 64 * 1024);
+        assert_eq!(quota.current_grants(&writer)?.len(), 1);
+        let mut grant = quota
+            .current_grant(&writer, &scope())?
+            .context("missing durable grant")?;
+        grant.resize(&writer, 128 * 1024)?;
+        assert_eq!(quota.status()?.reserved_bytes, 128 * 1024);
+        grant.resize(&writer, 32 * 1024)?;
+        assert_eq!(quota.status()?.reserved_bytes, 32 * 1024);
+        let normal = quota.reserve("other", 16 * 1024)?;
+        assert_eq!(quota.status()?.reserved_bytes, 48 * 1024);
+        drop(normal);
+        assert_eq!(quota.status()?.reserved_bytes, 32 * 1024);
+        grant.release(&writer)?;
+        assert_eq!(quota.status()?.reserved_bytes, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn grant_quota_and_writer_isolation_fail_without_retiring_recovery_capacity() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let quota = Quota::open(root.path())?;
+        let store = FileStore::new(quota.root.join("collections-1.2/fixture"));
+        let writer = store.lock()?;
+        let other_store = FileStore::new(quota.root.join("collections-1.2/other"));
+        let other = other_store.lock()?;
+        let mut grant = quota.reserve_current(&writer, scope(), 64 * 1024)?;
+        assert!(grant.resize(&other, 128 * 1024).is_err());
+        assert!(quota.current_grant(&other, &scope()).is_err());
+        let used = quota.status()?.used_bytes;
+        quota.configure(QuotaPolicy {
+            root_bytes: used + 64 * 1024 + 4096,
+            default_collection_bytes: 128 * 1024,
+            collections: BTreeMap::new(),
+        })?;
+        assert!(
+            grant
+                .resize(&writer, 128 * 1024)
+                .unwrap_err()
+                .is::<QuotaPressure>()
+        );
+        assert!(
+            quota
+                .reserve("other", 8192)
+                .err()
+                .context("missing quota pressure")?
+                .is::<QuotaPressure>()
+        );
+        assert_eq!(quota.status()?.reserved_bytes, 64 * 1024);
+        assert_eq!(grant.capacity(), 64 * 1024);
+        grant.release(&writer)?;
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_or_rebound_durable_metadata_fails_closed() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let quota = Quota::open(root.path())?;
+        let store = FileStore::new(quota.root.join("collections-1.2/fixture"));
+        let writer = store.lock()?;
+        let grant = quota.reserve_current(&writer, scope(), 64 * 1024)?;
+        let path = quota
+            .root
+            .join(".quota-1.2/current-grants")
+            .join(scope().filename());
+        let mut record = grant.record.clone();
+        record.scope.incarnation = Incarnation::from_bytes([9; 16]);
+        fs::write(&path, serde_json::to_vec(&record)?)?;
+        assert!(quota.status().is_err());
+        assert!(quota.current_grant(&writer, &scope()).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn process_exit_retains_grant_until_the_collection_writer_retires_it() -> Result<()> {
+        for rebound in [false, true] {
+            let root = tempfile::tempdir()?;
+            let status = std::process::Command::new(std::env::current_exe()?)
+                .args([
+                    "--exact",
+                    "quota::current::tests::durable_grant_child",
+                    "--nocapture",
+                ])
+                .env("AIRK_CURRENT_GRANT_TEST_ROOT", root.path())
+                .env(
+                    "AIRK_CURRENT_GRANT_TEST_REBIND",
+                    if rebound { "1" } else { "0" },
+                )
+                .status()?;
+            ensure!(status.success(), "grant child failed");
+            let quota = Quota::open(root.path())?;
+            assert_eq!(quota.status()?.reserved_bytes, 64 * 1024);
+            let store = FileStore::new(quota.root.join("collections-1.2/fixture"));
+            let writer = store.lock()?;
+            let mut expected = scope();
+            if rebound {
+                expected.transaction = Sha256Digest::from_bytes([7; 32]);
+            }
+            quota
+                .current_grant(&writer, &expected)?
+                .context("lost crash recovery allowance")?
+                .release(&writer)?;
+            assert_eq!(quota.status()?.reserved_bytes, 0);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn durable_grant_child() -> Result<()> {
+        let Some(root) = std::env::var_os("AIRK_CURRENT_GRANT_TEST_ROOT") else {
+            return Ok(());
+        };
+        let quota = Quota::open(Path::new(&root))?;
+        let store = FileStore::new(quota.root.join("collections-1.2/fixture"));
+        let writer = store.lock()?;
+        let grant = quota.reserve_current(&writer, scope(), 64 * 1024)?;
+        let _grant = if std::env::var("AIRK_CURRENT_GRANT_TEST_REBIND").as_deref() == Ok("1") {
+            let mut target = scope();
+            target.transaction = Sha256Digest::from_bytes([7; 32]);
+            grant.rebind(&writer, target)?
+        } else {
+            grant
+        };
+        std::process::exit(0);
+    }
+}
+
+// Caller retains the actual ledger lock and positive complete-collection
+// absence proof. Inventory is read-only; no recovery of another collection.
+pub(super) fn retired_inventory(
+    directory: &crate::service::registry::catalog::setup::storage::SetupDirectory,
+    collection: &str,
+) -> Result<Vec<(std::ffi::OsString, File)>> {
+    use crate::service::registry::catalog::setup::storage::SetupFileMode;
+    let mut selected = Vec::new();
+    let mut records = 0;
+    for (visited, entry) in directory.entries()?.enumerate() {
+        ensure!(
+            visited < MAX_RESERVATIONS * 2 + 2,
+            "excessive current quota grant state"
+        );
+        let name = entry?;
+        let text = name.to_str().context("invalid current quota grant name")?;
+        let file = directory.open_file(&name, SetupFileMode::Read)?;
+        ensure!(
+            file.metadata()?.len() <= RECORD_MAX,
+            "oversized current quota grant"
+        );
+        if text.starts_with("grant-") && text.len() <= 128 {
+            // Unpublished atomic-write scratch cannot own a transaction.
+            // Its collection is not authenticated; preserve it without deletion.
+            continue;
+        }
+        let mut bytes = Vec::new();
+        file.try_clone()?
+            .take(RECORD_MAX + 1)
+            .read_to_end(&mut bytes)?;
+        let record = decode_record(Some(&name), &bytes)?;
+        records += 1;
+        ensure!(
+            records <= MAX_RESERVATIONS,
+            "current quota grant count exhausted"
+        );
+        if record.scope.collection == collection {
+            selected.push((name, file));
+        }
+    }
+    Ok(selected)
+}

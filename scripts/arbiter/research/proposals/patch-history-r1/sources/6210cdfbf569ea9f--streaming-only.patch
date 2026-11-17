@@ -1,0 +1,47 @@
+--- EXECUTED-R1/source/goal_rubric.py
++++ ADDITIVE-R2/data-preparation-r2/goal_rubric_streaming.py
+@@ -73,6 +73,16 @@
+     return {'completion':any(v['completion'] for v in values),'alternatives':values}
+ 
+ 
++def streaming_sha256(path, block_bytes=65536):
++    """Exact bounded file digest; never retain the raw publisher parquet."""
++    digest = hashlib.sha256()
++    buffer = bytearray(block_bytes)
++    with Path(path).open('rb') as stream:
++        while count := stream.readinto(buffer):
++            digest.update(memoryview(buffer)[:count])
++    return digest.hexdigest()
++
++
+ def main():
+     import pyarrow.dataset as dataset
+     import pyarrow as arrow
+@@ -83,11 +93,12 @@
+     parser.add_argument('--partition',choices=('CAL','CONFIRMATION'),required=True)
+     args=parser.parse_args();output=args.output.resolve()
+     if output.exists() or not output.is_relative_to(ROOT/'artifacts'):parser.error('fresh private output required')
+-    paths=(Path(__file__),args.corpus,args.fixture/'manifest.private.json',args.hotpot)
++    paths=(Path(__file__),args.corpus,args.fixture/'manifest.private.json')
+     retained={p:p.read_bytes() for p in paths};sha=lambda raw:hashlib.sha256(raw).hexdigest()
+     if sha(retained[args.corpus])!=args.corpus_sha256:raise ValueError('unreviewed corpus')
+     if sha(retained[args.fixture/'manifest.private.json'])!=args.source_manifest_sha256:raise ValueError('unreviewed native source mapping')
+-    if sha(retained[args.hotpot])!='c20b638ca82b21d04fe12e14ff417ad05153d4d215a65de54497fca4e972f7c6':raise ValueError('unreviewed human sentence bytes')
++    hotpot_sha256=streaming_sha256(args.hotpot)
++    if hotpot_sha256!='c20b638ca82b21d04fe12e14ff417ad05153d4d215a65de54497fca4e972f7c6':raise ValueError('unreviewed human sentence bytes')
+     corpus=json.loads(retained[args.corpus]);fixture=json.loads(retained[args.fixture/'manifest.private.json'])
+     def verify_sources():
+         for row in fixture['files']:
+@@ -143,10 +154,10 @@
+         tasks.append({'id':task['id'],'dataset':task['dataset'],'split':task['split'],'publisher_split':task['publisher_split'],'question':task['question'],'original_question_categories':categories,'disagreement':task['disagreement'],'source_component':task['source_component'],'goal_selected':task['id'] in fixture['goal_ids'],'source_groups':groups,'alternatives':alternatives})
+     for task in tasks:
+         if task['split']=='test':task['bootstrap_source_component']=next(original['source_component']for original in corpus['tasks']if original['id']==task['id'])
+-    if any(p.read_bytes()!=raw for p,raw in retained.items()):raise ValueError('rubric input drift')
++    if any(p.read_bytes()!=raw for p,raw in retained.items()) or streaming_sha256(args.hotpot)!=hotpot_sha256:raise ValueError('rubric input drift')
+     verify_sources()
+     output.mkdir(parents=True)
+-    report={'schema':'airk.private-human-goal-rubric/1','experiment_partition':args.partition,'tasks':tasks,'input_seals':{str(p):sha(raw) for p,raw in retained.items()},
++    report={'schema':'airk.private-human-goal-rubric/1','experiment_partition':args.partition,'tasks':tasks,'input_seals':{**{str(p):sha(raw) for p,raw in retained.items()},str(args.hotpot):hotpot_sha256},
+         'authority':'Primary approved exact rubric before final scoring: tokenF1>=.80, exact yes/no, complete support/citations from SAME original human alternative; exact match secondary; no invented aliases or unions.',
+         'projection':'Original human answers and evidence mechanically mapped to original source byte ranges. No human labels of AIRK actions/authority/gap/sufficiency. Source connected components conservatively group bootstrap dependence only; never union evidence into gold.',
+         'caller_requirements':'Authenticate actual returned source bytes/ranges and citation reference identities before grade(); include failures/all model turns/internal reads separately. No query-only support credit.'}

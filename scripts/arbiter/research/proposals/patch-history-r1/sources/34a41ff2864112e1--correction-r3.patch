@@ -1,0 +1,300 @@
+--- r2/transformer.py
++++ r3/transformer.py
+@@ -126,7 +126,17 @@
+     plan_raw=Path(a.execution_plan).read_bytes();need(digest(plan_raw)==a.execution_plan_sha256,'Graph plan drift')
+     plan=json.loads(plan_raw);sys.path.insert(0,plan['owner_root']);import reference_worker
+     reference_worker.verify_loaded_runtime(plan)
++    from gate_protocol import original_external_context
++    # ModelProto checker resolves relative external ranges against CWD. Enter
++    # the real original asset directory for this read-only checker only; never
++    # relocate/fabricate weights. Restore fresh output CWD even on rejection.
++    with original_external_context(a.source,output.parent):
++        onnx.checker.check_model(model,full_check=False,check_custom_domain=False)
+     result,proof=rewrite(model,onnx)
++    with original_external_context(a.source,output.parent):
++        onnx.checker.check_model(result,full_check=False,check_custom_domain=False)
++    proof['onnx_checker']='original and candidate; real original external-data context; custom kernel ownership separate'
++
+     from check_shapes import check
+     proof['custom_shape_witnesses']=check(result,onnx,{'path':a.cpu_shape_source,'sha256':a.cpu_shape_source_sha256})
+     reference_worker.verify_loaded_runtime(plan)
+--- r2/check_shapes.py
++++ r3/check_shapes.py
+@@ -38,10 +38,24 @@
+             dims=value.type.tensor_type.shape.dim
+             if value.name in ['input_ids','attention_mask','position_ids']:dims[1].dim_value=tokens
+             if value.name in ['candidate_positions','option_mask']:dims[1].dim_value=options
+-        # This official ORT tool owns GQA context shape propagation. Its no-past
+-        # cache outputs remain unresolved, so resolve them explicitly with the
+-        # pinned CPU Compute rule only AFTER every Q/K/V/type/attribute check.
+-        inferred=SymbolicShapeInference.infer_shapes(candidate,auto_merge=False,guess_output_rank=False)
++        # Extend the instance dispatcher only on an inference copy. The pinned
++        # official no-past handler omits cache types; resolve them BEFORE its
++        # enclosing global all-output completeness check, never after failure.
++        from gate_protocol import cache_contract,dispatch_with_cache,infer_complete
++        engine=SymbolicShapeInference(2**31-1,False,False,0)
++        stock=engine.dispatcher_['GroupQueryAttention']
++        def infer_gqa(node):
++            attrs={a.name:onnx.helper.get_attribute_value(a) for a in node.attribute}
++            required=[node.input[i] for i in [0,1,2,5,6,10]]
++            def contract():
++                actual={name:shape(engine.known_vi_[name]) for name in required}
++                return cache_contract(list(node.input),list(node.output),attrs,actual,tokens,NS)
++            def publish(name,dtype,dims):
++                engine.known_vi_[name].CopyFrom(onnx.helper.make_tensor_value_info(name,dtype,dims))
++            dispatch_with_cache(contract,lambda:stock(node),publish)
++        engine.dispatcher_['GroupQueryAttention']=infer_gqa
++        engine._preprocess(candidate)
++        inferred=infer_complete(engine)
+         known={v.name:v for v in list(inferred.graph.input)+list(inferred.graph.value_info)+list(inferred.graph.output)}
+         witnesses=[]
+         for n in [v for v in inferred.graph.node if v.op_type=='GroupQueryAttention']:
+@@ -60,6 +74,7 @@
+             # Actual CPU source: with no past, physical totalT sets present
+             # shape [batch,kv_heads,totalT,head_size]. No guessed/unknown axis.
+             cache=[1,8,tokens,128]
++            for name in n.output[1:]:need(name in known and shape(known[name])==(onnx.TensorProto.FLOAT,cache),'Pinned no-past cache resolution failed')
+             witnesses.append({'node':n.name,'context':[1,tokens,2048],
+                 'cache_shapes_resolved_by_pinned_cpu_compute':[cache,cache],
+                 'actual_allocation_proof':'pending native profiling; annotations are not allocation'})
+--- r2/run_graph_owned.py
++++ r3/run_graph_owned.py
+@@ -2,6 +2,7 @@
+ import argparse,hashlib,json,os,sys,time
+ from pathlib import Path
+ BASE=Path(__file__).resolve().parent
++from gate_protocol import fresh_child_cwd
+ 
+ def need(ok,message):
+     if not ok:raise ValueError(message)
+@@ -33,7 +34,7 @@
+     try:
+         remaining=deadline-time.monotonic();need(remaining>0,'Original graph phase expired before launch')
+         with (root/'stdout.log').open('xb') as log:
+-            owned=windows_job_8g.run_windows_owned(argv,BASE,log,remaining,env,absolute_deadline=deadline,before_resume=before_resume)
++            owned=windows_job_8g.run_windows_owned(argv,fresh_child_cwd(root,BASE),log,remaining,env,absolute_deadline=deadline,before_resume=before_resume)
+         report['owned']=owned
+         expected={'exit_code':0,'timed_out':False,'log_oversized':False,'owned_descendants_settled':True,
+             'owned_job_forced_termination':False,'owned_job_final_active_processes':0,'owned_job_final_member_pids':[],
+--- /dev/null
++++ r3/gate_protocol.py
+@@ -0,0 +1,58 @@
++"""Private orchestration controls; no neural imports, graph/session creation or DTOs."""
++from pathlib import Path
++import os,struct
++from contextlib import contextmanager
++
++def need(ok,message):
++    if not ok:raise ValueError(message)
++
++@contextmanager
++def original_external_context(source,output_root):
++    source=Path(source).resolve(strict=True); output_root=Path(output_root).resolve(strict=True)
++    previous=Path.cwd()
++    need(previous.resolve()==output_root,'Checker must enter from fresh output working directory')
++    try:
++        os.chdir(source.parent)
++        yield
++    finally:
++        os.chdir(previous)
++
++def cache_contract(inputs,outputs,attrs,known,tokens,ns):
++    need(type(tokens) is int and tokens in [1,17,128,8192],'Unsupported exact shape case')
++    need(len(inputs)==11 and not any(inputs[3:5]) and not any(inputs[7:10]),'No-past/no extra GQA inputs required')
++    need(len(outputs)==3 and all(outputs) and len(set(outputs))==3,'Three distinct internal outputs required')
++    need(attrs.get('num_heads')==16 and attrs.get('kv_num_heads')==8 and attrs.get('causal')==1
++         and attrs.get('local_window_size')==-1 and attrs.get('do_rotary')==0
++         and attrs.get('softcap')==0. and attrs.get('smooth_softmax')==0
++         and struct.pack('<f',attrs.get('scale',0.)).hex()=='f304b53d','Exact pinned CPU GQA attributes required')
++    need(inputs[5:7]==[ns+'seqlen32',ns+'total32'] and inputs[10]=='/scorer/Where_output_0','Original mask/full physical seqlen required')
++    for name,expected in [(inputs[0],(1,[1,tokens,2048])),(inputs[1],(1,[1,tokens,1024])),
++        (inputs[2],(1,[1,tokens,1024])),(inputs[10],(1,[1,1,tokens,tokens])),
++        (inputs[5],(6,[1])),(inputs[6],(6,[1]))]:
++        need(known.get(name)==expected,'Resolved native GQA input type/shape required: '+name)
++    return {outputs[1]:(1,[1,8,tokens,128]),outputs[2]:(1,[1,8,tokens,128])}
++
++def dispatch_with_cache(contract,stock,publish):
++    caches=contract()  # Validate actual upstream values before inference extension.
++    stock()           # Official context propagation remains authoritative.
++    for name,(dtype,dims) in caches.items():publish(name,dtype,dims)
++
++def infer_complete(engine):
++    complete=False
++    while engine.run_:complete=engine._infer_impl()
++    engine._update_output_from_vi()
++    need(complete,'Incomplete symbolic shape inference; unresolved shapes refused')
++    return engine.out_mp_
++
++def fresh_child_cwd(root,base):
++    root=Path(root).resolve(strict=True);base=Path(base).resolve(strict=True)
++    need(root!=base and root.parent==base.parent,'Fresh sibling output required')
++    return root
++
++def external_save_plan(graph):
++    graph=Path(graph)
++    need(graph.parent.is_dir() and not graph.exists(),'Fresh optimized model path required')
++    external=graph.with_suffix('.weights.bin')
++    need(not external.exists(),'Fresh optimized external data path required')
++    return external,{'session.optimized_model_external_initializers_file_name':external.name,
++        'session.optimized_model_external_initializers_min_size_in_bytes':'1024'}--- /dev/null
++++ r3/test_gates.py
+@@ -0,0 +1,77 @@
++"""No ONNX/Torch/ORT imports or graph creation. Exercise guard control flow."""
++import struct,tempfile,unittest
++from pathlib import Path
++from types import SimpleNamespace
++from gate_protocol import cache_contract,dispatch_with_cache,infer_complete,original_external_context,fresh_child_cwd,external_save_plan
++
++class Gates(unittest.TestCase):
++    def setUp(self):
++        self.ns='/airk_compact_gqa/'
++        self.inputs=['q','k','v','','',self.ns+'seqlen32',self.ns+'total32','','','','/scorer/Where_output_0']
++        self.outputs=['context','presentk','presentv']
++        self.attrs=dict(num_heads=16,kv_num_heads=8,causal=1,local_window_size=-1,do_rotary=0,softcap=0.,smooth_softmax=0,scale=struct.unpack('<f',bytes.fromhex('f304b53d'))[0])
++    def known(self,t):return {'q':(1,[1,t,2048]),'k':(1,[1,t,1024]),'v':(1,[1,t,1024]),self.inputs[10]:(1,[1,1,t,t]),self.inputs[5]:(6,[1]),self.inputs[6]:(6,[1])}
++    def contract(self,t=17):return cache_contract(self.inputs,self.outputs,self.attrs,self.known(t),t,self.ns)
++    def test_no_past_fills_before_global_completeness(self):
++        state={};order=[]
++        def stock():state.update(context=(1,[1,17,2048]),presentk=(0,[]),presentv=(0,[]));order.append('stock')
++        def publish(n,d,s):state[n]=(d,s);order.append(n)
++        def global_check():
++            self.assertEqual(state,{'context':(1,[1,17,2048]),'presentk':(1,[1,8,17,128]),'presentv':(1,[1,8,17,128])})
++        stock()
++        with self.assertRaises(AssertionError):global_check() # Exact prior failure.
++        dispatch_with_cache(self.contract,stock,publish);global_check()
++        self.assertEqual(order[-3:],['stock','presentk','presentv'])
++    def test_refusal_prevents_stock_dispatch(self):
++        self.attrs['scale']=1.;called=[]
++        with self.assertRaises(ValueError):dispatch_with_cache(self.contract,lambda:called.append(1),lambda *a:None)
++        self.assertEqual(called,[])
++    def test_all_cases_have_exact_complete_types(self):
++        for t in [1,17,128,8192]:self.assertEqual(self.contract(t),{'presentk':(1,[1,8,t,128]),'presentv':(1,[1,8,t,128])})
++        for mutation in [(0,[1,17,1024]),(1,[1,'T',1024]),(1,[1,8,17,128])]:
++            known=self.known(17);known['k']=mutation
++            with self.assertRaises(ValueError):cache_contract(self.inputs,self.outputs,self.attrs,known,17,self.ns)
++    def test_mask_past_and_window_changes_refused(self):
++        for index,value in [(3,'past'),(5,'mask_sum'),(10,'dropped_mask')]:
++            changed=list(self.inputs);changed[index]=value
++            with self.assertRaises(ValueError):cache_contract(changed,self.outputs,self.attrs,self.known(17),17,self.ns)
++        self.attrs['local_window_size']=512
++        with self.assertRaises(ValueError):self.contract()
++    def test_global_incomplete_never_accepted(self):
++        engine=SimpleNamespace(run_=True,out_mp_='inference-copy')
++        def step():engine.run_=False;return False
++        engine._infer_impl=step;engine._update_output_from_vi=lambda:None
++        with self.assertRaises(ValueError):infer_complete(engine)
++        engine.run_=True
++        def done():engine.run_=False;return True
++        engine._infer_impl=done;self.assertEqual(infer_complete(engine),'inference-copy')
++    def test_checker_real_external_context_restores_on_failure(self):
++        previous=Path.cwd()
++        with tempfile.TemporaryDirectory(dir=previous) as tmp:
++            root=Path(tmp);assets=root/'assets';out=root/'out';assets.mkdir();out.mkdir()
++            source=assets/'source.original';source.write_bytes(b'original metadata fixture')
++            (assets/'actual.bin').write_bytes(b'actual fixture bytes')
++            try:
++                import os;os.chdir(out)
++                with self.assertRaisesRegex(RuntimeError,'checker refusal'):
++                    with original_external_context(source,out):
++                        self.assertEqual(Path('actual.bin').read_bytes(),b'actual fixture bytes')
++                        raise RuntimeError('checker refusal')
++                self.assertEqual(Path.cwd(),out)
++            finally:os.chdir(previous)
++    def test_child_uses_fresh_output_not_frozen_source(self):
++        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
++            p=Path(tmp);base=p/'proposal';out=p/'output';base.mkdir();out.mkdir()
++            self.assertEqual(fresh_child_cwd(out,base),out.resolve())
++            with self.assertRaises(ValueError):fresh_child_cwd(base,base)
++    def test_externalized_save_choices_and_freshness(self):
++        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
++            graph=Path(tmp)/'optimized.onnx';external,entries=external_save_plan(graph)
++            self.assertEqual(external.name,'optimized.weights.bin')
++            self.assertEqual(entries,{'session.optimized_model_external_initializers_file_name':'optimized.weights.bin','session.optimized_model_external_initializers_min_size_in_bytes':'1024'})
++            observed={}
++            for key,value in entries.items():observed[key]=value # Fake configurable builder receives actual planned options.
++            self.assertNotEqual(observed.get('session.optimized_model_external_initializers_file_name',''),'')
++            external.write_bytes(b'occupied')
++            with self.assertRaises(ValueError):external_save_plan(graph)
++if __name__=='__main__':unittest.main()--- r2/native-proposal/runtime.rs
++++ r3/native-proposal/runtime.rs
+@@ -338,11 +338,47 @@
+         profiling_prefix: &std::path::Path,
+         optimized_model: &std::path::Path,
+     ) -> Result<Self> {
+-        Self::open_configured(profile, source, |builder| {
++        // Only this private profiler serializes an optimized graph. Ordinary
++        // open(None-equivalent) keeps its exact builder and does not save.
++        let external = optimized_model.with_extension("weights.bin");
++        ensure!(
++            optimized_model
++                .parent()
++                .is_some_and(std::path::Path::is_dir)
++                && !optimized_model.exists()
++                && !external.exists(),
++            "fresh optimized graph/external weights paths required"
++        );
++        let external_name = external
++            .file_name()
++            .and_then(|s| s.to_str())
++            .context("UTF-8 optimized external weights basename required")?;
++        let scorer = Self::open_configured(profile, source, |builder| {
+             Ok(builder
+                 .with_profiling(profiling_prefix)?
++                .with_config_entry(
++                    "session.optimized_model_external_initializers_file_name",
++                    external_name,
++                )?
++                .with_config_entry(
++                    "session.optimized_model_external_initializers_min_size_in_bytes",
++                    "1024",
++                )?
+                 .with_optimized_model_path(optimized_model)?)
+-        })
++        })?;
++        // Saving remains inside this original load operation. The owned caller
++        // must also observe these same live output bounds during FFI save.
++        let graph_bytes = std::fs::metadata(optimized_model)?.len();
++        let weights_bytes = std::fs::metadata(&external)?.len();
++        ensure!(
++            graph_bytes > 0 && graph_bytes <= 64 * 1024 * 1024,
++            "diagnostic optimized graph output bound exceeded"
++        );
++        ensure!(
++            weights_bytes > 0 && weights_bytes <= 8 * 1024 * 1024 * 1024,
++            "diagnostic optimized external weights output bound exceeded"
++        );
++        Ok(scorer)
+     }
+     fn open_configured(
+         profile: ExecutionProfile,
+--- r2/native-proposal/attention_diagnostic.rs
++++ r3/native-proposal/attention_diagnostic.rs
+@@ -147,6 +147,10 @@
+         verify_files(&files,&profile)?;
+         let loaded=operations.observe(operation::Kind::Load,0,None,||Scorer::open_profiled(
+             ExecutionProfile::for_qualification(profile.clone())?,&files,&profile_prefix,&optimized))?;
++        receipt["optimized_save"] = json!({"mode":"externalized-injected-initializers",
++            "graph_limit_bytes":67108864u64,"weights_limit_bytes":8589934592u64,
++            "external_path":optimized.with_extension("weights.bin"),
++            "scope":"save included in original load deadline/RSS; fresh output watchdog required"});
+         receipt["load_us"]=json!(loaded.elapsed_us);
+         receipt["load_peak_process_rss_bytes"]=json!(peak_rss());flush(&mut file,&receipt)?;
+         ensure!(loaded.within_deadline,"original diagnostic load deadline exceeded");
+--- r2/native-proposal/CONTRACT.md
++++ r3/native-proposal/CONTRACT.md
+@@ -331,3 +331,15 @@
+ unchanged. Old same-artifact seals cannot qualify a different graph. Synthetic
+ GQA operator controls are separate from model forwards and prove only actual
+ registered CPU kernel/allocation shape, never model or task qualification.
++
++
++Private Compact attention proposal R3: the profiled full-model constructor uses
++pinned ORT externalized optimized serialization (fresh weights basename, 1024
++byte threshold). It must never use default Model::Save on injected multi-GiB
++weights. Save time and memory remain inside the original 120 second load and
++16 GiB native budget. Fresh graph <=64 MiB and external weights <=8 GiB are
++checked before forward; the actual execution owner must observe these bounds
++while synchronous serialization is in flight and retain all emitted bytes.
++No profiled execution is authorized by source preparation. Ordinary Scorer::open
++keeps its original builder and performs no optimized serialization. Tiny graphs
++contain no learned/external weights and retain their separately bounded save.

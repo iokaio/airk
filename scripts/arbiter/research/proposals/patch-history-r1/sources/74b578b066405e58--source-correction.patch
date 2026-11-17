@@ -1,0 +1,35 @@
+--- D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\final-plan-current-policy-preparation-20261116T085632Z\current-orchestration\current-section-native-preservation-r1\preserve_current.py
++++ D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\final-plan-current-policy-preparation-20261116T085632Z\current-orchestration\dense-private-diagnostics-native-preservation-r1\preserve_current.py
+@@ -1,14 +1,14 @@
+-"""One reviewed profile-only four-library plus real combined_reads image preservation; no native execution or build."""
++"""One reviewed Dense/private-diagnostics four-library plus real combined_reads image preservation; no native execution or build."""
+ from pathlib import Path
+ import hashlib,json,os,shutil,struct,datetime,subprocess
+ B=Path(__file__).resolve().parent
+ R=Path(r'D:\code\Github\airk')
+ E=R/'artifacts/v190/final-plan/exec-20261116T052942Z'
+-RECEIPT=E/'current-section-controlled-jobs2-build-r1.json'
+-LOG=E/'current-section-controlled-jobs2-build-r1.log'
++RECEIPT=E/'dense-private-diagnostics-images-build-r1.json'
++LOG=E/'dense-private-diagnostics-images-build-r1.log'
+ SID='S-1-5-21-3678370870-3858642417-826968105-1002'
+-GROUP='198f42edc92bfc627f33235c0e8c752c94abbf798b626c0f89c9311eb2fad260'
+-COMMIT='f5f9dceceb91ce3d8bace0061522dbf889612c09'
++GROUP='5d37af734afb899ec264169caf85585839e4b78d0e2d6fce10131d1ce9bb6a94'
++COMMIT='59580fa6e6742e8101fd35346a2b999621671278'
+ assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=R,text=True).strip()==COMMIT
+ PACKAGES=['airk-service','airk-inference','airk-retrieval','airk-kernel','airk-cli::combined_reads']
+ def sha(p):
+@@ -74,9 +74,9 @@
+ assert sha(RECEIPT)==pin(RECEIPT)['sha256']
+ inventory={'schema':'airk.preserved-native-test-images/1','utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+  'source_commit':COMMIT,'native_group':GROUP,'actual_build_receipt':{'path':str(RECEIPT),'sha256':sha(RECEIPT)},
+- 'images':result,'source_dirty':True,'reviewed_delta':'Reviewed eleven-file Large diagnostics and Mac failure-observation section is exact native198f. HEADf5 is ancestry only; no clean-source equivalence. Original failures retained.','scope':'Actual all-feature Cargo no-run test-image inventory and unchanged byte copies; no testcase counts inferred, selected model execution, qualification, signing or publication.'}
+-(B/'native-test-images-current-section-r1.json').write_text(json.dumps(inventory,indent=2)+'\n',encoding='utf-8')
+-side={'schema':'airk.private-current-image-preservation-binding/1','inventory':pin(B/'native-test-images-current-section-r1.json'),
++ 'images':result,'source_dirty':True,'reviewed_delta':'Reviewed Dense seven-file plus Mac diagnostics four-file section is exact native5d37. HEAD59580 is build ancestry with dirty reviewed sources; no clean-source equivalence. Original failures retained.','scope':'Actual all-feature Cargo no-run test-image inventory and unchanged byte copies; no testcase counts inferred, selected model execution, qualification, signing or publication.'}
++(B/'native-test-images-dense-private-diagnostics-r1.json').write_text(json.dumps(inventory,indent=2)+'\n',encoding='utf-8')
++side={'schema':'airk.private-current-image-preservation-binding/1','inventory':pin(B/'native-test-images-dense-private-diagnostics-r1.json'),
+  'build_receipt':pin(RECEIPT),'cargo_json':pin(LOG),'actual_static_ORT_rows':ort,'images':bindings,
+  'testcases_listed_or_run':False,'native_model_request_dispatched':False,'preserver_source':pin(Path(__file__).resolve()),'creation_policy':'Fresh protected human1002 parent inheritance; no existing owner/ACL changes. Copy occurs only after actual completed PASS with unchangedinputs and exact currentCargoJSON.','artifact_or_target_approval':'pending explicit Root review; none invented'}
+ (B/'source-owners.json').write_text(json.dumps([{'path':path,**policy} for path,policy in source_policies.items()],indent=2)+'\n',encoding='utf-8')

@@ -1,0 +1,213 @@
+--- a/README.md
++++ b/README.md
+@@ -15,15 +15,11 @@
+ or exports the full cached native JSON with its capture time. It makes no new
+ native read; summary copies disclose their subset. Cached data is not live proof.
+ 
+-Windows debug r29 contains the correction for the r28 upgrade checkpoint overflow
+-with accumulated completed-job history. Scoped regressions pass; installed and
+-platform qualification remain pending. See the
+-[1.8.14 working record](docs/releases/release-1.8.14.md) for package evidence.
+-
+-The [fixture compatibility matrix](docs/testing/fixture-compatibility.md) keeps
+-imported-legacy migration distinct from reviewed catalog upgrades. The authentic
+-legacy producer and installed-editor acceptance remain pending; the authentic
+-1.5.12 schema-8 metadata bridge passed scoped regression. r26 remains preserved.
++Historical r26/r29 packaging and pre-baseline migration experiments retain their
++original identities in the working records and fixture compatibility matrix.
++They do not define the current clean-break path. The authentic two-index
++1.8.11 to 1.8.16 native reset passed within its recorded scope; installed-editor
++and broader release qualification remain separate.
+ 
+ The [clean-break contract](docs/upgrade-rebuild-fallback.md) replaces the
+ previous optional rebuild and pre-1.8.16 migration paths. It requires a fresh
+@@ -47,17 +43,17 @@
+ terminal integration. Inno compilation and real registry/signing round-trips
+ remain unqualified; the 13 static/mocked checks are not installed acceptance.
+ 
+-Current reset source also corrects the operation-bound native bootstrap probe
+-and host cleanup of proven old HTTP environment/metadata, public trust copies
+-and this window's Assistance endpoint. Modified, shared or unproven artifacts
+-remain visible blockers; no client is automatically enrolled. The r37 Windows
+-runtime build, actual native-enabled extension suite and authentic 1.8.11 to
+-1.8.16 two-index clean break passed, including cleanup and fresh HTTPS parity.
+-The r37 Mac ARM component batch also passed. Public-release and full-matrix
+-qualification remain incomplete. The [working record](docs/releases/release-1.8.16.md)
+-records exact candidate, package and installed-acceptance scopes and preserved failures.
+-
+-**1.8.16 source builds on the unpublished 1.8.14 implementation; qualification is in progress.** The source versions and generated catalog identify the [One AIRK implementation](docs/one-airk.md). The single-executable HTTPS runtime is implemented; the clean-break baseline and final native and installed-platform acceptance are tracked in the [1.8.14 working record](docs/releases/release-1.8.14.md). Earlier binaries keep their original versions and hashes.
++The reset rebuilds every saved index from its reviewed sources and supported
++preferences, including restored pause/watch policy. It verifies predecessor
++process exit and removes ownership-proven legacy state and executables;
++incomplete or unproven cleanup stays visible. Existing terminals need reopening
++to inherit installed CLI PATH changes. If Explorer still runs old extension
++JavaScript, use **Restart Extensions** once to activate the replacement loader.
++Public-release and full-matrix qualification remain incomplete. The
++[working record](docs/releases/release-1.8.16.md) records exact candidate, package and installed
++acceptance scopes and preserves failed evidence.
++
++**1.8.16 source builds on the unpublished 1.8.14 implementation; qualification is in progress.** The source versions and generated catalog identify the [One AIRK implementation](docs/one-airk.md). The single-executable HTTPS runtime is implemented; the [1.8.16 working record](docs/releases/release-1.8.16.md) tracks current clean-break and installed acceptance. The 1.8.14 record retains historical implementation evidence. Earlier binaries keep their original versions and hashes.
+ 
+ Before 1.8.16, legacy runtime, launcher and index formats are cleanup inputs,
+ not reusable index state. The reset preserves only reviewed sources and supported
+--- a/packages/vscode/README.md
++++ b/packages/vscode/README.md
+@@ -15,15 +15,11 @@
+ or exports the full cached native JSON with its capture time. It makes no new
+ native read; summary copies disclose their subset. Cached data is not live proof.
+ 
+-Windows debug r29 contains the correction for the r28 upgrade checkpoint overflow
+-with accumulated completed-job history. Scoped regressions pass; installed and
+-platform qualification remain pending. See the
+-[1.8.14 working record](https://github.com/iokaio/airk/blob/feat/finetuning/docs/releases/release-1.8.14.md) for package evidence.
+-
+-The [fixture compatibility matrix](https://github.com/iokaio/airk/blob/feat/finetuning/docs/testing/fixture-compatibility.md)
+-keeps imported-legacy migration distinct from reviewed catalog upgrades. The
+-authentic legacy producer and installed-editor acceptance remain pending; the
+-1.5.12 schema-8 metadata bridge passed scoped regression. r26 remains preserved.
++Historical r26/r29 packaging and pre-baseline migration experiments retain their
++original identities in the working records and fixture compatibility matrix.
++They do not define the current clean-break path. The authentic two-index
++1.8.11 to 1.8.16 native reset passed within its recorded scope; installed-editor
++and broader release qualification remain separate.
+ 
+ The [clean-break contract](https://github.com/iokaio/airk/blob/feat/finetuning/docs/upgrade-rebuild-fallback.md) replaces the
+ previous optional rebuild and pre-1.8.16 migration paths. It requires a fresh
+@@ -47,17 +43,17 @@
+ terminal integration. Inno compilation and real registry/signing round-trips
+ remain unqualified; the 13 static/mocked checks are not installed acceptance.
+ 
+-Current reset source also corrects the operation-bound native bootstrap probe
+-and host cleanup of proven old HTTP environment/metadata, public trust copies
+-and this window's Assistance endpoint. Modified, shared or unproven artifacts
+-remain visible blockers; no client is automatically enrolled. The r37 Windows
+-runtime build, actual native-enabled extension suite and authentic 1.8.11 to
+-1.8.16 two-index clean break passed, including cleanup and fresh HTTPS parity.
+-The r37 Mac ARM component batch also passed. Public-release and full-matrix
+-qualification remain incomplete. The [working record](https://github.com/iokaio/airk/blob/feat/finetuning/docs/releases/release-1.8.16.md)
+-records exact candidate, package and installed-acceptance scopes and preserved failures.
++The reset rebuilds every saved index from its reviewed sources and supported
++preferences, including restored pause/watch policy. It verifies predecessor
++process exit and removes ownership-proven legacy state and executables;
++incomplete or unproven cleanup stays visible. Existing terminals need reopening
++to inherit installed CLI PATH changes. If Explorer still runs old extension
++JavaScript, use **Restart Extensions** once to activate the replacement loader.
++Public-release and full-matrix qualification remain incomplete. The
++[working record](https://github.com/iokaio/airk/blob/feat/finetuning/docs/releases/release-1.8.16.md) records exact candidate, package and installed
++acceptance scopes and preserves failed evidence.
+ 
+-**1.8.16 source builds on the unpublished 1.8.14 implementation; qualification is in progress.** The source versions and generated catalog identify the [One AIRK implementation](https://github.com/iokaio/airk/blob/feat/finetuning/docs/one-airk.md). The single-executable HTTPS runtime is implemented; the clean-break baseline and final native and installed-platform acceptance are tracked in the [1.8.14 working record](https://github.com/iokaio/airk/blob/feat/finetuning/docs/releases/release-1.8.14.md). Earlier binaries keep their original versions and hashes.
++**1.8.16 source builds on the unpublished 1.8.14 implementation; qualification is in progress.** The source versions and generated catalog identify the [One AIRK implementation](https://github.com/iokaio/airk/blob/feat/finetuning/docs/one-airk.md). The single-executable HTTPS runtime is implemented; the [1.8.16 working record](https://github.com/iokaio/airk/blob/feat/finetuning/docs/releases/release-1.8.16.md) tracks current clean-break and installed acceptance. The 1.8.14 record retains historical implementation evidence. Earlier binaries keep their original versions and hashes.
+ 
+ Before 1.8.16, legacy runtime, launcher and index formats are cleanup inputs,
+ not reusable index state. The reset preserves only reviewed sources and supported
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -10,16 +10,11 @@
+ installed acceptance of this revised policy are in progress. The earlier
+ reconciliation adapter was not installed-qualified and is superseded.
+ 
+-The [1.8.14 working record](releases/release-1.8.14.md) records the r29 correction
+-for the confirmed r28 upgrade checkpoint overflow with accumulated completed-job
+-history. Scoped regressions pass; installed and final release qualification
+-remain pending. Package evidence is recorded separately.
+-
+-The [fixture compatibility matrix](testing/fixture-compatibility.md) records the
+-separate packaging, authority, setup and migration contracts. The authentic
+-legacy editor producer and installed acceptance remain pending. The authentic
+-1.5.12 schema-8 metadata bridge passed scoped regression; reviewed 1.8.12 catalog
+-migration remains a separate case.
++Historical r26/r29 packaging, checkpoint-overflow corrections and pre-baseline
++migration experiments remain in the [1.8.14 record](releases/release-1.8.14.md)
++and [fixture matrix](testing/fixture-compatibility.md). The authentic two-index
++1.8.11 to 1.8.16 native reset has passed; installed-editor and broader release
++qualification remain separate.
+ 
+ The [clean-break and rebuild contract](upgrade-rebuild-fallback.md) replaces the
+ optional fallback and historical index migration requirements. Native shutdown,
+@@ -43,18 +38,13 @@
+ terminal integration. Its 13 static/mocked checks do not execute Inno or registry
+ round-trips; ISCC was unavailable for this local check; real compilation/signing remain unqualified.
+ 
+-The current [1.8.16 record](releases/release-1.8.16.md) also describes the exact
+-Starting-intent/fresh-state bootstrap probe and proven host artifact cleanup.
+-The r37 Windows runtime build, actual native-enabled extension suite and
+-authentic 1.8.11 to 1.8.16 two-index clean break passed, including cleanup and
+-fresh HTTPS parity. The r37 Mac ARM component batch passed scoped Clippy,
+-398 native tests, Python and the full mocked extension suite; this does not
+-qualify Mac installed/native-enabled extension, GUI, Intel or signing. The r37
+-VSIX was created and its seals verified, but the installed Windows editor gate
+-failed on unresolved catalog-outcome reconciliation; it is not accepted for user
+-installation. Cleanup remains unqualified, and full workspace/T3 work is stopped.
+-Earlier r36 Mac results, failed journeys and the r36
+-enabled-extension failure retain their historical scope and evidence.
++The [1.8.16 record](releases/release-1.8.16.md) retains passing native reset,
++Windows extension and Mac component scopes separately from failed installed
++editor runs. R38 mocked/native-enabled extension suites passed, but its UI run
++failed on a sequence-16 response budget. R39 correction and checks are pending;
++no new installed-editor, package or public-release acceptance is implied.
++Reopen terminals for installed CLI PATH changes; activate an old loaded
++extension once with **Restart Extensions**.
+ 
+ The authorized follow-up to the completion plan's two-failure stop corrected the
+ shared native model-preparation fixture. Four cheap regressions, scoped Clippy,
+@@ -63,7 +53,7 @@
+ incomplete. The [8 November stop and repair note](research/one-airk-completion-stop-2026-11-08.md)
+ retains both original failures, the correction and unrun gates.
+ 
+-**1.8.16 source builds on the unpublished 1.8.14 implementation; qualification is in progress.** The source versions and generated catalog identify the [One AIRK implementation](one-airk.md). The single-executable HTTPS runtime is implemented; the clean-break baseline and final native and installed-platform acceptance are tracked in the [1.8.14 working record](releases/release-1.8.14.md). Earlier binaries keep their original versions and hashes.
++**1.8.16 source builds on the unpublished 1.8.14 implementation; qualification is in progress.** The source versions and generated catalog identify the [One AIRK implementation](one-airk.md). The single-executable HTTPS runtime is implemented; current clean-break and installed acceptance are tracked in the [1.8.16 working record](releases/release-1.8.16.md). The 1.8.14 record retains historical implementation evidence. Earlier binaries keep their original versions and hashes.
+ 
+ [One AIRK implementation plan](one-airk.md) targets the **1.8.16+** development line with a single native
+ executable, embedded MiniLM, authenticated loopback MCP, automatic alternate-port
+@@ -196,7 +186,7 @@
+ 
+ Successful runtime activation finishes quietly. Once its loader is active, AIRK handles later detected extension replacements automatically; external coding-agent sessions may need their own restart to load the new tool connection. Connection or cleanup issues produce a specific warning and details instead of a clean success message.
+ 
+-The 1.8.14 working installer and **Install or Repair CLI** migrate recognized owned workspace connections for the supported Codex (`.codex/config.toml`), Claude Code (`.mcp.json`) and VS Code/Copilot Chat (`.vscode/mcp.json`) adapters to the authenticated native HTTPS endpoint. After complete known configuration migration, native ownership checks retire old launcher images, their processes and eligible approved superseded runtime executables. Both legacy-to-modern and later modern-to-modern updates preserve the selected runtime, sources, indexes and settings. New connections use HTTPS directly. Other servers, disabled settings and tool policies remain intact; missing entries do not enable an agent. Unsupported clients, unproven/custom declarations, ambiguous scopes, unsaved edits, unsafe files or blocked cleanup leave installation explicitly incomplete, rather than reporting clean success. Actual installed-client/platform qualification remains separate; see [agent setup](agent-integration.md).
++**Historical pre-baseline behavior:** The 1.8.14 working installer and **Install or Repair CLI** migrate recognized owned workspace connections for the supported Codex (`.codex/config.toml`), Claude Code (`.mcp.json`) and VS Code/Copilot Chat (`.vscode/mcp.json`) adapters to the authenticated native HTTPS endpoint. After complete known configuration migration, native ownership checks retire old launcher images, their processes and eligible approved superseded runtime executables. That historical migration preserved selected runtime, sources, indexes and settings. The current pre-1.8.16 boundary instead rebuilds all saved indexes in fresh state under the clean-break contract. New connections use HTTPS directly. Other servers, disabled settings and tool policies remain intact; missing entries do not enable an agent. Unsupported clients, unproven/custom declarations, ambiguous scopes, unsaved edits, unsafe files or blocked cleanup leave installation explicitly incomplete, rather than reporting clean success. Actual installed-client/platform qualification remains separate; see [agent setup](agent-integration.md).
+ 
+ The current branch uses **1.8.14 for implementation**; the earlier **1.9.0** research target and release promotion remain separate, carrying forward the 1.5.0 addition of the [AIRK Explorer and Explorer Assistance](releases/release-1.5.0.md); the paragraphs above and below about 1.4.x describe earlier releases. [Routine CI](ci-and-builds.md) runs the full workspace once on Linux, focused native regressions elsewhere, all platform builds/package smoke and a container smoke. Full platform/container suites and installed-runtime lifecycle campaigns are explicit qualification. 1.4.2 scales Balanced admission to one quarter of detected RAM (2–32 GiB), protects capacity for up to four project query workers, and raises Balanced source pacing to 64 MiB/s per job within a 256 MiB/s shared ceiling. Native watching supports 8,192 directories per project and 32,768 shared, with bounded incremental traversal and specific limit diagnostics. Existing manual resource overrides and storage quotas are preserved. These are admission policies, not hard OS memory or disk-I/O limits. Follow the [versioning process](versioning.md) from local candidates through CI and publication. Its checks run on Windows x64; earlier installed-editor and Linux receipts do not qualify this follow-up.
+ 
+@@ -206,7 +196,7 @@
+ 
+ The [MCP contract](mcp.md) documents `diagnostics.runtime`, including running frontend/worker/service versions, process and payload identities, build receipt metadata and explicit missing observations.
+ 
+-Successful CLI installation removes obsolete terminal executables and eligible approved nonselected runtime payloads regardless of version, after activation and complete known-client configuration migration. Locked files report incomplete cleanup; a later trusted activation or **Install or Repair CLI** resumes the exact transaction. The selected runtime, sources, indexes and settings are preserved. See the [console installation contract](service-console.md).
++**Historical compatible-line cleanup:** Successful CLI installation removes obsolete terminal executables and eligible approved nonselected runtime payloads regardless of version, after activation and complete known-client configuration migration. Locked files report incomplete cleanup; a later trusted activation or **Install or Repair CLI** resumes the exact transaction. The selected runtime, sources, indexes and settings are preserved. See the [console installation contract](service-console.md).
+ 
+ Trusted activation can install or reconnect the approved runtime and terminal
+ command, then reconcile existing native registrations. It does not register opened
+--- a/docs/releases/release-1.8.16.md
++++ b/docs/releases/release-1.8.16.md
+@@ -167,7 +167,7 @@
+ commands, identities, root-cause notes and qualification ladder; earlier failed
+ fixtures retain their original identities.
+ 
+-## Current r37 correction and scoped r36 qualification
++## Historical r37 correction and scoped r36 qualification
+ 
+ The sixth owned native r36 journey passed (106.995 s): both indexes rebuilt,
+ pause/watch restored and sources preserved (2/2); all seven held predecessor
+@@ -239,6 +239,21 @@
+ and cheap regressions are planned, with no source correction yet. Versions
+ remain 1.8.16, and no publication is claimed.
+ 
++## Current r38 evidence and r39 correction in progress
++
++R38 extension checks collected 1,291 mocked tests: 1,270 passed and 21
++skipped. Native-enabled checks collected 1,292: 1,289 passed and three
++skipped. These retain their exact component scope. The passing authentic
++r37 two-index reset separately proved both rebuilds/restored pause-watch/source
++preservation, all seven predecessor exits, cleanup, fresh HTTPS and uninstall.
++
++The R38 installed UI run failed on the sequence-16 response budget. The r39
++portable native correction and regression checks are pending; no corrected
++backend, native transport, installed editor, new package or release
++qualification is claimed from source review. R37 Neo native/component results
++retain their frozen source scope; they do not qualify the later TS journal or
++r39 native delta. The ledger retains exact receipts and pending gates.
++
+ ## Earlier correction work — superseded before installed qualification
+ 
+ The unpublished `legacy-reconcile-continuation/1` adapter had been implemented

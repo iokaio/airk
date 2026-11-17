@@ -1,0 +1,106 @@
+--- a/crates/airk-kernel/src/source_policy.rs
++++ b/crates/airk-kernel/src/source_policy.rs
+@@ -385,7 +385,7 @@
+         self.require_unrestricted_read()?;
+         self.validate_source_policy_binding(policy)?;
+         crate::service_execution::checkpoint()?;
+-        let selected = self.refresh_service_snapshot()?;
++        let mut selected = self.refresh_service_snapshot()?;
+         if let Some(scope) = selected.current_scope()? {
+             crate::current::recover_current(
+                 &selected.store,
+@@ -661,6 +661,11 @@
+             state.retained_policy_unknown = false;
+         }
+         drop(writer);
++        // The write phase pinned this slot against replacement. Cleanup below
++        // acquires its own selection+writer before dropping its selection to
++        // upgrade the object gate. Retaining our write-phase pin would prevent
++        // that upgrade forever. Other callers' selections remain untouched.
++        drop(selected.service_selection.take());
+         let report = capsule
+             .application
+             .as_mut()
+--- a/crates/airk-kernel/src/split_execution.rs
++++ b/crates/airk-kernel/src/split_execution.rs
+@@ -28,7 +28,20 @@
+             _ => anyhow::bail!("split current execution purpose is unsupported"),
+         };
+         let selected = self.with_expected_source_policy(Some(policy.clone()))?;
+-        let application = selected.apply_source_policy(policy, policy_operation)?;
++        let mut application = selected.apply_source_policy(policy, policy_operation)?;
++        if work.job.purpose == SplitJobPurpose::OriginalCleanup {
++            // Each native turn deletes at most 4096 owned files. Keep the job
++            // finite while permitting real bounded progress; an actual cleanup
++            // error stops immediately and remains in the retained report.
++            for _ in 0..15 {
++                if !application.physical_cleanup_pending || application.cleanup_error.is_some() {
++                    break;
++                }
++                crate::service_execution::checkpoint()?;
++                selected.checkpoint_completed_split_work()?;
++                application = selected.apply_source_policy(policy, policy_operation)?;
++            }
++        }
+         if work.job.purpose == SplitJobPurpose::DestinationBuild {
+             if work.snapshot.request.require_semantic_ready && !selected.vectors_enabled()? {
+                 selected.configure_vectors(true)?;
+@@ -68,7 +81,7 @@
+             semantic_ready: status.semantic_readiness.state
+                 == airk_core::readiness::SemanticState::Ready,
+             cleanup_complete: !application.physical_cleanup_pending,
+-            policy_application: None,
++            policy_application: Some(application),
+             remainder_witness: None,
+         };
+         selected.qualify_split_job_result(work, result)
+--- a/crates/airk-kernel/tests/source_policy.rs
++++ b/crates/airk-kernel/tests/source_policy.rs
+@@ -1261,3 +1261,47 @@
+     );
+     Ok(())
+ }
++
++#[test]
++fn service_policy_cleanup_releases_only_its_own_pin_and_preserves_actual_error_reports() -> Result<()> {
++    let owned=owner()?;
++    let base=owned.path().canonicalize()?;
++    let root=base.join("source");
++    let data=base.join("data");
++    fs::create_dir_all(&root)?;
++    fs::write(root.join("private.md"),b"private source remains unchanged\n")?;
++    fs::write(root.join("public.md"),b"healthy public evidence\n")?;
++    let kernel=Kernel::open_service_collection(&root,Some(data.clone()),"default")?;
++    kernel.configure_vectors(false)?;
++    kernel.index_service_sources()?;
++    let collection=airk_store::service::collection::Collection::existing(&data,&canonical(&root)?,"default")?;
++    let external=collection.select()?;
++    let objects=external.store.directory().join("objects/sources");
++    let orphan=objects.join("0".repeat(64));
++    fs::write(&orphan,b"owned abandoned capture")?;
++    let policy=policy(&kernel,"private.md",PathScope::Exact)?;
++    let operation=Incarnation::from_bytes([103;16]);
++    let pending=kernel.apply_source_policy(&policy,operation)?;
++    assert!(pending.physical_cleanup_pending);
++    assert!(pending.cleanup_error.is_none(),"a genuine external pin defers cleanup without an I/O error");
++    assert!(orphan.exists());
++    drop(external);
++    // An actual malformed owned-object entry must be reported, rather than
++    // being hidden forever behind the cleanup call's own selection lease.
++    let malformed=objects.join("nonregular-derived-object");
++    fs::create_dir(&malformed)?;
++    let failed=kernel.apply_source_policy(&policy,operation)?;
++    assert!(failed.physical_cleanup_pending);
++    assert!(failed.cleanup_error.as_deref().is_some_and(|error|error.contains("nonregular current object")));
++    assert_eq!(kernel.source_policy_status()?,Some(failed));
++    assert!(malformed.is_dir());
++    fs::remove_dir(malformed)?;
++    let complete=kernel.apply_source_policy(&policy,operation)?;
++    assert!(!complete.physical_cleanup_pending);
++    assert!(complete.cleanup_error.is_none());
++    assert_eq!(kernel.source_policy_status()?,Some(complete));
++    assert!(!orphan.exists());
++    assert_eq!(fs::read(root.join("private.md"))?,b"private source remains unchanged\n");
++    assert!(kernel.read_file("public.md",1,1,4096)?.hits[0].text.contains("healthy public evidence"));
++    Ok(())
++}

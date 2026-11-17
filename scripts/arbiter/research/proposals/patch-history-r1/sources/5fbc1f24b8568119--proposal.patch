@@ -1,0 +1,1187 @@
+--- a/crates/airk-ingest/src/source_scope/CONTRACT.md
++++ b/crates/airk-ingest/src/source_scope/CONTRACT.md
+@@ -69,3 +69,32 @@
+ no locator, field or changed refusal class. The no-follow flags, supported case-mode
+ checks and missing-future-suffix handling remain unchanged. This diagnostic does not
+ qualify a redirected or previously unsupported ancestor.
++
++## Narrow macOS system ignore-control alias
++
++The matcher/control capture owner alone may bind the exact macOS OS alias
++`/etc` to literal `private/etc`. This is runtime control authority, never source
++or administrative-input authority. It preserves original `/etc/...` locator
++spelling, ignore precedence and the Core File/Absent/Directory baseline bytes,
++schema and digest domains. No policy/path canonicalization grants the binding.
++
++The owner retains root/private/etc directory descriptors opened separately
++with O_NOFOLLOW and qualifies their actual native filesystem/case boundaries.
++Each is UID0, non-group/other-writable and has a successful descriptor-bound
++native security observation proving no ACL. Nonempty or unknown ACL state is
++unsupported and refuses, even if an entry would only restrict access. The `/etc`
++entry is observed no-follow relative to held root: root-owned symlink, exact
++literal target, stable native identity/metadata. No open traverses the link.
++Alias and named target/ancestor identity+security are rechecked before/after
++control observations and at scan seal/revalidation; failures latch. All suffix
++components and leaves remain no-follow; actual qualified ENOENT alone is absence.
++The original and fixed target spellings both retain policy exclusion checks.
++The existing bounded source-read buffer/metadata/reopen checks are shared through
++a private descriptor-relative control hook; generic source opens remain strict.
++
++The capability is fixed inside the existing Ingest control owner, with no caller
++mapping, new wire type, stored alias field, changed source naming profile or state
++format. Retained baseline File/Absent/Directory fixture bytes and identities must
++remain exact. Adversarial injected security/alias observations and real owned
++suffix capture tests precede an actual read-only Mac anchor control and reference
++refresh. No root/system/ACL mutations or ignore-control omission is permitted.
+--- a/crates/airk-ingest/src/lib.rs
++++ b/crates/airk-ingest/src/lib.rs
+@@ -22,6 +22,7 @@
+ mod extraction_pool;
+ pub mod retention;
+ pub use extraction_pool::ExtractionExecution;
++mod control_capture;
+ pub mod control_snapshot;
+ pub mod header_context;
+ mod host_components;
+--- a/crates/airk-ingest/src/policy_ignore.rs
++++ b/crates/airk-ingest/src/policy_ignore.rs
+@@ -33,6 +33,7 @@
+     directories: BTreeMap<PathBuf, [Gitignore; 4]>,
+     failure: Option<&'static str>,
+     global: Gitignore,
++    captures: crate::control_capture::Owner,
+     root_blocked: bool,
+     controls: Option<std::sync::Arc<crate::control_snapshot::ControlSnapshot>>,
+ }
+@@ -68,6 +69,7 @@
+         let root = root.to_path_buf();
+         let mut selected = Self {
+             global: Gitignore::empty(),
++            captures: Default::default(),
+             root,
+             policy: policy.cloned(),
+             charged: 0,
+@@ -115,10 +117,14 @@
+ 
+     fn capture(&mut self, path: &Path) -> Result<Option<String>> {
+         let path = std::path::absolute(path).map_err(|_| refused("ignore_control_locator"))?;
++        let captured = match &self.controls {
++            Some(controls) => controls.capture_path(&path)?,
++            None => self.captures.path(&path)?,
++        };
+         if self.controls.is_some() {
+-            crate::control_snapshot::qualify_locator(&path, false)?;
+-        }
+-        let metadata = match fs::symlink_metadata(&path) {
++            captured.qualify(false)?;
++        }
++        let metadata = match captured.metadata() {
+             Ok(value) => value,
+             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                 if let Some(controls) = &self.controls {
+@@ -137,14 +143,13 @@
+             }
+         };
+         ensure!(
+-            metadata.is_file() && !metadata.file_type().is_symlink(),
++            metadata.file && !metadata.symlink,
+             refused("aliased_ignore_control")
+         );
+         #[cfg(windows)]
+         {
+-            use std::os::windows::fs::MetadataExt;
+             ensure!(
+-                metadata.file_attributes() & 0x400 == 0,
++                metadata.attributes & 0x400 == 0,
+                 refused("aliased_ignore_control")
+             );
+         }
+@@ -160,8 +165,17 @@
+                 .unwrap_or(true),
+             refused("excluded_ignore_control")
+         );
++        let physical = captured.physical();
++        if physical != path
++            && let Some(policy) = &self.policy
++        {
++            ensure!(
++                crate::permanent_policy::allows_absolute_control_input_checked(policy, &physical)?,
++                refused("excluded_ignore_control")
++            );
++        }
+         let length =
+-            usize::try_from(metadata.len()).map_err(|_| refused("ignore_control_budget"))?;
++            usize::try_from(metadata.bytes).map_err(|_| refused("ignore_control_budget"))?;
+         let allowance = length
+             .checked_add(1)
+             .ok_or_else(|| refused("ignore_control_budget"))?;
+@@ -172,14 +186,9 @@
+         // A failed capture still consumes its allowance. The reader never follows
+         // an input/ancestor link and verifies held identity and pathname afterward.
+         self.charged += allowance;
+-        let bytes = crate::source_read::read(
+-            path.parent()
+-                .ok_or_else(|| refused("ignore_control_locator"))?,
+-            &path,
+-            MAX_FILE_BYTES,
+-            allowance,
+-        )
+-        .map_err(|_| refused("ignore_control_unavailable"))?;
++        let bytes = captured
++            .read(MAX_FILE_BYTES, allowance)
++            .map_err(|_| refused("ignore_control_unavailable"))?;
+         ensure!(
+             bytes.len() <= MAX_FILE_BYTES,
+             refused("ignore_control_budget")
+--- a/crates/airk-ingest/src/control_snapshot.rs
++++ b/crates/airk-ingest/src/control_snapshot.rs
+@@ -34,7 +34,7 @@
+     ControlDrift { kind }.into()
+ }
+ /// Preserve uncertainty. Only actual NotFound is an absence observation.
+-fn require_absence(observed: std::io::Result<std::fs::Metadata>) -> Result<()> {
++fn require_absence<T>(observed: std::io::Result<T>) -> Result<()> {
+     match observed {
+         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+         Err(error) => Err(error.into()),
+@@ -55,12 +55,14 @@
+ pub struct ControlSnapshot {
+     state: Mutex<State>,
+     expected: Option<SourceControlBaseline>,
++    captures: crate::control_capture::Owner,
+ }
+ impl ControlSnapshot {
+     pub fn capture() -> Self {
+         Self {
+             state: Mutex::new(State::default()),
+             expected: None,
++            captures: Default::default(),
+         }
+     }
+     pub fn revalidate(expected: SourceControlBaseline) -> Result<Self> {
+@@ -68,6 +70,7 @@
+         Ok(Self {
+             state: Mutex::new(State::default()),
+             expected: Some(expected),
++            captures: Default::default(),
+         })
+     }
+     /// Re-read exactly the authenticated dependency set before selected work
+@@ -92,34 +95,39 @@
+         }
+         for (path, value) in &expected.inputs {
+             let path = Path::new(path);
+-            qualify_locator(path, matches!(value, ControlInputState::Directory))?;
++            let captured = self.capture_path(path)?;
++            captured.qualify(matches!(value, ControlInputState::Directory))?;
+             match value {
+                 ControlInputState::File { .. } => {
+-                    let bytes = match crate::read_protected_path(path, 64 << 10, false) {
++                    let bytes = match captured.read(64 << 10, (64 << 10) + 1) {
+                         Ok(bytes) => bytes,
+                         Err(error)
+                             if error
+                                 .downcast_ref::<std::io::Error>()
+                                 .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
+                         {
+-                            if crate::source_read::missing_protected_path(path)? {
++                            if captured.missing()? {
+                                 return Err(changed(ControlDriftKind::Inputs));
+                             }
+                             return Err(error);
+                         }
+                         Err(error) => return Err(error),
+                     };
++                    ensure!(
++                        bytes.len() <= 64 << 10,
++                        "control revalidation exceeds file budget"
++                    );
+                     self.file(path, &bytes)?;
+                 }
+                 ControlInputState::Absent => {
+-                    require_absence(std::fs::symlink_metadata(path))?;
++                    require_absence(captured.metadata())?;
+                     self.absent_qualified(path)?;
+                 }
+                 ControlInputState::Directory => {
+-                    let metadata = match std::fs::symlink_metadata(path) {
++                    let metadata = match captured.metadata() {
+                         Ok(metadata) => metadata,
+                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+-                            if crate::source_read::missing_protected_path(path)? {
++                            if captured.missing()? {
+                                 return Err(changed(ControlDriftKind::Inputs));
+                             }
+                             return Err(error.into());
+@@ -127,14 +135,13 @@
+                         Err(error) => return Err(error.into()),
+                     };
+                     ensure!(
+-                        metadata.is_dir() && !metadata.file_type().is_symlink(),
++                        metadata.directory && !metadata.symlink,
+                         "control directory changed"
+                     );
+                     #[cfg(windows)]
+                     {
+-                        use std::os::windows::fs::MetadataExt;
+                         ensure!(
+-                            metadata.file_attributes() & 0x400 == 0,
++                            metadata.attributes & 0x400 == 0,
+                             "control directory redirected"
+                         );
+                     }
+@@ -143,6 +150,9 @@
+             }
+         }
+         Ok(())
++    }
++    pub(crate) fn capture_path(&self, path: &Path) -> Result<crate::control_capture::ControlPath> {
++        self.captures.path(path)
+     }
+     /// This is computed by the same owner that actually selects global files.
+     /// Hashing these locators does not itself prove their content or authority.
+@@ -188,6 +198,7 @@
+             "control snapshot already refused; fresh review required"
+         );
+         let outcome = (|| -> Result<()> {
++            self.captures.recheck()?;
+             let path = path
+                 .to_str()
+                 .ok_or_else(|| anyhow::anyhow!("non-UTF8 control locator"))?;
+@@ -266,9 +277,10 @@
+     /// no-follow/name-boundary reader. NotFound alone is not this proof.
+     pub(crate) fn absent_qualified(&self, path: &Path) -> Result<()> {
+         let outcome = (|| -> Result<()> {
+-            qualify_locator(path, false)?;
+-            ensure!(
+-                crate::source_read::missing_protected_path(path)?,
++            let captured = self.capture_path(path)?;
++            captured.qualify(false)?;
++            ensure!(
++                captured.missing()?,
+                 "control absence changed or unqualified"
+             );
+             self.record(path, ControlInputState::Absent)
+@@ -284,6 +296,7 @@
+     /// Used for an actual qualified .git directory marker, not directory
+     /// inventory identity; the relevant info/exclude is recorded separately.
+     pub(crate) fn directory_qualified(&self, path: &Path) -> Result<()> {
++        self.capture_path(path)?.qualify(true)?;
+         self.record(path, ControlInputState::Directory)
+     }
+     pub(crate) fn context(&self, root: &str, digest: Sha256Digest) -> Result<()> {
+@@ -353,6 +366,7 @@
+             .lock()
+             .map_err(|_| anyhow::anyhow!("control snapshot unavailable"))?;
+         ensure!(!state.failed, "cannot seal refused control snapshot");
++        self.captures.recheck()?;
+         let baseline = SourceControlBaseline {
+             schema: 1,
+             // Revalidation compares the original controls; only the locked
+@@ -382,6 +396,12 @@
+ /// Qualify every existing ancestor without following a redirect. Missing
+ /// suffixes are allowed only as an absence observation, rechecked before commit.
+ pub(crate) fn qualify_locator(path: &Path, directory: bool) -> Result<()> {
++    crate::control_capture::Owner::default()
++        .path(path)?
++        .qualify(directory)
++}
++
++pub(crate) fn qualify_strict(path: &Path, directory: bool) -> Result<()> {
+     ensure!(path.is_absolute(), "control locator is not absolute");
+     let anchor = path
+         .ancestors()
+@@ -501,7 +521,8 @@
+             std::io::ErrorKind::PermissionDenied,
+             std::io::ErrorKind::Other,
+         ] {
+-            let error = require_absence(Err(std::io::Error::from(kind))).unwrap_err();
++            let error =
++                require_absence::<std::fs::Metadata>(Err(std::io::Error::from(kind))).unwrap_err();
+             assert!(error.downcast_ref::<ControlDrift>().is_none());
+             assert_eq!(error.downcast_ref::<std::io::Error>().unwrap().kind(), kind);
+         }
+@@ -510,7 +531,9 @@
+             error.downcast_ref::<ControlDrift>().map(|drift| drift.kind),
+             Some(ControlDriftKind::Inputs)
+         );
+-        require_absence(Err(std::io::Error::from(std::io::ErrorKind::NotFound)))?;
++        require_absence::<std::fs::Metadata>(Err(std::io::Error::from(
++            std::io::ErrorKind::NotFound,
++        )))?;
+         Ok(())
+     }
+ }
+--- a/crates/airk-ingest/src/source_read.rs
++++ b/crates/airk-ingest/src/source_read.rs
+@@ -338,7 +338,24 @@
+             .all(|part| matches!(part, Component::Normal(_))),
+         "invalid source path"
+     );
+-    let mut held = open(root, relative)?;
++    read_opened(
++        open(root, relative)?,
++        path,
++        limit,
++        remaining,
++        require_single_link,
++        || open(root, relative),
++    )
++}
++
++fn read_opened(
++    mut held: Opened,
++    path: &Path,
++    limit: usize,
++    remaining: usize,
++    require_single_link: bool,
++    reopen: impl Fn() -> Result<Opened>,
++) -> Result<Vec<u8>> {
+     require_nonarchive(path)?;
+     let before = held.file.metadata()?;
+     ensure!(before.is_file(), "source is not a regular file");
+@@ -358,7 +375,7 @@
+         "source changed during scan; retry indexing"
+     );
+     // Check the pathname still names the held file, using the same protected traversal.
+-    let current = open(root, relative)?;
++    let current = reopen()?;
+     ensure!(
+         identity(&held.file)? == identity(&current.file)?,
+         "source replaced during scan; retry indexing"
+@@ -368,6 +385,77 @@
+         "workspace raw source read budget exhausted; previous generation retained"
+     );
+     Ok(bytes)
++}
++
++/// Only the fixed control owner supplies this already-validated directory FD.
++/// Ordinary source/admin callers retain their root-to-leaf no-follow traversal.
++#[cfg(target_os = "macos")]
++pub(crate) fn read_control_at(
++    directory: &File,
++    relative: &Path,
++    original: &Path,
++    limit: usize,
++    remaining: usize,
++) -> Result<Vec<u8>> {
++    read_opened(
++        open_control_at(directory, relative)?,
++        original,
++        limit,
++        remaining,
++        false,
++        || open_control_at(directory, relative),
++    )
++}
++#[cfg(target_os = "macos")]
++fn open_control_at(directory: &File, relative: &Path) -> Result<Opened> {
++    use std::{
++        ffi::CString,
++        os::{
++            fd::{AsRawFd, FromRawFd},
++            unix::ffi::OsStrExt,
++        },
++    };
++    let components: Vec<_> = relative.components().collect();
++    ensure!(
++        !components.is_empty() && components.len() <= 256 && relative.as_os_str().len() <= 4096,
++        "invalid control suffix"
++    );
++    let mut directories = vec![directory.try_clone()?];
++    for (index, component) in components.iter().enumerate() {
++        let Component::Normal(name) = component else {
++            anyhow::bail!("invalid control suffix");
++        };
++        let name = CString::new(name.as_bytes())?;
++        let is_directory = index + 1 != components.len();
++        let flags = libc::O_RDONLY
++            | libc::O_NOFOLLOW
++            | libc::O_CLOEXEC
++            | libc::O_NONBLOCK
++            | if is_directory { libc::O_DIRECTORY } else { 0 };
++        // SAFETY: parent and component remain live; fresh successful FD has one owner.
++        let fd = unsafe {
++            libc::openat(
++                directories.last().unwrap().as_raw_fd(),
++                name.as_ptr(),
++                flags,
++            )
++        };
++        if fd < 0 {
++            return Err(std::io::Error::last_os_error())
++                .context("open control suffix without links");
++        }
++        let file = unsafe { File::from_raw_fd(fd) };
++        if is_directory {
++            crate::native_name_boundary::qualify_directory_handle(&file)?;
++            directories.push(file);
++        } else {
++            return Ok(Opened {
++                file,
++                _directories: directories,
++            });
++        }
++    }
++    anyhow::bail!("empty control suffix")
+ }
+ 
+ #[cfg(unix)]
+--- /dev/null
++++ b/crates/airk-ingest/src/control_capture/decision.rs
+@@ -0,0 +1,45 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Pure predicates used by the actual macOS syscall adapter and cross-host controls.
++use anyhow::{Result, ensure};
++pub(super) fn directory(uid: u32, mode: u32) -> Result<()> {
++    ensure!(
++        uid == 0 && mode & 0o170000 == 0o040000 && mode & 0o022 == 0,
++        "system control directory is not root-protected"
++    );
++    Ok(())
++}
++pub(super) fn alias(uid: u32, mode: u32, links: u64, target: &[u8]) -> Result<()> {
++    ensure!(
++        uid == 0
++            && mode & 0o170000 == 0o120000
++            && mode & 0o022 == 0
++            && links == 1
++            && target == b"private/etc",
++        "system control alias is unsupported"
++    );
++    Ok(())
++}
++pub(super) fn no_acl(query_status: i32, property_present: i32) -> Result<()> {
++    ensure!(
++        query_status == 0 && property_present == 0,
++        "native control ACL is present or unknown"
++    );
++    Ok(())
++}
++
++/// One refused captured boundary cannot silently heal under the same scan owner.
++pub(super) fn observe_once(
++    failed: &std::sync::atomic::AtomicBool,
++    observe: impl FnOnce() -> Result<()>,
++) -> Result<()> {
++    use std::sync::atomic::Ordering;
++    ensure!(
++        !failed.load(Ordering::Acquire),
++        "system control anchor previously refused"
++    );
++    let result = observe();
++    if result.is_err() {
++        failed.store(true, Ordering::Release);
++    }
++    result
++}
+--- /dev/null
++++ b/crates/airk-ingest/src/control_capture/macos/tests.rs
+@@ -0,0 +1,67 @@
++// SPDX-License-Identifier: Apache-2.0
++use super::*;
++#[test]
++fn actual_macos_system_control_anchor_is_metadata_only_and_generic_source_stays_strict()
++-> Result<()> {
++    let anchor = SystemEtc::capture()?.context("actual macOS /etc OS alias required")?;
++    anchor.recheck()?;
++    anchor.qualify(Path::new("gitconfig"), false)?;
++    assert!(crate::native_name_boundary::qualify(Path::new("/"), "etc/gitconfig", false).is_err());
++    anchor.recheck()
++}
++#[test]
++fn macos_private_control_hook_preserves_bound_bytes_and_refuses_leaf_and_directory_aliases()
++-> Result<()> {
++    let owned = tempfile::tempdir()?;
++    let root = owned.path().canonicalize()?;
++    let parent = OpenOptions::new()
++        .read(true)
++        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
++        .open(&root)?;
++    let file = root.join("control");
++    std::fs::write(&file, b"actual\n")?;
++    assert_eq!(
++        crate::source_read::read_control_at(&parent, Path::new("control"), &file, 64, 65)?,
++        b"actual\n"
++    );
++    std::os::unix::fs::symlink(&file, root.join("leaf-alias"))?;
++    assert!(
++        crate::source_read::read_control_at(
++            &parent,
++            Path::new("leaf-alias"),
++            &root.join("leaf-alias"),
++            64,
++            65
++        )
++        .is_err()
++    );
++    let directory = root.join("directory");
++    std::fs::create_dir(&directory)?;
++    std::fs::write(directory.join("control"), b"outside\n")?;
++    std::os::unix::fs::symlink(&directory, root.join("directory-alias"))?;
++    assert!(
++        crate::source_read::read_control_at(
++            &parent,
++            Path::new("directory-alias/control"),
++            &root.join("directory-alias/control"),
++            64,
++            65
++        )
++        .is_err()
++    );
++    assert!(
++        crate::source_read::read_control_at(&parent, Path::new("../control"), &file, 64, 65)
++            .is_err()
++    );
++    // O_NONBLOCK must return a held FIFO descriptor without waiting for a
++    // writer; the shared regular-file guard refuses BEFORE any byte read.
++    let fifo = root.join("fifo-control");
++    let fifo_name = CString::new(fifo.as_os_str().as_bytes())?;
++    // SAFETY: fresh owned temporary name, no privileges or existing path changes.
++    assert_eq!(unsafe { libc::mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
++    assert!(
++        crate::source_read::read_control_at(&parent, Path::new("fifo-control"), &fifo, 64, 65)
++            .is_err()
++    );
++    Ok(())
++}
+--- /dev/null
++++ b/crates/airk-ingest/src/control_capture/macos.rs
+@@ -0,0 +1,303 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Fixed macOS OS-control anchor. No configurable mapping or source authority.
++use super::Metadata;
++use anyhow::{Context, Result, ensure};
++use std::{
++    ffi::{CStr, CString, c_void},
++    fs::{File, OpenOptions},
++    os::{
++        fd::{AsRawFd, FromRawFd},
++        unix::{ffi::OsStrExt, fs::OpenOptionsExt},
++    },
++    path::{Component, Path},
++    sync::atomic::AtomicBool,
++};
++
++// Public Darwin filesec ABI. libc0.2.190 does not declare these functions.
++unsafe extern "C" {
++    fn filesec_init() -> *mut c_void;
++    fn filesec_free(value: *mut c_void);
++    fn filesec_query_property(
++        value: *mut c_void,
++        property: libc::c_int,
++        valid: *mut libc::c_int,
++    ) -> libc::c_int;
++    #[cfg_attr(target_arch = "x86_64", link_name = "fstatx64_np")]
++    fn fstatx_np(fd: libc::c_int, stat: *mut libc::stat, security: *mut c_void) -> libc::c_int;
++    #[cfg_attr(target_arch = "x86_64", link_name = "lstatx64_np")]
++    fn lstatx_np(
++        path: *const libc::c_char,
++        stat: *mut libc::stat,
++        security: *mut c_void,
++    ) -> libc::c_int;
++}
++struct Security(std::ptr::NonNull<c_void>);
++impl Drop for Security {
++    fn drop(&mut self) {
++        unsafe { filesec_free(self.0.as_ptr()) };
++    }
++}
++#[derive(Clone, Debug, PartialEq, Eq)]
++struct Stamp {
++    device: u64,
++    inode: u64,
++    uid: u32,
++    gid: u32,
++    mode: u32,
++    links: u64,
++    flags: u32,
++    modified: (i64, i64),
++    changed: (i64, i64),
++}
++impl From<&libc::stat> for Stamp {
++    fn from(value: &libc::stat) -> Self {
++        Self {
++            device: value.st_dev as u64,
++            inode: value.st_ino,
++            uid: value.st_uid,
++            gid: value.st_gid,
++            mode: u32::from(value.st_mode),
++            links: u64::from(value.st_nlink),
++            flags: value.st_flags,
++            modified: (value.st_mtime, value.st_mtime_nsec),
++            changed: (value.st_ctime, value.st_ctime_nsec),
++        }
++    }
++}
++fn protected_directory(stamp: &Stamp) -> Result<()> {
++    super::decision::directory(stamp.uid, stamp.mode)?;
++    Ok(())
++}
++fn security_observation(fd: Option<&File>) -> Result<libc::stat> {
++    // A bare acl_get_fd_np NULL cannot distinguish missing ACL from failed I/O.
++    // Successful fstatx/lstatx plus filesec_query_property explicitly reports
++    // ACL presence. Only a known absence is supported; ANY present ACL refuses.
++    let security = Security(
++        std::ptr::NonNull::new(unsafe { filesec_init() })
++            .context("native security allocation failed")?,
++    );
++    let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
++    let status = match fd {
++        Some(file) => unsafe {
++            fstatx_np(file.as_raw_fd(), metadata.as_mut_ptr(), security.0.as_ptr())
++        },
++        None => unsafe { lstatx_np(c"/etc".as_ptr(), metadata.as_mut_ptr(), security.0.as_ptr()) },
++    };
++    ensure!(
++        status == 0,
++        "native control security observation failed: {}",
++        std::io::Error::last_os_error()
++    );
++    let mut valid = -1;
++    let queried = unsafe { filesec_query_property(security.0.as_ptr(), 5, &mut valid) };
++    super::decision::no_acl(queried, valid)?;
++    Ok(unsafe { metadata.assume_init() })
++}
++fn directory_stamp(file: &File) -> Result<Stamp> {
++    crate::native_name_boundary::qualify_directory_handle(file)?;
++    let stamp = Stamp::from(&security_observation(Some(file))?);
++    protected_directory(&stamp)?;
++    Ok(stamp)
++}
++fn open_root() -> std::io::Result<File> {
++    OpenOptions::new()
++        .read(true)
++        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
++        .open("/")
++}
++fn open_directory(parent: &File, name: &CStr) -> std::io::Result<File> {
++    let fd = unsafe {
++        libc::openat(
++            parent.as_raw_fd(),
++            name.as_ptr(),
++            libc::O_RDONLY
++                | libc::O_DIRECTORY
++                | libc::O_NOFOLLOW
++                | libc::O_CLOEXEC
++                | libc::O_NONBLOCK,
++        )
++    };
++    if fd < 0 {
++        Err(std::io::Error::last_os_error())
++    } else {
++        Ok(unsafe { File::from_raw_fd(fd) })
++    }
++}
++fn metadata_at(parent: &File, name: &CStr) -> std::io::Result<libc::stat> {
++    let mut result = std::mem::MaybeUninit::<libc::stat>::uninit();
++    if unsafe {
++        libc::fstatat(
++            parent.as_raw_fd(),
++            name.as_ptr(),
++            result.as_mut_ptr(),
++            libc::AT_SYMLINK_NOFOLLOW,
++        )
++    } != 0
++    {
++        return Err(std::io::Error::last_os_error());
++    }
++    Ok(unsafe { result.assume_init() })
++}
++fn alias_stamp(root: &File) -> Result<Stamp> {
++    let before = metadata_at(root, c"etc")?;
++    let stamp = Stamp::from(&before);
++    let mut target = [0u8; 32];
++    let length = unsafe {
++        libc::readlinkat(
++            root.as_raw_fd(),
++            c"etc".as_ptr(),
++            target.as_mut_ptr().cast(),
++            target.len(),
++        )
++    };
++    let length = usize::try_from(length)
++        .ok()
++        .filter(|length| *length < target.len())
++        .context("system alias target unavailable or truncated")?;
++    super::decision::alias(stamp.uid, stamp.mode, stamp.links, &target[..length])?;
++    let security = Stamp::from(&security_observation(None)?);
++    ensure!(
++        security == stamp && Stamp::from(&metadata_at(root, c"etc")?) == stamp,
++        "system control alias changed"
++    );
++    Ok(stamp)
++}
++pub(super) struct SystemEtc {
++    root: File,
++    private: File,
++    target: File,
++    stamps: [Stamp; 3],
++    alias: Stamp,
++    failed: AtomicBool,
++}
++impl SystemEtc {
++    pub(super) fn capture() -> Result<Option<Self>> {
++        let root = open_root()?;
++        let before = metadata_at(&root, c"etc")?;
++        if before.st_mode & libc::S_IFMT != libc::S_IFLNK {
++            return Ok(None);
++        }
++        let root_stamp = directory_stamp(&root)?;
++        let alias = alias_stamp(&root)?;
++        let private = open_directory(&root, c"private")?;
++        let private_stamp = directory_stamp(&private)?;
++        let target = open_directory(&private, c"etc")?;
++        let target_stamp = directory_stamp(&target)?;
++        let value = Self {
++            root,
++            private,
++            target,
++            stamps: [root_stamp, private_stamp, target_stamp],
++            alias,
++            failed: AtomicBool::new(false),
++        };
++        value.recheck()?;
++        Ok(Some(value))
++    }
++    pub(super) fn recheck(&self) -> Result<()> {
++        super::decision::observe_once(&self.failed, || self.recheck_once())
++    }
++    fn recheck_once(&self) -> Result<()> {
++        ensure!(
++            directory_stamp(&self.root)? == self.stamps[0]
++                && directory_stamp(&self.private)? == self.stamps[1]
++                && directory_stamp(&self.target)? == self.stamps[2],
++            "held system control anchor changed"
++        );
++        let root = open_root()?;
++        let private = open_directory(&root, c"private")?;
++        let target = open_directory(&private, c"etc")?;
++        ensure!(
++            directory_stamp(&root)? == self.stamps[0]
++                && directory_stamp(&private)? == self.stamps[1]
++                && directory_stamp(&target)? == self.stamps[2]
++                && alias_stamp(&root)? == self.alias,
++            "named system control anchor changed"
++        );
++        Ok(())
++    }
++    fn names(relative: &Path) -> Result<Vec<CString>> {
++        ensure!(
++            relative.as_os_str().len() <= 4096 && relative.components().count() <= 256,
++            "control suffix exceeds bound"
++        );
++        relative
++            .components()
++            .map(|part| {
++                let Component::Normal(name) = part else {
++                    anyhow::bail!("invalid control suffix");
++                };
++                Ok(CString::new(name.as_bytes())?)
++            })
++            .collect()
++    }
++    pub(super) fn qualify(&self, relative: &Path, directory: bool) -> Result<()> {
++        self.recheck()?;
++        let mut names = Self::names(relative)?;
++        if !directory {
++            names.pop();
++        }
++        let mut parent = self.target.try_clone()?;
++        for name in names {
++            match open_directory(&parent, &name) {
++                Ok(next) => {
++                    crate::native_name_boundary::qualify_directory_handle(&next)?;
++                    parent = next;
++                }
++                Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
++                Err(error) => return Err(error.into()),
++            }
++        }
++        self.recheck()
++    }
++    pub(super) fn metadata(&self, relative: &Path) -> std::io::Result<Metadata> {
++        self.recheck().map_err(std::io::Error::other)?;
++        let result = (|| -> Result<Metadata> {
++            let mut names = Self::names(relative)?;
++            let Some(leaf) = names.pop() else {
++                return Ok(self.target.metadata()?.into());
++            };
++            let mut parent = self.target.try_clone()?;
++            for name in names {
++                let next = open_directory(&parent, &name)?;
++                crate::native_name_boundary::qualify_directory_handle(&next)?;
++                parent = next;
++            }
++            let value = metadata_at(&parent, &leaf)?;
++            Ok(Metadata {
++                file: value.st_mode & libc::S_IFMT == libc::S_IFREG,
++                directory: value.st_mode & libc::S_IFMT == libc::S_IFDIR,
++                symlink: value.st_mode & libc::S_IFMT == libc::S_IFLNK,
++                bytes: value
++                    .st_size
++                    .try_into()
++                    .context("negative control length")?,
++            })
++        })();
++        self.recheck().map_err(std::io::Error::other)?;
++        result.map_err(|error| match error.downcast::<std::io::Error>() {
++            Ok(io) => io,
++            Err(other) => std::io::Error::other(other),
++        })
++    }
++    pub(super) fn read(
++        &self,
++        relative: &Path,
++        original: &Path,
++        limit: usize,
++        remaining: usize,
++    ) -> Result<Vec<u8>> {
++        self.recheck()?;
++        let result =
++            crate::source_read::read_control_at(&self.target, relative, original, limit, remaining);
++        match (result, self.recheck()) {
++            (Ok(bytes), Ok(())) => Ok(bytes),
++            (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
++            (Err(error), Err(recheck)) => {
++                Err(error.context(format!("control anchor also changed: {recheck:#}")))
++            }
++        }
++    }
++}
++#[cfg(test)]
++mod tests;
+--- /dev/null
++++ b/crates/airk-ingest/src/control_capture/tests.rs
+@@ -0,0 +1,158 @@
++// SPDX-License-Identifier: Apache-2.0
++use super::*;
++use airk_core::{
++    identity::Sha256Digest,
++    source_control::{ControlInputState, SourceControlBaseline},
++};
++use std::collections::BTreeMap;
++
++#[test]
++fn control_system_alias_requires_exact_fixed_target_and_root_security() -> Result<()> {
++    decision::directory(0, 0o040755)?;
++    decision::alias(0, 0o120755, 1, b"private/etc")?;
++    for (uid, mode) in [(501, 0o040755), (0, 0o040775), (0, 0o100755), (0, 0o120755)] {
++        assert!(decision::directory(uid, mode).is_err());
++    }
++    for target in [
++        b"/private/etc".as_slice(),
++        b"private/../etc",
++        b"private/etc/",
++        b"private/other",
++        b"",
++    ] {
++        assert!(decision::alias(0, 0o120755, 1, target).is_err());
++    }
++    for (uid, mode, links) in [
++        (501, 0o120755, 1),
++        (0, 0o120777, 1),
++        (0, 0o040755, 1),
++        (0, 0o120755, 2),
++    ] {
++        assert!(decision::alias(uid, mode, links, b"private/etc").is_err());
++    }
++    Ok(())
++}
++#[test]
++fn control_system_acl_requires_successful_known_absence_not_errno_guessing() -> Result<()> {
++    decision::no_acl(0, 0)?;
++    for (status, present) in [(-1, 0), (1, 0), (0, -1), (0, 1), (0, 32)] {
++        assert!(decision::no_acl(status, present).is_err());
++    }
++    Ok(())
++}
++#[test]
++fn control_capture_retains_complete_original_baseline_and_drift_latch() -> Result<()> {
++    let owned = tempfile::tempdir()?;
++    let root = owned.path().canonicalize()?;
++    let file = root.join("control");
++    let absent = root.join("absent");
++    std::fs::write(&file, b"ignored\n")?;
++    let snapshot = crate::control_snapshot::ControlSnapshot::capture();
++    snapshot.record_environment(&root)?;
++    let selected = snapshot.capture_path(&file)?;
++    assert_eq!(selected.physical(), file);
++    let bytes = selected.read(65536, 65537)?;
++    assert_eq!(bytes, b"ignored\n");
++    snapshot.file(&file, &bytes)?;
++    snapshot.absent_qualified(&absent)?;
++    snapshot.directory_qualified(&root)?;
++    let configuration = Sha256Digest::from_bytes([2; 32]);
++    let settings = Sha256Digest::from_bytes([3; 32]);
++    let baseline = snapshot.seal_complete(configuration, settings)?;
++    let expected = SourceControlBaseline {
++        schema: 1,
++        publication: None,
++        configuration,
++        settings,
++        contexts: baseline.contexts.clone(),
++        inputs: BTreeMap::from([
++            (
++                file.to_str().unwrap().to_owned(),
++                ControlInputState::File {
++                    sha256: serde_json::from_value(serde_json::json!(
++                        "a6c7e3c5ddd823efc8b7a30853eabc152dac866843bd7a39dc4a29e0a0eb68b3"
++                    ))?,
++                    bytes: 8,
++                },
++            ),
++            (
++                absent.to_str().unwrap().to_owned(),
++                ControlInputState::Absent,
++            ),
++            (
++                root.to_str().unwrap().to_owned(),
++                ControlInputState::Directory,
++            ),
++        ]),
++    };
++    assert_eq!(
++        serde_json::to_vec(&baseline)?,
++        serde_json::to_vec(&expected)?
++    );
++    let retained = crate::control_snapshot::ControlSnapshot::revalidate(baseline.clone())?;
++    retained.revalidate_inputs()?;
++    assert_eq!(
++        serde_json::to_vec(&retained.seal_complete(configuration, settings)?)?,
++        serde_json::to_vec(&expected)?
++    );
++    assert_eq!(
++        retained
++            .seal_complete(configuration, settings)?
++            .identity()?,
++        baseline.identity()?
++    );
++    std::fs::write(&file, b"changed\n")?;
++    assert!(retained.revalidate_inputs().is_err());
++    std::fs::write(&file, b"ignored\n")?;
++    assert!(
++        retained.revalidate_inputs().is_err(),
++        "restoration cannot clear captured failure"
++    );
++    Ok(())
++}
++#[cfg(unix)]
++#[test]
++fn ordinary_control_and_source_suffix_aliases_remain_refused() -> Result<()> {
++    let owned = tempfile::tempdir()?;
++    let root = owned.path().canonicalize()?;
++    let file = root.join("control");
++    let alias = root.join("alias");
++    std::fs::write(&file, b"safe\n")?;
++    std::os::unix::fs::symlink(&file, &alias)?;
++    let selected = Owner::default().path(&alias)?;
++    assert!(selected.read(64, 65).is_err());
++    assert!(crate::source_read::read(&root, &alias, 64, 65).is_err());
++    Ok(())
++}
++
++#[test]
++fn control_system_refusal_latches_without_observing_restored_authority() -> Result<()> {
++    use std::{cell::Cell, sync::atomic::AtomicBool};
++    let failed = AtomicBool::new(false);
++    let observations = Cell::new(0);
++    decision::observe_once(&failed, || {
++        observations.set(1);
++        Ok(())
++    })?;
++    assert!(
++        decision::observe_once(&failed, || {
++            observations.set(2);
++            anyhow::bail!("actual identity changed")
++        })
++        .is_err()
++    );
++    assert!(
++        decision::observe_once(&failed, || {
++            observations.set(3);
++            Ok(())
++        })
++        .is_err()
++    );
++    assert_eq!(
++        observations.get(),
++        2,
++        "same owner must not accept a restored or newly observed boundary"
++    );
++    decision::observe_once(&AtomicBool::new(false), || Ok(()))?;
++    Ok(())
++}
+--- /dev/null
++++ b/crates/airk-ingest/src/control_capture.rs
+@@ -0,0 +1,170 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Control-only native capture. Generic source/admin readers never receive this capability.
++use anyhow::{Result, ensure};
++use std::path::{Path, PathBuf};
++#[cfg(any(test, target_os = "macos"))]
++mod decision;
++#[cfg(target_os = "macos")]
++mod macos;
++#[cfg(test)]
++mod tests;
++
++#[derive(Default)]
++pub(crate) struct Owner {
++    #[cfg(target_os = "macos")]
++    anchor: std::sync::Mutex<Option<std::sync::Arc<macos::SystemEtc>>>,
++    #[cfg(target_os = "macos")]
++    failed: std::sync::atomic::AtomicBool,
++}
++impl Owner {
++    pub(crate) fn path(&self, path: &Path) -> Result<ControlPath> {
++        ensure!(
++            path.is_absolute()
++                && path.as_os_str().len() <= 32768
++                && path.components().count() <= 256
++                && path.components().all(|part| !matches!(
++                    part,
++                    std::path::Component::CurDir | std::path::Component::ParentDir
++                )),
++            "invalid control locator"
++        );
++        #[cfg(target_os = "macos")]
++        let anchor = {
++            use std::sync::atomic::Ordering;
++            ensure!(
++                !self.failed.load(Ordering::Acquire),
++                "control anchor previously refused"
++            );
++            let result = (|| -> Result<_> {
++                if !path.starts_with("/etc") {
++                    return Ok(None);
++                }
++                let mut captured = self
++                    .anchor
++                    .lock()
++                    .map_err(|_| anyhow::anyhow!("control anchor unavailable"))?;
++                if captured.is_none() {
++                    *captured = macos::SystemEtc::capture()?.map(std::sync::Arc::new);
++                }
++                if let Some(anchor) = captured.as_ref() {
++                    anchor.recheck()?;
++                }
++                Ok(captured.clone())
++            })();
++            if result.is_err() {
++                self.failed.store(true, Ordering::Release);
++            }
++            result?
++        };
++        Ok(ControlPath {
++            original: path.to_path_buf(),
++            #[cfg(target_os = "macos")]
++            anchor,
++        })
++    }
++    pub(crate) fn recheck(&self) -> Result<()> {
++        #[cfg(target_os = "macos")]
++        {
++            use std::sync::atomic::Ordering;
++            ensure!(
++                !self.failed.load(Ordering::Acquire),
++                "control anchor previously refused"
++            );
++            let result = self
++                .anchor
++                .lock()
++                .map_err(|_| anyhow::anyhow!("control anchor unavailable"))?
++                .as_ref()
++                .map_or(Ok(()), |anchor| anchor.recheck());
++            if result.is_err() {
++                self.failed.store(true, Ordering::Release);
++            }
++            result?;
++        }
++        Ok(())
++    }
++}
++pub(crate) struct ControlPath {
++    original: PathBuf,
++    #[cfg(target_os = "macos")]
++    anchor: Option<std::sync::Arc<macos::SystemEtc>>,
++}
++pub(crate) struct Metadata {
++    pub(crate) file: bool,
++    pub(crate) directory: bool,
++    pub(crate) symlink: bool,
++    pub(crate) bytes: u64,
++    #[cfg(windows)]
++    pub(crate) attributes: u32,
++}
++impl From<std::fs::Metadata> for Metadata {
++    fn from(value: std::fs::Metadata) -> Self {
++        #[cfg(windows)]
++        use std::os::windows::fs::MetadataExt;
++        Self {
++            file: value.is_file(),
++            directory: value.is_dir(),
++            symlink: value.file_type().is_symlink(),
++            bytes: value.len(),
++            #[cfg(windows)]
++            attributes: value.file_attributes(),
++        }
++    }
++}
++impl ControlPath {
++    pub(crate) fn physical(&self) -> PathBuf {
++        #[cfg(target_os = "macos")]
++        if self.anchor.is_some() {
++            return Path::new("/private/etc").join(self.relative());
++        }
++        self.original.clone()
++    }
++    #[cfg(target_os = "macos")]
++    fn relative(&self) -> &Path {
++        self.original
++            .strip_prefix("/etc")
++            .expect("fixed control anchor prefix")
++    }
++    pub(crate) fn qualify(&self, directory: bool) -> Result<()> {
++        #[cfg(target_os = "macos")]
++        if let Some(anchor) = &self.anchor {
++            return anchor.qualify(self.relative(), directory);
++        }
++        crate::control_snapshot::qualify_strict(&self.original, directory)
++    }
++    pub(crate) fn metadata(&self) -> std::io::Result<Metadata> {
++        #[cfg(target_os = "macos")]
++        if let Some(anchor) = &self.anchor {
++            return anchor.metadata(self.relative());
++        }
++        std::fs::symlink_metadata(&self.original).map(Into::into)
++    }
++    pub(crate) fn missing(&self) -> Result<bool> {
++        #[cfg(target_os = "macos")]
++        if let Some(anchor) = &self.anchor {
++            anchor.qualify(self.relative(), false)?;
++            let result = match anchor.metadata(self.relative()) {
++                Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
++                Err(error) => return Err(error.into()),
++                Ok(_) => false,
++            };
++            anchor.recheck()?;
++            return Ok(result);
++        }
++        crate::source_read::missing_protected_path(&self.original)
++    }
++    pub(crate) fn read(&self, limit: usize, remaining: usize) -> Result<Vec<u8>> {
++        #[cfg(target_os = "macos")]
++        if let Some(anchor) = &self.anchor {
++            return anchor.read(self.relative(), &self.original, limit, remaining);
++        }
++        crate::source_read::read(
++            self.original
++                .parent()
++                .ok_or_else(|| anyhow::anyhow!("control locator has no parent"))?,
++            &self.original,
++            limit,
++            remaining,
++        )
++    }
++}

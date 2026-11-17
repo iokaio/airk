@@ -1,0 +1,567 @@
+--- a/packages/admin/src/arbiter.tsx
++++ b/packages/admin/src/arbiter.tsx
+@@ -2,7 +2,7 @@
+ // Native Core owns every stage/model/configuration DTO and readiness decision.
+ import type { JSX } from 'preact';
+ import { useContext, useEffect, useRef, useState } from 'preact/hooks';
+-import type { Enrollment, ManagementRequest, ModelChoice, ProfileStatus, Stage, StageConfiguration, Status, Task } from '../../contracts-gen/arbiter';
++import type { DeviceModelStatus, DevicePolicy, DeviceStageConfiguration, DeviceStageStatus, DeviceStatus as Status, DeviceVariantStatus, Enrollment, GpuPrecisionPreference, ManagementRequest, SelectedModel, Stage, Task } from '../../contracts-gen/arbiter';
+ import { call, isUnknownOutcome, type CallResult } from './api';
+ import { currentSession, onSessionChange } from './session';
+ import { isCatalogId, isDigest, OPS, type Operation } from './operations';
+@@ -11,29 +11,59 @@
+ 
+ const stages: readonly Stage[] = ['focus', 'context'];
+ const stageTitles: Record<Stage, string> = { focus: 'Arbiter Focus', context: 'Arbiter Context' };
+-const operations = { status: OPS.arbiterStatus, initialize: OPS.arbiterInitialize, configure: OPS.arbiterConfigure,
+-  provision: OPS.arbiterProvision, cancel: OPS.arbiterCancel, remove: OPS.arbiterRemove, recover: OPS.arbiterRecover } as const;
+-export function stageProfileTitle(stage: Stage, model: ModelChoice): string | null {
+-  if (stage === 'focus' && model === 'arbiter-focus-qwen3-reranker-06b') return 'Arbiter Focus';
+-  if (stage === 'context' && model === 'arbiter-context-qwen3-17b') return 'Arbiter Context — Compact';
+-  if (stage === 'context' && model === 'arbiter-context-qwen3-4b') return 'Arbiter Context — Large';
++type CurrentRequest = Extract<ManagementRequest, { operation: 'status_device' | 'initialize_device' | 'configure_device' | 'migrate_device' | 'provision_device' | 'cancel_device' | 'remove_device' | 'recover_device' }>;
++const operations = { status_device: OPS.arbiterStatus, initialize_device: OPS.arbiterInitialize, configure_device: OPS.arbiterConfigure,
++  migrate_device: OPS.arbiterMigrate, provision_device: OPS.arbiterProvision, cancel_device: OPS.arbiterCancel, remove_device: OPS.arbiterRemove, recover_device: OPS.arbiterRecover } as const;
++export function stageModelTitle(stage: Stage, model: SelectedModel): string | null {
++  if (stage === 'focus' && model === 'focus') return 'Arbiter Focus';
++  if (stage === 'context' && model === 'context_compact') return 'Arbiter Context — Compact';
++  if (stage === 'context' && model === 'context_large') return 'Arbiter Context — Large';
+   return null;
+ }
+-export function selectableStageProfile(stage: Stage, entry: ProfileStatus): boolean {
+-  return !!stageProfileTitle(stage, entry.model) && !!entry.profile
+-    && !['unqualified', 'unsupported_system', 'unsupported_task'].includes(entry.availability);
+-}
+-function nativeProfileTitle(stage: Stage, profiles: readonly ProfileStatus[], profile: string | null | undefined): string {
+-  if (!profile) return 'none';
+-  const entry = profiles.find(entry => entry.profile === profile);
+-  return entry && stageProfileTitle(stage, entry.model) || profile;
++/** Native model-admission observations are descriptive, never an execution permit. */
++export function selectableStageVariant(entry: DeviceVariantStatus, model: DeviceModelStatus): boolean {
++  return nativeModelAdmitted(model) && !['unqualified', 'unsupported_system', 'unsupported_task'].includes(entry.availability);
++}
++/** Requested/Ready is the native owner's admission observation, not inferred qualification. */
++function nativeModelAdmitted(entry: DeviceModelStatus): boolean {
++  return entry.availability === 'requested' || entry.availability === 'ready';
++}
++export function selectableStageModel(stage: Stage, entry: DeviceModelStatus): boolean {
++  return !!stageModelTitle(stage, entry.model);
++}
++function admittedStageModel(stage: Stage, entry: DeviceModelStatus): boolean {
++  return selectableStageModel(stage, entry) && nativeModelAdmitted(entry);
++}
++function nativeModelTitle(stage: Stage, model: SelectedModel | null | undefined): string {
++  return model ? stageModelTitle(stage, model) ?? 'Unsupported native model choice' : 'none';
++}
++function activeModelTitle(stage: Stage, status: DeviceStageStatus): string {
++  if (!status.active_profile) return 'none';
++  const model = status.models.find(model => model.variants.some(variant => variant.manifest === status.active_profile));
++  return model ? nativeModelTitle(stage, model.model) : 'Unknown native variant (see Details)';
++}
++const deviceTitle: Record<DevicePolicy, string> = { auto: 'Auto', cpu: 'CPU' };
++const preferenceTitle: Record<GpuPrecisionPreference, string> = { auto: 'Auto', fp32: 'FP32', fp16: 'FP16' };
++function backendTitle(backend: DeviceVariantStatus['backend']): string {
++  return backend === null ? 'CPU' : backend === 'cuda' ? 'CUDA' : backend === 'direct_ml' ? 'DirectML' : backend === 'core_ml' ? 'Core ML' : 'Unsupported native backend';
++}
++function precisionTitle(precision: DeviceVariantStatus['precision']): string {
++  return precision === 'float32' ? 'FP32' : precision === 'float16' ? 'FP16' : 'precision not reported';
++}
++function variantTitle(variant: DeviceVariantStatus): string {
++  return variant.backend ? `${backendTitle(variant.backend)} · ${precisionTitle(variant.precision)}` : 'CPU · native profile';
++}
++function selectionTitle(status: DeviceStageStatus): string {
++  const selected = status.selection?.selected;
++  if (!selected) return 'No execution variant selected';
++  return selected.backend === null ? 'CPU · native CPU profile; precision not reported' : `${backendTitle(selected.backend)} · ${precisionTitle(selected.precision)}`;
+ }
+ function taskTitle(task: Task): string {
+   if (task === 'airk.focus_rank.v1') return 'Rank retrieved evidence';
+   if (task === 'airk.context_action.v1') return 'Gather and assess additional context';
+   return task;
+ }
+-type Draft = { configuration: StageConfiguration; index: string; tasks: Task[]; revision: number };
++type Draft = { configuration: DeviceStageConfiguration; index: string; tasks: Task[]; revision: number };
+ type Review = { generation: number; revision: number; draft: number };
+ interface ArbiterDependencies {
+   session(): unknown;
+@@ -42,16 +72,42 @@
+   changed(): void;
+ }
+ const rec = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
++const backendKnown = (value: unknown): boolean => value === null || ['cuda','direct_ml','core_ml'].includes(String(value));
++const precisionKnown = (value: unknown): boolean => value === null || value === 'float32' || value === 'float16';
++function selectionDisplayable(value: unknown): boolean {
++  if (value == null) return true;
++  const selection = rec(value), selected = selection.selected;
++  return selection.schema === 'airk.arbiter.device-status/1' && Array.isArray(selection.reasons)
++    && selection.reasons.every(reason => typeof rec(reason).reason === 'string')
++    && (selection.operation_failure == null || typeof selection.operation_failure === 'string')
++    && (selected === null || typeof rec(selected).manifest === 'string'
++      && backendKnown(rec(selected).backend) && precisionKnown(rec(selected).precision)
++      && (rec(selected).backend === null) === (rec(selected).precision === null));
++}
+ function observationOf(result: CallResult): Status | null {
+-  if (result.kind !== 'ok' || rec(result.envelope.result).status !== 'arbiter') return null;
++  if (result.kind !== 'ok' || rec(result.envelope.result).status !== 'arbiter_device') return null;
+   const value = rec(rec(result.envelope.result).observation), configuration = rec(value.configuration);
+   if (value.initialization != null && typeof rec(value.initialization).reason !== 'string') return null;
+-  if (value.schema !== 'airk.arbiter.status/2' || configuration.schema !== 'airk.arbiter.configuration/3'
++  if (value.schema !== 'airk.arbiter.status/3' || configuration.schema !== 'airk.arbiter.configuration/4'
+       || !Number.isSafeInteger(configuration.revision) || Number(configuration.revision) < 1
+-      || !stages.every(stage => Array.isArray(rec(value[stage]).profiles)
+-        && (rec(value[stage]).profiles as unknown[]).every(entry => typeof rec(entry).model === 'string' && Array.isArray(rec(entry).tasks))
++      || !stages.every(stage => Array.isArray(rec(value[stage]).models)
++        && (rec(value[stage]).models as unknown[]).every(entry => typeof rec(entry).model === 'string'
++          && typeof rec(entry).availability === 'string' && typeof rec(entry).reason === 'string'
++          && Array.isArray(rec(entry).tasks) && Array.isArray(rec(entry).variants)
++          && (rec(entry).variants as unknown[]).every(variant => typeof rec(variant).manifest === 'string'
++            && typeof rec(variant).execution_identity === 'string' && typeof rec(variant).reason === 'string'
++            && typeof rec(variant).model_admission === 'string' && Array.isArray(rec(variant).tasks)
++            && backendKnown(rec(variant).backend) && precisionKnown(rec(variant).precision)
++            && (rec(variant).backend === null) === (rec(variant).precision === null)))
+         && typeof rec(value[stage]).reason === 'string' && typeof rec(value[stage]).availability === 'string'
++        && ['auto','cpu'].includes(String(rec(value[stage]).device_policy))
++        && ['auto','fp32','fp16'].includes(String(rec(value[stage]).gpu_precision))
++        && Number.isSafeInteger(rec(value[stage]).queued) && Number(rec(value[stage]).queued) >= 0
++        && Number.isSafeInteger(rec(value[stage]).running) && Number(rec(value[stage]).running) >= 0
++        && selectionDisplayable(rec(value[stage]).selection)
+         && Array.isArray(rec(configuration[stage]).indexes) && (rec(configuration[stage]).indexes as unknown[]).every(entry => typeof rec(entry).index_id === 'string' && Array.isArray(rec(entry).tasks))
++        && ['auto','cpu'].includes(String(rec(configuration[stage]).device_policy))
++        && ['auto','fp32','fp16'].includes(String(rec(configuration[stage]).gpu_precision))
+         && typeof rec(configuration[stage]).enabled === 'boolean')) return null;
+   return structuredClone(value) as unknown as Status;
+ }
+@@ -59,7 +115,7 @@
+ export function createArbiterWorkspace(deps: ArbiterDependencies) {
+   let session = deps.session(), generation = 0, disposed = false;
+   let observation: Status | null = null, drafts: Record<Stage, Draft> | null = null;
+-  let outcome: CallState = { phase: 'idle' }, originalRequest: ManagementRequest | null = null;
++  let outcome: CallState = { phase: 'idle' }, originalRequest: CurrentRequest | null = null;
+   let sending = false, unresolved = false, problem = '', legacyDigest = '', observationRevision = 0, lastObservedAt: number | null = null, statusStale = false;
+   const synchronize = () => {
+     if (session === deps.session()) return;
+@@ -71,47 +127,47 @@
+     return !!review && !!observation && !!drafts && review.generation === generation
+       && review.revision === observation.configuration.revision && (stage === undefined || review.draft === drafts[stage].revision);
+   };
+-  const adopt = (next: Status, request: ManagementRequest) => {
++  const adopt = (next: Status, request: CurrentRequest) => {
+     observation = next; observationRevision++; lastObservedAt = Date.now(); statusStale = false;
+     if (next.initialization) {
+       drafts = null; legacyDigest = next.initialization.actual_legacy_digest ?? ''; return;
+     }
+     legacyDigest = '';
+-    if (!drafts || request.operation === 'initialize') {
++    if (!drafts || request.operation === 'initialize_device') {
+       const draft = (stage: Stage): Draft => ({ configuration: structuredClone(next.configuration[stage]), index: '', tasks: [], revision: 0 });
+       drafts = { focus: draft('focus'), context: draft('context') };
+-    } else if (request.operation === 'configure') {
++    } else if (request.operation === 'configure_device') {
+       drafts[request.stage] = { ...drafts[request.stage], configuration: structuredClone(next.configuration[request.stage]), revision: drafts[request.stage].revision + 1 };
+     }
+   };
+-  const send = async (request: ManagementRequest) => {
++  const send = async (request: CurrentRequest) => {
+     synchronize();
+-    if (disposed || session === null || !deps.visible() || sending || request.operation !== 'status' && unresolved) return;
++    if (disposed || session === null || !deps.visible() || sending || request.operation !== 'status_device' && (unresolved || statusStale)) return;
+     const capturedSession = session, ticket = generation;
+     const current = () => !disposed && generation === ticket && deps.session() === capturedSession;
+     const operation = operations[request.operation];
+-    originalRequest = structuredClone(request); if (request.operation === 'status') statusStale = true; sending = true; problem = ''; outcome = { phase: 'pending', operation }; deps.changed();
++    originalRequest = structuredClone(request); if (request.operation === 'status_device') statusStale = true; sending = true; problem = ''; outcome = { phase: 'pending', operation }; deps.changed();
+     try {
+       const result = await deps.run(operation, { arbiter: { request: structuredClone(request) } });
+       if (!current()) return;
+       outcome = { phase: 'done', operation, result, at: Date.now() };
+-      if (request.operation !== 'status') unresolved = isUnknownOutcome(result);
++      if (request.operation !== 'status_device') unresolved = isUnknownOutcome(result);
+       const native = observationOf(result);
+-      if (native) { adopt(native, request); if (request.operation === 'status') unresolved = false; }
++      if (native) { adopt(native, request); if (request.operation === 'status_device') unresolved = false; }
+       else if (result.kind === 'ok') {
+-        problem = 'This response has no current two-stage native status. Its complete original outcome is retained below.';
++        problem = 'This response has no current device-aware native status. Its complete original outcome is retained below.';
+         unresolved = true;
+       }
+     } catch {
+       if (current()) {
+         problem = 'No typed management outcome was received. Read native status before another change.';
+-        if (request.operation !== 'status') unresolved = true;
++        if (request.operation !== 'status_device') unresolved = true;
+         outcome = { phase: 'idle' };
+       }
+     } finally { if (current()) { sending = false; deps.changed(); } }
+   };
+   const edit = (stage: Stage, change: (draft: Draft) => void) => {
+-    synchronize(); if (!drafts || sending || unresolved || disposed || !deps.visible()) return;
++    synchronize(); if (!drafts || sending || unresolved || statusStale || disposed || !deps.visible()) return;
+     change(drafts[stage]); drafts[stage].revision++; deps.changed();
+   };
+   const view = () => {
+@@ -119,27 +175,35 @@
+     const reviews = observation && drafts ? Object.fromEntries(stages.map(stage => [stage, { generation, revision: observation!.configuration.revision, draft: drafts![stage].revision }])) as Record<Stage, Review> : null;
+     return { observation: observation && structuredClone(observation), drafts: drafts && structuredClone(drafts), reviews,
+       generation, observationRevision, lastObservedAt, statusStale, sending, unresolved, problem, outcome, originalRequest: originalRequest && structuredClone(originalRequest), legacyDigest,
+-      canSend: !disposed && session !== null && deps.visible() && !sending && !unresolved };
++      canSend: !disposed && session !== null && deps.visible() && !sending && !unresolved && !statusStale };
+   };
+   return {
+     view,
+     sync() { synchronize(); deps.changed(); },
+-    readStatus: () => send({ operation: 'status' }),
++    readStatus: () => send({ operation: 'status_device' }),
+     initialize: (reviewedGeneration: number, reviewedObservation = observationRevision) => {
+       synchronize();
+       if (reviewedGeneration !== generation || reviewedObservation !== observationRevision || observation && !observation.initialization) return;
+       const digest = observation?.initialization ? observation.initialization.actual_legacy_digest ?? null : legacyDigest || null;
+-      if (digest === null || isDigest(digest)) return send({ operation: 'initialize', expected_legacy_configuration: digest });
++      if (digest === null || isDigest(digest)) return send({ operation: 'initialize_device', expected_legacy_configuration: digest });
+     },
+     setLegacyDigest(value: string) { synchronize(); if (observation?.initialization) return; legacyDigest = value; deps.changed(); },
+     enable(stage: Stage, enabled: boolean) { edit(stage, draft => { draft.configuration.enabled = enabled; }); },
+-    select(stage: Stage, profile: string | null) {
+-      if (profile !== null && !observation?.[stage].profiles.some(entry => entry.profile === profile && selectableStageProfile(stage, entry))) return;
+-      edit(stage, draft => { draft.configuration.selected_profile = profile; });
++    select(stage: Stage, model: SelectedModel | null) {
++      if (model !== null && !observation?.[stage].models.some(entry => entry.model === model && selectableStageModel(stage, entry))) return;
++      edit(stage, draft => { draft.configuration.selected_model = model; });
++    },
++    device(stage: Stage, policy: DevicePolicy) {
++      if (policy !== 'auto' && policy !== 'cpu') return;
++      edit(stage, draft => { draft.configuration.device_policy = policy; });
++    },
++    precision(stage: Stage, precision: GpuPrecisionPreference) {
++      if (!['auto','fp32','fp16'].includes(precision)) return;
++      edit(stage, draft => { draft.configuration.gpu_precision = precision; });
+     },
+     indexInput(stage: Stage, index: string) { edit(stage, draft => { draft.index = index; }); },
+     taskInput(stage: Stage, task: Task, checked: boolean) {
+-      if (!observation?.[stage].profiles.some(entry => !!stageProfileTitle(stage, entry.model) && entry.tasks.includes(task))) return;
++      if (!observation?.[stage].models.some(entry => !!stageModelTitle(stage, entry.model) && entry.tasks.includes(task))) return;
+       edit(stage, draft => { draft.tasks = checked ? [...new Set([...draft.tasks, task])] : draft.tasks.filter(value => value !== task); });
+     },
+     addIndex(stage: Stage) {
+@@ -154,17 +218,18 @@
+     save(stage: Stage, review: Review | undefined) {
+       if (!valid(review, stage) || !drafts) return;
+       const configuration = drafts[stage].configuration;
+-      if (configuration.enabled && (!configuration.indexes.length || !observation![stage].profiles.some(entry => entry.profile === configuration.selected_profile && selectableStageProfile(stage, entry)))) return;
+-      return send({ operation: 'configure', stage, expected_revision: review!.revision, ...structuredClone(configuration) });
++      if (configuration.enabled && (!configuration.indexes.length || !observation![stage].models.some(entry => entry.model === configuration.selected_model && admittedStageModel(stage, entry)))) return;
++      return send({ operation: 'configure_device', stage, expected_revision: review!.revision, configuration: structuredClone(configuration) });
+     },
+     model(stage: Stage, action: 'provision' | 'remove', profile: string, review: Review | undefined) {
+       if (!valid(review)) return;
+-      const entry = observation![stage].profiles.find(entry => entry.profile === profile && !!stageProfileTitle(stage, entry.model));
+-      if (!entry || action === 'provision' && !selectableStageProfile(stage, entry)) return;
+-      return send({ operation: action, expected_revision: review!.revision, profile });
++      const model = observation![stage].models.find(model => !!stageModelTitle(stage, model.model) && model.variants.some(entry => entry.manifest === profile));
++      const entry = model?.variants.find(entry => entry.manifest === profile);
++      if (!entry || !model || action === 'provision' && !selectableStageVariant(entry, model)) return;
++      return send({ operation: action === 'provision' ? 'provision_device' : 'remove_device', expected_revision: review!.revision, profile });
+     },
+     lifecycle(stage: Stage, action: 'cancel' | 'recover', review: Review | undefined) {
+-      if (valid(review)) return send({ operation: action, expected_revision: review!.revision, stage });
++      if (valid(review)) return send({ operation: action === 'cancel' ? 'cancel_device' : 'recover_device', expected_revision: review!.revision, stage });
+     },
+     dispose() { disposed = true; generation++; },
+   };
+@@ -185,28 +250,40 @@
+     {view.observation && view.statusStale ? <p role="status">Showing retained Arbiter status{view.lastObservedAt ? ` from ${new Date(view.lastObservedAt).toLocaleTimeString()}` : ''}. {view.sending ? 'Refreshing...' : 'The last refresh did not return current status. Use Refresh Arbiter status to try again.'}</p> : null}
+     {!view.observation ? <p>{view.sending ? 'Loading Focus and Context status...' : 'Arbiter status is unavailable. Use Refresh Arbiter status to try again.'}</p> : !view.drafts ? <p>Native configuration requires initialization. The reported disabled configuration is a placeholder and cannot be edited or saved.</p> : stages.map(stage => {
+       const status = view.observation![stage], draft = view.drafts![stage], review = view.reviews![stage];
+-      const title = stageTitles[stage], tasks = [...new Set(status.profiles.filter(entry => !!stageProfileTitle(stage, entry.model)).flatMap(entry => entry.tasks))];
+-      const validEnabled = !draft.configuration.enabled || draft.configuration.indexes.length > 0 && status.profiles.some(entry => entry.profile === draft.configuration.selected_profile && selectableStageProfile(stage, entry));
++      const title = stageTitles[stage], tasks = [...new Set(status.models.filter(entry => !!stageModelTitle(stage, entry.model)).flatMap(entry => entry.tasks))];
++      const validEnabled = !draft.configuration.enabled || draft.configuration.indexes.length > 0 && status.models.some(entry => entry.model === draft.configuration.selected_model && admittedStageModel(stage, entry));
+       return <section aria-label={title} key={stage}>
+         <h3>{title}</h3>
+         <p>Status: <Text value={status.availability} />. <Text value={status.reason} /></p>
+-        <p>Turned {view.observation!.configuration[stage].enabled ? 'on' : 'off'}. Selected model: <Text value={nativeProfileTitle(stage, status.profiles, status.selected_profile)} />. Active model: <Text value={nativeProfileTitle(stage, status.profiles, status.active_profile)} />. Queued: {status.queued}; running: {status.running}.</p>
++        <p>Turned {view.observation!.configuration[stage].enabled ? 'on' : 'off'}. Selected model: <Text value={nativeModelTitle(stage, status.selected_model)} />. Active model: <Text value={activeModelTitle(stage, status)} />. Queued: {status.queued}; running: {status.running}.</p>
++        <p>Requested device: <Text value={deviceTitle[status.device_policy]} />. Requested GPU precision: <Text value={preferenceTitle[status.gpu_precision]} />. Native selection: <Text value={selectionTitle(status)} />.</p>
++        {status.selection?.reasons.length ? <ul aria-label={`${title} native selection reasons`}>{status.selection.reasons.map((row, index) => <li key={index}><Text value={row.reason.replaceAll('_',' ')} /></li>)}</ul> : null}
++        {status.selection?.operation_failure ? <p role="status">Native operation failure: <Text value={status.selection.operation_failure} /></p> : null}
++        <details><summary>Complete native stage and device selection</summary><pre><Text value={JSON.stringify(status, null, 2)} /></pre></details>
+         <label><input type="checkbox" checked={draft.configuration.enabled} disabled={!view.canSend} onChange={event => workspace.enable(stage, event.currentTarget.checked)} /> Enable {title}</label>
+-        <h4>Choose and download a model</h4>
+-        <p>Selection changes this draft only. Provisioning is a separate explicit action. Verified cached assets can be used offline; this page offers no file import. Missing assets are never downloaded by an ordinary read or a checkbox.</p>
+-        <label><input type="radio" name={`arbiter-${stage}-profile`} checked={!draft.configuration.selected_profile} disabled={!view.canSend} onChange={() => workspace.select(stage, null)} /> No model selected</label>
+-        {!status.profiles.length ? <p>No native model choices are available for this stage.</p> : null}
+-        {status.profiles.map(entry => { const name = stageProfileTitle(stage, entry.model), selectable = selectableStageProfile(stage, entry);
+-          return <article key={entry.model}>
++        <h4>Choose a model and execution policy</h4>
++        <p>Model selection, device policy and GPU precision change this draft only. Auto permits native CPU fallback when eligible; CPU excludes GPU candidates. A saved request never establishes current capacity, runtime availability or qualification.</p>
++        <label>Device policy<select aria-label={`${title} device policy`} value={draft.configuration.device_policy} disabled={!view.canSend} onChange={event => workspace.device(stage, event.currentTarget.value as DevicePolicy)}><option value="auto">Auto</option><option value="cpu">CPU</option></select></label>
++        <label>GPU precision<select aria-label={`${title} GPU precision`} value={draft.configuration.gpu_precision} disabled={!view.canSend} onChange={event => workspace.precision(stage, event.currentTarget.value as GpuPrecisionPreference)}><option value="auto">Auto</option><option value="fp32">FP32</option><option value="fp16">FP16</option></select></label>
++        <p>Precision applies only to GPU candidates and is saved but unused while CPU is selected. CPU fallback retains its native CPU profile; requested FP32 or FP16 is never shown as the CPU's actual precision.</p>
++        <label><input type="radio" name={`arbiter-${stage}-model`} checked={!draft.configuration.selected_model} disabled={!view.canSend} onChange={() => workspace.select(stage, null)} /> No model selected</label>
++        {!status.models.length ? <p>No native model choices are available for this stage.</p> : null}
++        {status.models.map(model => { const name = stageModelTitle(stage, model.model), selectable = selectableStageModel(stage, model);
++          return <article key={model.model}>
+             <h4><Text value={name ?? 'Unsupported native model choice'} /></h4>
+-            <p><Text value={entry.availability} />: <Text value={entry.reason} /></p>
+-            <p>Download size: {entry.download_bytes ?? 'not reported'} bytes. Provisional memory reservation: {entry.memory_reservation_bytes ?? 'not reported'} bytes. A reservation is not a measurement of currently available memory.</p>
+-            {entry.cpu_fit ? <p>Declared CPU fit: {entry.cpu_fit.minimum_physical_cores} physical cores; intra-op threads {entry.cpu_fit.intra_threads}; inter-op threads {entry.cpu_fit.inter_threads}. These are native profile requirements, not a measurement of this host.</p> : <p>No native CPU fit was reported.</p>}
+-            <p>Use the native availability and reason above for this host; model names or sizes do not establish fit or qualification.</p>
+-            <label><input type="radio" name={`arbiter-${stage}-profile`} checked={!!entry.profile && draft.configuration.selected_profile === entry.profile} disabled={!view.canSend || !selectable} onChange={() => workspace.select(stage, entry.profile ?? null)} /> Select <Text value={name ?? entry.model} /></label>
+-            <div class="actions"><button type="button" disabled={!view.canSend || !selectable} onClick={() => entry.profile && void workspace.model(stage, 'provision', entry.profile, review)}>Download <Text value={name ?? entry.model} /></button>
+-              <button type="button" class="danger" disabled={!view.canSend || !name || !entry.profile} onClick={() => entry.profile && void workspace.model(stage, 'remove', entry.profile, review)}>Remove local <Text value={name ?? entry.model} /> model</button></div>
+-            <details><summary>Complete native profile status and qualification</summary><pre><Text value={JSON.stringify(entry, null, 2)} /></pre></details>
++            <p><Text value={model.availability} />: <Text value={model.reason} /></p>
++            <label><input type="radio" name={`arbiter-${stage}-model`} checked={draft.configuration.selected_model === model.model} disabled={!view.canSend || !selectable} onChange={() => workspace.select(stage, model.model)} /> Select <Text value={name ?? model.model} /></label>
++            {!model.variants.length ? <p>No execution variants are reported. Model choice does not establish availability.</p> : null}
++            {model.variants.map(entry => <div role="group" aria-label={`${name ?? model.model}: ${variantTitle(entry)}`} key={entry.manifest}>
++              <h5><Text value={variantTitle(entry)} /></h5><p><Text value={entry.availability} />: <Text value={entry.reason} /></p>
++              <p>Native model admission: <Text value={entry.model_admission} />.{entry.model_admission === 'local_candidate' ? ' Local candidate admission does not establish independent model qualification.' : ''} Execution still requires native runtime, device and capacity admission.</p>
++              <p>Download size: {entry.download_bytes ?? 'not reported'} bytes. Provisional memory reservation: {entry.memory_reservation_bytes ?? 'not reported'} bytes. A reservation is not a measurement of currently available memory.</p>
++              {entry.cpu_fit ? <p>Declared CPU fit: {entry.cpu_fit.minimum_physical_cores} physical cores; intra-op threads {entry.cpu_fit.intra_threads}; inter-op threads {entry.cpu_fit.inter_threads}. These are native profile requirements, not a measurement of this host.</p> : <p>No native CPU fit was reported.</p>}
++              <div class="actions"><button type="button" disabled={!view.canSend || !name || !selectableStageVariant(entry, model)} onClick={() => void workspace.model(stage, 'provision', entry.manifest, review)}>Download <Text value={`${name ?? model.model} · ${variantTitle(entry)}`} /></button>
++                <button type="button" class="danger" disabled={!view.canSend || !name} onClick={() => void workspace.model(stage, 'remove', entry.manifest, review)}>Remove local <Text value={`${name ?? model.model} · ${variantTitle(entry)}`} /> model</button></div>
++              <details><summary>Complete native variant status and qualification</summary><pre><Text value={JSON.stringify(entry, null, 2)} /></pre></details>
++            </div>)}
++            <details><summary>Complete native model status</summary><pre><Text value={JSON.stringify(model, null, 2)} /></pre></details>
+           </article>;
+         })}
+         <h4>Choose which indexes {title} may read</h4>
+@@ -215,7 +292,7 @@
+         <Field label={`${title}: immutable index ID from Index library`} value={draft.index} onInput={value => workspace.indexInput(stage, value)} invalid={draft.index !== '' && !isCatalogId('idx_', draft.index)} />
+         {tasks.map(task => <label key={task}><input type="checkbox" checked={draft.tasks.includes(task)} disabled={!view.canSend} onChange={event => workspace.taskInput(stage, task, event.currentTarget.checked)} /><Text value={taskTitle(task)} /></label>)}
+         <button type="button" class="secondary" disabled={!view.canSend || !isCatalogId('idx_', draft.index) || !draft.tasks.length || draft.configuration.indexes.some(entry => entry.index_id === draft.index)} onClick={() => workspace.addIndex(stage)}>Add explicit {title} enrollment to draft</button>
+-        {!validEnabled ? <p role="status">Before enabling this stage, select its available native model and explicitly enroll at least one index. Turning it off does not change the other stage.</p> : null}
++        {!validEnabled ? <p role="status">Before enabling this stage, select a model with native admission and explicitly enroll at least one index. An unavailable model can be saved while this stage is off. Turning it off does not change the other stage.</p> : null}
+         <p class="muted">Changes apply only to this stage. Review the selected model and enrolled indexes before applying.</p>
+         <div class="actions"><button type="button" disabled={!view.canSend || !validEnabled} onClick={() => void workspace.save(stage, review)}>Apply {title} choices</button>
+           <button type="button" class="secondary" disabled={!view.canSend} onClick={() => workspace.reset(stage)}>Reset {title} draft to saved native state</button>
+--- a/packages/vscode/src/adminUiContract.ts
++++ b/packages/vscode/src/adminUiContract.ts
+@@ -61,6 +61,7 @@
+   arbiterStatus: 'arbiter.status',
+   arbiterInitialize: 'arbiter.initialize',
+   arbiterConfigure: 'arbiter.configure',
++  arbiterMigrate: 'arbiter.migrate',
+   arbiterProvision: 'arbiter.provision',
+   arbiterCancel: 'arbiter.cancel',
+   arbiterRemove: 'arbiter.remove',
+--- a/packages/admin/test/arbiterStages.test.mjs
++++ b/packages/admin/test/arbiterStages.test.mjs
+@@ -1,62 +1,80 @@
+ // SPDX-License-Identifier: Apache-2.0
+-// Native-emitted structural cases; simulated UI outcomes do not qualify models or transport parity.
++// Current Rust-emitted device fixtures over simulated callbacks; no native/GPU qualification claim.
+ import assert from 'node:assert/strict';
+ import test from 'node:test';
+ import {readFile} from 'node:fs/promises';
+ import {fileURLToPath} from 'node:url';
+ import {build} from 'esbuild';
+ const root=fileURLToPath(new URL('../',import.meta.url));
+-const native=JSON.parse(await readFile(new URL('../../../fixtures/split/arbiter/stage_cases.json',import.meta.url),'utf8'));
+-assert.equal(native.schema,'airk.arbiter.stage-semantic-cases/1');assert.equal(native.qualification,false);
++const native=JSON.parse(await readFile(new URL('../../../fixtures/split/arbiter/device_cases.json',import.meta.url),'utf8'));
++assert.equal(native.schema,'airk.arbiter.device-semantic-cases/1');assert.equal(native.qualification,false);
++const cases=native.cases.filter(row=>row.status), requests=native.cases.filter(row=>row.request).map(row=>row.request);
++assert.ok(cases.length>0,'nonzero current native status cases required');
+ const bundle=await build({absWorkingDir:root,entryPoints:['src/arbiter.tsx'],bundle:true,write:false,platform:'node',format:'esm',jsx:'automatic',jsxImportSource:'preact',plugins:[{name:'component-callback-seams',setup(plugin){
+ plugin.onResolve({filter:/^preact\/hooks$/},()=>({path:'hooks',namespace:'arbiter-test'}));
+ plugin.onLoad({filter:/^hooks$/,namespace:'arbiter-test'},()=>({contents:`const host=()=>globalThis.__arbiterHooks;export function useState(initial){const h=host(),i=h.cursor++;if(!(i in h.slots))h.slots[i]=initial;return [h.slots[i],next=>h.slots[i]=typeof next==='function'?next(h.slots[i]):next];}export function useRef(initial){const h=host(),i=h.cursor++;return h.slots[i]??={current:initial};}export function useEffect(){}export function useContext(){return true;}`}));
+ plugin.onResolve({filter:/^\.\/session$/},()=>({path:'session',namespace:'arbiter-test'}));
+ plugin.onLoad({filter:/^session$/,namespace:'arbiter-test'},()=>({contents:'export const currentSession=()=>globalThis.__arbiterSession;export const onSessionChange=()=>()=>{};export const dropSession=()=>{};'}));
+ }}]});
+-const {Arbiter,createArbiterWorkspace,stageProfileTitle,selectableStageProfile}=await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
+-const sample=id=>structuredClone(native.cases.find(entry=>entry.id===id).status);
+-const ok=status=>({kind:'ok',status:200,envelope:{schema:'airk-admin/1',ok:true,result:{status:'arbiter',observation:structuredClone(status),future_result:{retained:true}}}});
+-function fixture(status=sample('both_disabled')){let session={},visible=true;const calls=[];let reply=async()=>ok(status);const owner=createArbiterWorkspace({session:()=>session,visible:()=>visible,run:async(op,body)=>{calls.push({op,body:structuredClone(body)});return reply();},changed(){}});return{owner,calls,session(value){session=value;owner.sync();},visible(value){visible=value;},reply(value){reply=value;},read:()=>owner.readStatus()};}
+-// Explicit UI-only lifecycle simulation on native DTOs. Native structural fixtures deliberately carry no qualified profile.
+-function simulatedProfiles(){const status=sample('both_disabled');for(const stage of ['focus','context'])for(const [i,entry]of status[stage].profiles.entries()){entry.profile=native.management_requests.find(request=>request.operation==='configure'&&request.stage===stage).selected_profile; if(i)entry.profile=entry.profile.slice(0,62)+String(i).padStart(2,'0');entry.availability='missing_assets';}return status;}
+-function enroll(f,stage){const request=native.management_requests.find(request=>request.operation==='configure'&&request.stage===stage);f.owner.select(stage,f.owner.view().observation[stage].profiles[0].profile);f.owner.indexInput(stage,request.indexes[0].index_id);f.owner.taskInput(stage,request.indexes[0].tasks[0],true);f.owner.addIndex(stage);f.owner.enable(stage,true);}
++const {Arbiter,createArbiterWorkspace,stageModelTitle,selectableStageModel,selectableStageVariant}=await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
++const sample=id=>{const row=cases.find(row=>row.id===id);assert.ok(row,'missing reviewed Rust status case '+id);return structuredClone(row.status);};
++const ok=status=>({kind:'ok',status:200,envelope:{schema:'airk-admin/1',ok:true,result:{status:'arbiter_device',observation:structuredClone(status),future_result:{retained:true}}}});
++function fixture(status=sample('both_disabled_auto')){let session={},visible=true;const calls=[];let reply=async()=>ok(status);const owner=createArbiterWorkspace({session:()=>session,visible:()=>visible,run:async(op,body)=>{calls.push({op,body:structuredClone(body)});return reply();},changed(){}});return{owner,calls,session(value){session=value;owner.sync();},visible(value){visible=value;},reply(value){reply=value;},read:()=>owner.readStatus()};}
++const nativeEnrollment=stage=>{const status=cases.map(row=>row.status).find(status=>status.configuration[stage].indexes.length);assert.ok(status,'Rust enrollment case required for '+stage);return structuredClone(status.configuration[stage].indexes[0]);};
++function enroll(f,stage){const entry=nativeEnrollment(stage);f.owner.indexInput(stage,entry.index_id);for(const task of entry.tasks)f.owner.taskInput(stage,task,true);f.owner.addIndex(stage);return entry;}
++const nodes=value=>!value||typeof value!=='object'?[]:Array.isArray(value)?value.flatMap(nodes):[value,...nodes(value.props?.children)];
++const text=value=>value==null?'':typeof value!=='object'?String(value):Array.isArray(value)?value.map(text).join(''):value.props?.value!==undefined?String(value.props.value):text(value.props?.children);
++function presentation(owner){globalThis.__arbiterHooks={cursor:0,slots:[]};globalThis.__arbiterSession={};const render=()=>{globalThis.__arbiterHooks.cursor=0;return Arbiter();};render();const slot=globalThis.__arbiterHooks.slots.find(value=>value?.current?.readStatus);assert.ok(slot);if(owner)slot.current=owner;return{workspace:slot.current,render,nodes:()=>nodes(render())};}
+ 
+-test('construction and local edits never read, provision, select or enroll implicitly',()=>{const f=fixture();assert.deepEqual(f.calls,[]);assert.equal(f.owner.view().observation,null);assert.equal(f.owner.view().drafts,null);f.owner.enable('focus',true);assert.deepEqual(f.calls,[]);});
+-test('hidden, absent, disposed and replaced sessions cannot dispatch or adopt held status',async()=>{const f=fixture();f.visible(false);await f.read();f.visible(true);f.session(null);await f.read();assert.equal(f.calls.length,0);f.session({});let complete;f.reply(()=>new Promise(resolve=>complete=resolve));const pending=f.read();f.session({replacement:true});complete(ok(sample('both_disabled')));await pending;assert.equal(f.owner.view().observation,null);assert.equal(f.owner.view().outcome.phase,'idle');f.owner.dispose();await f.read();assert.equal(f.calls.length,1);});
+-test('labels admit exact approved roles and exclude retired or foreign-stage models',()=>{assert.equal(stageProfileTitle('focus',native.current_models[0]),'Arbiter Focus');assert.equal(stageProfileTitle('context',native.current_models[1]),'Arbiter Context — Compact');assert.equal(stageProfileTitle('context',native.current_models[2]),'Arbiter Context — Large');assert.equal(stageProfileTitle('focus',native.current_models[1]),null);assert.equal(stageProfileTitle('context','arbiter-small-intern-08b'),null);});
+-for(const row of native.cases)test(`native ${row.id}: full selected/active, availability, reasons and independent consent retained`,async()=>{const f=fixture(row.status);await f.read();assert.deepEqual(f.owner.view().observation,row.status);if(row.configuration_writable===false){assert.equal(f.owner.view().drafts,null);assert.equal(f.owner.view().reviews,null);}else for(const stage of ['focus','context'])assert.deepEqual(f.owner.view().drafts[stage].configuration,row.status.configuration[stage]);assert.equal(f.calls.length,1);assert.equal(f.calls[0].op,'arbiter.status');assert.equal(f.owner.view().unresolved,false);});
+-for(const stage of ['focus','context'])test(`${stage} consent and save are independent, with exact native configure fields and no provisioning`,async()=>{const status=simulatedProfiles(),f=fixture(status),other=stage==='focus'?'context':'focus';await f.read();enroll(f,stage);f.owner.enable(other,true);const otherDraft=structuredClone(f.owner.view().drafts[other]);const review=f.owner.view().reviews[stage],expected=native.management_requests.find(request=>request.operation==='configure'&&request.stage===stage);await f.owner.save(stage,review);assert.deepEqual(f.calls[1],{op:'arbiter.configure',body:{arbiter:{request:expected}}});assert.deepEqual(f.owner.view().drafts[other],otherDraft);assert.equal(f.calls.length,2);});
+-test('unset, unenrolled and unqualified stage cannot be enabled or provisioned',async()=>{const f=fixture();await f.read();for(const stage of ['focus','context']){f.owner.enable(stage,true);await f.owner.save(stage,f.owner.view().reviews[stage]);for(const entry of f.owner.view().observation[stage].profiles){assert.equal(selectableStageProfile(stage,entry),false);f.owner.select(stage,entry.profile);await f.owner.model(stage,'provision','11'.repeat(32),f.owner.view().reviews[stage]);}}assert.equal(f.calls.length,1);const g=fixture(simulatedProfiles());await g.read();g.owner.enable('focus',true);g.owner.select('focus',g.owner.view().observation.focus.profiles[0].profile);await g.owner.save('focus',g.owner.view().reviews.focus);assert.equal(g.calls.length,1);});
+-test('foreign tasks, invalid and duplicate indexes never become consent',async()=>{const f=fixture(simulatedProfiles());await f.read();f.owner.indexInput('focus','invalid');f.owner.taskInput('focus','airk.context_action.v1',true);f.owner.addIndex('focus');assert.deepEqual(f.owner.view().drafts.focus.configuration.indexes,[]);enroll(f,'focus');enroll(f,'focus');assert.equal(f.owner.view().drafts.focus.configuration.indexes.length,1);assert.deepEqual(f.owner.view().drafts.context.configuration.indexes,[]);f.owner.removeIndex('focus',f.owner.view().drafts.focus.configuration.indexes[0].index_id);assert.deepEqual(f.owner.view().drafts.focus.configuration.indexes,[]);});
+-test('draft, revision and session review fences refuse stale saves and model callbacks',async()=>{const f=fixture(simulatedProfiles());await f.read();enroll(f,'focus');const review=f.owner.view().reviews.focus;f.owner.enable('focus',false);await f.owner.save('focus',review);assert.equal(f.calls.length,1);const fresh=f.owner.view().reviews.focus;const changed=simulatedProfiles();changed.configuration.revision=2;f.reply(async()=>ok(changed));await f.read();await f.owner.lifecycle('focus','cancel',fresh);assert.equal(f.calls.length,2);const current=f.owner.view().reviews.focus,profile=f.owner.view().observation.focus.profiles[0].profile;f.session({});await f.owner.model('focus','remove',profile,current);assert.equal(f.calls.length,2);});
+-test('explicit lifecycle actions retain native request shapes and independent stage',async()=>{const f=fixture(simulatedProfiles());await f.read();for(const request of native.management_requests.filter(value=>['cancel','recover'].includes(value.operation))){await f.owner.lifecycle(request.stage,request.operation,f.owner.view().reviews[request.stage]);assert.deepEqual(f.calls.at(-1),{op:`arbiter.${request.operation}`,body:{arbiter:{request}}});}for(const stage of ['focus','context'])for(const action of ['provision','remove']){const profile=f.owner.view().observation[stage].profiles[0].profile;await f.owner.model(stage,action,profile,f.owner.view().reviews[stage]);assert.deepEqual(f.calls.at(-1).body,{arbiter:{request:{operation:action,expected_revision:1,profile}}});}});
+-test('unknown mutation blocks retries, preserves exact outcome and request, and requires a valid native status',async()=>{const f=fixture(simulatedProfiles());await f.read();const unknown={kind:'transport',status:null,message:'connection lost'};f.reply(async()=>unknown);const review=f.owner.view().reviews.focus;await f.owner.lifecycle('focus','cancel',review);assert.equal(f.owner.view().unresolved,true);assert.deepEqual(f.owner.view().outcome.result,unknown);assert.deepEqual(f.owner.view().originalRequest,native.management_requests.find(request=>request.operation==='cancel'));await f.owner.lifecycle('context','recover',review);assert.equal(f.calls.length,2);f.reply(async()=>ok({...sample('both_disabled'),schema:'old'}));await f.read();assert.equal(f.owner.view().unresolved,true);f.reply(async()=>ok(sample('both_disabled')));await f.read();assert.equal(f.owner.view().unresolved,false);assert.equal(f.calls.length,4);});
+-test('initialization is explicit, disabled native request and session fenced; legacy digest is exact',async()=>{const f=fixture();await f.owner.initialize(f.owner.view().generation);assert.deepEqual(f.calls[0],{op:'arbiter.initialize',body:{arbiter:{request:native.management_requests.find(request=>request.operation==='initialize')}}});const generation=f.owner.view().generation;f.session({});await f.owner.initialize(generation);assert.equal(f.calls.length,1);f.owner.setLegacyDigest('bad');await f.owner.initialize(f.owner.view().generation);assert.equal(f.calls.length,1);f.owner.setLegacyDigest('ab'.repeat(32));await f.owner.initialize(f.owner.view().generation);assert.equal(f.calls.at(-1).body.arbiter.request.expected_legacy_configuration,'ab'.repeat(32));});
++test('construction and local edits never read initialize download select or enroll implicitly',()=>{const f=fixture();assert.deepEqual(f.calls,[]);assert.equal(f.owner.view().observation,null);assert.equal(f.owner.view().drafts,null);f.owner.enable('focus',true);f.owner.device('context','cpu');assert.deepEqual(f.calls,[]);});
++for(const row of cases)test(`native ${row.id}: complete current status/configuration/model/variant/selection metadata retained`,async()=>{const f=fixture(row.status);await f.read();assert.deepEqual(f.owner.view().observation,row.status);if(row.status.initialization){assert.equal(f.owner.view().drafts,null);assert.equal(f.owner.view().reviews,null);}else for(const stage of ['focus','context'])assert.deepEqual(f.owner.view().drafts[stage].configuration,row.status.configuration[stage]);assert.deepEqual(f.calls,[{op:'arbiter.status',body:{arbiter:{request:{operation:'status_device'}}}}]);});
+ 
+-test('malformed native status cannot replace original outcome or be treated as readiness',async()=>{for(const breakStatus of [status=>status.focus.profiles.push(null),status=>status.context.profiles[0].tasks=null,status=>status.configuration.focus.indexes.push({index_id:null,tasks:[]})]){const status=sample('both_disabled');breakStatus(status);const f=fixture(status);await f.read();assert.equal(f.owner.view().observation,null);assert.match(f.owner.view().problem,/no current two-stage/);assert.deepEqual(f.owner.view().outcome.result,ok(status));}});
+-test('known native refusal is retained without automatic recovery or download',async()=>{const f=fixture(simulatedProfiles());await f.read();const failure={kind:'failed',status:409,envelope:{error:{class:'conflict',code:'arbiter_revision_changed',message:'Native revision changed',retryable:false}}};f.reply(async()=>failure);await f.owner.lifecycle('focus','recover',f.owner.view().reviews.focus);assert.deepEqual(f.owner.view().outcome.result,failure);assert.equal(f.owner.view().unresolved,false);assert.equal(f.calls.length,2);});
+-test('throwing or concurrent model requests never produce an automatic retry',async()=>{const f=fixture(simulatedProfiles());await f.read();let fail;f.reply(()=>new Promise((_,reject)=>fail=reject));const first=f.owner.lifecycle('context','recover',f.owner.view().reviews.context);await f.owner.lifecycle('focus','cancel',f.owner.view().reviews.focus);assert.equal(f.calls.length,2);fail(Error('lost response'));await first;assert.equal(f.owner.view().unresolved,true);assert.match(f.owner.view().problem,/Read native status/);assert.equal(f.calls.length,2);});
+-const nodes=value=>!value||typeof value!=='object'?[]:Array.isArray(value)?value.flatMap(nodes):[value,...nodes(value.props?.children)];
+-const text=value=>value==null?'':typeof value!=='object'?String(value):Array.isArray(value)?value.map(text).join(''):text(value.props?.children);
+-function presentation(){globalThis.__arbiterHooks={cursor:0,slots:[]};globalThis.__arbiterSession={};const render=()=>{globalThis.__arbiterHooks.cursor=0;return Arbiter();};render();const workspace=globalThis.__arbiterHooks.slots.find(value=>value?.current?.readStatus)?.current;assert.ok(workspace);return{workspace,render,nodes:()=>nodes(render())};}
+-test('actual shared component starts with explicit status and initialization controls and no assumed stage state',async()=>{const f=presentation();const workspace=f.workspace;
+-const tree=f.nodes();assert.equal(tree.filter(node=>node.type==='section').length,0);assert.equal(tree.find(node=>node.type==='button'&&text(node)==='Refresh Arbiter status').props.disabled,false);assert.ok(tree.find(node=>node.type==='button'&&text(node)==='Initialize both stages off'));assert.match(text(f.render()),/Both stages are off by default/);assert.match(text(f.render()),/Arbiter status is unavailable/);workspace.dispose();});
++test('current independent operation catalog includes every device management request and no silent legacy rename',()=>{assert.deepEqual([...new Set(requests.filter(row=>row.operation.endsWith('_device')).map(row=>row.operation))].sort(),['cancel_device','configure_device','initialize_device','migrate_device','provision_device','recover_device','remove_device','status_device']);assert.ok(requests.some(row=>row.operation==='status'),'original explicit legacy status control remains separate');});
++const configurations=requests.filter(row=>row.operation==='configure_device'&&!row.configuration.enabled);
++test('native configure input catalog covers both stages and every device/GPU precision preference',()=>{const expected=[];for(const stage of ['focus','context'])for(const device of ['auto','cpu'])for(const precision of ['auto','fp32','fp16'])expected.push(`${stage}/${device}/${precision}`);assert.deepEqual([...new Set(configurations.map(row=>`${row.stage}/${row.configuration.device_policy}/${row.configuration.gpu_precision}`))].sort(),expected.sort());});
++for(const request of configurations)test(`native full configure payload ${request.stage}/${request.configuration.device_policy}/${request.configuration.gpu_precision} is exact and preserves other stage`,async()=>{const f=fixture();await f.read();assert.equal(f.owner.view().observation.configuration.revision,request.expected_revision,'Rust fixture revision must identify the actual reviewed observation');const stage=request.stage,other=stage==='focus'?'context':'focus',before=structuredClone(f.owner.view().drafts[other]);f.owner.select(stage,request.configuration.selected_model);f.owner.device(stage,request.configuration.device_policy);f.owner.precision(stage,request.configuration.gpu_precision);for(const entry of request.configuration.indexes){f.owner.indexInput(stage,entry.index_id);for(const task of entry.tasks)f.owner.taskInput(stage,task,true);f.owner.addIndex(stage);}f.owner.enable(stage,false);await f.owner.save(stage,f.owner.view().reviews[stage]);assert.deepEqual(f.calls.at(-1),{op:'arbiter.configure',body:{arbiter:{request}}});assert.deepEqual(f.owner.view().drafts[other],before);assert.equal(f.calls.length,2);});
+ 
+-test('actual shared component uses separate stage callbacks and renders native constrained/failure details',async()=>{const f=fixture(simulatedProfiles());await f.read();const ui=presentation();globalThis.__arbiterHooks.slots.find(value=>value?.current?.readStatus).current=f.owner;let tree=ui.nodes();assert.equal(tree.filter(node=>node.type==='section').length,2);const focus=tree.find(node=>node.type==='section'&&node.props['aria-label']==='Arbiter Focus');nodes(focus).find(node=>node.type==='input'&&node.props.type==='checkbox').props.onChange({currentTarget:{checked:true}});assert.equal(f.owner.view().drafts.focus.configuration.enabled,true);assert.equal(f.owner.view().drafts.context.configuration.enabled,false);assert.equal(f.calls.length,1);assert.match(text(ui.render()),/reservation is not a measurement/);assert.match(text(ui.render()),/No indexes are enrolled/);assert.ok(ui.nodes().find(node=>node.type==='button'&&text(node)==='Apply Arbiter Focus choices').props.disabled);for(const id of ['constrained','failed','draining','missing_assets']){const row=sample(id);f.reply(async()=>ok(row));await f.read();tree=ui.nodes();assert.ok(tree.some(node=>node.props?.value===row.focus.availability));assert.ok(tree.some(node=>node.props?.value===row.focus.reason));assert.ok(tree.some(node=>node.type==='button'&&text(node)==='Recover Arbiter Focus model state'));assert.deepEqual(f.owner.view().observation,row);}});
++test('logical model choices stay distinct from execution variants and retired or foreign slots refuse',()=>{assert.equal(stageModelTitle('focus','focus'),'Arbiter Focus');assert.equal(stageModelTitle('context','context_compact'),'Arbiter Context — Compact');assert.equal(stageModelTitle('context','context_large'),'Arbiter Context — Large');assert.equal(stageModelTitle('focus','context_large'),null);assert.equal(stageModelTitle('context','arbiter-small-intern-08b'),null);const status=sample('both_disabled_auto');assert.deepEqual(status.focus.models.map(row=>row.model),['focus']);assert.deepEqual(status.context.models.map(row=>row.model),['context_compact','context_large']);for(const stage of ['focus','context'])for(const model of status[stage].models)assert.equal(selectableStageModel(stage,model),true);});
+ 
+-test('Context Compact and Large selection remain explicit and cannot select or provision a Focus model',async()=>{const f=fixture(simulatedProfiles());await f.read();const profiles=f.owner.view().observation.context.profiles;for(const entry of profiles){f.owner.select('context',entry.profile);assert.equal(f.owner.view().drafts.context.configuration.selected_profile,entry.profile);assert.equal(f.calls.length,1);}const selected=f.owner.view().drafts.context.configuration.selected_profile,foreign=f.owner.view().observation.focus.profiles[0].profile;f.owner.select('context',foreign);await f.owner.model('context','provision',foreign,f.owner.view().reviews.context);assert.equal(f.owner.view().drafts.context.configuration.selected_profile,selected);assert.equal(f.calls.length,1);f.owner.select('context',null);assert.equal(f.owner.view().drafts.context.configuration.selected_profile,null);});
+-test('observing download, verification, warmup and removal never triggers a followup model request',async()=>{const status=simulatedProfiles(),f=fixture(status);for(const availability of ['requested','downloading','verifying','warming','ready','draining','missing_assets']){for(const stage of ['focus','context']){status[stage].availability=availability;status[stage].active_profile=availability==='ready'?status[stage].profiles[0].profile:null;for(const entry of status[stage].profiles)entry.availability=availability;}f.reply(async()=>ok(status));await f.read();assert.deepEqual(f.owner.view().observation,status);}assert.equal(f.calls.length,7);assert.ok(f.calls.every(call=>call.op==='arbiter.status'));});
+-test('reset and disabling one stage retain the other stage draft and explicit enrollments',async()=>{const f=fixture(simulatedProfiles());await f.read();enroll(f,'focus');enroll(f,'context');const context=structuredClone(f.owner.view().drafts.context);f.owner.enable('focus',false);assert.equal(f.owner.view().drafts.focus.configuration.indexes.length,1);assert.deepEqual(f.owner.view().drafts.context,context);f.owner.reset('focus');assert.deepEqual(f.owner.view().drafts.focus.configuration,f.owner.view().observation.configuration.focus);assert.deepEqual(f.owner.view().drafts.context,context);assert.equal(f.calls.length,1);});
++test('unavailable logical model can be an off-stage intent but cannot establish enablement or provision',async()=>{const f=fixture(sample('no_admitted_variant'));await f.read();f.owner.select('context','context_large');assert.equal(f.owner.view().drafts.context.configuration.selected_model,'context_large');enroll(f,'context');f.owner.enable('context',true);await f.owner.save('context',f.owner.view().reviews.context);for(const model of f.owner.view().observation.context.models)for(const variant of model.variants){assert.equal(selectableStageVariant(variant,model),false);await f.owner.model('context','provision',variant.manifest,f.owner.view().reviews.context);}assert.equal(f.calls.length,1);assert.equal(f.owner.view().observation.configuration.context.enabled,false);});
+ 
+-for(const id of ['initialization_missing','initialization_legacy','initialization_ambiguous','initialization_corrupt'])test(`native ${id}: explicit initialization retains outcome, sends exact digest and exposes no writable placeholder`,async()=>{const status=sample(id),f=fixture(status);await f.read();const original=f.owner.view().outcome;assert.deepEqual(f.owner.view().observation,status);assert.equal(f.owner.view().drafts,null);assert.equal(f.owner.view().reviews,null);assert.equal(f.calls.length,1);for(const stage of ['focus','context']){f.owner.enable(stage,true);f.owner.indexInput(stage,'idx_'+'11'.repeat(16));f.owner.select(stage,'22'.repeat(32));await f.owner.save(stage,undefined);await f.owner.lifecycle(stage,'recover',undefined);await f.owner.model(stage,'provision','22'.repeat(32),undefined);}assert.equal(f.calls.length,1);assert.deepEqual(f.owner.view().outcome,original);const ui=presentation();globalThis.__arbiterHooks.slots.find(value=>value?.current?.readStatus).current=f.owner;assert.equal(ui.nodes().filter(node=>node.type==='section').length,0);assert.ok(ui.nodes().find(node=>node.type==='button'&&text(node)==='Initialize both stages off'));assert.ok(ui.nodes().some(node=>node.props?.value===status.initialization.reason));assert.match(text(ui.render()),/placeholder and cannot be edited or saved/);f.owner.setLegacyDigest('ff'.repeat(32));const view=f.owner.view();await f.owner.initialize(view.generation,view.observationRevision);assert.deepEqual(f.calls[1],{op:'arbiter.initialize',body:{arbiter:{request:{operation:'initialize',expected_legacy_configuration:status.initialization.actual_legacy_digest??null}}}});assert.equal(f.calls.length,2);assert.equal(f.owner.view().drafts,null);});
+-test('normal failed model stages remain editable without exposing initialization or parsing their reason',async()=>{const f=fixture(sample('failed'));await f.read();assert.ok(f.owner.view().drafts);const ui=presentation();globalThis.__arbiterHooks.slots.find(value=>value?.current?.readStatus).current=f.owner;assert.equal(ui.nodes().filter(node=>node.type==='section').length,2);assert.equal(ui.nodes().find(node=>node.type==='button'&&text(node)==='Initialize both stages off'),undefined);const before=f.calls.length;await f.owner.initialize(f.owner.view().generation);assert.equal(f.calls.length,before);f.owner.enable('focus',false);await f.owner.save('focus',f.owner.view().reviews.focus);assert.equal(f.calls.at(-1).op,'arbiter.configure');});
+-test('configuration-unavailable status revokes old drafts and initialization callbacks require the reviewed observation',async()=>{const f=fixture(simulatedProfiles());await f.read();enroll(f,'focus');const stale=f.owner.view().reviews.focus;f.reply(async()=>ok(sample('initialization_missing')));await f.read();assert.equal(f.owner.view().drafts,null);await f.owner.save('focus',stale);assert.equal(f.calls.length,2);const viewed=f.owner.view();f.reply(async()=>ok(sample('initialization_legacy')));await f.read();await f.owner.initialize(viewed.generation,viewed.observationRevision);assert.equal(f.calls.length,3);f.reply(async()=>ok(sample('both_disabled')));await f.owner.initialize(f.owner.view().generation,f.owner.view().observationRevision);assert.equal(f.calls.length,4);assert.deepEqual(f.owner.view().drafts.focus.configuration,sample('both_disabled').configuration.focus);assert.deepEqual(f.owner.view().drafts.context.configuration,sample('both_disabled').configuration.context);});
++test('model Requested/Ready is native enable admission; fit or runtime failure is not reconstructed as qualification',async()=>{for(const row of cases){if(row.status.initialization)continue;for(const stage of ['focus','context']){const status=row.status,chosen=status[stage].models.find(model=>['requested','ready'].includes(model.availability));if(!chosen)continue;const f=fixture(status);await f.read();f.owner.select(stage,chosen.model);if(!f.owner.view().drafts[stage].configuration.indexes.length)enroll(f,stage);f.owner.enable(stage,true);await f.owner.save(stage,f.owner.view().reviews[stage]);assert.equal(f.calls.at(-1).body.arbiter.request.operation,'configure_device');assert.equal(f.calls.at(-1).body.arbiter.request.configuration.selected_model,chosen.model);assert.deepEqual(f.owner.view().outcome.result,ok(status));}}});
+ 
+-test('failed refresh labels retained observations stale and a later native result clears it', async () => {
+- const f=fixture(); await f.read(); const original=f.owner.view().observation;
+- f.reply(async()=>({kind:'transport',status:null,message:'offline'})); await f.read();
+- assert.equal(f.owner.view().statusStale,true); assert.deepEqual(f.owner.view().observation,original);
+- assert.equal(f.owner.view().sending,false); assert.ok(f.owner.view().lastObservedAt);
+- f.reply(async()=>ok(sample('both_disabled'))); await f.read(); assert.equal(f.owner.view().statusStale,false);
+-});
++test('foreign tasks invalid and duplicate indexes never become consent',async()=>{const f=fixture();await f.read();const foreign=nativeEnrollment('context').tasks[0];f.owner.indexInput('focus','invalid');f.owner.taskInput('focus',foreign,true);f.owner.addIndex('focus');assert.deepEqual(f.owner.view().drafts.focus.configuration.indexes,[]);const expected=enroll(f,'focus');enroll(f,'focus');assert.deepEqual(f.owner.view().drafts.focus.configuration.indexes,[expected]);assert.deepEqual(f.owner.view().drafts.context.configuration.indexes,[]);});
++
++test('independent drafts reset all native device/precision fields without changing the other stage',async()=>{const f=fixture();await f.read();enroll(f,'context');f.owner.device('context','cpu');f.owner.precision('context','fp16');const context=structuredClone(f.owner.view().drafts.context);f.owner.device('focus','cpu');f.owner.precision('focus','fp32');f.owner.enable('focus',false);f.owner.reset('focus');assert.deepEqual(f.owner.view().drafts.focus.configuration,f.owner.view().observation.configuration.focus);assert.deepEqual(f.owner.view().drafts.context,context);assert.equal(f.calls.length,1);});
++
++test('unsupported precision control is rejected without mutating a reviewed draft or dropping native fields',async()=>{const invalid=native.cases.find(row=>row.invalid?.configuration?.gpu_precision==='bf16');assert.ok(invalid,'native BF16 refusal control required');const f=fixture();await f.read();const before=f.owner.view().drafts.context;f.owner.precision('context',invalid.invalid.configuration.gpu_precision);assert.deepEqual(f.owner.view().drafts.context,before);assert.equal(f.calls.length,1);});
++
++test('requested FP16 and actual CPU fallback are both shown without relabeling CPU precision',async()=>{const f=fixture(sample('context_compact_requested_fp16_actual_cpu_fallback'));await f.read();const ui=presentation(f.owner),view=text(ui.render());assert.match(view,/Requested GPU precision: FP16/);assert.match(view,/Native selection: CPU · native CPU profile; precision not reported/);assert.doesNotMatch(view,/Native selection: CPU · FP16/);for(const rejection of f.owner.view().observation.context.selection.reasons)assert.ok(view.includes(rejection.reason.replaceAll('_',' ')));assert.ok(ui.nodes().some(node=>node.props?.value===JSON.stringify(f.owner.view().observation.context,null,2)));});
++for(const [id,precision] of [['context_compact_auto_fp32_gpu','FP32'],['context_compact_auto_fp16_when_fp32_unavailable','FP16'],['context_large_fp16_qualified_gpu','FP16']])test(`native ${id} keeps requested precision separate from selected backend and actual precision`,async()=>{const f=fixture(sample(id));await f.read();const ui=presentation(f.owner),context=f.owner.view().observation.context,selected=context.selection.selected;assert.ok(selected.backend);assert.match(text(ui.render()),new RegExp(`Native selection: (CUDA|DirectML|Core ML) · ${precision}`));assert.ok(ui.nodes().some(node=>node.props?.value===JSON.stringify(context,null,2)));});
++
++test('current component has exactly two stage sections and complete Auto/CPU plus GPU precision controls',async()=>{const f=fixture(sample('both_stages_independent'));await f.read();const ui=presentation(f.owner),tree=ui.nodes();assert.equal(tree.filter(node=>node.type==='section').length,2);for(const stage of ['Arbiter Focus','Arbiter Context']){const device=tree.find(node=>node.type==='select'&&node.props['aria-label']===`${stage} device policy`),precision=tree.find(node=>node.type==='select'&&node.props['aria-label']===`${stage} GPU precision`);assert.deepEqual(nodes(device).filter(node=>node.type==='option').map(node=>node.props.value),['auto','cpu']);assert.deepEqual(nodes(precision).filter(node=>node.type==='option').map(node=>node.props.value),['auto','fp32','fp16']);}assert.match(text(ui.render()),/reservation is not a measurement/);assert.match(text(ui.render()),/Precision applies only to GPU candidates/);});
++
++test('draft revision and session fences reject stale policy save and lifecycle callbacks',async()=>{const f=fixture();await f.read();const stale=f.owner.view().reviews.focus;f.owner.precision('focus','fp16');await f.owner.save('focus',stale);assert.equal(f.calls.length,1);const review=f.owner.view().reviews.focus;f.session({replacement:true});await f.owner.lifecycle('focus','recover',review);assert.equal(f.calls.length,1);});
++test('hidden absent disposed and replaced sessions cannot dispatch or adopt held current status',async()=>{const f=fixture();f.visible(false);await f.read();f.visible(true);f.session(null);await f.read();assert.equal(f.calls.length,0);f.session({});let complete;f.reply(()=>new Promise(resolve=>complete=resolve));const pending=f.read();f.session({replacement:true});complete(ok(sample('both_disabled_auto')));await pending;assert.equal(f.owner.view().observation,null);assert.equal(f.owner.view().outcome.phase,'idle');f.owner.dispose();await f.read();assert.equal(f.calls.length,1);});
++
++test('unknown mutation blocks automatic retry and retains complete request and outcome until current status',async()=>{const f=fixture();await f.read();const unknown={kind:'transport',status:null,message:'connection lost'};f.reply(async()=>unknown);await f.owner.lifecycle('focus','cancel',f.owner.view().reviews.focus);assert.equal(f.owner.view().unresolved,true);assert.deepEqual(f.owner.view().outcome.result,unknown);assert.equal(f.owner.view().originalRequest.operation,'cancel_device');await f.owner.lifecycle('context','recover',f.owner.view().reviews.context);assert.equal(f.calls.length,2);f.reply(async()=>ok(sample('both_disabled_auto')));await f.read();assert.equal(f.owner.view().unresolved,false);assert.equal(f.calls.length,3);});
++
++test('failed current status preserves complete retained observation read-only and never fabricates empty configuration',async()=>{const f=fixture();await f.read();const before=f.owner.view(),failure={kind:'failed',status:409,envelope:{error:{class:'conflict',code:'arbiter_configuration_unresolved',message:'Native configuration unavailable',retryable:false,future_native:{all:'retained'}}}};f.reply(async()=>failure);await f.read();assert.equal(f.owner.view().statusStale,true);assert.equal(f.owner.view().canSend,false);assert.deepEqual(f.owner.view().observation,before.observation);assert.deepEqual(f.owner.view().outcome.result,failure);f.owner.enable('focus',true);await f.owner.lifecycle('focus','recover',before.reviews.focus);assert.equal(f.calls.length,2);assert.deepEqual(f.owner.view().drafts,before.drafts);f.reply(async()=>ok(sample('both_disabled_auto')));await f.read();assert.equal(f.owner.view().statusStale,false);assert.equal(f.owner.view().canSend,true);});
++
++test('legacy status2 remains historical and cannot be relabeled current GPU configuration',async()=>{const historical=JSON.parse(await readFile(new URL('../../../fixtures/split/arbiter/stage_cases.json',import.meta.url),'utf8')).cases.find(row=>row.id==='both_disabled').status;const reply={kind:'ok',status:200,envelope:{schema:'airk-admin/1',ok:true,result:{status:'arbiter',observation:historical}}};const f=fixture();f.reply(async()=>reply);await f.read();assert.equal(f.owner.view().observation,null);assert.equal(f.owner.view().drafts,null);assert.equal(f.owner.view().unresolved,true);assert.deepEqual(f.owner.view().outcome.result,reply);});
++
++test('malformed model/variant/selection cannot create current readiness and original body remains complete',async()=>{for(const corrupt of [status=>status.focus.models.push(null),status=>status.context.models[0].tasks=null,status=>status.context.selection.reasons=null,status=>status.context.selection.selected.backend='future_gpu']){const status=sample('context_compact_auto_fp32_gpu');corrupt(status);const f=fixture(status);await f.read();assert.equal(f.owner.view().observation,null);assert.equal(f.owner.view().unresolved,true);assert.deepEqual(f.owner.view().outcome.result,ok(status));}});
++
++test('known mutation refusal stays complete and never starts implicit recovery or download',async()=>{const f=fixture();await f.read();const failure={kind:'failed',status:409,envelope:{error:{class:'conflict',code:'arbiter_revision_changed',message:'Native revision changed',retryable:false}}};f.reply(async()=>failure);await f.owner.lifecycle('focus','recover',f.owner.view().reviews.focus);assert.deepEqual(f.owner.view().outcome.result,failure);assert.equal(f.owner.view().unresolved,false);assert.equal(f.calls.length,2);});
++
++test('every native lifecycle observation is a read and never starts a followup model request',async()=>{const f=fixture();for(const row of cases){f.reply(async()=>ok(row.status));await f.read();assert.deepEqual(f.owner.view().observation,row.status);}assert.equal(f.calls.length,cases.length);assert.ok(f.calls.every(call=>call.op==='arbiter.status'));});
++
++test('actual missing-state disabled observation stays writable without an invented initialization field',async()=>{const f=fixture(sample('both_disabled_auto'));await f.read();assert.equal(f.owner.view().observation.initialization,undefined);assert.ok(f.owner.view().drafts);assert.ok(f.owner.view().reviews);const before=f.calls.length;await f.owner.initialize(f.owner.view().generation);assert.equal(f.calls.length,before);});
++for(const row of cases.filter(row=>row.status.initialization))test(`native ${row.id}: retained legacy initialization never exposes writable placeholder or invents revision/digest`,async()=>{const f=fixture(row.status);await f.read();assert.equal(f.owner.view().drafts,null);assert.equal(f.owner.view().reviews,null);const view=f.owner.view();for(const stage of ['focus','context']){f.owner.enable(stage,true);await f.owner.save(stage,undefined);}assert.equal(f.calls.length,1);await f.owner.initialize(view.generation,view.observationRevision);assert.equal(f.calls.at(-1).body.arbiter.request.operation,'initialize_device');assert.equal(f.calls.at(-1).body.arbiter.request.expected_legacy_configuration,row.status.initialization.actual_legacy_digest??null);assert.equal(f.calls.length,2);});
++
++test('future native fields are extended only after Rust emission and retained throughout complete status/outcome',async()=>{const status=sample('both_disabled_auto');status.future_native={control:['all','retained'],never_qualification:true};const f=fixture(status);await f.read();assert.deepEqual(f.owner.view().observation,status);assert.deepEqual(f.owner.view().outcome.result,ok(status));const ui=presentation(f.owner);assert.ok(ui.nodes().some(node=>node.props?.state?.result?.envelope?.result?.observation?.future_native?.control?.length===2));assert.deepEqual(f.owner.view().originalRequest,{operation:'status_device'});});
++
++// Preserve the existing pending-call and native revision/session failure boundaries.
++test('throwing or concurrent native model requests never start an automatic retry',async()=>{const f=fixture();await f.read();let reject;f.reply(()=>new Promise((_,failure)=>reject=failure));const pending=f.owner.lifecycle('context','recover',f.owner.view().reviews.context);await f.owner.lifecycle('focus','cancel',f.owner.view().reviews.focus);assert.equal(f.calls.length,2);reject(Error('No typed response'));await pending;assert.equal(f.owner.view().unresolved,true);assert.match(f.owner.view().problem,/Read native status/);assert.equal(f.calls.length,2);});
++test('new native configuration revision invalidates prior lifecycle and save review',async()=>{const f=fixture();await f.read();const stale=f.owner.view().reviews.focus;const revised=sample('both_disabled_auto');revised.configuration.revision++; // Explicit synthetic CAS transition after Rust emission; no native admission claim.
++f.reply(async()=>ok(revised));await f.read();await f.owner.save('focus',stale);await f.owner.lifecycle('focus','cancel',stale);assert.equal(f.calls.length,2);assert.deepEqual(f.owner.view().observation,revised);});
++test('explicit initialization requires current generation and uses the complete native request',async()=>{const expected=requests.find(row=>row.operation==='initialize_device');assert.ok(expected);const f=fixture();assert.equal(expected.expected_legacy_configuration??null,null,'new-state native initialization control required');await f.owner.initialize(f.owner.view().generation);assert.deepEqual(f.calls[0],{op:'arbiter.initialize',body:{arbiter:{request:expected}}});const old=f.owner.view().generation;f.session({replacement:true});await f.owner.initialize(old);assert.equal(f.calls.length,1);f.owner.setLegacyDigest('not-a-digest');await f.owner.initialize(f.owner.view().generation);assert.equal(f.calls.length,1);});
++test('native observation fences initialization and current status revokes a retained legacy placeholder',async()=>{for(const row of cases.filter(row=>row.status.initialization)){const f=fixture(row.status);await f.read();const old=f.owner.view();await f.read();await f.owner.initialize(old.generation,old.observationRevision);assert.equal(f.calls.length,2,'same generation but a later native observation refuses old initialization callback');f.reply(async()=>ok(sample('both_disabled_auto')));await f.read();assert.ok(f.owner.view().drafts);assert.ok(f.owner.view().reviews);await f.owner.initialize(f.owner.view().generation);assert.equal(f.calls.length,3);}});
++test('remove one explicit enrollment changes only the requested stage draft',async()=>{const f=fixture();await f.read();const focus=enroll(f,'focus');enroll(f,'context');const context=structuredClone(f.owner.view().drafts.context);f.owner.removeIndex('focus',focus.index_id);assert.deepEqual(f.owner.view().drafts.focus.configuration.indexes,[]);assert.deepEqual(f.owner.view().drafts.context,context);assert.equal(f.calls.length,1);});
+--- a/packages/ui/test/management.dom.test.mjs
++++ b/packages/ui/test/management.dom.test.mjs
+@@ -13,7 +13,7 @@
+ const root = fileURLToPath(new URL('../../vscode/', import.meta.url));
+ const nativeReads = JSON.parse(await readFile(new URL('../../../fixtures/split/ui_pilot/native_reads.json', import.meta.url), 'utf8'));
+ // One explicit post-emission extension exercises forward-compatible retention.
+-const stageStatus = {...JSON.parse(await readFile(new URL('../../../fixtures/split/arbiter/stage_cases.json', import.meta.url), 'utf8')).cases.find(entry => entry.id === 'both_disabled').status,future_native:{all:['retained']}};
++const stageStatus = {...JSON.parse(await readFile(new URL('../../../fixtures/split/arbiter/device_cases.json', import.meta.url), 'utf8')).cases.find(entry => entry.id === 'both_disabled_auto').status,future_native:{all:['retained']}};
+ const usage = nativeReads.cases.find(entry => entry.name === 'usage_unknown_fields');
+ const usageFailure = nativeReads.cases.find(entry => entry.name === 'usage_native_failure');
+ let browser;
+@@ -45,10 +45,10 @@
+           if(window.holdArbiter){window.heldMessage=message;return;}
+           if(message.operation==='usage.document'){const reply=message.payload.body.usage_document.read.report?window.nativeUsage:window.nativeUsageFailure;
+             return window.hostReply(message,{epoch:message.epoch,current:true,reply:{httpStatus:reply.status,body:JSON.stringify(reply.body)}});}
+-          if(message.operation==='arbiter.configure'){const request=message.payload.body.arbiter.request;const {stage,enabled,indexes,selected_profile}=request;window.arbiterStatus.configuration={...window.arbiterStatus.configuration,[stage]:{enabled,indexes,selected_profile},revision:2};}
++          if(message.operation==='arbiter.configure'){const request=message.payload.body.arbiter.request;const {stage,configuration}=request;window.arbiterStatus.configuration={...window.arbiterStatus.configuration,[stage]:structuredClone(configuration),revision:2};window.arbiterStatus[stage]={...window.arbiterStatus[stage],selected_model:configuration.selected_model,device_policy:configuration.device_policy,gpu_precision:configuration.gpu_precision};}
+           const result={schema:'airk-admin/1',ok:true,operation:message.operation,result:message.operation==='catalog.page'
+             ?{status:'catalog_page',page:{namespace:'e'.repeat(32),revision:1,items:[],continuation:null}}
+-            :{status:'arbiter',observation:window.arbiterStatus}};
++            :{status:'arbiter_device',observation:window.arbiterStatus}};
+           return window.hostReply(message,{epoch:message.epoch,current:true,reply:{httpStatus:200,body:JSON.stringify(result)}});
+         }
+       }});`);
+@@ -64,9 +64,14 @@
+     assert.equal(await browser.evaluate(`document.querySelector('[aria-label="Native management session"] > span').textContent`),'Native management');
+     assert.equal(await browser.evaluate('document.querySelectorAll("nav").length'), 0, 'native consumer uses the owning Explorer navigation, without a nested browser shell');
+     await browser.observed(`[...document.querySelectorAll('button')].some(button=>button.textContent==='Refresh Arbiter status'&&!button.disabled)`);
+-    await browser.observed(`document.body.textContent.includes('Synthetic structural fixture; no model or platform qualification')`);
+-    assert.deepEqual(await browser.evaluate(`JSON.parse([...document.querySelectorAll('details')].find(detail=>detail.querySelector('summary')?.textContent==='Details and complete management outcome').querySelector('pre').textContent)`),{status:'arbiter',observation:stageStatus},'complete native status retains its explicit future-field control');
+-    assert.equal(await browser.evaluate(`[...document.querySelectorAll('button')].filter(button=>button.textContent.startsWith('Download Arbiter')).every(button=>button.disabled)`), true);
++    await browser.observed(`document.body.textContent.includes(${JSON.stringify(stageStatus.focus.reason)})`);
++    assert.deepEqual(await browser.evaluate(`JSON.parse([...document.querySelectorAll('details')].find(detail=>detail.querySelector('summary')?.textContent==='Details and complete management outcome').querySelector('pre').textContent)`),{status:'arbiter_device',observation:stageStatus},'complete native status retains its explicit future-field control');
++    assert.equal(await browser.evaluate(`[...document.querySelectorAll('button')].filter(button=>button.textContent.startsWith('Download Arbiter')).length`),stageStatus.focus.models.concat(stageStatus.context.models).reduce((total,model)=>total+model.variants.length,0),'all native variants, including a genuinely empty roster, have exact download control coverage');
++    assert.equal(await browser.evaluate(`[...document.querySelectorAll('button')].filter(button=>button.textContent.startsWith('Download Arbiter')).every(button=>button.disabled)`),true);
++    assert.equal(await browser.evaluate(`document.querySelectorAll('input[type=radio][name="arbiter-focus-model"]').length`),2);
++    assert.equal(await browser.evaluate(`document.querySelectorAll('input[type=radio][name="arbiter-context-model"]').length`),3);
++    assert.deepEqual(await browser.evaluate(`[...document.querySelector('[aria-label="Arbiter Focus device policy"]').options].map(option=>option.value)`),['auto','cpu']);
++    assert.deepEqual(await browser.evaluate(`[...document.querySelector('[aria-label="Arbiter Focus GPU precision"]').options].map(option=>option.value)`),['auto','fp32','fp16']);
+     assert.equal(await browser.evaluate(`document.querySelector('[aria-label="Arbiter Focus"] input[type=checkbox]').checked`), false);
+     await browser.evaluate(`{const stage=document.querySelector('[aria-label="Arbiter Focus"]');stage.querySelector('input[type=checkbox]').click();}`);
+     assert.equal(await browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent==='Apply Arbiter Focus choices').disabled`),true,'unqualified model cannot be enabled');
+@@ -76,15 +81,20 @@
+     await browser.observed(`[...document.querySelectorAll('button')].some(button=>button.textContent==='Add explicit Arbiter Focus enrollment to draft'&&!button.disabled)`);
+     await browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent==='Add explicit Arbiter Focus enrollment to draft').click()`);
+     await browser.observed(`document.querySelector('[aria-label="Arbiter Focus"]').textContent.includes('idx_'+'d'.repeat(32))`);
++    await browser.evaluate(`{const stage=document.querySelector('[aria-label="Arbiter Focus"]');[...stage.querySelectorAll('label')].find(label=>label.textContent.trim()==='Select Arbiter Focus').querySelector('input').click();const device=document.querySelector('[aria-label="Arbiter Focus device policy"]');device.value='cpu';device.dispatchEvent(new Event('change',{bubbles:true}));const precision=document.querySelector('[aria-label="Arbiter Focus GPU precision"]');precision.value='fp16';precision.dispatchEvent(new Event('change',{bubbles:true}));}`);
++    await browser.observed(`document.querySelector('[aria-label="Arbiter Focus device policy"]').value==='cpu'&&document.querySelector('[aria-label="Arbiter Focus GPU precision"]').value==='fp16'`);
++    await browser.evaluate(`document.querySelector('[aria-label="Arbiter Focus"] input[type=checkbox]').click()`);
++    assert.equal(await browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent==='Apply Arbiter Focus choices').disabled`),true,'off-stage model intent does not promote an unavailable model to enable admission');
++    await browser.evaluate(`document.querySelector('[aria-label="Arbiter Focus"] input[type=checkbox]').click()`);
+     await browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent==='Apply Arbiter Focus choices').click()`);
+     await browser.observed(`window.requests.some(message=>message.operation==='arbiter.configure')`);
+     const saved = await browser.evaluate(`window.requests.find(message=>message.operation==='arbiter.configure').payload.body`);
+-    assert.deepEqual(saved, { arbiter: { request: { operation: 'configure', stage:'focus', expected_revision:1, enabled:false,
+-      indexes:[{index_id:'idx_'+'d'.repeat(32),tasks:['airk.focus_rank.v1']}],selected_profile:null } } });
++    assert.deepEqual(saved, { arbiter: { request: { operation: 'configure_device', stage:'focus', expected_revision:stageStatus.configuration.revision,
++      configuration:{...stageStatus.configuration.focus,enabled:false,selected_model:'focus',device_policy:'cpu',gpu_precision:'fp16',indexes:[{index_id:'idx_'+'d'.repeat(32),tasks:['airk.focus_rank.v1']}]} } } });
+     assert.deepEqual(await browser.evaluate('window.arbiterStatus.configuration.context'),stageStatus.configuration.context,'Focus changes preserve Context independently');
+     assert.equal(await browser.evaluate('window.browserAuthTouches'),0);
+     await browser.observed(`document.body.textContent.includes('"revision": 2')`);
+-    assert.deepEqual(await browser.evaluate(`JSON.parse([...document.querySelectorAll('details')].find(detail=>detail.querySelector('summary')?.textContent==='Details and complete management outcome').querySelector('pre').textContent)`),{status:'arbiter',observation:await browser.evaluate('window.arbiterStatus')},'complete CAS response retains every original status field including future_native');
++    assert.deepEqual(await browser.evaluate(`JSON.parse([...document.querySelectorAll('details')].find(detail=>detail.querySelector('summary')?.textContent==='Details and complete management outcome').querySelector('pre').textContent)`),{status:'arbiter_device',observation:await browser.evaluate('window.arbiterStatus')},'complete CAS response retains every original status field including future_native');
+     await browser.evaluate(`window.navigateManagement('index-library')`);
+     await browser.observed(`document.querySelector('[aria-label="Index library views"]')`);
+     await browser.evaluate(`[...document.querySelectorAll('[aria-label="Index library views"] button')].find(button=>button.textContent==='Create an index').click()`);
+--- a/packages/ui/test/adminUiContract.test.mjs
++++ b/packages/ui/test/adminUiContract.test.mjs
+@@ -4,6 +4,7 @@
+ import test from 'node:test';
+ import { createRequire } from 'node:module';
+ import { fileURLToPath } from 'node:url';
++import {readFile} from 'node:fs/promises';
+ const { build } = createRequire(new URL('../../vscode/package.json', import.meta.url))('esbuild');
+ const bundle = await build({ entryPoints: [fileURLToPath(new URL('../../vscode/src/adminUiContract.ts', import.meta.url))],
+   bundle: true, write: false, platform: 'node', format: 'esm' });
+@@ -59,3 +60,18 @@
+   assert.equal(actual.admitAdminUiRequest(close, { epoch: 3, ready: false, trusted: false, nativeEnabled: false, management: false }), null);
+   assert.equal(actual.admitAdminUiRequest(close, { ...ready, epoch: 4 }), 'admin_ui_context_changed');
+ });
++
++const deviceCases=JSON.parse(await readFile(new URL('../../../fixtures/split/arbiter/device_cases.json',import.meta.url),'utf8'));
++const deviceRequests=deviceCases.cases.filter(row=>row.request?.operation.endsWith('_device')).map(row=>row.request);
++const deviceOperationTokens={status_device:'arbiter.status',initialize_device:'arbiter.initialize',configure_device:'arbiter.configure',migrate_device:'arbiter.migrate',provision_device:'arbiter.provision',cancel_device:'arbiter.cancel',remove_device:'arbiter.remove',recover_device:'arbiter.recover'};
++test('C9 current device management operation/input catalog is exact and full native bodies are preserved',()=>{
++ assert.deepEqual([...new Set(deviceRequests.map(row=>row.operation))].sort(),['cancel_device','configure_device','initialize_device','migrate_device','provision_device','recover_device','remove_device','status_device']);
++ assert.equal(actual.OPS.arbiterMigrate,'arbiter.migrate');
++ for(const native of deviceRequests){const operation=deviceOperationTokens[native.operation],body={arbiter:{request:native}};const parsed=actual.parseAdminUiRequest(request({operation,payload:{body}}));assert.ok(parsed,operation);assert.deepEqual(parsed.payload.body,body);assert.ok(Object.isFrozen(parsed.payload.body));}
++});
++
++test('current Admin device methods equal the independent eight-row native catalog, with no legacy alias',async()=>{
++ const catalog=JSON.parse(await readFile(new URL('../../../fixtures/split/i3/admin_operations.json',import.meta.url),'utf8'));
++ const expected=[['arbiter.status','Arbiter.StatusDevice'],['arbiter.initialize','Arbiter.InitializeDevice'],['arbiter.configure','Arbiter.ConfigureDevice'],['arbiter.migrate','Arbiter.MigrateDevice'],['arbiter.provision','Arbiter.ProvisionDevice'],['arbiter.cancel','Arbiter.CancelDevice'],['arbiter.remove','Arbiter.RemoveDevice'],['arbiter.recover','Arbiter.RecoverDevice']];
++ for(const [operation,method]of expected){const row=catalog.operations.find(row=>row.operation===operation);assert.ok(row,operation);assert.equal(row.method,method);assert.ok(row.surfaces.includes('admin'));assert.ok(Object.values(actual.OPS).includes(operation));}
++});

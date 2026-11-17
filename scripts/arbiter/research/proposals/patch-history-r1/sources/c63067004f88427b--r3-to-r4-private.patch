@@ -1,0 +1,86 @@
+--- run_retained_restart_r3.py
++++ run_retained_restart_r4.py
+@@ -45,9 +45,13 @@
+ 
+ def prior_proof(card):
+     value=lambda key:json.loads(Path(card['prior'][key]).read_text(encoding='utf-8'))
+-    require(value('child_receipt')['passed'] is False and value('owner_receipt')['passed'] is False,
++    require(value('original_r5_child_receipt')['passed'] is False,
+         'original R5 failure was retagged')
+-    prior_proof_values(card['native'],value('stop'),value('exit'),value('owner_receipt')['owner'])
++    latest=value('child_receipt')
++    require(latest['passed'] is False and value('owner_receipt')['passed'] is False,
++        'previous actual restart phase failure was retagged')
++    prior_proof_values(card['native'],latest['actual_native_stop'],
++        latest['cleanup_process_exit']['observation'],value('owner_receipt')['owner'])
+ 
+ 
+ 
+@@ -79,6 +83,32 @@
+     report['passed']=bool(candidate and finished<cutoff and report['postverification_passed']
+         and 'failure' not in report and 'cleanup_failure' not in report)
+     return report['passed']
++
++
++
++def require_restart_scope_continuity(previous,current,previous_instance,current_instance):
++    require(previous_instance!=current_instance,'restart scope needs authentic new service instance')
++    fields={'schema','qualifier','fingerprint','selection','members'}
++    require(set(previous)==fields and set(current)==fields,'unknown restart scope projection')
++    require(previous['schema']==current['schema']==1
++        and previous['qualifier']==current['qualifier']=='selected_subset'
++        and previous['selection']==current['selection'] and previous['members']==current['members'],
++        'persisted public source authority changed across restart')
++    for scope in (previous,current):
++        value=scope['fingerprint']
++        require(isinstance(value,str) and len(value)==64 and all(c in '0123456789abcdef' for c in value),
++            'invalid native authority fingerprint')
++    require(previous['fingerprint']!=current['fingerprint'],
++        'old service-bound authority fingerprint replayed after restart')
++    # Never modify either observation or reproduce a native digest. The caller
++    # retains both, then binds subsequent reads to this exact new native scope.
++
++
++def require_child_success(result,receipt):
++    if result['exit_code']!=0:
++        raise RuntimeError('owned restart child exited '+str(result['exit_code'])
++            +'; descendants_settled='+str(result['owned_descendants_settled'])
++            +'; first child failure='+str(receipt.get('failure') if receipt else 'receipt unavailable'))
+ 
+ 
+ def require_restarted_identity(health,native,handle):
+@@ -188,6 +218,7 @@
+         require(status['configuration']['focus']['enabled'] is False and R.profile_row(status)['availability']=='missing_assets',
+             'persisted disabled/removed state absent')
+         oracles=json.loads(Path(card['oracles']).read_text(encoding='utf-8'))
++        current_scopes={}
+         for name in ('a','b'):
+             oracle=oracles[name];oracle['sources']={(r['index_id'],r['source_root_id'],r['source_relative_path']):
+                 {k:v for k,v in r.items() if k not in ('index_id','source_root_id','source_relative_path')} for r in oracle['sources']}
+@@ -200,8 +231,17 @@
+                 record('raw-'+kind+'-'+name,{'stdout':result.stdout,'stderr':result.stderr,'exit_code':result.returncode,'request_arguments':json.loads(request)})
+                 require(result.returncode==0,'native ordinary MiniLM read refused')
+                 observed=A.observe(json.loads(result.stdout),index,oracle,E,Q,kind=kind,request_arguments=json.loads(request),
+-                    expected_publications=ready['publication_identity'],expected_scope=ready['member_body']['scope_observation'])
++                    expected_publications=ready['publication_identity'],expected_scope=current_scopes.get(name))
+                 record('validated-'+kind+'-'+name,observed)
++                if kind=='diagnostics':
++                    previous_scope=ready['member_body']['scope_observation']
++                    current_scope=observed['member_body']['scope_observation']
++                    require_restart_scope_continuity(previous_scope,current_scope,
++                        card['original_r5_instance'],health['instance'])
++                    record('native-authority-epoch-continuity-'+name,{
++                        'previous_service_instance':card['original_r5_instance'],'current_service_instance':health['instance'],
++                        'previous_native_scope':previous_scope,'current_native_scope':current_scope})
++                    current_scopes[name]=current_scope
+                 if kind=='search':
+                     A.require_hybrid(observed);require(not A.applied_focus(observed),'removed Focus unexpectedly applied')
+         require(all(sha(r['path'])==r['sha256'] for r in card['read_only_sources']),'original source/request bytes changed')
+@@ -260,6 +300,7 @@
+         receipt=json.loads(child_bytes) if child_bytes is not None else None
+         report['child_receipt_observation']=receipt
+         R=load('retained_owner_acceptance',Path(card['r5_recipe'])/'run_owned_public_focus_r5.py')
++        require_child_success(result,receipt)
+         require(R.natural_owner(result),'owned restart child/Job did not naturally settle')
+         require(receipt is not None and receipt['passed'] is True and receipt['focus_work_repeated'] is False
+             and receipt['actual_original_process_exit']['process_handle_signaled'] is True

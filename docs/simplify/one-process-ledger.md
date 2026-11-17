@@ -8014,3 +8014,131 @@ Final pre-stage repository check passes5486publicfiles. Source map copy flags ar
 now explicitly labeled as historical inventory fields; current maintained-owner
 presence and no-execution status are separate. Broader source/access scans
 remain open, including newly identified generated fixture boundaries.
+
+### 17 November: broad rescue review and bounded JavaScript audit
+
+The first rescue checkpoint is committed locally as
+c787da29fac14ebba7928ecf5a4a032024b37a4c (1,875 files); no push.
+This is not an all-artifacts completion claim. The original 10,356-candidate
+scope is reconciled; broader standalone and embedded-source classification
+remains open. User-repaired access was reobserved; agents changed no ACLs.
+
+The maintained JavaScript provenance analyzer was independently reviewed and
+committed as 9e1b0c00d22d599f921aa848d729086e8e258669. Human DCO trailer verified;
+15 changed Git outputs were audited for the human owner. Root reran ten pure
+controls successfully in 0.002s. The reviewed analyzer's live SHA is
+d31f5669296705f4209328ff01d349638084a528495008a5bf084fd13ab14456.
+Its bounded read-only analysis is authorized against the frozen broad delta;
+HEAD remains fixed during the run. It executes the maintained TypeScript
+compiler in memory, not historical JavaScript, and makes no runtime claim.
+
+Additional independent reviews closed: patch history accounts for 1,359 paths
+including 817 unique authored patches and 412 authenticated upstream exclusions;
+embedded history verifies 195 source fields and 47 upstream exclusions, with
+seven combined controls passing. These additional files await the next combined
+rescue commit. Root independently reviewed the metadata-reference projector,
+reran eight controls (0.002s), and verified all 1,679 reference HTML documents.
+One missing HotpotQA acquisition receipt remains explicit; no HTML was executed
+or copied. Operational source review and remaining generated/vendor proofs are
+still in progress. Update final-plan.md only after the full source rescue commit,
+then resume current implementation from maintained owners.
+JavaScript audit follow-up: R1 refused after 42.38s because transpileModule
+cannot emit declaration-only .d.ts files. A cheap actual-compiler reproduction
+confirmed that cause. Correction 70db92af78598572f3a19fc01239e9205336ff40 records
+those candidates as nonemitting and reports candidate identity on other compiler
+failures. Root reviewed the change, reran eleven controls (0.002s), verified human
+DCO and audited thirteen Git outputs. R2 completed in 74.3837234s against the
+original 300s bound: 39,951 JS paths/1,206 hashes inspected, 35,129 paths/715 hashes
+matched exact generation evidence; 4,822 paths/491 hashes remain unresolved or
+assigned separate vendor/source review. Receipt source-javascript-provenance-r2.json
+SHA a43d5e3bc530779a659c8ae3ba7dacc2806fa83bba262eb1b8e80075153a7ed0.
+R1 evidence remains unchanged; no historical JavaScript was executed.
+
+Operational history revision 2 is frozen for combined commit with map
+32d5a3cb128fa0b0a9ecf07b1c94a8d8deae0ec6168ded22623d241e1a12756f:
+2,413 origins, 2,047 new distinct source copies and seven existing-owner aliases.
+Root reviewed purpose/limits, reproduction adapter and complete-folder roster
+controls, independently rerunning seven tests in 1.291s. Eighteen build CMDs are
+preserved explicitly as historical generated copies with producer candidates;
+this does not assert exact replay. Private/vendor/generated exclusions have
+separate evidence. Archive/browser proof review corrected consumed-byte pinning
+and withheld provisional claims after final validation failures; root reran six
+archive controls (0.003s) and five browser controls (0.001s), including an
+independent RSA vector and mutation refusals. Fresh proof projections are pending.
+### 17 November: final rescue reconciliation and rk installer scope
+
+Operational history's final map is now
+c38bda3e9d38bb9b3dcc359fa20f943ddc8bc513cfdd2507eca31c1e675a289e;
+the earlier map above remains historical. The source-rescue catalogue now links
+190 receiving READMEs. Independent source-inventory review passes 50 tests,
+including explicit byte-range extraction that keeps the extracted source hash
+separate from its surrounding report. The finite 830-document follow-up has
+zero unexplained authored bodies; receipt embedded-bounded-coverage-r3.json
+SHA 19855837c120494a5d907004a8fa7666fad2e44389ca2dd92811aaabd7f0f604.
+This does not close the separately recorded broad parse, size, name-pruning and
+historical access limits. The final frozen inventory union is being reconciled;
+no all-artifacts completion claim is made before that result.
+
+Root reviewed cleanup planning/apply and independently passed 21 controls
+(0.006s), including source-owner/SDDL rechecks, batched observations and final
+input-drift barriers. No originals have been deleted. Cleanup follows the broad
+rescue commit, a separate preservation-test transition, and explicit per-file
+consumer review. Live historical helper dependencies, mixed evidence containers,
+private data and retained research outputs remain excluded. Root also reviewed
+role-only CMake evidence (5 controls), non-script roles (6 controls), vendor
+document evidence (9 controls), and runbook preservation (3 controls). These
+establish the stated bounded roles/source inverses, not historical native builds.
+
+The user authorized Azure-style rk launchers, then explicitly required Windows,
+macOS and Linux support and user-facing examples using rk. Windows packaging,
+Unix/native ownership and current CLI documentation proceed in parallel. The
+actual executable stays airkctl; no third compiled executable or new crate.
+Windows uses a CMD launcher and Unix uses an exec wrapper. Existing shortcut
+receipt semantics remain unchanged; a separately documented native ownership
+contract covers Unix rk creation, recovery and exact owned cleanup. Portable
+packages retain their no-PATH-mutation policy. Examples explain PATH discovery
+and retain canonical airkctl as an equivalent command. No profile, ACL or account
+changes, deployment or publication are authorized by this feature.
+The reviewed broad source checkpoint contains 4,226 staged paths. The final
+stage audit verifies 5,810 exact raw Git blobs against reviewed bytes; receipt
+source-rescue-stage-and-whitespace-audit-r1.json SHA
+52cc57839356bc45af9aff37d4ccb1ef252307d6d960fb3e6f6673a7843e8b8b.
+All 45,775 whitespace findings across 765 paths are preserved historical source
+or exact upstream notices, with per-path inverse/member evidence; none belongs
+to newly authored helpers. Repository checks pass for 9,702 public files.
+The late Cargo provenance helper adds three independently passing controls and
+accounts for 120 generated-input roles without historical-execution claims.
+The finite 641-row CMake remainder (362 distinct bodies, 795,456 bytes) identifies
+no additional authored AIRK source; source-cmake-residual-manual-review-r1.json
+SHA 06c970a17f97620b16c1d377f075cddf1fc43bf58f13c076e8826db9d25abd65.
+
+Aggregate reconciliation is NOT complete. R1 was deliberately interrupted at
+654.0047 seconds after identifying 11,889 repeated immutable Git lookups.
+An independently reviewed cache reduces these to 208 distinct proofs, verified
+in 5.70 seconds; root's full utility selection passes 60 controls in 0.206s.
+The two changed utility blobs were separately compared against their staged raw
+Git identities. R2 nevertheless reaches its original 900-second deadline in
+serial disposition-source verification, before the candidate worker phase.
+Its empty output and timeout receipt remain retained; timeout receipt SHA
+6aa3d87d5edf5a36ece5d57f001140f4d81c772b856942be568802abf884ddac.
+No completed aggregate report or all-artifacts pass is claimed. The source
+checkpoint rests on the separately reviewed 29 maps/7,586 migration rows and
+exact staged-byte audit. Further aggregate work requires phase diagnostics and
+reviewed parallel verification, not an unchanged retry or a wider timeout.
+No original artifact code has been removed.
+
+Alias requirements now include interactive alternative-name/no-alias choice and
+unattended first-free rk, rk1, rk2 numbering, recorded in airkctl-aliases.txt.
+Root independently passes 13 Windows/portable controls (1.537s); six Unix shell
+control groups pass under their owner's guarded fixture. Actual unchanged Inno
+source compiles with inert payloads in 1.524s; the resulting installer was not
+executed. Native Clippy R1 fails on a nonexistent directory path accessor;
+R2 confirms the API correction and reports two strict lint findings. Their
+corrections and an exact-handle Windows note-stream regression await the next
+scoped native checks. These uncommitted feature edits are separate from rescue.
+Root audited 490 new build outputs and 4,155 recent Git outputs as human-owned.
+
+At 2026-11-17T22:45:07Z the user requested hourly overall-plan updates covering
+completed work, outstanding tasks, blockers and next actions. Continue that
+cadence while actively working; the next update is due at 23:45:07Z. No hosted
+conversation scheduler is available, so this is an active-work reporting duty.

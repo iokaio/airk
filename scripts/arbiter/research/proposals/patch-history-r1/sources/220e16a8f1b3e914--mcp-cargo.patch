@@ -1,0 +1,8 @@
+--- crates/airk-mcp/Cargo.toml
++++ crates/airk-mcp/Cargo.toml
+@@ -31,4 +31,5 @@
+ futures.workspace = true
+ 
+ [dev-dependencies]
++sha2.workspace = true
+ tempfile.workspace = true

@@ -1,0 +1,251 @@
+--- a/docs/service-project-retirement.md
++++ b/docs/service-project-retirement.md
+@@ -1,12 +1,55 @@
+ # Guarded project retirement
+ 
+-## Current 1.6.4 removal contract
++## Missing files, source folders and index storage in the 1.8.8 working build
++
++**Post-P14 development behavior; local qualification is in progress.** Earlier
++P14 tests qualify their recorded source and package identities, not this added
++recovery path. Version 1.8.8 remains unpublished.
++
++A missing source is not an instruction to forget its index. When storage remains,
++retained evidence can still be available with verification **Off**. **Report**
++labels observed source-verification failures; **Require** enforces verification.
++Resume paused work and explicitly update an existing index to publish individual
++file removals. Retiring the entire index is a separate reviewed choice.
++
++Missing index storage is reported as an unavailable member. For a Project that
++combines indexes, member availability **Report** keeps healthy members' evidence
++and the complete failed-member details. **Require** refuses an incomplete result.
++Source verification and member availability are separate controls. Neither read
++path unregisters an index, recreates a missing folder or silently narrows a grant.
++
++To remove an unwanted index, select it in **Indexing > Index library** and use
++**Prepare native index-retirement review**. Inspect the native effect and apply
++that reviewed request explicitly. Retirement cancels the selected index's work,
++disables its source authority and removes its current Project memberships and
++default references, including unsupported context defaults. Other memberships,
++associations and independent indexes remain intact. Frozen grants and historical
++receipts remain unchanged: an old grant that names the retired index becomes
++stale; review and use a fresh grant for the desired remaining Project defaults.
++An active reviewed split can require its exact recovery to finish first.
++
++Logical retirement and physical cleanup are reported separately. Cleanup can
++settle a missing collection or a wholly missing data-root ancestor using retained
++native ownership and qualified absence; it does not create replacement folders,
++ledgers or locks merely to remove references. When a shared data root remains,
++cleanup releases only the retired index's proven disposable allocations. A
++surviving owner, unknown file, changed binding or returned foreign storage keeps
++cleanup pending rather than deleting unrelated data or releasing its credit.
++Interrupted cleanup retains its native proof and resumes through the existing
++owner. Source files, other indexes and shared models are preserved. This is
++logical deletion, not secure erasure of earlier results, exports or backups.
++
++A fresh upgrade from 1.8.7 can require a different preactivation recovery when an
++old index's source configuration is unavailable. See [explicit legacy upgrade
++retirement](service-installation.md#unavailable-legacy-index-during-upgrade).
++
++## Historical 1.6.4 removal contract
+ 
+ Removal cancels work, stops monitoring and new admission, drains owned workers, then automatically deletes the ownership-matched index, usage ledger and saved project settings. Registry details and job/configuration receipts are removed after files are gone. Opaque identifiers and removal time remain as minimal history and an opt-out marker. Sources and shared model assets are untouched. Pending removal is durable and resumes after interruption; it is not reported complete until deletion finishes. Earlier inactive registrations enter this path during the schema-10 migration. Unknown entries, aliases, ownership failures and held leases defer deletion and report failure. See [1.6.4](releases/release-1.6.4.md).
+ 
+ ## Historical two-step implementation through 1.6.1
+ 
+-The remainder records the earlier unregister/retained-cleanup behavior and its original validation; it is superseded by the current removal contract above.
++The remainder records the earlier unregister/retained-cleanup behavior and its original validation; it is superseded by the later removal contracts above.
+ 
+ Development work for 1.4.0. Unregister and deletion of derived state are separate operations. This contract does not authorize automatic cleanup of 1.3 state or unknown directories.
+ 
+--- a/docs/service-installation.md
++++ b/docs/service-installation.md
+@@ -1,5 +1,46 @@
+ # Offline service installation and lifecycle
+ 
++## Unavailable legacy index during upgrade
++
++The unpublished 1.8.8 working source adds explicit recovery for a **fresh upgrade
++from 1.8.7** whose saved index configuration is `pending_metadata`, for example
++after its source and storage ancestor disappeared. **Qualification is in
++progress.** Missing source files alone do not require this path when the saved
++index configuration is still available. The installer otherwise fails closed;
++it does not grant access to an unknown old index or treat it as an empty source.
++
++In VS Code, run **AIRK: Review unavailable legacy upgrade index retirement**.
++Choose the saved unavailable index and inspect its complete native review: exact
++source/storage registration, accepting candidate, original backup and affected
++work. **Authorize reviewed retirement** saves that exact authorization only.
++**Resume accepted same-candidate activation** is a separate confirmed action.
++The native owner can then retire that index logically and finish activation
++without changing a healthy index's original source, registration or retained
++publication. Returned storage is preserved for separately guarded cleanup.
++
++**Check exact receipt** reads the original saved request. Missing or uncertain
++receipts do not authorize a new key or automatic resubmission. Complete details,
++JSON/Markdown copies and exports retain the full native result. An **Applied**
++receipt records historical logical retirement with physical cleanup pending; it
++is not current activation readiness or an evidence grant. Reopening the view
++selects no evidence scope. The evidence MCP interface remains read-only.
++
++The equivalent local CLI commands are `runtime legacy-retirement-candidates`,
++`runtime legacy-retirement-review`, `runtime legacy-retirement-authorize`,
++`runtime legacy-retirement-receipt` and `runtime legacy-retirement-resume`, each
++with the exact `--install-dir`. Review also takes `--index-id`; candidate pages
++accept the returned `--after` continuation. Authorization receives the exact
++native `preview` and `review_digest` JSON on stdin; receipt/resume receive the
++original native request JSON. Preserve the returned caller and key. These are
++runtime administration commands, not an additional MCP mutation route.
++
++Recovery must use the candidate that owns the saved installer identity. This
++fresh-upgrade path does not let another binary take over an older pending
++activation. A changed unconfirmed review requires a new explicit review; an
++already accepted retirement remains durable if genuine source metadata returns.
++Physical cleanup still checks the actual ownership and absence conditions in
++[guarded index retirement](service-project-retirement.md).
++
+ See [process counts and ownership](process-model.md) for the purpose of each executable, Windows launcher chains, the observed installed 1.6.3 topology and the limits of identifying obsolete agent sessions from a process list.
+ 
+ Since 1.5.4, upgrade behavior is: after validating and recording the exact candidate and predecessor intent, the installer stops the verified optional manager and forcibly terminates same-user processes using the approved predecessor main/helper and receipt-verified stable launcher on Windows and Linux. Captured native process handles (Windows) or pidfds (Linux) prevent PID reuse from redirecting termination. This works with previous releases without requiring a new shutdown protocol. The shared exit wait is five seconds; payload verification, manager control, copying and startup are additional. Connected AIRK clients are disconnected and must reconnect. macOS retains authenticated control/manager shutdown pending a native forced-stop implementation and qualification. Unknown executables and foreign installations are preserved. The new installer must run outside the predecessor payload/launcher. Previous-payload retirement uses the same verified hard stop before cleanup and restarts the selected service afterward. An exactly verified healthy instance deliberately stopped for cleanup restarts without crash backoff; unobserved or failed startup retains the existing circuit.
+--- a/README.md
++++ b/README.md
+@@ -3,6 +3,12 @@
+ **1.8.8 is an unpublished manual-test working build.** Accepted local P9–P12 work adds permanent exclusions, reviewed index splitting, per-file profile reporting, explicit Lean/Rich retained profiles and reviewed reference refresh with separate requery. P13 retains current ranking and diversity. P14 selected local qualification includes Windows native tests and documented editor coverage. Manual acceptance and release promotion remain separate. See the [working-build record](docs/releases/release-1.8.8.md) and [implementation ledger](docs/research/implementation-v190.md) for exact evidence, failures and platform limits.
+ 
+ Opening a trusted folder does not register or index it. Use **Indexing > Index library** to review sources, storage and watching; create Project memberships and review an access grant, then explicitly **Use Grant for this window**. Evidence reads and source verification do not start indexing.
++
++**Missing sources and storage:** the working source adds [reviewed index
++retirement and cleanup](docs/service-project-retirement.md) for removed files or folders and separate
++[unavailable legacy-index upgrade recovery](docs/service-installation.md#unavailable-legacy-index-during-upgrade). Healthy indexes keep
++their independent evidence; old grants are never silently narrowed. Post-P14
++recovery qualification is in progress and does not inherit earlier P14 passes.
+ 
+ **Find the code and documents behind a feature. Give your coding agent cited evidence, or explore it yourself in AIRK Workbench.**
+ 
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -3,6 +3,12 @@
+ **1.8.8 is an unpublished manual-test working build.** Accepted local P9–P12 work adds permanent exclusions, reviewed index splitting, per-file profile reporting, explicit Lean/Rich retained profiles and reviewed reference refresh with separate requery. P13 retains current ranking and diversity. P14 selected local qualification includes Windows native tests and documented editor coverage. Manual acceptance and release promotion remain separate. See the [working-build record](releases/release-1.8.8.md) and [implementation ledger](research/implementation-v190.md) for exact evidence, failures and platform limits.
+ 
+ Opening a trusted folder does not register or index it. Use **Indexing > Index library** to review sources, storage and watching; create Project memberships and review an access grant, then explicitly **Use Grant for this window**. Evidence reads and source verification do not start indexing.
++
++**Missing sources and storage:** the working source adds [reviewed index
++retirement and cleanup](service-project-retirement.md) for removed files or folders and separate
++[unavailable legacy-index upgrade recovery](service-installation.md#unavailable-legacy-index-during-upgrade). Healthy indexes keep
++their independent evidence; old grants are never silently narrowed. Post-P14
++recovery qualification is in progress and does not inherit earlier P14 passes.
+ 
+ | Current guide | Scope |
+ | --- | --- |
+@@ -13,6 +19,8 @@
+ | [Permanent source exclusions](source-policy.md) | Native enforcement, removal publications and separate reclamation |
+ | [Combined Project reads](combined-reads.md) | Unique-index composition, scope and complete member results |
+ | [Recommendations](recommendations.md) | Bounded metadata advice and separately reviewed defaults |
++| [Guarded index retirement](service-project-retirement.md) | Missing files/storage, current-reference cleanup and independent indexes |
++| [Unavailable legacy-index upgrade](service-installation.md#unavailable-legacy-index-during-upgrade) | Explicit same-candidate retirement before activation; complete native receipts |
+ 
+ The [1.8.8 working-build record](releases/release-1.8.8.md) and
+ [implementation ledger](research/implementation-v190.md) retain exact source/runtime
+--- a/packages/vscode/README.md
++++ b/packages/vscode/README.md
+@@ -3,6 +3,12 @@
+ **1.8.8 is an unpublished manual-test working build.** Accepted local P9–P12 work adds permanent exclusions, reviewed index splitting, per-file profile reporting, explicit Lean/Rich retained profiles and reviewed reference refresh with separate requery. P13 retains current ranking and diversity. P14 selected local qualification includes Windows native tests and documented editor coverage. Manual acceptance and release promotion remain separate. See the [working-build record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.8.md) and [implementation ledger](https://github.com/iokaio/airk/blob/main/docs/research/implementation-v190.md) for exact evidence, failures and platform limits.
+ 
+ Opening a trusted folder does not register or index it. Use **Indexing > Index library** to review sources, storage and watching; create Project memberships and review an access grant, then explicitly **Use Grant for this window**. Evidence reads and source verification do not start indexing.
++
++**Missing sources and storage:** the working source adds [reviewed index
++retirement and cleanup](https://github.com/iokaio/airk/blob/main/docs/service-project-retirement.md) for removed files or folders and separate
++[unavailable legacy-index upgrade recovery](https://github.com/iokaio/airk/blob/main/docs/service-installation.md#unavailable-legacy-index-during-upgrade). Healthy indexes keep
++their independent evidence; old grants are never silently narrowed. Post-P14
++recovery qualification is in progress and does not inherit earlier P14 passes.
+ 
+ **Find the code and documents behind a feature. Give your coding agent cited evidence, or explore it yourself in AIRK Workbench.**
+ 
+--- a/docs/releases/release-1.8.8.md
++++ b/docs/releases/release-1.8.8.md
+@@ -1,4 +1,22 @@
+ # AIRK 1.8.8 manual-test working build
++
++## Post-P14 removed-source recovery (6 November 2026; qualification in progress)
++
++The working source adds explicit retirement after source or storage loss,
++ownership-checked absent-storage cleanup and removal of current Project/default
++references while preserving frozen grants and healthy indexes. A fresh 1.8.7
++upgrade can separately review an unavailable old index, save its exact native
++authorization and explicitly resume the same candidate. Logical Applied,
++physical cleanup, activation readiness and evidence authority remain separate.
++See [guarded retirement](../service-project-retirement.md) and
++[upgrade recovery](../service-installation.md#unavailable-legacy-index-during-upgrade).
++
++The first post-P14 focused run failed; corrections and current-source validation
++remain in progress. Earlier P14 evidence below retains its original source,
++package identities and platform limits. It does not qualify this added behavior
++or the final current-source local test installer. Version 1.8.8 is unpublished.
++
++## Retained local phase checkpoints
+ 
+ The unpublished **1.8.8 manual-test working build** includes accepted local
+ P9 permanent exclusions, P10 reviewed index splitting, P11a per-file profile
+--- a/docs/releases/release-1.9.0.md
++++ b/docs/releases/release-1.9.0.md
+@@ -1,4 +1,12 @@
+ # Planned AIRK 1.9.0 release and development checkpoints
++
++Post-P14 removed-source/storage retirement and fresh 1.8.7 legacy upgrade
++recovery are implemented in the working source and under local qualification.
++The [1.8.8 working-build record](release-1.8.8.md#post-p14-removed-source-recovery-6-november-2026-qualification-in-progress)
++separates this follow-up from the retained P14 checkpoints below. The local test
++installer and manual acceptance remain separate; no promotion is claimed.
++
++## Retained phase-plan record
+ 
+ This is the planned promotion record, not a published release. The current
+ working version remains **1.8.8**. P9 exclusions, P10 splitting and P11a/P11b
+--- a/docs/research/implementation-v190.md
++++ b/docs/research/implementation-v190.md
+@@ -9,7 +9,7 @@
+ Progress below is observed local evidence; it does not establish publication or
+ cross-platform qualification.
+ 
+-**Current checkpoint, 6 November 2026 - P14 selected local qualification results:** P9-P12 remain accepted
++**Retained P14 checkpoint, 6 November 2026 - selected local qualification results:** P9-P12 remain accepted
+ for unpublished local development. P13 retained ranking/diversity; no candidate
+ or gain is claimed. Current source `237f8969...` / 960 inputs adds bounded lifecycle installation-lock
+ admission to cold-default split and typed quota-read corrections. Prior source
+@@ -5133,3 +5133,36 @@
+ release/publication qualification follows without its actual evidence. Collected
+ receipts retain their actual source identities; old artifacts are not relabeled. Earlier
+ P12 and other dated records remain unchanged.
++
++## Post-P14 removed-source and storage recovery — 6 November 2026 (qualification in progress)
++
++The follow-up implements explicit index retirement and cleanup after individual
++file, whole-source-root or storage loss, preserving independent indexes and
++immutable grant/receipt history. Retire removes current Project membership and
++default references; a fresh remaining scope requires explicit grant review.
++Missing data is qualified through retained native custody and absence rather
++than recreation. A fresh actual 1.8.7 upgrade has a separate native reviewed
++retirement/authorization/receipt/resume path before activation. This does not
++support taking over an older pending upgrade under a different installer.
++
++The initial post-P14 focused Windows selection on native source
++`d7bda22429831bf84a364d97c7b172876ba4344241fcb0e4823e6dc96da4d83c`
++/ 968 inputs finished with **23 passed / 14 failed**. Its **336.6669 s** wrapper,
++immutable JUnit, complete failure output and source-preservation receipt remain
++failed evidence. The nine new Store legacy cases produced **2 passed / 7 failed**:
++five fixture canonical-order refusals, one missing committed receipt and one
++terminal new-write-marker refusal. Audit found that path-derived A/B bindings
++must be sorted for native plan admission, and that canonical retirement writes
++already set the existing activated catalog's new-write marker through validated
++SQL triggers. Corrections retain all native owner/fence/transaction checks and
++require the interruption tests to reach their actual intended checkpoints.
++CLI consumer/fixture failures and the independent ordinary-cleanup interruption
++regression are tracked separately; these observations are not a passing result.
++
++Current corrected scoped/full Rust, actual predecessor/debug process and
++compiled-host complete-result parity, portable Neo and final local installer
++checks still require their own retained outcomes. Neo testing must end with
++Cargo cleanup and verified target absence. No new optimized/signed Mac campaign,
++Linux/Intel/editor qualification, release promotion or publication is inferred.
++The accepted P14 source `237f8969...` and its earlier `5d8912b1...` evidence above
++retain their original identities and limits. Working version remains **1.8.8**.

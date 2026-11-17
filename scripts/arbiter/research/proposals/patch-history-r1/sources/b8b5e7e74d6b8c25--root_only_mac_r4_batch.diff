@@ -1,0 +1,32 @@
+--- reviewed-r3.py
++++ root_only_mac_r4_batch.py
+@@ -1,17 +1,17 @@
+-"""ROOT ONLY: current eac7 Mac R3 cargo-test scoped batch; preparation only."""
++"""ROOT ONLY: isolated Mac two-fix R4 cargo-test scoped batch; preparation only."""
+ from pathlib import Path
+ import hashlib,importlib.util,json,os,platform,shutil,subprocess,sys,time
+ SOURCE=Path('/Users/tylerjensen/airk-builds/advanced-split-local-delivery-r2/source')
+ BASE=SOURCE.parent
+ TARGET=SOURCE/'artifacts/v190/p10-target'
+-OUT=BASE/'receipts/native-platform-r3'
++OUT=BASE/'receipts/native-platform-r4'
+ PREREQS=Path('/Users/tylerjensen/airk-builds/advanced-split-local-delivery-prerequisites-r1')
+ PYTHON=Path('/Users/tylerjensen/Code/airk/artifacts/tools/neo-python-3.13.18/bin/python3.13')
+ CARGO=Path('/Users/tylerjensen/.cargo/bin/cargo')
+ NODE=PREREQS/'tools/node-v24.15.0-darwin-arm64/bin/node'
+ STATIC=Path('/Users/tylerjensen/Code/airk/artifacts/advanced-split/ort130-arm64-env.json')
+ INVENTORY=PREREQS/'inputs/runtime-handoff-r1/admin-assets.json'
+-NATIVE_SHA='eac7b9aac9a5a9943422a08406dd9602da55a35d2d7ed7cbceb24a2f4bdc29c5'
++NATIVE_SHA='3a9a089fa36e02c57e6baedb0452a200d2d8a567150dc6e5e519e45fc8cae903'
+ 
+ def load(name,path):
+  spec=importlib.util.spec_from_file_location(name,path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
+@@ -43,7 +43,7 @@
+  stages=[
+   ('scoped-clippy',[str(CARGO),'clippy','-p','airk-service','-p','airk-supervisor','-p','airk-kernel','--all-targets','--all-features','--locked','--timings','--','-D','warnings'],None),
+   ('bridge-six',[str(CARGO),'test','-p','airk-service','-p','airk-supervisor','-p','airk-kernel','--all-features','--lib','--locked','--timings','runtime_metadata::arbiter::tests::sync_control_','--','--test-threads=2'],6),
+-  ('matched-pair-model-smoke',[str(PYTHON),'-I','-B','scripts/build-service-runtime.py','--destination',str(BASE/'artifacts/runtime-recovery-r3'),'--profile','release-local','--admin-inventory',str(INVENTORY)],None),
++  ('matched-pair-model-smoke',[str(PYTHON),'-I','-B','scripts/build-service-runtime.py','--destination',str(BASE/'artifacts/runtime-recovery-r4'),'--profile','release-local','--admin-inventory',str(INVENTORY)],None),
+  ]
+  try:
+   for name,command,expected in stages:

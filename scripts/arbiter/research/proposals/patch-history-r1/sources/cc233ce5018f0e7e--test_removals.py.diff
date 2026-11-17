@@ -1,0 +1,15 @@
+--- compact/test_removals.py
++++ large/test_removals.py
+@@ -7,10 +7,10 @@
+         self.args=['Constant_2599','Constant',[],['onnx::Unsqueeze_428'],(7,[1],[0]),
+             [{'name':'/scorer/layers.0/self_attn/Unsqueeze_4','op':'Unsqueeze','inputs':['/scorer/layers.0/self_attn/Gather_2_output_0','onnx::Unsqueeze_428']}],
+             {'/scorer/layers.0/self_attn/Unsqueeze_4'}]
+-    def test_actual_first_global_constant_is_attention_axis(self):
++    def test_literal_global_constant_is_exclusive_attention_axis(self):
+         self.assertEqual(allow(*self.args),0)
+         self.assertFalse(self.args[0].startswith('/scorer/layers.0/self_attn/'))
+-    def test_actual_second_global_constant(self):
++    def test_second_literal_exclusive_attention_axis(self):
+         self.args[0]='Constant_2601';self.args[3]=['onnx::Unsqueeze_430']
+         self.args[5]=[{'name':'/scorer/layers.0/self_attn/Unsqueeze_5','op':'Unsqueeze','inputs':['/scorer/layers.0/self_attn/Gather_1_output_0','onnx::Unsqueeze_430']}]
+         self.args[6]={'/scorer/layers.0/self_attn/Unsqueeze_5'}

@@ -1,0 +1,40 @@
+--- r1/manual-clean-remote.py
++++ r2/manual-clean-remote.py
+@@ -84,18 +84,33 @@
+   for row in rows:
+    parent,name=row['path'].rsplit('/',1) if '/'in row['path'] else ('',row['path']);children[parent].append(name)
+   def root_anchor():
+-   same(targetmeta,meta(os.stat('target',dir_fd=sourcefd,follow_symlinks=False)),True);assert TARGET.resolve(strict=True)==TARGET
++   # The approved target must still occupy its original absolute namespace.
++   assert SOURCE.resolve(strict=True)==SOURCE and TARGET.resolve(strict=True)==TARGET
++   same(meta(os.fstat(sourcefd)),meta(SOURCE.lstat()),True)
++   same(targetmeta,meta(TARGET.lstat()),True)
++   same(targetmeta,meta(os.stat('target',dir_fd=sourcefd,follow_symlinks=False)),True)
++  def parent_anchor(fd,relative):
++   # Reopen from the approved target before each mutation; an opened subtree
++   # moved out of that target may not keep using its old fd for deletion.
++   probe=os.dup(targetfd)
++   try:
++    for part in relative.split('/') if relative else []:
++     assert part not in ['', '.', '..'] and '/'not in part
++     child=os.open(part,FLAGS,dir_fd=probe);os.close(probe);probe=child
++    same(meta(os.fstat(fd)),meta(os.fstat(probe)),True)
++   finally:os.close(probe)
+   def remove(fd,rel):
+    expected=sorted(children[rel])
+    assert sorted(os.listdir(fd))==expected,'directory entries changed'
+    for name in expected:
+-    root_anchor();key=rel+'/'+name if rel else name;m=bypath[key];s=os.stat(name,dir_fd=fd,follow_symlinks=False);admit(meta(s),targetmeta['dev']);isdir=stat.S_ISDIR(s.st_mode);same(m,meta(s),isdir)
++    root_anchor();parent_anchor(fd,rel);key=rel+'/'+name if rel else name;m=bypath[key];s=os.stat(name,dir_fd=fd,follow_symlinks=False);admit(meta(s),targetmeta['dev']);isdir=stat.S_ISDIR(s.st_mode);same(m,meta(s),isdir)
+     if isdir:
+      child=os.open(name,FLAGS,dir_fd=fd)
+      try:same(m,meta(os.fstat(child)),True);remove(child,key)
+      finally:os.close(child)
+-     root_anchor();same(m,meta(os.stat(name,dir_fd=fd,follow_symlinks=False)),True);os.rmdir(name,dir_fd=fd)
+-    else:os.unlink(name,dir_fd=fd)
++     root_anchor();parent_anchor(fd,rel);same(m,meta(os.stat(name,dir_fd=fd,follow_symlinks=False)),True);os.rmdir(name,dir_fd=fd)
++    else:
++     root_anchor();parent_anchor(fd,rel);same(m,meta(os.stat(name,dir_fd=fd,follow_symlinks=False)));os.unlink(name,dir_fd=fd)
+     removed.append(key)
+   remove(targetfd,'');assert not os.listdir(targetfd);root_anchor();os.close(targetfd);targetfd=None;os.rmdir('target',dir_fd=sourcefd)
+   after_status=source_status();assert after_status==before_status,'outside source status changed';assert not os.path.lexists(TARGET);post_processes=processes();fresh('after-processes.json',post_processes);assert not post_processes['blockers'];fresh('after-inventory.json',{'target_exists':False,'entries':[],'source_status':after_status,'space':snapshot()});success=True

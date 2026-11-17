@@ -1,0 +1,142 @@
+// SPDX-License-Identifier: Apache-2.0
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn approved_release_redirects_are_exact_https_and_never_workspace_or_arbitrary_hosts()
+    -> Result<()> {
+        approved(
+            "https://github.com/iokaio/airk/releases/download/v1.9.0/model.part01",
+            true,
+        )?;
+        approved(
+            "https://release-assets.githubusercontent.com/github-production-release-asset/1/2?sig=opaque",
+            false,
+        )?;
+        for url in [
+            "http://github.com/iokaio/airk/releases/download/v1.9.0/m",
+            "https://github.com/other/airk/releases/download/v1/m",
+            "https://github.com@evil.invalid/iokaio/airk/releases/download/v1/m",
+            "https://release-assets.githubusercontent.com/other/1",
+            "https://github.com:444/iokaio/airk/releases/download/v1/m",
+            "https://example.invalid/m",
+        ] {
+            assert!(approved(url, false).is_err(), "{url}");
+        }
+        assert!(
+            approved(
+                "https://release-assets.githubusercontent.com/github-production-release-asset/1/2",
+                true
+            )
+            .is_err()
+        );
+        Ok(())
+    }
+    #[tokio::test]
+    async fn streamed_part_hash_and_length_failures_never_publish_logical_asset() -> Result<()> {
+        use airk_store::service::{
+            ServiceLease,
+            arbiter_assets::{AssetStore, Phase},
+        };
+        let root = tempfile::tempdir()?;
+        let lease = Arc::new(ServiceLease::acquire(root.path())?);
+        let store = AssetStore::open(
+            lease,
+            airk_core::identity::Sha256Digest::from_bytes([1; 32]),
+            airk_core::identity::Incarnation::from_bytes([2; 16]),
+        )?;
+        let mut profile: Profile = serde_json::from_slice(include_bytes!(
+            "../../../../../fixtures/arbiter/profile-downloads.json"
+        ))?;
+        // This is a Store/stream boundary fixture, not a qualified model.
+        profile.qualification = None;
+        profile.stage = Some(airk_core::arbiter::Stage::Context);
+        profile.model = airk_core::arbiter::ModelChoice::ContextQwenCompact;
+        profile.tasks = std::collections::BTreeSet::from([airk_core::arbiter::Task::ContextAction]);
+        let task_policy = airk_retrieval::arbiter::context_action::policy_digest()?;
+        profile.task_policies = std::collections::BTreeMap::from([(
+            airk_core::arbiter::Task::ContextAction,
+            task_policy,
+        )]);
+        profile.abi = super::super::failure_tests::structural_context_abi();
+        let digest = airk_core::identity::Sha256Digest::from_bytes(Sha256::digest(b"hello").into());
+        profile.assets.truncate(6);
+        profile.peak_disk_bytes = 1 << 20;
+        for asset in &mut profile.assets {
+            asset.bytes = 10;
+            asset.sha256 =
+                airk_core::identity::Sha256Digest::from_bytes(Sha256::digest(b"helloworld").into());
+        }
+        // Descriptor pins name the exact raw fixture bytes, just like the
+        // logical assets; the injected part failures below remain unchanged.
+        profile.compiler =
+            airk_core::identity::Sha256Digest::from_bytes(Sha256::digest(b"helloworld").into());
+        profile.calibration =
+            airk_core::identity::Sha256Digest::from_bytes(Sha256::digest(b"helloworld").into());
+        let transaction = store.begin(&profile, 1)?;
+        let mut writer = transaction
+            .asset(&profile.assets[0])?
+            .context("missing stage")?;
+        let first = AssetPart {
+            url: "https://github.com/iokaio/airk/releases/download/v1.9.0/model.part01".into(),
+            backup_urls: vec![],
+            bytes: 5,
+            sha256: digest,
+        };
+        consume(
+            http_body_util::Full::new(bytes::Bytes::from_static(b"hello")),
+            &first,
+            &mut writer,
+        )
+        .await?;
+        let mut second = first.clone();
+        second.sha256 =
+            airk_core::identity::Sha256Digest::from_bytes(Sha256::digest(b"world").into());
+        consume(
+            http_body_util::Full::new(bytes::Bytes::from_static(b"world")),
+            &second,
+            &mut writer,
+        )
+        .await?;
+        transaction.publish(writer)?;
+        let mut bad = transaction
+            .asset(&profile.assets[1])?
+            .context("missing bad stage")?;
+        assert!(
+            consume(
+                http_body_util::Full::new(bytes::Bytes::from_static(b"wrong")),
+                &first,
+                &mut bad
+            )
+            .await
+            .is_err()
+        );
+        assert!(transaction.publish(bad).is_err());
+        let mut oversized = transaction
+            .asset(&profile.assets[2])?
+            .context("missing size stage")?;
+        assert!(
+            consume(
+                http_body_util::Full::new(bytes::Bytes::from_static(b"hello!")),
+                &first,
+                &mut oversized
+            )
+            .await
+            .is_err()
+        );
+        drop(transaction);
+        assert_eq!(store.phase(&profile)?, Some(Phase::Failed));
+        assert!(store.pin(&profile).is_err());
+        let path = root
+            .path()
+            .join("arbiter-v3/assets")
+            .join(profile.manifest.to_string());
+        assert_eq!(
+            std::fs::read(path.join(&profile.assets[0].name))?,
+            b"helloworld"
+        );
+        assert!(!path.join(&profile.assets[1].name).exists());
+        assert!(!path.join(&profile.assets[2].name).exists());
+        Ok(())
+    }
+}

@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Explicitly launch OR collect one already frozen P10 Neo batch."""
+import hashlib,json,re,subprocess,sys,tempfile
+from pathlib import Path
+base=Path(__file__).resolve().parent
+action,label=sys.argv[1:]
+assert action in ['launch','collect'] and re.fullmatch(r'p10-native-[a-z0-9-]+',label)
+connection=json.loads((base/'neo-connection.local.json').read_text(encoding='utf-8-sig'))
+peer=connection['user']+'@'+connection['host']
+ssh=['ssh','-i',connection['identity_path'],*connection['ssh_options'],peer]
+scp=['scp','-i',connection['identity_path'],*connection['ssh_options']]
+remote='/Users/tylerjensen/airk-builds/'+label
+def download(name,local_name,optional=False):
+    # Download independently before touching immutable local evidence. Repeat
+    # collection may verify identical bytes, never replace a prior receipt.
+    destination=base/local_name
+    with tempfile.TemporaryDirectory(prefix='p10-neo-collect-',dir=base) as scratch:
+        fresh=Path(scratch)/'download'
+        result=subprocess.run([*scp,peer+':'+remote+'/'+name,str(fresh)])
+        if result.returncode:
+            assert optional, 'Required remote evidence unavailable: '+name
+            return False
+        content=fresh.read_bytes()
+        if destination.exists():
+            assert destination.read_bytes()==content, 'Different immutable local evidence: '+local_name
+        else:
+            with destination.open('xb') as output: output.write(content)
+    return True
+if action=='launch':
+    for suffix in ['.tar.gz','-snapshot.json','-plan.json','-runner.py']:
+        assert (base/(label+suffix)).is_file()
+    subprocess.run([*ssh,'umask 077; mkdir '+remote],check=True)
+    for path,name in [(base/(label+'.tar.gz'),'source.tar.gz'),(base/(label+'-snapshot.json'),'snapshot.json'),
+                      (base/(label+'-plan.json'),'plan.json'),(base/(label+'-runner.py'),'runner.py'),(base/'p10-neo-owner.py','owner.py')]:
+        subprocess.run([*scp,str(path),peer+':'+remote+'/'+name],check=True)
+    command='cd '+remote+' && nohup /Users/tylerjensen/airk-builds/timing-1.6.4.PutU1P/tools/python3.13 owner.py > owner.log 2>&1 < /dev/null &'
+    subprocess.run([*ssh,command],check=True)
+    with (base/(label+'-active.json')).open('x',encoding='utf-8') as output:
+        output.write(json.dumps({'remote':remote,'snapshot':label,'cleanup':'owner finally cargo clean + target absence verification'})+'\n')
+else:
+    subprocess.run([*ssh,'test -f '+remote+'/cleanup.json && test ! -e '+remote+'/target'],check=True)
+    plan=json.loads((base/(label+'-plan.json')).read_text(encoding='utf-8'))
+    planned={row['name']:row for row in plan['steps']}
+    assert len(planned)==len(plan['steps'])
+    assert all(re.fullmatch(r'[A-Za-z0-9_-]+',name) for name in planned)
+    for name in ['cleanup.json','cargo-clean.log','owner.log','timings.json']:
+        download(name,label+'-'+name)
+    available=[]
+    for name in ['qualification.json','steps.json']:
+        if download(name,label+'-'+name,optional=True):
+            available.append(name)
+    steps=json.loads((base/(label+'-steps.json')).read_text(encoding='utf-8')) if 'steps.json' in available else []
+    assert [row['name'] for row in steps]==list(planned)[:len(steps)], 'Remote steps differ from frozen local plan'
+    for row in steps:
+        assert row['name'] in planned
+        expected=[item.replace('{run}',remote).replace('{source}',remote+'/source') for item in planned[row['name']]['command']]
+        assert row['command']==expected, 'Remote command differs from frozen plan'
+        download(row['name']+'.log',label+'-'+row['name']+'.log')
+    timings=json.loads((base/(label+'-timings.json')).read_text(encoding='utf-8'))
+    assert len(timings['files'])<=256
+    seen=set()
+    for row in timings['files']:
+        name=row['name']
+        assert re.fullmatch(r'[A-Za-z0-9._-]+[.]html',name) and name not in seen
+        seen.add(name)
+        assert re.fullmatch(r'[a-f0-9]{64}',row['sha256']) and 0<=row['bytes']<=64<<20
+        local=label+'-timing-'+name
+        download('cargo-timings/'+name,local)
+        content=(base/local).read_bytes()
+        assert len(content)==row['bytes'] and hashlib.sha256(content).hexdigest()==row['sha256']
+    cleanup=json.loads((base/(label+'-cleanup.json')).read_text(encoding='utf-8'))
+    assert cleanup['cargo_clean_exit_code']==0 and cleanup['target_removed']
+print(action,label)

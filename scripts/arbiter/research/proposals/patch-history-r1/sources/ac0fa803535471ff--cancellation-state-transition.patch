@@ -1,0 +1,15 @@
+@@ lifecycle.rs: cancellation transition before native release
+fn cancel_current(state: &mut State) {
+    state.pending = None;
+    if state.busy {
+        state.cancel.cancel();
+        if state.phase != Availability::Draining {
+            state.phase = Availability::Requested;
+        }
+        state.reason = "Cancellation requested; the original operation must settle. Actual native drains retain their owned completion proof.".into();
+    }
+}
+
+@@ manage Cancel: replace state.pending=None / cancel / unconditional phase assignment with cancel_current(&mut state), retain actual handle.release_profile(profile) inside original busy guard.
+
+@@ regression: start -> Downloading -> cancel_current -> complete(Err) => !busy/Requested, serial unchanged/token canceled; start -> Draining -> cancel_current -> complete(Err) => !busy/Draining, preserving unknown actual native drain.

@@ -1,0 +1,1075 @@
+--- a/crates/airk-inference/src/inference_engine/pool/arbiter/CONTRACT.md
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/CONTRACT.md
+@@ -375,3 +375,46 @@
+ claimed in /2. No task/model/release qualification is granted. Removing the old
+ save-heavy helper is conditioned on its single caller migration and clean
+ scoped compilation; immutable old image/run evidence remains preserved.
++
++
++Private selected-model GQA diagnostic extension (proposal; no qualification)
++
++The existing test-support-only same-weight metadata regeneration /2 accepts
++exactly one optional graph override: retained compact_graph or additive
++large_graph. /1 accepts neither; both together are refused. Rust selects the
++original model independently of caller graph metadata. Compact remains exact
++28-layer/Q16/KV8/head128/context2048, CPU4/16GiB. Large is exact
++36-layer/Q32/KV8/head128/context4096, CPU16/40GiB; its backbone hidden2560 is
++not its attention output4096. Large keeps its original 48GiB outer Job cap and
++120s native load/score deadlines. No ordinary Scorer constructor or public
++catalog/download authority changes. No full-model optimized snapshot is saved.
++
++The new source-pinned Large graph rewrite keeps all original initializers,
++external byte ranges, projection/QK-normalization/rotary/readout nodes and the
++six-input/scores-only ABI. Only the reviewed attention subgraphs and their
++exclusive literal Unsqueeze-axis constants may disappear. The exact original
++Large graph is f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94:
++398 original initializers (326 external learned Float weights, 72 inline),
++36 original post-QK float32 scale bits f304b53d, no past/cache public input or
++output. Post-RoPE Q and K transpose before flatten; Q is4096, K/V1024. The
++original finite causal mask remains an input to the native GQA kernel. Generic
++shape inference cannot substitute for native allocation/semantics evidence.
++
++Native metadata emission requires the exact original8192/N8 baseline profile,
++unchanged compiler/tokenizer/weights/notice/fixture physical paths and bytes,
++unchanged CpuFit/memory/disk/ABI/task policy, authenticated graph/proof/settled
++creation pins and a genuine matching native build receipt/source closure. A
++new model manifest and rebound unqualified calibration never transfer old
++qualification or same-artifact expected-array custody. All terminal classes
++remain unsupported; no semantic/training admission is introduced.
++
++Separate additive Large synthetic17/8192 controls preserve the Compact controls
++and require actual CPU execution, private KV outputs, numerical group mapping
++and native allocated output shapes [1,T,4096], [1,8,T,128] twice. The Large full
++single-forward diagnostic uses exact original all-live8192/N8 tensors and
++independent original-publisher FP32 arrays under existing raw<=.001,
++mass<=.05 and unchanged argmax checks. Actual36 GQA events/provider/durations/
++allocated output bytes and original process/Job settlement are required; the
++structural proof alone cannot authorize inference or claim resource/p95 gates.
++Original failed Large120s evidence stays failed. Full20-warm qualification is
++separate from this one diagnostic forward.
+--- a/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/attention_diagnostic.rs
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/attention_diagnostic.rs
+@@ -3,6 +3,16 @@
+ use super::*;
+ 
+ fn allocated_gqa_profile(raw: &[u8], tokens: usize, required: usize) -> Result<()> {
++    allocated_gqa_profile_for_model(raw, tokens, required, ModelChoice::ContextQwenCompact)
++}
++
++fn allocated_gqa_profile_for_model(
++    raw: &[u8],
++    tokens: usize,
++    required: usize,
++    model: ModelChoice,
++) -> Result<()> {
++    let selected = airk_retrieval::arbiter::runtime::selected_gqa_model(model)?;
+     let events: Vec<Value> = serde_json::from_slice(raw)?;
+     let mut nodes = BTreeSet::new();
+     for event in events
+@@ -25,7 +35,7 @@
+             nodes.insert(key.to_owned()),
+             "repeated GQA execution in single-forward diagnostic"
+         );
+-        let expected = json!([{"float":[1,tokens,2048]},{"float":[1,8,tokens,128]},{"float":[1,8,tokens,128]}]);
++        let expected = json!([{"float":[1,tokens,selected.query_width]},{"float":[1,selected.kv_heads,tokens,selected.head_size]},{"float":[1,selected.kv_heads,tokens,selected.head_size]}]);
+         ensure!(
+             args["output_type_shape"] == expected,
+             "actual context/internal KV allocations absent or different"
+@@ -35,7 +45,10 @@
+             .context("native allocated output size absent")?
+             .parse::<u64>()?;
+         ensure!(
+-            bytes == (tokens as u64) * 4096 * 4,
++            bytes
++                == (tokens as u64)
++                    * (selected.query_width + 2 * selected.kv_heads * selected.head_size) as u64
++                    * 4,
+             "actual allocated GQA output bytes differ"
+         );
+     }
+@@ -72,18 +85,60 @@
+ #[test]
+ #[ignore = "explicit new Compact graph/current input/source pins and exclusive native window; ONE diagnostic forward"]
+ fn software_v2_compact_attention_profiled_8192_diagnostic() -> Result<()> {
+-    let (input, profile, files, input_hash) = inputs()?;
+-    let fit = profile.cpu_fit.as_ref().context("native CPU fit absent")?;
+-    ensure!(
+-        profile.model == ModelChoice::ContextQwenCompact
+-            && profile.max_tokens == 8192
+-            && profile.memory_reservation_bytes == 16u64 << 30
+-            && fit.intra_threads == 4
++    attention_profiled_diagnostic(ModelChoice::ContextQwenCompact)
++}
++
++#[test]
++#[ignore = "explicit new Large graph/current input/source pins and exclusive native window; ONE diagnostic forward"]
++fn software_v2_large_attention_profiled_8192_diagnostic() -> Result<()> {
++    attention_profiled_diagnostic(ModelChoice::ContextQwenLarge)
++}
++
++fn selected_diagnostic_profile(
++    model: ModelChoice,
++    max_tokens: usize,
++    memory_bytes: u64,
++    fit: Option<&airk_core::arbiter::CpuFit>,
++    expected_model: ModelChoice,
++) -> Result<airk_retrieval::arbiter::runtime::SelectedGqaModel> {
++    let selected = airk_retrieval::arbiter::runtime::selected_gqa_model(expected_model)?;
++    let fit = fit.context("native CPU fit absent")?;
++    ensure!(
++        model == expected_model
++            && max_tokens == 8192
++            && memory_bytes == selected.memory_reservation_bytes
++            && fit.minimum_physical_cores == selected.cpu_threads
++            && fit.intra_threads == selected.cpu_threads
+             && fit.inter_threads == 1
+             && fit.sequential
+             && !fit.spinning,
+-        "only original Compact8192/CPU4/16GiB diagnostic is admitted"
+-    );
++        "exact selected model8192/native CPU/reservation diagnostic required"
++    );
++    Ok(selected)
++}
++
++fn attention_profiled_diagnostic(expected_model: ModelChoice) -> Result<()> {
++    let (input, profile, files, input_hash) = inputs()?;
++    let selected = selected_diagnostic_profile(
++        profile.model,
++        profile.max_tokens,
++        profile.memory_reservation_bytes,
++        profile.cpu_fit.as_ref(),
++        expected_model,
++    )?;
++    let (label, kind, measurement) = match expected_model {
++        ModelChoice::ContextQwenCompact => (
++            "compact",
++            "compact_attention_diagnostic",
++            "compact-fp32-gqa-profiled/2",
++        ),
++        ModelChoice::ContextQwenLarge => (
++            "large",
++            "large_attention_diagnostic",
++            "large-fp32-gqa-profiled/2",
++        ),
++        _ => anyhow::bail!("selected Context diagnostic required"),
++    };
+     ensure!(
+         std::env::var("ORT_GQA_DISABLE_FLASH_ATTENTION").as_deref() == Ok("0"),
+         "explicit frozen native GQA flash policy required"
+@@ -110,22 +165,22 @@
+         .context("genuine original publisher array absent")?;
+     let output = PathBuf::from(std::env::var("AIRK_SOFTWARE_V2_NATIVE_OUTPUT")?);
+     let parent = output.parent().context("diagnostic output parent absent")?;
+-    let profile_prefix = parent.join("compact-gqa-profile");
+-    let optimized = parent.join("compact-gqa-optimized.onnx");
++    let profile_prefix = parent.join(format!("{label}-gqa-profile"));
++    let optimized = parent.join(format!("{label}-gqa-optimized.onnx"));
+     ensure!(!optimized.exists(), "fresh optimized graph output required");
+     let mut file = OpenOptions::new()
+         .write(true)
+         .create_new(true)
+         .open(&output)?;
+     let binary_sha256 = file_hash(&std::env::current_exe()?)?;
+-    let mut receipt = json!({"kind":"compact_attention_diagnostic","complete":false,"evaluation":true,
++    let mut receipt = json!({"kind":kind,"complete":false,"evaluation":true,
+         "release_qualified":false,"qualification_granted":false,"input_sha256":input_hash,
+         "profile":profile.manifest,"profile_source_sha256":input.profile.sha256,"source_manifest":input.source_manifest,
+         "resource_policy":input.policy,"resource_policy_digest":input.policy_digest,"model":profile.model,
+         "cpu_fit":profile.cpu_fit,"target":current_target(),"isa":isa(),"process_id":std::process::id(),
+         "execution_user":airk_ipc::endpoint::current_user()?,"native_binary_sha256":binary_sha256,
+         "measurement_identity":"native-original-operation-start-to-post-end-retention/1",
+-        "diagnostic_measurement_identity":"compact-fp32-gqa-profiled/2","profiling_enabled":true,
++        "diagnostic_measurement_identity":measurement,"profiling_enabled":true,
+         "optimized_save":{"enabled":false,"scope":"ordinary production initializer retention; profiling events only; no full-model optimized snapshot"},
+         "operation_journal":output.with_extension("operations.jsonl"),"rows":[],
+         "reference_scope":"original-publisher numeric diagnostic only; old same-artifact custody is NOT new-graph proof"});
+@@ -177,7 +232,7 @@
+         let(raw,mass,argmax)=comparison(&actual,reference)?;
+         receipt["original_fp32_comparison"]=json!({"raw":raw,"mass":mass,"argmax":argmax});
+         ensure!(raw<=0.001 && mass<=0.05 && argmax,"unchanged original FP32 numerical gate refused");
+-        allocated_gqa_profile(&std::fs::read(&profiling)?,8192,28)?;
++        allocated_gqa_profile_for_model(&std::fs::read(&profiling)?,8192,selected.layers,expected_model)?;
+         drop(scorer);verify_files(&files,&profile)?;
+         Ok(())
+     }).and_then(std::convert::identity);
+@@ -190,6 +245,9 @@
+ }
+ 
+ fn tiny_profile(tokens: usize) -> Result<()> {
++    tiny_profile_for_model(ModelChoice::ContextQwenCompact, tokens)
++}
++fn tiny_profile_for_model(model: ModelChoice, tokens: usize) -> Result<()> {
+     ensure!(
+         std::env::var("ORT_GQA_DISABLE_FLASH_ATTENTION").as_deref() == Ok("0"),
+         "explicit frozen GQA policy required"
+@@ -201,8 +259,13 @@
+     let graph = pinned(&graph_pin, 65536)?;
+     let output = PathBuf::from(std::env::var("AIRK_GQA_TINY_OUTPUT")?);
+     let parent = output.parent().context("synthetic output parent")?;
+-    let prefix = parent.join(format!("synthetic-gqa-{tokens}"));
+-    let optimized = parent.join(format!("synthetic-gqa-{tokens}-optimized.onnx"));
++    let label = match model {
++        ModelChoice::ContextQwenCompact => "synthetic-gqa",
++        ModelChoice::ContextQwenLarge => "synthetic-large-gqa",
++        _ => anyhow::bail!("selected Context synthetic diagnostic required"),
++    };
++    let prefix = parent.join(format!("{label}-{tokens}"));
++    let optimized = parent.join(format!("{label}-{tokens}-optimized.onnx"));
+     ensure!(
+         !optimized.exists(),
+         "fresh synthetic optimized graph required"
+@@ -213,8 +276,8 @@
+     ))?;
+     let result = owner
+         .run(|| {
+-            airk_retrieval::arbiter::runtime::synthetic_gqa_profile(
+-                &graph, tokens, &prefix, &optimized,
++            airk_retrieval::arbiter::runtime::synthetic_gqa_profile_for_model(
++                model, &graph, tokens, &prefix, &optimized,
+             )
+         })
+         .and_then(std::convert::identity)?;
+@@ -223,7 +286,7 @@
+             .as_str()
+             .context("actual profiling output absent")?,
+     );
+-    allocated_gqa_profile(&std::fs::read(profile)?, tokens, 1)?;
++    allocated_gqa_profile_for_model(&std::fs::read(profile)?, tokens, 1, model)?;
+     let mut file = OpenOptions::new()
+         .write(true)
+         .create_new(true)
+@@ -241,3 +304,174 @@
+ fn software_v2_synthetic_gqa_allocation_t8192() -> Result<()> {
+     tiny_profile(8192)
+ }
++
++#[test]
++#[ignore = "explicit Large synthetic graph/pins/output and actual owned120s CPU16 process required; no model weights"]
++fn software_v2_synthetic_large_gqa_allocation_t17() -> Result<()> {
++    tiny_profile_for_model(ModelChoice::ContextQwenLarge, 17)
++}
++#[test]
++#[ignore = "explicit Large synthetic graph/pins/output and actual owned120s CPU16 process required; no model weights"]
++fn software_v2_synthetic_large_gqa_allocation_t8192() -> Result<()> {
++    tiny_profile_for_model(ModelChoice::ContextQwenLarge, 8192)
++}
++
++#[test]
++fn selected_large_diagnostic_refuses_compact_shape_and_resource_substitution() -> Result<()> {
++    let large = json!({"dur":1,"args":{"op_name":"GroupQueryAttention","provider":"CPUExecutionProvider",
++        "node_index":"35","output_size":"417792",
++        "output_type_shape":[{"float":[1,17,4096]},{"float":[1,8,17,128]},{"float":[1,8,17,128]}]}});
++    let compact = json!({"dur":1,"args":{"op_name":"GroupQueryAttention","provider":"CPUExecutionProvider",
++        "node_index":"27","output_size":"278528",
++        "output_type_shape":[{"float":[1,17,2048]},{"float":[1,8,17,128]},{"float":[1,8,17,128]}]}});
++    allocated_gqa_profile_for_model(
++        &serde_json::to_vec(&vec![large.clone()])?,
++        17,
++        1,
++        ModelChoice::ContextQwenLarge,
++    )?;
++    assert!(
++        allocated_gqa_profile_for_model(
++            &serde_json::to_vec(&vec![compact])?,
++            17,
++            1,
++            ModelChoice::ContextQwenLarge
++        )
++        .is_err()
++    );
++    assert!(allocated_gqa_profile(&serde_json::to_vec(&vec![large.clone()])?, 17, 1).is_err());
++    let mut layers = Vec::new();
++    for index in 0..36 {
++        let mut event = large.clone();
++        event["args"]["node_index"] = json!(index.to_string());
++        layers.push(event);
++    }
++    allocated_gqa_profile_for_model(
++        &serde_json::to_vec(&layers)?,
++        17,
++        36,
++        ModelChoice::ContextQwenLarge,
++    )?;
++    layers.truncate(28);
++    assert!(
++        allocated_gqa_profile_for_model(
++            &serde_json::to_vec(&layers)?,
++            17,
++            36,
++            ModelChoice::ContextQwenLarge
++        )
++        .is_err()
++    );
++    let fit = airk_core::arbiter::CpuFit {
++        minimum_physical_cores: 16,
++        intra_threads: 16,
++        inter_threads: 1,
++        sequential: true,
++        spinning: false,
++    };
++    let selected = selected_diagnostic_profile(
++        ModelChoice::ContextQwenLarge,
++        8192,
++        40u64 << 30,
++        Some(&fit),
++        ModelChoice::ContextQwenLarge,
++    )?;
++    assert_eq!(
++        (
++            selected.query_width,
++            selected.query_heads,
++            selected.kv_heads,
++            selected.head_size,
++            selected.layers
++        ),
++        (4096, 32, 8, 128, 36)
++    );
++    assert!(
++        selected_diagnostic_profile(
++            ModelChoice::ContextQwenCompact,
++            8192,
++            40u64 << 30,
++            Some(&fit),
++            ModelChoice::ContextQwenLarge
++        )
++        .is_err()
++    );
++    for (tokens, memory) in [(2048, 40u64 << 30), (8192, 16u64 << 30)] {
++        assert!(
++            selected_diagnostic_profile(
++                ModelChoice::ContextQwenLarge,
++                tokens,
++                memory,
++                Some(&fit),
++                ModelChoice::ContextQwenLarge
++            )
++            .is_err()
++        );
++    }
++    for changed in [
++        airk_core::arbiter::CpuFit {
++            minimum_physical_cores: 4,
++            intra_threads: 4,
++            ..fit.clone()
++        },
++        airk_core::arbiter::CpuFit {
++            inter_threads: 2,
++            ..fit.clone()
++        },
++        airk_core::arbiter::CpuFit {
++            sequential: false,
++            ..fit.clone()
++        },
++        airk_core::arbiter::CpuFit {
++            spinning: true,
++            ..fit.clone()
++        },
++    ] {
++        assert!(
++            selected_diagnostic_profile(
++                ModelChoice::ContextQwenLarge,
++                8192,
++                40u64 << 30,
++                Some(&changed),
++                ModelChoice::ContextQwenLarge
++            )
++            .is_err()
++        );
++    }
++    assert!(
++        selected_diagnostic_profile(
++            ModelChoice::ContextQwenLarge,
++            8192,
++            40u64 << 30,
++            None,
++            ModelChoice::ContextQwenLarge
++        )
++        .is_err()
++    );
++    let compact_fit = airk_core::arbiter::CpuFit {
++        minimum_physical_cores: 4,
++        intra_threads: 4,
++        ..fit
++    };
++    let compact = selected_diagnostic_profile(
++        ModelChoice::ContextQwenCompact,
++        8192,
++        16u64 << 30,
++        Some(&compact_fit),
++        ModelChoice::ContextQwenCompact,
++    )?;
++    assert_eq!(
++        (
++            compact.query_width,
++            compact.query_heads,
++            compact.layers,
++            compact.cpu_threads
++        ),
++        (2048, 16, 28, 4)
++    );
++    assert!(
++        airk_retrieval::arbiter::runtime::selected_gqa_model(ModelChoice::FocusQwenReranker06B)
++            .is_err()
++    );
++    Ok(())
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime/qualification/CONTRACT.md
++++ b/crates/airk-retrieval/src/arbiter/runtime/qualification/CONTRACT.md
+@@ -119,3 +119,31 @@
+ build seals are required. The existing native numeric-template emitter must
+ produce a byte-identical blank17/128/8192 template before any scoring; original
+ independent numeric arrays remain opaque, unchanged evidence only.
++
++
++## Private Large graph diagnostic extension (/2)
++
++The Compact-only /2 scope above is extended additively by optional large_graph.
++A /2 request carries exactly one of compact_graph or large_graph; /1 carries
++neither, and a mixed override refuses. The native selected model determines
++source identity, layer count, attention width, original initializer count,
++CPU and reservation independently of the caller's proof. Compact remains
++28layers/context2048/CPU4/16GiB. Large requires the original40GiB/CPU16
++8192/N8 baseline,36layers/context4096/KV8/head128,398 original initializers,
++326 external learned Float weights and original graph SHA
++f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94.
++Large backbone hidden2560 must not be used as attention4096. The same original
++compiler, policy, task map, ABI, disk, exact full physical asset paths and all
++non-graph Asset bytes are preserved; the new model identity/calibration has no
++old same-artifact custody or qualification. Constructor output has no downloads,
++qualified targets, supported terminal evidence or release authority. Authentic
++new graph/checker/shape/settled creator pins and actual matching source/build
++receipts remain mandatory. Large shape proof includes all four1/17/128/8192
++populations and all36 internal cache witnesses; actual native kernel/tiny/full
++allocation and independent reference checks remain separate gates.
++
++The existing synthetic GQA helper keeps its Compact entry point. An additive
++test-support-only selected-model entry point uses exact CompactQ16/2048/CPU4
++or LargeQ32/4096/CPU16 with sharedKV8/head128 and private caches. Other models
++refuse. This changes no ordinary scorer constructor, public input/output ABI,
++production provider selection, native operation deadline or memory policy.
+--- a/crates/airk-retrieval/src/arbiter/runtime/qualification/regeneration/compact_graph.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/qualification/regeneration/compact_graph.rs
+@@ -1,5 +1,5 @@
+ // SPDX-License-Identifier: Apache-2.0
+-//! Private Compact graph identity only. No scoring or qualification authority.
++//! Private pinned Compact/Large graph identities only. No scoring or qualification authority.
+ use super::*;
+ 
+ #[derive(serde::Deserialize, serde::Serialize)]
+@@ -10,14 +10,57 @@
+     pub owned_creation: ResourceFilePin,
+     pub baseline_input: ResourceFilePin,
+ }
+-fn graph_evidence(proof: &Value, owner: &Value, input: &Input) -> Result<()> {
++
++struct Family {
++    layers: usize,
++    width: usize,
++    source: &'static str,
++    initializers: usize,
++    cores: usize,
++    reservation: u64,
++    profile_id: &'static str,
++    resolved_field: &'static str,
++    owner_schema: &'static str,
++}
++fn family(model: ModelChoice) -> Result<Family> {
++    match model {
++        ModelChoice::ContextQwenCompact => Ok(Family {
++            layers: 28,
++            width: 2048,
++            source: "c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4",
++            initializers: 310,
++            cores: 4,
++            reservation: 16u64 << 30,
++            profile_id: "private-compact-fp32-gqa-diagnostic-v1",
++            resolved_field: "all28_resolved",
++            owner_schema: "airk.private.compact-graph-owner/1",
++        }),
++        ModelChoice::ContextQwenLarge => Ok(Family {
++            layers: 36,
++            width: 4096,
++            source: "f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94",
++            initializers: 398,
++            cores: 16,
++            reservation: 40u64 << 30,
++            profile_id: "private-large-fp32-gqa-diagnostic-v1",
++            resolved_field: "all36_resolved",
++            owner_schema: "airk.private.large-graph-owner/1",
++        }),
++        _ => anyhow::bail!("only pinned Compact or Large GQA identity is admitted"),
++    }
++}
++pub(super) fn profile_id(model: ModelChoice) -> Result<&'static str> {
++    Ok(family(model)?.profile_id)
++}
++
++fn graph_evidence(proof: &Value, owner: &Value, input: &Input, model: ModelChoice) -> Result<()> {
++    let selected = family(model)?;
+     ensure!(
+         proof["new_graph_sha256"] == json!(input.graph.sha256)
+-            && proof["source_sha256"]
+-                == "c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4"
+-            && proof["gqa_nodes"] == 28
++            && proof["source_sha256"] == selected.source
++            && proof["gqa_nodes"] == selected.layers
+             && proof["original_scale_float32_bits"] == "f304b53d"
+-            && proof["original_initializers"] == 310
++            && proof["original_initializers"] == selected.initializers
+             && proof["original_nodes_preserved_verbatim"] == true
+             && proof["original_initializers_and_external_ranges_preserved_verbatim"] == true
+             && proof["all6inputs_scores_only"] == true
+@@ -29,6 +72,13 @@
+                 == "original and candidate; real original external-data context; custom kernel ownership separate",
+         "actual graph/checker/source proof differs"
+     );
++    if model == ModelChoice::ContextQwenLarge {
++        ensure!(
++            proof["original_external_initializers"] == 326
++                && proof["original_scores_output_preserved_verbatim"] == true,
++            "exact Large external-weight/readout preservation required"
++        );
++    }
+     let cases = proof["custom_shape_witnesses"]
+         .as_array()
+         .context("strict shape cases absent")?;
+@@ -40,7 +90,7 @@
+         ensure!(
+             case["tokens"] == tokens
+                 && case["options"] == options
+-                && case["all28_resolved"] == true
++                && case[selected.resolved_field] == true
+                 && case["external_weight_value_policy"]["external_required_values_refused"] == 0,
+             "strict shape case failed or changed"
+         );
+@@ -48,12 +98,12 @@
+             .as_array()
+             .context("shape witnesses absent")?;
+         ensure!(
+-            rows.len() == 28,
+-            "complete28-layer shape witnesses required"
++            rows.len() == selected.layers,
++            "complete selected-layer shape witnesses required"
+         );
+         for row in rows {
+             ensure!(
+-                row["context"] == json!([1, tokens, 2048])
++                row["context"] == json!([1, tokens, selected.width])
+                     && row["cache_shapes_resolved_by_pinned_cpu_compute"]
+                         == json!([[1, 8, tokens, 128], [1, 8, tokens, 128]]),
+                 "actual strict context/cache dimensions differ"
+@@ -61,7 +111,7 @@
+         }
+     }
+     ensure!(
+-        owner["schema"] == "airk.private.compact-graph-owner/1"
++        owner["schema"] == selected.owner_schema
+             && owner["complete"] == true
+             && owner["failure"].is_null()
+             && owner["graph_only"] == true
+@@ -89,7 +139,8 @@
+     );
+     Ok(())
+ }
+-fn baseline(input: &Input) -> Result<(ResourceRunInput, Profile)> {
++fn baseline(input: &Input, model: ModelChoice) -> Result<(ResourceRunInput, Profile)> {
++    let selected = family(model)?;
+     let request: ResourceRunInput =
+         serde_json::from_slice(&pinned_metadata(&input.baseline_input, 1 << 20)?)?;
+     request.validate()?;
+@@ -101,25 +152,26 @@
+     profile.validate()?;
+     let fit = profile.cpu_fit.as_ref().context("original CpuFit absent")?;
+     ensure!(
+-        profile.model == ModelChoice::ContextQwenCompact
++        profile.model == model
+             && profile.max_tokens == 8192
+             && profile.max_candidates == 8
+-            && profile.memory_reservation_bytes == 16u64 << 30
+-            && fit.minimum_physical_cores == 4
+-            && fit.intra_threads == 4
++            && profile.memory_reservation_bytes == selected.reservation
++            && fit.minimum_physical_cores == selected.cores
++            && fit.intra_threads == selected.cores
+             && fit.inter_threads == 1
+             && fit.sequential
+             && !fit.spinning,
+-        "unchanged Compact8192/Cpu4/16GiB baseline required"
++        "unchanged selected-model8192/CPU/memory baseline required"
+     );
+     Ok((request, profile))
+ }
+-pub(super) fn apply(input: &Input, assets: &mut [AssetInput]) -> Result<()> {
+-    let (request, old) = baseline(input)?;
++pub(super) fn apply(input: &Input, assets: &mut [AssetInput], model: ModelChoice) -> Result<()> {
++    let selected = family(model)?;
++    let (request, old) = baseline(input, model)?;
+     let graph = pinned_metadata(&input.graph, 64 << 20)?;
+     let proof: Value = serde_json::from_slice(&pinned_metadata(&input.shape_proof, 1 << 20)?)?;
+     let owner: Value = serde_json::from_slice(&pinned_metadata(&input.owned_creation, 1 << 20)?)?;
+-    graph_evidence(&proof, &owner, input)?;
++    graph_evidence(&proof, &owner, input, model)?;
+     ensure!(
+         proof["bytes"] == graph.len() && owner["graph"]["bytes"] == graph.len(),
+         "actual graph length differs"
+@@ -137,10 +189,9 @@
+         );
+         if item.asset.role == AssetRole::Model {
+             ensure!(
+-                item.asset.sha256.to_string()
+-                    == "c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4"
++                item.asset.sha256.to_string() == selected.source
+                     && input.graph.sha256 != item.asset.sha256,
+-                "exact original/new Compact graph identity required"
++                "exact selected original/new graph identity required"
+             );
+             item.asset.sha256 = input.graph.sha256;
+             item.asset.bytes = graph.len() as u64;
+@@ -150,10 +201,12 @@
+     Ok(())
+ }
+ pub(super) fn validate_prepared(input: &Input, prepared: &PreparedProfile) -> Result<()> {
+-    let (request, old) = baseline(input)?;
++    let selected = family(prepared.profile.model)?;
++    let (request, old) = baseline(input, prepared.profile.model)?;
+     let new = &prepared.profile;
+     ensure!(
+-        new.profile_id == "private-compact-fp32-gqa-diagnostic-v1"
++        new.profile_id == selected.profile_id
++            && new.model == old.model
+             && new.manifest != old.manifest
+             && new.compiler == old.compiler
+             && new.policy == old.policy
+@@ -234,7 +287,7 @@
+         "owned":{"exit_code":0,"timed_out":false,"log_oversized":false,"owned_descendants_settled":true,
+             "owned_job_forced_termination":false,"owned_job_final_active_processes":0,
+             "owned_job_final_member_pids":[],"parent_assigned_to_job":false,"child_assigned_before_resume":true}});
+-    graph_evidence(&proof, &owner, &input)?;
++    graph_evidence(&proof, &owner, &input, ModelChoice::ContextQwenCompact)?;
+     for (path, value) in [
+         ("/source_sha256", json!("changed")),
+         ("/custom_shape_witnesses", json!([])),
+@@ -254,7 +307,7 @@
+         *changed
+             .pointer_mut(path)
+             .context("literal proof mutation")? = value;
+-        assert!(graph_evidence(&changed, &owner, &input).is_err());
++        assert!(graph_evidence(&changed, &owner, &input, ModelChoice::ContextQwenCompact).is_err());
+     }
+     for (path, value) in [
+         ("/complete", json!(false)),
+@@ -268,7 +321,121 @@
+         *changed
+             .pointer_mut(path)
+             .context("literal owner mutation")? = value;
+-        assert!(graph_evidence(&proof, &changed, &input).is_err());
+-    }
+-    Ok(())
+-}
++        assert!(graph_evidence(&proof, &changed, &input, ModelChoice::ContextQwenCompact).is_err());
++    }
++    Ok(())
++}
++
++#[test]
++fn large_graph_proof_refuses_compact_shape_source_or_unsettled_creator() -> Result<()> {
++    let input = Input {
++        graph: ResourceFilePin {
++            path: "C:/private/model.onnx".into(),
++            sha256: Sha256Digest::from_bytes([1; 32]),
++        },
++        shape_proof: ResourceFilePin {
++            path: "C:/private/proof.json".into(),
++            sha256: Sha256Digest::from_bytes([2; 32]),
++        },
++        owned_creation: ResourceFilePin {
++            path: "C:/private/owner.json".into(),
++            sha256: Sha256Digest::from_bytes([3; 32]),
++        },
++        baseline_input: ResourceFilePin {
++            path: "C:/private/input.json".into(),
++            sha256: Sha256Digest::from_bytes([4; 32]),
++        },
++    };
++    let cases = [(1,1),(17,3),(128,8),(8192,8)].into_iter().map(|(t,n)| json!({
++        "tokens":t,"options":n,"all36_resolved":true,
++        "external_weight_value_policy":{"external_required_values_refused":0},
++        "witnesses":(0..36).map(|_|json!({"context":[1,t,4096],
++            "cache_shapes_resolved_by_pinned_cpu_compute":[[1,8,t,128],[1,8,t,128]]})).collect::<Vec<_>>()
++    })).collect::<Vec<_>>();
++    let proof = json!({"new_graph_sha256":input.graph.sha256,
++        "source_sha256":"f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94",
++        "gqa_nodes":36,"original_scale_float32_bits":"f304b53d","original_initializers":398,
++        "original_external_initializers":326,"original_scores_output_preserved_verbatim":true,
++        "original_nodes_preserved_verbatim":true,"original_initializers_and_external_ranges_preserved_verbatim":true,
++        "all6inputs_scores_only":true,"cache_outputs_internal_only":true,"model_forward":false,
++        "custom_shape_gate_pending":false,"native_kernel_gate_pending":true,
++        "onnx_checker":"original and candidate; real original external-data context; custom kernel ownership separate",
++        "custom_shape_witnesses":cases});
++    let owner = json!({"schema":"airk.private.large-graph-owner/1","complete":true,"failure":null,
++        "graph_only":true,"model_forward":false,"original_phase_expired":false,"post_input_drift":[],
++        "graph":{"path":input.graph.path,"sha256":input.graph.sha256},
++        "shape_proof":{"path":input.shape_proof.path,"sha256":input.shape_proof.sha256},
++        "owned":{"exit_code":0,"timed_out":false,"log_oversized":false,"owned_descendants_settled":true,
++            "owned_job_forced_termination":false,"owned_job_final_active_processes":0,
++            "owned_job_final_member_pids":[],"parent_assigned_to_job":false,"child_assigned_before_resume":true}});
++    graph_evidence(&proof, &owner, &input, ModelChoice::ContextQwenLarge)?;
++    for (path, value) in [
++        (
++            "/source_sha256",
++            json!("c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4"),
++        ),
++        ("/gqa_nodes", json!(28)),
++        ("/original_external_initializers", json!(254)),
++        ("/original_scores_output_preserved_verbatim", json!(false)),
++        ("/original_initializers", json!(310)),
++        ("/custom_shape_witnesses", json!([])),
++        ("/custom_shape_witnesses/3/tokens", json!(2048)),
++        (
++            "/custom_shape_witnesses/3/witnesses/0/context",
++            json!([1, 2048, 2048]),
++        ),
++        (
++            "/custom_shape_witnesses/3/external_weight_value_policy/external_required_values_refused",
++            json!(1),
++        ),
++        ("/all6inputs_scores_only", json!(false)),
++        ("/model_forward", json!(true)),
++    ] {
++        let mut changed = proof.clone();
++        *changed
++            .pointer_mut(path)
++            .context("literal proof mutation")? = value;
++        assert!(graph_evidence(&changed, &owner, &input, ModelChoice::ContextQwenLarge).is_err());
++    }
++    for (path, value) in [
++        ("/complete", json!(false)),
++        ("/owned/exit_code", json!(1)),
++        ("/owned/owned_job_forced_termination", json!(true)),
++        ("/owned/owned_job_final_member_pids", json!([1])),
++        ("/graph/sha256", json!(Sha256Digest::from_bytes([9; 32]))),
++        ("/post_input_drift", json!(["changed"])),
++    ] {
++        let mut changed = owner.clone();
++        *changed
++            .pointer_mut(path)
++            .context("literal owner mutation")? = value;
++        assert!(graph_evidence(&proof, &changed, &input, ModelChoice::ContextQwenLarge).is_err());
++    }
++    Ok(())
++}
++
++#[test]
++fn selected_graph_families_preserve_literal_cpu_memory_width_and_source() -> Result<()> {
++    let compact = family(ModelChoice::ContextQwenCompact)?;
++    assert_eq!(
++        (
++            compact.layers,
++            compact.width,
++            compact.cores,
++            compact.reservation
++        ),
++        (28, 2048, 4, 17_179_869_184)
++    );
++    let large = family(ModelChoice::ContextQwenLarge)?;
++    assert_eq!(
++        (large.layers, large.width, large.cores, large.reservation),
++        (36, 4096, 16, 42_949_672_960)
++    );
++    assert_eq!(large.initializers, 398);
++    assert_eq!(
++        large.source,
++        "f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94"
++    );
++    assert!(family(ModelChoice::FocusQwenReranker06B).is_err());
++    Ok(())
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime/qualification/regeneration.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/qualification/regeneration.rs
+@@ -25,6 +25,8 @@
+     source_files: Vec<ResourceFilePin>,
+     #[serde(default)]
+     compact_graph: Option<compact_graph::Input>,
++    #[serde(default)]
++    large_graph: Option<compact_graph::Input>,
+ }
+ #[derive(Deserialize)]
+ #[serde(deny_unknown_fields)]
+@@ -32,6 +34,39 @@
+     schema: String,
+     profiles: Vec<Profile>,
+ }
++fn graph_request_scope(schema: &str, compact: bool, large: bool) -> bool {
++    (schema == "airk.private.context-metadata-regeneration/1" && !compact && !large)
++        || (schema == "airk.private.context-metadata-regeneration/2" && (compact ^ large))
++}
++
++#[test]
++fn graph_request_scope_preserves_legacy_and_refuses_mixed_overrides() {
++    assert!(graph_request_scope(
++        "airk.private.context-metadata-regeneration/1",
++        false,
++        false
++    ));
++    assert!(graph_request_scope(
++        "airk.private.context-metadata-regeneration/2",
++        true,
++        false
++    ));
++    assert!(graph_request_scope(
++        "airk.private.context-metadata-regeneration/2",
++        false,
++        true
++    ));
++    for (schema, compact, large) in [
++        ("airk.private.context-metadata-regeneration/1", true, false),
++        ("airk.private.context-metadata-regeneration/1", false, true),
++        ("airk.private.context-metadata-regeneration/2", false, false),
++        ("airk.private.context-metadata-regeneration/2", true, true),
++        ("unknown", false, true),
++    ] {
++        assert!(!graph_request_scope(schema, compact, large));
++    }
++}
++
+ fn pinned_metadata(pin: &ResourceFilePin, maximum: u64) -> Result<Vec<u8>> {
+     pin.validate()?;
+     let path = Path::new(&pin.path);
+@@ -245,15 +280,21 @@
+     };
+     let input: Input = serde_json::from_slice(&pinned_metadata(&request_pin, 1 << 20)?)?;
+     ensure!(
+-        ((input.schema == "airk.private.context-metadata-regeneration/1"
+-            && input.compact_graph.is_none())
+-            || (input.schema == "airk.private.context-metadata-regeneration/2"
+-                && input.compact_graph.is_some()))
+-            && input.output.is_absolute()
++        graph_request_scope(
++            &input.schema,
++            input.compact_graph.is_some(),
++            input.large_graph.is_some()
++        ) && input.output.is_absolute()
+             && !input.output.exists()
+             && input.asset_root.is_absolute(),
+         "fresh private metadata-regeneration scope required"
+     );
++    let graph = input.compact_graph.as_ref().or(input.large_graph.as_ref());
++    let graph_model = if input.large_graph.is_some() {
++        ModelChoice::ContextQwenLarge
++    } else {
++        ModelChoice::ContextQwenCompact
++    };
+     let root_meta = fs::symlink_metadata(&input.asset_root)?;
+     ensure!(
+         root_meta.is_dir() && !root_meta.file_type().is_symlink(),
+@@ -326,7 +367,7 @@
+     )?;
+     let run = (|| -> Result<()> {
+         for old in original.profiles {
+-            if input.compact_graph.is_some() && old.model != ModelChoice::ContextQwenCompact {
++            if graph.is_some() && old.model != graph_model {
+                 continue;
+             }
+             let model_name = serde_json::to_value(old.model)?
+@@ -344,14 +385,14 @@
+                     path: originals.join(&asset.name),
+                 })
+                 .collect();
+-            if let Some(graph) = &input.compact_graph {
+-                compact_graph::apply(graph, &mut source_assets)?;
++            if let Some(graph) = graph {
++                compact_graph::apply(graph, &mut source_assets, graph_model)?;
+             }
+             let mut prepared = prepare_with_limits(
+                 ProfileInput {
+                     model: old.model,
+-                    profile_id: if input.compact_graph.is_some() {
+-                        "private-compact-fp32-gqa-diagnostic-v1".into()
++                    profile_id: if graph.is_some() {
++                        compact_graph::profile_id(graph_model)?.into()
+                     } else {
+                         format!("private-final-policy-v2-{model_name}")
+                     },
+@@ -395,7 +436,7 @@
+                     &policy,
+                 )?;
+             }
+-            if let Some(graph) = &input.compact_graph {
++            if let Some(graph) = graph {
+                 compact_graph::validate_prepared(graph, &prepared)?;
+             }
+             ensure!(
+@@ -415,15 +456,9 @@
+                     .iter()
+                     .find(|current| current.name == asset.name)
+                     .context("original neural/notice/fixture asset absent")?;
+-                if asset.role == AssetRole::Model && input.compact_graph.is_some() {
++                if asset.role == AssetRole::Model && graph.is_some() {
+                     ensure!(
+-                        current.sha256
+-                            == input
+-                                .compact_graph
+-                                .as_ref()
+-                                .context("graph override")?
+-                                .graph
+-                                .sha256,
++                        current.sha256 == graph.context("graph override")?.graph.sha256,
+                         "new graph asset identity differs"
+                     );
+                     continue;
+@@ -473,7 +508,7 @@
+                 "task_policies":prepared.profile.task_policies,"max_tokens":prepared.profile.max_tokens,
+                 "asset_files":pin(&directory.join("asset-files.private.json"))?,"resource_run_input":pin(&directory.join("resource-run-input.private.json"))?,
+                 "original_fixture_is_new8192_qualification":false,"new_neural_weights":false,"terminal_classes_supported":false,"task_qualified":false,"release_qualified":false});
+-            if let Some(graph) = &input.compact_graph {
++            if let Some(graph) = graph {
+                 row["new_model_graph"] = json!(true);
+                 row["graph_override"] = serde_json::to_value(graph)?;
+             }
+--- a/crates/airk-retrieval/src/arbiter/runtime.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime.rs
+@@ -692,7 +692,40 @@
+     }
+ }
+ 
+-/// Synthetic GQA operator control only; no model weights or execution profile.
++/// Literal selected attention dimensions for test-support diagnostics only.
++/// Large query_width4096 is distinct from its backbone hidden width2560.
++#[cfg(any(test, feature = "test-support"))]
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct SelectedGqaModel {
++    pub model: ModelChoice,
++    pub query_width: usize,
++    pub query_heads: usize,
++    pub kv_heads: usize,
++    pub head_size: usize,
++    pub layers: usize,
++    pub cpu_threads: usize,
++    pub memory_reservation_bytes: u64,
++}
++#[cfg(any(test, feature = "test-support"))]
++pub fn selected_gqa_model(model: ModelChoice) -> Result<SelectedGqaModel> {
++    let (query_width, query_heads, layers, cpu_threads, memory_reservation_bytes) = match model {
++        ModelChoice::ContextQwenCompact => (2048, 16, 28, 4, 16u64 << 30),
++        ModelChoice::ContextQwenLarge => (4096, 32, 36, 16, 40u64 << 30),
++        _ => anyhow::bail!("selected Context GQA diagnostic model required"),
++    };
++    Ok(SelectedGqaModel {
++        model,
++        query_width,
++        query_heads,
++        kv_heads: 8,
++        head_size: 128,
++        layers,
++        cpu_threads,
++        memory_reservation_bytes,
++    })
++}
++
++/// Historical Compact synthetic control; its caller and receipt identity remain unchanged.
+ #[cfg(any(test, feature = "test-support"))]
+ pub fn synthetic_gqa_profile(
+     graph: &[u8],
+@@ -700,6 +733,27 @@
+     profiling_prefix: &std::path::Path,
+     optimized_model: &std::path::Path,
+ ) -> Result<serde_json::Value> {
++    synthetic_gqa_profile_for_model(
++        ModelChoice::ContextQwenCompact,
++        graph,
++        tokens,
++        profiling_prefix,
++        optimized_model,
++    )
++}
++
++/// Synthetic GQA operator control only; no model weights or execution profile.
++#[cfg(any(test, feature = "test-support"))]
++pub fn synthetic_gqa_profile_for_model(
++    model: ModelChoice,
++    graph: &[u8],
++    tokens: usize,
++    profiling_prefix: &std::path::Path,
++    optimized_model: &std::path::Path,
++) -> Result<serde_json::Value> {
++    let selected = selected_gqa_model(model)?;
++    let kv_width = selected.kv_heads * selected.head_size;
++    let query_group = selected.query_heads / selected.kv_heads;
+     crate::native_inference::require_service_compute()?;
+     ensure!(
+         matches!(tokens, 17 | 8192) && graph.len() <= 65536,
+@@ -708,13 +762,13 @@
+     ensure!(
+         airk_process::cpu_fit::usable_physical_cores()
+             .context("usable physical-core observation unavailable")?
+-            >= 4,
+-        "native CPU4 refused"
++            >= selected.cpu_threads,
++        "selected native CPU fit refused"
+     );
+     crate::onnx::initialize_runtime()?;
+     let _environment = crate::onnx::acquire_session_environment()?;
+     let mut session = Session::builder()?
+-        .with_intra_threads(4)?
++        .with_intra_threads(selected.cpu_threads)?
+         .with_inter_threads(1)?
+         .with_optimization_level(GraphOptimizationLevel::Level3)?
+         .with_parallel_execution(false)?
+@@ -749,13 +803,14 @@
+                 == ["context"],
+         "synthetic control ABI differs; cache must remain private"
+     );
+-    let q = vec![0f32; tokens * 2048];
+-    let k = vec![0f32; tokens * 1024];
+-    let mut v = vec![0f32; tokens * 1024];
++    let q = vec![0f32; tokens * selected.query_width];
++    let k = vec![0f32; tokens * kv_width];
++    let mut v = vec![0f32; tokens * kv_width];
+     for t in 0..tokens {
+-        for h in 0..8 {
+-            for d in 0..128 {
+-                v[t * 1024 + h * 128 + d] = (h * 128 + d) as f32 / 1024. + t as f32 / 8192.;
++        for h in 0..selected.kv_heads {
++            for d in 0..selected.head_size {
++                v[t * kv_width + h * selected.head_size + d] =
++                    (h * selected.head_size + d) as f32 / kv_width as f32 + t as f32 / 8192.;
+             }
+         }
+     }
+@@ -768,9 +823,9 @@
+     let options = RunOptions::new()?.with_outputs(OutputSelector::no_default().with("context"));
+     let outputs = session.run_with_options(
+         ort::inputs![
+-            "query"=>Tensor::from_array(([1,tokens,2048],q))?,
+-            "key"=>Tensor::from_array(([1,tokens,1024],k))?,
+-            "value"=>Tensor::from_array(([1,tokens,1024],v))?,
++            "query"=>Tensor::from_array(([1,tokens,selected.query_width],q))?,
++            "key"=>Tensor::from_array(([1,tokens,kv_width],k))?,
++            "value"=>Tensor::from_array(([1,tokens,kv_width],v))?,
+             "bias"=>Tensor::from_array(([1,1,tokens,tokens],bias))?,
+             "seqlens_k"=>Tensor::from_array(([1],vec![tokens as i32-1]))?,
+             "total_sequence_length"=>Tensor::from_array(([1],vec![tokens as i32]))?,
+@@ -779,15 +834,17 @@
+     )?;
+     let (shape, actual) = outputs["context"].try_extract_tensor::<f32>()?;
+     ensure!(
+-        shape.as_ref() == [1, tokens as i64, 2048],
++        shape.as_ref() == [1, tokens as i64, selected.query_width as i64],
+         "actual synthetic context shape differs"
+     );
+     let mut maximum_error = 0f32;
+     for t in 0..tokens {
+-        for h in 0..16 {
+-            for d in 0..128 {
+-                let expected = ((h / 2) * 128 + d) as f32 / 1024. + t as f32 / 16384.;
+-                let value = actual[t * 2048 + h * 128 + d];
++        for h in 0..selected.query_heads {
++            for d in 0..selected.head_size {
++                let expected = ((h / query_group) * selected.head_size + d) as f32
++                    / kv_width as f32
++                    + t as f32 / 16384.;
++                let value = actual[t * selected.query_width + h * selected.head_size + d];
+                 ensure!(value.is_finite(), "nonfinite synthetic GQA value");
+                 maximum_error = maximum_error.max((value - expected).abs());
+             }

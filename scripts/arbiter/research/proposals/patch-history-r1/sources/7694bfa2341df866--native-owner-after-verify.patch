@@ -1,0 +1,637 @@
+--- a/crates/airk-store/src/service_collection_integrity.rs
++++ b/crates/airk-store/src/service_collection_integrity.rs
+@@ -8,6 +8,8 @@
+ pub mod census;
+ #[path = "service_collection_verify.rs"]
+ pub mod verify;
++#[path = "service_collection_native_owner.rs"]
++pub mod native_owner;
+ 
+ const RECEIPT: &str = "integrity-observation.json";
+ const MAX_DAMAGE: usize = 32;
+@@ -48,6 +50,8 @@
+     pub known_damage: Vec<KnownDamage>,
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub verify: Option<verify::VerifyProgress>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub native_owner: Option<native_owner::NativeOwnerEnrollment>,
+ }
+ 
+ pub(super) fn owned_scratch(path: &Path, owner: Sha256Digest) -> bool {
+@@ -142,6 +146,7 @@
+             "foreign integrity head");
+         let previous = self.load(namespace)?;
+         let verify = previous.as_ref().and_then(|value| value.verify.clone());
++        let native_owner = previous.as_ref().and_then(|value| value.native_owner.clone());
+         let mut known_damage = previous.map_or_else(Vec::new, |value| value.known_damage);
+         if let Some(damage) = damage {
+             if !known_damage.iter().any(|old| old.incarnation == damage.incarnation && old.component == damage.component) {
+@@ -153,7 +158,7 @@
+             namespace, worker_epoch: epoch, head, known_damage,
+             basis: PublicationBasis::RetainedHeadMetadataAnchor,
+             physical_audit: PhysicalAudit::Unknown,
+-            privacy, verify };
++            privacy, verify, native_owner };
+         // Same lease/root fence immediately before durable metadata publication.
+         ensure!(self.check()? == (namespace, epoch), "integrity worker changed");
+         write(self.collection, RECEIPT, &state)?;
+--- /dev/null
++++ b/crates/airk-store/src/service_collection_native_owner.rs
+@@ -0,0 +1,194 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Native owner enrollment and bounded restart observations; no query cutover.
++use super::*;
++use crate::service::registry::IntegrityAuditState;
++
++const NATIVE_PRODUCER_CONTRACT: u32 = 1;
++
++#[derive(Clone, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct NativeOwnerEnrollment {
++    producer_contract: u32,
++    scope: Sha256Digest,
++    private_data_root: [u64;3],
++    selected_directory: [u64;3],
++    data_root_key: Sha256Digest,
++    enrolled_unix_ms: u64,
++}
++/// Owns the exact admitted lease Arc and data-root namespace pin. No borrowed
++/// registry/self-reference, WriterLock, CurrentRead, transaction or tree census.
++pub struct NativeOwnerAuthority {
++    collection: Collection,
++    lease: std::sync::Arc<crate::service::ProjectLease>,
++    bound: crate::service::data_scope::BoundDataRoot,
++    control: PathBuf,
++    enrollment: NativeOwnerEnrollment,
++    namespace_pin: NamespacePin,
++}
++#[cfg(windows)]
++struct NamespacePin(crate::service_census_windows::WindowsWalk);
++#[cfg(target_os="linux")]
++struct NamespacePin(std::fs::File);
++#[cfg(not(any(windows,target_os="linux")))]
++struct NamespacePin;
++impl NamespacePin {
++    fn new(path:&Path)->Result<Self> {
++        #[cfg(windows)]
++        {return Ok(Self(crate::service_census_windows::WindowsWalk::begin(path)?));}
++        #[cfg(target_os="linux")]
++        {return Ok(Self(super::census::pin_owner_root(path)?));}
++        #[cfg(not(any(windows,target_os="linux")))]
++        {let _=path;anyhow::bail!("unsupported native owner namespace evidence")}
++    }
++    fn check(&self)->Result<()> {
++        #[cfg(windows)]
++        {return self.0.check_current();}
++        #[cfg(target_os="linux")]
++        {ensure!(matches!(crate::private_storage::inspect(&self.0,crate::private_storage::Kind::RootDirectory)?,
++            crate::private_storage::Observation::Private(_)),"native private root security changed");return Ok(());}
++        #[cfg(not(any(windows,target_os="linux")))]
++        {anyhow::bail!("unsupported native owner namespace evidence")}
++    }
++}
++/// Exact native-owned publication under the delayed physical-detection contract.
++/// This is not a physically verified component certificate or a query bypass.
++pub struct OwnedPublication<'a> {
++    head: CurrentHead,
++    basis: PublicationBasis,
++    physical_audit: PhysicalAudit,
++    _owner: &'a NativeOwnerAuthority,
++    _read: &'a CurrentRead,
++}
++impl OwnedPublication<'_> {
++    pub fn head(&self)->&CurrentHead {&self.head}
++    pub fn basis(&self)->&PublicationBasis {&self.basis}
++    pub fn physical_audit(&self)->&PhysicalAudit {&self.physical_audit}
++}
++
++fn namespace(data: &Path, selected: &Path) -> Result<([u64;3],[u64;3])> {
++    #[cfg(target_os = "linux")]
++    { return super::census::owner_namespace(data,selected); }
++    #[cfg(windows)]
++    { return crate::service_census_windows::owner_namespace(data,selected); }
++    #[cfg(not(any(target_os = "linux",windows)))]
++    { let _=(data,selected);anyhow::bail!("native private-owner evidence unavailable on this platform") }
++}
++fn scope_identity(scope:&crate::current::CurrentScope)->Result<Sha256Digest> {
++    scope.validate()?;
++    Ok(airk_core::identity::framed_digest(b"native-owner-scope/1",&[&serde_json::to_vec(scope)?]))
++}
++fn data_identity(path:&Path)->Result<Sha256Digest> {
++    Ok(airk_core::identity::framed_digest(b"native-owner-data-root/1",&[path.to_str().context("native data root is not UTF-8")?.as_bytes()]))
++}
++impl<'a> IntegrityOwner<'a> {
++    fn native_selected(&self) -> Result<(FileStore, crate::current::CurrentScope)> {
++        self.check()?;
++        let store=self.collection.selected_store()?;
++        ensure!(store.collection_namespace()?=="collections-1.4", "unsupported native producer namespace");
++        let scope=store.current_owned_scope()?.context("native publication scope missing")?;
++        ensure!(scope.root==self.collection.owner.root && scope.collection==self.collection.owner.collection,
++            "crossed native publication owner");
++        Ok((store,scope))
++    }
++    fn native_admissible(&self, head:&CurrentHead, state:&IntegrityObservation) -> Result<()> {
++        ensure!(!self.bound.native_integrity_revoked(),"live native owner revoked by integrity failure");
++        ensure!(state.known_damage.len()<MAX_DAMAGE && !state.known_damage.iter()
++            .any(|damage|damage.incarnation==head.scope.incarnation),"native component has sticky known damage");
++        let recorded=self.registry.recorded_integrity_damage(self.lease)?;
++        ensure!(recorded.len()<MAX_DAMAGE && !recorded.iter().any(|damage|damage.incarnation==head.scope.incarnation),
++            "native component has durable control-store damage veto");
++        match self.registry.integrity_audit_state(self.lease)? {
++            IntegrityAuditState::Clear | IntegrityAuditState::LiveAudit {..} => (),
++            IntegrityAuditState::Unresolved {..} => anyhow::bail!("native owner has unresolved audit durability"),
++        }
++        Ok(())
++    }
++    /// One-time old-head enrollment is metadata-only, under actual writer
++    /// exclusion. Unknown physical audit is preserved; no census/Verify is run.
++    pub fn enroll_native_owner(&self,lease:std::sync::Arc<crate::service::ProjectLease>,
++        writer:&mut crate::WriterLock,now:u64)->Result<NativeOwnerAuthority> {
++        ensure!(std::ptr::eq(self.lease,lease.as_ref()),"native authority requires the exact admitted lease owner");
++        let fence=self.check()?;
++        let (store,scope)=self.native_selected()?;
++        crate::maintenance::check_writer(&store,writer,
++            &Quota::open_service(Path::new(&self.collection.owner.data_root))?)?;
++        let namespace_pin=NamespacePin::new(Path::new(&self.collection.owner.data_root))?;
++        let ids=namespace(Path::new(&self.collection.owner.data_root),store.directory())?;
++        let read=store.current_read(&scope)?;
++        let head=read.settled_native_head()?.context("native enrollment requires settled publication journal")?;
++        // An old published head is adopted as a metadata anchor, not falsely
++        // labelled physically audited. Existing damage/progress remains sticky.
++        if self.load(fence.0)?.is_none() {self.anchor(&read)?;}
++        let _lock=manifest_lock(&self.collection.directory)?;
++        let mut state=self.load(fence.0)?.context("native owner anchor missing")?;
++        if let Some(previous)=&state.native_owner {
++            ensure!(previous.producer_contract==NATIVE_PRODUCER_CONTRACT,"unsupported native owner producer contract");
++            let current_key=data_identity(Path::new(&self.collection.owner.data_root))?;
++            if previous.data_root_key!=current_key {
++                crate::service::registry::data_relocation::require_native_owner_move(
++                    self.bound.native_control_root(),previous.data_root_key,Path::new(&self.collection.owner.data_root))?;
++            } else {
++                ensure!(previous.private_data_root==ids.0,"native data root physically replaced without owning relocation");
++                if previous.scope==scope_identity(&scope)? {
++                    ensure!(previous.selected_directory==ids.1,"selected native directory replaced without new incarnation");
++                }
++            }
++        }
++        self.native_admissible(&head,&state)?;
++        ensure!(self.check()?==fence && namespace(Path::new(&self.collection.owner.data_root),store.directory())?==ids,
++            "native enrollment namespace changed");
++        let enrollment=NativeOwnerEnrollment {producer_contract:NATIVE_PRODUCER_CONTRACT,scope:scope_identity(&scope)?,
++            private_data_root:ids.0,selected_directory:ids.1,
++            data_root_key:data_identity(Path::new(&self.collection.owner.data_root))?,enrolled_unix_ms:now};
++        state.native_owner=Some(enrollment.clone());
++        state.head=head;
++        state.worker_epoch=fence.1;
++        write(self.collection,RECEIPT,&state)?;
++        Ok(NativeOwnerAuthority{collection:self.collection.clone(),lease,bound:self.bound.clone(),
++            control:self.bound.native_control_root().into(),enrollment,namespace_pin})
++    }
++    /// Healthy restart requires only bounded owner/root/journal/veto metadata.
++    /// No descendant enumeration, payload scan, lexical audit or object read.
++    pub fn resume_native_owner(&self,lease:std::sync::Arc<crate::service::ProjectLease>)->Result<NativeOwnerAuthority> {
++        self.load_native_owner(lease)?.context("native owner enrollment missing")
++    }
++    pub fn load_native_owner(&self,lease:std::sync::Arc<crate::service::ProjectLease>)->Result<Option<NativeOwnerAuthority>> {
++        ensure!(std::ptr::eq(self.lease,lease.as_ref()),"native authority requires the exact admitted lease owner");
++        let fence=self.check()?;
++        let Some(state)=self.load(fence.0)? else {return Ok(None)};
++        let Some(enrollment)=state.native_owner.clone() else {return Ok(None)};
++        let namespace_pin=NamespacePin::new(Path::new(&self.collection.owner.data_root))?;
++        let authority=NativeOwnerAuthority{collection:self.collection.clone(),lease,bound:self.bound.clone(),
++            control:self.bound.native_control_root().into(),enrollment,namespace_pin};
++        let (store,scope)=self.native_selected()?;
++        let read=store.current_read(&scope)?;
++        authority.observe_for(&read)?;
++        Ok(Some(authority))
++    }
++}
++impl NativeOwnerAuthority {
++    /// The eventual F14 adapter must bind this to its actual query read. No
++    /// borrowed writer/census survives enrollment or enters the normal query.
++    pub fn observe_for<'a>(&'a self,read:&'a CurrentRead)->Result<OwnedPublication<'a>> {
++        let registry=crate::service::registry::ServiceRegistry::open_saved(&self.control)?;
++        let owner=self.collection.integrity_owner(&registry,self.lease.as_ref(),&self.bound)?;
++        let fence=owner.check()?;
++        self.namespace_pin.check()?;
++        let (store,scope)=owner.native_selected()?;
++        ensure!(self.enrollment.producer_contract==NATIVE_PRODUCER_CONTRACT
++            && self.enrollment.scope==scope_identity(&scope)? && read.head().scope==scope,
++            "native owner enrollment or selected incarnation changed");
++        ensure!(self.enrollment.data_root_key==data_identity(Path::new(&self.collection.owner.data_root))?,
++            "native relocation requires enrollment through its completed owning receipt");
++        let ids=namespace(Path::new(&self.collection.owner.data_root),store.directory())?;
++        ensure!(ids==(self.enrollment.private_data_root,self.enrollment.selected_directory),
++            "native owner physical namespace changed");
++        let head=read.settled_native_head()?.context("native publication journal is unsettled")?;
++        let state=owner.load(fence.0)?.context("native owner observation missing")?;
++        owner.native_admissible(&head,&state)?;
++        ensure!(owner.check()?==fence,"native owner changed during observation");
++        Ok(OwnedPublication{head,basis:PublicationBasis::RetainedHeadMetadataAnchor,
++            physical_audit:PhysicalAudit::Unknown,_owner:self,_read:read})
++    }
++    pub fn revoke_live(&self) {self.bound.revoke_native_integrity();}
++}
+--- a/crates/airk-store/src/service_collection_census.rs
++++ b/crates/airk-store/src/service_collection_census.rs
+@@ -320,3 +320,55 @@
+     let after = file.metadata()?;
+     Ok((before.dev(),before.ino(),before.uid(),before.mode()) == (after.dev(),after.ino(),after.uid(),after.mode()))
+ }
++
++/// Protected data-root privacy is transitive to owned, non-writable-by-others
++/// directory ancestry; descendants need not all have exact mode 0700.
++#[cfg(target_os = "linux")]
++pub(super) fn owner_namespace(data: &Path, selected: &Path) -> Result<([u64;3],[u64;3])> {
++    use std::os::unix::fs::MetadataExt;
++    let root = open_absolute(data)?;
++    let crate::private_storage::Observation::Private(proof) = crate::private_storage::inspect(
++        &root, crate::private_storage::Kind::RootDirectory)? else {
++        anyhow::bail!("native data root lacks positive private evidence")
++    };
++    fn mount_id(file: &File) -> Result<u64> {
++        use std::{io::Read, os::fd::AsRawFd};
++        let mut bytes = Vec::new();
++        File::open(format!("/proc/self/fdinfo/{}",file.as_raw_fd()))?.take(4097).read_to_end(&mut bytes)?;
++        ensure!(bytes.len() <= 4096, "native namespace mount metadata exceeds bound");
++        let text = std::str::from_utf8(&bytes)?;
++        let mut values = text.lines().filter_map(|line|line.strip_prefix("mnt_id:"));
++        let value: u64 = values.next().context("native namespace mount evidence unavailable")?.trim().parse()?;
++        ensure!(value != 0 && values.next().is_none(), "ambiguous native namespace mount evidence");
++        Ok(value)
++    }
++    let root_mount = mount_id(&root)?;
++    let root_identity = proof.identity();
++    let mut parent = root.try_clone()?;
++    let mut seen = BTreeSet::new();
++    seen.insert(root_identity);
++    for (count, component) in selected.strip_prefix(data)?.components().enumerate() {
++        ensure!(count < 64, "native namespace ancestry exceeds bound");
++        let std::path::Component::Normal(name) = component else {
++            anyhow::bail!("native namespace path is not root-relative")
++        };
++        parent = open_child(&parent,name)?;
++        let metadata = parent.metadata()?;
++        ensure!(safe_ancestor(&parent)? && metadata.uid() == unsafe {libc::geteuid()}
++            && metadata.dev() == root_identity[0] && mount_id(&parent)? == root_mount,
++            "native selected ancestry is not positively owned on the same mount");
++        ensure!(seen.insert([metadata.dev(),metadata.ino(),0]), "native namespace repeats physical identity");
++    }
++    let metadata = parent.metadata()?;
++    ensure!(proof.recheck()?.is_ok() && proof.check_current(&open_absolute(data)?)?,
++        "native data root changed during namespace observation");
++    Ok((root_identity,[metadata.dev(),metadata.ino(),0]))
++}
++#[cfg(target_os = "linux")]
++pub(super) fn pin_owner_root(data:&Path)->Result<File> {
++    let file=open_absolute(data)?;
++    ensure!(matches!(crate::private_storage::inspect(&file,crate::private_storage::Kind::RootDirectory)?,
++        crate::private_storage::Observation::Private(_)),"native data root lacks positive privacy evidence");
++    Ok(file)
++}
++
+--- a/crates/airk-store/src/service_census_windows.rs
++++ b/crates/airk-store/src/service_census_windows.rs
+@@ -324,3 +324,38 @@
+         Ok(())
+     }
+ }
++
++/// Bounded owner namespace observation, with zero directory enumeration. The
++/// protected private data root may have normally inherited private descendants.
++pub(crate) fn owner_namespace(data: &Path, selected: &Path) -> Result<([u64;3],[u64;3])> {
++    let root = absolute(data)?;
++    let Observation::Private(proof) = private_storage::inspect(&root.file,Kind::RootDirectory)? else {
++        anyhow::bail!("native data root lacks positive private evidence")
++    };
++    ensure!(no_alternate_streams(&root.file)?, "unsupported data-root streams");
++    let root_identity = proof.identity();
++    let mut parent = root.file.try_clone()?;
++    let mut ancestors = Vec::new();
++    let mut seen = BTreeSet::new();
++    seen.insert(root_identity);
++    for (count, component) in selected.strip_prefix(data)?.components().enumerate() {
++        ensure!(count < 64, "native namespace ancestry exceeds bound");
++        let Component::Normal(name) = component else { anyhow::bail!("native namespace path is not root-relative") };
++        let child = relative(&parent,&name.encode_wide().collect::<Vec<_>>())?;
++        let Observation::Private(child_proof) = private_storage::inspect(&child,Kind::Directory)? else {
++            anyhow::bail!("native selected ancestry lacks inherited private evidence")
++        };
++        ensure!(private_storage::same_volume(&root.file,&child) && no_alternate_streams(&child)?,
++            "native selected ancestry crosses a volume or unsupported stream");
++        ensure!(seen.insert(child_proof.identity()), "native namespace repeats physical identity");
++        ancestors.push(parent); parent = child;
++    }
++    let Observation::Private(selected_proof) = private_storage::inspect(&parent,Kind::Directory)? else {
++        anyhow::bail!("native selected directory lost privacy evidence")
++    };
++    let selected_identity = selected_proof.identity();
++    let current = absolute(data)?;
++    ensure!(proof.recheck()?.is_ok() && proof.check_current(&current.file)?,
++        "native data root changed during namespace observation");
++    Ok((root_identity,selected_identity))
++}
+--- a/crates/airk-store/src/service_data_relocation.rs
++++ b/crates/airk-store/src/service_data_relocation.rs
+@@ -641,3 +641,13 @@
+         Ok(())
+     }
+ }
++
++/// Exact completed native move, not a path/default-location hint.
++pub(crate) fn require_native_owner_move(control:&Path,source_key:airk_core::identity::Sha256Digest,destination:&Path)->Result<()> {
++    require_settled(control)?;
++    let value:Completed=serde_json::from_slice(&read(&control.join(RESULT),16384)?)?;
++    let key=airk_core::identity::framed_digest(b"native-owner-data-root/1",
++        &[value.source.to_str().context("non-UTF-8 native migration source")?.as_bytes()]);
++    ensure!(key==source_key && selected(control,&value.source,destination)?,"native enrollment lacks exact completed relocation");
++    Ok(())
++}
+--- a/crates/airk-store/src/private_storage_windows.rs
++++ b/crates/airk-store/src/private_storage_windows.rs
+@@ -128,6 +128,44 @@
+ }
+ 
+ 
++
++/// Exclusive new native root creation only. Never changes an existing ACL.
++pub(super) fn create_native_root(path:&std::path::Path)->Result<()> {
++    use std::os::windows::{ffi::OsStrExt,io::{OwnedHandle,FromRawHandle}};
++    use windows_sys::Win32::{Security::{Authorization::{ConvertSidToStringSidW,
++        ConvertStringSecurityDescriptorToSecurityDescriptorW,SDDL_REVISION_1},SECURITY_ATTRIBUTES},
++        Storage::FileSystem::CreateDirectoryW};
++    let mut token=std::ptr::null_mut();
++    ensure!(unsafe{OpenProcessToken(GetCurrentProcess(),TOKEN_QUERY,&mut token)}!=0,"native root token unavailable");
++    let token=unsafe{OwnedHandle::from_raw_handle(token)};
++    let mut user=[0usize;64];let mut returned=0;
++    ensure!(unsafe{GetTokenInformation(token.as_raw_handle(),TokenUser,user.as_mut_ptr().cast(),
++        mem::size_of_val(&user) as u32,&mut returned)}!=0
++        &&returned as usize>=mem::size_of::<TOKEN_USER>(),"native root user token unavailable");
++    let sid=unsafe{(*user.as_ptr().cast::<TOKEN_USER>()).User.Sid};
++    ensure!(unsafe{IsValidSid(sid)}!=0,"native root user SID invalid");
++    let mut text=std::ptr::null_mut();
++    ensure!(unsafe{ConvertSidToStringSidW(sid,&mut text)}!=0,"native root SID conversion failed");
++    let _sid_owner=Descriptor(text.cast());
++    let mut length=0;
++    while length<256 && unsafe{*text.add(length)}!=0{length+=1;}
++    ensure!(length<256,"native root SID exceeds bound");
++    let sid=String::from_utf16(unsafe{std::slice::from_raw_parts(text,length)})?;
++    let sddl:Vec<u16>=format!("O:{sid}D:P(A;OICI;FA;;;{sid})").encode_utf16().chain(Some(0)).collect();
++    let mut descriptor=std::ptr::null_mut();
++    ensure!(unsafe{ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.as_ptr(),SDDL_REVISION_1,
++        &mut descriptor,std::ptr::null_mut())}!=0,"native private root descriptor invalid");
++    let _descriptor_owner=Descriptor(descriptor);
++    let attributes=SECURITY_ATTRIBUTES{nLength:mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
++        lpSecurityDescriptor:descriptor,bInheritHandle:0};
++    let path:Vec<u16>=path.as_os_str().encode_wide().chain(Some(0)).collect();
++    // SAFETY: all owned token/descriptor/name storage remains live until return.
++    // CreateDirectoryW is exclusive; ERROR_ALREADY_EXISTS never rewrites ACLs.
++    ensure!(unsafe{CreateDirectoryW(path.as_ptr(),&attributes)}!=0,
++        "native private root creation refused: {}",std::io::Error::last_os_error());
++    Ok(())
++}
++
+ #[cfg(test)]
+ pub(super) mod tests {
+     use super::*;
+@@ -155,7 +193,7 @@
+         Ok(String::from_utf16(unsafe { std::slice::from_raw_parts(text, length) })?)
+     }
+     pub(crate) fn private_root(path: &std::path::Path) -> Result<()> {
+-        directory_acl(path, false)
++        super::create_native_root(path)
+     }
+     pub(crate) fn foreign_readable_root(path: &std::path::Path) -> Result<()> { directory_acl(path, true) }
+     fn directory_acl(path: &std::path::Path, foreign: bool) -> Result<()> {
+--- a/crates/airk-store/src/private_storage.rs
++++ b/crates/airk-store/src/private_storage.rs
+@@ -175,3 +175,8 @@
+ pub(crate) fn test_foreign_readable_root(path: &std::path::Path) -> Result<()> {
+     windows::tests::foreign_readable_root(path)
+ }
++
++#[cfg(windows)]
++pub(crate) fn create_native_data_root(path:&std::path::Path)->Result<()> {
++    windows::create_native_root(path)
++}
+--- a/crates/airk-store/src/service_data_scope.rs
++++ b/crates/airk-store/src/service_data_scope.rs
+@@ -243,6 +243,12 @@
+     }
+     fresh_namespace(&scope.data)?;
+     // A missing root is created owner-only; an existing root keeps its permissions.
++    #[cfg(windows)]
++    if !exists(&scope.data)? {
++        fs::create_dir_all(scope.data.parent().context("native data parent missing")?)?;
++        crate::private_storage::create_native_data_root(&scope.data)?;
++    }
++    #[cfg(not(windows))]
+     {
+         let mut builder = fs::DirBuilder::new();
+         builder.recursive(true);
+--- a/crates/airk-store/src/service_collection_tests.rs
++++ b/crates/airk-store/src/service_collection_tests.rs
+@@ -1078,3 +1078,150 @@
+         "partial drain cannot heal an inherited unresolved audit");
+     Ok(())
+ }
++
++#[cfg(any(windows,target_os="linux"))]
++fn native_private_fixture()->Result<IntegrityFixture> {
++    use crate::service::{ProjectLease,data_scope,registry::ServiceRegistry};
++    use airk_core::service::ProjectRegistration;
++    let temporary=match std::env::var_os("AIRK_PRIVATE_CENSUS_BASE") {
++        Some(base)=>tempfile::Builder::new().prefix("native-owner-fixture-").tempdir_in(base)?,
++        None=>tempfile::tempdir()?,
++    };
++    let base=temporary.path().canonicalize()?;
++    let (data,source,control)=(base.join("data"),base.join("source"),base.join("control"));
++    fs::create_dir(&source)?;fs::create_dir(&control)?;
++    let namespace=Incarnation::from_bytes([111;16]);
++    let registration=ProjectRegistration::new(source.to_str().unwrap().into(),data.to_str().unwrap().into(),"fixture".into())?;
++    let mut registry=ServiceRegistry::open(&control,namespace)?;
++    registry.register(&registration)?;
++    // Exercise the actual new-root creation adapter; no fixture chmod/ACL rewrite.
++    let bound=data_scope::bind(&data,&control,namespace)?;
++    let slot=Incarnation::from_bytes([112;16]);
++    let collection=Collection::initialize(&data,&registration.root,"fixture",slot)?;
++    let store=collection.selected_store()?;
++    initialize(&store,&registration.root,slot)?;
++    let scope=store.current_owned_scope()?.context("native fixture scope missing")?;
++    let mut lease=ProjectLease::acquire(&control,registration.binding)?;
++    registry.admit_worker(&mut lease)?;
++    Ok((temporary,collection,registry,bound,lease,store,scope))
++}
++
++#[cfg(any(windows,target_os="linux"))]
++#[test]
++#[cfg_attr(target_os="linux",ignore="requires AIRK_PRIVATE_CENSUS_BASE with positively protected local ancestry")]
++fn native_old_head_enrollment_and_restart_are_metadata_only_and_do_not_hold_writer()->Result<()> {
++    let (_temporary,collection,mut registry,bound,lease,store,scope)=native_private_fixture()?;
++    let lease=std::sync::Arc::new(lease);
++    // Exact existing corruption seam: metadata/head still authenticates while a
++    // full lexical audit fails. Enrollment must truthfully retain audit Unknown.
++    {
++        let connection=rusqlite::Connection::open(store.directory().join("current.sqlite3"))?;
++        assert_eq!(connection.execute("UPDATE current_fts_config SET v=999 WHERE k='version'",[])?,1);
++    }
++    {
++        let owner=collection.integrity_owner(&registry,lease.as_ref(),&bound)?;
++        let mut writer=store.lock()?;
++        let authority=owner.enroll_native_owner(lease.clone(),&mut writer,1000)?;
++        drop(writer);
++        // Normal indexing can acquire its actual OS writer while authority lives.
++        let writer=store.lock()?;drop(writer);
++        let read=store.current_read(&scope)?;
++        let observed=authority.observe_for(&read)?;
++        assert_eq!(observed.head().token()?,read.token()?);
++        assert_eq!(*observed.physical_audit(),super::integrity::PhysicalAudit::Unknown);
++        assert!(read.verify_lexical_integrity().is_err(),"ordinary strict audit remains enabled");
++    }
++    drop(lease);
++    let mut lease=crate::service::ProjectLease::acquire(bound.native_control_root(),registry.bindings()?[0])?;
++    registry.admit_worker(&mut lease)?;
++    let lease=std::sync::Arc::new(lease);
++    let owner=collection.integrity_owner(&registry,lease.as_ref(),&bound)?;
++    let authority=owner.resume_native_owner(lease.clone())?;
++    let read=store.current_read(&scope)?;
++    assert_eq!(*authority.observe_for(&read)?.physical_audit(),super::integrity::PhysicalAudit::Unknown);
++    assert!(read.verify_lexical_integrity().is_err(),"restart did not silently perform/require full audit");
++    Ok(())
++}
++
++#[cfg(any(windows,target_os="linux"))]
++#[test]
++#[cfg_attr(target_os="linux",ignore="requires AIRK_PRIVATE_CENSUS_BASE with positively protected local ancestry")]
++fn native_damage_control_veto_survives_collection_quota_failure_and_worker_restart()->Result<()> {
++    let (_temporary,collection,mut registry,bound,lease,store,scope)=native_private_fixture()?;
++    let binding=lease.identity().0;
++    let lease=std::sync::Arc::new(lease);
++    {
++        let owner=collection.integrity_owner(&registry,lease.as_ref(),&bound)?;
++        let mut writer=store.lock()?;
++        let authority=owner.enroll_native_owner(lease.clone(),&mut writer,1100)?;
++        drop(writer);
++        let before=fs::read(collection.directory.join("integrity-observation.json"))?;
++        {
++            let connection=rusqlite::Connection::open(store.directory().join("current.sqlite3"))?;
++            assert_eq!(connection.execute("UPDATE current_fts_config SET v=999 WHERE k='version'",[])?,1);
++        }
++        let quota=Quota::open_service(Path::new(&collection.owner.data_root))?;
++        let original=quota.policy()?;
++        let status=quota.status()?;
++        let mut full=original.clone();
++        full.root_bytes=status.used_bytes.checked_add(status.reserved_bytes).context("fixture quota overflow")?;
++        quota.configure(full)?;
++        let read=store.current_read(&scope)?;
++        assert!(read.verify_lexical_integrity().is_err(),"record actual detected lexical damage");
++        let component=read.head().lexical_commit;
++        let failed=owner.record_damage(&read,component,1101);
++        quota.configure(original)?;
++        assert!(failed.is_err());
++        assert_eq!(fs::read(collection.directory.join("integrity-observation.json"))?,before,
++            "collection failure must not rewrite a previously clean metadata anchor");
++        assert!(authority.observe_for(&read).is_err(),"shared live revocation must be immediate");
++        assert!(registry.recorded_integrity_damage(lease.as_ref())?.iter().any(|entry|entry.component==component));
++    }
++    drop(lease);
++    let mut lease=crate::service::ProjectLease::acquire(bound.native_control_root(),binding)?;
++    registry.admit_worker(&mut lease)?;
++    let lease=std::sync::Arc::new(lease);
++    // Fresh runtime token must not depend on the prior process-only revocation.
++    let fresh=crate::service::data_scope::bind(Path::new(&collection.owner.data_root),bound.native_control_root(),registry.incarnation()?)?;
++    let owner=collection.integrity_owner(&registry,lease.as_ref(),&fresh)?;
++    assert!(owner.resume_native_owner(lease.clone()).is_err(),"durable control veto must refuse stale clean enrollment after restart");
++    Ok(())
++}
++
++#[cfg(any(windows,target_os="linux"))]
++#[test]
++#[cfg_attr(target_os="linux",ignore="requires AIRK_PRIVATE_CENSUS_BASE with positively protected local ancestry")]
++fn native_live_audit_and_clean_cancel_do_not_disable_healthy_owner_restart()->Result<()> {
++    use airk_core::service::{JobKind,JobOutcome,RequestKey};
++    use crate::service::registry::IntegrityAuditState;
++    let (_temporary,collection,mut registry,bound,lease,store,scope)=native_private_fixture()?;
++    let binding=lease.identity().0;
++    let lease=std::sync::Arc::new(lease);
++    let authority={
++        let owner=collection.integrity_owner(&registry,lease.as_ref(),&bound)?;
++        let mut writer=store.lock()?;
++        owner.enroll_native_owner(lease.clone(),&mut writer,1200)?
++    };
++    let (namespace,epoch)=registry.request_epoch()?;
++    let key=RequestKey{namespace,epoch,nonce:Incarnation::from_bytes([113;16])};
++    let job=registry.enqueue(binding,namespace,&key,JobKind::Verify)?;
++    registry.claim_job_id(lease.as_ref(),job.id)?.context("audit not claimed")?;
++    assert_eq!(registry.integrity_audit_state(lease.as_ref())?,IntegrityAuditState::LiveAudit{job:job.id});
++    {
++        let read=store.current_read(&scope)?;
++        assert_eq!(*authority.observe_for(&read)?.physical_audit(),super::integrity::PhysicalAudit::Unknown,
++            "ordinary live audit must not require deep completion before owner admission");
++    }
++    let proof=registry.drained_verify_before_execution(lease.as_ref(),&bound,job.id)?;
++    registry.complete_job_with_maintenance_and_audit_at(lease.as_ref(),job.id,JobOutcome::Canceled,1201,None,Some(&proof))?;
++    assert_eq!(registry.integrity_audit_state(lease.as_ref())?,IntegrityAuditState::Clear);
++    drop(authority);drop(lease);
++    let mut lease=crate::service::ProjectLease::acquire(bound.native_control_root(),binding)?;
++    registry.admit_worker(&mut lease)?;
++    let lease=std::sync::Arc::new(lease);
++    let owner=collection.integrity_owner(&registry,lease.as_ref(),&bound)?;
++    let authority=owner.resume_native_owner(lease.clone())?;
++    let read=store.current_read(&scope)?;
++    assert_eq!(*authority.observe_for(&read)?.physical_audit(),super::integrity::PhysicalAudit::Unknown);
++    Ok(())
++}
+--- a/crates/airk-kernel/src/diagnostics.rs
++++ b/crates/airk-kernel/src/diagnostics.rs
+@@ -538,3 +538,22 @@
+             crate::service_execution::checkpoint)
+     }
+ }
++
++impl Kernel {
++    /// Owning native worker startup/re-observation. Absence alone permits
++    /// initial metadata enrollment; malformed/foreign/unresolved state never
++    /// falls through to a fresh clean enrollment. Ordinary reads stay strict.
++    pub fn prepare_native_owner(
++        &self, registry:&airk_store::service::registry::ServiceRegistry,
++        lease:std::sync::Arc<airk_store::service::ProjectLease>,
++        bound:&airk_store::service::data_scope::BoundDataRoot,
++    )->Result<airk_store::service::collection::integrity::native_owner::NativeOwnerAuthority> {
++        let collection=self.service_collection.as_ref().context("native owner requires service collection")?;
++        let owner=collection.integrity_owner(registry,lease.as_ref(),bound)?;
++        if let Some(authority)=owner.load_native_owner(lease.clone())? {return Ok(authority)}
++        let store=collection.selected_store()?;
++        let mut writer=store.lock()?;
++        let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis().try_into()?;
++        owner.enroll_native_owner(lease.clone(),&mut writer,now)
++    }
++}
+--- a/crates/airk-cli/src/project_worker.rs
++++ b/crates/airk-cli/src/project_worker.rs
+@@ -103,6 +103,9 @@
+     control: std::path::PathBuf,
+     identity: WorkerIdentity,
+     storage: airk_store::service::data_scope::BoundDataRoot,
++    // Foundation only: retained actual owner capability or explicit error;
++    // ordinary tools keep every strict query check until F14 adopts consumers.
++    _native_owner: Result<airk_store::service::collection::integrity::native_owner::NativeOwnerAuthority>,
+     broker: Mutex<Broker>,
+     tools: airk_mcp::local::LocalTools,
+     closing: Arc<AtomicBool>,
+@@ -462,6 +465,7 @@
+     airk_kernel::service_execution::install(Path::new(&registration.data_root), identity)?;
+     let receipt = kernel.service_rebuild_receipt()?;
+     registry.recover_jobs_with_rebuild_receipt(&lease, receipt.as_ref())?;
++    let native_owner = kernel.prepare_native_owner(&registry,lease.clone(),&storage);
+     record_watch_roots(&kernel, &mut registry, &lease);
+     let _ = reconcile_semantic_setup(&kernel, &mut registry, &lease, init.engine);
+     // Recovery is durable desired work, admitted by the service rather than an
+@@ -516,6 +520,7 @@
+         control: init.runtime.clone(),
+         identity,
+         storage,
++        _native_owner: native_owner,
+         broker: Mutex::new(broker),
+         tools: airk_mcp::local::LocalTools::with_client(
+             kernel.clone(),

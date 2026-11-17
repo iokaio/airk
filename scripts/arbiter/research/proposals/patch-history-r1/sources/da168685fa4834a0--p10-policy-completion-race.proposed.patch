@@ -1,0 +1,74 @@
+--- a/crates/airk-store/src/service_catalog_split.rs
++++ b/crates/airk-store/src/service_catalog_split.rs
+@@ -1633,6 +1633,40 @@
+         expected: Sha256Digest,
+         job: Sha256Digest,
+     ) -> Result<SplitSnapshot> {
++        // A worker can die after Succeeded but before its ordinary P9 policy
++        // completion tail. Reconcile only this exact accepted result before the
++        // split advertises RemainderPublished; never depend on another actor's
++        // scan/timer ordering. The canonical P9 owner validates the real result.
++        let policy_completion = {
++            let tx = self.connection.unchecked_transaction()?;
++            let old = exact(&tx, operation, expected)?;
++            let (admitted, reference) =
++                admitted_job(&tx, job)?.context("split job not admitted")?;
++            ensure!(admitted.receipt_digest == expected, "split completion lifecycle changed");
++            if reference.purpose == SplitJobPurpose::OriginalRemoval {
++                ensure!(super::super::jobs::record(&tx, job)?.state == JobState::Succeeded,
++                    "split job is not successfully complete");
++                let work = super::super::configuration::work(&tx, job)?
++                    .context("split original policy configuration missing")?;
++                let ProjectConfiguration::ApplySourcePolicy { policy, operation_id } =
++                    work.request.configuration else {
++                    anyhow::bail!("split original removal is not accepted policy work");
++                };
++                let current = super::policy::snapshot(&tx, old.request.original_index)?
++                    .context("split original policy missing")?;
++                ensure!(current.job == job && current.operation_id == operation_id
++                    && current.policy == *policy && current.policy == old.plan.remainder,
++                    "split original policy completion lineage differs");
++                Some((old.request.original_index, operation_id))
++            } else {
++                None
++            }
++        };
++        if let Some((index, policy_operation)) = policy_completion {
++            self.catalog_record_policy_job(index, policy_operation)?;
++        }
++        // Recheck the exact receipt, native work lineage, and Succeeded result
++        // under the existing write transaction after the P9 owner's commit.
+         let tx = self
+             .connection
+             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+--- a/crates/airk-cli/src/project_supervisor_split_tests.rs
++++ b/crates/airk-cli/src/project_supervisor_split_tests.rs
+@@ -163,6 +163,13 @@
+             complete = Some(current);
+             break;
+         }
++        if current.receipt.stage == SplitStage::RemainderPublished {
++            let policy = fixture.registry.catalog_policy_status(current.request.original_index)?
++                .context("remainder policy absent")?;
++            ensure!(policy.application.as_ref().is_some_and(|report|
++                report.removal_publication == current.receipt.remainder_publication),
++                "split advanced before canonical P9 completion acknowledgment");
++        }
+         if let Some(child) = current.receipt.jobs.last()
+             && fixture.registry.job(child.job)?.state == JobState::Pending
+         {
+@@ -200,6 +207,14 @@
+             fixture
+                 .registry
+                 .complete_job(&project_lease, child.job, outcome)?;
++            if child.purpose == SplitJobPurpose::OriginalRemoval {
++                // Deliberately omit production's post-Succeeded P9 tail. This
++                // is the real crash/interleaving boundary the metadata owner
++                // must reconcile from the exact retained native job result.
++                ensure!(fixture.registry.catalog_policy_status(current.request.original_index)?
++                    .context("original policy absent after actual removal")?.application.is_none(),
++                    "fixture unexpectedly ran the P9 completion tail");
++            }
+             witnessed |= child.purpose == SplitJobPurpose::OriginalWitness;
+             removed |= child.purpose == SplitJobPurpose::OriginalRemoval;
+             // These actual ownership guards end before the next metadata turn.

@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: Apache-2.0
+
+#[cfg(test)]
+mod root_resolution_cache_tests {
+    use super::*;
+    use airk_store::service::registry::ServiceRegistry;
+    use airk_core::{identity::Incarnation, service::ProjectRegistration};
+    use std::{fs, sync::Arc, time::{Duration,Instant}};
+    fn fixture() -> Result<(tempfile::TempDir, PathBuf, RootScope, ProjectRegistration)> {
+        let owner = tempfile::tempdir()?;
+        let base = owner.path().canonicalize()?;
+        let source = base.join("source"); let data = base.join("data"); let control=base.join("control");
+        for path in [&source,&data,&control] { fs::create_dir(path)?; }
+        let project = ProjectRegistration::new(source.to_str().unwrap().into(),data.to_str().unwrap().into(),"fixture".into())?;
+        Ok((owner,control,RootScope::new(&source,None)?,project))
+    }
+    #[test]
+    fn unchanged_authenticated_stamp_reuses_owned_scope_and_registration_invalidates_missing() -> Result<()> {
+        let (_owner,control,scope,project)=fixture()?;
+        let mut registry=ServiceRegistry::open(&control,Incarnation::from_bytes([71;16]))?;
+        let first=scope.observe_cached(&control,None,Instant::now()+Duration::from_secs(2))?;
+        assert!(matches!(first.resolution,RootResolution::Missing));
+        let hit=scope.observe_cached(&control,Some(first.clone()),Instant::now()+Duration::from_secs(2))?;
+        assert!(Arc::ptr_eq(&first,&hit),"hit must reuse the owned observation without full row decode");
+        assert_eq!(first.captured,hit.captured,"stamp polling must not rejuvenate the original observation");
+        assert_eq!(first.observed_unix_ms,hit.observed_unix_ms);
+        registry.register(&project)?;
+        let registered=scope.observe_cached(&control,Some(first),Instant::now()+Duration::from_secs(2))?;
+        assert!(matches!(registered.resolution,RootResolution::Registered(_)));
+        let before=registered.stamp;
+        registry.pause(project.binding,true)?;
+        let paused=scope.observe_cached(&control,Some(registered),Instant::now()+Duration::from_secs(2))?;
+        assert_ne!(paused.stamp,before);
+        Ok(())
+    }
+    #[test]
+    fn same_revision_replacement_namespace_never_reuses_old_scope() -> Result<()> {
+        let (owner,control,scope,project)=fixture()?;
+        let mut registry=ServiceRegistry::open(&control,Incarnation::from_bytes([72;16]))?;
+        registry.register(&project)?;
+        let first=scope.observe_cached(&control,None,Instant::now()+Duration::from_secs(2))?;
+        drop(registry);
+        fs::rename(&control,owner.path().join("old-control"))?;
+        fs::create_dir(&control)?;
+        let mut replacement=ServiceRegistry::open(&control,Incarnation::from_bytes([73;16]))?;
+        replacement.register(&project)?;
+        let second=scope.observe_cached(&control,Some(first.clone()),Instant::now()+Duration::from_secs(2))?;
+        assert_eq!(first.stamp.unwrap().revision,second.stamp.unwrap().revision);
+        assert_ne!(first.stamp.unwrap().namespace,second.stamp.unwrap().namespace);
+        assert!(!Arc::ptr_eq(&first,&second));
+        Ok(())
+    }
+    #[test]
+    fn cheap_stamp_is_not_a_fresh_row_audit_and_expiry_forces_validation() -> Result<()> {
+        let (_owner,control,scope,project)=fixture()?;
+        let mut registry=ServiceRegistry::open(&control,Incarnation::from_bytes([74;16]))?;
+        registry.register(&project)?;
+        let mut first=scope.observe_cached(&control,None,Instant::now()+Duration::from_secs(2))?;
+        let db=rusqlite::Connection::open(control.join("service-1.4.sqlite3"))?;
+        db.execute("UPDATE projects SET payload=x'7b7d' WHERE binding=?1",[project.binding.to_string()])?;
+        let hit=scope.observe_cached(&control,Some(first.clone()),Instant::now()+Duration::from_secs(2))?;
+        assert!(Arc::ptr_eq(&first,&hit),"same stamp fast path performs no full project decode");
+        drop(hit);
+        Arc::get_mut(&mut first).context("observation unexpectedly shared")?.captured=Instant::now()-Duration::from_secs(5);
+        assert!(scope.observe_cached(&control,Some(first),Instant::now()+Duration::from_secs(2)).is_err(),
+            "expired snapshot must detect out-of-band malformed row instead of resetting its age");
+        Ok(())
+    }
+    #[test]
+    fn expired_admission_is_known_unsubmitted_and_creates_no_registry() -> Result<()> {
+        let (_owner,control,scope,_project)=fixture()?;
+        let error=scope.observe_cached(&control,None,Instant::now()).err().context("expired scope admitted")?;
+        assert!(error.downcast_ref::<airk_store::service::registry::SavedScopeExpired>().is_some());
+        assert!(fs::read_dir(control)?.next().is_none());
+        Ok(())
+    }
+    #[test]
+    fn contended_stamp_refuses_instead_of_serving_cached_scope_and_recovers() -> Result<()> {
+        let (_owner,control,scope,project)=fixture()?;
+        let mut registry=ServiceRegistry::open(&control,Incarnation::from_bytes([75;16]))?;
+        registry.register(&project)?;
+        let first=scope.observe_cached(&control,None,Instant::now()+Duration::from_secs(2))?;
+        let db=rusqlite::Connection::open(control.join("service-1.4.sqlite3"))?;
+        db.execute_batch("BEGIN EXCLUSIVE")?;
+        let blocked=scope.observe_cached(&control,Some(first.clone()),Instant::now()+Duration::from_millis(20));
+        db.execute_batch("ROLLBACK")?;
+        assert!(blocked.is_err(),"contended authentication must not substitute cached authority");
+        let recovered=scope.observe_cached(&control,Some(first.clone()),Instant::now()+Duration::from_secs(2))?;
+        assert!(Arc::ptr_eq(&first,&recovered));
+        assert_eq!(first.captured,recovered.captured);
+        Ok(())
+    }
+}

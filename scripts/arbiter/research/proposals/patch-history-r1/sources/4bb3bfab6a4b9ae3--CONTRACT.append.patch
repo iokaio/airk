@@ -1,0 +1,15 @@
+*** Begin Patch
+*** Update File: crates/airk-kernel/src/inference_owner/evaluation_tests/CONTRACT.md
+@@
++
++The fresh-query diagnostic accepts both existing native search representations.
++Explicit combined selectors retain the strict combined-read materializer and
++member/publication fences. An implicit singleton request must deserialize Core
++SearchResponse and validated ScopeObservation, bind its exact sole index, full
++publication/collection/generation and frozen citation/source roots/hashes, and
++validate the original typed VerificationReceipt and reference projection. Unknown
++shapes or singleton responses to explicit combined selectors refuse. Full native
++partial, unchecked, budget-exhausted, empty and readiness observations remain
++unchanged; they are not upgraded to verification success. Full physical census
++and original Stop/lease/model/head fences remain independently mandatory.
+*** End Patch

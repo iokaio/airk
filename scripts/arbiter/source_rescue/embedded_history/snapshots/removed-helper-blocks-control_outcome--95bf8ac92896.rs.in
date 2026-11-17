@@ -1,0 +1,39 @@
+// SPDX-License-Identifier: Apache-2.0
+/// The control answer in canonical space, as the recorded `airk` output.
+fn control_outcome(
+    parity: &Parity,
+    control: &Path,
+    tool: &str,
+    arguments: &Value,
+    selection: airk_core::service::ToolSelection,
+) -> Outcome {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let response = runtime
+        .block_on(airk_cli::service_runtime::request(
+            control,
+            airk_core::service::ControlMethod::ToolsCall {
+                read_attempt: None,
+                tool: tool.into(),
+                arguments: arguments.as_object().unwrap().clone(),
+                selection,
+                response_mode: airk_core::service::ToolResponseMode::Full,
+                usage_client: airk_core::usage::ClientFamily::Cli,
+            },
+        ))
+        .unwrap();
+    match response {
+        airk_core::service::ControlResponse::ToolResult { result } => Outcome::Envelope(
+            comparable(serde_json::from_str(&parity.canonical(&result.to_string())).unwrap()),
+        ),
+        airk_core::service::ControlResponse::ToolCallFailed { message } => {
+            Outcome::Failed(parity.canonical(&message))
+        }
+        other => panic!(
+            "unexpected M3 response: {}",
+            serde_json::to_string(&other).unwrap()
+        ),
+    }
+}

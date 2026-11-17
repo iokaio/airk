@@ -1,0 +1,132 @@
+// SPDX-License-Identifier: Apache-2.0
+
+#[tokio::test]
+async fn coalesced_failure_tickets_do_not_poison_later_repair_or_reset_ready() -> Result<()> {
+    let ready = RuntimeReadiness::default();
+    let (release, released) = tokio::sync::oneshot::channel();
+    let mut first = Box::pin(ready.run(|| async move {
+        released.await?;
+        Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "owned fixture denial").into())
+    }));
+    let mut second = Box::pin(ready.run(|| async { panic!("shared waiter must not initialize") }));
+    std::future::poll_fn(|cx| {
+        assert!(std::future::Future::poll(first.as_mut(), cx).is_pending());
+        assert!(std::future::Future::poll(second.as_mut(), cx).is_pending());
+        std::task::Poll::Ready(())
+    }).await;
+    release.send(()).unwrap();
+    let first_error = first.await.unwrap_err();
+    assert!(first_error.chain().any(|cause| cause.downcast_ref::<std::io::Error>()
+        .is_some_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied)));
+    ready.run(|| async { Ok(()) }).await?;
+    let second_error = second.await.unwrap_err();
+    assert_eq!(second_error.to_string(), first_error.to_string());
+    ready.run(|| async { panic!("old failure ticket must not reset repaired readiness") }).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn explicit_owner_shutdown_joins_pending_attempt_and_closes_admission() -> Result<()> {
+    let ready = RuntimeReadiness::default();
+    let mut waiting = Box::pin(ready.run(|| async {
+        std::future::pending::<Result<()>>().await
+    }));
+    std::future::poll_fn(|cx| {
+        assert!(std::future::Future::poll(waiting.as_mut(), cx).is_pending());
+        std::task::Poll::Ready(())
+    }).await;
+    ready.shutdown().await?;
+    assert!(waiting.await.unwrap_err().to_string().contains("session closed"));
+    assert!(ready.run(|| async { panic!("closed owner cannot initialize") }).await.is_err());
+    Ok(())
+}
+#[tokio::test]
+async fn panic_and_abort_fan_out_real_join_failures_then_allow_repair() -> Result<()> {
+    for panic_case in [false, true] {
+        let ready = RuntimeReadiness::default();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let mut first = Box::pin(ready.run(|| async move {
+            released.await?;
+            if panic_case { panic!("original owned initializer panic"); }
+            std::future::pending::<Result<()>>().await
+        }));
+        let mut second = Box::pin(ready.run(|| async { panic!("must share attempt") }));
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(first.as_mut(), cx).is_pending());
+            assert!(std::future::Future::poll(second.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        }).await;
+        if panic_case {
+            release.send(()).unwrap();
+        } else {
+            let attempt = {
+                let state = ready.state.lock().await;
+                let ReadinessState::Running(attempt) = &*state else { panic!("owned attempt required") };
+                attempt.clone()
+            };
+            let slot = attempt.task.lock().await;
+            slot.as_ref().unwrap().abort();
+        }
+        let first_error = first.await.unwrap_err();
+        let second_error = second.await.unwrap_err();
+        assert_eq!(first_error.to_string(), "installed runtime verification task failed");
+        assert_eq!(second_error.to_string(), first_error.to_string());
+        for error in [&first_error, &second_error] {
+            let join = error.chain().find_map(|cause| cause.downcast_ref::<tokio::task::JoinError>())
+                .expect("real task JoinError remains discoverable");
+            assert_eq!(join.is_panic(), panic_case);
+            assert_eq!(join.is_cancelled(), !panic_case);
+            if panic_case { assert!(format!("{error:#}").contains("original owned initializer panic")); }
+        }
+        ready.run(|| async { Ok(()) }).await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn shared_failure_keeps_display_classification_and_source_chain() -> Result<()> {
+    let ready = RuntimeReadiness::default();
+    let error = ready.run(|| async {
+        Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied,
+            "service_explicitly_stopped: original owned refusal").into())
+    }).await.unwrap_err();
+    assert_eq!(error.to_string(), "service_explicitly_stopped: original owned refusal");
+    assert!(error.to_string().contains("service_explicitly_stopped"));
+    assert!(error.chain().any(|cause| cause.downcast_ref::<std::io::Error>()
+        .is_some_and(|value| value.kind() == std::io::ErrorKind::PermissionDenied)));
+    ready.run(|| async { Ok(()) }).await?;
+    Ok(())
+}
+#[tokio::test]
+async fn cancelled_shutdown_retains_attempt_handle_for_a_later_drain() -> Result<()> {
+    let ready = RuntimeReadiness::default();
+    let mut waiting = Box::pin(ready.run(|| async {
+        std::future::pending::<Result<()>>().await
+    }));
+    std::future::poll_fn(|cx| {
+        assert!(std::future::Future::poll(waiting.as_mut(), cx).is_pending());
+        std::task::Poll::Ready(())
+    }).await;
+    let attempt = {
+        let state = ready.state.lock().await;
+        let ReadinessState::Running(attempt) = &*state else { panic!("owned attempt required") };
+        attempt.clone()
+    };
+    // Stall disposal at its owner-held handle, not with wall-clock sleeps.
+    let slot = attempt.task.lock().await;
+    let mut shutdown = Box::pin(ready.shutdown());
+    std::future::poll_fn(|cx| {
+        assert!(std::future::Future::poll(shutdown.as_mut(), cx).is_pending());
+        std::task::Poll::Ready(())
+    }).await;
+    drop(shutdown);
+    assert!(slot.is_some(), "cancelled shutdown cannot take/detach the task");
+    assert!(matches!(&*ready.state.lock().await, ReadinessState::Running(current)
+        if Arc::ptr_eq(current, &attempt)));
+    assert!(ready.run(|| async { panic!("closing owner cannot admit replacement") }).await.is_err());
+    drop(slot);
+    ready.shutdown().await?;
+    assert!(attempt.task.lock().await.is_none(), "later shutdown joins the retained task");
+    assert!(waiting.await.is_err());
+    Ok(())
+}

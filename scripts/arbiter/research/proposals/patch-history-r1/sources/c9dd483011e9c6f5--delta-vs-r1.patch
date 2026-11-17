@@ -1,0 +1,160 @@
+--- r1/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/CONTRACT.md
++++ r2/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/CONTRACT.md
+@@ -59,3 +59,8 @@
+ inventory identity is explicitly distinct from an archive hash; source archives
+ and modified inventories are never conflated. Compiler version-kind identifies
+ MSVC toolset separately from exact compiler executable identity.
++
++The aggregate command plan must itself name the exact canonical current producer
++proof, not merely match a resealed plan hash. Regression inputs reseal all
++unrelated source/proof references before targeting status/settlement failures;
++intrinsic DLL/unsafe-option controls keep all unrelated roster fences valid.
+--- r1/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/tests.rs
++++ r2/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection/tests.rs
+@@ -70,7 +70,18 @@
+         json!("-Donnxruntime_BUILD_CUDA_EP_AS_PLUGIN=OFF"),
+         json!("-DCMAKE_CUDA_ARCHITECTURES=86"),
+     ];
+-    for name in PATH_OPTIONS {
++    for name in &[
++        "CMAKE_MAKE_PROGRAM",
++        "Patch_EXECUTABLE",
++        "PYTHON_EXECUTABLE",
++        "Python3_EXECUTABLE",
++        "CMAKE_CUDA_COMPILER",
++        "onnxruntime_CUDA_HOME",
++        "CUDAToolkit_ROOT",
++        "onnxruntime_CUDNN_HOME",
++        "CUDNN_PATH",
++        "FETCHCONTENT_SOURCE_DIR_CUDNN_FRONTEND",
++    ] {
+         configure.push(json!(format!(
+             "-D{name}={}",
+             if *name == "CMAKE_CUDA_COMPILER" {
+@@ -106,7 +117,7 @@
+     let build = m.json("build-proof", build_value);
+     let aggregate_archive = m.pin("onnxruntime.lib", vec![3; 70_000]);
+     let out = json!({"path":"gpu-aggregate/onnxruntime.lib","bytes":70_000,"sha256":aggregate_archive.sha256});
+-    let plan = json!({"synthetic":true,"inputs":[]});
++    let plan = json!({"synthetic":true,"inputs":[],"producer_proof_sha256":build_sha});
+     let plan_sha = canonical_sha(&plan)?;
+     let lib = m.pin("lib.exe", b"synthetic archiver".to_vec());
+     let aggregate_receipt=m.json("aggregate-receipt",json!({"status":"PASS_GPU_AGGREGATE_ONLY_UNQUALIFIED","command":ok,"output":out,"plan":plan,"tool":row(&lib,m.files[&lib.path].len() as u64)}));
+@@ -173,9 +184,32 @@
+     assert!(!raw.contains("commands"));
+     Ok(())
+ }
++fn reseal_producer_chain(m: &mut Memory, input: &mut Input, producer: Value) -> Result<()> {
++    input.producer_receipt = m.json("changed-producer", producer);
++    let mut build: Value = serde_json::from_slice(&m.files[&input.build_proof.path])?;
++    build["build_receipt"]["sha256"] = json!(input.producer_receipt.sha256);
++    let build_sha = canonical_sha(&build)?;
++    input.build_proof = m.json("changed-build", build);
++    let mut receipt: Value = serde_json::from_slice(&m.files[&input.aggregate_receipt.path])?;
++    receipt["plan"]["producer_proof_sha256"] = json!(build_sha);
++    let plan_sha = canonical_sha(&receipt["plan"])?;
++    input.aggregate_receipt = m.json("changed-aggregate-receipt", receipt);
++    let mut aggregate: Value = serde_json::from_slice(&m.files[&input.aggregate_proof.path])?;
++    aggregate["producer_proof_sha256"] = json!(build_sha);
++    aggregate["receipt_sha256"] = json!(input.aggregate_receipt.sha256);
++    aggregate["plan_sha256"] = json!(plan_sha);
++    input.aggregate_proof = m.json("changed-aggregate-proof", aggregate);
++    Ok(())
++}
+ #[test]
+ fn synthetic_projector_refuses_failed_or_unsettled_producer() -> Result<()> {
+-    for field in ["status", "owned_job_forced_termination"] {
++    for (field, expected) in [
++        ("status", "successful same-build producer proof required"),
++        (
++            "owned_job_forced_termination",
++            "producer did not naturally settle successfully",
++        ),
++    ] {
+         let (mut m, mut input) = fixture()?;
+         let mut value: Value = serde_json::from_slice(&m.files[&input.producer_receipt.path])?;
+         if field == "status" {
+@@ -183,9 +217,29 @@
+         } else {
+             value["commands"][0][field] = json!(true);
+         }
+-        input.producer_receipt = m.json("changed-producer", value);
+-        assert!(project(&m, input).is_err());
+-    }
++        reseal_producer_chain(&mut m, &mut input, value)?;
++        let error = project(&m, input)
++            .err()
++            .context("invalid producer accepted")?;
++        assert_eq!(error.to_string(), expected);
++    }
++    Ok(())
++}
++#[test]
++fn aggregate_plan_refuses_different_build_even_with_resealed_plan_sha() -> Result<()> {
++    let (mut m, mut input) = fixture()?;
++    let mut receipt: Value = serde_json::from_slice(&m.files[&input.aggregate_receipt.path])?;
++    receipt["plan"]["producer_proof_sha256"] = json!(Sha256Digest::from_bytes([0x99; 32]));
++    let plan_sha = canonical_sha(&receipt["plan"])?;
++    input.aggregate_receipt = m.json("cross-build-aggregate-receipt", receipt);
++    let mut proof: Value = serde_json::from_slice(&m.files[&input.aggregate_proof.path])?;
++    proof["receipt_sha256"] = json!(input.aggregate_receipt.sha256);
++    proof["plan_sha256"] = json!(plan_sha);
++    input.aggregate_proof = m.json("cross-build-aggregate-proof", proof);
++    let error = project(&m, input)
++        .err()
++        .context("cross-build plan accepted")?;
++    assert_eq!(error.to_string(), "proof/source/aggregate closure mismatch");
+     Ok(())
+ }
+ #[test]
+@@ -193,7 +247,26 @@
+     assert!(strict::parse(br#"{"a":1,"a":2}"#).is_err());
+     assert!(strict::parse(br#"{"nested":{"b":1,"b":2}}"#).is_err());
+     assert!(canonical_sha(&json!({"elapsed":0.1})).is_err());
+-    assert!(options(&json!(["-DUNKNOWN=C:/Users/private"])).is_err());
++    let mut valid_paths: Vec<Value> = [
++        "CMAKE_MAKE_PROGRAM",
++        "Patch_EXECUTABLE",
++        "PYTHON_EXECUTABLE",
++        "Python3_EXECUTABLE",
++        "CMAKE_CUDA_COMPILER",
++        "onnxruntime_CUDA_HOME",
++        "CUDAToolkit_ROOT",
++        "onnxruntime_CUDNN_HOME",
++        "CUDNN_PATH",
++        "FETCHCONTENT_SOURCE_DIR_CUDNN_FRONTEND",
++    ]
++    .into_iter()
++    .map(|name| json!(format!("-D{name}=C:/synthetic")))
++    .collect();
++    valid_paths.push(json!("-DUNKNOWN=C:/Users/private"));
++    let error = options(&Value::Array(valid_paths))
++        .err()
++        .context("unsafe semantic option accepted")?;
++    assert_eq!(error.to_string(), "unsafe semantic build option");
+     Ok(())
+ }
+ #[test]
+--- r1/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection.rs
++++ r2/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/projection.rs
+@@ -235,6 +235,7 @@
+             && build["provider_dlls"] == producer["provider_dlls"]
+             && aggregate["output"] == command["output"]
+             && sha(&aggregate["plan_sha256"])? == canonical_sha(&command["plan"])?
++            && sha(&command["plan"]["producer_proof_sha256"])? == canonical_sha(&build)?
+             && sha(&lock["cpu_lock_sha256"])? == input.cpu_lock.sha256
+             && sha(&build["cuda_inventory_sha256"])? == input.cuda_inventory.sha256
+             && sha(&lock["cudnn"]["extraction_receipt_sha256"])? == input.cudnn_inventory.sha256,
+--- r1/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/tests.rs
++++ r2/crates/airk-retrieval/src/arbiter/runtime/cuda/provenance/tests.rs
+@@ -223,7 +223,9 @@
+     ] {
+         let mut changed = value.clone();
+         changed.files[1].name = name.into();
+-        assert!(!accepts(&changed, &native), "{name}");
++        let mut matching_native = native.clone();
++        matching_native[1].name = name.into();
++        assert!(!accepts(&changed, &matching_native), "{name}");
+     }
+     let mut changed = value.clone();
+     changed.files[1].sha256 = hash(30);

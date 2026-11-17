@@ -1,0 +1,125 @@
+--- PRIOR_PRIVATE_VECTOR_EMITTER
++++ ADDITIVE_PRIVATE_SYNTHETIC_EMITTER
+@@ -1596,3 +1596,122 @@
+     );
+     Ok(())
+ }
++
++/// Fresh synthetic-only source and owning request cases for composed native
++/// acceptance. Never reads or mutates the frozen CAL/confirmation artifacts.
++#[test]
++#[ignore = "private synthetic composed source/request emitter; fresh protected artifacts output required"]
++fn emit_private_selected_synthetic_fixture() -> Result<()> {
++    use std::io::Write;
++    let output = PathBuf::from(
++        std::env::var_os("AIRK_SELECTED_SYNTHETIC_OUTPUT")
++            .context("synthetic fixture output missing")?,
++    );
++    ensure!(
++        output.is_absolute() && !output.try_exists()?,
++        "synthetic output must be fresh/absolute"
++    );
++    let parent = output
++        .parent()
++        .context("synthetic output parent missing")?
++        .canonicalize()?;
++    ensure!(
++        parent.starts_with(artifact_root()?),
++        "synthetic fixture leaves private artifacts"
++    );
++    let pin = OpenedDirectory::open(&parent)?;
++    let output_pin = crate::ipc::endpoint::create_root_at(
++        &pin,
++        output
++            .file_name()
++            .context("synthetic output name missing")?,
++    )?;
++    let source = output.join("sources");
++    let _source_pin = crate::ipc::endpoint::create_root_at(&output_pin, OsStr::new("sources"))?;
++    let question = "Where is the SyntheticRelay lantern maintenance schedule documented?";
++    let mut files = Vec::new();
++    let mut first_hash = None;
++    for ordinal in 0..8 {
++        let name = format!("doc-{ordinal:02}.txt");
++        let body = format!(
++            "Synthetic document {ordinal}\nSyntheticRelay maintenance follows the lantern schedule every Friday.\nThis synthetic source is for native isolation and lifecycle checks.\n"
++        );
++        let raw = body.as_bytes();
++        let mut file = std::fs::OpenOptions::new()
++            .write(true)
++            .create_new(true)
++            .open(source.join(&name))?;
++        file.write_all(raw)?;
++        file.sync_all()?;
++        let digest = sha(raw);
++        if ordinal == 0 {
++            first_hash = Some(digest);
++        }
++        files.push(serde_json::json!({"path":name,"bytes":raw.len(),"sha256":digest,"lines":3}));
++    }
++    for mode in ["hybrid", "vector", "lexical"] {
++        let value = serde_json::json!({"query":question,"mode":mode,"limit":8,"max_bytes":65536,
++            "full_chunks":true,"response_mode":"full","include_status":true});
++        let _: airk_mcp::SearchArgs = serde_json::from_value(value.clone())?;
++        write(&output, &format!("search-{mode}.json"), &value)?;
++    }
++    let references = serde_json::json!({"name":"SyntheticRelay","limit":32,"max_bytes":65536,
++        "include_files":true,"include_count":true,"order":"path","response_mode":"full","include_status":true});
++    let _: airk_mcp::ReferenceArgs = serde_json::from_value(references.clone())?;
++    write(&output, "references-exact.json", &references)?;
++    let read = serde_json::json!({"path":"doc-00.txt","start_line":1,"end_line":3,"max_bytes":8192,
++        "response_mode":"full","include_status":true});
++    let _: airk_mcp::ReadArgs = serde_json::from_value(read.clone())?;
++    write(&output, "read-file.json", &read)?;
++    let mut pinned_read = read;
++    pinned_read
++        .as_object_mut()
++        .context("read case not object")?
++        .insert(
++            "known_hash".into(),
++            serde_json::to_value(first_hash.context("synthetic first source missing")?)?,
++        );
++    let _: airk_mcp::ReadArgs = serde_json::from_value(pinned_read.clone())?;
++    write(&output, "read-file-known-source.json", &pinned_read)?;
++    let mut answer = answer_template()?;
++    answer
++        .as_object_mut()
++        .context("answer case not object")?
++        .insert("question".into(), question.into());
++    let decoded: airk_mcp::AnswerArgs = serde_json::from_value(answer.clone())?;
++    decoded.request.validate()?;
++    write(&output, "answer.json", &answer)?;
++    let resources = ControlMethod::Resources;
++    ensure!(
++        resources.metadata_relay_refusal().is_none(),
++        "Resources unavailable to metadata relay"
++    );
++    write(&output, "resources.json", &resources)?;
++    write(
++        &output,
++        "source-scopes.private.json",
++        &serde_json::json!({
++            "schema":"airk.private-selected-synthetic-source-scopes/1","source_roots":[source],
++            "questions":[{"id":"synthetic:maintenance","question":question,"source_root":source,"split":"synthetic"}],
++            "scope":"Fresh synthetic only; no CAL/confirmation, answer/support/task gold or human actionlabels. Native live configuration emitter still owns actual index/source/publication bindings."
++        }),
++    )?;
++    write(
++        &output,
++        "fixture.private.json",
++        &serde_json::json!({
++            "schema":"airk.private-selected-synthetic-native-fixture/1","evaluation":true,"release_qualified":false,
++            "source_root":source,"files":files,"NN_invocations":0,"human_semantic_gold_count":0,
++            "requests":[{"file":"search-hybrid.json","tool":"search"},{"file":"search-vector.json","tool":"search"},
++                {"file":"search-lexical.json","tool":"search"},{"file":"references-exact.json","tool":"references"},
++                {"file":"read-file.json","tool":"read_file"},{"file":"read-file-known-source.json","tool":"read_file"},
++                {"file":"answer.json","tool":"answer"},{"file":"resources.json","transport":"service rpc"}],
++            "semantics":"SearchMode has only hybrid/vector/lexical. Exact is original case-sensitive whole-identifier references, not a fabricated exact search mode. JSON cases are validated by the actual MCP owner types; Resources is serialized directly from Core. These fixtures prove exercised lifecycle/isolation/work boundaries only, never quality gold."
++        }),
++    )?;
++    println!(
++        "{}",
++        serde_json::json!({"output":output,"source_files":8,"NN_invocations":0,"CAL_confirmation_accessed":false})
++    );
++    Ok(())
++}

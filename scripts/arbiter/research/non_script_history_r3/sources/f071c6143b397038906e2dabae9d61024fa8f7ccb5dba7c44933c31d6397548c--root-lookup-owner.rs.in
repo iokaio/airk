@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: Apache-2.0
+struct SourceLookupOwner {
+    closed: std::sync::atomic::AtomicBool,
+    permit: Arc<tokio::sync::Semaphore>,
+    worker: tokio::sync::Mutex<Option<tokio::task::JoinHandle<Result<Arc<crate::service_frontend::RootObservation>>>>>,
+}
+impl SourceLookupOwner {
+    fn new() -> Self {
+        Self { closed: std::sync::atomic::AtomicBool::new(false),
+            permit: Arc::new(tokio::sync::Semaphore::new(1)), worker: tokio::sync::Mutex::new(None) }
+    }
+    fn close(&self) {
+        self.closed.store(true,std::sync::atomic::Ordering::Release);
+        self.permit.close();
+    }
+    async fn run<F>(self: &Arc<Self>, deadline: Instant, work: F)
+        -> Result<Arc<crate::service_frontend::RootObservation>>
+    where F: FnOnce()->Result<Arc<crate::service_frontend::RootObservation>>+Send+'static {
+        let permit=tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), self.permit.clone().acquire_owned())
+            .await.map_err(|_| airk_store::service::registry::SavedScopeExpired)?
+            .map_err(|_| airk_store::service::registry::SavedScopeExpired)?;
+        if self.closed.load(std::sync::atomic::Ordering::Acquire) || Instant::now() >= deadline {
+            return Err(airk_store::service::registry::SavedScopeExpired.into());
+        }
+        let mut slot=tokio::time::timeout_at(tokio::time::Instant::from_std(deadline),self.worker.lock())
+            .await.map_err(|_|airk_store::service::registry::SavedScopeExpired)?;
+        // A cancelled caller leaves its actual handle in this owner. The permit
+        // is released only by that worker, so any previous handle is completed.
+        if let Some(previous)=slot.as_mut() {
+            let joined=previous.await.context("previous source lookup worker failed");
+            *slot=None;
+            drop(joined?);
+        }
+        if self.closed.load(std::sync::atomic::Ordering::Acquire) || Instant::now() >= deadline {
+            return Err(airk_store::service::registry::SavedScopeExpired.into());
+        }
+        let keep_owner=self.clone();
+        *slot=Some(tokio::task::spawn_blocking(move || {
+            let _owner=keep_owner;
+            let _permit=permit;
+            work()
+        }));
+        let result=slot.as_mut().expect("owned source lookup").await.context("source lookup worker failed");
+        *slot=None;
+        result?
+    }
+    async fn shutdown(&self)->Result<()> {
+        self.close();
+        let mut slot=self.worker.lock().await;
+        if let Some(worker)=slot.as_mut() {
+            let joined=worker.await.context("source lookup drain failed");
+            *slot=None;
+            // Metadata result belongs to its request. Cleanup still reports a
+            // worker panic; cancellation does not invent a replacement result.
+            drop(joined?);
+        }
+        Ok(())
+    }
+}
+impl Drop for SourceLookupOwner { fn drop(&mut self) { self.close(); } }

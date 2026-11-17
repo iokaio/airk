@@ -1,0 +1,388 @@
+diff --git a/packages/vscode/src/explorerContracts.ts b/packages/vscode/src/explorerContracts.ts
+index 23619ec..ff4a347 100644
+--- a/packages/vscode/src/explorerContracts.ts
++++ b/packages/vscode/src/explorerContracts.ts
+@@ -1,4 +1,10 @@
+ // SPDX-License-Identifier: Apache-2.0
++/** Complete host-captured native data; browser-safe DTO with no native client dependency. */
++export interface CapturedLifecycleResponse {
++    capturedAt:number; qualification:'historical_native_lifecycle_response';
++    runtime:{installDir:string;controlDir:string;runtimeSha256:string}; namespace:string;
++    before_health:Record<string,unknown>|null; force:boolean; response:Record<string,unknown>;
++}
+ /** Optional repository guidance, shared by the UI and its copy action. */
+ export const AGENT_INSTRUCTION_FILES = {
+     claude: { name: 'Claude Code', file: 'CLAUDE.md' },
+@@ -17,6 +23,7 @@ import type { Availability } from './explorerFeatures';
+ import type { DraftKind, ProposalOutcome, ProposalReceipt } from './explorerDrafts';
+ import type { ExplorerError, ExplorerErrorCode } from './explorerErrors';
+ import { ROUTE_KEYS } from './explorerRoutes';
++import type { CatalogView } from './indexingCatalog';
+ 
+ export const MESSAGE_VERSION = 1;
+ /** Fixed public destinations for user-clicked About links; never agent-supplied URLs. */
+@@ -104,6 +111,9 @@ export interface ExplorerViewState {
+     readonly connectionCheck?: ConnectionCheck;
+     readonly startup?: { readonly message: string; readonly startedAt: number; readonly failed?: boolean };
+     readonly trusted: boolean;
++    /** Actual editor trust, separate from disposed/revoked client authority. Absent is unknown. */
++    readonly workspaceTrusted?: boolean;
++    readonly nativeExecutionEnabled?: boolean;
+     readonly connection: ConnectionState;
+     readonly projects: readonly ProjectSummary[];
+     readonly projectsObservedAt?: number;
+@@ -121,6 +131,7 @@ export interface ExplorerViewState {
+     readonly moreProjects?: boolean;
+     /** Present while a Management tab is open; built from the shared console state. */
+     readonly management?: ManagementView;
++    readonly indexing?: CatalogView;
+     /** Agent drafts waiting in this window's Suggestions Inbox (summaries only; bodies are fetched on review). */
+     readonly suggestions?: SuggestionsView;
+ }
+@@ -366,6 +377,8 @@ export interface PlanView {
+ }
+ export interface PendingIntentView { readonly id: string; readonly title: string; readonly unknown: boolean; readonly lifecycle: boolean; readonly forceAvailable: boolean }
+ export interface ManagementView {
++    readonly capturedLifecycle?:CapturedLifecycleResponse;
++    readonly capturedLifecycleUnavailable?:string;
+     readonly busy: boolean;
+     readonly connected: boolean;
+     readonly checkedAt?: number;
+@@ -401,6 +414,7 @@ export interface ManagementView {
+ 
+ /** Console action names the Explorer may send; identical to the console's own allowlist (tested). */
+ export const MANAGE_ACTIONS = [
++    'copyLifecycle', 'openLifecycle', 'saveLifecycle',
+     'reviewLegacyStartup', 'legacyStartupReceipts', 'removeLegacyStartup', 'copyLegacyStartup', 'registeredProjects', 'inactiveProjects', 'registerWorkspace',
+     'refresh', 'connect', 'start', 'stop', 'restart', 'repairRuntime', 'upgradeRuntime', 'rollbackRuntime', 'resumeActivation', 'logs', 'resources', 'queryConcurrency',
+     'responseMode', 'recoverLifecycle', 'abandonLifecycle', 'startEmbedding', 'stopEmbedding', 'forceEmbedding', 'firstPage', 'nextPage', 'morePlan',
+@@ -559,6 +573,7 @@ export const WEBVIEW_MESSAGES = {
+     'project.select': { project: PROJECT },
+     'status.refresh': {},
+     'extension.reload': {},
++    'workspace.manageTrust': {},
+     'workbench.toggle': {},
+     'details.copy': { section: { kind: 'enum', values: ['index', 'health', 'progress', 'activity', 'semantic', 'service', 'storage', 'recovery'] }, project: { kind: 'string', min: 64, max: 64, pattern: /^[a-f0-9]{64}$/, optional: true } },
+     'search.page': { project: PROJECT, selectionEpoch: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER }, page: { kind: 'int', min: 0, max: 4 } },
+@@ -597,6 +612,30 @@ export const WEBVIEW_MESSAGES = {
+         name: { kind: 'string', max: 256, optional: true }, pathPrefix: { kind: 'string', max: 1024, optional: true }, limit: { kind: 'int', min: 1, max: 100 },
+     },
+     'manage.refresh': {},
++    'indexing.page': { kind: { kind: 'enum', values: ['projects', 'indexes', 'memberships', 'sources', 'grants'] }, next: { kind: 'bool' },
++        index: { kind: 'string', min: 36, max: 36, pattern: /^idx_[0-9a-f]{32}$/, optional: true },
++        project: { kind: 'string', min: 36, max: 36, pattern: /^prj_[0-9a-f]{32}$/, optional: true } },
++    'indexing.detail': { kind: { kind: 'enum', values: ['project', 'index', 'grant'] }, id: { kind: 'string', min: 36, max: 36, pattern: /^(?:idx_|prj_|grt_)[0-9a-f]{32}$/ } },
++    'indexing.preview': { operation: { kind: 'json', max: 49152 }, generation: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER } },
++    'indexing.create': { name: { kind: 'string', min: 1, max: 256 }, generation: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER } },
++    'indexing.apply': { generation: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER } },
++    'indexing.reconcile': {},
++    'indexing.context.read': {},
++    'indexing.context.preview': { selection: { kind:'json', max:4096 }, generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
++    'indexing.context.delete': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
++    'indexing.grant.draft': { selection: { kind:'json', max:4096 }, generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
++    'indexing.grant.use': { choice: { kind:'json', max:4096 }, generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
++    'indexing.grant.revoke': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
++    'indexing.setup.draft': { selection: { kind:'json', max:16384 }, generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
++    'indexing.setup.apply': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
++    'indexing.setup.resume': { id:{kind:'string',min:32,max:32,pattern:/^[0-9a-f]{32}$/},generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
++    'indexing.source.draft': { change:{kind:'json',max:16384},generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
++    'indexing.source.read': { begin:{kind:'string',min:32,max:32,pattern:/^[0-9a-f]{32}$/},generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
++    'indexing.source.pending': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
++    'indexing.retirement.read': { id:{kind:'string',min:32,max:32,pattern:/^[0-9a-f]{32}$/},generation:{kind:'int',min:0,max:Number.MAX_SAFE_INTEGER} },
++    'indexing.retirement.stopTracking': { generation:{kind:'int',min:0,max:Number.MAX_SAFE_INTEGER} },
++    'indexing.source.resolve': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
++    'indexing.export': { format: { kind: 'enum', values: ['copy', 'json'] } },
+     'manage.action': {
+         action: { kind: 'enum', values: MANAGE_ACTIONS },
+         project: { ...PROJECT, optional: true },
+@@ -617,7 +656,7 @@ export const WEBVIEW_MESSAGES = {
+         revision: { kind: 'int', min: 0, max: 1_000_000_000 }, expectedHash: { kind: 'string', min: 64, max: 64, pattern: /^[a-f0-9]{64}$/, optional: true } },
+     'strategy.import': {},
+     'usage.read': {},
+-    'usage.action': { action: { kind: 'enum', values: ['days', 'refresh', 'json', 'csv', 'markdown', 'recording', 'clear', 'import', 'prices', 'removePrices', 'template', 'feedback'] },
++    'usage.action': { action: { kind: 'enum', values: ['days', 'refresh', 'json', 'csv', 'markdown', 'recording', 'clear', 'import', 'prices', 'removePrices', 'template', 'feedback','openIndexAdministration'] },
+         days: { kind: 'int', min: 7, max: 30, optional: true } },
+     'clipboard.write': { text: { kind: 'string', min: 1, max: 262144 } },
+     'instructions.open': { agent: { kind: 'enum', values: ['claude', 'codex', 'copilot'] }, project: { kind: 'string', min: 64, max: 64, pattern: /^[0-9a-f]{64}$/ } },
+@@ -699,6 +738,7 @@ export function parseWebviewMessage(input: unknown): WebviewMessage | undefined
+ // ---- Host → webview messages.
+ export type HostMessage =
+     | { v: 1; type: 'state'; state: ExplorerViewState }
++    | { v: 1; type: 'indexing.session'; session: CatalogView }
+     | { v: 1; type: 'search.session'; session: SearchSessionView }
+     | { v: 1; type: 'navigate'; route: string }
+     /** A query entered outside the panel (sidebar quick search or a command); the webview runs it. */
+diff --git a/packages/vscode/src/explorerManagement.ts b/packages/vscode/src/explorerManagement.ts
+index fe5e082..021b306 100644
+--- a/packages/vscode/src/explorerManagement.ts
++++ b/packages/vscode/src/explorerManagement.ts
+@@ -44,6 +44,7 @@ export function panelDetails(view: ManagementView, section: string, version: str
+         facts('Requests',entry.requests);
+     }
+     if(section==='service'){
++        if(view.capturedLifecycle)lines.push('',`Captured native lifecycle response: ${new Date(view.capturedLifecycle.capturedAt).toISOString()} (historical; not current health or authority).`,'Use the explicit lifecycle JSON actions for the complete native request, result and pre-operation health.');
+         facts('Service',view.service);facts('Runtime',view.runtime);facts('Running versions',view.runtimeVersions);facts('Resources',view.resources);facts('Inference',view.inference);
+         lines.push('',...view.processEvents);
+     }
+@@ -313,6 +314,8 @@ export function managementView(state: ServiceConsoleState): ManagementView {
+     const legacyReview = state.legacyReview, legacyValue = obj(legacyReview?.value), preview = obj(legacyValue.preview), spec = obj(preview.spec), target = obj(spec.target);
+     return {
+         busy: state.busy, connected: state.connected, checkedAt:state.health?.state==='unavailable'?undefined:state.health?.checkedAt, trusted: state.trusted, authority: state.authority,
++        ...(state.trusted&&state.capturedLifecycle?{capturedLifecycle:structuredClone(state.capturedLifecycle)}:{}),
++        ...(state.trusted&&state.capturedLifecycleUnavailable?{capturedLifecycleUnavailable:state.capturedLifecycleUnavailable}:{}),
+         ...(state.lifecycle ? { lifecycle: state.lifecycle } : {}), responseMode: state.responseMode ?? 'terse', ...(state.message ? { message: state.message } : {}),
+         service: [observed('Service', state.health), ...rows([['Service instance', health.instance], ['Native version', health.version], ['Index format', obj(health.storage_formats).index === 1 ? 'Index format 1 (index-v1)' : undefined], ['Service-state format', obj(health.storage_formats).service_state], ['Protocol', health.protocol],
+             ['Service process', health.process_id], ['Uptime (ms)', health.uptime_ms], ['Accepting work', obj(health.policy).accepting],
+diff --git a/packages/vscode/src/explorerWebview/manage.tsx b/packages/vscode/src/explorerWebview/manage.tsx
+index 9edace8..548b2c8 100644
+--- a/packages/vscode/src/explorerWebview/manage.tsx
++++ b/packages/vscode/src/explorerWebview/manage.tsx
+@@ -41,7 +41,7 @@ export function Act(props: { actions: ReturnType<typeof useActions>; action: Act
+ }
+ 
+ function Frame(props: { view?: ManagementView; trusted: boolean; actions: ReturnType<typeof useActions>; intro: string; children: ComponentChildren }) {
+-    if (!props.trusted || props.view?.trusted === false) { return <p class="callout">Trust this workspace before AIRK connects or accepts management requests.</p>; }
++    if (!props.trusted || props.view?.trusted === false) { return <p class="callout">AIRK client authority is unavailable. Review the window's trust or client notice before making management requests.</p>; }
+     if (!props.view) { return <p class="muted">Reading the AIRK service state…</p>; }
+     return (
+         <div class="manage">
+@@ -187,11 +187,11 @@ export function ProjectsScreen(props: ScreenProps) {
+     return <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Manage indexing on">
+         {view && <>
+             <div class="section-head"><div class="inline-form"><label>Project <ProjectPicker view={view} value={entry?.summary.project} onChange={setOpened} /></label>
+-                <Act actions={actions} action="registerWorkspace" enabled={view.enabled.registerWorkspace} ghost>Add project…</Act></div>
++                <Act actions={actions} action="registerWorkspace" enabled={view.enabled.registerWorkspace} ghost>Set up index…</Act></div>
+                 <span class="muted">Updates automatically</span></div>
+             <details><summary>Browse active or removed projects</summary><Paging view={view} actions={actions} /></details>
+             {!view.connected && !view.busy && <p class="callout">The service connection is unavailable. Automatic checks will retry; view connection details in the Service tab.</p>}
+-            {!entry && <p class="callout" role="status">{!view.connected?view.busy?'Connecting to AIRK and loading saved project details…':'Project registrations could not be checked. Retained work has not been reported as removed.':`No ${view.inactive?'removed':'active'} projects on this page. Add project reviews an open folder.`}</p>}
++            {!entry && <p class="callout" role="status">{!view.connected?view.busy?'Connecting to AIRK and loading saved project details…':'Project registrations could not be checked. Retained work has not been reported as removed.':`No ${view.inactive?'removed':'active'} projects on this page. Set up index opens an explicit native source and storage review in Indexing.`}</p>}
+             {entry && scoped && <>
+                 <h2>{entry.summary.name}</h2><p class="path">{entry.summary.root}</p>
+                 {tab==='overview'&&!view.inactive&&<IndexContents project={entry.summary} status={entry.summary.project===props.state.selectedProject?props.state.status:undefined} connected={view.connected}/>}
+@@ -391,6 +391,8 @@ export function ServiceScreen(props: ScreenProps) {
+                     <Act actions={actions} action="queryConcurrency" enabled={on('queryConcurrency')} ghost>Concurrent requests…</Act>
+                 </div>
+                 {view.lifecycle === 'external' && <p class="muted">Startup, stop, restart, upgrades and rollback are controlled by the external service manager.</p>}
++                {view.capturedLifecycle&&<details class="card" data-testid="captured-native-lifecycle"><summary>Captured native lifecycle response (historical)</summary><p>This records the complete native request and response at capture time, with the actual pre-operation health response when available. It is not current health, evidence authority or a new process inspection. JSON includes machine details and any native diagnostic fields.</p><pre>{JSON.stringify(view.capturedLifecycle,null,2)}</pre><div class="actions"><Act actions={actions} action="copyLifecycle">Copy complete JSON</Act><Act actions={actions} action="openLifecycle" ghost>Open complete JSON</Act><Act actions={actions} action="saveLifecycle" ghost>Export complete JSON</Act></div></details>}
++                {view.capturedLifecycleUnavailable&&<p class="callout">The native lifecycle result exceeded the complete-capture budget. Its saved request remains tracked for native recovery; no completed receipt is being displayed.</p>}
+                 <div class="cards two">
+                     <article class="card"><div class="section-head"><h2>Service</h2><CopyDetails section="service" /></div><Rows rows={view.service} hideUnobserved />
+                         <p class="muted">Health confirms responsiveness. It does not prove indexing progress, source freshness or complete semantic coverage.</p></article>
+diff --git a/packages/vscode/src/serviceConsoleView.ts b/packages/vscode/src/serviceConsoleView.ts
+index bcd3a04..027fbdd 100644
+--- a/packages/vscode/src/serviceConsoleView.ts
++++ b/packages/vscode/src/serviceConsoleView.ts
+@@ -2,6 +2,7 @@
+ // Service console state, message validation and the bounded diagnostic report. Explorer › Management
+ // renders this state; the separate Service Console webview was removed in 1.5.0.
+ import { ConsolePage, RecordValue, RepairOperation, identifier, record } from './serviceClient';
++import type { CapturedLifecycleResponse } from './explorerContracts';
+ export interface ConsoleObservation { state: 'live'|'cached'|'failed'|'unavailable'; value?:RecordValue; code?:string; checkedAt:number }
+ export interface ServiceConsoleState {
+     revision:string; trusted:boolean; busy:boolean; authority:string; version:string; connected:boolean;
+@@ -13,13 +14,14 @@ export interface ServiceConsoleState {
+     health:ConsoleObservation; resources:ConsoleObservation; model:ConsoleObservation; sources:ConsoleObservation;
+     bootstrap:ConsoleObservation; page?:ConsolePage; activePage?:ConsolePage; workers?:RecordValue; events:RecordValue[]; historyOmitted:boolean;
+     serviceEvents?:ConsoleObservation;
++    capturedLifecycle?:CapturedLifecycleResponse; capturedLifecycleUnavailable?:string;
+     configurationResults?:Map<string,{job:string;jobState:string;value?:RecordValue;code?:string;checkedAt:number}>;
+     configurationResultsOmitted?:boolean;
+     selected:Set<string>; plan?:{value:RecordValue;items:RecordValue[];after:string|null};
+     pending:{id:string;title:string;unknown:boolean;lifecycle?:boolean;forceAvailable?:boolean}[]; preview?:string; includePaths:boolean; message?:string;
+ }
+ export type ConsoleAction = {type:'service';revision:string;action:string;project?:string;id?:string;selected?:boolean;scope?:'one'|'selected'|'all';operation?:RepairOperation;includePaths?:boolean;allowFallback?:boolean};
+-export const CONSOLE_SIMPLE_ACTIONS=['reviewLegacyStartup','legacyStartupReceipts','removeLegacyStartup','copyLegacyStartup','registeredProjects','inactiveProjects','registerWorkspace','refresh','connect','start','stop','restart','repairRuntime','upgradeRuntime','rollbackRuntime','resumeActivation','logs','resources','queryConcurrency','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport','openReport','saveReport','exportLogs','openRawLogs','saveRawLogs'];
++export const CONSOLE_SIMPLE_ACTIONS=['copyLifecycle','openLifecycle','saveLifecycle','reviewLegacyStartup','legacyStartupReceipts','removeLegacyStartup','copyLegacyStartup','registeredProjects','inactiveProjects','registerWorkspace','refresh','connect','start','stop','restart','repairRuntime','upgradeRuntime','rollbackRuntime','resumeActivation','logs','resources','queryConcurrency','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport','openReport','saveReport','exportLogs','openRawLogs','saveRawLogs'];
+ export const CONSOLE_PROJECT_ACTIONS=['unregisterProject','previewCleanup','deleteDerived','inspect','index','pause','resume','restartProject','retryRecovery','watch','modelSetup','configureProject','copyConfiguration','enableSemantic','disableSemantic','configureDetail'];
+ export const CONSOLE_OPERATIONS=['auto','verify','recover','reconcile','vectors','rebuild'];
+ /** Messages select fixed host-owned operations; no paths, commands, tokens or RPC bodies are accepted. */
+@@ -79,6 +81,7 @@ export function diagnosticPreview(state:ServiceConsoleState,includePaths:boolean
+     const fields=(value:RecordValue,keys:string[])=>Object.fromEntries(keys.filter(key=>['string','number','boolean'].includes(typeof value[key])||value[key]===null).map(key=>[key,typeof value[key]==='string'?String(value[key]).slice(0,512):value[key]]));
+     const health=obj(state.health.value?.observation),resources=obj(state.resources.value?.observation),model=obj(state.model.value);
+     const report:RecordValue={schemaVersion:1,capturedAt:new Date().toISOString(),authority:includePaths?state.authority:'selected execution host',extensionVersion:state.version,
++        ...(state.trusted&&state.capturedLifecycle?{capturedLifecycleSummary:{capturedAt:state.capturedLifecycle.capturedAt,qualification:state.capturedLifecycle.qualification,completeNativeJson:'Available separately through the explicit lifecycle JSON copy/open/export actions.'}}:{}),
+         observations:Object.fromEntries(['health','resources','model','sources','bootstrap'].map(name=>{const observation=state[name as 'health'];return [name,{state:observation.state,checkedAt:observation.checkedAt,code:observation.code}];})),
+         service:fields(health,['instance','version','protocol','process_id','executable_sha256','runtime_sha256','uptime_ms',...(includePaths?['user']:[])]),
+         storageFormats:fields(obj(health.storage_formats),['index','service_state','logs']),
+diff --git a/packages/vscode/src/serviceIntents.ts b/packages/vscode/src/serviceIntents.ts
+index f4a8152..98d361b 100644
+--- a/packages/vscode/src/serviceIntents.ts
++++ b/packages/vscode/src/serviceIntents.ts
+@@ -2,6 +2,7 @@
+ import { createHash } from 'node:crypto';
+ import { isDeepStrictEqual } from 'node:util';
+ import { identifier, MutationIntent, record, RequestKey, ServiceClient, ServiceError, validateMutationIntent, count } from './serviceClient';
++import { CatalogApplyIntent, IndexSetupApplyIntent, SourceResolveIntent, catalogFenceObservation, indexSetupObservation, sourceChangeObservation, validateCatalogApply, validateIndexSetupApply, validateSourceResolveIntent } from './indexingCatalog';
+ 
+ export interface IntentStorage {
+     keys(): readonly string[];
+@@ -9,10 +10,13 @@ export interface IntentStorage {
+     update(key: string, value: unknown): Thenable<void>;
+ }
+ export interface LifecycleIntent { lifecycle:{caller:string;key:RequestKey;action:'stop'|'restart';expected_instance:string;runtime:string} }
+-export type ConsoleIntent=MutationIntent|LifecycleIntent;
+-export interface SavedIntent { schema: 1; scope: string; title: string; intent: ConsoleIntent }
++export type ConsoleIntent=MutationIntent|LifecycleIntent|CatalogApplyIntent|IndexSetupApplyIntent|SourceResolveIntent;
++export interface SavedIntent { schema: 1; scope: string; title: string; intent: ConsoleIntent; nativeObservation?:Record<string,unknown>; nativeFenceObservation?:Record<string,unknown>; nativeSetupObservation?:Record<string,unknown>; nativeSourceObservation?:Record<string,unknown>; localDispatchState?:'submitted'|'known_receipt' }
+ function validate(input:unknown):ConsoleIntent {
+     const object=record(input);
++    if('catalog_source_change_resolve' in object)return validateSourceResolveIntent(input);
++    if('catalog_index_setup_apply' in object)return validateIndexSetupApply(input);
++    if('catalog_apply' in object)return validateCatalogApply(input);
+     if(!('lifecycle' in object))return validateMutationIntent(input);
+     if(Object.keys(object).join(',')!=='lifecycle')throw new ServiceError('invalid_lifecycle_intent');
+     const value=record(object.lifecycle),key=record(value.key);
+@@ -22,12 +26,16 @@ function validate(input:unknown):ConsoleIntent {
+     identifier(key.namespace,16);identifier(key.nonce,16);count(key.epoch);
+     return input as LifecycleIntent;
+ }
+-function request(intent:ConsoleIntent){
+-    return 'enqueue' in intent?intent.enqueue:'retry' in intent?intent.retry:'plan_create' in intent?intent.plan_create:'configure_project' in intent?intent.configure_project:intent.lifecycle;
++function identity(intent:ConsoleIntent):{namespace:string;id:string}{
++    if('catalog_source_change_resolve' in intent)return {namespace:intent.namespace,id:intent.catalog_source_change_resolve.begin_operation};
++    if('catalog_index_setup_apply' in intent){const key=record(record(intent.catalog_index_setup_apply.draft.request).key);return {namespace:identifier(key.namespace,16),id:identifier(key.nonce,16)};}
++    const request='catalog_apply' in intent?intent.catalog_apply.request:'enqueue' in intent?intent.enqueue:'retry' in intent?intent.retry:'plan_create' in intent?intent.plan_create:'configure_project' in intent?intent.configure_project:intent.lifecycle;
++    return {namespace:request.key.namespace,id:request.key.nonce};
+ }
+ const PREFIX = 'airk.service.intent.1.';
+ const LIMIT = 64;
+-const MAX_BYTES = 32768;
++const MAX_BYTES = 65536;
++const MAX_TOTAL_BYTES = 64 * 32768;
+ /** Each immutable request has its own storage key: windows never rewrite a shared list. */
+ export class IntentJournal {
+     readonly scope: string;
+@@ -46,25 +54,31 @@ export class IntentJournal {
+         return keys.filter(key=>key.startsWith(`${PREFIX}${this.scope}.`)).sort().slice(0,LIMIT).map(key=>{
+             const value=record(this.storage.get(key));
+             if(Buffer.byteLength(JSON.stringify(value))>MAX_BYTES||value.schema!==1||value.scope!==this.scope
+-                ||typeof value.title!=='string'||value.title.length>160)throw new ServiceError('local_intent_record_invalid');
++                ||typeof value.title!=='string'||value.title.length>160||value.localDispatchState!==undefined&&!['submitted','known_receipt'].includes(String(value.localDispatchState)))throw new ServiceError('local_intent_record_invalid');
+             const intent=validate(value.intent);
+-            const requestKey=request(intent).key;
++            const requestKey=identity(intent);
+             if(requestKey.namespace!==this.namespace)throw new ServiceError('local_intent_scope_mismatch');
+             const id=identifier(key.slice(key.lastIndexOf('.')+1),16);
+-            if(requestKey.nonce!==id)throw new ServiceError('local_intent_identity_mismatch');
++            if(requestKey.id!==id)throw new ServiceError('local_intent_identity_mismatch');
+             return {id,value:value as unknown as SavedIntent};
+         });
+     }
+     private serialize<T>(action:()=>Promise<T>):Promise<T> {
+         const next=this.tail.then(action);this.tail=next.catch(()=>undefined);return next;
+     }
+-    prepare(title:string,intent:ConsoleIntent):Promise<string> {
++    prepare(title:string,intent:ConsoleIntent,nativeObservation?:Record<string,unknown>):Promise<string> {
+         // Copy before any asynchronous work; the exact persisted bytes are submitted.
+         const copied=validate(JSON.parse(JSON.stringify(intent)));
+-        const key=request(copied).key;
+-        const id=identifier(key.nonce,16);
++        const key=identity(copied);
++        const id=identifier(key.id,16);
+         if(key.namespace!==this.namespace)throw new ServiceError('local_intent_scope_mismatch');
+         const value:SavedIntent={schema:1,scope:this.scope,title,intent:copied};
++        if('catalog_source_change_resolve' in copied){
++            if(!nativeObservation)throw new ServiceError('native_source_begin_observation_required');const observed=sourceChangeObservation(nativeObservation);if(!observed)throw new ServiceError('native_source_begin_observation_required');
++            const begin=record(observed.begin),metadata=record(begin.metadata),request=record(begin.request);
++            if(metadata.operation_id!==copied.catalog_source_change_resolve.begin_operation||record(request.key).namespace!==copied.namespace)throw new ServiceError('crossed_local_source_begin');
++            value.nativeObservation=structuredClone(nativeObservation);
++        }else if(nativeObservation!==undefined)throw new ServiceError('unexpected_local_native_observation');
+         return this.serialize(async()=>{
+             if(!title||title.length>160||Buffer.byteLength(JSON.stringify(value))>MAX_BYTES)throw new ServiceError('local_intent_record_oversize');
+             this.list();
+@@ -74,20 +88,58 @@ export class IntentJournal {
+                 if(saved.schema!==1||saved.scope!==this.scope||!isDeepStrictEqual(saved.intent,copied))throw new ServiceError('local_intent_key_conflict');
+                 return id;
+             }
+-            if(this.storage.keys().filter(key=>key.startsWith(PREFIX)).length>=LIMIT)throw new ServiceError('local_intent_capacity_exceeded');
++            const savedKeys=this.storage.keys().filter(key=>key.startsWith(PREFIX));
++            if(savedKeys.length>=LIMIT)throw new ServiceError('local_intent_capacity_exceeded');
++            const totalBytes=savedKeys.reduce((sum,key)=>{const saved=this.storage.get(key);return sum+(saved===undefined?0:Buffer.byteLength(JSON.stringify(saved)));},0);
++            if(totalBytes+Buffer.byteLength(JSON.stringify(value))>MAX_TOTAL_BYTES)throw new ServiceError('local_intent_byte_capacity_exceeded');
+             await this.storage.update(this.key(id),value);
+             return id;
+         });
+     }
++    /** Preserve the full authenticated native outcome without changing the immutable request. */
++    observeCatalog(id:string,response:Record<string,unknown>):Promise<void>{
++        const copied=structuredClone(response);
++        return this.serialize(async()=>{
++            const saved=this.list().find(entry=>entry.id===id);if(!saved||!('catalog_apply' in saved.value.intent)&&!('catalog_index_setup_apply' in saved.value.intent)&&!('catalog_source_change_resolve' in saved.value.intent))throw new ServiceError('local_catalog_intent_not_found',true);
++            const typedFence=['catalog_applied','catalog_receipt','catalog_outcome_unknown'].includes(String(copied.status));
++            const priorFence=saved.value.nativeFenceObservation,observed=typedFence?catalogFenceObservation(copied):undefined,prior=priorFence?catalogFenceObservation(priorFence):undefined,observedFence=typedFence&&(copied.fenced_receipt!=null||observed!==undefined);
++            const wasApplied=!!priorFence&&(priorFence.fenced_receipt!=null||prior?.state==='applied');
++            const isApplied=copied.fenced_receipt!=null||observed?.state==='applied';
++            const setup='catalog_index_setup_apply' in saved.value.intent&&indexSetupObservation(copied);
++            const source='catalog_source_change_resolve' in saved.value.intent,knownSource=sourceChangeObservation(saved.value.nativeObservation??{})?saved.value.nativeObservation:saved.value.nativeSourceObservation;
++            const value:SavedIntent={...saved.value,nativeObservation:copied,...(observedFence&&(!wasApplied||isApplied)?{nativeFenceObservation:copied}:{}),...(setup?{nativeSetupObservation:copied}:{}),...(source?{nativeSourceObservation:sourceChangeObservation(copied)?undefined:knownSource}:{}),...('catalog_index_setup_apply' in saved.value.intent?{localDispatchState:copied.status==='catalog_index_setup_receipt'&&copied.receipt!=null?'known_receipt' as const:'submitted' as const}:{})},bytes=Buffer.byteLength(JSON.stringify(value));
++            if(bytes>MAX_BYTES)throw new ServiceError('local_intent_record_oversize',true);
++            const total=this.storage.keys().filter(key=>key.startsWith(PREFIX)&&key!==this.key(id)).reduce((sum,key)=>{const item=this.storage.get(key);return sum+(item===undefined?0:Buffer.byteLength(JSON.stringify(item)));},bytes);
++            if(total>MAX_TOTAL_BYTES)throw new ServiceError('local_intent_byte_capacity_exceeded',true);
++            await this.storage.update(this.key(id),value);
++        });
++    }
++    markSubmitted(id:string):Promise<void>{
++        return this.serialize(async()=>{
++            const saved=this.list().find(entry=>entry.id===id);if(!saved)throw new ServiceError('local_intent_not_found');
++            const value:SavedIntent={...saved.value,localDispatchState:'submitted'},bytes=Buffer.byteLength(JSON.stringify(value));
++            if(bytes>MAX_BYTES)throw new ServiceError('local_intent_record_oversize');
++            const total=this.storage.keys().filter(key=>key.startsWith(PREFIX)&&key!==this.key(id)).reduce((sum,key)=>{const item=this.storage.get(key);return sum+(item===undefined?0:Buffer.byteLength(JSON.stringify(item)));},bytes);
++            if(total>MAX_TOTAL_BYTES)throw new ServiceError('local_intent_byte_capacity_exceeded');await this.storage.update(this.key(id),value);
++        });
++    }
+     async reconcile(client:ServiceClient,onReceipt:(response:Record<string,unknown>)=>Promise<void>,onRemoved?:(project:string)=>Promise<void>,onFailure?:(id:string,error:unknown)=>void):Promise<void>{
+-        const candidates=this.list().filter(saved=>!('lifecycle' in saved.value.intent)&&!('plan_create' in saved.value.intent));
++        const candidates=this.list().filter(saved=>!('lifecycle' in saved.value.intent)&&!('plan_create' in saved.value.intent)&&!('catalog_apply' in saved.value.intent)&&!('catalog_index_setup_apply' in saved.value.intent)&&!('catalog_source_change_resolve' in saved.value.intent));
+         const after=this.reconcileAfter??'';
+         const batch=[...candidates.filter(saved=>saved.id>after),...candidates.filter(saved=>saved.id<=after)].slice(0,8);
+         for(const saved of batch){
+             this.reconcileAfter=saved.id;
+             try{
+                 const intent=saved.value.intent;
+-                if('lifecycle' in intent||'plan_create' in intent)continue;
++                if('lifecycle' in intent||'plan_create' in intent||'catalog_index_setup_apply' in intent||'catalog_source_change_resolve' in intent)continue;
++                if('catalog_apply' in intent){
++                    const request=intent.catalog_apply.request;
++                    const result=await client.rpc({catalog_receipt:{caller:request.caller,key:request.key}},'catalog_receipt');
++                    const complete=client.validateCatalogObservation(result,request,intent.request_digest,intent.catalog_apply.preview_digest);
++                    if(saved.value.nativeFenceObservation)client.validateCatalogFenceContinuity(saved.value.nativeFenceObservation,result);
++                    await this.observeCatalog(saved.id,result);if(!complete)continue;
++                    await onReceipt(result);await this.forget(saved.id);continue;
++                }
+                 const request='enqueue' in intent?intent.enqueue:'configure_project' in intent?intent.configure_project:intent.retry;
+                 const project='project' in request?request.project:undefined;
+                 const result=await client.rpc({request_receipt:{caller:request.caller,key:request.key,...(project?{project}:{})}},'request_receipt');
+@@ -102,19 +154,29 @@ export class IntentJournal {
+             }catch(error){if(!onFailure)throw error;onFailure(saved.id,error);}
+         }
+     }
+-    async submit(client:ServiceClient|undefined,id:string,onReceipt?:(response:Record<string,unknown>)=>Promise<void>,
++    async submit(client:ServiceClient|undefined,id:string,onReceipt?:(response:Record<string,unknown>)=>Promise<void|boolean>,
+         lifecycle?:(intent:LifecycleIntent)=>Promise<Record<string,unknown>>):Promise<Record<string,unknown>> {
+         const saved=this.list().find(entry=>entry.id===id);
+         if(!saved)throw new ServiceError('local_intent_not_found');
+         // Errors, including a lost acknowledgement, preserve the immutable record.
+         const intent=saved.value.intent;
++        // Catalog applies are never replayed from a saved journal entry. Only receipt reads may settle them.
++        if('catalog_apply' in intent)throw new ServiceError('catalog_apply_requires_receipt_reconciliation');
++        if('catalog_index_setup_apply' in intent)throw new ServiceError('index_setup_requires_receipt_reconciliation');
++        if('catalog_source_change_resolve' in intent)throw new ServiceError('source_resolution_requires_observation');
+         if('lifecycle' in intent&&!lifecycle)throw new ServiceError('native_lifecycle_transport_required');
+         if(!('lifecycle' in intent)&&!client)throw new ServiceError('console_not_connected');
+         const response='lifecycle' in intent?await lifecycle!(intent):await client!.submitMutation(intent);
+-        await onReceipt?.(response);
+-        await this.forget(id);
++        const retire=await onReceipt?.(response);
++        if(retire!==false)await this.forget(id);
+         return response;
+     }
++    forgetUnchanged(id:string,expected:unknown,valid:()=>boolean):Promise<void>{
++        return this.serialize(async()=>{
++            if(!valid()||!isDeepStrictEqual(this.list().find(entry=>entry.id===id)?.value,expected))throw new ServiceError('stale_local_tracking_review');
++            await this.storage.update(this.key(id),undefined);
++        });
++    }
+     forget(id:string):Promise<void> {
+         return this.serialize(async()=>{await this.storage.update(this.key(id),undefined);});
+     }

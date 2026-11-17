@@ -1,0 +1,417 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Proposed P10 contracts only. Native owners authenticate, stage, reserve and execute.
+use crate::{
+    catalog_management::{MAX_PAGE_BYTES, MAX_RECEIPT_BYTES, catalog_operation_id},
+    catalog_source_change::{SourceConfigurationSnapshot, source_job_id},
+    identity::{Incarnation, RevisionToken, Sha256Digest, framed_digest},
+    index_catalog::{CatalogRevision, IndexId, PolicyReference, QueryProjectId, ScopeAtom, atoms, encoded_size, label},
+    service::{ProjectRegistration, RequestKey},
+    source_policy::{SourcePolicy, SplitDestination, SplitPolicyPlan},
+};
+use anyhow::{Result, ensure};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
+
+pub const SPLIT_CONTRACT: u32 = 2;
+pub const MAX_SPLIT_JOBS: usize = 16;
+pub const MAX_SPLIT_PROJECTS: usize = 32;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "baseline_kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SplitBaseline {
+    Persisted { reference: PolicyReference },
+    /// Reviewed virtual all-root policy at INITIAL. It was never persisted.
+    /// Source/registration/catalog revisions below bind its native derivation.
+    VirtualUnrestricted,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SplitProjectEffect {
+    pub project_id: QueryProjectId,
+    pub expected_scope_revision: CatalogRevision,
+    pub expected_original_membership: Option<CatalogRevision>,
+    pub retain_original: bool,
+    /// None declines destination membership; Some is a fully reviewed scope.
+    /// Membership never implicitly creates an evidence grant or changes defaults.
+    pub destination_scope: Option<Vec<ScopeAtom>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SplitCapacityReview {
+    pub destination_growth: u64,
+    pub destination_temporary: u64,
+    pub original_rewrite: u64,
+    pub cleanup_allowance: u64,
+    pub original_quota_digest: Sha256Digest,
+    pub destination_quota_digest: Sha256Digest,
+}
+impl SplitCapacityReview {
+    pub fn total(&self) -> Result<u64> {
+        let total = self.destination_growth.checked_add(self.destination_temporary)
+            .and_then(|value| value.checked_add(self.original_rewrite))
+            .and_then(|value| value.checked_add(self.cleanup_allowance));
+        let total = total.filter(|value| *value <= i64::MAX as u64).ok_or_else(|| anyhow::anyhow!("split peak capacity overflow"))?;
+        ensure!(self.destination_growth > 0 && self.cleanup_allowance > 0, "split requires destination and cleanup capacity");
+        Ok(total)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SplitRequest {
+    pub schema: u32,
+    pub required_policy_contract: u32,
+    pub caller: Incarnation,
+    pub key: RequestKey,
+    pub expected_catalog_revision: CatalogRevision,
+    pub original_index: IndexId,
+    pub original_registration: ProjectRegistration,
+    pub expected_definition_revision: CatalogRevision,
+    pub expected_source_revision: CatalogRevision,
+    pub original_incarnation: Incarnation,
+    pub original_settings_digest: Sha256Digest,
+    pub source_configuration: SourceConfigurationSnapshot,
+    pub baseline: SplitBaseline,
+    pub before_policy_digest: Sha256Digest,
+    pub selectors: Vec<ScopeAtom>,
+    pub destination_name: String,
+    pub destination_registration: ProjectRegistration,
+    pub destination: SplitDestination,
+    pub compiled_plan_digest: Sha256Digest,
+    /// Native metadata requires all affected Projects plus explicitly chosen additions.
+    pub projects: Vec<SplitProjectEffect>,
+    pub capacity: SplitCapacityReview,
+    pub require_semantic_ready: bool,
+    /// Dated/native settings only; cutover may not overwrite later user changes.
+    pub original_watch_digest: Sha256Digest,
+    pub destination_watch_enabled: bool,
+}
+impl SplitRequest {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(self.schema == 1 && self.required_policy_contract == SPLIT_CONTRACT, "unsupported split contract");
+        self.original_registration.validate()?;
+        self.destination_registration.validate()?;
+        self.source_configuration.validate()?;
+        label(&self.destination_name)?;
+        atoms(&self.selectors)?;
+        ensure!(!self.selectors.is_empty() && self.selectors.windows(2).all(|pair| pair[0] < pair[1]), "split selectors must be nonempty and canonically ordered");
+        ensure!(self.original_registration.binding != self.destination_registration.binding
+            && self.original_registration.root == self.destination_registration.root
+            && self.original_registration.root == self.source_configuration.primary_root
+            && self.destination.owner_binding == self.destination_registration.binding
+            && self.destination.collection == self.destination_registration.collection
+            && self.original_index != self.destination.index_id, "split cannot change primary source or share backing identity");
+        self.capacity.total()?;
+        ensure!(self.projects.len() <= MAX_SPLIT_PROJECTS, "split Project review exceeds capacity");
+        let destination_sources = self.destination.source_ids.values().copied().collect::<BTreeSet<_>>();
+        let mut projects = BTreeSet::new();
+        for effect in &self.projects {
+            ensure!(projects.insert(effect.project_id), "duplicate split Project effect");
+            ensure!(effect.retain_original || effect.destination_scope.is_some(), "split Project removal needs explicit destination scope");
+            if let Some(scope) = &effect.destination_scope {
+                atoms(scope)?;
+                ensure!(!scope.is_empty() && scope.iter().all(|atom| destination_sources.contains(&atom.source_root_id)), "split destination membership scope invalid");
+            }
+        }
+        encoded_size(self, MAX_PAGE_BYTES)?;
+        Ok(())
+    }
+    pub fn identity(&self) -> Result<Sha256Digest> {
+        self.validate()?;
+        Ok(framed_digest(b"airk/catalog-split-request/1", &[&serde_json::to_vec(self)?]))
+    }
+    pub fn operation_id(&self) -> Result<Incarnation> { catalog_operation_id(self.caller, &self.key) }
+    pub fn validate_plan(&self, before: &SourcePolicy, plan: &SplitPolicyPlan) -> Result<()> {
+        self.validate()?;
+        before.validate()?;
+        plan.validate_against(before)?;
+        ensure!(before.index_id == self.original_index && before.owner_binding == self.original_registration.binding
+            && before.collection == self.original_registration.collection && before.identity()? == self.before_policy_digest,
+            "split baseline binding differs");
+        match &self.baseline {
+            SplitBaseline::Persisted { reference } => ensure!(reference.epoch == before.epoch && reference.digest == before.identity()?, "split persisted policy review stale"),
+            SplitBaseline::VirtualUnrestricted => ensure!(before.epoch == CatalogRevision::INITIAL && before.positive_includes.is_none() && before.denies.is_empty(), "virtual baseline must be explicitly unrestricted at INITIAL"),
+        }
+        let mut aliases = std::collections::BTreeMap::new();
+        for root in &before.roots {
+            if root.owner {
+                ensure!(root.canonical_path == self.original_registration.root && root.aliases.is_empty(), "split primary descriptor differs");
+            } else {
+                ensure!(root.aliases.len() == 1 && aliases.insert(root.aliases[0].clone(), root.canonical_path.clone()).is_none(), "split alias descriptor differs");
+            }
+        }
+        ensure!(aliases == self.source_configuration.aliases, "split source configuration differs");
+        ensure!(plan.operation_id == self.operation_id()? && plan.selectors == self.selectors
+            && plan.destination_binding == self.destination
+            && framed_digest(b"airk/catalog-split-plan/1", &[&serde_json::to_vec(plan)?]) == self.compiled_plan_digest,
+            "split compiled plan differs from review");
+        // Existing/virtual before roots must be reconstructed from exact native
+        // source rows at expected_source_revision; a frontend digest is no proof.
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SplitStage { Accepted, DestinationPrepared, Building, DestinationValidated, OriginalFenced, RemainderPublished, MembershipApplied, CleanupPending, Complete }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SplitJobPurpose { DestinationBuild, OriginalRemoval, DestinationCleanup, OriginalCleanup }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SplitJobRef {
+    pub purpose: SplitJobPurpose,
+    pub caller: Incarnation,
+    pub key: RequestKey,
+    pub backing: Sha256Digest,
+    pub job: Sha256Digest,
+    pub engine_identity: Sha256Digest,
+    /// Native claim must compare exact saved ConfigurationWork/input lineage.
+    pub configuration_digest: Sha256Digest,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SplitRunState {
+    Pending,
+    Running,
+    NeedsAttention { code: String },
+    CanceledBeforeFence { cleanup_pending: bool },
+    Complete,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SplitReceipt {
+    pub schema: u32,
+    pub operation_id: Incarnation,
+    pub request_digest: Sha256Digest,
+    pub revision: CatalogRevision,
+    /// Exact predecessor for the native compare-and-swap transition.
+    pub previous_receipt_digest: Option<Sha256Digest>,
+    pub catalog_revision: CatalogRevision,
+    pub stage: SplitStage,
+    pub state: SplitRunState,
+    /// All component owner allocations must already be held before build starts.
+    pub capacity_receipt: Sha256Digest,
+    pub destination_storage: Option<Sha256Digest>,
+    pub destination_publication: Option<RevisionToken>,
+    pub destination_validation: Option<Sha256Digest>,
+    pub original_fence: Option<Sha256Digest>,
+    pub remainder_publication: Option<RevisionToken>,
+    pub membership_receipt: Option<Sha256Digest>,
+    pub cleanup_receipt: Option<Sha256Digest>,
+    pub cancellation_cleanup_receipt: Option<Sha256Digest>,
+    pub jobs: Vec<SplitJobRef>,
+}
+impl SplitReceipt {
+    pub fn validate_for(&self, request: &SplitRequest) -> Result<()> {
+        ensure!(self.schema == 1 && self.operation_id == request.operation_id()? && self.request_digest == request.identity()?
+            && self.catalog_revision >= request.expected_catalog_revision, "split receipt identity conflict");
+        ensure!(self.previous_receipt_digest.is_none() == (self.revision == CatalogRevision::INITIAL), "split receipt predecessor differs");
+        if self.revision == CatalogRevision::INITIAL { ensure!(self.stage == SplitStage::Accepted, "initial split receipt must be accepted"); }
+        let required = |stage, present| -> Result<()> { ensure!(present == (self.stage >= stage), "split stage proof mismatch"); Ok(()) };
+        required(SplitStage::DestinationPrepared, self.destination_storage.is_some())?;
+        required(SplitStage::DestinationValidated, self.destination_publication.is_some() && self.destination_validation.is_some())?;
+        ensure!(self.destination_publication.is_some() == self.destination_validation.is_some(), "partial destination proof");
+        required(SplitStage::OriginalFenced, self.original_fence.is_some())?;
+        required(SplitStage::RemainderPublished, self.remainder_publication.is_some())?;
+        required(SplitStage::MembershipApplied, self.membership_receipt.is_some())?;
+        required(SplitStage::Complete, self.cleanup_receipt.is_some())?;
+        ensure!((self.stage == SplitStage::Complete) == matches!(self.state, SplitRunState::Complete), "split terminal state differs from stage");
+        ensure!(self.cancellation_cleanup_receipt.is_some() == matches!(self.state, SplitRunState::CanceledBeforeFence { cleanup_pending: false }), "split cancellation cleanup proof differs");
+        match &self.state {
+            SplitRunState::CanceledBeforeFence { .. } => ensure!(self.stage < SplitStage::OriginalFenced, "post-fence cancellation cannot undo transfer"),
+            SplitRunState::NeedsAttention { code } => ensure!(!code.is_empty() && code.len() <= 128 && code.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'), "invalid split failure code"),
+            SplitRunState::Complete => ensure!(self.stage == SplitStage::Complete, "split completion requires settled cleanup"),
+            _ => ensure!(self.stage != SplitStage::Complete, "terminal split stage requires complete state"),
+        }
+        ensure!(self.jobs.len() <= MAX_SPLIT_JOBS, "split job receipt exceeds capacity");
+        let mut jobs = BTreeSet::new();
+        for work in &self.jobs {
+            ensure!(work.key.namespace == request.key.namespace && work.job == source_job_id(work.backing, work.caller, &work.key)?
+                && jobs.insert(work.job) && work.backing == match work.purpose { SplitJobPurpose::DestinationBuild | SplitJobPurpose::DestinationCleanup => request.destination_registration.binding, _ => request.original_registration.binding }, "split job identity conflict");
+        }
+        encoded_size(self, MAX_RECEIPT_BYTES)?;
+        Ok(())
+    }
+    pub fn identity(&self, request: &SplitRequest) -> Result<Sha256Digest> {
+        self.validate_for(request)?;
+        Ok(framed_digest(b"airk/catalog-split-receipt/1", &[&serde_json::to_vec(self)?]))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SplitRecoveryAction { Resume, Cancel }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SplitRecoveryRequest {
+    pub caller: Incarnation,
+    pub key: RequestKey,
+    pub operation_id: Incarnation,
+    pub request_digest: Sha256Digest,
+    pub expected_receipt_digest: Sha256Digest,
+    pub action: SplitRecoveryAction,
+}
+impl SplitRecoveryRequest {
+    pub fn validate_for(&self, request: &SplitRequest, receipt: &SplitReceipt) -> Result<()> {
+        ensure!(self.key.namespace == request.key.namespace && self.operation_id == receipt.operation_id
+            && self.request_digest == request.identity()? && self.expected_receipt_digest == receipt.identity(request)?, "split recovery review changed");
+        encoded_size(self, MAX_RECEIPT_BYTES)?;
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SplitRecoveryOutcome {
+    ResumeAccepted { accepted_job: Sha256Digest, receipt_digest: Sha256Digest, resulting_receipt: Box<SplitReceipt> },
+    CancelBeforeFenceAccepted { receipt_digest: Sha256Digest, cleanup_pending: bool, resulting_receipt: Box<SplitReceipt> },
+    /// This is a refusal to undo the fence, not successful cancellation.
+    RestrictiveCompletionRequired { receipt_digest: Sha256Digest },
+    AlreadyComplete { receipt_digest: Sha256Digest },
+    Unknown { caller: Incarnation, key: RequestKey },
+}
+
+
+/// Exact recovery acknowledgment. Retain it independently of a later operation
+/// observation; read-only receipt lookup never resubmits the request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SplitRecoveryReceipt {
+    pub request: SplitRecoveryRequest,
+    pub request_digest: Sha256Digest,
+    pub outcome: SplitRecoveryOutcome,
+}
+impl SplitRecoveryReceipt {
+    pub fn validate_for(&self, request: &SplitRequest, reviewed: &SplitReceipt) -> Result<()> {
+        self.request.validate_for(request, reviewed)?;
+        ensure!(self.request_digest == framed_digest(b"airk/catalog-split-recovery/1", &[&serde_json::to_vec(&self.request)?]), "split recovery receipt identity differs");
+        let reviewed_digest = reviewed.identity(request)?;
+        let successor = |next: &SplitReceipt, digest: Sha256Digest| -> Result<()> {
+            next.validate_for(request)?;
+            ensure!(digest == next.identity(request)? && next.previous_receipt_digest == Some(reviewed_digest)
+                && next.revision == reviewed.revision.next()? && next.stage >= reviewed.stage
+                && next.catalog_revision >= reviewed.catalog_revision && next.capacity_receipt == reviewed.capacity_receipt
+                && next.jobs.starts_with(&reviewed.jobs), "split recovery successor lineage differs");
+            for (old, new) in [
+                (reviewed.destination_storage, next.destination_storage),
+                (reviewed.destination_validation, next.destination_validation),
+                (reviewed.original_fence, next.original_fence),
+                (reviewed.membership_receipt, next.membership_receipt),
+                (reviewed.cleanup_receipt, next.cleanup_receipt),
+                (reviewed.cancellation_cleanup_receipt, next.cancellation_cleanup_receipt),
+            ] { ensure!(old.is_none() || old == new, "split recovery changed an existing proof"); }
+            ensure!(reviewed.destination_publication.is_none() || reviewed.destination_publication == next.destination_publication,
+                "split recovery changed destination publication");
+            ensure!(reviewed.remainder_publication.is_none() || reviewed.remainder_publication == next.remainder_publication,
+                "split recovery changed remainder publication");
+            Ok(())
+        };
+        match &self.outcome {
+            SplitRecoveryOutcome::ResumeAccepted { accepted_job, receipt_digest, resulting_receipt } => {
+                ensure!(self.request.action == SplitRecoveryAction::Resume && reviewed.stage != SplitStage::Complete
+                    && !matches!(reviewed.state, SplitRunState::CanceledBeforeFence { cleanup_pending: false }), "unexpected split resume acknowledgment");
+                successor(resulting_receipt, *receipt_digest)?;
+                let work = resulting_receipt.jobs.last().ok_or_else(|| anyhow::anyhow!("split resume lacks accepted job"))?;
+                ensure!(resulting_receipt.jobs.len() == reviewed.jobs.len() + 1
+                    && work.job == *accepted_job && work.caller == self.request.caller && work.key == self.request.key
+                    && !reviewed.jobs.iter().any(|job| job.job == *accepted_job), "split resume accepted job differs");
+                if matches!(reviewed.state, SplitRunState::CanceledBeforeFence { cleanup_pending: true }) {
+                    ensure!(work.purpose == SplitJobPurpose::DestinationCleanup && resulting_receipt.stage == reviewed.stage
+                        && resulting_receipt.state == (SplitRunState::CanceledBeforeFence { cleanup_pending: true }), "canceled split may resume destination cleanup only");
+                } else {
+                    ensure!(matches!(resulting_receipt.state, SplitRunState::Pending | SplitRunState::Running)
+                        && match work.purpose {
+                            SplitJobPurpose::DestinationBuild => resulting_receipt.stage >= SplitStage::DestinationPrepared && resulting_receipt.stage < SplitStage::DestinationValidated,
+                            SplitJobPurpose::OriginalRemoval => resulting_receipt.stage >= SplitStage::OriginalFenced && resulting_receipt.stage < SplitStage::RemainderPublished,
+                            SplitJobPurpose::OriginalCleanup => resulting_receipt.stage >= SplitStage::MembershipApplied && resulting_receipt.stage < SplitStage::Complete,
+                            SplitJobPurpose::DestinationCleanup => false,
+                        }, "split resume purpose differs from phase");
+                }
+            }
+            SplitRecoveryOutcome::CancelBeforeFenceAccepted { receipt_digest, cleanup_pending, resulting_receipt } => {
+                ensure!(self.request.action == SplitRecoveryAction::Cancel && reviewed.stage < SplitStage::OriginalFenced, "unexpected split cancellation acknowledgment");
+                successor(resulting_receipt, *receipt_digest)?;
+                ensure!(resulting_receipt.stage == reviewed.stage
+                    && resulting_receipt.state == (SplitRunState::CanceledBeforeFence { cleanup_pending: *cleanup_pending }), "split cancellation outcome differs from successor");
+                let added = &resulting_receipt.jobs[reviewed.jobs.len()..];
+                ensure!(added.len() <= 1 && added.iter().all(|work| work.purpose == SplitJobPurpose::DestinationCleanup
+                    && work.caller == self.request.caller && work.key == self.request.key), "split cancellation appended unrelated work");
+            }
+            SplitRecoveryOutcome::RestrictiveCompletionRequired { receipt_digest } => ensure!(self.request.action == SplitRecoveryAction::Cancel
+                && reviewed.stage >= SplitStage::OriginalFenced && reviewed.stage < SplitStage::Complete
+                && *receipt_digest == reviewed_digest, "unexpected split restrictive completion acknowledgment"),
+            SplitRecoveryOutcome::AlreadyComplete { receipt_digest } => ensure!(reviewed.stage == SplitStage::Complete && *receipt_digest == reviewed_digest, "split completion acknowledgment differs"),
+            SplitRecoveryOutcome::Unknown { caller, key } => ensure!(*caller == self.request.caller && *key == self.request.key, "split recovery uncertainty crossed request"),
+        }
+        encoded_size(self, MAX_RECEIPT_BYTES)?;
+        Ok(())
+    }
+}
+
+
+/// The destination is sealed while building. The original reference is only a
+/// required-capability/active-operation marker until the exact stage fence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SplitOwnerRole { OriginalRemainder, Destination }
+
+/// These are additional split constraints, never alternatives to ordinary scope,
+/// publication, source-policy, grant and delivery checks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SplitEvidenceConstraint {
+    PreserveOriginalAdmission,
+    SealedDestination,
+    SealedCutover,
+    ReviewedActive,
+}
+
+/// Persist destination requirement before staged bytes exist. An original marker
+/// may be installed early without denying its existing reads. Older runtimes
+/// still refuse unsupported required capabilities. Keep capability after cutover.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SplitOwnerReference {
+    pub required_contract: u32,
+    pub operation_id: Incarnation,
+    pub request_digest: Sha256Digest,
+    pub index_id: IndexId,
+    pub role: SplitOwnerRole,
+    /// Cutover activation proof; None alone does NOT seal an original index.
+    /// Internal builders require native accepted-operation authority, never a
+    /// public bypass. Missing current native lifecycle proof fails closed.
+    pub activation_receipt: Option<Sha256Digest>,
+}
+impl SplitOwnerReference {
+    pub fn validate_for(&self, request: &SplitRequest, receipt: &SplitReceipt) -> Result<()> {
+        receipt.validate_for(request)?;
+        let expected_index = match self.role {
+            SplitOwnerRole::OriginalRemainder => request.original_index,
+            SplitOwnerRole::Destination => request.destination.index_id,
+        };
+        ensure!(self.required_contract == SPLIT_CONTRACT && self.operation_id == receipt.operation_id
+            && self.request_digest == receipt.request_digest && self.index_id == expected_index, "split owner requirement differs");
+        if self.activation_receipt.is_some() {
+            ensure!(receipt.stage >= SplitStage::MembershipApplied
+                && self.activation_receipt == receipt.membership_receipt, "split owner activated before reviewed cutover");
+        }
+        encoded_size(self, MAX_RECEIPT_BYTES)?;
+        Ok(())
+    }
+    pub fn evidence_constraint(&self, request: &SplitRequest, receipt: &SplitReceipt) -> Result<SplitEvidenceConstraint> {
+        self.validate_for(request, receipt)?;
+        if self.activation_receipt.is_some() { return Ok(SplitEvidenceConstraint::ReviewedActive); }
+        Ok(match self.role {
+            SplitOwnerRole::Destination => SplitEvidenceConstraint::SealedDestination,
+            SplitOwnerRole::OriginalRemainder if receipt.stage < SplitStage::OriginalFenced => SplitEvidenceConstraint::PreserveOriginalAdmission,
+            SplitOwnerRole::OriginalRemainder => SplitEvidenceConstraint::SealedCutover,
+        })
+    }
+}

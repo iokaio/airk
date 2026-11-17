@@ -1,0 +1,408 @@
+--- a/packages/vscode/src/explorerController.ts
++++ b/packages/vscode/src/explorerController.ts
+@@ -12,7 +12,7 @@
+ import { changesSince, checkCitations, inspect } from './explorerInspect';
+ import { managementView, panelDetails } from './explorerManagement';
+ import { passageView, RefRegistry, searchArgs, searchView } from './explorerSearch';
+-import { headline, statusSummary } from './explorerStatus';
++import { headline, statusSummary, scalarWithRetainedDetails } from './explorerStatus';
+ import { displayPath } from './explorerSource';
+ import { exportStrategy, importPlan, importRecipe, importStrategy, listWorkspaceFiles, loadWorkspaceFile, liveAt, openPlanDraft, openSource, savePlanInWorkspace } from './explorerWorkspaceIO';
+ import { renderPlan, SearchRecipe, validatePlan, validateRecipe, validateStrategy } from './explorerStrategies';
+@@ -88,6 +88,8 @@
+     private statusIdentity?: string;
+     private observedIdentity?: string;
+     private statusLoading?: Promise<void>;
++    private statusLoadingKind?: 'scalar' | 'details';
++    private retainedDetails?: { project: string; binding: string; identity?: string; summary: StatusSummary; settings?: string };
+     private notice?: ExplorerError;
+     private revision = 0;
+     private route = '#overview';
+@@ -284,26 +286,65 @@
+         return this.evidence;
+     }
+ 
+-    private loadStatus(): Promise<void> {
+-        if (this.statusLoading || this.disposed) { return this.statusLoading ?? Promise.resolve(); }
++    private detailSettingsKey(project: string): string | undefined {
++        const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
++        const state = this.control.state;
++        const page = state.inactiveProjects ? state.activePage : state.page;
++        const row = page?.projects.find(entry => object(object(entry.project).registration).binding === project);
++        const snapshot = object(object(row?.inspection).snapshot);
++        return typeof snapshot.incarnation === 'string' && typeof snapshot.settings_digest === 'string'
++            ? JSON.stringify([snapshot.incarnation, snapshot.settings_digest, snapshot.vectors_enabled]) : undefined;
++    }
++
++    private loadStatus(kind: 'scalar' | 'details' = 'scalar'): Promise<void> {
++        if (this.disposed) { return Promise.resolve(); }
++        if (this.statusLoading) {
++            if (kind !== 'details' || this.statusLoadingKind !== 'scalar') { return this.statusLoading; }
++            const project = this.selected, epoch = this.selectionEpoch, identity = this.control.observationIdentity;
++            const generation = this.panel.generation;
++            const spec = JSON.stringify(this.host.specs().find(entry => entry.service?.project === project));
++            return this.statusLoading.then(() => {
++                if (!this.disposed && this.host.trusted() && this.panel.open && generation === this.panel.generation
++                    && project === this.selected && epoch === this.selectionEpoch && identity === this.control.observationIdentity
++                    && spec === JSON.stringify(this.host.specs().find(entry => entry.service?.project === project))) {
++                    return this.loadStatus('details');
++                }
++            });
++        }
+         const project = this.selected;
+         const epoch = this.selectionEpoch;
+         const spec = this.host.specs().find(entry => entry.service?.project === project);
+         if (!project || !this.host.trusted() || !spec) { return Promise.resolve(); }
+         const binding = JSON.stringify(spec), generation = this.panel.generation;
+         const identity = this.control.observationIdentity;
++        const settings = this.detailSettingsKey(project);
+         const bound = () => !this.disposed && this.host.trusted() && project === this.selected
+             && identity === this.control.observationIdentity && epoch === this.selectionEpoch
++            && (kind !== 'details' || settings === this.detailSettingsKey(project))
+             && JSON.stringify(this.host.specs().find(entry => entry.service?.project === project)) === binding;
+         const current = () => bound() && this.panel.open && generation === this.panel.generation;
++        this.statusLoadingKind = kind;
+         this.statusLoading = (async () => {
+             try {
+-                const result = await this.session().call('airk_diagnostics', { response_mode: 'full' }, { timeout: 90000, supersede: 'status' });
+-                if (current()) { this.status = statusSummary(result.payload); this.statusFor = project; this.statusIdentity = identity; this.notice = undefined; }
++                const result = await this.session().call(kind === 'details' ? 'airk_diagnostics' : 'airk_status',
++                    { response_mode: 'full' }, { timeout: kind === 'details' ? 90000 : 15000, supersede: 'status' });
++                if (current()) {
++                    const raw = result.payload.observed_unix_ms;
++                    const received = Date.now();
++                    const observed = kind === 'scalar' && typeof raw === 'number'
++                        && Number.isSafeInteger(raw) && raw >= 0 ? Math.min(raw, received) : received;
++                    const summary = statusSummary(result.payload, observed);
++                    if (kind === 'details') { this.retainedDetails = { project, binding, identity, summary: { ...summary, detailsObservedAt: observed }, settings }; }
++                    const prior = this.retainedDetails;
++                    const detail = prior?.project === project && prior.binding === binding && prior.identity === identity
++                        ? prior.summary : undefined;
++                    this.status = kind === 'details' ? { ...summary, detailsObservedAt: observed } : scalarWithRetainedDetails(summary, detail, prior?.settings === this.detailSettingsKey(project));
++                    this.statusFor = project; this.statusIdentity = identity; this.notice = undefined;
++                }
+             } catch (error) {
+                 if (current() && failure(error).code !== 'NO_PROJECT') { this.notice = failure(error); }
+             } finally {
+-                this.statusLoading = undefined;
++                this.statusLoading = undefined; this.statusLoadingKind = undefined;
+                 if (current()) { this.publish(); }
+                 // A new visible recipient/binding gets its OWN observation. Do
+                 // not publish the old response into a recreated panel or trust scope.
+@@ -412,7 +453,7 @@
+                 if (!this.host.specs().some(spec => spec.service?.project === typed.project)) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
+                 this.select(typed.project); this.publish(); await this.loadStatus(); return;
+             }
+-            case 'status.refresh': await Promise.all([this.loadStatus(), this.control.refresh()]); return;
++            case 'status.refresh': await Promise.all([this.loadStatus('details'), this.control.refresh()]); return;
+             case 'manage.refresh': await this.control.refresh(); return;
+             case 'manage.observe': {
+                 this.managementOpen = (message as WebviewMessageOf<'manage.observe'>).open;
+--- a/packages/vscode/src/explorerStatus.ts
++++ b/packages/vscode/src/explorerStatus.ts
+@@ -116,3 +116,27 @@
+     if (status.freshness === 'running' || status.freshness === 'pending') { return { word: 'indexing', severity: 'info' }; }
+     return { word: 'ready', severity: 'ok' };
+ }
++
++
++/** Preserve separately sampled details without presenting them as freshly sampled.
++ * Native counts/readiness always come from the scalar observation. A merged
++ * scalar and detailed timestamps stay independent across subsequent cache hits.
++ */
++export function scalarWithRetainedDetails(scalar: StatusSummary, details?: StatusSummary, publicationDetailsValid = true): StatusSummary {
++    if (!details) { return scalar; }
++    const runtime = {
++        ...(details.versionsMatch !== undefined ? { versionsMatch: details.versionsMatch } : {}),
++        ...(details.runtimeVersions !== undefined ? { runtimeVersions: details.runtimeVersions } : {}),
++    };
++    const samePublication = publicationDetailsValid && scalar.publication !== undefined && scalar.publication === details.publication;
++    const publicationDetails = samePublication ? {
++        ...(details.vectorsEnabled !== undefined ? { vectorsEnabled: details.vectorsEnabled } : {}),
++        ...(details.localModelReady !== undefined ? { localModelReady: details.localModelReady } : {}),
++        ...(details.workPhase !== undefined ? { workPhase: details.workPhase } : {}),
++        ...(details.workPaused !== undefined ? { workPaused: details.workPaused } : {}),
++    } : {};
++    const retained = Object.keys(runtime).length + Object.keys(publicationDetails).length > 0;
++    return { ...runtime, ...publicationDetails, ...scalar,
++        ...(retained ? { detailsObservedAt: details.detailsObservedAt ?? details.observedAt } : {}) };
++}
++
+--- a/packages/vscode/src/test/explorerStatus.test.ts
++++ b/packages/vscode/src/test/explorerStatus.test.ts
+@@ -1,7 +1,7 @@
+ // SPDX-License-Identifier: Apache-2.0
+ import { strict as assert } from 'node:assert';
+ import { test } from 'node:test';
+-import { headline, indexContents, semanticExplanation, sourceWorkExplanation, statusSummary, workProgressDisplay } from '../explorerStatus';
++import { scalarWithRetainedDetails, headline, indexContents, semanticExplanation, sourceWorkExplanation, statusSummary, workProgressDisplay } from '../explorerStatus';
+ import type { ProjectSummary, ProjectWorkView } from '../explorerContracts';
+ 
+ test('airk_status maps to separate readiness, freshness and semantic observations', () => {
+@@ -98,3 +98,24 @@
+     assert.match(sourceWorkExplanation(saved.freshness),/waiting/);
+     assert.match(sourceWorkExplanation('idle'),/does not verify/);
+ });
++
++
++test('scalar observations retain scoped details with independent ages without inheriting old readiness', () => {
++    const details = statusSummary({index_state:'available',publication:{token:'same'},files:99,
++        vectors_enabled:true,local_model_ready:true,runtime:{versions_match:false},
++        work:{project_paused:true,progress:{phase:'embedding'}}}, 100);
++    const scalar = statusSummary({index_state:'available',publication:{token:'same'},files:101,
++        semantic_readiness:{state:'partial'},freshness:{state:'running'}}, 200);
++    const merged = scalarWithRetainedDetails(scalar, details);
++    assert.equal(merged.files,101);assert.equal(merged.semantic,'partial');assert.equal(merged.freshness,'running');
++    assert.equal(merged.vectorsEnabled,true);assert.equal(merged.localModelReady,true);
++    assert.equal(merged.versionsMatch,false);assert.equal(merged.workPaused,true);assert.equal(merged.observedAt,200);assert.equal(merged.detailsObservedAt,100);
++    const unavailable = scalarWithRetainedDetails(statusSummary({index_state:'unknown',publication:null},300),details);
++    assert.equal(unavailable.indexState,'unknown');assert.equal(unavailable.publication,undefined);
++    assert.equal(unavailable.files,undefined);assert.equal(unavailable.vectorsEnabled,undefined);
++    assert.equal(unavailable.workPaused,undefined);assert.equal(unavailable.versionsMatch,false);
++    assert.equal(unavailable.observedAt,300);assert.equal(unavailable.detailsObservedAt,100);
++    assert.equal(scalarWithRetainedDetails(scalar),scalar);
++    assert.equal(details.files,99);assert.equal(details.observedAt,100);
++});
++
+--- a/packages/vscode/src/explorerContracts.ts
++++ b/packages/vscode/src/explorerContracts.ts
+@@ -87,6 +87,8 @@
+     readonly workPhase?: string;
+     readonly workPaused?: boolean;
+     readonly observedAt: number;
++    /** Independent time for retained runtime/configuration details; not scalar cache age. */
++    readonly detailsObservedAt?: number;
+ }
+ 
+ export interface ConnectionCheck {
+--- a/packages/vscode/src/explorerWebview/manage.tsx
++++ b/packages/vscode/src/explorerWebview/manage.tsx
+@@ -62,7 +62,7 @@
+             ['VS Code extension', props.state.extensionVersion], ...props.view.runtimeVersions,
+             ...(props.state.status?.runtimeVersions ?? [['MCP frontend (airk)', 'not observed'], ['Index worker (airk)', 'not observed']] as FactRow[]),
+         ]} hideUnobserved />
+-        <p class="muted">CLI and helper versions describe the selected installation. Process observations describe the service and the selected project’s MCP connection and worker; they may differ during an upgrade. {props.state.status ? `Project runtime observed ${ago(props.state.status.observedAt)}.` : 'Connect to the selected project to observe its processes.'} {!props.view.connected && 'Disconnected: observations may be stale.'}</p>
++        <p class="muted">CLI and helper versions describe the selected installation. Process observations describe the service and the selected project’s MCP connection and worker; they may differ during an upgrade. {(props.state.status?.runtimeVersions || props.state.status?.versionsMatch !== undefined) ? `Project runtime details observed ${ago(props.state.status.detailsObservedAt ?? props.state.status.observedAt)}.` : 'Connect to the selected project to observe its processes.'} {!props.view.connected && 'Disconnected: observations may be stale.'}</p>
+         {props.state.status?.versionsMatch === false && <p class="callout" role="alert">The observed runtime versions do not match. Review Service before relying on the new version’s behavior.</p>}
+     </section>;
+ }
+--- a/packages/vscode/src/explorerWebview/overview.tsx
++++ b/packages/vscode/src/explorerWebview/overview.tsx
+@@ -88,6 +88,7 @@
+                     ['Published semantic state', status?.semantic ?? 'Not checked'],
+                     ['Completed / selected artifacts', status ? `${observed(status.semanticCompleted)} / ${observed(status.semanticSelected)}` : 'Not checked'],
+                     ['Published status observed', ago(status?.observedAt)],
++                    ['Detailed observations', ago(status?.detailsObservedAt)],
+                 ]} />
+                 <p class="muted">Saved setup policy can be newer than this publication. Source indexing and semantic work run separately.</p>
+                 <div class="actions"><button type="button" onClick={() => props.go({ workspace: 'manage', tab: 'overview' })}>Review semantic setup</button>
+--- a/packages/vscode/src/explorerWebview/app.tsx
++++ b/packages/vscode/src/explorerWebview/app.tsx
+@@ -189,7 +189,8 @@
+                 ['Live source verified', observed(status?.liveSourceVerified)],
+                 ['Semantic coverage', status ? `${status.semantic}${status.semanticSelected !== undefined ? ` · ${observed(status.semanticCompleted)} / ${observed(status.semanticSelected)}` : ''}` : 'not observed'],
+                 ['Runtime versions match', observed(status?.versionsMatch)],
+-                ['Observed', ago(status?.observedAt)],
++                ['Published status observed', ago(status?.observedAt)],
++                ['Detailed observations', ago(status?.detailsObservedAt)],
+             ]} />
+             <p class="muted">Health, published readiness, source freshness and semantic coverage are separate observations. Ready is not proof that saved files still match the index.</p>
+             <div class="actions">
+--- a/packages/vscode/src/explorerWebview/search.tsx
++++ b/packages/vscode/src/explorerWebview/search.tsx
+@@ -3,7 +3,7 @@
+ import { OpenSourceResult, PassageView, SearchMode, SearchForm } from '../explorerContracts';
+ import { RECIPE_SCHEMA, SearchRecipe } from '../explorerStrategies';
+ import { HostFailure, request } from './api';
+-import { countLine, shortToken } from './format';
++import { ago, countLine, shortToken } from './format';
+ import type { ScreenProps } from './workspaces';
+ import { FileBrowser, type LibraryFile } from './fileBrowser';
+ import { currentSelection } from './strategyStore';
+@@ -91,6 +91,7 @@
+             </form>
+             {form.mode === 'vector' && <p class="muted">Describe a concept or behavior in natural language. Semantic search ranks indexed passages by embedding similarity; the exact query words need not appear.</p>}
+             {vectorReason && <p class="muted">{vectorReason}</p>}
++            {status?.detailsObservedAt !== undefined && (status.vectorsEnabled !== undefined || status.localModelReady !== undefined) && <p class="muted">Saved policy details observed {ago(status.detailsObservedAt)}.</p>}
+             <SaveRecipe form={form} />
+             {!canSearch && <p class="callout">Search needs a connected AIRK service and a published index ({props.state.connection}).</p>}
+             {error && <p class="callout" role="alert">{error}</p>}
+--- a/packages/vscode/src/explorerManagement.ts
++++ b/packages/vscode/src/explorerManagement.ts
+@@ -39,7 +39,8 @@
+             ['Requested semantic preference',entry.configuration.requestedVectors===undefined?'No pending change observed':entry.configuration.requestedVectors?'Enabled':'Disabled'],
+             ['Published semantic state',status?.semantic??entry.summary.semantic??'Not observed'],
+             ['Model configured in publication',status?.localModelReady===undefined?'Not observed':String(status.localModelReady)],
+-            ['Publication',status?.publication??'Not observed'],['Observed',status?new Date(status.observedAt).toISOString():'Not observed']]);
++            ['Publication',status?.publication??'Not observed'],['Published status observed',status?new Date(status.observedAt).toISOString():'Not observed'],
++            ['Detailed observations',status?.detailsObservedAt===undefined?'Not observed':new Date(status.detailsObservedAt).toISOString()]]);
+         facts('Requests',entry.requests);
+     }
+     if(section==='service'){
+--- a/packages/vscode/src/test/explorerShell.test.ts
++++ b/packages/vscode/src/test/explorerShell.test.ts
+@@ -88,7 +88,7 @@
+                     return { publication: 'airk-r1:t', payload: { truncated: false, publication: { token: 'airk-r1:t' },
+                         hits: [{ citation: { path: 'a.ts', start_line: 2, end_line: 4, content_hash: 'cd'.repeat(32) }, text: 'x', truncated: false }] } };
+                 }
+-                assert.equal(tool, 'airk_diagnostics');
++                assert.ok(tool === 'airk_status' || tool === 'airk_diagnostics', 'only scalar readiness or explicit details are expected');
+                 return { payload: { index_state: 'available', publication: { token: 'airk-r1:t' }, semantic_readiness: { state: 'ready' }, freshness: { state: 'idle' } } };
+             }, dispose() {} };
+         }
+@@ -556,7 +556,7 @@
+     let liveInstance=instance,liveNamespace=namespace,epochGate:ReturnType<typeof f08Deferred<void>>|undefined;
+     const changed=new Set<(state:any)=>void>(),specChanges=new Set<()=>void>(),values=new Map<string,unknown>();
+     const clientSignals:Array<ReturnType<typeof f08Deferred<void>>>=[],gates:Array<{entered:ReturnType<typeof f08Deferred<void>>;release:ReturnType<typeof f08Deferred<void>>}>=[];
+-    const evidenceSignals:Array<ReturnType<typeof f08Deferred<void>>>=[],evidence:Array<{project:string;spec:any;result:ReturnType<typeof f08Deferred<any>>}>=[];
++    const evidenceSignals:Array<ReturnType<typeof f08Deferred<void>>>=[],evidence:Array<{tool:string;project:string;spec:any;result:ReturnType<typeof f08Deferred<any>>}>=[];
+     const polls:Promise<void>[]=[],consoleSnapshots:any[]=[];
+     let specs=[project,other].map((binding,index)=>({command:'/launcher',root:`/src/prompt-${index}`,dataDir:`/data/${index}`,collection:`prompt-${index}`,name:`prompt-${index}`,service:{installDir:'/install',project:binding}}));
+     const page={revision:1,cached:true,observed_unix_ms:1,after:null,projects:specs.map(spec=>({project:{registration:{binding:spec.service.project,root:spec.root,data_root:spec.dataDir,collection:spec.collection},paused:false,fencing_generation:1},progress:null,inspection:savedCounts?{snapshot:{index_state:'available',publication:'saved-old-registry-publication',indexed_files:99}}:null}))};
+@@ -601,9 +601,9 @@
+         onDidChangeSpecs:(listener:()=>void)=>{specChanges.add(listener);return {dispose(){specChanges.delete(listener);}};},
+         log(){},setStatusBar(){},workspaceState:{get:(_key:string,fallback:unknown)=>fallback,update:async()=>{}},suggestions,control:source};
+     context.mock.method(EvidenceClient.prototype,'call',function(this:InstanceType<typeof EvidenceClient>,tool:string){
+-        assert.equal(tool,'airk_diagnostics');
++        assert.ok(tool==='airk_status'||tool==='airk_diagnostics','only scalar readiness or explicit details are expected');
+         const index=evidence.length;
+-        const pending={project:this.project,spec:structuredClone(this.spec),result:f08Deferred<any>()};evidence.push(pending);
++        const pending={tool,project:this.project,spec:structuredClone(this.spec),result:f08Deferred<any>()};evidence.push(pending);
+         (evidenceSignals[index]??=f08Deferred<void>()).resolve();return pending.result.promise;
+     });
+     const explorer=new ExplorerController(host);
+@@ -623,6 +623,7 @@
+             }
+             assert.ok(explorer.snapshot().status,'current identity needs its own completed observation');
+         },
++        settings(value:string){(page.projects[0] as any).inspection={observed_unix_ms:Date.now(),snapshot:{project,incarnation:'11'.repeat(16),settings_digest:value,vectors_enabled:true}};},
+         restartIdentity(){liveInstance='78'.repeat(16);liveNamespace='9a'.repeat(16);epochGate=f08Deferred<void>();},
+         releaseEpoch(){epochGate?.resolve();},
+         poll(){return startPoll();},
+@@ -827,3 +828,126 @@
+         assert.ok(!panel.posted.slice(boundary).some((entry:any)=>entry.state?.status?.files===777));
+     }finally{await f.cleanup();context.mock.restoreAll();}
+ });
++
++
++test('automatic Explorer observations use scalar status while explicit details retain independently aged fields',async context=>{
++    const f=promptFeedbackHost(context);
++    try{
++        f.explorer.open();const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});
++        await f.blocked();await f.requested();f.release();await f.console.whenIdle();await f.settleStatus();
++        assert.ok(f.evidence.length>0);assert.ok(f.evidence.every(request=>request.tool==='airk_status'));
++        const detailIndex=f.evidence.length;
++        panel.send({v:1,type:'status.refresh',requestId:'explicit-details'});
++        assert.equal((await f.requested(detailIndex)).tool,'airk_diagnostics');
++        f.finish(detailIndex,{payload:{index_state:'available',publication:{token:'same-publication'},files:99,
++            vectors_enabled:true,local_model_ready:true,runtime:{versions_match:false},
++            semantic_readiness:{state:'partial'},freshness:{state:'running'}}});
++        await flush();
++        const detailed=f.explorer.snapshot().status!;
++        assert.equal(typeof detailed.detailsObservedAt,'number');
++        const detailTime=detailed.detailsObservedAt;
++        const scalarIndex=f.evidence.length;
++        const scalar=(f.explorer as any).loadStatus();
++        assert.equal((await f.requested(scalarIndex)).tool,'airk_status');
++        f.finish(scalarIndex,{payload:{index_state:'available',publication:{token:'same-publication'},files:101,
++            observed_unix_ms:200,semantic_readiness:{state:'partial'},freshness:{state:'idle'}}});
++        await scalar;
++        const current=f.explorer.snapshot().status!;
++        assert.equal(current.files,101);assert.equal(current.freshness,'idle');
++        assert.equal(current.observedAt,200);assert.equal(current.detailsObservedAt,detailTime);
++        assert.equal(current.vectorsEnabled,true);assert.equal(current.localModelReady,true);
++        assert.equal(current.versionsMatch,false);
++        let copied='';context.mock.method(vscodeStub.env.clipboard,'writeText',async(value:string)=>{copied=value;});
++        await (f.explorer as any).dispatch({v:1,type:'details.copy',requestId:'copy',project,section:'semantic'});
++        assert.ok(copied.includes('Published status observed'));
++        assert.ok(copied.includes('Detailed observations'));
++        assert.ok(copied.includes(new Date(detailTime!).toISOString()));
++        assert.ok(panel.posted.some((entry:any)=>entry.type==='result'&&entry.requestId==='explicit-details'&&entry.ok));
++    }finally{await f.cleanup();context.mock.restoreAll();}
++});
++
++test('two explicit detail waiters behind one scalar share one independent diagnostics request',async context=>{
++    const f=promptFeedbackHost(context);
++    try{
++        f.explorer.open();const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});
++        await f.blocked();await f.requested();f.release();await f.console.whenIdle();await f.settleStatus();
++        const index=f.evidence.length;
++        const scalar=(f.explorer as any).loadStatus();
++        assert.equal((await f.requested(index)).tool,'airk_status');
++        panel.send({v:1,type:'status.refresh',requestId:'detail-one'});
++        panel.send({v:1,type:'status.refresh',requestId:'detail-two'});await flush();
++        assert.equal(f.evidence.length,index+1,'details cannot race the existing scalar owner');
++        f.finish(index);await scalar;
++        assert.equal((await f.requested(index+1)).tool,'airk_diagnostics');
++        await flush();assert.equal(f.evidence.length,index+2,'explicit waiters share the details owner');
++        f.finish(index+1);await flush();
++        for(const requestId of ['detail-one','detail-two']){
++            assert.ok(panel.posted.some((entry:any)=>entry.type==='result'&&entry.requestId===requestId&&entry.ok));
++        }
++    }finally{await f.cleanup();context.mock.restoreAll();}
++});
++
++test('same-publication saved settings changes reject old detailed policy while retaining independently sampled runtime',async context=>{
++    const f=promptFeedbackHost(context);
++    try{
++        f.explorer.open();const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});
++        await f.blocked();await f.requested();f.release();await f.console.whenIdle();await f.settleStatus();
++        f.settings('aa'.repeat(32));await f.poll();
++        let index=f.evidence.length;
++        const oldDetails=(f.explorer as any).loadStatus('details');
++        assert.equal((await f.requested(index)).tool,'airk_diagnostics');
++        f.settings('bb'.repeat(32));await f.poll();
++        f.finish(index,{payload:{index_state:'available',publication:{token:'same'},vectors_enabled:false,
++            local_model_ready:false,runtime:{versions_match:false}}});await oldDetails;
++        assert.equal((await f.requested(index+1)).tool,'airk_status');
++        f.finish(index+1,{payload:{index_state:'available',publication:{token:'same'},files:5,
++            semantic_readiness:{state:'pending'},freshness:{state:'running'},observed_unix_ms:400}});
++        await flush();
++        assert.equal(f.explorer.snapshot().status?.vectorsEnabled,undefined,'old saved settings cannot be relabeled current');
++        index=f.evidence.length;
++        const details=(f.explorer as any).loadStatus('details');await f.requested(index);
++        f.finish(index,{payload:{index_state:'available',publication:{token:'same'},vectors_enabled:true,
++            local_model_ready:true,runtime:{versions_match:false}}});await details;
++        const observed=f.explorer.snapshot().status!.detailsObservedAt;
++        f.settings('cc'.repeat(32));await f.poll();
++        index=f.evidence.length;
++        const scalar=(f.explorer as any).loadStatus();await f.requested(index);
++        f.finish(index,{payload:{index_state:'available',publication:{token:'same'},files:6,
++            semantic_readiness:{state:'partial'},freshness:{state:'idle'},observed_unix_ms:500}});await scalar;
++        const status=f.explorer.snapshot().status!;
++        assert.equal(status.files,6);assert.equal(status.vectorsEnabled,undefined);
++        assert.equal(status.localModelReady,undefined);assert.equal(status.versionsMatch,false);
++        assert.equal(status.observedAt,500);assert.equal(status.detailsObservedAt,observed);
++    }finally{await f.cleanup();context.mock.restoreAll();}
++});
++test('publication and control identity changes cannot relabel retained details or migrate queued demand',async context=>{
++    const f=promptFeedbackHost(context);
++    try{
++        f.explorer.open();const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});
++        await f.blocked();await f.requested();f.release();await f.console.whenIdle();await f.settleStatus();
++        let index=f.evidence.length;
++        const details=(f.explorer as any).loadStatus('details');await f.requested(index);
++        f.finish(index,{payload:{index_state:'available',publication:{token:'old-publication'},
++            vectors_enabled:false,local_model_ready:false,runtime:{versions_match:false}}});await details;
++        index=f.evidence.length;
++        const scalar=(f.explorer as any).loadStatus();await f.requested(index);
++        f.finish(index,{payload:{index_state:'available',publication:{token:'new-publication'},files:7,
++            semantic_readiness:{state:'pending'},freshness:{state:'running'},observed_unix_ms:300}});await scalar;
++        const published=f.explorer.snapshot().status!;
++        assert.equal(published.publication,'new-publication');assert.equal(published.files,7);
++        assert.equal(published.vectorsEnabled,undefined);assert.equal(published.localModelReady,undefined);
++        assert.equal(published.versionsMatch,false,'same-owner runtime sample retains its own old age');
++        index=f.evidence.length;
++        const oldScalar=(f.explorer as any).loadStatus();await f.requested(index);
++        panel.send({v:1,type:'status.refresh',requestId:'obsolete-detail-demand'});await flush();
++        f.restartIdentity();const poll=f.poll();await flush();
++        f.finish(index,{payload:{index_state:'available',publication:{token:'obsolete'},files:777}});
++        await oldScalar;
++        const replacement=await f.requested(index+1);
++        assert.equal(replacement.tool,'airk_status','old details demand cannot migrate to new ownership');
++        f.releaseEpoch();await poll;f.finish(index+1);await f.settleStatus();
++        assert.equal(f.explorer.snapshot().status?.versionsMatch,undefined);
++        assert.equal(f.explorer.snapshot().status?.detailsObservedAt,undefined);
++    }finally{await f.cleanup();context.mock.restoreAll();}
++});
++

@@ -1,0 +1,202 @@
+--- r2/crates/airk-cli/tests/combined_reads/retention.rs
++++ r3/crates/airk-cli/tests/combined_reads/retention.rs
+@@ -6,6 +6,39 @@
+     retention::RetainedProfile,
+     usage::{IndexMetric, IndexSummary},
+ };
++
++// Keep positive transport flags and exact scoped members before unwrapping.
++fn retained_body(reply: &Value, index: IndexId, label: &str) -> Result<Value> {
++    airk_core::index_catalog::encoded_size(reply, 3 * airk_core::MAX_RESPONSE_BYTES + 4096)?;
++    ensure!(
++        reply.is_object()
++            && reply
++                .get("isError")
++                .is_none_or(|flag| flag == &json!(false)),
++        "{label} outer error flag; complete bounded reply: {reply}"
++    );
++    let value = body(reply)?;
++    let members = value["members"]
++        .as_array()
++        .with_context(|| format!("{label} members absent: {reply}"))?;
++    ensure!(
++        members.len() == 1
++            && members[0]["index_id"] == json!(index)
++            && members[0]["outcome"] == "complete"
++            && members[0]["is_error"] == false,
++        "{label} exact positive member changed: {reply}"
++    );
++    Ok(value)
++}
++fn retained_mcp_body(wire: &Value, index: IndexId, label: &str) -> Result<Value> {
++    airk_core::index_catalog::encoded_size(wire, 3 * airk_core::MAX_RESPONSE_BYTES + 8192)?;
++    ensure!(wire.get("error").is_none(), "{label} RPC error: {wire}");
++    let reply = wire
++        .get("result")
++        .filter(|value| value.is_object())
++        .with_context(|| format!("{label} RPC result absent: {wire}"))?;
++    retained_body(reply, index, label)
++}
+ 
+ async fn configure(f: &Fixture, name: &str, draft: Value) -> Result<()> {
+     let file = f.owner.path().join(format!("retention-{name}.json"));
+@@ -237,20 +270,12 @@
+             airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+         let args = json!({"query":"boundaryneedle","mode":"vector","limit":8,"max_bytes":8192,"verification":"off","response_mode":"full"});
+         let native = native_read(backend.as_ref(), "airk_search", &args).await?;
+-        ensure!(
+-            native["isError"] != true,
+-            "native migrated provider read failed: {native}"
+-        );
+         let mut mcp = McpSession::start(&f)?;
+         let actual = mcp.call(10, "airk_search", args)?;
+-        ensure!(
+-            actual["result"]["isError"] != true,
+-            "MCP migrated provider read failed: {actual}"
+-        );
+         assert_parity(
+             "retention actual helper MCP",
+-            &body(&native)?,
+-            &body(&actual["result"])?,
++            &retained_body(&native, f.indexes[2], "retention native vector")?,
++            &retained_mcp_body(&actual, f.indexes[2], "retention MCP vector")?,
+         )?;
+         // The same real migrated provider must expose the new per-file report
+         // through native, actual CLI call and actual stdio MCP, with full data.
+@@ -260,18 +285,16 @@
+             let info = native_read(backend.as_ref(), "airk_file_info", &info_args).await?;
+             let cli = f.cli("airk_file_info", &info_args).await?;
+             let wire = mcp.call(call_id, "file_info", info_args)?;
+-            ensure!(
+-                info["isError"] != true
+-                    && cli["isError"] != true
+-                    && wire["result"]["isError"] != true,
+-                "selected profile FileInfo transport refused: native={info},cli={cli},mcp={wire}"
+-            );
+-            let complete = body(&info)?;
+-            assert_parity("selected FileInfo actual CLI", &complete, &body(&cli)?)?;
++            let complete = retained_body(&info, f.indexes[2], "retention native FileInfo")?;
++            assert_parity(
++                "selected FileInfo actual CLI",
++                &complete,
++                &retained_body(&cli, f.indexes[2], "retention CLI FileInfo")?,
++            )?;
+             assert_parity(
+                 "selected FileInfo actual MCP",
+                 &complete,
+-                &body(&wire["result"])?,
++                &retained_mcp_body(&wire, f.indexes[2], "retention MCP FileInfo")?,
+             )?;
+             let members = complete["members"]
+                 .as_array()
+@@ -279,11 +302,16 @@
+             ensure!(
+                 members.len() == 1
+                     && members[0]["index_id"] == json!(f.indexes[2])
++                    && members[0]["outcome"] == "complete"
+                     && members[0]["is_error"] == false,
+                 "selected FileInfo returned wrong member"
+             );
+             let file = member_body(&complete, &members[0])?;
+-            let report = &file["content"]["profile_families"];
++            // ConditionalRead flattens the serialized FileInfo payload. Typed
++            // Rust .content remains an Option<T>; this is the actual JSON wire.
++            let report = file.get("profile_families").with_context(|| {
++                format!("flat selected FileInfo report absent; complete member: {file}")
++            })?;
+             ensure!(
+                 report["applied_file"]["applied_retention"]["profile"] == json!(target)
+                     && report["applied_file"].get("legacy_detail").is_none(),
+--- r2/packages/vscode/src/test/profileFamilies.test.ts
++++ r3/packages/vscode/src/test/profileFamilies.test.ts
+@@ -12,7 +12,8 @@
+ 
+ const families=['saved_identity','saved_text','lexical_candidates','vectors','declarations','imports','written_calls','framework_structure','manifest_packages_dependencies','requirements_design_decisions','headings_sections','standalone_dates_bounds','tables_rows','mapped_regions','declaration_continuity','document_unit_continuity','imported_assertions','ocr_text_facts'];
+ function report(){return {schema:'airk.profile-families/1',basis:'metadata_only',file:{publication:'one-head',path:'src/a.rs',source_hash:'ab'.repeat(32)},applied_file:{adapter_id:'rust',adapter_version:'fixture',effective_profile_digest:'cd'.repeat(32),legacy_detail:'agent_lean'},configured_collection_policy:{state:'unavailable',reason:'selected_scope'},published_collection_policy:{state:'unavailable',reason:'selected_scope'},pending_collection_reindex:null,families:families.map(family=>({family,support:'unknown',retention:family==='manifest_packages_dependencies'?'not_retained':'selected',reply_inclusion:'omitted'})),future_native_field:{identity:'preserve opaque metadata'}};}
+-function turn():WorkbenchTurn{return {id:'families',at:1,input:'/info src/a.rs --include-profile-families',format:'structured',request:{plan:{steps:[{id:'info',tool:'file_info',args:{path:'src/a.rs',include_profile_families:true}}]}},envelope:{status:'complete',executed:true,publication:'one-head',steps:[{id:'info',tool:'file_info',status:'complete',result:{read:{status:'content'},content:{path:'src/a.rs',profile_families:report()}}}],evidence:[{step:'info',text:'selected evidence',publication:'one-head',citation:{path:'src/a.rs',start_line:1,end_line:1,content_hash:'ab'.repeat(32)}}]}};}
++type ReportShape="flat"|"historical_nested";
++function turn(shape:ReportShape="flat"):WorkbenchTurn{return {id:'families',at:1,input:'/info src/a.rs --include-profile-families',format:'structured',request:{plan:{steps:[{id:'info',tool:'file_info',args:{path:'src/a.rs',include_profile_families:true}}]}},envelope:{status:'complete',executed:true,publication:'one-head',steps:[{id:'info',tool:'file_info',status:'complete',result:shape==='flat'?{read:{status:'content'},path:'src/a.rs',profile_families:report()}:{read:{status:'content'},content:{path:'src/a.rs',profile_families:report()}}}],evidence:[{step:'info',text:'selected evidence',publication:'one-head',citation:{path:'src/a.rs',start_line:1,end_line:1,content_hash:'ab'.repeat(32)}}]}};}
+ 
+ test('native-schema form keeps Default absent and explicit false/true typed',()=>{
+     const schema={type:'object',required:['path'],properties:{path:{type:'string'},include_profile_families:{type:'boolean',default:false,description:'Native metadata-only family report'}}};
+@@ -22,22 +23,25 @@
+     for(const choice of ['false','true'])assert.equal(toolFormArguments(schema,{path:'src/a.rs',include_profile_families:choice}).include_profile_families,choice==='true');
+     assert.throws(()=>toolFormArguments(schema,{path:'src/a.rs',include_profile_families:'yes'}));
+ });
+-test('structured details and full/selected JSON and Markdown preserve every family and unknown field',()=>{
+-    const entry=turn(),session=newSession('ab'.repeat(32));session.turns=[entry];const original=structuredClone(entry.envelope);
+-    assert.deepEqual(discoveryDetails(entry.envelope!)[0].profileFamilies,report());
+-    for(const format of ['json','markdown'] as const)for(const selected of [undefined,['record-0']]){
+-        const output=renderExport(session,format,entry.id,selected);
+-        for(const family of families)assert.ok(output.includes(family));
+-        assert.ok(output.includes('preserve opaque metadata'));assert.ok(output.includes('selected_scope'));assert.ok(output.includes('not_retained'));assert.ok(output.includes('omitted'));
+-        if(format==='json'&&selected){const coverage=JSON.parse(output).turns[0].envelope.source_coverage;assert.deepEqual(coverage[0].profile_families,report());}
++test('flat native and historical nested details and full/selected exports preserve every family',()=>{
++    for(const shape of ['flat','historical_nested'] as const){
++        const entry=turn(shape),session=newSession('ab'.repeat(32));session.turns=[entry];const original=structuredClone(entry.envelope);
++        const result=object((entry.envelope!.steps as Record<string,unknown>[])[0].result);
++        assert.equal(Object.hasOwn(result,'content'),shape==='historical_nested');
++        assert.deepEqual(discoveryDetails(entry.envelope!)[0].profileFamilies,report());
++        for(const format of ['json','markdown'] as const)for(const selected of [undefined,['record-0']]){
++            const output=renderExport(session,format,entry.id,selected);
++            for(const family of families)assert.ok(output.includes(family));
++            assert.ok(output.includes('preserve opaque metadata'));assert.ok(output.includes('selected_scope'));assert.ok(output.includes('not_retained'));assert.ok(output.includes('omitted'));
++            if(format==='json'&&selected){const coverage=JSON.parse(output).turns[0].envelope.source_coverage;assert.deepEqual(coverage[0].profile_families,report());}
++        }
++        assert.deepEqual(entry.envelope,original);
+     }
+-    assert.deepEqual(entry.envelope,original);
+-    const legacy=turn();delete object(object((legacy.envelope!.steps as Record<string,unknown>[])[0].result).content).profile_families;
+-    assert.deepEqual(discoveryDetails(legacy.envelope!),[], 'legacy content without metadata has no detail row');
+ });
+ 
+ test('absent family report does not invent details or suppress other native metadata',()=>{
+-    const legacy=turn(),content=object(object((legacy.envelope!.steps as Record<string,unknown>[])[0].result).content);
++    const legacy=turn(),content=object((legacy.envelope!.steps as Record<string,unknown>[])[0].result);
++    assert.deepEqual(content.profile_families,report());assert.equal(Object.hasOwn(content,'content'),false);
+     delete content.profile_families;
+     assert.deepEqual(discoveryDetails(legacy.envelope!),[]);
+     content.publication='legacy-metadata-head';
+@@ -55,26 +59,35 @@
+ test('actual session save/load preserves opt-in draft and full report without rebuilding it',async()=>{
+     const directory=await fs.mkdtemp(path.join(os.tmpdir(),'airk-family-session-'));
+     try{
+-        const store=new SessionStore(directory),session=newSession('ab'.repeat(32));session.turns=[turn()];
++        const store=new SessionStore(directory);
++        for(const shape of ['flat','historical_nested'] as const){
++        const session=newSession('ab'.repeat(32));session.turns=[turn(shape)];
+         session.formDraft={activeTool:'file_info',values:{file_info:{path:'src/a.rs',include_profile_families:'true'}},revision:1,scope:'',recipe:''};
+         await store.save(session,true);const restored=await store.load(session.project,session.id);
+         assert.deepEqual(restored.turns[0].envelope,session.turns[0].envelope);assert.deepEqual(restored.formDraft,session.formDraft);
+-        for(const format of ['json','markdown'] as const)assert.ok(renderExport(restored,format).includes('preserve opaque metadata'));
++        assert.deepEqual(discoveryDetails(restored.turns[0].envelope!)[0].profileFamilies,report());
++        for(const format of ['json','markdown'] as const)for(const selected of [undefined,['record-0']])assert.ok(renderExport(restored,format,restored.turns[0].id,selected).includes('preserve opaque metadata'));
++        }
+     }finally{await fs.rm(directory,{recursive:true,force:true});}
+ });
+ 
+ 
+-test('Selected retained identity and collection fallback survive full/selected details and exports without a legacy alias',()=>{
+-    const entry=turn(),value=object(report()),applied=object(value.applied_file);
++test('Selected retained identity survives canonical flat and historical nested full/selected details and exports without legacy alias',()=>{
++    for(const shape of ['flat','historical_nested'] as const){
++    const entry=turn(shape),value=object(report()),applied=object(value.applied_file);
+     delete applied.legacy_detail;delete applied.legacy_detail_was_absent;
+     applied.applied_retention={kind:'selected',profile:'rich',family:'manifest',algorithm:'airk/file-aware-retention/1'};
+     value.configured_collection_policy={state:'known',revision:{retained_profile:'rich',legacy_fallback_detail:'agent_lean',policy_digest:'ab'.repeat(32)}};
+     value.published_collection_policy={state:'known',revision:{retained_profile:'lean',legacy_fallback_detail:'agent_lean',policy_digest:'cd'.repeat(32)}};value.pending_collection_reindex=true;
+-    const step=object((entry.envelope!.steps as Record<string,unknown>[])[0]);object(object(step.result).content).profile_families=value;
+-    const session=newSession('ab'.repeat(32));session.turns=[entry];
++    const step=object((entry.envelope!.steps as Record<string,unknown>[])[0]),result=object(step.result);
++    assert.equal(Object.hasOwn(result,'content'),shape==='historical_nested');
++    const content=shape==='flat'?result:object(result.content);content.profile_families=value;
++    const session=newSession('ab'.repeat(32));session.turns=[entry];const original=structuredClone(entry.envelope);
+     assert.deepEqual(discoveryDetails(entry.envelope!)[0].profileFamilies,value);
+     for(const format of ['json','markdown'] as const)for(const selected of [undefined,['record-0']]){
+         const output=renderExport(session,format,entry.id,selected);assert.ok(output.includes('airk/file-aware-retention/1'));assert.ok(output.includes('legacy_fallback_detail'));assert.ok(output.includes('pending_collection_reindex'));assert.ok(output.includes('rich'));assert.ok(output.includes('lean'));
++        if(format==='json'&&selected){const coverage=JSON.parse(output).turns[0].envelope.source_coverage;assert.deepEqual(coverage[0].profile_families,value);}
+     }
+-    assert.equal(object(value.applied_file).legacy_detail,undefined);
++    assert.deepEqual(entry.envelope,original);assert.equal(object(value.applied_file).legacy_detail,undefined);
++    }
+ });

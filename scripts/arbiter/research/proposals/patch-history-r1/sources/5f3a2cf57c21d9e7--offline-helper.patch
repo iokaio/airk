@@ -1,0 +1,13 @@
+--- a/cmake/external/helper_functions.cmake
++++ b/cmake/external/helper_functions.cmake
+@@ -5,6 +5,10 @@
+ 
+ function(onnxruntime_fetchcontent_declare contentName)
+     cmake_parse_arguments(PARSE_ARGV 1 ARG "" "URL;SOURCE_SUBDIR" "")
++    # AIRK GPU producer: every archive must already be in its authenticated offline mirror.
++    if(NOT IS_ABSOLUTE "${ARG_URL}" OR NOT EXISTS "${ARG_URL}")
++      message(FATAL_ERROR "AIRK GPU offline dependency is missing or nonlocal: ${contentName}")
++    endif()
+     message(STATUS "Fetch ${contentName} from ${ARG_URL}")
+     FetchContent_Declare(${ARGV})
+     string(TOLOWER ${contentName} contentNameLower)

@@ -1,0 +1,200 @@
+--- D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\r154-composed-launch-preparation-r4\launch_route.py
++++ private-r5/launch_route.py
+@@ -2,7 +2,9 @@
+ """Private existing-route composed launch; no execution without Root's frozen card."""
+ import argparse, hashlib, importlib.util, json, os, queue, subprocess, sys, threading, time
+ from pathlib import Path
+-BASE=Path(__file__).resolve().parent
++PROPOSAL_BASE=Path(__file__).resolve().parent
++BASE=Path('D:\\code\\Github\\airk\\artifacts\\advanced-split\\models\\actual-composed-service-r2\\r154-composed-launch-preparation-r4')
++sys.path.insert(0,str(BASE))
+ SID='S-1-5-21-3678370870-3858642417-826968105-1002'
+ 
+ def need(value,message):
+@@ -25,8 +27,69 @@
+         'owned_job_final_member_pids':[],'parent_assigned_to_job':False,'child_assigned_before_resume':True}
+     return all(type(value.get(k)) is type(v) and value[k]==v for k,v in expected.items())
+ 
++def ownership_settled(value):
++    expected={'timed_out':False,'log_oversized':False,'owned_descendants_settled':True,
++        'owned_job_forced_termination':False,'owned_job_final_active_processes':0,
++        'owned_job_final_member_pids':[],'parent_assigned_to_job':False,'child_assigned_before_resume':True}
++    return (type(value.get('exit_code')) is int
++        and all(type(value.get(k)) is type(v) and value[k]==v for k,v in expected.items()))
++
++def ownership_outcome(value):
++    if not ownership_settled(value):return 'unsettled_or_unknown'
++    return 'naturally_settled_success' if value['exit_code']==0 else 'naturally_settled_nonzero'
++
++def full_semantic_population(status,clients):
++    # This private fixture checks existing Rust-owned output; it defines no DTO.
++    readiness=clients.semantic_readiness(status)
++    need(readiness['state']!='failed','Native semantic work explicitly failed; no Answer admitted')
++    selected=readiness.get('selected_artifacts');completed=readiness['completed_artifacts']
++    need(type(selected) is int and 0<=completed<=selected<=753,'Unexpected frozen753 semantic population')
++    discovery=status.get('discovery_readiness')
++    need(isinstance(discovery,dict) and discovery.get('state') in ('pending','partial','paused','ready','failed'),
++        'Native discovery readiness observation missing or invalid')
++    need(discovery['state']!='failed','Native discovery explicitly failed; no Answer admitted')
++    if readiness['state']!='ready' or selected!=753 or completed!=753 or discovery['state']!='ready':return False
++    need(type(status.get('files')) is int and status['files']==753,'Full semantic population differs from frozen753 source files')
++    need(readiness.get('failure') is None and discovery.get('failure') is None,'Native readiness retains a failure')
++    return True
++
++def canonical_work_idle(status,instance):
++    work=status.get('work');runtime=status.get('runtime')
++    need(isinstance(work,dict) and isinstance(runtime,dict),'Native work/runtime observations missing')
++    need(work.get('basis')=='instance_bound_service_metadata' and work.get('failed_observations')==[],
++        'Native work sample incomplete; no idle inference')
++    service=runtime.get('service');worker=work.get('worker');serving=work.get('serving_worker')
++    need(isinstance(service,dict) and service.get('instance')==instance
++        and runtime.get('service_error') is None and service.get('responsive') is True
++        and isinstance(serving,dict) and serving.get('service')==instance
++        and isinstance(worker,dict) and worker.get('identity')==serving
++        and worker.get('matches_serving_worker') is True and work.get('progress_current_worker') is True,
++        'Native work sample does not authenticate the current original-instance worker')
++    need(all(k in work for k in ('active_job','pending_job','queued_jobs','queue_truncated'))
++        and isinstance(work['queued_jobs'],list) and type(work['queue_truncated']) is bool,
++        'Native work queue observation incomplete')
++    return (work['active_job'] is None and work['pending_job'] is None
++        and work['queued_jobs']==[] and work['queue_truncated'] is False
++        and worker.get('restarting') is False and worker.get('automatic_start_blocked') is False)
++
++def await_semantic_population(read,clients,registration,instance,cutoff,record,wait_change):
++    while True:
++        remaining(cutoff)
++        status=read(cutoff)
++        record(status)  # Full native sample is retained even when it refuses.
++        remaining(cutoff)  # Late-ready observations never pass the original deadline.
++        if clients.publication_pending(status,registration['collection'],registration['binding']):
++            wait_change(cutoff);remaining(cutoff);continue
++        population=full_semantic_population(status,clients)
++        if population and canonical_work_idle(status,instance):return status
++        if not population:
++            wait_change(cutoff);remaining(cutoff)
++        # Once full population is published, durable job completion can precede
++        # its final in-memory worker sample. Continue actual bounded CLI reads;
++        # another filesystem notification is not guaranteed for that transition.
++
+ def card(expected):
+-    path=BASE/'launch-card.json';raw=path.read_bytes();need(hashlib.sha256(raw).hexdigest()==expected,'Root-reviewed card SHA differs')
++    path=PROPOSAL_BASE/'launch-card.json';raw=path.read_bytes();need(hashlib.sha256(raw).hexdigest()==expected,'Root-reviewed card SHA differs')
+     value=json.loads(raw);need(value['whole_seconds']==1800 and value['r154_seconds']==360,'Original whole and Answer phases required')
+     return value,raw
+ 
+@@ -96,7 +159,7 @@
+             'stdout_sha256':hashlib.sha256(out).hexdigest(),'stderr_sha256':hashlib.sha256(err).hexdigest()})
+         remaining(self.cutoff)
+         if error is not None:raise error
+-        need(code==0,'Actual native command refused; full bytes retained: '+str(directory))
++        need(code==0,'Command '+label+' exited '+str(code)+'; complete streams retained: '+str(directory))
+         return subprocess.CompletedProcess(command,code,out.decode(),err.decode())
+     def cli(self,*argv,**kwargs):return self.call([self.value['airkctl'],*argv],kwargs.pop('label','cli'),**kwargs)
+     def alive(self):need(self.service.poll() is None,'Original Service exited before required observation')
+@@ -110,6 +173,7 @@
+         result=api.WaitForMultipleObjects(2,handles,False,max(1,int(remaining(min(cutoff,self.cutoff))*1000)))
+         if result==0:
+             need(api.FindNextChangeNotification(watch.handle),'Actual directory observer rearm failed')
++            remaining(min(cutoff,self.cutoff))
+         elif result==1:raise RuntimeError('Original Service exited during observed startup')
+         elif result==258:raise TimeoutError('Original startup/event observation cutoff expired')
+         else:raise ctypes.WinError(ctypes.get_last_error())
+@@ -149,13 +213,14 @@
+         need(control.samefile(Path(self.value['work'])/'control'),'Actual Ready names a different control directory')
+         # Only a fully authenticated actual record becomes cleanup/control authority.
+         self.ready=candidate;self.control=control;self.report['full_ready']=candidate;self.retain()
+-    def setup(self,clients):
++    def setup(self,clients,changes):
+         route=self
+         class Attached(clients.Fixture):
+             @property
+             def catalog_authority(self):return True
+             def run(self,*args,input=None,check=True,timeout=None):
+-                need(check is True,'Only successful native setup commands permitted')
++                need(type(check) is bool,'Native command check policy must be explicit')
++                # call still requires exit0; query(retry=False) submits one read only.
+                 return route.cli(*args,input=input,timeout=timeout,label='setup')
+             def wait(self,receipt,expected='succeeded'):
+                 # Same exercised FocusR5 observation loop; only read-only Job observations repeat.
+@@ -172,6 +237,25 @@
+         for command in ('index','setup-model','index'):
+             result=fixture.job('r154',command)
+             write(self.root/('native-job-'+command+('-final' if (self.root/('native-job-'+command+'.json')).exists() else '')+'.json'),result)
++        # The terminal Index Job does not include asynchronous vectors work.
++        # Register the native observer BEFORE the first canonical diagnostics read.
++        watch=changes(self.control)
++        samples=self.root/'semantic-readiness';samples.mkdir();observations=[]
++        def record(status):
++            path=samples/f'{len(observations):05d}.json';write(path,status)
++            observations.append({'path':str(path),'sha256':sha(path)})
++            self.report['semantic_readiness_samples']=list(observations);self.retain()
++        try:
++            accepted=await_semantic_population(
++                lambda until:fixture.query('r154','tools','call','airk_diagnostics','--args',
++                    '{"response_mode":"full"}',deadline=until,retry=False),
++                clients,fixture.projects['r154'],self.ready['health']['instance'],self.cutoff,
++                record,lambda until:self.wait_event(watch,until))
++            self.report['full753_semantic_ready_and_no_active_publication_work']={
++                'sample':observations[-1],'publication':accepted['publication'],
++                'original_whole_cutoff':self.cutoff,'before_scope_emission_and_warm':True}
++            self.retain()
++        finally:watch.close()
+         # Forward only the already-produced canonical selection values, unchanged.
+         # Rust owns ScopedConnectRequest parsing and all current authority checks.
+         self.publish_reviewed_scope(fixture.scopes)
+@@ -259,12 +343,23 @@
+             '--native-budget-cases-sha256',v['native_budget_cases']['sha256'],
+             '--context-manifest',v['context_manifest'],'--focus-manifest',v['focus_manifest'],
+             '--sdk-manifest',v['sdk_handoff']['path'],'--sdk-manifest-sha256',v['sdk_handoff']['sha256'],
+-            '--phase-seconds','360','--output',str(work/'r154-fresh-attribution-r4')]
++            '--phase-seconds','360','--output',str(work/'r154-fresh-attribution-r5')]
+         # After handoff the unchanged observer owns exactly one canonical Shutdown, including failures.
+         self.delegated_stop=True;self.report['service_stop_delegated_to_R154']=True;self.retain()
+-        self.call(args,'R154-owned-observer',timeout=remaining(self.cutoff))
+-        path=work/'r154-fresh-attribution-r4/owned-execution.json';result=json.loads(path.read_bytes())
+-        self.report['r154_owned_execution']={'path':str(path),'sha256':sha(path),'full_result':result}
++        failure=None
++        try:self.call(args,'R154-owned-observer',timeout=remaining(self.cutoff))
++        except BaseException as error:failure=error
++        path=work/'r154-fresh-attribution-r5/owned-execution.json'
++        try:
++            with path.open('rb') as stream:raw=stream.read(8*1024*1024+1)
++            need(len(raw)<=8*1024*1024,'Owned observer receipt exceeds8MiB')
++            result=json.loads(raw)
++            self.report['r154_owned_execution']={'path':str(path),'sha256':hashlib.sha256(raw).hexdigest(),'full_result':result}
++            self.retain()
++        except BaseException as error:
++            self.report['observer_report_failure']={'type':type(error).__name__,'message':str(error)}
++            if failure is None:raise
++        if failure is not None:raise failure
+         need(result.get('complete') is True,'Original360s observer phase failed; no retry')
+     def cleanup(self):
+         if self.service is not None and self.handle is not None:
+@@ -319,7 +414,7 @@
+         clients=load(BASE/'shared/check-service-clients.py','r154_attached_clients')
+         changes=load(BASE/'shared/check-arbiter-lifecycle.py','r154_native_changes').Changes
+         composed=load(BASE/'shared/run_composed.py','r154_existing_composed')
+-        route.start(custody,reference_worker.windows_sid,changes);route.setup(clients);route.start_controller()
++        route.start(custody,reference_worker.windows_sid,changes);route.setup(clients,changes);route.start_controller()
+         route.warm('focus',value['focus_manifest'],composed);route.warm('context',value['context_manifest'],composed)
+         route.finish_controller();route.diagnostic();route.report['complete']=True
+     except BaseException as error:
+@@ -376,13 +471,15 @@
+         env.update(value['environment'])
+         with (root/'stdout-stderr.log').open('xb') as log:
+             result=outer_job.run_windows_owned(argv,BASE,log,remaining(cutoff),env,absolute_deadline=cutoff,before_resume=before_resume)
+-        report['owned']=result;need(natural(result),'Actual route Job did not naturally settle; native cleanup remains separate')
+-        child=root/'route/receipt.json';body=json.loads(child.read_bytes());report['route_receipt']={'path':str(child),'sha256':sha(child)}
++        report['owned']=result;report['owned_outcome']=ownership_outcome(result)
++        need(ownership_settled(result),'Actual route Job ownership unsettled or unknown; native cleanup remains separate')
++        child=root/'route/receipt.json';body=json.loads(child.read_bytes());report['route_receipt']={'path':str(child),'sha256':sha(child),'full_result':body}
++        need(natural(result),'Actual route Job naturally settled with nonzero exit '+str(result['exit_code'])+'; route failure retained')
+         need(body.get('complete') is True and body.get('immutable_inputs_postverified') is True,'Composed route did not complete')
+         report['complete']=True
+     except BaseException as error:report['failure']={'type':type(error).__name__,'message':str(error)}
+     finally:
+-        try:verify(value);need((BASE/'launch-card.json').read_bytes()==raw,'Frozen launch card changed');report['immutable_inputs_postverified']=True
++        try:verify(value);need((PROPOSAL_BASE/'launch-card.json').read_bytes()==raw,'Frozen launch card changed');report['immutable_inputs_postverified']=True
+         except BaseException as error:
+             report['postverification_failure']=str(error);report['complete']=False
+         observed=time.monotonic();report['elapsed_seconds']=observed-started;report['original_phase_expired']=observed>=cutoff

@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: Apache-2.0
+/// A console transcript with the varying observation fields `stable` drops
+/// replaced in place (pretty JSON keeps one field per line).
+fn stable_transcript(text: &str) -> String {
+    const VARYING: [&str; 7] = [
+        "request_id",
+        "observed_unix_ms",
+        "observed_from_unix_ms",
+        "observed_to_unix_ms",
+        "cache_age_ms",
+        "cached",
+        "elapsed_ms",
+    ];
+    text.lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            match VARYING
+                .iter()
+                .find(|key| trimmed.starts_with(&format!("\"{key}\":")))
+            {
+                Some(key) => format!(
+                    "{}\"{key}\": _{}",
+                    &line[..line.len() - trimmed.len()],
+                    if line.ends_with(',') { "," } else { "" }
+                ),
+                None => line.to_owned(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}

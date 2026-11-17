@@ -1,0 +1,894 @@
+--- a/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2.rs
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2.rs
+@@ -19,7 +19,6 @@
+     io::{Read, Seek, SeekFrom, Write},
+     path::{Path, PathBuf},
+     sync::Arc,
+-    time::Instant,
+ };
+ 
+ struct Files(BTreeMap<String, String>);
+@@ -170,9 +169,6 @@
+     }
+ }
+ impl std::error::Error for ObservedNativeFailure {}
+-fn micros(start: Instant) -> Result<u64> {
+-    Ok(u64::try_from(start.elapsed().as_micros())?)
+-}
+ fn flush(file: &mut File, receipt: &Value) -> Result<()> {
+     let bytes = serde_json::to_vec_pretty(receipt)?;
+     file.seek(SeekFrom::Start(0))?;
+@@ -321,7 +317,7 @@
+         .write(true)
+         .create_new(true)
+         .open(&output)?;
+-    let binary = std::env::current_exe()?;
++    let binary_sha256 = file_hash(&std::env::current_exe()?)?;
+     let mut receipt = json!({"schema":"airk.arbiter.native-resource/2","complete":false,
+         "evaluation":true,"release_qualified":false,"candidate_resource_passed":false,
+         "input_sha256":input_hash,"source_manifest":input.source_manifest,
+@@ -329,57 +325,93 @@
+         "resource_policy":input.policy,"resource_policy_digest":input.policy_digest,
+         "model":profile.model,"target":current_target(),"isa":isa(),"cpu_fit":profile.cpu_fit,
+         "process_id":std::process::id(),"execution_user":airk_ipc::endpoint::current_user()?,
+-        "native_binary_sha256":file_hash(&binary)?,"resource":ResourceSeries::new(profile.memory_reservation_bytes)?,
++        "native_binary_sha256":binary_sha256,"resource":ResourceSeries::new(profile.memory_reservation_bytes)?,
++        "operation_journal":output.with_extension("operations.jsonl"),
++        "measurement_identity":"native-original-operation-start-to-post-end-retention/1",
+         "numeric_status":"unavailable_in_resource_only_run",
+         "scope":"Actual service-lease native score-return/clock/process-lifetime-RSS observations only. No task quality, composed service admission, cold end-to-end, calibrated action, platform transfer or publication claim."});
+     flush(&mut file, &receipt)?;
++    let mut operations = operation::Journal::create(
++        &output,
++        operation::Identity {
++            input_sha256: input_hash,
++            profile: profile.manifest,
++            process_id: std::process::id(),
++            native_binary_sha256: binary_sha256,
++        },
++        input.policy.deadline_ms,
++    )?;
+     let (_parent, control) = private_control()?;
+     let owner = airk_kernel::inference_owner::NativeInferenceOwner::admit(Arc::new(
+         airk_store::service::ServiceLease::acquire(&control)?,
+     ))?;
+     let run = owner.run(|| -> Result<()> {
+         verify_files(&files, &profile)?;
+-        let started = Instant::now();
+-        let loaded = Scorer::open(
+-            ExecutionProfile::for_qualification(profile.clone())?,
+-            &files,
+-        );
+-        receipt["load_us"] = json!(micros(started)?);
++        let loaded = operations.observe(operation::Kind::Load, 0, None, || {
++            Scorer::open(
++                ExecutionProfile::for_qualification(profile.clone())?,
++                &files,
++            )
++        })?;
++        receipt["load_us"] = json!(loaded.elapsed_us);
++        receipt["load_native_call_us"] = json!(loaded.native_call_elapsed_us);
+         receipt["load_peak_process_rss_bytes"] = json!(peak_rss());
+         flush(&mut file, &receipt)?;
+-        let scorer = loaded?;
++        ensure!(
++            loaded.within_deadline,
++            "original native load deadline exceeded"
++        );
++        let scorer = loaded.value?;
+         receipt["execution_identity"] = serde_json::to_value(scorer.execution_identity()?)?;
+         let compiled = resource_input(&profile, &files, |state, question, candidates| {
+             scorer.compile(state, question, candidates)
+         })?;
+         receipt["input"] = serde_json::to_value(&compiled)?;
+-        let start = Instant::now();
+-        let warmed = scorer.score(&compiled);
+-        let warmup_us = micros(start)?;
++        let warmed = operations.observe(
++            operation::Kind::Warmup,
++            0,
++            Some(compiled.input_digest),
++            || scorer.score(&compiled),
++        )?;
+         let peak = peak_rss().context("actual native process peak RSS unavailable")?;
+-        receipt["warmup"] = json!({"elapsed_us":warmup_us,"peak_process_rss_bytes":peak,
+-            "returned":true,"success":warmed.is_ok()});
++        receipt["warmup"] = json!({"elapsed_us":warmed.elapsed_us,
++            "native_call_elapsed_us":warmed.native_call_elapsed_us,"peak_process_rss_bytes":peak,
++            "returned":true,"success":warmed.value.is_ok()});
+         flush(&mut file, &receipt)?;
+-        warmed?;
+-        ensure!(
+-            warmup_us <= input.policy.p95_limit_us && peak <= profile.memory_reservation_bytes,
++        ensure!(
++            warmed.within_deadline,
++            "original native warmup deadline exceeded"
++        );
++        warmed.value?;
++        ensure!(
++            warmed.elapsed_us <= input.policy.p95_limit_us
++                && peak <= profile.memory_reservation_bytes,
+             "first warmup exceeded frozen native resource bound; no measured forward admitted"
+         );
+         let mut series = ResourceSeries::new(profile.memory_reservation_bytes)?;
++        let mut ordinal = 0;
+         let result = observe_series(
+             &mut series,
+             &input.policy,
+             || {
+-                let started = Instant::now();
+-                let scored = scorer.score(&compiled);
+-                let elapsed_us = micros(started)?;
++                ordinal += 1;
++                let scored = operations.observe(
++                    operation::Kind::Sample,
++                    ordinal,
++                    Some(compiled.input_digest),
++                    || scorer.score(&compiled),
++                )?;
++                let elapsed_us = scored.elapsed_us;
+                 let peak_process_rss_bytes = peak_rss().context("actual native RSS unavailable")?;
+-                scored.map_err(|error| {
++                scored.value.map_err(|error| {
+                     error.context(ObservedNativeFailure {
+                         elapsed_us,
+                         peak_process_rss_bytes,
+                     })
+                 })?;
++                // Original operation time includes both durable observer publications.
++                // A late return therefore enters the real partial series as overrun,
++                // and Core refuses the next forward without inventing a zero sample.
+                 Ok(ResourceSample {
+                     elapsed_us,
+                     peak_process_rss_bytes,
+@@ -594,7 +626,8 @@
+     let mut file = OpenOptions::new()
+         .write(true)
+         .create_new(true)
+-        .open(output)?;
++        .open(&output)?;
++    let binary_sha256 = file_hash(&std::env::current_exe()?)?;
+     let mut receipt = json!({"schema":"airk.arbiter.native-numeric-result/2","complete":false,"evaluation":true,
+         "release_qualified":false,"input_sha256":input_hash,"profile":profile.manifest,
+         "profile_source_sha256":input.profile.sha256,"fixture":pin,"source_manifest":input.source_manifest,
+@@ -602,24 +635,49 @@
+         "resource_policy_digest":input.policy_digest,"resource_policy":input.policy,
+         "model":profile.model,"target":current_target(),"isa":isa(),"cpu_fit":profile.cpu_fit,
+         "process_id":std::process::id(),"execution_user":airk_ipc::endpoint::current_user()?,
+-        "native_binary_sha256":file_hash(&std::env::current_exe()?)?,
++        "native_binary_sha256":binary_sha256,"operation_journal":output.with_extension("operations.jsonl"),
++        "measurement_identity":"native-original-operation-start-to-post-end-retention/1",
+         "rows":[],"scope":"Actual native raw-logit/mass/argmax comparisons with separately pinned independent references; no semantic/calibration/composed-path/publication qualification."});
++    flush(&mut file, &receipt)?;
++    let mut operations = operation::Journal::create(
++        &output,
++        operation::Identity {
++            input_sha256: input_hash,
++            profile: profile.manifest,
++            process_id: std::process::id(),
++            native_binary_sha256: binary_sha256,
++        },
++        input.policy.deadline_ms,
++    )?;
+     let (_parent, control) = private_control()?;
+     let owner = airk_kernel::inference_owner::NativeInferenceOwner::admit(Arc::new(
+         airk_store::service::ServiceLease::acquire(&control)?,
+     ))?;
+     let run=owner.run(||->Result<()>{verify_files(&files,&profile)?;
+-        let scorer=Scorer::open(ExecutionProfile::for_qualification(profile.clone())?,&files)?;
++        let loaded=operations.observe(operation::Kind::Load,0,None,|| {
++            Scorer::open(ExecutionProfile::for_qualification(profile.clone())?,&files)
++        })?;
++        receipt["load_us"]=json!(loaded.elapsed_us);
++        receipt["load_native_call_us"]=json!(loaded.native_call_elapsed_us);
++        receipt["load_peak_process_rss_bytes"]=json!(peak_rss());
++        flush(&mut file,&receipt)?;
++        ensure!(loaded.within_deadline,"original native numeric load deadline exceeded");
++        let scorer=loaded.value?;
+         receipt["execution_identity"]=serde_json::to_value(scorer.execution_identity()?)?;
+-        for row in &fixture.rows {
+-            let started=Instant::now();let actual=scorer.score(&row.input)?;let elapsed_us=micros(started)?;
++        for (ordinal,row) in fixture.rows.iter().enumerate() {
++            let scored=operations.observe(operation::Kind::Numeric,ordinal+1,Some(row.input.input_digest),||scorer.score(&row.input))?;
++            let elapsed_us=scored.elapsed_us;
++            let native_call_elapsed_us=scored.native_call_elapsed_us;
++            let within_deadline=scored.within_deadline;
++            let actual=scored.value?;
+             let(same_raw,same_mass,same_argmax)=comparison(&actual,row.reference_same_artifact.as_ref().context("same-artifact reference")?)?;
+             let(original_raw,original_mass,original_argmax)=comparison(&actual,row.reference_original_fp32.as_ref().context("original FP32 reference")?)?;
+             receipt["rows"].as_array_mut().context("numeric result rows")?.push(json!({"name":row.name,
+                 "input_digest":row.input.input_digest,"tokens":row.input.input_ids.len(),"options":row.input.candidate_positions.len(),
+-                "raw_scores":actual,"elapsed_us":elapsed_us,"same_artifact_raw_error":same_raw,"same_artifact_mass_error":same_mass,
++                "raw_scores":actual,"elapsed_us":elapsed_us,"native_call_elapsed_us":native_call_elapsed_us,"same_artifact_raw_error":same_raw,"same_artifact_mass_error":same_mass,
+                 "original_fp32_raw_error":original_raw,"original_fp32_mass_error":original_mass,"argmax_matches":same_argmax&&original_argmax}));
+             flush(&mut file,&receipt)?;
++            ensure!(within_deadline,"original native numeric score deadline exceeded; exact returned partial rows retained");
+             let focus=profile.model==ModelChoice::FocusQwenReranker06B;
+             ensure!(same_raw<=0.001&&same_mass<=if focus{0.00001}else{0.05}
+                 &&original_raw<=if focus{0.25}else{0.001}&&original_mass<=0.05&&same_argmax&&original_argmax,
+@@ -734,6 +792,7 @@
+     Ok(())
+ }
+ 
++mod operation;
+ mod original_sources;
+ 
+ #[cfg(test)]
+--- /dev/null
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/operation.rs
+@@ -0,0 +1,236 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Private qualification-only original-operation observations; never Scorer policy.
++use airk_core::{identity::Sha256Digest, read_attempt::ReadClock};
++use anyhow::{Context, Result, ensure};
++use serde::Serialize;
++use std::{
++    fs::{File, OpenOptions},
++    io::Write,
++    path::Path,
++};
++
++#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub(super) enum Kind {
++    Load,
++    Warmup,
++    Sample,
++    Numeric,
++}
++#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++enum Phase {
++    Started,
++    Returned,
++    NotDispatched,
++}
++#[derive(Clone, Debug, Serialize)]
++pub(super) struct Identity {
++    pub input_sha256: Sha256Digest,
++    pub profile: Sha256Digest,
++    pub process_id: u32,
++    pub native_binary_sha256: Sha256Digest,
++}
++#[derive(Clone, Debug, Serialize)]
++pub(super) struct Event {
++    schema: &'static str,
++    sequence: u64,
++    identity: Identity,
++    kind: Kind,
++    ordinal: usize,
++    operation_input_digest: Option<Sha256Digest>,
++    phase: Phase,
++    clock: ReadClock,
++    started_monotonic_ns: u64,
++    expires_monotonic_ns: u64,
++    observed_monotonic_ns: u64,
++    native_call_elapsed_us: Option<u64>,
++    native_success: Option<bool>,
++}
++pub(super) struct Returned<T> {
++    pub value: Result<T>,
++    pub elapsed_us: u64,
++    pub native_call_elapsed_us: u64,
++    pub within_deadline: bool,
++}
++fn native_clock() -> ReadClock {
++    #[cfg(windows)]
++    {
++        ReadClock::WindowsPerformanceCounter
++    }
++    #[cfg(unix)]
++    {
++        ReadClock::UnixMonotonic
++    }
++}
++struct Attempt<'a> {
++    identity: &'a Identity,
++    kind: Kind,
++    ordinal: usize,
++    input: Option<Sha256Digest>,
++    deadline_ms: u64,
++}
++fn observe<T>(
++    attempt: Attempt<'_>,
++    sequence: &mut u64,
++    clock: &mut impl FnMut() -> Result<u64>,
++    publish: &mut impl FnMut(&Event) -> Result<()>,
++    call: impl FnOnce() -> Result<T>,
++) -> Result<Returned<T>> {
++    let Attempt {
++        identity,
++        kind,
++        ordinal,
++        input,
++        deadline_ms,
++    } = attempt;
++    ensure!(
++        (1..=120_000).contains(&deadline_ms),
++        "invalid original native operation allowance"
++    );
++    ensure!(
++        match kind {
++            Kind::Load | Kind::Warmup => ordinal == 0,
++            Kind::Sample => (1..=20).contains(&ordinal),
++            Kind::Numeric => (1..=12).contains(&ordinal),
++        },
++        "native operation ordinal differs"
++    );
++    ensure!(
++        (kind == Kind::Load) == input.is_none(),
++        "native operation input identity differs"
++    );
++    let started = clock()?;
++    let expires = started
++        .checked_add(
++            deadline_ms
++                .checked_mul(1_000_000)
++                .context("operation duration overflow")?,
++        )
++        .context("operation deadline overflow")?;
++    *sequence = sequence
++        .checked_add(1)
++        .context("operation sequence overflow")?;
++    let mut event = Event {
++        schema: "airk.arbiter.native-operation/1",
++        sequence: *sequence,
++        identity: identity.clone(),
++        kind,
++        ordinal,
++        operation_input_digest: input,
++        phase: Phase::Started,
++        clock: native_clock(),
++        started_monotonic_ns: started,
++        expires_monotonic_ns: expires,
++        observed_monotonic_ns: started,
++        native_call_elapsed_us: None,
++        native_success: None,
++    };
++    // The start is durable BEFORE the native operation. Publishing consumes the
++    // original allowance and can never renew the absolute expiry.
++    publish(&event)?;
++    let native_start = clock()?;
++    ensure!(native_start >= started, "operation clock moved backwards");
++    if native_start >= expires {
++        *sequence = sequence
++            .checked_add(1)
++            .context("operation sequence overflow")?;
++        event.sequence = *sequence;
++        event.phase = Phase::NotDispatched;
++        event.observed_monotonic_ns = native_start;
++        publish(&event)?;
++        anyhow::bail!("original native operation expired before dispatch");
++    }
++    let value = call();
++    let observation = (|| -> Result<(u64, u64)> {
++        let returned = clock()?;
++        ensure!(
++            returned >= native_start,
++            "operation return clock moved backwards"
++        );
++        let native_call_elapsed_us = (returned - native_start) / 1000;
++        *sequence = sequence
++            .checked_add(1)
++            .context("operation sequence overflow")?;
++        event.sequence = *sequence;
++        event.phase = Phase::Returned;
++        event.observed_monotonic_ns = returned;
++        event.native_call_elapsed_us = Some(native_call_elapsed_us);
++        event.native_success = Some(value.is_ok());
++        // A returned native error remains the primary typed cause if its
++        // retention also fails. No observer failure can admit another call.
++        publish(&event)?;
++        let retained = clock()?;
++        ensure!(
++            retained >= returned,
++            "operation retention clock moved backwards"
++        );
++        Ok((native_call_elapsed_us, retained))
++    })();
++    match observation {
++        Ok((native_call_elapsed_us, retained)) => Ok(Returned {
++            value,
++            elapsed_us: (retained - started).div_ceil(1000),
++            native_call_elapsed_us,
++            within_deadline: retained <= expires,
++        }),
++        Err(observation_error) => Err(match value {
++            Err(native_error) => native_error.context(format!(
++                "after-call observation also failed: {observation_error:#}"
++            )),
++            Ok(_) => observation_error.context(
++                "native operation returned successfully before after-call observation failed",
++            ),
++        }),
++    }
++}
++pub(super) struct Journal {
++    file: File,
++    identity: Identity,
++    deadline_ms: u64,
++    sequence: u64,
++}
++impl Journal {
++    pub fn create(output: &Path, identity: Identity, deadline_ms: u64) -> Result<Self> {
++        Ok(Self {
++            file: OpenOptions::new()
++                .write(true)
++                .create_new(true)
++                .open(output.with_extension("operations.jsonl"))?,
++            identity,
++            deadline_ms,
++            sequence: 0,
++        })
++    }
++    pub fn observe<T>(
++        &mut self,
++        kind: Kind,
++        ordinal: usize,
++        input: Option<Sha256Digest>,
++        call: impl FnOnce() -> Result<T>,
++    ) -> Result<Returned<T>> {
++        let file = &mut self.file;
++        observe(
++            Attempt {
++                identity: &self.identity,
++                kind,
++                ordinal,
++                input,
++                deadline_ms: self.deadline_ms,
++            },
++            &mut self.sequence,
++            &mut airk_process::monotonic::now_ns,
++            &mut |event| {
++                let bytes = serde_json::to_vec(event)?;
++                file.write_all(&bytes)?;
++                file.write_all(b"\n")?;
++                file.flush()?;
++                file.sync_data()?;
++                Ok(())
++            },
++            call,
++        )
++    }
++}
++#[cfg(test)]
++mod tests;
+--- /dev/null
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/operation/tests.rs
+@@ -0,0 +1,365 @@
++// SPDX-License-Identifier: Apache-2.0
++use super::*;
++use airk_core::arbiter::resource_policy::{
++    ResourceFailure, ResourcePolicy, ResourceSample, ResourceSeries,
++};
++use std::cell::Cell;
++fn identity() -> Identity {
++    Identity {
++        input_sha256: Sha256Digest::from_bytes([1; 32]),
++        profile: Sha256Digest::from_bytes([2; 32]),
++        process_id: 7,
++        native_binary_sha256: Sha256Digest::from_bytes([3; 32]),
++    }
++}
++fn attempt(identity: &Identity, kind: Kind, ordinal: usize) -> Attempt<'_> {
++    Attempt {
++        identity,
++        kind,
++        ordinal,
++        input: (kind != Kind::Load).then_some(Sha256Digest::from_bytes([4; 32])),
++        deadline_ms: 10,
++    }
++}
++#[test]
++fn native_operation_starts_before_call_with_one_original_expiry() -> Result<()> {
++    let identity = identity();
++    let mut sequence = 0;
++    let mut times = [1000, 2000, 7_000_001, 8_000_001].into_iter();
++    let mut events = Vec::new();
++    let called = Cell::new(false);
++    let observed = observe(
++        attempt(&identity, Kind::Sample, 1),
++        &mut sequence,
++        &mut || Ok(times.next().unwrap()),
++        &mut |event| {
++            assert!(!called.get() || event.phase == Phase::Returned);
++            events.push(event.clone());
++            Ok(())
++        },
++        || {
++            called.set(true);
++            Ok(17)
++        },
++    )?;
++    assert_eq!(observed.value?, 17);
++    assert_eq!(observed.elapsed_us, 8000);
++    assert_eq!(observed.native_call_elapsed_us, 6998);
++    assert!(observed.within_deadline);
++    assert_eq!(events.len(), 2);
++    assert_eq!(sequence, 2);
++    assert_eq!(events[0].sequence, 1);
++    assert_eq!(events[0].phase, Phase::Started);
++    assert_eq!(events[1].sequence, 2);
++    assert_eq!(events[1].phase, Phase::Returned);
++    assert_eq!(events[0].started_monotonic_ns, 1000);
++    assert_eq!(events[0].expires_monotonic_ns, 10_001_000);
++    assert_eq!(events[1].expires_monotonic_ns, 10_001_000);
++    assert_eq!(events[1].native_success, Some(true));
++    if let Some(path) = std::env::var_os("AIRK_SOFTWARE_V2_OPERATION_CASES_OUTPUT") {
++        let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
++        serde_json::to_writer_pretty(&mut file, &events)?;
++        file.write_all(b"\n")?;
++        file.sync_data()?;
++    }
++    Ok(())
++}
++#[test]
++fn native_operation_start_observer_failure_never_dispatches() {
++    let identity = identity();
++    let called = Cell::new(false);
++    let mut sequence = 0;
++    let result = observe(
++        attempt(&identity, Kind::Load, 0),
++        &mut sequence,
++        &mut || Ok(100),
++        &mut |_| anyhow::bail!("actual start observer refused"),
++        || {
++            called.set(true);
++            Ok(())
++        },
++    );
++    assert!(result.is_err());
++    assert!(!called.get());
++    assert_eq!(sequence, 1);
++}
++#[test]
++fn native_operation_startup_expiry_is_retained_without_dispatch() {
++    let identity = identity();
++    let called = Cell::new(false);
++    let mut sequence = 0;
++    let mut times = [100, 10_000_100].into_iter();
++    let mut events = Vec::new();
++    let result = observe(
++        attempt(&identity, Kind::Load, 0),
++        &mut sequence,
++        &mut || Ok(times.next().unwrap()),
++        &mut |event| {
++            events.push(event.clone());
++            Ok(())
++        },
++        || {
++            called.set(true);
++            Ok(())
++        },
++    );
++    assert!(result.is_err());
++    assert!(!called.get());
++    assert_eq!(events.len(), 2);
++    assert_eq!(events[1].phase, Phase::NotDispatched);
++    assert_eq!(events[1].native_success, None);
++    assert_eq!(events[1].expires_monotonic_ns, 10_000_100);
++}
++#[test]
++fn native_operation_known_error_retains_actual_end_without_renewal() -> Result<()> {
++    let identity = identity();
++    let mut sequence = 0;
++    let mut times = [100, 200, 300, 400].into_iter();
++    let mut events = Vec::new();
++    let result = observe(
++        attempt(&identity, Kind::Numeric, 3),
++        &mut sequence,
++        &mut || Ok(times.next().unwrap()),
++        &mut |event| {
++            events.push(event.clone());
++            Ok(())
++        },
++        || anyhow::bail!("actual score returned error"),
++    )?;
++    let error: Result<()> = result.value;
++    assert!(error.is_err());
++    assert_eq!(events.len(), 2);
++    assert_eq!(events[1].phase, Phase::Returned);
++    assert_eq!(events[1].native_success, Some(false));
++    assert_eq!(events[1].expires_monotonic_ns, 10_000_100);
++    assert_eq!(result.elapsed_us, 1);
++    Ok(())
++}
++#[test]
++fn native_operation_first_expired_return_stops_core_series_with_exact_partial_sample() -> Result<()>
++{
++    let identity = identity();
++    let policy = ResourcePolicy::software_v2();
++    let mut series = ResourceSeries::new(100)?;
++    let mut sequence = 0;
++    let mut times = [100, 200, 120_000_000_099, 120_000_000_101].into_iter();
++    let mut events = Vec::new();
++    let calls = Cell::new(0);
++    let mut retained = None;
++    let result = super::super::observe_series(
++        &mut series,
++        &policy,
++        || {
++            let mut original = attempt(&identity, Kind::Sample, 1);
++            original.deadline_ms = policy.deadline_ms;
++            let observed = observe(
++                original,
++                &mut sequence,
++                &mut || Ok(times.next().unwrap()),
++                &mut |event| {
++                    events.push(event.clone());
++                    Ok(())
++                },
++                || {
++                    calls.set(calls.get() + 1);
++                    Ok(())
++                },
++            )?;
++            observed.value?;
++            assert!(!observed.within_deadline);
++            Ok(ResourceSample {
++                elapsed_us: observed.elapsed_us,
++                peak_process_rss_bytes: 10,
++            })
++        },
++        |series| {
++            retained = Some(series.clone());
++            Ok(())
++        },
++    );
++    assert!(result.is_err());
++    assert_eq!(calls.get(), 1);
++    assert_eq!(events.len(), 2);
++    let retained = retained.unwrap();
++    assert_eq!(retained.attempted_samples, 1);
++    assert_eq!(retained.samples.len(), 1);
++    assert_eq!(retained.samples[0].elapsed_us, 120_000_001);
++    assert_eq!(retained.failure, Some(ResourceFailure::DeadlineOverrun));
++    assert!(!retained.complete);
++    assert_eq!(retained.nearest_rank_p95_us, None);
++    assert_eq!(retained.maximum_us, None);
++    Ok(())
++}
++#[test]
++fn native_operation_exact_boundary_end_succeeds_and_end_observer_failure_refuses() -> Result<()> {
++    let identity = identity();
++    let mut sequence = 0;
++    let mut times = [100, 200, 10_000_099, 10_000_100].into_iter();
++    let value = observe(
++        attempt(&identity, Kind::Warmup, 0),
++        &mut sequence,
++        &mut || Ok(times.next().unwrap()),
++        &mut |_| Ok(()),
++        || Ok(()),
++    )?;
++    value.value?;
++    assert!(value.within_deadline);
++    assert_eq!(value.elapsed_us, 10000);
++    let called = Cell::new(0);
++    let mut times = [100, 200, 300].into_iter();
++    let result = observe(
++        attempt(&identity, Kind::Numeric, 12),
++        &mut sequence,
++        &mut || Ok(times.next().unwrap()),
++        &mut |event| {
++            if event.phase == Phase::Returned {
++                anyhow::bail!("end observer refused")
++            }
++            Ok(())
++        },
++        || {
++            called.set(called.get() + 1);
++            Ok(())
++        },
++    );
++    assert!(result.is_err());
++    assert_eq!(called.get(), 1);
++    Ok(())
++}
++#[test]
++fn native_operation_wrong_ordinals_and_backwards_clocks_never_gain_time() {
++    let identity = identity();
++    for (kind, ordinal) in [
++        (Kind::Load, 1),
++        (Kind::Warmup, 1),
++        (Kind::Sample, 0),
++        (Kind::Sample, 21),
++        (Kind::Numeric, 0),
++        (Kind::Numeric, 13),
++    ] {
++        let mut sequence = 0;
++        let called = Cell::new(false);
++        assert!(
++            observe(
++                attempt(&identity, kind, ordinal),
++                &mut sequence,
++                &mut || Ok(100),
++                &mut |_| Ok(()),
++                || {
++                    called.set(true);
++                    Ok(())
++                }
++            )
++            .is_err()
++        );
++        assert!(!called.get());
++        assert_eq!(sequence, 0);
++    }
++    let mut sequence = 0;
++    let mut times = [100, 99].into_iter();
++    let called = Cell::new(false);
++    assert!(
++        observe(
++            attempt(&identity, Kind::Load, 0),
++            &mut sequence,
++            &mut || Ok(times.next().unwrap()),
++            &mut |_| Ok(()),
++            || {
++                called.set(true);
++                Ok(())
++            }
++        )
++        .is_err()
++    );
++    assert!(!called.get());
++}
++
++#[test]
++fn native_operation_retains_original_native_error_when_any_after_call_observer_fails() {
++    #[derive(Debug)]
++    struct ActualNativeFailure;
++    impl std::fmt::Display for ActualNativeFailure {
++        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++            f.write_str("actual native failure marker")
++        }
++    }
++    impl std::error::Error for ActualNativeFailure {}
++    let cases = [
++        (
++            vec![Some(100), Some(200), None],
++            false,
++            0,
++            "injected clock read failure",
++        ),
++        (
++            vec![Some(100), Some(200), Some(199)],
++            false,
++            0,
++            "return clock moved backwards",
++        ),
++        (
++            vec![Some(100), Some(200), Some(300)],
++            true,
++            0,
++            "injected end retention failure",
++        ),
++        (
++            vec![Some(100), Some(200), Some(300), None],
++            false,
++            0,
++            "injected clock read failure",
++        ),
++        (
++            vec![Some(100), Some(200), Some(300), Some(299)],
++            false,
++            0,
++            "retention clock moved backwards",
++        ),
++        (
++            vec![Some(100), Some(200), Some(300)],
++            false,
++            u64::MAX - 1,
++            "operation sequence overflow",
++        ),
++    ];
++    for (times, end_fails, mut sequence, expected_observer_error) in cases {
++        let identity = identity();
++        let mut times = times.into_iter();
++        let called = Cell::new(0);
++        let result: Result<Returned<()>> = observe(
++            attempt(&identity, Kind::Numeric, 1),
++            &mut sequence,
++            &mut || {
++                times
++                    .next()
++                    .unwrap()
++                    .ok_or_else(|| anyhow::anyhow!("injected clock read failure"))
++            },
++            &mut |event| {
++                if end_fails && event.phase == Phase::Returned {
++                    anyhow::bail!("injected end retention failure");
++                }
++                Ok(())
++            },
++            || {
++                called.set(called.get() + 1);
++                Err(ActualNativeFailure.into())
++            },
++        );
++        let error = result
++            .err()
++            .expect("after-call observation must fail closed");
++        assert!(
++            error.downcast_ref::<ActualNativeFailure>().is_some(),
++            "lost original typed native error"
++        );
++        let display = format!("{error:#}");
++        assert!(display.contains("actual native failure marker"));
++        assert!(display.contains(expected_observer_error), "{display}");
++        assert_eq!(
++            called.get(),
++            1,
++            "observer failure admitted another native call"
++        );
++    }
++}
+--- a/crates/airk-inference/src/inference_engine/pool/arbiter/CONTRACT.md
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/CONTRACT.md
+@@ -250,3 +250,68 @@
+ pins were independently recomputed after the complete original publisher
+ SHA/Git-blob closure check. Output records these provenance identities without
+ claiming that the minimal neural roster replaces that complete source audit.
++
++
++## Original-operation external observation for software-v2 qualification
++
++The test-only software_v2 operation module emits create-new, append-only
++OUTPUT.with_extension("operations.jsonl") observations for resource load,
++warmup0 and samples 1 through 20, or numeric load and each original full fixture row.
++It has no production Scorer hook, new provider, caller signal or public API.
++An event binds the pinned native run-input/profile/image, actual process ID,
++strict sequence, kind/ordinal and exact compiled input digest where present.
++The image is hashed once before operations, never once per forward.
++
++The clock is the existing airk_process::monotonic owner: Windows QPC scaled to
++nanoseconds; Unix/Darwin use the existing monotonic/uptime contract. Each start
++samples one original absolute policy120s expiry and is flushed/synced BEFORE
++FFI. Publishing that start consumes the original allowance. Expiry while
++publishing refuses dispatch and emits not_dispatched; no signal can renew it.
++Immediately after a native load/score returns, success/error and original
++start/expiry/return clocks are durably retained. A failed observer cannot admit
++further native work. A native error remains an actual returned error.
++
++A matching external Windows watcher owns the same original absolute QPC
++expiry, with the actual suspended-assigned direct-child process/job handles,
++PID/image/SID and exact input identity. It observes complete journal lines by
++native directory-change notification and process-handle waits. Notifications
++or later records never refresh an active expiry. Missing end at expiry, wrong
++identity/sequence/clock or changed journal prefix fails the execution; any
++termination applies only to that exact owned Job. Actual exit handles and Job
++accounting still prove settlement. A forced/unknown outcome cannot pass and
++never fabricates native cancellation, reservation release or zero NN work.
++A separate fixed whole-process bound covers preflight/compilation and the batch;
++it is neither a new per-operation limit nor p95 evidence.
++
++The new measurement identity is
++native-original-operation-start-to-post-end-retention/1.
++Actual full-operation elapsed is rounded conservatively upward to u64
++microseconds; raw native-call elapsed remains separate in returned events.
++The resource series therefore includes both durable observer costs, stops on
++its first known deadline/RSS overrun and has no partial p95/maximum. Load and
++warmup limits precede measured admission; twenty valid warm samples and sorted
++index18 remain required. Numeric rows retain exact inputs/raw outputs and the
++original tolerances, with each actual row retained before its deadline refusal.
++A post-end-sync native clock check retains both observer flush costs. The external
++watcher does not clear an active expiry merely on Returned bytes: it keeps that
++original expiry until the next authenticated Started or the actual process-handle
++exit. Thus a hung end sync cannot escape the original external cutoff. The same
++conservative fence can refuse during inter-call Core/body retention, compilation
++or final source rechecks after an actual end sync; this stricter observed-execution
++refusal is separate from the measured p95 sample interval. Prospective Started
++markers never prove an FFI dispatch or fabricate an NN count.
++
++Old image/measurement identities and /1 receipts remain immutable and are
++never retagged. Existing software-v2 NN0 metadata/reference input provenance is
++retained under its original source manifest; a later patched execution image
++needs its own actual build/source custody and explicit compatibility review.
++No whole-source group, process image or source manifest is silently rewritten.
++Unix source clocks remain portable; this Windows watcher does not itself
++qualify a Neo external-observer implementation or any model/platform outcome.
++
++
++When a native operation returns an error and any later clock, sequence or end
++retention observation also fails, retain the original typed native error as the
++cause and add the complete observation failure context. Failure remains closed;
++no duration is invented when a clock fails and no subsequent call is admitted.
++A post-call observer failure after native success records that distinction.

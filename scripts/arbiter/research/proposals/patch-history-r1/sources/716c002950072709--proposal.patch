@@ -1,0 +1,379 @@
+--- a/crates/airk-frontend/src/project_client/CONTRACT.md
++++ b/crates/airk-frontend/src/project_client/CONTRACT.md
+@@ -24,3 +24,28 @@
+ any other canonical tool is refused, rather than silently discarded. Existing
+ Search/Answer aliases retain their previous local-only mapping; the native
+ connection continues to require canonical wire names.
++
++## D06 accepted read and connection admission are separate clocks
++
++The existing55-second client reuse cutoff and60-second native broker/worker
++connection admission expiry remain unchanged. They decide whether a NEW query
++may be submitted/admitted; neither rewrites the original accepted read budget.
++An admitted read keeps its original monotonic parent, request ID, cancellation,
++partition and immutable source/selection binding through native completion and
++outer delivery. The caller's actual120-second Answer cap/125-second transport
++parent and existing125-second hard-reap boundary still apply. No completed work
++or receipt is rebound, no query is replayed, and no authority lifetime is renewed.
++
++Connection reuse remains fresh/healthy and source-ticket checked before the
++first frame. A cached connection is not replaced merely because its admission
++expiry precedes the parent read deadline: the broker owns actual acceptance.
++After acceptance, expiration of the admission window prohibits further queries
++on that connection, while the existing owner awaits the accepted native result.
++Delivery still refuses caller expiry/cancellation and actual nonce, catalog,
++installed source scope, configuration or publication changes. The connection
++admission clock never grants source authority or permits expired scope delivery.
++
++Injected-clock regressions distinguish accepted completion at70s under the same
++120s parent from refused new submission after55s; parent expiry/cancellation
++still refuse. An actual local IPC case preserves the captured120s absolute wire
++expiry/request/arguments exactly rather than narrowing it to55s. No model runs.
+--- a/crates/airk-supervisor/src/project_worker/CONTRACT.md
++++ b/crates/airk-supervisor/src/project_worker/CONTRACT.md
+@@ -62,3 +62,26 @@
+ actual worker helpers against Kernel context_member_payload_bytes without a
+ model/worker process. A framing correction does not establish that an underlying
+ member operation succeeded or authorize replay of a failed finite Answer.
++
++## D06 connection admission does not shorten an accepted read parent
++
++The60-second broker connection authorization and matching worker admission check
++are unchanged and continue to refuse every new query after expiry. The already
++accepted query retains its original decoded ReadAttemptBudget and partition;
++that admission expiry is not a second execution deadline. A connection admitted
++near its end may finish its one accepted bounded operation while remaining
++unusable for another query. Broker already retains active expired connections
++until actual finish; cancellation/disconnect never fabricates completion.
++
++The existing125-second worker hard-reap boundary and shorter original caller
++or Answer deadline remain; there is no new allowance or wire field. Every
++native application, source/selection/configuration callback and delivery poll
++keeps its actual authority/liveness checks. Revoked or expired installed scope
++cannot be delivered. No Window TTL, installed-scope lifetime, grant TTL or
++55-second frontend reuse policy changes. The administrative native read sibling
++already preserves its accepted120-second read beyond a pre-submit55s check.
++
++Cheap controls preserve the captured wire parent/identity on decode and use
++injected broker time to prove an accepted query can settle after admission
++expiry while a new one is refused. These establish clock ownership and no-replay
++behavior; they do not qualify a model, live service or real R154 outcome.
+--- a/crates/airk-frontend/src/project_client.rs
++++ b/crates/airk-frontend/src/project_client.rs
+@@ -595,11 +595,9 @@
+         mut query: Query,
+         context: airk_mcp::read_attempt::ReadAttemptContext,
+     ) -> Result<serde_json::Value> {
+-        ensure!(
+-            self.reusable(Instant::now()),
+-            "direct connection expired before query submission; obtain fresh brokerage"
+-        );
+-        let context = context.narrowed(self.authorized_until);
++        // Freshness authorizes this submission; it does not replace the
++        // already bounded original read parent after native acceptance.
++        let context = self.admitted_read_context(context, Instant::now())?;
+         query.context_partition = context.context_partition().cloned();
+         ensure!(
+             query.context_partition.is_none() || self.read_attempt_supported,
+@@ -656,10 +654,7 @@
+             let (result, stream) = exchange.await.context("native read owner failed")?;
+             self.stream = stream;
+             let result = result?;
+-            ensure!(
+-                !context.cancellation().is_cancelled() && Instant::now() < context.deadline(),
+-                "native read completed after caller cancellation or deadline; delivery suppressed"
+-            );
++            require_original_read_delivery(&context, Instant::now())?;
+             self.last_finished = Instant::now();
+             self.healthy = !result.rebind;
+             self.status_receipt = result.status_receipt;
+@@ -672,12 +667,35 @@
+         }
+     }
+ 
++    fn admitted_read_context(
++        &self,
++        context: airk_mcp::read_attempt::ReadAttemptContext,
++        now: Instant,
++    ) -> Result<airk_mcp::read_attempt::ReadAttemptContext> {
++        ensure!(
++            self.reusable(now),
++            "direct connection expired before query submission; obtain fresh brokerage"
++        );
++        Ok(context)
++    }
++
+     pub fn status_receipt(&self) -> airk_mcp::response::StatusReceipt {
+         self.status_receipt
+     }
+     pub fn restore_status_receipt(&mut self, receipt: airk_mcp::response::StatusReceipt) {
+         self.status_receipt = receipt;
+     }
++}
++
++fn require_original_read_delivery(
++    context: &airk_mcp::read_attempt::ReadAttemptContext,
++    now: Instant,
++) -> Result<()> {
++    ensure!(
++        !context.cancellation().is_cancelled() && now < context.deadline(),
++        "native read completed after caller cancellation or deadline; delivery suppressed"
++    );
++    Ok(())
+ }
+ 
+ #[cfg(test)]
+@@ -1174,11 +1192,9 @@
+                 return Ok(source_scope_superseded());
+             }
+             if state.connection.as_ref().is_none_or(|connection| {
+-                (context.context_partition().is_some()
+-                    && connection.authorized_until < context.deadline())
+-                    || !self
+-                        .status
+-                        .transport_reusable(&ticket, state.connection_scope, connection)
++                !self
++                    .status
++                    .transport_reusable(&ticket, state.connection_scope, connection)
+             }) {
+                 state.connection = None;
+                 state.connection_scope = None;
+--- a/crates/airk-frontend/src/project_client/read_attempt_tests.rs
++++ b/crates/airk-frontend/src/project_client/read_attempt_tests.rs
+@@ -443,3 +443,118 @@
+     }
+     Ok(())
+ }
++
++fn admitted_lifetime_fixture(now: Instant) -> Connection {
++    Connection {
++        stream: None,
++        identity: airk_core::service::WorkerIdentity {
++            service: airk_core::identity::Incarnation::from_bytes([81; 16]),
++            worker: airk_core::identity::Incarnation::from_bytes([82; 16]),
++            project: "ab".repeat(32).parse().unwrap(),
++            fencing_generation: 1,
++        },
++        authorized_until: now + Duration::from_secs(55),
++        last_finished: now,
++        healthy: true,
++        scoped: false,
++        read_scope: None,
++        read_attempt_supported: true,
++        status_receipt: Default::default(),
++    }
++}
++#[test]
++fn admitted_original_parent_survives_admission_expiry_but_never_renews_or_reuses_it() -> Result<()>
++{
++    let now = Instant::now();
++    let mut connection = admitted_lifetime_fixture(now);
++    let parent = airk_mcp::read_attempt::ReadAttemptContext::new(
++        now + Duration::from_secs(120),
++        Default::default(),
++    )
++    .with_request_id(airk_core::identity::Incarnation::from_bytes([83; 16]))?;
++    let accepted = connection.admitted_read_context(parent.clone(), now)?;
++    assert_eq!(accepted.deadline(), now + Duration::from_secs(120));
++    assert_eq!(accepted.request_id(), parent.request_id());
++    require_original_read_delivery(&accepted, now + Duration::from_secs(70))?;
++    // Keep idle-age independently fresh: this refusal is admission expiry.
++    connection.last_finished = now + Duration::from_secs(70);
++    assert!(
++        connection
++            .admitted_read_context(parent.clone(), now + Duration::from_secs(70))
++            .is_err()
++    );
++    assert!(require_original_read_delivery(&accepted, now + Duration::from_secs(120)).is_err());
++    parent.cancellation().cancel();
++    assert!(require_original_read_delivery(&accepted, now + Duration::from_secs(1)).is_err());
++    Ok(())
++}
++#[tokio::test]
++async fn actual_connection_keeps_captured_120_and_125_second_wire_parents_past_55_second_reuse_cut()
++-> Result<()> {
++    for seconds in [120, 125] {
++        let owned = tempfile::tempdir()?;
++        let root = owned.path().join("runtime");
++        local_ipc::prepare_root(&root)?;
++        let endpoint = local_ipc::endpoint(&root, "original-read-admission-clock")?;
++        let mut listener = local_ipc::Listener::bind(&endpoint)?;
++        let now = Instant::now();
++        let id = airk_core::identity::Incarnation::from_bytes([84; 16]);
++        let parent = airk_mcp::read_attempt::ReadAttemptContext::new(
++            now + Duration::from_secs(seconds),
++            Default::default(),
++        )
++        .with_request_id(id)?;
++        let original = airk_host::read_attempt::encode(&parent, id)?;
++        let context = parent.with_wire_attempt(original)?;
++        let arguments = serde_json::json!({"response_mode":"full","include_status":true})
++            .as_object()
++            .unwrap()
++            .clone();
++        let expected_arguments = arguments.clone();
++        let peer = tokio::spawn(async move {
++            let mut stream = listener.accept().await?;
++            let query: Query = local_ipc::read_message(&mut stream, Duration::from_secs(5))
++                .await?
++                .context("original read missing")?;
++            let carried = query
++                .read_attempt
++                .context("captured original parent omitted")?;
++            ensure!(
++                carried.request_id == original.request_id
++                    && carried.clock == original.clock
++                    && carried.expires_monotonic_ns == original.expires_monotonic_ns
++                    && carried.remaining_ns <= original.remaining_ns,
++                "connection admission narrowed/replaced original wire parent"
++            );
++            ensure!(
++                query.tool == "airk_status" && query.arguments == expected_arguments,
++                "original canonical input changed"
++            );
++            local_ipc::write_message(
++                &mut stream,
++                &protocol::QueryResult {
++                    read_admission: None,
++                    result: airk_mcp::unified::success(serde_json::json!({"complete":true})),
++                    status_receipt: Default::default(),
++                    rebind: false,
++                },
++                Duration::from_secs(5),
++            )
++            .await?;
++            let extra =
++                local_ipc::read_message::<_, Query>(&mut stream, Duration::from_secs(5)).await?;
++            ensure!(extra.is_none(), "accepted query was replayed");
++            Ok::<_, anyhow::Error>(())
++        });
++        let stream = local_ipc::connect(&endpoint).await?;
++        let mut connection = admitted_lifetime_fixture(now);
++        connection.stream = Some(stream);
++        let value = connection
++            .call_with_read_context("airk_status".into(), arguments, context)
++            .await?;
++        assert_eq!(value["structuredContent"]["complete"], true);
++        drop(connection);
++        peer.await??;
++    }
++    Ok(())
++}
+--- a/crates/airk-supervisor/src/project_worker.rs
++++ b/crates/airk-supervisor/src/project_worker.rs
+@@ -264,6 +264,22 @@
+         detail,
+     ))
+ }
++/// Connection expiry owns NEW admission only. Decode the same bounded parent
++/// without replacing it with the connection's shorter cache/admission window.
++fn query_read_context(
++    attempt: Option<airk_core::read_attempt::ReadAttemptBudget>,
++    partition: Option<&airk_core::combined_context::PartitionAllowance>,
++) -> Result<Option<airk_mcp::read_attempt::ReadAttemptContext>> {
++    attempt
++        .map(airk_host::read_attempt::decode)
++        .transpose()?
++        .map(|context| match partition {
++            Some(partition) => context.with_context_partition(partition.clone()),
++            None => Ok(context),
++        })
++        .transpose()
++}
++
+ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
+     let Some(grant): Option<ConnectionGrant> =
+         local_ipc::read_message(&mut stream, Duration::from_secs(5)).await?
+@@ -361,14 +377,7 @@
+             let wire_attempt = request.read_attempt;
+             let retry_budget_complete = request.native.is_none()
+                 || wire_attempt.is_some_and(|budget| budget.native_retry_expires_monotonic_ns.is_some());
+-            let read_context = wire_attempt.map(airk_host::read_attempt::decode).transpose()?
+-                .map(|context| -> Result<_> {
+-                    let context = context.narrowed(authorized_until);
+-                    match &request.context_partition {
+-                        Some(partition) => context.with_context_partition(partition.clone()),
+-                        None => Ok(context),
+-                    }
+-                }).transpose()?;
++            let read_context = query_read_context(wire_attempt, request.context_partition.as_ref())?;
+             // Accepted blocking work keeps the existing hard reap boundary; a
+             // shorter caller deadline must not kill this shared worker early.
+             let query_deadline = received + Duration::from_secs(125);
+--- a/crates/airk-supervisor/src/project_worker/admission.rs
++++ b/crates/airk-supervisor/src/project_worker/admission.rs
+@@ -309,3 +309,74 @@
+         Ok(())
+     }
+ }
++
++#[cfg(test)]
++mod admitted_lifetime_tests {
++    use anyhow::{Context, Result};
++    use std::time::{Duration, Instant};
++    #[test]
++    fn worker_decodes_original_captured_parent_without_connection_admission_narrowing() -> Result<()>
++    {
++        let now = Instant::now();
++        let id = airk_core::identity::Incarnation::from_bytes([85; 16]);
++        let parent = airk_mcp::read_attempt::ReadAttemptContext::new(
++            now + Duration::from_secs(120),
++            Default::default(),
++        )
++        .with_request_id(id)?;
++        let wire = airk_host::read_attempt::encode(&parent, id)?;
++        let decoded =
++            super::super::query_read_context(Some(wire), None)?.context("original read missing")?;
++        let carried = decoded
++            .captured_transport_attempt()
++            .context("original absolute parent was narrowed/replaced")?;
++        assert_eq!(carried.expires_monotonic_ns, wire.expires_monotonic_ns);
++        assert_eq!(carried.request_id, id);
++        assert_eq!(decoded.request_id(), Some(id));
++        assert!(super::super::query_read_context(None, None)?.is_none());
++        Ok(())
++    }
++    #[test]
++    fn actual_broker_clock_keeps_accepted_capacity_after_60_second_expiry_and_refuses_new_work()
++    -> Result<()> {
++        use airk_core::{
++            identity::Incarnation,
++            service::{AdmissionError, QueryAllowance, WorkerIdentity},
++        };
++        use airk_kernel::service_broker::{Broker, BrokerLimits};
++        let now = Instant::now();
++        let identity = WorkerIdentity {
++            service: Incarnation::from_bytes([86; 16]),
++            worker: Incarnation::from_bytes([87; 16]),
++            project: "ab".repeat(32).parse()?,
++            fencing_generation: 1,
++        };
++        let caller = Incarnation::from_bytes([88; 16]);
++        let mut broker = Broker::new(identity.service, BrokerLimits::default())?;
++        broker.register(
++            identity,
++            QueryAllowance {
++                concurrent_queries: 2,
++                response_bytes: 2048,
++            },
++            now,
++            Duration::from_secs(300),
++        )?;
++        let grant = broker.issue(identity, caller, now, Duration::from_secs(5))?;
++        let session = broker.redeem(&grant, identity, caller, now, Duration::from_secs(60))?;
++        let accepted = broker.begin_query(identity, session, 1024, now)?;
++        let after_admission = now + Duration::from_secs(70);
++        assert_eq!(
++            broker.begin_query(identity, session, 1024, after_admission),
++            Err(AdmissionError::Expired)
++        );
++        assert_eq!(broker.status(after_admission).active_queries, 1);
++        broker.finish_query(identity, accepted)?;
++        assert_eq!(broker.status(after_admission).active_queries, 0);
++        assert_eq!(
++            broker.begin_query(identity, session, 1024, after_admission),
++            Err(AdmissionError::Expired)
++        );
++        Ok(())
++    }
++}

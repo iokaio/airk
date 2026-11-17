@@ -1,0 +1,117 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Actual modern worker/provider checkpoint preflight; explicitly supplied image.
+use super::*;
+use airk_core::service::{JobKind, JobOutcome};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+fn multiple_batch_source() -> String {
+    (0..2800)
+        .map(|line| format!("cobalt harbor original checkpoint passage {line}\n"))
+        .collect()
+}
+
+#[test]
+fn checkpoint_fixture_requires_several_distinct_embedding_batches() {
+    let text = multiple_batch_source();
+    let chunks = airk_ingest::chunk(&text);
+    assert!(chunks.len() > 2 * airk_retrieval::embedding_batch::MAX_BATCH_CHUNKS);
+    let distinct = chunks.iter().map(|chunk| &chunk.text).collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(distinct.len(), chunks.len());
+}
+
+#[test]
+#[ignore = "requires matched modern AIRK_TEST_BINARY; actual worker/provider preflight"]
+fn accepted_vectors_finish_later_batch_before_native_checkpoint_seals() -> Result<()> {
+    let mut fixture = NativeFixture::build_modern()?;
+    let project = fixture.indices[0].registration.binding;
+    let source = Path::new(&fixture.indices[0].registration.root).join("many.txt");
+    let original = multiple_batch_source();
+    std::fs::write(&source, &original)?;
+    let key = fixture.key()?;
+    let job = fixture.registry.enqueue(project, local_ipc::caller_identity()?, &key, JobKind::Index)?;
+    fixture.control.owner.borrow_mut().run_job(job)?;
+    let count = Arc::new(AtomicUsize::new(0));
+    let observed = count.clone();
+    let (entered, waiting) = mpsc::sync_channel(1);
+    let (release, released) = mpsc::sync_channel(1);
+    fixture.control.owner.borrow().pool.as_ref().context("native provider absent")?
+        .set_compute_hook(Box::new(move |context, request| {
+            if matches!(request, airk_retrieval::embedding_worker::Request::Embed { .. }) {
+                let call = observed.fetch_add(1, Ordering::SeqCst);
+                if call == 0 {
+                    entered.send(context.unwrap().worker).unwrap();
+                    // Sender drop releases the actual call on every error path.
+                    let _ = released.recv_timeout(Duration::from_secs(30));
+                }
+            }
+        }))?;
+    let key = fixture.key()?;
+    let job = fixture.registry.enqueue(project, local_ipc::caller_identity()?, &key, JobKind::Vectors)?;
+    let allowance = {
+        let mut owner = fixture.control.owner.borrow_mut();
+        owner.resources.pending(project, job.id, job.kind, Instant::now())?;
+        let allowance = owner.resources.next(Instant::now())?.context("native job not admitted")?;
+        ensure!(allowance.job == job.id, "scheduler selected different job");
+        owner.workers.get_mut(&project).context("worker absent")?.run_job(allowance.clone())?;
+        allowance
+    };
+    ensure!(waiting.recv_timeout(Duration::from_secs(10))? == Some(allowance.identity), "held compute crossed worker");
+    let operation = new_instance_id()?;
+    let observe = |fixture: &mut NativeFixture, seal| -> Result<protocol::WorkerCheckpointObservation> {
+        let mut owner = fixture.control.owner.borrow_mut();
+        let worker = owner.workers.get_mut(&project).context("checkpoint worker absent")?;
+        let identity = worker.identity.context("checkpoint worker identity absent")?;
+        service_ipc::write_frame(worker.input.as_mut().context("worker input closed")?,
+            &WorkerCommand::Checkpoint { identity, operation_id: operation, seal })?;
+        let Reply::Checkpoint { observation } = worker.output.recv_timeout(Duration::from_secs(5))? else {
+            anyhow::bail!("native worker checkpoint response missing")
+        };
+        ensure!(observation.schema == 1 && observation.identity == identity
+            && observation.operation_id == operation && observation.admission_closed
+            && observation.engine_sha256 == crate::runtime_pair::engine_identity_at(&fixture.main)?,
+            "crossed native worker checkpoint response: {}", serde_json::to_string(&observation)?);
+        Ok(observation)
+    };
+    let pending = observe(&mut fixture, false)?;
+    ensure!(!pending.durable_boundary && !pending.sealed && pending.active_work_grant == Some(allowance.id),
+        "accepted semantic work prematurely checkpointed: {}", serde_json::to_string(&pending)?);
+    let provider = fixture.control.owner.borrow().pool.as_ref().unwrap().provider_status()?.unwrap();
+    ensure!(provider.admission_open && provider.running_outstanding == 1 && provider.model_references_outstanding > 0,
+        "checkpoint stopped admission needed by accepted later batches: {}", serde_json::to_string(&provider)?);
+    ensure!(fixture.registry.job(job.id)?.outcome.is_none(), "held job already completed");
+    release.send(())?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let status = fixture.control.owner.borrow_mut().workers.get_mut(&project).unwrap().work_status(None, false, None)?;
+        ensure!(status.failure.is_none(), "accepted native vector job failed: {}", serde_json::to_string(&status)?);
+        if status.finished == Some(allowance.id) { break; }
+        ensure!(Instant::now() < deadline, "accepted vector job did not finish after release");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    fixture.control.owner.borrow_mut().resources.finished(allowance.identity, allowance.id)?;
+    let saved = fixture.registry.job(job.id)?;
+    ensure!(matches!(saved.outcome, Some(JobOutcome::Succeeded { .. })) && saved.id == job.id,
+        "original accepted vector receipt lost: {saved:?}");
+    ensure!(count.load(Ordering::SeqCst) >= 2, "fixture never needed a later embedding batch");
+    let sealed = observe(&mut fixture, true)?;
+    ensure!(sealed.durable_boundary && sealed.sealed && sealed.active_work_grant.is_none(),
+        "completed worker did not seal: {}", serde_json::to_string(&sealed)?);
+    // Capture and seal every worker, including the untouched sibling, before
+    // asking the real provider owner for the completion barrier.
+    let identities = fixture.control.owner.borrow().workers.values().map(|worker| worker.identity.unwrap()).collect::<Vec<_>>();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let complete = fixture.control.owner.borrow_mut().pool.as_mut().unwrap().checkpoint_drain(operation, identities.clone())?;
+        if let Some(complete) = complete {
+            ensure!(complete.state == airk_core::inference_provider::CompletionState::Complete && complete.captured_workers == identities,
+                "native completion crossed worker roster");
+            break;
+        }
+        ensure!(Instant::now() < deadline, "native provider checkpoint remained pending");
+        std::thread::yield_now();
+    }
+    ensure!(std::fs::read(&source)? == original.as_bytes(), "checkpoint changed source bytes");
+    fixture.source_bytes_unchanged()?;
+    eprintln!("accepted Vectors {} completed {} actual embedding calls before native checkpoint", job.id, count.load(Ordering::SeqCst));
+    Ok(())
+}

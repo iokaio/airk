@@ -1,0 +1,61 @@
+--- frozen-r6/launch_route.py
++++ private-correction/launch_route.py
+@@ -74,7 +74,7 @@
+ 
+ def owner_work_idle(packet,clients,registration,health):
+     project=registration['binding']
+-    # These are original native responses; never projected into scoped work.
++    # Original native responses remain separate from scoped evidence.
+     for name in ('health_before','health_after'):
+         observed=packet[name]
+         need(observed.get('status')=='health' and isinstance(observed.get('observation'),dict)
+@@ -82,20 +82,42 @@
+                 for k in ('instance','process_id','executable_sha256','user','version','protocol')),
+             'Readiness management Health differs from retained original Service')
+     progress,watch,worker=(packet[name] for name in ('progress','watch','worker'))
++    # Keep the maintained binding/revision/failure checks. Its enabled-watch
++    # requirement owns automatic source-healing tests, not this manual fixture.
+     settled=clients.source_work_settled(progress,watch,project)
++    sample=progress['observation'];observed_watch=watch['observation']
++    if observed_watch.get('enabled') is False:
++        # An explicitly disabled, observed watcher with no outstanding intent is
++        # a valid native configuration. Do not enable it or invent a substitute.
++        disabled=(observed_watch.get('backend')=='disabled'
++            and type(observed_watch.get('native_roots')) is int and observed_watch['native_roots']==0
++            and observed_watch.get('configuration_observed') is True
++            and observed_watch['requested_revision']==observed_watch['completed_revision']==0)
++        settled=(disabled and progress['pending_job'] is None and progress['queued_jobs']==[]
++            and progress['queue_truncated'] is False and progress['project_paused'] is False
++            and (sample is None or sample['job']['state'] not in ('pending','running')))
+     need(worker.get('status')=='worker' and worker.get('project')==project,
+         'Native Worker management observation names a different project')
+-    identity=worker.get('identity');sample=progress.get('observation')
++    identity=worker.get('identity')
++    if identity is None:return False
+     need(isinstance(identity,dict) and identity.get('service')==health['instance']
+-        and identity.get('project')==project and isinstance(sample,dict)
+-        and sample.get('worker')==identity
++        and identity.get('project')==project,
++        'Native Worker does not authenticate the original-instance project')
++    if worker.get('restarting') is not False or worker.get('automatic_start_blocked') is not False:return False
++    # A pending automatic-audit handoff legitimately removes cached Progress.
++    # Busy/unknown queues never need a fabricated active snapshot and NEVER pass.
++    if not settled:return False
++    # Pending pages omit running jobs; a missing cached snapshot cannot prove idle.
++    if sample is None:return False
++    # Retained failed/canceled work cannot authorize this fixture's Answer.
++    if sample['job']['state']!='succeeded':return False
++    # A cached old-generation sample can survive worker recovery. It remains
++    # not ready until a genuine current observation arrives; never infer idle.
++    return (sample.get('worker')==identity
+         and type(identity.get('fencing_generation')) is int
+         and sample.get('current_fencing_generation')==identity['fencing_generation']
+         and sample.get('job',{}).get('fencing_generation')==identity['fencing_generation']
+-        and sample.get('progress',{}).get('job')==sample.get('job',{}).get('id'),
+-        'Native Progress/Worker samples do not authenticate the current original-instance worker')
+-    return (settled and worker.get('restarting') is False
+-        and worker.get('automatic_start_blocked') is False)
++        and sample.get('progress',{}).get('job')==sample.get('job',{}).get('id'))
+ 
+ def await_semantic_population(read,clients,registration,instance,cutoff,record,wait_change,read_work,health):
+     while True:

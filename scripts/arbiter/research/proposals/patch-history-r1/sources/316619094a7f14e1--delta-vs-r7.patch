@@ -1,0 +1,170 @@
+--- r7/WORKER-CONTRACT.md
++++ r8/WORKER-CONTRACT.md
+@@ -10,7 +10,7 @@
+ 
+ General QASPER replay retains the original publisher instruction; only software code rows use the DEV-selected instruction. Both are native-emitted. Code comparisons use the identical selected instruction for original/adapted weights; replay is original human paragraph relevance, never complete evidence.
+ 
+-R2 actual-owned continuity: DEV selection consumes a pinned naturally successful SCORE receipt/start/plan/result. A pure immutable key binds checkpoint/model/runtime/data/fullsource/owner/baseimage/versions/commonenvironment/deviceidentity/host+GPUcaps across stages. Only mode, output-local caches, wall and selection/probe evidence vary; the selected instruction is verified separately. ProbeÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢train also preserves the selected instruction. Exactly85score list entries and unique IDs are required before mapping. R1 remains preserved; no oldrun is relabelled.
++R2 actual-owned continuity: DEV selection consumes a pinned naturally successful SCORE receipt/start/plan/result. A pure immutable key binds checkpoint/model/runtime/data/fullsource/owner/baseimage/versions/commonenvironment/deviceidentity/host+GPUcaps across stages. Only mode, output-local caches, wall and selection/probe evidence vary; the selected instruction is verified separately. ProbeÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢train also preserves the selected instruction. Exactly85score list entries and unique IDs are required before mapping. R1 remains preserved; no oldrun is relabelled.
+ 
+ R3 parent clock closure: after actual maintained owned settlement (including worker finally output retention), parent hashes final worker result, child log, actual plan and every consumed execution-source pin, preserving hash failures separately from the original owned result/failure. It constructs/validates the full receipt body, then samples the original clock LAST; at/after original wall cap is nonpass. Only final elapsed/disposition insertion, final execution.json serialization/write and terminal reporting are excluded. Hash exceptions/mismatches never erase original natural-nonzero versus unsettled evidence or create a pass. No clock renewal, replay, extra model run or process-control change.
+ 
+@@ -79,3 +79,23 @@
+ proof retains every arithmetic function and the entire post-guard model/loss/
+ scoring/training tail unchanged. This metadata correction transfers no old run
+ verdict; R6 actual failure remains naturally settled/nonpass under original pins.
++
++
++No-site child startup (additive R8)
++
++The maintained original no-site reference parent launches -B -S. F1/F2 now uses
++that same child no-site bootstrap: parent and child start with -B -S, stable
++sealed absent PYTHONPYCACHEPREFIX and explicit sealed PYTHONPATH. No implicit
++site initialization, .pth execution, sitecustomize/usercustomize or global/user
++site discovery supplies model code. Parent refuses a site-enabled startup and
++retains actual_no_site. Every continuation validates exact -B -S child argv.
++A private import-only audit starts the same interpreter/flags/environment,
++imports Torch/Transformers/Qwen3 architecture plus the actual pure worker and
++reference modules, checks CUDA remains uninitialized, and applies unchanged
++verify_loaded_runtime to every imported physical module before any model call.
++Its complete imported-file list/hashes is retained. No model is instantiated,
++checkpoint loaded, tensor constructed or CUDA availability/device API called.
++No ambient closure expansion is allowed; an unavailable import or unsealed
++import refuses. Bootstrap controls use inert private sitecustomize/.pth traps;
++actual no-site must leave them unexecuted. Original failed R7/ffbc remains
++unaltered; no non-bootstrap worker/arithmetic change is part of R8.
+--- r7/launch_owned.py
++++ r8/launch_owned.py
+@@ -25,6 +25,10 @@
+     return {'actual_pycache_prefix':actual_prefix,'actual_dont_write_bytecode':True,'prefix_absent':True,'child_environment_before_CPython_startup':True}
+ 
+ 
++def child_command(plan,path,sha):
++    return [plan['base_python']['path'],'-B','-S',plan['worker']['path'],'--plan',str(path),'--plan-sha256',sha]
++
++
+ def disposition(owned,worker):
+ 
+     settled=bool(owned and owned['owned_descendants_settled']and not owned['owned_job_forced_termination']and owned['owned_job_final_active_processes']==0 and not owned['owned_job_final_member_pids']and all(r['exit_observed']for r in owned['retained_member_exits']))
+@@ -101,6 +105,8 @@
+     plan=json.loads(Path(path).read_bytes());started=time.monotonic();deadline=started+plan['limits']['wall_seconds']
+ 
+     bootstrap=verify_bootstrap(plan,sys.pycache_prefix,sys.dont_write_bytecode)
++    if sys.flags.no_site!=1:raise ValueError('actual parent Python must start with -S')
++    bootstrap['actual_no_site']=True
+ 
+     if plan['continuity_key']!=continuity_key(plan):raise ValueError('immutable continuation key changed')
+ 
+@@ -122,7 +128,7 @@
+ 
+     if time.monotonic()>=deadline:raise TimeoutError('original allocation consumed before launch')
+ 
+-    out.mkdir();command=[plan['base_python']['path'],'-B',plan['worker']['path'],'--plan',str(path),'--plan-sha256',sha]
++    out.mkdir();command=child_command(plan,path,sha)
+ 
+     start={'schema':'airk.private.F1-F2-owned-start/1','plan':{'path':str(path),'sha256':sha},'identity':identity,'argv':command,'bootstrap':bootstrap,'monotonic_start':started,'monotonic_deadline':deadline,'gpu_observed':gpu,'sources':plan['execution_sources'],'limits':plan['limits']}
+ 
+--- r7/workflow.py
++++ r8/workflow.py
+@@ -18,7 +18,7 @@
+     key=continuity_key(plan)
+     if plan['continuity_key']!=key:raise ValueError('actual immutable execution identity differs')
+     if execution['identity']['sid']!=plan['human_sid']or start['identity']['sid']!=plan['human_sid']:raise ValueError('actual human stage identity differs')
+-    expected=[plan['base_python']['path'],'-B',plan['worker']['path'],'--plan',start['plan']['path'],'--plan-sha256',plan_sha]
++    expected=[plan['base_python']['path'],'-B','-S',plan['worker']['path'],'--plan',start['plan']['path'],'--plan-sha256',plan_sha]
+     if start['argv']!=expected or execution['argv']!=expected:raise ValueError('actual command differs from stage plan')
+     owned=execution['owned'];state=execution['disposition']
+     if execution['failure']is not None or not state['passed']or not state['naturally_settled']or state['ownership_unknown_or_unsettled']or not worker['complete']or worker.get('failure'):raise ValueError('actual stage did not complete naturally')
+--- r7/test_workflow.py
++++ r8/test_workflow.py
+@@ -7,7 +7,7 @@
+     result['continuity_key']=continuity_key(result);return result
+ 
+ def evidence():
+-    p=plan();sha='exactPlanSHA';start={'plan':{'path':'D:/plan.json','sha256':sha},'identity':{'sid':'human1002'},'argv':['D:/base_python','-B','D:/worker','--plan','D:/plan.json','--plan-sha256',sha]}
++    p=plan();sha='exactPlanSHA';start={'plan':{'path':'D:/plan.json','sha256':sha},'identity':{'sid':'human1002'},'argv':['D:/base_python','-B','-S','D:/worker','--plan','D:/plan.json','--plan-sha256',sha]}
+     image={'path':'D:/base_python','sha256':'base_pythonSHA'}
+     owned={'exit_code':0,'timed_out':False,'log_oversized':False,'owned_descendants_settled':True,'owned_job_forced_termination':False,'owned_job_final_active_processes':0,'owned_job_final_member_pids':[],'owned_total_processes':1,'child_assigned_before_resume':True,'parent_assigned_to_job':False,'whole_process_deadline_not_refreshed':True,'retained_member_exits':[{'exit_observed':True,'exit_code':0}],'owned_leader_pid':42,'suspended_assignment':{'single_suspended_worker':42,'parent_in_child_job':False,'image':copy.deepcopy(image)},'before_GO':{'same_actual_leader_gate':42,'members':[42],'image':copy.deepcopy(image)},'peak_host_committed_bytes':1000}
+     execution={'schema':'airk.private.F1-F2-owned-execution/1','plan_sha256':sha,'identity':{'sid':'human1002'},'argv':start['argv'],'owned':owned,'failure':None,'disposition':{'passed':True,'naturally_settled':True,'ownership_unknown_or_unsettled':False},'elapsed_seconds':20}
+@@ -42,6 +42,10 @@
+     def test_changed_plan_key_cannot_relabel_original_score(self):
+         e,s,p,w,sha=evidence();p['reference_module']['sha256']='othercheckpoint'
+         with self.assertRaisesRegex(ValueError,'immutable'):validate_owned(e,s,p,w,sha,'score')
++    def test_site_enabled_child_argv_cannot_be_accepted_as_current(self):
++        e,s,p,w,sha=evidence()
++        s['argv'].remove('-S');e['argv']=list(s['argv'])
++        with self.assertRaisesRegex(ValueError,'actual command differs'):validate_owned(e,s,p,w,sha,'score')
+     def test_probe_requires_exact1update32draws_not_zero_work(self):
+         e,s,p,w,sha=evidence();p['mode']='probe';p['limits']['wall_seconds']=120;p['max_optimizer_steps']=1;p['continuity_key']=continuity_key(p);w.update({'mode':'probe','gradient_steps':1,'optimizer_attempts':1,'forward_attempts':32,'forward_calls':32,'backward_attempts':32,'backwards_completed':32,'probe_adapter_discarded':True})
+         validate_owned(e,s,p,w,sha,'probe');w['gradient_steps']=0;w['optimizer_attempts']=0
+--- r7/audit_imports.py
++++ r8/audit_imports.py
+@@ -0,0 +1,39 @@
++"""Metadata-only exact no-site import-closure audit. No model/tensor/device calls."""
++import argparse,hashlib,json,os,sys,traceback
++from pathlib import Path
++from focus_worker import pinned,load_module
++
++
++def main():
++    parser=argparse.ArgumentParser();parser.add_argument('--plan',type=Path,required=True);parser.add_argument('--plan-sha256',required=True);parser.add_argument('--output',type=Path,required=True);args=parser.parse_args()
++    plan=json.loads(pinned({'path':str(args.plan.resolve()),'sha256':args.plan_sha256}).read_bytes())
++    if args.output.exists():raise ValueError('create-new import-audit output required')
++    report={'schema':'airk.private.F1-no-site-import-audit/1','passed':False,'model_calls':0,'probe_tensor_calls':0,'CUDA_device_or_availability_calls':0,'failure':None,'imports':[]}
++    try:
++        if sys.flags.no_site!=1 or not sys.dont_write_bytecode or sys.pycache_prefix!=plan['environment']['PYTHONPYCACHEPREFIX']or Path(sys.pycache_prefix).exists():raise ValueError('no-site/fresh-unwritten-cache bootstrap differs')
++        if 'torch'in sys.modules:raise ValueError('Torch unexpectedly preimported')
++        import torch,numpy,safetensors,transformers
++        if torch.cuda.is_initialized():raise ValueError('CUDA initialized during import')
++        from transformers.models.qwen3.modeling_qwen3 import Qwen3ForCausalLM
++        reference=load_module(plan['reference_worker'],'audit_actual_reference_worker')
++        official=load_module(plan['reference_module'],'audit_actual_official_source')
++        import gpu_identity,worker_logic,workflow
++        if torch.cuda.is_initialized():raise ValueError('CUDA initialized by architecture/reference import')
++        runtime=json.loads(pinned(plan['reference_plan']['runtime_manifest']).read_bytes())
++        for name,module in list(sys.modules.items()):
++            filename=getattr(module,'__dict__',{}).get('__file__')
++            if not isinstance(filename,str):continue
++            path=Path(filename).resolve()
++            if not path.is_file():continue
++            expected=runtime['files'].get(str(path))or plan['input_seals'].get(str(path))
++            with path.open('rb')as stream:actual=hashlib.file_digest(stream,'sha256').hexdigest()
++            report['imports'].append({'module':name,'path':str(path),'expected_sha256':expected,'actual_sha256':actual,'matched':expected==actual})
++        reference.verify_loaded_runtime(plan['reference_plan'])
++        if any(not x['matched']for x in report['imports']):raise ValueError('unsealed import')
++        report.update({'passed':True,'actual_no_site':sys.flags.no_site,'dont_write_bytecode':sys.dont_write_bytecode,'pycache_prefix':sys.pycache_prefix,'prefix_absent':not Path(sys.pycache_prefix).exists(),'CUDA_initialized':torch.cuda.is_initialized(),'versions':{'torch':torch.__version__,'transformers':transformers.__version__,'numpy':numpy.__version__},'model_class_imported_only':Qwen3ForCausalLM.__name__,'sys_path':sys.path,'sitecustomize_imported':'sitecustomize'in sys.modules,'usercustomize_imported':'usercustomize'in sys.modules,'pywin32_bootstrap_imported':'pywin32_bootstrap'in sys.modules})
++    except BaseException as error:report['failure']={'type':type(error).__name__,'message':str(error),'traceback':traceback.format_exc()}
++    with args.output.open('x',encoding='utf-8')as stream:json.dump(report,stream,indent=2);stream.write('\n')
++    print(json.dumps({'passed':report['passed'],'imported_files':len(report['imports']),'failure':report['failure'],'CUDA_initialized':report.get('CUDA_initialized')}))
++    return 0 if report['passed']else 1
++
++if __name__=='__main__':raise SystemExit(main())
+--- r7/test_no_site.py
++++ r8/test_no_site.py
+@@ -0,0 +1,26 @@
++"""Real inert bootstrap trap, no Torch/model imports."""
++import json,os,subprocess,sys,tempfile,unittest
++from pathlib import Path
++from launch_owned import child_command
++
++
++class NoSiteControls(unittest.TestCase):
++    def test_actual_child_command_has_no_site_and_original_base_worker(self):
++        p={'base_python':{'path':'C:/exact/python.exe'},'worker':{'path':'D:/exact/worker.py'}}
++        self.assertEqual(child_command(p,'D:/exact/plan.json','literalSHA'),['C:/exact/python.exe','-B','-S','D:/exact/worker.py','--plan','D:/exact/plan.json','--plan-sha256','literalSHA'])
++    def test_no_site_executes_neither_owned_pth_nor_sitecustomize(self):
++        parent=Path(__file__).resolve().parent.parent
++        with tempfile.TemporaryDirectory(prefix='F1-no-site-control-',dir=parent)as name:
++            base=Path(name);trap=base/'trap';trap.mkdir();usersite=base/'userbase'/f'Python{sys.version_info.major}{sys.version_info.minor}'/'site-packages';usersite.mkdir(parents=True)
++            pthmarker=base/'pth-executed';custommarker=base/'sitecustomize-executed'
++            (usersite/'owned-trap.pth').write_text('import pathlib; pathlib.Path('+repr(str(pthmarker))+').write_text("owned trap")\n',encoding='utf-8')
++            (trap/'sitecustomize.py').write_text('from pathlib import Path\nPath('+repr(str(custommarker))+').write_text("owned trap")\n',encoding='utf-8')
++            env=dict(os.environ);env.update({'PYTHONPATH':str(trap),'PYTHONUSERBASE':str(base/'userbase'),'PYTHONDONTWRITEBYTECODE':'1','PYTHONPYCACHEPREFIX':str(base/'absent-pycache')})
++            code='import sys,json; assert sys.flags.no_site==1; assert "sitecustomize"not in sys.modules; print(json.dumps({"no_site":sys.flags.no_site}))'
++            result=subprocess.run([sys.executable,'-B','-S','-c',code],env=env,capture_output=True,text=True,timeout=10)
++            self.assertEqual(result.returncode,0,result.stderr);self.assertFalse(pthmarker.exists());self.assertFalse(custommarker.exists());self.assertFalse((base/'absent-pycache').exists())
++            # The exact owned .pth trap is live; only explicit test execution runs it.
++            result=subprocess.run([sys.executable,'-B','-S','-c','import site; site.addsitedir('+repr(str(usersite))+')'],env=env,capture_output=True,text=True,timeout=10)
++            self.assertEqual(result.returncode,0,result.stderr);self.assertTrue(pthmarker.exists());self.assertFalse(custommarker.exists())
++
++if __name__=='__main__':unittest.main(verbosity=2)

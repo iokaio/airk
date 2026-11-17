@@ -1,0 +1,151 @@
+diff --git a/crates/airk-mcp/src/unified.rs b/crates/airk-mcp/src/unified.rs
+--- a/crates/airk-mcp/src/unified.rs
++++ b/crates/airk-mcp/src/unified.rs
+@@ -40,7 +40,7 @@
+                 *text = text.replace(old, public);
+             }
+             *text = text
+-                .replace("airk_explorer_ui_status", "status.explorer")
++                .replace("airk_explorer_ui_status", "diagnostics.explorer.ui")
+                 .replace("airk_explorer_help_search", "help")
+                 .replace("airk_explorer_help_get", "help")
+                 .replace("airk_", "");
+@@ -50,6 +50,82 @@
+         _ => {}
+     }
+ }
++fn replace_diagnostic_tool(text: &str, old: &str, public: &str) -> String {
++    let identifier = |character: char| character.is_ascii_alphanumeric() || character == '_';
++    let mut result = String::with_capacity(text.len());
++    let mut cursor = 0;
++    for (start, _) in text.match_indices(old) {
++        let end = start + old.len();
++        if text[..start].chars().next_back().is_some_and(identifier)
++            || text[end..].chars().next().is_some_and(identifier)
++        { continue; }
++        result.push_str(&text[cursor..start]);
++        result.push_str(public);
++        cursor = end;
++    }
++    result.push_str(&text[cursor..]);
++    result
++}
++
++fn public_diagnostic_text(text: &str) -> String {
++    let mut text = text.to_owned();
++    for (public, old) in UI_NAMES {
++        text = replace_diagnostic_tool(&text, old, public);
++    }
++    for (old, public) in [
++        ("airk_explorer_ui_status", "diagnostics (explorer.ui)"),
++        ("airk_explorer_help_search", "help"),
++        ("airk_explorer_help_get", "help"),
++        ("airk_explorer_suggest_navigation", "suggest_view"),
++        ("airk_explorer_suggest_review", "suggest_view"),
++        ("airk_explorer_suggest_management", "suggest_view"),
++        ("airk_help", "help"),
++    ] {
++        text = replace_diagnostic_tool(&text, old, public);
++    }
++    text
++}
++
++/// Rewrite only adapter-authored diagnostics. Strategy operators, template
++/// bodies, shared handoff content, and evidence retain their exact bytes.
++fn public_ui_response(tool: &str, mut result: Value) -> Value {
++    let Some(mut value) = body(&result) else { return result; };
++    if let Some(error) = value.get_mut("error").and_then(Value::as_object_mut) {
++        for field in ["message", "detail"] {
++            if let Some(Value::String(text)) = error.get_mut(field) {
++                *text = public_diagnostic_text(text);
++            }
++        }
++    }
++    if value.get("valid") == Some(&Value::Bool(false)) {
++        if let Some(errors) = value.get_mut("errors").and_then(Value::as_array_mut) {
++            for error in errors {
++                if let Some(Value::String(text)) = error.get_mut("message") {
++                    *text = public_diagnostic_text(text);
++                }
++            }
++        }
++    }
++    if matches!(tool, "airk_explorer_help_get" | "airk_explorer_help_search" | "airk_explorer_ui_status") {
++        if let Some(notes) = value.get_mut("notes").and_then(Value::as_array_mut) {
++            for note in notes {
++                if let Value::String(text) = note { *text = public_diagnostic_text(text); }
++            }
++        }
++    }
++    // Both MCP representations must carry the same projected diagnostics.
++    if result.get("structuredContent").is_some() {
++        result["structuredContent"] = value.clone();
++    }
++    if let Some(Value::String(text)) = result.get_mut("content")
++        .and_then(Value::as_array_mut).and_then(|items| items.first_mut())
++        .and_then(|item| item.get_mut("text"))
++    {
++        *text = value.to_string();
++    }
++    result
++}
++
+ fn project_schema() -> Value {
+     json!({"type":"string","pattern":"^[0-9a-f]{64}$","description":"Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown."})
+ }
+@@ -126,6 +202,9 @@
+         .as_object_mut()
+         .unwrap()
+         .remove("project");
++    schema["properties"]["tool"]["description"] = json!(
++        "Exact public MCP tool name, for example search; returns its current description and input schema."
++    );
+     for (key, property) in [
+         ("query", json!({"type":"string","maxLength":256})),
+         ("topic_id", json!({"type":"string","maxLength":64})),
+@@ -316,7 +395,8 @@
+             );
+         };
+         let client = *self.client.lock().unwrap();
+-        explorer.call(project, name.into(), args, client).await.unwrap_or_else(|_| failure("UI_UNAVAILABLE", "The verified Explorer adapter is unavailable. Check status and the installed extension; native retrieval remains available."))
++        let result = explorer.call(project, name.into(), args, client).await.unwrap_or_else(|_| failure("UI_UNAVAILABLE", "The verified Explorer adapter is unavailable. Check diagnostics and the installed extension; native retrieval remains available."));
++        public_ui_response(name, result)
+     }
+     async fn help(&self, mut args: Map<String, Value>) -> Value {
+         let native_selector = !args.contains_key("query")
+@@ -1630,4 +1710,34 @@
+         );
+         assert!(native.calls.lock().unwrap().is_empty());
+     }
+-}
++
++    #[test]
++    fn public_ui_diagnostics_use_advertised_tools_without_rewriting_user_content() {
++        let original = json!({
++            "valid":false,"errors":[{"field":"workspace_binding","message":"Read airk_explorer_ui_status again."}],
++            "strategy":{"instructions":["Call airk_help"],"steps":[{"op":"airk.status"}]},
++            "handoff":{"content":"User-authored airk_explorer_ui_status text"}
++        });
++        let projected = public_ui_response("airk_explorer_validate_draft", success(original.clone()));
++        let value = body(&projected).unwrap();
++        assert_eq!(value["errors"][0]["message"], "Read diagnostics (explorer.ui) again.");
++        assert_eq!(value["strategy"], original["strategy"]);
++        assert_eq!(value["handoff"], original["handoff"]);
++        assert_eq!(serde_json::from_str::<Value>(projected["content"][0]["text"].as_str().unwrap()).unwrap(), projected["structuredContent"]);
++        let error = body(&public_ui_response("airk_explorer_suggest_search", failure("STALE_BINDING", "Call airk_explorer_ui_status or airk_explorer_templates_list."))).unwrap();
++        assert_eq!(error["error"]["message"], "Call diagnostics (explorer.ui) or list_templates.");
++        assert_eq!(public_diagnostic_text("Unknown field custom_airk_help_suffix"), "Unknown field custom_airk_help_suffix");
++        let help = json!({"notes":["Call airk_help for CLI guidance."],"body":"Use airk_search in the native CLI."});
++        let public_help = body(&public_ui_response("airk_explorer_help_get", success(help.clone()))).unwrap();
++        assert_eq!(public_help["notes"][0], "Call help for CLI guidance.");
++        assert_eq!(public_help["body"], help["body"]);
++        let catalog = tools();
++        let help = catalog.iter().find(|tool| tool.name == "help").unwrap();
++        let schema = serde_json::to_value(&help.input_schema).unwrap();
++        assert!(!schema["properties"]["tool"]["description"].as_str().unwrap().contains("search or search"));
++        let draft = catalog.iter().find(|tool| tool.name == "draft_search").unwrap();
++        let schema = serde_json::to_value(&draft.input_schema).unwrap();
++        assert!(schema["properties"]["workspace_binding"]["description"].as_str().unwrap().contains("diagnostics.explorer.ui"));
++    }
++
++}

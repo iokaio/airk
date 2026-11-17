@@ -1,0 +1,1231 @@
+--- a/crates/airk-cli/src/explorer_assistance.rs
++++ b/crates/airk-cli/src/explorer_assistance.rs
+@@ -48,6 +48,9 @@
+     pub electron: bool,
+     /// The descriptor's directory; the server reads per-window attachment descriptors below it.
+     pub assistance_dir: PathBuf,
++    // Exact verified loaded JS bytes, not version/path/mtime as content identity.
++    pub(crate) server_digest: [u8; 32],
++    pub(crate) extension_version: String,
+ }
+ 
+ fn regular_file(path: &Path, limit: u64, what: &str) -> Result<()> {
+@@ -205,6 +208,8 @@
+         server,
+         electron: value.runtime.electron,
+         assistance_dir,
++        server_digest: digest.into(),
++        extension_version: value.extension_version,
+     })
+ }
+ 
+--- /dev/null
++++ b/crates/airk-cli/src/unified_mcp/explorer_adapter.rs
+@@ -0,0 +1,1022 @@
++// SPDX-License-Identifier: Apache-2.0
++//! One contained adapter and one retained blocking operation per frontend owner.
++use super::*;
++use crate::native_process::ContainedChild;
++use std::{
++    io::{BufRead, BufReader},
++    process::{ChildStdin, ChildStdout},
++    sync::{
++        Mutex,
++        atomic::{AtomicBool, AtomicU8, Ordering},
++    },
++};
++
++fn child_work_deadline(started: Instant) -> Instant {
++    started + Duration::from_secs(15)
++}
++#[derive(Debug)]
++struct ExchangeFailure {
++    primary: anyhow::Error,
++    _secondary: anyhow::Error,
++}
++impl std::fmt::Display for ExchangeFailure {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        std::fmt::Display::fmt(&self.primary, f)
++    }
++}
++impl std::error::Error for ExchangeFailure {
++    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
++        let original: &(dyn std::error::Error + 'static) = self.primary.as_ref();
++        original.source()
++    }
++}
++fn settle_exchange(
++    reply: Result<Vec<u8>>,
++    written: Result<()>,
++    writer_first: bool,
++) -> Result<Vec<u8>> {
++    match (reply, written) {
++        (Ok(bytes), Ok(())) => Ok(bytes),
++        (Err(primary), Ok(())) => Err(primary),
++        (Ok(_), Err(primary)) => Err(primary),
++        (Err(reply), Err(written)) => {
++            let (primary, secondary) = if writer_first {
++                (written, reply)
++            } else {
++                (reply, written)
++            };
++            Err(anyhow::Error::new(ExchangeFailure {
++                primary,
++                _secondary: secondary,
++            }))
++        }
++    }
++}
++
++#[derive(Default)]
++struct Admission(AtomicU8);
++struct Permit<'a>(&'a Admission);
++impl Admission {
++    fn close(&self) {
++        self.0.fetch_or(1, Ordering::AcqRel);
++    }
++    fn closed(&self) -> bool {
++        self.0.load(Ordering::Acquire) & 1 != 0
++    }
++    fn accept(&self) -> Result<Permit<'_>> {
++        self.0
++            .compare_exchange(0, 2, Ordering::AcqRel, Ordering::Acquire)
++            .map_err(|_| anyhow::anyhow!("Explorer adapter admission closed or busy"))?;
++        Ok(Permit(self))
++    }
++}
++impl Drop for Permit<'_> {
++    fn drop(&mut self) {
++        self.0.0.fetch_and(!2, Ordering::AcqRel);
++    }
++}
++
++struct Adapter {
++    launch: crate::explorer_assistance::Launch,
++    project: Option<String>,
++    root: Option<PathBuf>,
++    client: String,
++    child: Option<ContainedChild>,
++    stdin: Option<ChildStdin>,
++    stdout: Option<BufReader<ChildStdout>>,
++    sequence: u64,
++    started_at: Instant,
++}
++impl Adapter {
++    fn start(
++        launch: crate::explorer_assistance::Launch,
++        project: Option<String>,
++        root: Option<PathBuf>,
++        admission: &Admission,
++        client: String,
++    ) -> Result<Self> {
++        let mut command = crate::explorer_assistance::command(&launch);
++        command
++            .stdin(Stdio::piped())
++            .stdout(Stdio::piped())
++            .stderr(Stdio::null());
++        if let (Some(project), Some(root)) = (&project, &root) {
++            command
++                .arg("--project-binding")
++                .arg(project)
++                .arg("--project-root")
++                .arg(root);
++        }
++        // Exact establishment admission immediately before spawning. This permit
++        // does not authorize a later UI request; EOF must gate that separately.
++        let _establishment = admission.accept()?;
++        let mut child = ContainedChild::spawn(&mut command)?;
++        let started_at = Instant::now();
++        let stdin = child.stdin.take().context("Explorer input unavailable")?;
++        let stdout = child.stdout.take().context("Explorer output unavailable")?;
++        Ok(Self {
++            launch,
++            project,
++            root,
++            child: Some(child),
++            stdin: Some(stdin),
++            stdout: Some(BufReader::new(stdout)),
++            sequence: 0,
++            started_at,
++            client,
++        })
++    }
++    fn initialize(&mut self, admission: &Admission, deadline: Instant) -> Result<()> {
++        let parameters = json!({"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":self.client,"version":self.launch.extension_version}});
++        self.rpc(
++            "initialize",
++            &serde_json::to_vec(&parameters)?,
++            admission,
++            deadline,
++        )?;
++        Ok(())
++    }
++    fn finish(mut self) -> Result<()> {
++        drop(self.stdin.take());
++        let deadline = Instant::now() + Duration::from_secs(5);
++        let status = loop {
++            match self
++                .child
++                .as_mut()
++                .context("Explorer child missing")?
++                .try_wait()?
++            {
++                Some(status) => break Some(status),
++                None if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
++                None => break None,
++            }
++        };
++        drop(self.child.take());
++        ensure!(
++            status.is_some_and(|status| status.success()),
++            "Explorer EOF drain failed"
++        );
++        Ok(())
++    }
++    fn matches(
++        &self,
++        launch: &crate::explorer_assistance::Launch,
++        project: &Option<String>,
++        root: &Option<PathBuf>,
++        client: &str,
++    ) -> bool {
++        &self.launch == launch
++            && &self.project == project
++            && &self.root == root
++            && self.client == client
++    }
++    fn rpc(
++        &mut self,
++        method: &str,
++        request: &[u8],
++        admission: &Admission,
++        deadline: Instant,
++    ) -> Result<Value> {
++        ensure!(request.len() <= 65536, "Explorer request exceeds bound");
++        self.sequence = self
++            .sequence
++            .checked_add(1)
++            .filter(|n| *n <= 9_007_199_254_740_991)
++            .context("Explorer correlation exhausted")?;
++        let id = self.sequence;
++        let mut frame =
++            format!("{{\"jsonrpc\":\"2.0\",\"id\":{id},\"method\":\"{method}\",\"params\":")
++                .into_bytes();
++        frame.extend_from_slice(request);
++        frame.extend_from_slice(b"}\n");
++        if method == "initialize" {
++            frame.extend_from_slice(
++                b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n",
++            );
++        }
++        let mut stdin = self.stdin.take().context("Explorer input missing")?;
++        let mut stdout = self.stdout.take().context("Explorer output missing")?;
++        // Single exact request admission, not a reusable setup/pipeline permit.
++        // A close after this linearization drains this request; it never retries it.
++        let result = std::thread::scope(|scope| -> Result<_> {
++            enum IoEvent {
++                Reply(Result<Vec<u8>>),
++                WriteFailed,
++            }
++            let (send, receive) = std::sync::mpsc::sync_channel(2);
++            let failed = send.clone();
++            let writer = std::thread::Builder::new()
++                .name("airk-ui-input".into())
++                .spawn_scoped(scope, move || {
++                    let written = (|| -> Result<()> {
++                        ensure!(
++                            Instant::now() < deadline,
++                            "Explorer request deadline expired"
++                        );
++                        let _request = admission.accept()?;
++                        stdin.write_all(&frame)?;
++                        stdin.flush()?;
++                        Ok(())
++                    })();
++                    if written.is_err() {
++                        let _ = failed.send(IoEvent::WriteFailed);
++                    }
++                    (stdin, written)
++                })?;
++            let reader = match std::thread::Builder::new()
++                .name("airk-ui-output".into())
++                .spawn_scoped(scope, move || {
++                    let mut bytes = Vec::new();
++                    let result = (&mut stdout)
++                        .take(3_146_753)
++                        .read_until(b'\n', &mut bytes)
++                        .map_err(anyhow::Error::from)
++                        .and_then(|_| {
++                            ensure!(
++                                bytes.ends_with(b"\n") && bytes.len() <= 3_146_752,
++                                "Explorer reply frame invalid"
++                            );
++                            Ok(bytes)
++                        });
++                    let _ = send.send(IoEvent::Reply(result));
++                    stdout
++                }) {
++                Ok(reader) => reader,
++                Err(error) => {
++                    drop(self.child.take());
++                    return Err(error.into());
++                }
++            };
++            let (reply, writer_first) = match receive
++                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
++            {
++                Ok(IoEvent::Reply(result)) => (result, false),
++                Ok(IoEvent::WriteFailed) => (Err(anyhow::anyhow!("Explorer input failed")), true),
++                Err(error) => (
++                    Err(anyhow::Error::new(error)
++                        .context("Explorer reply timed out or disconnected")),
++                    false,
++                ),
++            };
++            if reply.is_err() {
++                drop(self.child.take());
++            }
++            let written = writer
++                .join()
++                .map_err(|_| anyhow::anyhow!("Explorer input owner panicked"));
++            let read = reader
++                .join()
++                .map_err(|_| anyhow::anyhow!("Explorer output owner panicked"));
++            // Join both owners before returning. Teardown failures cannot replace
++            // the first observed reply/timeout; an input event uses its real cause.
++            let (stdin, written) = match written {
++                Ok(value) => value,
++                Err(error) => {
++                    return settle_exchange(reply, Err(error), writer_first)
++                        .and_then(|_| unreachable!());
++                }
++            };
++            let bytes = settle_exchange(reply, written, writer_first)?;
++            let stdout = read?;
++            Ok((stdin, stdout, bytes))
++        });
++        match result {
++            Ok((stdin, stdout, bytes)) => {
++                self.stdin = Some(stdin);
++                self.stdout = Some(stdout);
++                #[derive(serde::Deserialize)]
++                #[serde(deny_unknown_fields)]
++                struct Reply {
++                    jsonrpc: String,
++                    id: u64,
++                    result: Option<Value>,
++                    error: Option<Value>,
++                }
++                let reply: Reply = serde_json::from_slice(&bytes)?;
++                ensure!(
++                    reply.jsonrpc == "2.0" && reply.id == id,
++                    "Explorer reply correlation mismatch"
++                );
++                ensure!(
++                    reply.error.is_none(),
++                    "Explorer exchange failed or timed out"
++                );
++                reply.result.context("Explorer result missing")
++            }
++            Err(error) => {
++                drop(self.child.take());
++                Err(error)
++            }
++        }
++    }
++}
++
++fn request_parameters(
++    tool: String,
++    arguments: Map<String, Value>,
++    client: &str,
++) -> Result<Vec<u8>> {
++    let parameters = serde_json::to_vec(&json!({"name":tool,"arguments":arguments}))?;
++    let client_bytes = serde_json::to_vec(client)?;
++    // name/tool are equal length; the old one-shot extra field adds its
++    // encoded value and exactly comma + quoted key + colon (10 bytes).
++    let legacy_bytes = parameters
++        .len()
++        .checked_add(10)
++        .and_then(|bytes| bytes.checked_add(client_bytes.len()))
++        .context("Explorer request size overflow")?;
++    ensure!(legacy_bytes <= 65536, "Explorer request exceeds bound");
++    Ok(parameters)
++}
++
++#[derive(Default)]
++pub(super) struct Owner {
++    admission: Admission,
++    adapter: Mutex<Option<Adapter>>,
++    // Never take a pending handle out of the owner across an await.
++    worker: tokio::sync::Mutex<Option<tokio::task::JoinHandle<Result<Value>>>>,
++    drain_failure: Mutex<Option<anyhow::Error>>,
++    cleaned: AtomicBool,
++    closed: tokio::sync::Notify,
++    #[cfg(test)]
++    establishments: std::sync::atomic::AtomicUsize,
++}
++impl Owner {
++    pub(super) fn close(&self) {
++        self.admission.close();
++        self.closed.notify_waiters();
++    }
++    pub(super) async fn call<F>(
++        self: &Arc<Self>,
++        resolve: F,
++        descriptor: PathBuf,
++        tool: String,
++        arguments: Map<String, Value>,
++        client: airk_core::usage::ClientFamily,
++    ) -> Result<Value>
++    where
++        F: Fn() -> Result<std::result::Result<(Option<String>, Option<PathBuf>), Value>>
++            + Send
++            + 'static,
++    {
++        let closed = self.closed.notified();
++        tokio::pin!(closed);
++        closed.as_mut().enable();
++        ensure!(!self.admission.closed(), "Explorer adapter closed");
++        let mut worker = tokio::select! {
++            biased;
++            _=&mut closed=>anyhow::bail!("Explorer adapter closed"),
++            result=self.worker.lock()=>result,
++        };
++        if let Some(previous) = worker.as_mut() {
++            let _joined = tokio::select! {
++                biased;
++                _=&mut closed=>anyhow::bail!("Explorer adapter closed"),
++                result=previous=>result,
++            };
++            worker.take();
++        }
++        ensure!(
++            !self.admission.closed(),
++            "Explorer adapter admission expired"
++        );
++        let owner = self.clone();
++        *worker = Some(tokio::task::spawn_blocking(move || {
++            let (project, root) = match resolve() {
++                Ok(Ok(scope)) => scope,
++                Ok(Err(reply)) => {
++                    drop(
++                        owner
++                            .adapter
++                            .lock()
++                            .unwrap_or_else(std::sync::PoisonError::into_inner)
++                            .take(),
++                    );
++                    return Ok(reply);
++                }
++                Err(error) => {
++                    drop(
++                        owner
++                            .adapter
++                            .lock()
++                            .unwrap_or_else(std::sync::PoisonError::into_inner)
++                            .take(),
++                    );
++                    return Err(error);
++                }
++            };
++            ensure!(
++                !owner.admission.closed(),
++                "Explorer adapter admission expired"
++            );
++            // Keep current deep verification per call in this bounded first slice.
++            let mut launch = match crate::explorer_assistance::plan(&descriptor) {
++                Ok(launch) => launch,
++                Err(error) => {
++                    drop(
++                        owner
++                            .adapter
++                            .lock()
++                            .unwrap_or_else(std::sync::PoisonError::into_inner)
++                            .take(),
++                    );
++                    return Err(error);
++                }
++            };
++            let client_name = format!("{client:?}");
++            let request = request_parameters(tool, arguments, &client_name)?;
++            ensure!(!owner.admission.closed(), "Explorer adapter closed");
++            let mut adapter = owner
++                .adapter
++                .lock()
++                .unwrap_or_else(std::sync::PoisonError::into_inner);
++            if adapter
++                .as_ref()
++                .is_some_and(|current| !current.matches(&launch, &project, &root, &client_name))
++            {
++                drop(adapter.take());
++                // Revalidate after the old contained process has actually drained.
++                launch = crate::explorer_assistance::plan(&descriptor)?;
++            }
++            let mut execution_deadline = None;
++            if adapter.is_none() {
++                let mut started =
++                    Adapter::start(launch, project, root, &owner.admission, client_name)?;
++                let deadline = child_work_deadline(started.started_at);
++                started.initialize(&owner.admission, deadline)?;
++                execution_deadline = Some(deadline);
++                ensure!(
++                    crate::explorer_assistance::plan(&descriptor)? == started.launch,
++                    "Explorer launch changed during setup"
++                );
++                *adapter = Some(started);
++                #[cfg(test)]
++                owner.establishments.fetch_add(1, Ordering::SeqCst);
++            }
++            // Resolve again after all verification, teardown and initialization waits.
++            // A source refusal remains its original typed result; never submit/replay
++            // a UI request against the previously resolved binding.
++            let current = match resolve() {
++                Ok(Ok(scope)) => scope,
++                Ok(Err(reply)) => {
++                    drop(adapter.take());
++                    return Ok(reply);
++                }
++                Err(error) => {
++                    drop(adapter.take());
++                    return Err(error);
++                }
++            };
++            let bound = adapter.as_ref().context("Explorer adapter missing")?;
++            if current != (bound.project.clone(), bound.root.clone()) {
++                drop(adapter.take());
++                anyhow::bail!("Explorer source binding changed during setup");
++            }
++            let deadline =
++                execution_deadline.unwrap_or_else(|| child_work_deadline(Instant::now()));
++            let result = adapter.as_mut().context("Explorer adapter missing")?.rpc(
++                "tools/call",
++                &request,
++                &owner.admission,
++                deadline,
++            );
++            if result.is_err() {
++                drop(adapter.take());
++            }
++            let reply = result?;
++            let projected = (|| -> Result<Value> {
++                let value = if let Some(value) = reply.get("structuredContent") {
++                    value.clone()
++                } else {
++                    let content = reply["content"]
++                        .as_array()
++                        .context("Explorer content missing")?;
++                    ensure!(
++                        content.len() == 1 && content[0]["type"] == "text",
++                        "Explorer content invalid"
++                    );
++                    serde_json::from_str(
++                        content[0]["text"]
++                            .as_str()
++                            .context("Explorer text missing")?,
++                    )?
++                };
++                let mut raw = Map::new();
++                if reply["isError"] == true {
++                    let mut value = value;
++                    let mut error = value
++                        .get_mut("error")
++                        .map(Value::take)
++                        .unwrap_or(Value::Null);
++                    raw.insert("ok".into(), Value::Bool(false));
++                    if let Some(fields) = error.as_object_mut() {
++                        if let Some(code) = fields.remove("code") {
++                            raw.insert("code".into(), code);
++                        }
++                        if let Some(detail) = fields.remove("detail") {
++                            raw.insert("detail".into(), detail);
++                        }
++                    }
++                } else {
++                    raw.insert("ok".into(), Value::Bool(true));
++                    raw.insert("value".into(), value);
++                }
++                let raw = Value::Object(raw);
++                ensure!(
++                    serde_json::to_vec(&raw)?.len() <= 1_048_576,
++                    "Explorer result exceeds bound"
++                );
++                Ok(super::project_explorer_reply(raw))
++            })();
++            if projected.is_err() {
++                drop(adapter.take());
++            }
++            projected
++        }));
++        let joined = worker.as_mut().context("Explorer owner missing")?.await;
++        worker.take();
++        joined.context("Explorer blocking owner failed")?
++    }
++    pub(super) async fn shutdown(self: &Arc<Self>) -> Result<()> {
++        self.close();
++        let mut worker = self.worker.lock().await;
++        if let Some(previous) = worker.as_mut() {
++            let joined = previous.await;
++            worker.take();
++            let failure = match joined {
++                Ok(Err(error)) => Some(error),
++                Err(error) => Some(error.into()),
++                _ => None,
++            };
++            if let Some(error) = failure {
++                let mut saved = self
++                    .drain_failure
++                    .lock()
++                    .unwrap_or_else(std::sync::PoisonError::into_inner);
++                if saved.is_none() {
++                    *saved = Some(error);
++                }
++            }
++        }
++        if !self.cleaned.load(Ordering::Acquire) {
++            let owner = self.clone();
++            *worker = Some(tokio::task::spawn_blocking(move || {
++                let adapter = owner
++                    .adapter
++                    .lock()
++                    .unwrap_or_else(std::sync::PoisonError::into_inner)
++                    .take();
++                if let Some(adapter) = adapter {
++                    adapter.finish()?;
++                }
++                owner.cleaned.store(true, Ordering::Release);
++                Ok(Value::Null)
++            }));
++            let joined = worker
++                .as_mut()
++                .context("Explorer cleanup owner missing")?
++                .await;
++            worker.take();
++            let failure = match joined {
++                Ok(Err(error)) => Some(error),
++                Err(error) => Some(error.into()),
++                _ => None,
++            };
++            if let Some(error) = failure {
++                let mut saved = self
++                    .drain_failure
++                    .lock()
++                    .unwrap_or_else(std::sync::PoisonError::into_inner);
++                if saved.is_none() {
++                    *saved = Some(error);
++                }
++            }
++        }
++        // No await after consuming the saved cause. A canceled cleanup wait
++        // retains both its actual handle and first failure for a later drain.
++        match self
++            .drain_failure
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .take()
++        {
++            Some(error) => Err(error),
++            None => Ok(()),
++        }
++    }
++}
++impl Drop for Owner {
++    fn drop(&mut self) {
++        self.admission.close();
++        // Fail-safe for an abandoned frontend owner. Ordinary EOF uses async
++        // shutdown above; this final fallback does not detach an idle child.
++        drop(
++            self.adapter
++                .get_mut()
++                .unwrap_or_else(std::sync::PoisonError::into_inner)
++                .take(),
++        );
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn real_bundle_fixture(package_variable: &str) -> Result<(tempfile::TempDir, PathBuf)> {
++        use sha2::Digest;
++        let node = PathBuf::from(
++            std::env::var_os("AIRK_TEST_NODE")
++                .context("set AIRK_TEST_NODE to the approved Node executable")?,
++        )
++        .canonicalize()?;
++        let package = PathBuf::from(std::env::var_os(package_variable).with_context(|| {
++            format!("set {package_variable} to the approved compiled extension package")
++        })?);
++        let manifest: Value =
++            serde_json::from_slice(&std::fs::read(package.join("package.json"))?)?;
++        let directory = tempfile::tempdir()?;
++        let root = directory.path().join("extension");
++        std::fs::create_dir_all(root.join("out"))?;
++        std::fs::write(root.join("package.json"), serde_json::to_vec(&manifest)?)?;
++        let server = root.join("out/explorerAssistance.js");
++        std::fs::copy(package.join("out/explorerAssistance.js"), &server)?;
++        let storage = directory.path().join("storage/explorer-assistance");
++        std::fs::create_dir_all(&storage)?;
++        #[cfg(windows)]
++        {
++            let user = crate::local_ipc::current_user()?;
++            let system =
++                PathBuf::from(std::env::var_os("SystemRoot").context("SystemRoot missing")?)
++                    .join("System32/icacls.exe");
++            let result = std::process::Command::new(system)
++                .arg(&storage)
++                .args([
++                    "/inheritance:r",
++                    "/grant:r",
++                    &format!("*{user}:(OI)(CI)F"),
++                    "*S-1-5-18:(OI)(CI)F",
++                    "*S-1-5-32-544:(OI)(CI)F",
++                ])
++                .output()?;
++            ensure!(result.status.success(), "private fixture ACL setup failed");
++        }
++        #[cfg(unix)]
++        {
++            use std::os::unix::fs::PermissionsExt;
++            std::fs::set_permissions(&storage, std::fs::Permissions::from_mode(0o700))?;
++        }
++        let descriptor = storage.join("launch-1.json");
++        let digest = sha2::Sha256::digest(std::fs::read(&server)?)
++            .iter()
++            .map(|byte| format!("{byte:02x}"))
++            .collect::<String>();
++        std::fs::write(
++            &descriptor,
++            serde_json::to_vec(
++                &json!({"schema":"airk-explorer-assistance-launch/1","extension_version":manifest["version"],"extension_root":root.canonicalize()?,"server":server.canonicalize()?,"server_sha256":digest,"runtime":{"path":node,"electron":false},"written_unix_ms":1}),
++            )?,
++        )?;
++        #[cfg(unix)]
++        {
++            use std::os::unix::fs::PermissionsExt;
++            std::fs::set_permissions(&descriptor, std::fs::Permissions::from_mode(0o600))?;
++        }
++        Ok((directory, descriptor))
++    }
++    async fn templates(owner: &Arc<Owner>, descriptor: PathBuf) -> Result<Value> {
++        owner
++            .call(
++                || Ok(Ok((None, None))),
++                descriptor,
++                "airk_explorer_templates_list".into(),
++                Map::new(),
++                airk_core::usage::ClientFamily::Cli,
++            )
++            .await
++    }
++    #[tokio::test]
++    #[ignore = "requires compiled real Assistance bundle and approved Node; explicit qualification only"]
++    async fn actual_bundled_js_reuses_one_contained_child_per_frontend_and_drains_eof() -> Result<()>
++    {
++        exercise_bundle("AIRK_TEST_ASSISTANCE_PACKAGE").await
++    }
++    #[tokio::test]
++    #[ignore = "requires approved older valid compiled Assistance bundle and Node; explicit compatibility gate"]
++    async fn older_valid_bundle_keeps_exact_results_and_scope_replacement() -> Result<()> {
++        exercise_bundle("AIRK_TEST_ASSISTANCE_OLD_PACKAGE").await
++    }
++    #[tokio::test]
++    #[ignore = "requires compiled real Assistance bundle and approved Node; explicit source fence qualification"]
++    async fn removal_while_post_initialize_scope_check_is_held_never_calls_old_binding()
++    -> Result<()> {
++        let (_directory, descriptor) = real_bundle_fixture("AIRK_TEST_ASSISTANCE_PACKAGE")?;
++        let owner = Arc::new(Owner::default());
++        let (entered, observed) = tokio::sync::oneshot::channel();
++        let (release, held) = std::sync::mpsc::channel();
++        let entered = Mutex::new(Some(entered));
++        let held = Mutex::new(Some(held));
++        let removed = Arc::new(AtomicBool::new(false));
++        let check_removed = removed.clone();
++        let calls = std::sync::atomic::AtomicUsize::new(0);
++        let running = owner.clone();
++        let task = tokio::spawn(async move {
++            running
++                .call(
++                    move || {
++                        if calls.fetch_add(1, Ordering::SeqCst) == 0 {
++                            return Ok(Ok((None, None)));
++                        }
++                        entered.lock().unwrap().take().unwrap().send(()).unwrap();
++                        held.lock().unwrap().take().unwrap().recv().unwrap();
++                        assert!(check_removed.load(Ordering::SeqCst));
++                        Ok(Err(json!({"isError":true,"source_removed":true})))
++                    },
++                    descriptor,
++                    "airk_explorer_templates_list".into(),
++                    Map::new(),
++                    airk_core::usage::ClientFamily::Cli,
++                )
++                .await
++        });
++        observed.await?;
++        // The real child has completed initialize; the request is not yet sent.
++        assert_eq!(owner.establishments.load(Ordering::SeqCst), 1);
++        removed.store(true, Ordering::SeqCst);
++        release.send(())?;
++        assert_eq!(task.await??, json!({"isError":true,"source_removed":true}));
++        assert!(owner.adapter.lock().unwrap().is_none());
++        owner.shutdown().await?;
++        Ok(())
++    }
++    #[test]
++    fn exchange_keeps_first_failure_and_actual_writer_cause() {
++        let error = settle_exchange(
++            Err(anyhow::anyhow!("original reply timeout")),
++            Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe).into()),
++            false,
++        )
++        .unwrap_err();
++        assert_eq!(error.to_string(), "original reply timeout");
++        assert_eq!(format!("{error:#}"), "original reply timeout");
++        let nested = settle_exchange(
++            Err(anyhow::anyhow!("root read cause").context("original reply timeout")),
++            Err(anyhow::anyhow!("cleanup write")),
++            false,
++        )
++        .unwrap_err();
++        assert_eq!(
++            format!("{nested:#}"),
++            "original reply timeout: root read cause"
++        );
++        let error = settle_exchange(
++            Err(anyhow::anyhow!("input event")),
++            Err(
++                anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
++                    .context("actual writer cause"),
++            ),
++            true,
++        )
++        .unwrap_err();
++        assert_eq!(
++            error
++                .chain()
++                .find_map(|cause| cause.downcast_ref::<std::io::Error>())
++                .unwrap()
++                .kind(),
++            std::io::ErrorKind::PermissionDenied
++        );
++    }
++    #[test]
++    fn child_work_budget_starts_after_delayed_preparation_without_renewal() {
++        // Test-owned clock instants: preparation took an hour; no sleep/OS call.
++        let preparation = Instant::now();
++        let spawn = preparation + Duration::from_secs(3600);
++        let deadline = child_work_deadline(spawn);
++        assert_eq!(deadline.duration_since(spawn), Duration::from_secs(15));
++        let initialized = spawn + Duration::from_secs(6);
++        assert_eq!(deadline.duration_since(initialized), Duration::from_secs(9));
++    }
++    async fn exercise_bundle(package_variable: &str) -> Result<()> {
++        let (directory, descriptor) = real_bundle_fixture(package_variable)?;
++        let first = Arc::new(Owner::default());
++        let second = Arc::new(Owner::default());
++        let initial = templates(&first, descriptor.clone()).await?;
++        assert_eq!(initial["isError"], false);
++        assert_eq!(
++            initial["structuredContent"]["extension_version"],
++            crate::explorer_assistance::plan(&descriptor)?.extension_version
++        );
++        let pid = first
++            .adapter
++            .lock()
++            .unwrap()
++            .as_ref()
++            .unwrap()
++            .child
++            .as_ref()
++            .unwrap()
++            .id();
++        assert_eq!(templates(&first, descriptor.clone()).await?, initial);
++        assert_eq!(
++            first
++                .adapter
++                .lock()
++                .unwrap()
++                .as_ref()
++                .unwrap()
++                .child
++                .as_ref()
++                .unwrap()
++                .id(),
++            pid
++        );
++        assert_eq!(first.establishments.load(Ordering::SeqCst), 1);
++        templates(&second, descriptor.clone()).await?;
++        assert_ne!(
++            second
++                .adapter
++                .lock()
++                .unwrap()
++                .as_ref()
++                .unwrap()
++                .child
++                .as_ref()
++                .unwrap()
++                .id(),
++            pid
++        );
++        let path = descriptor.clone();
++        let legacy = tokio::task::spawn_blocking(move || {
++            super::super::call_explorer(
++                path,
++                None,
++                None,
++                "airk_explorer_templates_list".into(),
++                Map::new(),
++                airk_core::usage::ClientFamily::Cli,
++            )
++        })
++        .await??;
++        assert_eq!(legacy, initial);
++        for (tool, arguments) in [
++            (
++                "airk_explorer_template_get",
++                json!({"template_id":"airk.core/not-real"}),
++            ),
++            (
++                "airk_explorer_help_get",
++                json!({"topic_id":"not-a-real-topic"}),
++            ),
++            (
++                "airk_explorer_validate_draft",
++                json!({"kind":"not-a-kind","draft":{}}),
++            ),
++        ] {
++            let arguments = arguments.as_object().unwrap().clone();
++            let path = descriptor.clone();
++            let legacy_args = arguments.clone();
++            let legacy = tokio::task::spawn_blocking(move || {
++                super::super::call_explorer(
++                    path,
++                    None,
++                    None,
++                    tool.into(),
++                    legacy_args,
++                    airk_core::usage::ClientFamily::Cli,
++                )
++            })
++            .await??;
++            let current = first
++                .call(
++                    || Ok(Ok((None, None))),
++                    descriptor.clone(),
++                    tool.into(),
++                    arguments,
++                    airk_core::usage::ClientFamily::Cli,
++                )
++                .await?;
++            assert_eq!(current, legacy);
++        }
++        let project = "ab".repeat(32);
++        let root = directory.path().canonicalize()?;
++        let bound_project = project.clone();
++        let bound_root = root.clone();
++        first
++            .call(
++                move || Ok(Ok((Some(bound_project.clone()), Some(bound_root.clone())))),
++                descriptor.clone(),
++                "airk_explorer_templates_list".into(),
++                Map::new(),
++                airk_core::usage::ClientFamily::Cli,
++            )
++            .await?;
++        assert_eq!(first.establishments.load(Ordering::SeqCst), 2);
++        {
++            let guard = first.adapter.lock().unwrap();
++            let adapter = guard.as_ref().unwrap();
++            assert_eq!(adapter.project.as_deref(), Some(project.as_str()));
++            assert_eq!(adapter.root.as_ref(), Some(&root));
++        }
++        first.shutdown().await?;
++        second.shutdown().await?;
++        assert!(first.adapter.lock().unwrap().is_none());
++        assert!(second.adapter.lock().unwrap().is_none());
++        assert!(templates(&first, descriptor).await.is_err());
++        Ok(())
++    }
++
++    #[tokio::test]
++    async fn canceled_waiter_and_shutdown_keep_the_actual_blocking_owner_until_drain() -> Result<()>
++    {
++        let owner = Arc::new(Owner::default());
++        let (entered, ready) = tokio::sync::oneshot::channel();
++        let (release, wait) = std::sync::mpsc::channel();
++        let wait = Mutex::new(Some(wait));
++        let entered = Mutex::new(Some(entered));
++        let call_owner = owner.clone();
++        let caller = tokio::spawn(async move {
++            call_owner
++                .call(
++                    move || {
++                        if let Some(entered) = entered.lock().unwrap().take() {
++                            let _ = entered.send(());
++                        }
++                        if let Some(wait) = wait.lock().unwrap().take() {
++                            wait.recv().context("fixture release closed")?;
++                        }
++                        Ok(Ok((None, None)))
++                    },
++                    PathBuf::from("never-opened-after-close"),
++                    "airk_explorer_templates_list".into(),
++                    Map::new(),
++                    airk_core::usage::ClientFamily::Cli,
++                )
++                .await
++        });
++        ready.await?;
++        caller.abort();
++        let _ = caller.await;
++        owner.close();
++        let mut drain = Box::pin(owner.shutdown());
++        std::future::poll_fn(|cx| {
++            assert!(std::future::Future::poll(drain.as_mut(), cx).is_pending());
++            std::task::Poll::Ready(())
++        })
++        .await;
++        drop(drain);
++        assert!(owner.worker.lock().await.is_some());
++        release.send(())?;
++        assert!(owner.shutdown().await.is_err());
++        assert!(owner.worker.lock().await.is_none());
++        assert!(owner.adapter.lock().unwrap().is_none());
++        assert_eq!(owner.establishments.load(Ordering::SeqCst), 0);
++        Ok(())
++    }
++
++    #[test]
++    fn request_budget_matches_original_serialization_with_unicode_and_exact_edges() -> Result<()> {
++        let tool = "airk_explorer_help_search";
++        for input in [
++            "Unicode 雪 with \"quotes\" and\nline".into(),
++            "a".repeat(65400),
++            "a".repeat(65536),
++        ] {
++            let arguments = json!({"query":input}).as_object().unwrap().clone();
++            let original =
++                serde_json::to_vec(&json!({"tool":tool,"arguments":&arguments,"client":"Cli"}))?;
++            let current = request_parameters(tool.into(), arguments, "Cli");
++            assert_eq!(current.is_ok(), original.len() <= 65536);
++        }
++        let base =
++            serde_json::to_vec(&json!({"tool":tool,"arguments":{"query":""},"client":"Cli"}))?
++                .len();
++        for delta in [0, 1] {
++            let arguments = json!({"query":"a".repeat(65536-base+delta)})
++                .as_object()
++                .unwrap()
++                .clone();
++            assert_eq!(
++                request_parameters(tool.into(), arguments, "Cli").is_ok(),
++                delta == 0
++            );
++        }
++        Ok(())
++    }
++    #[test]
++    fn native_legacy_projection_keeps_empty_string_distinct_from_absent_or_nonstring_detail() {
++        let empty = super::super::project_explorer_reply(
++            json!({"ok":false,"code":"INVALID_SCHEMA","detail":""}),
++        );
++        let absent =
++            super::super::project_explorer_reply(json!({"ok":false,"code":"INVALID_SCHEMA"}));
++        assert_ne!(empty, absent);
++        for detail in [Value::Null, json!(false), json!(0)] {
++            assert_eq!(
++                super::super::project_explorer_reply(
++                    json!({"ok":false,"code":"INVALID_SCHEMA","detail":detail})
++                ),
++                absent
++            );
++        }
++    }
++}
+--- a/crates/airk-cli/src/unified_mcp.rs
++++ b/crates/airk-cli/src/unified_mcp.rs
+@@ -16,7 +16,9 @@
+     time::{Duration, Instant},
+ };
+ 
++mod explorer_adapter;
+ struct Explorer {
++    owner: Arc<explorer_adapter::Owner>,
+     descriptor: PathBuf,
+     roots: BTreeMap<String, PathBuf>,
+     scopes: BTreeMap<String, crate::service_frontend::RootScope>,
+@@ -688,6 +690,12 @@
+     }
+ }
+ impl ExplorerTools for Explorer {
++    fn close(&self) {
++        self.owner.close();
++    }
++    fn shutdown(&self) -> airk_mcp::remote::ReadyFuture<'_> {
++        Box::pin(self.owner.shutdown())
++    }
+     fn call(
+         &self,
+         project: Option<String>,
+@@ -699,25 +707,29 @@
+         let root = project.as_ref().and_then(|id| self.roots.get(id)).cloned();
+         let scope = project.as_ref().and_then(|id| self.scopes.get(id)).cloned();
+         let control = self.control.clone();
+-        Box::pin(async move {
+-            tokio::task::spawn_blocking(move || {
+-                let (project, root) = if let Some(scope) = scope {
+-                    match scope.resolve(&control)? {
++        Box::pin(self.owner.call(
++            move || {
++                if let Some(scope) = &scope {
++                    return match scope.resolve(&control)? {
+                         crate::service_frontend::RootResolution::Registered(registration) => {
+-                            (Some(registration.binding.to_string()), Some(scope.root))
++                            Ok(Ok((
++                                Some(registration.binding.to_string()),
++                                Some(scope.root.clone()),
++                            )))
+                         }
+                         other => {
+                             let (code, _, message) = root_failure(other);
+-                            return Ok(airk_mcp::unified::failure(code, message));
++                            Ok(Err(airk_mcp::unified::failure(code, message)))
+                         }
+-                    }
+-                } else {
+-                    (project, root)
+-                };
+-                call_explorer(descriptor, project, root, tool, arguments, client)
+-            })
+-            .await?
+-        })
++                    };
++                }
++                Ok(Ok((project.clone(), root.clone())))
++            },
++            descriptor,
++            tool,
++            arguments,
++            client,
++        ))
+     }
+ }
+ /// One-shot call to a running Explorer window through its verified launch descriptor.
+@@ -781,10 +793,15 @@
+         "Explorer exchange failed or timed out"
+     );
+     let reply: Value = serde_json::from_slice(&bytes)?;
++    Ok(project_explorer_reply(reply))
++}
++
++// Shared exact ToolResult projection for legacy one-shot and retained sessions.
++fn project_explorer_reply(mut reply: Value) -> Value {
+     if reply["ok"] == true {
+-        Ok(airk_mcp::unified::success(reply["value"].clone()))
++        airk_mcp::unified::success(reply["value"].take())
+     } else {
+-        Ok(airk_mcp::unified::failure(reply["code"].as_str().unwrap_or("UI_UNAVAILABLE"),reply["detail"].as_str().unwrap_or("Explorer request unavailable; inspect status for attachment and project selection.")))
++        airk_mcp::unified::failure(reply["code"].as_str().unwrap_or("UI_UNAVAILABLE"),reply["detail"].as_str().unwrap_or("Explorer request unavailable; inspect status for attachment and project selection."))
+     }
+ }
+ 
+@@ -830,6 +847,7 @@
+         .collect();
+     let explorer = descriptor.map(|descriptor| {
+         Arc::new(Explorer {
++            owner: Arc::new(explorer_adapter::Owner::default()),
+             descriptor,
+             roots,
+             scopes: BTreeMap::new(),
+@@ -916,6 +934,7 @@
+         .collect();
+     let explorer = descriptor.map(|descriptor| {
+         Arc::new(Explorer {
++            owner: Arc::new(explorer_adapter::Owner::default()),
+             descriptor,
+             roots: BTreeMap::new(),
+             scopes: configured,
+--- a/crates/airk-mcp/src/unified.rs
++++ b/crates/airk-mcp/src/unified.rs
+@@ -20,6 +20,10 @@
+ ];
+ 
+ pub trait ExplorerTools: Send + Sync + 'static {
++    fn close(&self) {}
++    fn shutdown(&self) -> crate::remote::ReadyFuture<'_> {
++        Box::pin(async { Ok(()) })
++    }
+     fn call(
+         &self,
+         project: Option<String>,
+@@ -277,6 +281,9 @@
+ }
+ impl RemoteTools for Unified {
+     fn close(&self) {
++        if let Some(explorer) = &self.explorer {
++            explorer.close();
++        }
+         for project in self.projects.values() {
+             project.backend.close();
+         }
+@@ -293,6 +300,16 @@
+                         }
+                     });
+                 }
++            }
++            if let Some(explorer) = &self.explorer
++                && let Err(error) = explorer.shutdown().await
++            {
++                failure = Some(match failure {
++                    None => error,
++                    Some(primary) => {
++                        primary.context(format!("Explorer cleanup also failed: {error:#}"))
++                    }
++                });
+             }
+             match failure {
+                 Some(error) => Err(error),
+--- a/packages/vscode/src/explorerAssistance/server.ts
++++ b/packages/vscode/src/explorerAssistance/server.ts
+@@ -52,7 +52,7 @@
+         case 'tools/call': {
+             if (typeof params.name !== 'string') { return failure(id, -32602, 'Tool name required'); }
+             const result = await this.tools.call(params.name, params.arguments, this.client);
+-            const structured = result.ok ? result.value : { error: { code: result.code, message: EXPLORER_ERRORS[result.code].message, ...(result.detail ? { detail: result.detail } : {}) } };
++            const structured = result.ok ? result.value : { error: { code: result.code, message: EXPLORER_ERRORS[result.code].message, ...(result.detail !== undefined ? { detail: result.detail } : {}) } };
+             return reply(id, { content: [{ type: 'text', text: JSON.stringify(structured) }], structuredContent: structured, isError: !result.ok });
+         }
+         case 'resources/list': return reply(id, { resources: this.index.catalog.topics.map(topic => ({
+--- /dev/null
++++ b/packages/vscode/src/test/explorerAssistanceSessionProjection.test.ts
+@@ -0,0 +1,28 @@
++// SPDX-License-Identifier: Apache-2.0
++import { strict as assert } from 'node:assert';
++import { test } from 'node:test';
++import { AssistanceServer } from '../explorerAssistance/server';
++import { HelpIndex } from '../explorerAssistance/help';
++import type { AssistanceTools } from '../explorerAssistance/tools';
++
++test('Assistance MCP preserves every present error detail from raw one-shot ToolResult serialization',async()=>{
++    for(const detail of ['',null,false,0,undefined,'Unicode 雪 with "quotes"']){
++        const raw={ok:false,code:'INVALID_SCHEMA',detail};
++        let calls=0;
++        const tools={call:async()=>{calls++;return raw;}} as unknown as AssistanceTools;
++        const server=new AssistanceServer(new HelpIndex({catalogVersion:1,extensionVersion:'1.8.0',topics:[]}),tools,'1.8.0');
++        await server.handle(JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{clientInfo:{name:'Cli',version:'1.8.0'}}}));
++        const response=await server.handle(JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'airk_explorer_template_get',arguments:{}}})) as any;
++        const oneShot=JSON.parse(JSON.stringify(raw));
++        const structured=response.result.structuredContent;
++        assert.equal(response.result.isError,true);
++        assert.equal(Object.hasOwn(structured.error,'detail'),Object.hasOwn(oneShot,'detail'));
++        assert.deepEqual(structured.error.detail,oneShot.detail);
++        assert.equal(JSON.parse(response.result.content[0].text).error.detail,oneShot.detail);
++        assert.equal(calls,1);
++        // Native legacy projection uses only string detail, otherwise its fixed
++        // fallback. Preserve empty string separately from missing/null/false/0.
++        const project=(value:Record<string,unknown>)=>({code:value.code,message:typeof value.detail==='string'?value.detail:'legacy fallback'});
++        assert.deepEqual(project(structured.error),project(oneShot));
++    }
++});

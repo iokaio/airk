@@ -1,0 +1,151 @@
+--- scripts/license-notices.py
++++ scripts/license-notices.py
+@@ -10,15 +10,12 @@
+ 
+ 
+ MODEL_COMPANIONS = {
+-    'minilm-v2-LICENSE.txt': ('LICENSE', '9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd'),
+-    'minilm-v2-TRAINING-NOTICES.md': ('TRAINING-NOTICES.md', '2daba18214e777ecb68e1154c26eb9d50c9f8ef25895e4dcc8af3d9d1275e4be'),
+-    'minilm-v2-provenance.json': ('training-provenance.json', '6f6a29bff30ef64212b0c6fc56095d94df3184856e488023820d995fbb68da81'),
+-    'CC-BY-4.0.txt': ('CC-BY-4.0.txt', '9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411'),
++    'minilm-LICENSE.txt': ('LICENSE', 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30'),
+ }
+ 
+ 
+ def stage_model_notices(root, output):
+-    """Retain complete trained-model rights text without any private inputs."""
++    """Retain complete original-model rights text without any private inputs."""
+     catalog_path = root / 'crates/airk-retrieval/src/model_catalog.json'
+     catalog_bytes = catalog_path.read_bytes()
+     catalog = json.loads(catalog_bytes)
+@@ -26,10 +23,10 @@
+     for source_name, (destination, expected) in MODEL_COMPANIONS.items():
+         source = root / 'third_party/models' / source_name
+         if source.is_symlink() or not source.is_file():
+-            raise ValueError('Missing regular trained-model notice: ' + source_name)
++            raise ValueError('Missing regular model notice: ' + source_name)
+         content = source.read_bytes()
+         if hashlib.sha256(content).hexdigest() != expected:
+-            raise ValueError('Trained-model notice digest mismatch: ' + source_name)
++            raise ValueError('Model notice digest mismatch: ' + source_name)
+         verified[destination] = content
+     license_hash = hashlib.sha256(verified['LICENSE']).hexdigest()
+     if not catalog['profiles'] or any(profile['manifest']['license_sha256'] != license_hash
+--- scripts/package-extension.py
++++ scripts/package-extension.py
+@@ -67,7 +67,7 @@
+ # esbuild outputs; referenced by URI or path from host modules, never require()d.
+ BUNDLES = ("explorerWebview.js", "explorerWebview.css", "explorerAssistance.js", "workbenchWebview.js", "workbenchWebview.css", "help-manifest.json")
+ MODEL_NOTICE_FILES = tuple("notices/all-MiniLM-L6-v2/" + name for name in (
+-    "LICENSE", "TRAINING-NOTICES.md", "training-provenance.json", "CC-BY-4.0.txt", "provenance.json"))
++    "LICENSE", "provenance.json"))
+ # Host-only implementations that must never ship a second bundled copy.
+ HOST_MARKERS = ("class ServiceClient", "class NativeControlTransport", "class NativeSession", "class IntentJournal", "class PrivateIntentStore", "function probeMcp",
+                 "class ServiceConsoleController", "class RuntimeHost")
+@@ -136,7 +136,7 @@
+     owner.stage_model_notices(ROOT, destination / "notices")
+     actual = {p.relative_to(destination).as_posix() for p in (destination / "notices").rglob("*") if p.is_file()}
+     if actual != set(MODEL_NOTICE_FILES):
+-        raise ValueError("Unexpected trained-model notice inventory")
++        raise ValueError("Unexpected model notice inventory")
+ 
+ 
+ def update_inventory_paths(native=False):
+--- scripts/package-native.py
++++ scripts/package-native.py
+@@ -169,7 +169,7 @@
+         required.update(model_files)
+         for name, digest in model_files.items():
+             if files.get(name) != digest:
+-                raise ValueError("Pinned trained-model notice differs or is missing: " + name)
++                raise ValueError("Pinned model notice differs or is missing: " + name)
+     if not required.issubset(files):
+         raise ValueError("Runtime pair legal/notice inventory is incomplete")
+     allowed = set(required)
+--- scripts/tests/test_license_declarations.py
++++ scripts/tests/test_license_declarations.py
+@@ -17,10 +17,7 @@
+ class DeclarationTests(unittest.TestCase):
+     def test_trained_model_notices_retain_all_four_companions_and_exact_catalog(self):
+         root = Path(__file__).resolve().parents[2]
+-        expected = {'minilm-v2-LICENSE.txt':'LICENSE',
+-                    'minilm-v2-TRAINING-NOTICES.md':'TRAINING-NOTICES.md',
+-                    'minilm-v2-provenance.json':'training-provenance.json',
+-                    'CC-BY-4.0.txt':'CC-BY-4.0.txt'}
++        expected = {'minilm-LICENSE.txt':'LICENSE'}
+         with tempfile.TemporaryDirectory() as temporary:
+             output = Path(temporary)/'notices'
+             MODULE.stage_model_notices(root, output)
+@@ -30,12 +27,11 @@
+                 self.assertEqual((staged/destination).read_bytes(),(root/'third_party/models'/source).read_bytes())
+             self.assertEqual((staged/'provenance.json').read_bytes(),
+                              (root/'crates/airk-retrieval/src/model_catalog.json').read_bytes())
+-            self.assertIn(b'Requests', (staged/'LICENSE').read_bytes())
++            self.assertEqual(hashlib.sha256((staged/'LICENSE').read_bytes()).hexdigest(), 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30')
+ 
+     def test_any_mutated_companion_refuses_before_model_notice_output(self):
+         root = Path(__file__).resolve().parents[2]
+-        for changed in ['minilm-v2-LICENSE.txt','minilm-v2-TRAINING-NOTICES.md',
+-                        'minilm-v2-provenance.json','CC-BY-4.0.txt']:
++        for changed in ['minilm-LICENSE.txt']:
+             with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temporary:
+                 fixture = Path(temporary)/'source'
+                 models = fixture/'third_party/models'
+--- scripts/tests/test_package_extension.py
++++ scripts/tests/test_package_extension.py
+@@ -95,8 +95,7 @@
+                 self.assertFalse((root / "missing").exists())
+ 
+     def test_vsix_model_notice_owner_retains_exact_public_companions_and_rejects_extra_files(self):
+-        expected = {"LICENSE": "minilm-v2-LICENSE.txt", "TRAINING-NOTICES.md": "minilm-v2-TRAINING-NOTICES.md",
+-                    "training-provenance.json": "minilm-v2-provenance.json", "CC-BY-4.0.txt": "CC-BY-4.0.txt"}
++        expected = {"LICENSE": "minilm-LICENSE.txt"}
+         with tempfile.TemporaryDirectory() as directory:
+             stage = Path(directory)
+             package.stage_model_notices(stage)
+@@ -106,7 +105,7 @@
+                 self.assertEqual((notice / output).read_bytes(), (package.ROOT / "third_party/models" / source).read_bytes())
+             self.assertEqual((notice / "provenance.json").read_bytes(), (package.ROOT / "crates/airk-retrieval/src/model_catalog.json").read_bytes())
+             (notice / "not-reviewed.txt").write_text("must not ship")
+-            with self.assertRaisesRegex(ValueError, "Unexpected trained-model notice inventory"):
++            with self.assertRaisesRegex(ValueError, "Unexpected model notice inventory"):
+                 package.stage_model_notices(stage)
+ 
+     def test_finished_vsix_refuses_unresolvable_listing_images_even_with_valid_hashes(self):
+--- scripts/tests/test_package_native.py
++++ scripts/tests/test_package_native.py
+@@ -342,10 +342,7 @@
+     def test_trained_model_notices_require_exact_authenticated_five_file_closure(self):
+         # Independent roster and literal rights pins: no expected set derived from the producer.
+         companions = {
+-            "minilm-v2-LICENSE.txt": ("LICENSE", "9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd"),
+-            "minilm-v2-TRAINING-NOTICES.md": ("TRAINING-NOTICES.md", "2daba18214e777ecb68e1154c26eb9d50c9f8ef25895e4dcc8af3d9d1275e4be"),
+-            "minilm-v2-provenance.json": ("training-provenance.json", "6f6a29bff30ef64212b0c6fc56095d94df3184856e488023820d995fbb68da81"),
+-            "CC-BY-4.0.txt": ("CC-BY-4.0.txt", "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411"),
++            "minilm-LICENSE.txt": ("LICENSE", "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"),
+         }
+         for target in SPLIT_IMAGES:
+             with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
+@@ -362,11 +359,9 @@
+                 files, _ = package.validate_runtime(root, "1.9.0", target, self.source)
+                 self.assertEqual({name.removeprefix("notices/all-MiniLM-L6-v2/") for name in files
+                                   if name.startswith("notices/all-MiniLM-L6-v2/")},
+-                                 {"LICENSE", "TRAINING-NOTICES.md", "training-provenance.json",
+-                                  "CC-BY-4.0.txt", "provenance.json"})
++                                 {"LICENSE", "provenance.json"})
+                 # Reseal the outer inventory to prove it cannot authorize changed legal bytes.
+-                for name in ("LICENSE", "TRAINING-NOTICES.md", "training-provenance.json",
+-                             "CC-BY-4.0.txt", "provenance.json"):
++                for name in ("LICENSE", "provenance.json"):
+                     path = notice_root / name
+                     original = path.read_bytes()
+                     for replacement in (None, original + b"tampered"):
+@@ -375,7 +370,7 @@
+                         else:
+                             path.write_bytes(replacement)
+                         seal_split(root, pair, build)
+-                        with self.assertRaisesRegex(ValueError, "Pinned trained-model notice"):
++                        with self.assertRaisesRegex(ValueError, "Pinned model notice"):
+                             package.validate_runtime(root, "1.9.0", target, self.source)
+                         path.write_bytes(original)
+                 (notice_root / "unreviewed.txt").write_bytes(b"extra")

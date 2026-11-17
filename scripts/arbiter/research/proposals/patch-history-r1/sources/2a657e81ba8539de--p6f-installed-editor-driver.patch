@@ -1,0 +1,920 @@
+diff --git a/packages/vscode/src/test/installedEditor.ts b/packages/vscode/src/test/installedEditor.ts
+index a0b90f6..6c49cd2 100644
+--- a/packages/vscode/src/test/installedEditor.ts
++++ b/packages/vscode/src/test/installedEditor.ts
+@@ -6,11 +6,15 @@ import { createHash } from 'node:crypto';
+ import * as fs from 'node:fs/promises';
+ import * as path from 'node:path';
+ import * as vscode from 'vscode';
+-import { LaunchSpec, launchArgs } from '../model';
+-import { probeMcp, runJson } from '../native';
++import { parse as parseJsonc, type ParseError } from 'jsonc-parser';
++import { UNIFIED_TOOLS } from '../model';
+ import { readRetryDelay } from '../explorerEvidence';
+ 
+ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
++class NativeReplyError extends Error {
++    readonly code?:string;
++    constructor(readonly reply:unknown,body?:any){super('Native MCP refused: '+JSON.stringify(reply));const code=body?.error?.code??body?.code??(reply as any)?.error?.data?.code;this.code=typeof code==='string'?code:undefined;}
++}
+ 
+ async function waitFor(file: string): Promise<void> {
+     const end = Date.now() + 150000;
+@@ -25,9 +29,11 @@ class Mcp {
+     private stderr = '';
+     private sequence = 0;
+     private pending = new Map<number, { resolve(value: any): void; reject(error: Error): void; timer: NodeJS.Timeout }>();
+-    constructor(spec: LaunchSpec) {
+-        this.child = spawn(spec.command, launchArgs(spec), { cwd: spec.root, windowsHide: true,
+-            env: { ...process.env }, stdio: 'pipe' });
++    constructor(definition: vscode.McpStdioServerDefinition) {
++        const environment={...process.env};
++        for(const [key,value]of Object.entries(definition.env??{})){if(value===null)delete environment[key];else environment[key]=String(value);}
++        this.child = spawn(definition.command, [...definition.args], { cwd: definition.cwd?.fsPath??path.dirname(definition.command), windowsHide: true,
++            env: environment, stdio: 'pipe' });
+         let buffer = '';
+         this.child.stdout.setEncoding('utf8');
+         this.child.stdout.on('data', data => {
+@@ -42,7 +48,7 @@ class Mcp {
+         });
+         this.child.stderr.on('data', data => { this.stderr = (this.stderr + data.toString()).slice(-8192); });
+         this.child.on('error', error => this.fail(error));
+-        this.child.on('exit', code => this.fail(new Error(`MCP exited: ${code}: ${this.stderr}`)));
++        this.child.on('exit', code => {let body:any;try{body=JSON.parse(this.stderr.trim().split(/\r?\n/).at(-1)??'null');}catch{}this.fail(new NativeReplyError({exit_code:code,stderr:this.stderr},body));});
+         this.child.stdin.on('error', error => this.fail(error));
+     }
+     private fail(error: Error): void {
+@@ -50,6 +56,7 @@ class Mcp {
+         this.pending.clear();
+     }
+     async request(method: string, params: object, timeout = method === 'initialize' ? 90000 : 30000): Promise<any> {
++        assert.ok(this.sequence<512,'Private native request budget exhausted');
+         const id = ++this.sequence;
+         return new Promise((resolve, reject) => {
+             const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`MCP timed out: ${method}`)); }, timeout);
+@@ -59,8 +66,10 @@ class Mcp {
+     }
+     async start(): Promise<void> {
+         const result = await this.request('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'airk-installed-editor-test', version: '1' } });
+-        assert.ok(!result.error);
++        if(result.error)throw new NativeReplyError(result,result.error.data);
+         this.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
++        const tools=await this.request('tools/list',{});
++        assert.deepEqual(tools.result.tools.map((tool:any)=>tool.name).sort(),[...UNIFIED_TOOLS].sort());
+     }
+     async call(name: string, args: object, rejected = false): Promise<any> {
+         const deadline = Date.now() + 30000;
+@@ -72,244 +81,276 @@ class Mcp {
+             const delay=readRetryDelay(result.result);
+             if(delay!==undefined&&Date.now()+delay<deadline){await sleep(delay);continue;}
+             const error = !!(result.error || result.result?.isError);
++            if(error&&!rejected)throw new NativeReplyError(result,body);
+             assert.equal(error, rejected, JSON.stringify(result));
+-            return rejected ? undefined : body;
++            return body;
+         }
+     }
+     close(): void { this.child.stdin.end(); this.child.kill(); this.fail(new Error('MCP closed')); }
+ }
+ 
+ export async function run(): Promise<void> {
+-    const runRoot = process.env.AIRK_EDITOR_RUN!, role = process.env.AIRK_EDITOR_ROLE!;
+-    const scenario = process.env.AIRK_EDITOR_SCENARIO!;
+-    assert.ok(runRoot && ['a', 'b'].includes(role) && ['same', 'different', 'multi', 'usage', 'untrusted'].includes(scenario));
+-    const allowed = path.resolve(__dirname, '../../../../artifacts/editor-qualification');
+-    const relative = path.relative(allowed, path.resolve(runRoot));
+-    assert.ok(relative && !relative.startsWith('..') && !path.isAbsolute(relative), 'Private qualification directory');
+-    const folder = path.join(runRoot, scenario);
+-    const marker = (name: string, owner = role) => path.join(folder, `${owner}-${name}.json`);
+-    const mark = (name: string, value: unknown = {}) => fs.writeFile(marker(name), JSON.stringify(value));
+-    const barrier = async (name: string) => { await mark(name); await waitFor(marker(name, role === 'a' ? 'b' : 'a')); };
+-    const extension = vscode.extensions.getExtension('iokaio.airk'); assert.ok(extension, 'Installed AIRK discovered');
+-    const packageVersion = JSON.parse(await fs.readFile(path.resolve(__dirname, '../../package.json'), 'utf8')).version;
+-    assert.equal(extension.packageJSON.version, packageVersion);
++    const runRoot=process.env.AIRK_EDITOR_RUN!,role=process.env.AIRK_EDITOR_ROLE!,scenario=process.env.AIRK_EDITOR_SCENARIO!;
++    assert.ok(runRoot&&['a','b'].includes(role)&&['same','different','multi','usage','untrusted','legacy'].includes(scenario));
++    const allowed=path.resolve(__dirname,'../../../../artifacts/editor-qualification');
++    const relative=path.relative(allowed,path.resolve(runRoot));
++    assert.ok(relative&&!relative.startsWith('..')&&!path.isAbsolute(relative),'Private qualification directory');
++    const folder=path.join(runRoot,scenario),marker=(name:string,owner=role)=>path.join(folder,owner+'-'+name+'.json');
++    const mark=(name:string,value:unknown={})=>fs.writeFile(marker(name),JSON.stringify(value,null,2));
++    const extension=vscode.extensions.getExtension('iokaio.airk');assert.ok(extension);
++    const packageVersion=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../package.json'),'utf8')).version;
++    assert.equal(extension.packageJSON.version,packageVersion);
+     const stage=process.env.AIRK_EDITOR_DEVELOPMENT_STAGE;
+     if(stage)assert.equal(await fs.realpath(extension.extensionPath),await fs.realpath(stage));
+     else assert.ok(path.resolve(extension.extensionPath).startsWith(path.join(runRoot,'extensions')+path.sep));
+-    const api = await extension.activate();
+-    await api.whenReady();
+-    const commands = await vscode.commands.getCommands(true);
+-    for (const name of ['airk.index', 'airk.reindex', 'airk.chooseStorage', 'airk.collections', 'airk.setupAgent', 'airk.verifyMcp', 'airk.status', 'airk.usage']) {
+-        assert.ok(commands.includes(name), name);
+-    }
++    const api=await extension.activate();await api.whenReady();
++    const evidence:any={scenario,role,editor:vscode.version,version:packageVersion,installed:!stage,trusted:vscode.workspace.isTrusted,extensionHostPid:process.pid,checks:[],native:[]};
++    const checks=evidence.checks as string[];
++    const phaseFile=marker('phase'),phase=JSON.parse(await fs.readFile(phaseFile,'utf8').catch(()=>'null'));
++    let sequence=phase?.sequence??0;
++    const ui=async(action:string,input:any={},route?:string):Promise<any>=>{
++        if(route)await vscode.commands.executeCommand('airk.explorer.open',route);
++        const id=++sequence;await mark('ui-request',{sequence:id,action,...input});
++        const file=marker('ui-done-'+id);await waitFor(file);
++        const value=JSON.parse(await fs.readFile(file,'utf8'));
++        assert.ok(Buffer.byteLength(JSON.stringify(value))<=1048576,'Complete UI evidence exceeds the disclosed fixture bound');
++        evidence.native.push({action,value});return value;
++    };
++    const definitions=async()=>await api.getServerDefinitions() as vscode.McpStdioServerDefinition[];
++    const noSelection=async(label:string)=>assert.deepEqual(await definitions(),[],label);
++    const route={library:'#indexing/library',projects:'#indexing/projects',window:'#indexing/window'};
++    const applied=(view:any)=>{
++        assert.equal(view.outcome?.status,'catalog_applied',JSON.stringify(view));
++        assert.match(view.outcome.receipt.operation_id,/^[0-9a-f]{32}$/);
++        if(view.outcome.receipt.authority_fence_required)assert.ok(view.outcome.fenced_receipt?.proof,'Complete native delivery-fence proof');
++        return view;
++    };
++    const context=()=>ui('context',{},route.window);
++    const use=async(selection:any)=>{
++        await context();await ui('page',{kind:'grants'});await ui('inspect',{kind:'grant',id:selection.grant});
++        const result=await ui('useGrant',{index:selection.index,project:selection.project});
++        assert.equal(result.outcome.selected_subset,true);
++        const current=await definitions();assert.equal(current.length,1,'One deliberately selected Index, independent of open folder count');
++        const argument=current[0].args.indexOf('--catalog-session');assert.ok(argument>=0,'Actual native catalog selector');
++        const selector=JSON.parse(current[0].args[argument+1]);
++        assert.equal(selector.index_id,selection.index);assert.equal(selector.grant_id,selection.grant);
++        assert.deepEqual(selector.project_ids,[selection.project]);
++        assert.ok(!current[0].args.includes('--root'),'No reconstructed legacy source selector');
++        evidence.definitions=(evidence.definitions??[]).concat(current.map(value=>({command:value.command,args:[...value.args],env:value.env,cwd:value.cwd?.fsPath})));
++        return current[0];
++    };
++    const scoped=(body:any,selection:any)=>{
++        const scope=body.scope_observation;assert.equal(scope?.qualifier,'selected_subset');
++        assert.equal(scope.provenance,'user_reviewed_project_grant');assert.equal(scope.grant.id,selection.grant);
++        assert.match(scope.fingerprint,/^[0-9a-f]{64}$/);assert.equal(scope.members.length,1);
++        assert.equal(scope.members[0].index_id,selection.index);
++        assert.deepEqual(scope.members[0].memberships.map((value:any)=>value.project_id),[selection.project]);
++        return body;
++    };
++    const finish=async()=>{await mark('result',evidence);await mark('capture');await waitFor(path.join(folder,'capture-complete.json'));};
+     await vscode.commands.executeCommand('airk.dashboard.focus');
+-    const evidence: Record<string, unknown> = { scenario, role, editor: vscode.version, version: extension.packageJSON.version,
+-        installed: !stage, trusted: vscode.workspace.isTrusted, extensionHostPid: process.pid, checks: [] };
+-    const checks = evidence.checks as string[];
+-    const openFixture = async (spec: LaunchSpec) => {
+-        const nativePath=(value:string)=>process.platform==='win32'?path.toNamespacedPath(value):value;
+-        for(const folder of vscode.workspace.workspaceFolders??[]) {
+-            if(path.relative(nativePath(await fs.realpath(folder.uri.fsPath)),nativePath(spec.root))==='') {
+-                return vscode.workspace.openTextDocument(vscode.Uri.joinPath(folder.uri,'fixture.ts'));
++    if(scenario==='legacy'){
++        const fixture=JSON.parse(await fs.readFile(path.join(folder,'legacy-fixture.json'),'utf8'));
++        assert.equal(fixture.fixture_kind,'managed_native_catalog_upgrade');
++        const configBytes=await fs.readFile(fixture.legacy_config.path);
++        assert.equal(createHash('sha256').update(configBytes).digest('hex'),fixture.legacy_config.sha256);
++        const errors:ParseError[]=[],parsed=parseJsonc(configBytes.toString('utf8'),errors,{allowTrailingComma:true}),entry=parsed.servers[fixture.legacy_config.entry_key];assert.equal(errors.length,0);
++        assert.equal(entry.command,fixture.legacy_config.command);assert.deepEqual(entry.args,fixture.legacy_config.args);
++        assert.deepEqual(entry.env??{},fixture.legacy_config.env??{});
++        const definition=new vscode.McpStdioServerDefinition('Retained manual legacy configuration',entry.command,entry.args,entry.env);
++        definition.cwd=vscode.Uri.file(fixture.legacy_config.cwd);
++        const client=new Mcp(definition);
++        try{
++            if(fixture.legacy_config.binding_kind==='pinned_predecessor'){
++                let refusal:unknown;try{await client.start();await client.call('symbols',{name:fixture.probe.symbol,compact:false});}catch(error){refusal=error;}
++                assert.ok(refusal instanceof NativeReplyError&&refusal.code&&fixture.expected_refusal_codes.includes(refusal.code),'A timeout or arbitrary failure is not incompatible-format proof');
++                evidence.native.push({predecessorRefusal:refusal.reply,code:refusal.code});evidence.legacyRetrievalParity=false;
++            }else{
++                await client.start();const result=await client.call('symbols',{name:fixture.probe.symbol,compact:false});
++                assert.equal(result.scope_observation?.provenance,'imported_legacy_snapshot');
++                assert.equal(result.items.length,1);assert.equal(result.items[0].citation.path,fixture.probe.path);
++                assert.equal(result.items[0].citation.content_hash,fixture.probe.content_sha256);
++                evidence.native.push({legacyProbe:result});evidence.legacyRetrievalParity=true;
+             }
+-        }
+-        throw new Error('Fixture has no matching opened workspace URI');
++        }finally{client.close();}
++        assert.equal(createHash('sha256').update(await fs.readFile(fixture.legacy_config.path)).digest('hex'),fixture.legacy_config.sha256);
++        await noSelection('Existing manual agent configuration owns its connection; no duplicate automatic definition');
++        evidence.legacyUpgradeCoverage=true;checks.push(fixture.legacy_config.binding_kind==='pinned_predecessor'?'unchanged incapable pinned predecessor refuses upgraded format':'unchanged stable launcher retrieves through sealed imported scope');
++        await finish();return;
++    }
++    if(scenario==='untrusted'){
++        assert.equal(vscode.workspace.isTrusted,false);await noSelection('Restricted Mode advertises no native scope');
++        await assert.rejects(Promise.resolve(vscode.commands.executeCommand('airk.index')),/workspace_untrusted/);
++        await assert.rejects(Promise.resolve(vscode.commands.executeCommand('airk.usage')),/workspace_untrusted/);
++        await ui('restricted',{},route.library);
++        assert.deepEqual(await fs.readdir(path.join(folder,'storage')),[]);
++        checks.push('Restricted Mode native handlers and actual Indexing forms blocked');
++        await finish();return;
++    }
++    assert.equal(vscode.workspace.isTrusted,true);
++    const source=await fs.realpath(path.join(folder,scenario==='different'&&role==='b'?'workspace-b':'workspace-a'));
++    const additional=await fs.realpath(path.join(folder,scenario==='different'&&role==='b'?'shared-b':'shared-a'));
++    const side=scenario==='different'&&role==='b'?'b':'a',data=path.join(folder,'storage','index-'+side);
++    const own=side==='b'?'WindowBetaEvidence':'WindowAlphaEvidence',foreign=side==='b'?'WindowAlphaEvidence':'WindowBetaEvidence';
++    const canonical=async(value:string)=>{const actual=await fs.realpath(value);return process.platform==='win32'?path.toNamespacedPath(actual).toLowerCase():actual;};
++    const createIndex=async(suffix:string,primary:string,extra:string,leaf:string)=>{
++        await ui('page',{kind:'indexes'},route.library);
++        const draft=await ui('setupDraft',{name:'Fixture index '+suffix,source:primary,storage:leaf,collection:'fixture-'+suffix,additional:{alias:'shared',path:extra}});
++        assert.equal(draft.setupReview.response.status,'catalog_index_setup_draft');
++        await noSelection('Native setup preview conveys no permission');await assert.rejects(fs.stat(leaf),{code:'ENOENT'});
++        const setup=await ui('setupApply');assert.equal(setup.outcome.status,'catalog_index_setup_applied');
++        assert.equal(setup.outcome.receipt.stage,'ready','Actual native setup completion');
++        const index=setup.outcome.receipt.index_id;assert.match(index,/^idx_[0-9a-f]{32}$/);
++        await noSelection('Completed setup remains unselected');await ui('page',{kind:'indexes'});
++        const detail=await ui('inspect',{kind:'index',id:index}),nativeIndex=detail.detail.detail.item.value,backing=nativeIndex.backing;
++        assert.equal(await canonical(backing.root),await canonical(primary));assert.equal(await canonical(backing.data_root),await canonical(leaf));
++        const nativeExtra=setup.outcome.receipt.request.sources.find((row:any)=>row.owner===false&&row.aliases.includes('shared'));
++        assert.ok(nativeExtra);assert.equal(await canonical(nativeExtra.canonical_path),await canonical(extra));
++        await ui('page',{kind:'projects'},route.projects);
++        const projectDraft=await ui('projectDraft',{name:'Fixture Project '+suffix}),project=projectDraft.review.request.operation.id;
++        assert.match(project,/^prj_[0-9a-f]{32}$/);applied(await ui('apply'));await ui('page',{kind:'projects'});await ui('inspect',{kind:'project',id:project});
++        const member=await ui('membershipDraft',{index,roots:[{path:backing.root,relative:'fixture.ts',kind:'exact'},{path:nativeExtra.canonical_path,relative:'',kind:'subtree'}]});
++        assert.equal(member.review.request.operation.membership.scope.length,2);applied(await ui('apply'));
++        await noSelection('Metadata Project membership is not permission');await context();await ui('grantDraft',{project,index});
++        const grantDraft=await ui('read'),grant=grantDraft.review.request.operation.grant.id;
++        assert.match(grant,/^grt_[0-9a-f]{32}$/);applied(await ui('apply',{grant:true}));await noSelection('Persisted reviewed grant is inert');
++        checks.push('native setup and multi-source membership full previews/receipts','persisted grant remains inert');
++        return {index,project,grant,backing,name:nativeIndex.name,source:primary,additional:extra,data:leaf};
+     };
+-    let uiSequence=0;
+-    const reviewedRegistration=async(root:string)=>{
+-        root=await fs.realpath(root);
+-        // Management › Projects holds the reviewed registration control.
++    let selection:any=phase?.selection;
++    if(phase?.stage==='reloaded'){
++        await noSelection('Reloaded saved preferences never restore permission');
++        await vscode.commands.executeCommand('airk.collections');await ui('connect',{},'#manage/service');
++        await noSelection('Reconnect does not turn a saved preference into permission');
++        checks.push('real reload retained an inert saved choice and withdrew automatic scope');
++    }else{
++        await noSelection('Fresh trusted folders are not indexes or permission');
+         await vscode.commands.executeCommand('airk.collections');
+-        const sequence=++uiSequence;
+-        await mark('ui-request',{sequence,action:'register',root:path.basename(root),source:root,storage:vscode.workspace.getConfiguration('airk').inspect<string>('storage.path')?.globalValue});
+-        await waitFor(marker(`ui-done-${sequence}`));
+-        const until=Date.now()+180000;
+-        while(Date.now()<until){const definitions:vscode.McpStdioServerDefinition[]=await api.getServerDefinitions();
+-            for(const definition of definitions){const args=definition.args;
+-                if(await fs.realpath(args[args.indexOf('--root')+1])===root&&await fs.realpath(args[args.indexOf('--data-dir')+1])===await fs.realpath(vscode.workspace.getConfiguration('airk').inspect<string>('storage.path')!.globalValue!))return;}
+-            await sleep(100);
++        await ui('connect',{},'#manage/service');
++        await ui('page',{kind:'indexes'},route.library);
++        if(scenario==='same'&&role==='b'){
++            await waitFor(marker('created','a'));
++            selection=JSON.parse(await fs.readFile(marker('created','a'),'utf8'));
++            checks.push('second window reuses the existing native Index without setup');
++        }else{
++            if(scenario==='different'&&role==='b')await waitFor(marker('created','a'));
++            selection=await createIndex(side,source,additional,data);
+         }
+-        throw new Error('Reviewed native registration did not become available');
+-    };
+-    if (scenario === 'untrusted') {
+-        assert.equal(vscode.workspace.isTrusted, false);
+-        assert.deepEqual(await api.getServerDefinitions(), []);
+-        await assert.rejects(Promise.resolve(vscode.commands.executeCommand('airk.index')), /runtime_client_no_longer_authorized/);
+-        await assert.rejects(Promise.resolve(vscode.commands.executeCommand('airk.usage')), /runtime_client_no_longer_authorized/);
+-        assert.deepEqual(await fs.readdir(path.join(folder, 'storage')), [], 'Untrusted workspace must not create an index');
+-        checks.push('untrusted definitions empty', 'index and usage commands rejected', 'storage untouched', 'dashboard focus');
+-        await vscode.commands.executeCommand('airk.explorer.open', '#manage/agents');
+-    } else {
+-        assert.equal(vscode.workspace.isTrusted, true);
+-        assert.deepEqual(await api.getServerDefinitions(),[],'A fresh profile must review roots before advertising MCP');
+-        for(const workspace of vscode.workspace.workspaceFolders??[])await reviewedRegistration(await fs.realpath(workspace.uri.fsPath));
+-        const definitions: vscode.McpStdioServerDefinition[] = await api.getServerDefinitions();
+-        assert.equal(definitions.length, ['multi', 'usage'].includes(scenario) ? 2 : 1);
+-        const specs: LaunchSpec[] = definitions.map(definition => ({ command: definition.command,
+-            root: definition.args[definition.args.indexOf('--root') + 1], dataDir: definition.args[definition.args.indexOf('--data-dir') + 1],
+-            collection: definition.args[definition.args.indexOf('--collection') + 1], name: definition.label,
+-            service:{installDir:definition.args[definition.args.indexOf('--install-dir')+1],project:definition.args[definition.args.indexOf('--service-project')+1]} }));
+-        assert.ok(specs.every(spec=>spec.command.includes('airk-launcher')&&/^[a-f0-9]{64}$/.test(spec.service!.project)),'Reviewed stable-launcher bindings');
+-        assert.deepEqual((await Promise.all(specs.map(spec => fs.realpath(spec.root)))).sort(),
+-            (await Promise.all((vscode.workspace.workspaceFolders ?? []).map(item => fs.realpath(item.uri.fsPath)))).sort());
+-        evidence.collections = specs.map(spec => spec.collection);
+-        for (const spec of specs) { assert.equal(await fs.realpath(spec.dataDir), await fs.realpath(path.join(folder, 'storage'))); }
+-        if (scenario === 'same' || scenario === 'different') { await barrier('ready'); }
+-        for (const spec of specs) {
+-            const document = await openFixture(spec);
+-            await vscode.window.showTextDocument(document);
+-            await mark('progress',{step:'index',root:spec.root,activeUri:document.uri.toString(),workspace:vscode.workspace.getWorkspaceFolder(document.uri)?.uri.toString()});
+-            await vscode.commands.executeCommand('airk.index');
+-            const ready=new Mcp(spec);await ready.start();
+-            try{const until=Date.now()+180000;let found=false;
+-                while(Date.now()<until){const symbols=await ready.call('airk_symbols',{name:path.basename(spec.root)==='workspace-b'?'WindowBetaEvidence':'WindowAlphaEvidence',compact:false});
+-                    if(symbols.items?.length===1){found=true;break;}await sleep(150);}
+-                assert.ok(found,'Native accepted work published the fixture symbols');
+-            }finally{ready.close();}
+-        }
+-        if (scenario === 'multi' && role === 'a') {
+-            // The installed Explorer: Search renders a cited hit and Management lists the project (checked over CDP).
+-            await vscode.commands.executeCommand('airk.explorer.search', 'return 42');
+-            await mark('explorer-ready');
+-            await waitFor(path.join(folder, 'explorer-checked.json'));
+-            checks.push('installed Explorer search cites the fixture', 'installed Explorer Management lists the project');
++        await mark('created',selection);
++        if(scenario==='usage'){
++            const secondary=await createIndex('b',await fs.realpath(path.join(folder,'workspace-b')),await fs.realpath(path.join(folder,'shared-b')),path.join(folder,'storage','index-b'));
++            await mark('secondary',secondary);
+         }
+-        if (scenario === 'usage') {
+-            const before = await Promise.all(specs.map(spec => runJson<any>(spec, 'usage', ['report'])));
+-            assert.ok(before.every(report => report.report.calls > 0));
+-            const sourceBefore = await Promise.all(specs.map(spec => fs.readFile(path.join(spec.root, 'fixture.ts'), 'utf8')));
+-            await fs.writeFile(path.join(folder, 'measurement.json'), JSON.stringify({ schema_version: 1,
+-                event_id: 'b'.repeat(32), unix_ms: Date.now(), client: 'codex', content_kind: 'code', provenance: 'client_reported',
+-                context: null, paired_task: null, airk_request_ids: [], session: { model_revision_sha256: 'a'.repeat(64),
+-                    requests: 1, input_tokens: 12000, cached_input_tokens: 2000, output_tokens: 1000, elapsed_ms: 45000, tool_round_trips: 3 } }));
+-            const otherMeasurement = path.join(folder, 'other-measurement.json');
+-            const other = JSON.parse(await fs.readFile(path.join(folder, 'measurement.json'), 'utf8'));
+-            other.event_id = 'c'.repeat(32); other.session.input_tokens = 888; other.session.cached_input_tokens = 0;
+-            await fs.writeFile(otherMeasurement, JSON.stringify(other));
+-            const draft=path.join(folder,'other-usage-draft.json');await fs.writeFile(draft,JSON.stringify({operation:'import_usage',path:otherMeasurement}));
+-            await runJson(specs[1], 'configure', ['--file', draft]);
+-            await vscode.window.showTextDocument(await openFixture(specs[0]));
+-            await vscode.commands.executeCommand('airk.usage');
+-            await mark('usage-ready', { specs });
+-            await waitFor(path.join(folder, 'usage-open-second.json'));
+-            await vscode.window.showTextDocument(await openFixture(specs[1]));
+-            await vscode.commands.executeCommand('airk.usage');
+-            await mark('usage-second-open');
+-            await waitFor(path.join(folder, 'usage-ui-complete.json'));
+-            const after = await Promise.all(specs.map(spec => runJson<any>(spec, 'usage', ['report'])));
+-            assert.equal(after[0].report.calls, 0); assert.equal(after[0].supplemental.length, 0); assert.equal(after[0].lifetime, null);
+-            assert.ok(after[1].report.calls >= before[1].report.calls, 'other collection can gain background observations');
+-            assert.equal(after[1].supplemental.flatMap((bucket: any) => bucket.summaries)
+-                .reduce((total: bigint, summary: any) => total + BigInt(summary.sessions.input_tokens), 0n), 888n,
+-                'clearing first collection preserves second collection supplied evidence');
+-            assert.deepEqual(await Promise.all(specs.map(spec => fs.readFile(path.join(spec.root, 'fixture.ts'), 'utf8'))), sourceBefore);
+-            for (const spec of specs) { assert.ok((await fs.stat(path.join(spec.dataDir, 'collections-1.4', spec.collection, 'active.json'))).isFile()); }
+-            checks.push('native reports for two collections', 'clear scoped to selected collection', 'source bytes and indexes preserved');
+-            const next = path.join(folder, 'selected-storage'); await fs.mkdir(next);
+-            await vscode.workspace.getConfiguration('airk').update('storage.path', next, vscode.ConfigurationTarget.Global);
+-            assert.deepEqual((await api.getServerDefinitions()).map((value:vscode.McpStdioServerDefinition)=>value.args),definitions.map(value=>value.args),'Storage preference preserves reviewed bindings');
+-            await reviewedRegistration(specs[0].root);
+-            const reboundContents = await fs.readdir(next);
+-            await mark('usage-storage-changed');
+-            await waitFor(path.join(folder, 'usage-stale-checked.json'));
+-            assert.deepEqual(await fs.readdir(next), reboundContents, 'stale usage panel must not create additional storage');
+-            checks.push('reviewed storage rebinding invalidates open reporting panels');
+-            await vscode.commands.executeCommand('airk.explorer.open', '#manage/agents');
+-            await mark('result', evidence); await mark('capture');
+-            await waitFor(path.join(folder, 'capture-complete.json'));
+-            return;
++        if(scenario==='multi'){
++            await context();await ui('associationDraft',{project:selection.project,index:selection.index});applied(await ui('apply'));
++            await noSelection('Saved default association is not permission');
++            const other=path.join(folder,'storage','index-b');await assert.rejects(fs.stat(other),{code:'ENOENT'});
++            checks.push('two open folders do not select or create all indexes');
+         }
+-        if (scenario === 'same' || scenario === 'different') { await barrier('indexed'); }
+-        checks.push('native command indexing', 'shared storage selection');
+-        for (const spec of specs) {
+-            const own = path.basename(spec.root) === 'workspace-b' ? 'WindowBetaEvidence' : 'WindowAlphaEvidence';
+-            const foreign = own === 'WindowAlphaEvidence' ? 'WindowBetaEvidence' : 'WindowAlphaEvidence';
+-            const client = new Mcp(spec);
+-            try {
+-                await client.start();
+-                const symbols = await client.call('airk_symbols', { name: own, compact: false });
+-                assert.equal(symbols.collection, spec.collection); assert.equal(symbols.items.length, 1);
+-                const sourceHash = createHash('sha256').update(await fs.readFile(path.join(spec.root, 'fixture.ts'))).digest('hex');
+-                assert.equal(symbols.items[0].citation.path, 'fixture.ts');
+-                assert.equal(symbols.items[0].citation.content_hash, sourceHash);
+-                const search = await client.call('airk_search', { query: own, limit: 5, mode: 'lexical' });
+-                assert.equal(search.collection, spec.collection); assert.ok(search.hits.length);
+-                assert.equal((await client.call('airk_search', { query: foreign, limit: 5, mode: 'lexical' })).hits.length, 0);
+-                await client.call('airk_search', { query: foreign, collection: 'other' }, true);
+-                await client.call('airk_read_file', { path: '../workspace-b/fixture.ts', start_line: 1, end_line: 2 }, true);
+-                if (scenario === 'same' || scenario === 'different') {
+-                    await barrier('reading');
+-                    if (role === 'a') {
+-                        await fs.appendFile(path.join(spec.root, 'fixture.ts'), '\nexport function SharedEditEvidence() { return 7; }\n');
+-                        await vscode.commands.executeCommand('airk.index');
+-                    } else {
+-                        for (let n = 0; n < 10; n++) {
+-                            const reply = await client.call('airk_symbols', { name: own, compact: false });
+-                            assert.equal(reply.collection, spec.collection); assert.equal(reply.items.length, 1);
+-                            await sleep(50);
+-                        }
+-                    }
+-                    await barrier('edited');
+-                    let changed = await client.call('airk_symbols', { name: 'SharedEditEvidence', compact: false });
+-                    if (scenario === 'same' || role === 'a') {
+-                        const deadline = Date.now() + 180000;
+-                        while (!changed.items.length && Date.now() < deadline) {
+-                            await sleep(150);
+-                            changed = await client.call('airk_symbols', { name: 'SharedEditEvidence', compact: false });
+-                        }
+-                    }
+-                    assert.equal(changed.collection, spec.collection);
+-                    assert.equal(changed.items.length, scenario === 'same' || role === 'a' ? 1 : 0);
+-                    if (changed.items.length) {
+-                        assert.equal(changed.items[0].citation.path, 'fixture.ts');
+-                        assert.equal(changed.items[0].citation.content_hash,
+-                            createHash('sha256').update(await fs.readFile(path.join(spec.root, 'fixture.ts'))).digest('hex'));
+-                    }
+-                    checks.push('concurrent MCP reads during peer indexing', 'post-edit collection isolation');
++    }
++    if(['same','different'].includes(scenario)){await mark('metadata-ready');await waitFor(marker('metadata-ready',role==='a'?'b':'a'));}
++    const definition=await use(selection);
++    if(scenario==='multi'&&!phase){
++        await mark('phase',{stage:'reloaded',selection,sequence});
++        await vscode.commands.executeCommand('workbench.action.reloadWindow');
++        // The actual replacement extension host resumes from the harness marker.
++        await new Promise<void>(()=>{});return;
++    }
++    if(['same','different'].includes(scenario)){
++        await mark('ready');await waitFor(marker('ready',role==='a'?'b':'a'));
++    }
++    const client=new Mcp(definition);
++    try{
++        await client.start();
++        const fixtureDocument=await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(source,'fixture.ts')));
++        await vscode.window.showTextDocument(fixtureDocument);await vscode.commands.executeCommand('airk.index');
++        let symbols:any;const until=Date.now()+180000;
++        do{
++            symbols=scoped(await client.call('symbols',{name:own,compact:false}),selection);
++            if(symbols.items?.length===1)break;
++            assert.ok(Date.now()<until,'Explicit native indexing did not publish fixture');await sleep(500);
++        }while(true);
++        assert.equal(symbols.items[0].citation.path,'fixture.ts');
++        assert.equal(symbols.items[0].citation.content_hash,createHash('sha256').update(await fs.readFile(path.join(source,'fixture.ts'))).digest('hex'));
++        const extra=scoped(await client.call('symbols',{name:'SharedAllowedEvidence',compact:false}),selection);assert.equal(extra.items.length,1);
++        assert.equal((await client.call('search',{query:foreign,mode:'lexical',limit:5})).hits.length,0);
++        assert.equal((await client.call('search',{query:'HiddenPrivateEvidence',mode:'lexical',limit:5})).hits.length,0);
++        const denied=await client.call('read_file',{path:'hidden.ts',start_line:1,end_line:2},true);scoped(denied,selection);
++        await client.call('read_file',{path:'../workspace-b/fixture.ts',start_line:1,end_line:2},true);
++        evidence.native.push({symbols,additional:extra,denied});
++        checks.push('actual raw definition command/args/env','complete native tool catalog','native complete scope observation','citation bytes and out-of-grant isolation');
++        const before=definition.args.slice(),otherData=path.join(folder,'selected-storage');
++        await fs.mkdir(otherData,{recursive:true});
++        await vscode.workspace.getConfiguration('airk').update('storage.path',otherData,vscode.ConfigurationTarget.Global);
++        const after=await definitions();assert.equal(after.length,1);assert.deepEqual(after[0].args,before);
++        assert.deepEqual(await fs.readdir(otherData),[],'Storage preference does not move immutable backing');
++        checks.push('storage preference preserves selected Index identity and backing');
++        if(['same','different'].includes(scenario)){
++            await mark('reading');await waitFor(marker('reading',role==='a'?'b':'a'));
++            if(role==='a'){
++                await fs.appendFile(path.join(source,'fixture.ts'),'\nexport function SharedEditEvidence() { return 7; }\n');
++                await vscode.commands.executeCommand('airk.index');
++            }
++            await mark('edited');await waitFor(marker('edited',role==='a'?'b':'a'));
++            const expected=scenario==='same'||role==='a'?1:0,end=Date.now()+180000;
++            let changed:any;
++            do{changed=await client.call('symbols',{name:'SharedEditEvidence',compact:false});if(changed.items.length===expected)break;assert.ok(Date.now()<end);await sleep(500);}while(true);
++            scoped(changed,selection);assert.equal(changed.items.length,expected);
++            if(expected)assert.equal(changed.items[0].citation.content_hash,createHash('sha256').update(await fs.readFile(path.join(source,'fixture.ts'))).digest('hex'));
++            await mark('retrieved');await waitFor(marker('retrieved',role==='a'?'b':'a'));
++            const peer=JSON.parse(await fs.readFile(marker('created',role==='a'?'b':'a'),'utf8'));
++            if(scenario==='same')assert.equal(selection.index,peer.index);else assert.notEqual(selection.index,peer.index);
++            checks.push('peer edit publication and Index isolation');
++            if(scenario==='same'){
++                if(role==='a'){
++                    await ui('page',{kind:'projects'},route.projects);await ui('inspect',{kind:'project',id:selection.project});
++                    const old=await ui('renameDraft',{name:'Stale review must not apply'});assert.equal(old.review.request.operation.operation,'rename_project');
++                    await mark('stale-review-ready');await waitFor(marker('peer-mutation-done','b'));
++                    const rejected=await ui('staleApply');assert.ok(rejected.error||rejected.outcome?.status!=='catalog_applied','Stale native review must not succeed');
++                    await ui('page',{kind:'projects'});const current=await ui('inspect',{kind:'project',id:selection.project});
++                    assert.equal(current.detail.detail.item.value.name,'Renamed by peer');await mark('stale-checked');
++                }else{
++                    await waitFor(marker('stale-review-ready','a'));await ui('page',{kind:'projects'},route.projects);await ui('inspect',{kind:'project',id:selection.project});
++                    await ui('renameDraft',{name:'Renamed by peer'});applied(await ui('apply'));await mark('peer-mutation-done');await waitFor(marker('stale-checked','a'));
+                 }
+-            } finally { client.close(); }
+-            assert.equal((await probeMcp(spec)).tools.length, 28);
++                checks.push('actual peer metadata change rejects a stale native review without resubmission');
++            }
+         }
+-        checks.push('16-tool handshake', 'MCP positive/negative retrieval', 'citation path/hash matches source', 'collection override rejected', 'path traversal rejected');
+-        if (scenario === 'same' || scenario === 'different') {
+-            const count = (await fs.readdir(path.join(folder, 'storage', 'collections-1.4'))).filter(name => name.startsWith('project-')).length;
+-            assert.equal(count, scenario === 'same' ? 1 : 2);
+-            checks.push(scenario === 'same' ? 'one shared collection for two windows' : 'two separate collections for two windows');
+-            await barrier('retrieved');
++        if(scenario==='usage'){
++            const secondary=JSON.parse(await fs.readFile(marker('secondary'),'utf8'));
++            const report=async(target:any)=>{
++                await use(target);await vscode.commands.executeCommand('airk.usage');await ui('usageScoped');
++                await ui('usageAdmin',{collection:target.backing.collection});await ui('usageJson',{collection:target.backing.collection});
++                const end=Date.now()+30000;let value:any;
++                do{try{value=JSON.parse(vscode.window.activeTextEditor?.document.getText()??'');}catch{}if(value?.administrative_scope?.index_id===target.index)break;assert.ok(Date.now()<end);await sleep(100);}while(true);
++                assert.equal(value.administrative_scope.label,'Entire Index history and shared data-root totals');
++                assert.equal(value.administrative_scope.qualification,'host_administrative_context_not_read_grant');assert.ok(value.administrative_scope.native_observation);
++                await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
++                evidence.native.push({administrativeUsage:value});return value;
++            };
++            const secondaryDefinition=await use(secondary),otherClient=new Mcp(secondaryDefinition);
++            try{await otherClient.start();await vscode.commands.executeCommand('airk.index');
++                const deadline=Date.now()+180000;
++                while(!scoped(await otherClient.call('symbols',{name:'WindowBetaEvidence',compact:false}),secondary).items.length){assert.ok(Date.now()<deadline);await sleep(500);}
++            }finally{otherClient.close();}
++            const before=await report(secondary);assert.ok(BigInt(before.report.calls)>0n,'The other Index must have real recorded calls before testing preservation');await report(selection);
++            await ui('usageClear',{index:selection.index,name:selection.name,collection:selection.backing.collection});
++            const after=await report(secondary);
++            assert.ok(BigInt(after.report.calls)>=BigInt(before.report.calls),'Clearing one Index must preserve the other Index ledger');
++            await use(selection);
++            scoped(await client.call('symbols',{name:own,compact:false}),selection);
++            checks.push('scoped Usage remains unavailable until explicit entire-Index administration','actual clear preserves the other Index ledger and read grant');
+         }
+-        await vscode.workspace.getConfiguration('airk').update('mcp.registrationEnabled', false, vscode.ConfigurationTarget.Global);
+-        assert.deepEqual(await api.getServerDefinitions(), []);
+-        await vscode.workspace.getConfiguration('airk').update('mcp.registrationEnabled', true, vscode.ConfigurationTarget.Global);
+-        assert.equal((await api.getServerDefinitions()).length, specs.length);
+-        checks.push('registration off/on');
+-        // A private per-profile setting change exercises the same binding refresh
+-        // used after the folder picker, without automating an OS-native dialog.
+-        if (scenario === 'multi') {
+-            await vscode.window.showTextDocument(await openFixture(specs[0]));
+-            await vscode.commands.executeCommand('airk.reindex');
+-            const sequence=++uiSequence;
+-            await mark('ui-request',{sequence,action:'approveRepair',root:path.basename(specs[0].root),source:await fs.realpath(specs[0].root),storage:specs[0].dataDir,project:specs[0].service!.project});
+-            await waitFor(marker(`ui-done-${sequence}`));
+-            const rebuilt=new Mcp(specs[0]);await rebuilt.start();
+-            try{const symbols=await rebuilt.call('airk_symbols',{name:'WindowAlphaEvidence',compact:false});
+-                assert.equal(symbols.items.length,1);assert.equal(symbols.items[0].citation.content_hash,createHash('sha256').update(await fs.readFile(path.join(specs[0].root,'fixture.ts'))).digest('hex'));
+-            }finally{rebuilt.close();}
+-            checks.push('real one-project rebuild preview approval and successful native receipt');
+-            const next = path.join(folder, 'selected-storage'); await fs.mkdir(next);
+-            await vscode.workspace.getConfiguration('airk').update('storage.path', next, vscode.ConfigurationTarget.Global);
+-            assert.deepEqual((await api.getServerDefinitions()).map((value:vscode.McpStdioServerDefinition)=>value.args),definitions.map(value=>value.args));
+-            assert.deepEqual(await fs.readdir(next),[],'Preference alone cannot create a native binding');
+-            await reviewedRegistration(specs[1].root);
+-            const moved: vscode.McpStdioServerDefinition[] = await api.getServerDefinitions();assert.equal(moved.length,2);
+-            assert.ok((await fs.stat(path.join(specs[0].dataDir,'collections-1.4',specs[0].collection,'active.json'))).isFile());
+-            await waitFor(path.join(next,'collections-1.4',specs[1].collection,'active.json'));
+-            assert.ok((await fs.stat(path.join(next,'collections-1.4',specs[1].collection,'active.json'))).isFile());
+-            checks.push('storage switch keeps previous indexes');
++        if(scenario==='multi'){
++            await vscode.commands.executeCommand('airk.explorer.search','return 42');await mark('explorer-ready');await waitFor(path.join(folder,'explorer-checked.json'));
++            checks.push('installed Explorer cited search, metadata Projects and live help');
++            await context();await ui('page',{kind:'grants'});await ui('inspect',{kind:'grant',id:selection.grant});
++            const revoke=await ui('revokeDraft');assert.equal(revoke.review.request.operation.operation,'revoke_grant');
++            const receipt=applied(await ui('apply'));assert.ok(receipt.outcome.fenced_receipt?.proof);
++            await assert.rejects(client.call('symbols',{name:own,compact:false}),'Old session must not return data after the native revocation receipt');
++            checks.push('actual grant revocation fences the retained MCP session');
+         }
+-        await vscode.commands.executeCommand('airk.explorer.open', '#manage/agents');
+-    }
+-    await mark('result', evidence);
+-    await mark('capture');
+-    await waitFor(path.join(folder, 'capture-complete.json'));
+-    console.log(JSON.stringify(evidence));
++    }finally{client.close();}
++    await vscode.commands.executeCommand('airk.explorer.open',route.window);
++    await finish();
+ }
+diff --git a/scripts/check-native-editor.cjs b/scripts/check-native-editor.cjs
+index 5ac4df2..4591d1b 100644
+--- a/scripts/check-native-editor.cjs
++++ b/scripts/check-native-editor.cjs
+@@ -9,8 +9,8 @@ const {editorUi}=require('./editor-ui.cjs');
+ const root=path.resolve(__dirname,'..');
+ const [editor,cli,source]=process.argv.slice(2).map(value=>path.resolve(value));
+ if(!source)throw new Error('Expected editor, its cli.js, and an approved extension stage or VSIX.');
+-const scenarios=(process.env.AIRK_EDITOR_SCENARIOS||'same,different,multi,usage,untrusted').split(',');
+-if(scenarios.some(value=>!['same','different','multi','usage','untrusted'].includes(value)))throw new Error('Unknown native editor scenario');
++const scenarios=(process.env.AIRK_EDITOR_SCENARIOS||'same,different,multi,usage,untrusted,legacy').split(',');
++if(scenarios.some(value=>!['same','different','multi','usage','untrusted','legacy'].includes(value)))throw new Error('Unknown native editor scenario');
+ const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms)),active=new Set();
+ const environment={...process.env,RUST_BACKTRACE:'1'};delete environment.ELECTRON_RUN_AS_NODE;delete environment.VSCODE_IPC_HOOK_CLI;
+ async function runProcess(args,logfile,extra={}){
+@@ -22,6 +22,74 @@ async function runProcess(args,logfile,extra={}){
+ }
+ async function unusedPort(){const server=net.createServer();await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const value=server.address().port;await new Promise(resolve=>server.close(resolve));return value;}
+ async function exists(file){return fs.access(file).then(()=>true,()=>false);}
++const sha=bytes=>require('node:crypto').createHash('sha256').update(bytes).digest('hex');
++function inside(root,value){const normalize=value=>process.platform==='win32'?path.toNamespacedPath(value).toLowerCase():value;const relative=path.relative(normalize(root),normalize(value));return relative!==''&&!relative.startsWith('..'+path.sep)&&relative!=='..'&&!path.isAbsolute(relative);}
++async function ownedPath(root,value,missingLeaf=false){
++    if(typeof value!=='string'||!path.isAbsolute(value))throw new Error('Expected absolute owned fixture path');
++    let resolved;try{resolved=await fs.realpath(value);}catch(error){if(!missingLeaf||error.code!=='ENOENT')throw error;resolved=path.join(await fs.realpath(path.dirname(value)),path.basename(value));}
++    if(!inside(root,resolved))throw new Error('Private editor request escaped its owned fixture');return resolved;
++}
++async function canonicalOwned(root,value){const actual=await ownedPath(root,value);const normalize=p=>process.platform==='win32'?path.toNamespacedPath(p).toLowerCase():p;if(normalize(path.resolve(value))!==normalize(actual))throw new Error('Legacy fixture path is not canonical');return actual;}
++async function legacyFixture(){
++    if(!process.env.AIRK_EDITOR_LEGACY_FIXTURE)return undefined;
++    const filename=path.resolve(process.env.AIRK_EDITOR_LEGACY_FIXTURE),bytes=await fs.readFile(filename);
++    if(bytes.length>1048576)throw new Error('Legacy fixture receipt exceeds 1 MiB');
++    const value=JSON.parse(bytes),artifacts=await fs.realpath(path.join(root,'artifacts')),fixture=await fs.realpath(value.fixture_root);
++    if(value.schema!==1||value.fixture_kind!=='managed_native_catalog_upgrade'||!inside(artifacts,fixture))throw new Error('Legacy receipt must name a native-owned artifacts fixture');
++    const normalize=p=>process.platform==='win32'?path.toNamespacedPath(p).toLowerCase():p;
++    if(normalize(path.resolve(value.fixture_root))!==normalize(fixture))throw new Error('Legacy fixture root is not canonical');
++    await canonicalOwned(fixture,filename);
++    for(const key of ['install_dir','control_dir','source_root','data_root'])await canonicalOwned(fixture,value[key]);
++    const config=value.legacy_config;if(config?.kind!=='vscode_servers'||typeof config.entry_key!=='string')throw new Error('Unsupported legacy configuration fixture');
++    for(const key of ['path','command','cwd'])await canonicalOwned(fixture,config[key]);
++    if(!['stable_launcher','pinned_predecessor'].includes(config.binding_kind))throw new Error('Legacy command binding kind is required');
++    if(config.binding_kind==='pinned_predecessor'&&(!Array.isArray(value.expected_refusal_codes)||!value.expected_refusal_codes.length||value.expected_refusal_codes.some(code=>typeof code!=='string'||['registry_busy','status_timeout','native_read_failed'].includes(code))))throw new Error('Pinned predecessor needs actual native incompatible-format refusal codes');
++    const original=await fs.readFile(config.path);if(sha(original)!==config.sha256)throw new Error('Original legacy configuration changed');
++    const parseErrors=[],parsed=require('../packages/vscode/node_modules/jsonc-parser').parse(original.toString('utf8'),parseErrors,{allowTrailingComma:true}),entry=parsed?.servers?.[config.entry_key];
++    const same=require('node:util').isDeepStrictEqual;
++    if(parseErrors.length||!entry||entry.command!==config.command||!same(entry.args,config.args)||!same(entry.env??{},config.env??{}))throw new Error('Legacy receipt does not match the actual original configuration');
++    if(!Array.isArray(config.args)||!config.args.includes('mcp')||Object.keys(config.env??{}).some(key=>!['AIRK_CLIENT','AIRK_MCP_RESPONSE_MODE'].includes(key)))throw new Error('Unsupported legacy native entry/environment');
++    const candidate=value.candidate;if(candidate?.install_manifest_sha256!==bundle.digest)throw new Error('Legacy fixture candidate differs from the verified installed-editor payload');
++    const runtime=await canonicalOwned(fixture,candidate.runtime_dir),installBytes=await fs.readFile(path.join(runtime,'airk-install.json'));
++    if(sha(installBytes)!==candidate.install_manifest_sha256)throw new Error('Legacy candidate installation manifest changed');
++    const inventory=JSON.parse(installBytes),names=Object.keys(inventory.files);if(names.length>4096)throw new Error('Legacy payload inventory exceeds fixture bound');
++    for(const name of names){const file=await ownedPath(runtime,path.resolve(runtime,name));if(sha(await fs.readFile(file))!==inventory.files[name])throw new Error('Legacy candidate payload changed: '+name);}
++    const pair=JSON.parse(await fs.readFile(path.join(runtime,'airk-runtime.json'),'utf8'));
++    if(pair.schema!==1||pair.airk_sha256!==candidate.engine_sha256||pair.embed_sha256!==candidate.helper_sha256)throw new Error('Legacy candidate pair differs from actual native receipt');
++    if(config.binding_kind==='pinned_predecessor'){
++        const owner=value.predecessor,commandRuntime=await canonicalOwned(fixture,owner.runtime_dir),manifest=await fs.readFile(path.join(commandRuntime,'airk-install.json'));
++        if(sha(manifest)!==owner.install_manifest_sha256)throw new Error('Actual predecessor payload manifest changed');
++        const inventory=JSON.parse(manifest),payload=owner.command_payload;
++        if(!payload||inventory.files[payload.relative_path]!==payload.sha256||sha(await fs.readFile(config.command))!==payload.sha256||await canonicalOwned(commandRuntime,path.resolve(commandRuntime,payload.relative_path))!==config.command)throw new Error('Pinned predecessor command is not its exact verified payload');
++    }else{
++        const binding=config.launcher_binding,installation=binding?.installation_launcher;
++        if(!binding||!['installation','universal'].includes(binding.kind)||binding.command_path!==config.command||sha(await fs.readFile(config.command))!==binding.command_sha256||!installation)throw new Error('Actual stable launcher binding is missing or changed');
++        await canonicalOwned(fixture,installation.path);await canonicalOwned(fixture,installation.receipt.path);
++        const bytes=await fs.readFile(installation.receipt.path),receipt=JSON.parse(bytes);
++        if(installation.receipt.path!==path.join(value.install_dir,'launcher.json')||sha(bytes)!==installation.receipt.sha256||receipt.schema!==1||Object.keys(receipt).sort().join(',')!=='schema,sha256'||receipt.sha256!==installation.sha256||sha(await fs.readFile(installation.path))!==installation.sha256)throw new Error('Actual installation launcher receipt changed');
++        if(binding.kind==='installation'){if(config.command!==installation.path||binding.command_sha256!==installation.sha256)throw new Error('Configuration does not name the verified installation launcher');}
++        else{
++            const record=binding.universal_pointer;if(!record)throw new Error('Actual universal launcher pointer is missing');await canonicalOwned(fixture,record.path);
++            const bytes=await fs.readFile(record.path),pointer=JSON.parse(bytes);
++            if(path.basename(record.path)!=='airk-launcher.json'||sha(bytes)!==record.sha256||pointer.schema!==1||Object.keys(pointer).sort().join(',')!=='install,launcher_sha256,schema'||pointer.install!==value.install_dir||pointer.launcher_sha256!==binding.command_sha256||path.dirname(record.path)!==path.dirname(config.command))throw new Error('Actual universal launcher pointer does not bind this installation');
++        }
++    }
++    const native=value.native;if(!native?.activation_receipt||!native.authority_v1_readiness||!native.post_health||!Array.isArray(native.evidence_files)||!native.evidence_files.length)throw new Error('Actual native activation/readiness/upgrade evidence is required');
++    if(native.evidence_files.length>64)throw new Error('Legacy native evidence file bound exceeded');
++    let nativeBytes=0;native.parsed_evidence=[];
++    for(const record of native.evidence_files){await canonicalOwned(fixture,record.path);const bytes=await fs.readFile(record.path);nativeBytes+=bytes.length;if(bytes.length>1048576||nativeBytes>4194304||sha(bytes)!==record.sha256)throw new Error('Legacy native evidence changed or exceeds the disclosed 4 MiB bound');native.parsed_evidence.push({path:record.path,sha256:record.sha256,value:JSON.parse(bytes.toString('utf8'))});}
++    const inspection=native.inspect;
++    if(!inspection||!native.parsed_evidence.some(record=>same(record.value,inspection))||inspection.selection?.active!==candidate.install_manifest_sha256||inspection.approval?.manifest_sha256!==candidate.install_manifest_sha256||inspection.payload_verified!==true)throw new Error('Actual native candidate inspection evidence is missing or does not select the candidate');
++    if(config.binding_kind==='stable_launcher'&&inspection.launcher!==config.launcher_binding.installation_launcher.path)throw new Error('Actual native inspection disagrees with the installation launcher binding');
++    const executable=await canonicalOwned(runtime,inspection.executable),relative=path.relative(runtime,executable).split(path.sep).join('/');
++    if(inventory.files[relative]!==candidate.engine_sha256||sha(await fs.readFile(executable))!==candidate.engine_sha256)throw new Error('Actual native inspection did not select the verified candidate engine');
++    if(!Object.keys(value.source_hashes_before??{}).length)throw new Error('Original native fixture source inventory is missing');
++    for(const [name,digest]of Object.entries(value.source_hashes_before??{})){const file=await ownedPath(value.source_root,path.resolve(value.source_root,name));if(value.source_hashes_after?.[name]!==digest||sha(await fs.readFile(file))!==digest)throw new Error('Legacy original source changed');}
++    if(!value.probe?.symbol||!value.probe.path||!/^[a-f0-9]{64}$/.test(value.probe.content_sha256))throw new Error('Native legacy fixture probe is missing');
++    const probe=await canonicalOwned(value.source_root,path.resolve(value.source_root,value.probe.path));
++    if(sha(await fs.readFile(probe))!==value.probe.content_sha256)throw new Error('Actual original legacy probe bytes changed');
++    return value;
++}
+ /** Installed AIRK Explorer: Search shows a cited fixture hit and Management lists the registered project. */
+ async function checkExplorer(ui){
+     const inExplorer=expression=>ui.document("!!document.querySelector('.airk-explorer')",expression);
+@@ -40,16 +108,19 @@ async function checkExplorer(ui){
+     await contains('inputSchema');
+     await click('About','.topbar button');await contains('Ioka LLC');await contains('Munarium');await contains('https://discord.gg/sJase5FbE');
+     const about=await ui.until(async()=>(await inExplorer("(()=>{const labels=[...document.querySelectorAll('[aria-label=\"AIRK public links\"] button')].map(b=>b.textContent.trim());return labels.some(x=>x.includes('Report an issue'))&&labels.some(x=>x.includes('Contribute to AIRK'))?labels:false;})()"))?.value,'Explorer About community links');
+-    await ui.until(async()=>(await inExplorer("(()=>{const b=[...document.querySelectorAll('.rail button')].find(n=>n.textContent.startsWith('Management'));if(!b)return false;b.click();return true;})()"))?.value,'Explorer Management rail');
+-    const rows=await ui.until(async()=>(await inExplorer("(()=>{const r=[...document.querySelectorAll('.project-card')].map(x=>x.innerText);return r.length?r:false;})()"))?.value,'Explorer Management projects');
+-    if(!rows.some(row=>row.includes('workspace-a')||row.includes('workspace-b')))throw new Error('Explorer Management did not list the project: '+JSON.stringify(rows));
++    await ui.click('Indexing');await ui.click('Projects');
++    const native=await ui.indexing({action:'page',kind:'projects'}),rows=native.page.page.items;
++    if(!rows.some(row=>row.kind==='project'&&String(row.value.name).includes('Fixture Project')))throw new Error('Indexing did not list the native metadata Project');
+     return {hits,rows,help:['role search','purpose and format guide','offline native engine guide','live tool schema','About credits/history/community links'],about};
+ }
+ async function cleanupServices(){
+     for(const folder of services.splice(0)){
+-        const control=path.join(folder,'native-service','control');
+-        if(!await exists(control))continue;
+-        try{const result=await execute(bundle.main,['service','shutdown','--runtime-dir',control],{windowsHide:true,timeout:30000,maxBuffer:65536});
++        const install=path.join(folder,'native-service');
++        if(!await exists(install))continue;
++        try{const inspected=await execute(bundle.main,['runtime','inspect','--install-dir',install],{windowsHide:true,timeout:30000,maxBuffer:65536});
++            const observation=JSON.parse(inspected.stdout),owned=await fs.realpath(folder);
++            const control=await canonicalOwned(owned,observation.control_dir);
++            const result=await execute(bundle.main,['service','shutdown','--runtime-dir',control],{windowsHide:true,timeout:30000,maxBuffer:65536});
+             await fs.writeFile(path.join(folder,'native-shutdown.json'),JSON.stringify({requested:true,stdout:result.stdout,stderr:result.stderr}));}
+         catch(error){await fs.writeFile(path.join(folder,'native-shutdown.json'),JSON.stringify({requested:false,error:String(error),retained:true}));}
+     }
+@@ -73,21 +144,29 @@ async function main(){
+ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON.stringify(path.join(root,'packages/vscode/out/test/installedEditor.js'))}).run()
+ .catch(error=>fs.writeFile(path.join(process.env.AIRK_EDITOR_RUN,process.env.AIRK_EDITOR_SCENARIO,process.env.AIRK_EDITOR_ROLE+'-error.json'),JSON.stringify({error:String(error),stack:error.stack})))
+ .finally(()=>vscode.commands.executeCommand('workbench.action.quit'));};`);
+-    const summary={schema:'airk-native-editor/1',source,staged:stage,nativeInstallDigest:bundle.digest,scenarios:[]};
++    const summary={schema:'airk-native-editor/2',source,staged:stage,nativeInstallDigest:bundle.digest,selectedScenarios:scenarios,legacyUpgradeCoverage:false,scenarios:[]};
+     console.log(`Native editor output: ${run}`);
+     for(const scenario of scenarios){
+-        const folder=path.join(run,scenario);await fs.mkdir(folder);services.push(folder);const storage=path.join(folder,'storage');await fs.mkdir(storage);
+-        for(const [name,symbol] of [['workspace-a','WindowAlphaEvidence'],['workspace-b','WindowBetaEvidence']]){const workspace=path.join(folder,name);await fs.mkdir(workspace);await fs.writeFile(path.join(workspace,'fixture.ts'),`export function ${symbol}() { return 42; }\n`);}
++        const folder=path.join(run,scenario);await fs.mkdir(folder);
++        const legacy=scenario==='legacy'?await legacyFixture():undefined;
++        if(scenario==='legacy'&&!legacy){summary.scenarios.push({scenario,status:'unqualified',coverage:false,reason:'AIRK_EDITOR_LEGACY_FIXTURE from an actual native managed upgrade is unavailable'});await fs.writeFile(path.join(run,'summary.json'),JSON.stringify(summary,null,2));continue;}
++        if(!legacy)services.push(folder);const storage=path.join(folder,'storage');await fs.mkdir(storage);
++        if(legacy)await fs.writeFile(path.join(folder,'legacy-fixture.json'),JSON.stringify(legacy,null,2));
++        for(const [name,symbol] of [['workspace-a','WindowAlphaEvidence'],['workspace-b','WindowBetaEvidence']]){const workspace=path.join(folder,name);await fs.mkdir(workspace);await fs.writeFile(path.join(workspace,'fixture.ts'),`export function ${symbol}() { return 42; }\n`);await fs.writeFile(path.join(workspace,'hidden.ts'),'export function HiddenPrivateEvidence() {}\n');}
++        for(const name of ['shared-a','shared-b']){await fs.mkdir(path.join(folder,name));await fs.writeFile(path.join(folder,name,'shared.ts'),'export function SharedAllowedEvidence() { return 19; }\n');}
++        const originalSources={};
++        for(const name of ['workspace-a/fixture.ts','workspace-a/hidden.ts','workspace-b/fixture.ts','workspace-b/hidden.ts','shared-a/shared.ts','shared-b/shared.ts'])originalSources[name]=await fs.readFile(path.join(folder,name),'utf8');
+         const roles=['same','different'].includes(scenario)?['a','b']:['a'],children=[],uis={},ports={};
+         for(const role of roles){const profile=path.join(folder,`profile-${role}`);await fs.mkdir(path.join(profile,'User'),{recursive:true});
+-            // These scenarios exercise explicit root-review dialogs. Automatic
+-            // onboarding has its own installed-artifact installer acceptance.
+-            await fs.writeFile(path.join(profile,'User/settings.json'),JSON.stringify({'airk.service.installDir':path.join(folder,'native-service'),'airk.storage.path':storage,'airk.cli.autoInstall':false,
++            // All new bindings come from the real reviewed Indexing forms. A
++            // separately supplied legacy fixture keeps its original config.
++            await fs.writeFile(path.join(profile,'User/settings.json'),JSON.stringify({'airk.service.installDir':legacy?.install_dir??path.join(folder,'native-service'),'airk.storage.path':legacy?.data_root??storage,'airk.cli.autoInstall':false,
+                 'workbench.startupEditor':'none','window.restoreWindows':'none','security.workspace.trust.startupPrompt':'never','extensions.autoUpdate':false,'extensions.autoCheckUpdates':false,
+                 'telemetry.telemetryLevel':'off','update.mode':'none','files.simpleDialog.enable':true,'window.dialogStyle':'custom',
+ }));
+             let workspace=path.join(folder,scenario==='different'&&role==='b'?'workspace-b':'workspace-a');
+             if(['multi','usage'].includes(scenario)){workspace=path.join(folder,'two-roots.code-workspace');await fs.writeFile(workspace,JSON.stringify({folders:[{path:'workspace-a'},{path:'workspace-b'}]}));}
++            if(legacy)workspace=legacy.source_root;
+             ports[role]=await unusedPort();
+             const args=[workspace,'--new-window','--user-data-dir',profile,'--extensions-dir',extensions,'--shared-data-dir',path.join(run,'shared-editor-data'),
+                 `--remote-debugging-port=${ports[role]}`,'--remote-debugging-address=127.0.0.1','--skip-welcome','--skip-release-notes','--disable-updates','--disable-telemetry','--disable-gpu'];
+@@ -100,43 +179,62 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
+             children.push(runProcess(args,path.join(folder,`${role}-editor.log`),{AIRK_EDITOR_RUN:run,AIRK_EDITOR_ROLE:role,AIRK_EDITOR_SCENARIO:scenario,
+                 AIRK_EDITOR_DEVELOPMENT_STAGE:stage?source:'',AIRK_USAGE_MODE:scenario==='usage'?'aggregates-only':'disabled'}));
+         }
+-        let failure,usageTask,explorerTask,allExited=false;const exited=Promise.all(children).then(()=>{allExited=true;}).catch(error=>{failure=error;});const handled=new Map(),uiChecks={};
++        let failure,explorerTask,allExited=false;const exited=Promise.all(children).then(()=>{allExited=true;}).catch(error=>{failure=error;});const handled=new Map();
+         try{
+             const end=Date.now()+600000;
+             while(true){if(failure)throw failure;
+                 for(const role of roles){const error=await fs.readFile(path.join(folder,`${role}-error.json`),'utf8').catch(()=>undefined);if(error)throw new Error(error);
+                     const request=JSON.parse(await fs.readFile(path.join(folder,`${role}-ui-request.json`),'utf8').catch(()=>'null'));
+-                    if(request&&handled.get(role)!==request.sequence){uis[role]??=await editorUi(ports[role]);if(!['register','approveRepair'].includes(request.action))throw new Error('Unknown private UI request');
+-                        const [fixture,sourceRoot,storageRoot]=await Promise.all([folder,request.source,request.storage].map(value=>fs.realpath(value)));
+-                        if(!['workspace-a','workspace-b'].includes(request.root)||path.dirname(sourceRoot)!==fixture||path.basename(sourceRoot)!==request.root||path.dirname(storageRoot)!==fixture||!['storage','selected-storage'].includes(path.basename(storageRoot)))throw new Error('UI request escaped fixture scope');
+-                        if(request.action==='register')await uis[role].register(request);
+-                        else{if(scenario!=='multi'||!/^[a-f0-9]{64}$/.test(request.project))throw new Error('Invalid private repair selection');await uis[role].approveRepair(request.project);}
+-                        handled.set(role,request.sequence);await fs.writeFile(path.join(folder,`${role}-ui-done-${request.sequence}.json`),'{}');}
++                    if(request&&handled.get(role)!==request.sequence){
++                        if(!Number.isSafeInteger(request.sequence)||request.sequence<1||request.sequence>256)throw new Error('Private UI action budget/sequence invalid');
++                        uis[role]??=await editorUi(ports[role]);
++                        const actions=['connect','page','inspect','setupDraft','setupApply','projectDraft','renameDraft','membershipDraft','apply','context','associationDraft','grantDraft','useGrant','revokeDraft','read','staleApply','restricted','usageScoped','usageAdmin','usageJson','usageClear'];
++                        if(!actions.includes(request.action))throw new Error('Unknown private Indexing action');
++                        const fixture=await fs.realpath(folder);
++                        if(request.action==='setupDraft'){await ownedPath(fixture,request.source);await ownedPath(fixture,request.storage,true);if(request.additional)await ownedPath(fixture,request.additional.path);}
++                        if(request.action==='membershipDraft')for(const atom of request.roots??[])await ownedPath(fixture,atom.path);
++                        for(const key of ['index','project','id'])if(request[key]!==undefined&&!/^(idx_|prj_|grt_)[a-f0-9]{32}$/.test(request[key]))throw new Error('Invalid exact native catalog ID');
++                        // Mark dispatch before invoking the UI; unknown outcomes are never replayed.
++                        handled.set(role,request.sequence);
++                        const value=await uis[role].indexing(request);
++                        if(Buffer.byteLength(JSON.stringify(value))>1048576)throw new Error('Complete private UI receipt exceeds 1 MiB');
++                        await fs.writeFile(path.join(folder,`${role}-ui-done-${request.sequence}.json`),JSON.stringify(value));}
+                 }
+                 if(scenario==='multi'&&await exists(path.join(folder,'a-explorer-ready.json'))&&!explorerTask){uis.a??=await editorUi(ports.a);
+                     explorerTask=checkExplorer(uis.a).then(value=>fs.writeFile(path.join(folder,'explorer-checked.json'),JSON.stringify(value,null,2))).catch(error=>{failure=error;});}
+-                if(scenario==='usage'&&await exists(path.join(folder,'a-usage-ready.json'))&&!usageTask){usageTask=require('./check-usage-editor.cjs').checkUsage(ports.a,folder).then(value=>{uiChecks.a=value;}).catch(error=>{failure=error;});}
+                 if((await Promise.all(roles.map(role=>exists(path.join(folder,`${role}-capture.json`))))).every(Boolean))break;
+                 if(allExited)throw new Error(`Private editor exited before acceptance completed: ${scenario}`);
+                 if(Date.now()>end)throw new Error(`Native editor scenario timed out: ${scenario}`);await delay(150);
+             }
+-            if(usageTask)await usageTask;if(explorerTask)await explorerTask;if(failure)throw failure;
++            if(explorerTask)await explorerTask;if(failure)throw failure;
+             for(const role of roles){uis[role]??=await editorUi(ports[role]);const ui=uis[role];
+                 const body=await ui.until(async()=>(await ui.service('document.body.innerText'))?.value,'AIRK Explorer Management');
+                 await fs.writeFile(path.join(folder,`${role}-service.txt`),body);
+-                if(scenario==='untrusted'){if(!(await ui.service("document.body.innerText.includes('Trust this workspace')&&![...document.querySelectorAll('button')].some(b=>!b.disabled&&['Review workspace registration','Connect / reconnect','Start service','Index now'].includes(b.textContent.trim()))"))?.value)throw new Error('Untrusted native controls were enabled');}
+-                else {await ui.responseMode('full');await ui.responseMode('terse');}
++                if(scenario==='untrusted'){if(!(await ui.service("![...document.querySelectorAll('button')].some(b=>!b.disabled&&['Prepare native setup review','Apply reviewed index setup','Use Grant for this window','Persist reviewed grant'].includes(b.textContent.trim()))"))?.value)throw new Error('Untrusted native controls were enabled');}
+                 const page=await ui.workbench('document.title');const image=await page.client.call('Page.captureScreenshot',{format:'png'});
+                 await fs.writeFile(path.join(folder,`${role}-workbench.png`),Buffer.from(image.data,'base64'));
+             }
+         }finally{for(const ui of Object.values(uis))ui.close();await fs.writeFile(path.join(folder,'capture-complete.json'),'{}');}
+         await exited;if(failure)throw failure;
+-        const results=await Promise.all(roles.map(async role=>({...JSON.parse(await fs.readFile(path.join(folder,`${role}-result.json`),'utf8')),uiChecks:uiChecks[role]||['native console','terse/full selector']})));
++        const sourcePreservation=[];
++        for(const [name,original]of Object.entries(originalSources)){
++            const expected=original+(['same','different'].includes(scenario)&&name==='workspace-a/fixture.ts'?'\nexport function SharedEditEvidence() { return 7; }\n':'');
++            const actual=await fs.readFile(path.join(folder,name));if(!actual.equals(Buffer.from(expected)))throw new Error('Unexpected source mutation: '+name);
++            sourcePreservation.push({path:name,before_sha256:sha(original),after_sha256:sha(actual),intentional_peer_edit:expected!==original});}
++        await fs.writeFile(path.join(folder,'source-preservation.json'),JSON.stringify(sourcePreservation,null,2));
++        const results=await Promise.all(roles.map(async role=>({...JSON.parse(await fs.readFile(path.join(folder,`${role}-result.json`),'utf8')),sourcePreservation})));
+         if(new Set(results.map(value=>value.extensionHostPid)).size!==roles.length)throw new Error('Each test window must have its own extension host');
+         summary.scenarios.push(...results);
++        if(legacy){if(sha(await fs.readFile(legacy.legacy_config.path))!==legacy.legacy_config.sha256)throw new Error('Legacy config changed after installed-editor probe');
++            for(const [name,digest]of Object.entries(legacy.source_hashes_before)){const file=await ownedPath(legacy.source_root,path.resolve(legacy.source_root,name));if(sha(await fs.readFile(file))!==digest)throw new Error('Legacy source changed during installed-editor probe');}
++            summary.legacyUpgradeCoverage=true;}
+         await cleanupServices();
+         await fs.writeFile(path.join(run,'summary.json'),JSON.stringify(summary,null,2));console.log(`${scenario}: native editor passed`);
+     }
+-    console.log(`Native editor acceptance passed: ${run}`);
++    summary.status=summary.scenarios.some(row=>row.status==='unqualified')?'partial':'passed';
++    summary.qualifiesFullScenarioSelection=summary.status==='passed';
++    await fs.writeFile(path.join(run,'summary.json'),JSON.stringify(summary,null,2));
++    if(summary.status==='partial'){console.log(`Native editor coverage remains unqualified: ${run}`);process.exitCode=2;}
++    else console.log(`Native editor selected scenarios passed: ${run}`);
+ }
+ main().catch(async error=>{for(const child of active)child.kill();await cleanupServices();console.error(error);process.exitCode=1;});
+diff --git a/scripts/editor-ui.cjs b/scripts/editor-ui.cjs
+index f5d0869..e596b65 100644
+--- a/scripts/editor-ui.cjs
++++ b/scripts/editor-ui.cjs
+@@ -8,6 +8,7 @@ async function connect(target){
+     socket.addEventListener('message',event=>{const value=JSON.parse(event.data);
+         if(value.method==='Runtime.executionContextCreated')contexts.add(value.params.context.id);
+         if(value.method==='Runtime.executionContextDestroyed')contexts.delete(value.params.executionContextId);
++        if(value.method==='Runtime.executionContextsCleared')contexts.clear();
+         const request=pending.get(value.id);if(request){pending.delete(value.id);clearTimeout(request.timer);value.error?request.reject(new Error(JSON.stringify(value.error))):request.resolve(value.result);}});
+     const call=(method,params={})=>new Promise((resolve,reject)=>{const id=++sequence,timer=setTimeout(()=>{pending.delete(id);reject(new Error(`CDP timeout: ${method}`));},method==='Runtime.evaluate'?2000:15000);
+         pending.set(id,{resolve,reject,timer});socket.send(JSON.stringify({id,method,params}));});
+@@ -16,7 +17,9 @@ async function connect(target){
+ }
+ async function editorUi(port){
+     const clients=new Map();
++    let reads=0;
+     async function document(predicate,expression,type='iframe'){
++        if(++reads>12000)throw new Error('Private editor DOM observation budget exhausted');
+         let targets;
+         // The DevTools listing can refuse or reset a connection transiently; callers retry through until().
+         try{targets=await(await fetch(`http://127.0.0.1:${port}/json/list`,{signal:AbortSignal.timeout(10000)})).json();}
+@@ -53,12 +56,93 @@ async function editorUi(port){
+             return result?.value;
+         },`scoped confirmation ${label}`);
+     }
+-    async function register(request){
+-        await until(async()=>(await service(clickButton('Review workspace registration')))?.value,'workspace registration button');
+-        await quickPick(request.root,'Register a trusted source root with AIRK');
+-        await confirm('Review registration',['AIRK 1.4 uses a new service','fresh index namespace']);
+-        await quickPick('Manual indexing','AIRK indexing ownership');
+-        await confirm('Register',['Register this exact native project',request.source,request.storage,'Index data:','Automatic source watching is disabled']);
++    // Waits inspect the DOM only. Dispatch a mutating click exactly once: an
++    // unknown CDP/native outcome must never resubmit Apply on a polling loop.
++    async function click(label,card){
++        const find=`(()=>{const roots=${card?`[...document.querySelectorAll('article')].filter(a=>[...a.children].some(n=>/^H[23]$/.test(n.tagName)&&n.textContent.trim()===${JSON.stringify(card)}))`:`[document]`};const b=roots.flatMap(a=>[...a.querySelectorAll('button')]).filter(b=>b.textContent.trim()===${JSON.stringify(label)});return b.length===1&&!b[0].disabled?b[0]:null;})()`;
++        await until(async()=>(await service(`!!${find}`))?.value,`enabled ${label}`);
++        const result=await service(`(()=>{const b=${find};if(!b||b.disabled)return false;b.click();return true;})()`);
++        if(result?.value!==true)throw new Error(`Unknown private UI click outcome: ${label}; no replay`);
++    }
++    async function fill(button,values){
++        await until(async()=>(await service(`(()=>{const buttons=[...document.querySelectorAll('button')].filter(b=>b.textContent.trim()===${JSON.stringify(button)});const form=buttons.length===1?buttons[0].closest('form'):null;if(!form)return false;const values=${JSON.stringify(values)};for(const [label,value]of Object.entries(values)){const node=[...form.querySelectorAll('label')].find(n=>[...n.childNodes].filter(c=>c.nodeType===Node.TEXT_NODE).map(c=>c.textContent).join('').trim()===label)?.querySelector('input,select');if(!node)return false;const proto=node.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,node.type==='checkbox'?'checked':'value').set.call(node,value);node.dispatchEvent(new Event(node.tagName==='SELECT'||node.type==='checkbox'?'change':'input',{bubbles:true}));}return true;})()`))?.value,`form ${button}`);
++    }
++    async function catalog(){
++        return until(async()=>{const value=(await service("(()=>{const d=[...document.querySelectorAll('details')].find(d=>d.querySelector('summary')?.textContent==='Complete response');if(!d)return;try{return JSON.parse(d.querySelector('pre').textContent);}catch{return;}})()"))?.value;return value||undefined;},'complete native catalog details');
++    }
++    async function settled(predicate){
++        return until(async()=>{const value=await catalog();if(value.error)throw new Error(value.error);return !value.busy&&predicate(value)?value:undefined;},'native catalog outcome');
++    }
++    async function inspect(kind,id){
++        const label=kind==='grant'?'Inspect grant':'Inspect';
++        const query=`(()=>{const cards=[...document.querySelectorAll('article')].filter(a=>[...a.children].some(n=>n.tagName==='P'&&[...n.querySelectorAll('code')].some(c=>c.textContent===${JSON.stringify(id)})));const b=cards.flatMap(a=>[...a.children].filter(n=>n.tagName==='BUTTON'&&n.textContent.trim()===${JSON.stringify(label)}));return b.length===1&&!b[0].disabled?b[0]:null;})()`;
++        await until(async()=>(await service(`!!${query}`))?.value,`native ${kind} row ${id}`);
++        if((await service(`(()=>{const b=${query};if(!b)return false;b.click();return true;})()`))?.value!==true)throw new Error('Unknown Inspect outcome');
++        return settled(v=>!!(kind==='grant'?v.grantDetail:v.detail));
++    }
++    async function indexing(request){
++        if(request.action==='restricted'){
++            const result=await until(async()=>(await service("(()=>{if(!document.body.innerText.includes('Restricted Mode'))return;const labels=['Prepare native setup review','Apply reviewed index setup','Persist reviewed grant','Use Grant for this window'];return {blocked:![...document.querySelectorAll('button')].some(b=>!b.disabled&&labels.includes(b.textContent.trim())),text:document.body.innerText};})()"))?.value,'actual Restricted Mode view');
++            if(!result.blocked)throw new Error('Restricted Mode exposed a native mutation');
++            await click('Manage Workspace Trust');return result;
++        }
++        if(request.action.startsWith('usage')){
++            const scoped="document.visibilityState==='visible'&&document.body.innerText.includes('Usage requires Index administration')";
++            const admin="document.visibilityState==='visible'&&document.body.innerText.includes('Entire Index history and shared data-root totals')&&document.body.innerText.includes("+JSON.stringify(request.collection??'')+")&&!!document.querySelector('[data-usage=clear]')";
++            const report=(predicate,expression)=>document(predicate,expression);
++            const reportClick=async(predicate,action)=>{
++                const selector='[data-usage="'+action+'"]';
++                await until(async()=>(await report(predicate,`!!document.querySelector(${JSON.stringify(selector)})&&!document.querySelector(${JSON.stringify(selector)}).disabled`))?.value,'usage action '+action);
++                if((await report(predicate,`(()=>{const b=document.querySelector(${JSON.stringify(selector)});if(!b||b.disabled)return false;b.click();return true;})()`))?.value!==true)throw new Error('Unknown usage click outcome; no replay');
++            };
++            if(request.action==='usageScoped'){
++                const result=await until(async()=>(await report(scoped,"({text:document.body.innerText,writeControls:document.querySelectorAll('[data-usage=clear],[data-usage=recording],[data-usage=import]').length})"))?.value,'scoped usage unavailable');
++                if(result.writeControls!==0)throw new Error('Scoped Usage exposed administration without explicit choice');return result;
++            }
++            if(request.action==='usageAdmin'){await reportClick(scoped,'openIndexAdministration');return until(async()=>(await report(admin,'({text:document.body.innerText})'))?.value,'explicit broad Index administration');}
++            if(request.action==='usageJson'){await reportClick(admin,'json');return {requested:true};}
++            if(request.action==='usageClear'){
++                await reportClick(admin,'clear');await confirm('Clear history',['Clear all usage history',request.name,'source files and index stay intact']);
++                return until(async()=>(await report(admin,"document.body.innerText.includes('No usage recorded yet.')?{cleared:true,text:document.body.innerText}:false"))?.value,'selected entire-Index usage clear');
++            }
++        }
++        switch(request.action){
++            case 'connect':await click('Connect / reconnect');return {connected:true};
++            case 'page':await click(request.kind==='projects'?'Refresh Projects':request.kind==='grants'?'Read grants':'Refresh indexes');return settled(v=>!!(request.kind==='grants'?v.grants:v.page));
++            case 'inspect':return inspect(request.kind,request.id);
++            case 'setupDraft':
++                for(let count=Number((await service("[...document.querySelectorAll('form')].find(f=>[...f.querySelectorAll('button')].some(b=>b.textContent==='Prepare native setup review'))?.querySelectorAll('fieldset').length??0"))?.value);count>0;count--)await click('Remove additional source '+count);
++                if(request.additional){await click('Add source location');}
++                await fill('Prepare native setup review',{'Index name':request.name,'Primary source location':request.source,'Index storage location':request.storage,'Collection':request.collection,'Enable native watching after setup':false,...(request.additional?{'Alias':request.additional.alias,'Source location':request.additional.path}:{})});
++                await click('Prepare native setup review');return settled(v=>!!v.setupReview);
++            case 'setupApply':await click('Apply reviewed index setup');return settled(v=>!!v.outcome);
++            case 'projectDraft':await fill('Preview create Project',{'New Project name':request.name});await click('Preview create Project');return settled(v=>!!v.review);
++            case 'renameDraft':await fill('Preview rename',{'New name':request.name});await click('Preview rename');return settled(v=>!!v.review);
++            case 'membershipDraft':{
++                await fill('Preview membership',{'Index ID':request.index,'Current membership revision (blank for new membership)':''});await click('Read Sources for this index');const sources=await settled(v=>!!v.sources);
++                const rows=sources.sources.page.items.map(row=>row.value);
++                const selected=request.roots.map(root=>{const row=rows.find(row=>row.canonical_path===root.path&&row.index_id===request.index&&row.enabled===true);if(!row)throw new Error('Native Source identity unavailable');return {...root,id:row.id};});
++                let count=Number((await service("[...document.querySelectorAll('form')].find(f=>[...f.querySelectorAll('button')].some(b=>b.textContent==='Preview membership'))?.querySelectorAll('fieldset').length??0"))?.value);
++                while(count>selected.length){await click('Remove scope '+count);count--;}
++                while(count<selected.length){await click('Add source scope');count++;}
++                for(let at=0;at<selected.length;at++){
++                    const root=selected[at];
++                    await until(async()=>(await service(`(()=>{const form=[...document.querySelectorAll('form')].find(f=>[...f.querySelectorAll('button')].some(b=>b.textContent==='Preview membership'));const field=form?.querySelectorAll('fieldset')[${at}];if(!field)return false;for(const [label,value]of Object.entries(${JSON.stringify({'Source ID':root.id,'Canonical relative path':root.relative,'Scope':root.kind})})){const node=[...field.querySelectorAll('label')].find(n=>[...n.childNodes].filter(c=>c.nodeType===Node.TEXT_NODE).map(c=>c.textContent).join('').trim()===label)?.querySelector('input,select');if(!node)return false;Object.getOwnPropertyDescriptor(node.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype,'value').set.call(node,value);node.dispatchEvent(new Event(node.tagName==='SELECT'?'change':'input',{bubbles:true}));}return true;})()`))?.value,'native membership source form');
++                }
++                await click('Preview membership');return settled(v=>!!v.review);
++            }
++            case 'apply':await click(request.grant?'Persist reviewed grant':'Apply reviewed changes');return settled(v=>!!v.outcome);
++            case 'context':await click('Read saved association');return settled(v=>!!v.hostContext||!!v.context);
++            case 'associationDraft':await fill('Preview saved association',{'Project IDs (comma separated; blank selects zero Projects)':request.project,'Default index IDs (comma separated; blank selects no index defaults)':request.index});await click('Preview saved association');return settled(v=>!!v.review);
++            case 'grantDraft':await fill('Prepare native grant review',{'Project IDs (1–32, comma separated)':request.project,"Optional index subset (1–32 IDs; blank asks native to include the selected Projects' memberships)":request.index});await click('Prepare native grant review');return settled(v=>!!v.review);
++            case 'useGrant':await fill('Use Grant for this window',{'Index ID from this grant':request.index,'Project IDs from this grant (1–32, comma separated)':request.project});await click('Use Grant for this window');return settled(v=>!!v.outcome?.selected_subset);
++            case 'revokeDraft':await click('Preview revoke grant');return settled(v=>!!v.review);
++            case 'read':return catalog();
++            case 'staleApply':{
++                await click('Apply reviewed changes');return until(async()=>{const v=await catalog();return !v.busy&&(v.error||v.outcome)?v:undefined;},'stale native preview refusal');
++            }
++            default:throw new Error('Unknown bounded Indexing action');
++        }
+     }
+     async function responseMode(mode){
+         await until(async()=>(await service(clickButton('Choose terse / full responses')))?.value,'response mode button');
+@@ -79,6 +163,6 @@ async function editorUi(port){
+             return rows.length===1&&['succeeded','failed','stale','skipped','canceled'].includes(rows[0].cells[1].textContent)?{phase:rows[0].cells[1].textContent,receipt:rows[0].innerText}:false;})()`))?.value,'native repair final receipt');
+         if(result.phase!=='succeeded')throw new Error(`Native editor repair failed: ${result.receipt}`);
+     }
+-    return {document,workbench,service,quickPick,confirm,register,approveRepair,responseMode,until,close(){for(const client of clients.values())client.close();}};
++    return {document,workbench,service,quickPick,confirm,indexing,catalog,click,approveRepair,responseMode,until,close(){for(const client of clients.values())client.close();}};
+ }
+ module.exports={editorUi,until};

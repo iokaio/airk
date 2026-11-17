@@ -1,0 +1,154 @@
+--- a/packages/vscode/src/explorerController.ts
++++ b/packages/vscode/src/explorerController.ts
+@@ -437,10 +437,13 @@
+                 const project = this.requireProject();
+                 const args = searchArgs(typed);
+                 const selectionEpoch = this.selectionEpoch, sequence = ++this.searchSequence;
++                const binding = JSON.stringify(this.host.specs().find(entry => entry.service?.project === project));
+                 const { query, mode, limit, maxBytes, fullChunks } = typed;
+                 this.searchState = { project, selectionEpoch, form: { query, mode, limit, maxBytes, fullChunks, pathPrefix: typed.pathPrefix ?? '' }, busy: true, page: 0 };
+                 const publish = () => { this.panel.post({ v: MESSAGE_VERSION, type: 'search.session', session: this.searchState! }); };
+-                const current = () => !this.disposed && selectionEpoch === this.selectionEpoch && sequence === this.searchSequence;
++                const current = () => !this.disposed && this.host.trusted() && project === this.selected
++                    && selectionEpoch === this.selectionEpoch && sequence === this.searchSequence
++                    && JSON.stringify(this.host.specs().find(entry => entry.service?.project === project)) === binding;
+                 publish();
+                 try {
+                     const result = await this.session().call('airk_search', args, { supersede: 'search', timeout: 30000 });
+@@ -449,7 +452,9 @@
+                     const view = searchView(project, typed, result.payload, result.publication, this.refs,
+                         { ...(status?.semantic ? { semantic: status.semantic } : {}), ...(status?.vectorsEnabled !== undefined ? { vectorsEnabled: status.vectorsEnabled } : {}) });
+                     this.searchState = { ...this.searchState!, result: view, busy: false }; publish();
+-                    return view;
++                    // Search evidence travels once through search.session. The
++                    // correlated response only releases the requesting waiter.
++                    return { completed: true };
+                 } catch (error) {
+                     if (current()) { this.searchState = { ...this.searchState!, result: undefined, busy: false, error: failure(error).message }; publish(); }
+                     throw error;
+--- a/packages/vscode/src/test/explorerShell.test.ts
++++ b/packages/vscode/src/test/explorerShell.test.ts
+@@ -26,7 +26,7 @@
+             let closed: () => void = () => undefined;
+             const panel = {
+                 options, posted: [] as any[], disposed: false,
+-                webview: { html: '', cspSource: 'vscode-resource:', asWebviewUri: (uri: any) => uri, postMessage: async (message: unknown) => { panel.posted.push(message); return true; },
++                webview: { html: '', cspSource: 'vscode-resource:', asWebviewUri: (uri: any) => uri, postMessage: async (message: unknown) => { panel.posted.push(structuredClone(message)); return true; },
+                     onDidReceiveMessage: (handler: (value: unknown) => void) => { receive = handler; return disposable; } },
+                 onDidChangeViewState: () => disposable,
+                 onDidDispose: (handler: () => void) => { closed = handler; return disposable; },
+@@ -179,7 +179,9 @@
+     try {
+         explorer.open('#search/query'); const first = panels.at(-1);
+         first.send({ v: 1, type: 'ready', requestId: 'ready' }); await flush();
+-        const result = await (explorer as any).dispatch({ v: 1, type: 'search.run', requestId: 'run', query: 'x', mode: 'lexical', limit: 5, maxBytes: 8192, fullChunks: false });
++        const acknowledgment = await (explorer as any).dispatch({ v: 1, type: 'search.run', requestId: 'run', query: 'x', mode: 'lexical', limit: 5, maxBytes: 8192, fullChunks: false });
++        assert.deepEqual(acknowledgment, { completed: true });
++        const result = first.posted.filter((entry: any) => entry.type === 'search.session' && entry.session.result).at(-1).session.result;
+         const epoch = explorer.snapshot().selectionEpoch!;
+         await (explorer as any).dispatch({ v: 1, type: 'search.form', requestId: 'draft', project, selectionEpoch: epoch,
+             query: 'unsent edit', mode: 'hybrid', pathPrefix: 'src/', limit: 100, maxBytes: 16384, fullChunks: true });
+@@ -214,6 +216,8 @@
+         const restored = reopened.posted.filter((entry: any) => entry.type === 'search.session').at(-1).session;
+         assert.equal(restored.busy, false); assert.equal(restored.result.hits[0].text, 'late result');
+         assert.ok(!reopened.posted.some((entry: any) => entry.type === 'result' && entry.requestId === 'w1'));
++        assert.equal([...first.posted, ...reopened.posted].filter((entry: any) => entry.type === 'search.session' && entry.session.result).length, 1,
++            'late authorized evidence is delivered once to the current panel, with no old completion response');
+     } finally { explorer.dispose(); }
+ });
+ 
+@@ -530,3 +534,94 @@
+     assert.ok(panel.posted.some((message: any) => message.type === 'inbox'));
+     explorer.dispose();
+ });
++
++const r03Request=(requestId:string)=>({v:1,type:'search.run',requestId,query:'x',mode:'lexical',limit:5,maxBytes:8192,fullChunks:false});
++const r03Evidence=(text='one-full-evidence-delivery')=>({publication:'airk-r1:t',payload:{truncated:false,
++    publication:{token:'airk-r1:t'},hits:[{citation:{path:'a.ts',start_line:2,end_line:4,content_hash:'cd'.repeat(32)},text,truncated:false}]}});
++function r03Pending(explorer:InstanceType<typeof ExplorerController>){
++    const requests:Array<{resolve:(value:any)=>void;reject:(error:Error)=>void}>=[];
++    (explorer as any).session=()=>({call:(tool:string)=>tool==='airk_search'
++        ?new Promise((resolve,reject)=>{requests.push({resolve,reject});})
++        :Promise.resolve({payload:{index_state:'available',publication:{token:'airk-r1:t'}}})});
++    return requests;
++}
++
++test('Search posts one complete evidence session and a small correctly correlated acknowledgment',async()=>{
++    const {explorer}=controller();
++    try{
++        explorer.open('#search/query');const panel=panels.at(-1);
++        panel.send({v:1,type:'ready',requestId:'ready'});await flush();
++        const before=panel.posted.length;
++        panel.send(r03Request('r03-complete'));await flush();
++        const posted=panel.posted.slice(before),sessions=posted.filter((row:any)=>row.type==='search.session');
++        assert.equal(sessions.length,2,'one busy observation and one completed observation');
++        assert.equal(sessions[0].session.busy,true);assert.equal(sessions[0].session.result,undefined);
++        assert.equal(sessions[1].session.busy,false);
++        const result=sessions[1].session.result;
++        assert.equal(result.hits[0].text,'x');
++        assert.equal((explorer as any).refs.get(result.hits[0].ref,project).path,'a.ts');
++        const replies=posted.filter((row:any)=>row.type==='result');
++        assert.deepEqual(replies,[{v:1,type:'result',requestId:'r03-complete',ok:true,data:{completed:true}}]);
++        assert.equal(posted.filter((row:any)=>row.session?.result||row.data?.hits).length,1);
++        assert.equal(replies[0].data.hits,undefined);assert.equal(replies[0].data.publication,undefined);
++        // Reopening is an intentional retained-session delivery, not a duplicate response.
++        panel.dispose();explorer.open();const reopened=panels.at(-1);
++        reopened.send({v:1,type:'ready',requestId:'ready'});await flush();
++        assert.deepEqual(reopened.posted.find((row:any)=>row.type==='search.session').session.result,result);
++        assert.ok(!reopened.posted.some((row:any)=>row.type==='result'&&row.requestId==='r03-complete'));
++    }finally{explorer.dispose();}
++});
++
++test('Search native failure preserves busy/error delivery and a correlated failure without success acknowledgment',async()=>{
++    const {explorer}=controller();
++    try{
++        explorer.open();const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await flush();
++        const pending=r03Pending(explorer),before=panel.posted.length;
++        panel.send(r03Request('r03-failed'));pending[0].reject(new Error('Original search failure'));await flush();
++        const posted=panel.posted.slice(before),sessions=posted.filter((row:any)=>row.type==='search.session');
++        assert.equal(sessions.length,2);assert.equal(sessions[0].session.busy,true);
++        assert.equal(sessions[1].session.busy,false);assert.match(sessions[1].session.error,/Original search failure/);
++        assert.equal(sessions[1].session.result,undefined);
++        const replies=posted.filter((row:any)=>row.type==='result');
++        assert.equal(replies.length,1);assert.equal(replies[0].requestId,'r03-failed');assert.equal(replies[0].ok,false);
++        assert.equal(replies[0].data,undefined);
++    }finally{explorer.dispose();}
++});
++
++test('superseded Search keeps one winning evidence delivery and independently correlated outcomes',async()=>{
++    const {explorer}=controller();
++    try{
++        explorer.open();const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await flush();
++        const pending=r03Pending(explorer),before=panel.posted.length;
++        panel.send(r03Request('r03-old'));panel.send(r03Request('r03-new'));
++        pending[1].resolve(r03Evidence());await flush();
++        pending[0].resolve(r03Evidence('stale-evidence-must-not-appear'));await flush();
++        const posted=panel.posted.slice(before),complete=posted.filter((row:any)=>row.type==='search.session'&&row.session.result);
++        assert.equal(complete.length,1);assert.equal(complete[0].session.result.hits[0].text,'one-full-evidence-delivery');
++        assert.equal(JSON.stringify(posted).split('one-full-evidence-delivery').length-1,1);
++        assert.ok(!JSON.stringify(posted).includes('stale-evidence-must-not-appear'));
++        const replies=posted.filter((row:any)=>row.type==='result');assert.equal(replies.length,2);
++        assert.deepEqual(replies.find((row:any)=>row.requestId==='r03-new').data,{completed:true});
++        const stale=replies.find((row:any)=>row.requestId==='r03-old');
++        assert.equal(stale.ok,false);assert.equal(stale.error.code,'REQUEST_SUPERSEDED');
++    }finally{explorer.dispose();}
++});
++
++test('late Search cannot deliver evidence or success acknowledgment after project spec or trust scope changes',async()=>{
++    for(const change of ['project','spec','trust'] as const){
++        const {explorer,host}=controller();
++        try{
++            explorer.open();const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await flush();
++            const pending=r03Pending(explorer);panel.send(r03Request('r03-scope'));
++            if(change==='project')(explorer as any).select(undefined);
++            else if(change==='trust')host.trusted=()=>false;
++            else{const saved=host.specs();host.specs=()=>saved.map(spec=>({...spec,command:'/changed-launcher'}));}
++            const before=panel.posted.length;pending[0].resolve(r03Evidence('wrong-scope-evidence'));await flush();
++            const posted=panel.posted.slice(before);
++            assert.ok(!posted.some((row:any)=>row.type==='search.session'&&row.session.result));
++            assert.ok(!JSON.stringify(posted).includes('wrong-scope-evidence'));
++            const reply=posted.find((row:any)=>row.type==='result'&&row.requestId==='r03-scope');
++            assert.equal(reply.ok,false);assert.equal(reply.error.code,'REQUEST_SUPERSEDED');
++        }finally{explorer.dispose();}
++    }
++});

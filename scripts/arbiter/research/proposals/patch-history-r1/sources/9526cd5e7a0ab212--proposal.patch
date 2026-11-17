@@ -1,0 +1,64 @@
+--- a/scripts/check-raw-https-clients.py
++++ b/scripts/check-raw-https-clients.py
+@@ -228,8 +228,9 @@
+ 
+ 
+ def verify_http_refusal(status, body):
+-    if status != 404 or not isinstance(body, dict) or not isinstance(body.get("error"), dict) or body["error"].get("code") != "unknown_tool":
+-        raise AssertionError("Unknown/mutation route did not return the native unknown_tool refusal")
++    if (status != 404 or not isinstance(body, dict) or body.get("schema") != "airk.local-api-error/1"
++            or not isinstance(body.get("error"), dict) or body["error"].get("code") != "read_tool_not_found"):
++        raise AssertionError("Unknown/mutation route did not return the native read_tool_not_found refusal")
+ 
+ 
+ def verify_relocated(previous, current):
+@@ -406,7 +407,7 @@
+                                                             "workspace": workspace, **observed})
+                             save()
+                         for tool in ("missing_fixture_tool", "index"):
+-                            http_attempt = {"phase":phase,"tool":tool,"arguments":{},"expected":{"status":404,"code":"unknown_tool"},"examples":{}}
++                            http_attempt = {"phase":phase,"tool":tool,"arguments":{},"expected":{"status":404,"schema":"airk.local-api-error/1","code":"read_tool_not_found"},"examples":{}}
+                             receipt.setdefault("http_attempts", []).append(http_attempt)
+                             save()
+                             try:
+--- a/scripts/tests/test_raw_https_clients.py
++++ b/scripts/tests/test_raw_https_clients.py
+@@ -268,7 +268,7 @@
+                     body = {"error":{"code":"invalid_query_scope_arguments","retryable":False},"future":{"original":"retained"}}
+                     return {"isError":True,"content":[{"type":"text","text":json.dumps(body)}],"structuredContent":body}
+                 if tool in ("index", "missing_fixture_tool"):
+-                    raise CAMPAIGN.transport.HttpRefused(404, {"error": {"code": "unknown_tool"}})
++                    raise CAMPAIGN.transport.HttpRefused(404, {"schema":"airk.local-api-error/1","error": {"code": "read_tool_not_found"}})
+                 return result(tool, self.scoped(tool, arguments))
+ 
+             def close(self):
+@@ -290,7 +290,7 @@
+         def invoke(_command, _flags, _control, tool, arguments, _environment, *, index=None, workspace=None):
+             assert (index is None) == (tool is None or workspace is not None)
+             scoped = {**arguments, "workspace": workspace} if workspace is not None else {**(arguments or {}), "index_ids": [index]}
+-            body = catalog if tool is None else ({"error": {"code": "unknown_tool"}}
++            body = catalog if tool is None else ({"schema":"airk.local-api-error/1","error": {"code": "read_tool_not_found"}}
+                     if tool in ("index", "missing_fixture_tool") else result(tool, scoped))
+             return {"exit_code": int(tool in ("index", "missing_fixture_tool") or body.get("isError", False)), "body": body}
+ 
+@@ -407,10 +407,18 @@
+             CAMPAIGN.verify_case_reply("search", {}, False, self.envelope({"hits":[]}), "idx", "sentinel")
+ 
+     def test_unknown_route_refusal_cannot_be_substituted_with_service_or_auth_failure(self):
+-        CAMPAIGN.verify_http_refusal(404, {"error":{"code":"unknown_tool"},"future":"retained"})
+-        for status, body in [(503,{"error":{"code":"service_unavailable"}}),(401,{"error":{"code":"auth_required"}}),(404,{"error":{"code":"another_error"}})]:
++        CAMPAIGN.verify_http_refusal(404, {"schema":"airk.local-api-error/1","error":{"code":"read_tool_not_found"},"future":"retained"})
++        for status, body in [(503,{"error":{"code":"service_unavailable"}}),(401,{"error":{"code":"auth_required"}}),(404,{"schema":"airk.local-api-error/1","error":{"code":"unknown_tool"}}),
++                             (404,{"error":{"code":"read_tool_not_found"}}),(404,{"schema":"another-schema","error":{"code":"read_tool_not_found"}}),
++                             (404,{"schema":"airk.local-api-error/1","error":{"code":"another_error"}})]:
+             with self.subTest(status=status), self.assertRaises(AssertionError):
+                 CAMPAIGN.verify_http_refusal(status, body)
++
++    def test_raw_refusal_expectation_is_bound_to_the_native_router_source(self):
++        # Independent literal tripwire: mocked responses cannot invent the native error.
++        source = (CAMPAIGN.ROOT / "crates/airk-mcp/src/remote/http.rs").read_text(encoding="utf-8")
++        self.assertRegex(source, r'ReadCallError::UnknownTool\)\s*=>\s*error\(StatusCode::NOT_FOUND,\s*"read_tool_not_found"\)')
++        self.assertIn('json!({"schema":"airk.local-api-error/1","error":{"code":code}})', source)
+ 
+     def test_source_bytes_and_inconsistent_full_result_copies_are_not_accepted(self):
+         body = {"error":{"code":"scoped_read_unavailable","retryable":False},"future":"outside-sentinel"}

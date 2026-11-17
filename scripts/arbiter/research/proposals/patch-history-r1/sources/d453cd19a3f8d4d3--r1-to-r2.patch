@@ -1,0 +1,10 @@
+--- service-consumer-r1/download.rs.proposed
++++ service-consumer-r2/download.rs.proposed
+@@ -267,6 +267,7 @@
+     let work = async {
+         let mut url = original.to_owned();
+         loop {
++            budget.live()?;
+             let (response, connection) =
+                 tokio::time::timeout(Duration::from_secs(30), response(&url))
+                     .await

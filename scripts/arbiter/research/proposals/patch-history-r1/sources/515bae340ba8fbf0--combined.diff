@@ -1,0 +1,327 @@
+--- a/crates/airk-mcp/src/help/topics.rs
++++ b/crates/airk-mcp/src/help/topics.rs
+@@ -187,6 +187,7 @@
+         text: r#"The service runs offline MiniLM inference in-process through one shared, bounded model owner; since 1.8.14 there is no separate airk-embed helper. Compatible projects share verified model assets and loaded sessions. Opening a read-only connection does not itself load a model.
+ Model setup, source discovery and semantic embedding are separate work. Vector opt-out keeps lexical evidence available. An explicit vector query fails honestly when the required model/index is unavailable. Querying does not download or install models.
+ Custom models require supported local manifests and verified assets. Use the reviewed project configuration path; do not point a workspace setting at an arbitrary executable. AIRK Admin exposes explicit model setup and shared in-process model observations.
++MiniLM remains separate from optional Arbiter Focus ranking and Arbiter Context gathering. Focus does not replace reusable document vectors, and a reranker cannot recover an omitted candidate. Stage-specific authenticated assets and task/platform/resource qualification are required; inspect topic=arbiter for the approved two-stage design and actual catalog availability.
+ Use airk_status semantic_readiness/local_model_ready and runtime/work observations, then airk_capabilities for adapter limits. Ask command=model-catalog and command=configure for current CLI help."#,
+     },
+     Topic {
+@@ -336,11 +337,14 @@
+     },
+     Topic {
+         id: "arbiter",
+-        title: "Optional Arbiter answers and model boundaries",
+-        text: r#"Bundled MiniLM supports ordinary semantic retrieval. Optional Arbiter contextual answers are separate: globally off by default, requiring explicit immutable-index enrollment plus a verified selected profile. Enabling globally does not enroll all indexes; deletion/recreation/import does not inherit consent.
+-Inspect actual native catalog/control output for the two smaller/two larger profile choices, requirements, supported tasks and qualification. A visible choice, downloaded asset or source implementation is not independent task/device/platform qualification. Unsupported/unavailable choices refuse honestly; no cloud, sidecar, unverified code or automatic read-triggered download is substituted.
+-The composed answer read differs from context, which reads neighboring indexed lines. A question such as which retry rule governs this queue can require a cited contract, implementation/test and document evidence. Bounded native gathering stays inside original scope/publications and budget, organizes supported cited facts, and exposes missing constraints/gaps instead of inventing an answer. This is an explanation of the task, not a fabricated successful model example.
+-Agents and Workbench use the same canonical contextual result when supported. Exact reads keep full results; excluded indexes contribute no optional-model content. Stale/revoked authority suppresses delivery. No recursive agent loop, source writes or commands. Fuller grounded context and fewer agent turns are goals; quality, latency and savings need independent measured evidence.
+-Use airkctl arbiter status to inspect the actual native profile catalog, requirements, readiness and configuration revision. airkctl arbiter configure --file [complete Configure request JSON file] applies the strict Core-native Configure request, including explicit immutable-index enrollments; replace the bracketed placeholder with the actual request file path and use the generated schema, never invented fields. Provision and remove name --expected-revision and --profile; cancel and recover name --expected-revision. These are explicit native management operations; a status read never downloads or enrolls anything. Read command="arbiter" and each exact subcommand for current inputs. Provision, verified offline import, disable/cancel/remove and recovery preserve original configuration/request identities. Missing models never download during reads. Disablement suppresses delivery while actual native work/pins drain; do not remove live assets or replay uncertain provisioning. Use actual tools/list and CLI help for served controls. Ordinary retrieval remains available when optional advice is off or unsupported."#,
++        title: "Arbiter Focus, Context and model requirements",
++        text: r#"MiniLM is the bundled candidate-retrieval encoder: it creates reusable document/question vectors for efficient indexed search. The approved two-stage source design adds independently enabled Arbiter Focus and Arbiter Context. Stage controls and profiles remain subject to actual native support and qualification; this Help text does not make a model available. Inspect the running catalog/status rather than assuming an older service implements these stages.
++Arbiter Focus uses Qwen3-Reranker-0.6B to score a question and each retrieved passage together, improving the order of a bounded candidate set. It can run while Context is off. Focus cannot recover evidence MiniLM/native retrieval never selected. Relevance is not correctness, complete coverage or a calibrated sufficiency judgment.
++Arbiter Context — Compact uses Qwen3-1.7B; Arbiter Context — Large uses Qwen3-4B. They perform the same bounded context-gathering task; size names do not promise a quality difference. Only one Context choice is active. With separately enabled and enrolled Focus, the flow is MiniLM candidates, Focus ranking, then Context evidence assessment and justified additional native reads. Focus is a shared ranking component, not a third Context choice.
++Both optional stages are off by default and require explicit immutable-index enrollment for their own content processing. Enabling Focus does not enable Context or enroll all indexes; deletion/recreation/import does not inherit consent. Stage enrollment never expands an agent's read scope. Context uses Focus only where Focus is separately enabled and the index enrolled. For excluded indexes, no content contributes to that stage. Turning both stages off preserves ordinary native retrieval.
++The answer read gathers cited contextual evidence for a question; context reads neighboring indexed lines at a coordinate. For a retry question, useful evidence may include a contract, implementation, test and document. Native gathering stays within original scope/publications and total read/round/fan-out/byte/token/deadline budgets, retains source receipts and gaps, and cannot write sources, run commands or become an autonomous agent loop. Agents and Workbench retain equivalent full canonical evidence, provenance and errors. Model assessments remain distinct from source facts; fewer follow-ups and better answers need independent measured evidence.
++Use airkctl arbiter status for actual native requirements, supported tasks, configuration revision, selected versus active profiles, availability and reasons. Downloaded weights, a visible choice or source implementation are not verified readiness or independent device/platform qualification. Focus is smaller than either Context model but still needs memory/CPU/backend admission; candidate count and passage length affect latency. There is no universal RAM minimum, assumed GPU support or silent model/precision/device switch. Account for Focus, the selected Context model, MiniLM and ordinary indexing together.
++Read command="arbiter" and each exact subcommand for served inputs. airkctl arbiter configure --file [complete Configure request JSON file] uses the current Core-native generated schema; replace the bracketed placeholder with the actual path and never invent stage fields from prose. Provision/remove/cancel/recover are explicit native management operations bound to actual configuration/request identities. A status read or ordinary question never downloads or enrolls anything. Verify transfer/staging requirements, complete authenticated assets and supported execution before activation. Verified offline import has the same checks; once ready, inference stays local in the existing service with no cloud or sidecar.
++If an optional stage is off, unsupported, missing assets or unavailable, retain ordinary retrieval and its explicit not-applied/refusal reason; do not claim the fallback performed optional ranking or assessment. Existing vector/hybrid completeness refusals still apply. Disablement suppresses new/stale optional delivery while actual native work and pins drain. Remove through the guarded native operation, not by deleting live files. Recover an uncertain original request instead of replaying it. Keep full canonical results available for authorized inspection, copy and export; disclose reordering, selected subsets, omissions and stop reasons."#,
+     },
+ ];
+--- a/crates/airk-mcp/src/help/content_cases.rs
++++ b/crates/airk-mcp/src/help/content_cases.rs
+@@ -136,6 +136,15 @@
+                 "off by default",
+                 "immutable-index",
+                 "MiniLM",
++                "Arbiter Focus",
++                "Arbiter Context — Compact",
++                "Arbiter Context — Large",
++                "Qwen3-Reranker-0.6B",
++                "Qwen3-1.7B",
++                "Qwen3-4B",
++                "selected versus active",
++                "offline import",
++                "no universal RAM minimum",
+                 "excluded indexes",
+                 "gaps",
+                 "independent",
+--- a/packages/vscode/src/explorerHelp/manage-service.md
++++ b/packages/vscode/src/explorerHelp/manage-service.md
+@@ -3,8 +3,8 @@
+ title: Service and runtime
+ route: manage/service
+ area: management
+-aliases: start, stop, restart, upgrade, rollback, embedding, resources
+-related_airk_help: service, upgrades, resources
++aliases: start, stop, restart, upgrade, rollback, embedding, resources, Arbiter Focus, Arbiter Context, Qwen, MiniLM
++related_airk_help: service, upgrades, resources, models, arbiter
+ ---
+ # Service and runtime
+ 
+@@ -13,3 +13,11 @@
+ Advanced management uses AIRK Admin. Explorer also keeps Agents, Activity, Usage and evidence reads inside this window; choose the corresponding main destination for those native service results.
+ 
+ Choose Open AIRK Admin to open the admin pages. Choose where... picks In VS Code (the Simple Browser, with a single-use sign-in link kept only in memory) or In my browser; the choice is remembered in the airk.admin.openIn setting. If the VS Code browser reports a certificate problem, choose Open in my browser.
++
++## Optional Arbiter stages
++
++The approved source design separates **Arbiter Focus** (Qwen3-Reranker-0.6B) from **Arbiter Context — Compact** (Qwen3-1.7B) and **Arbiter Context — Large** (Qwen3-4B). Focus ranks MiniLM's retrieved candidates and can run with Context off. Context assesses evidence and guides bounded additional reads. Only one Context model is active. The stage controls and profiles remain subject to implementation and qualification; inspect the running service rather than assuming this guide enables them.
++
++Both stages are off by default and need their own explicit index enrollment and verified supported assets. Model selection is intended configuration; active readiness additionally needs task/platform support and current resources. Status, ordinary queries and Help never authorize model downloads. Use native Arbiter status and current generated command/schema guidance for supported controls.
++
++Focus still has a memory and latency cost; candidate count and passage length matter. There is no universal RAM floor or assumed GPU support. An unavailable stage retains ordinary retrieval with an explicit reason, while normal vector/completeness refusals still apply. Disablement drains native work; remove models through guarded service controls instead of deleting live assets. Native Help's Arbiter guide explains requirements, offline use, stage consent, fallback and recovery.
+--- a/packages/vscode/src/explorerHelp/search.md
++++ b/packages/vscode/src/explorerHelp/search.md
+@@ -4,7 +4,7 @@
+ route: search/query
+ area: explorer
+ aliases: find text, lexical search, semantic search, hybrid search, vector search, grep the index
+-related_airk_help: search, tool-selection
++related_airk_help: search, tool-selection, models, arbiter
+ ---
+ # Search indexed evidence
+ 
+@@ -27,3 +27,9 @@
+ - Open source requests a dated native saved-source check against the citation and current source policy, then observes unsaved editor state. A past match does not establish continued freshness. Workbench retains the complete source-open observation separately from the original query and offers JSON copy/export.
+ 
+ Page changes announce the retained result range. Previous/Next use the same controls as Review Changes.
++
++## MiniLM, Focus and Context
++
++MiniLM supplies reusable vectors for candidate retrieval. The approved **Arbiter Focus** stage uses Qwen3-Reranker-0.6B to rerank a bounded retrieved set; it cannot find evidence omitted by candidate retrieval. Focus is designed to run independently with **Arbiter Context** off. Context Compact (Qwen3-1.7B) and Large (Qwen3-4B) add evidence assessment and bounded follow-up reads. Relevance scores do not prove evidence sufficiency.
++
++Check the actual service's supported and qualified stages before enabling them; new stage controls are still being introduced in this source candidate. They require explicit stage/index consent and resource admission. Ordinary search remains available with explicit not-applied reasons when optional work is unavailable. Full provenance, publication identity, errors and any disclosed reordering or omissions remain part of the native result.
+--- a/packages/vscode/src/explorerHelp/assistance-tools.md
++++ b/packages/vscode/src/explorerHelp/assistance-tools.md
+@@ -4,7 +4,7 @@
+ route:
+ area: guidance
+ aliases: AI agent, MCP, explorer assistance tools, template discovery, validation, proposals, navigation, setup, codex, claude, copilot
+-related_airk_help: explorer, roles, agent-setup, mcp, workflows
++related_airk_help: explorer, roles, agent-setup, mcp, workflows, arbiter
+ ---
+ # Work with an AI agent
+ 
+@@ -41,3 +41,9 @@
+ New entries use the discovered HTTPS endpoint and the native credential/trust flow. Stdio MCP and the stable launcher are retired. The one-shot airkctl agents credential helper supplies credentials where the supported agent requires it; tokens remain native-held. Reads never create an index or expand a grant. Use airkctl agents --help and the actual native reports for headless setup and repair. Agent-choice changes apply to later calls, but a client may need to refresh its cached tools list.
+ 
+ A status timeout reports unknown readiness. Cold installed-runtime verification stays shared within the MCP session, so later polls do not restart it; verification failures remain errors. Use diagnostics to inspect runtime and work separately. Cached status includes its observation age and never proves that live source bytes match the publication.
++
++## Questions and contextual evidence
++
++The `answer` tool gathers a bounded cited evidence packet for a question; `context` expands neighboring indexed lines at a specific location. The assistant can use the packet's organized source-backed evidence, assessments, gaps and stop reason when composing its response. These are read-only operations within the connection's native scope.
++
++The approved optional design has independent Arbiter Focus ranking plus Arbiter Context Compact/Large gathering. Focus can assist ordinary retrieval with Context off; neither stage grants an agent extra index permissions. Availability depends on actual implemented controls, verified profiles, explicit stage/index enrollment and current resources. Inspect native Arbiter Help and status; a selected or downloaded model does not establish active readiness or completed model qualification.
+--- a/docs/agent-integration.md
++++ b/docs/agent-integration.md
+@@ -14,6 +14,26 @@
+ extension between a standalone client and AIRK. Headless reads still require the
+ native service to be running and the client process to have its reviewed
+ credential and CA trust. A saved configuration alone does not supply either.
++
++## Retrieval, ranking and contextual questions
++
++MiniLM remains the bundled embedding encoder for native candidate retrieval.
++The approved source design adds independently enabled **Arbiter Focus**
++(Qwen3-Reranker-0.6B), followed when enabled by **Arbiter Context — Compact**
++(Qwen3-1.7B) or **Arbiter Context — Large** (Qwen3-4B). Focus can assist ordinary
++retrieval while Context is off; Context guides bounded evidence gathering.
++Controls and new profiles remain under implementation/qualification.
++
++The `answer` MCP tool gathers contextual evidence for a question and retains
++source receipts, gaps, work and stop reasons. It differs from `context`, which
++expands lines around an indexed coordinate. Neither model advice nor stage
++enrollment expands the client's authorized index scope. Inspect the running
++catalog and native status for supported operations and active profiles.
++
++The [Arbiter operator guide](arbiter/user-guide.md) explains stage/index consent,
++explicit model provisioning, hardware admission, offline use, selected versus
++active state and fallback. A reranker cannot recover evidence absent from the
++candidate set, and a relevance score is not a sufficiency guarantee.
+ 
+ ## Select scope and provision the actual client
+ 
+--- a/docs/admin-pages.md
++++ b/docs/admin-pages.md
+@@ -32,6 +32,25 @@
+ local user (Windows: the connection's owning process; Linux:
+ `/proc/net/tcp`). **macOS has no such check yet, so the admin API answers
+ `admin_peer_refused` there.**
++
++## Optional Arbiter stages
++
++The approved source design separates **Arbiter Focus** (independent
++Qwen3-Reranker-0.6B ranking) from **Arbiter Context — Compact** (Qwen3-1.7B) and
++**Arbiter Context — Large** (Qwen3-4B) evidence gathering. The new stage controls
++and profiles remain under implementation and qualification; inspect actual
++native support rather than inferring availability from a visible model name.
++
++Review configuration and consent per stage and immutable index. Selection is
++not active readiness: authenticated assets, supported tasks/platform/backend and
++current resource admission are separate requirements. Ordinary search, status
++and Help never approve downloads. Focus can run with Context off; turning both
++off preserves ordinary retrieval. Missing or unavailable stages report their
++reason and retain normal retrieval, including its existing completeness refusals.
++
++Use the [Arbiter operator guide](arbiter/user-guide.md) for model roles, measured
++hardware requirements, offline provisioning, drain/removal and original-request
++recovery. Actual CLI/schema definitions remain authoritative for control inputs.
+ 
+ ## What works in this version
+ 
+--- a/docs/arbiter/user-guide.md
++++ b/docs/arbiter/user-guide.md
+@@ -0,0 +1,151 @@
++# Arbiter Focus and Context
++
++This guide describes the approved two-stage design in the current source
++candidate. The new controls and model profiles are being implemented and
++qualified. Use the running service's catalog and status to establish what your
++installed version actually supports; this document does not make a model ready.
++
++## What each model does
++
++| Component | Model | Purpose |
++| --- | --- | --- |
++| Bundled retrieval | Trained MiniLM | Creates document and question embeddings so AIRK can find candidates efficiently. |
++| Arbiter Focus | Qwen3-Reranker-0.6B | Scores the question and each retrieved passage together to improve the order of a bounded candidate set. |
++| Arbiter Context — Compact | Qwen3-1.7B | Assesses the gathered evidence and selects justified additional reads within the original budget. |
++| Arbiter Context — Large | Qwen3-4B | Performs the same contextual task with a larger resource budget. |
++
++Focus can run independently while Context is off. When both stages are enabled
++for an index, the intended flow is MiniLM candidate retrieval, Focus reranking,
++then Context assessment and bounded evidence gathering. Only one Context model
++is selected at a time. Compact and Large describe model size; their names do not
++certify a quality difference.
++
++Focus can reorder only the candidates AIRK retrieved. It cannot recover an
++important passage that candidate retrieval omitted. MiniLM recall and the native
++retrieval recipe still matter. A relevance score is not proof that a passage is
++correct, that all required evidence is present, or that no further read is useful.
++
++Context can identify a missing definition, constraint, example, test or
++counterevidence and choose among verified native reads. It cannot invent a path,
++expand the caller's permissions, execute a command, modify source files or start
++an autonomous agent loop. Its sufficiency assessment is fallible and relative to
++the question and visible evidence.
++
++## What you need
++
++- A running, verified AIRK Service version that supports the stage and model
++  profile. The VS Code extension is optional; CLI, MCP and browser clients use
++  the same native service.
++- Readable indexed evidence and an authorized index scope. Semantic candidate
++  retrieval also needs the matching MiniLM model and published document vectors.
++- Explicit stage configuration and enrollment of the intended immutable index
++  identities. Enabling Focus does not enable Context or enroll every index.
++- The complete authenticated assets for each selected stage, including its
++  tokenizer, compiler/readout, calibration, qualification fixtures and notices.
++  Downloaded weights alone are not an active profile.
++- A qualified profile for the actual OS, architecture, backend and supported
++  tasks, with enough available memory, disk and execution capacity at admission.
++
++Both optional stages are off by default. A new, recreated or imported index does
++not inherit another index's consent. Renaming an enrolled index preserves its
++identity. A connection's read scope remains a separate authorization boundary;
++stage enrollment does not grant an agent access to an index.
++
++## Check support before enabling a stage
++
++```console
++airkctl arbiter --help
++airkctl arbiter status
++```
++
++Inspect the actual catalog, configuration revision, task support, requirements
++and per-stage availability. Use the current generated configuration schema and
++command help to prepare changes; do not copy fields or flags from an older
++version. A selected model is the user's intended configuration. An active model
++has verified assets, supported execution and current admission. A visible or
++selected entry may remain unavailable with a specific reason.
++
++Review Focus and Context separately. Enable only the intended stage and enroll
++only the indexes it may process. Context may use Focus only where Focus is
++separately enabled and the index is enrolled for it. With Focus off, Context can
++use the ordinary native candidate ordering. With Context off, Focus can still
++help ordinary retrieval where supported.
++
++Model provisioning is an explicit management operation. A status query, ordinary
++search or contextual question does not authorize a download. Review the selected
++profile, transfer and staging/rollback disk requirements before provisioning.
++Acceptance of a provisioning request is not completion; retain its request and
++configuration identities and inspect its native outcome.
++
++## Hardware and latency
++
++Focus is smaller than either Context model, but it is substantially larger than
++MiniLM and still needs resource admission. It scores a question and passage
++together for every candidate, so passage length and candidate count affect both
++memory and latency. Context adds its own token, assessment and read work. The
++combined profile must account for both stages, MiniLM and ordinary indexing.
++
++There is no universal RAM minimum, guaranteed CPU latency or assumed GPU support.
++The service must report measured requirements for the qualified model precision,
++backend, OS/architecture and input limits. Compact does not mean it fits every
++machine, and installing a GPU does not establish a supported execution path.
++Unavailable capacity is an explicit not-applied reason rather than permission to
++switch models, precision or devices silently.
++
++## Results, limits and fallback
++
++Canonical results retain original source locations, content hashes, publication
++identity and read authority. Focus ordering and any selected or omitted subset
++must be disclosed. A ranked excerpt is still indexed evidence, not a new source
++fact. Complete supported evidence and provenance remain available through the
++normal authorized inspection, copy and export paths.
++
++Context returns organized cited evidence, its assessments and gaps, work used
++and the stop reason. The MCP `answer` operation gathers this contextual packet;
++`context` expands neighboring indexed lines around a specific location. The
++calling assistant can use the packet in its response. Review the cited evidence
++and qualifications rather than treating a model judgment as exhaustive proof.
++
++If an optional stage is disabled, unsupported, missing assets or temporarily
++unavailable, retain ordinary MiniLM/native retrieval with the explicit stage
++application or refusal reason. Do not interpret fallback as a successful Focus
++ranking or a successful Context assessment. Explicit vector/hybrid requests and
++saved completeness requirements keep their normal refusal rules.
++
++Deadlines, candidate/read/round/byte/token limits and index authorization do not
++reset between stages or follow-up reads. Stale or revoked authority suppresses
++delivery. Excluded indexes contribute no content to that stage. Turning both
++optional stages off preserves ordinary retrieval behavior.
++
++## Offline use, disablement and removal
++
++After a supported profile's complete assets have been verified and provisioned,
++inference is local inside AIRK Service. The product does not send indexed
++questions or evidence to a cloud model, run a model server or execute code from
++a model repository. Offline import must authenticate the same complete assets
++as online provisioning. Missing assets remain unavailable when offline.
++
++Disable each stage through its supported native controls. Disablement prevents
++new optional work and suppresses stale delivery while already admitted work
++drains; it is not proof that native execution stopped instantly. Remove a
++profile only through the service's guarded operation after its pins and active
++work are released. Preserve any previous qualified bundle required for rollback.
++Do not delete live model directories manually.
++
++After an interrupted or uncertain operation, inspect and recover the original
++request using its actual configuration revision. Do not replay it under a fresh
++identity merely because the client lost the reply. A restart, partial download
++or downloaded checkpoint never manufactures readiness.
++
++## Qualification and support
++
++Model download, a successful export, a correct relevance ranking and a passing
++renderer test prove different things. The selected native pipeline still needs
++independent evidence-quality, safe sufficiency/abstention, bounded gathering,
++goal/follow-up, recovery, resource, platform and package qualification. Help
++reports available controls and requirements; it does not certify those results.
++
++When reporting a problem, retain the service/profile versions, selected versus
++active stage, the explicit unavailable or stop reason and native request/receipt
++identity. Review excerpts, paths and logs before sharing them. Do not post
++credentials, sign-in URLs or private source text.

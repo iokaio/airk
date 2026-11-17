@@ -1,0 +1,25 @@
+--- a/scripts/cuda-static-checkpointed.py
++++ b/scripts/cuda-static-checkpointed.py
+@@ -14,12 +14,15 @@
+ def require_header(v):
+  if v.get('schema')!='airk.private.cuda-checkpointed-build/1' or v.get('status')!='PASS_CHECKPOINTED_PRODUCER_ONLY_UNQUALIFIED' or v.get('mode')!='checkpointed-warm' or v.get('qualification') is not False or v.get('cold_build_qualified') is not False or v.get('producer_source',{}).get('sha256')!=COMPOSER or v.get('input_contract',{}).get('sha256')!=INPUT or v.get('plan',{}).get('sha256')!=PLAN or v.get('original_failed_build',{}).get('sha256')!=R12:raise ValueError('exact successful checkpointed composite authority required')
+ 
++def toolchain_pins(tools):
++ return [{field:tools[k][field] for field in ['path','bytes','sha256']} for k in ['compiler','cmake','ninja','patch','python','vcvars']]
++
+ def execution_context(build,core):
+  if build.get('schema')!='airk.cuda-static-build-proof/2':raise ValueError('checkpoint proof/2 required')
+  pin=build['build_receipt'];core.verify_file(core.plain(pin['path'],regular=True),pin);v=core.read_json(pin['path']);require_header(v)
+  ip=v['input_contract'];core.verify_file(core.plain(ip['path'],regular=True),ip);inputs=core.read_json(ip['path'])
+  tools=v['toolchain']
+- if build['toolchain_pins']!=[tools[k] for k in ['compiler','cmake','ninja','patch','python','vcvars']]:raise ValueError('canonical exact toolchain pins differ')
++ if build['toolchain_pins']!=toolchain_pins(tools):raise ValueError('canonical exact toolchain pins differ')
+  for row in build['toolchain_pins']:core.verify_file(core.plain(row['path'],regular=True),row)
+  return Path(inputs['r12_proposal']),tools
+ 
+@@ -72,4 +75,4 @@
+  if value['original_attempt_started_utc']!=origin.isoformat() or completed>=helper.CAMPAIGN or completed<max(datetime.datetime.fromisoformat(b['completed_utc']) for b in bodies) or value['global_campaign_cutoff_utc']!=helper.CAMPAIGN.isoformat() or value['wall_since_first_attempt_seconds']!=(completed-origin).total_seconds() or value['total_active_section_seconds']!=sum(b['elapsed_seconds'] for b in bodies) or not 0<=value['metadata_composition_seconds']<300:raise ValueError('checkpoint chronology/metadata deadline differs')
+  for row in inputs['pins']:core.verify_file(core.plain(row['path'],regular=True),row)
+  if core.digest(raw)!=expected_receipt_sha256:raise ValueError('composite changed during verification')
+- return {'schema':'airk.cuda-static-build-proof/2','target':runtime.TARGET,'ort_version':runtime.VERSION,'build_receipt':runtime._pin(core,raw),'producer_source':value['producer_source'],'approved_plan_sha256':PLAN,'original_failed_R12':value['original_failed_build'],'failed_ancestry':failed,'sections':normalized,'source_manifest':value['source_manifest'],'source_inventory_sha256':value['source_inventory_sha256'],'frontend_inventory_sha256':value['frontend_inventory_sha256'],'cuda_inventory_sha256':value['cuda_inventory_sha256'],'frozen_input_closure_sha256':value['frozen_original_inputs_sha256'],'ninja':ninja,'static_target_closure':{'sha256':value['target_closure_sha256'],'count':96},'libraries':libraries,'provider_dlls':pair,'toolchain_pins':[tools[k] for k in ['compiler','cmake','ninja','patch','python','vcvars']],'qualification':False,'activation_pins_available':False}
++ return {'schema':'airk.cuda-static-build-proof/2','target':runtime.TARGET,'ort_version':runtime.VERSION,'build_receipt':runtime._pin(core,raw),'producer_source':value['producer_source'],'approved_plan_sha256':PLAN,'original_failed_R12':value['original_failed_build'],'failed_ancestry':failed,'sections':normalized,'source_manifest':value['source_manifest'],'source_inventory_sha256':value['source_inventory_sha256'],'frontend_inventory_sha256':value['frontend_inventory_sha256'],'cuda_inventory_sha256':value['cuda_inventory_sha256'],'frozen_input_closure_sha256':value['frozen_original_inputs_sha256'],'ninja':ninja,'static_target_closure':{'sha256':value['target_closure_sha256'],'count':96},'libraries':libraries,'provider_dlls':pair,'toolchain_pins':toolchain_pins(tools),'qualification':False,'activation_pins_available':False}

@@ -1,0 +1,75 @@
+--- retained-native-name-controller.py
++++ declared-overlay-control-alias-controller.py
+@@ -5,13 +5,16 @@
+ C=None
+ 
+ def validate_config(value):
+- assert isinstance(value,dict) and value.get('status')=='frozen_root_commit'
++ assert isinstance(value,dict) and value.get('status')=='frozen_declared_overlay'
+  for field,size in (('commit',40),('tree',40),('manifest_sha256',64),('static_sha256',64)):
+   item=value.get(field);assert isinstance(item,str) and len(item)==size and all(c in '0123456789abcdef' for c in item)
+- assert value['commit']!='dda749cbdf77b3e2106003ff10a683ec3aec3202', 'unchanged failed DDA input cannot replay'
++ assert value['commit']=='059a2a893069f89e8ea8aefec7f9bdb8bb6063b6' and value['external_delta_commit']=='e306258a2b6913e6ba91a20fe0b50dbe6ae8361f'
++ assert value['tree']=='92f38579cbd9a4650466cc839e34bde1b8574973'
++ assert value['expected_dirty_paths'] and len(value['expected_dirty_paths'])==len(set(value['expected_dirty_paths']))
++ assert re.fullmatch('[0-9a-f]{64}',value['expected_dirty_status_sha256'])
+  seal=value.get('raw_c7');assert isinstance(seal,dict) and isinstance(seal.get('files'),int) and seal['files']>0
+  digest=seal.get('sha256');assert isinstance(digest,str) and len(digest)==64 and all(c in '0123456789abcdef' for c in digest)
+- assert [x['name'] for x in value.get('commands',[])]==['scoped-clippy', 'name-boundary-controls', 'private-log-controls', 'exact-reference-refresh']
++ assert [x['name'] for x in value.get('commands',[])]==['scoped-clippy', 'mac-system-control-anchor', 'affected-control-regressions', 'private-log-controls', 'exact-reference-refresh']
+  return value
+ 
+ def read_config():
+@@ -33,17 +36,29 @@
+  actor()
+  with q.open('x') as f:json.dump(value,f,indent=2);f.write('\n');f.flush();os.fsync(f.fileno())
+ def git(*args):return subprocess.check_output(['git','--no-optional-locks',*args],cwd=C['source'])
++def require_exact_overlay_status():
++ raw=git('status','--porcelain=v1','-z','--untracked-files=all')
++ entries=raw.split(b'\0');assert entries.pop()==b''
++ paths=[]
++ for entry in entries:
++  assert len(entry)>=4 and entry[2:3]==b' ' and entry[:2] in (b' M',b'??'), 'unexpected index/rename/deletion state'
++  paths.append(os.fsdecode(entry[3:]))
++ assert sorted(paths)==sorted(C['expected_dirty_paths']), 'undeclared or missing dirty source path'
++ assert hashlib.sha256(raw).hexdigest()==C['expected_dirty_status_sha256'], 'exact overlay census bytes changed'
++ return True
++
+ def preflight():
+  actor();source=Path(C['source']);base=Path(C['base'])
+  for q in (base,source,base/'evidence'):
+   assert q.lstat().st_uid==501 and q.resolve()==q and q.is_dir()
+  assert git('rev-parse','HEAD').decode().strip()==C['commit']
+  assert git('rev-parse','HEAD^{tree}').decode().strip()==C['tree']
+- assert not git('status','--porcelain=v1','--untracked-files=all')
++ require_exact_overlay_status()
+  assert sha(C['manifest'])==C['manifest_sha256']
+  manifest=json.loads(Path(C['manifest']).read_text())
+  for row in manifest['files']:
+-  q=source/row['path'];s=q.lstat();assert stat.S_ISREG(s.st_mode) and s.st_uid==501 and s.st_nlink==1 and sha(q)==row['sha256']
++  name=row['path'];assert not Path(name).is_absolute() and '..' not in Path(name).parts and '\\' not in name
++  q=source/name;s=q.lstat();assert stat.S_ISREG(s.st_mode) and s.st_uid==501 and s.st_nlink==1 and q.resolve()==q and sha(q)==row['sha256']
+  assert load('actual_native_identity',source/'scripts/build-service-runtime.py').source_identity()==C['raw_c7']
+  assert sha(C['static_environment'])==C['static_sha256']
+  return source,base
+@@ -106,7 +121,7 @@
+  soft,hard=resource.getrlimit(resource.RLIMIT_NOFILE);assert hard==resource.RLIM_INFINITY or hard>=4096
+  resource.setrlimit(resource.RLIMIT_NOFILE,(max(soft,4096),hard))
+  owner=load('actual_darwin_owner',source/'scripts/provision-static-onnx-runtime.py')
+- env=dict(os.environ,PYTHONDONTWRITEBYTECODE='1',PYTHONNOUSERSITE='1',CARGO_BUILD_JOBS='2',CARGO_INCREMENTAL='0',CARGO_TARGET_DIR=str(target),AIRK_BUNDLED_MODEL_DIR=str(base/'inputs/bundled-model-v3'),AIRK_TEST_MODEL_DIR=str(base/'inputs/bundled-model-v3/minilm-l6-v2-s8-v3'),RUST_TEST_THREADS='2')
++ env=dict(os.environ,PYTHONDONTWRITEBYTECODE='1',PYTHONNOUSERSITE='1',CARGO_BUILD_JOBS='2',CARGO_INCREMENTAL='0',CARGO_TARGET_DIR=str(target),AIRK_BUNDLED_MODEL_DIR='/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/inputs/bundled-model-v3',AIRK_TEST_MODEL_DIR='/Users/tylerjensen/airk-builds/arbiter-final-20261116-r1/inputs/bundled-model-v3/minilm-l6-v2-s8-v3',RUST_TEST_THREADS='2')
+  env['PATH']=str(Path(C['python']).parent)+':'+str(Path(C['node']).parent)+':'+str(Path.home()/'.cargo/bin')+':/usr/bin:/bin:/usr/sbin:/sbin'
+  start=time.monotonic();records=[];cleanup=None;all_settled=True;error=None;passed=False
+  initial={'schema':'airk.neo-integrated-platform-start/1','utc':datetime.now(timezone.utc).isoformat(),'actor':actor(),'config':C,'status':'started','passed':False,'descriptor_before':[soft,hard],'descriptor_after':list(resource.getrlimit(resource.RLIMIT_NOFILE)),'owner_script_sha256':sha(source/'scripts/provision-static-onnx-runtime.py'),'receipt_runner_sha256':sha(source/'scripts/dev/receipt_runner.py'),'original_dirty_status_sha256':hashlib.sha256(subprocess.check_output(['git','--no-optional-locks','status','--porcelain=v1','-z','--untracked-files=normal'],cwd=Path.home()/'code/airk')).hexdigest()}
+@@ -154,9 +169,10 @@
+    cleanup_blocker='Actual owned descendant settlement unproven; target/evidence retained without cleanup claim.';passed=False
+   current=None;dirty=None;unchanged=False
+   try:
++   preflight()  # Full final source-map, baseline HEAD/tree and exact dirty census reopen.
+    current=load('after_native_identity',source/'scripts/build-service-runtime.py').source_identity()
+    dirty=hashlib.sha256(subprocess.check_output(['git','--no-optional-locks','status','--porcelain=v1','-z','--untracked-files=normal'],cwd=Path.home()/'code/airk')).hexdigest()
+-   unchanged=current==C['raw_c7'] and not git('status','--porcelain=v1','--untracked-files=all') and dirty==initial['original_dirty_status_sha256']
++   unchanged=current==C['raw_c7'] and require_exact_overlay_status() and dirty==initial['original_dirty_status_sha256']
+   except BaseException as failure:
+    evidence_errors.append({'stage':'final_input_observation','type':type(failure).__name__,'message':str(failure)});passed=False
+   passed=passed and unchanged and not evidence_errors

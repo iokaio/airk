@@ -1,0 +1,83 @@
+--- frozen-r6/card
++++ prepared-r7/card
+@@ -1,14 +1,14 @@
+ {
+-  "schema": "airk.private-r154-composed-launch-card/6",
+-  "classification": "one fresh R6 attribution-only Answer after full753 semantics and separate genuine owner-work observation; R4/R5 failed preserved",
++  "schema": "airk.private-r154-composed-launch-card/7",
++  "classification": "one fresh R7 attribution-only Answer after newly observed full753 semantic readiness and authenticated idle work; R4/R5/R6 remain failed, no historical replay or qualification",
+   "whole_seconds": 1800,
+   "r154_seconds": 360,
+   "outer_job_policy": "maintained uncapped kill-on-close actual multiprocess owner; original native profile CPU/RAM gates unchanged",
+   "observer_job_bytes": 8589934592,
+   "repository_root": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3",
+   "stage_root": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1",
+-  "work": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1\\work-r6",
+-  "output": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1\\composed-route-r6",
++  "work": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1\\work-r7",
++  "output": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1\\composed-route-r7",
+   "staging_guard": "D:\\code\\Github\\airk\\artifacts\\advanced-split\\models\\actual-composed-service-r2\\r154-flat-stage-preparation-r1\\stage_assets.py",
+   "staging_receipt": {
+     "path": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1\\staging-receipt.json",
+@@ -35,7 +35,7 @@
+     "path": "D:\\code\\Github\\airk\\artifacts\\tools\\node-v24.15.0-win-x64\\node.exe",
+     "sha256": "3331e1ffe19874215472217c5e94f5a0c6d8e18c4ac7111d3937aa0ad5e9b4a5"
+   },
+-  "r154_launcher": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r6-readiness-typed-retry-proposal-r1\\launch_owned.py",
++  "r154_launcher": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r7-execution-preparation-r1\\launch_owned.py",
+   "r154_preparation": {
+     "path": "D:\\code\\Github\\airk\\artifacts\\advanced-split\\models\\actual-composed-service-r2\\r154-fresh-attribution-preparation-r3\\preparation.json",
+     "sha256": "573d6539104c8265dd197c6339b910f7943b73d5e652507de3fa803c67466e83",
+@@ -314,7 +314,7 @@
+   "service_environment": {
+     "AIRK_ARBITER_EVALUATION_INPUTS": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1\\evaluation-inputs.private.json",
+     "AIRK_ARBITER_EVALUATION_INPUTS_SHA256": "55719e6943a992271bd9cfa1e98046dc4b946332b22bdf146efb0d8b487b6656",
+-    "AIRK_ARBITER_EVALUATION_WORK": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1\\work-r6",
++    "AIRK_ARBITER_EVALUATION_WORK": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1\\work-r7",
+     "AIRK_ARBITER_EVALUATION_SECONDS": "1800",
+     "AIRK_ARBITER_EVALUATION_RESOURCE_CONSENT": "throughput64gib4threads",
+     "AIRK_NATIVE_DISPATCH_OBSERVER": "true",
+@@ -2182,9 +2182,18 @@
+     "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r6-readiness-typed-retry-proposal-r1\\launch_owned.py": "8de03259e5a3d4907b9726bc0f7563f9733645f6912a15ad68595c3a18ba75d1",
+     "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r6-readiness-typed-retry-proposal-r1\\OWNED-CONTRACT.md": "5aa5cfaf5d60781a180a2d885b8a39079964f9ef60d7fd896d9d59a9e42a961d",
+     "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r6-readiness-typed-retry-proposal-r1\\test_r6_controls.py": "87942ec5fd998a1c9c48abbce1b28e6e582635d4fb7efd49fd19603e7825709f",
+-    "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r6-readiness-typed-retry-proposal-r1\\actual-r5-evidence.json": "d8feedec224e4a3409ba8400d717c08cbc393f120227755665c51712bd8c68a0"
++    "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r6-readiness-typed-retry-proposal-r1\\actual-r5-evidence.json": "d8feedec224e4a3409ba8400d717c08cbc393f120227755665c51712bd8c68a0",
++    "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r7-execution-preparation-r1\\launch_route.py": "0219fe489795f7962c9c53157a2b3c38be04e778f0cee2185a8bbf65c533bc11",
++    "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r7-execution-preparation-r1\\launch_owned.py": "8de03259e5a3d4907b9726bc0f7563f9733645f6912a15ad68595c3a18ba75d1",
++    "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r7-execution-preparation-r1\\OWNED-CONTRACT.md": "27b3e329e9a3bc1d5f4473ed5fc464d7ff6541df41d85aec6405544258902047",
++    "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r7-execution-preparation-r1\\preceding-r6-failure-and-settlement.json": "9d4b7b330432eb313578ce4c01950cd7aae4628d8e0b85179b0eac57b7c84fe8",
++    "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r6-idle-causal-correction-r1\\launch_route.py": "e6ffd4cab3651299186640adb75fb5be9d717773e34cb3dc2f6670c5d39f9039",
++    "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r6-idle-causal-correction-r1\\test_causal_controls.py": "bc758bf70c43cff1fb5d9d868953db8c702549d6fb266c0bb5f119a004c491b9",
++    "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r6-idle-causal-correction-r1\\OWNED-CONTRACT.md": "c6fce958e68fe3ab43509048868302c66931227795072208d5c171715211d542",
++    "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r6-idle-causal-correction-r1\\review-packet.json": "9db77441ba64d6a35dd82126429042a8963491ce318e640ab80347a4a95e829e",
++    "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r6-idle-causal-correction-r1\\tests-receipt.json": "7caff9b639c9a79ac99be8b8117ac981f85831bc289911a59af0a73c60cebb34"
+   },
+-  "index_data": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1\\index-data-r6",
++  "index_data": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1\\index-data-r7",
+   "previous_failed_run": {
+     "card": "D:\\code\\Github\\airk\\artifacts\\advanced-split\\models\\actual-composed-service-r2\\r154-composed-launch-preparation-r3\\launch-card.json",
+     "sha256": "999cc0f676cb40ef596b5e6d12a4c99cbb1a1d05a8682b803b587a512061ac16",
+@@ -2240,5 +2249,22 @@
+     "actual_route_receipt": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\candidate-worktree-r3\\artifacts\\r154-fresh-current-section-r1\\composed-route-r5\\route\\receipt.json",
+     "actual_route_receipt_sha256": "ff20dab48fd0bc99a150899b0910237418c2e38c21531b97d5302add0dfa5302",
+     "disposition": "failed before warming/Answer; natural child nonzero and native shutdown/exit receipts retained unchanged"
++  },
++  "preceding_failed_R6": {
++    "path": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r7-execution-preparation-r1\\preceding-r6-failure-and-settlement.json",
++    "sha256": "9d4b7b330432eb313578ce4c01950cd7aae4628d8e0b85179b0eac57b7c84fe8"
++  },
++  "reviewed_single_predicate_correction": {
++    "packet": {
++      "path": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r6-idle-causal-correction-r1\\review-packet.json",
++      "sha256": "9db77441ba64d6a35dd82126429042a8963491ce318e640ab80347a4a95e829e"
++    },
++    "frozen_controls": {
++      "path": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\r154-r6-idle-causal-correction-r1\\tests-receipt.json",
++      "sha256": "7caff9b639c9a79ac99be8b8117ac981f85831bc289911a59af0a73c60cebb34",
++      "selected": 43,
++      "passed": 43
++    },
++    "historical_observations_not_new_authority": true
+   }
+ }

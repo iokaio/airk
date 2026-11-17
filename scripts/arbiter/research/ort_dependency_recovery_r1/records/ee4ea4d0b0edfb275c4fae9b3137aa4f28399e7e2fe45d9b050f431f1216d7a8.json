@@ -1,0 +1,15 @@
+{
+  "base_bytes": 7223,
+  "base_sha256": "a2c818cbe6d139e844734b6bcabe5eb34337f71c87e17de9769657c4bf857b81",
+  "edits": [
+    {
+      "delete_bytes": 0,
+      "deleted_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "insert_base64": "Ci8vIFdvcmthcm91bmQgZm9yIGFuIE5WQ0MgMTMuMyAoY3VkYWZlKyspIGhvc3QgcGFyc2UgZXJyb3IgdHJpZ2dlcmVkIGJ5IG5hbWluZwovLyB0aGUgbWVtYmVyIGFsaWFzIHRlbXBsYXRlIGBJZlJSZWY8Li4uPjo6QWRkUHRyPE90aGVyPmAgZGlyZWN0bHkgaW5zaWRlIHRoZQovLyBpbnNlcnRfb3JfYXNzaWduL3RyeV9lbXBsYWNlIG1hY3Jvcy4gV3JhcHBpbmcgdGhlIHF1YWxpZmllZC1pZCBpbiB0aGlzCi8vIHRvcC1sZXZlbCBhbGlhcyB0ZW1wbGF0ZSBhdm9pZHMgdGhlIG1pcy1wYXJzZSB3aGlsZSBwcmVzZXJ2aW5nIHRoZSBvcmlnaW5hbAovLyBTRklOQUUgYmVoYXZpb3I6IHN1YnN0aXR1dGlvbiBzdGlsbCBoYXBwZW5zIGluIHRoZSBpbW1lZGlhdGUgY29udGV4dCwgc28KLy8gZm9ybWluZyBhIHBvaW50ZXItdG8tcmVmZXJlbmNlIHJlbWFpbnMgYSBzb2Z0IChTRklOQUUpIGZhaWx1cmUgcmF0aGVyIHRoYW4gYQovLyBoYXJkIGVycm9yLiBTZWUgaHR0cHM6Ly9naXRodWIuY29tL2Fic2VpbC9hYnNlaWwtY3BwL2lzc3Vlcy8yMDc1Lgp0ZW1wbGF0ZSA8Y2xhc3MgVCwgY2xhc3MgT3RoZXI+CnVzaW5nIElmUlJlZkFkZFB0ciA9IHR5cGVuYW1lIElmUlJlZjxUPjo6dGVtcGxhdGUgQWRkUHRyPE90aGVyPjsK",
+      "offset": 2449
+    }
+  ],
+  "schema": "airk.exact-byte-recovery/1",
+  "target_bytes": 7856,
+  "target_sha256": "1fde0aebba3d65672fb7f3edd10a6a702d6728e23cfb7c06f3b0cedde8e439d5"
+}

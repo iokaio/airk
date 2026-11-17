@@ -1,0 +1,18 @@
+--- frozen22/grade_dev.py
++++ additive-streaming/grade_dev.py
+@@ -2,9 +2,13 @@
+ from pathlib import Path
+ from fractions import Fraction
+ import argparse,hashlib,json,os,threading,time,types
+-ROOT=Path(__file__).resolve().parents[4];HERE=Path(__file__).resolve().parent;MODELS=ROOT/"artifacts/advanced-split/models"
++ROOT=Path(__file__).resolve().parents[4];MODELS=ROOT/"artifacts/advanced-split/models";HERE=MODELS/"native-parent-bag-export-source-r1"
+ EXPECTED={"candidate-u8":"native-parent-bag-r1-u8","candidate-s8":"native-parent-bag-r1-s8","control-shipped-u8":"original-shipped-u8-ort130-evaluation","control-mixed-u8":"original-mixed-u8-ort130-evaluation"}
+-def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
++def sha(p):
++    digest=hashlib.sha256()
++    with Path(p).open("rb") as stream:
++        for block in iter(lambda:stream.read(1024*1024),b""):digest.update(block)
++    return digest.hexdigest()
+ def require(value,message):
+     if not value:raise ValueError(message)
+ def main():

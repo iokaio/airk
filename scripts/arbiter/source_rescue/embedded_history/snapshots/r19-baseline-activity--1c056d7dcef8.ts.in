@@ -1,0 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
+const rec = (value: unknown): Rec | null =>
+  typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Rec) : null;
+const okValue = (result: CallResult): Rec | null => (result.kind === 'ok' ? rec(result.envelope.result) : null);

@@ -1,0 +1,70 @@
+// SPDX-License-Identifier: Apache-2.0
+
+#[test]
+fn integrity_anchor_is_unknown_and_damage_survives_worker_restart() -> Result<()> {
+    use crate::service::{ProjectLease, data_scope, registry::ServiceRegistry};
+    use airk_core::service::ProjectRegistration;
+    use super::integrity::{PublicationBasis, PhysicalAudit, PrivacyEligibility};
+    let temporary = tempfile::tempdir()?;
+    let base = temporary.path().canonicalize()?;
+    let (data, source, control) = (base.join("data"), base.join("source"), base.join("control"));
+    for path in [&data, &source, &control] { fs::create_dir(path)?; }
+    let namespace = Incarnation::from_bytes([21; 16]);
+    let slot = Incarnation::from_bytes([22; 16]);
+    let registration = ProjectRegistration::new(source.to_str().unwrap().into(),
+        data.to_str().unwrap().into(), "fixture".into())?;
+    let mut registry = ServiceRegistry::open(&control, namespace)?;
+    registry.register(&registration)?;
+    let bound = data_scope::bind(&data, &control, namespace)?;
+    let collection = Collection::initialize(&data, &registration.root, "fixture", slot)?;
+    let store = collection.selected_store()?;
+    let token = initialize(&store, &registration.root, slot)?;
+    let scope = store.current_owned_scope()?.context("fixture scope missing")?;
+    let read = store.current_read(&scope)?;
+    let mut lease = ProjectLease::acquire(&control, registration.binding)?;
+    // Exclusion without registry admission is insufficient.
+    assert!(collection.integrity_owner(&registry, &lease, &bound).is_err());
+    registry.admit_worker(&mut lease)?;
+    {
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        let anchor = owner.anchor(&read)?;
+        assert_eq!(anchor.head.token()?, token);
+        assert_eq!(anchor.basis, PublicationBasis::RetainedHeadMetadataAnchor);
+        assert_eq!(anchor.physical_audit, PhysicalAudit::Unknown);
+        assert_eq!(anchor.privacy, PrivacyEligibility::PlatformEvidenceUnavailable);
+        let damaged = owner.record_damage(&read, token.digest, 123)?;
+        assert_eq!(damaged.known_damage.len(), 1);
+        assert_eq!(owner.anchor(&read)?.known_damage, damaged.known_damage);
+    }
+    drop(lease);
+    let mut replacement = ProjectLease::acquire(&control, registration.binding)?;
+    registry.admit_worker(&mut replacement)?;
+    let reopened = Collection::existing(&data, &registration.root, "fixture")?;
+    let owner = reopened.integrity_owner(&registry, &replacement, &bound)?;
+    let state = owner.anchor(&read)?;
+    assert_eq!(state.known_damage.len(), 1);
+    assert_eq!(state.known_damage[0].component, token.digest);
+    assert_eq!(read.token()?, token, "metadata foundation must not alter strict reads");
+    Ok(())
+}
+
+#[test]
+fn integrity_owner_rejects_cross_registry_bound_root() -> Result<()> {
+    use crate::service::{ProjectLease, data_scope, registry::ServiceRegistry};
+    use airk_core::service::ProjectRegistration;
+    let temporary = tempfile::tempdir()?;
+    let base = temporary.path().canonicalize()?;
+    let (data, source, control, other) = (base.join("data"), base.join("source"), base.join("control"), base.join("other"));
+    for path in [&data, &source, &control, &other] { fs::create_dir(path)?; }
+    let namespace = Incarnation::from_bytes([31; 16]);
+    let registration = ProjectRegistration::new(source.to_str().unwrap().into(),
+        data.to_str().unwrap().into(), "fixture".into())?;
+    let mut registry = ServiceRegistry::open(&control, namespace)?;
+    registry.register(&registration)?;
+    let bound = data_scope::bind(&data, &control, namespace)?;
+    let collection = Collection::initialize(&data, &registration.root, "fixture", Incarnation::from_bytes([32;16]))?;
+    let mut foreign = ProjectLease::acquire(&other, registration.binding)?;
+    assert!(registry.admit_worker(&mut foreign).is_err());
+    assert!(collection.integrity_owner(&registry, &foreign, &bound).is_err());
+    Ok(())
+}

@@ -1,0 +1,26 @@
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
+@@ -6,6 +6,7 @@
+ };
+ use anyhow::{Context, Result, ensure};
+ use serde::{Deserialize, Serialize};
++#[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
+ use sha2::{Digest, Sha256};
+ use std::{
+     collections::{BTreeMap, BTreeSet},
+@@ -28,6 +29,7 @@
+ mod manifest;
+ mod numeric;
+ pub use numeric::compare_reference_scores;
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
+ mod provenance;
+ pub use eligibility::{DeviceEligibility, EligibilityKey, is_device_eligibility_failure};
+ pub use manifest::product_compatibility_policy_digest;
+@@ -378,6 +380,7 @@
+             }
+         }
+     }
++    #[cfg(all(windows, target_arch = "x86_64"))]
+     fn poison(&self) {
+         self.poisoned.store(true, Ordering::Release);
+         self.epoch.fetch_add(1, Ordering::AcqRel);

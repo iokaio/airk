@@ -1,0 +1,856 @@
+--- original-source/aggregate_native_retrieval.py
++++ source/aggregate_native_retrieval.py
+@@ -8,7 +8,7 @@
+ from pathlib import Path
+ import re
+ 
+-ROOT = Path(__file__).resolve().parents[2]
++ROOT = Path(__file__).resolve().parents[5]
+ QUERY = {'mode': 'vector', 'limit': 10, 'max_bytes': 32768, 'full_chunks': True}
+ FAMILIES = {
+     'trained-v2-u8', 'trained-v2-s8',
+--- original-source/audit_sources.py
++++ source/audit_sources.py
+@@ -6,7 +6,7 @@
+ import json
+ from pathlib import Path
+ 
+-ROOT=Path(__file__).resolve().parents[2]
++ROOT=Path(__file__).resolve().parents[5]
+ 
+ 
+ def audit_pass(root,manifest):
+--- original-source/calibration_labels.py
++++ source/calibration_labels.py
+@@ -8,7 +8,7 @@
+ from goal_rubric import next_read_utility,complete_support
+ from goal_sources import SourceLedger
+ 
+-ROOT=Path(__file__).resolve().parents[2]
++ROOT=Path(__file__).resolve().parents[5]
+ 
+ 
+ def counterfactual_utilities(task,source_factory,before,outcomes):
+--- original-source/compile_reference.py
++++ source/compile_reference.py
+@@ -6,7 +6,7 @@
+ from pathlib import Path
+ import re
+ 
+-ROOT=Path(__file__).resolve().parents[2]
++ROOT=Path(__file__).resolve().parents[5]
+ SYSTEM='You are a careful decision assistant. Use the state and decision schema in the user message to make the requested decisions. For every field, choose exactly one answer symbol (e.g. A, B, C, ...) from its listed options and return one valid JSON object mapping each field name to its chosen symbol. Use the field names and symbols exactly as given. Do not include explanations, Markdown, or extra text.'
+ SYMBOLS='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+ FOLDERS={"intern08":"internlm--Intern-Decision-0.8B","intern4":"internlm--Intern-Decision-4B","strands2":"StrandsAgents--strands-decider-2B-qwen3.5-v1-2610","kev4":"jaredpalmer--kev-4b"}
+--- original-source/consolidate_onnx.py
++++ source/consolidate_onnx.py
+@@ -6,7 +6,7 @@
+ from pathlib import Path
+ import time
+ 
+-ROOT=Path(__file__).resolve().parents[2]
++ROOT=Path(__file__).resolve().parents[5]
+ 
+ 
+ def digest(path):
+--- original-source/development_retrieval.py
++++ source/development_retrieval.py
+@@ -15,7 +15,7 @@
+ from grade_native_retrieval import evidence_recall, cluster_interval
+ from goal_sources import SourceLedger, FrozenSourceMetadata
+ 
+-ROOT = Path(__file__).resolve().parents[2]
++ROOT = Path(__file__).resolve().parents[5]
+ CORPUS_SHA = 'f6c6616c1de29948deee9f37c70ccaadbb7a5dc71d0cd02c91d207c9ccbac097'
+ MASK_SHA = '76842592dab174fd90bc3918542759adbf9cea615080334a308acafd6924727d'
+ PROTOCOL_SHA = '0fa7ffbfe381d0804704710e683f85a897d59a661073ba24e849fe53b3e298e8'
+--- original-source/encoder_development.py
++++ source/encoder_development.py
+@@ -6,7 +6,7 @@
+ from pathlib import Path
+ import time
+ 
+-ROOT=Path(__file__).resolve().parents[2]
++ROOT=Path(__file__).resolve().parents[5]
+ 
+ 
+ def sha(data):return hashlib.sha256(data).hexdigest()
+--- original-source/export_encoder.py
++++ source/export_encoder.py
+@@ -7,7 +7,7 @@
+ from pathlib import Path
+ import time
+ 
+-ROOT=Path(__file__).resolve().parents[2]
++ROOT=Path(__file__).resolve().parents[5]
+ from safe_int8 import recode_unsigned_weights
+ 
+ 
+--- original-source/goal_rubric.py
++++ source/goal_rubric.py
+@@ -12,7 +12,7 @@
+ import re
+ import string
+ 
+-ROOT=Path(__file__).resolve().parents[2]
++ROOT=Path(__file__).resolve().parents[5]
+ 
+ 
+ def normalize(text):
+@@ -74,16 +74,19 @@
+ 
+ 
+ def main():
+-    import pyarrow.parquet as parquet
++    import pyarrow.dataset as dataset
++    import pyarrow as arrow
+     parser=argparse.ArgumentParser(description=__doc__)
+     parser.add_argument('--corpus',type=Path,required=True);parser.add_argument('--fixture',type=Path,required=True)
+     parser.add_argument('--hotpot',type=Path,required=True);parser.add_argument('--output',type=Path,required=True)
++    parser.add_argument('--corpus-sha256',required=True);parser.add_argument('--source-manifest-sha256',required=True)
++    parser.add_argument('--partition',choices=('CAL','CONFIRMATION'),required=True)
+     args=parser.parse_args();output=args.output.resolve()
+     if output.exists() or not output.is_relative_to(ROOT/'artifacts'):parser.error('fresh private output required')
+     paths=(Path(__file__),args.corpus,args.fixture/'manifest.private.json',args.hotpot)
+     retained={p:p.read_bytes() for p in paths};sha=lambda raw:hashlib.sha256(raw).hexdigest()
+-    if sha(retained[args.corpus])!='6e9d8ade6f799ed2a5e1903de69482db9fcd3cb1731a5fee4a504adede5fca6f':raise ValueError('unreviewed corpus')
+-    if sha(retained[args.fixture/'manifest.private.json'])!='2627e54241d8e961cc03c005c02f1655be364462ada16bbafdc0434cf4192a60':raise ValueError('unreviewed native source mapping')
++    if sha(retained[args.corpus])!=args.corpus_sha256:raise ValueError('unreviewed corpus')
++    if sha(retained[args.fixture/'manifest.private.json'])!=args.source_manifest_sha256:raise ValueError('unreviewed native source mapping')
+     if sha(retained[args.hotpot])!='c20b638ca82b21d04fe12e14ff417ad05153d4d215a65de54497fca4e972f7c6':raise ValueError('unreviewed human sentence bytes')
+     corpus=json.loads(retained[args.corpus]);fixture=json.loads(retained[args.fixture/'manifest.private.json'])
+     def verify_sources():
+@@ -92,7 +95,19 @@
+             if len(raw)!=row['bytes'] or sha(raw)!=row['sha256']:raise ValueError('native source bytes differ')
+     verify_sources()
+     mapping={p['id']:p for p in fixture['paragraphs']};documents={d['id']:d for d in corpus['documents']}
+-    hotpot={r['id']:r for r in parquet.read_table(io.BytesIO(retained[args.hotpot])).to_pylist()}
++    if corpus.get('experiment_partition')!=args.partition or fixture.get('experiment_partition')!=args.partition:raise ValueError('selected partition rubric admission required')
++    wanted={task['question_id']for task in corpus['tasks']}
++    arrow.set_cpu_count(1);arrow.set_io_thread_count(1)
++    scanner=dataset.dataset(args.hotpot,format='parquet').scanner(
++        columns=['id','context','type','level'],filter=dataset.field('id').isin(sorted(wanted)),
++        batch_size=32,batch_readahead=0,fragment_readahead=0,use_threads=False,
++        fragment_scan_options=dataset.ParquetFragmentScanOptions(use_buffered_stream=True,buffer_size=8192,pre_buffer=False))
++    hotpot={}
++    for batch in scanner.to_batches():
++        for row in batch.to_pylist():
++            if row['id']not in wanted or row['id']in hotpot:raise ValueError('foreign/duplicate opaque support projection')
++            hotpot[row['id']]=row
++    if set(hotpot)!=wanted:raise ValueError('opaque support projection missing selected IDs')
+     tasks=[];parents={}
+     def root(key):
+         parents.setdefault(key,key)
+@@ -125,13 +140,13 @@
+         if task['split']=='test':
+             for group in groups[1:]:parents[root(group)]=root(groups[0])
+         categories={key:hotpot[task['question_id']][key] for key in ('type','level')} if task['dataset']=='HotpotQA' else {'answer_kinds':sorted({a['answer_kind'] for a in alternatives})}
+-        tasks.append({'id':task['id'],'dataset':task['dataset'],'split':task['split'],'publisher_split':task['publisher_split'],'question':task['question'],'original_question_categories':categories,'disagreement':task['disagreement'],'goal_selected':task['id'] in fixture['goal_ids'],'source_groups':groups,'alternatives':alternatives})
++        tasks.append({'id':task['id'],'dataset':task['dataset'],'split':task['split'],'publisher_split':task['publisher_split'],'question':task['question'],'original_question_categories':categories,'disagreement':task['disagreement'],'source_component':task['source_component'],'goal_selected':task['id'] in fixture['goal_ids'],'source_groups':groups,'alternatives':alternatives})
+     for task in tasks:
+-        if task['split']=='test':task['bootstrap_source_component']=root(task['source_groups'][0])
++        if task['split']=='test':task['bootstrap_source_component']=next(original['source_component']for original in corpus['tasks']if original['id']==task['id'])
+     if any(p.read_bytes()!=raw for p,raw in retained.items()):raise ValueError('rubric input drift')
+     verify_sources()
+     output.mkdir(parents=True)
+-    report={'schema':'airk.private-human-goal-rubric/1','tasks':tasks,'input_seals':{str(p):sha(raw) for p,raw in retained.items()},
++    report={'schema':'airk.private-human-goal-rubric/1','experiment_partition':args.partition,'tasks':tasks,'input_seals':{str(p):sha(raw) for p,raw in retained.items()},
+         'authority':'Primary approved exact rubric before final scoring: tokenF1>=.80, exact yes/no, complete support/citations from SAME original human alternative; exact match secondary; no invented aliases or unions.',
+         'projection':'Original human answers and evidence mechanically mapped to original source byte ranges. No human labels of AIRK actions/authority/gap/sufficiency. Source connected components conservatively group bootstrap dependence only; never union evidence into gold.',
+         'caller_requirements':'Authenticate actual returned source bytes/ranges and citation reference identities before grade(); include failures/all model turns/internal reads separately. No query-only support credit.'}
+--- original-source/goal_summary.py
++++ source/goal_summary.py
+@@ -41,8 +41,8 @@
+     if len(expected_ids) != 100 or len(set(expected_ids)) != 100:
+         raise ValueError('exact frozen 100 goal IDs required')
+     names = set(BASELINES) | set(arbiter_conditions)
+-    if len(arbiter_conditions) != 4 or len(names) != 6 or set(conditions) != names:
+-        raise ValueError('two baseline and four distinct Arbiter conditions required')
++    if len(arbiter_conditions) != 2 or len(names) != 4 or set(conditions) != names:
++        raise ValueError('two normal controls and two selected Context conditions required')
+     normalized = {}; summaries = {}
+     for name, rows in conditions.items():
+         if len(rows) != 100 or {row['task_id'] for row in rows} != set(expected_ids):
+@@ -145,5 +145,5 @@
+             'all_optional_completion_floors_pass': all(summaries[name]['completion_floor_pass'] for name in arbiter_conditions),
+             'all_candidate_completion_comparisons_pass': all(summaries[name]['within_two_points_of_strongest_baseline'] for name in arbiter_conditions),
+             'primary_turn_floor_pass': all(row['turn_floor_pass'] for row in comparisons if row['baseline'] == selected_baseline),
+-            'all_optional_agent_citation_precision_comparisons_pass': (all(row['agent_citation_precision_no_regression'] is True for row in critical_comparisons) if len(critical_comparisons)==4 else None),
++            'all_optional_agent_citation_precision_comparisons_pass': (all(row['agent_citation_precision_no_regression'] is True for row in critical_comparisons) if len(critical_comparisons)==2 else None),
+             'scope': 'Exact fixed-population descriptive accounting only. Both controls reported; no success-only all-task mean. These metrics alone do not establish source/resource/critical-evidence/noninterference/native transport or release qualification.'}
+--- original-source/goal_trial.py
++++ source/goal_trial.py
+@@ -4,21 +4,22 @@
+ import re
+ import time
+ 
+-from goal_rubric import grade
++from goal_rubric import grade,next_read_utility
+ from grade_native_retrieval import evidence_recall
++from selected_stage_observations import observe
+ 
+ 
+ class GoalTrial:
+-    def __init__(self,client,sources,generate,core_request_template,arm,expected_profile=None):
++    def __init__(self,client,sources,generate,core_request_template,arm,expected_profile=None,focus_profile=None,source_factory=None):
+         if arm not in ('ordinary_followup','deterministic_packet','arbiter'):raise ValueError('unknown frozen comparison arm')
+-        if core_request_template.get('schema')!='airk.arbiter.context.request/1':raise ValueError('native-owned Core request instance required')
++        if core_request_template.get('schema')!='airk.arbiter.context.request/2':raise ValueError('native-owned Core request instance required')
+         self.client,self.sources,self.generate=client,sources,generate
+-        self.template=copy.deepcopy(core_request_template);self.arm=arm;self.expected_profile=expected_profile
++        self.template=copy.deepcopy(core_request_template);self.arm=arm;self.expected_profile=expected_profile;self.focus_profile=focus_profile;self.source_factory=source_factory
+         if arm=='arbiter' and not expected_profile:raise ValueError('Arbiter trial requires exact admitted candidate profile identity')
+ 
+     def run(self,task):
+         start=time.monotonic();calls=[];turns=[];seen={};canonical_seconds=0.;canonical_calls=0;canonical_bytes=0;transport_bytes=0
+-        preprocessing_seconds=0.;inference_seconds=0.;failure=None;final=None;model_advice=[];unobserved_inner_work=False;source_error=None
++        preprocessing_seconds=0.;inference_seconds=0.;failure=None;final=None;model_advice=[];stage_observations=[];reference_read_utilities=[];unobserved_neural_work=False;unobserved_inner_work=False;source_error=None
+         tool='search' if self.arm=='ordinary_followup' else 'answer'
+         if tool=='search':arguments={'query':task['question'],'limit':8,'max_bytes':4096,'full_chunks':True,'response_mode':'full','include_status':True}
+         else:
+@@ -45,13 +46,14 @@
+                 failure='native_call_failed';break
+             if tool=='answer':
+                 work=value['work'];canonical_calls+=work['calls'];canonical_bytes+=work['bytes']
+-                if work['input_tokens']>2048:failure='native_internal_token_budget_exceeded';break
+-                if self.arm=='arbiter':
+-                    if not value['applications'] or any(application['availability']!='ready' or application['profile']!=self.expected_profile for application in value['applications']):
+-                        failure='arbiter_candidate_not_ready';break
+-                    model_advice.extend(value['advice'])
+-                elif value['advice'] or work['input_tokens']>0 or (work.get('inference_us') or 0)>0:
+-                    failure='deterministic_arm_used_model_work';break
++            try:
++                stages=observe(value,tool,self.expected_profile if self.arm=='arbiter' else None,self.focus_profile)
++                stage_observations.append(stages)
++                model_advice.extend(stages['Context_history'])
++                if stages['work_unknown']:
++                    unobserved_neural_work=True;failure='unobserved_native_model_work';break
++            except (ValueError,KeyError,TypeError) as error:
++                failure='selected_stage_contract_failed';source_error=str(error);break
+             if not turns:
+                 initial=value if tool=='search' else next((record['canonical_result'] for record in value['records'] if record['operation']=='search' and record['arguments'].get('query')==task['question']),None)
+                 if not isinstance(initial,dict) or initial.get('execution',{}).get('served_mode')!='hybrid' or initial.get('execution',{}).get('incomplete') is not False:
+@@ -59,7 +61,18 @@
+             if canonical_calls>8 or max(canonical_bytes,transport_bytes)>262144 or canonical_seconds>30:
+                 failure='native_total_budget_exceeded';break
+             before=time.monotonic()
+-            try:self.sources.observe(value)
++            try:
++                self.sources.observe(value)
++                if tool=='answer' and self.source_factory is not None:
++                    utility_sources=self.source_factory()
++                    for record in value['records']:
++                        before_spans=utility_sources.visible_candidates()
++                        utility_sources.observe(record['canonical_result'])
++                        if record['operation'] in ('context','read_evidence'):
++                            utility=next_read_utility(task,before_spans,utility_sources.visible_candidates())
++                            reference_read_utilities.append({'record':record['id'],'operation':record['operation'],
++                                'original_human_reference_utility':utility,'label_class':'REFERENCE_GAIN' if utility['useful'] else 'UNKNOWN',
++                                'human_action_sufficiency_gold':False,'selected_choice_causal_attribution':False})
+             except (ValueError,KeyError,TypeError) as error:source_error=str(error);failure='source_provenance_failed';break
+             finally:preprocessing_seconds+=time.monotonic()-before
+             generation_start=time.monotonic();response=self.generate(task['question'],self.sources.visible_candidates())
+@@ -89,7 +102,7 @@
+         shown_recall,shown_complete=evidence_recall(task,provided)
+         cited_recall,cited_complete=evidence_recall(task,cited)
+         if failure or citation_errors:grading['completion']=False
+-        return {'task_id':task['id'],'arm':self.arm,'expected_profile':self.expected_profile,'success':grading['completion'],
++        return {'task_id':task['id'],'arm':self.arm,'expected_profile':self.expected_profile,'expected_Focus_profile':self.focus_profile,'success':grading['completion'],
+             'final_response':final,
+             'human_evidence':{'shown_recall_fraction':[shown_recall.numerator,shown_recall.denominator],
+                 'cited_recall_fraction':[cited_recall.numerator,cited_recall.denominator],
+@@ -99,5 +112,5 @@
+             'grade':grading,'failure':failure,'citation_identity_errors':citation_errors,'external_model_turns':len(turns),
+             'canonical_calls':None if unobserved_inner_work else canonical_calls,'canonical_calls_lower_bound':canonical_calls,'unobserved_native_inner_work':unobserved_inner_work,'native_rpc_attempts':len(calls),'source_error':source_error,'canonical_returned_bytes':None if unobserved_inner_work else canonical_bytes,'canonical_returned_bytes_lower_bound':canonical_bytes,'native_rpc_returned_bytes':transport_bytes,'canonical_seconds':canonical_seconds,
+             'external_inference_seconds':inference_seconds,'preprocessing_seconds':preprocessing_seconds,'wall_seconds':time.monotonic()-start,
+-            'all_native_calls':calls,'all_model_turns':turns,'provided_source_ranges':provided,'cited_source_ranges':cited,'model_advice':model_advice,
++            'all_native_calls':calls,'all_model_turns':turns,'provided_source_ranges':provided,'cited_source_ranges':cited,'model_advice':model_advice,'selected_stage_observations':stage_observations,'native_additional_Read_reference_utilities':reference_read_utilities,'unobserved_neural_work':unobserved_neural_work,'known_neural_input_tokens':sum(item['known_input_tokens'] for item in stage_observations),
+             'scope':'Actual native/local-model comparison trial only. No gold feedback or hidden retries. Qualification requires complete frozen population, paired summaries and all source/profile/resource gates.'}
+--- original-source/grade_native_retrieval.py
++++ source/grade_native_retrieval.py
+@@ -10,7 +10,7 @@
+ from goal_rubric import covered_location
+ from goal_sources import SourceLedger
+ 
+-ROOT=Path(__file__).resolve().parents[2]
++ROOT=Path(__file__).resolve().parents[5]
+ 
+ 
+ def evidence_recall(task,spans):
+--- original-source/materialize_sources.py
++++ source/materialize_sources.py
+@@ -5,19 +5,24 @@
+ import json
+ from pathlib import Path
+ 
+-ROOT=Path(__file__).resolve().parents[2]
++ROOT=Path(__file__).resolve().parents[5]
+ 
+ 
+ def main():
+     parser=argparse.ArgumentParser(description=__doc__)
+     parser.add_argument('--corpus',type=Path,required=True)
+     parser.add_argument('--output',type=Path,required=True)
++    parser.add_argument('--corpus-sha256',required=True)
++    parser.add_argument('--partition',choices=('CAL','CONFIRMATION'),required=True)
+     args=parser.parse_args();output=args.output.resolve()
+     if output.exists() or not output.is_relative_to(ROOT/'artifacts'):parser.error('fresh private output required')
+     raw=args.corpus.read_bytes();source=Path(__file__).read_bytes();freeze=(Path(__file__).parent/'a0-freeze.json').read_bytes()
+     sha=lambda data:hashlib.sha256(data).hexdigest()
+-    if sha(raw)!='6e9d8ade6f799ed2a5e1903de69482db9fcd3cb1731a5fee4a504adede5fca6f':raise ValueError('unreviewed corpus')
+-    corpus=json.loads(raw);output.mkdir(parents=True);mapping=[];paragraph_mapping=[];groups={}
++    if sha(raw)!=args.corpus_sha256:raise ValueError('unreviewed corpus')
++    corpus=json.loads(raw)
++    if corpus.get('experiment_partition')!=args.partition or len(corpus['tasks'])!=100 or any(t.get('experiment_partition')!=args.partition for t in corpus['tasks']):raise ValueError('foreign selected partition')
++    if output.is_relative_to(args.corpus.parent.resolve()):raise ValueError('native sources must be outside immutable corpus root')
++    output.mkdir(parents=True);mapping=[];paragraph_mapping=[];groups={}
+     for document in corpus['documents']:
+         key=document['source_group']
+         groups.setdefault(key,[]).append(document)
+@@ -40,12 +45,12 @@
+         body=b''.join(pieces);path.write_bytes(body)
+         mapping.append({'source_group':group,'file':path.relative_to(output).as_posix(),'sha256':sha(body),'bytes':len(body),'paragraphs':paragraphs,
+             'coverage':'Complete supplied publisher Wikipedia context excerpt, not full Wikipedia article' if hotpot else 'All licensed allowed QASPER text paragraphs in original section/paragraph order; quote-bearing paragraphs and figures/tables omitted; no added section headers'})
+-    eligible=[t for t in corpus['tasks'] if t['split']=='test' and any(a['alignment']=='all_original_evidence_maps_to_allowed_text' and not a['unanswerable'] for a in t['human_alternatives'])]
++    eligible=[t for t in corpus['tasks'] if t['experiment_partition']==args.partition and any(a['alignment']=='all_original_evidence_maps_to_allowed_text' and not a['unanswerable'] for a in t['human_alternatives'])]
+     chosen=sorted((t['id'] for t in eligible),key=lambda identifier:sha(('airk.goal.final.v1:'+identifier).encode()))[:100]
+-    if len(chosen)!=100:raise ValueError('frozen goal population unavailable')
++    if len(chosen)!=100 or len(mapping)<30:raise ValueError('frozen100/30 partition population unavailable')
+     if args.corpus.read_bytes()!=raw or Path(__file__).read_bytes()!=source or (Path(__file__).parent/'a0-freeze.json').read_bytes()!=freeze:raise ValueError('fixture input drift')
+     report={'schema':'airk.private-native-human-fixtures/1','corpus_sha256':sha(raw),'freeze_sha256':sha(freeze),'runner_sha256':sha(source),
+-        'files':mapping,'paragraphs':paragraph_mapping,'goal_ids':chosen,'goal_selection':'First100 SHA256 domain-separated eligible final task IDs; selected before any final model scoring; no resampling',
++        'files':mapping,'paragraphs':paragraph_mapping,'goal_ids':chosen if args.partition=='CONFIRMATION' else [],'calibration_ids':chosen if args.partition=='CAL' else [],'experiment_partition':args.partition,'goal_selection':('Original A0 first100eligible qualifiedIDs under airk.goal.final.v1 ordering; no resampling' if args.partition=='CONFIRMATION' else 'All100 already frozen CAL IDs; order only, no source-informed reselection'),
+         'native_scopes':{'HotpotQA':'sources/hotpot (GLOBAL complete cross-document collection)','QASPER':'sources/qasper/<original publisher paper ID> (original paper-bound request scope)'},
+         'rights':'Private licensed fixtures only. Preserve per-source attribution and rights in corpus; Hotpot-derived text is CC BY-SA4 evaluation-only, never distributable-weight training. Exact paragraph bytes retained without added headers; whole-paper paragraphs joined using only two newline bytes, with original byte/line mappings and omissions disclosed.',
+         'scope':'Fixture materialization and pre-score goal-ID freeze only, no native indexing/transport/model quality result'}
+--- original-source/native_eval_session.cjs
++++ source/native_eval_session.cjs
+@@ -8,7 +8,7 @@
+ const { spawn } = require('node:child_process');
+ const readline = require('node:readline');
+ 
+-const ROOT = path.resolve(__dirname, '..', '..');
++const ROOT = path.resolve(__dirname, '..', '..', '..', '..', '..');
+ const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+ const inside = (parent, child) => { const rel = path.relative(parent, child); return rel === '' || (!rel.startsWith('..'+path.sep) && rel !== '..' && !path.isAbsolute(rel)); };
+ function sameDirectory(left, right) {
+--- original-source/native_goal_client.py
++++ source/native_goal_client.py
+@@ -66,7 +66,7 @@
+ class PinnedSession:
+     """Existing generated Node I2 client; opaque native W4 selection, no DTO mirror."""
+     def __init__(self,client,timeout):
+-        root=Path(__file__).resolve().parents[2]
++        root=Path(__file__).resolve().parents[5]
+         helper=Path(__file__).with_name('native_eval_session.cjs')
+         self.lines=queue.Queue(maxsize=4);self.closed=False
+         node=shutil.which('node')
+@@ -135,7 +135,7 @@
+     def __init__(self,runtime_pair,control_root,index_id,output,fixture_ready=None,process_observer=None,*,index_bindings=None,session_factory=None):
+         self.pair=Path(runtime_pair).resolve();self.control=Path(control_root).resolve();self.index_id=index_id
+         self.output=Path(output).resolve()
+-        root=Path(__file__).resolve().parents[2]/'artifacts'
++        root=Path(__file__).resolve().parents[5]/'artifacts'
+         if self.output.exists() or not self.output.is_relative_to(root):raise ValueError('fresh private native call directory required')
+         self.binding=ResidentBinding(index_bindings,index_id=index_id) if index_bindings is not None else None
+         if fixture_ready and self.binding is None:raise ValueError('resident evaluation requires original native index bindings')
+@@ -160,13 +160,17 @@
+             if observed['process_id']!=health['process_id'] or observed['executable_sha256']!=health['executable_sha256'] or not health.get('instance') or not health.get('catalog_clock',{}).get('namespace'):raise ValueError('actual fixture process differs from native Ready health')
+             self.fixture_seals[self.fixture_ready]=raw
+             input_path=self.fixture_ready.parent/'inputs.json';input_raw=input_path.read_bytes()
+-            if hashlib.sha256(input_raw).hexdigest()!=ready['inputs_sha256'] or len(ready['profiles'])!=4:raise ValueError('native fixture input/profile closure differs')
++            if hashlib.sha256(input_raw).hexdigest()!=ready['inputs_sha256'] or len(ready['profiles'])!=3:raise ValueError('native fixture input/profile closure differs')
+             self.fixture_seals[input_path]=input_raw
++            from selected_stage_observations import CURRENT_MODELS
++            if {row['model'] for row in ready['profiles']}!=CURRENT_MODELS:raise ValueError('selected native three-model roster differs')
+             for row in ready['profiles']:
+                 name=row['snapshot']
+                 if Path(name).name!=name:raise ValueError('foreign native fixture profile snapshot')
+                 path=self.fixture_ready.parent/name;content=path.read_bytes()
+                 if hashlib.sha256(content).hexdigest()!=row['profile_sha256']:raise ValueError('native fixture profile snapshot identity differs')
++                description=json.loads(content)
++                if description['model']!=row['model'] or description['manifest']!=row['manifest']:raise ValueError('native profile/model identity substitution')
+                 self.fixture_seals[path]=content
+             self.service_identity={'ready_sha256':hashlib.sha256(raw).hexdigest(),'actual_native_health':health,'actual_process_observation':observed,'running_service_is_matched_pair_airk':False,'scope':'Actual native test-binary fixture process; matched pair pins below identify the client distribution, not the running service executable.'}
+             (self.output/'actual-service-ready.json').write_bytes(raw)
+@@ -207,6 +211,24 @@
+         result={'command':command,'elapsed_seconds':elapsed,'full_control_response':response,
+                 'stdout_sha256':hashlib.sha256(process.stdout).hexdigest(),'stderr_sha256':hashlib.sha256(process.stderr).hexdigest(),
+                 'scope':'Native management observation, not a canonical evidence read. Counted separately; elapsed time charged within this invocation deadline.'}
++        (directory/(phase+'.json')).write_text(json.dumps(result,indent=2)+'\n')
++        return result
++
++    def observe_stage_status(self,directory,phase,context_profile=None,focus_profile=None,timeout=30):
++        from selected_stage_observations import check_status
++        directory=Path(directory);directory.mkdir(parents=True,exist_ok=True)
++        command=[str(self.images['airkctl']),'--service-runtime-dir',str(self.control),'arbiter','status']
++        started=time.monotonic();reply=subprocess.run(command,capture_output=True,timeout=timeout,check=False)
++        (directory/(phase+'-stdout.bin')).write_bytes(reply.stdout)
++        (directory/(phase+'-stderr.bin')).write_bytes(reply.stderr)
++        if reply.returncode!=0:raise ValueError('actual native stage status read failed')
++        raw=json.loads(reply.stdout)
++        status=raw['observation']
++        check_status(status,context_profile,focus_profile)
++        if status['configuration']['catalog']!=self.service_identity['actual_native_health']['catalog_clock']['namespace']:raise ValueError('stage Status2 catalog differs')
++        self.verify()
++        result={'command':command,'elapsed_seconds':time.monotonic()-started,'full_native_response':raw,
++                'stdout_sha256':hashlib.sha256(reply.stdout).hexdigest(),'stderr_sha256':hashlib.sha256(reply.stderr).hexdigest()}
+         (directory/(phase+'.json')).write_text(json.dumps(result,indent=2)+'\n')
+         return result
+ 
+--- original-source/prepare_encoder_baselines.py
++++ source/prepare_encoder_baselines.py
+@@ -5,7 +5,7 @@
+ import json
+ from pathlib import Path
+ 
+-ROOT=Path(__file__).resolve().parents[2]
++ROOT=Path(__file__).resolve().parents[5]
+ 
+ 
+ def main():
+--- original-source/qwen_export.py
++++ source/qwen_export.py
+@@ -15,7 +15,7 @@
+ import time
+ 
+ HERE = Path(__file__).resolve().parent
+-ROOT = HERE.parents[1]
++ROOT = HERE.parents[4]
+ 
+ 
+ def digest(path):
+--- original-source/run_goal_condition.py
++++ source/run_goal_condition.py
+@@ -19,17 +19,15 @@
+ from native_goal_client import NativeGoalClient,require_normal_session_close
+ import qwen_export
+ 
+-ROOT = Path(__file__).resolve().parents[2]
+-SCOPE_PINS = {'development': 'ef6b48b6d86fa2e4ccdd1097c1e261a49f7b79521e257518f4cff9320c9540ce',
+-              'final': '4470916861293fe1185bb4c0469a8c051437f3f3451ba5c8a813a2c5df5f4a0c'}
++ROOT = Path(__file__).resolve().parents[5]
+ INFRA_FAILURES = {'native_call_failed', 'source_provenance_failed', 'arbiter_candidate_not_ready',
+-                  'deterministic_arm_used_model_work','native_read_population_changed'}
++                  'selected_stage_contract_failed','unobserved_native_model_work','native_read_population_changed'}
+ 
+ 
+ def original_task_metadata(task,split):
+     return {'dataset':task['dataset'],'original_question_categories':task['original_question_categories'],
+             'original_human_disagreement':task['disagreement'],
+-            'source_component':task['bootstrap_source_component'] if split=='final' else None}
++            'source_component':task['bootstrap_source_component'] if split=='confirmation' else None}
+ 
+ 
+ def guard_output_location(output, fixture, native_rows):
+@@ -60,10 +58,25 @@
+                  'question-scopes', 'rubric', 'fixture', 'output'):
+         parser.add_argument('--' + name, type=Path, required=True)
+     parser.add_argument('--assets', type=Path, default=ROOT/'artifacts/advanced-split/models/candidate-assets')
+-    parser.add_argument('--split', choices=('development', 'final'), required=True)
++    parser.add_argument('--split', choices=('confirmation',), required=True)
++    parser.add_argument('--campaign-freeze',type=Path,required=True)
++    parser.add_argument('--campaign-freeze-sha256',required=True)
++    parser.add_argument('--focus-profile')
+     parser.add_argument('--arm', choices=('ordinary_followup', 'deterministic_packet', 'arbiter'), required=True)
+     parser.add_argument('--profile-manifest', help='Exact native Core Profile manifest digest, not the human-readable profile_id')
+     args = parser.parse_args();output = args.output.resolve()
++    freeze_raw=args.campaign_freeze.read_bytes()
++    if hashlib.sha256(freeze_raw).hexdigest()!=args.campaign_freeze_sha256:raise ValueError('selected A6 freeze changed')
++    freeze=json.loads(freeze_raw)
++    if freeze.get('schema')!='airk.private-selected-native-goal-freeze/1' or freeze.get('status')!='FROZEN_BEFORE_SELECTED_GOAL_OUTCOMES' or freeze.get('approved') is not True:raise ValueError('reviewed preoutcome selected A6 freeze required')
++    expected_pins=freeze['input_pins']
++    for path,pin in freeze['source_pins'].items():
++        if qwen_export.digest(path)!=pin:raise ValueError('selected A6 source closure changed')
++    if args.focus_profile!=freeze['shared_Focus_profile']:raise ValueError('frozen common Focus condition differs')
++    for name in ('runtime_pair','control_root','fixture_ready','index_bindings','request_template','question_scopes','rubric','fixture','assets'):
++        if str(getattr(args,name).resolve())!=freeze['paths'][name]:raise ValueError('foreign frozen A6 path: '+name)
++    if args.arm=='arbiter' and args.profile_manifest not in freeze['Context_profiles']:raise ValueError('unselected Context profile')
++
+     if output.exists() or not output.is_relative_to(ROOT/'artifacts'):
+         parser.error('fresh private output directory required; no automatic retries/resume')
+     if (args.arm == 'arbiter') != bool(args.profile_manifest) or (args.profile_manifest and not valid_digest(args.profile_manifest)):
+@@ -73,21 +86,21 @@
+                'aggregate_native_retrieval.py', 'goal-evaluation-freeze.json',
+                'goal-source-presentation-policy.json', 'goal-baseline-selection-freeze.json',
+                'next-read-calibration-policy-freeze.json', 'goal-critical-evidence-freeze.json',
+-               'grade_native_retrieval.py')
++               'grade_native_retrieval.py','selected_stage_observations.py')
+     paths = [Path(__file__).with_name(name) for name in modules]
+-    paths += [args.fixture_ready, args.index_bindings, args.request_template, args.question_scopes,
++    paths += [args.campaign_freeze,args.fixture_ready, args.index_bindings, args.request_template, args.question_scopes,
+               args.rubric, args.fixture/'manifest.private.json']
+     retained = {path: path.read_bytes() for path in paths}
+     sha = lambda raw: hashlib.sha256(raw).hexdigest()
+-    if sha(retained[args.question_scopes]) != SCOPE_PINS[args.split] or sha(retained[args.rubric]) != '6004b1e1427661b236664352c9e1fdada5993d184685ca61bc13eba1a6b85423' or sha(retained[args.fixture/'manifest.private.json']) != '2627e54241d8e961cc03c005c02f1655be364462ada16bbafdc0434cf4192a60':
+-        raise ValueError('unreviewed fixed question/rubric/source identities')
++    for path,label in ((args.fixture_ready,'ready'),(args.index_bindings,'bindings'),(args.request_template,'request'),(args.question_scopes,'scopes'),(args.rubric,'rubric'),(args.fixture/'manifest.private.json','source_manifest')):
++        if sha(retained[path])!=expected_pins[label]:raise ValueError('unreviewed selected A6 input: '+label)
+     scopes = json.loads(retained[args.question_scopes]);rubric = json.loads(retained[args.rubric])
+-    split = 'test' if args.split == 'final' else 'development'
+-    tasks = {row['id']: row for row in rubric['tasks'] if row['split'] == split and (args.split != 'final' or row['goal_selected'])}
+-    if len(tasks) != (100 if args.split == 'final' else 9) or {row['id'] for row in scopes['questions']} != set(tasks):
++    split = 'test'
++    tasks = {row['id']: row for row in rubric['tasks'] if row['split'] == split and row['goal_selected']}
++    if len(tasks) != 100 or {row['id'] for row in scopes['questions']} != set(tasks):
+         raise ValueError('frozen goal population changed')
+     binding_receipt = json.loads(retained[args.index_bindings]);ready = json.loads(retained[args.fixture_ready])
+-    if binding_receipt.get('schema') != 'airk.private-arbiter-index-bindings/1' or binding_receipt.get('evaluation') is not True or binding_receipt.get('release_qualified') is not False or binding_receipt['scopes_sha256'] != SCOPE_PINS[args.split] or binding_receipt['instance'] != ready['health']['instance'] or binding_receipt['namespace'] != ready['health']['catalog_clock']['namespace'] or not Path(binding_receipt['control_root']).samefile(args.control_root):
++    if binding_receipt.get('schema') != 'airk.private-arbiter-index-bindings/1' or binding_receipt.get('evaluation') is not True or binding_receipt.get('release_qualified') is not False or binding_receipt['scopes_sha256'] != expected_pins['scopes'] or binding_receipt['instance'] != ready['health']['instance'] or binding_receipt['namespace'] != ready['health']['catalog_clock']['namespace'] or not Path(binding_receipt['control_root']).samefile(args.control_root):
+         raise ValueError('actual native index binding authority differs')
+     bindings = binding_receipt['bindings']
+     output=guard_output_location(output,args.fixture,bindings)
+@@ -101,18 +114,19 @@
+     now = lambda: datetime.now(timezone.utc).isoformat()
+     before_started = now();before = audit_pass(args.fixture, manifest)
+     before_finished = now()
+-    source_metadata=FrozenSourceMetadata(args.fixture)
++    source_metadata=FrozenSourceMetadata(args.fixture,expected_pins['source_manifest'])
+     first_question = scopes['questions'][0]
+     first_client_started = time.monotonic()
+     first_client = NativeGoalClient(args.runtime_pair, args.control_root,
+                                    by_root[scope_key(first_question['source_root'])], output/'calls-000', args.fixture_ready,
+                                    index_bindings=args.index_bindings)
++    stage_before=first_client.observe_stage_status(output/'stage-status','before',args.profile_manifest if args.arm=='arbiter' else None,args.focus_profile)
+     first_client_seconds = time.monotonic()-first_client_started
+     load_start = time.monotonic();model, tokenizer, asset_seals = load_fixed_agent(args.assets)
+     load_seconds = time.monotonic() - load_start
+     result = {'schema': 'airk.private-native-goal-condition/1', 'complete': False,
+               'evaluation': True, 'release_qualified': False, 'split': args.split, 'arm': args.arm,
+-              'expected_profile': args.profile_manifest, 'started_at_utc': started_utc,
++              'expected_profile': args.profile_manifest,'expected_Focus_profile':args.focus_profile,'campaign_freeze_sha256':args.campaign_freeze_sha256,'stage_status_before':stage_before, 'started_at_utc': started_utc,
+               'native_fixture_ready_sha256': sha(retained[args.fixture_ready]),
+               'native_index_bindings_sha256': sha(retained[args.index_bindings]),
+               'question_scopes_sha256': sha(retained[args.question_scopes]),
+@@ -135,11 +149,11 @@
+                                       by_root[scope_key(question['source_root'])], output/f'calls-{index:03d}', args.fixture_ready,
+                                       index_bindings=args.index_bindings)
+             client_seconds = first_client_seconds if index == 0 else time.monotonic()-client_started
+-            ledger = SourceLedger(args.fixture, question['source_root'],native_bindings=args.index_bindings,metadata_cache=source_metadata)
++            ledger = SourceLedger(args.fixture, question['source_root'],expected_pins['source_manifest'],native_bindings=args.index_bindings,metadata_cache=source_metadata)
+             generate = lambda text, records: generate_answer(model, tokenizer, text, records)
+             trial = None;close_started = None
+             try:
+-                trial = GoalTrial(client, ledger, generate, template, args.arm, args.profile_manifest).run(task)
++                trial = GoalTrial(client, ledger, generate, template, args.arm, args.profile_manifest,args.focus_profile,lambda: SourceLedger(args.fixture,question['source_root'],expected_pins['source_manifest'],native_bindings=args.index_bindings,metadata_cache=source_metadata)).run(task)
+             finally:
+                 close_started = time.monotonic()
+                 if trial is not None:
+@@ -154,6 +168,8 @@
+             if trial['failure'] in INFRA_FAILURES:raise ValueError('native infrastructure failure: '+str(trial['failure']))
+         after_started = now();after = audit_pass(args.fixture, manifest)
+         result['source_after'] = {'started_at_utc': after_started, 'finished_at_utc': now(), 'closed_roster': after}
++        result['stage_status_after']=first_client.observe_stage_status(output/'stage-status','after',args.profile_manifest if args.arm=='arbiter' else None,args.focus_profile)
++        if result['stage_status_after']['full_native_response']['observation']['configuration'] != stage_before['full_native_response']['observation']['configuration']:raise ValueError('native stage configuration changed during campaign')
+         first_client.verify()
+         if after != before or any(path.read_bytes() != raw for path, raw in retained.items()) or any(qwen_export.digest(path) != pin for path, pin in asset_seals.items()):
+             raise ValueError('goal campaign source/asset/input drift')
+--- original-source/split_model_assets.py
++++ source/split_model_assets.py
+@@ -10,7 +10,7 @@
+ from pathlib import Path
+ import re
+ 
+-ROOT=Path(__file__).resolve().parents[2]
++ROOT=Path(__file__).resolve().parents[5]
+ 
+ 
+ def split_asset(root,asset,output,prefix,part_size=1<<30):
+--- original-source/summarize_goal_campaign.py
++++ source/summarize_goal_campaign.py
+@@ -11,10 +11,11 @@
+ from goal_summary import add_descriptive_intervals, summarize
+ from grade_native_retrieval import evidence_recall
+ from native_goal_client import require_normal_session_close
+-from summarize_native_calibration import MODELS
+-
+-ROOT = Path(__file__).resolve().parents[2]
+-PROTOCOL_FILES = ('tools/retrieval-train/native_eval_session.cjs',
++MODELS = {'arbiter-context-qwen3-17b', 'arbiter-context-qwen3-4b'}
++ALL_MODELS = MODELS | {'arbiter-focus-qwen3-reranker-06b'}
++
++ROOT = Path(__file__).resolve().parents[5]
++PROTOCOL_FILES = ('artifacts/advanced-split/models/selected-native-goal-driver-r1/source/native_eval_session.cjs',
+                   'packages/vscode/out/airkctl/session.js',
+                   'packages/vscode/out/airkctl/runner.js',
+                   'packages/vscode/out/airkctl/adminChunks.js')
+@@ -73,23 +74,25 @@
+ 
+ def close_conditions(conditions, ready, expected_ids, pins):
+     profiles = {row['manifest']: row['model'] for row in ready['profiles']}
+-    if len(ready['profiles']) != 4 or len(profiles) != 4 or set(profiles.values()) != MODELS:
+-        raise ValueError('exact four distinct native profile/model slots required')
+-    if len(conditions) != 6:raise ValueError('exact six complete conditions required')
++    if len(ready['profiles']) != 3 or len(profiles) != 3 or set(profiles.values()) != ALL_MODELS:
++        raise ValueError('exact three selected stage profiles required')
++    if len(conditions) != 4:raise ValueError('exact four complete selected conditions required')
+     result = {}
++    focus_reference=conditions[0].get('expected_Focus_profile')
+     for condition in conditions:
+-        if condition.get('complete') is not True or condition.get('evaluation') is not True or condition.get('release_qualified') is not False or condition.get('split') != 'final' or 'campaign_error' in condition:
++        if condition.get('expected_Focus_profile')!=focus_reference:raise ValueError('shared Focus condition changed')
++        if condition.get('complete') is not True or condition.get('evaluation') is not True or condition.get('release_qualified') is not False or condition.get('split') != 'confirmation' or 'campaign_error' in condition:
+             raise ValueError('condition is partial, failed or not the frozen final population')
+         for key, value in pins.items():
+             if condition.get(key) != value:raise ValueError('condition frozen input binding changed: '+key)
+         arm = condition['arm'];profile = condition['expected_profile']
+         if arm == 'arbiter':
+-            if profile not in profiles:raise ValueError('condition profile is outside exact native Ready roster')
++            if profile not in profiles or profiles[profile] not in MODELS:raise ValueError('condition Context profile outside selected Ready roster')
+             name = profiles[profile]
+         elif arm in ('ordinary_followup', 'deterministic_packet') and profile is None:name = arm
+         else:raise ValueError('unknown comparison condition')
+         rows = condition['trials']
+-        if name in result or len(rows) != 100 or {row['task_id'] for row in rows} != set(expected_ids) or any(row['arm'] != arm or row['expected_profile'] != profile for row in rows):
++        if name in result or len(rows) != 100 or {row['task_id'] for row in rows} != set(expected_ids) or any(row['arm'] != arm or row['expected_profile'] != profile or row.get('expected_Focus_profile')!=focus_reference for row in rows):
+             raise ValueError('duplicate model/condition, incomplete IDs or mixed profile identity')
+         result[name] = rows
+     if set(result) != MODELS | {'ordinary_followup', 'deterministic_packet'}:
+@@ -102,6 +105,10 @@
+ 
+ 
+ def verify_trial_grade(trial, task, fixture, source_files):
++    from selected_stage_observations import observe
++    observations=[observe(call['full_canonical_value'],call['tool'],trial['expected_profile'] if trial['arm']=='arbiter' else None,trial.get('expected_Focus_profile')) for call in trial['all_native_calls'] if call.get('validated')]
++    if observations!=trial['selected_stage_observations'] or any(item['work_unknown']for item in observations):raise ValueError('retained stage work/history/coverage differs or unknown')
++    if sum(item['known_input_tokens']for item in observations)!=trial['known_neural_input_tokens']:raise ValueError('native model work charge differs')
+     provided = trial['provided_source_ranges'];shown = [record for turn in trial['all_model_turns'] for record in turn['shown_records']]
+     if Counter(map(span_key, shown)) != Counter(map(span_key, provided)):
+         raise ValueError('claimed provided source differs from actual shown model records')
+@@ -136,22 +143,31 @@
+     parser.add_argument('--condition',type=Path,action='append',required=True)
+     for name in ('ready','rubric','question-scopes','request-template','fixture','output'):
+         parser.add_argument('--'+name,type=Path,required=True)
++    parser.add_argument('--campaign-freeze',type=Path,required=True)
++    parser.add_argument('--campaign-freeze-sha256',required=True)
+     args=parser.parse_args();output=args.output.resolve()
+-    if output.exists() or not output.is_relative_to(ROOT/'artifacts') or len(args.condition)!=6 or len({path.resolve() for path in args.condition})!=6:
+-        parser.error('six distinct condition artifacts and fresh private output required')
++    raw=args.campaign_freeze.read_bytes()
++    if hashlib.sha256(raw).hexdigest()!=args.campaign_freeze_sha256:raise ValueError('selected A6 freeze changed')
++    freeze=json.loads(raw)
++    if freeze.get('approved') is not True or freeze.get('status')!='FROZEN_BEFORE_SELECTED_GOAL_OUTCOMES':raise ValueError('unreviewed selected A6 freeze')
++    if output.exists() or not output.is_relative_to(ROOT/'artifacts') or len(args.condition)!=4 or len({path.resolve() for path in args.condition})!=4:
++        parser.error('four distinct selected condition artifacts and fresh private output required')
+     paths=[Path(__file__),Path(__file__).with_name('goal_summary.py'),Path(__file__).with_name('goal_rubric.py'),
+            Path(__file__).with_name('goal-baseline-selection-freeze.json'),Path(__file__).with_name('goal-critical-evidence-freeze.json'),args.ready,args.rubric,
+            args.question_scopes,args.request_template,args.fixture/'manifest.private.json',
+-           *[ROOT/name for name in PROTOCOL_FILES],*args.condition]
++           *[ROOT/name for name in PROTOCOL_FILES],args.campaign_freeze,*args.condition]
+     retained={path:path.read_bytes() for path in paths};sha=lambda raw:hashlib.sha256(raw).hexdigest()
+     pins={'native_fixture_ready_sha256':sha(retained[args.ready]),'rubric_sha256':sha(retained[args.rubric]),
+           'question_scopes_sha256':sha(retained[args.question_scopes]),'request_template_sha256':sha(retained[args.request_template])}
+-    if pins['rubric_sha256']!='6004b1e1427661b236664352c9e1fdada5993d184685ca61bc13eba1a6b85423' or pins['question_scopes_sha256']!='4470916861293fe1185bb4c0469a8c051437f3f3451ba5c8a813a2c5df5f4a0c' or sha(retained[args.fixture/'manifest.private.json'])!='2627e54241d8e961cc03c005c02f1655be364462ada16bbafdc0434cf4192a60':
+-        raise ValueError('wrong fixed question/rubric/source identity')
++    for key,label in (('rubric_sha256','rubric'),('question_scopes_sha256','scopes'),('request_template_sha256','request'),('native_fixture_ready_sha256','ready')):
++        if pins[key]!=freeze['input_pins'][label]:raise ValueError('selected frozen identity differs: '+label)
++    if sha(retained[args.fixture/'manifest.private.json'])!=freeze['input_pins']['source_manifest']:raise ValueError('selected source manifest differs')
++    pins['campaign_freeze_sha256']=args.campaign_freeze_sha256
+     ready=json.loads(retained[args.ready]);rubric=json.loads(retained[args.rubric]);scopes=json.loads(retained[args.question_scopes]);manifest=json.loads(retained[args.fixture/'manifest.private.json'])
+     expected_ids=[row['id'] for row in scopes['questions']];tasks={row['id']:row for row in rubric['tasks'] if row['split']=='test' and row['goal_selected']}
+     if len(expected_ids)!=100 or set(expected_ids)!=set(tasks):raise ValueError('wrong fixed100 task set')
+     conditions=[json.loads(retained[path]) for path in args.condition]
++    if any(condition.get('expected_Focus_profile')!=freeze['shared_Focus_profile']for condition in conditions):raise ValueError('common Focus scope differs from freeze')
+     closed=close_conditions(conditions,ready,expected_ids,pins)
+     execution_identity=verify_execution_closure(conditions,{name:sha(retained[ROOT/name]) for name in PROTOCOL_FILES},ready)
+     before=audit_pass(args.fixture,manifest);files={row['file']:row for row in manifest['files']}
+@@ -170,11 +186,23 @@
+         raise ValueError('conditions used different index/source bindings or algorithms')
+     result=add_descriptive_intervals(summarize(closed,expected_ids,sorted(MODELS)),closed,list(tasks.values()))
+     critical=result['critical_evidence_comparisons']
+-    result['a6_goal_comparison_pass']=result['all_optional_completion_floors_pass'] and result['all_candidate_completion_comparisons_pass'] and result['primary_turn_floor_pass'] and len(critical)==4 and all(row['shown_critical_evidence_floor_pass'] and row['cited_critical_evidence_floor_pass'] and row['agent_citation_precision_no_regression'] is True for row in critical)
++    contribution={}
++    for model in sorted(MODELS):
++        rows=closed[model]
++        selected_packets=sum(any(event['result']['status']=='selected' for view in row['selected_stage_observations'] for event in view['Context_history']) for row in rows)
++        actual_reference_gain=sum(any(event['label_class']=='REFERENCE_GAIN' for event in row['native_additional_Read_reference_utilities']) for row in rows)
++        contribution[model]={'packets_with_qualified_generic_Read_selected':selected_packets,
++                             'tasks_with_actual_additional_Read_original_reference_gain':actual_reference_gain,
++                             'human_semantic_gold':False,'causal_choice_attribution':False,
++                             'contribution_observed':selected_packets>0 and actual_reference_gain>0}
++    result['selected_Context_native_contribution']=contribution
++    result['zero_invalid_citation_references']=all(row['citation_identity_errors']==0 for rows in closed.values() for row in rows)
++
++    result['a6_goal_comparison_pass']=result['all_optional_completion_floors_pass'] and result['all_candidate_completion_comparisons_pass'] and result['primary_turn_floor_pass'] and all(row['contribution_observed'] for row in contribution.values()) and len(critical)==2 and all(row['shown_critical_evidence_floor_pass'] and row['cited_critical_evidence_floor_pass'] and row['agent_citation_precision_no_regression'] is True for row in critical)
+     result.update(schema='airk.private-native-goal-comparison/1',evaluation=True,release_qualified=False,
+                   actual_execution_identity=execution_identity,
+                   input_seals={str(path):sha(raw) for path,raw in retained.items()},
+-                  scope='Actual six-condition fixed100 public-human-rubric comparison only. Original failures/all turns and both paired controls retained; strongest baseline selection uses baseline outcomes only. Optional-only .75 floor; no new baseline acceptance floor. Source/resource/cancel/critical-evidence/noninterference/platform/package/release qualification remain separately required.')
++                  scope='Actual four-condition selected-path fixed100 public-human-rubric comparison only. Original failures/all turns and both paired controls retained; strongest baseline selection uses baseline outcomes only. Optional-only .75 floor; no new baseline acceptance floor. Source/resource/cancel/critical-evidence/noninterference/platform/package/release qualification remain separately required.')
+     after=audit_pass(args.fixture,manifest)
+     if after!=before or any(path.read_bytes()!=raw for path,raw in retained.items()):raise ValueError('goal summary input/source drift')
+     output.mkdir(parents=True);(output/'comparison.private.json').write_text(json.dumps(result,indent=2)+'\n');(output/'runner.py').write_bytes(retained[Path(__file__)])
+--- original-source/summarize_native_calibration.py
++++ source/summarize_native_calibration.py
+@@ -6,7 +6,7 @@
+ import math
+ from pathlib import Path
+ 
+-ROOT = Path(__file__).resolve().parents[2]
++ROOT = Path(__file__).resolve().parents[5]
+ MODELS = {'arbiter-small-intern-08b', 'arbiter-small-strands-2b',
+           'arbiter-large-intern-4b', 'arbiter-large-kev-4b'}
+ 
+--- original-source/test_goal_campaign_closure.py
++++ source/test_goal_campaign_closure.py
+@@ -4,17 +4,17 @@
+ 
+ from goal_summary import summarize
+ from summarize_goal_campaign import close_conditions,verify_execution_closure,PROTOCOL_FILES
+-from summarize_native_calibration import MODELS
++from summarize_goal_campaign import MODELS,ALL_MODELS
+ 
+ 
+ class GoalCampaignClosureTests(unittest.TestCase):
+     def setUp(self):
+         self.ids=[str(i) for i in range(100)]
+-        self.ready={'profiles':[{'manifest':str(i+1)*64,'model':name} for i,name in enumerate(sorted(MODELS))]}
++        self.ready={'profiles':[{'manifest':str(i+1)*64,'model':name} for i,name in enumerate(sorted(ALL_MODELS))]}
+         self.pins={'rubric_sha256':'a'*64,'question_scopes_sha256':'b'*64,'native_fixture_ready_sha256':'c'*64,'request_template_sha256':'d'*64}
+         self.conditions=[]
+-        for arm,profile in [('ordinary_followup',None),('deterministic_packet',None),*[('arbiter',row['manifest']) for row in self.ready['profiles']]]:
+-            self.conditions.append({'complete':True,'evaluation':True,'release_qualified':False,'split':'final','arm':arm,'expected_profile':profile,**self.pins,
++        for arm,profile in [('ordinary_followup',None),('deterministic_packet',None),*[('arbiter',row['manifest']) for row in self.ready['profiles'] if row['model'] in MODELS]]:
++            self.conditions.append({'complete':True,'evaluation':True,'release_qualified':False,'split':'confirmation','arm':arm,'expected_profile':profile,**self.pins,
+                 'trials':[{'task_id':key,'arm':arm,'expected_profile':profile,'success':int(key)<(75 if arm=='arbiter' else 70),'external_model_turns':4 if arm=='arbiter' else 5,'citation_identity_errors':0,'failure':None} for key in self.ids]})
+ 
+     def result(self):return close_conditions(self.conditions,self.ready,self.ids,self.pins)
+@@ -44,7 +44,7 @@
+         seals={'D:/repo/'+name:pin for name,pin in self.protocol.items()}
+         seals['D:/pair/airk-runtime.json']='3'*64
+         self.conditions=[]
+-        for _ in range(6):
++        for _ in range(4):
+             identity={'input_seals':copy.deepcopy(seals),'image':{'sha256':'2'*64},
+                       'index_id':'actual-index','ready_sha256':'a'*64,'bindings_sha256':'b'*64,
+                       'service_instance':'original-instance','catalog_namespace':'original-catalog'}
+--- original-source/test_goal_summary.py
++++ source/test_goal_summary.py
+@@ -8,7 +8,7 @@
+ class GoalSummaryTests(unittest.TestCase):
+     def setUp(self):
+         self.ids = [str(i) for i in range(100)]
+-        self.candidates = ['arbiter-' + str(i) for i in range(4)]
++        self.candidates = ['ContextCompact', 'ContextLarge']
+         self.conditions = {}
+         for name in ['ordinary_followup', 'deterministic_packet', *self.candidates]:
+             self.conditions[name] = [{'task_id': key, 'success': int(key) < 80,
+--- original-source/test_goal_trial.py
++++ source/test_goal_trial.py
+@@ -29,7 +29,7 @@
+             parsed={'answer':'correct' if last else '', 'citations':['r1','r2'] if last else [],'need_more':not last,'query':'' if last else 'READ r1'}
+             return {'parsed':parsed,'shown_records':records,'elapsed_seconds':.001,'input_tokens':100,'output_tokens':30}
+         task={'id':'developer-only','question':'Find both original facts','alternatives':[{'human_annotation_id':'test-not-human-gold','answer':'correct','facts':[{'locations':[{'file':str(i),'byte_start':0,'byte_end':1}]} for i in (1,2)]}]}
+-        client=Client();trial=GoalTrial(client,Sources(),generate,{'schema':'airk.arbiter.context.request/1','budget':{}},'ordinary_followup')
++        client=Client();trial=GoalTrial(client,Sources(),generate,{'schema':'airk.arbiter.context.request/2','budget':{}},'ordinary_followup')
+         result=trial.run(task)
+         self.assertTrue(result['success']);self.assertEqual(result['external_model_turns'],2);self.assertEqual(result['canonical_calls'],2)
+         self.assertEqual([request[0] for request in client.requests],['search','context'])
+@@ -42,7 +42,7 @@
+         class Client:
+             def call(self,*args):return {'full_canonical_value':None,'elapsed_seconds':.01,'timed_out':True,'returncode':None,'envelope':None,'stdout_bytes':0}
+         task={'id':'developer-only','question':'Question','alternatives':[]}
+-        result=GoalTrial(Client(),Sources(),lambda *_:self.fail('model must not run after failed native call'),{'schema':'airk.arbiter.context.request/1','budget':{}},'deterministic_packet').run(task)
++        result=GoalTrial(Client(),Sources(),lambda *_:self.fail('model must not run after failed native call'),{'schema':'airk.arbiter.context.request/2','budget':{}},'deterministic_packet').run(task)
+         self.assertFalse(result['success']);self.assertIsNone(result['canonical_calls']);self.assertTrue(result['unobserved_native_inner_work'])
+         self.assertEqual(result['native_rpc_attempts'],1)
+ 
+@@ -52,7 +52,7 @@
+                 def call(self,*args):
+                     return {'validated':field!='identity_error',field:'untrusted response fence','full_canonical_value':{'actual_raw':'retained'},'elapsed_seconds':.01,'timed_out':False,'returncode':0,'envelope':{'isError':False},'stdout_bytes':17}
+             task={'id':'developer-only','question':'Question','alternatives':[]}
+-            result=GoalTrial(Client(),Sources(),lambda *_:self.fail('model must not receive unvalidated source'),{'schema':'airk.arbiter.context.request/1','budget':{}},'ordinary_followup').run(task)
++            result=GoalTrial(Client(),Sources(),lambda *_:self.fail('model must not receive unvalidated source'),{'schema':'airk.arbiter.context.request/2','budget':{}},'ordinary_followup').run(task)
+             self.assertEqual(result['failure'],'native_call_failed')
+             self.assertEqual(result['all_native_calls'][0]['full_canonical_value'],{'actual_raw':'retained'})
+             self.assertEqual(result['external_model_turns'],0)
+@@ -63,6 +63,6 @@
+                 def call(self,*args):
+                     return {'validated':True,'full_canonical_value':{'execution':{'served_mode':mode,'incomplete':incomplete}},'elapsed_seconds':.01,'timed_out':False,'returncode':0,'envelope':{'isError':False},'stdout_bytes':17}
+             task={'id':'developer-only','question':'Question','alternatives':[]}
+-            result=GoalTrial(Client(),Sources(),lambda *_:self.fail('model must not receive changed route population'),{'schema':'airk.arbiter.context.request/1','budget':{}},'ordinary_followup').run(task)
++            result=GoalTrial(Client(),Sources(),lambda *_:self.fail('model must not receive changed route population'),{'schema':'airk.arbiter.context.request/2','budget':{}},'ordinary_followup').run(task)
+             self.assertEqual(result['failure'],'native_read_population_changed')
+             self.assertEqual(result['external_model_turns'],0)
+--- original-source/test_native_goal_binding.py
++++ source/test_native_goal_binding.py
+@@ -32,7 +32,7 @@
+                     client.observe_health(root,'changed-'+field,1)
+ 
+     def test_actual_fixture_binary_is_distinct_and_pid_reuse_refused(self):
+-        repository = Path(__file__).resolve().parents[2]
++        repository = Path(__file__).resolve().parents[5]
+         with tempfile.TemporaryDirectory(dir=repository/'artifacts') as directory:
+             root=Path(directory);pair=root/'pair';pair.mkdir();control=root/'control';control.mkdir()
+             pins={}
+--- original-source/test_training_execution.py
++++ source/test_training_execution.py
+@@ -19,7 +19,7 @@
+ class TrainingExecutionTests(unittest.TestCase):
+     @classmethod
+     def setUpClass(cls):
+-        root = Path(__file__).resolve().parents[2]
++        root = Path(__file__).resolve().parents[5]
+         (root / 'artifacts').mkdir(exist_ok=True)
+         cls.base_python = Path(sys._base_executable).resolve()
+         cls.child_python = Path(sys.executable).resolve()
+@@ -41,7 +41,7 @@
+             self.assertEqual(execution.runtime_paths(root), {os.path.normcase(str(root / 'runtime.py'))})
+ 
+     def run_child(self, script, deadline):
+-        root = Path(__file__).resolve().parents[2]
++        root = Path(__file__).resolve().parents[5]
+         with tempfile.TemporaryDirectory(dir=root / 'artifacts') as directory:
+             work = Path(directory)
+             child = work / 'synthetic.py'
+@@ -117,7 +117,7 @@
+         self.assertNotIn('PAYLOAD_MUST_NOT_EXECUTE', stdout)
+ 
+     def test_suspended_assignment_precedes_any_child_code(self):
+-        root = Path(__file__).resolve().parents[2]
++        root = Path(__file__).resolve().parents[5]
+         with tempfile.TemporaryDirectory(dir=root / 'artifacts') as directory:
+             work = Path(directory)
+             marker = work / 'executed.txt'
+@@ -137,7 +137,7 @@
+             self.assertEqual(result['owned_total_processes'], 2)
+ 
+     def test_leader_exit_zero_with_event_blocked_descendant_cannot_pass(self):
+-        root = Path(__file__).resolve().parents[2]
++        root = Path(__file__).resolve().parents[5]
+         with tempfile.TemporaryDirectory(dir=root / 'artifacts') as directory:
+             work = Path(directory)
+             code = 'import subprocess,sys;subprocess.Popen([sys.executable,"-B","-c","import threading;threading.Event().wait()"]);print("leader exits",flush=True)'
+--- original-source/training_execution.py
++++ source/training_execution.py
+@@ -449,7 +449,7 @@
+         raise ValueError('training seal differs from primary-reviewed hash')
+     seal = json.loads(raw)
+     output = args.log_dir.resolve()
+-    if output != Path(seal['launch_log_dir']).resolve() or not output.is_relative_to(Path(__file__).resolve().parents[2] / 'artifacts') or output.exists():
++    if output != Path(seal['launch_log_dir']).resolve() or not output.is_relative_to(Path(__file__).resolve().parents[5] / 'artifacts') or output.exists():
+         raise ValueError('fresh reviewed private training log directory required')
+     if seal['limits']['wall_seconds'] > 600 or seal['limits']['host_committed_bytes'] > 8 * 1024**3 or seal['limits']['cuda_allocator_bytes'] > 4 * 1024**3:
+         raise ValueError('reviewed one-trial resource ceiling exceeded')
+--- original-source/verify_encoder_fp32.py
++++ source/verify_encoder_fp32.py
+@@ -5,7 +5,7 @@
+ import json
+ from pathlib import Path
+ 
+-ROOT=Path(__file__).resolve().parents[2]
++ROOT=Path(__file__).resolve().parents[5]
+ 
+ 
+ def main():
+--- original-source/verify_encoder_inputs.py
++++ source/verify_encoder_inputs.py
+@@ -5,7 +5,7 @@
+ import json
+ from pathlib import Path
+ 
+-ROOT=Path(__file__).resolve().parents[2]
++ROOT=Path(__file__).resolve().parents[5]
+ 
+ 
+ def main():

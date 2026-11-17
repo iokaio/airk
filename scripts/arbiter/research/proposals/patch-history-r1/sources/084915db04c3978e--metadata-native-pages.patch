@@ -1,0 +1,567 @@
+--- a/crates/airk-store/src/current/map.rs
++++ b/crates/airk-store/src/current/map.rs
+@@ -38,6 +38,8 @@
+     ArtifactHandle,
+     UnitHandle,
+     RecentChanges,
++    NativeFactHeader,
++    NativeFactPage,
+ }
+ 
+ #[derive(Clone, Debug)]
+@@ -89,6 +91,8 @@
+             Self::ArtifactHandle => b"artifact-handle",
+             Self::UnitHandle => b"unit-handle",
+             Self::RecentChanges => b"recent-changes/1",
++            Self::NativeFactHeader => b"native-fact-header/1",
++            Self::NativeFactPage => b"native-fact-page/1",
+         }
+     }
+ }
+--- a/crates/airk-store/src/current/metadata.rs
++++ b/crates/airk-store/src/current/metadata.rs
+@@ -25,6 +25,60 @@
+     pub path: String,
+     pub digest: Sha256Digest,
+     pub bytes: usize,
++    #[serde(default,skip_serializing_if="Option::is_none")]
++    pub scalars: Option<FileScalars>,
++}
++
++/// Publication-derived scalars, authenticated by the existing current map.
++/// Absence on legacy heads means no projection; it is never an empty file claim.
++#[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct FileScalars {
++    pub version:u32,
++    pub state:airk_core::changes::FileState,
++    pub source_bytes:usize,
++    pub payload_bytes:usize,
++    pub extracted_bytes:usize,
++    pub chunks:usize,
++    pub indexed_lines:usize,
++    pub facts:usize,
++    pub raw_source:bool,
++    pub language:String,
++    pub extraction_method:String,
++    pub parse_status:String,
++}
++impl FileScalars {
++    fn from_file(file:&InventoryFile)->Self{Self{
++        version:1,state:file.state.clone(),source_bytes:file.source_bytes,
++        payload_bytes:file.payload_bytes,extracted_bytes:file.extracted_bytes,
++        chunks:file.chunks,indexed_lines:file.indexed_lines,facts:file.facts,
++        raw_source:file.raw_source,language:file.language.clone(),
++        extraction_method:file.extraction_method.clone(),parse_status:file.parse_status.clone(),
++    }}
++    fn verify(&self,artifact:&airk_core::Artifact,sequence:u64)->Result<()>{
++        ensure!(self.version==1,"unsupported current file scalar projection");
++        let file=InventoryFile{continuity:Vec::new(),continuity_coverage:Default::default(),
++            state:self.state.clone(),source_bytes:self.source_bytes,payload_bytes:self.payload_bytes,
++            extracted_bytes:self.extracted_bytes,chunks:self.chunks,indexed_lines:self.indexed_lines,
++            facts:self.facts,raw_source:self.raw_source,language:self.language.clone(),
++            extraction_method:self.extraction_method.clone(),parse_status:self.parse_status.clone()};
++        verify(artifact,&file,sequence)?;
++        let retained=artifact.retained.as_ref().context("current scalar extraction missing")?;
++        ensure!(self.payload_bytes==retained.object_bytes&&self.extracted_bytes==retained.extracted_bytes
++            &&self.raw_source==retained.raw_source&&self.language==artifact.language
++            &&self.extraction_method==artifact.extraction_method&&self.parse_status==artifact.parse_status,
++            "current scalar metadata differs from captured artifact");
++        Ok(())
++    }
++}
++
++fn verify_indexed_lines(store:&FileStore,artifact:&airk_core::Artifact,scalars:&FileScalars)->Result<()>{
++    let profile=artifact.retained.as_ref().and_then(|retained|retained.profile.as_ref())
++        .context("scalar producer extraction profile missing")?;
++    let lines=if profile.contract_version==2&&artifact.extraction_method=="utf8"{
++        std::str::from_utf8(&store.read_retained_source(artifact)?)?.split_inclusive('\n').count()
++    }else{artifact.chunks.iter().map(|chunk|chunk.end_line).max().unwrap_or(0)};
++    ensure!(scalars.indexed_lines==lines,"scalar producer indexed line count mismatch");Ok(())
+ }
+ 
+ fn object(store: &FileStore, digest: Sha256Digest) -> PathBuf {
+@@ -71,6 +125,7 @@
+             path: path.into(),
+             digest,
+             bytes: bytes.len(),
++            scalars: Some(FileScalars::from_file(file)),
+         };
+         let destination = object(
+             self,
+@@ -165,6 +220,8 @@
+             serde_json::to_vec(&value)? == bytes,
+             "noncanonical current metadata"
+         );
++        ensure!(reference.scalars.as_ref().is_none_or(|scalars|*scalars==FileScalars::from_file(&value)),
++            "current metadata scalar projection mismatch");
+         Ok(value)
+     }
+ }
+@@ -182,6 +239,29 @@
+             "invalid current metadata reference"
+         );
+         Ok(reference.bytes)
++    }
++    /// Selected authenticated scalar bytes only. This does not authorize relaxing
++    /// private-root/physical integrity checks or certify legacy absent projections.
++    pub fn file_scalars(&self,path:&str)->Result<Option<FileScalars>>{
++        let Some(bytes)=self.map_get(MapDomain::FileMetadata,path.as_bytes())? else{return Ok(None);};
++        let reference:FileMetadataRef=serde_json::from_slice(&bytes)?;
++        ensure!(reference.path==path&&reference.bytes<=MAX_METADATA_BYTES
++            &&serde_json::to_vec(&reference)?==bytes,"invalid current scalar metadata reference");
++        let Some(scalars)=reference.scalars else{return Ok(None);};
++        let artifact=self.artifact(path)?.context("current scalar artifact missing")?;
++        scalars.verify(&artifact,self.head().sequence)?;
++        Ok(Some(scalars))
++    }
++    /// Strict audit compares the publication-derived scalars with the original
++    /// retained inventory. Publication prepare uses the same full reader/check.
++    pub fn audit_file_scalars(&self,store:&FileStore,path:&str)->Result<bool>{
++        let scalars=self.file_scalars(path)?;
++        let _=self.file_metadata(store,path)?;
++        if let Some(scalars)=&scalars{
++            let compact=self.artifact(path)?.context("scalar audit artifact missing")?;
++            verify_indexed_lines(store,&store.load_retained(&compact)?,scalars)?;
++        }
++        Ok(scalars.is_some())
+     }
+     pub fn artifact_path(
+         &self,
+@@ -300,14 +380,13 @@
+     }
+     for change in artifacts {
+         let path = change.path();
+-        let measurement = match change {
+-            super::ArtifactChange::Upsert(input) => Some(serde_json::to_vec(
+-                &airk_core::usage::SourceContextSize::measure(
+-                    &store.load_retained(&input.artifact)?,
+-                )?,
+-            )?),
+-            super::ArtifactChange::Delete(_) => None,
+-        };
++        let materialized=match change{
++            super::ArtifactChange::Upsert(input)=>Some(store.load_retained(&input.artifact)?),
++            super::ArtifactChange::Delete(_)=>None,
++        };
++        let measurement=materialized.as_ref().map(|artifact|{
++            Ok::<_,anyhow::Error>(serde_json::to_vec(&airk_core::usage::SourceContextSize::measure(artifact)?)?)
++        }).transpose()?;
+         let measured = map::MapChange::new(
+             scope,
+             MapDomain::SourceMeasurement,
+@@ -334,6 +413,10 @@
+             };
+             let file = store.read_current_metadata(reference)?;
+             verify(&input.artifact, &file, sequence)?;
++            if let Some(scalars)=&reference.scalars{
++                scalars.verify(&input.artifact,sequence)?;
++                verify_indexed_lines(store,materialized.as_ref().context("scalar producer materialization missing")?,scalars)?;
++            }
+             for (domain, identity) in handles(&file)? {
+                 let c =
+                     map::MapChange::new(scope, domain, &identity, Some(path.as_bytes().to_vec()))?;
+--- a/crates/airk-store/src/current/mod.rs
++++ b/crates/airk-store/src/current/mod.rs
+@@ -12,6 +12,7 @@
+ pub mod maintenance;
+ pub mod map;
+ pub mod metadata;
++pub mod native_projection;
+ pub mod postings;
+ #[cfg(test)]
+ mod publication_spike_tests;
+--- /dev/null
++++ b/crates/airk-store/src/current/native_projection.rs
+@@ -0,0 +1,121 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Publication-owned native fact pages in the existing authenticated map/journal.
++//! Imported assertions and public query cutover are deliberately separate.
++use super::{CurrentRead,CurrentScope,map::{self,MapDomain}};
++use airk_core::{Artifact,Fact,identity::Sha256Digest};
++use anyhow::{Context,Result,ensure};
++use serde::{Serialize,Deserialize};
++const ROWS:usize=32;
++const MAX_PAGES:usize=16;
++const MAX_BYTES:usize=256*1024;
++pub(crate) const TRANSACTION_BYTES:usize=4*1024*1024;
++#[derive(Clone,Debug,Serialize,Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct NativeFactHeader {
++    pub version:u32,pub path:String,pub source:Sha256Digest,pub payload:Sha256Digest,
++    pub profile:Sha256Digest,pub facts:usize,pub pages:usize,
++    /// False means bounded projection unavailable, never zero facts.
++    pub supported:bool,
++}
++#[derive(Clone,Debug,Serialize,Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct NativeFactRow{pub ordinal:usize,pub fact:Fact}
++#[derive(Clone,Debug,Serialize,Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct NativeFactPage{pub version:u32,pub path:String,pub page:usize,pub rows:Vec<NativeFactRow>}
++fn identity(path:&str,page:usize)->Result<Vec<u8>>{Ok(serde_json::to_vec(&(path,page))?)}
++fn header(artifact:&Artifact)->Result<NativeFactHeader>{
++    let retained=artifact.retained.as_ref().context("native projection extraction missing")?;
++    Ok(NativeFactHeader{version:1,path:artifact.path.clone(),source:artifact.content_hash.parse()?,
++        payload:retained.object.parse()?,profile:retained.profile.as_ref().context("native projection profile missing")?.identity()?,
++        facts:retained.facts,pages:0,supported:false})
++}
++fn decode_header(bytes:&[u8],path:&str)->Result<NativeFactHeader>{
++    let value:NativeFactHeader=serde_json::from_slice(bytes)?;
++    ensure!(value.version==1&&value.path==path&&value.pages<=MAX_PAGES
++        &&(value.supported||value.pages==0)&&serde_json::to_vec(&value)?==bytes,"invalid native projection header");
++    ensure!(!value.supported||value.pages==value.facts.div_ceil(ROWS),"native projection count mismatch");
++    Ok(value)
++}
++fn build(artifact:&Artifact,remaining:usize)->Result<(NativeFactHeader,Vec<Vec<u8>>)> {
++    let mut result=header(artifact)?;
++    ensure!(artifact.facts.len()==result.facts,"native projection retained count mismatch");
++    if result.facts>ROWS*MAX_PAGES{return Ok((result,Vec::new()));}
++    let mut order=(0..artifact.facts.len()).collect::<Vec<_>>();
++    order.sort_by(|left,right|{
++        let a=&artifact.facts[*left];let b=&artifact.facts[*right];
++        (a.start_line,&a.kind,&a.name,left).cmp(&(b.start_line,&b.kind,&b.name,right))
++    });
++    let mut encoded=Vec::new();let mut bytes=0usize;
++    for (page,ordinals) in order.chunks(ROWS).enumerate(){
++        let value=NativeFactPage{version:1,path:artifact.path.clone(),page,
++            rows:ordinals.iter().map(|ordinal|NativeFactRow{ordinal:*ordinal,fact:artifact.facts[*ordinal].clone()}).collect()};
++        let value=serde_json::to_vec(&value)?;
++        bytes=bytes.checked_add(value.len()).context("native projection byte overflow")?;
++        if value.len()>map::MAX_VALUE_BYTES||bytes>MAX_BYTES.min(remaining){return Ok((result,Vec::new()));}
++        encoded.push(value);
++    }
++    result.supported=true;result.pages=encoded.len();Ok((result,encoded))
++}
++/// Called only from metadata preparation inside the existing writer MapPlan.
++/// Result afterimages participate in the ordinary pending journal and retention.
++pub(crate) fn prepare(scope:&CurrentScope,plan:&mut map::MapPlan<'_>,path:&str,
++    artifact:Option<&Artifact>,remaining:&mut usize)->Result<Vec<map::MapChange>>{
++    let key=map::key(scope,MapDomain::NativeFactHeader,path.as_bytes())?;
++    let old=plan.get(key)?.map(|bytes|decode_header(&bytes,path)).transpose()?;
++    let prepared=artifact.map(|artifact|build(artifact,*remaining)).transpose()?;
++    let new_pages=prepared.as_ref().map_or(0,|(_,pages)|pages.len());
++    let mut changes=Vec::new();
++    for page in 0..old.as_ref().map_or(0,|header|header.pages).max(new_pages){
++        let value=prepared.as_ref().and_then(|(_,pages)|pages.get(page)).cloned();
++        let change=map::MapChange::new(scope,MapDomain::NativeFactPage,&identity(path,page)?,value)?;
++        plan.put(change.key(),change.value())?;changes.push(change);
++    }
++    let value=prepared.as_ref().map(|(header,_)|serde_json::to_vec(header)).transpose()?;
++    let change=map::MapChange::new(scope,MapDomain::NativeFactHeader,path.as_bytes(),value)?;
++    plan.put(change.key(),change.value())?;changes.push(change);
++    if let Some((_,pages))=prepared{*remaining=remaining.saturating_sub(pages.iter().map(Vec::len).sum());}
++    Ok(changes)
++}
++impl CurrentRead{
++    pub fn native_fact_header(&self,path:&str)->Result<Option<NativeFactHeader>>{
++        let Some(bytes)=self.map_get(MapDomain::NativeFactHeader,path.as_bytes())? else{return Ok(None);};
++        let value=decode_header(&bytes,path)?;
++        let artifact=self.artifact(path)?.context("native projection artifact missing")?;
++        let expected=header(&artifact)?;
++        ensure!(value.source==expected.source&&value.payload==expected.payload&&value.profile==expected.profile&&value.facts==expected.facts,
++            "native projection source/profile binding mismatch");
++        Ok(Some(value))
++    }
++    /// Selected page only, preserving original native ordinals. None means legacy
++    /// or unsupported projection and requires the existing strict fallback.
++    pub fn native_fact_page(&self,path:&str,page:usize)->Result<Option<NativeFactPage>>{
++        let Some(header)=self.native_fact_header(path)?.filter(|header|header.supported) else{return Ok(None);};
++        ensure!(page<header.pages,"native projection page out of range");
++        let bytes=self.map_get(MapDomain::NativeFactPage,&identity(path,page)?)?.context("native projection page missing")?;
++        let value:NativeFactPage=serde_json::from_slice(&bytes)?;
++        ensure!(value.version==1&&value.path==path&&value.page==page&&value.rows.len()==(header.facts-page*ROWS).min(ROWS)
++            &&value.rows.iter().all(|row|row.ordinal<header.facts&&row.fact.start_line>0&&row.fact.end_line>=row.fact.start_line)
++            &&value.rows.iter().map(|row|row.ordinal).collect::<std::collections::BTreeSet<_>>().len()==value.rows.len()
++            &&value.rows.windows(2).all(|rows|{
++                let a=&rows[0];let b=&rows[1];
++                (a.fact.start_line,&a.fact.kind,&a.fact.name,a.ordinal)<(b.fact.start_line,&b.fact.kind,&b.fact.name,b.ordinal)
++            })&&serde_json::to_vec(&value)?==bytes,"invalid native projection page");
++        Ok(Some(value))
++    }
++    /// Exact physical producer parity; no audit/eligibility receipt is invented.
++    /// False is incomplete legacy/unsupported coverage, not successful auditing.
++    pub fn audit_native_fact_projection(&self,store:&crate::FileStore,path:&str)->Result<bool>{
++        let Some(actual)=self.native_fact_header(path)? else{return Ok(false);};
++        if !actual.supported{return Ok(false);}
++        let compact=self.artifact(path)?.context("native projection artifact missing")?;
++        let artifact=store.load_retained(&compact)?;store.verify_retained_source(&compact)?;
++        let (expected,pages)=build(&artifact,MAX_BYTES)?;
++        ensure!(serde_json::to_vec(&actual)?==serde_json::to_vec(&expected)?,"native projection producer header mismatch");
++        for (number,bytes) in pages.iter().enumerate(){
++            let selected=self.native_fact_page(path,number)?.context("native projection unavailable during audit")?;
++            ensure!(serde_json::to_vec(&selected)?==*bytes,"native projection producer rows mismatch");
++        }
++        Ok(true)
++    }
++}
+--- /dev/null
++++ b/crates/airk-store/src/current/native_projection_tests.rs
+@@ -0,0 +1,158 @@
++// SPDX-License-Identifier: Apache-2.0
++use super::*;
++fn fact(name:&str,id:u32)->airk_core::extraction::LocalFact{
++    airk_core::extraction::LocalFact{id,owner:None,kind:"heading".into(),name:name.into(),
++        span:airk_core::extraction::LocalSpan{start:0,end:4},syntax_kind:"heading".into(),start_line:1,end_line:1,
++        location:airk_core::DocumentLocation::Lines{start:1,end:1},document:None,code:None,region:None,attributes:Default::default()}
++}
++#[test]
++fn publication_pages_preserve_original_ordinals_without_source_materialization()->Result<()> {
++    let fixture=Fixture::new()?;
++    let input=retained_input_with_facts(&fixture,"one.txt","body",vec![fact("Zulu",0),fact("Alpha",1),fact("Alpha",2)])?;
++    let lock=fixture.store.lock()?;
++    fixture.store.current_write(&lock,&fixture.quota,&fixture.scope,CAPACITY)?
++        .commit_artifact(&fixture.head.token()?,"one.txt",Some(&input))?;
++    drop(lock);
++    let read=fixture.store.current_read(&fixture.scope)?;
++    let full=fixture.store.load_retained(&input.artifact)?;
++    let page=read.native_fact_page("one.txt",0)?.context("projection absent")?;
++    assert_eq!(page.rows.iter().map(|row|row.ordinal).collect::<Vec<_>>(),vec![1,2,0]);
++    for row in &page.rows{assert_eq!(serde_json::to_value(&row.fact)?,serde_json::to_value(&full.facts[row.ordinal])?);}
++    let mut query=airk_core::FactQuery{path_prefix:"one.txt".into(),name:None,kind:None,language:None,
++        exact_name:false,limit:100,max_bytes:65536,path_exact:true,document_only:false};
++    let strict=read.native_facts_page(&fixture.store,&query,false,&Default::default())?;
++    let projected=page.rows.iter().map(|row|super::super::discovery::fact_hit(&full,&row.fact)).collect::<Vec<_>>();
++    assert_eq!(serde_json::to_value(&strict.facts)?,serde_json::to_value(&projected)?);
++    query.max_bytes=1;
++    let refused=read.native_facts_page(&fixture.store,&query,false,&Default::default())?;
++    assert_eq!(refused.page.required_record_bytes,Some(serde_json::to_vec(&projected[0])?.len()));
++    assert!(read.audit_native_fact_projection(&fixture.store,"one.txt")?);
++    let source=fixture.store.directory().join("objects/sources").join(&input.artifact.content_hash);
++    let held=source.with_extension("held");fs::rename(&source,&held)?;
++    let selected=read.native_fact_page("one.txt",0)?.context("selected projection depended on source")?;
++    assert_eq!(selected.rows.len(),3);
++    assert!(read.audit_native_fact_projection(&fixture.store,"one.txt").is_err());
++    fs::rename(held,source)?;
++    drop(read);
++    let lock=fixture.store.lock()?;
++    let mut writer=fixture.store.current_write(&lock,&fixture.quota,&fixture.scope,CAPACITY)?;
++    let token=writer.head()?.token()?;
++    writer.commit_artifact(&token,"one.txt",None)?;
++    drop(writer);drop(lock);
++    assert!(fixture.store.current_read(&fixture.scope)?.native_fact_header("one.txt")?.is_none());
++    Ok(())
++}
++#[test]
++fn unsupported_native_projection_is_explicit_not_empty_evidence()->Result<()> {
++    let fixture=Fixture::new()?;
++    let facts=(0..513).map(|id|fact(&format!("name-{id}"),id)).collect();
++    let input=retained_input_with_facts(&fixture,"many.txt","body",facts)?;
++    let lock=fixture.store.lock()?;
++    fixture.store.current_write(&lock,&fixture.quota,&fixture.scope,CAPACITY)?
++        .commit_artifact(&fixture.head.token()?,"many.txt",Some(&input))?;
++    drop(lock);
++    let read=fixture.store.current_read(&fixture.scope)?;
++    let header=read.native_fact_header("many.txt")?.context("missing explicit projection state")?;
++    assert!(!header.supported);assert_eq!(header.facts,513);
++    assert!(read.native_fact_page("many.txt",0)?.is_none());
++    assert!(!read.audit_native_fact_projection(&fixture.store,"many.txt")?);
++    assert_eq!(fixture.store.load_retained(&input.artifact)?.facts.len(),513);
++    Ok(())
++}
++
++#[test]
++fn scalar_projection_is_derived_checked_and_replayed_with_existing_map()->Result<()> {
++    use airk_core::{changes::{FileState,FileStamps},publication::InventoryFile};
++    let fixture=Fixture::new()?;
++    let input=retained_input_at(&fixture,"one.txt","body")?;
++    let retained=input.artifact.retained.as_ref().unwrap();
++    let file=InventoryFile{continuity:Vec::new(),continuity_coverage:Default::default(),
++        state:FileState{artifact_id:airk_core::identity::ArtifactId::from_bytes([48;16]),
++            stamps:FileStamps{first_generation:1,path_generation:1,content_generation:1,evidence_generation:1},
++            source_hash:input.artifact.content_hash.parse()?,profile_id:retained.profile.as_ref().unwrap().identity()?,
++            payload_digest:retained.object.parse()?,evidence_digest:Sha256Digest::from_bytes([49;32]),
++            root:fixture.scope.root.clone(),path:"one.txt".into()},
++        source_bytes:input.artifact.bytes,payload_bytes:retained.object_bytes,extracted_bytes:retained.extracted_bytes,
++        chunks:retained.chunks,indexed_lines:1,facts:retained.facts,raw_source:true,language:input.artifact.language.clone(),
++        extraction_method:input.artifact.extraction_method.clone(),parse_status:input.artifact.parse_status.clone()};
++    let reservation=fixture.quota.reserve(&fixture.scope.collection,1<<20)?;
++    let reference=fixture.store.retain_current_metadata("one.txt",&file,&reservation)?;
++    let mut wrong=reference.clone();wrong.scalars.as_mut().unwrap().indexed_lines=2;
++    assert!(fixture.store.read_current_metadata(&wrong).is_err());
++    let mut legacy=reference.clone();legacy.scalars=None;
++    assert_eq!(fixture.store.read_current_metadata(&legacy)?,file);
++    let (_reservation,sealed)=fixture.sealed()?;
++    let connection=database::open_reader(&fixture.store.directory().join("current.sqlite3"))?;
++    let mut wrong_file=file.clone();wrong_file.indexed_lines=2;
++    let wrong_producer=fixture.store.retain_current_metadata("one.txt",&wrong_file,&reservation)?;
++    {
++    let mut rejected=map::MapPlan::new(&connection,&fixture.scope,fixture.head.artifact_root)?;
++    let error=metadata::prepare(&fixture.store,&fixture.scope,&mut rejected,
++        &[ArtifactChange::Upsert(Box::new(input.clone()))],&[wrong_producer],1).unwrap_err();
++    assert!(error.to_string().contains("indexed line count mismatch"));
++    }
++    let mut plan=map::MapPlan::new(&connection,&fixture.scope,fixture.head.artifact_root)?;
++    let first=map::MapChange::new(&fixture.scope,map::MapDomain::Artifact,b"one.txt",Some(input.bytes()?))?;
++    plan.put(first.key(),first.value())?;
++    let upserts=[ArtifactChange::Upsert(Box::new(input.clone()))];
++    let mut changes=vec![first];
++    changes.extend(metadata::prepare(&fixture.store,&fixture.scope,&mut plan,&upserts,&[reference.clone()],1)?);
++    changes.sort_by_key(map::MapChange::key);
++    let mut target=fixture.target(&sealed);target.artifact_root=plan.root()?;drop(connection);
++    let lock=fixture.store.lock()?;
++    let mut writer=fixture.store.current_write(&lock,&fixture.quota,&fixture.scope,CAPACITY)?;
++    let pending=writer.prepare_mapped(&fixture.head.token()?,target,&sealed,&[input],None,&changes)?;
++    writer.mark_applying(&pending)?;
++    drop(writer);drop(lock); // resume from the actual durable pending journal
++    let lock=fixture.store.lock()?;
++    let mut writer=fixture.store.current_write(&lock,&fixture.quota,&fixture.scope,CAPACITY)?;
++    let replay=writer.pending()?.context("pending scalar publication lost")?;
++    writer.commit(&replay,replay.target.lexical_commit)?;drop(writer);drop(lock);
++    let read=fixture.store.current_read(&fixture.scope)?;
++    let scalar=read.file_scalars("one.txt")?.context("scalar projection missing")?;
++    assert_eq!(scalar.indexed_lines,file.indexed_lines);assert_eq!(scalar.state,file.state);
++    assert!(read.audit_file_scalars(&fixture.store,"one.txt")?);
++    let object=fixture.store.directory().join("current-metadata").join(format!("{}.json",reference.digest));
++    let held=object.with_extension("held");fs::rename(&object,&held)?;
++    assert_eq!(read.file_scalars("one.txt")?.unwrap().indexed_lines,1);
++    assert!(read.file_metadata(&fixture.store,"one.txt").is_err());
++    assert!(read.audit_file_scalars(&fixture.store,"one.txt").is_err());
++    fs::rename(held,object)?;
++    Ok(())
++}
++
++#[test]
++fn native_pages_resume_and_replacement_retires_old_map_records()->Result<()> {
++    let fixture=Fixture::new()?;
++    let facts=(0..65).map(|id|fact(&format!("N{:03}",64-id),id)).collect();
++    let input=retained_input_with_facts(&fixture,"pages.txt","body",facts)?;
++    let lock=fixture.store.lock()?;
++    fixture.store.current_write(&lock,&fixture.quota,&fixture.scope,CAPACITY)?
++        .commit_artifact(&fixture.head.token()?,"pages.txt",Some(&input))?;
++    drop(lock);
++    let read=fixture.store.current_read(&fixture.scope)?;
++    let header=read.native_fact_header("pages.txt")?.context("header absent")?;
++    assert!(header.supported);assert_eq!(header.pages,3);
++    let mut ordinals=Vec::new();
++    for number in 0..header.pages{
++        let page=read.native_fact_page("pages.txt",number)?.context("page absent")?;
++        assert_eq!(page.rows.len(),if number==2{1}else{32});
++        ordinals.extend(page.rows.iter().map(|row|row.ordinal));
++    }
++    assert_eq!(ordinals,(0..65).rev().collect::<Vec<_>>());
++    assert!(read.native_fact_page("pages.txt",3).is_err());
++    let token=read.token()?;drop(read);
++    let replacement=retained_input_with_facts(&fixture,"pages.txt","body",vec![fact("Only",0)])?;
++    let lock=fixture.store.lock()?;
++    fixture.store.current_write(&lock,&fixture.quota,&fixture.scope,CAPACITY)?
++        .commit_artifact(&token,"pages.txt",Some(&replacement))?;
++    drop(lock);
++    let read=fixture.store.current_read(&fixture.scope)?;
++    assert_eq!(read.native_fact_header("pages.txt")?.unwrap().pages,1);
++    assert_eq!(read.native_fact_page("pages.txt",0)?.unwrap().rows[0].fact.name,"Only");
++    for retired in [1,2]{
++        assert!(read.map_get(map::MapDomain::NativeFactPage,&serde_json::to_vec(&("pages.txt",retired))?)?.is_none());
++    }
++    assert!(read.audit_native_fact_projection(&fixture.store,"pages.txt")?);
++    Ok(())
++}
+--- a/crates/airk-store/src/current/postings.rs
++++ b/crates/airk-store/src/current/postings.rs
+@@ -100,6 +100,9 @@
+     version: u32,
+ ) -> Result<BTreeSet<Sha256Digest>> {
+     let artifact = store.load_retained(compact)?;
++    selectors_loaded(&artifact,version)
++}
++fn selectors_loaded(artifact:&Artifact,version:u32)->Result<BTreeSet<Sha256Digest>>{
+     let mut selectors = BTreeSet::from([
+         Lookup::Files.identity(),
+         Lookup::Language(&artifact.language).identity(),
+@@ -139,7 +142,6 @@
+ /// Accumulates final afterimages and charges them before they can grow beyond
+ /// the journal's admission ceiling. Missing retained evidence can require a
+ /// bounded authenticated base-map traversal to retire old path memberships.
+-#[derive(Default)]
+ pub(crate) struct PostingChanges {
+     values: BTreeMap<Sha256Digest, map::MapChange>,
+     bytes: usize,
+@@ -147,6 +149,13 @@
+     recovery_selectors: usize,
+     recovery_bytes: usize,
+     complete: bool,
++    native_remaining: usize,
++}
++
++impl Default for PostingChanges{
++    fn default()->Self{Self{values:BTreeMap::new(),bytes:0,missing:BTreeMap::new(),
++        recovery_selectors:0,recovery_bytes:0,complete:false,
++        native_remaining:super::native_projection::TRANSACTION_BYTES}}
+ }
+ 
+ struct MissingPosting {
+@@ -159,6 +168,7 @@
+     pub(crate) fn new(complete: bool) -> Self {
+         Self {
+             complete,
++            native_remaining: super::native_projection::TRANSACTION_BYTES,
+             ..Default::default()
+         }
+     }
+@@ -292,10 +302,17 @@
+             valid_current_path(path) && previous.is_none_or(|old| &old.path == path),
+             "posting artifact path mismatch"
+         );
+-        let new = next
+-            .map(|a| selectors(store, a, next_version))
+-            .transpose()?
+-            .unwrap_or_default();
++        // Reuse the exact retained decode already required for new selectors.
++        let next_full=next.map(|artifact|store.load_retained(artifact)).transpose()?;
++        let new=next_full.as_ref().map(|artifact|selectors_loaded(artifact,next_version)).transpose()?.unwrap_or_default();
++        for change in super::native_projection::prepare(scope,plan,path,next_full.as_ref(),&mut self.native_remaining)?{
++            let old=self.values.get(&change.key()).and_then(|value|value.value()).map_or(0,<[u8]>::len);
++            let bytes=self.bytes.checked_sub(old).and_then(|bytes|bytes.checked_add(change.value().map_or(0,<[u8]>::len)))
++                .context("native projection transaction bytes overflow")?;
++            ensure!(bytes<=MAX_CHANGED_BYTES&&(self.values.contains_key(&change.key())||self.values.len()<MAX_CHANGED_KEYS),
++                "native projection transaction admission exceeded");
++            self.bytes=bytes;self.values.insert(change.key(),change);
++        }
+         let old = match previous
+             .map(|a| selectors(store, a, previous_version))
+             .transpose()
+--- a/crates/airk-store/src/current/tests.rs
++++ b/crates/airk-store/src/current/tests.rs
+@@ -932,7 +932,7 @@
+         None,
+         &changes,
+     )?;
+-    assert_eq!(pending.map_count, 6);
++    assert_eq!(pending.map_count, 7); // includes native fact header
+     current.mark_applying(&pending)?;
+     drop(current);
+     drop(writer);
+@@ -1031,7 +1031,7 @@
+         br#"{"engine":"test","version":2}"#,
+     )?;
+     // Includes file metadata and source-size measurement retirement.
+-    assert_eq!(deletion.map_count, 10);
++    assert_eq!(deletion.map_count, 11); // includes native fact header retirement
+     current.mark_applying(&deletion)?;
+     drop(current);
+     drop(writer);
+@@ -1195,7 +1195,7 @@
+         None,
+         br#"{"engine":"test","version":2}"#,
+     )?;
+-    assert_eq!(pending.map_count, 10);
++    assert_eq!(pending.map_count, 11); // includes native fact header retirement
+     current.mark_applying(&pending)?;
+     current.commit(&pending, pending.target.lexical_commit)?;
+     drop(current);
+@@ -1459,7 +1459,7 @@
+         &next,
+     )?;
+     // Includes metadata retirement, source measurement, posting format and retained change metadata.
+-    assert_eq!(pending.map_count, 8);
++    assert_eq!(pending.map_count, 9); // includes native fact header
+     assert_eq!(pending.inputs_count, 1);
+     assert_eq!(pending.lexical_manifest_bytes, next.len() as u64);
+     drop(current);
+@@ -2474,3 +2474,6 @@
+     }
+     Ok(())
+ }
++
++#[path="native_projection_tests.rs"]
++mod native_projection_tests;

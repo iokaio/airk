@@ -1,0 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+const vscode=require('vscode'),fs=require('node:fs/promises'),path=require('node:path');
+exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require("D:\\code\\Github\\airk\\packages\\vscode\\out\\test\\installedEditor.js").run()
+.catch(error=>fs.writeFile(path.join(process.env.AIRK_EDITOR_RUN,process.env.AIRK_EDITOR_SCENARIO,process.env.AIRK_EDITOR_ROLE+'-error.json'),JSON.stringify({error:String(error),stack:error.stack})))
+.finally(()=>vscode.commands.executeCommand('workbench.action.quit'));};

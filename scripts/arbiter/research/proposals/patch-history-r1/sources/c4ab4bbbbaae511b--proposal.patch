@@ -1,0 +1,2107 @@
+--- a/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2.rs
++++ b/crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2.rs
+@@ -491,6 +491,7 @@
+         ),
+     })
+ }
++#[cfg(not(feature = "gpu-cuda"))]
+ fn softmax(values: &[f32]) -> Result<Vec<f64>> {
+     ensure!(
+         !values.is_empty() && values.iter().all(|value| value.is_finite()),
+@@ -504,6 +505,7 @@
+     let total: f64 = values.iter().sum();
+     Ok(values.into_iter().map(|value| value / total).collect())
+ }
++#[cfg(not(feature = "gpu-cuda"))]
+ fn comparison(actual: &[f32], expected: &[f32]) -> Result<(f64, f64, bool)> {
+     ensure!(
+         actual.len() == expected.len(),
+@@ -529,6 +531,10 @@
+             .fold(0f64, f64::max),
+         winner(actual) == winner(expected),
+     ))
++}
++#[cfg(feature = "gpu-cuda")]
++fn comparison(actual: &[f32], expected: &[f32]) -> Result<(f64, f64, bool)> {
++    airk_retrieval::arbiter::runtime::cuda::compare_reference_scores(actual, expected)
+ }
+ fn numeric_shape(
+     fixture: &NumericFixture,
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/CONTRACT.md
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/CONTRACT.md
+@@ -179,3 +179,78 @@
+ actual native poison observation for failures before a device could be returned;
+ it never permits execution. The fixed-absolute operation journal and component
+ contract preserve genuine owned-process timing/custody requirements.
++
++## G3: product compatibility and actual local eligibility (proposed)
++
++Scientific RuntimeManifest/1 VariantFit and exact reference UUID/driver pins
++retain their original scope/bytes. Product RuntimeManifest/2 has the explicit authenticated closure/requirements
++fields from the G3 decision and a Core Notice Asset pin to the separately
++Rust-owned public provenance projection; it does not ship the private raw
++producer sidecar. It accepts no `fits`, adapter UUID or driver-image equality rule.
++A new approved manifest/policy digest and GPU Profile identity are mandatory.
++Unknown schema/target/SM/build/provider/math/placement/resource/source rows
++refuse; initial actual supported class is Windows x64/SM86 only. Signed held
++System32 driver identity remains mandatory actual observation, not a reference
++card's universal allowlist. CPU encoding/execution and forced CPU remain intact.
++
++A non-Deserialize DeviceEligibility is created only by actual native owner
++completion of bounded per-host admission under the existing management
++warm/probe original<=120000ms deadline: authenticate exact artifacts/actual
++SM86+signed driver/modules; check real free capacity against qualified
++conservative requirements and actual charges; native load; complete final
++all-subgraph placement; one pass of independently referenced Context17/128/8192
++or all twelve Focus512 cases; real synchronization and final deadline/authority/
++capacity recheck. No per-user20/p95/peak/coexistence or semantic requalification
++benchmark is introduced. Release/variant G4/G5 remains tied to tested hardware.
++
++A different user UUID/driver-image hash is not itself a refusal or a passing
++qualification. Neither raw JSON, saved receipt, reference A6000 evidence nor
++metadata flags construct the live witness. Actual user peak/p95 stay unobserved
++unless genuinely measured; these checks do not assert those quantities.
++DeviceEvidence keeps its genuine release/variant scope; local diagnostics are
++not rebranded as G4. No persisted permit/public config/status field is added.
++
++The witness binds actual UUID/driver API+signed image/module/runtime/model/math/
++fixture/catalog/configuration/joint-set identity. Recheck actual free capacity
++and authority before dispatch, avoid charging backed residents twice, and retain
++all custody until real completion. Unknown settlement invalidates acceptance
++and never advances fallback. Private scientific /1 cannot mint product /2
++acceptance; actual old failure/evidence remains immutable.
++
++The accepted short scope is proposal57aacf58bc1a503a14f2574b0edb32162bca106d12bfd8c54e56c3b0cef6a1ce.
++Product /2 requirements/data never mint DeviceEligibility. The real native
++resident must establish it under one existing original management deadline;
++query entry/delivery also fence the actual native configuration/source/joint
++key. Reaccepting retained stages shares that same management cutoff and actual
++sessions/charges; no duplicate loads, budget renewal or hidden Answer work.
++Management liveness is checked only during establish, never retained as a
++120s expiry on future Ready. Actual session teardown revokes the witness.
++
++The private native acceptance fixture is airk.arbiter.device-acceptance-input/1,
++strictly decoded and bound to the selected compiler/task/resource/trained-asset
++closure and exact compiled Fixture Asset hash. Its complete twelve Focus or
++three Context rows retain both independently produced same-artifact and
++original-FP32 full score arrays. Native compiler readout validation precedes
++any row dispatch. This is one fixed acceptance pass, never an input-derived
++query or a twenty-sample benchmark. The original management authority is
++sampled before/after rows and is not retained as a future Ready expiry.
++
++Only the lane's current validation thread and exact approved fixture-row digest
++may dispatch before acceptance. Other pending product scores refuse. A live
++witness holds weak references to the actual session/device/state; teardown,
++poison, changed native key, or revocation makes it stale even if a queue retains
++its Arc. Numeric/complete observed placement mismatches are typed admission
++refusals; malformed sources/fixtures and deadline/cancellation are not invented
++provider faults. Actual CUDA allocation error2 and observed insufficient free
++capacity carry the separate capacity class. No error-string matching grants a
++fault classification. Incremental host bytes come from the authenticated
++Binding; None refuses while explicit zero remains zero.
++
++The /2 product runtime admission opens the path-free native public provenance
++and every direct legal Notice under the existing held protected-file owner.
++The test-support projection bridge implements the public projector's Source
++callbacks with real held/no-follow hash and effective-owner/integrity checks,
++then rechecks all held sources within the original deadline. It never changes
++an ACL, ships raw producer records, or creates execution authority. The raw
++checkpointed producer/composite schema is a separate pending strict bridge;
++this implementation does not alias its status to the historical /1 producer.
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/eligibility/tests.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/eligibility/tests.rs
+@@ -0,0 +1,206 @@
++// SPDX-License-Identifier: Apache-2.0
++use super::*;
++fn sha(n: u8) -> Sha256Digest {
++    Sha256Digest::from_bytes([n; 32])
++}
++#[test]
++fn native_key_requires_all_actual_facts_and_nonce() -> Result<()> {
++    let key = EligibilityKey::new(sha(1), sha(2), sha(3), Incarnation::from_bytes([4; 16]))?;
++    assert_eq!(key, key.clone());
++    for (a, b, c, n) in [
++        (sha(0), sha(2), sha(3), [4; 16]),
++        (sha(1), sha(0), sha(3), [4; 16]),
++        (sha(1), sha(2), sha(0), [4; 16]),
++        (sha(1), sha(2), sha(3), [0; 16]),
++    ] {
++        assert!(EligibilityKey::new(a, b, c, Incarnation::from_bytes(n)).is_err());
++    }
++    assert_ne!(
++        key,
++        EligibilityKey::new(sha(1), sha(2), sha(5), Incarnation::from_bytes([4; 16]))?
++    );
++    Ok(())
++}
++#[test]
++fn pending_and_foreign_thread_cannot_dispatch_management_inputs() -> Result<()> {
++    assert!(AdmissionState::Pending.authorize(sha(1)).is_err());
++    let mut science = AdmissionState::Scientific;
++    science.revoke();
++    science.authorize(sha(1))?;
++    let mut state = AdmissionState::Validating {
++        thread: std::thread::current().id(),
++        input: None,
++    };
++    assert!(state.authorize(sha(1)).is_err());
++    state = AdmissionState::Validating {
++        thread: std::thread::current().id(),
++        input: Some(sha(1)),
++    };
++    state.authorize(sha(1))?;
++    assert!(state.authorize(sha(2)).is_err());
++    assert!(
++        std::thread::spawn(move || state.authorize(sha(1)))
++            .join()
++            .unwrap()
++            .is_err()
++    );
++    Ok(())
++}
++#[test]
++fn saved_witness_with_no_actual_device_or_session_never_becomes_current() -> Result<()> {
++    let key = EligibilityKey::new(sha(1), sha(2), sha(3), Incarnation::from_bytes([4; 16]))?;
++    let witness = Arc::new(DeviceEligibility {
++        key: key.clone(),
++        device: Weak::new(),
++        epoch: 1,
++        uuid: [1; 16],
++        driver_api: 12080,
++        driver_image: sha(5),
++        runtime_manifest: sha(6),
++        profile: sha(7),
++        fixture: sha(8),
++        valid: AtomicBool::new(true),
++        session_alive: Weak::new(),
++        state: Weak::new(),
++    });
++    assert!(!witness.current(&key));
++    let mut state = AdmissionState::Eligible(witness.clone());
++    state.revoke();
++    assert!(!witness.valid.load(Ordering::Acquire));
++    assert!(matches!(state, AdmissionState::Pending));
++    Ok(())
++}
++fn input() -> CompiledInput {
++    CompiledInput {
++        prompt: "literal synthetic input".into(),
++        input_ids: vec![1; 17],
++        attention_mask: vec![1; 17],
++        position_ids: (0..17).collect(),
++        decision_position: 16,
++        candidate_positions: vec![32, 33, 34],
++        option_mask: vec![true; 3],
++        input_digest: sha(1),
++    }
++}
++fn row() -> Row {
++    Row {
++        name: "literal".into(),
++        input: input(),
++        reference_same_artifact: vec![0., 1., 2.],
++        reference_original_fp32: vec![0., 1., 2.],
++    }
++}
++#[test]
++fn numeric_refusal_preserves_original_limits_and_fault_classes() -> Result<()> {
++    let row = row();
++    check_scores(&[0., 1., 2.], &row, false)?;
++    let error = check_scores(&[0., 1., 2.002], &row, false).unwrap_err();
++    assert!(is_device_eligibility_failure(&error));
++    assert!(!is_device_capacity_failure(&error));
++    assert!(!is_device_eligibility_failure(&anyhow::anyhow!(
++        "fixture missing/deadline expired/CUDA allocation failed"
++    )));
++    let mut malformed = row;
++    malformed.reference_original_fp32[1] = f32::NAN;
++    assert!(!is_device_eligibility_failure(
++        &check_scores(&[0., 1., 2.], &malformed, false).unwrap_err()
++    ));
++    let error = capacity_fault("actual driver error2".into());
++    assert!(is_device_capacity_failure(&error));
++    assert!(is_device_eligibility_failure(&error));
++    assert!(!is_device_capacity_failure(&native_fault(
++        "provider fault".into()
++    )));
++    Ok(())
++}
++#[test]
++fn shared_numeric_owner_retains_literal_softmax_and_first_tie_behavior() -> Result<()> {
++    let (raw, mass, winner) = compare_reference_scores(&[0., 0.], &[0., 1.])?;
++    assert_eq!(raw, 1.);
++    assert!((mass - 0.2310585786300049).abs() < 1e-14);
++    assert!(!winner);
++    assert_eq!(
++        compare_reference_scores(&[2., 2.], &[2., 2.])?,
++        (0., 0., true)
++    );
++    for (a, b) in [
++        (vec![], vec![]),
++        (vec![1.], vec![1., 2.]),
++        (vec![f32::NAN], vec![0.]),
++    ] {
++        assert!(compare_reference_scores(&a, &b).is_err());
++    }
++    Ok(())
++}
++#[cfg(feature = "test-support")]
++#[test]
++fn complete_fixture_denominator_masks_and_source_are_required_before_native_work() -> Result<()> {
++    let mut profile = crate::arbiter::runtime::catalog_profiles()?
++        .into_iter()
++        .find(|p| p.model == ModelChoice::ContextQwenCompact)
++        .context("Compact")?;
++    profile.max_tokens = 8192;
++    let rows = [(17, 3), (128, 8), (8192, 8)]
++        .into_iter()
++        .enumerate()
++        .map(|(index, (tokens, options))| Row {
++            name: format!("literal-{index}"),
++            input: CompiledInput {
++                prompt: String::new(),
++                input_ids: vec![1; tokens],
++                attention_mask: vec![1; tokens],
++                position_ids: (0..tokens as i64).collect(),
++                decision_position: tokens as i64 - 1,
++                candidate_positions: (32..32 + options as i64).collect(),
++                option_mask: vec![true; options],
++                input_digest: sha(1),
++            },
++            reference_same_artifact: vec![0.; options],
++            reference_original_fp32: vec![0.; options],
++        })
++        .collect();
++    let mut fixture = Fixture {
++        schema: "airk.arbiter.device-acceptance-input/1".into(),
++        model: profile.model,
++        compiler: profile.compiler,
++        task_policy: profile.task_policies[&Task::ContextAction],
++        trained_assets: profile
++            .assets
++            .iter()
++            .filter(|a| {
++                matches!(
++                    a.role,
++                    AssetRole::Model | AssetRole::ExternalWeights | AssetRole::Tokenizer
++                )
++            })
++            .map(|a| {
++                (
++                    a.name.clone(),
++                    JointAssetBinding {
++                        role: a.role.clone(),
++                        sha256: a.sha256,
++                    },
++                )
++            })
++            .collect(),
++        resource_policy: ResourcePolicy::software_v2().digest()?,
++        independent_reference_source: sha(7),
++        rows,
++    };
++    fixture.validate(&profile)?;
++    fixture.rows[2].input.attention_mask[8191] = 0;
++    assert!(fixture.validate(&profile).is_err());
++    fixture.rows[2].input.attention_mask[8191] = 1;
++    fixture.rows[2].reference_original_fp32.pop();
++    assert!(fixture.validate(&profile).is_err());
++    fixture.rows[2].reference_original_fp32.push(0.);
++    fixture.rows[2].input.position_ids[8191] = 0;
++    assert!(fixture.validate(&profile).is_err());
++    fixture.rows[2].input.position_ids[8191] = 8191;
++    fixture.independent_reference_source = sha(0);
++    assert!(fixture.validate(&profile).is_err());
++    fixture.independent_reference_source = sha(7);
++    fixture.trained_assets.clear();
++    assert!(fixture.validate(&profile).is_err());
++    Ok(())
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/eligibility.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/eligibility.rs
+@@ -0,0 +1,523 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Live per-resident admission. Never G4, p95, semantic or a persisted permit.
++use super::super::{AssetSource, Scorer};
++use super::*;
++use crate::arbiter::compiler::CompiledInput;
++use airk_core::{
++    arbiter::{
++        AssetRole, ModelChoice, Task, context_action::calibration::JointAssetBinding,
++        resource_policy::ResourcePolicy,
++    },
++    identity::Incarnation,
++};
++use std::{marker::PhantomData, rc::Rc, thread::ThreadId};
++
++/// Native actor identity data only, not a capability. No Deserialize.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct EligibilityKey {
++    configuration: Sha256Digest,
++    source: Sha256Digest,
++    joint_residency: Sha256Digest,
++    nonce: Incarnation,
++}
++impl EligibilityKey {
++    pub fn new(
++        configuration: Sha256Digest,
++        source: Sha256Digest,
++        joint_residency: Sha256Digest,
++        nonce: Incarnation,
++    ) -> Result<Self> {
++        ensure!(
++            [configuration, source, joint_residency]
++                .iter()
++                .all(|v| *v != Sha256Digest::from_bytes([0; 32]))
++                && nonce != Incarnation::from_bytes([0; 16]),
++            "native eligibility key is unavailable"
++        );
++        Ok(Self {
++            configuration,
++            source,
++            joint_residency,
++            nonce,
++        })
++    }
++}
++/// Constructed only after actual native session validation; no public fields,
++/// Deserialize, source-JSON approval flag or persisted reconstruction.
++pub struct DeviceEligibility {
++    key: EligibilityKey,
++    device: Weak<CudaDevice>,
++    epoch: u64,
++    uuid: [u8; 16],
++    driver_api: i32,
++    driver_image: Sha256Digest,
++    runtime_manifest: Sha256Digest,
++    profile: Sha256Digest,
++    fixture: Sha256Digest,
++    valid: AtomicBool,
++    session_alive: Weak<AtomicBool>,
++    state: Weak<Mutex<AdmissionState>>,
++}
++impl DeviceEligibility {
++    pub fn current(&self, key: &EligibilityKey) -> bool {
++        if !self.valid.load(Ordering::Acquire)
++            || key != &self.key
++            || !self
++                .session_alive
++                .upgrade()
++                .is_some_and(|v| v.load(Ordering::Acquire))
++            || !self.state.upgrade().is_some_and(|v| !v.is_poisoned())
++        {
++            return false;
++        }
++        self.device.upgrade().is_some_and(|d| {
++            !d.poisoned()
++                && d.epoch() == self.epoch
++                && d.uuid() == self.uuid
++                && d.driver_api_version() == self.driver_api
++                && d.driver_image_sha256() == self.driver_image
++                && d.runtime.manifest_identity() == self.runtime_manifest
++        })
++    }
++    /// Diagnostic only: the digest is not an execution or persisted permit.
++    pub fn observation(&self) -> serde_json::Value {
++        serde_json::json!({"schema":"airk.native.cuda.device-eligibility/1","scope":"actual bounded host admission only; not G4/p95/peak/semantic qualification","profile":self.profile,"fixture":self.fixture,"runtime_manifest":self.runtime_manifest,"adapter_uuid":self.uuid,"driver_api":self.driver_api,"driver_image_sha256":self.driver_image,"dispatch_epoch":self.epoch})
++    }
++}
++pub(super) enum AdmissionState {
++    Scientific,
++    Pending,
++    Validating {
++        thread: ThreadId,
++        input: Option<Sha256Digest>,
++    },
++    Eligible(Arc<DeviceEligibility>),
++}
++pub(super) fn initial_admission(manifest: &manifest::RuntimeDescriptor) -> AdmissionState {
++    if manifest.is_product() {
++        AdmissionState::Pending
++    } else {
++        AdmissionState::Scientific
++    }
++}
++impl AdmissionState {
++    fn revoke(&mut self) {
++        if let Self::Eligible(w) = self {
++            w.valid.store(false, Ordering::Release);
++        }
++        if !matches!(self, Self::Scientific) {
++            *self = Self::Pending;
++        }
++    }
++    pub(super) fn authorize(&self, digest: Sha256Digest) -> Result<()> {
++        match self {
++            Self::Scientific => Ok(()),
++            Self::Validating { thread, input } => {
++                ensure!(
++                    *thread == std::thread::current().id() && *input == Some(digest),
++                    "only the current canonical management row may score before eligibility"
++                );
++                Ok(())
++            }
++            Self::Eligible(w) => {
++                ensure!(w.current(&w.key), "native device eligibility is stale");
++                Ok(())
++            }
++            Self::Pending => {
++                anyhow::bail!("native product device eligibility required before scoring")
++            }
++        }
++    }
++}
++impl Binding {
++    pub(super) fn authorize_score(&self, digest: Sha256Digest) -> Result<()> {
++        self.admission
++            .lock()
++            .map_err(|_| anyhow::anyhow!("eligibility state poisoned"))?
++            .authorize(digest)
++    }
++    pub(in crate::arbiter::runtime) fn revoke_eligibility(&self) {
++        let mut state = self
++            .admission
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        state.revoke();
++    }
++    pub(in crate::arbiter::runtime) fn end_session_eligibility(&self) {
++        self.session_alive.store(false, Ordering::Release);
++        self.revoke_eligibility();
++    }
++}
++struct Validation<'a> {
++    binding: &'a Binding,
++    committed: bool,
++    _local: PhantomData<Rc<()>>,
++}
++impl<'a> Validation<'a> {
++    fn begin(binding: &'a Binding) -> Result<Self> {
++        let mut state = binding
++            .admission
++            .lock()
++            .map_err(|_| anyhow::anyhow!("eligibility state poisoned"))?;
++        ensure!(
++            !matches!(
++                *state,
++                AdmissionState::Scientific | AdmissionState::Validating { .. }
++            ),
++            "resident is scientific or already validating"
++        );
++        state.revoke();
++        *state = AdmissionState::Validating {
++            thread: std::thread::current().id(),
++            input: None,
++        };
++        Ok(Self {
++            binding,
++            committed: false,
++            _local: PhantomData,
++        })
++    }
++    fn allow(&self, digest: Sha256Digest) -> Result<()> {
++        let mut state = self
++            .binding
++            .admission
++            .lock()
++            .map_err(|_| anyhow::anyhow!("eligibility state poisoned"))?;
++        let AdmissionState::Validating { thread, input } = &mut *state else {
++            anyhow::bail!("native eligibility management was invalidated")
++        };
++        ensure!(
++            *thread == std::thread::current().id(),
++            "wrong eligibility owner thread"
++        );
++        *input = Some(digest);
++        Ok(())
++    }
++    fn finish(mut self, witness: Arc<DeviceEligibility>) -> Result<()> {
++        let mut state = self
++            .binding
++            .admission
++            .lock()
++            .map_err(|_| anyhow::anyhow!("eligibility state poisoned"))?;
++        ensure!(
++            matches!(&*state,AdmissionState::Validating{thread,..} if *thread==std::thread::current().id()),
++            "eligibility invalidated before Ready"
++        );
++        *state = AdmissionState::Eligible(witness);
++        self.committed = true;
++        Ok(())
++    }
++}
++impl Drop for Validation<'_> {
++    fn drop(&mut self) {
++        if !self.committed {
++            self.binding.revoke_eligibility();
++        }
++    }
++}
++#[derive(Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct Row {
++    name: String,
++    input: CompiledInput,
++    reference_same_artifact: Vec<f32>,
++    reference_original_fp32: Vec<f32>,
++}
++#[derive(Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct Fixture {
++    schema: String,
++    model: ModelChoice,
++    compiler: Sha256Digest,
++    task_policy: Sha256Digest,
++    trained_assets: BTreeMap<String, JointAssetBinding>,
++    resource_policy: Sha256Digest,
++    independent_reference_source: Sha256Digest,
++    rows: Vec<Row>,
++}
++impl Fixture {
++    fn validate(&self, profile: &Profile) -> Result<()> {
++        let focus = profile.model == ModelChoice::FocusQwenReranker06B;
++        ensure!(
++            matches!(
++                profile.model,
++                ModelChoice::FocusQwenReranker06B
++                    | ModelChoice::ContextQwenCompact
++                    | ModelChoice::ContextQwenLarge
++            ) && profile.max_tokens == if focus { 512 } else { 8192 },
++            "eligibility profile maximum shape is not the selected canonical boundary"
++        );
++        let task = if focus {
++            Task::FocusRank
++        } else {
++            Task::ContextAction
++        };
++        ensure!(
++            self.schema == "airk.arbiter.device-acceptance-input/1"
++                && self.model == profile.model
++                && self.compiler == profile.compiler
++                && profile.task_policies.get(&task) == Some(&self.task_policy)
++                && self.resource_policy == ResourcePolicy::software_v2().digest()?
++                && self.independent_reference_source != Sha256Digest::from_bytes([0; 32]),
++            "eligibility fixture identity/source mismatch"
++        );
++        let assets = profile
++            .assets
++            .iter()
++            .filter(|a| {
++                matches!(
++                    a.role,
++                    AssetRole::Model | AssetRole::ExternalWeights | AssetRole::Tokenizer
++                )
++            })
++            .map(|a| {
++                (
++                    a.name.clone(),
++                    JointAssetBinding {
++                        role: a.role.clone(),
++                        sha256: a.sha256,
++                    },
++                )
++            })
++            .collect::<BTreeMap<_, _>>();
++        ensure!(
++            assets == self.trained_assets,
++            "eligibility fixture trained asset closure mismatch"
++        );
++        ensure!(
++            self.rows.len() == if focus { 12 } else { 3 },
++            "complete canonical eligibility roster required"
++        );
++        let mut names = BTreeSet::new();
++        for (index, row) in self.rows.iter().enumerate() {
++            let (tokens, options) = if focus {
++                (512, 2)
++            } else {
++                [(17, 3), (128, 8), (8192, 8)][index]
++            };
++            let input = &row.input;
++            ensure!(
++                !row.name.is_empty()
++                    && row.name.len() <= 128
++                    && names.insert(&row.name)
++                    && input.input_ids.len() == tokens
++                    && input.input_ids.iter().all(|v| *v >= 0)
++                    && input.attention_mask.len() == tokens
++                    && input.position_ids.iter().copied().eq(0..tokens as i64)
++                    && input.decision_position == tokens as i64 - 1
++                    && input.candidate_positions.len() == options
++                    && input.candidate_positions.iter().all(|v| *v >= 0)
++                    && input.option_mask == vec![true; options]
++                    && input.prompt.len() <= 65536
++                    && input.input_digest != Sha256Digest::from_bytes([0; 32]),
++                "canonical eligibility tensor roster/shape changed"
++            );
++            ensure!(
++                if focus {
++                    input.attention_mask.iter().all(|v| matches!(v, 0 | 1))
++                        && input.attention_mask.last() == Some(&1)
++                        && input.attention_mask.windows(2).all(|p| p[0] <= p[1])
++                } else {
++                    input.attention_mask.iter().all(|v| *v == 1)
++                },
++                "canonical eligibility padding/visibility changed"
++            );
++            for scores in [&row.reference_same_artifact, &row.reference_original_fp32] {
++                ensure!(
++                    scores.len() == options && scores.iter().all(|v| v.is_finite()),
++                    "complete finite independent reference required"
++                );
++            }
++        }
++        Ok(())
++    }
++}
++#[derive(Debug)]
++struct NumericMismatch {
++    name: String,
++    same_raw: f64,
++    same_mass: f64,
++    original_raw: f64,
++    original_mass: f64,
++    argmax: bool,
++    actual: Vec<f32>,
++}
++impl std::fmt::Display for NumericMismatch {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        write!(
++            f,
++            "actual native synthetic numerical eligibility mismatch: case={} same_raw={} same_mass={} original_raw={} original_mass={} argmax={} actual={:?}",
++            self.name,
++            self.same_raw,
++            self.same_mass,
++            self.original_raw,
++            self.original_mass,
++            self.argmax,
++            self.actual
++        )
++    }
++}
++impl std::error::Error for NumericMismatch {}
++fn check_scores(actual: &[f32], row: &Row, focus: bool) -> Result<()> {
++    let (a, m, w) = compare_reference_scores(actual, &row.reference_same_artifact)?;
++    let (b, n, v) = compare_reference_scores(actual, &row.reference_original_fp32)?;
++    if a > 0.001
++        || m > if focus { 0.00001 } else { 0.05 }
++        || b > if focus { 0.25 } else { 0.001 }
++        || n > 0.05
++        || !w
++        || !v
++    {
++        return Err(NumericMismatch {
++            name: row.name.clone(),
++            same_raw: a,
++            same_mass: m,
++            original_raw: b,
++            original_mass: n,
++            argmax: w && v,
++            actual: actual.to_vec(),
++        }
++        .into());
++    }
++    Ok(())
++}
++/// Only genuine observed compatibility failures; malformed fixture/source,
++/// authority and deadline errors are never classified as provider faults.
++pub fn is_device_eligibility_failure(error: &anyhow::Error) -> bool {
++    super::super::is_native_device_failure(error)
++        || error.chain().any(|v| {
++            v.is::<NumericMismatch>()
++                || v.downcast_ref::<PlacementRefusal>().is_some_and(|p| {
++                    p.observation.complete
++                        && p.observation.shim_status == 0
++                        && p.observation.ort_error_code == 0
++                        && !p.observation.nodes.is_empty()
++                        && p.observation
++                            .nodes
++                            .iter()
++                            .any(|n| n.ep != "CUDAExecutionProvider")
++                })
++        })
++}
++impl Scorer {
++    /// Actual authenticated incremental host requirement; not resident peak again.
++    pub fn host_warm_extra_bytes(&self) -> Option<u64> {
++        self.profile.host_warm_extra_bytes()
++    }
++    pub fn requires_device_eligibility(&self) -> bool {
++        self.profile.gpu.as_ref().is_some_and(|b| {
++            b.admission
++                .lock()
++                .map(|state| !matches!(*state, AdmissionState::Scientific))
++                .unwrap_or(true)
++        })
++    }
++    pub fn invalidate_device_eligibility(&self) {
++        if let Some(b) = &self.profile.gpu {
++            b.revoke_eligibility();
++        }
++    }
++    pub fn device_eligibility_current(&self, key: &EligibilityKey) -> bool {
++        self.profile.gpu.as_ref().is_some_and(|b| {
++            b.admission
++                .lock()
++                .map(|state| matches!(&*state,AdmissionState::Eligible(w) if w.current(key)))
++                .unwrap_or(false)
++        })
++    }
++    pub fn establish_device_eligibility(
++        &self,
++        source: &dyn AssetSource,
++        key: EligibilityKey,
++        deadline: Instant,
++        liveness: Arc<dyn Fn() -> bool + Send + Sync>,
++    ) -> Result<Arc<DeviceEligibility>> {
++        crate::native_inference::require_service_compute()?;
++        let binding = self
++            .profile
++            .gpu
++            .as_ref()
++            .context("CPU resident has no device eligibility")?;
++        binding.revoke_eligibility();
++        in_time(deadline)?;
++        ensure!(
++            deadline.saturating_duration_since(Instant::now())
++                <= std::time::Duration::from_millis(120000),
++            "management eligibility budget cannot exceed original120s"
++        );
++        ensure!(liveness(), "native eligibility authority changed");
++        ensure!(
++            self.profile.release_qualified(),
++            "product eligibility requires compiled qualified artifact"
++        );
++        let row = binding
++            .device
++            .runtime
++            .manifest
++            .requirement(self.profile.description())?;
++        binding
++            .device
++            .validate_profile(self.profile.description())?;
++        let validation = Validation::begin(binding)?;
++        let raw = super::super::bytes(source, &row.acceptance_fixture, 16 << 20)?;
++        let fixture: Fixture = serde_json::from_slice(&raw)?;
++        fixture.validate(self.profile.description())?;
++        for row in &fixture.rows {
++            self.compiler.validate_qwen_readout(&row.input)?;
++        }
++        in_time(deadline)?;
++        ensure!(liveness(), "native eligibility authority changed");
++        self.device_placement()?
++            .context("complete final native placement missing")?
++            .require_strict()?;
++        let capacity = binding.device.reserve_warm_work(
++            binding.plan.warm_extra_bytes(),
++            binding.plan.headroom_bytes(),
++            deadline,
++        )?;
++        capacity.settle()?;
++        let epoch = binding.device.epoch();
++        let focus = self.profile.description().model == ModelChoice::FocusQwenReranker06B;
++        for row in &fixture.rows {
++            in_time(deadline)?;
++            ensure!(liveness(), "native eligibility authority changed");
++            validation.allow(row.input.input_digest)?;
++            let actual = self.score_with_deadline(&row.input, deadline)?;
++            check_scores(&actual, row, focus)?;
++            in_time(deadline)?;
++            ensure!(liveness(), "native eligibility authority changed");
++        }
++        self.synchronize(deadline)?;
++        ensure!(self.device_settled(), "native eligibility work unsettled");
++        let final_capacity = binding.device.reserve_warm_work(
++            binding.plan.warm_extra_bytes(),
++            binding.plan.headroom_bytes(),
++            deadline,
++        )?;
++        final_capacity.settle()?;
++        in_time(deadline)?;
++        ensure!(
++            liveness() && binding.device.epoch() == epoch && !binding.device.poisoned(),
++            "native eligibility identity/authority changed before Ready"
++        );
++        let device = &binding.device;
++        let witness = Arc::new(DeviceEligibility {
++            key,
++            device: Arc::downgrade(device),
++            epoch,
++            uuid: device.uuid(),
++            driver_api: device.driver_api_version(),
++            driver_image: device.driver_image_sha256(),
++            runtime_manifest: device.runtime.manifest_identity(),
++            profile: self.profile.description().manifest,
++            fixture: row.acceptance_fixture.sha256,
++            valid: AtomicBool::new(true),
++            session_alive: Arc::downgrade(&binding.session_alive),
++            state: Arc::downgrade(&binding.admission),
++        });
++        validation.finish(witness.clone())?;
++        Ok(witness)
++    }
++}
++#[cfg(test)]
++mod tests;
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/manifest.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/manifest.rs
+@@ -47,6 +47,66 @@
+             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+         && !value.contains("..")
+ }
++#[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
++fn validate_payload(
++    files: &[RuntimeFile],
++    load_order: &[String],
++    system_imports: &BTreeSet<String>,
++) -> Result<()> {
++    ensure!(
++        (2..=64).contains(&files.len()) && system_imports.len() <= 256,
++        "CUDA closure capacity"
++    );
++    let mut names = BTreeSet::new();
++    let mut total = 0u64;
++    for file in files {
++        ensure!(
++            name(&file.name)
++                && file.name.ends_with(".dll")
++                && file.name != "onnxruntime.dll"
++                && file.name != "nvcuda.dll"
++                && file.bytes > 0
++                && file.bytes <= 2u64 << 30
++                && names.insert(file.name.clone()),
++            "invalid or duplicate CUDA payload"
++        );
++        total = total
++            .checked_add(file.bytes)
++            .context("CUDA closure overflow")?;
++        ensure!(
++            total <= 8u64 << 30 && file.imports.len() <= 256 && file.delay_imports.len() <= 256,
++            "CUDA closure byte/import capacity"
++        );
++    }
++    ensure!(
++        names.contains("onnxruntime_providers_shared.dll")
++            && names.contains("onnxruntime_providers_cuda.dll"),
++        "same-build provider pair missing"
++    );
++    ensure!(
++        load_order.len() == names.len()
++            && load_order.iter().cloned().collect::<BTreeSet<_>>() == names,
++        "invalid CUDA load order"
++    );
++    ensure!(
++        system_imports.iter().all(|v| name(v)
++            && v.ends_with(".dll")
++            && !names.contains(v)
++            && v != "onnxruntime.dll"),
++        "invalid system import closure"
++    );
++    for file in files {
++        ensure!(
++            file.imports
++                .iter()
++                .chain(&file.delay_imports)
++                .all(|v| names.contains(v) || system_imports.contains(v)),
++            "unresolved native DLL import"
++        );
++    }
++    Ok(())
++}
++
+ impl RuntimeManifest {
+     #[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
+     pub fn validate(&self) -> Result<()> {
+@@ -61,59 +121,8 @@
+                 && self.producer_bytes <= 16 << 20,
+             "producer/static-core closure mismatch"
+         );
+-        ensure!(
+-            (2..=64).contains(&self.files.len())
+-                && self.fits.len() <= 16
+-                && self.system_imports.len() <= 256,
+-            "CUDA closure capacity"
+-        );
+-        let mut names = BTreeSet::new();
+-        let mut total = 0u64;
+-        for file in &self.files {
+-            ensure!(
+-                name(&file.name)
+-                    && file.name.ends_with(".dll")
+-                    && file.name != "onnxruntime.dll"
+-                    && file.name != "nvcuda.dll"
+-                    && file.bytes > 0
+-                    && file.bytes <= 2u64 << 30
+-                    && names.insert(file.name.clone()),
+-                "invalid or duplicate CUDA payload"
+-            );
+-            total = total
+-                .checked_add(file.bytes)
+-                .context("CUDA closure overflow")?;
+-            ensure!(
+-                total <= 8u64 << 30 && file.imports.len() <= 256 && file.delay_imports.len() <= 256,
+-                "CUDA closure byte/import capacity"
+-            );
+-        }
+-        ensure!(
+-            names.contains("onnxruntime_providers_shared.dll")
+-                && names.contains("onnxruntime_providers_cuda.dll"),
+-            "same-build provider pair missing"
+-        );
+-        ensure!(
+-            self.load_order.len() == names.len()
+-                && self.load_order.iter().cloned().collect::<BTreeSet<_>>() == names,
+-            "invalid CUDA load order"
+-        );
+-        ensure!(
+-            self.system_imports.iter().all(|v| name(v)
+-                && v.ends_with(".dll")
+-                && !names.contains(v)
+-                && v != "onnxruntime.dll"),
+-            "invalid system import closure"
+-        );
+-        for file in &self.files {
+-            ensure!(
+-                file.imports
+-                    .iter()
+-                    .chain(&file.delay_imports)
+-                    .all(|v| names.contains(v) || self.system_imports.contains(v)),
+-                "unresolved native DLL import"
+-            );
+-        }
++        ensure!(self.fits.len() <= 16, "CUDA scientific fit capacity");
++        validate_payload(&self.files, &self.load_order, &self.system_imports)?;
+         let mut manifests = BTreeSet::new();
+         for fit in &self.fits {
+             ensure!(
+@@ -178,3 +187,232 @@
+         &[b"fp32;tf32=0;original-six-input-and-scores-abi;unchanged-numeric-limits"],
+     )
+ }
++
++/// Product requirements are compiled data; they are not a live device permit.
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub(super) struct VariantRequirement {
++    pub manifest: Sha256Digest,
++    pub execution_identity: String,
++    pub target: String,
++    pub compute_capabilities: Vec<[u32; 2]>,
++    pub minimum_driver_api: i32,
++    pub cold_peak_limit_bytes: u64,
++    pub warm_extra_limit_bytes: u64,
++    pub headroom_bytes: u64,
++    pub host_warm_extra_limit_bytes: u64,
++    pub artifact_evidence: DeviceEvidence,
++    pub acceptance_fixture: airk_core::arbiter::Asset,
++}
++impl VariantRequirement {
++    pub fn supports(&self, id: &AdapterIdentity) -> Result<()> {
++        ensure!(
++            id.uuid != [0; 16]
++                && id.driver_image_sha256 != Sha256Digest::from_bytes([0; 32])
++                && id.dedicated_memory
++                && self.compute_capabilities.contains(&[
++                    u32::try_from(id.compute_major)?,
++                    u32::try_from(id.compute_minor)?
++                ])
++                && id.driver_api_version >= self.minimum_driver_api,
++            "actual native product architecture/driver/memory-pool unsupported"
++        );
++        let required = self
++            .cold_peak_limit_bytes
++            .checked_add(self.headroom_bytes)
++            .context("declared product capacity overflow")?;
++        if required > id.physical_total_bytes {
++            return Err(capacity_fault("actual native physical VRAM cannot cover qualified declared requirement plus headroom".into()));
++        }
++        Ok(())
++    }
++}
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub(super) struct ProductRuntimeManifest {
++    pub schema: String,
++    pub ort_version: String,
++    pub static_core_build: Sha256Digest,
++    pub provenance: airk_core::arbiter::Asset,
++    pub files: Vec<RuntimeFile>,
++    pub load_order: Vec<String>,
++    pub system_imports: BTreeSet<String>,
++    pub requirements: Vec<VariantRequirement>,
++}
++impl ProductRuntimeManifest {
++    #[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
++    pub fn validate(&self) -> Result<()> {
++        use airk_core::arbiter::AssetRole;
++        ensure!(
++            self.schema == "airk.native.cuda-runtime-manifest/2"
++                && self.ort_version == "1.30.0"
++                && self.static_core_build != Sha256Digest::from_bytes([0; 32]),
++            "unknown product CUDA runtime"
++        );
++        ensure!(
++            self.provenance.name == "airk-cuda-build-provenance.json"
++                && self.provenance.role == AssetRole::Notice
++                && self.provenance.bytes > 0
++                && self.provenance.bytes <= 1 << 20
++                && self.provenance.sha256 != Sha256Digest::from_bytes([0; 32]),
++            "product runtime requires exact public provenance asset"
++        );
++        validate_payload(&self.files, &self.load_order, &self.system_imports)?;
++        ensure!(
++            self.requirements.len() <= 16,
++            "product CUDA requirement capacity"
++        );
++        let mut seen = BTreeSet::new();
++        for row in &self.requirements {
++            ensure!(
++                seen.insert(row.manifest)
++                    && row.manifest != Sha256Digest::from_bytes([0; 32])
++                    && !row.execution_identity.is_empty()
++                    && row.execution_identity.len() <= 512,
++                "duplicate/invalid product variant"
++            );
++            ensure!(
++                row.target == "x86_64-pc-windows-msvc"
++                    && row.compute_capabilities == [[8, 6]]
++                    && row.minimum_driver_api >= 12080,
++                "unqualified native target/SM/driver requirements"
++            );
++            DeviceCapacityPlan::new(
++                row.cold_peak_limit_bytes,
++                row.warm_extra_limit_bytes,
++                row.headroom_bytes,
++            )?;
++            let e = &row.artifact_evidence;
++            ensure!(
++                e.target == row.target
++                    && e.execution_identity == row.execution_identity
++                    && e.numerical != e.resources
++                    && e.numerical != e.placement
++                    && e.resources != e.placement
++                    && [e.numerical, e.resources, e.placement]
++                        .iter()
++                        .all(|v| *v != Sha256Digest::from_bytes([0; 32])),
++                "invalid scoped artifact evidence"
++            );
++            let f = &row.acceptance_fixture;
++            ensure!(
++                f.role == AssetRole::Fixture
++                    && name(&f.name)
++                    && f.bytes > 0
++                    && f.bytes <= 16 << 20
++                    && f.sha256 != Sha256Digest::from_bytes([0; 32]),
++                "complete independent eligibility fixture required"
++            );
++        }
++        Ok(())
++    }
++}
++#[derive(Clone, Debug)]
++pub(super) enum RuntimeDescriptor {
++    Scientific(RuntimeManifest),
++    Product(ProductRuntimeManifest),
++}
++impl RuntimeDescriptor {
++    #[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
++    pub fn parse(raw: &[u8]) -> Result<Self> {
++        ensure!(raw.len() <= 128 << 10, "runtime descriptor byte cap");
++        let head: serde_json::Value = serde_json::from_slice(raw)?;
++        match head["schema"].as_str() {
++            Some("airk.native.cuda-runtime-manifest/1") => {
++                let value: RuntimeManifest = serde_json::from_slice(raw)?;
++                value.validate()?;
++                Ok(Self::Scientific(value))
++            }
++            Some("airk.native.cuda-runtime-manifest/2") => {
++                let value: ProductRuntimeManifest = serde_json::from_slice(raw)?;
++                value.validate()?;
++                Ok(Self::Product(value))
++            }
++            _ => anyhow::bail!("unknown CUDA runtime descriptor schema"),
++        }
++    }
++    pub fn build(&self) -> Sha256Digest {
++        match self {
++            Self::Scientific(v) => v.static_core_build,
++            Self::Product(v) => v.static_core_build,
++        }
++    }
++    #[cfg(all(windows, target_arch = "x86_64"))]
++    pub fn files(&self) -> &[RuntimeFile] {
++        match self {
++            Self::Scientific(v) => &v.files,
++            Self::Product(v) => &v.files,
++        }
++    }
++    #[cfg(all(windows, target_arch = "x86_64"))]
++    pub fn load_order(&self) -> &[String] {
++        match self {
++            Self::Scientific(v) => &v.load_order,
++            Self::Product(v) => &v.load_order,
++        }
++    }
++    #[cfg(all(windows, target_arch = "x86_64"))]
++    pub fn system_imports(&self) -> &BTreeSet<String> {
++        match self {
++            Self::Scientific(v) => &v.system_imports,
++            Self::Product(v) => &v.system_imports,
++        }
++    }
++    pub fn is_product(&self) -> bool {
++        matches!(self, Self::Product(_))
++    }
++    pub fn fits(&self) -> Result<&[VariantFit]> {
++        match self {
++            Self::Scientific(v) => Ok(&v.fits),
++            Self::Product(_) => anyhow::bail!("product requirements cannot be scientific fits"),
++        }
++    }
++    pub fn requirement(&self, profile: &Profile) -> Result<&VariantRequirement> {
++        let Self::Product(v) = self else {
++            anyhow::bail!("scientific reference fit cannot grant product eligibility")
++        };
++        let identity = profile.device_execution_identity()?;
++        let row = v
++            .requirements
++            .iter()
++            .find(|r| r.manifest == profile.manifest && r.execution_identity == identity)
++            .context("product variant has no compiled conservative requirements")?;
++        ensure!(
++            row.target == super::super::current_target()
++                && row.host_warm_extra_limit_bytes <= profile.memory_reservation_bytes
++                && profile.assets.iter().any(|a| a == &row.acceptance_fixture),
++            "product host/fixture/target requirements differ from profile"
++        );
++        ensure!(
++            matches!(&profile.device_execution.as_ref().context("CPU product profile")?.memory,DeviceMemory::Dedicated{required_peak_bytes,headroom_bytes} if *required_peak_bytes==row.cold_peak_limit_bytes&&*headroom_bytes==row.headroom_bytes),
++            "product conservative bounds differ from immutable profile"
++        );
++        Ok(row)
++    }
++    #[cfg(any(test, all(windows, target_arch = "x86_64")))]
++    pub fn approved(raw: &[u8]) -> Result<(Self, Sha256Digest)> {
++        let approved = option_env!("AIRK_APPROVED_CUDA_MANIFEST_SHA256")
++            .context(RuntimeUnavailable::new("manifest approval not compiled"))?;
++        let build = option_env!("AIRK_STATIC_CUDA_BUILD_SHA256")
++            .context(RuntimeUnavailable::new("static build provenance absent"))?;
++        let digest = Sha256Digest::from_bytes(Sha256::digest(raw).into());
++        ensure!(
++            digest.to_string() == approved,
++            "unapproved runtime manifest bytes"
++        );
++        let value = Self::parse(raw)?;
++        // Keep scientific compiled approval on its exact original owner path.
++        if matches!(&value, Self::Scientific(_)) {
++            let (legacy, digest) = RuntimeManifest::approved(raw)?;
++            return Ok((Self::Scientific(legacy), digest));
++        }
++        ensure!(
++            value.build().to_string() == build,
++            "GPU closure differs from linked static build"
++        );
++        Ok((value, digest))
++    }
++}
++pub fn product_compatibility_policy_digest() -> Sha256Digest {
++    airk_core::identity::framed_digest(b"airk.native.cuda.compatibility/2",&[b"windows-x64;sm=86;dedicated;driver-api>=12080;signed-held-driver-and-module-closure;qualified-conservative-bounds;actual-load-final-map-independent-one-pass-numeric-sync;original-management-deadline;no-user-g4-or-permit"])
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/numeric.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/numeric.rs
+@@ -0,0 +1,42 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Shared native raw/mass/argmax replay, moved from software_v2 qualification.
++use anyhow::{Result, ensure};
++fn softmax(values: &[f32]) -> Result<Vec<f64>> {
++    ensure!(
++        !values.is_empty() && values.iter().all(|value| value.is_finite()),
++        "finite native numeric scores required"
++    );
++    let peak = values.iter().copied().fold(f32::NEG_INFINITY, f32::max);
++    let values = values
++        .iter()
++        .map(|value| (f64::from(*value) - f64::from(peak)).exp())
++        .collect::<Vec<_>>();
++    let total: f64 = values.iter().sum();
++    Ok(values.into_iter().map(|value| value / total).collect())
++}
++pub fn compare_reference_scores(actual: &[f32], expected: &[f32]) -> Result<(f64, f64, bool)> {
++    ensure!(
++        actual.len() == expected.len(),
++        "native numeric reference cardinality differs"
++    );
++    let a = softmax(actual)?;
++    let b = softmax(expected)?;
++    let winner = |scores: &[f32]| {
++        scores.iter().enumerate().fold(
++            0,
++            |best, (index, value)| if *value > scores[best] { index } else { best },
++        )
++    };
++    Ok((
++        actual
++            .iter()
++            .zip(expected)
++            .map(|(a, b)| (f64::from(*a) - f64::from(*b)).abs())
++            .fold(0f64, f64::max),
++        a.iter()
++            .zip(b)
++            .map(|(a, b)| (a - b).abs())
++            .fold(0f64, f64::max),
++        winner(actual) == winner(expected),
++    ))
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/run.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/run.rs
+@@ -56,6 +56,7 @@
+     focus: bool,
+ ) -> Result<Vec<f32>> {
+     in_time(deadline)?;
++    binding.authorize_score(input.input_digest)?;
+     let tokens = input.input_ids.len();
+     let candidates = input.candidate_positions.len();
+     let output_name = if focus { "logits" } else { "scores" };
+@@ -154,5 +155,6 @@
+         "Arbiter GPU score shape/finite contract changed"
+     );
+     in_time(deadline)?;
++    binding.authorize_score(input.input_digest)?;
+     Ok(scores.to_vec())
+ }
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/tests.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/tests.rs
+@@ -360,3 +360,132 @@
+     assert!(prepare_fp32_probe_profile(&cpu, &source, &runtime, runtime_pin, plan).is_err());
+     Ok(())
+ }
++
++fn product_manifest() -> manifest::ProductRuntimeManifest {
++    let old = manifest();
++    let identity = "literal-native-product-identity".to_owned();
++    manifest::ProductRuntimeManifest {
++        schema: "airk.native.cuda-runtime-manifest/2".into(),
++        ort_version: "1.30.0".into(),
++        static_core_build: Sha256Digest::from_bytes([2; 32]),
++        provenance: airk_core::arbiter::Asset {
++            name: "airk-cuda-build-provenance.json".into(),
++            role: airk_core::arbiter::AssetRole::Notice,
++            bytes: 12,
++            sha256: Sha256Digest::from_bytes([3; 32]),
++        },
++        files: old.files,
++        load_order: old.load_order,
++        system_imports: old.system_imports,
++        requirements: vec![manifest::VariantRequirement {
++            manifest: Sha256Digest::from_bytes([4; 32]),
++            execution_identity: identity.clone(),
++            target: "x86_64-pc-windows-msvc".into(),
++            compute_capabilities: vec![[8, 6]],
++            minimum_driver_api: 12080,
++            cold_peak_limit_bytes: 100,
++            warm_extra_limit_bytes: 20,
++            headroom_bytes: 10,
++            host_warm_extra_limit_bytes: 1,
++            artifact_evidence: DeviceEvidence {
++                target: "x86_64-pc-windows-msvc".into(),
++                execution_identity: identity,
++                numerical: Sha256Digest::from_bytes([5; 32]),
++                resources: Sha256Digest::from_bytes([6; 32]),
++                placement: Sha256Digest::from_bytes([7; 32]),
++            },
++            acceptance_fixture: airk_core::arbiter::Asset {
++                name: "synthetic-input.json".into(),
++                role: airk_core::arbiter::AssetRole::Fixture,
++                bytes: 15,
++                sha256: Sha256Digest::from_bytes([8; 32]),
++            },
++        }],
++    }
++}
++#[test]
++fn product_manifest_is_distinct_strict_and_has_no_scientific_fit_transfer() -> Result<()> {
++    let product = product_manifest();
++    product.validate()?;
++    let raw = serde_json::to_vec(&product)?;
++    let parsed = manifest::RuntimeDescriptor::parse(&raw)?;
++    assert!(parsed.is_product());
++    assert!(parsed.fits().is_err());
++    let mut mixed = serde_json::to_value(&product)?;
++    mixed["fits"] = serde_json::json!([]);
++    assert!(manifest::RuntimeDescriptor::parse(&serde_json::to_vec(&mixed)?).is_err());
++    let mut legacy = serde_json::to_value(manifest())?;
++    legacy["schema"] = serde_json::json!("airk.native.cuda-runtime-manifest/2");
++    assert!(manifest::RuntimeDescriptor::parse(&serde_json::to_vec(&legacy)?).is_err());
++    let mut altered = product.clone();
++    altered.requirements[0].compute_capabilities = vec![[8, 9]];
++    assert!(altered.validate().is_err());
++    let mut altered = product.clone();
++    altered.requirements[0].artifact_evidence.resources =
++        altered.requirements[0].artifact_evidence.numerical;
++    assert!(altered.validate().is_err());
++    let mut altered = product;
++    altered.provenance.name = "private-producer.json".into();
++    assert!(altered.validate().is_err());
++    Ok(())
++}
++#[test]
++fn product_compatibility_is_not_reference_uuid_or_driver_image_equality() -> Result<()> {
++    let product = product_manifest();
++    let row = &product.requirements[0];
++    let mut actual = AdapterIdentity {
++        uuid: [11; 16],
++        ordinal: 3,
++        compute_major: 8,
++        compute_minor: 6,
++        driver_api_version: 12080,
++        driver_image_sha256: Sha256Digest::from_bytes([12; 32]),
++        physical_total_bytes: 110,
++        dedicated_memory: true,
++    };
++    row.supports(&actual)?;
++    actual.uuid = [13; 16];
++    actual.driver_image_sha256 = Sha256Digest::from_bytes([14; 32]);
++    row.supports(&actual)?;
++    for (major, minor) in [(7, 5), (8, 0), (8, 7), (8, 9), (9, 0)] {
++        actual.compute_major = major;
++        actual.compute_minor = minor;
++        assert!(row.supports(&actual).is_err());
++    }
++    actual.compute_major = 8;
++    actual.compute_minor = 6;
++    actual.physical_total_bytes = 109;
++    assert!(is_device_capacity_failure(
++        &row.supports(&actual).unwrap_err()
++    ));
++    actual.physical_total_bytes = 110;
++    actual.driver_api_version = 12079;
++    assert!(!is_device_capacity_failure(
++        &row.supports(&actual).unwrap_err()
++    ));
++    actual.driver_api_version = 12080;
++    actual.dedicated_memory = false;
++    assert!(row.supports(&actual).is_err());
++    Ok(())
++}
++
++#[test]
++fn qualified_scientific_route_preserves_scoring_while_product_requires_live_eligibility()
++-> Result<()> {
++    let legacy = manifest::RuntimeDescriptor::Scientific(manifest());
++    let scientific = eligibility::initial_admission(&legacy);
++    assert!(matches!(
++        scientific,
++        eligibility::AdmissionState::Scientific
++    ));
++    scientific.authorize(Sha256Digest::from_bytes([9; 32]))?;
++    let product = manifest::RuntimeDescriptor::Product(product_manifest());
++    let product = eligibility::initial_admission(&product);
++    assert!(matches!(product, eligibility::AdmissionState::Pending));
++    assert!(
++        product
++            .authorize(Sha256Digest::from_bytes([9; 32]))
++            .is_err()
++    );
++    Ok(())
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda/windows.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/windows.rs
+@@ -448,8 +448,15 @@
+     pop: unsafe extern "system" fn(*mut ContextHandle) -> i32,
+     memory: unsafe extern "system" fn(*mut usize, *mut usize) -> i32,
+     sync: unsafe extern "system" fn() -> i32,
++    attribute: Option<unsafe extern "system" fn(*mut i32, i32, i32) -> i32>,
+ }
+ fn cuda(result: i32) -> Result<()> {
++    // Pinned CUDA12.8 cuda.h: CUDA_ERROR_OUT_OF_MEMORY=2.
++    if result == 2 {
++        return Err(super::capacity_fault(
++            "actual native CUDA driver out-of-memory".into(),
++        ));
++    }
+     if result != 0 {
+         return Err(super::native_fault(format!(
+             "native CUDA driver call failed ({result})"
+@@ -458,7 +465,7 @@
+     Ok(())
+ }
+ impl Driver {
+-    unsafe fn from(module: usize) -> Result<Self> {
++    unsafe fn from(module: usize, product: bool) -> Result<Self> {
+         Ok(Self {
+             get: unsafe { symbol(module, c"cuDeviceGet")? },
+             init: unsafe { symbol(module, c"cuInit")? },
+@@ -473,6 +480,11 @@
+             pop: unsafe { symbol(module, c"cuCtxPopCurrent_v2")? },
+             memory: unsafe { symbol(module, c"cuMemGetInfo_v2")? },
+             sync: unsafe { symbol(module, c"cuCtxSynchronize")? },
++            attribute: if product {
++                Some(unsafe { symbol(module, c"cuDeviceGetAttribute")? })
++            } else {
++                None
++            },
+         })
+     }
+ }
+@@ -521,6 +533,7 @@
+     baseline: Baseline,
+     _modules: Vec<usize>,
+     driver: Driver,
++    product: bool,
+     identity: Sha256Digest,
+ }
+ static LOADED: OnceLock<LoadedRuntime> = OnceLock::new();
+@@ -548,7 +561,7 @@
+     deadline: Instant,
+ ) -> Result<(
+     &'static LoadedRuntime,
+-    manifest::RuntimeManifest,
++    manifest::RuntimeDescriptor,
+     Sha256Digest,
+ )> {
+     let _exclusive = ADMISSION
+@@ -573,7 +586,7 @@
+     security(directory.as_file(), true)?;
+     let description = HeldFile::open(&directory, manifest_path, true, deadline)?;
+     let bytes = read(&description.file, 128 << 10)?;
+-    let (manifest, identity) = manifest::RuntimeManifest::approved(&bytes)?;
++    let (manifest, identity) = manifest::RuntimeDescriptor::approved(&bytes)?;
+     crate::onnx::initialize_runtime()?;
+     use ort::execution_providers::ExecutionProvider;
+     ensure!(
+@@ -589,16 +602,45 @@
+         existing.recheck(deadline)?;
+         return Ok((existing, manifest, identity));
+     }
+-    let producer = HeldFile::open(
+-        &directory,
+-        &root.join(&manifest.producer_name),
+-        true,
+-        deadline,
+-    )?;
+-    ensure!(
+-        producer.bytes == manifest.producer_bytes && producer.sha == manifest.producer_sha256,
+-        "actual CUDA producer receipt differs"
+-    );
++    let mut sidecars = Vec::new();
++    match &manifest {
++        manifest::RuntimeDescriptor::Scientific(value) => {
++            let producer =
++                HeldFile::open(&directory, &root.join(&value.producer_name), true, deadline)?;
++            ensure!(
++                producer.bytes == value.producer_bytes && producer.sha == value.producer_sha256,
++                "actual scientific producer receipt differs"
++            );
++            sidecars.push(producer);
++        }
++        manifest::RuntimeDescriptor::Product(value) => {
++            let artifact = &value.provenance;
++            let proof = HeldFile::open(&directory, &root.join(&artifact.name), true, deadline)?;
++            let projected = super::provenance::validate(
++                &read(&proof.file, 1 << 20)?,
++                artifact,
++                value.static_core_build,
++                &value.files,
++            )?;
++            sidecars.push(proof);
++            let mut names = BTreeSet::new();
++            for legal in projected.legal_assets() {
++                ensure!(
++                    legal.role == airk_core::arbiter::AssetRole::Notice
++                        && legal.name.starts_with("airk-cuda-notice-")
++                        && names.insert(legal.name.clone())
++                        && !value.files.iter().any(|v| v.name == legal.name),
++                    "public legal closure name mismatch"
++                );
++                let file = HeldFile::open(&directory, &root.join(&legal.name), true, deadline)?;
++                ensure!(
++                    file.bytes == legal.bytes && file.sha == legal.sha256,
++                    "actual legal notice differs from native public projection"
++                );
++                sidecars.push(file);
++            }
++        }
++    }
+     let system_path = system_directory()?;
+     let system = OpenedDirectory::open(&system_path)?;
+     security(system.as_file(), false)?;
+@@ -609,8 +651,10 @@
+         deadline,
+     )?;
+     trusted_driver(&driver_file)?;
+-    let mut files = vec![description, producer, driver_file];
+-    for item in &manifest.files {
++    let mut files = vec![description];
++    files.extend(sidecars);
++    files.push(driver_file);
++    for item in manifest.files() {
+         let held = HeldFile::open(&directory, &root.join(&item.name), true, deadline)?;
+         ensure!(
+             held.sha == item.sha256 && held.bytes == item.bytes,
+@@ -623,7 +667,7 @@
+         );
+         files.push(held);
+     }
+-    for name in &manifest.system_imports {
++    for name in manifest.system_imports() {
+         if name == "nvcuda.dll"
+             || name.starts_with("api-ms-win-")
+             || name.starts_with("ext-ms-win-")
+@@ -648,12 +692,12 @@
+     };
+     attempt.modules.push(load(&system_path.join("nvcuda.dll"))?);
+     reconcile(attempt.files.as_ref().unwrap(), &baseline)?;
+-    for name in &manifest.load_order {
++    for name in manifest.load_order() {
+         in_time(deadline)?;
+         attempt.modules.push(load(&root.join(name))?);
+         reconcile(attempt.files.as_ref().unwrap(), &baseline)?;
+     }
+-    let driver = unsafe { Driver::from(attempt.modules[0])? };
++    let driver = unsafe { Driver::from(attempt.modules[0], manifest.is_product())? };
+     cuda(unsafe { (driver.init)(0) })?;
+     for file in attempt.files.as_ref().unwrap() {
+         file.recheck(deadline)?;
+@@ -668,6 +712,7 @@
+             baseline,
+             _modules: modules,
+             driver,
++            product: manifest.is_product(),
+             identity,
+         })
+         .map_err(|_| anyhow::anyhow!("GPU module owner raced"))?;
+@@ -701,6 +746,58 @@
+             driver: &self.driver,
+         })
+     }
++    pub fn discover(&self, deadline: Instant) -> Result<Vec<AdapterIdentity>> {
++        self.recheck(deadline)?;
++        ensure!(self.product, "product-only metadata discovery");
++        let mut count = 0;
++        cuda(unsafe { (self.driver.count)(&mut count) })?;
++        ensure!((0..=64).contains(&count), "invalid adapter count");
++        let driver_image = self
++            .files
++            .iter()
++            .find(|f| {
++                f.path
++                    .file_name()
++                    .and_then(OsStr::to_str)
++                    .is_some_and(|n| n.eq_ignore_ascii_case("nvcuda.dll"))
++            })
++            .context("held driver identity missing")?
++            .sha;
++        let mut values = Vec::new();
++        for ordinal in 0..count {
++            in_time(deadline)?;
++            let (mut device, mut major, mut minor, mut api, mut pool, mut total, mut uuid) =
++                (0, 0, 0, 0, 0, 0usize, [0; 16]);
++            cuda(unsafe { (self.driver.get)(&mut device, ordinal) })?;
++            cuda(unsafe { (self.driver.uuid)(&mut uuid, device) })?;
++            cuda(unsafe { (self.driver.cc)(&mut major, &mut minor, device) })?;
++            cuda(unsafe { (self.driver.version)(&mut api) })?;
++            cuda(unsafe { (self.driver.total)(&mut total, device) })?;
++            cuda(unsafe {
++                self.driver
++                    .attribute
++                    .context("native memory-pool observer absent")?(
++                    &mut pool, 18, device
++                )
++            })?;
++            ensure!(
++                uuid != [0; 16] && total > 0 && matches!(pool, 0 | 1),
++                "native adapter metadata invalid"
++            );
++            values.push(AdapterIdentity {
++                uuid,
++                ordinal,
++                compute_major: major,
++                compute_minor: minor,
++                driver_api_version: api,
++                driver_image_sha256: driver_image,
++                physical_total_bytes: total as u64,
++                dedicated_memory: pool == 0,
++            });
++        }
++        in_time(deadline)?;
++        Ok(values)
++    }
+     pub fn adapters(
+         &'static self,
+         deadline: Instant,
+@@ -734,7 +831,7 @@
+         in_time(deadline)?;
+         reconcile(&self.files, &self.baseline)?;
+         ensure!(ordinal == context.ordinal, "CUDA context/ordinal mismatch");
+-        context.with_current(||{let(mut uuid,mut major,mut minor,mut driver,mut total,mut free,mut actual_total)=([0;16],0,0,0,0usize,0usize,0usize);cuda(unsafe{(self.driver.uuid)(&mut uuid,context.device)})?;cuda(unsafe{(self.driver.cc)(&mut major,&mut minor,context.device)})?;cuda(unsafe{(self.driver.version)(&mut driver)})?;cuda(unsafe{(self.driver.total)(&mut total,context.device)})?;cuda(unsafe{(self.driver.memory)(&mut free,&mut actual_total)})?;ensure!(uuid!=[0;16]&&total>0&&actual_total>0&&actual_total<=total&&free<=actual_total&&driver>=12080,"invalid/unsupported actual CUDA device observation");in_time(deadline)?;Ok(AdapterObservation{uuid,ordinal,compute_major:major,compute_minor:minor,driver_api_version:driver,driver_image_sha256:self.files.iter().find(|f|f.path.file_name().and_then(OsStr::to_str).is_some_and(|n|n.eq_ignore_ascii_case("nvcuda.dll"))).context("held driver identity missing")?.sha,physical_total_bytes:total as u64,total_bytes:actual_total as u64,free_bytes:free as u64,epoch:0})})
++        context.with_current(||{let(mut uuid,mut major,mut minor,mut driver,mut total,mut free,mut actual_total)=([0;16],0,0,0,0usize,0usize,0usize);cuda(unsafe{(self.driver.uuid)(&mut uuid,context.device)})?;cuda(unsafe{(self.driver.cc)(&mut major,&mut minor,context.device)})?;cuda(unsafe{(self.driver.version)(&mut driver)})?;cuda(unsafe{(self.driver.total)(&mut total,context.device)})?;cuda(unsafe{(self.driver.memory)(&mut free,&mut actual_total)})?;ensure!(uuid!=[0;16]&&total>0&&actual_total>0&&actual_total<=total&&free<=actual_total&&driver>=12080,"invalid/unsupported actual CUDA device observation");in_time(deadline)?;Ok(AdapterObservation{uuid,ordinal,compute_major:major,compute_minor:minor,driver_api_version:driver,driver_image_sha256:self.files.iter().find(|f|f.path.file_name().and_then(OsStr::to_str).is_some_and(|n|n.eq_ignore_ascii_case("nvcuda.dll"))).context("held driver identity missing")?.sha,physical_total_bytes:total as u64,total_bytes:actual_total as u64,free_bytes:free as u64,epoch:0,dedicated_memory:if self.product {let mut integrated=0;let get=self.driver.attribute.context("native memory-pool observer missing")?;cuda(unsafe{get(&mut integrated,18,context.device)})?;ensure!(matches!(integrated,0|1),"native CUDA memory pool type unknown");Some(integrated==0)}else{None}})})
+     }
+     pub fn synchronize(&self, context: &PrimaryContext) -> Result<()> {
+         reconcile(&self.files, &self.baseline)?;
+@@ -857,3 +954,104 @@
+     unsafe { symbol(module as usize, c"airk_ort_collect_final_placement_v1") }
+         .context(RuntimeUnavailable::new("final-placement capability absent"))
+ }
++
++#[cfg(feature = "test-support")]
++struct ProjectionSource {
++    deadline: Instant,
++    files: std::cell::RefCell<BTreeMap<PathBuf, HeldFile>>,
++}
++#[cfg(feature = "test-support")]
++impl ProjectionSource {
++    fn hold(
++        &self,
++        pin: &airk_core::arbiter::resource_policy::ResourceFilePin,
++        maximum: u64,
++    ) -> Result<()> {
++        pin.validate()?;
++        in_time(self.deadline)?;
++        let path = Path::new(&pin.path);
++        ensure!(
++            path.is_absolute(),
++            "projection source path must be absolute"
++        );
++        if !self.files.borrow().contains_key(path) {
++            let parent =
++                OpenedDirectory::open(path.parent().context("projection source parent missing")?)?;
++            // Immutable metadata/SDK inputs may be human-owned or OS trusted. Neither
++            // branch accepts foreign write/delete/DAC/owner grants or modifies any ACL.
++            let private = if security(parent.as_file(), true).is_ok() {
++                true
++            } else {
++                security(parent.as_file(), false)?;
++                false
++            };
++            let held = HeldFile::open(&parent, path, private, self.deadline)?;
++            ensure!(
++                held.sha == pin.sha256 && held.bytes <= maximum,
++                "actual pinned projection source differs"
++            );
++            self.files.borrow_mut().insert(path.to_owned(), held);
++        }
++        let files = self.files.borrow();
++        let held = files.get(path).context("projection custody missing")?;
++        ensure!(
++            held.sha == pin.sha256 && held.bytes <= maximum,
++            "projection pin changed"
++        );
++        held.recheck(self.deadline)
++    }
++}
++#[cfg(feature = "test-support")]
++impl super::provenance::projection::Source for ProjectionSource {
++    fn read(
++        &self,
++        pin: &airk_core::arbiter::resource_policy::ResourceFilePin,
++        maximum: u64,
++    ) -> Result<Vec<u8>> {
++        self.hold(pin, maximum)?;
++        let files = self.files.borrow();
++        let held = files
++            .get(Path::new(&pin.path))
++            .context("projection held input missing")?;
++        let raw = read(&held.file, maximum)?;
++        in_time(self.deadline)?;
++        Ok(raw)
++    }
++    fn authenticate(
++        &self,
++        pin: &airk_core::arbiter::resource_policy::ResourceFilePin,
++        bytes: u64,
++        maximum: u64,
++    ) -> Result<()> {
++        self.hold(pin, maximum)?;
++        ensure!(
++            self.files
++                .borrow()
++                .get(Path::new(&pin.path))
++                .context("projection input missing")?
++                .bytes
++                == bytes,
++            "projection declared source size differs"
++        );
++        Ok(())
++    }
++    fn recheck(&self) -> Result<()> {
++        for held in self.files.borrow().values() {
++            held.recheck(self.deadline)?;
++        }
++        in_time(self.deadline)
++    }
++}
++#[cfg(feature = "test-support")]
++pub(super) fn project_public(raw: &[u8], deadline: Instant) -> Result<Vec<u8>> {
++    let input = super::provenance::projection::decode_input(raw)?;
++    let source = ProjectionSource {
++        deadline,
++        files: std::cell::RefCell::new(BTreeMap::new()),
++    };
++    let prepared = super::provenance::projection::project(&source, input)?;
++    let bytes = serde_json::to_vec(&prepared)?;
++    ensure!(bytes.len() <= 16 << 20, "native projection output cap");
++    in_time(deadline)?;
++    Ok(bytes)
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
+@@ -16,7 +16,13 @@
+     },
+     time::Instant,
+ };
++mod eligibility;
+ mod manifest;
++mod numeric;
++pub use numeric::compare_reference_scores;
++mod provenance;
++pub use eligibility::{DeviceEligibility, EligibilityKey, is_device_eligibility_failure};
++pub use manifest::product_compatibility_policy_digest;
+ mod run;
+ pub(super) use run::score as score_gpu;
+ #[cfg(any(test, all(windows, target_arch = "x86_64")))]
+@@ -62,6 +68,17 @@
+     Ok(())
+ }
+ #[derive(Clone, Debug, Serialize)]
++pub struct AdapterIdentity {
++    pub uuid: [u8; 16],
++    pub ordinal: i32,
++    pub compute_major: i32,
++    pub compute_minor: i32,
++    pub driver_api_version: i32,
++    pub driver_image_sha256: Sha256Digest,
++    pub physical_total_bytes: u64,
++    pub dedicated_memory: bool,
++}
++#[derive(Clone, Debug, Serialize)]
+ pub struct AdapterObservation {
+     pub uuid: [u8; 16],
+     pub ordinal: i32,
+@@ -73,6 +90,8 @@
+     pub total_bytes: u64,
+     pub free_bytes: u64,
+     pub epoch: u64,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub dedicated_memory: Option<bool>,
+ }
+ #[derive(Clone, Copy, Debug)]
+ pub struct DeviceCapacityPlan {
+@@ -133,7 +152,7 @@
+             })
+             .context("GPU capacity overflow")?;
+         if free < required {
+-            return Err(native_fault(format!(
++            return Err(capacity_fault(format!(
+                 "actual free VRAM {free} cannot cover pending work+headroom {required}"
+             )));
+         }
+@@ -157,7 +176,7 @@
+ pub struct CudaRuntime {
+     #[cfg(all(windows, target_arch = "x86_64"))]
+     loaded: &'static windows::LoadedRuntime,
+-    manifest: manifest::RuntimeManifest,
++    manifest: manifest::RuntimeDescriptor,
+     identity: Sha256Digest,
+     _native_lease: Arc<dyn Send + Sync>,
+     devices: Mutex<BTreeMap<[u8; 16], Weak<CudaDevice>>>,
+@@ -210,14 +229,37 @@
+         }
+     }
+     pub fn runtime_build(&self) -> Sha256Digest {
+-        self.manifest.static_core_build
++        self.manifest.build()
+     }
+     pub fn manifest_identity(&self) -> Sha256Digest {
+         self.identity
++    }
++    pub fn is_product(&self) -> bool {
++        self.manifest.is_product()
++    }
++    pub fn discover_adapters(&self, deadline: Instant) -> Result<Vec<AdapterIdentity>> {
++        crate::native_inference::require_service_compute()?;
++        in_time(deadline)?;
++        ensure!(
++            self.is_product(),
++            "metadata-only discovery is the product /2 path"
++        );
++        #[cfg(all(windows, target_arch = "x86_64"))]
++        {
++            self.loaded.discover(deadline)
++        }
++        #[cfg(not(all(windows, target_arch = "x86_64")))]
++        {
++            anyhow::bail!("CUDA product discovery unavailable")
++        }
+     }
+     pub fn adapters(&self, deadline: Instant) -> Result<Vec<AdapterObservation>> {
+         crate::native_inference::require_service_compute()?;
+         in_time(deadline)?;
++        ensure!(
++            !self.is_product(),
++            "product discovery must not retain contexts on unselected adapters"
++        );
+         #[cfg(all(windows, target_arch = "x86_64"))]
+         {
+             self.loaded.adapters(deadline, self._native_lease.clone())
+@@ -236,6 +278,42 @@
+             device.observation(deadline)?;
+             return Ok(device);
+         }
++        #[cfg(all(windows, target_arch = "x86_64"))]
++        let (observed, context) = if self.is_product() {
++            let id = self
++                .discover_adapters(deadline)?
++                .into_iter()
++                .find(|v| v.uuid == uuid)
++                .context("native product adapter UUID unavailable")?;
++            ensure!(
++                id.compute_major == 8 && id.compute_minor == 6 && id.dedicated_memory,
++                "actual adapter is outside compiled SM86 dedicated compatibility"
++            );
++            let context = self
++                .loaded
++                .retain_primary(id.ordinal, self._native_lease.clone())?;
++            let observed = self.loaded.observe(id.ordinal, &context, deadline)?;
++            ensure!(
++                observed.uuid == uuid,
++                "actual selected adapter changed during context creation"
++            );
++            (observed, context)
++        } else {
++            let observed = self
++                .adapters(deadline)?
++                .into_iter()
++                .find(|v| v.uuid == uuid)
++                .context("native adapter UUID unavailable")?;
++            ensure!(
++                observed.compute_major == 8 && observed.compute_minor == 6,
++                "CUDA compute capability differs from compiled SM86 native policy"
++            );
++            let context = self
++                .loaded
++                .retain_primary(observed.ordinal, self._native_lease.clone())?;
++            (observed, context)
++        };
++        #[cfg(not(all(windows, target_arch = "x86_64")))]
+         let observed = self
+             .adapters(deadline)?
+             .into_iter()
+@@ -245,10 +323,6 @@
+             observed.compute_major == 8 && observed.compute_minor == 6,
+             "CUDA compute capability differs from compiled SM86 native policy"
+         );
+-        #[cfg(all(windows, target_arch = "x86_64"))]
+-        let context = self
+-            .loaded
+-            .retain_primary(observed.ordinal, self._native_lease.clone())?;
+         let epoch = NEXT_EPOCH
+             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| v.checked_add(1))
+             .map_err(|_| anyhow::anyhow!("GPU capability epoch exhausted"))?;
+@@ -318,6 +392,7 @@
+                         || value.compute_major != self.observed.compute_major
+                         || value.compute_minor != self.observed.compute_minor
+                         || value.physical_total_bytes != self.observed.physical_total_bytes
++                        || value.dedicated_memory != self.observed.dedicated_memory
+                     {
+                         self.poison();
+                         anyhow::bail!("CUDA adapter/driver epoch changed");
+@@ -401,7 +476,12 @@
+                 && !policy.tf32
+                 && policy.placement == PlacementPolicy::StrictGpu
+                 && policy.runtime_build == self.runtime.runtime_build()
+-                && policy.compatibility_policy == compatibility_policy_digest()
++                && policy.compatibility_policy
++                    == if self.runtime.manifest.is_product() {
++                        product_compatibility_policy_digest()
++                    } else {
++                        compatibility_policy_digest()
++                    }
+                 && policy.provider_options == provider_options_digest()
+                 && policy.math_policy == math_policy_digest(),
+             "GPU model/runtime/policy/precision is not the native FP32 strict variant"
+@@ -410,11 +490,29 @@
+     }
+     pub(super) fn qualified_plan(&self, profile: &Profile) -> Result<DeviceCapacityPlan> {
+         self.validate_profile(profile)?;
++        if self.runtime.manifest.is_product() {
++            let row = self.runtime.manifest.requirement(profile)?;
++            row.supports(&AdapterIdentity {
++                uuid: self.observed.uuid,
++                ordinal: self.observed.ordinal,
++                compute_major: self.observed.compute_major,
++                compute_minor: self.observed.compute_minor,
++                driver_api_version: self.observed.driver_api_version,
++                driver_image_sha256: self.observed.driver_image_sha256,
++                physical_total_bytes: self.observed.physical_total_bytes,
++                dedicated_memory: self.observed.dedicated_memory == Some(true),
++            })?;
++            return DeviceCapacityPlan::new(
++                row.cold_peak_limit_bytes,
++                row.warm_extra_limit_bytes,
++                row.headroom_bytes,
++            );
++        }
+         let identity = profile.device_execution_identity()?;
+         let fit = self
+             .runtime
+             .manifest
+-            .fits
++            .fits()?
+             .iter()
+             .find(|v| v.manifest == profile.manifest && v.execution_identity == identity)
+             .context("exact native variant has no compiled measured phase capacity")?;
+@@ -501,6 +599,8 @@
+     pub evidence: Option<DeviceEvidence>,
+     pub host_warm_extra_bytes: Option<u64>,
+     log: Arc<Mutex<(Vec<String>, usize, bool)>>,
++    admission: Arc<Mutex<eligibility::AdmissionState>>,
++    session_alive: Arc<AtomicBool>,
+ }
+ impl Binding {
+     pub fn qualified(
+@@ -510,23 +610,31 @@
+     ) -> Result<Self> {
+         in_time(deadline)?;
+         let plan = device.qualified_plan(profile)?;
+-        let fit = device
+-            .runtime
+-            .manifest
+-            .fits
+-            .iter()
+-            .find(|v| {
+-                v.manifest == profile.manifest
+-                    && v.execution_identity
+-                        == profile.device_execution_identity().unwrap_or_default()
+-            })
+-            .context("GPU variant fit missing")?;
+-        ensure!(
+-            fit.host_warm_extra_bytes <= profile.memory_reservation_bytes,
+-            "native GPU host extra exceeds admitted profile peak"
+-        );
+-        let evidence = fit.evidence.clone();
+-        let host = fit.host_warm_extra_bytes;
++        let (evidence, host) = if device.runtime.manifest.is_product() {
++            let row = device.runtime.manifest.requirement(profile)?;
++            (
++                row.artifact_evidence.clone(),
++                row.host_warm_extra_limit_bytes,
++            )
++        } else {
++            let fit = device
++                .runtime
++                .manifest
++                .fits()?
++                .iter()
++                .find(|v| {
++                    v.manifest == profile.manifest
++                        && v.execution_identity
++                            == profile.device_execution_identity().unwrap_or_default()
++                })
++                .context("GPU scientific variant fit missing")?;
++            ensure!(
++                fit.host_warm_extra_bytes <= profile.memory_reservation_bytes,
++                "scientific host extra exceeds profile peak"
++            );
++            (fit.evidence.clone(), fit.host_warm_extra_bytes)
++        };
++        let admission = eligibility::initial_admission(&device.runtime.manifest);
+         Ok(Self {
+             device,
+             plan,
+@@ -534,6 +642,8 @@
+             evidence: Some(evidence),
+             host_warm_extra_bytes: Some(host),
+             log: Arc::new(Mutex::new((Vec::new(), 0, false))),
++            admission: Arc::new(Mutex::new(admission)),
++            session_alive: Arc::new(AtomicBool::new(true)),
+         })
+     }
+     #[cfg(any(test, feature = "test-support"))]
+@@ -556,6 +666,8 @@
+             evidence: None,
+             host_warm_extra_bytes: None,
+             log: Arc::new(Mutex::new((Vec::new(), 0, false))),
++            admission: Arc::new(Mutex::new(eligibility::AdmissionState::Scientific)),
++            session_alive: Arc::new(AtomicBool::new(true)),
+         })
+     }
+     pub fn configure(
+@@ -632,6 +744,7 @@
+ #[derive(Debug)]
+ pub(crate) struct NativeDeviceFailure {
+     message: String,
++    capacity: bool,
+     source: Option<ort::Error>,
+ }
+ impl std::fmt::Display for NativeDeviceFailure {
+@@ -647,9 +760,25 @@
+ pub(super) fn native_fault(message: String) -> anyhow::Error {
+     NativeDeviceFailure {
+         message,
++        capacity: false,
+         source: None,
+     }
+     .into()
++}
++pub(super) fn capacity_fault(message: String) -> anyhow::Error {
++    NativeDeviceFailure {
++        message,
++        capacity: true,
++        source: None,
++    }
++    .into()
++}
++/// Genuine native free-capacity/CUDA OOM facts only; no message matching.
++pub fn is_device_capacity_failure(error: &anyhow::Error) -> bool {
++    error.chain().any(|v| {
++        v.downcast_ref::<NativeDeviceFailure>()
++            .is_some_and(|v| v.capacity)
++    })
+ }
+ pub(super) fn run_failure(error: ort::Error) -> anyhow::Error {
+     use ort::ErrorCode;
+@@ -663,6 +792,7 @@
+     ) {
+         NativeDeviceFailure {
+             message: "native CUDA/ORT execution failed".into(),
++            capacity: false,
+             source: Some(error),
+         }
+         .into()
+@@ -909,3 +1039,26 @@
+         calibration_bytes,
+     })
+ }
++
++/// Metadata-only opaque Rust projection. Its output creates no runtime/device permit.
++/// # Safety
++/// Caller passes the actual retained ServiceLease and existing native compute scope;
++/// every path is an approved pinned source under the original caller deadline.
++#[cfg(feature = "test-support")]
++pub unsafe fn observe_public_runtime_provenance(
++    _lease: Arc<dyn Send + Sync>,
++    raw: &[u8],
++    deadline: Instant,
++) -> Result<Vec<u8>> {
++    crate::native_inference::require_service_compute()?;
++    in_time(deadline)?;
++    #[cfg(all(windows, target_arch = "x86_64"))]
++    {
++        windows::project_public(raw, deadline)
++    }
++    #[cfg(not(all(windows, target_arch = "x86_64")))]
++    {
++        let _ = raw;
++        anyhow::bail!("held public projection factory requires Windows x64")
++    }
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime/session_owner.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime/session_owner.rs
+@@ -50,6 +50,7 @@
+     fn drop(&mut self) {
+         #[cfg(feature = "gpu-cuda")]
+         if let Some(gpu) = &self.gpu {
++            gpu.end_session_eligibility();
+             let _ = gpu.device.synchronize(gpu.load_deadline);
+             if gpu.device.poisoned() {
+                 std::mem::forget(gpu.clone());

@@ -1,0 +1,146 @@
+--- a/README.md
++++ b/README.md
+@@ -8,7 +8,9 @@
+ retirement and cleanup](docs/service-project-retirement.md) for removed files or folders and separate
+ [unavailable legacy-index upgrade recovery](docs/service-installation.md#unavailable-legacy-index-during-upgrade). Healthy indexes keep
+ their independent evidence; old grants are never silently narrowed. Post-P14
+-recovery qualification is in progress and does not inherit earlier P14 passes.
++recovery has selected Windows native/process and Mac portable validation. Full
++workspace and final installer qualification remain separate; see the working-build
++record for current results and earlier failures.
+ 
+ **Find the code and documents behind a feature. Give your coding agent cited evidence, or explore it yourself in AIRK Workbench.**
+ 
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -8,7 +8,9 @@
+ retirement and cleanup](service-project-retirement.md) for removed files or folders and separate
+ [unavailable legacy-index upgrade recovery](service-installation.md#unavailable-legacy-index-during-upgrade). Healthy indexes keep
+ their independent evidence; old grants are never silently narrowed. Post-P14
+-recovery qualification is in progress and does not inherit earlier P14 passes.
++recovery has selected Windows native/process and Mac portable validation. Full
++workspace and final installer qualification remain separate; see the working-build
++record for current results and earlier failures.
+ 
+ | Current guide | Scope |
+ | --- | --- |
+--- a/packages/vscode/README.md
++++ b/packages/vscode/README.md
+@@ -8,7 +8,9 @@
+ retirement and cleanup](https://github.com/iokaio/airk/blob/main/docs/service-project-retirement.md) for removed files or folders and separate
+ [unavailable legacy-index upgrade recovery](https://github.com/iokaio/airk/blob/main/docs/service-installation.md#unavailable-legacy-index-during-upgrade). Healthy indexes keep
+ their independent evidence; old grants are never silently narrowed. Post-P14
+-recovery qualification is in progress and does not inherit earlier P14 passes.
++recovery has selected Windows native/process and Mac portable validation. Full
++workspace and final installer qualification remain separate; see the working-build
++record for current results and earlier failures.
+ 
+ **Find the code and documents behind a feature. Give your coding agent cited evidence, or explore it yourself in AIRK Workbench.**
+ 
+--- a/docs/service-project-retirement.md
++++ b/docs/service-project-retirement.md
+@@ -5,6 +5,10 @@
+ **Post-P14 development behavior; local qualification is in progress.** Earlier
+ P14 tests qualify their recorded source and package identities, not this added
+ recovery path. Version 1.8.8 remains unpublished.
++Selected current-source Windows recovery tests, actual predecessor upgrade
++process scenarios and Mac portable cases have passed; the [working-build
++record](releases/release-1.8.8.md) retains their exact scope. Full workspace and
++final installer qualification remain separate.
+ 
+ A missing source is not an instruction to forget its index. When storage remains,
+ retained evidence can still be available with verification **Off**. **Report**
+--- a/docs/releases/release-1.8.8.md
++++ b/docs/releases/release-1.8.8.md
+@@ -26,6 +26,39 @@
+ 42-case Neo, fresh matched DEBUG/process and full 2,661-test qualification remain
+ pending at this checkpoint. Earlier source results retain their original
+ identities; these focused results do not qualify the final local test installer.
++
++### 6 November 2026 - selected current-source recovery validation
++
++On native source
++`6de490d57d7053cbd63862366e840cc3657df4ef10e8a57c4ca018e6d19a2633`
++/ 968 inputs, the corrected Windows recovery selection passed **47 tests**.
++The fresh matched DEBUG pair passed all **four** actual public 1.8.7 predecessor
++process scenarios: source-only loss, source and storage loss, returned storage
++and foreign returned storage. The storage-loss scenario also passed the three
++compiled-host read-only review/authorization/applied receipt comparisons.
++Complete CLI/MCP bodies, healthy-index evidence, source preservation and native
++teardown proofs remain part of the scenario evidence. These are development
++runtime results, not optimized installer or installed-editor qualification.
++
++The same source passed **42 selected Mac ARM tests** across 20 owning Cargo
++commands plus formatting, using the saved Neo SSH setup and offline assets.
++Logs and Cargo timings were retained before mandatory `cargo clean`, which
++exited zero; the exact owned target was confirmed absent. This selected portable
++coverage does not establish full Mac workspace, signed distribution, Intel or
++Linux qualification. Earlier source results keep their original identities.
++
++A fresh dependency-policy check passed in **7.970 seconds** with live advisory
++data and locked vet imports. It reported three findings covered by existing
++maintainer-reviewed exceptions: unmaintained `paste` 1.0.15
++(`RUSTSEC-2024-0436`), unmaintained `ttf-parser` 0.25.1
++(`RUSTSEC-2026-0192`) and the moderate `minimatch` 10.2.6 packaging-tool advisory
++(`GHSA-g3hv-75wg-m249`). This is a policy pass with disclosed exceptions, not an
++absence-of-findings claim or an independent audit of every dependency.
++
++The full Windows workspace run is collected separately from these selected
++passes. Final optimized runtime, package, local installer and installed-host
++results require their own source/artifact evidence. Version **1.8.8** remains
++unpublished; manual acceptance, promotion and publication remain separate.
+ 
+ ## Retained local phase checkpoints
+ 
+--- a/docs/research/implementation-v190.md
++++ b/docs/research/implementation-v190.md
+@@ -5202,3 +5202,49 @@
+ cleanup and timing receipts must be collected separately. Version **1.8.8** is
+ still unpublished; no optimized/signed rebuild, final local installer, broader
+ platform or publication qualification follows from the focused pass.
++
++### 6 November 2026 - selected current-source recovery validation
++
++On native source
++`6de490d57d7053cbd63862366e840cc3657df4ef10e8a57c4ca018e6d19a2633`
++/ 968 inputs, the corrected Windows recovery selection passed **47 tests**.
++The fresh matched DEBUG pair passed all **four** actual public 1.8.7 predecessor
++process scenarios: source-only loss, source and storage loss, returned storage
++and foreign returned storage. The storage-loss scenario also passed the three
++compiled-host read-only review/authorization/applied receipt comparisons.
++Complete CLI/MCP bodies, healthy-index evidence, source preservation and native
++teardown proofs remain part of the scenario evidence. These are development
++runtime results, not optimized installer or installed-editor qualification.
++
++The same source passed **42 selected Mac ARM tests** across 20 owning Cargo
++commands plus formatting, using the saved Neo SSH setup and offline assets.
++Logs and Cargo timings were retained before mandatory `cargo clean`, which
++exited zero; the exact owned target was confirmed absent. This selected portable
++coverage does not establish full Mac workspace, signed distribution, Intel or
++Linux qualification. Earlier source results keep their original identities.
++
++A fresh dependency-policy check passed in **7.970 seconds** with live advisory
++data and locked vet imports. It reported three findings covered by existing
++maintainer-reviewed exceptions: unmaintained `paste` 1.0.15
++(`RUSTSEC-2024-0436`), unmaintained `ttf-parser` 0.25.1
++(`RUSTSEC-2026-0192`) and the moderate `minimatch` 10.2.6 packaging-tool advisory
++(`GHSA-g3hv-75wg-m249`). This is a policy pass with disclosed exceptions, not an
++absence-of-findings claim or an independent audit of every dependency.
++
++The full Windows workspace run is collected separately from these selected
++passes. Final optimized runtime, package, local installer and installed-host
++results require their own source/artifact evidence. Version **1.8.8** remains
++unpublished; manual acceptance, promotion and publication remain separate.
++
++The retained evidence is `post-p14-debug-process-batch-r6/summary.json`
++(fresh compiled source `6de490d5...`, four scenarios passed),
++`post-p14-native-recovery-r2-qualification.json` and its cleanup/target-absence
++receipts (42 Mac cases), and `post-p14-final-dependency-fresh-r1.json`
++(fresh Cargo/npm advisory policy with all three exception dispositions).
++The exceptions retain their original maintainer review dates and review-by
++limits in `.cargo/audit-exceptions.json`; no new approval is inferred here.
++Earlier failed process and full-suite records remain failed evidence. The
++current full Windows run's command-ownership inventory failure is tracked
++separately: generated reference refresh exposed five missing test-owner entries,
++and a test-only correction is prepared for review after complete run collection.
++No passing workspace result or future package outcome is inferred.

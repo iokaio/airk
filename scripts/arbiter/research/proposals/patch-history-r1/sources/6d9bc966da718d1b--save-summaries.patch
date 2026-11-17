@@ -1,0 +1,101 @@
+--- a/packages/vscode/src/workbenchSessions.ts
++++ b/packages/vscode/src/workbenchSessions.ts
+@@ -2,7 +2,7 @@
+ import * as fs from 'node:fs/promises';
+ import * as path from 'node:path';
+ import { randomUUID } from 'node:crypto';
+-import { object, Value, WorkbenchSession } from './workbenchContracts';
++import { object, Value, WorkbenchSession, WorkbenchSessionSummary } from './workbenchContracts';
+ 
+ const LIMIT = 4 * 1024 * 1024;
+ const validId = (id: string) => /^[a-f0-9-]{36}$/.test(id);
+@@ -55,10 +55,10 @@
+         try {handle=await fs.open(file,'wx',0o600);} catch {throw new Error('Another Workbench window is saving this project; retry or fork the session.');}
+         try {return await action(root);} finally {await handle.close();await fs.unlink(file);}
+     }
+-    async save(session:WorkbenchSession,persistResults=true):Promise<void> {
++    async save(session:WorkbenchSession,persistResults=true):Promise<WorkbenchSessionSummary[]|undefined> {
+         if (!session.turns.length) {return;}
+         trimSession(session);
+-        await this.lock(session.project,async root=>{
++        return this.lock(session.project,async root=>{
+             let current:WorkbenchSession|undefined;
+             try {current=await this.load(session.project,session.id);} catch(error) {if((error as NodeJS.ErrnoException).code!=='ENOENT'){throw error;}}
+             if(current && current.revision!==session.revision){throw new Error('Session changed in another window. Open it again or start a new session.');}
+@@ -69,6 +69,7 @@
+             finally {await fs.unlink(temporary).catch(()=>undefined);}
+             const recent=await this.scan(session.project);
+             for(const expired of recent.slice(10)){await fs.unlink(path.join(root,`${expired.id}.json`));}
++            return recent.slice(0,10).map(value=>({id:value.id,title:value.title,updatedAt:value.updatedAt,turns:value.turns.length}));
+         });
+     }
+     async remove(project:string,id?:string):Promise<void>{
+--- a/packages/vscode/src/workbenchContracts.ts
++++ b/packages/vscode/src/workbenchContracts.ts
+@@ -6,9 +6,10 @@
+ export interface WorkbenchSession { schema: 1; id: string; project: string; title: string; createdAt: number; updatedAt: number; revision: number; omitted: number; turns: WorkbenchTurn[] }
+ export interface EvidenceCard { id: string; path: string; start: number; end: number; hash: string; text: string; location?: unknown; step: string; publication?: string }
+ export interface Continuation { id:string; tool:string; callsRemaining:number }
++export interface WorkbenchSessionSummary { id: string; title: string; updatedAt: number; turns: number }
+ export interface WorkbenchState {
+     projects: { id: string; name: string }[]; project?: string; session?: WorkbenchSession;
+-    recent: { id: string; title: string; updatedAt: number; turns: number }[];
++    recent: WorkbenchSessionSummary[];
+     cards: Record<string, EvidenceCard[]>; busy: boolean; notice?: string; save: string;
+     continuations?:Record<string,Continuation[]>;
+     status?: Value; persistence: boolean; operations?: Value;
+--- a/packages/vscode/src/workbenchView.ts
++++ b/packages/vscode/src/workbenchView.ts
+@@ -104,8 +104,12 @@
+         this.saveQueue=this.saveQueue.then(async()=>{
+             // Preserve revisions after earlier saves queued by the same window.
+             captured.revision=session.revision;
+-            await this.store.save(captured,results);session.revision=captured.revision;
+-            if(this.session===session){this.recent=(await this.store.list(session.project)).map(s=>({id:s.id,title:s.title,updatedAt:s.updatedAt,turns:s.turns.length}));this.saving=results?'Auto-saved':'Inputs saved; results excluded';this.send();}
++            const recent=await this.store.save(captured,results);session.revision=captured.revision;
++            if(this.session!==session){return;}
++            const summaries=recent??(await this.store.list(session.project)).map(s=>({id:s.id,title:s.title,updatedAt:s.updatedAt,turns:s.turns.length}));
++            // Empty saves retain the list fallback; a new transcript can arrive during it.
++            if(this.session!==session){return;}
++            this.recent=summaries;this.saving=results?'Auto-saved':'Inputs saved; results excluded';this.send();
+         }).catch(error=>{this.saving='Save failed — export or retry';this.fail(error);});
+     }
+     private async privacyChanged():Promise<void>{
+--- a/packages/vscode/src/test/workbench.test.ts
++++ b/packages/vscode/src/test/workbench.test.ts
+@@ -79,3 +79,35 @@
+     const explorer=new EvidenceClient(spec,'test',{open});await assert.rejects(explorer.call('airk_parse',{}));assert.equal(calls,0);
+     const workbench=new EvidenceClient(spec,'test',{open,workbench:true,clientName:'airk-workbench'});await assert.rejects(workbench.call('airk_parse',{}));assert.equal(calls,1);assert.equal(label,'airk-workbench');workbench.dispose();explorer.dispose();
+ });
++
++// F17 draft: actual filesystem reads, not a mirrored implementation assertion.
++test('save returns bounded recent summaries from its existing prune scan',async()=>{
++    const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-workbench-save-'));
++    class CountingStore extends SessionStore {
++        loads=0;
++        override async load(project:string,id:string){this.loads++;return super.load(project,id);}
++    }
++    try{
++        const store=new CountingStore(root),directory=path.join(root,project);
++        await fs.mkdir(directory,{recursive:true});
++        const sessions=Array.from({length:10},(_,index)=>{
++            const session=newSession(project);session.updatedAt=index;
++            session.turns=Array.from({length:200},(_,turn)=>({id:String(turn),at:turn,input:'fixture query',format:'structured' as const,envelope:{text:'fictional'.repeat(2170)}}));
++            return session;
++        });
++        let bytes=0;
++        for(const session of sessions){const text=JSON.stringify(session);bytes+=Buffer.byteLength(text);assert.ok(Buffer.byteLength(text)<4*1024*1024);await fs.writeFile(path.join(directory,`${session.id}.json`),text);}
++        assert.ok(bytes>36*1024*1024,'fixture keeps ten near-limit envelopes');
++        const saved=sessions[9];saved.title='Updated fixture';saved.updatedAt=100;
++        const recent=await store.save(saved);
++        assert.equal(store.loads,11,'one optimistic revision read and one complete ten-file scan');
++        assert.equal(saved.revision,1);
++        assert.equal(recent?.length,10);
++        assert.deepEqual(recent?.[0],{id:saved.id,title:'Updated fixture',updatedAt:100,turns:200});
++        assert.ok(Buffer.byteLength(JSON.stringify(recent))<4096,'summary contains no retained excerpts');
++        store.loads=0;
++        assert.equal(await store.save(newSession(project)),undefined);
++        assert.equal(store.loads,0,'an empty session remains a no-op');
++        assert.deepEqual(recent,(await store.list(project)).map(value=>({id:value.id,title:value.title,updatedAt:value.updatedAt,turns:value.turns.length})));
++    }finally{await fs.rm(root,{recursive:true,force:true});}
++});

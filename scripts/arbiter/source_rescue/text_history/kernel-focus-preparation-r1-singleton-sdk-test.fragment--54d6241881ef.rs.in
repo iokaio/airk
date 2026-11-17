@@ -1,0 +1,74 @@
+// SPDX-License-Identifier: Apache-2.0
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn focus_selection_requires_actual_singleton_allowance_and_retains_direct_custody() -> Result<()> {
+    use airk_core::combined_context::{PartitionAllowance, Resources, ALLOWANCE_SCHEMA};
+    use airk_core::index_catalog::CatalogRevision;
+    use airk_core::scoped_reads::{SelectionOwnerKind, SelectionScopeRef};
+    let temporary = tempfile::tempdir()?;
+    let source = temporary.path().join("source");
+    let data = temporary.path().join("data");
+    std::fs::create_dir_all(source.join("public"))?;
+    std::fs::create_dir_all(source.join("private"))?;
+    std::fs::write(source.join("public/a.txt"), "amber alpha\n")?;
+    std::fs::write(source.join("public/b.txt"), "amber beta\n")?;
+    std::fs::write(source.join("private/secret.txt"), "amber PRIVATE_NEVER_OPTIONAL\n")?;
+    let model = data.join("models/local");
+    std::fs::create_dir_all(&model)?;
+    std::fs::write(model.join("vocabulary.json"), br#"{"amber":[1.0,0.0],"alpha":[0.8,0.2],"beta":[0.7,0.3]}"#)?;
+    std::fs::write(model.join("model.json"), serde_json::to_vec(&json!({"schema":1,"name":"focus-handler-word-vector-fixture","license":"Apache-2.0","dimensions":2,"sha256":"2b9dd16aedae16d0b95ac4ef700d04465c401b3bb9f867ceb5fc35617cd2fb87"}))?)?;
+    let base = Kernel::open(&source, Some(data))?;
+    base.index()?;
+    let reviewed = crate::scoped_observation_tests::authority(&base)?;
+    let member = &reviewed.grant.memberships[0].membership;
+    let selection = SelectionScopeRef { owner: SelectionOwnerKind::Window,
+        grant_nonce: Incarnation::from_bytes([60;16]), service_instance: Incarnation::from_bytes([61;16]),
+        scope_identity: digest(62), catalog_revision: CatalogRevision::INITIAL };
+    let selected = base.with_selection_reads(airk_kernel::scoped_reads::SelectionReadAuthority {
+        schema:1, backing:reviewed.backing, index_id:reviewed.index_id, project_ids:reviewed.project_ids.clone(), selection,
+        atoms:member.scope.iter().cloned().map(|atom|(member.project_id,atom)).collect(), sources:reviewed.sources.clone(),
+        membership_revisions:vec![(member.project_id,CatalogRevision::INITIAL)], source_revision:CatalogRevision::INITIAL,
+        policy_epoch:0,policy_digest:None })?;
+    let authority = ScopedReadRef { schema:1,lease_generation:1,index_id:reviewed.index_id,grant_id:None,grant_revision:None,
+        selection:Some(selection),fingerprint:selected.scoped_read_fingerprint()?.unwrap() };
+    let worker = WorkerIdentity {service:Incarnation::from_bytes([8;16]),worker:Incarnation::from_bytes([9;16]),project:reviewed.backing,fencing_generation:1};
+    let owner = Arc::new(FocusOwner{enabled:true,requests:Mutex::new(vec![])});
+    let mut tools = local::LocalTools::new(selected.with_native_arbiter(worker,authority,owner.clone())?).await?;
+    let args = json!({"query":"amber","mode":"vector","limit":2,"max_bytes":4096,"response_mode":"full","verification":"off"});
+    // An installed per-index Kernel cannot infer original selection cardinality.
+    let unpartitioned = payload(tools.call_with_read_context("airk_search".into(),args.as_object().unwrap().clone(),attempt()).await?)?;
+    assert_eq!(unpartitioned["focus"]["kind"],"not_applied");
+    assert!(owner.requests.lock().unwrap().is_empty());
+    let parent = Budget {calls:1,rounds:1,fanout:1,input_tokens:64,candidates:2,max_bytes:65_536,deadline_ms:30_000};
+    let context = attempt();
+    let original_attempt = context.captured_transport_attempt().unwrap();
+    let allowance = PartitionAllowance {schema:ALLOWANCE_SCHEMA.into(),attempt:original_attempt.request_id,
+        selection:selection.scope_identity,index_id:authority.index_id,resources:Resources::budget(&parent),
+        parent_budget:parent.clone(),assessment_ordinals:vec![]};
+    assert!(allowance.is_ordinary_focus());
+    let context = context.with_context_partition(allowance.clone())?;
+    let focused = payload(tools.call_with_read_context("airk_search".into(),args.as_object().unwrap().clone(),context.clone()).await?)?;
+    assert_eq!(focused["focus"]["kind"],"receipt");
+    let requests = owner.requests.lock().unwrap();
+    assert_eq!(requests.len(),1);assert_eq!(requests[0].parent_budget,parent);
+    assert_eq!(requests[0].partition.as_ref().unwrap().selection,selection.scope_identity);
+    assert_eq!(requests[0].read_attempt.request_id,original_attempt.request_id);
+    drop(requests);
+    let mut restored=focused.clone();restored.as_object_mut().unwrap().remove("focus");
+    let hits=restored["hits"].as_array_mut().unwrap();hits.reverse();
+    let mut original=unpartitioned.clone();original.as_object_mut().unwrap().remove("focus");
+    normalize(&mut restored);normalize(&mut original);assert_eq!(restored,original);
+    let registrations=Arc::new(Mutex::new(vec![]));let captured=registrations.clone();
+    struct Guard;
+    impl crate::read_attempt::ReadDeliveryGuard for Guard {
+        fn bindings_digest(&self)->Sha256Digest{digest(63)}
+        fn poll(&self,effect:&mut dyn FnMut()->std::task::Poll<std::io::Result<usize>>)->std::task::Poll<std::io::Result<usize>>{effect()}
+    }
+    let context=context.with_delivery_guard_factory(Arc::new(move|bindings,_|{captured.lock().unwrap().push(bindings.to_vec());Ok(Arc::new(Guard))}));
+    context.retain_delivery_for(&focused)?;
+    let registered=registrations.lock().unwrap();assert_eq!(registered.len(),1);
+    assert_eq!(registered[0].len(),1);assert_eq!(registered[0][0].stage,Stage::Focus);
+    drop(registered);
+    assert!(tools.call_with_read_context("airk_answer".into(),json!({}).as_object().unwrap().clone(),context).await.is_err());
+    tools.close().await?;
+    Ok(())
+}

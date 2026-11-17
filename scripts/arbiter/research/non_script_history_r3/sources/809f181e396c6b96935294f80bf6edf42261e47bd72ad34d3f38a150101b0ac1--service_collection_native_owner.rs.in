@@ -1,0 +1,194 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Native owner enrollment and bounded restart observations; no query cutover.
+use super::*;
+use crate::service::registry::IntegrityAuditState;
+
+const NATIVE_PRODUCER_CONTRACT: u32 = 1;
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeOwnerEnrollment {
+    producer_contract: u32,
+    scope: Sha256Digest,
+    private_data_root: [u64;3],
+    selected_directory: [u64;3],
+    data_root_key: Sha256Digest,
+    enrolled_unix_ms: u64,
+}
+/// Owns the exact admitted lease Arc and data-root namespace pin. No borrowed
+/// registry/self-reference, WriterLock, CurrentRead, transaction or tree census.
+pub struct NativeOwnerAuthority {
+    collection: Collection,
+    lease: std::sync::Arc<crate::service::ProjectLease>,
+    bound: crate::service::data_scope::BoundDataRoot,
+    control: PathBuf,
+    enrollment: NativeOwnerEnrollment,
+    namespace_pin: NamespacePin,
+}
+#[cfg(windows)]
+struct NamespacePin(crate::service_census_windows::WindowsWalk);
+#[cfg(target_os="linux")]
+struct NamespacePin(std::fs::File);
+#[cfg(not(any(windows,target_os="linux")))]
+struct NamespacePin;
+impl NamespacePin {
+    fn new(path:&Path)->Result<Self> {
+        #[cfg(windows)]
+        {return Ok(Self(crate::service_census_windows::WindowsWalk::begin(path)?));}
+        #[cfg(target_os="linux")]
+        {return Ok(Self(super::census::pin_owner_root(path)?));}
+        #[cfg(not(any(windows,target_os="linux")))]
+        {let _=path;anyhow::bail!("unsupported native owner namespace evidence")}
+    }
+    fn check(&self)->Result<()> {
+        #[cfg(windows)]
+        {return self.0.check_current();}
+        #[cfg(target_os="linux")]
+        {ensure!(matches!(crate::private_storage::inspect(&self.0,crate::private_storage::Kind::RootDirectory)?,
+            crate::private_storage::Observation::Private(_)),"native private root security changed");return Ok(());}
+        #[cfg(not(any(windows,target_os="linux")))]
+        {anyhow::bail!("unsupported native owner namespace evidence")}
+    }
+}
+/// Exact native-owned publication under the delayed physical-detection contract.
+/// This is not a physically verified component certificate or a query bypass.
+pub struct OwnedPublication<'a> {
+    head: CurrentHead,
+    basis: PublicationBasis,
+    physical_audit: PhysicalAudit,
+    _owner: &'a NativeOwnerAuthority,
+    _read: &'a CurrentRead,
+}
+impl OwnedPublication<'_> {
+    pub fn head(&self)->&CurrentHead {&self.head}
+    pub fn basis(&self)->&PublicationBasis {&self.basis}
+    pub fn physical_audit(&self)->&PhysicalAudit {&self.physical_audit}
+}
+
+fn namespace(data: &Path, selected: &Path) -> Result<([u64;3],[u64;3])> {
+    #[cfg(target_os = "linux")]
+    { return super::census::owner_namespace(data,selected); }
+    #[cfg(windows)]
+    { return crate::service_census_windows::owner_namespace(data,selected); }
+    #[cfg(not(any(target_os = "linux",windows)))]
+    { let _=(data,selected);anyhow::bail!("native private-owner evidence unavailable on this platform") }
+}
+fn scope_identity(scope:&crate::current::CurrentScope)->Result<Sha256Digest> {
+    scope.validate()?;
+    Ok(airk_core::identity::framed_digest(b"native-owner-scope/1",&[&serde_json::to_vec(scope)?]))
+}
+fn data_identity(path:&Path)->Result<Sha256Digest> {
+    Ok(airk_core::identity::framed_digest(b"native-owner-data-root/1",&[path.to_str().context("native data root is not UTF-8")?.as_bytes()]))
+}
+impl<'a> IntegrityOwner<'a> {
+    fn native_selected(&self) -> Result<(FileStore, crate::current::CurrentScope)> {
+        self.check()?;
+        let store=self.collection.selected_store()?;
+        ensure!(store.collection_namespace()?=="collections-1.4", "unsupported native producer namespace");
+        let scope=store.current_owned_scope()?.context("native publication scope missing")?;
+        ensure!(scope.root==self.collection.owner.root && scope.collection==self.collection.owner.collection,
+            "crossed native publication owner");
+        Ok((store,scope))
+    }
+    fn native_admissible(&self, head:&CurrentHead, state:&IntegrityObservation) -> Result<()> {
+        ensure!(!self.bound.native_integrity_revoked(),"live native owner revoked by integrity failure");
+        ensure!(state.known_damage.len()<MAX_DAMAGE && !state.known_damage.iter()
+            .any(|damage|damage.incarnation==head.scope.incarnation),"native component has sticky known damage");
+        let recorded=self.registry.recorded_integrity_damage(self.lease)?;
+        ensure!(recorded.len()<MAX_DAMAGE && !recorded.iter().any(|damage|damage.incarnation==head.scope.incarnation),
+            "native component has durable control-store damage veto");
+        match self.registry.integrity_audit_state(self.lease)? {
+            IntegrityAuditState::Clear | IntegrityAuditState::LiveAudit {..} => (),
+            IntegrityAuditState::Unresolved {..} => anyhow::bail!("native owner has unresolved audit durability"),
+        }
+        Ok(())
+    }
+    /// One-time old-head enrollment is metadata-only, under actual writer
+    /// exclusion. Unknown physical audit is preserved; no census/Verify is run.
+    pub fn enroll_native_owner(&self,lease:std::sync::Arc<crate::service::ProjectLease>,
+        writer:&mut crate::WriterLock,now:u64)->Result<NativeOwnerAuthority> {
+        ensure!(std::ptr::eq(self.lease,lease.as_ref()),"native authority requires the exact admitted lease owner");
+        let fence=self.check()?;
+        let (store,scope)=self.native_selected()?;
+        crate::maintenance::check_writer(&store,writer,
+            &Quota::open_service(Path::new(&self.collection.owner.data_root))?)?;
+        let namespace_pin=NamespacePin::new(Path::new(&self.collection.owner.data_root))?;
+        let ids=namespace(Path::new(&self.collection.owner.data_root),store.directory())?;
+        let read=store.current_read(&scope)?;
+        let head=read.settled_native_head()?.context("native enrollment requires settled publication journal")?;
+        // An old published head is adopted as a metadata anchor, not falsely
+        // labelled physically audited. Existing damage/progress remains sticky.
+        if self.load(fence.0)?.is_none() {self.anchor(&read)?;}
+        let _lock=manifest_lock(&self.collection.directory)?;
+        let mut state=self.load(fence.0)?.context("native owner anchor missing")?;
+        if let Some(previous)=&state.native_owner {
+            ensure!(previous.producer_contract==NATIVE_PRODUCER_CONTRACT,"unsupported native owner producer contract");
+            let current_key=data_identity(Path::new(&self.collection.owner.data_root))?;
+            if previous.data_root_key!=current_key {
+                crate::service::registry::data_relocation::require_native_owner_move(
+                    self.bound.native_control_root(),previous.data_root_key,Path::new(&self.collection.owner.data_root))?;
+            } else {
+                ensure!(previous.private_data_root==ids.0,"native data root physically replaced without owning relocation");
+                if previous.scope==scope_identity(&scope)? {
+                    ensure!(previous.selected_directory==ids.1,"selected native directory replaced without new incarnation");
+                }
+            }
+        }
+        self.native_admissible(&head,&state)?;
+        ensure!(self.check()?==fence && namespace(Path::new(&self.collection.owner.data_root),store.directory())?==ids,
+            "native enrollment namespace changed");
+        let enrollment=NativeOwnerEnrollment {producer_contract:NATIVE_PRODUCER_CONTRACT,scope:scope_identity(&scope)?,
+            private_data_root:ids.0,selected_directory:ids.1,
+            data_root_key:data_identity(Path::new(&self.collection.owner.data_root))?,enrolled_unix_ms:now};
+        state.native_owner=Some(enrollment.clone());
+        state.head=head;
+        state.worker_epoch=fence.1;
+        write(self.collection,RECEIPT,&state)?;
+        Ok(NativeOwnerAuthority{collection:self.collection.clone(),lease,bound:self.bound.clone(),
+            control:self.bound.native_control_root().into(),enrollment,namespace_pin})
+    }
+    /// Healthy restart requires only bounded owner/root/journal/veto metadata.
+    /// No descendant enumeration, payload scan, lexical audit or object read.
+    pub fn resume_native_owner(&self,lease:std::sync::Arc<crate::service::ProjectLease>)->Result<NativeOwnerAuthority> {
+        self.load_native_owner(lease)?.context("native owner enrollment missing")
+    }
+    pub fn load_native_owner(&self,lease:std::sync::Arc<crate::service::ProjectLease>)->Result<Option<NativeOwnerAuthority>> {
+        ensure!(std::ptr::eq(self.lease,lease.as_ref()),"native authority requires the exact admitted lease owner");
+        let fence=self.check()?;
+        let Some(state)=self.load(fence.0)? else {return Ok(None)};
+        let Some(enrollment)=state.native_owner.clone() else {return Ok(None)};
+        let namespace_pin=NamespacePin::new(Path::new(&self.collection.owner.data_root))?;
+        let authority=NativeOwnerAuthority{collection:self.collection.clone(),lease,bound:self.bound.clone(),
+            control:self.bound.native_control_root().into(),enrollment,namespace_pin};
+        let (store,scope)=self.native_selected()?;
+        let read=store.current_read(&scope)?;
+        authority.observe_for(&read)?;
+        Ok(Some(authority))
+    }
+}
+impl NativeOwnerAuthority {
+    /// The eventual F14 adapter must bind this to its actual query read. No
+    /// borrowed writer/census survives enrollment or enters the normal query.
+    pub fn observe_for<'a>(&'a self,read:&'a CurrentRead)->Result<OwnedPublication<'a>> {
+        let registry=crate::service::registry::ServiceRegistry::open_saved(&self.control)?;
+        let owner=self.collection.integrity_owner(&registry,self.lease.as_ref(),&self.bound)?;
+        let fence=owner.check()?;
+        self.namespace_pin.check()?;
+        let (store,scope)=owner.native_selected()?;
+        ensure!(self.enrollment.producer_contract==NATIVE_PRODUCER_CONTRACT
+            && self.enrollment.scope==scope_identity(&scope)? && read.head().scope==scope,
+            "native owner enrollment or selected incarnation changed");
+        ensure!(self.enrollment.data_root_key==data_identity(Path::new(&self.collection.owner.data_root))?,
+            "native relocation requires enrollment through its completed owning receipt");
+        let ids=namespace(Path::new(&self.collection.owner.data_root),store.directory())?;
+        ensure!(ids==(self.enrollment.private_data_root,self.enrollment.selected_directory),
+            "native owner physical namespace changed");
+        let head=read.settled_native_head()?.context("native publication journal is unsettled")?;
+        let state=owner.load(fence.0)?.context("native owner observation missing")?;
+        owner.native_admissible(&head,&state)?;
+        ensure!(owner.check()?==fence,"native owner changed during observation");
+        Ok(OwnedPublication{head,basis:PublicationBasis::RetainedHeadMetadataAnchor,
+            physical_audit:PhysicalAudit::Unknown,_owner:self,_read:read})
+    }
+    pub fn revoke_live(&self) {self.bound.revoke_native_integrity();}
+}

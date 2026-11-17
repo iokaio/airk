@@ -1,0 +1,1537 @@
+--- crates/airk-inference/src/inference_engine/pool/arbiter/CONTRACT.md
++++ crates/airk-inference/src/inference_engine/pool/arbiter/CONTRACT.md
+@@ -107,3 +107,61 @@
+ The actual exclusive native ServiceLease and NativeInferenceOwner remain alive across load, all forwards, observations and cleanup. Input descriptors bind Rust-emitted unqualified profiles and authenticated numeric fixtures; they do not grant compute or source authority.
+ 
+ Only private receipts retain live paths or source/request data. Product fixtures require separate licensed distribution review.
++
++
++## Private actual-dispatch and charge observation
++
++Only native test-support compiles the optional execution observer. The public
++ScoreRequest shape, ordinary score path, native authority, resource admission,
++queue limits and original deadline remain unchanged. The service fixture attaches
++one typed observer to its EvaluationOwner before the existing SAME ServiceLease
++Arc and NativeCatalogAdmission instance check. No serialized request, role flag,
++public operation or ordinary-service environment setting attaches it.
++
++Bounded metadata preparation occurs before the existing final
++`dispatch_before_original_deadline` guard. Only the passed guard's actual score
++closure emits dispatch_admitted immediately before observed_score_call/scorer.score.
++This is a native score-call boundary observation, not a claim to execute inside
++FFI. Expired/canceled/pre-dispatch refusals emit no dispatch witness. The actual
++returned success/error, raw f32 bit patterns (including nonfinite failures), and
++owning native ScoreReceipt are observed BEFORE source/delivery refusal can discard
++scores. Missing return never becomes known/zero work or a successful NN claim.
++
++The witness is the LAST Job field: job_settled follows actual original compute,
++delivery and per-job resident-permit drops without changing field-drop order.
++It does not claim resident/session completion. Dispatch also supplies an opaque
++OptionalRelease proof from that exact actual resident reservation; observation
++retains only Weak allocation identity and release-state custody, never a strong
++charge. The fixture deduplicates native release waits by actual charge identity.
++Only that original opaque future's actual completion may emit profile_released
++and charge_released for its dispatched bindings. Actual ResidentSession scorer,
++source-pin and reservation drop order remains authoritative. A forged/crossed
++binding is refused; JSON observations never grant source or release authority.
++
++A bounded nonblocking try_send channel (at most 4096 events), try-lock metadata
++registry (64 original charge allocations) and monotonic native event/dispatch
++identities never perform observer I/O or await under native/source admission
++locks. Full, contended or disconnected observations increment an explicit lost
++counter without changing actual execution or inventing work. The private writer
++is outside those locks; it bounds the run to 1024 dispatches, 8192 records and
++64MiB, persists actual events to composed-observer.jsonl, and writes its owning
++RecorderSummary to composed-observer.closed.json. Loss, writer failure or missing
++actual return/release makes acceptance incomplete, never a retry permission.
++Wall-clock deadline conversion is observational only; original monotonic native
++deadlines remain the sole execution authority.
++
++The JSON event and summary types are owned by Inference execution_observer,
++using actual Core ScopeBinding/Task/digests and the native ScoreReceipt rather
++than consumer mirrors. The ignored fixture alone accepts explicit true/false
++AIRK_NATIVE_DISPATCH_OBSERVER; default is absent. Complete recorder evidence is
++not model, task, source-trajectory or release qualification. The driver mutates
++only after the actual dispatch marker, requires matching successful finite
++native return after its trigger plus actual settlement/release evidence, and
++reports a lost race as incomplete without retry. Ordinary source/delivery gates
++and existing actual service shutdown/lease-reacquisition evidence remain required.
++
++Cheap controls inject only score-return/clock seams and retain real native queue
++and resource charges. They cover canceled/expired guard refusal, exact
++success/failure/nonfinite work, last-job versus last-resident release, full/closed
++observation loss, no invented completion, crossed release identity, and exact
++fixture lease/gate attachment refusal. They run no NN and claim no qualification.
+--- crates/airk-service/src/service_runtime/arbiter/CONTRACT.md
++++ crates/airk-service/src/service_runtime/arbiter/CONTRACT.md
+@@ -223,3 +223,61 @@
+ not actuated learned trajectories or extra allowances in the captured request.
+ Artifacts remain private and unqualified until the required actual native,
+ independent-label, fitting, held-out, resource and product qualification gates.
++
++
++## Private actual-dispatch and charge observation
++
++Only native test-support compiles the optional execution observer. The public
++ScoreRequest shape, ordinary score path, native authority, resource admission,
++queue limits and original deadline remain unchanged. The service fixture attaches
++one typed observer to its EvaluationOwner before the existing SAME ServiceLease
++Arc and NativeCatalogAdmission instance check. No serialized request, role flag,
++public operation or ordinary-service environment setting attaches it.
++
++Bounded metadata preparation occurs before the existing final
++`dispatch_before_original_deadline` guard. Only the passed guard's actual score
++closure emits dispatch_admitted immediately before observed_score_call/scorer.score.
++This is a native score-call boundary observation, not a claim to execute inside
++FFI. Expired/canceled/pre-dispatch refusals emit no dispatch witness. The actual
++returned success/error, raw f32 bit patterns (including nonfinite failures), and
++owning native ScoreReceipt are observed BEFORE source/delivery refusal can discard
++scores. Missing return never becomes known/zero work or a successful NN claim.
++
++The witness is the LAST Job field: job_settled follows actual original compute,
++delivery and per-job resident-permit drops without changing field-drop order.
++It does not claim resident/session completion. Dispatch also supplies an opaque
++OptionalRelease proof from that exact actual resident reservation; observation
++retains only Weak allocation identity and release-state custody, never a strong
++charge. The fixture deduplicates native release waits by actual charge identity.
++Only that original opaque future's actual completion may emit profile_released
++and charge_released for its dispatched bindings. Actual ResidentSession scorer,
++source-pin and reservation drop order remains authoritative. A forged/crossed
++binding is refused; JSON observations never grant source or release authority.
++
++A bounded nonblocking try_send channel (at most 4096 events), try-lock metadata
++registry (64 original charge allocations) and monotonic native event/dispatch
++identities never perform observer I/O or await under native/source admission
++locks. Full, contended or disconnected observations increment an explicit lost
++counter without changing actual execution or inventing work. The private writer
++is outside those locks; it bounds the run to 1024 dispatches, 8192 records and
++64MiB, persists actual events to composed-observer.jsonl, and writes its owning
++RecorderSummary to composed-observer.closed.json. Loss, writer failure or missing
++actual return/release makes acceptance incomplete, never a retry permission.
++Wall-clock deadline conversion is observational only; original monotonic native
++deadlines remain the sole execution authority.
++
++The JSON event and summary types are owned by Inference execution_observer,
++using actual Core ScopeBinding/Task/digests and the native ScoreReceipt rather
++than consumer mirrors. The ignored fixture alone accepts explicit true/false
++AIRK_NATIVE_DISPATCH_OBSERVER; default is absent. Complete recorder evidence is
++not model, task, source-trajectory or release qualification. The driver mutates
++only after the actual dispatch marker, requires matching successful finite
++native return after its trigger plus actual settlement/release evidence, and
++reports a lost race as incomplete without retry. Ordinary source/delivery gates
++and existing actual service shutdown/lease-reacquisition evidence remain required.
++
++Cheap controls inject only score-return/clock seams and retain real native queue
++and resource charges. They cover canceled/expired guard refusal, exact
++success/failure/nonfinite work, last-job versus last-resident release, full/closed
++observation loss, no invented completion, crossed release identity, and exact
++fixture lease/gate attachment refusal. They run no NN and claim no qualification.
+--- crates/airk-inference/src/inference_engine/pool/arbiter.rs
++++ crates/airk-inference/src/inference_engine/pool/arbiter.rs
+@@ -10,6 +10,9 @@
+     collections::{BTreeMap, VecDeque},
+     sync::Condvar,
+ };
++
++#[cfg(feature = "test-support")]
++pub mod execution_observer;
+ 
+ /// Native admission owner retains the memory reservation until actual FFI
+ /// completion. A disconnected delivery never releases this reservation early.
+@@ -56,6 +59,7 @@
+ /// Fixed-size, private native measurements after an actual score call returns.
+ /// This is not a wire response or evidence/source authority.
+ #[derive(Clone, Debug, PartialEq, Eq)]
++#[cfg_attr(feature = "test-support", derive(serde::Serialize, serde::Deserialize))]
+ pub struct ScoreReceipt {
+     pub input_digest: Sha256Digest,
+     pub input_tokens: usize,
+@@ -178,6 +182,11 @@
+     admission: airk_kernel::service_resources::OptionalReuse,
+     reply: oneshot::Sender<Result<Scored>>,
+     compiled: Option<oneshot::Sender<CompiledReceipt>>,
++    #[cfg(feature = "test-support")]
++    observer: Option<execution_observer::Observer>,
++    // Last field: actual original work/delivery/permit drops precede settlement observation.
++    #[cfg(feature = "test-support")]
++    observation: Option<execution_observer::Witness>,
+ }
+ /// Field drop order is part of the native lifetime contract: actual scorer
+ /// teardown completes before the exact authenticated asset-source pins release.
+@@ -541,6 +550,25 @@
+             .context("resident has no authenticated joint calibration")
+     }
+     pub fn score(&self, request: ScoreRequest) -> Result<PendingScore> {
++        self.score_inner(
++            request,
++            #[cfg(feature = "test-support")]
++            None,
++        )
++    }
++    #[cfg(feature = "test-support")]
++    pub fn score_observed(
++        &self,
++        request: ScoreRequest,
++        observer: execution_observer::Observer,
++    ) -> Result<PendingScore> {
++        self.score_inner(request, Some(observer))
++    }
++    fn score_inner(
++        &self,
++        request: ScoreRequest,
++        #[cfg(feature = "test-support")] observer: Option<execution_observer::Observer>,
++    ) -> Result<PendingScore> {
+         let ScoreRequest {
+             worker,
+             scope,
+@@ -609,6 +637,10 @@
+             queued_at: Instant::now(),
+             max_input_tokens,
+             compiled: Some(compiled),
++            #[cfg(feature = "test-support")]
++            observer,
++            #[cfg(feature = "test-support")]
++            observation: None,
+             scope,
+             task,
+             deadline,
+@@ -800,8 +832,15 @@
+                                 let started=Instant::now();
+                                 ensure!(airk_kernel::service_resource_observations::available_memory().is_some_and(|available|available>=job.resident.reservation.bytes().saturating_add(256<<20)),"optional native score has no fresh OS headroom");
+                                 job.admission.validate(&job.resident.reservation)?;
++                                #[cfg(feature = "test-support")]
++                                let prepared_observation=job.observer.as_ref().and_then(|observer|observer.prepare(&job,&receipt));
+                                 dispatch_before_original_deadline(job.deadline,Instant::now,||job.reply.is_closed(),|| {
+-                                    observed_score_call(&receipt, started, Instant::now, || scorer.score(&input))
++                                    #[cfg(feature = "test-support")]
++                                    { job.observation=prepared_observation.map(|prepared|prepared.admitted()); }
++                                    let scored=observed_score_call(&receipt, started, Instant::now, || scorer.score(&input));
++                                    #[cfg(feature = "test-support")]
++                                    if let Some(observation)=&mut job.observation {observation.returned(&scored);}
++                                    scored
+                                 })
+                             });
+                             let source_live = (job.authority)(&job.scope);
+--- /dev/null
++++ crates/airk-inference/src/inference_engine/pool/arbiter/execution_observer.rs
+@@ -0,0 +1,486 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Private test-support observations, never native admission or an inside-FFI claim.
++use super::*;
++use serde::{Deserialize, Serialize};
++use sha2::{Digest, Sha256};
++use std::{
++    sync::{Weak, atomic::AtomicU64},
++    time::{SystemTime, UNIX_EPOCH},
++};
++use tokio::sync::mpsc::{self, Receiver, Sender};
++pub const CAPACITY: usize = 4096;
++const MAX_CHARGES: usize = 64;
++#[derive(Clone, Serialize, Deserialize)]
++pub struct Binding {
++    pub observer_id: Incarnation,
++    pub dispatch_identity: u64,
++    pub profile_manifest: Sha256Digest,
++    pub task: Task,
++    pub input_digest: Sha256Digest,
++    pub question_utf8_sha256: Sha256Digest,
++    pub original_deadline_unix_ms: u64,
++    pub tokens: usize,
++    pub charge_identity: String,
++    pub charge_bytes: u64,
++    pub scope: ScopeBinding,
++}
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum Kind {
++    DispatchAdmitted,
++    ScoreReturned,
++    JobSettled,
++    ProfileReleased,
++    ChargeReleased,
++}
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
++pub enum Outcome {
++    Success,
++    Error,
++}
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct RecorderSummary {
++    pub schema: String,
++    pub complete: bool,
++    pub evaluation: bool,
++    pub release_qualified: bool,
++    pub dropped: u64,
++    pub writer_failed: usize,
++    pub records: usize,
++    pub bytes: u64,
++    pub last_sequence: u64,
++    pub error: Option<String>,
++    pub proof: String,
++}
++#[derive(Clone, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct Record {
++    pub schema: String,
++    pub sequence: u64,
++    pub unix_ms: u64,
++    pub kind: Kind,
++    #[serde(flatten)]
++    pub binding: Binding,
++    pub outcome: Option<Outcome>,
++    pub finite_raw_scores: Option<bool>,
++    pub raw_scores: Option<Vec<Option<f32>>>,
++    pub raw_score_bits: Option<Vec<u32>>,
++    pub work: Option<ScoreReceipt>,
++    pub error: Option<String>,
++    pub return_observed: bool,
++    pub proof: Option<String>,
++}
++pub struct Event {
++    pub record: Record,
++    pub release: Option<ReleaseProof>,
++}
++/// Opaque actual charge completion, constructed only at native dispatch.
++pub struct ReleaseProof {
++    observer: Observer,
++    binding: Binding,
++    release: airk_kernel::service_resources::OptionalRelease,
++}
++pub struct ReleasedCharge {
++    observer: Observer,
++    binding: Binding,
++}
++impl ReleaseProof {
++    pub async fn wait(self) -> Result<ReleasedCharge> {
++        self.release.wait().await?;
++        Ok(ReleasedCharge {
++            observer: self.observer,
++            binding: self.binding,
++        })
++    }
++}
++impl ReleasedCharge {
++    pub fn emit_for(&self, bindings: &[Binding]) -> Result<()> {
++        for binding in bindings {
++            ensure!(
++                binding.observer_id == self.binding.observer_id
++                    && binding.charge_identity == self.binding.charge_identity
++                    && binding.profile_manifest == self.binding.profile_manifest
++                    && binding.charge_bytes == self.binding.charge_bytes,
++                "crossed actual native charge release evidence"
++            );
++        }
++        for binding in bindings {
++            for kind in [Kind::ProfileReleased, Kind::ChargeReleased] {
++                let mut record = Observer::record(binding.clone(), kind);
++                record.proof = Some(
++                    "actual_final_reservation_drop_after_native_scorer_and_source_teardown".into(),
++                );
++                self.observer.emit(record, None);
++            }
++        }
++        Ok(())
++    }
++}
++struct State {
++    sender: Option<Sender<Event>>,
++    sequence: u64,
++    next_dispatch: u64,
++    charges: BTreeMap<usize, (Weak<Reservation>, u64)>,
++}
++struct Inner {
++    id: Incarnation,
++    state: Mutex<State>,
++    dropped: AtomicU64,
++}
++#[derive(Clone)]
++pub struct Observer(Arc<Inner>);
++impl Observer {
++    pub fn channel(capacity: usize) -> Result<(Self, Receiver<Event>)> {
++        ensure!(
++            (1..=CAPACITY).contains(&capacity),
++            "private observer capacity refused"
++        );
++        let (sender, receiver) = mpsc::channel(capacity);
++        Ok((
++            Self(Arc::new(Inner {
++                id: airk_kernel::service_broker::new_instance_id()?,
++                state: Mutex::new(State {
++                    sender: Some(sender),
++                    sequence: 0,
++                    next_dispatch: 0,
++                    charges: BTreeMap::new(),
++                }),
++                dropped: AtomicU64::new(0),
++            })),
++            receiver,
++        ))
++    }
++    fn lost(&self) {
++        let _ = self
++            .0
++            .dropped
++            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
++                Some(value.saturating_add(1))
++            });
++    }
++    pub fn dropped(&self) -> u64 {
++        self.0.dropped.load(Ordering::Acquire)
++    }
++    /// Only after actual fixture service/native owners have settled. No runtime path calls this.
++    pub fn close(&self) {
++        if let Ok(mut state) = self.0.state.lock() {
++            state.sender = None;
++        } else {
++            self.lost();
++        }
++    }
++    fn timestamp() -> Option<u64> {
++        u64::try_from(
++            SystemTime::now()
++                .duration_since(UNIX_EPOCH)
++                .ok()?
++                .as_millis(),
++        )
++        .ok()
++    }
++    fn emit(&self, mut record: Record, release: Option<ReleaseProof>) {
++        let Ok(mut state) = self.0.state.try_lock() else {
++            self.lost();
++            return;
++        };
++        let Some(next) = state.sequence.checked_add(1) else {
++            self.lost();
++            return;
++        };
++        let Some(unix_ms) = Self::timestamp() else {
++            self.lost();
++            return;
++        };
++        state.sequence = next;
++        record.sequence = next;
++        record.unix_ms = unix_ms;
++        if state
++            .sender
++            .as_ref()
++            .is_none_or(|sender| sender.try_send(Event { record, release }).is_err())
++        {
++            self.lost();
++        }
++    }
++    fn record(binding: Binding, kind: Kind) -> Record {
++        Record {
++            schema: "airk.private.native-dispatch/1".into(),
++            sequence: 0,
++            unix_ms: 0,
++            kind,
++            binding,
++            outcome: None,
++            finite_raw_scores: None,
++            raw_scores: None,
++            raw_score_bits: None,
++            work: None,
++            error: None,
++            return_observed: false,
++            proof: None,
++        }
++    }
++    pub(super) fn prepare(&self, job: &Job, compiled: &CompiledReceipt) -> Option<Prepared> {
++        let key = Arc::as_ptr(&job.resident.reservation) as usize;
++        let (charge, dispatch_identity) = {
++            let Ok(mut state) = self.0.state.try_lock() else {
++                self.lost();
++                return None;
++            };
++            let Some(dispatch) = state.next_dispatch.checked_add(1) else {
++                self.lost();
++                return None;
++            };
++            state.next_dispatch = dispatch;
++            let charge = if let Some((_, id)) = state.charges.get(&key) {
++                *id
++            } else {
++                if state.charges.len() >= MAX_CHARGES {
++                    self.lost();
++                    return None;
++                }
++                let id = state.charges.len() as u64 + 1;
++                state
++                    .charges
++                    .insert(key, (Arc::downgrade(&job.resident.reservation), id));
++                id
++            };
++            (charge, dispatch)
++        };
++        let Some(unix_ms) = Self::timestamp() else {
++            self.lost();
++            return None;
++        };
++        let Some(deadline) = unix_ms.checked_add(
++            u64::try_from(
++                job.deadline
++                    .saturating_duration_since(Instant::now())
++                    .as_millis(),
++            )
++            .unwrap_or(u64::MAX),
++        ) else {
++            self.lost();
++            return None;
++        };
++        let binding = Binding {
++            observer_id: self.0.id,
++            dispatch_identity,
++            profile_manifest: job.resident.profile,
++            task: job.task,
++            input_digest: compiled.input_digest,
++            question_utf8_sha256: Sha256Digest::from_bytes(
++                Sha256::digest(job.question.as_bytes()).into(),
++            ),
++            original_deadline_unix_ms: deadline,
++            tokens: compiled.input_tokens,
++            charge_identity: format!("{}:{charge}", self.0.id),
++            charge_bytes: job.resident.reservation.bytes(),
++            scope: job.scope.clone(),
++        };
++        Some(Prepared {
++            observer: self.clone(),
++            binding,
++            release: job.resident.reservation.release_observer(),
++        })
++    }
++}
++pub(super) struct Prepared {
++    observer: Observer,
++    binding: Binding,
++    release: airk_kernel::service_resources::OptionalRelease,
++}
++impl Prepared {
++    /// Called only inside the already-passed final native dispatch guard.
++    pub(super) fn admitted(self) -> Witness {
++        self.observer.emit(
++            Observer::record(self.binding.clone(), Kind::DispatchAdmitted),
++            Some(ReleaseProof {
++                observer: self.observer.clone(),
++                binding: self.binding.clone(),
++                release: self.release,
++            }),
++        );
++        Witness {
++            observer: self.observer,
++            binding: self.binding,
++            returned: false,
++        }
++    }
++}
++pub(super) struct Witness {
++    observer: Observer,
++    binding: Binding,
++    returned: bool,
++}
++impl Witness {
++    pub(super) fn returned(&mut self, result: &Result<Scored>) {
++        self.returned = true;
++        let mut record = Observer::record(self.binding.clone(), Kind::ScoreReturned);
++        record.return_observed = true;
++        match result {
++            Ok(scored) => {
++                record.outcome = Some(Outcome::Success);
++                record.finite_raw_scores = Some(
++                    !scored.scores.is_empty()
++                        && scored.scores.iter().all(|value| value.is_finite()),
++                );
++                if scored.scores.len() <= 64 {
++                    record.raw_scores = Some(
++                        scored
++                            .scores
++                            .iter()
++                            .map(|value| value.is_finite().then_some(*value))
++                            .collect(),
++                    );
++                    record.raw_score_bits =
++                        Some(scored.scores.iter().map(|value| value.to_bits()).collect());
++                } else {
++                    self.observer.lost();
++                    record.finite_raw_scores = Some(false);
++                    record.error=Some("Native score evidence exceeded the private observation bound; full result was not observed".into());
++                }
++                record.work = Some(ScoreReceipt {
++                    input_digest: scored.input_digest,
++                    input_tokens: scored.input_tokens,
++                    queue_us: scored.queue_us,
++                    compile_us: scored.compile_us,
++                    inference_us: scored.inference_us,
++                });
++            }
++            Err(error) => {
++                record.outcome = Some(Outcome::Error);
++                record.error = Some(format!("{error:#}").chars().take(1024).collect());
++                record.work = error
++                    .downcast_ref::<KnownScoreFailure>()
++                    .map(|failure| failure.receipt.clone());
++            }
++        }
++        self.observer.emit(record, None);
++    }
++}
++impl Drop for Witness {
++    fn drop(&mut self) {
++        let mut record = Observer::record(self.binding.clone(), Kind::JobSettled);
++        record.return_observed = self.returned;
++        record.proof =
++            Some("actual_job_compute_delivery_and_per_job_resident_permit_dropped".into());
++        self.observer.emit(record, None);
++    }
++}
++
++impl Record {
++    /// Decode conformance only; serialized observations never mint native custody.
++    pub fn validate(&self) -> Result<()> {
++        ensure!(
++            self.schema == "airk.private.native-dispatch/1"
++                && self.sequence > 0
++                && self.unix_ms > 0,
++            "private native event schema/sequence/time refused"
++        );
++        ensure!(
++            (1..=2048).contains(&self.binding.tokens)
++                && self.binding.charge_bytes > 0
++                && !self.binding.charge_identity.is_empty()
++                && self.binding.charge_identity.len() <= 128
++                && self.binding.dispatch_identity > 0,
++            "private native event binding bounds refused"
++        );
++        if self.kind == Kind::ScoreReturned {
++            ensure!(
++                self.return_observed && self.outcome.is_some(),
++                "native return observation missing"
++            );
++            let work = self
++                .work
++                .as_ref()
++                .context("actual native returned work missing")?;
++            ensure!(
++                work.input_digest == self.binding.input_digest
++                    && work.input_tokens == self.binding.tokens,
++                "actual return differs from original compiled input"
++            );
++            if self.outcome == Some(Outcome::Success) {
++                let scores = self
++                    .raw_scores
++                    .as_ref()
++                    .context("actual returned scores missing")?;
++                let bits = self
++                    .raw_score_bits
++                    .as_ref()
++                    .context("actual score bits missing")?;
++                ensure!(
++                    !scores.is_empty() && scores.len() <= 64 && scores.len() == bits.len(),
++                    "actual score evidence bound differs"
++                );
++                let finite = bits.iter().all(|bits| f32::from_bits(*bits).is_finite());
++                ensure!(
++                    self.finite_raw_scores == Some(finite),
++                    "native score finiteness claim differs"
++                );
++                ensure!(
++                    scores.iter().zip(bits).all(|(score, bits)| {
++                        let value = f32::from_bits(*bits);
++                        if value.is_finite() {
++                            score.is_some_and(|score| score.to_bits() == *bits)
++                        } else {
++                            score.is_none()
++                        }
++                    }),
++                    "native score evidence differs from actual bit pattern"
++                );
++            } else {
++                ensure!(
++                    self.raw_scores.is_none()
++                        && self.raw_score_bits.is_none()
++                        && self.error.is_some(),
++                    "failed native return invented scores or omitted cause"
++                );
++            }
++        } else {
++            ensure!(
++                self.outcome.is_none()
++                    && self.work.is_none()
++                    && self.raw_scores.is_none()
++                    && self.raw_score_bits.is_none(),
++                "non-return observation invented completed work"
++            );
++        }
++        if matches!(self.kind, Kind::ProfileReleased | Kind::ChargeReleased) {
++            ensure!(
++                self.proof.as_deref()
++                    == Some(
++                        "actual_final_reservation_drop_after_native_scorer_and_source_teardown"
++                    ),
++                "native release proof kind differs"
++            );
++        }
++        ensure!(
++            self.error.as_ref().is_none_or(|value| value.len() <= 4096)
++                && serde_json::to_vec(self)?.len() <= 65536,
++            "native event byte bound exceeded"
++        );
++        Ok(())
++    }
++}
++impl RecorderSummary {
++    pub fn validate(&self) -> Result<()> {
++        ensure!(
++            self.schema == "airk.private.native-dispatch-recorder/1"
++                && self.evaluation
++                && !self.release_qualified,
++            "private native recorder scope/bounds differ"
++        );
++        ensure!(
++            !self.complete
++                || (self.dropped == 0
++                    && self.writer_failed == 0
++                    && self.error.is_none()
++                    && self.last_sequence == self.records as u64
++                    && self.records <= 8192
++                    && self.bytes <= 64 << 20),
++            "incomplete observer evidence claimed complete"
++        );
++        Ok(())
++    }
++}
+--- crates/airk-inference/src/inference_engine/pool/arbiter/tests.rs
++++ crates/airk-inference/src/inference_engine/pool/arbiter/tests.rs
+@@ -615,3 +615,6 @@
+     );
+     Ok(())
+ }
++
++#[cfg(feature = "test-support")]
++mod execution_observation;
+--- /dev/null
++++ crates/airk-inference/src/inference_engine/pool/arbiter/tests/execution_observation.rs
+@@ -0,0 +1,302 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Real native charge/queue fixtures and injected score-return seam; no NN qualification.
++use super::super::execution_observer::{Kind, Observer, Outcome, Record};
++use super::*;
++fn queued(observer: Observer) -> Result<(Arc<Shared>, Job, Arc<Reservation>, PendingScore)> {
++    let shared = shared_fixture();
++    let handle = Handle(shared.clone());
++    let resources = airk_kernel::service_resources::Resources::new(
++        airk_core::service_resources::ResourceConfiguration {
++            memory_bytes: Some(8 << 30),
++            ..Default::default()
++        },
++        8,
++        Some(16 << 30),
++    )?;
++    let request = request_fixture(&shared, &resources, 61)?;
++    let charge = request.resident.reservation.clone();
++    let mut config = Configuration::disabled(request.scope.installation, shared.service);
++    config.context.enabled = true;
++    config.context.selected_profile = Some(request.resident.profile);
++    config.context.indexes = vec![airk_core::arbiter::Enrollment {
++        index_id: request.scope.index_id,
++        tasks: std::collections::BTreeSet::from([Task::ContextAction]),
++    }];
++    handle.configure(config)?;
++    let pending = handle.score_observed(request, observer)?;
++    let mut job = shared
++        .queue
++        .lock()
++        .unwrap()
++        .jobs
++        .pop_front()
++        .context("original queued job missing")?;
++    job.compute.running();
++    Ok((shared, job, charge, pending))
++}
++fn compiled() -> CompiledReceipt {
++    CompiledReceipt {
++        input_digest: Sha256Digest::from_bytes([71; 32]),
++        input_tokens: 17,
++        queue_us: 2,
++        compile_us: 3,
++    }
++}
++#[test]
++fn canceled_or_expired_actual_dispatch_guard_emits_no_phantom_native_event() -> Result<()> {
++    for expired in [false, true] {
++        let (observer, mut events) = Observer::channel(16)?;
++        let (_shared, job, _charge, _pending) = queued(observer.clone())?;
++        let prepared = observer.prepare(&job, &compiled());
++        let calls = std::cell::Cell::new(0);
++        let deadline = if expired {
++            Instant::now()
++        } else {
++            Instant::now() + Duration::from_secs(1)
++        };
++        let result = dispatch_before_original_deadline(
++            deadline,
++            Instant::now,
++            || !expired,
++            || {
++                let _observed = prepared.map(|value| value.admitted());
++                calls.set(calls.get() + 1);
++                Ok(())
++            },
++        );
++        assert!(result.is_err());
++        assert_eq!(calls.get(), 0);
++        drop(job);
++        assert!(events.try_recv().is_err());
++        assert_eq!(observer.dropped(), 0);
++    }
++    Ok(())
++}
++#[tokio::test]
++async fn actual_dispatch_return_job_drop_and_final_charge_release_have_one_native_identity()
++-> Result<()> {
++    use std::future::Future;
++    let (observer, mut events) = Observer::channel(32)?;
++    let (shared, mut job, charge, _pending) = queued(observer.clone())?;
++    let refs = Arc::strong_count(&charge);
++    let prepared = observer
++        .prepare(&job, &compiled())
++        .context("native observation preparation absent")?;
++    assert_eq!(Arc::strong_count(&charge), refs);
++    dispatch_before_original_deadline(
++        job.deadline,
++        Instant::now,
++        || false,
++        || {
++            job.observation = Some(prepared.admitted());
++            let returned = observed_score_call(&compiled(), Instant::now(), Instant::now, || {
++                Ok(vec![1.0, 2.0])
++            });
++            job.observation.as_mut().unwrap().returned(&returned);
++            returned.map(|_| ())
++        },
++    )?;
++    let dispatch = events.try_recv()?;
++    assert_eq!(dispatch.record.kind, Kind::DispatchAdmitted);
++    assert!(dispatch.record.work.is_none());
++    let binding = dispatch.record.binding.clone();
++    let returned = events.try_recv()?;
++    assert_eq!(returned.record.kind, Kind::ScoreReturned);
++    assert_eq!(returned.record.outcome, Some(Outcome::Success));
++    assert_eq!(returned.record.finite_raw_scores, Some(true));
++    assert_eq!(returned.record.work.as_ref().unwrap().input_tokens, 17);
++    assert_eq!(
++        serde_json::to_value(&binding)?,
++        serde_json::to_value(&returned.record.binding)?
++    );
++    assert!(events.try_recv().is_err());
++    drop(job);
++    let settled = events.try_recv()?;
++    assert_eq!(settled.record.kind, Kind::JobSettled);
++    assert!(settled.record.return_observed);
++    assert_eq!(
++        shared
++            .accounting
++            .status(airk_core::inference_provider::ProviderIdentity {
++                schema: 1,
++                service_instance: shared.service,
++                provider_generation: shared.service,
++                approved_execution_sha256: Sha256Digest::from_bytes([72; 32])
++            })?
++            .running_outstanding,
++        0
++    );
++    let mut proof = Box::pin(
++        dispatch
++            .release
++            .context("actual opaque charge proof absent")?
++            .wait(),
++    );
++    assert!(
++        proof
++            .as_mut()
++            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
++            .is_pending()
++    );
++    drop(charge);
++    let proof = proof.await?;
++    let mut crossed = binding.clone();
++    crossed.charge_identity.push('x');
++    assert!(proof.emit_for(&[crossed]).is_err());
++    assert!(events.try_recv().is_err());
++    proof.emit_for(&[binding.clone()])?;
++    for kind in [Kind::ProfileReleased, Kind::ChargeReleased] {
++        let event = events.try_recv()?;
++        assert_eq!(event.record.kind, kind);
++        assert_eq!(
++            serde_json::to_value(&event.record.binding)?,
++            serde_json::to_value(&binding)?
++        );
++        let decoded: Record = serde_json::from_value(serde_json::to_value(&event.record)?)?;
++        decoded.validate()?;
++        assert_eq!(decoded.sequence, event.record.sequence);
++    }
++    assert_eq!(observer.dropped(), 0);
++    Ok(())
++}
++#[test]
++fn actual_failed_or_nonfinite_score_return_retains_work_and_exact_score_bits() -> Result<()> {
++    for nonfinite in [false, true] {
++        let (observer, mut events) = Observer::channel(16)?;
++        let (_shared, mut job, _charge, _pending) = queued(observer.clone())?;
++        job.observation = observer
++            .prepare(&job, &compiled())
++            .map(|value| value.admitted());
++        let value = observed_score_call(&compiled(), Instant::now(), Instant::now, || {
++            if nonfinite {
++                Ok(vec![f32::NAN])
++            } else {
++                anyhow::bail!("actual injected native score error")
++            }
++        });
++        job.observation.as_mut().unwrap().returned(&value);
++        let _ = events.try_recv()?;
++        let returned = events.try_recv()?;
++        assert_eq!(returned.record.work.as_ref().unwrap().input_tokens, 17);
++        if nonfinite {
++            assert_eq!(returned.record.finite_raw_scores, Some(false));
++            assert_eq!(
++                returned.record.raw_score_bits,
++                Some(vec![f32::NAN.to_bits()])
++            );
++            let _: Record = serde_json::from_value(serde_json::to_value(&returned.record)?)?;
++        } else {
++            assert_eq!(returned.record.outcome, Some(Outcome::Error));
++            assert!(
++                returned
++                    .record
++                    .error
++                    .as_ref()
++                    .unwrap()
++                    .contains("injected native score error")
++            );
++            assert!(returned.record.raw_scores.is_none());
++        }
++        drop(job);
++    }
++    Ok(())
++}
++#[test]
++fn full_or_disconnected_observer_retains_failure_count_without_granting_or_suppressing_native_dispatch()
++-> Result<()> {
++    assert!(Observer::channel(0).is_err());
++    assert!(Observer::channel(4097).is_err());
++    for disconnected in [false, true] {
++        let (observer, events) = Observer::channel(1)?;
++        let mut receiver = Some(events);
++        if disconnected {
++            drop(receiver.take());
++        }
++        let (_shared, mut job, _charge, _pending) = queued(observer.clone())?;
++        let calls = std::cell::Cell::new(0);
++        let prepared = observer.prepare(&job, &compiled()).unwrap();
++        dispatch_before_original_deadline(
++            job.deadline,
++            Instant::now,
++            || false,
++            || {
++                job.observation = Some(prepared.admitted());
++                let result = observed_score_call(&compiled(), Instant::now(), Instant::now, || {
++                    calls.set(calls.get() + 1);
++                    Ok(vec![1.0])
++                });
++                job.observation.as_mut().unwrap().returned(&result);
++                result.map(|_| ())
++            },
++        )?;
++        drop(job);
++        assert_eq!(calls.get(), 1);
++        assert!(observer.dropped() >= 2);
++        if let Some(mut receiver) = receiver {
++            assert_eq!(receiver.try_recv()?.record.kind, Kind::DispatchAdmitted);
++            assert!(receiver.try_recv().is_err());
++        }
++    }
++    Ok(())
++}
++#[test]
++fn dispatch_without_actual_return_never_reports_known_or_zero_completed_work() -> Result<()> {
++    let (observer, mut events) = Observer::channel(16)?;
++    let (_shared, mut job, _charge, _pending) = queued(observer.clone())?;
++    job.observation = observer
++        .prepare(&job, &compiled())
++        .map(|value| value.admitted());
++    drop(job);
++    let _ = events.try_recv()?;
++    let settled = events.try_recv()?;
++    assert_eq!(settled.record.kind, Kind::JobSettled);
++    assert!(!settled.record.return_observed);
++    assert!(settled.record.work.is_none());
++    assert!(events.try_recv().is_err());
++    Ok(())
++}
++
++#[test]
++fn native_observer_record_owner_refuses_fake_return_and_false_complete_loss() -> Result<()> {
++    use super::super::execution_observer::RecorderSummary;
++    let (observer, mut events) = Observer::channel(16)?;
++    let (_shared, mut job, _charge, _pending) = queued(observer.clone())?;
++    job.observation = observer
++        .prepare(&job, &compiled())
++        .map(|value| value.admitted());
++    let result = observed_score_call(&compiled(), Instant::now(), Instant::now, || Ok(vec![1.0]));
++    job.observation.as_mut().unwrap().returned(&result);
++    let dispatch = events.try_recv()?;
++    dispatch.record.validate()?;
++    let returned = events.try_recv()?;
++    returned.record.validate()?;
++    let mut fake = returned.record.clone();
++    fake.work = None;
++    assert!(fake.validate().is_err());
++    let mut fake = returned.record.clone();
++    fake.raw_score_bits.as_mut().unwrap()[0] ^= 1;
++    assert!(fake.validate().is_err());
++    let mut fake = dispatch.record;
++    fake.work = returned.record.work;
++    assert!(fake.validate().is_err());
++    let mut summary = RecorderSummary {
++        schema: "airk.private.native-dispatch-recorder/1".into(),
++        complete: true,
++        evaluation: true,
++        release_qualified: false,
++        dropped: 1,
++        writer_failed: 0,
++        records: 1,
++        bytes: 100,
++        last_sequence: 1,
++        error: None,
++        proof: "fixture".into(),
++    };
++    assert!(summary.validate().is_err());
++    summary.complete = false;
++    summary.records = 8193;
++    summary.bytes = 65 << 20;
++    summary.error = Some("actual recorder bound refused; evidence incomplete".into());
++    summary.validate()?;
++    Ok(())
++}
+--- crates/airk-service/src/service_runtime/arbiter.rs
++++ crates/airk-service/src/service_runtime/arbiter.rs
+@@ -51,6 +51,8 @@
+             evaluation: None,
+             #[cfg(all(feature = "local-inference", feature = "test-support"))]
+             context_observer: None,
++            #[cfg(all(feature = "local-inference", feature = "test-support"))]
++            execution_observer: None,
+             configuration: context.configuration.clone(),
+             #[cfg(feature = "local-inference")]
+             assets: context.assets.clone(),
+@@ -402,6 +404,9 @@
+     evaluation: Option<airk_retrieval::arbiter::runtime::EvaluationCatalog>,
+     #[cfg(all(feature = "local-inference", feature = "test-support"))]
+     context_observer: Option<evaluation::ContextObservationSink>,
++    #[cfg(all(feature = "local-inference", feature = "test-support"))]
++    execution_observer:
++        Option<airk_inference::inference_engine::pool::arbiter::execution_observer::Observer>,
+     configuration: Arc<airk_store::service::arbiter::ConfigurationStore>,
+     #[cfg(feature = "local-inference")]
+     assets: Arc<airk_store::service::arbiter_assets::AssetStore>,
+@@ -436,6 +441,8 @@
+             evaluation: None,
+             #[cfg(all(feature = "local-inference", feature = "test-support"))]
+             context_observer: None,
++            #[cfg(all(feature = "local-inference", feature = "test-support"))]
++            execution_observer: None,
+             ownership: ownership.clone(),
+             configuration: Arc::new(configuration),
+             #[cfg(feature = "local-inference")]
+@@ -450,6 +457,22 @@
+             installation: binding.installation,
+             namespace: clock.namespace,
+         })
++    }
++    #[cfg(feature = "local-inference")]
++    fn score_request(
++        &self,
++        handle: &airk_inference::inference_engine::pool::arbiter::Handle,
++        request: airk_inference::inference_engine::pool::arbiter::ScoreRequest,
++    ) -> Result<airk_inference::inference_engine::pool::arbiter::PendingScore> {
++        #[cfg(feature = "test-support")]
++        if let Some(observer) = &self.execution_observer {
++            ensure!(
++                self.evaluation.is_some(),
++                "Private score observer requires the actual native evaluation catalog"
++            );
++            return handle.score_observed(request, observer.clone());
++        }
++        handle.score(request)
+     }
+     fn configuration(&self) -> Result<Configuration> {
+         ensure!(
+--- crates/airk-service/src/service_runtime/arbiter/evaluation.rs
++++ crates/airk-service/src/service_runtime/arbiter/evaluation.rs
+@@ -79,6 +79,15 @@
+     /// Separate compiler census/recording work is not a deployed-model timing.
+     pub fn observe_context(mut self, sink: ContextObservationSink) -> Self {
+         self.owner.context.context_observer = Some(sink);
++        self
++    }
++    /// Observation only; actual service composition still checks the SAME native lease/gate.
++    pub fn observe_execution(
++        mut self,
++        observer: airk_inference::inference_engine::pool::arbiter::execution_observer::Observer,
++    ) -> Self {
++        self.owner.focus.execution_observer = Some(observer.clone());
++        self.owner.context.execution_observer = Some(observer);
+         self
+     }
+     pub fn configuration(&self) -> Result<EvaluationResult<Configuration>> {
+@@ -164,3 +173,50 @@
+         ))
+     }
+ }
++
++#[cfg(test)]
++mod execution_observer_tests {
++    use super::*;
++    #[test]
++    fn private_execution_observer_attachment_still_requires_actual_startup_lease_and_gate()
++    -> Result<()> {
++        use airk_catalog_control::catalog_admission::NativeCatalogAdmission;
++        use airk_core::{identity::Incarnation, index_catalog::CatalogRevision};
++        let root = tempfile::tempdir()?;
++        let other = tempfile::tempdir()?;
++        let lease = Arc::new(airk_store::service::ServiceLease::acquire(root.path())?);
++        let foreign = Arc::new(airk_store::service::ServiceLease::acquire(other.path())?);
++        let gate = NativeCatalogAdmission::new(
++            Incarnation::from_bytes([81; 16]),
++            Incarnation::from_bytes([82; 16]),
++            CatalogRevision::INITIAL,
++            1,
++        )?;
++        for variant in [0, 1, 2] {
++            let(observer,_)=airk_inference::inference_engine::pool::arbiter::execution_observer::Observer::channel(16)?;
++            // Attachment itself grants no execution catalog; actual score routing separately requires it.
++            let owner = EvaluationOwner {
++                owner: Owner::new(lease.clone(), gate.clone())?,
++            }
++            .observe_execution(observer);
++            assert!(
++                owner.owner.focus.execution_observer.is_some()
++                    && owner.owner.context.execution_observer.is_some()
++            );
++            let supplied = if variant == 0 { &foreign } else { &lease };
++            let other_gate = NativeCatalogAdmission::new(
++                Incarnation::from_bytes([81; 16]),
++                Incarnation::from_bytes([82; 16]),
++                CatalogRevision::INITIAL,
++                1,
++            )?;
++            assert_eq!(
++                owner
++                    .into_owner_for(supplied, if variant == 1 { &other_gate } else { &gate })
++                    .is_ok(),
++                variant == 2
++            );
++        }
++        Ok(())
++    }
++}
+--- crates/airk-service/src/service_runtime/arbiter/focus_scoring.rs
++++ crates/airk-service/src/service_runtime/arbiter/focus_scoring.rs
+@@ -210,22 +210,25 @@
+                 let pending = async {
+                     let resident = handle.resident(profile.manifest)?;
+                     let admission = supervisor.reuse_optional(resident.reservation()).await?;
+-                    handle.score(ScoreRequest {
+-                        worker: request.worker.worker,
+-                        scope: request.scope.clone(),
+-                        task: Task::FocusRank,
+-                        deadline,
+-                        authority: live.clone(),
+-                        state: String::new(),
+-                        question: request.question.clone(),
+-                        candidates: vec![Candidate {
+-                            id: candidate.id.to_string(),
+-                            text: candidate.window.text(&candidate.hit)?.to_owned(),
+-                        }],
+-                        resident,
+-                        admission,
+-                        max_input_tokens: profile.max_tokens,
+-                    })
++                    self.score_request(
++                        &handle,
++                        ScoreRequest {
++                            worker: request.worker.worker,
++                            scope: request.scope.clone(),
++                            task: Task::FocusRank,
++                            deadline,
++                            authority: live.clone(),
++                            state: String::new(),
++                            question: request.question.clone(),
++                            candidates: vec![Candidate {
++                                id: candidate.id.to_string(),
++                                text: candidate.window.text(&candidate.hit)?.to_owned(),
++                            }],
++                            resident,
++                            admission,
++                            max_input_tokens: profile.max_tokens,
++                        },
++                    )
+                 };
+                 let mut pending = match tokio::time::timeout_at(
+                     tokio::time::Instant::from_std(deadline),
+--- crates/airk-service/src/service_runtime/arbiter/joint_scoring.rs
++++ crates/airk-service/src/service_runtime/arbiter/joint_scoring.rs
+@@ -223,19 +223,22 @@
+             let pending = async {
+                 let resident = handle.resident(profile.manifest)?;
+                 let admission = supervisor.reuse_optional(resident.reservation()).await?;
+-                handle.score(ScoreRequest {
+-                    worker: request.worker.worker,
+-                    scope: request.scope.clone(),
+-                    task: Task::ContextAction,
+-                    deadline,
+-                    authority: live,
+-                    state: prompt.state,
+-                    question: prompt.question,
+-                    candidates: prompt.candidates,
+-                    resident,
+-                    admission,
+-                    max_input_tokens: request.remaining_input_tokens,
+-                })
++                self.score_request(
++                    &handle,
++                    ScoreRequest {
++                        worker: request.worker.worker,
++                        scope: request.scope.clone(),
++                        task: Task::ContextAction,
++                        deadline,
++                        authority: live,
++                        state: prompt.state,
++                        question: prompt.question,
++                        candidates: prompt.candidates,
++                        resident,
++                        admission,
++                        max_input_tokens: request.remaining_input_tokens,
++                    },
++                )
+             };
+             let mut pending =
+                 match tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), pending)
+--- crates/airk-service/src/service_runtime/arbiter/scoring.rs
++++ crates/airk-service/src/service_runtime/arbiter/scoring.rs
+@@ -124,19 +124,22 @@
+                 // serialized scoring never allocates a second model session.
+                 let resident = handle.resident(profile.manifest)?;
+                 let admission = supervisor.reuse_optional(resident.reservation()).await?;
+-                handle.score(ScoreRequest {
+-                    worker: request.worker.worker,
+-                    scope: request.scope.clone(),
+-                    task: Task::ContextNextRead,
+-                    deadline,
+-                    authority: live,
+-                    state: prompt.state,
+-                    question: prompt.question,
+-                    candidates: prompt.candidates,
+-                    resident,
+-                    admission,
+-                    max_input_tokens: request.remaining_input_tokens,
+-                })
++                self.score_request(
++                    &handle,
++                    ScoreRequest {
++                        worker: request.worker.worker,
++                        scope: request.scope.clone(),
++                        task: Task::ContextNextRead,
++                        deadline,
++                        authority: live,
++                        state: prompt.state,
++                        question: prompt.question,
++                        candidates: prompt.candidates,
++                        resident,
++                        admission,
++                        max_input_tokens: request.remaining_input_tokens,
++                    },
++                )
+             };
+             let mut pending =
+                 match tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), pending)
+--- crates/airk-service/src/service_runtime/evaluation_fixture_tests.rs
++++ crates/airk-service/src/service_runtime/evaluation_fixture_tests.rs
+@@ -16,6 +16,8 @@
+     io::Read,
+     path::PathBuf,
+ };
++
++mod execution_observer;
+ 
+ const LIMIT: usize = 1024 * 1024;
+ #[derive(Deserialize)]
+@@ -344,6 +346,10 @@
+         Err(std::env::VarError::NotPresent) => None,
+         _ => bail!("private CAL observer mode must be explicit true/false"),
+     };
++    let mut execution_recorder = execution_observer::Recorder::from_env(&work)?;
++    let execution_observer = execution_recorder
++        .as_ref()
++        .map(|recorder| recorder.observer());
+     let source = prepared.clone();
+     let (seeded, seed_ready) = tokio::sync::oneshot::channel();
+     let factory: EvaluationFactory = Box::new(move |lease, gate| {
+@@ -375,6 +381,9 @@
+         );
+         if let Some(observer) = context_observer {
+             owner = owner.observe_context(observer);
++        }
++        if let Some(observer) = execution_observer {
++            owner = owner.observe_execution(observer);
+         }
+         seeded
+             .send(namespace)
+@@ -458,6 +467,9 @@
+             if !observed_service_exit {
+                 let _ = service.await;
+             }
++            if let Some(recorder) = execution_recorder.take() {
++                let _ = recorder.finish().await;
++            }
+             return Err(error.context(
+                 "private fixture startup refused; no Ready or successful closure was claimed",
+             ));
+@@ -494,7 +506,13 @@
+             .await;
+             let _ = (&mut service).await;
+         }
++        if let Some(recorder) = execution_recorder.take() {
++            let _ = recorder.finish().await;
++        }
+         return Err(error.context("private fixture failed; no successful closure was claimed"));
++    }
++    if let Some(recorder) = execution_recorder.take() {
++        recorder.finish().await?;
+     }
+     // Actual lease reacquisition proves no model/session still retains its
+     // service ownership capability. Work, assets and receipts remain private.
+@@ -1596,122 +1614,3 @@
+     );
+     Ok(())
+ }
+-
+-/// Fresh synthetic-only source and owning request cases for composed native
+-/// acceptance. Never reads or mutates the frozen CAL/confirmation artifacts.
+-#[test]
+-#[ignore = "private synthetic composed source/request emitter; fresh protected artifacts output required"]
+-fn emit_private_selected_synthetic_fixture() -> Result<()> {
+-    use std::io::Write;
+-    let output = PathBuf::from(
+-        std::env::var_os("AIRK_SELECTED_SYNTHETIC_OUTPUT")
+-            .context("synthetic fixture output missing")?,
+-    );
+-    ensure!(
+-        output.is_absolute() && !output.try_exists()?,
+-        "synthetic output must be fresh/absolute"
+-    );
+-    let parent = output
+-        .parent()
+-        .context("synthetic output parent missing")?
+-        .canonicalize()?;
+-    ensure!(
+-        parent.starts_with(artifact_root()?),
+-        "synthetic fixture leaves private artifacts"
+-    );
+-    let pin = OpenedDirectory::open(&parent)?;
+-    let output_pin = crate::ipc::endpoint::create_root_at(
+-        &pin,
+-        output
+-            .file_name()
+-            .context("synthetic output name missing")?,
+-    )?;
+-    let source = output.join("sources");
+-    let _source_pin = crate::ipc::endpoint::create_root_at(&output_pin, OsStr::new("sources"))?;
+-    let question = "Where is the SyntheticRelay lantern maintenance schedule documented?";
+-    let mut files = Vec::new();
+-    let mut first_hash = None;
+-    for ordinal in 0..8 {
+-        let name = format!("doc-{ordinal:02}.txt");
+-        let body = format!(
+-            "Synthetic document {ordinal}\nSyntheticRelay maintenance follows the lantern schedule every Friday.\nThis synthetic source is for native isolation and lifecycle checks.\n"
+-        );
+-        let raw = body.as_bytes();
+-        let mut file = std::fs::OpenOptions::new()
+-            .write(true)
+-            .create_new(true)
+-            .open(source.join(&name))?;
+-        file.write_all(raw)?;
+-        file.sync_all()?;
+-        let digest = sha(raw);
+-        if ordinal == 0 {
+-            first_hash = Some(digest);
+-        }
+-        files.push(serde_json::json!({"path":name,"bytes":raw.len(),"sha256":digest,"lines":3}));
+-    }
+-    for mode in ["hybrid", "vector", "lexical"] {
+-        let value = serde_json::json!({"query":question,"mode":mode,"limit":8,"max_bytes":65536,
+-            "full_chunks":true,"response_mode":"full","include_status":true});
+-        let _: airk_mcp::SearchArgs = serde_json::from_value(value.clone())?;
+-        write(&output, &format!("search-{mode}.json"), &value)?;
+-    }
+-    let references = serde_json::json!({"name":"SyntheticRelay","limit":32,"max_bytes":65536,
+-        "include_files":true,"include_count":true,"order":"path","response_mode":"full","include_status":true});
+-    let _: airk_mcp::ReferenceArgs = serde_json::from_value(references.clone())?;
+-    write(&output, "references-exact.json", &references)?;
+-    let read = serde_json::json!({"path":"doc-00.txt","start_line":1,"end_line":3,"max_bytes":8192,
+-        "response_mode":"full","include_status":true});
+-    let _: airk_mcp::ReadArgs = serde_json::from_value(read.clone())?;
+-    write(&output, "read-file.json", &read)?;
+-    let mut pinned_read = read;
+-    pinned_read
+-        .as_object_mut()
+-        .context("read case not object")?
+-        .insert(
+-            "known_hash".into(),
+-            serde_json::to_value(first_hash.context("synthetic first source missing")?)?,
+-        );
+-    let _: airk_mcp::ReadArgs = serde_json::from_value(pinned_read.clone())?;
+-    write(&output, "read-file-known-source.json", &pinned_read)?;
+-    let mut answer = answer_template()?;
+-    answer
+-        .as_object_mut()
+-        .context("answer case not object")?
+-        .insert("question".into(), question.into());
+-    let decoded: airk_mcp::AnswerArgs = serde_json::from_value(answer.clone())?;
+-    decoded.request.validate()?;
+-    write(&output, "answer.json", &answer)?;
+-    let resources = ControlMethod::Resources;
+-    ensure!(
+-        resources.metadata_relay_refusal().is_none(),
+-        "Resources unavailable to metadata relay"
+-    );
+-    write(&output, "resources.json", &resources)?;
+-    write(
+-        &output,
+-        "source-scopes.private.json",
+-        &serde_json::json!({
+-            "schema":"airk.private-selected-synthetic-source-scopes/1","source_roots":[source],
+-            "questions":[{"id":"synthetic:maintenance","question":question,"source_root":source,"split":"synthetic"}],
+-            "scope":"Fresh synthetic only; no CAL/confirmation, answer/support/task gold or human actionlabels. Native live configuration emitter still owns actual index/source/publication bindings."
+-        }),
+-    )?;
+-    write(
+-        &output,
+-        "fixture.private.json",
+-        &serde_json::json!({
+-            "schema":"airk.private-selected-synthetic-native-fixture/1","evaluation":true,"release_qualified":false,
+-            "source_root":source,"files":files,"NN_invocations":0,"human_semantic_gold_count":0,
+-            "requests":[{"file":"search-hybrid.json","tool":"search"},{"file":"search-vector.json","tool":"search"},
+-                {"file":"search-lexical.json","tool":"search"},{"file":"references-exact.json","tool":"references"},
+-                {"file":"read-file.json","tool":"read_file"},{"file":"read-file-known-source.json","tool":"read_file"},
+-                {"file":"answer.json","tool":"answer"},{"file":"resources.json","transport":"service rpc"}],
+-            "semantics":"SearchMode has only hybrid/vector/lexical. Exact is original case-sensitive whole-identifier references, not a fabricated exact search mode. JSON cases are validated by the actual MCP owner types; Resources is serialized directly from Core. These fixtures prove exercised lifecycle/isolation/work boundaries only, never quality gold."
+-        }),
+-    )?;
+-    println!(
+-        "{}",
+-        serde_json::json!({"output":output,"source_files":8,"NN_invocations":0,"CAL_confirmation_accessed":false})
+-    );
+-    Ok(())
+-}
+--- /dev/null
++++ crates/airk-service/src/service_runtime/evaluation_fixture_tests/execution_observer.rs
+@@ -0,0 +1,96 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Private fixture recorder. All filesystem I/O and release waits stay outside native gates.
++use super::*;
++use airk_inference::inference_engine::pool::arbiter::execution_observer::{
++    Binding, Kind, Observer, RecorderSummary,
++};
++use std::io::Write;
++use tokio::sync::oneshot;
++use tokio::task::JoinSet;
++const MAX_RECORDS: usize = 8192;
++const MAX_BYTES: u64 = 64 << 20;
++pub(super) struct Recorder {
++    observer: Observer,
++    stop: oneshot::Sender<()>,
++    task: tokio::task::JoinHandle<Result<()>>,
++}
++impl Recorder {
++    pub(super) fn from_env(work: &Path) -> Result<Option<Self>> {
++        match std::env::var("AIRK_NATIVE_DISPATCH_OBSERVER") {
++            Ok(value) if value == "true" => {}
++            Ok(value) if value == "false" => return Ok(None),
++            Err(std::env::VarError::NotPresent) => return Ok(None),
++            _ => bail!("private native dispatch observer must be explicit true/false"),
++        }
++        Self::start(work).map(Some)
++    }
++    fn start(work: &Path) -> Result<Self> {
++        let (observer, mut receiver) = Observer::channel(4096)?;
++        let mut file = std::fs::OpenOptions::new()
++            .write(true)
++            .create_new(true)
++            .open(work.join("composed-observer.jsonl"))?;
++        let (stop, mut stopped) = oneshot::channel();
++        let recorded = observer.clone();
++        let work = work.to_owned();
++        let task = tokio::spawn(async move {
++            let mut records = 0usize;
++            let mut bytes = 0u64;
++            let mut last_sequence = 0u64;
++            let result=async{
++    let mut watchers=JoinSet::new();
++    let mut bindings:BTreeMap<String,Vec<Binding>>=BTreeMap::new();
++    let mut released=BTreeSet::new();let mut finishing=false;let mut dispatched=0usize;
++    loop{
++     if finishing&&watchers.is_empty()&&receiver.is_empty(){recorded.close();break;}
++     tokio::select!{biased;
++      event=receiver.recv()=>{
++       let event=event.context("native event channel closed before recorder settlement")?;
++       event.record.validate()?;
++       ensure!(event.record.sequence>last_sequence,"native observer sequence regressed");last_sequence=event.record.sequence;
++       let mut raw=serde_json::to_vec(&event.record)?;raw.push(b'\n');
++       records=records.checked_add(1).context("observer record counter overflow")?;bytes=bytes.checked_add(raw.len() as u64).context("observer byte counter overflow")?;
++       ensure!(records<=MAX_RECORDS&&bytes<=MAX_BYTES,"private observer record/byte bound exceeded");
++       file.write_all(&raw)?;file.flush()?;
++       if let Some(proof)=event.release{
++        ensure!(event.record.kind==Kind::DispatchAdmitted,"charge proof outside native dispatch");
++        let id=event.record.binding.charge_identity.clone();ensure!(!released.contains(&id),"native charge dispatched after actual release");
++        dispatched+=1;ensure!(dispatched<=1024,"private native dispatch census bound exceeded");
++        let first=!bindings.contains_key(&id);let entry=bindings.entry(id.clone()).or_default();
++        ensure!(!entry.iter().any(|value|value.dispatch_identity==event.record.binding.dispatch_identity),"duplicate dispatch identity");
++        entry.push(event.record.binding.clone());
++        if first{watchers.spawn(async move{(id,proof.wait().await)});}
++       }
++      },
++      _=&mut stopped,if !finishing=>{finishing=true;},
++      Some(completed)=watchers.join_next(),if !watchers.is_empty()=>{
++       let (id,proof)=completed.context("actual charge release observer task failed")?;let proof=proof?;
++       let observed=bindings.get(&id).context("actual charge completion lacks original dispatch binding")?;
++       proof.emit_for(observed)?;ensure!(released.insert(id),"duplicate actual charge completion");
++      }
++     }
++    }
++    ensure!(recorded.dropped()==0,"native observer lost events; no complete acceptance evidence");file.sync_all()?;Ok::<(),anyhow::Error>(())
++   }.await;
++            recorded.close();
++            let summary=RecorderSummary{schema:"airk.private.native-dispatch-recorder/1".into(),complete:result.is_ok()&&recorded.dropped()==0,evaluation:true,release_qualified:false,dropped:recorded.dropped(),writer_failed:usize::from(result.is_err()),records,bytes,last_sequence,error:result.as_ref().err().map(|error|format!("{error:#}")),proof:"Recorder closes only after actual service ownership settlement and native per-charge release futures; dispatch is the guarded score-call boundary, not an inside-FFI marker.".into()};
++            summary.validate()?;
++            write(&work, "composed-observer.closed.json", &summary)?;
++            result
++        });
++        Ok(Self {
++            observer,
++            stop,
++            task,
++        })
++    }
++    pub(super) fn observer(&self) -> Observer {
++        self.observer.clone()
++    }
++    pub(super) async fn finish(self) -> Result<()> {
++        let _ = self.stop.send(());
++        self.task
++            .await
++            .context("native recorder task closed without a result")?
++    }
++}

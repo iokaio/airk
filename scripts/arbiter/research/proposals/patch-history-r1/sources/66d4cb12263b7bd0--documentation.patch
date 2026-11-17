@@ -1,0 +1,208 @@
+--- a/README.md
++++ b/README.md
+@@ -1,4 +1,11 @@
+ # AIRK: Local Search for Coding Agents
++
++P11b is an **unaccepted 1.8.8 candidate** for explicitly reviewed Lean/Rich
++retained profiles. Legacy indexing levels keep their existing meanings and
++defaults; reply projection remains independent. The candidate source is applied
++and focused UI compilation/tests passed. Native migration, recovery, resource and
++platform qualification remain pending. P11a remains accepted for local development;
++this does not publish a release or complete later phases.
+ 
+ P11a’s [per-file profile family reporting](docs/profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P10 is accepted for local development. P11a qualification has passed: focused native, Mac ARM, Workbench and actual CLI/console/MCP checks, followed by the required final gates. P11a has passed its local phase checks and is accepted for unpublished local development. The working version remains **1.8.8**, unpublished.
+ 
+--- a/packages/vscode/README.md
++++ b/packages/vscode/README.md
+@@ -1,4 +1,11 @@
+ # AIRK: Local Search for Coding Agents
++
++P11b is an **unaccepted 1.8.8 candidate** for explicitly reviewed Lean/Rich
++retained profiles. Legacy indexing levels keep their existing meanings and
++defaults; reply projection remains independent. The candidate source is applied
++and focused UI compilation/tests passed. Native migration, recovery, resource and
++platform qualification remain pending. P11a remains accepted for local development;
++this does not publish a release or complete later phases.
+ 
+ P11a’s [per-file profile family reporting](https://github.com/iokaio/airk/blob/main/docs/profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P10 is accepted for local development. P11a qualification has passed: focused native, Mac ARM, Workbench and actual CLI/console/MCP checks, followed by the required final gates. P11a has passed its local phase checks and is accepted for unpublished local development. The working version remains **1.8.8**, unpublished.
+ 
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -1,4 +1,11 @@
+ # AIRK documentation
++
++P11b is an **unaccepted 1.8.8 candidate** for explicitly reviewed Lean/Rich
++retained profiles. Legacy indexing levels keep their existing meanings and
++defaults; reply projection remains independent. The candidate source is applied
++and focused UI compilation/tests passed. Native migration, recovery, resource and
++platform qualification remain pending. P11a remains accepted for local development;
++this does not publish a release or complete later phases.
+ 
+ P11a’s [per-file profile family reporting](profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P10 is accepted for local development. P11a qualification has passed: focused native, Mac ARM, Workbench and actual CLI/console/MCP checks, followed by the required final gates. P11a has passed its local phase checks and is accepted for unpublished local development. The working version remains **1.8.8**, unpublished.
+ 
+--- a/docs/releases/release-1.8.8.md
++++ b/docs/releases/release-1.8.8.md
+@@ -1,4 +1,11 @@
+ # AIRK 1.8.8 manual-test working build
++
++P11b is an **unaccepted 1.8.8 candidate** for explicitly reviewed Lean/Rich
++retained profiles. Legacy indexing levels keep their existing meanings and
++defaults; reply projection remains independent. The candidate source is applied
++and focused UI compilation/tests passed. Native migration, recovery, resource and
++platform qualification remain pending. P11a remains accepted for local development;
++this does not publish a release or complete later phases.
+ 
+ P11a’s [per-file profile family reporting](../profile-family-reporting.md) adds an explicit opt-in to File info. It keeps applied file-profile identity separate from collection policy, preserves scoped unknowns and retains complete native metadata through Workbench details and exports. P10 is accepted for local development. P11a qualification has passed: focused native, Mac ARM, Workbench and actual CLI/console/MCP checks, followed by the required final gates. P11a has passed its local phase checks and is accepted for unpublished local development. The working version remains **1.8.8**, unpublished.
+ 
+--- a/docs/extraction-policy.md
++++ b/docs/extraction-policy.md
+@@ -109,3 +109,51 @@
+ **AIRK: Show Extraction Policy** displays collection/root/storage and native policy status. **AIRK: Configure Extraction Policy** selects a JSON file, captures a bounded private copy, validates it, and shows the current and proposed state. Saving requires confirmation and sends the same captured bytes even if the selected file changes while the preview is open. Temporary input is removed on completion, cancellation or failure.
+ 
+ After saving, the extension offers **Index now** for that collection. Declining leaves the policy pending until a later successful index. Both controls require workspace trust. They do not rewrite the selected file, workspace settings, agent configuration or tool approvals. See [VS Code extension](vscode-extension.md) for scheduling behavior.
++
++
++## Explicit versioned retained profiles
++
++The **unaccepted P11b candidate**, on working version **1.8.8**, introduces Lean and Rich as separate retained
++profiles under extraction-profile contract 3 and policy version 4. Existing
++`essential`, `agent_lean`, `balanced` (Rich Structure, legacy) and `detailed`
++settings retain their existing meanings and defaults. Reply projection remains
++independent. A missing historical profile is unknown; an existing historical
++profile without `index_detail` retains its original Detailed meaning.
++
++On a native owned index with a published baseline, prepare an explicit reviewed
++configuration draft such as `{"operation":"retained_profile","target":"lean"}`
++through the existing native configuration preparation/receipt path. Preparation
++returns the exact publication and configured/applied policy digests for review.
++Workbench offers the same native review through its existing configuration flow. Saving the desired policy
++and publishing the new representation are separate outcomes. Pause, manual
++updates, watches, vector eligibility and model settings are preserved. The current
++publication remains available to the supported runtime if indexing fails or is
++canceled. An interrupted request must be reconciled by its exact saved receipt;
++unknown outcomes never authorize mutation replay. A known failed request requires
++current review before a new request.
++
++The candidate selects the exact current Rust, manifest, Markdown,
++instruction Markdown and DOCX producers. Lean preserves supported package,
++dependency, script, workspace and configuration evidence in manifests; Rich keeps
++that core plus supported additions. Other versions/families keep their recorded
++legacy fallback. Unsupported output is not created by choosing Rich. OCR remains
++an explicit operation with unchanged adapters, dependencies, models and
++provenance. No parser CPU reduction is claimed by the initial full-producer path.
++
++Policy 4 stores the selected `retained_profile` and an explicit
++`legacy_fallback_detail`; its legacy `detail` field is absent. Existing policy
++versions retain their bytes and semantics. Adapter-rule edits may retain an
++already published new profile, while changing the profile requires native review.
++Per-file cache identity includes only effective producer inputs and the selected
++family algorithm, rather than the entire collection policy. A repeated applied
++choice queues no new source pass; restoring the applied choice over a different
++pending desired policy still saves that choice. Previously queued independent
++source work is preserved.
++
++The candidate source is applied; focused UI compilation and 83 owning tests
++passed. Native migration, both owner-capability barriers, interruption/quota,
++split inheritance and actual CLI/MCP/Workbench qualification remain pending.
++Migration currently requires an already published baseline; this does not claim
++a new first-publication picker for an empty index. No performance, ONNX cost,
++platform or broad format qualification follows from consumer fixtures. P11b is
++not accepted; P11a's reporting and its exact evidence remain separately accepted.
+--- a/docs/profile-family-reporting.md
++++ b/docs/profile-family-reporting.md
+@@ -100,3 +100,13 @@
+ These proposed checks supplement actual native transport tests; renderer mocks
+ alone do not establish CLI/MCP/Workbench parity. Full qualification and manual
+ acceptance remain pending in the [implementation ledger](research/implementation-v190.md).
++
++## Separate P11b retention candidate
++
++P11b's unaccepted [versioned retention candidate](extraction-policy.md#explicit-versioned-retained-profiles)
++adds explicit Lean/Rich selections while retaining historical profile identity.
++The candidate report carries new selected file identity and configured/published
++retention separately, including legacy fallback and scoped unavailable policy.
++This extends the accepted P11a read contract; it does not reinterpret old levels
++or make the new migration qualified. Full/Terse and reply Lean/Rich remain
++independent controls. Native P11b qualification is pending.
+--- a/docs/reply-detail.md
++++ b/docs/reply-detail.md
+@@ -98,3 +98,12 @@
+ ## P11a: explicit per-file family metadata
+ 
+ The [family report](profile-family-reporting.md) uses `include_profile_families` on existing FileInfo reads. Default/false retain the old representation and validator. Workbench’s schema-driven File info form offers an explicit choice; complete native report metadata survives structured details, JSON/Markdown copies/exports and session restore. Reporting adds no source reads or profile migration; existing verification remains independent. Focused native, Mac ARM, Workbench and actual CLI/console/MCP parity checks passed. Final qualification gates passed. P11a has passed its local phase checks and is accepted for unpublished local development. P10 is already accepted for local development.
++
++## P11b retained-profile candidate remains independent
++
++The unaccepted [versioned retention candidate](extraction-policy.md#explicit-versioned-retained-profiles)
++adds a reviewed retained Lean/Rich choice. It does not change `reply_detail`,
++response encoding, model choice or existing legacy indexing-level meanings.
++A Rich reply cannot recreate facts omitted by a Lean retained profile. Report
++configured and published retention separately from the applied per-file profile;
++P11b native migration/qualification remains pending.
+--- a/docs/workbench/implementation.md
++++ b/docs/workbench/implementation.md
+@@ -155,3 +155,14 @@
+ ## P11a: explicit per-file family metadata
+ 
+ The [family report](../profile-family-reporting.md) uses `include_profile_families` on existing FileInfo reads. Default/false retain the old representation and validator. Workbench’s schema-driven File info form offers an explicit choice; complete native report metadata survives structured details, JSON/Markdown copies/exports and session restore. Reporting adds no source reads or profile migration; existing verification remains independent. Focused native, Mac ARM, Workbench and actual CLI/console/MCP parity checks passed. Final qualification gates passed. P11a has passed its local phase checks and is accepted for unpublished local development. P10 is already accepted for local development.
++
++## P11b candidate: reviewed retained-profile migration
++
++The existing configuration flow offers **Review Lean or Rich retention**, obtains
++the complete native review and confirms its publication/settings/policy identity
++before mutation. Configured and published retention remain separate observations;
++legacy levels are not new Lean/Rich aliases. A lost reply keeps the exact saved
++request/receipt lookup and does not automatically prepare or replay another
++mutation. Decline or trust loss prevents dispatch. Focused compile and 83 owning
++UI tests passed, including flat/historical opaque report exports. Native process,
++recovery/resource/platform qualification remains pending; P11b is unaccepted.
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -420,3 +420,16 @@
+ `airk-store::current::text_range` owns optional retained display-text pages and ordered original locations. It uses existing resource/journal/retention/quota ownership and the same file projection audit cursor. Its logical certificate derives exact page digests from authoritative retained extraction; separate bounded physical turns read those pages without reparsing source/payload. This representation does not map raw PDF/DOCX offsets into extracted text or confer query authority.
+ 
+ Retained-data audit evidence remains owned by `airk-store::service::collection::integrity::verify`. Only that verifier constructs its opaque physical proof; the existing registry/background owner can persist a bounded dated observation under the same job/lease fence. Serialization produces history, never physical authority. Whole optional Verify, retained declared-data coverage and the later stronger private-consumer profile remain separate contracts. The registry schema-11 row prepares the existing background owner; no additional scheduler or database is introduced and automatic execution is not yet wired.
++
++## P11b candidate retention ownership
++
++The unaccepted P11b candidate keeps the existing crate direction. Core owns the
++versioned retained-profile identities and pure review contract. Ingest selects
++qualified file-family retention from the actual saved producer identity and
++preserves semantic input/provenance before fact filtering; unsupported producers
++retain explicit legacy fallback. Kernel and Store retain source/profile cache
++identity, configured/applied separation and guarded publication. Native Configure
++owns exact reviewed migration admission and the dual-owner compatibility barrier;
++CLI dispatches its existing job/receipt flow. Workbench displays and confirms the
++full native review. Consumer tests alone do not qualify publication, predecessor
++readers, split inheritance or native recovery; those P11b checks remain pending.
+--- a/docs/research/implementation-v190.md
++++ b/docs/research/implementation-v190.md
+@@ -4796,3 +4796,28 @@
+ P11a qualification and primary review passed. P11a is accepted for unpublished local development. P11b–P14, deleted-source recovery and final
+ local test installer remain unfinished. No push, publication, normal installation
+ or completion of the full plan is claimed.
++
++
++### P11b — applied candidate; native qualification pending, 6 November 2026
++
++P11a is accepted at local commit `f2bf2d219eda7096986565fcbc57f7ef9b1c5c7a`.
++The byte-preserving worktree reanchor retains its original compiled/runtime/Mac
++identities and prior evidence. P11b is **not accepted**; version remains **1.8.8**.
++The reviewed 91-source/test-file candidate is applied at native source
++**`1eddf7fc5c7dc54301346644948521082dce543bdbbb8a5b26c3358e931abd8c` / 954 inputs**.
++
++One Workbench compile passed (host, webview, Assistance and actual bundles).
++The three selected owning suites, `serviceConfiguration`, `serviceConsole` and
++`profileFamilies`, passed **83 / 0 failed / 0 skipped** in 407.6145 ms. They cover
++review/no-op forwarding, lost-response exact journal and declined/trust-lost
++review, plus Selected-profile metadata in flat native/historical nested exports.
++P11a's flat/historical session and export tests remain intact; the webview's
++original byte0x85 file is byte-preserved. No UI correction was needed.
++`p11b-ui-qualification-r1.json` binds both log hashes and the observed native source.
++
++These are consumer/controller observations, not proof of native migration or
++actual CLI/MCP process parity. Native owner/barrier, predecessor/interruption,
++quota/split inheritance, cache/model reuse, resource and platform gates remain
++pending. No speedup or model/OCR change is claimed. Migration currently requires
++a published baseline; no empty-index first-publication picker is inferred.
++P12–P14, deleted-source recovery and final local test installer remain unfinished.

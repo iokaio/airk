@@ -1,0 +1,9 @@
+// SPDX-License-Identifier: Apache-2.0
+{
+    const result = await runJobAction(
+      kind === 'retry' ? OPS.jobsRetry : OPS.jobsCancel,
+      kind === 'retry' ? body.jobsRetry(jobId) : body.jobsCancel(jobId),
+    );
+    const updated = rec(okValue(result)?.job);
+    if (updated !== null) setJobRecord(updated);
+  }

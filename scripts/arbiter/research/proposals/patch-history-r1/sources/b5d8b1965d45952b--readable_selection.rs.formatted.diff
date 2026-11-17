@@ -1,0 +1,321 @@
+--- a/crates/airk-service/src/service_runtime/evaluation_fixture_tests/readable_selection.rs
++++ b/crates/airk-service/src/service_runtime/evaluation_fixture_tests/readable_selection.rs
+@@ -0,0 +1,318 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Private explicit selection adapter over canonical native grant authority.
++use super::*;
++use airk_core::{
++    index_catalog::{IndexDefinition, IndexId, Membership, QueryProject, QueryProjectId},
++    service::ScopedConnectRequest,
++    source_policy::SourceRoot,
++};
++use airk_kernel::scoped_reads::ScopedReadAuthority;
++use airk_store::service::registry::{ServiceRegistry, catalog::CatalogState};
++
++fn selected_project(
++    index: IndexId,
++    sources: &[airk_core::index_catalog::SourceRootId],
++    project: QueryProjectId,
++    projects: &[QueryProject],
++    memberships: &[Membership],
++) -> Result<QueryProjectId> {
++    let selected_projects = projects
++        .iter()
++        .filter(|row| row.id == project)
++        .cloned()
++        .collect::<Vec<_>>();
++    ensure!(
++        selected_projects.len() == 1,
++        "explicit private project missing or duplicated"
++    );
++    // Keep every membership of THIS project: a merged project must still refuse.
++    let selected_members = memberships
++        .iter()
++        .filter(|row| row.project_id == project)
++        .cloned()
++        .collect::<Vec<_>>();
++    readable_fixture_project(index, sources, &selected_projects, &selected_members)
++}
++
++fn validate_authority(
++    request: &ScopedConnectRequest,
++    catalog: &CatalogState,
++    index: &IndexDefinition,
++    roots: &[SourceRoot],
++    projects: &[QueryProject],
++    memberships: &[Membership],
++    authority: Option<&ScopedReadAuthority>,
++) -> Result<QueryProjectId> {
++    request.validate()?;
++    ensure!(
++        catalog.activated
++            && request.namespace == catalog.namespace
++            && request.expected_catalog_revision == catalog.revision
++            && request.index_id == index.id
++            && request.project_ids.len() == 1,
++        "explicit private selection namespace/revision/index/project differs"
++    );
++    let authority = authority.context("native reviewed grant authority absent")?;
++    authority.validate()?;
++    ensure!(
++        authority.index_id == index.id
++            && authority.backing == index.backing.binding
++            && authority.project_ids == request.project_ids
++            && authority.grant.id == request.grant_id
++            && authority.grant.revision == request.expected_grant_revision
++            && authority.provenance.kind()
++                == airk_core::grant_provenance::GrantProvenanceKind::UserReviewedProjectGrant,
++        "explicit private native reviewed authority differs"
++    );
++    let ids = roots.iter().map(|root| root.id).collect::<Vec<_>>();
++    let project = selected_project(
++        index.id,
++        &ids,
++        request.project_ids[0],
++        projects,
++        memberships,
++    )?;
++    let granted = authority
++        .grant
++        .memberships
++        .iter()
++        .filter(|row| row.membership.index_id == index.id && row.membership.project_id == project)
++        .collect::<Vec<_>>();
++    ensure!(
++        granted.len() == 1
++            && granted[0].source_revision == index.source_revision
++            && granted[0].policy_epoch
++                == index.policy.as_ref().map_or(0, |policy| policy.epoch.get())
++            && granted[0].policy_digest == index.policy.as_ref().map(|policy| policy.digest),
++        "explicit private frozen grant source/policy differs"
++    );
++    // Native authority may support narrowed grants. This fixture explicitly requires
++    // the ORIGINAL WHOLE roots on both the current membership and frozen grant.
++    selected_project(
++        index.id,
++        &ids,
++        project,
++        projects,
++        &[granted[0].membership.clone()],
++    )?;
++    ensure!(
++        authority.sources.len() == roots.len()
++            && authority.sources.iter().all(|source| roots
++                .iter()
++                .any(|root| root.id == source.source_root_id
++                    && root.canonical_path == source.original_root)),
++        "explicit private authority source descriptors differ"
++    );
++    Ok(project)
++}
++
++pub(super) fn qualify(
++    registry: &mut ServiceRegistry,
++    request: &ScopedConnectRequest,
++    catalog: &CatalogState,
++    index: &IndexDefinition,
++    roots: &[SourceRoot],
++    projects: &[QueryProject],
++    memberships: &[Membership],
++) -> Result<(QueryProjectId, ScopedReadAuthority)> {
++    // Reuse the owning native host/context/persisted grant checks; no ID guessing,
++    // credential issuance, caller-side revision rolling or duplicate schema here.
++    let selected =
++        airk_catalog_control::catalog_coordinator::native_scoped_selection(registry, request)?;
++    let authority =
++        airk_catalog_control::catalog_authority::build_catalog_read_authority(registry, &selected)?;
++    let project = validate_authority(
++        request,
++        catalog,
++        index,
++        roots,
++        projects,
++        memberships,
++        Some(&authority),
++    )?;
++    Ok((project, authority))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use airk_core::{
++        grant_provenance::GrantProvenance,
++        identity::Incarnation,
++        index_catalog::{CatalogRevision, GrantedMembership, ReviewedGrant, SourceRootId},
++        scoped_reads::SourceDescriptor,
++        service::ProjectRegistration,
++    };
++
++    struct Fixture {
++        request: ScopedConnectRequest,
++        catalog: CatalogState,
++        index: IndexDefinition,
++        roots: Vec<SourceRoot>,
++        projects: Vec<QueryProject>,
++        members: Vec<Membership>,
++        authority: ScopedReadAuthority,
++    }
++    impl Fixture {
++        fn new() -> Result<Self> {
++            // Literal shape reproduces real U103 automatic set plus explicitly
++            // reviewed project for ONE immutable index; expected IDs are independent.
++            let index: IndexId = "idx_5a93c66de44632270436c5859cf4d7d3".parse()?;
++            let source: SourceRootId = "src_8dd6f2049a34a8f4dc52cb7f32877cba".parse()?;
++            let projects: Vec<QueryProject> = serde_json::from_value(serde_json::json!([
++                {"id":"prj_b1144ea101152809eac3586eb2a95746","name":"U103 automatic set","definition_revision":1,"scope_revision":2,"defaults_revision":1,"default_indexes":[]},
++                {"id":"prj_303b6312f0ab401b9fdb716cc05052f3","name":"Explicit reviewed fixture","definition_revision":1,"scope_revision":2,"defaults_revision":1,"default_indexes":[]}
++            ]))?;
++            let members: Vec<Membership> = serde_json::from_value(serde_json::json!([
++                {"project_id":"prj_b1144ea101152809eac3586eb2a95746","index_id":index,"revision":1,"scope":[{"source_root_id":source,"kind":"subtree","path":""}]},
++                {"project_id":"prj_303b6312f0ab401b9fdb716cc05052f3","index_id":index,"revision":1,"scope":[{"source_root_id":source,"kind":"subtree","path":""}]}
++            ]))?;
++            let namespace = Incarnation::from_bytes([1; 16]);
++            let revision: CatalogRevision = serde_json::from_value(serde_json::json!(7))?;
++            let root = std::env::current_dir()?.to_string_lossy().into_owned();
++            let registration =
++                ProjectRegistration::new(root.clone(), root.clone(), "fixture".into())?;
++            let request = ScopedConnectRequest {
++                schema: 1,
++                context_key: Sha256Digest::from_bytes([2; 32]),
++                namespace,
++                expected_catalog_revision: revision,
++                grant_id: "grt_19889b927f5e7ca17527e1f79da1c8da".parse()?,
++                expected_grant_revision: CatalogRevision::INITIAL,
++                index_id: index,
++                project_ids: vec![projects[1].id],
++            };
++            let catalog = CatalogState {
++                schema: 13,
++                namespace,
++                revision,
++                activated: true,
++                accepted_new_writes: true,
++                authority_contract: 1,
++                policy_contract: 4,
++                upgrade_id: namespace,
++                legacy_schema_digest: Sha256Digest::from_bytes([0; 32]),
++                backup_digest: Sha256Digest::from_bytes([0; 32]),
++            };
++            let definition: IndexDefinition = serde_json::from_value(
++                serde_json::json!({"id":index,"name":"fixture","backing":registration,
++                "definition_revision":1,"source_revision":2,"policy":null,"tombstone":false,"source_import":"complete"}),
++            )?;
++            let roots = vec![SourceRoot {
++                id: source,
++                canonical_path: root.clone(),
++                aliases: vec![],
++                owner: true,
++            }];
++            let authority = ScopedReadAuthority {
++                schema: 1,
++                backing: definition.backing.binding,
++                index_id: index,
++                project_ids: request.project_ids.clone(),
++                grant: ReviewedGrant {
++                    id: request.grant_id,
++                    host: Sha256Digest::from_bytes([3; 32]),
++                    revision: CatalogRevision::INITIAL,
++                    revoked: false,
++                    memberships: vec![GrantedMembership {
++                        membership: members[1].clone(),
++                        source_revision: definition.source_revision,
++                        policy_epoch: 0,
++                        policy_digest: None,
++                    }],
++                },
++                provenance: GrantProvenance::UserReviewedProjectGrant,
++                sources: vec![SourceDescriptor {
++                    source_root_id: source,
++                    original_root: root,
++                }],
++            };
++            Ok(Self {
++                request,
++                catalog,
++                index: definition,
++                roots,
++                projects,
++                members,
++                authority,
++            })
++        }
++        fn validate(&self) -> Result<QueryProjectId> {
++            validate_authority(
++                &self.request,
++                &self.catalog,
++                &self.index,
++                &self.roots,
++                &self.projects,
++                &self.members,
++                Some(&self.authority),
++            )
++        }
++    }
++    #[test]
++    fn explicit_reviewed_project_succeeds_with_other_legitimate_membership_but_unselected_stays_ambiguous()
++    -> Result<()> {
++        let fixture = Fixture::new()?;
++        assert_eq!(fixture.validate()?, fixture.projects[1].id);
++        assert!(
++            readable_fixture_project(
++                fixture.index.id,
++                &[fixture.roots[0].id],
++                &fixture.projects,
++                &fixture.members
++            )
++            .is_err()
++        );
++        Ok(())
++    }
++    #[test]
++    fn explicit_reviewed_project_refuses_missing_revoked_stale_foreign_or_narrowed_authority()
++    -> Result<()> {
++        let f = Fixture::new()?;
++        assert!(
++            validate_authority(
++                &f.request,
++                &f.catalog,
++                &f.index,
++                &f.roots,
++                &f.projects,
++                &f.members,
++                None
++            )
++            .is_err()
++        );
++        let mut f = Fixture::new()?;
++        f.authority.grant.revoked = true;
++        assert!(f.validate().is_err());
++        let mut f = Fixture::new()?;
++        f.request.namespace = Incarnation::from_bytes([9; 16]);
++        assert!(f.validate().is_err());
++        let mut f = Fixture::new()?;
++        f.request.expected_catalog_revision = CatalogRevision::INITIAL;
++        assert!(f.validate().is_err());
++        let mut f = Fixture::new()?;
++        f.request.expected_grant_revision = serde_json::from_value(serde_json::json!(2))?;
++        assert!(f.validate().is_err());
++        let mut f = Fixture::new()?;
++        f.request.index_id = "idx_408453a0f41b66667eb5a0ba92f5a4db".parse()?;
++        assert!(f.validate().is_err());
++        let mut f = Fixture::new()?;
++        f.request.project_ids = vec![f.projects[0].id];
++        assert!(f.validate().is_err());
++        let mut f = Fixture::new()?;
++        f.authority.sources[0].source_root_id = "src_31432f7bc1107061b36db5d653c6855c".parse()?;
++        assert!(f.validate().is_err());
++        let mut f = Fixture::new()?;
++        f.members[1].scope[0].path = "narrowed".into();
++        assert!(f.validate().is_err());
++        let mut f = Fixture::new()?;
++        f.authority.grant.memberships[0].membership.scope[0].path = "narrowed".into();
++        assert!(f.validate().is_err());
++        let mut f = Fixture::new()?;
++        let mut other = f.members[1].clone();
++        other.index_id = "idx_408453a0f41b66667eb5a0ba92f5a4db".parse()?;
++        f.members.push(other);
++        assert!(f.validate().is_err());
++        Ok(())
++    }
++}

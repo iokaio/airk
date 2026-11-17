@@ -1,0 +1,1160 @@
+{
+  "schema": "airk.embedded-classification-scope/1",
+  "purpose": "Eligibility only for the independently reviewed230 JSONcontainers; no private content or receipt payload is copied. Actual raw bytes and pointer text must match before applying source-role rules.",
+  "role_evidence_receipt": {
+    "path": "artifacts/v190/final-plan/exec-20261116T052942Z/embedded-json-indicator-dispositions-r1.json",
+    "sha256": "c0b10db6a885301398dd03bd953c554b6dc636ef004acbe165199613b9932968"
+  },
+  "files": [
+    {
+      "container": "artifacts/worktree-retention/2026-11-10/p10-worktree/ignored-artifacts/testing/combined-reads/688c3a77efe4d9b02077c26a18eea359.json",
+      "sha256": "e7cfd1ed2a556e34cc0c0df08f8cd95be88b34cf66f16819d695608be4320ab1",
+      "bytes": 23370
+    },
+    {
+      "container": "artifacts/v190/p13a-additional-corpus-r1.json",
+      "sha256": "c9ed78ac0b9cd8c2bf982bb1fe4148c278d174edb3484a84025ff8b2b51d235d",
+      "bytes": 8586
+    },
+    {
+      "container": "artifacts/v190/p13a-additional-labels-freeze-r1.json",
+      "sha256": "8f301390a92369fae5ab08e5dd3a973baf3183b17e25e3e9b4dd6a38f16d2db4",
+      "bytes": 6824
+    },
+    {
+      "container": "artifacts/v190/p6f-resume-final-scoped-parity-r4.json",
+      "sha256": "bea18ebcad127ad2bb2ad7f9b929ab11b4fbf6831a824caeb1df63e8a1e00a18",
+      "bytes": 1956142
+    },
+    {
+      "container": "artifacts/v190/p6f-resume-final-scoped-parity-r5.json",
+      "sha256": "3681c4cd126f09743bf3e0fe4aa1cd3802db231e870c7d18f6fe04cf990ae35e",
+      "bytes": 1951090
+    },
+    {
+      "container": "artifacts/v190/p6f-resume-final-scoped-parity.json",
+      "sha256": "9246df813338bdce7ee8c1eee5399f351935514c58b6d0a98e5a26796f7dfee2",
+      "bytes": 1951211
+    },
+    {
+      "container": "artifacts/v190/p6f-scoped-parity-report-r3.json",
+      "sha256": "f6930074ceaac310fd915208cc590c46ad07a3f9b7bb3e39abf9a8bb81091924",
+      "bytes": 421885
+    },
+    {
+      "container": "artifacts/v190/p6f-scoped-parity-report-r4.json",
+      "sha256": "1138286c652fb0395bd33e692b6d848af6bd6edb28cbd843764b86eb4888c3ef",
+      "bytes": 454442
+    },
+    {
+      "container": "artifacts/v190/p6f-scoped-parity-report-r5.json",
+      "sha256": "d037eaa1a2cb73a1bba77ca20e79da83008795312ca825d36b86d88f4580b4df",
+      "bytes": 1971610
+    },
+    {
+      "container": "artifacts/v190/p9-pre-policy-probe-20261105-r1/source/scripts/fixtures/retrieval-v190.json",
+      "sha256": "c890e995908188285a0ebd572638bf57977e940d812422629234907a94ab9820",
+      "bytes": 4734
+    },
+    {
+      "container": "artifacts/v190/p14-native-quota-r1-public/scripts/fixtures/retrieval-v190.json",
+      "sha256": "c890e995908188285a0ebd572638bf57977e940d812422629234907a94ab9820",
+      "bytes": 4734
+    },
+    {
+      "container": "artifacts/v190/p11b-composed-p11a-r3/overlap-resolutions.json",
+      "sha256": "ebfce23224a730c4d8d678221d87bfc9e11fdbc21e08439dab287740875fdfe8",
+      "bytes": 3575
+    },
+    {
+      "container": "artifacts/v190/p11b-composed-p11a-r2/overlap-resolutions.json",
+      "sha256": "ebfce23224a730c4d8d678221d87bfc9e11fdbc21e08439dab287740875fdfe8",
+      "bytes": 3575
+    },
+    {
+      "container": "artifacts/v190/final-plan/ui-build-snapshot-r1/source/scripts/fixtures/retrieval-v190.json",
+      "sha256": "c890e995908188285a0ebd572638bf57977e940d812422629234907a94ab9820",
+      "bytes": 4734
+    },
+    {
+      "container": "artifacts/v190/final-plan/ui-build-snapshot-r1/source/packages/vscode/out/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/ui-build-snapshot-r1/source/packages/ui/generated/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/ui-build-snapshot-r1/source/fixtures/cli-golden/windows/airk.json",
+      "sha256": "294dbdac520a484f13f524456b8a6c744e4c538c6bc4d1d1ecf50e279581fd78",
+      "bytes": 1196045
+    },
+    {
+      "container": "artifacts/v190/final-plan/ui-build-snapshot-r1/source/crates/airk-mcp/src/help/cli_commands.json",
+      "sha256": "6f7125ca67ce1ee501a1c83c59085261b3cf026b36d90b79e750c8243b5a6dd5",
+      "bytes": 257076
+    },
+    {
+      "container": "artifacts/v190/final-plan/ui-build-snapshot-r1/source/crates/airk-mcp/src/help/content.json",
+      "sha256": "3d2842a08b02cacf3d3c095909b1d7b59c2102e078e24b8fa7e9350482b40384",
+      "bytes": 466521
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-workbench-build-r1/source/scripts/fixtures/retrieval-v190.json",
+      "sha256": "c890e995908188285a0ebd572638bf57977e940d812422629234907a94ab9820",
+      "bytes": 4734
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-workbench-build-r1/source/packages/vscode/out/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-workbench-build-r1/source/packages/ui/generated/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-workbench-build-r1/source/fixtures/cli-golden/windows/airk.json",
+      "sha256": "294dbdac520a484f13f524456b8a6c744e4c538c6bc4d1d1ecf50e279581fd78",
+      "bytes": 1196045
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-workbench-build-r1/source/crates/airk-mcp/src/help/cli_commands.json",
+      "sha256": "6f7125ca67ce1ee501a1c83c59085261b3cf026b36d90b79e750c8243b5a6dd5",
+      "bytes": 257076
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-workbench-build-r1/source/crates/airk-mcp/src/help/content.json",
+      "sha256": "3d2842a08b02cacf3d3c095909b1d7b59c2102e078e24b8fa7e9350482b40384",
+      "bytes": 466521
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-title-build-r1/source/scripts/fixtures/retrieval-v190.json",
+      "sha256": "c890e995908188285a0ebd572638bf57977e940d812422629234907a94ab9820",
+      "bytes": 4734
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-title-build-r1/source/packages/vscode/out/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-title-build-r1/source/packages/ui/generated/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-title-build-r1/source/fixtures/cli-golden/windows/airk.json",
+      "sha256": "294dbdac520a484f13f524456b8a6c744e4c538c6bc4d1d1ecf50e279581fd78",
+      "bytes": 1196045
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-title-build-r1/source/crates/airk-mcp/src/help/cli_commands.json",
+      "sha256": "6f7125ca67ce1ee501a1c83c59085261b3cf026b36d90b79e750c8243b5a6dd5",
+      "bytes": 257076
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-title-build-r1/source/crates/airk-mcp/src/help/content.json",
+      "sha256": "3d2842a08b02cacf3d3c095909b1d7b59c2102e078e24b8fa7e9350482b40384",
+      "bytes": 466521
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-native-r3-cards/workbench-r3/workbench-observations.json",
+      "sha256": "4fdbb6751afdf4d8f376e0963fd68c6b395391c51d03fc058ec8b50177488ba7",
+      "bytes": 541045
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-native-r3-cards/workbench-r3/workbench-receipt.json",
+      "sha256": "e0f29cc9193b0326334dad56dfbefd753109ed1664660c098cbcc1c2476745b8",
+      "bytes": 719681
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-native-r2-cards/workbench-r2/workbench-observations.json",
+      "sha256": "23cf7944f9e7b388d07493488c6004d341f2ce36c435ee6264e7b946d2bb7bd4",
+      "bytes": 541039
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-native-r2-cards/workbench-r2/workbench-receipt.json",
+      "sha256": "3995bc388ad73c3c258a1e807758cab17f09a19c03031096825fdb5355114a6e",
+      "bytes": 719675
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-live-workbench-r1/workbench-observations.json",
+      "sha256": "323116b0a2da375b0f736d2504592c45a9d3f970fee45ebb6bdca3e72b90417c",
+      "bytes": 541039
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/ui-live-workbench-r1/workbench-receipt.json",
+      "sha256": "7e23a91bc3d7524a348e9585cb5741d14bdd046668b7ae8d810a4d9b2baf5306",
+      "bytes": 718255
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/mac-system-control-alias-transfer-r1/source-proof/scripts/fixtures/retrieval-v190.json",
+      "sha256": "c890e995908188285a0ebd572638bf57977e940d812422629234907a94ab9820",
+      "bytes": 4734
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/mac-system-control-alias-transfer-r1/source-proof/packages/ui/generated/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/mac-system-control-alias-transfer-r1/source-proof/fixtures/cli-golden/windows/airk.json",
+      "sha256": "294dbdac520a484f13f524456b8a6c744e4c538c6bc4d1d1ecf50e279581fd78",
+      "bytes": 1196045
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/mac-system-control-alias-transfer-r1/source-proof/crates/airk-mcp/src/help/cli_commands.json",
+      "sha256": "6f7125ca67ce1ee501a1c83c59085261b3cf026b36d90b79e750c8243b5a6dd5",
+      "bytes": 257076
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/mac-system-control-alias-transfer-r1/source-proof/crates/airk-mcp/src/help/content.json",
+      "sha256": "3d2842a08b02cacf3d3c095909b1d7b59c2102e078e24b8fa7e9350482b40384",
+      "bytes": 466521
+    },
+    {
+      "container": "artifacts/v190/final-plan/exec-20261116T052942Z/fresh-ann-query-r1/cohort.json",
+      "sha256": "9d55bde6f4bcbdd2331730d2951479c75c2ae3b4f9935c5d519940e2bc84bb9a",
+      "bytes": 6569
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r4/scripts/fixtures/retrieval-v190.json",
+      "sha256": "c890e995908188285a0ebd572638bf57977e940d812422629234907a94ab9820",
+      "bytes": 4734
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r4/packages/vscode/out/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r4/packages/ui/generated/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r4/fixtures/cli-golden/windows/airk.json",
+      "sha256": "294dbdac520a484f13f524456b8a6c744e4c538c6bc4d1d1ecf50e279581fd78",
+      "bytes": 1196045
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r4/crates/airk-mcp/src/help/cli_commands.json",
+      "sha256": "6f7125ca67ce1ee501a1c83c59085261b3cf026b36d90b79e750c8243b5a6dd5",
+      "bytes": 257076
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r4/crates/airk-mcp/src/help/content.json",
+      "sha256": "3d2842a08b02cacf3d3c095909b1d7b59c2102e078e24b8fa7e9350482b40384",
+      "bytes": 466521
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r3/scripts/fixtures/retrieval-v190.json",
+      "sha256": "c890e995908188285a0ebd572638bf57977e940d812422629234907a94ab9820",
+      "bytes": 4734
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r3/packages/vscode/out/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r3/packages/ui/generated/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r3/fixtures/cli-golden/windows/airk.json",
+      "sha256": "294dbdac520a484f13f524456b8a6c744e4c538c6bc4d1d1ecf50e279581fd78",
+      "bytes": 1196045
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r3/crates/airk-mcp/src/help/cli_commands.json",
+      "sha256": "6f7125ca67ce1ee501a1c83c59085261b3cf026b36d90b79e750c8243b5a6dd5",
+      "bytes": 257076
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r3/crates/airk-mcp/src/help/content.json",
+      "sha256": "3d2842a08b02cacf3d3c095909b1d7b59c2102e078e24b8fa7e9350482b40384",
+      "bytes": 466521
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r3/artifacts/windows-candidate-r3/stage/out/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r3/artifacts/installed-explorer-preflight/run-QGaK3I/profile/User/globalStorage/iokaio.airk/interface-cache/78438adeeb3dd4904c6ff9569788a7b6dccb92b102591a04e409aa592d768be8/out/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r3/artifacts/installed-explorer-preflight/run-QGaK3I/profile/User/globalStorage/iokaio.airk/interface-cache/73d90ab2b3ceb0c07af8b626dc420decbe48120f7a5fe51cf3a6887bf72a787e/out/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r3/artifacts/installed-explorer-preflight/run-QGaK3I/extensions/iokaio.airk-1.8.207/out/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r2/scripts/fixtures/retrieval-v190.json",
+      "sha256": "c890e995908188285a0ebd572638bf57977e940d812422629234907a94ab9820",
+      "bytes": 4734
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r2/packages/vscode/out/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r2/packages/ui/generated/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r2/fixtures/cli-golden/windows/airk.json",
+      "sha256": "294dbdac520a484f13f524456b8a6c744e4c538c6bc4d1d1ecf50e279581fd78",
+      "bytes": 1196045
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r2/crates/airk-mcp/src/help/cli_commands.json",
+      "sha256": "6f7125ca67ce1ee501a1c83c59085261b3cf026b36d90b79e750c8243b5a6dd5",
+      "bytes": 257076
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r2/crates/airk-mcp/src/help/content.json",
+      "sha256": "3d2842a08b02cacf3d3c095909b1d7b59c2102e078e24b8fa7e9350482b40384",
+      "bytes": 466521
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r2/artifacts/windows-candidate-r2/stage/out/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r2/artifacts/installed-explorer-preflight/run-EbSEMq/profile/User/globalStorage/iokaio.airk/interface-cache/78438adeeb3dd4904c6ff9569788a7b6dccb92b102591a04e409aa592d768be8/out/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r2/artifacts/installed-explorer-preflight/run-EbSEMq/profile/User/globalStorage/iokaio.airk/interface-cache/73d90ab2b3ceb0c07af8b626dc420decbe48120f7a5fe51cf3a6887bf72a787e/out/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r2/artifacts/installed-explorer-preflight/run-EbSEMq/extensions/iokaio.airk-1.8.207/out/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r1/scripts/fixtures/retrieval-v190.json",
+      "sha256": "c890e995908188285a0ebd572638bf57977e940d812422629234907a94ab9820",
+      "bytes": 4734
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r1/packages/vscode/out/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r1/packages/ui/generated/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r1/fixtures/cli-golden/windows/airk.json",
+      "sha256": "294dbdac520a484f13f524456b8a6c744e4c538c6bc4d1d1ecf50e279581fd78",
+      "bytes": 1196045
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r1/crates/airk-mcp/src/help/cli_commands.json",
+      "sha256": "6f7125ca67ce1ee501a1c83c59085261b3cf026b36d90b79e750c8243b5a6dd5",
+      "bytes": 257076
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r1/crates/airk-mcp/src/help/content.json",
+      "sha256": "3d2842a08b02cacf3d3c095909b1d7b59c2102e078e24b8fa7e9350482b40384",
+      "bytes": 466521
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r1/artifacts/windows-milestone-vsix-r1/stage/out/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r1/artifacts/installed-explorer-preflight/run-7J0wYu/profile/User/globalStorage/iokaio.airk/interface-cache/ff976c1a5830cbcf26d951efd411d97efa4416cff5fe1d78e1e4553d3ba9d901/out/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r1/artifacts/installed-explorer-preflight/run-7J0wYu/profile/User/globalStorage/iokaio.airk/interface-cache/61e5d8be8b63677f722be311f9a232267906f5314269760f9fd5d72d2b493b1c/out/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/v190/final-plan/candidate-worktree-r1/artifacts/installed-explorer-preflight/run-7J0wYu/extensions/iokaio.airk-1.8.207/out/help-manifest.json",
+      "sha256": "ae049612e6bd798e06fec889fec167578acf6e8506ca6bfe176698fa512b26bf",
+      "bytes": 1072787
+    },
+    {
+      "container": "artifacts/tools/vscode-1.145.0-a717-r2/runtime/a717861c07/resources/app/extensions/typescript-language-features/package.nls.json",
+      "sha256": "c0c0c0443d61c69b49cb6ccc33f16f3a2ce01313a17194c440b97b5734250135",
+      "bytes": 46550
+    },
+    {
+      "container": "artifacts/tools/vscode-1.145.0-a717-r2/runtime/a717861c07/resources/app/extensions/copilot/package.json",
+      "sha256": "301b29ba7af155a5051c185d13a6a78d70650295269b10f213f114eac7e5769a",
+      "bytes": 196884
+    },
+    {
+      "container": "artifacts/tools/vscode-1.145.0-a717-r1/runtime/a717861c07/resources/app/extensions/typescript-language-features/package.nls.json",
+      "sha256": "c0c0c0443d61c69b49cb6ccc33f16f3a2ce01313a17194c440b97b5734250135",
+      "bytes": 46550
+    },
+    {
+      "container": "artifacts/tools/vscode-1.145.0-a717-r1/runtime/a717861c07/resources/app/extensions/copilot/package.json",
+      "sha256": "301b29ba7af155a5051c185d13a6a78d70650295269b10f213f114eac7e5769a",
+      "bytes": 196884
+    },
+    {
+      "container": "artifacts/testing/combined-reads/3d221d61f34db88f8ab1fa6e576b7319.json",
+      "sha256": "95abb82a54692651fa97e1ac34d6ff824bda7084234ebd668a797967f9121791",
+      "bytes": 21585
+    },
+    {
+      "container": "artifacts/split/receipts/3c-goldens-airk.json",
+      "sha256": "c3a1d3302831ae73815daa8147b6dd9af349ed7c2eba5cb9d9c4977fa7461769",
+      "bytes": 1189888
+    },
+    {
+      "container": "artifacts/split/receipts/combined-goldens-airk.json",
+      "sha256": "c3a1d3302831ae73815daa8147b6dd9af349ed7c2eba5cb9d9c4977fa7461769",
+      "bytes": 1189888
+    },
+    {
+      "container": "artifacts/split/receipts/h3e-goldens-airk.json",
+      "sha256": "c3a1d3302831ae73815daa8147b6dd9af349ed7c2eba5cb9d9c4977fa7461769",
+      "bytes": 1189888
+    },
+    {
+      "container": "artifacts/split/receipts/jobs-goldens-airk.json",
+      "sha256": "c3a1d3302831ae73815daa8147b6dd9af349ed7c2eba5cb9d9c4977fa7461769",
+      "bytes": 1189888
+    },
+    {
+      "container": "artifacts/split/receipts/journal-split-goldens-airk.json",
+      "sha256": "c3a1d3302831ae73815daa8147b6dd9af349ed7c2eba5cb9d9c4977fa7461769",
+      "bytes": 1189888
+    },
+    {
+      "container": "artifacts/split/receipts/logs-goldens-airk.json",
+      "sha256": "c3a1d3302831ae73815daa8147b6dd9af349ed7c2eba5cb9d9c4977fa7461769",
+      "bytes": 1189888
+    },
+    {
+      "container": "artifacts/split/receipts/m1-goldens-airk.json",
+      "sha256": "c3a1d3302831ae73815daa8147b6dd9af349ed7c2eba5cb9d9c4977fa7461769",
+      "bytes": 1189888
+    },
+    {
+      "container": "artifacts/split/receipts/m14-goldens-airk.json",
+      "sha256": "c3a1d3302831ae73815daa8147b6dd9af349ed7c2eba5cb9d9c4977fa7461769",
+      "bytes": 1189888
+    },
+    {
+      "container": "artifacts/split/receipts/m19-goldens-airk.json",
+      "sha256": "c3a1d3302831ae73815daa8147b6dd9af349ed7c2eba5cb9d9c4977fa7461769",
+      "bytes": 1189888
+    },
+    {
+      "container": "artifacts/split/receipts/m2-goldens-airk.json",
+      "sha256": "c3a1d3302831ae73815daa8147b6dd9af349ed7c2eba5cb9d9c4977fa7461769",
+      "bytes": 1189888
+    },
+    {
+      "container": "artifacts/split/receipts/m3-goldens-airk.json",
+      "sha256": "c3a1d3302831ae73815daa8147b6dd9af349ed7c2eba5cb9d9c4977fa7461769",
+      "bytes": 1189888
+    },
+    {
+      "container": "artifacts/split/receipts/m4-goldens-airk.json",
+      "sha256": "c3a1d3302831ae73815daa8147b6dd9af349ed7c2eba5cb9d9c4977fa7461769",
+      "bytes": 1189888
+    },
+    {
+      "container": "artifacts/split/receipts/shell-goldens-airk.json",
+      "sha256": "c3a1d3302831ae73815daa8147b6dd9af349ed7c2eba5cb9d9c4977fa7461769",
+      "bytes": 1189888
+    },
+    {
+      "container": "artifacts/split/receipts/status-goldens-airk.json",
+      "sha256": "c3a1d3302831ae73815daa8147b6dd9af349ed7c2eba5cb9d9c4977fa7461769",
+      "bytes": 1189888
+    },
+    {
+      "container": "artifacts/split/receipts/u84-goldens-airk.json",
+      "sha256": "c3a1d3302831ae73815daa8147b6dd9af349ed7c2eba5cb9d9c4977fa7461769",
+      "bytes": 1189888
+    },
+    {
+      "container": "artifacts/split/receipts/u86-goldens-airk.json",
+      "sha256": "c3a1d3302831ae73815daa8147b6dd9af349ed7c2eba5cb9d9c4977fa7461769",
+      "bytes": 1189888
+    },
+    {
+      "container": "artifacts/security-rmcp-2026-11-09/source/rmcp-3.9.0/tests/test_message_schema/server_json_rpc_message_schema.json",
+      "sha256": "b76cb6f6d1fe98354ef62ee5b2a9513c3c13ca99eb7a7433bcafa40d1e7a612e",
+      "bytes": 125452
+    },
+    {
+      "container": "artifacts/security-rmcp-2026-11-09/source/rmcp-3.9.0/tests/test_message_schema/server_json_rpc_message_schema_current.json",
+      "sha256": "7949788b66181ad07598c657891c86c9dad0f55a12ed662baa82bfcacdc1777e",
+      "bytes": 125452
+    },
+    {
+      "container": "artifacts/readiness-1818/clean-break-11-report-b.json",
+      "sha256": "55bc0a698aecb7eb9fab6b09817c8809d1d04ebf683491b4c3381778d3409ba8",
+      "bytes": 526311
+    },
+    {
+      "container": "artifacts/readiness-1818/clean-break-11-report-c.json",
+      "sha256": "53da6c9d060c0084f2d067c17014dd8746af6dee43d2ad403a900210165fb3e1",
+      "bytes": 526429
+    },
+    {
+      "container": "artifacts/readiness-1818/clean-break-11-report.json",
+      "sha256": "f845043170fab8b575785884722e207a642c073d40fe040cb59b36bc860172c7",
+      "bytes": 526307
+    },
+    {
+      "container": "artifacts/readiness-1818/clean-break-15-report.json",
+      "sha256": "95313bfb633f4af0e48bf46ae73d381c8d17a449967473db9feec00638edba0a",
+      "bytes": 16006
+    },
+    {
+      "container": "artifacts/readiness-1818/clean-break-interrupted-report-b.json",
+      "sha256": "00f21e015fed0b4dadf58b64d66a1a32547cf9964c8afe38b196a497aee4f4ea",
+      "bytes": 601778
+    },
+    {
+      "container": "artifacts/readiness-1818/clean-break-interrupted-report.json",
+      "sha256": "5768c7a5f1b228b742cc7e7984397615331f2df7f46e2011d68b994241f2dbb7",
+      "bytes": 616671
+    },
+    {
+      "container": "artifacts/readiness-1818/debug-full-machine-repro-r2.json",
+      "sha256": "2bf4711127f3dde148170f6a030f0363d89dd9f5f46083fdacdc6f533e03c96a",
+      "bytes": 672546
+    },
+    {
+      "container": "artifacts/readiness-1818/debug-full-machine-repro-r3.json",
+      "sha256": "5b2341eac03779b5994ddcdb5b5bba76ffea68e544faa2caecbbb0e0d82b75ee",
+      "bytes": 780578
+    },
+    {
+      "container": "artifacts/readiness-1818/debug-full-machine-repro.json",
+      "sha256": "236da4b1e0c9f592807517774aef3c24a314cd5921731e6af1409096f8f047c0",
+      "bytes": 654264
+    },
+    {
+      "container": "artifacts/readiness-1818/debug-replacement-machine.json",
+      "sha256": "e7d448d7c16c0f0e2336c474c652ac59fbbca42e4b18f0b48bcbf975f316aeba",
+      "bytes": 22117
+    },
+    {
+      "container": "artifacts/readiness-1818/debug-replacement-plain.json",
+      "sha256": "86229d95f758e5de45ea13ece23f74987ef304a4b0f520f332e7adb71af45aa9",
+      "bytes": 21514
+    },
+    {
+      "container": "artifacts/readiness-1818/full-machine-repro-c.json",
+      "sha256": "232bdd954e5397bbc220f69e4507215066040b9a1f333de52635301a00efc52c",
+      "bytes": 861825
+    },
+    {
+      "container": "artifacts/readiness-1818/replacement-machine-e.json",
+      "sha256": "854e93f21e310453ad362a504f98f2c76655755a6f937b22936b35a055ee6342",
+      "bytes": 21924
+    },
+    {
+      "container": "artifacts/readiness-1818/replacement-plain-e.json",
+      "sha256": "529da9a543ebdf41a949e4aee093def095b4e5e6013f7cf6983aac77ffa639fd",
+      "bytes": 21517
+    },
+    {
+      "container": "artifacts/mcp-scenarios-2026-11-01/ledger.json",
+      "sha256": "dd246e9c7336a08a4c98daea71338d4376dde51bbe12f859510dabdf74133c55",
+      "bytes": 424936
+    },
+    {
+      "container": "artifacts/mcp-scenarios-2026-11-01/replay-1.8.4-ledger.json",
+      "sha256": "fc730638cbd4e791e5a379ff86830f8570ed63ca5ce86446ad8f2970b9e23cc6",
+      "bytes": 787187
+    },
+    {
+      "container": "artifacts/manual-mcp-1.8.7-2026-11-01/ledger.json",
+      "sha256": "061e6ac795a30193d5362ccae5e260d55baa6fc684cb3665753de910c5b738c9",
+      "bytes": 210791
+    },
+    {
+      "container": "artifacts/local-vsix/20261115-212744/vsix/stage/out/help-manifest.json",
+      "sha256": "2ed2e3bedb747a0ec358a0d7e6059bdf730e4f0dc5a1e855b47637fa5ca949c2",
+      "bytes": 1063472
+    },
+    {
+      "container": "artifacts/local-vsix/20261115-181557/vsix/stage/out/help-manifest.json",
+      "sha256": "96756ba6cf1f63b3057bb70a1e5e7aa84e56dee15068a18b5f2d331b3ff3d1e8",
+      "bytes": 1049215
+    },
+    {
+      "container": "artifacts/local-vsix/20261115-173533/vsix/stage/out/help-manifest.json",
+      "sha256": "d091a52cc8342fec6e044b006400f3b65e46dece0d2be716d243ab8d1d94d17a",
+      "bytes": 1049215
+    },
+    {
+      "container": "artifacts/local-vsix/20261115-164141/vsix/stage/out/help-manifest.json",
+      "sha256": "c922f9c9ffc0716eb947130958f1e4b086ecb2cc63fb71ef2748656e7c8415ca",
+      "bytes": 1049215
+    },
+    {
+      "container": "artifacts/local-vsix/20261115-151937/vsix/stage/out/help-manifest.json",
+      "sha256": "8e444c9ed57f2df9075db6affacf918f74d1fdc64e8e0924a08fa122ee144e96",
+      "bytes": 1049215
+    },
+    {
+      "container": "artifacts/local-vsix/20261115-131356/vsix/stage/out/help-manifest.json",
+      "sha256": "fd2ee4f3ad177f0206090b7a16056c9c7eb8e9f05f695134df13913445aaab13",
+      "bytes": 1049215
+    },
+    {
+      "container": "artifacts/local-vsix/20261115-130142/vsix/stage/out/help-manifest.json",
+      "sha256": "fd2ee4f3ad177f0206090b7a16056c9c7eb8e9f05f695134df13913445aaab13",
+      "bytes": 1049215
+    },
+    {
+      "container": "artifacts/local-vsix/20261115-130101/vsix/stage/out/help-manifest.json",
+      "sha256": "fd2ee4f3ad177f0206090b7a16056c9c7eb8e9f05f695134df13913445aaab13",
+      "bytes": 1049215
+    },
+    {
+      "container": "artifacts/local-vsix/20261115-130007/vsix/stage/out/help-manifest.json",
+      "sha256": "fd2ee4f3ad177f0206090b7a16056c9c7eb8e9f05f695134df13913445aaab13",
+      "bytes": 1049215
+    },
+    {
+      "container": "artifacts/local/one-airk-1814/neo-audit-token-probe-1794106224/probe.json",
+      "sha256": "67c862ab4ab56f7f6ed890ae189aa86780c686293d78f940e0c4db782b81a2f7",
+      "bytes": 10558
+    },
+    {
+      "container": "artifacts/local/one-airk-1.8.14/clean-break-r32-upgrade-report-r1.json",
+      "sha256": "f69b19041634a6cf906993652423bb0f81c6577070738583675c4585f189bf20",
+      "bytes": 17897
+    },
+    {
+      "container": "artifacts/local/one-airk-1.8.14/clean-break-r33-upgrade-report-r1.json",
+      "sha256": "1ed516a76b1375360e7fa3add1c4da1739ea48185bc99ddc37abbe481865481f",
+      "bytes": 17937
+    },
+    {
+      "container": "artifacts/local/one-airk-1.8.14/clean-break-r34-upgrade-report-r1.json",
+      "sha256": "7fe5fb68dbda8fe1523d5ccf954d448f83ee76dfc2a4c0fec036c11db093b78d",
+      "bytes": 30994
+    },
+    {
+      "container": "artifacts/local/one-airk-1.8.14/clean-break-r35-upgrade-report-r1.json",
+      "sha256": "defaf1a9d4ee447f97317821f64a2d3a9a0b89b96f3eaf23e299a74864fdd28f",
+      "bytes": 37858
+    },
+    {
+      "container": "artifacts/local/one-airk-1.8.14/clean-break-r36-upgrade-report-r1.json",
+      "sha256": "b78abb9e50703adeaac308451d68cf6c77207946ee97518da5baabcf64a4478e",
+      "bytes": 357570
+    },
+    {
+      "container": "artifacts/local/one-airk-1.8.14/clean-break-r36-upgrade-report-r2.json",
+      "sha256": "74054251fe8abfe7189198ddcf4498398ebb5c3d70e1d9a8d04adc09c3a60823",
+      "bytes": 497843
+    },
+    {
+      "container": "artifacts/local/one-airk-1.8.14/clean-break-r37-upgrade-report-r1.json",
+      "sha256": "5bedba58fdccc14996badd76dcc2a941bcfc08c3af9896071c9fe86e1e63f5c4",
+      "bytes": 470267
+    },
+    {
+      "container": "artifacts/local/one-airk-1.8.14/clean-break-r39-upgrade-report-r1.json",
+      "sha256": "52ea41e9e987b7d3c0e80c6c3b70eaae1944feff56a0029cd9350cd71e4c320d",
+      "bytes": 470072
+    },
+    {
+      "container": "artifacts/local/one-airk-1.8.14/client-protocol-audit-r1/code-proxy-ca-source-audit.json",
+      "sha256": "8e6c4c967f712d813171516b6ac1bc06c2efcb61f22aa65a4f5ca9d0041fde16",
+      "bytes": 11694
+    },
+    {
+      "container": "artifacts/local/one-airk-1.8.14/b/Release/_deps/safeint-src/Archive/issues/6642/6642.json",
+      "sha256": "b1471b2f79e2eb2c01e7e6f6ff3864daf28f1f3aeb60ec464793b447b6607e95",
+      "bytes": 4819
+    },
+    {
+      "container": "artifacts/local/one-airk-1.8.14/b/Release/_deps/safeint-src/Archive/issues/6534/6534.json",
+      "sha256": "76061aa2c35db67fc255f3dfaed7d02bb4ba14820099ce7946ea4f61938cd060",
+      "bytes": 10774
+    },
+    {
+      "container": "artifacts/local/one-airk-1.8.14/b/Release/_deps/safeint-src/Archive/issues/17629/17629.json",
+      "sha256": "eb45485642e2db864f4821a13891c16d3303b79982f01c6db0576750439b0bc0",
+      "bytes": 4467
+    },
+    {
+      "container": "artifacts/local/one-airk-1.8.14/b/Release/_deps/safeint-src/Archive/discussions/578321.json",
+      "sha256": "77dcebe2881fcd6cfe5bf4d223e44fb5dd82904c755bae074ea121673305c880",
+      "bytes": 5040
+    },
+    {
+      "container": "artifacts/experiments/semindexint8/bookbuilder-smoke/corpus.json",
+      "sha256": "1ed018be65efbe70815742cfd2c868e58d60c2a3c037e7d1d5f2c727628d4b98",
+      "bytes": 72084
+    },
+    {
+      "container": "artifacts/branch-review-r1/neo-cfg-audit-r4.json",
+      "sha256": "4dca1ffc12d343ed6b63b18ebc1030fe5ebc851e0c76e14057515571dbbbcdca",
+      "bytes": 23873
+    },
+    {
+      "container": "artifacts/advanced-split/w4-file-info-diagnostic-r1/source-probe.json.source-input.json",
+      "sha256": "f5f111c151a791ff0a2180fcce3d4336382b7fb553796545168539ff4a0f10e3",
+      "bytes": 8336
+    },
+    {
+      "container": "artifacts/advanced-split/receipts/delivery-09-workbench-native-r2.json",
+      "sha256": "04b1ae58937dc045e654b0ad666cf670c0ae1da804c3554957583d0a44f2ecff",
+      "bytes": 574497
+    },
+    {
+      "container": "artifacts/advanced-split/receipts/workbench-open-r63/result.json",
+      "sha256": "c8ad7194e8ee3ca14f79cbefa7111dc2d0b049f7998380edfa62af212a8ea565",
+      "bytes": 716264
+    },
+    {
+      "container": "artifacts/advanced-split/receipts/runtime-r60/native-fixtures/airk-service-clients-0it75yai/workbench-answer-export.json",
+      "sha256": "3ffd8b9eae802c07a74baa93030a9f045d92b1702e059b86248cefa40631d114",
+      "bytes": 14021
+    },
+    {
+      "container": "artifacts/advanced-split/receipts/runtime-r60/native-fixtures/airk-service-clients-0it75yai/workbench-observations.json.failure.json",
+      "sha256": "125e0ecf320e80b768d91b67de26eba9b4276093ae1bc4c581ee74c44a8905d3",
+      "bytes": 876375
+    },
+    {
+      "container": "artifacts/advanced-split/receipts/final-help-r1/generated/shared-help-manifest/packages/ui/generated/help-manifest.json",
+      "sha256": "ea17e3a4185602cd371545a6db87ae34c75053d72de1fb275aa9088c46a15461",
+      "bytes": 1049149
+    },
+    {
+      "container": "artifacts/advanced-split/receipts/final-help-r1/generated/native-content/crates/airk-mcp/src/help/content.json",
+      "sha256": "7df8337e07045775e2705f52ed016f3507468c502a178fd8fbd4635c8d205f19",
+      "bytes": 455742
+    },
+    {
+      "container": "artifacts/advanced-split/receipts/final-help-r1/generated/cli-catalog/crates/airk-mcp/src/help/cli_commands.json",
+      "sha256": "fee830f8d71261ee58b4f9bcc959a7409ff489ee124a6691dcc7077af5ecd8f5",
+      "bytes": 248070
+    },
+    {
+      "container": "artifacts/advanced-split/ort130-x64-owned-r5/b/Release/_deps/safeint-src/Archive/issues/6642/6642.json",
+      "sha256": "b1471b2f79e2eb2c01e7e6f6ff3864daf28f1f3aeb60ec464793b447b6607e95",
+      "bytes": 4819
+    },
+    {
+      "container": "artifacts/advanced-split/ort130-x64-owned-r5/b/Release/_deps/safeint-src/Archive/issues/6534/6534.json",
+      "sha256": "76061aa2c35db67fc255f3dfaed7d02bb4ba14820099ce7946ea4f61938cd060",
+      "bytes": 10774
+    },
+    {
+      "container": "artifacts/advanced-split/ort130-x64-owned-r5/b/Release/_deps/safeint-src/Archive/issues/17629/17629.json",
+      "sha256": "eb45485642e2db864f4821a13891c16d3303b79982f01c6db0576750439b0bc0",
+      "bytes": 4467
+    },
+    {
+      "container": "artifacts/advanced-split/ort130-x64-owned-r5/b/Release/_deps/safeint-src/Archive/discussions/578321.json",
+      "sha256": "77dcebe2881fcd6cfe5bf4d223e44fb5dd82904c755bae074ea121673305c880",
+      "bytes": 5040
+    },
+    {
+      "container": "artifacts/advanced-split/ort130-x64-owned-r3/b/Release/_deps/safeint-src/Archive/issues/6642/6642.json",
+      "sha256": "b1471b2f79e2eb2c01e7e6f6ff3864daf28f1f3aeb60ec464793b447b6607e95",
+      "bytes": 4819
+    },
+    {
+      "container": "artifacts/advanced-split/ort130-x64-owned-r3/b/Release/_deps/safeint-src/Archive/issues/6534/6534.json",
+      "sha256": "76061aa2c35db67fc255f3dfaed7d02bb4ba14820099ce7946ea4f61938cd060",
+      "bytes": 10774
+    },
+    {
+      "container": "artifacts/advanced-split/ort130-x64-owned-r3/b/Release/_deps/safeint-src/Archive/issues/17629/17629.json",
+      "sha256": "eb45485642e2db864f4821a13891c16d3303b79982f01c6db0576750439b0bc0",
+      "bytes": 4467
+    },
+    {
+      "container": "artifacts/advanced-split/ort130-x64-owned-r3/b/Release/_deps/safeint-src/Archive/discussions/578321.json",
+      "sha256": "77dcebe2881fcd6cfe5bf4d223e44fb5dd82904c755bae074ea121673305c880",
+      "bytes": 5040
+    },
+    {
+      "container": "artifacts/advanced-split/ort130-x64/b/Release/_deps/safeint-src/Archive/issues/6642/6642.json",
+      "sha256": "b1471b2f79e2eb2c01e7e6f6ff3864daf28f1f3aeb60ec464793b447b6607e95",
+      "bytes": 4819
+    },
+    {
+      "container": "artifacts/advanced-split/ort130-x64/b/Release/_deps/safeint-src/Archive/issues/6534/6534.json",
+      "sha256": "76061aa2c35db67fc255f3dfaed7d02bb4ba14820099ce7946ea4f61938cd060",
+      "bytes": 10774
+    },
+    {
+      "container": "artifacts/advanced-split/ort130-x64/b/Release/_deps/safeint-src/Archive/issues/17629/17629.json",
+      "sha256": "eb45485642e2db864f4821a13891c16d3303b79982f01c6db0576750439b0bc0",
+      "bytes": 4467
+    },
+    {
+      "container": "artifacts/advanced-split/ort130-x64/b/Release/_deps/safeint-src/Archive/discussions/578321.json",
+      "sha256": "77dcebe2881fcd6cfe5bf4d223e44fb5dd82904c755bae074ea121673305c880",
+      "bytes": 5040
+    },
+    {
+      "container": "artifacts/advanced-split/models/training-env/resolver-report.json",
+      "sha256": "7c60307ebd2ce15672598320c7cbe12c627fcf23e8c266594c1d593eb19af355",
+      "bytes": 769027
+    },
+    {
+      "container": "artifacts/advanced-split/models/requests-train-rights/pairs.private.json",
+      "sha256": "916b398de0fc9774041fe174d0e585c862bc68e9aa18fa04028c3126f693a18f",
+      "bytes": 682310
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r2/data/collections-1.2/default/current-resources/07f63aa301143b3814bcc036120ba674a849b66145f6b0996ec0a286a52a22ef.json",
+      "sha256": "69d359d66d669944f4204933173142641804dd021dd1b09788e8fd76e56e826b",
+      "bytes": 132175
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r2/data/collections-1.2/default/current-resources/2559ad27cc8a3f757fbe0417f2c71c5be95beb63cc8b1342a2d8184442d2e6de.json",
+      "sha256": "e381e24c17446b24d089e8b3546322260b50b7a97c1c4d0f58f69d61a6c9cf45",
+      "bytes": 28208
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r2/data/collections-1.2/default/current-resources/358234a56ac582e301a055b13de19970c2b223df5e2fb316d3cee5682967f91f.json",
+      "sha256": "3a43b1435a8679e841cf9728c6b66cbaba79d8b242db22239692980d9517d4dd",
+      "bytes": 218434
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r2/data/collections-1.2/default/current-resources/465944763c2336545f6c360340ea91414dab242b974a36c019f8d7526e065efe.json",
+      "sha256": "d120bc46d05d9083c91a79aa9c87c5ec20917944730c7034f81797a0d54a0868",
+      "bytes": 127860
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r2/data/collections-1.2/default/current-resources/49454c2f5c1931cdbc9fb1f6c227e2edc1bb3cc05d9bc5f654a1c0c808181dde.json",
+      "sha256": "4adcb17faaa3fca9f45ec8780b530906dc27e42dfe04963da0391ec7d235f560",
+      "bytes": 131469
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r2/data/collections-1.2/default/current-resources/743f73c83cf503c946503edc00b2fb04f8cda63e6e037eca2c49f6df64e5baf9.json",
+      "sha256": "34acb103efd8659a41d073423c71d9bcae7b3a8b2c232fbaa9712c6681ab042c",
+      "bytes": 131118
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r2/data/collections-1.2/default/current-resources/aa8557b4ab47251f5dcbc2238d00fa70923d40ab7572ca726b71bcb81cffb863.json",
+      "sha256": "f486faad604627492e48c129b18a778fdc3ed8c450b3cf327541ca0a4983a1a5",
+      "bytes": 216739
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r2/data/collections-1.2/default/current-resources/b6450bf3cf0f4311957a85e0d1f47ac6c5666ec81ca491b117366216083106a7.json",
+      "sha256": "15bdcca7e215158dd6bf3be729ed60a26e9bca21e609f144008cf3cc9bf43b5f",
+      "bytes": 93267
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r2/data/collections-1.2/default/current-resources/bc792f0c77b40b672bb26a5430011d72fb1679fb86aae88f324b75b02715e964.json",
+      "sha256": "3187d831a141a7967b9b218bbd670448c5a4a4b0c36ab380076a19342a870c6f",
+      "bytes": 125385
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r2/data/collections-1.2/default/current-resources/c5d5452da1c7d46513f4b4ca747494cf09ca9eee8b0d81fc3850aab6d6ade042.json",
+      "sha256": "d4ee620727594b8e1995ae195263e34d1529db779738ac182138ebee50155ec2",
+      "bytes": 189978
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r2/data/collections-1.2/default/current-resources/c9fcd8a3aec330d5c7ad2f1d9050de04a6f9d2da17865914c9f086140e9270fd.json",
+      "sha256": "111ade487b9ffc4426f12e32df70c1b989c18d40ebe1d73cd27439c36ff11efa",
+      "bytes": 155813
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r2/data/collections-1.2/default/current-resources/ca286e6e1f90cadd5e402457d6a8de5095060b659997ca804fdaf3802925e01a.json",
+      "sha256": "627d06ce428dcb0a3d24ca90e92e51e1b2bc6dae97f28cc54f32f2a3637e8437",
+      "bytes": 218580
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r2/data/collections-1.2/default/current-resources/d5807746a13604fc5fd1a48ad0ee85dd67069ea0e0c675355c97337c64962048.json",
+      "sha256": "8113196d4205c797b2b2c0580f6acc403be1f7a39a94ea04325ac94f9f4065ef",
+      "bytes": 219411
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r2/data/collections-1.2/default/current-resources/d868b42d4ed6f14c45c26d06658afac4d5c674df43fe43f3be5fc414ba754ff9.json",
+      "sha256": "c88d1829eebbc692f15a85076edd2b59f47c8ad20f6c61c7cadf54ff8ff3faa6",
+      "bytes": 129633
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r2/data/collections-1.2/default/current-resources/d8ecc691624adddd829e92021a97f75a7e18b00ea865a894b831420f9bc93026.json",
+      "sha256": "e0614bf4d3a571cbed8e019de395d949f97e247f1b8a81d4233f61febb69258a",
+      "bytes": 33467
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r2/data/collections-1.2/default/current-resources/e2df1e1872fdb6a85d2c6815143d75d020eeb5c702d5b5a25e81bab149f37684.json",
+      "sha256": "27432e3ee07361f2b2e670c3e2726db3fa70d058fbbb99888d1a45b16f786e4c",
+      "bytes": 130941
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r2/data/collections-1.2/default/current-resources/e5fc0571827037808df056135458c023a7ae1fb11a692923d2906d1f62754b50.json",
+      "sha256": "b2f560d7201dffe53ac8ff6f434e536f063de96496f5234f2d807abfb3196217",
+      "bytes": 137779
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r2/data/collections-1.2/default/current-resources/ebda5aac079c8e9c8eb2baac207bd78ad4ba88097ff375483c2e3b8f67f99c49.json",
+      "sha256": "ee8f10108fa777aa610d7272331f7956982d1e95b5b080b11a00641e3486b672",
+      "bytes": 207158
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r2/data/collections-1.2/default/current-resources/ec887a6d27a25256c5c0d2e50c7fd5a5f17704dc50f2c138690ea9e67ab01013.json",
+      "sha256": "cac9d1b3bbbc5549061472906e8e0c48b4c422ef0f8d4c846ced585459577075",
+      "bytes": 222677
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r2/data/collections-1.2/default/current-resources/f2f23d83ba7696799e0df240d0646f04f8b5ab0f292f5c1785e6d2cc5b668925.json",
+      "sha256": "08c27347e1a40c07324ed396bbab9f533d50a037690494fb4830965714be7e2b",
+      "bytes": 222427
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r2/data/collections-1.2/default/current-resources/fa27b81a1aba26e0edbf0ad82cb4f947095504b9ab916d119f217b57ccf44b84.json",
+      "sha256": "26b10cae0e206a865e74f22915e9cfcfafa32a033bae8380fca1fd0ab89b0128",
+      "bytes": 97662
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r1/data/collections-1.2/default/current-resources/07f63aa301143b3814bcc036120ba674a849b66145f6b0996ec0a286a52a22ef.json",
+      "sha256": "69d359d66d669944f4204933173142641804dd021dd1b09788e8fd76e56e826b",
+      "bytes": 132175
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r1/data/collections-1.2/default/current-resources/2559ad27cc8a3f757fbe0417f2c71c5be95beb63cc8b1342a2d8184442d2e6de.json",
+      "sha256": "e381e24c17446b24d089e8b3546322260b50b7a97c1c4d0f58f69d61a6c9cf45",
+      "bytes": 28208
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r1/data/collections-1.2/default/current-resources/358234a56ac582e301a055b13de19970c2b223df5e2fb316d3cee5682967f91f.json",
+      "sha256": "3a43b1435a8679e841cf9728c6b66cbaba79d8b242db22239692980d9517d4dd",
+      "bytes": 218434
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r1/data/collections-1.2/default/current-resources/465944763c2336545f6c360340ea91414dab242b974a36c019f8d7526e065efe.json",
+      "sha256": "d120bc46d05d9083c91a79aa9c87c5ec20917944730c7034f81797a0d54a0868",
+      "bytes": 127860
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r1/data/collections-1.2/default/current-resources/49454c2f5c1931cdbc9fb1f6c227e2edc1bb3cc05d9bc5f654a1c0c808181dde.json",
+      "sha256": "4adcb17faaa3fca9f45ec8780b530906dc27e42dfe04963da0391ec7d235f560",
+      "bytes": 131469
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r1/data/collections-1.2/default/current-resources/743f73c83cf503c946503edc00b2fb04f8cda63e6e037eca2c49f6df64e5baf9.json",
+      "sha256": "34acb103efd8659a41d073423c71d9bcae7b3a8b2c232fbaa9712c6681ab042c",
+      "bytes": 131118
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r1/data/collections-1.2/default/current-resources/aa8557b4ab47251f5dcbc2238d00fa70923d40ab7572ca726b71bcb81cffb863.json",
+      "sha256": "f486faad604627492e48c129b18a778fdc3ed8c450b3cf327541ca0a4983a1a5",
+      "bytes": 216739
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r1/data/collections-1.2/default/current-resources/b6450bf3cf0f4311957a85e0d1f47ac6c5666ec81ca491b117366216083106a7.json",
+      "sha256": "15bdcca7e215158dd6bf3be729ed60a26e9bca21e609f144008cf3cc9bf43b5f",
+      "bytes": 93267
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r1/data/collections-1.2/default/current-resources/bc792f0c77b40b672bb26a5430011d72fb1679fb86aae88f324b75b02715e964.json",
+      "sha256": "3187d831a141a7967b9b218bbd670448c5a4a4b0c36ab380076a19342a870c6f",
+      "bytes": 125385
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r1/data/collections-1.2/default/current-resources/c5d5452da1c7d46513f4b4ca747494cf09ca9eee8b0d81fc3850aab6d6ade042.json",
+      "sha256": "d4ee620727594b8e1995ae195263e34d1529db779738ac182138ebee50155ec2",
+      "bytes": 189978
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r1/data/collections-1.2/default/current-resources/c9fcd8a3aec330d5c7ad2f1d9050de04a6f9d2da17865914c9f086140e9270fd.json",
+      "sha256": "111ade487b9ffc4426f12e32df70c1b989c18d40ebe1d73cd27439c36ff11efa",
+      "bytes": 155813
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r1/data/collections-1.2/default/current-resources/ca286e6e1f90cadd5e402457d6a8de5095060b659997ca804fdaf3802925e01a.json",
+      "sha256": "627d06ce428dcb0a3d24ca90e92e51e1b2bc6dae97f28cc54f32f2a3637e8437",
+      "bytes": 218580
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r1/data/collections-1.2/default/current-resources/d5807746a13604fc5fd1a48ad0ee85dd67069ea0e0c675355c97337c64962048.json",
+      "sha256": "8113196d4205c797b2b2c0580f6acc403be1f7a39a94ea04325ac94f9f4065ef",
+      "bytes": 219411
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r1/data/collections-1.2/default/current-resources/d868b42d4ed6f14c45c26d06658afac4d5c674df43fe43f3be5fc414ba754ff9.json",
+      "sha256": "c88d1829eebbc692f15a85076edd2b59f47c8ad20f6c61c7cadf54ff8ff3faa6",
+      "bytes": 129633
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r1/data/collections-1.2/default/current-resources/d8ecc691624adddd829e92021a97f75a7e18b00ea865a894b831420f9bc93026.json",
+      "sha256": "e0614bf4d3a571cbed8e019de395d949f97e247f1b8a81d4233f61febb69258a",
+      "bytes": 33467
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r1/data/collections-1.2/default/current-resources/e2df1e1872fdb6a85d2c6815143d75d020eeb5c702d5b5a25e81bab149f37684.json",
+      "sha256": "27432e3ee07361f2b2e670c3e2726db3fa70d058fbbb99888d1a45b16f786e4c",
+      "bytes": 130941
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r1/data/collections-1.2/default/current-resources/e5fc0571827037808df056135458c023a7ae1fb11a692923d2906d1f62754b50.json",
+      "sha256": "b2f560d7201dffe53ac8ff6f434e536f063de96496f5234f2d807abfb3196217",
+      "bytes": 137779
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r1/data/collections-1.2/default/current-resources/ebda5aac079c8e9c8eb2baac207bd78ad4ba88097ff375483c2e3b8f67f99c49.json",
+      "sha256": "ee8f10108fa777aa610d7272331f7956982d1e95b5b080b11a00641e3486b672",
+      "bytes": 207158
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r1/data/collections-1.2/default/current-resources/ec887a6d27a25256c5c0d2e50c7fd5a5f17704dc50f2c138690ea9e67ab01013.json",
+      "sha256": "cac9d1b3bbbc5549061472906e8e0c48b4c422ef0f8d4c846ced585459577075",
+      "bytes": 222677
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r1/data/collections-1.2/default/current-resources/f2f23d83ba7696799e0df240d0646f04f8b5ab0f292f5c1785e6d2cc5b668925.json",
+      "sha256": "08c27347e1a40c07324ed396bbab9f533d50a037690494fb4830965714be7e2b",
+      "bytes": 222427
+    },
+    {
+      "container": "artifacts/advanced-split/models/native-parent-bag-units-r1/data/collections-1.2/default/current-resources/fa27b81a1aba26e0edbf0ad82cb4f947095504b9ab916d119f217b57ccf44b84.json",
+      "sha256": "26b10cae0e206a865e74f22915e9cfcfafa32a033bae8380fca1fd0ab89b0128",
+      "bytes": 97662
+    },
+    {
+      "container": "artifacts/advanced-split/models/backend-research/onnx-1.19.0.pypi.json",
+      "sha256": "ce44f3ea59afdf42fdd3c2606a12557fe26301f2554f2eb56a57861772fc6116",
+      "bytes": 91769
+    },
+    {
+      "container": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/techqa-source-disjoint-positive-pairs-r5/research-source-manifest.json",
+      "sha256": "3e9506f1e6c3b5223d1d77f9289c941402b5a41ab385cbc0cefdc9a02f770642",
+      "bytes": 1190517
+    },
+    {
+      "container": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/techqa-original-publisher-archive-r2/local-parse-r3/original-training_Q_A.json",
+      "sha256": "0e9b77bc1ad7f7e95d05b095a34b1ece75c679575747949288a1d0f7470f4f46",
+      "bytes": 1149612
+    },
+    {
+      "container": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/techqa-original-publisher-archive-r2/local-parse-r3/TRAIN-original-documents/swg21611699.json",
+      "sha256": "3119700fc653a21ec2d4222f84db4d424e3eef491463fea6bb10bb5f495fd068",
+      "bytes": 7433
+    },
+    {
+      "container": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/techqa-original-publisher-archive-r2/local-parse-r3/TRAIN-original-documents/swg21995397.json",
+      "sha256": "3bc19325ab9f398872a58cfb4bf76933c5fbb0659d0e33d646ea0773d18f30d6",
+      "bytes": 48060
+    },
+    {
+      "container": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/techqa-original-publisher-archive-r2/local-parse-r3/TRAIN-original-documents/swg24039150.json",
+      "sha256": "ec3fec8c8826061d6cfc998456164e9aa2152a04b9cd60316c09f867142e9b09",
+      "bytes": 90710
+    },
+    {
+      "container": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/techqa-original-publisher-archive-r2/local-parse-r3/TRAIN-original-documents/swg24039742.json",
+      "sha256": "6a94e1b82e29349d2db2c77ff6c1df780bdfde588023036975f3035e312b0a2f",
+      "bytes": 234318
+    },
+    {
+      "container": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/techqa-original-publisher-archive-r2/local-parse-r3/TRAIN-original-documents/swg24043263.json",
+      "sha256": "a27de1c7494e2d1cc916d1768e536c7b89f75b4a56f986ec93f71592d061158b",
+      "bytes": 169899
+    },
+    {
+      "container": "artifacts/advanced-split/models/actual-composed-service-r2/public-human-label-admission-r1/techqa-original-publisher-archive-r2/local-parse-r3/TRAIN-original-documents/swg24044440.json",
+      "sha256": "6cf1e508d4b4ecbbb5b7e4033ac2f9761db213af75051269880a0e7a0ed7260c",
+      "bytes": 52097
+    },
+    {
+      "container": "artifacts/advanced-split/mac-setup-platform-placement-r1/body-identity-proof.json",
+      "sha256": "90fcc7e12e1fc784676f498ac1e7e6a3e56b6d201ed383a215e7ec332c66242f",
+      "bytes": 2333
+    },
+    {
+      "container": "artifacts/advanced-split/mac-current-read-r16/frozen-public/crates/airk-mcp/src/help/cli_commands.json",
+      "sha256": "bffa035c37a71f0814bdd600d70c8ab5aa30af41038a2bc0b5b05e56af68a4d3",
+      "bytes": 244308
+    },
+    {
+      "container": "artifacts/advanced-split/mac-current-read-r16/frozen-public/crates/airk-mcp/src/help/content.json",
+      "sha256": "4f69a6b76ab7198aaede2ff0f43a95b1563d73dd1103d023d64d54aa78cf909d",
+      "bytes": 449665
+    },
+    {
+      "container": "artifacts/advanced-split/mac-current-read-r15/frozen-public/crates/airk-mcp/src/help/cli_commands.json",
+      "sha256": "bffa035c37a71f0814bdd600d70c8ab5aa30af41038a2bc0b5b05e56af68a4d3",
+      "bytes": 244308
+    },
+    {
+      "container": "artifacts/advanced-split/mac-current-read-r15/frozen-public/crates/airk-mcp/src/help/content.json",
+      "sha256": "4f69a6b76ab7198aaede2ff0f43a95b1563d73dd1103d023d64d54aa78cf909d",
+      "bytes": 449665
+    },
+    {
+      "container": "artifacts/advanced-split/mac-current-read-r14/frozen-public/crates/airk-mcp/src/help/cli_commands.json",
+      "sha256": "bffa035c37a71f0814bdd600d70c8ab5aa30af41038a2bc0b5b05e56af68a4d3",
+      "bytes": 244308
+    },
+    {
+      "container": "artifacts/advanced-split/mac-current-read-r14/frozen-public/crates/airk-mcp/src/help/content.json",
+      "sha256": "4f69a6b76ab7198aaede2ff0f43a95b1563d73dd1103d023d64d54aa78cf909d",
+      "bytes": 449665
+    },
+    {
+      "container": "artifacts/advanced-split/help-source-preview-b84fe5bd/manifest.json",
+      "sha256": "bb171ec4a8d50ce06d59efe4201fcd7e5b23e37ab29282670fe53f7ec8b2d114",
+      "bytes": 976305
+    },
+    {
+      "container": "artifacts/advanced-split/core-contract-gate-r149/scripts/fixtures/retrieval-v190.json",
+      "sha256": "c890e995908188285a0ebd572638bf57977e940d812422629234907a94ab9820",
+      "bytes": 4734
+    },
+    {
+      "container": "artifacts/advanced-split/core-contract-gate-r149/packages/ui/generated/help-manifest.json",
+      "sha256": "ea17e3a4185602cd371545a6db87ae34c75053d72de1fb275aa9088c46a15461",
+      "bytes": 1049149
+    },
+    {
+      "container": "artifacts/advanced-split/core-contract-gate-r149/fixtures/cli-golden/windows/airk.json",
+      "sha256": "c3a1d3302831ae73815daa8147b6dd9af349ed7c2eba5cb9d9c4977fa7461769",
+      "bytes": 1189888
+    },
+    {
+      "container": "artifacts/advanced-split/core-contract-gate-r149/crates/airk-mcp/src/help/cli_commands.json",
+      "sha256": "fee830f8d71261ee58b4f9bcc959a7409ff489ee124a6691dcc7077af5ecd8f5",
+      "bytes": 248070
+    },
+    {
+      "container": "artifacts/advanced-split/core-contract-gate-r149/crates/airk-mcp/src/help/content.json",
+      "sha256": "7df8337e07045775e2705f52ed016f3507468c502a178fd8fbd4635c8d205f19",
+      "bytes": 455742
+    }
+  ]
+}

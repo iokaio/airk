@@ -1,0 +1,49 @@
+--- a/scripts/tests/test_usage_http_transport.py
++++ b/scripts/tests/test_usage_http_transport.py
+@@ -27,21 +27,19 @@
+         fixture.arguments.assert_not_called()
+ 
+     def exercise(self, changed=False):
+-        selected = {"expected_catalog_revision": 4, "grant": "original"}
+-        connection = {"selection": {"kind": "scoped", "selection": {**selected, "expected_catalog_revision": 5}}}
+-        if changed:
+-            connection["selection"]["selection"]["grant"] = "other"
++        selected = {"index_id": "idx_" + "a" * 32}
++        endpoint = {"url": "https://127.0.0.1:57421/mcp"}
+         fixture = SimpleNamespace(single_image=True, scopes={"p": selected}, control=Path("owned"),
+-            managed_health={"instance": "exact"}, assert_alive=Mock(),
+-            enroll_http=Mock(return_value=connection),
+-            rpc=Mock(return_value={"observation": {"instance": "exact"}}))
++            managed_health={"instance": "exact"}, assert_alive=Mock(), http_endpoint=Mock(return_value=endpoint),
++            enroll_http=Mock(side_effect=AssertionError("No credential enrollment")),
++            rpc=Mock(return_value={"observation": {"instance": "other" if changed else "exact"}}))
+         network = Mock()
+         transport = SimpleNamespace(validate_native_identity=Mock(), McpClient=Mock(return_value=network))
+         with patch.object(driver.importlib.util, "module_from_spec", return_value=transport), \
+              patch.object(driver.importlib.util, "spec_from_file_location", return_value=SimpleNamespace(loader=SimpleNamespace(exec_module=lambda _: None))), \
+              patch.object(driver.subprocess, "Popen", side_effect=AssertionError("Modern stdio launch forbidden")):
+             if changed:
+-                with self.assertRaisesRegex(AssertionError, "changed reviewed scope"):
++                with self.assertRaisesRegex(AssertionError, ""):
+                     with driver.usage_mcp(fixture, "p", Path("owned")):
+                         self.fail("Changed grant was accepted")
+                 transport.McpClient.assert_not_called()
+@@ -50,14 +48,13 @@
+                     send({"id": 1})
+                     receive(1)
+                 network.close.assert_called_once()
+-                enrollment = fixture.enroll_http.call_args.args
+-                self.assertEqual(enrollment[2], "codex")
+-                self.assertEqual(enrollment[0], {"kind": "scoped", "selection": selected})
++                fixture.enroll_http.assert_not_called()
++                transport.McpClient.assert_called_once_with(endpoint, fixture.control, scope={"index_ids": ["idx_" + "a" * 32]})
+                 fixture.rpc.assert_called_once_with("health")
+                 transport.validate_native_identity.assert_called_once()
+ 
+-    def test_modern_uses_native_scoped_codex_enrollment_and_https(self):
++    def test_modern_uses_tokenless_endpoint_and_explicit_index(self):
+         self.exercise()
+ 
+-    def test_enrollment_cannot_substitute_authority(self):
++    def test_crossed_service_cannot_replace_owned_endpoint(self):
+         self.exercise(changed=True)

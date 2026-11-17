@@ -1,0 +1,87 @@
+--- crates\airk-service\src\service_runtime\evaluation_fixture_tests.rs
++++ crates\airk-service\src\service_runtime\evaluation_fixture_tests.rs
+@@ -1515,3 +1515,84 @@
+     ensure!(probes.len() <= 5, "offered whole-card probe bound");
+     Ok(probes)
+ }
++
++/// Serialize actual Core semantic setup drafts and inspect the CPU-selected
++/// MiniLM object plan without opening an inference session or any task data.
++#[test]
++#[ignore = "private selected semantic setup draft emitter; explicit immutable MiniLM assets and fresh output required"]
++fn emit_private_selected_vector_configuration() -> Result<()> {
++    use airk_core::service_configuration::ConfigurationDraft;
++    let directory = PathBuf::from(
++        std::env::var_os("AIRK_SELECTED_MINILM_DIRECTORY")
++            .context("selected MiniLM directory missing")?,
++    )
++    .canonicalize()?;
++    let (_parent, mut manifest_file) =
++        source_file(&directory.join("model.json"), &artifact_root()?)?;
++    let manifest_raw = bounded(&mut manifest_file)?;
++    ensure!(
++        serde_json::from_slice::<serde_json::Value>(&manifest_raw)?["schema"] == 2,
++        "selected MiniLM must use the actual current ONNX model definition"
++    );
++    let plan = airk_retrieval::model::inspect_object_plan(&directory)?;
++    let catalog = airk_retrieval::model_catalog::inspect_catalog()?;
++    let output = PathBuf::from(
++        std::env::var_os("AIRK_SELECTED_VECTOR_DRAFT_OUTPUT")
++            .context("selected semantic draft output missing")?,
++    );
++    ensure!(
++        output.is_absolute() && !output.try_exists()?,
++        "semantic draft output must be fresh/absolute"
++    );
++    let parent = output
++        .parent()
++        .context("semantic draft output parent missing")?
++        .canonicalize()?;
++    ensure!(
++        parent.starts_with(artifact_root()?),
++        "semantic draft output leaves private artifacts"
++    );
++    let pin = OpenedDirectory::open(&parent)?;
++    let _output_pin = crate::ipc::endpoint::create_root_at(
++        &pin,
++        output
++            .file_name()
++            .context("semantic draft output name missing")?,
++    )?;
++    let selection = airk_core::vector_selection::VectorSelectionPolicy::default();
++    selection.validate()?;
++    write(
++        &output,
++        "vectors-enabled.json",
++        &ConfigurationDraft::Vectors { enabled: true },
++    )?;
++    write(
++        &output,
++        "minilm-install.json",
++        &ConfigurationDraft::InstallModel {
++            directory: directory.clone(),
++        },
++    )?;
++    write(
++        &output,
++        "vector-selection-all.json",
++        &ConfigurationDraft::VectorSelection {
++            policy: selection.clone(),
++        },
++    )?;
++    write(
++        &output,
++        "minilm-plan.json",
++        &serde_json::json!({
++            "schema":"airk.private-selected-native-semantic-setup/1","evaluation":true,"release_qualified":false,
++            "source_directory":directory,"model_definition_sha256":sha(&manifest_raw),
++            "object_plan":plan,"actual_native_catalog":catalog,"vector_selection_digest":selection.digest()?,
++            "NN_invocations":0,"scope":"Only actual Core configuration draft serialization and CPU-selected immutable MiniLM object inspection. No service/index/source/task/model execution or semantic readiness claim."
++        }),
++    )?;
++    println!(
++        "{}",
++        serde_json::json!({"output":output,"NN_invocations":0,"task_data_opened":false})
++    );
++    Ok(())
++}

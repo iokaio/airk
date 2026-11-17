@@ -1,0 +1,319 @@
+--- /dev/null
++++ b/packages/vscode/src/test/installedEditorContracts.ts
+@@ -0,0 +1,83 @@
++// SPDX-License-Identifier: Apache-2.0
++/** External qualification driver only. Raw native replies remain authoritative. */
++import {strict as assert} from 'node:assert';
++import {validateCombinedCatalogSession} from '../catalogSession';
++import {materializeNativeMetadata} from '../nativeMetadata';
++import {readResultBody} from '../sourceVerification';
++import {combinedRows} from '../explorerSearch';
++export function installedSelector(definition:any,result:any,selection:any):any{
++    assert.ok(Array.isArray(definition.args));
++    assert.equal(definition.args.filter((arg:string)=>arg==='--combined-session').length,1,'Actual combined native selector');
++    for(const arg of ['--catalog-session','--root','--data-dir','--collection','--service-project'])assert.ok(!definition.args.includes(arg),'No reconstructed legacy selector');
++    const at=definition.args.indexOf('--combined-session');assert.ok(at>=0&&typeof definition.args[at+1]==='string');
++    const selector=validateCombinedCatalogSession(JSON.parse(definition.args[at+1]));
++    assert.deepEqual(selector,result.outcome.selection.session,'Complete native reviewed selection');
++    assert.deepEqual(selector.index_ids,[selection.index]);assert.deepEqual(selector.project_ids,[selection.project]);assert.equal(selector.grant_id,selection.grant);
++    return selector;
++}
++export function installedToolBody(wire:any):any{
++    assert.ok(wire&&typeof wire==='object');assert.equal(wire.error,undefined,'No RPC error in successful tool envelope');
++    const result=wire.result;assert.ok(result&&typeof result==='object'&&!Array.isArray(result));
++    assert.ok(result.isError===undefined||typeof result.isError==='boolean','Actual typed outer error flag');
++    assert.ok(Array.isArray(result.content)&&result.content.length===1&&result.content[0].type==='text'&&typeof result.content[0].text==='string');
++    const body=JSON.parse(result.content[0].text);
++    if(result.structuredContent!==undefined)assert.deepEqual(result.structuredContent,body,'Complete text and structured native copies agree');
++    assert.ok(Buffer.byteLength(JSON.stringify(body))<=65536,'Native canonical body bound');return body;
++}
++export function installedMember(raw:any,selection:any,denied=false):any{
++    assert.equal(raw?.schema,'airk.combined-read/1');
++    // This is the shipped lossless logical projection, not independent fullreply
++    // cryptographic authentication. Untouched raw delivery stays in transport evidence.
++    const value=materializeNativeMetadata(raw),scope:any=value.selection;
++    assert.deepEqual(scope.project_ids,[selection.project]);assert.deepEqual(scope.index_ids,[selection.index]);
++    assert.equal(scope.grant_id,selection.grant);assert.equal(scope.grant_revision,selection.session.expected_grant_revision);
++    assert.equal(scope.member_availability,'report');assert.match(scope.identity,/^[a-f0-9]{64}$/);
++    assert.ok(Array.isArray(value.members)&&value.members.length===1);
++    const member:any=value.members[0];assert.equal(member.index_id,selection.index);assert.equal(member.allocation?.index_id,selection.index);
++    assert.ok(member.allocation.max_bytes>0&&member.allocation.deadline_ms>0);
++    assert.equal(member.outcome,denied?'failed':'complete');assert.equal(member.is_error,denied);
++    if(Object.hasOwn(member.result,'isError'))assert.equal(member.result.isError,denied,'Complete child error envelope agrees');
++    assert.equal(value.partial,denied);assert.equal(typeof value.truncated,'boolean');
++    const vector:any=value.publication_vector;assert.ok(Array.isArray(vector.members)&&vector.members.length===1);
++    assert.equal(vector.members[0].index_id,selection.index);assert.match(vector.authority,/^[a-f0-9]{64}$/);
++    assert.ok(vector.observed_to_unix_ms>=vector.observed_from_unix_ms);
++    const delivery=raw.delivery_observation?.receipt;
++    assert.equal(delivery?.schema,1);assert.equal(delivery.namespace,selection.session.namespace);
++    assert.equal(delivery.scope_identity,vector.authority,'Native delivery/vector domain');
++    assert.ok(delivery.catalog_revision>=selection.session.expected_catalog_revision,'Delivery may advance catalog revision');
++    const body:any=readResultBody(member.result),observed=body.scope_observation;
++    assert.equal(observed?.qualifier,'selected_subset');assert.equal(observed.provenance,'user_reviewed_project_grant');
++    assert.equal(observed.grant.id,selection.grant);assert.equal(observed.grant.revision,selection.session.expected_grant_revision);assert.match(observed.fingerprint,/^[a-f0-9]{64}$/);
++    assert.equal(observed.members.length,1);assert.equal(observed.members[0].index_id,selection.index);
++    assert.deepEqual(observed.members[0].memberships.map((row:any)=>row.project_id),[selection.project]);
++    if(denied){
++        assert.deepEqual(body.error,{schema:1,code:'scoped_read_unavailable',retryable:false});
++        assert.equal(vector.members[0].publication,null,'Denied path does not invent an artifact publication');
++        assert.ok(Array.isArray(value.ranking));assert.equal(value.ranking.length,0);
++        for(const field of ['items','hits','content','evidence'])assert.equal(body[field],undefined,'Denied source carries no evidence');
++    }else{
++        const rows=combinedRows(value);assert.ok(rows);
++        for(const {origin}of rows){
++            assert.equal(origin.index_id,selection.index);assert.deepEqual(origin.project_ids,[selection.project]);
++            assert.ok(Array.isArray(selection.source_ids)&&selection.source_ids.includes(origin.source_root_id),'Native configured originating source');
++            assert.deepEqual(origin.publication,vector.members[0].publication,'Origin retains exact native member publication');
++        }
++        if(body.publication!==undefined)assert.deepEqual(body.publication,vector.members[0].publication);
++    }
++    return body; // Derived assertion view only; never replaces canonical export/evidence.
++}
++export function installedRevocation(body:any,selector:any):void{
++    assert.equal(body?.error?.code,'combined_scope_unavailable');assert.equal(body.error.query_submitted,false);
++    assert.equal(body.error.retryable,false);assert.equal(body.error.query_replay_safe,false);
++    assert.equal(body.requested_scope.confirmed,false);assert.deepEqual(body.requested_scope.selection,selector);
++    for(const field of ['items','hits','evidence','result','members'])assert.equal(body[field],undefined);
++}
++export async function finishInstalledClient(client:{observations:unknown[];close():Promise<unknown>},evidence:any,persist:(name:string,value:unknown)=>Promise<unknown>):Promise<void>{
++    evidence.native.push({transport:client.observations});let cleanup:unknown;
++    try{await client.close();}catch(error){cleanup=error;evidence.transport_cleanup_failure=String(error);}
++    try{await persist('retained-evidence',evidence);}catch(error){
++        evidence.retention_failure=String(error);if(!cleanup)cleanup=error;
++        console.error('Private native evidence retention failed:',String(error));
++    }
++    if(cleanup&&!evidence.failure)throw cleanup; // Preserve a primary failure and disclose failed cleanup separately.
++}
+--- a/packages/vscode/src/test/installedEditor.ts
++++ b/packages/vscode/src/test/installedEditor.ts
+@@ -9,6 +9,7 @@
+ import { parse as parseJsonc, type ParseError } from 'jsonc-parser';
+ import { UNIFIED_TOOLS } from '../model';
+ import { readRetryDelay } from '../explorerEvidence';
++import { installedSelector, installedToolBody, installedMember, installedRevocation, finishInstalledClient } from './installedEditorContracts';
+ 
+ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+ class NativeReplyError extends Error {
+@@ -90,9 +91,11 @@
+     }
+     async start(): Promise<void> {
+         const result = await this.request('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'airk-installed-editor-test', version: '1' } });
++        this.observations.push({method:'initialize',result});
+         if(result.error)throw new NativeReplyError(result,result.error.data);
+         this.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
+         const tools=await this.request('tools/list',{});
++        this.observations.push({method:'tools/list',result:tools});assert.equal(tools.error,undefined);assert.ok(Array.isArray(tools.result?.tools));
+         assert.deepEqual(tools.result.tools.map((tool:any)=>tool.name).sort(),[...UNIFIED_TOOLS].sort());
+     }
+     async call(name: string, args: object, rejected = false): Promise<any> {
+@@ -100,8 +103,8 @@
+         while (true) {
+             const result = await this.request('tools/call', { name, arguments: {response_mode:'full',...args} }, Math.max(1,deadline-Date.now()));
+             this.observations.push({name,args,result});if(this.observations.length>512)throw new Error('Native observation bound exhausted');
+-            let body:any;
+-            try { body=JSON.parse(result.result?.content?.[0]?.text); } catch { /* Preserve protocol errors below. */ }
++            if(result.error)throw new NativeReplyError(result,result.error.data);
++            const body=installedToolBody(result);
+             // Only the shared typed read-retry contract authorizes repeating the exact call.
+             const delay=readRetryDelay(result.result);
+             if(delay!==undefined&&Date.now()+delay<deadline){await sleep(delay);continue;}
+@@ -163,24 +166,14 @@
+     const use=async(selection:any)=>{
+         await context();await ui('page',{kind:'grants'});await ui('inspect',{kind:'grant',id:selection.grant});
+         const result=await ui('useGrant',{index:selection.index,project:selection.project});
+-        assert.equal(result.outcome.selected_subset,true);
+-        const current=await definitions();assert.equal(current.length,1,'One deliberately selected Index, independent of open folder count');
+-        const argument=current[0].args.indexOf('--catalog-session');assert.ok(argument>=0,'Actual native catalog selector');
+-        const selector=JSON.parse(current[0].args[argument+1]);
+-        assert.equal(selector.index_id,selection.index);assert.equal(selector.grant_id,selection.grant);
+-        assert.deepEqual(selector.project_ids,[selection.project]);
+-        assert.ok(!current[0].args.includes('--root'),'No reconstructed legacy source selector');
++        const current=await definitions();
+         evidence.definitions=(evidence.definitions??[]).concat(current.map(value=>({command:value.command,args:[...value.args],env:value.env,cwd:value.cwd?.fsPath,cwd_explicit:value.cwd!==undefined})));
++        await mark('retained-evidence',evidence); // Complete definitions/UI result retained even on an early contract refusal.
++        assert.equal(result.outcome.selected_subset,true);assert.equal(current.length,1,'One deliberately selected Index, independent of open folder count');
++        const selector=installedSelector(current[0],result,selection);selection.session=selector;
+         return current[0];
+     };
+-    const scoped=(body:any,selection:any)=>{
+-        const scope=body.scope_observation;assert.equal(scope?.qualifier,'selected_subset');
+-        assert.equal(scope.provenance,'user_reviewed_project_grant');assert.equal(scope.grant.id,selection.grant);
+-        assert.match(scope.fingerprint,/^[0-9a-f]{64}$/);assert.equal(scope.members.length,1);
+-        assert.equal(scope.members[0].index_id,selection.index);
+-        assert.deepEqual(scope.members[0].memberships.map((value:any)=>value.project_id),[selection.project]);
+-        return body;
+-    };
++    const scoped=(body:any,selection:any,denied=false)=>installedMember(body,selection,denied);
+     const finish=async()=>{await mark('result',evidence);await mark('capture');await waitFor(path.join(folder,'capture-complete.json'));};
+     await vscode.commands.executeCommand('airk.dashboard.focus');
+     if(scenario==='legacy'){
+@@ -213,7 +206,7 @@
+                 assert.equal(result.items[0].citation.content_hash,fixture.probe.content_sha256);
+                 evidence.native.push({legacyProbe:result});evidence.legacyRetrievalParity=true;
+             }
+-        }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:undefined};throw error;}finally{evidence.native.push({transport:client.observations});await mark('retained-evidence',evidence);await client.close();}
++        }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:undefined};throw error;}finally{await finishInstalledClient(client,evidence,mark);}
+         assert.equal(createHash('sha256').update(await fs.readFile(fixture.legacy_config.path)).digest('hex'),fixture.legacy_config.sha256);
+         await noSelection('Existing manual agent configuration owns its connection; no duplicate automatic definition');
+         evidence.legacyUpgradeCoverage=true;checks.push(fixture.legacy_config.binding_kind==='pinned_predecessor'?'unchanged incapable pinned predecessor refuses upgraded format':'unchanged stable launcher retrieves through sealed imported scope');
+@@ -256,7 +249,7 @@
+         const grantDraft=await ui('read'),grant=grantDraft.review.request.operation.grant.id;
+         assert.match(grant,/^grt_[0-9a-f]{32}$/);applied(await ui('apply',{grant:true}));await noSelection('Persisted reviewed grant is inert');
+         checks.push('native setup and multi-source membership full previews/receipts','persisted grant remains inert');
+-        return {index,project,grant,backing,name:nativeIndex.name,source:primary,additional:extra,data:leaf};
++        return {index,project,grant,backing,name:nativeIndex.name,source:primary,additional:extra,data:leaf,source_ids:member.review.request.operation.membership.scope.map((atom:any)=>atom.source_root_id)};
+     };
+     let selection:any=phase?.selection;
+     if(phase?.stage==='reloaded'){
+@@ -321,12 +314,12 @@
+         assert.equal(symbols.items[0].citation.path,'fixture.ts');
+         assert.equal(symbols.items[0].citation.content_hash,createHash('sha256').update(await fs.readFile(path.join(source,'fixture.ts'))).digest('hex'));
+         const extra=scoped(await client.call('symbols',{name:'SharedAllowedEvidence',compact:false}),selection);assert.equal(extra.items.length,1);
+-        assert.equal((await client.call('search',{query:foreign,mode:'lexical',limit:5})).hits.length,0);
+-        assert.equal((await client.call('search',{query:'HiddenPrivateEvidence',mode:'lexical',limit:5})).hits.length,0);
+-        const denied=await client.call('read_file',{path:'hidden.ts',start_line:1,end_line:2},true);scoped(denied,selection);
+-        await client.call('read_file',{path:'../workspace-b/fixture.ts',start_line:1,end_line:2},true);
++        assert.equal(scoped(await client.call('search',{query:foreign,mode:'lexical',limit:5}),selection).hits.length,0);
++        assert.equal(scoped(await client.call('search',{query:'HiddenPrivateEvidence',mode:'lexical',limit:5}),selection).hits.length,0);
++        const denied=await client.call('read_file',{path:'hidden.ts',start_line:1,end_line:2});scoped(denied,selection,true);
++        const escaped=await client.call('read_file',{path:'../workspace-b/fixture.ts',start_line:1,end_line:2});scoped(escaped,selection,true);
+         evidence.native.push({symbols,additional:extra,denied});
+-        checks.push('actual raw definition command/args/env','complete native tool catalog','native complete scope observation','citation bytes and out-of-grant isolation');
++        checks.push('actual raw definition command/args/env','advertised native tool catalog retained with inputs; supported names match','complete combined scope/member projection; original raw transport retained','citation bytes and out-of-grant isolation');
+         const before=definition.args.slice(),otherData=path.join(folder,'selected-storage');
+         await fs.mkdir(otherData,{recursive:true});
+         await vscode.workspace.getConfiguration('airk').update('storage.path',otherData,vscode.ConfigurationTarget.Global);
+@@ -342,8 +335,8 @@
+             await mark('edited');await waitFor(marker('edited',role==='a'?'b':'a'));
+             const expected=scenario==='same'||role==='a'?1:0,end=Math.min(Date.now()+180000,sharedDeadline);
+             let changed:any;
+-            do{changed=await client.call('symbols',{name:'SharedEditEvidence',compact:false});if(changed.items.length===expected)break;assert.ok(Date.now()<end);await sleep(500);}while(true);
+-            scoped(changed,selection);assert.equal(changed.items.length,expected);
++            do{changed=scoped(await client.call('symbols',{name:'SharedEditEvidence',compact:false}),selection);if(changed.items.length===expected)break;assert.ok(Date.now()<end);await sleep(500);}while(true);
++            assert.equal(changed.items.length,expected);
+             if(expected)assert.equal(changed.items[0].citation.content_hash,createHash('sha256').update(await fs.readFile(path.join(source,'fixture.ts'))).digest('hex'));
+             await mark('retrieved');await waitFor(marker('retrieved',role==='a'?'b':'a'));
+             const peer=JSON.parse(await fs.readFile(marker('created',role==='a'?'b':'a'),'utf8'));
+@@ -415,7 +408,7 @@
+             try{await otherClient.start();await vscode.commands.executeCommand('airk.index');
+                 const deadline=Math.min(Date.now()+180000,sharedDeadline);
+                 while(!scoped(await otherClient.call('symbols',{name:'WindowBetaEvidence',compact:false}),secondary).items.length){assert.ok(Date.now()<deadline);await sleep(500);}
+-            }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:undefined};throw error;}finally{evidence.native.push({transport:otherClient.observations});await mark('retained-evidence',evidence);await otherClient.close();}
++            }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:undefined};throw error;}finally{await finishInstalledClient(otherClient,evidence,mark);}
+             const before=await report(secondary);assert.ok(BigInt(before.report.calls)>0n,'The other Index must have real recorded calls before testing preservation');
+             const primaryBefore=await report(selection);assert.ok(BigInt(primaryBefore.report.calls)>0n,'Primary Index must have actual usage to clear');
+             await ui('usageClear',{index:selection.index,name:selection.name,collection:selection.backing.collection});
+@@ -445,20 +438,15 @@
+             assert.ok(refusal instanceof NativeReplyError,'Timeout/EOF is not native revocation proof');
+             const envelope=refusal.reply as any;assert.equal(envelope.result?.isError,true);
+             const body=JSON.parse(envelope.result.content[0].text),error=body.error;
+-            assert.equal(error?.code,'scoped_observation_unavailable');assert.equal(error.query_submitted,null);
+-            assert.equal(error.retryable,true);assert.equal(error.fresh_brokerage_required,true);assert.equal(error.query_replay_safe,false);
+-            assert.equal(body.requested_scope.confirmed,false);
+-            assert.deepEqual(body.requested_scope.selection,JSON.parse(definition.args[definition.args.indexOf('--catalog-session')+1]));
+-            for(const field of ['items','hits','evidence','result'])assert.equal(body[field],undefined);
++            installedRevocation(body,selection.session);
+             assert.equal(client.observations.length,observedBefore+1,'Revocation must not replay or rebroker the query');
+             checks.push('actual grant revocation fences the retained MCP session');
+         }
+-    }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:undefined};throw error;}finally{evidence.native.push({transport:client.observations});await mark('retained-evidence',evidence);await client.close();}
++    }catch(error){evidence.failure={error:String(error),stack:error instanceof Error?error.stack:undefined,native:error instanceof NativeReplyError?error.reply:undefined};throw error;}finally{await finishInstalledClient(client,evidence,mark);}
+     await mark('transport-closed');
+     if(['same','different'].includes(scenario))await waitFor(marker('transport-closed',role==='a'?'b':'a'));
+     if(role==='a'){
+-        const selector=JSON.parse(definition.args[definition.args.indexOf('--catalog-session')+1]);
+-        const stop=await ui('serviceStop',{installDir:path.join(folder,'native-service'),runtimeSha256:process.env.AIRK_EDITOR_RUNTIME_SHA256,namespace:selector.namespace},'#manage/service');
++        const stop=await ui('serviceStop',{installDir:path.join(folder,'native-service'),runtimeSha256:process.env.AIRK_EDITOR_RUNTIME_SHA256},'#manage/service');
+         await fs.writeFile(path.join(folder,'native-stop.json'),JSON.stringify(stop,null,2));
+         evidence.native.push({ownedServiceStop:stop});
+     }else await waitFor(path.join(folder,'native-stop.json'));
+--- a/scripts/check-native-editor.cjs
++++ b/scripts/check-native-editor.cjs
+@@ -258,7 +258,15 @@
+                         const actions=['serviceStop','connect','startService','page','inspect','setupDraft','setupApply','projectDraft','renameDraft','membershipDraft','apply','context','associationDraft','grantDraft','useGrant','revokeDraft','read','reconcile','staleApply','restricted','usageScoped','usageAdmin','usageJson','usageClear'];
+                         if(!actions.includes(request.action))throw new Error('Unknown private Indexing action');
+                         const fixture=await fs.realpath(folder);
+-                        if(request.action==='serviceStop'){await canonicalOwned(fixture,request.installDir);if(request.installDir!==path.join(folder,'native-service')||request.runtimeSha256!==bundle.digest||!/^[a-f0-9]{32}$/.test(request.namespace))throw new Error('Crossed owned Stop fixture binding');}
++                        if(request.action==='serviceStop'){
++                            await canonicalOwned(fixture,request.installDir);
++                            if(request.installDir!==path.join(folder,'native-service')||request.runtimeSha256!==bundle.digest)throw new Error('Crossed owned Stop fixture binding');
++                            const observed=await execute(bundle.main,['runtime','inspect','--install-dir',request.installDir],{windowsHide:true,env:environment,timeout:30000,maxBuffer:65536});
++                            const metadata=JSON.parse(observed.stdout);
++                            if(metadata.payload_verified!==true||metadata.approval?.manifest_sha256!==bundle.digest||!/^[a-f0-9]{32}$/.test(metadata.registry_namespace))throw new Error('Owned service namespace unavailable before Stop');
++                            await fs.writeFile(path.join(folder,'native-pre-stop-inspect.json'),JSON.stringify(metadata,null,2));
++                            request.namespace=metadata.registry_namespace;
++                        }
+                         if(request.action==='setupDraft'){await ownedPath(fixture,request.source);await ownedPath(fixture,request.storage,true);if(request.additional)await ownedPath(fixture,request.additional.path);}
+                         if(request.action==='membershipDraft')for(const atom of request.roots??[])await ownedPath(fixture,atom.path);
+                         for(const key of ['index','project','id'])if(request[key]!==undefined&&!/^(idx_|prj_|grt_)[a-f0-9]{32}$/.test(request[key]))throw new Error('Invalid exact native catalog ID');
+--- /dev/null
++++ b/packages/vscode/src/test/installedEditorContracts.test.ts
+@@ -0,0 +1,68 @@
++// SPDX-License-Identifier: Apache-2.0
++// Synthetic Core-shaped consumer regressions; actual native/editor proof is separate.
++import {test} from 'node:test';import {strict as assert} from 'node:assert';
++import {installedSelector,installedToolBody,installedMember,installedRevocation,finishInstalledClient} from './installedEditorContracts';
++const id=(prefix:string,byte:string)=>prefix+byte.repeat(32),hash=(byte:string)=>byte.repeat(64);
++function fixture(denied=false):any{
++    const index=id('idx_','1'),project=id('prj_','2'),grant=id('grt_','3'),source=id('src_','4');
++    const session={schema:1,context_key:hash('a'),namespace:'5'.repeat(32),expected_catalog_revision:2,grant_id:grant,expected_grant_revision:1,project_ids:[project],index_ids:[index]};
++    const selection={index,project,grant,source_ids:[source],session};
++    const publication={collection:'fixture',incarnation:'6'.repeat(32),generation:1,revision:hash('7'),token:'airk-r1:fixture-test-token'};
++    const observed={qualifier:'selected_subset',provenance:'user_reviewed_project_grant',grant:{id:grant,revision:1},fingerprint:hash('8'),members:[{index_id:index,memberships:[{project_id:project}]}]};
++    const body=denied?{error:{schema:1,code:'scoped_read_unavailable',retryable:false},scope_observation:observed}
++        :{items:[{name:'Fixture',citation:{path:'fixture.ts',content_hash:hash('9'),start_line:1,end_line:1}}],publication,scope_observation:observed};
++    const result={isError:denied,structuredContent:body,content:[{type:'text',text:JSON.stringify(body)}]};
++    const raw={schema:'airk.combined-read/1',selection:{project_ids:[project],index_ids:[index],grant_id:grant,grant_revision:1,member_availability:'report',identity:hash('a')},
++        publication_vector:{authority:hash('b'),observed_from_unix_ms:1,observed_to_unix_ms:2,members:[{index_id:index,publication:denied?null:publication}]},
++        members:[{index_id:index,is_error:denied,allocation:{index_id:index,limit:20,max_bytes:65536,deadline_ms:30000,verification_max_sources:1,verification_max_bytes:65536,verification_deadline_ms:1},outcome:denied?'failed':'complete',result}],
++        ranking:denied?[]:[{index_id:index,result_pointer:'/members/0/result/structuredContent/items/0',local_rank:1,rank_contribution:1/61,origin:{index_id:index,project_ids:[project],source_root_id:source,source_relative_path:'fixture.ts',publication}}],
++        rank_policy:'fixture',partial:denied,truncated:false,delivery_observation:{receipt:{schema:1,namespace:session.namespace,catalog_revision:3,scope_identity:hash('b'),result_digest:hash('c')}}};
++    return {selection,raw,body,definition:{args:['--combined-session',JSON.stringify(session),'mcp']},ui:{outcome:{selection:{session}}}};
++}
++test('complete current combined definition binds native reviewed singleton and rejects obsolete flag',()=>{
++    const f=fixture();assert.deepEqual(installedSelector(f.definition,f.ui,f.selection),f.selection.session);
++    assert.throws(()=>installedSelector({args:['--catalog-session',JSON.stringify(f.selection.session),'mcp']},f.ui,f.selection));
++});
++test('crossed index, Project and native session refuse',()=>{
++    for(const field of ['index_ids','project_ids','context_key']){
++        const f=fixture(),bad=structuredClone(f.selection.session);bad[field]=field==='context_key'?hash('d'):[id(field==='index_ids'?'idx_':'prj_','e')];
++        assert.throws(()=>installedSelector({args:['--combined-session',JSON.stringify(bad),'mcp']},f.ui,f.selection));
++    }
++});
++test('lossless member projection preserves raw body, floats and distinct identity domains',()=>{
++    const f=fixture(),before=structuredClone(f.raw);assert.equal(installedMember(f.raw,f.selection).items.length,1);
++    assert.deepEqual(f.raw,before);assert.notEqual(f.raw.selection.identity,f.raw.publication_vector.authority);
++});
++test('Report denied source is failed singleton with null publication, not outer-error success',()=>{
++    const f=fixture(true);assert.equal(installedMember(f.raw,f.selection,true).error.code,'scoped_read_unavailable');
++    assert.throws(()=>installedMember(f.raw,f.selection));const bad=structuredClone(f.raw);bad.members[0].is_error=false;assert.throws(()=>installedMember(bad,f.selection,true));
++    const published=structuredClone(f.raw);published.publication_vector.members[0].publication={token:'not-a-denial-publication'};assert.throws(()=>installedMember(published,f.selection,true));
++});
++test('crossed allocation, unexpected member and wrong citation origin refuse',()=>{
++    for(const mutation of [(x:any)=>{x.members[0].allocation.index_id=id('idx_','e');},(x:any)=>{x.members.push(x.members[0]);},(x:any)=>{x.ranking[0].origin.project_ids=[id('prj_','e')];},(x:any)=>{x.members[0].result.structuredContent.scope_observation.grant.revision=2;}]){
++        const f=fixture();mutation(f.raw);assert.throws(()=>installedMember(f.raw,f.selection));
++    }
++});
++test('outer flags and complete text/structured copies remain strict',()=>{
++    const f=fixture(),wire={result:{isError:false,structuredContent:f.raw,content:[{type:'text',text:JSON.stringify(f.raw)}]}};
++    assert.deepEqual(installedToolBody(wire),f.raw);
++    assert.throws(()=>installedToolBody({result:{...wire.result,isError:'false'}}));
++    assert.throws(()=>installedToolBody({result:{...wire.result,structuredContent:{different:true}}}));
++    assert.throws(()=>installedToolBody({error:{code:1},result:wire.result}));
++});
++test('current revocation refuses before submission and never invents fresh brokerage authority',()=>{
++    const f=fixture(),body={error:{code:'combined_scope_unavailable',query_submitted:false,retryable:false,query_replay_safe:false},requested_scope:{confirmed:false,selection:f.selection.session}};
++    installedRevocation(body,f.selection.session);assert.throws(()=>installedRevocation({...body,error:{...body.error,retryable:true}},f.selection.session));
++    assert.throws(()=>installedRevocation({...body,items:[]},f.selection.session));
++});
++test('manual legacy flat reply stays intact under transport decoding',()=>{
++    const legacy={items:[],scope_observation:{provenance:'imported_legacy_snapshot'}};
++    assert.deepEqual(installedToolBody({result:{content:[{type:'text',text:JSON.stringify(legacy)}]}}),legacy);
++});
++test('primary native failure survives cleanup failure with complete raw evidence retained',async()=>{
++    const cleanup=new Error('owned close failed'),evidence:any={native:[],failure:{error:'primary query failed'}},saved:any[]=[];
++    await finishInstalledClient({observations:[{raw:'complete'}],close:async()=>{throw cleanup;}},evidence,async(_name,value)=>{saved.push(structuredClone(value));});
++    assert.equal(saved[0].failure.error,'primary query failed');assert.match(saved[0].transport_cleanup_failure,/owned close failed/);
++    assert.deepEqual(saved[0].native,[{transport:[{raw:'complete'}]}]);
++    await assert.rejects(finishInstalledClient({observations:[],close:async()=>{throw cleanup;}},{native:[]},async()=>{}),error=>error===cleanup);
++});

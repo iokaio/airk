@@ -1,0 +1,47 @@
+--- a/docs/arbiter/README.md
++++ b/docs/arbiter/README.md
+@@ -7,6 +7,44 @@
+ and proposed research datasets have separate identities. Attribution is not a
+ claim of training admission, model quality, independent held-out evidence or
+ release qualification.
++
++## Device and precision controls
++
++The Service page separates Focus/Context model choice from execution variants.
++Each stage has **Auto / CPU** device policy and **Auto / FP32 / FP16** GPU
++precision preferences, independent enablement and explicit index consent.
++Selecting a model changes a draft; downloads remain separate explicit actions.
++
++Auto may fall back to an admitted CPU variant. Native status shows requested
++settings, selected execution and fallback/refusal reasons. GPU precision
++preferences leave the CPU profile unchanged: requested FP16 with a CPU selection
++does not mean FP16 execution, and unreported CPU precision stays unreported.
++
++The controls and native admission/fallback machinery are implemented. The current
++scientific GPU path is **Windows x64 CUDA SM86 only**. **No Arbiter GPU or FP16
++model variant is qualified yet.** Implemented controls and scoped tests do not
++establish GPU/model quality, memory/latency or supported-platform qualification.
++
++Use `airkctl arbiter status` for complete native status/3 and configuration/4.
++Current CLI arguments are:
++
++| Action | Arguments after `airkctl arbiter` |
++| --- | --- |
++| Apply stage choices | `configure --file <request.json>` |
++| Download or remove an exact variant | `provision` or `remove`, with `--expected-revision <N> --profile <SHA>` |
++| Cancel or recover a stage operation | `cancel` or `recover`, with `--expected-revision <N> --stage <focus-or-context>` |
++| Import a verified local bundle | `import --expected-revision <N> --profile <SHA> --directory <absolute-folder>` |
++| Explicit disabled initialization | `initialize`, optionally `--expected-legacy-configuration <SHA>` |
++| Explicit retained-state migration | `migrate --expected-revision <N> --expected-configuration <SHA>` |
++
++Configure files contain the complete native `configure_device` management
++request: `stage`, `expected_revision` and a nested per-stage `configuration`.
++`device_policy` and `gpu_precision` are fields inside that configuration. Use the
++[Rust-generated schema](../../packages/contracts-gen/arbiter.schema.json) and
++actual native revisions, index IDs and variant manifests. Explicit `status-legacy`
++and `--legacy` retain CPU configuration/3 and status/2 semantics; active device
++state that they cannot represent is refused. The [native CLI contract](../../crates/airkctl/src/contract/CONTRACT.md#d08-additive-native-device-management-transport)
++owns these flags and compatibility rules.
+ 
+ ## Research credits and permitted-use boundaries
+ 

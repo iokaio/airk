@@ -1,0 +1,58 @@
+// SPDX-License-Identifier: Apache-2.0
+    pub fn resolve(&self, control: &Path) -> Result<RootResolution> {
+        Ok(self.observe(control)?.resolution)
+    }
+    pub(crate) fn observe(&self, control: &Path) -> Result<RootObservation> {
+        self.observe_uncached(control, None)
+    }
+    fn observe_uncached(&self, control: &Path, deadline: Option<std::time::Instant>) -> Result<RootObservation> {
+        let captured = std::time::Instant::now();
+        let observed_unix_ms = scope_observed_unix_ms();
+        if !control.join("service-1.4.sqlite3").try_exists()? {
+            return Ok(RootObservation { resolution: RootResolution::Missing, fence: None,
+                stamp: None, observed_unix_ms, root: self.root.clone(), collection: self.collection.clone(), captured });
+        }
+        let mut registry = airk_store::service::registry::ServiceRegistry::open_saved_before(control, deadline)?;
+        self.observe_registry(&mut registry, deadline, captured, observed_unix_ms)
+    }
+    pub(crate) fn observe_cached(&self, control: &Path, cached: Option<std::sync::Arc<RootObservation>>,
+        deadline: std::time::Instant) -> Result<std::sync::Arc<RootObservation>> {
+        if std::time::Instant::now() >= deadline { return Err(airk_store::service::registry::SavedScopeExpired.into()); }
+        let captured = std::time::Instant::now();
+        let observed_unix_ms = scope_observed_unix_ms();
+        if !control.join("service-1.4.sqlite3").try_exists()? {
+            if std::time::Instant::now() >= deadline { return Err(airk_store::service::registry::SavedScopeExpired.into()); }
+            return Ok(std::sync::Arc::new(RootObservation { resolution: RootResolution::Missing, fence: None,
+                stamp: None, observed_unix_ms, root: self.root.clone(), collection: self.collection.clone(), captured }));
+        }
+        let mut registry = airk_store::service::registry::ServiceRegistry::open_saved_before(control, Some(deadline))?;
+        let stamp = registry.source_scope_stamp(Some(deadline))?;
+        if let Some(cached) = cached {
+            if cached.root == self.root && cached.collection == self.collection
+                && cached.stamp == Some(stamp) && cached.fresh_at(std::time::Instant::now()) {
+                if std::time::Instant::now() >= deadline { return Err(airk_store::service::registry::SavedScopeExpired.into()); }
+                return Ok(cached); // no project row decoded; original observation age retained.
+            }
+        }
+        Ok(std::sync::Arc::new(self.observe_registry(&mut registry, Some(deadline), captured, observed_unix_ms)?))
+    }
+    fn observe_registry(&self, registry: &mut airk_store::service::registry::ServiceRegistry,
+        deadline: Option<std::time::Instant>, captured: std::time::Instant, observed_unix_ms: Option<u64>) -> Result<RootObservation> {
+        let observed = registry.observe_source_scope_before(&self.root, self.collection.as_deref(), deadline)?;
+        let stamp = Some(airk_store::service::registry::SavedScopeStamp {
+            namespace: observed.namespace, revision: observed.revision,
+        });
+        use airk_store::service::registry::SavedScopeResolution;
+        let (resolution, fence) = match observed.resolution {
+            SavedScopeResolution::Registered(project) => {
+                let fence = crate::project_client::SourceFence { namespace: observed.namespace,
+                    revision: observed.revision, project: project.registration.binding,
+                    fencing_generation: project.fencing_generation };
+                (RootResolution::Registered(project.registration), Some(fence))
+            }
+            SavedScopeResolution::Missing => (RootResolution::Missing,None),
+            SavedScopeResolution::Removed => (RootResolution::Removed,None),
+            SavedScopeResolution::Ambiguous => (RootResolution::Ambiguous,None),
+        };
+        Ok(RootObservation { resolution, fence, stamp, observed_unix_ms, root: self.root.clone(), collection: self.collection.clone(), captured })
+    }

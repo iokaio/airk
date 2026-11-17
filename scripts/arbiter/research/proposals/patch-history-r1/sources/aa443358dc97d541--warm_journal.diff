@@ -1,0 +1,12 @@
+--- D:\code\Github\airk\crates\airk-service\src\service_runtime\evaluation_fixture_tests\warm_journal.rs
++++ D:\code\Github\airk\crates\airk-service\src\service_runtime\evaluation_fixture_tests\warm_journal.rs
+@@ -56,6 +56,9 @@
+                     last = record.sequence;
+                     file.write_all(&raw)?;
+                     file.flush()?;
++                    // Windows last-write notifications require the still-open file
++                    // to be flushed to storage. This writer is outside warm gates.
++                    file.sync_data()?;
+                 }
+                 ensure!(
+                     observed.dropped() == 0,

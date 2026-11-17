@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: Apache-2.0
+
+#[cfg(test)]
+mod source_cache_return_age_tests {
+    use super::*;
+    #[tokio::test]
+    async fn expired_source_observation_cannot_hit_fresh_status_after_backend_wait() -> Result<()> {
+        let control=tempfile::tempdir()?;
+        let fence=SourceFence { namespace: airk_core::identity::Incarnation::from_bytes([81;16]),
+            revision: 1, project: "ab".repeat(32).parse()?, fencing_generation: 1 };
+        let backend=source_tools(control.path().into(),fence.project);
+        let mut state=backend.state.lock().await;
+        state.cached_status=CachedStatus::new(CacheScope::Source(fence),
+            &airk_mcp::unified::success(serde_json::json!({"index_state":"available","publication":{"token":"saved"}})));
+        let mut request=backend.call_observed_until("airk_status".into(),serde_json::Map::new(),fence,Instant::now());
+        assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(request.as_mut().poll(cx))).await.is_pending());
+        drop(state);
+        let reply=request.await?;
+        let detail:serde_json::Value=serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
+        assert_eq!(detail["error"]["query_submitted"],false);
+        assert_eq!(detail["error"]["retryable"],true);
+        assert!(backend.state.lock().await.connection.is_none());
+        assert!(std::fs::read_dir(control.path())?.next().is_none());
+        Ok(())
+    }
+}

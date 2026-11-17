@@ -1,0 +1,886 @@
+diff --git a/crates/airk-cli/src/source_supervisor.rs b/crates/airk-cli/src/source_supervisor.rs
+index 40e2e29..414b7ab 100644
+--- a/crates/airk-cli/src/source_supervisor.rs
++++ b/crates/airk-cli/src/source_supervisor.rs
+@@ -961,9 +961,7 @@ impl SourceSupervisor {
+                             ) in observations
+                             {
+                                 if fences.blocked(project) { continue; }
+-                                if failure == Some(WatchFailure::RootLimit) {
+-                                    sent.remove(&project);
+-                                }
++                                retry_unavailable_configuration(&mut sent, project, epoch, failure);
+                                 if registry
+                                     .record_watch_observation(
+                                         project, epoch, native, backend, failure, now_ms,
+@@ -1293,6 +1291,29 @@ fn send_configuration(
+     Ok(())
+ }
+ 
++fn retry_unavailable_configuration(
++    sent: &mut BTreeMap<ProjectBinding, (u64, Option<Sha256Digest>)>,
++    project: ProjectBinding,
++    epoch: u64,
++    failure: Option<WatchFailure>,
++) {
++    if matches!(
++        failure,
++        Some(WatchFailure::RootLimit | WatchFailure::MetadataUnavailable)
++    ) && sent
++        .get(&project)
++        .is_some_and(|(current, _)| *current == epoch)
++    {
++        // Retry through the existing bounded registry sweep. A delayed failure
++        // from a superseded epoch must not invalidate its replacement binding.
++        sent.remove(&project);
++    }
++}
++
++#[cfg(test)]
++#[path = "source_supervisor_retry_tests.rs"]
++mod retry_tests;
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/crates/airk-cli/src/source_worker.rs b/crates/airk-cli/src/source_worker.rs
+index 89ae0f6..6818cca 100644
+--- a/crates/airk-cli/src/source_worker.rs
++++ b/crates/airk-cli/src/source_worker.rs
+@@ -28,6 +28,48 @@ struct Pending {
+     roots: Vec<String>,
+ }
+ 
++fn source_policy(
++    registry: &airk_store::service::registry::ServiceRegistry,
++    project: airk_core::service::ProjectBinding,
++) -> Result<Option<airk_core::source_policy::SourcePolicy>> {
++    if registry
++        .catalog_state()?
++        .is_some_and(|state| state.authority_contract >= 1)
++    {
++        let index = registry
++            .catalog_index_for_binding(project)?
++            .context("watcher has no current native index binding")?;
++        registry.catalog_source_policy(index.id)
++    } else {
++        Ok(None)
++    }
++}
++
++fn install_policy_observation(
++    watcher: &mut SourceWatcher,
++    pending: Pending,
++    policy: Result<Option<airk_core::source_policy::SourcePolicy>>,
++) -> Result<bool> {
++    // Unknown policy is not a successful legacy/no-policy observation. The
++    // Kernel's unobserved-binding boundary removes traversal and publishes an
++    // explicit MetadataUnavailable observation without opening source inputs.
++    let (configuration_observed, source_policy) = match policy {
++        Ok(policy) => (pending.observed, policy),
++        Err(_) => (false, None),
++    };
++    watcher.install(Binding {
++        registration: pending.registration,
++        epoch: pending.epoch,
++        configuration_observed,
++        additional_roots: pending.roots,
++        source_policy,
++    })
++}
++
++#[cfg(test)]
++#[path = "source_worker_policy_tests.rs"]
++mod policy_tests;
++
+ fn reply(reply: &Reply) -> Result<()> {
+     Ok(service_ipc::write_frame(
+         &mut std::io::stdout().lock(),
+@@ -113,7 +155,7 @@ pub fn run() -> Result<()> {
+                         );
+                     }
+                     policy_fences.insert(project, (operation_id, nonce));
+-                    watcher.remove(project);
++                    watcher.fence_policy(project);
+                     missing.remove(&project);
+                     epochs.remove(&project);
+                     if pending
+@@ -302,27 +344,9 @@ pub fn run() -> Result<()> {
+                             &init.runtime,
+                             init.service,
+                         )?;
+-                        if registry
+-                            .catalog_state()?
+-                            .is_some_and(|state| state.authority_contract >= 1)
+-                        {
+-                            registry
+-                                .catalog_index_for_binding(project)?
+-                                .map(|index| registry.catalog_source_policy(index.id))
+-                                .transpose()
+-                                .map(Option::flatten)
+-                        } else {
+-                            Ok(None)
+-                        }
++                        source_policy(&registry, project)
+                     })();
+-                    let configuration_observed = pending.observed && policy.is_ok();
+-                    let installed = watcher.install(Binding {
+-                        registration: pending.registration,
+-                        epoch: pending.epoch,
+-                        configuration_observed,
+-                        additional_roots: pending.roots,
+-                        source_policy: policy.unwrap_or(None),
+-                    })?;
++                    let installed = install_policy_observation(&mut watcher, pending, policy)?;
+                     epochs.insert(project, (configuration_epoch, Some(digest), installed));
+                 }
+                 Command::Remove {
+diff --git a/crates/airk-cli/tests/combined_reads.rs b/crates/airk-cli/tests/combined_reads.rs
+index ea8c95d..819191e 100644
+--- a/crates/airk-cli/tests/combined_reads.rs
++++ b/crates/airk-cli/tests/combined_reads.rs
+@@ -1881,6 +1881,9 @@ async fn recommendations_keep_native_cli_mcp_parity_and_execute_copied_examples(
+         );
+         let result = body(&native)?;
+         assert_eq!(result["schema"], "airk.recommendations/1");
++        let instructions = result["instructions"]["text"].as_str().context("scope instructions absent")?;
++        ensure!(instructions.contains("separate native management review"), "missing reviewed management guidance: {instructions}");
++        ensure!(!instructions.contains("pending P9/P10"), "obsolete management guidance: {instructions}");
+         assert_parity("recommendations CLI", &result, &body(&cli)?)?;
+         assert_parity("recommendations MCP", &result, &body(&wire["result"])?)?;
+         let plan = json!({"schema":"airk.parse.request/1","mode":"execute","verification":"off","plan":{"schema":"airk.parse.plan/1","steps":[{"id":"advice","tool":"query_scope","args":args}]}});
+@@ -1975,6 +1978,36 @@ async fn recommendations_keep_native_cli_mcp_parity_and_execute_copied_examples(
+         "P8 useful subset observations",
+         &json!({"scope":"Original fictional positive lexical fixture; selected and all available scope, not a general recall/latency/physical-I/O claim","cases":subset_observations}),
+     )?;
++    // Lifecycle/removal advice uses the same complete canonical body in all
++    // transports. It offers a separate review and never prepares a mutation.
++    for (situation, action) in [
++        ("different_lifecycles", "review_split"),
++        ("never_index_path", "removal_pending"),
++    ] {
++        let args = json!({"view":"recommendations","situation":situation,"max_bytes":65536});
++        let native = native_read(backend.as_ref(), "airk_query_scope", &args).await?;
++        let cli = f.cli("airk_query_scope", &args).await?;
++        let wire = mcp.call(id, "query_scope", args.clone())?;
++        id += 1;
++        ensure!(native["isError"] != true && cli["isError"] != true && wire["result"]["isError"] != true,
++            "management advice failed: {native} {cli} {wire}");
++        let result = body(&native)?;
++        assert_eq!(result["cards"][0]["action"], action);
++        let tradeoff = result["cards"][0]["tradeoff"].as_str().context("management tradeoff absent")?;
++        ensure!(tradeoff.contains("separate native review") && tradeoff.contains("Advice does not prepare or apply"),
++            "management review boundaries absent: {tradeoff}");
++        assert_parity("management recommendations CLI", &result, &body(&cli)?)?;
++        assert_parity("management recommendations MCP", &result, &body(&wire["result"])?)?;
++        let plan = json!({"schema":"airk.parse.request/1","mode":"execute","verification":"off","plan":{"schema":"airk.parse.plan/1","steps":[{"id":"advice","tool":"query_scope","args":args}]}});
++        let parsed = mcp.call(id, "parse", plan)?;
++        id += 1;
++        ensure!(parsed["result"]["isError"] != true, "management advisory plan failed: {parsed}");
++        let parsed_body = body(&parsed["result"])?;
++        assert_parity("management recommendations Workbench plan", &result, &body(&parsed_body["steps"][0]["result"])?)?;
++        assert_eq!(result["limits"]["evidence_queries"], 0);
++        assert_eq!(result["limits"]["source_scans"], 0);
++        assert_eq!(result["limits"]["worker_probes"], 0);
++    }
+     for args in [
+         json!({"view":"recommendations","selection":{"project_ids":[f.projects[2]],"index_ids":[f.indexes[2]]}}),
+         json!({"view":"recommendations","max_bytes":1}),
+diff --git a/crates/airk-core/src/combined_reads/recommendations.rs b/crates/airk-core/src/combined_reads/recommendations.rs
+index dc16c77..e2d5d21 100644
+--- a/crates/airk-core/src/combined_reads/recommendations.rs
++++ b/crates/airk-core/src/combined_reads/recommendations.rs
+@@ -138,9 +138,9 @@ pub fn project(
+         ),
+         Situation::DifferentLifecycles => (
+             "You identified groups with different lifecycle or policy needs.",
+-            "split_pending",
++            "review_split",
+             "Independent indexes could provide separate policy and budgets.",
+-            "Prefer query filters when sufficient. Split is unavailable until P10; destination build, temporary space and future jobs cost work. Size alone is not a reason to split.",
++            "Prefer query filters when sufficient. Open the selected index's split controls for a separate native review; destination build, temporary space and future jobs cost work. Advice does not prepare or apply a split. Size alone is not a reason to split.",
+         ),
+         Situation::Overlap => (
+             "You asked to review possible overlapping indexes; physical overlap is unproven.",
+@@ -158,7 +158,7 @@ pub fn project(
+             "You explicitly identified evidence that should never be indexed.",
+             "removal_pending",
+             "A reviewed permanent exclusion applies to every user of this index.",
+-            "Use the selected index's Sources controls to review permanent exclusion. Advice-linked management previews remain pending P10. Review all affected Projects and other indexes; exclusion, cleanup and unblock are separate. Source files are never removed.",
++            "Open the selected index's Sources controls for a separate native review of permanent exclusion. Advice does not prepare or apply removal. Review all affected Projects and other indexes; exclusion, cleanup and unblock are separate. Source files are never removed.",
+         ),
+     };
+     let selected_scope = selected
+diff --git a/crates/airk-core/src/combined_reads_tests.rs b/crates/airk-core/src/combined_reads_tests.rs
+index c94f6d8..bf8cce3 100644
+--- a/crates/airk-core/src/combined_reads_tests.rs
++++ b/crates/airk-core/src/combined_reads_tests.rs
+@@ -87,13 +87,19 @@ fn recommendations_narrow_disjoint_prefixes_and_cover_all_decision_rows() -> Res
+         (Situation::Reuse, "review_reuse"),
+         (Situation::FocusedTask, "use_query_scope"),
+         (Situation::SharedDependencies, "use_query_scope"),
+-        (Situation::DifferentLifecycles, "split_pending"),
++        (Situation::DifferentLifecycles, "review_split"),
+         (Situation::Overlap, "review_reuse"),
+         (Situation::IrrelevantPath, "use_query_scope"),
+         (Situation::NeverIndexPath, "removal_pending"),
+     ] {
+         let result = advise(&available, &selected, &[], &[], situation, 100)?;
+         assert_eq!(result["cards"][0]["action"], action);
++        let guidance = result["cards"][0]["tradeoff"].as_str().unwrap();
++        assert!(!guidance.contains("until P10") && !guidance.contains("pending P10"));
++        if matches!(situation, Situation::DifferentLifecycles | Situation::NeverIndexPath) {
++            assert!(guidance.contains("separate native review"));
++            assert!(guidance.contains("Advice does not prepare or apply"));
++        }
+         assert_eq!(result["omitted_index_ids"], json!([index(2)]));
+         assert_eq!(result["available"][0]["readiness"]["state"], "unknown");
+         assert_eq!(result["limits"]["source_scans"], 0);
+diff --git a/crates/airk-kernel/src/source_watch.rs b/crates/airk-kernel/src/source_watch.rs
+index 0225cc9..52b5548 100644
+--- a/crates/airk-kernel/src/source_watch.rs
++++ b/crates/airk-kernel/src/source_watch.rs
+@@ -228,7 +228,27 @@ impl SourceWatcher {
+         }
+         let weight = binding.weight()?;
+         let project = binding.registration.binding;
++        let previously_installed = self.entries.contains_key(&project);
+         self.remove(project);
++        if !binding.configuration_observed {
++            // Unknown native policy is not a successful empty policy. Do not
++            // construct ignore matchers, traverse sources or admit event work.
++            if previously_installed {
++                self.revoke_watch_backend();
++            }
++            self.observations.insert(
++                project,
++                Observation {
++                    project,
++                    epoch: binding.epoch,
++                    native_roots: 0,
++                    backend: WatchBackend::PeriodicFallback,
++                    failure: Some(WatchFailure::MetadataUnavailable),
++                    traversal: None,
++                },
++            );
++            return Ok(false);
++        }
+         if self.entries.len() >= MAX_PROJECTS || self.weight + weight > MAX_BINDING_BYTES {
+             self.observations.insert(
+                 project,
+@@ -264,6 +284,46 @@ impl SourceWatcher {
+         self.refresh = now.checked_sub(Duration::from_secs(10)).unwrap_or(now);
+         Ok(true)
+     }
++    fn revoke_watch_backend(&mut self) {
++        // A shared directory can have several policy owners. Retire the owned
++        // backend rather than guessing which handles an unknown policy permits.
++        // Remaining qualified bindings replan through the existing bounded loop.
++        drop(self.watcher.take());
++        self.watched.clear();
++        self.plan = None;
++        for _ in 0..256 {
++            if self.receiver.try_recv().is_err() {
++                break;
++            }
++        }
++        self.overflow.store(false, Ordering::Release);
++        self.topology.store(false, Ordering::Release);
++        self.force_rebind = false;
++        let now = Instant::now();
++        for (project, entry) in &mut self.entries {
++            Self::dirty(entry, now);
++            self.observations.insert(
++                *project,
++                Observation {
++                    project: *project,
++                    epoch: entry.binding.epoch,
++                    native_roots: 0,
++                    backend: WatchBackend::PeriodicFallback,
++                    failure: Some(WatchFailure::BackendUnavailable),
++                    traversal: None,
++                },
++            );
++        }
++    }
++    /// Withdraw source authority before native policy changes or requalification.
++    /// Repeated fences for an already absent binding do not disrupt other roots.
++    pub fn fence_policy(&mut self, project: ProjectBinding) {
++        let previously_installed = self.entries.contains_key(&project);
++        self.remove(project);
++        if previously_installed {
++            self.revoke_watch_backend();
++        }
++    }
+     pub fn remove(&mut self, project: ProjectBinding) {
+         if let Some(entry) = self.entries.remove(&project) {
+             self.weight = self.weight.saturating_sub(entry.weight);
+diff --git a/crates/airk-kernel/src/source_watch_tests.rs b/crates/airk-kernel/src/source_watch_tests.rs
+index 08bf1d6..4f7c905 100644
+--- a/crates/airk-kernel/src/source_watch_tests.rs
++++ b/crates/airk-kernel/src/source_watch_tests.rs
+@@ -45,6 +45,105 @@ fn directory_plan_with_policy(
+     Ok((project, plan))
+ }
+ 
++#[test]
++fn unobserved_configuration_never_admits_directory_planning_or_source_notices() -> Result<()> {
++    let owner = tempfile::tempdir()?;
++    let base = owner.path().canonicalize()?;
++    let source = base.join("unavailable-source");
++    let data = base.join("data");
++    let mut unknown = binding(&source, &data, "unobserved")?;
++    let project = unknown.registration.binding;
++    unknown.configuration_observed = false;
++    unknown.additional_roots.push(base.join("unavailable-alias").to_str().unwrap().into());
++    let mut watcher = SourceWatcher::new();
++    assert!(!watcher.install(unknown)?);
++    assert!(!watcher.entries.contains_key(&project));
++    assert!(watcher.root_index.is_empty());
++    assert_eq!(watcher.weight, 0);
++    for _ in 0..3 {
++        watcher.poll()?;
++        assert!(watcher.plan.as_ref().is_none_or(|plan| {
++            plan.tasks.is_empty() && plan.walk.is_none() && plan.wanted.is_empty() && plan.usage.is_empty()
++        }));
++        assert!(watcher.watched.is_empty());
++        assert!(watcher.notices(32)?.is_empty());
++    }
++    let observation = watcher.observations(32).pop().unwrap();
++    assert_eq!(observation.project, project);
++    assert_eq!(observation.native_roots, 0);
++    assert_eq!(observation.failure, Some(WatchFailure::MetadataUnavailable));
++    assert!(observation.traversal.is_none());
++    assert!(!source.exists() && !data.exists());
++    Ok(())
++}
++
++#[test]
++fn authority_loss_revokes_old_watches_without_stranding_healthy_or_requalified_bindings() -> Result<()> {
++    let owner = tempfile::tempdir()?;
++    let base = owner.path().canonicalize()?;
++    let source = base.join("source");
++    let healthy = base.join("healthy");
++    let data = base.join("data");
++    fs::create_dir(&source)?;
++    fs::create_dir(&healthy)?;
++    let marker = source.join(".gitignore");
++    fs::write(&marker, b"# unchanged source control\n")?;
++    for fenced_first in [false, true] {
++        let mut watcher = SourceWatcher::new();
++        ensure!(watcher.watcher.is_some(), "native watcher unavailable");
++        let original = binding(&source, &data, "lost-authority")?;
++        let project = original.registration.binding;
++        let peer = binding(&healthy, &data, "healthy")?;
++        let peer_id = peer.registration.binding;
++        assert!(watcher.install(original)?);
++        assert!(watcher.install(peer)?);
++        for path in [&source, &healthy] {
++            watcher.watcher.as_mut().unwrap().watch(path, RecursiveMode::NonRecursive)?;
++            watcher.watched.insert(path.clone());
++        }
++        watcher.sender.try_send(vec![marker.clone()])?;
++        if fenced_first {
++            watcher.fence_policy(project);
++            assert!(watcher.watcher.is_none());
++        }
++        let mut unknown = binding(&source, &data, "lost-authority")?;
++        unknown.configuration_observed = false;
++        assert!(!watcher.install(unknown)?);
++        assert!(watcher.watcher.is_none());
++        assert!(watcher.watched.is_empty() && watcher.plan.is_none());
++        assert!(watcher.receiver.try_recv().is_err());
++        assert!(!watcher.entries.contains_key(&project));
++        assert!(watcher.entries.contains_key(&peer_id));
++        assert_eq!(watcher.observations[&project].failure, Some(WatchFailure::MetadataUnavailable));
++        assert_eq!(watcher.observations[&peer_id].native_roots, 0);
++        // Delayed events from the withdrawn scope cannot admit source work.
++        watcher.sender.try_send(vec![marker.clone()])?;
++        let until = Instant::now() + Duration::from_secs(5);
++        while !watcher.watched.contains(&healthy) && Instant::now() < until {
++            watcher.poll()?;
++        }
++        assert!(watcher.watched.contains(&healthy));
++        assert!(!watcher.watched.contains(&source));
++        assert!(watcher.notices(32)?.iter().all(|notice| notice.project == peer_id));
++        // Repeated failed qualification must not keep dropping the peer backend.
++        let mut unknown = binding(&source, &data, "lost-authority")?;
++        unknown.configuration_observed = false;
++        assert!(!watcher.install(unknown)?);
++        watcher.fence_policy(project);
++        assert!(watcher.watcher.is_some() && watcher.watched.contains(&healthy));
++        // A successful same-epoch legacy empty-policy observation remains valid.
++        assert!(watcher.install(binding(&source, &data, "lost-authority")?)?);
++        let until = Instant::now() + Duration::from_secs(5);
++        while !watcher.watched.contains(&source) && Instant::now() < until {
++            watcher.poll()?;
++        }
++        assert!(watcher.watched.contains(&source) && watcher.watched.contains(&healthy));
++        assert_eq!(watcher.entries[&project].binding.epoch, 1);
++    }
++    assert_eq!(fs::read(&marker)?, b"# unchanged source control\n");
++    Ok(())
++}
++
+ #[cfg(any(windows, target_os = "macos"))]
+ #[test]
+ fn permanent_watch_policy_prunes_denies_and_reports_unknown_names_and_ignore_controls() -> Result<()>
+diff --git a/crates/airk-mcp/src/scope_instructions.rs b/crates/airk-mcp/src/scope_instructions.rs
+index 0531ec6..8528f65 100644
+--- a/crates/airk-mcp/src/scope_instructions.rs
++++ b/crates/airk-mcp/src/scope_instructions.rs
+@@ -65,7 +65,7 @@ pub fn generate(selected: &ResolvedSelection, metadata: &Value) -> Result<Value>
+         &[&serde_json::to_vec(&catalog)?],
+     );
+     let text = format!(
+-        "AIRK query scope instructions\nGenerated from the active installed catalog at {} Unix ms. Scope identity: {}. Catalog: {}.\nProjects (names, IDs and saved defaults): {}\nSelected source/prefix boundaries: {}\nOmitted indexes: {}\nConnection: active; pending scope: none. These instructions are not an access grant. Revalidate IDs and current permitted scope with query_scope before use; follow its bounded pages and valid continuations.\n\nActual tools/call examples:\n{}\n\nUse explicit project_ids AND index_ids for this subset. One combined request reads a shared index once. Index IDs only narrow the authorized Project union. Preserve originating index, exact publication, source hash, original location and valid handles; follow-up reads select that origin and its publication. Inspect member outcomes, readiness, truncation, shared total budgets, continuations and verification receipts. member_availability=require rejects unavailable members; verification=require checks returned saved sources. Neither proves whole-scope completeness. Use only typed retries and valid continuations. Zero results means no matches returned under these publications, filters, readiness and budgets. Broaden only by an explicit reported user choice within current grants; never select all, drop failed members or request broader access automatically.\n\nSaved defaults affect future selections after separate native review; they never widen an active grant or replace a restored session's explicit scope. Reuse, membership removal, index deletion and permanent denial are different actions. Permanent denial and split remain pending P9/P10.\n\nLauncher paths and client configuration are per-user/per-machine; use this machine's approved installed launcher and review configuration separately. Copying this block writes no configuration, AGENTS.md, CLAUDE.md or sources. Lifecycle start/stop/repair is an explicit reviewed management action. On an older catalog, use only its supported legacy single-index project binding and report combined selection unavailable; never send these new fields, reinterpret legacy bindings as Project IDs or synthesize merged provenance. If discovery fails, stop with unavailable guidance; do not broaden scope.\n",
++        "AIRK query scope instructions\nGenerated from the active installed catalog at {} Unix ms. Scope identity: {}. Catalog: {}.\nProjects (names, IDs and saved defaults): {}\nSelected source/prefix boundaries: {}\nOmitted indexes: {}\nConnection: active; pending scope: none. These instructions are not an access grant. Revalidate IDs and current permitted scope with query_scope before use; follow its bounded pages and valid continuations.\n\nActual tools/call examples:\n{}\n\nUse explicit project_ids AND index_ids for this subset. One combined request reads a shared index once. Index IDs only narrow the authorized Project union. Preserve originating index, exact publication, source hash, original location and valid handles; follow-up reads select that origin and its publication. Inspect member outcomes, readiness, truncation, shared total budgets, continuations and verification receipts. member_availability=require rejects unavailable members; verification=require checks returned saved sources. Neither proves whole-scope completeness. Use only typed retries and valid continuations. Zero results means no matches returned under these publications, filters, readiness and budgets. Broaden only by an explicit reported user choice within current grants; never select all, drop failed members or request broader access automatically.\n\nSaved defaults affect future selections after separate native review; they never widen an active grant or replace a restored session's explicit scope. Reuse, membership removal, index deletion and permanent denial are different actions. Permanent exclusion and independent index splitting require a separate native management review for the selected index and supported capabilities. These read-only recommendations do not prepare or apply either operation; source files are never removed.\n\nLauncher paths and client configuration are per-user/per-machine; use this machine's approved installed launcher and review configuration separately. Copying this block writes no configuration, AGENTS.md, CLAUDE.md or sources. Lifecycle start/stop/repair is an explicit reviewed management action. On an older catalog, use only its supported legacy single-index project binding and report combined selection unavailable; never send these new fields, reinterpret legacy bindings as Project IDs or synthesize merged provenance. If discovery fails, stop with unavailable guidance; do not broaden scope.\n",
+         metadata["observed_unix_ms"],
+         selected.identity()?,
+         catalog_digest,
+diff --git a/crates/airk-store/src/service_catalog_retirement_evidence.rs b/crates/airk-store/src/service_catalog_retirement_evidence.rs
+index 27a12dd..9180f51 100644
+--- a/crates/airk-store/src/service_catalog_retirement_evidence.rs
++++ b/crates/airk-store/src/service_catalog_retirement_evidence.rs
+@@ -94,19 +94,45 @@ impl ServiceRegistry {
+             return Ok(None);
+         };
+         ensure!(
+-            binding == index.backing.binding.to_string()
+-                && active.as_deref() == Some(binding.as_str()),
+-            "native retirement backing pointer changed"
+-        );
+-        let (payload, registered, paused): (Vec<u8>, bool, bool) = read.query_row(
+-            "SELECT substr(payload,1,20481),registered,paused FROM projects WHERE binding=?1",
+-            [&binding],
+-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+-        )?;
+-        ensure!(
+-            !registered && paused && payload == serde_json::to_vec(&index.backing)?,
+-            "native retirement retained registration changed"
++            binding == index.backing.binding.to_string(),
++            "native retirement backing identity changed"
+         );
++        let registration: Option<(Vec<u8>, bool, bool)> = read
++            .query_row(
++                "SELECT substr(payload,1,20481),registered,paused FROM projects WHERE binding=?1",
++                [&binding],
++                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
++            )
++            .optional()?;
++        match (active.as_deref(), registration) {
++            (Some(pointer), Some((payload, registered, paused))) => ensure!(
++                pointer == binding
++                    && !registered
++                    && paused
++                    && payload == serde_json::to_vec(&index.backing)?,
++                "native retirement retained registration changed"
++            ),
++            (None, None) => {
++                // Physical cleanup drops the exact inactive registration and
++                // its FK pointer together. Absence alone is not retirement
++                // evidence: require the cleanup transaction's saved identity,
++                // in addition to the complete canonical fence verified above.
++                let removed: bool = read.query_row(
++                    "SELECT EXISTS(SELECT 1 FROM service_removed_projects WHERE binding=?1 AND root_identity=?2)",
++                    params![
++                        binding,
++                        super::super::project_removal::removed_root_identity(&index.backing.root)
++                            .to_string()
++                    ],
++                    |row| row.get(0),
++                )?;
++                ensure!(
++                    removed,
++                    "native retirement cleanup identity is not retained"
++                );
++            }
++            _ => anyhow::bail!("native retirement backing pointer changed"),
++        }
+         let enabled: bool = read.query_row(
+             "SELECT EXISTS(SELECT 1 FROM index_sources WHERE index_id=?1 AND enabled<>0)",
+             params![index_id.to_string()],
+diff --git a/crates/airk-store/src/service_catalog_retirement_evidence_tests.rs b/crates/airk-store/src/service_catalog_retirement_evidence_tests.rs
+index 3762b48..0f9b012 100644
+--- a/crates/airk-store/src/service_catalog_retirement_evidence_tests.rs
++++ b/crates/airk-store/src/service_catalog_retirement_evidence_tests.rs
+@@ -205,3 +205,71 @@ fn native_retirement_evidence_rejects_ambiguous_full_saved_lineage() -> Result<(
+     );
+     Ok(())
+ }
++
++#[test]
++fn completed_native_purge_preserves_exact_retirement_evidence_and_requires_saved_cleanup_identity()
++-> Result<()> {
++    let (temp, mut registry, original) = fixture()?;
++    let request = retire_request(&mut registry, &original)?;
++    let index = id(&request);
++    let retired = apply(&mut registry, &request)?;
++    let before = registry
++        .catalog_index_retirement_evidence(index)?
++        .context("pre-cleanup retirement proof missing")?;
++    let backing = before.index.backing.clone();
++    let source = temp.path().join("source").join("preserved.txt");
++    std::fs::write(&source, b"source is not cleanup state")?;
++    assert!(registry.catalog_policy_status(index)?.is_none());
++    assert!(!std::path::Path::new(&backing.data_root).exists());
++
++    // Actual owning cleanup, including its native ancestor-absence proof and
++    // committed removed-project identity. No fabricated null FK or cleanup row.
++    assert!(registry.purge_removed_project_turn(backing.binding)?);
++    let pointer: Option<String> = registry.connection.query_row(
++        "SELECT active_registration FROM index_definitions WHERE id=?1",
++        [index.to_string()],
++        |row| row.get(0),
++    )?;
++    assert!(pointer.is_none());
++    let after = registry
++        .catalog_index_retirement_evidence(index)?
++        .context("completed cleanup lost canonical retirement proof")?;
++    assert_eq!(before.index, after.index);
++    assert_eq!(after.retirement, retired);
++    assert_eq!(after.retirement, before.retirement);
++    after.validate()?;
++    assert_eq!(std::fs::read(&source)?, b"source is not cleanup state");
++    assert!(!std::path::Path::new(&backing.data_root).exists());
++
++    let removed: (String, i64) = registry.connection.query_row(
++        "SELECT root_identity,removed_ms FROM service_removed_projects WHERE binding=?1",
++        [backing.binding.to_string()],
++        |row| Ok((row.get(0)?, row.get(1)?)),
++    )?;
++    registry.connection.execute(
++        "DELETE FROM service_removed_projects WHERE binding=?1",
++        [backing.binding.to_string()],
++    )?;
++    assert!(registry.catalog_index_retirement_evidence(index).is_err());
++    registry.connection.execute(
++        "INSERT INTO service_removed_projects VALUES(?1,?2,?3)",
++        params![
++            backing.binding.to_string(),
++            Sha256Digest::from_bytes([111; 32]).to_string(),
++            removed.1
++        ],
++    )?;
++    assert!(registry.catalog_index_retirement_evidence(index).is_err());
++    registry.connection.execute(
++        "UPDATE service_removed_projects SET root_identity=?1 WHERE binding=?2",
++        params![removed.0, backing.binding.to_string()],
++    )?;
++    assert_eq!(
++        registry
++            .catalog_index_retirement_evidence(index)?
++            .context("restored exact proof missing")?
++            .retirement,
++        retired
++    );
++    Ok(())
++}
+diff --git a/docs/architecture.md b/docs/architecture.md
+index 2ef909c..decca8d 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -1,6 +1,14 @@
+ # Architecture
+ 
+-P14's current **1.8.8 candidate**, `237f8969...` / 960 inputs, keeps the
++The unpublished **1.8.8 working build** retains the existing crate and service
++owners. Current behavior and exact validation identities are recorded in the
++[working-build record](releases/release-1.8.8.md). Index retirement after source
++or storage loss stays with the catalog, native worker and storage owners;
++frozen grants remain unchanged and healthy indexes retain independent access.
++
++## Retained P14 checkpoint (6 November 2026)
++
++P14's earlier **1.8.8 candidate**, `237f8969...` / 960 inputs, keeps the
+ existing owners. A claimed DestinationBuild job that explicitly requires semantic
+ readiness selects the paired bundled default through its model owner before Current
+ initialization and indexing. The collection writer, prepaid funding, source policy
+@@ -12,7 +20,7 @@ existing read clients retain the same complete hint contract.
+ 
+ **Prior source `5d8912b1...` evidence (6 November 2026):** Windows full Nextest passed **2,626 tests** with **50 selection exclusions**; its fresh producer took **764.1665 s**, and all **15 final R4 stages / 84 unchanged gates** passed, including **459 Python tests / 9 expected skips**. All **10 selected broader stages** passed by exact evidence adoption; the original failed queue stays failed. The real-corpus campaign remains a deadline failure with partial coverage. Its native/extension/VSIX package stages, `same`, `different`, `multi` and `untrusted` editor scenarios passed on their original native/package identities. Failed usage Stop and initial legacy attempts are retained. These observations do not become current-source qualification by relabeling.
+ 
+-Current native source `237f8969...` / **960 inputs** adds bounded native installation-lock admission before accepting lifecycle work. Only typed installation-lock contention can wait within the **60-second admission budget** before Stop/Restart mutation acceptance. After acquiring the lock, native code rechecks the same instance/runtime and retains the lock through authority checks and completion. Submitted actions are never replayed; generic text and other failures do not become retryable. Scoped CLI Clippy passed in **32.292 s**, the unaccepted-state timeout regression passed in **36.053 s**, a fresh matched debug pair built in **90.262 s**, and the actual held-lock Stop integration passed in **29.522 s**. The current optimized producer passed in **734.0468 s**; native packaging passed in **15.255 s** and VSIX packaging in **17.183 s**. The fresh current-source legacy fixture passed in **68.399 s** and its whole installed-editor scenario in **33.561 s**, including native Stop and canonical cleanup. The subsequent whole usage scenario passed in **97.960 s**, including its native Stop and cleanup. A preceding **259.85 s** quick-pick failure remains unresolved and intermittent; the successful rerun used observational diagnostics, with no product picker correction or cause claim. All six selected editor scenarios are covered using four retained old-source scenarios and fresh current-source usage/legacy. Current-source Windows qualification passed formatting (**6.244 s**), strict workspace Clippy (**24.3543 s**) and full Nextest: **2,627 passed / 0 failed / 51 skipped**, with no retries. All four restored long campaigns passed: compact reads (**246.170 s**), retention plateau (**146.632 s**), sparse catalog edits (**29.658 s**) and manual backlog (**108.021 s**). Nextest ran for **1,542.644 s**; its wrapper took **1,617.6504 s**. Serial doctests passed across **8 crate targets** in **18.6745 s**; there were **0 eligible examples**, not eight executed examples. Immutable JUnit and Cargo timing reports retain this current-source run. These are selected local qualification results; manual acceptance and release promotion remain separate.
++Checkpoint native source `237f8969...` / **960 inputs** adds bounded native installation-lock admission before accepting lifecycle work. Only typed installation-lock contention can wait within the **60-second admission budget** before Stop/Restart mutation acceptance. After acquiring the lock, native code rechecks the same instance/runtime and retains the lock through authority checks and completion. Submitted actions are never replayed; generic text and other failures do not become retryable. Scoped CLI Clippy passed in **32.292 s**, the unaccepted-state timeout regression passed in **36.053 s**, a fresh matched debug pair built in **90.262 s**, and the actual held-lock Stop integration passed in **29.522 s**. The current optimized producer passed in **734.0468 s**; native packaging passed in **15.255 s** and VSIX packaging in **17.183 s**. The fresh current-source legacy fixture passed in **68.399 s** and its whole installed-editor scenario in **33.561 s**, including native Stop and canonical cleanup. The subsequent whole usage scenario passed in **97.960 s**, including its native Stop and cleanup. A preceding **259.85 s** quick-pick failure remains unresolved and intermittent; the successful rerun used observational diagnostics, with no product picker correction or cause claim. All six selected editor scenarios are covered using four retained old-source scenarios and fresh current-source usage/legacy. Current-source Windows qualification passed formatting (**6.244 s**), strict workspace Clippy (**24.3543 s**) and full Nextest: **2,627 passed / 0 failed / 51 skipped**, with no retries. All four restored long campaigns passed: compact reads (**246.170 s**), retention plateau (**146.632 s**), sparse catalog edits (**29.658 s**) and manual backlog (**108.021 s**). Nextest ran for **1,542.644 s**; its wrapper took **1,617.6504 s**. Serial doctests passed across **8 crate targets** in **18.6745 s**; there were **0 eligible examples**, not eight executed examples. Immutable JUnit and Cargo timing reports retain this current-source run. These are selected local qualification results; manual acceptance and release promotion remain separate.
+ 
+ Prior source `5d8912b1...` passed 2,626 Windows tests (50 selection exclusions),
+ focused checks and five Neo tests, the fresh ARM release, Developer ID and
+diff --git a/docs/ci-and-builds.md b/docs/ci-and-builds.md
+index 71f9eb0..7b51b8f 100644
+--- a/docs/ci-and-builds.md
++++ b/docs/ci-and-builds.md
+@@ -99,7 +99,7 @@ Usage accounting has a separate best-effort contract: successful and failed jobs
+ 
+ ## Downloadable candidates
+ 
+-Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.8.8 working-build record](releases/release-1.8.8.md) describes current implementation and qualification limits, while the [October 17 release summary](releases/releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact unified 28-tool MCP catalog; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
++Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.8.8 working-build record](releases/release-1.8.8.md) describes current implementation and qualification limits, while the [October 17 release summary](releases/releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact unified 29-tool MCP catalog; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
+ 
+ Successful native jobs upload an artifact named `airk-native-<target>-<commit>-<run-id>-<attempt>` to the workflow run's Artifacts section. It contains:
+ 
+diff --git a/docs/cli.md b/docs/cli.md
+index f3ab336..af96551 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -82,16 +82,83 @@ References add `--order index|path|code_first`, `--include-files`, `--include-co
+ 
+ ## Services, projects and scope
+ 
+-One **service** owns a control directory: its project registry, job queue and worker processes. A **project** is a source folder (`--root`), an index directory (`--data-dir`) and a collection name (`--collection`). Its canonical form has a 64-character hexadecimal **binding**.
++One **service** owns a control directory: its registry, job queue and worker
++processes. In the current catalog, an **index** has an independent native backing
++registration; a query **Project** groups reviewed source/path memberships from
++one or more indexes. A legacy lowercase **project** is the source/data/collection
++registration with a 64-character hexadecimal **binding**. These identities are
++not interchangeable.
+ 
+ There are two ways to reach a service:
+ 
+ - **Installed runtime** (what the VS Code extension sets up). Commands find the per-user installation automatically; `--service-install-dir` selects another one. Select a project with `--root <folder>`, plus `--data-dir` and `--collection` when they are not the defaults.
+ - **A service you start yourself** (headless, no installation). Run `airk serve --runtime-dir <control>`. Then add `--service-runtime-dir <control> --service-project <binding> --root … --data-dir … --collection …` to project commands.
+ 
+-## Creating a project for any folder
++## Reviewed index and Project setup in 1.8.8
+ 
+-You can register any folder you can read as a project. Indexes and settings live in the data directory; the source folder is only read.
++The working build activates authority-1 catalogs through the qualified native
++installer. New indexes require the catalog setup flow; `init` and `service register`
++cannot bypass it. Query Project membership and evidence grants are separate from
++creating an index. [Reviewed setup](service-project-setup.md) describes those
++boundaries; [combined reads](combined-reads.md) describes evidence selection.
++
++Headless administration uses the same native methods as the editor. Save one
++method JSON value in a file and run:
++
++```console
++airk service rpc --runtime-dir <control> --request-file <method.json>
++```
++
++For example, this read-only method lists a bounded first page of indexes:
++
++```json
++{"catalog_page":{"request":{"kind":"indexes","index_id":null,"project_id":null,"after":null,"expected_catalog_revision":null,"limit":16,"max_bytes":16384}}}
++```
++
++Use the returned revision and continuation for later pages; do not infer a
++complete library from one page. Current setup follows these separate steps:
++
++1. Read `"request_epoch"` through `service rpc` and retain its namespace/epoch.
++   Choose one new 32-hex nonce for the request key. Submit
++   `catalog_index_setup_draft` with a `selection` containing that key, the current
++   `expected_catalog_revision`, `name`, `primary_root`, `data_root`, `collection`,
++   `additional_roots` (an array of alias/path objects) and `setup_watch`.
++2. Inspect the returned complete native `draft`, canonical registration and
++   storage action. Only after review, send
++   `{"catalog_index_setup_apply":{"draft":<exact returned draft>}}`.
++   Keep the original draft and its request caller/key for
++   `catalog_index_setup_receipt`; uncertain outcomes do not permit a new key.
++3. Create a query Project and its memberships using `catalog_preview` and
++   explicit `catalog_apply` of the same request/preview digest. Use
++   `catalog_host_context` and `catalog_grant_draft` for a reviewed grant, then
++   explicitly apply that grant. The complete method and request shapes are in
++   [native metadata methods](../crates/airk-core/src/service.rs),
++   [index setup](../crates/airk-core/src/catalog_setup.rs) and
++   [catalog operations](../crates/airk-core/src/catalog_management.rs).
++4. Select that grant explicitly with `--catalog-session <reviewed-session-json>`
++   for one index or `--combined-session <reviewed-session-json>` for a Project
++   selection. Do not mix these flags with root/data/collection/project selectors.
++   Native validation still checks the grant, catalog revision and complete scope.
++   Management and indexing jobs use the native backing registration separately.
++
++These are raw metadata APIs: inspect the native `status` and complete receipt,
++not just the CLI exit code. A ready index, a saved grant and a currently authorized
++evidence session are distinct outcomes. Missing/expired receipts are unknown;
++never regenerate request identities to replay an uncertain mutation.
++
++For removal, request `catalog_source_mutation_draft` with the current index ID,
++catalog revision and request key, and `change: {"operation":"retire_index"}`.
++Review and explicitly apply its exact `request` and `preview_digest` through
++`catalog_apply`, then read `catalog_receipt` using the original caller/key.
++Retirement removes current references while preserving frozen grants; physical
++cleanup has its own proof. See [guarded index retirement](service-project-retirement.md).
++The legacy `configure`/`unregister` path does not replace this catalog review.
++
++## Legacy authority-zero registration examples
++
++The following retained commands apply to authority-zero services. They are not
++setup instructions for new indexes in the current authority-1 catalog. Indexes
++and settings live in the data directory; the source folder is only read.
+ 
+ ```text
+ # A service you started:
+diff --git a/docs/headless-cli.md b/docs/headless-cli.md
+index b9a1bcf..e0b293b 100644
+--- a/docs/headless-cli.md
++++ b/docs/headless-cli.md
+@@ -17,7 +17,7 @@ For command purpose, implementation ownership, effects and catalog differences,
+ | Extension feature | Headless equivalent |
+ |---|---|
+ | Install or repair the runtime | `airk runtime location`, `inspect` and `ensure` for the per-user installation, or `airk serve --runtime-dir <control>` from a local build |
+-| Add a project | Installed runtime: `airk --root <src> init`. Explicit service: `airk --root <src> --data-dir <data> --collection <name> service register --runtime-dir <control>` |
++| Set up a new index and query Project | Use `service rpc` with native catalog draft, review, apply and receipt methods; see [current headless setup](cli.md#reviewed-index-and-project-setup-in-188). Legacy `init`/`service register` cannot create new indexes in an authority-1 catalog. |
+ | List projects | `airk projects` (installed runtime) or `airk projects --runtime-dir <control>` |
+ | Explorer Assistance tools | `airk explorer draft-search\|draft-strategy\|draft-plan\|suggest-view\|validate-draft\|list-templates\|get-template\|proposal-status\|get-handoff --output <new file>`: results go to the file, never to an Inbox (see the [CLI guide](cli.md#explorer-assistance-from-the-cli)) |
+ | Index, pause, resume, watch | `airk <scope> index`, `pause`, `resume`, `watch on`/`watch off`, `inspect` |
+@@ -28,12 +28,19 @@ For command purpose, implementation ownership, effects and catalog differences,
+ | Agent connection | `airk <scope> setup --client claude` (also codex, vscode, cursor, gemini, cline, roo, junie, copilot-cli, opencode and others) prints the MCP configuration for an installed runtime; agents launch `airk … mcp` |
+ | Usage reports | `airk <scope> usage report`, `policy`, `configure`, `clear`, `feedback`, `import` |
+ | Management status and logs | `airk service health`, `service logs`, `service console` (JSON transport), `tools call airk_status` and `airk_diagnostics` |
+-| Remove a project's index | `airk <scope> configure --stdin` with `{"operation":"unregister"}` (sources untouched) |
++| Retire an index | Prepare `catalog_source_mutation_draft` with `change: {"operation":"retire_index"}`, then explicitly apply its exact native request and preview digest through `catalog_apply`; inspect the exact receipt. [Retirement and physical cleanup](service-project-retirement.md) are separate. |
+ | Review and remove AIRK data | `airk runtime inventory --install-dir <dir>`; `airk runtime purge --install-dir <dir> --select <id> [--confirm <digest>]` |
+ | Login startup | `airk runtime login --install-dir <dir> plan`, `status`, `install` or `uninstall` |
+ | Uninstall the runtime | `airk runtime uninstall --install-dir <dir>` |
+ 
+-`<scope>` is either `--root <src> [--data-dir …] [--collection …]` for the installed runtime, or `--service-runtime-dir <control> --service-project <binding> --root … --data-dir … --collection …` for a service you started.
++For current evidence reads, `<scope>` can be `--catalog-session <reviewed-session-json>`
++or `--combined-session <reviewed-session-json>`, with `--service-runtime-dir <control>`
++for an explicitly selected service. Sessions bind the reviewed grant and explicit
++Project/index selection; paths and saved defaults grant no access. Do not combine
++these session flags with legacy root/data/collection/project selectors. Imported
++legacy connections retain their qualified one-index binding. [Current setup](cli.md#reviewed-index-and-project-setup-in-188)
++describes the separate management flow; management/index-job commands use their
++native backing registration rather than an evidence-session flag.
+ 
+ ## Editor-only features
+ 
+@@ -54,5 +61,9 @@ These belong to the editor integration and have no headless meaning:
+ 
+ - **Guarded maintenance** (rebuild, repair and verify previews with plans) has no dedicated command. The extension creates and executes plans through `service rpc` requests (`plan_create`, `plan_items`, `plan_execute`). Headless users can send the same JSON with `airk service rpc --runtime-dir <control> --stdin`, but there is no friendlier wrapper yet. `airk index --full` deliberately refuses and points to this path.
+ - **Durable request retries** use `airk service requests prepare|list|retry|forget`, which exposes the raw request model.
++- **Current catalog setup and retirement** use `service rpc` with the native
++  catalog contracts; there is no dedicated friendly CLI wizard. A successful
++  metadata transport exit is not proof of application success: inspect the
++  returned native `status`, complete receipt and readiness/cleanup observations.
+ 
+ These gaps are recorded for a follow-up; the CLI is not claimed to be friendlier than the extension for them.
+diff --git a/docs/releases/release-1.8.8.md b/docs/releases/release-1.8.8.md
+index 5f08efb..1041404 100644
+--- a/docs/releases/release-1.8.8.md
++++ b/docs/releases/release-1.8.8.md
+@@ -11,10 +11,12 @@ physical cleanup, activation readiness and evidence authority remain separate.
+ See [guarded retirement](../service-project-retirement.md) and
+ [upgrade recovery](../service-installation.md#unavailable-legacy-index-during-upgrade).
+ 
+-The first post-P14 focused run failed; corrections and current-source validation
+-remain in progress. Earlier P14 evidence below retains its original source,
+-package identities and platform limits. It does not qualify this added behavior
+-or the final current-source local test installer. Version 1.8.8 is unpublished.
++The first post-P14 focused run failed. The completed selected recovery checks,
++combined native test acceptance and local Windows package are recorded below,
++including their failures, corrections, source identities and platform limits.
++Earlier P14 evidence retains its original identity and does not independently
++qualify this follow-up. Version 1.8.8 remains unpublished; installed-editor manual
++acceptance and broader qualification are separate.
+ 
+ **6 November correction checkpoint:** Native source
+ `6de490d57d7053cbd63862366e840cc3657df4ef10e8a57c4ca018e6d19a2633`
+@@ -177,7 +179,7 @@ The current and historical observations below retain their original identities.
+ 
+ **Prior source `5d8912b1...` evidence (6 November 2026):** Windows full Nextest passed **2,626 tests** with **50 selection exclusions**; its fresh producer took **764.1665 s**, and all **15 final R4 stages / 84 unchanged gates** passed, including **459 Python tests / 9 expected skips**. All **10 selected broader stages** passed by exact evidence adoption; the original failed queue stays failed. The real-corpus campaign remains a deadline failure with partial coverage. Its native/extension/VSIX package stages, `same`, `different`, `multi` and `untrusted` editor scenarios passed on their original native/package identities. Failed usage Stop and initial legacy attempts are retained. These observations do not become current-source qualification by relabeling.
+ 
+-Current native source `237f8969...` / **960 inputs** adds bounded native installation-lock admission before accepting lifecycle work. Only typed installation-lock contention can wait within the **60-second admission budget** before Stop/Restart mutation acceptance. After acquiring the lock, native code rechecks the same instance/runtime and retains the lock through authority checks and completion. Submitted actions are never replayed; generic text and other failures do not become retryable. Scoped CLI Clippy passed in **32.292 s**, the unaccepted-state timeout regression passed in **36.053 s**, a fresh matched debug pair built in **90.262 s**, and the actual held-lock Stop integration passed in **29.522 s**. The current optimized producer passed in **734.0468 s**; native packaging passed in **15.255 s** and VSIX packaging in **17.183 s**. The fresh current-source legacy fixture passed in **68.399 s** and its whole installed-editor scenario in **33.561 s**, including native Stop and canonical cleanup. The subsequent whole usage scenario passed in **97.960 s**, including its native Stop and cleanup. A preceding **259.85 s** quick-pick failure remains unresolved and intermittent; the successful rerun used observational diagnostics, with no product picker correction or cause claim. All six selected editor scenarios are covered using four retained old-source scenarios and fresh current-source usage/legacy. Current-source Windows qualification passed formatting (**6.244 s**), strict workspace Clippy (**24.3543 s**) and full Nextest: **2,627 passed / 0 failed / 51 skipped**, with no retries. All four restored long campaigns passed: compact reads (**246.170 s**), retention plateau (**146.632 s**), sparse catalog edits (**29.658 s**) and manual backlog (**108.021 s**). Nextest ran for **1,542.644 s**; its wrapper took **1,617.6504 s**. Serial doctests passed across **8 crate targets** in **18.6745 s**; there were **0 eligible examples**, not eight executed examples. Immutable JUnit and Cargo timing reports retain this current-source run. These are selected local qualification results; manual acceptance and release promotion remain separate. Earlier D4e
++Checkpoint native source `237f8969...` / **960 inputs** adds bounded native installation-lock admission before accepting lifecycle work. Only typed installation-lock contention can wait within the **60-second admission budget** before Stop/Restart mutation acceptance. After acquiring the lock, native code rechecks the same instance/runtime and retains the lock through authority checks and completion. Submitted actions are never replayed; generic text and other failures do not become retryable. Scoped CLI Clippy passed in **32.292 s**, the unaccepted-state timeout regression passed in **36.053 s**, a fresh matched debug pair built in **90.262 s**, and the actual held-lock Stop integration passed in **29.522 s**. The current optimized producer passed in **734.0468 s**; native packaging passed in **15.255 s** and VSIX packaging in **17.183 s**. The fresh current-source legacy fixture passed in **68.399 s** and its whole installed-editor scenario in **33.561 s**, including native Stop and canonical cleanup. The subsequent whole usage scenario passed in **97.960 s**, including its native Stop and cleanup. A preceding **259.85 s** quick-pick failure remains unresolved and intermittent; the successful rerun used observational diagnostics, with no product picker correction or cause claim. All six selected editor scenarios are covered using four retained old-source scenarios and fresh current-source usage/legacy. Current-source Windows qualification passed formatting (**6.244 s**), strict workspace Clippy (**24.3543 s**) and full Nextest: **2,627 passed / 0 failed / 51 skipped**, with no retries. All four restored long campaigns passed: compact reads (**246.170 s**), retention plateau (**146.632 s**), sparse catalog edits (**29.658 s**) and manual backlog (**108.021 s**). Nextest ran for **1,542.644 s**; its wrapper took **1,617.6504 s**. Serial doctests passed across **8 crate targets** in **18.6745 s**; there were **0 eligible examples**, not eight executed examples. Immutable JUnit and Cargo timing reports retain this current-source run. These are selected local qualification results; manual acceptance and release promotion remain separate. Earlier D4e
+ passes (2,624 tests, 15 final stages and 15 repeated native smoke suites) retain
+ their source and limits. Deleted-source recovery and the local test installer
+ remain unfinished. Version **1.8.8** is unpublished.
+diff --git a/docs/releases/release-1.9.0.md b/docs/releases/release-1.9.0.md
+index 9d91a42..41d01a8 100644
+--- a/docs/releases/release-1.9.0.md
++++ b/docs/releases/release-1.9.0.md
+@@ -1,10 +1,10 @@
+ # Planned AIRK 1.9.0 release and development checkpoints
+ 
+ Post-P14 removed-source/storage retirement and fresh 1.8.7 legacy upgrade
+-recovery are implemented in the working source and under local qualification.
++recovery are implemented in the working source with selected local validation.
+ The [1.8.8 working-build record](release-1.8.8.md#post-p14-removed-source-recovery-6-november-2026-qualification-in-progress)
+-separates this follow-up from the retained P14 checkpoints below. The local test
+-installer and manual acceptance remain separate; no promotion is claimed.
++separates this follow-up and its local Windows test package from the retained
++P14 checkpoints below. Manual acceptance remains separate; no promotion is claimed.
+ 
+ ## Retained phase-plan record
+ 
+@@ -16,18 +16,19 @@ passed 39 focused Windows native tests, all 12 final release qualification
+ stages and 19 scoped Neo tests with successful cleanup. Primary review accepted
+ P12 for unpublished local development; installed-editor and final plan acceptance
+ remain separate. P13 review retained current ranking and diversity; no candidate
+-was adopted. P14 now evaluates source `237f8969...` / 960 native inputs, adding bounded lifecycle
++was adopted. This retained P14 checkpoint evaluated source `237f8969...` / 960 native inputs, adding bounded lifecycle
+ installation-lock admission after the cold
+ bundled-default and typed quota-read admission corrections. Prior source `5d8912b1...` passed 2,626 Windows tests with 50 selection exclusions,
+ focused checks, five Neo tests, fresh ARM64 release and Developer ID/copy checks,
+ isolated installed lifecycle and cleanup. Ten selected broader stages passed; the corpus deadline failure and partial editor results retain their scoped results. Selected local observations retain their documented scope. Dated D4e core passes do not qualify
+-the newer source. Deleted-source recovery and the local
+-test installer remain unfinished; no promotion or publication is implied. Exact accepted and historical evidence is in the
++the newer source. At this checkpoint, deleted-source recovery and the local
++test installer were unfinished; later results are in the working-build record.
++No promotion or publication is implied. Exact accepted and historical evidence is in the
+ [working-build record](release-1.8.8.md) and [ledger](../research/implementation-v190.md).
+ 
+ **Prior source `5d8912b1...` evidence (6 November 2026):** Windows full Nextest passed **2,626 tests** with **50 selection exclusions**; its fresh producer took **764.1665 s**, and all **15 final R4 stages / 84 unchanged gates** passed, including **459 Python tests / 9 expected skips**. All **10 selected broader stages** passed by exact evidence adoption; the original failed queue stays failed. The real-corpus campaign remains a deadline failure with partial coverage. Its native/extension/VSIX package stages, `same`, `different`, `multi` and `untrusted` editor scenarios passed on their original native/package identities. Failed usage Stop and initial legacy attempts are retained. These observations do not become current-source qualification by relabeling.
+ 
+-Current native source `237f8969...` / **960 inputs** adds bounded native installation-lock admission before accepting lifecycle work. Only typed installation-lock contention can wait within the **60-second admission budget** before Stop/Restart mutation acceptance. After acquiring the lock, native code rechecks the same instance/runtime and retains the lock through authority checks and completion. Submitted actions are never replayed; generic text and other failures do not become retryable. Scoped CLI Clippy passed in **32.292 s**, the unaccepted-state timeout regression passed in **36.053 s**, a fresh matched debug pair built in **90.262 s**, and the actual held-lock Stop integration passed in **29.522 s**. The current optimized producer passed in **734.0468 s**; native packaging passed in **15.255 s** and VSIX packaging in **17.183 s**. The fresh current-source legacy fixture passed in **68.399 s** and its whole installed-editor scenario in **33.561 s**, including native Stop and canonical cleanup. The subsequent whole usage scenario passed in **97.960 s**, including its native Stop and cleanup. A preceding **259.85 s** quick-pick failure remains unresolved and intermittent; the successful rerun used observational diagnostics, with no product picker correction or cause claim. All six selected editor scenarios are covered using four retained old-source scenarios and fresh current-source usage/legacy. Current-source Windows qualification passed formatting (**6.244 s**), strict workspace Clippy (**24.3543 s**) and full Nextest: **2,627 passed / 0 failed / 51 skipped**, with no retries. All four restored long campaigns passed: compact reads (**246.170 s**), retention plateau (**146.632 s**), sparse catalog edits (**29.658 s**) and manual backlog (**108.021 s**). Nextest ran for **1,542.644 s**; its wrapper took **1,617.6504 s**. Serial doctests passed across **8 crate targets** in **18.6745 s**; there were **0 eligible examples**, not eight executed examples. Immutable JUnit and Cargo timing reports retain this current-source run. These are selected local qualification results; manual acceptance and release promotion remain separate.
++Checkpoint native source `237f8969...` / **960 inputs** adds bounded native installation-lock admission before accepting lifecycle work. Only typed installation-lock contention can wait within the **60-second admission budget** before Stop/Restart mutation acceptance. After acquiring the lock, native code rechecks the same instance/runtime and retains the lock through authority checks and completion. Submitted actions are never replayed; generic text and other failures do not become retryable. Scoped CLI Clippy passed in **32.292 s**, the unaccepted-state timeout regression passed in **36.053 s**, a fresh matched debug pair built in **90.262 s**, and the actual held-lock Stop integration passed in **29.522 s**. The current optimized producer passed in **734.0468 s**; native packaging passed in **15.255 s** and VSIX packaging in **17.183 s**. The fresh current-source legacy fixture passed in **68.399 s** and its whole installed-editor scenario in **33.561 s**, including native Stop and canonical cleanup. The subsequent whole usage scenario passed in **97.960 s**, including its native Stop and cleanup. A preceding **259.85 s** quick-pick failure remains unresolved and intermittent; the successful rerun used observational diagnostics, with no product picker correction or cause claim. All six selected editor scenarios are covered using four retained old-source scenarios and fresh current-source usage/legacy. Current-source Windows qualification passed formatting (**6.244 s**), strict workspace Clippy (**24.3543 s**) and full Nextest: **2,627 passed / 0 failed / 51 skipped**, with no retries. All four restored long campaigns passed: compact reads (**246.170 s**), retention plateau (**146.632 s**), sparse catalog edits (**29.658 s**) and manual backlog (**108.021 s**). Nextest ran for **1,542.644 s**; its wrapper took **1,617.6504 s**. Serial doctests passed across **8 crate targets** in **18.6745 s**; there were **0 eligible examples**, not eight executed examples. Immutable JUnit and Cargo timing reports retain this current-source run. These are selected local qualification results; manual acceptance and release promotion remain separate.
+ 
+ P7 implements [combined Project reads](../combined-reads.md) with complete
+ native, CLI, MCP, Workbench, plan/session, verification and export support.
+diff --git a/docs/research/implementation-v190.md b/docs/research/implementation-v190.md
+index cf90a35..90ab47d 100644
+--- a/docs/research/implementation-v190.md
++++ b/docs/research/implementation-v190.md
+@@ -11,7 +11,7 @@ cross-platform qualification.
+ 
+ **Retained P14 checkpoint, 6 November 2026 - selected local qualification results:** P9-P12 remain accepted
+ for unpublished local development. P13 retained ranking/diversity; no candidate
+-or gain is claimed. Current source `237f8969...` / 960 inputs adds bounded lifecycle installation-lock
++or gain is claimed. Checkpoint source `237f8969...` / 960 inputs adds bounded lifecycle installation-lock
+ admission to cold-default split and typed quota-read corrections. Prior source
+ `5d8912b1...` Windows full Nextest passed **2,626 tests**, with **50 selection exclusions**.
+ Formatting, strict Clippy (17.394 s), Kernel typed tests (2), actual native/CLI/MCP
+@@ -20,10 +20,11 @@ fresh ARM64 release, Developer ID/post-seal copied-launcher checks and the actua
+ isolated installed lifecycle; all three cleanup observations exited 0 with target
+ absent. **Prior source `5d8912b1...` evidence (6 November 2026):** Windows full Nextest passed **2,626 tests** with **50 selection exclusions**; its fresh producer took **764.1665 s**, and all **15 final R4 stages / 84 unchanged gates** passed, including **459 Python tests / 9 expected skips**. All **10 selected broader stages** passed by exact evidence adoption; the original failed queue stays failed. The real-corpus campaign remains a deadline failure with partial coverage. Its native/extension/VSIX package stages, `same`, `different`, `multi` and `untrusted` editor scenarios passed on their original native/package identities. Failed usage Stop and initial legacy attempts are retained. These observations do not become current-source qualification by relabeling.
+ 
+-Current native source `237f8969...` / **960 inputs** adds bounded native installation-lock admission before accepting lifecycle work. Only typed installation-lock contention can wait within the **60-second admission budget** before Stop/Restart mutation acceptance. After acquiring the lock, native code rechecks the same instance/runtime and retains the lock through authority checks and completion. Submitted actions are never replayed; generic text and other failures do not become retryable. Scoped CLI Clippy passed in **32.292 s**, the unaccepted-state timeout regression passed in **36.053 s**, a fresh matched debug pair built in **90.262 s**, and the actual held-lock Stop integration passed in **29.522 s**. The current optimized producer passed in **734.0468 s**; native packaging passed in **15.255 s** and VSIX packaging in **17.183 s**. The fresh current-source legacy fixture passed in **68.399 s** and its whole installed-editor scenario in **33.561 s**, including native Stop and canonical cleanup. The subsequent whole usage scenario passed in **97.960 s**, including its native Stop and cleanup. A preceding **259.85 s** quick-pick failure remains unresolved and intermittent; the successful rerun used observational diagnostics, with no product picker correction or cause claim. All six selected editor scenarios are covered using four retained old-source scenarios and fresh current-source usage/legacy. Current-source Windows qualification passed formatting (**6.244 s**), strict workspace Clippy (**24.3543 s**) and full Nextest: **2,627 passed / 0 failed / 51 skipped**, with no retries. All four restored long campaigns passed: compact reads (**246.170 s**), retention plateau (**146.632 s**), sparse catalog edits (**29.658 s**) and manual backlog (**108.021 s**). Nextest ran for **1,542.644 s**; its wrapper took **1,617.6504 s**. Serial doctests passed across **8 crate targets** in **18.6745 s**; there were **0 eligible examples**, not eight executed examples. Immutable JUnit and Cargo timing reports retain this current-source run. These are selected local qualification results; manual acceptance and release promotion remain separate.
++Checkpoint native source `237f8969...` / **960 inputs** adds bounded native installation-lock admission before accepting lifecycle work. Only typed installation-lock contention can wait within the **60-second admission budget** before Stop/Restart mutation acceptance. After acquiring the lock, native code rechecks the same instance/runtime and retains the lock through authority checks and completion. Submitted actions are never replayed; generic text and other failures do not become retryable. Scoped CLI Clippy passed in **32.292 s**, the unaccepted-state timeout regression passed in **36.053 s**, a fresh matched debug pair built in **90.262 s**, and the actual held-lock Stop integration passed in **29.522 s**. The current optimized producer passed in **734.0468 s**; native packaging passed in **15.255 s** and VSIX packaging in **17.183 s**. The fresh current-source legacy fixture passed in **68.399 s** and its whole installed-editor scenario in **33.561 s**, including native Stop and canonical cleanup. The subsequent whole usage scenario passed in **97.960 s**, including its native Stop and cleanup. A preceding **259.85 s** quick-pick failure remains unresolved and intermittent; the successful rerun used observational diagnostics, with no product picker correction or cause claim. All six selected editor scenarios are covered using four retained old-source scenarios and fresh current-source usage/legacy. Current-source Windows qualification passed formatting (**6.244 s**), strict workspace Clippy (**24.3543 s**) and full Nextest: **2,627 passed / 0 failed / 51 skipped**, with no retries. All four restored long campaigns passed: compact reads (**246.170 s**), retention plateau (**146.632 s**), sparse catalog edits (**29.658 s**) and manual backlog (**108.021 s**). Nextest ran for **1,542.644 s**; its wrapper took **1,617.6504 s**. Serial doctests passed across **8 crate targets** in **18.6745 s**; there were **0 eligible examples**, not eight executed examples. Immutable JUnit and Cargo timing reports retain this current-source run. These are selected local qualification results; manual acceptance and release promotion remain separate.
+ Earlier D4e receipts retain their original identity.
+-Deleted-source recovery and the local test installer remain unfinished. Version
+-**1.8.8** is unpublished.
++At this retained checkpoint, deleted-source recovery and the local test installer
++were unfinished. Later selected recovery and package results appear at the end
++of this ledger. Version **1.8.8** remains unpublished.
+ 
+ **Earlier P12 checkpoint, 6 November 2026 (historical):** P9, P10, P11a, P11b and P12 are accepted for
+ unpublished local development. P10 is committed as `c2584cb`, P11a as `f2bf2d2`
+diff --git a/packages/vscode/src/explorerWebview/indexing.tsx b/packages/vscode/src/explorerWebview/indexing.tsx
+index dac7dc4..c6774ea 100644
+--- a/packages/vscode/src/explorerWebview/indexing.tsx
++++ b/packages/vscode/src/explorerWebview/indexing.tsx
+@@ -72,7 +72,7 @@ export function IndexingScreen(props: ScreenProps) {
+                 <button disabled={disabled} onClick={()=>void run(()=>request('indexing.recommendations.copy',{}))}>Copy agent scope instructions</button>
+                 <p>Use this query scope prefills a temporary Workbench form. Review it before running. It does not change an agent connection or replace saved session choices automatically.</p>
+                 {canSaveAdviceDefault&&<button disabled={disabled} onClick={()=>void preview({operation:'set_project_defaults',project_id:project!.id,expected_defaults_revision:project!.defaults_revision,index_ids:adviceSelection!.index_ids})}>Review saving as Project default</button>}
+-                <p>To save a single-Project scope, inspect that Project and review its native defaults change. For a combined scope, use each Project's defaults form below; a query index may belong to only one selected Project. Reuse opens existing membership review. Split recommendations remain unavailable until P10. Recommendations do not prefill permanent-removal jobs; open index Sources and prepare an explicit native review below.</p>
++                <p>To save a single-Project scope, inspect that Project and review its native defaults change. For a combined scope, use each Project's defaults form below; a query index may belong to only one selected Project. Reuse opens existing membership review. Split recommendations open a native review only when this connection reports split capability; applying a split requires its separate complete review. Recommendations do not prefill permanent-removal jobs; open index Sources and prepare an explicit native review below.</p>
+                 <button disabled={disabled} onClick={()=>props.go({workspace:'indexing',tab:'projects'})}>Review reuse or Project defaults</button>
+                 <details><summary>Complete Recommendations response</summary><pre>{JSON.stringify(view.recommendations,null,2)}</pre></details>
+             </>:<p>Recommendations unavailable on this connection. Review the complete native response: <code>{JSON.stringify(view.recommendations)}</code></p>)}
+diff --git a/packages/vscode/src/test/indexingSplit.test.ts b/packages/vscode/src/test/indexingSplit.test.ts
+index 063ac3e..c423c3b 100644
+--- a/packages/vscode/src/test/indexingSplit.test.ts
++++ b/packages/vscode/src/test/indexingSplit.test.ts
+@@ -69,10 +69,10 @@ test('capability-qualified Recommendation link opens native detail without prepa
+     const control:CatalogControl={catalogRead:async method=>{reads++;return 'catalog_page'in method?{status:'catalog_page',page:{namespace:f.namespace,revision:1,items:[item],continuation:null},capabilities:{policy_contract:contract,future_native_capability:true}}:{status:'catalog_detail',detail:{namespace:f.namespace,revision:1,item},capabilities:{policy_contract:contract,future_native_capability:true}};},catalogPrepare:async()=>{throw new Error('must not create a catalog mutation');},catalogApply:async()=>{throw new Error('must not apply a catalog mutation');},catalogReconcile:async()=>[],catalogPending:()=>[],catalogSplitDraft:async()=>{drafts++;return {response:{draft:f.draft},draft:f.draft,selection:f.choice};},catalogSplitSourceState:async()=>splitSourceResponse(f),catalogSplitApply:async()=>{applies++;return {};}};
+     const controller=new IndexingCatalogController({control,identity:()=> 'stable',authorized:()=>true,changed(){}});
+     await controller.page('indexes');const advice={schema:'airk.recommendations/1',selected:{index_ids:[f.index],project_ids:[]},cards:[{action:'review_split'}],future_advice:'retained'};
+-    await controller.recommendations(async()=>advice);await assert.rejects(controller.splitOpen(f.index,controller.snapshot().generation),/capability/);
++    await controller.recommendations(async()=>advice);assert.equal(controller.snapshot().canReviewSplit,false);const unsupportedReads=reads;await assert.rejects(controller.splitOpen(f.index,controller.snapshot().generation),/capability/);assert.equal(reads,unsupportedReads);assert.equal(drafts,0);assert.equal(applies,0);
+     contract=2;await controller.page('indexes');await controller.recommendations(async()=>advice);const before=reads;await controller.splitOpen(f.index,controller.snapshot().generation);
+     assert.equal(reads,before+1);assert.equal(drafts,0);assert.equal(applies,0);assert.equal(controller.snapshot().splitFormOpen,true);assert.equal(controller.snapshot().capabilities?.future_native_capability,true);assert.ok(catalogExport(controller.snapshot(),true).includes('future_advice'));
+-    assert.ok(controller.snapshot().canReviewSplit);
++    assert.ok(controller.snapshot().canReviewSplit);const qualifiedReads=reads;await assert.rejects(controller.splitOpen(f.destinationIndex,controller.snapshot().generation),/advised_index/);assert.equal(reads,qualifiedReads);assert.equal(drafts,0);assert.equal(applies,0);
+ });
+ 
+ test('split receipt reads retry typed contention but split mutations dispatch only once',async()=>{

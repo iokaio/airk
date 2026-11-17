@@ -1,0 +1,565 @@
+--- a/scripts/build-local-service-installer.py
++++ b/scripts/build-local-service-installer.py
+@@ -105,7 +105,7 @@
+     return machine if machine.is_file() or not os.environ.get("LOCALAPPDATA") or not user.is_file() else user
+ 
+ 
+-def stage(layout, airk, airkctl, version, signing, verified_notices=None):
++def stage(layout, airk, airkctl, version, signing, verified_notices=None, *, cuda=None):
+     (layout / "bin").mkdir(parents=True)
+     (layout / "service").mkdir()
+     shutil.copy2(airkctl, layout / "bin/airkctl.exe")
+@@ -119,6 +119,9 @@
+     else:
+         subprocess.run([sys.executable, str(ROOT / "scripts/license-notices.py"), "--output",
+                         str(notices / "dependencies"), "--release"], cwd=ROOT, check=True)
++    if cuda is not None:
++        load_script("cuda-package-provenance").stage_native_projection(
++            cuda["projection"], layout / "service", cuda["handoff"])
+     files = {item.relative_to(layout).as_posix(): {"sha256": digest(item), "bytes": item.stat().st_size}
+              for item in sorted(layout.rglob("*")) if item.is_file()}
+     inventory = {"schema": INVENTORY_SCHEMA, "version": version, "channel": "stable", "target": TARGET,
+@@ -199,13 +202,13 @@
+ 
+ 
+ 
+-def verified_runtime(directory, version, source, static_inputs, admin_block):
++def verified_runtime(directory, version, source, static_inputs, admin_block, *, cuda=None):
+     """Use the canonical complete C7 validator; never reconstruct missing metadata."""
+     if directory.is_symlink() or not directory.is_dir():
+         raise ValueError("Expected an existing tested runtime directory without redirection")
+     directory = directory.resolve(strict=True)
+     package = load_script("package-native")
+-    files, executables = package.validate_runtime(directory, version, TARGET, source)
++    files, executables = package.validate_runtime(directory, version, TARGET, source, **({"cuda": cuda} if cuda is not None else {}))
+     if tuple(executables) != ("airk.exe", "airkctl.exe"):
+         raise ValueError("Tested Windows runtime must contain its exact service/client pair")
+     build = package.bounded_json(directory / "airk-build.json", 65_536)
+@@ -234,7 +237,15 @@
+     parser.add_argument("--unsigned", action="store_true",
+                         help="Label the payload and installer unsigned instead of stopping without signing access")
+     parser.add_argument("--iscc", type=Path, default=default_iscc())
++    load_script("package-native").add_cuda_arguments(parser)
+     args = parser.parse_args()
++    cuda_requested = any(getattr(args, name) is not None for name in (
++        "cuda_environment", "cuda_environment_sha256", "cuda_projection", "cuda_projection_sha256",
++        "cuda_native_execution_receipt", "cuda_native_execution_receipt_sha256"))
++    if cuda_requested and args.runtime_dir is None:
++        parser.error("Optional CUDA installer inputs require --runtime-dir consume mode")
++    cuda = (load_script("package-native").cuda_from_args(args, load_script("build-service-runtime"))
++            if cuda_requested else None)
+     if args.runtime_dir is not None:
+         if args.admin_inventory is None:
+             parser.error("--runtime-dir requires --admin-inventory")
+@@ -268,19 +279,19 @@
+             admin_inventory = package.bounded_json(args.admin_inventory, 1 << 20)
+         admin_block = admin.block_from_inventory(admin_inventory)
+         source = steps.call("source-inputs", runtime.source_identity)
+-        static_inputs = steps.call("static-ort-inputs", runtime.verify_static_inputs)
++        static_inputs = steps.call("static-ort-inputs", (lambda: runtime.verify_static_inputs(cuda)) if cuda is not None else runtime.verify_static_inputs)
+         if args.runtime_dir is None:
+             steps.call("airkctl-dependencies", lambda: runtime.check_lightweight_dependencies(unified=True))
+             airk, airkctl = steps.call("native", lambda: runtime.cargo_pair(profile))
+         else:
+             consumed = steps.call("tested-runtime", lambda: verified_runtime(
+-                args.runtime_dir, version, source, static_inputs, admin_block))
++                args.runtime_dir, version, source, static_inputs, admin_block, **({"cuda": cuda} if cuda is not None else {})))
+             receipt["input_runtime"] = runtime_input_receipt(consumed)
+             profile = consumed["build"]["profile"]
+             # Pin fresh complete copies before signing; the original remains read-only.
+             copied = run / "tested-runtime"
+             shutil.copytree(Path(consumed["directory"]), copied)
+-            pinned = verified_runtime(copied, version, source, static_inputs, admin_block)
++            pinned = verified_runtime(copied, version, source, static_inputs, admin_block, **({"cuda": cuda} if cuda is not None else {}))
+             if pinned["files"] != consumed["files"] or pinned["build"] != consumed["build"]:
+                 raise RuntimeError("Tested runtime changed while its private signing input was copied")
+             airk, airkctl = copied / "airk.exe", copied / "airkctl.exe"
+@@ -303,10 +314,10 @@
+         shutil.copy2(airkctl, qualified / "airkctl.exe")
+         build = steps.call("runtime-qualification", lambda: runtime.qualify_staged_runtime(
+             qualified, version, "windows", "x86_64", profile, source, static_inputs,
+-            admin_inventory, admin_block))
++            admin_inventory, admin_block, **({"cuda": cuda} if cuda is not None else {})))
+         airk, airkctl = qualified / "airk.exe", qualified / "airkctl.exe"
+         inventory = steps.call("stage", lambda: stage(layout, airk, airkctl, version, signing,
+-                                                       verified_notices=qualified / "notices"))
++                                                       verified_notices=qualified / "notices", **({"cuda": cuda} if cuda is not None else {})))
+         if (inventory["files"]["service/airk.exe"]["sha256"] != build["runtime"]["airk_sha256"]
+                 or inventory["files"]["bin/airkctl.exe"]["sha256"] != build["runtime"]["airkctl_sha256"]
+                 or inventory["admin_assets"] != {key: admin_block[key] for key in ("inventory_sha256", "bundle_sha256")}):
+@@ -324,12 +335,12 @@
+                                                                artifact, run)
+             receipt["signing"] = {"provenance": "local", "claim": signing, "artifacts": signer.receipts,
+                                   "uninstaller_unsigned_sha256": unsigned_uninstaller}
+-        if (runtime.source_identity() != source or runtime.verify_static_inputs() != static_inputs
++        if (runtime.source_identity() != source or (runtime.verify_static_inputs(cuda) if cuda is not None else runtime.verify_static_inputs()) != static_inputs
+                 or admin.block_from_inventory(admin_inventory) != admin_block):
+             raise RuntimeError("Runtime inputs changed during installer packaging")
+         if consumed is not None:
+-            final_input = verified_runtime(args.runtime_dir, version, source, static_inputs, admin_block)
+-            final_copy = verified_runtime(copied, version, source, static_inputs, admin_block)
++            final_input = verified_runtime(args.runtime_dir, version, source, static_inputs, admin_block, **({"cuda": cuda} if cuda is not None else {}))
++            final_copy = verified_runtime(copied, version, source, static_inputs, admin_block, **({"cuda": cuda} if cuda is not None else {}))
+             if (final_input != consumed or final_copy["files"] != consumed["files"]
+                     or final_copy["build"] != consumed["build"]):
+                 raise RuntimeError("Tested runtime changed during installer packaging")
+--- a/scripts/cuda-native-execution.py
++++ b/scripts/cuda-native-execution.py
+@@ -0,0 +1,167 @@
++# SPDX-License-Identifier: Apache-2.0
++"""One actual NN0 package projection child; no model, resource or training alias."""
++import argparse,datetime,hashlib,importlib.util,json,math,os,sys,time
++from pathlib import Path
++sys.dont_write_bytecode=True
++SID='S-1-5-21-3678370870-3858642417-826968105-1002'
++SELECTOR='inference_engine::pool::arbiter::qualification::software_v2::cuda_qualification::emit_cuda_runtime_package_projection_from_held_native_closure'
++HELPERS={'reference_owned.py':'2d7a31a64eaba745e32ed83adfbeedb75983ab6f9b5c4cc82714e9371c1895a1','reference_parent.py':'775e32da732446919789490ca5a30b0b3d863f570b7bf1852d56e9e7c7391354','reference_worker.py':'9c04be28ef06c0a06b8e2cffd4c274348ff141046114cc493d725ce527b694c7'}
++CAMPAIGN=datetime.datetime(2026,11,19,5,29,42,tzinfo=datetime.timezone.utc)
++def digest(p):
++ with Path(p).open('rb') as f:return hashlib.file_digest(f,'sha256').hexdigest()
++def regular(p):
++ p=Path(p)
++ if not p.is_absolute() or p.resolve(strict=True)!=p:raise ValueError('canonical absolute regular input required')
++ for x in [p,*p.parents]:
++  st=x.lstat()
++  if x.is_symlink() or getattr(st,'st_file_attributes',0)&0x400:raise ValueError('aliased input refused')
++ if not p.is_file():raise ValueError('regular input required')
++ return p
++def pin(p):p=regular(p);return {'path':str(p),'bytes':p.stat().st_size,'sha256':digest(p)}
++def pinned(row):
++ p=regular(row['path'])
++ if pin(p)!=row:raise ValueError('exact byte pin differs: '+str(p))
++ return p
++def read(p,limit=16<<20):
++ p=regular(p)
++ if p.stat().st_size>limit:raise ValueError('bounded metadata required')
++ return json.loads(p.read_bytes())
++def load(p,name):
++ spec=importlib.util.spec_from_file_location(name,p);m=importlib.util.module_from_spec(spec);sys.modules[name]=m;spec.loader.exec_module(m);return m
++
++def helpers(plan):
++ base=Path(plan['ownership_helper_root'])
++ for name,sha in HELPERS.items():
++  if digest(regular(base/name))!=sha:raise ValueError('original ownership primitive source differs')
++ sys.path.insert(0,str(base));parent=load(base/'reference_parent.py','cuda_nn0_existing_parent');owner=load(base/'reference_owned.py','cuda_nn0_existing_owned')
++ if digest(regular(parent.worker.__file__))!=HELPERS['reference_worker.py']:raise ValueError('ownership dependency shadowed')
++ return parent,owner
++
++def source_image(plan):
++ packet=read(pinned(plan['image_packet']));build=read(pinned(plan['native_build_receipt']),32<<20)
++ if packet.get('schema')!='airk.preserved-native-test-images/1' or not core_pin_matches(packet.get('actual_build_receipt'),plan['native_build_receipt']) or packet.get('native_group')!=plan['native_group'] or build.get('passed') is not True or build.get('inputs_unchanged') is not True or build['groups']['native']['sha256']!=plan['native_group']:raise ValueError('actual preserved native image/source build differs')
++ rows=[r for r in packet['images'] if r['binary_id']=='airk-inference']
++ if len(rows)!=1:raise ValueError('exact preserved Inference image required')
++ row=rows[0]
++ if {k:row[k] for k in ['path','bytes','sha256']}!=plan['native_image'] or row['original_file_owner_sid']!=SID or row['preserved_file_owner_sid']!=SID:raise ValueError('native image/custody differs')
++ pinned(plan['native_image'])
++ required=plan['required_native_sources']
++ if not {'crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification.rs','crates/airk-retrieval/src/arbiter/runtime/cuda/windows.rs'}.issubset(required) or any(build['groups']['native']['files'].get(k)!=v for k,v in required.items()):raise ValueError('native package source closure differs')
++ return row
++
++def census(root):
++ root=Path(root)
++ if not root.is_absolute() or root.resolve(strict=True)!=root:raise ValueError('canonical runtime source root required')
++ rows=[];stack=[root]
++ while stack:
++  directory=stack.pop()
++  st=directory.lstat()
++  if directory.is_symlink() or getattr(st,'st_file_attributes',0)&0x400:raise ValueError('runtime directory alias refused')
++  for child in directory.iterdir():
++   st=child.lstat()
++   if child.is_symlink() or getattr(st,'st_file_attributes',0)&0x400:raise ValueError('runtime file alias refused')
++   if child.is_dir():stack.append(child)
++   elif child.is_file():rows.append(pin(child))
++   else:raise ValueError('special runtime input refused')
++   if len(rows)>128:raise ValueError('runtime file census exceeds128')
++ return sorted(rows,key=lambda r:r['path'])
++
++def preflight(plan):
++ if plan.get('schema')!='airk.private.cuda-package-projection-plan/1' or plan.get('human_sid')!=SID or plan.get('limits')!={'wall_seconds':120,'host_committed_bytes':8<<30,'log_bytes':64<<20}:raise ValueError('exact NN0 plan/bounds required')
++ if plan['wrapper']['sha256']!=digest(__file__):raise ValueError('actual reviewed parent source differs')
++ pinned(plan['wrapper']);source_image(plan)
++ for key in ['native_input','descriptor','image_packet','native_build_receipt','output_guard','output_guard_lock','parent_python']:pinned(plan[key])
++ if plan['output_guard']['sha256']!='c2f9c3e305106469d6a58699eaa36ec2afed7a6cd4be63275498fd78af2d3f4a' or plan['output_guard_lock']['sha256']!='549be258fd21be030f994f6da7f74146a9e9edd3bb611bee83305d9a4deade6d':raise ValueError('reviewed same-human protected output guard required')
++ if census(plan['runtime_root'])!=plan['runtime_files']:raise ValueError('complete exact runtime byte census differs')
++ descriptor=Path(plan['descriptor']['path'])
++ if descriptor.parent!=Path(plan['runtime_root']) or descriptor.name!='airk-cuda-runtime.json' or plan['descriptor'] not in plan['runtime_files']:raise ValueError('native descriptor/root pin differs')
++ if Path(plan['output_root']).is_relative_to(Path(plan['runtime_root'])):raise ValueError('fresh execution output must be separate from sealed runtime source')
++ required=[plan[k] for k in ['parent_python','wrapper','native_image','native_input','descriptor','image_packet','native_build_receipt','output_guard','output_guard_lock']]+plan['runtime_files']
++ required +=[pin(Path(plan['ownership_helper_root'])/name) for name in HELPERS]
++ lock=read(plan['output_guard_lock']['path']);repository=Path(plan['repository_root'])
++ if repository!=Path('D:/code/Github/airk'):raise ValueError('actual reviewed repository root required')
++ required +=[{'path':str(repository/'scripts'/name),'sha256':lock[key]} for name,key in [('provision-static-onnx-runtime.py','cpu_owner_sha256'),('static-onnx-runtime-lock.json','cpu_lock_sha256')]]
++ seals=plan['input_seals']
++ if any(seals.get(row['path'])!=row['sha256'] for row in required) or len(seals)>16380:raise ValueError('complete original input seals required')
++ for path,sha in seals.items():
++  if digest(regular(path))!=sha:raise ValueError('original input seal differs')
++ return plan
++
++def core_pin_matches(actual,expected):
++ return isinstance(actual,dict) and actual.get('path')==expected['path'] and actual.get('sha256')==expected['sha256']
++def emission_facts(value,plan,output,owned):
++ if value.get('schema')!='airk.private.cuda-runtime-package-projection-emission/1' or not core_pin_matches(value.get('input'),plan['native_input']) or not core_pin_matches(value.get('descriptor'),plan['descriptor']) or not core_pin_matches(value.get('projection'),output) or value.get('pid')!=owned.get('owned_leader_pid') or value.get('execution_user')!=SID:raise ValueError('actual inner native emission identity differs')
++ if any(value.get(k) is not False for k in ['model_requests_dispatched','runtime_admission_dispatched','activation','qualification']) or value.get('forward_count_observed','missing') is not None or type(value.get('elapsed_us')) is not int or not 0<=value['elapsed_us']<120000000:raise ValueError('metadata-only native emission scope/deadline differs')
++
++def verify_execution(path,sha,projection_pin=None):
++ path=regular(path)
++ if digest(path)!=sha:raise ValueError('reviewed owned NN0 receipt differs')
++ v=read(path);plan=read(pinned(v['plan']));preflight(plan);parent,_=helpers(plan)
++ if v.get('schema')!='airk.private.owned-cuda-package-projection/1' or v.get('complete') is not True or v.get('failure') is not None or v.get('execution_user_sid')!=SID or v.get('whole_phase_deadline_not_refreshed') is not True or v.get('whole_phase_expired') is not False or v.get('post_input_drift')!=[] or v.get('activation') is not False or v.get('qualification') is not False or not parent.settled(v.get('owned',{})):raise ValueError('actual naturally settled original NN0 ownership required')
++ if type(v['elapsed_seconds']) not in (int,float) or not math.isfinite(v['elapsed_seconds']) or not 0<=v['elapsed_seconds']<120 or type(v['owned'].get('peak_host_committed_bytes')) is not int or not 0<v['owned']['peak_host_committed_bytes']<=8<<30:raise ValueError('original NN0 whole-phase/committed bound exceeded')
++ expected=[plan['native_image']['path'],'--exact',SELECTOR,'--ignored','--nocapture','--test-threads=1']
++ if v.get('parent_python')!=plan['parent_python'] or type(v.get('parent_pid')) is not int or v['parent_pid']<=0 or v.get('command')!=expected or v.get('input_seals')!=dict(plan['input_seals'],**{v['plan']['path']:v['plan']['sha256']}):raise ValueError('actual original selector/input seals differ')
++ suspend=v['owned'].get('suspended_assignment',{})
++ if suspend.get('pid')!=v['owned'].get('owned_leader_pid') or suspend.get('execution_user_sid')!=SID or suspend.get('image')!={k:plan['native_image'][k] for k in ['path','sha256']}:raise ValueError('suspended original native PID/SID/image proof differs')
++ for key in ['projection','native_emission','stdout']:pinned(v[key])
++ if v['projection']['bytes']>1<<20 or v['native_emission']['bytes']>1<<20 or v['stdout']['bytes']>64<<20:raise ValueError('original NN0 output/log retention cap exceeded')
++ if projection_pin is not None and v['projection']!=projection_pin:raise ValueError('native projection output differs')
++ emission_facts(read(v['native_emission']['path']),plan,v['projection'],v['owned'])
++ if digest(path)!=sha:raise ValueError('owned NN0 receipt changed during verification')
++ return plan,v
++
++def finish_observation(receipt,started,deadline,log,clock=time.monotonic,hash_file=pin):
++ try:
++  if log.exists():
++   receipt['stdout']=hash_file(log)
++   if receipt['stdout'].get('bytes',0)>64<<20:raise ValueError('original64MiB stdout cap exceeded during retention')
++ except BaseException as exc:
++  receipt['retention_failure']={'type':type(exc).__name__,'message':str(exc)};receipt['complete']=False
++  receipt['failure']=receipt['failure'] or receipt['retention_failure']
++ now=clock();receipt['elapsed_seconds']=now-started;receipt['whole_phase_expired']=now>=deadline
++ if receipt['whole_phase_expired']:receipt['complete']=False;receipt['failure']=receipt['failure'] or {'type':'TimeoutError','message':'original NN0 phase expired during final retention'}
++
++def run(plan_path,expected):
++ started=time.monotonic();deadline=started+min(120,(CAMPAIGN-datetime.datetime.now(datetime.timezone.utc)).total_seconds())
++ pp=regular(plan_path)
++ if digest(pp)!=expected:raise ValueError('reviewed package plan differs')
++ plan=read(pp)
++ if Path(plan['parent_python']['path'])!=Path(sys.executable) or pin(sys.executable)!=plan['parent_python']:raise ValueError('actual parent interpreter bytes differ')
++ preflight(plan);parent,owner=helpers(plan)
++ if parent.worker.windows_sid()!=SID:raise ValueError('actual parent SID differs from logged-in human')
++ if time.monotonic()>=deadline:raise TimeoutError('original NN0 phase expired during initial authentication')
++ guard=load(plan['output_guard']['path'],'nn0_existing_output_guard');lock=read(plan['output_guard_lock']['path']);cpu=guard.cpu_owner(lock);out=Path(plan['output_root']);guard_lock=json.loads(json.dumps(lock));guard_lock['build_path']['fresh_child']=out.name;policy=guard.identity_and_parent(cpu,out,guard_lock);out.mkdir();(out/'temp').mkdir()
++ output=out/'native-projection.json';log=out/'stdout-stderr.log';argv=[plan['native_image']['path'],'--exact',SELECTOR,'--ignored','--nocapture','--test-threads=1'];environment=dict(os.environ)
++ for key in list(environment):
++  if key.upper().startswith(('AIRK_','ORT_','PYTHON','CUDA_','CUDNN_')):environment.pop(key)
++ environment.update({'PATH':'C:/Windows/System32;C:/Windows','TEMP':str(out/'temp'),'TMP':str(out/'temp'),'TMPDIR':str(out/'temp'),'AIRK_CUDA_QUALIFICATION_INPUT':plan['native_input']['path'],'AIRK_CUDA_QUALIFICATION_INPUT_SHA256':plan['native_input']['sha256'],'AIRK_CUDA_QUALIFICATION_OUTPUT':str(output)})
++ receipt={'schema':'airk.private.owned-cuda-package-projection/1','plan':pin(pp),'execution_user_sid':SID,'parent_pid':os.getpid(),'parent_python':pin(sys.executable),'command':argv,'input_seals':dict(plan['input_seals'],**{str(pp):expected}),'whole_phase_deadline_not_refreshed':True,'whole_phase_expired':False,'complete':False,'failure':None,'post_input_drift':[],'activation':False,'qualification':False,'output_policy':policy}
++ try:
++  if time.monotonic()>=deadline:raise TimeoutError('original NN0 phase expired before native child')
++  def authenticate(api,job,info,child_deadline):return parent.suspended_authentication(api,info,deadline,child_deadline,SID,plan['native_image'],owner.image_proof)
++  with (out/'stdin.txt').open('xb') as f:f.flush()
++  with (out/'stdin.txt').open('rb') as initial,log.open('xb') as stdout:receipt['owned']=owner.run_windows_owned_training(argv,Path(plan['repository_root']),stdout,deadline-time.monotonic(),environment,initial,8<<30,before_resume=authenticate,absolute_deadline=deadline)
++  if not parent.settled(receipt['owned']) or receipt['owned']['peak_host_committed_bytes']>8<<30:raise ValueError('actual original native child did not naturally settle within bounds')
++  receipt['projection']=pin(output)
++  if receipt['projection']['bytes']>1<<20:raise ValueError('native projection exceeds1MiB')
++  receipt['native_emission']=pin(output.with_suffix('.receipt.json'));emission_facts(read(receipt['native_emission']['path']),plan,receipt['projection'],receipt['owned'])
++  for path,sha in receipt['input_seals'].items():
++   if digest(regular(path))!=sha:receipt['post_input_drift'].append(path)
++  preflight(plan)
++  if receipt['post_input_drift']:raise ValueError('actual NN0 source/input/runtime drift')
++  receipt['complete']=True
++ except BaseException as exc:
++  receipt['failure']={'type':type(exc).__name__,'message':str(exc)};receipt['complete']=False
++  if hasattr(exc,'owned_cleanup'):receipt['actual_cleanup_failure']=exc.owned_cleanup
++  raise
++ finally:
++  original_error=sys.exc_info()[1];finish_observation(receipt,started,deadline,log)
++  with (out/'execution.json').open('x') as f:json.dump(receipt,f,indent=2);f.write('\n')
++  if original_error is None and receipt['failure'] is not None:raise ValueError(receipt['failure'])
++ return receipt
++
++def main():
++ ap=argparse.ArgumentParser();ap.add_argument('--execute-reviewed-nn0',action='store_true');ap.add_argument('--plan',type=Path,required=True);ap.add_argument('--plan-sha256',required=True);ap.add_argument('--approved-script-sha256',required=True);a=ap.parse_args()
++ if not a.execute_reviewed_nn0 or digest(__file__)!=a.approved_script_sha256:raise ValueError('explicit reviewed NN0 wrapper required')
++ run(a.plan,a.plan_sha256)
++if __name__=='__main__':main()
+--- a/scripts/cuda-package-provenance.py
++++ b/scripts/cuda-package-provenance.py
+@@ -2,7 +2,7 @@
+ """Exact optional payload merge only. Native Rust owns runtime manifests/PE approval.
+ This module deliberately cannot manufacture/approve a RuntimeManifest.
+ """
+-from pathlib import PurePosixPath
++from pathlib import Path,PurePosixPath
+ import re
+ class NativeGpuProjectionUnavailable(ValueError):pass
+ 
+@@ -32,6 +32,66 @@
+  if not notice_files:raise NativeGpuProjectionUnavailable('actual exact GPU legal projection unavailable')
+  return combined
+ 
+-def require_native_activation_projection(*args,**kwargs):
+- # No native projection/approval protocol has been supplied yet. Do not guess it in Python.
+- raise NativeGpuProjectionUnavailable('native Rust validated distributable projection and actual producer/PE proof required')
++def _execution_owner():
++ import importlib.util
++ p=Path(__file__).with_name('cuda-native-execution.py');spec=importlib.util.spec_from_file_location('cuda_package_native_custody',p);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);return m
++
++def require_native_activation_projection(projection_path=None,projection_sha256=None,verified_handoff=None,*,native_execution_receipt=None,repo_root=None,source_root=None):
++ # This consumes only the descriptive Rust-emitted projection, never RuntimeManifest.
++ import hashlib,json
++ if projection_path is None or verified_handoff is None or native_execution_receipt is None or repo_root is None:raise NativeGpuProjectionUnavailable('actual native projection and owned NN0 execution pins required')
++ if not isinstance(native_execution_receipt,tuple) or len(native_execution_receipt)!=2:raise ValueError('explicit parent receipt path/SHA tuple required')
++ owner=_execution_owner();projection=owner.pin(projection_path)
++ if projection['sha256']!=projection_sha256:raise ValueError('reviewed native projection SHA differs')
++ plan,execution=owner.verify_execution(*native_execution_receipt,projection_pin=projection)
++ root=Path(plan['runtime_root'])
++ if source_root is not None and Path(source_root)!=root:raise ValueError('caller source root differs from actual native custody')
++ value=owner.read(projection_path,1<<20)
++ if set(value)!={'schema','descriptor','static_core_build','files','scope','activation','qualification'} or value['schema']!='airk.native.cuda-package-projection/1' or value['activation'] is not False or value['qualification'] is not False:raise ValueError('exact descriptive native package projection required')
++ build=verified_handoff.get('gpu_build',{})
++ if verified_handoff.get('activation_pins_available') is not False or build.get('schema') not in ('airk.cuda-static-build-proof/1','airk.cuda-static-build-proof/2') or value['static_core_build']!=build.get('build_receipt',{}).get('sha256'):raise ValueError('native projection/static-core producer mismatch')
++ descriptor=value['descriptor']
++ if not isinstance(descriptor,dict) or set(descriptor)!={'name','bytes','sha256'} or descriptor['name']!='airk-cuda-runtime.json' or (descriptor['bytes'],descriptor['sha256'])!=(plan['descriptor']['bytes'],plan['descriptor']['sha256']):raise ValueError('actual native descriptor pin differs')
++ rows=value['files']
++ if not isinstance(rows,list) or not 4<=len(rows)<=128 or rows!=sorted(rows,key=lambda r:r.get('name','')):raise ValueError('bounded sorted native exact file roster required')
++ files={};legal={};native={};total=0
++ for row in rows:
++  if set(row)!={'name','bytes','sha256'} or type(row['bytes']) is not int or not 0<row['bytes']<=2<<30:raise ValueError('native file row bound/shape differs')
++  name=row['name'];_path(name)
++  if name in files:raise ValueError('duplicate native file row')
++  if name.startswith('notices/cuda-runtime/'):legal[name]=row['sha256']
++  else:native[name]=row['sha256']
++  source=owner.regular(root.joinpath(*PurePosixPath(name).parts));actual=owner.pin(source)
++  if (actual['bytes'],actual['sha256'])!=(row['bytes'],row['sha256']):raise ValueError('actual exact native payload byte drift')
++  total+=row['bytes'];files[name]=row['sha256']
++ if total>4<<30:raise ValueError('native optional payload exceeds4GiB')
++ exact_optional_payload({},native,legal)
++ if {str(root.joinpath(*PurePosixPath(name).parts)):sha for name,sha in files.items()}!={r['path']:r['sha256'] for r in plan['runtime_files']}:raise ValueError('projection omits/invents an original runtime custody file')
++ if files.get(descriptor['name'])!=descriptor['sha256']:raise ValueError('native descriptor omitted from exact files')
++ return {'files':files,'source_root':root,'native_projection':projection,'native_execution_receipt':owner.pin(native_execution_receipt[0]),'static_core_build':value['static_core_build'],'descriptor':descriptor,'activation':False,'qualification':False,'_repo_root':str(Path(repo_root))}
++
++def reverify_native_projection(value,verified_handoff):
++ observed=require_native_activation_projection(value['native_projection']['path'],value['native_projection']['sha256'],verified_handoff,native_execution_receipt=(value['native_execution_receipt']['path'],value['native_execution_receipt']['sha256']),repo_root=value['_repo_root'],source_root=value['source_root'])
++ if observed!=value:raise ValueError('native package custody/projection drift')
++ return observed
++
++def stage_native_projection(value,destination,verified_handoff):
++ import shutil
++ value=reverify_native_projection(value,verified_handoff);owner=_execution_owner();destination=Path(destination)
++ if not destination.is_absolute() or destination.resolve(strict=True)!=destination or not destination.is_dir():raise ValueError('existing canonical package staging directory required')
++ for ancestor in [destination,*destination.parents]:
++  st=ancestor.lstat()
++  if ancestor.is_symlink() or getattr(st,'st_file_attributes',0)&0x400:raise ValueError('package destination alias refused')
++ # All names already passed the exact native/legal allowlist; never overwrite base images.
++ for name in value['files']:
++  target=destination.joinpath(*PurePosixPath(name).parts)
++  if target.exists():raise ValueError('existing package entry retained: '+name)
++  for parent in target.parents:
++   if parent==destination:break
++   if parent.exists() and (parent.is_symlink() or getattr(parent.lstat(),'st_file_attributes',0)&0x400 or not parent.is_dir()):raise ValueError('package nested destination redirected')
++ for name,sha in value['files'].items():
++  source=owner.regular(value['source_root'].joinpath(*PurePosixPath(name).parts));target=destination.joinpath(*PurePosixPath(name).parts);target.parent.mkdir(parents=True,exist_ok=True)
++  with source.open('rb') as src,target.open('xb') as dst:shutil.copyfileobj(src,dst,1<<20)
++  if owner.digest(owner.regular(target))!=sha:raise ValueError('native package copy hash differs')
++ reverify_native_projection(value,verified_handoff)
++ return dict(value['files'])
+--- a/scripts/package-native.py
++++ b/scripts/package-native.py
+@@ -123,7 +123,37 @@
+     verify_archive(archive, expected, executable)
+ 
+ 
+-def validate_runtime(runtime, version, target, source):
++def add_cuda_arguments(parser):
++    for name in ("cuda-environment", "cuda-projection", "cuda-native-execution-receipt"):
++        parser.add_argument("--" + name, type=Path)
++        parser.add_argument("--" + name + "-sha256")
++
++
++def cuda_from_args(args, builder):
++    values = tuple(getattr(args, name, None) for name in (
++        "cuda_environment", "cuda_environment_sha256", "cuda_projection", "cuda_projection_sha256",
++        "cuda_native_execution_receipt", "cuda_native_execution_receipt_sha256"))
++    if any(value is not None for value in values) and not all(value is not None for value in values):
++        raise ValueError("All six explicit CUDA input pins are required")
++    if not any(value is not None for value in values):
++        return None
++    if getattr(args, "target", "x86_64-pc-windows-msvc") != "x86_64-pc-windows-msvc":
++        raise ValueError("Optional CUDA package context requires Windows x64")
++    return builder.prepare_cuda_inputs(*values)
++
++
++def validate_cuda_payload(builder, cuda, runtime, target, build, files):
++    if target != "x86_64-pc-windows-msvc":
++        raise ValueError("Optional CUDA package target differs")
++    if builder.reverify_cuda_inputs(cuda) != build["static_ort"]:
++        raise ValueError("Packaged native static/source proof differs from the same CUDA inputs")
++    builder.verify_cuda_staged(cuda, runtime)
++    for name, digest in cuda["projection"]["files"].items():
++        if files.get(name) != digest:
++            raise ValueError("Exact native optional payload differs: " + name)
++
++
++def validate_runtime(runtime, version, target, source, *, cuda=None):
+     files = inventory(runtime)
+     install = bounded_json(runtime / "airk-install.json")
+     pair = bounded_json(runtime / "airk-runtime.json", 4096)
+@@ -181,7 +211,10 @@
+     if not required.issubset(files):
+         raise ValueError("Runtime pair legal/notice inventory is incomplete")
+     allowed = set(required)
+-    if builder.single_image_version(version):
++    if cuda is not None:
++        validate_cuda_payload(builder, cuda, runtime, target, build, files)
++        allowed.update(cuda["projection"]["files"])
++    elif builder.single_image_version(version):
+         static_notices = bounded_json(runtime / "notices/static-onnx-runtime/inventory.json")
+         allowed.update(builder.static_notice_inventory(static_notices, target, files))
+     inference_assets = builder.inference_assets(operating_system, architecture, version) if builder.int8_version(version) else {}
+@@ -268,6 +301,7 @@
+     parser.add_argument("--local-artifact-signing", action="store_true", help="Explicitly consume a Windows local-signing pair; never hosted release provenance")
+     parser.add_argument("--source-manifest", type=Path, help="Reuse verified CI compiler metadata for signed repackaging")
+     parser.add_argument("--signtool", default="signtool")
++    add_cuda_arguments(parser)
+     args = parser.parse_args()
+     if args.local_artifact_signing and (args.target != "x86_64-pc-windows-msvc" or not args.signed_dir):
+         parser.error("Local Artifact Signing packaging requires the Windows target and --signed-dir")
+@@ -282,10 +316,11 @@
+         metadata = json.loads(capture("cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"))
+         version = next(p["version"] for p in metadata["packages"] if p["name"] == "airk-cli")
+     builder = runtime_builder()
++    cuda = cuda_from_args(args, builder)
+     runtime = args.runtime_dir.resolve(strict=True)
+     if runtime.is_symlink() or not runtime.is_dir():
+         raise SystemExit("Expected an immutable tested runtime pair directory")
+-    files, executables = validate_runtime(runtime, version, args.target, builder.source_identity())
++    files, executables = validate_runtime(runtime, version, args.target, builder.source_identity(), **({"cuda": cuda} if cuda is not None else {}))
+     signing = None
+     if args.signed_dir:
+         specification = importlib.util.spec_from_file_location("airk_signing", ROOT / "scripts/sign-native.py")
+@@ -293,9 +328,9 @@
+         specification.loader.exec_module(signer)
+         arguments = (args.signed_dir.resolve(strict=True), runtime, args.target,
+                      capture("git", "rev-parse", "HEAD"), sha256(ROOT / "Cargo.lock"), args.signtool)
+-        runtime, signing = (signer.read_verified_pair(*arguments, allow_local=True) if args.local_artifact_signing
+-                            else signer.read_verified_pair(*arguments))
+-        files, executables = validate_runtime(runtime, version, args.target, builder.source_identity())
++        runtime, signing = (signer.read_verified_pair(*arguments, allow_local=True, **({"cuda": cuda} if cuda is not None else {})) if args.local_artifact_signing
++                            else signer.read_verified_pair(*arguments, **({"cuda": cuda} if cuda is not None else {})))
++        files, executables = validate_runtime(runtime, version, args.target, builder.source_identity(), **({"cuda": cuda} if cuda is not None else {}))
+     executable = executables[0]
+     output = (args.output or ROOT / "artifacts" / "native" / args.target).resolve()
+     if not output.is_relative_to((ROOT / "artifacts").resolve()) or output == (ROOT / "artifacts").resolve():
+@@ -358,6 +393,10 @@
+         bundled_model = model_report["bundled_model"]
+     if model_smoke is not None and model_smoke["profile"] != selected:
+         raise SystemExit("Archived inference probe selected a different CPU model profile")
++    if cuda is not None:
++        builder.reverify_cuda_inputs(cuda)
++        builder.verify_cuda_staged(cuda, runtime)
++        builder.verify_cuda_staged(cuda, smoke)
+     common = {
+         "version": version, "target": args.target,
+         "commit": capture("git", "rev-parse", "HEAD"),
+--- a/scripts/sign-native.py
++++ b/scripts/sign-native.py
+@@ -147,7 +147,7 @@
+         raise ValueError("Local signing component differs from the pinned Windows policy")
+ 
+ 
+-def read_verified_pair(directory, source, target, commit, lock_digest, signtool="signtool", *, allow_local=False):
++def read_verified_pair(directory, source, target, commit, lock_digest, signtool="signtool", *, allow_local=False, cuda=None):
+     package = pair_package()
+     receipt_path = directory / "signing.json"
+     receipt = package.bounded_json(receipt_path, 65_536)
+@@ -200,6 +200,10 @@
+         observed = verify_copied_launcher(runtime, signed["version"], components[launcher], signtool)
+         if receipt.get("copied_launcher") != observed:
+             raise ValueError("Signed pair lacks matching standalone launcher evidence")
++    if cuda is not None:
++        original_build = package.bounded_json(source / "airk-build.json", 65_536)
++        package.validate_runtime(source, original["version"], target, original_build["source"], cuda=cuda)
++        package.validate_runtime(runtime, signed["version"], target, original_build["source"], cuda=cuda)
+     return runtime, receipt
+ 
+ 
+@@ -252,12 +256,12 @@
+             and len({value["id"] for value in receipts}) == 1)
+ 
+ 
+-def prepare_pair(source, output, target):
++def prepare_pair(source, output, target, *, cuda=None):
+     package = pair_package()
+     source = source.resolve(strict=True)
+     original_build = json.loads((source / "airk-build.json").read_text(encoding="utf-8"))
+     original_install = json.loads((source / "airk-install.json").read_text(encoding="utf-8"))
+-    files, executables = package.validate_runtime(source, original_install["version"], target, original_build["source"])
++    files, executables = package.validate_runtime(source, original_install["version"], target, original_build["source"], **({"cuda": cuda} if cuda is not None else {}))
+     output = output.resolve()
+     if not output.is_relative_to((ROOT / "artifacts").resolve()) or output == (ROOT / "artifacts").resolve():
+         raise ValueError("Signing output must be a fresh directory inside artifacts/")
+@@ -275,14 +279,14 @@
+     return source, runtime, executables, files
+ 
+ 
+-def finish_pair(source, output, target, components, commit, lock_digest, signtool="signtool", *, local=False):
++def finish_pair(source, output, target, components, commit, lock_digest, signtool="signtool", *, local=False, cuda=None):
+     if local and target != "x86_64-pc-windows-msvc":
+         raise ValueError("Local Artifact Signing pairs require the Windows target")
+     package = pair_package()
+     runtime = output / "runtime"
+     original_build = json.loads((source / "airk-build.json").read_text(encoding="utf-8"))
+     original_install = json.loads((source / "airk-install.json").read_text(encoding="utf-8"))
+-    files, executables = package.validate_runtime(source, original_install["version"], target, original_build["source"])
++    files, executables = package.validate_runtime(source, original_install["version"], target, original_build["source"], **({"cuda": cuda} if cuda is not None else {}))
+     pending = json.loads((output / "pair-signing.pending.json").read_text(encoding="utf-8"))
+     if pending != {"schema": 1, "source": str(source), "target": target, "source_install_sha256": files["airk-install.json"]}:
+         raise ValueError("Signing source differs from prepared pair")
+@@ -331,7 +335,7 @@
+     if "apple" in target and package.runtime_builder().standalone_launcher_version(original_install["version"]):
+         launcher = package.runtime_builder().launcher_name("macos", original_install["version"])
+         receipt["copied_launcher"] = verify_copied_launcher(runtime, original_install["version"], components[launcher], signtool)
+-    package.validate_runtime(runtime, original_install["version"], target, original_build["source"])
++    package.validate_runtime(runtime, original_install["version"], target, original_build["source"], **({"cuda": cuda} if cuda is not None else {}))
+     if package.inventory(source) != files:
+         raise ValueError("Tested source changed during signing")
+     (output / "signing.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+@@ -341,7 +345,7 @@
+ def sign_pair(args):
+     """Sign both staged copies, then seal their exact new installer identities."""
+     output = args.output.resolve()
+-    source, runtime, executables, _ = prepare_pair(args.runtime_dir, output, args.target)
++    source, runtime, executables, _ = prepare_pair(args.runtime_dir, output, args.target, **({"cuda": args.cuda_context} if getattr(args,"cuda_context",None) is not None else {}))
+     if "apple" in args.target and (runtime / "AIRK.app/Contents/CodeResources").exists() and not args.notarize:
+         raise ValueError("Re-signing a stapled app requires explicit --notarize to replace its ticket")
+     commit = run(["git", "rev-parse", "HEAD"]).strip()
+@@ -387,7 +391,7 @@
+                 run(["/usr/bin/xcrun", "stapler", "validate", runtime / "AIRK.app"])
+                 for receipt in components.values():
+                     receipt["notarization"] = {"id": result["id"], "status": "Accepted", "stapled": True, "scope": "AIRK.app"}
+-    finish_pair(source, output, args.target, components, commit, lock_digest, args.signtool)
++    finish_pair(source, output, args.target, components, commit, lock_digest, args.signtool, **({"cuda": args.cuda_context} if getattr(args,"cuda_context",None) is not None else {}))
+ 
+ 
+ def sign_local_pair(args):
+@@ -399,7 +403,7 @@
+     adapter = importlib.util.module_from_spec(specification)
+     specification.loader.exec_module(adapter)
+     output = args.output.resolve()
+-    source, runtime, _executables, _files = prepare_pair(args.runtime_dir, output, args.target)
++    source, runtime, _executables, _files = prepare_pair(args.runtime_dir, output, args.target, **({"cuda": args.cuda_context} if getattr(args,"cuda_context",None) is not None else {}))
+     commit = run(["git", "rev-parse", "HEAD"]).strip()
+     lock_digest = digest(ROOT / "Cargo.lock")
+     tool = adapter.signtool_path() if args.signtool == "signtool" else Path(args.signtool)
+@@ -414,7 +418,7 @@
+         (destination.parent / "signing.json").write_text(json.dumps(component, indent=2) + "\n", encoding="utf-8")
+         shutil.copyfile(destination, runtime / name)
+         components[name] = component
+-    finish_pair(source, output, args.target, components, commit, lock_digest, str(tool), local=True)
++    finish_pair(source, output, args.target, components, commit, lock_digest, str(tool), local=True, **({"cuda": args.cuda_context} if getattr(args,"cuda_context",None) is not None else {}))
+ 
+ 
+ def main():
+@@ -431,7 +435,11 @@
+     parser.add_argument("--notarize", action="store_true")
+     parser.add_argument("--keychain-profile")
+     parser.add_argument("--keychain", type=Path, help="Explicit existing Apple signing/notary keychain (for isolated CI keychains)")
++    pair_package().add_cuda_arguments(parser)
+     args = parser.parse_args()
++    args.cuda_context = pair_package().cuda_from_args(args, pair_package().runtime_builder())
++    if args.cuda_context is not None and not args.runtime_dir:
++        parser.error("Optional CUDA signing requires an explicit tested runtime pair")
+     windows = "windows" in args.target
+     if platform.system() != ("Windows" if windows else "Darwin"):
+         parser.error("Sign and verify on the intended native OS")

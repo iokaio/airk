@@ -1,0 +1,66 @@
+{
+  "schema": "airk.model-metadata-reference-families/1",
+  "expected_files": 1679,
+  "families": [
+    {
+      "kind": "qasper_bulk",
+      "source_root": "artifacts/advanced-split/models/qasper-rights-audit-v03",
+      "expected_files": 1585,
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/qasper-rights-audit-v03/bulk-rights-1794625872552210100.json",
+          "sha256": "4a2a0788296acc11e508674a47a66be3c58d1b61294e4872aa5383565b579a2b",
+          "bytes": 716234
+        }
+      ]
+    },
+    {
+      "kind": "qasper_versioned",
+      "source_root": "artifacts/advanced-split/models/qasper-additional-versioned-metadata-r1",
+      "expected_files": 38,
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/qasper-additional-versioned-metadata-r1/metadata-collection.json",
+          "sha256": "1c958bf8986025e19d37fc8c52b60810022f3a6b3bc8d47c00cc4430eb320353",
+          "bytes": 24638
+        }
+      ]
+    },
+    {
+      "kind": "qasper_versioned",
+      "source_root": "artifacts/advanced-split/models/qasper-versioned-primary-metadata-r1",
+      "expected_files": 55,
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/qasper-versioned-primary-metadata-r1/metadata-collection.json",
+          "sha256": "6800af95b8d61292c82e0a98d1b5e7d3119c47d95453b651c72aa47a3f3ffd03",
+          "bytes": 35182
+        }
+      ]
+    },
+    {
+      "kind": "hotpot_reference",
+      "source_root": "artifacts/advanced-split/models/hotpot-rights",
+      "expected_files": 1,
+      "evidence": [
+        {
+          "path": "artifacts/advanced-split/models/hotpot-rights/hf-metadata.json",
+          "sha256": "1bbe47c22648ec3b4606a0446ecf69a1d6c4b9ebbd802ec6275087e022d9ea25",
+          "bytes": 8675
+        },
+        {
+          "path": "artifacts/advanced-split/models/hotpot-rights/repository-pin.json",
+          "sha256": "90bef862815509dbaf0cdc0b61f6554513151b7754e5d10a496e08ec98f53aef",
+          "bytes": 7131
+        }
+      ],
+      "reference": {
+        "url": "https://hotpotqa.github.io/",
+        "content_sha256": "1aa51a46cd7080b941a788c61ae3cebaea8df88cd2f4d22e1d98fff39d0e79c7",
+        "bytes": 144422,
+        "provenance_gap": "The original acquisition receipt for this retained publisher homepage is unavailable. The observed HTML content hash and pinned companion publisher/dataset metadata identify a reference document; they do not prove acquisition time, transport custody or a publisher Git revision."
+      }
+    }
+  ],
+  "scope": "Retained external metadata/reference inputs only; no authored implementation, HTML payload, corpus text, labels or rights adoption."
+}

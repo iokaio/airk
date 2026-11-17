@@ -1,0 +1,538 @@
+--- a/crates/airk-service/src/service_runtime/arbiter/final_distribution/composed_validation.rs
++++ b/crates/airk-service/src/service_runtime/arbiter/final_distribution/composed_validation.rs
+@@ -2,8 +2,76 @@
+ //! Private actual-composition reconciliation. Original bytes, never check verdicts.
+ //! Service test-support consumer of the genuine Inference observer owner.
+ use super::*;
++use airk_core::arbiter::resource_policy::ResourcePolicy;
+ use airk_core::{SearchResponse, service::ServiceHealth, service_resources::ResourceSnapshot};
+ use serde_json::{Value, json};
++
++#[derive(Clone, Copy)]
++struct ComposedLimits {
++    deadline_ms: u64,
++    shared_input_tokens: usize,
++    context_input_tokens: usize,
++    current: bool,
++}
++impl ComposedLimits {
++    fn from_policy(policy: Option<&ResourcePolicy>) -> Result<Self> {
++        if let Some(policy) = policy {
++            policy.validate()?;
++            Ok(Self {
++                deadline_ms: policy.deadline_ms,
++                shared_input_tokens: policy.shared_input_tokens,
++                context_input_tokens: policy.context_input_tokens,
++                current: true,
++            })
++        } else {
++            Ok(Self {
++                deadline_ms: 30_000,
++                shared_input_tokens: 8192,
++                context_input_tokens: 2048,
++                current: false,
++            })
++        }
++    }
++    fn read_deadline(self, actual: u64) -> Result<()> {
++        ensure!(
++            (1..=self.deadline_ms).contains(&actual),
++            "original native read deadline exceeds approved composed policy"
++        );
++        Ok(())
++    }
++    fn profile(self, profile: &Profile) -> Result<()> {
++        let expected = if profile.declared_stage() == Some(Stage::Focus) {
++            512
++        } else {
++            self.context_input_tokens
++        };
++        ensure!(
++            profile.max_tokens == expected,
++            "composed profile width differs from original approved policy"
++        );
++        Ok(())
++    }
++    fn development_deadline(self, actual: &Value) -> Result<()> {
++        bounded_number(actual, self.deadline_ms as f64 / 1000.0)
++    }
++    fn budget(self, budget: &Budget, submitted: Option<&Budget>) -> Result<()> {
++        budget.validate()?;
++        ensure!(
++            budget.input_tokens <= self.shared_input_tokens,
++            "original composed budget exceeds approved shared tokens"
++        );
++        self.read_deadline(budget.deadline_ms)?;
++        if self.current {
++            ensure!(
++                budget.input_tokens == self.shared_input_tokens
++                    && budget.deadline_ms == self.deadline_ms
++                    && submitted == Some(budget),
++                "current composed budget differs from actual original8192/120 Answer arguments"
++            );
++        }
++        Ok(())
++    }
++}
+ 
+ const CASES: [&str; 10] = [
+     "baseline_identity",
+@@ -267,7 +335,7 @@
+     }
+     Ok(())
+ }
+-fn canonical_call(value: &Value, health: &ServiceHealth) -> Result<Value> {
++fn canonical_call(value: &Value, health: &ServiceHealth, limits: ComposedLimits) -> Result<Value> {
+     if value["schema"] == "airk.development-native-goal-call/1" {
+         ensure!(
+             value["returncode"] == 0
+@@ -277,7 +345,7 @@
+                 && value["timed_out"] == false,
+             "original canonical call failed/incomplete"
+         );
+-        bounded_number(&value["deadline_seconds"], 30.0)?;
++        limits.development_deadline(&value["deadline_seconds"])?;
+         let exchange = &value["session_exchange"];
+         ensure!(
+             exchange["arguments_sha256"] == value["arguments_sha256"],
+@@ -713,11 +781,13 @@
+     completed: u64,
+     deadline: u64,
+     question_sha: Sha256Digest,
++    submitted_budget: Option<Budget>,
+ }
+ fn original_call(
+     observations: &Value,
+     plan: &Value,
+     health: &ServiceHealth,
++    limits: ComposedLimits,
+ ) -> Result<OriginalCall> {
+     let start = json_artifact(&observations["call_start"])?;
+     let completion = json_artifact(&observations["call_completion"])?;
+@@ -749,10 +819,7 @@
+         "original one-use read identity differs"
+     );
+     let deadline = integer(request, "deadline_ms")?;
+-    ensure!(
+-        (1..=30000).contains(&deadline),
+-        "original native read deadline exceeds bound"
+-    );
++    limits.read_deadline(deadline)?;
+     let started = integer(result, "started_unix_ms")?;
+     let completed = integer(result, "completed_unix_ms")?;
+     ensure!(
+@@ -772,7 +839,19 @@
+         sha256: serde_json::from_value(result["value"]["arguments_sha256"].clone())?,
+     })?;
+     let arguments: Value = serde_json::from_slice(&bytes)?;
+-    let canonical = canonical_call(&completion, health)?;
++    let canonical = canonical_call(&completion, health, limits)?;
++    let submitted_budget = if limits.current && request["tool"] == "answer" {
++        let arguments: airk_mcp::AnswerArgs = serde_json::from_value(arguments.clone())?;
++        arguments.request.validate()?;
++        limits.budget(&arguments.request.budget, Some(&arguments.request.budget))?;
++        ensure!(
++            deadline == arguments.request.budget.deadline_ms,
++            "current composed controller deadline differs from actual Answer budget"
++        );
++        Some(arguments.request.budget)
++    } else {
++        None
++    };
+     let question = if request["tool"] == "answer" {
+         let question = arguments["question"]
+             .as_str()
+@@ -793,6 +872,7 @@
+         completed,
+         deadline,
+         question_sha: sha(question.as_bytes()),
++        submitted_budget,
+     })
+ }
+ fn dispatches<'a>(events: &'a [Record], call: &OriginalCall) -> Result<Vec<&'a Record>> {
+@@ -827,10 +907,11 @@
+     health: &ServiceHealth,
+     profiles: &BTreeMap<ModelChoice, Profile>,
+     model: ModelChoice,
++    limits: ComposedLimits,
+ ) -> Result<()> {
+-    let call = original_call(observations, plan, health)?;
++    let call = original_call(observations, plan, health, limits)?;
+     let budget: Budget = serde_json::from_value(json_artifact(&observations["original_budget"])?)?;
+-    budget.validate()?;
++    limits.budget(&budget, call.submitted_budget.as_ref())?;
+     let packet = airk_core::arbiter::context_action::ContextResponseV2::from_canonical(
+         &call.canonical,
+         &budget,
+@@ -976,6 +1057,7 @@
+     plan: &Value,
+     health: &ServiceHealth,
+     expected_profile: &Profile,
++    limits: ComposedLimits,
+ ) -> Result<()> {
+     let warm = &observations["warm_load"];
+     ensure!(
+@@ -1120,7 +1202,7 @@
+         previous = completed;
+     }
+     let forward = json!({"call_start":warm["first_forward_start"],"call_completion":warm["first_forward_completion"]});
+-    let call = original_call(&forward, plan, health)?;
++    let call = original_call(&forward, plan, health, limits)?;
+     let events = journal(&observations["journal"])?;
+     ensure!(
+         dispatches(&events, &call)?
+@@ -1235,12 +1317,17 @@
+     }
+     Ok(())
+ }
+-fn source_reads(observations: &Value, before: &Value, health: &ServiceHealth) -> Result<()> {
++fn source_reads(
++    observations: &Value,
++    before: &Value,
++    health: &ServiceHealth,
++    limits: ComposedLimits,
++) -> Result<()> {
+     let search: SearchResponse = serde_json::from_value(before.clone())?;
+     let calls = references(&observations["source_calls"])?;
+     let mut citations = Vec::new();
+     for call in calls {
+-        let value = canonical_call(&call, health)?;
++        let value = canonical_call(&call, health, limits)?;
+         let read: airk_core::evidence::ReadEvidence =
+             serde_json::from_value(value["read"].clone())?;
+         ensure!(
+@@ -1279,7 +1366,7 @@
+         Ok(configuration)
+     }
+ }
+-fn comparable(reference: &Value, health: &ServiceHealth) -> Result<Value> {
++fn comparable(reference: &Value, health: &ServiceHealth, limits: ComposedLimits) -> Result<Value> {
+     let original = json_artifact(reference)?;
+     if original["schema"] == "airk.private.composed-observation/1"
+         && original["request"]["kind"] == "native_command"
+@@ -1301,10 +1388,14 @@
+         }
+         Ok(value)
+     } else {
+-        canonical_call(&original, health)
+-    }
+-}
+-fn comparison_calls(observations: &Value, health: &ServiceHealth) -> Result<()> {
++        canonical_call(&original, health, limits)
++    }
++}
++fn comparison_calls(
++    observations: &Value,
++    health: &ServiceHealth,
++    limits: ComposedLimits,
++) -> Result<()> {
+     let before = observations["baseline_calls"]
+         .as_array()
+         .context("baseline calls absent")?;
+@@ -1320,8 +1411,8 @@
+     let mut health_seen = false;
+     let mut metadata = false;
+     for (before, after) in before.iter().zip(after.iter()) {
+-        let left = comparable(before, health)?;
+-        let right = comparable(after, health)?;
++        let left = comparable(before, health, limits)?;
++        let right = comparable(after, health, limits)?;
+         ensure!(
+             left == right,
+             "unaffected canonical result changed during optional scoring"
+@@ -1683,7 +1774,12 @@
+     );
+     settled_released(&events, dispatch)
+ }
+-fn independent_stages(observations: &Value, health: &ServiceHealth, focus: &Profile) -> Result<()> {
++fn independent_stages(
++    observations: &Value,
++    health: &ServiceHealth,
++    focus: &Profile,
++    limits: ComposedLimits,
++) -> Result<()> {
+     let configs = references(&observations["config_calls"])?;
+     ensure!(
+         configs.len() >= 3,
+@@ -1728,8 +1824,8 @@
+     );
+     let mut applied = false;
+     for (before, after) in baselines.iter().zip(currents.iter()) {
+-        let before = canonical_call(before, health)?;
+-        let after = canonical_call(after, health)?;
++        let before = canonical_call(before, health, limits)?;
++        let after = canonical_call(after, health, limits)?;
+         if after.get("focus").is_some() {
+             search_preservation(&before, &after, focus)?;
+             applied = true;
+@@ -1759,7 +1855,13 @@
+ }
+ /// All ten actual cases are reconciled from originals. Wrapper verdict/check
+ /// flags are deliberately ignored and cannot manufacture release authority.
+-pub(super) fn validate(profile: &Profile, expected: &Binding, records: &[Original]) -> Result<()> {
++pub(super) fn validate(
++    profile: &Profile,
++    expected: &Binding,
++    records: &[Original],
++    policy: Option<&ResourcePolicy>,
++) -> Result<()> {
++    let limits = ComposedLimits::from_policy(policy)?;
+     let (_, receipt) = original_schema(records, "airk.private.actual-composed-service/1")?;
+     ensure!(
+         receipt["proof_class"] == "ActualComposed" && receipt["qualification_granted"] == false,
+@@ -1771,6 +1873,9 @@
+         "actual composed case roster incomplete/foreign"
+     );
+     let profiles = fixture_profiles(receipt, profile, expected)?;
++    for profile in profiles.values() {
++        limits.profile(profile)?;
++    }
+     let health = verify_health(receipt, &profiles)?;
+     let plan = json_artifact(&receipt["driver_plan"])?;
+     ensure!(
+@@ -1808,9 +1913,16 @@
+                 );
+             }
+             "focus_only_search" => {
+-                let before =
+-                    canonical_call(&json_artifact(&observations["before_call"])?, &health)?;
+-                let after = canonical_call(&json_artifact(&observations["after_call"])?, &health)?;
++                let before = canonical_call(
++                    &json_artifact(&observations["before_call"])?,
++                    &health,
++                    limits,
++                )?;
++                let after = canonical_call(
++                    &json_artifact(&observations["after_call"])?,
++                    &health,
++                    limits,
++                )?;
+                 let before_status = typed_status(&document(&observations["status_before"])?)?;
+                 let after_status = typed_status(&document(&observations["status_after"])?)?;
+                 ensure!(
+@@ -1822,7 +1934,7 @@
+                 );
+                 search_preservation(&before, &after, focus)?;
+                 source_ids(observations, &before, &after)?;
+-                source_reads(observations, &before, &health)?;
++                source_reads(observations, &before, &health, limits)?;
+             }
+             "dual_compact" | "dual_large" => {
+                 let model = if id == "dual_compact" {
+@@ -1830,8 +1942,15 @@
+                 } else {
+                     ModelChoice::ContextQwenLarge
+                 };
+-                composed_packet(observations, &plan, &health, &profiles, model)?;
+-                final_warm_load(observations, receipt, &plan, &health, &profiles[&model])?;
++                composed_packet(observations, &plan, &health, &profiles, model, limits)?;
++                final_warm_load(
++                    observations,
++                    receipt,
++                    &plan,
++                    &health,
++                    &profiles[&model],
++                    limits,
++                )?;
+                 let resource_calls = references(&observations["resource_calls"])?;
+                 let limit = resource(&resource_calls[0])?.memory_limit_bytes;
+                 let samples = observations["os_samples"]
+@@ -1864,7 +1983,7 @@
+                 let events = journal(&observations["journal"])?;
+                 let dispatch = trigger(observations, &events)?;
+                 let result = returned(&events, dispatch)?;
+-                comparison_calls(observations, &health)?;
++                comparison_calls(observations, &health, limits)?;
+                 for reference in observations["concurrent_calls"]
+                     .as_array()
+                     .context("concurrent call refs absent")?
+@@ -1876,8 +1995,8 @@
+             "source_revoke" => {
+                 race_case(observations, &plan, false)?;
+                 ensure!(
+-                    comparable(&observations["unaffected_call"], &health)?
+-                        == comparable(&observations["unaffected_baseline"], &health)?,
++                    comparable(&observations["unaffected_call"], &health, limits)?
++                        == comparable(&observations["unaffected_baseline"], &health, limits)?,
+                     "unaffected-index full native result changed after original source revocation"
+                 );
+             }
+@@ -1969,7 +2088,7 @@
+                     "Remove completed before actual final resident release"
+                 );
+             }
+-            "stage_independence" => independent_stages(observations, &health, focus)?,
++            "stage_independence" => independent_stages(observations, &health, focus, limits)?,
+             "normal_shutdown" => {
+                 let closes = observations["session_closes"]
+                     .as_array()
+@@ -2036,6 +2155,82 @@
+ mod tests {
+     use super::*;
+     use airk_inference::inference_engine::pool::arbiter::{ScoreReceipt, execution_observer};
++    #[test]
++    fn composed_policy_preserves_historical30s_and_requires_approved_current120s() -> Result<()> {
++        let historical = ComposedLimits::from_policy(None)?;
++        historical.read_deadline(30_000)?;
++        historical.development_deadline(&json!(30.0))?;
++        assert!(historical.read_deadline(30_001).is_err());
++        assert!(historical.development_deadline(&json!(30.001)).is_err());
++        assert!(historical.read_deadline(0).is_err());
++        let policy = ResourcePolicy::software_v2();
++        let current = ComposedLimits::from_policy(Some(&policy))?;
++        current.read_deadline(120_000)?;
++        current.development_deadline(&json!(120.0))?;
++        assert!(current.read_deadline(120_001).is_err());
++        assert!(current.development_deadline(&json!(120.001)).is_err());
++        let mut unapproved_shape = policy;
++        unapproved_shape.deadline_ms = 120_001;
++        assert!(ComposedLimits::from_policy(Some(&unapproved_shape)).is_err());
++        Ok(())
++    }
++    #[test]
++    fn current_composed_budget_refuses_old_or_substituted_original_arguments() -> Result<()> {
++        let policy = ResourcePolicy::software_v2();
++        let current = ComposedLimits::from_policy(Some(&policy))?;
++        let budget = Budget {
++            calls: 8,
++            rounds: 3,
++            fanout: 8,
++            input_tokens: 8192,
++            candidates: 32,
++            max_bytes: 262144,
++            deadline_ms: 120000,
++        };
++        current.budget(&budget, Some(&budget))?;
++        assert!(current.budget(&budget, None).is_err());
++        let mut old = budget.clone();
++        old.input_tokens = 2048;
++        old.deadline_ms = 30000;
++        ComposedLimits::from_policy(None)?.budget(&old, None)?;
++        assert!(current.budget(&old, Some(&old)).is_err());
++        assert!(current.budget(&budget, Some(&old)).is_err());
++        let mut substituted = budget.clone();
++        substituted.candidates = 16;
++        assert!(current.budget(&budget, Some(&substituted)).is_err());
++        let mut overrun = budget.clone();
++        overrun.deadline_ms = 120001;
++        assert!(current.budget(&overrun, Some(&overrun)).is_err());
++        Ok(())
++    }
++    #[test]
++    fn composed_profile_widths_do_not_relabel_historical_context_or_focus() -> Result<()> {
++        let policy = ResourcePolicy::software_v2();
++        let historical = ComposedLimits::from_policy(None)?;
++        let current = ComposedLimits::from_policy(Some(&policy))?;
++        let catalog = airk_retrieval::arbiter::runtime::catalog_profiles()?;
++        let focus = catalog
++            .iter()
++            .find(|profile| profile.model == ModelChoice::FocusQwenReranker06B)
++            .context("Focus fixture absent")?;
++        historical.profile(focus)?;
++        current.profile(focus)?;
++        let mut context = catalog
++            .iter()
++            .find(|profile| profile.model == ModelChoice::ContextQwenCompact)
++            .context("Context fixture absent")?
++            .clone();
++        context.max_tokens = 2048;
++        historical.profile(&context)?;
++        assert!(current.profile(&context).is_err());
++        context.max_tokens = 8192;
++        current.profile(&context)?;
++        assert!(historical.profile(&context).is_err());
++        let mut wrong_focus = focus.clone();
++        wrong_focus.max_tokens = 8192;
++        assert!(current.profile(&wrong_focus).is_err());
++        Ok(())
++    }
+     fn events() -> Result<Vec<Record>> {
+         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+             .parent()
+--- a/crates/airk-service/src/service_runtime/arbiter/final_distribution.rs
++++ b/crates/airk-service/src/service_runtime/arbiter/final_distribution.rs
+@@ -1606,7 +1606,12 @@
+             Gate::HeldoutA6 => {
+                 validate_quality(profile.model, profile.manifest, &expected, &originals)?
+             }
+-            Gate::ActualComposed => composed_validation::validate(profile, &expected, &originals)?,
++            Gate::ActualComposed => composed_validation::validate(
++                profile,
++                &expected,
++                &originals,
++                resource_policy.as_ref(),
++            )?,
+             Gate::RightsClosure => validate_rights(profile, &expected, decision, &originals)?,
+         }
+     }
+--- a/crates/airk-service/src/service_runtime/arbiter/final_distribution/CONTRACT.md
++++ b/crates/airk-service/src/service_runtime/arbiter/final_distribution/CONTRACT.md
+@@ -353,3 +353,28 @@
+ all validated ancestry receipts. Group labels alone do not authenticate a newly
+ provided receipt. Jointly changing a manifest and receipt file map while copying
+ a reviewed native-group label refuses; the native regression retains that case.
++
++
++## D06 current composed policy consumption
++
++The current final proof's separately approved Core ResourcePolicy/2 also owns
++composed validation limits. The existing historical path retains its 30-second
++read ceiling and Context2048/Focus512 identities. The current path requires
++Context8192/Focus512 identities across the entire three-model fixture and uses
++the approved120-second ceiling on both development-native-goal calls and
++original composed start/await calls, including first-forward warm observations,
++source reads, noninterference and independent-stage comparisons. It does not
++refresh a submitted deadline, change any read clock or grant extra model time.
++
++Current dual-stage Answer evidence must bind the exact Rust-decoded original
++AnswerArgs budget to the separately pinned original budget:8192 shared input
++tokens and120000ms. Historical2048/30 arguments or a changed source-budget
++projection cannot satisfy current qualification. Existing actual event/charge,
++complete source, native input, resource/OS telemetry, drain and held-out proof
++requirements remain in force. Controller acceptance, synthetic sources and a
++configured resource ceiling cannot replace any of those gates. Primitive p95
++measurements remain distinct from actual composed/end-to-end observations.
++
++This is a private evidence-validator decision under existing D06, with no new
++wire fields or digest inputs. Native historical receipts stay unchanged; current
++limits flow only from the exact policy already approved by the final decision.
+--- a/crates/airk-service/src/service_runtime/evaluation_fixture_tests.rs
++++ b/crates/airk-service/src/service_runtime/evaluation_fixture_tests.rs
+@@ -1982,6 +1982,16 @@
+ #[test]
+ #[ignore = "private synthetic composed source/request emitter; fresh protected artifacts output required"]
+ fn emit_private_selected_synthetic_fixture() -> Result<()> {
++    emit_selected_synthetic_fixture(answer_template()?)
++}
++
++#[test]
++#[ignore = "private current8192/120 synthetic composed source/request emitter; fresh protected output required"]
++fn emit_private_selected_synthetic_fixture_software_v2() -> Result<()> {
++    emit_selected_synthetic_fixture(software_v2_answer_template()?)
++}
++
++fn emit_selected_synthetic_fixture(mut answer: serde_json::Value) -> Result<()> {
+     use std::io::Write;
+     let output = PathBuf::from(
+         std::env::var_os("AIRK_SELECTED_SYNTHETIC_OUTPUT")
+@@ -2053,7 +2063,6 @@
+         );
+     let _: airk_mcp::ReadArgs = serde_json::from_value(pinned_read.clone())?;
+     write(&output, "read-file-known-source.json", &pinned_read)?;
+-    let mut answer = answer_template()?;
+     answer
+         .as_object_mut()
+         .context("answer case not object")?
+--- a/crates/airk-service/src/service_runtime/evaluation_fixture_tests/CONTRACT.md
++++ b/crates/airk-service/src/service_runtime/evaluation_fixture_tests/CONTRACT.md
+@@ -20,3 +20,10 @@
+ pressure, telemetry, reservation and resource facts; subsequent actual warm and
+ call receipts must establish those outcomes. Historical evidence remains under
+ its original policy. No public model metadata/source closure is manufactured.
++
++The additive `emit_private_selected_synthetic_fixture_software_v2` selector uses
++the same synthetic source and request emitter with the current Rust-owned
++8192-token/120-second Answer template, including complete response options. The
++original synthetic selector preserves its historical2048/30 Answer template.
++Only the question is filled from this native emitter's fixed synthetic prompt;
++no Python layer reconstructs or rewrites the request contract or model budget.

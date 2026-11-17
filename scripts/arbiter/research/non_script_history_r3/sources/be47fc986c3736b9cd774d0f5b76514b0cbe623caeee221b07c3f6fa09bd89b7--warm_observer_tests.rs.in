@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: Apache-2.0
+use super::*;
+fn ready() -> Record {
+    let manifest=Sha256Digest::from_bytes([9;32]);
+    let mut configuration=Configuration::disabled(Sha256Digest::from_bytes([1;32]),airk_core::identity::Incarnation::from_bytes([2;16]));
+    configuration.context.enabled=true;configuration.context.selected_profile=Some(manifest);
+    Record{schema:"airk.private.arbiter-warm-completion/1".into(),observer_id:airk_core::identity::Incarnation::from_bytes([3;16]),sequence:0,observed_unix_ms:1,stage:Stage::Context,profile_manifest:manifest,actual_configuration:Some(configuration.clone()),native_configuration_revision:Some(configuration.revision),expected_configuration:configuration,lifecycle_serial:4,current_lifecycle_serial:4,accepted_configure_revision:2,captured_configure_revision:2,phase:Availability::Ready,active_profile:Some(manifest),canceled:false,operation_succeeded:true,outcome:Outcome::Failed,error:None}
+}
+#[test]
+fn ready_requires_success_and_current_native_identity() {
+    assert_eq!(ready().classify(),Outcome::Ready);
+    for variant in 0..5 {let mut record=ready();match variant{0=>record.operation_succeeded=false,1=>record.phase=Availability::Warming,2=>record.active_profile=None,3=>record.native_configuration_revision=None,_=>record.expected_configuration.context.enabled=false};assert_ne!(record.classify(),Outcome::Ready);}
+}
+#[test]
+fn canceled_and_superseded_completions_cannot_claim_ready() {
+    for variant in 0..4 {let mut record=ready();match variant{0=>record.canceled=true,1=>record.current_lifecycle_serial+=1,2=>record.accepted_configure_revision+=1,_=>record.actual_configuration=None};assert_eq!(record.classify(),Outcome::Superseded);}
+}
+#[tokio::test]
+async fn sealing_waits_for_original_capture_and_rejects_new_capture()->Result<()> {
+    let(observer,mut receiver)=Observer::channel()?;let guard=observer.begin().unwrap();
+    let observed=observer.clone();let mut close=Box::pin(observed.seal_and_wait());
+    let mut context=std::task::Context::from_waker(std::task::Waker::noop());
+    assert!(std::future::Future::poll(close.as_mut(),&mut context).is_pending());assert!(observer.begin().is_none());
+    observer.emit(ready());drop(guard);close.await;
+    assert_eq!(receiver.recv().await.unwrap().outcome,Outcome::Ready);assert_eq!(observer.dropped(),0);Ok(())
+}
+#[test]
+fn bounded_queue_refuses_to_claim_complete_after_overflow()->Result<()> {
+    let(observer,_receiver)=Observer::channel()?;for _ in 0..129{observer.emit(ready());}
+    assert_eq!(observer.dropped(),1);Ok(())
+}

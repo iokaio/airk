@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+from pathlib import Path
+p=Path('artifacts/optimizations/f08c2-draft/implementation/source/packages/vscode/src/test/serviceConsole.test.ts')
+s=p.read_text(encoding='utf-8');start=s.index("test('optional Events failure falls back")
+pre=s[:start];t=s[start:]
+t=t.replace("    const f=fixture(),base=f.host.runtime.client({} as any),seen:string[]=[],failures:string[]=[];", "    for(const scenario of ['unsupported_service_method','invalid_event_page','registry_unavailable']){\n    const f=fixture(),base=f.host.runtime.client({} as any),seen:string[]=[],failures:string[]=[];",1)
+t=t.replace("        if(unavailable&&name==='events')return {status:'failure',code:'unsupported_service_method'};", "        if(unavailable&&name==='events')return scenario==='invalid_event_page'?{status:'events',page:{namespace,events:'malformed',next:null,tail:{namespace,project:null,after:0,through:null}}}:{status:'failure',code:scenario};")
+t=t.replace("assert.equal(f.controller.state.message,'unsupported_service_method');", "assert.equal(f.controller.state.message,scenario);")
+t=t.replace("assert.ok(failures.includes('events_namespace:unsupported_service_method'));", "assert.ok(failures.includes(`events_namespace:${scenario}`));")
+assert t.endswith('    }finally{f.controller.dispose();}\n});\n');t=t[:-len('    }finally{f.controller.dispose();}\n});\n')]+'    }finally{f.controller.dispose();}\n    }\n});\n'
+p.write_text(pre+t,encoding='utf-8',newline='\n')
+p=Path('artifacts/optimizations/f08c2-draft/implementation/IMPLEMENTATION.txt');s=p.read_text(encoding='utf-8')
+old='Known unsupported/malformed Events or a failed reset prevents adoption of a NEW project page until namespace is confirmed; old retained pages remain their original cached observations where no definite scope change is known. Previously optional Events failure could follow a successful RequestEpoch+Console read. This availability boundary is explicit and requires actual compatible-runtime/error-path qualification; no silent fallback mutation/new snapshot subprocess is added.'
+new='Review correction: unsupported/malformed/transient Events or failed fresh reset falls back to the ORIGINAL RequestEpoch operation to confirm namespace before loading Console/Workers/plan. This preserves existing healthy page availability on optional Events failure. Normal successful observation remains one Events/no RequestEpoch. The first Events diagnostic/message is retained and no unvalidated rows merge. This fallback retains its original pressure-pruning side effect; it is not described as a nonmutating scalar. If fallback confirmation also fails, definite scope-change state stays cleared and no new page adopts. Shared poll timeout still owns disconnect/reconnect classification while the original Events failure remains in diagnostics. No uncertain keyed mutation is replayed and no new snapshot subprocess is added.'
+assert old in s;s=s.replace(old,new)
+s+='\nReview fallback fixtures\nActual controller/ServiceClient transport fixture covers unsupported Events, malformed Events page and transient registry_unavailable with working epoch+Console: current page/Workers remain available, one original namespace fallback occurs, first error remains reported, and zero enqueue/configuration/retry/plan_execute occurs. Failed fresh cursor reset AND failed epoch confirmation preserve first refusal and cleared known-replaced UI state. All tests remain drafted/unrun.\n'
+p.write_text(s,encoding='utf-8',newline='\n')

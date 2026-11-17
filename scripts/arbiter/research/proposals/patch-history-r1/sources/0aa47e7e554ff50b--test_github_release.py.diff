@@ -1,0 +1,19 @@
+--- scripts/tests/test_github_release.py
++++ scripts/tests/test_github_release.py
+@@ -646,6 +646,16 @@
+ def split_files(target, signed=False, version=SPLIT, admin=SPLIT_ADMIN, images=True):
+     """Fictional bytes in the split pair layout: schema-3 pair metadata and schema-2 build receipt."""
+     files, executables = pair_files(target, signed, version)
++    if tuple(int(part) for part in version.split(".")) >= (1, 9, 0):
++        # Current packages require real authenticated public model notices even
++        # when all native/signature bytes are fictional custody fixtures.
++        legal = release.native.runtime_builder().load_script("license-notices")
++        with tempfile.TemporaryDirectory() as temporary:
++            notices = Path(temporary) / "notices"
++            legal.stage_model_notices(release.ROOT, notices)
++            for source in notices.rglob("*"):
++                if source.is_file():
++                    files["notices/" + source.relative_to(notices).as_posix()] = source.read_bytes()
+     if not images:
+         files.pop(executables[1])
+     operating_system = "windows" if "windows" in target else "macos" if "apple" in target else "linux"

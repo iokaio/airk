@@ -1,0 +1,145 @@
+--- a/scripts/check-runtime-legacy-retirement.py
++++ b/scripts/check-runtime-legacy-retirement.py
+@@ -144,27 +144,32 @@
+ 
+ 
+ def old_status_ready(value, project, indexed_job):
+-    # This is a cache-sampling barrier, not a query-result comparison or a live
+-    # source verification claim. The exact completed Index receipt supplies both
+-    # the source job and publication; no fabricated watermark is introduced.
++    # Actual public 1.8.7 Status exposes compact freshness even in full mode.
++    # The completed Index receipt binds publication; full provenance is checked
++    # separately in BOTH Search bodies, where the public payload exposes it.
+     assert indexed_job["state"] == "succeeded" and indexed_job["kind"] == "index"
+     assert indexed_job["outcome"]["state"] == "succeeded"
+     assert value["collection"] == project["collection"]
+     freshness = value["freshness"]
+-    required = {"state", "source_job", "requested_watermark", "completed_watermark",
+-        "running_watermark", "last_success_unix_ms", "error"}
+-    assert isinstance(freshness, dict) and required <= freshness.keys(), "Actual old full status lacks required freshness metadata"
++    assert isinstance(freshness, dict) and {"state", "live_source_verified"} <= freshness.keys()
+     assert freshness["state"] in ("pending", "running", "idle"), freshness
+-    assert freshness["error"] is None, freshness
+-    requested, completed = freshness["requested_watermark"], freshness["completed_watermark"]
+-    assert type(requested) is int and type(completed) is int and 0 <= completed <= requested
+-    if (freshness["state"] != "idle" or completed < requested
+-            or freshness["running_watermark"] is not None
+-            or freshness["source_job"] != indexed_job["id"]):
++    assert freshness["live_source_verified"] is False, freshness
++    if freshness["state"] != "idle":
+         return False
+-    assert type(freshness["last_success_unix_ms"]) is int and freshness["last_success_unix_ms"] > 0
+     assert value["publication"]["token"] == indexed_job["outcome"]["revision"], "Status publication differs from exact completed Index"
+     return True
++
++
++def validate_old_search_freshness(value, project, indexed_job):
++    assert value["collection"] == project["collection"]
++    assert value["publication"]["token"] == indexed_job["outcome"]["revision"]
++    freshness = value["freshness"]
++    assert freshness["state"] == "idle" and freshness["error"] is None, freshness
++    assert freshness["source_job"] == indexed_job["id"], freshness
++    requested, completed = freshness["requested_watermark"], freshness["completed_watermark"]
++    assert type(requested) is int and type(completed) is int and requested >= 0 and completed >= requested
++    assert freshness["running_watermark"] is None, freshness
++    assert type(freshness["last_success_unix_ms"]) is int and freshness["last_success_unix_ms"] > 0
+ 
+ 
+ def finish_owner(fixture, receipt):
+@@ -443,7 +448,7 @@
+                     "source_job": indexed_job["id"], "publication": indexed_job["outcome"]["revision"],
+                     "freshness": value["freshness"], "metadata_polls": poll + 1,
+                     "final_status_command_ordinal": len(self.commands),
+-                    "qualification": "Actual old worker source-metadata sample idle; not live verification"})
++                    "qualification": "Actual old compact Status idle; full Search provenance checked separately; not live verification"})
+                 return
+             time.sleep(min(.1, self.clients.remaining(deadline, 60)))
+         raise AssertionError("Old metadata observation budget exhausted; no evidence read was retried to match")
+@@ -517,6 +522,9 @@
+             "no_cause_inferred": True}
+         assert len(json.dumps(diagnostic).encode("utf-8")) <= MAX_FRAME
+         retain("comparison", diagnostic)
++        if payload == self.old_seal["manifest_sha256"]:
++            for observed in (body, other):
++                validate_old_search_freshness(observed, project, self.source_jobs[project["binding"]])
+         assert stable(body) == stable(other), (
+             "Complete CLI/MCP legacy-body mismatch; complete replies and bounded structural diff: "
+             + retained["comparison"]["path"])
+--- a/scripts/tests/test_runtime_legacy_retirement.py
++++ b/scripts/tests/test_runtime_legacy_retirement.py
+@@ -119,9 +119,10 @@
+             fixture.old_seal={'files':{'airk.exe':h.sha(binary)},'manifest_sha256':'1'*64}
+             fixture.new_seal={'files':{'airk.exe':'2'*64},'manifest_sha256':'3'*64}
+             fixture.clients=Clients()
++            fixture.source_jobs={project['binding']: {}}
+             fixture.wait_old_read_quiescence=lambda *_args:None  # This unit isolates failure-evidence retention.
+             fixture.command=lambda *_args,**_kwargs:SimpleNamespace(returncode=0,stdout=json.dumps(envelope(body)))
+-            with patch.object(h,'Mcp',Mcp):
++            with patch.object(h,'Mcp',Mcp), patch.object(h,'validate_old_search_freshness'):
+                 with self.assertRaisesRegex(AssertionError,'Complete CLI/MCP legacy-body mismatch'):
+                     fixture.query(binary,project)
+             cli=list(root.glob('search-*-cli.json'));mcp=list(root.glob('search-*-mcp.json'))
+@@ -131,32 +132,37 @@
+             report=json.loads(next(root.glob('search-*-comparison.json')).read_text())
+             self.assertEqual(report['existing_parity_projection_differences']['entries'][0]['pointer'],'/freshness/state')
+ 
+-    def test_old_status_barrier_waits_for_same_source_job_idle_watermark_and_publication(self):
++    def test_old_status_barrier_uses_actual_compact_idle_and_exact_publication(self):
+         project={'collection':'legacy-b'}
+         job={'id':'actual-index','state':'succeeded','kind':'index',
+             'outcome':{'state':'succeeded','revision':'exact-publication'}}
+         value={'collection':'legacy-b','publication':{'token':'exact-publication'},
+-            'freshness':{'state':'pending','source_job':'actual-index',
+-                'requested_watermark':0,'completed_watermark':0,'running_watermark':None,
+-                'last_success_unix_ms':None,'error':None}}
++            'freshness':{'state':'pending','live_source_verified':False}}
+         self.assertFalse(h.old_status_ready(value,project,job))
+-        value['freshness'].update(state='idle',last_success_unix_ms=123)
++        value['freshness']['state']='idle'
+         self.assertTrue(h.old_status_ready(value,project,job))
+-        value['freshness']['source_job']='older-source-job'
+-        self.assertFalse(h.old_status_ready(value,project,job))
+-        value['freshness']['source_job']='actual-index';value['publication']['token']='another-publication'
++        value['publication']['token']='another-publication'
+         with self.assertRaises(AssertionError):h.old_status_ready(value,project,job)
+ 
+-    def test_old_status_barrier_refuses_failed_missing_or_malformed_metadata(self):
++    def test_old_status_barrier_refuses_missing_or_failed_compact_metadata(self):
+         project={'collection':'legacy-b'}
+         job={'id':'index','state':'succeeded','kind':'index','outcome':{'state':'succeeded','revision':'publication'}}
+         with self.assertRaises(AssertionError):h.old_status_ready({'collection':'legacy-b','freshness':{'state':'idle'}},project,job)
++        value={'collection':'legacy-b','freshness':{'state':'failed','live_source_verified':False}}
++        with self.assertRaises(AssertionError):h.old_status_ready(value,project,job)
++
++    def test_full_old_search_requires_exact_job_idle_watermarks_timestamp_and_publication(self):
++        project={'collection':'legacy-b'}
++        job={'id':'index','outcome':{'revision':'publication'}}
+         value={'collection':'legacy-b','publication':{'token':'publication'},'freshness':{
+-            'state':'failed','source_job':'index','requested_watermark':0,'completed_watermark':0,
+-            'running_watermark':None,'last_success_unix_ms':12,'error':'failed'}}
+-        with self.assertRaises(AssertionError):h.old_status_ready(value,project,job)
+-        value['freshness'].update(state='idle',error=None,completed_watermark=True)
+-        with self.assertRaises(AssertionError):h.old_status_ready(value,project,job)
++            'state':'idle','source_job':'index','requested_watermark':0,'completed_watermark':0,
++            'running_watermark':None,'last_success_unix_ms':12,'error':None}}
++        h.validate_old_search_freshness(value,project,job)
++        for key,bad in [('source_job','wrong'),('state','pending'),('completed_watermark',True),
++                ('last_success_unix_ms',None),('running_watermark',1),('error','failure')]:
++            original=value['freshness'][key];value['freshness'][key]=bad
++            with self.subTest(key=key),self.assertRaises(AssertionError):h.validate_old_search_freshness(value,project,job)
++            value['freshness'][key]=original
+ 
+     def test_old_status_wait_performs_only_metadata_reads_with_original_deadline(self):
+         from types import SimpleNamespace
+@@ -164,9 +170,8 @@
+         project={'binding':'b','root':'source','data_root':'data','collection':'legacy-b'}
+         job={'id':'index','state':'succeeded','kind':'index','outcome':{'state':'succeeded','revision':'publication'}}
+         pending={'collection':'legacy-b','publication':{'token':'publication'},'freshness':{
+-            'state':'pending','source_job':'index','requested_watermark':0,'completed_watermark':0,
+-            'running_watermark':None,'last_success_unix_ms':None,'error':None}}
+-        idle=json.loads(json.dumps(pending));idle['freshness'].update(state='idle',last_success_unix_ms=12)
++            'state':'pending','live_source_verified':False}}
++        idle=json.loads(json.dumps(pending));idle['freshness'].update(state='idle')
+         with tempfile.TemporaryDirectory() as temporary:
+             root=Path(temporary).resolve();binary=root/'old.exe';binary.write_bytes(b'inert unit bytes')
+             fixture=object.__new__(h.Fixture);fixture.old_seal={'files':{'airk.exe':h.sha(binary)}}

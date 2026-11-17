@@ -1,0 +1,40 @@
+--- reviewed-R3/candidate_overlay.py
+
++++ proposed-R4/candidate_overlay.py
+
+@@ -271,8 +271,22 @@
+
+         name=row['path'];relative_name(name)
+         if not name.startswith(('packages/vscode/','packages/ui/','packages/admin/','packages/contracts-gen/')):continue
+         need(public_name(name),'UI source manifest contains non-public source')
+-        for base in (snapshot,root):
+-            regular(base/name);need(sha(base/name)==row['sha256'],'UI reviewed raw source drift: '+name)
++        if name == 'packages/vscode/README.md' and sha(root/name) != row['sha256']:
++            # Exact reviewed packaging-only input event. Original compile identity is retained.
++            event_file=Path(__file__).resolve().parent/'listing-input-event.json'
++            need(sha(event_file)=='6c25bece67d362f7de2a7161191131283550cb782d7b74ec659ff63eabed99eb', 'listing event bytes changed')
++            event=json.loads(event_file.read_text(encoding='utf-8'))
++            need(event['schema']=='airk.private.packaging-listing-input-event/1'
++                and event['commit']==revision(root)=='059a2a893069f89e8ea8aefec7f9bdb8bb6063b6'
++                and approved==event['original_handoff_sha256']=='3411049ba9793cbb6bddf1ed2cdd7362015cde3add94a81266f21cfc955fe8e1'
++                and event['path']==name and event['new_compilation_performed'] is False
++                and row['sha256']==sha(snapshot/name)==event['original_source_sha256']=='660096057a8a06678c4d1ac3b3a0083896e5de1a609a66f94c3072a46d189689'
++                and sha(root/name)==event['current_source_sha256']=='96d130413d4387492ad340ac8eda2663b0c3dfee665e3e9dba3d6a203b763d64',
++                'only exact reviewed current listing may differ from original compile inputs')
++            regular(snapshot/name);regular(root/name)
++        else:
++            for base in (snapshot,root):
++                regular(base/name);need(sha(base/name)==row['sha256'],'UI reviewed raw source drift: '+name)
+         checked.append(name)
+     for row in document['derived_tracked']:
+         need(public_name(row['path']),'non-public generated tracked input')
+@@ -298,7 +312,7 @@
+
+                 path=parent/name;regular(path);human_path(path,snapshot)
+                 rel=path.relative_to(snapshot/'packages/vscode').as_posix();relative_name(rel)
+                 dependencies[rel]={'path':rel,'sha256':sha(path),'bytes':path.stat().st_size}
+-    return {'handoff':str(handoff),'handoff_sha256':approved,'input_manifest':str(manifest),
++    return {'packaging_listing_input_event_sha256':sha(Path(__file__).resolve().parent/'listing-input-event.json'), 'handoff':str(handoff),'handoff_sha256':approved,'input_manifest':str(manifest),
+         'input_manifest_sha256':sha(manifest),'snapshot':str(snapshot),'reviewed_ui_source_count':len(checked),
+         'reviewed_ui_sources':checked,'compiled_outputs':observed,'dependency_packages':selected,
+         'missing_other_platform_optional_packages':skipped,'dependency_files':sorted(dependencies.values(),key=lambda row:row['path']),

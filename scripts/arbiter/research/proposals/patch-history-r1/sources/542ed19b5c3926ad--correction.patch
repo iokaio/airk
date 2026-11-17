@@ -1,0 +1,66 @@
+--- a/packages/vscode/src/referenceRefresh.ts
++++ b/packages/vscode/src/referenceRefresh.ts
+@@ -32,7 +32,7 @@
+     catalogHex(value.caller,32);for(const key of ['original_result_digest','original_evidence_selection_digest','original_query_digest'])catalogHex(value[key],64);
+     const key=catalogObject(value.key);exact(key,'namespace,epoch,nonce');catalogHex(key.namespace,32);catalogHex(key.nonce,32);catalogRevision(key.epoch);
+     const selected=catalogObject(value.selection);exact(selected,'schema,context_key,namespace,expected_catalog_revision,grant_id,expected_grant_revision,project_ids,index_ids');
+-    if(selected.schema!==1||key.namespace!==selected.namespace)throw new Error('crossed_refresh_namespace');catalogHex(selected.namespace,32);catalogHex(selected.context_key,64);catalogRevision(selected.expected_catalog_revision);catalogRevision(selected.expected_grant_revision);catalogId(selected.grant_id,'grt_');
++    if(selected.schema!==1)throw new Error('invalid_refresh_selection_schema');catalogHex(selected.namespace,32);catalogHex(selected.context_key,64);catalogRevision(selected.expected_catalog_revision);catalogRevision(selected.expected_grant_revision);catalogId(selected.grant_id,'grt_');
+     const projects=array(selected.project_ids,32).map(v=>catalogId(v,'prj_'));if(new Set(projects).size!==projects.length)throw new Error('duplicate_refresh_project');
+     const indexes=array(selected.index_ids,32).map(v=>catalogId(v,'idx_'));if(new Set(indexes).size!==indexes.length)throw new Error('duplicate_refresh_index');
+     const members=array(value.members,8);let count=0;const seen=new Set<string>();
+--- a/packages/vscode/src/test/referenceRefresh.test.ts
++++ b/packages/vscode/src/test/referenceRefresh.test.ts
+@@ -14,7 +14,7 @@
+     const originalResult={publication_vector:[{index_id:'idx_'+id('6'),publication:'airk-r1:'+id('7')+':1:'+hash('8')}],hits:[{text:'Original historical snippet',content_hash:hash('9')}],future_native:{all_fields:['preserved']}};
+     const members=[{index_id:'idx_'+id('6'),original_publication:'airk-r1:'+id('7')+':1:'+hash('8'),sources:[{source_root_id:'src_'+id('a'),source_relative_path:'one.txt',canonical_root:'/owned/source',indexed_hash:hash('9')}]}];
+     const key={namespace:id('1'),epoch:1,nonce:id(nonce)},caller=id('2');
+-    const selection={schema:1,caller,key,original_result_digest:refreshDigest(originalResult),original_query_digest:refreshDigest(originalQuery),original_evidence_selection_digest:refreshDigest(members),mode:'selected_only',selection:{schema:1,context_key:hash('3'),namespace:id('1'),expected_catalog_revision:1,grant_id:'grt_'+id('5'),expected_grant_revision:1,project_ids:['prj_'+id('b')],index_ids:['idx_'+id('6')]},members};
++    const selection={schema:1,caller,key,original_result_digest:refreshDigest(originalResult),original_query_digest:refreshDigest(originalQuery),original_evidence_selection_digest:refreshDigest(members),mode:'selected_only',selection:{schema:1,context_key:hash('3'),namespace:id('e'),expected_catalog_revision:1,grant_id:'grt_'+id('5'),expected_grant_revision:1,project_ids:['prj_'+id('b')],index_ids:['idx_'+id('6')]},members};
+     return validateRefreshIntent({reference_refresh:{configure_project:{project:hash('c'),caller,key,request:{incarnation:id('7'),settings:hash('d'),configuration:{operation:'refresh_references',selection}}},original_query:originalQuery,original_result:originalResult,evidence_retention:'memory_only'}});
+ }
+ function receipt(intent:ReferenceRefreshIntent):Value {
+@@ -68,7 +68,7 @@
+ test('mixed split/refresh terminal reservations preserve existing192KiB split and2MiB aggregate',async()=>{
+     const split=splitFixture(),storage=new Memory(),journal=new IntentJournal(storage,'mixed-control',split.namespace);
+     const splitId=await journal.prepare('Split',{catalog_split_apply:{draft:split.draft}});assert.equal(journal.list().find(v=>v.id===splitId)?.value.reservedObservationBytes,SPLIT_JOURNAL_BYTES);assert.equal(SPLIT_JOURNAL_BYTES,192*1024);
+-    const refresh=(digit:string)=>{const intent=fixture(digit),request=intent.reference_refresh.configure_project,selection=request.request.configuration.selection as Value;request.key.namespace=split.namespace;(selection.key as Value).namespace=split.namespace;(selection.selection as Value).namespace=split.namespace;return validateRefreshIntent(intent);};
++    const refresh=(digit:string)=>{const intent=fixture(digit),request=intent.reference_refresh.configure_project,selection=request.request.configuration.selection as Value;request.key.namespace=split.namespace;(selection.key as Value).namespace=split.namespace;return validateRefreshIntent(intent);};
+     for(const digit of ['1','2','3','4','6','7','8'])await journal.prepare('Refresh',refresh(digit));
+     await assert.rejects(journal.prepare('Exceeds mixed aggregate',refresh('9')),/byte_capacity/);assert.equal(journal.list().length,8);
+ });
+@@ -131,6 +131,9 @@
+     const selection=JSON.parse(canonical) as Value;
+     assert.equal(refreshSelectionCanonicalJson(selection),canonical);
+     assert.equal(refreshSelectionIdentity(selection),expected);
++    const separated=JSON.parse(canonical) as Value;(separated.selection as Value).namespace='03'.repeat(16);
++    assert.notEqual((separated.key as Value).namespace,(separated.selection as Value).namespace);
++    assert.equal(refreshSelectionIdentity(separated),'a3610bdf29b2117a4ac43d8fc6838b7dad405c5b4dc36a56e206f628fb6591d4');
+     const reverse=(value:unknown):unknown=>Array.isArray(value)?value.map(reverse):value!==null&&typeof value==='object'?Object.fromEntries(Object.entries(value as Value).reverse().map(([k,v])=>[k,reverse(v)])):value;
+     assert.equal(refreshSelectionIdentity(reverse(selection)),expected);
+     assert.throws(()=>refreshSelectionIdentity({...selection,future_request_field:true}),/fields/);
+@@ -189,3 +192,24 @@
+     assert.equal(refreshQueryTool('airk_file_info'),'airk_file_info');
+     for(const input of ['configure_project','airk_parse','airk_status','airk_search ',{toString:()=> 'airk_search'},null])assert.throws(()=>refreshQueryTool(input),/invalid_refresh_original_query/);
+ });
++
++
++test('request epoch and catalog scope namespaces remain independent while each is validated and bound',()=>{
++    const intent=fixture(),request=intent.reference_refresh.configure_project,selection=request.request.configuration.selection as Value,scope=selection.selection as Value;
++    assert.notEqual(request.key.namespace,scope.namespace);
++    assert.deepEqual(validateRefreshIntent(intent),intent);
++    const original=refreshSelectionIdentity(selection);
++    const changedCatalog=structuredClone(selection);(changedCatalog.selection as Value).namespace=id('a');
++    const changedRequest=structuredClone(selection);(changedRequest.key as Value).namespace=id('b');
++    assert.notEqual(refreshSelectionIdentity(changedCatalog),original);
++    assert.notEqual(refreshSelectionIdentity(changedRequest),original);
++    assert.notEqual(refreshSelectionIdentity(changedRequest),refreshSelectionIdentity(changedCatalog));
++    const crossedKey=structuredClone(intent);crossedKey.reference_refresh.configure_project.key={...request.key,namespace:id('a')};
++    assert.throws(()=>validateRefreshIntent(crossedKey),/request_key/);
++    for(const field of ['namespace','nonce','epoch']){
++        const bad=structuredClone(selection);(bad.key as Value)[field]=field==='epoch'?0:'invalid';
++        assert.throws(()=>refreshSelectionIdentity(bad));
++    }
++    const badCatalog=structuredClone(selection);(badCatalog.selection as Value).namespace='invalid';
++    assert.throws(()=>refreshSelectionIdentity(badCatalog));
++});

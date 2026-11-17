@@ -1,0 +1,151 @@
+--- r3/transformer.py
++++ r4/transformer.py
+@@ -85,9 +85,26 @@
+     known={i.name for i in graph.input}|set(initial)|{i.name for i in small}
+     selected=topo_and_reachable([n for n in graph.node if n.name not in removed_sinks]+added,[x.name for x in graph.output],known)
+     retained={n.name for n in selected};removed=[n for n in original.graph.node if n.name not in retained]
++    # Original exporter-global Unsqueeze axis constants are outside attention
++    # namespaces but become unused only when their exact attention consumers
++    # disappear. Refuse every other non-attention removal.
++    from gate_protocol import removable_attention_axis_constant
++    consumers={}
++    for n in original.graph.node:
++        for value in n.input:consumers.setdefault(value,[]).append(n)
++    removed_names={n.name for n in removed};axis_constants=[];per_layer=[0]*28
+     for node in removed:
+-        need(any(node.name.startswith(f'/scorer/layers.{i}/self_attn/') for i in range(28)),'Rewrite removed a non-attention node')
++        if not any(node.name.startswith(f'/scorer/layers.{i}/self_attn/') for i in range(28)):
++            constant=None
++            if len(node.attribute)==1 and node.attribute[0].name=='value':
++                tensor=node.attribute[0].t
++                constant=(tensor.data_type,list(tensor.dims),onnx.numpy_helper.to_array(tensor).tolist())
++            users=[n for value in node.output for n in consumers.get(value,[])]
++            layer=removable_attention_axis_constant(node.name,node.op_type,list(node.input),list(node.output),constant,
++                [{'name':n.name,'op':n.op_type,'inputs':list(n.input)} for n in users],removed_names)
++            axis_constants.append(node.name);per_layer[layer]+=1
+         need(not any(part in node.name for part in ['/q_proj/','/k_proj/','/v_proj/','/o_proj/','/q_norm/','/k_norm/']),'Rewrite removed original projection or Q/K norm')
++    need(len(axis_constants)==336 and per_layer==[12]*28,'Exact source-pinned336 attention-axis constants/12 per layer required')
+     del graph.node[:];graph.node.extend(selected);graph.initializer.extend(small)
+     if not any(x.domain=='com.microsoft' for x in model.opset_import):model.opset_import.append(h.make_opsetid('com.microsoft',1))
+     original_nodes={n.name:n.SerializeToString(deterministic=True) for n in original.graph.node}
+@@ -102,7 +119,7 @@
+     need([x.SerializeToString(deterministic=True) for x in graph.output]==[x.SerializeToString(deterministic=True) for x in original.graph.output],'Output/cache ABI changed')
+     live={o for n in graph.node for o in n.output}|known
+     valid_vi=[x for x in graph.value_info if x.name in live];del graph.value_info[:];graph.value_info.extend(valid_vi)
+-    return model,{'gqa_nodes':28,'removed_original_nodes':[n.name for n in removed],'original_scale_float32_bits':scales[0],
++    return model,{'gqa_nodes':28,'removed_global_axis_constants':axis_constants,'axis_constants_per_layer':per_layer,'removed_original_nodes':[n.name for n in removed],'original_scale_float32_bits':scales[0],
+         'original_initializers':len(initial),'new_small_shape_initializers':len(small),'original_nodes_preserved_verbatim':True,
+         'original_initializers_and_external_ranges_preserved_verbatim':True,'all6inputs_scores_only':True,
+         'cache_outputs_internal_only':True,'actual_allocations_unproven_until_native_profile':True}
+--- r3/gate_protocol.py
++++ r4/gate_protocol.py
+@@ -55,4 +55,16 @@
+     external=graph.with_suffix('.weights.bin')
+     need(not external.exists(),'Fresh optimized external data path required')
+     return external,{'session.optimized_model_external_initializers_file_name':external.name,
+-        'session.optimized_model_external_initializers_min_size_in_bytes':'1024'}+        'session.optimized_model_external_initializers_min_size_in_bytes':'1024'}
++def removable_attention_axis_constant(name,op,inputs,outputs,constant,users,removed):
++    """Only exporter-global axis literals consumed by removed attention Unsqueeze."""
++    import re
++    need(re.fullmatch(r'Constant_[0-9]+',name) is not None and op=='Constant' and inputs==[]
++        and len(outputs)==1 and constant==(7,[1],[0]),'Only exact exported Int64[1] zero-axis Constant allowed outside attention')
++    need(len(users)==1,'Exact original single attention-axis consumer required')
++    user=users[0]
++    match=re.fullmatch(r'/scorer/layers\.([0-9]+)/self_attn/Unsqueeze(?:_[0-9]+)?',user['name'])
++    need(match is not None and 0<=int(match.group(1))<28 and user['op']=='Unsqueeze'
++        and len(user['inputs'])==2 and user['inputs'][1]==outputs[0]
++        and user['name'] in removed,'Constant must be axis of removed attention-only Unsqueeze')
++    return int(match.group(1))
+--- /dev/null
++++ r4/test_removals.py
+@@ -0,0 +1,36 @@
++"""Literal controls for exporter-global attention shape constants; no graph imports."""
++import unittest,copy
++from gate_protocol import removable_attention_axis_constant as allow
++
++class RemovedAxis(unittest.TestCase):
++    def setUp(self):
++        self.args=['Constant_2599','Constant',[],['onnx::Unsqueeze_428'],(7,[1],[0]),
++            [{'name':'/scorer/layers.0/self_attn/Unsqueeze_4','op':'Unsqueeze','inputs':['/scorer/layers.0/self_attn/Gather_2_output_0','onnx::Unsqueeze_428']}],
++            {'/scorer/layers.0/self_attn/Unsqueeze_4'}]
++    def test_actual_first_global_constant_is_attention_axis(self):
++        self.assertEqual(allow(*self.args),0)
++        self.assertFalse(self.args[0].startswith('/scorer/layers.0/self_attn/'))
++    def test_actual_second_global_constant(self):
++        self.args[0]='Constant_2601';self.args[3]=['onnx::Unsqueeze_430']
++        self.args[5]=[{'name':'/scorer/layers.0/self_attn/Unsqueeze_5','op':'Unsqueeze','inputs':['/scorer/layers.0/self_attn/Gather_1_output_0','onnx::Unsqueeze_430']}]
++        self.args[6]={'/scorer/layers.0/self_attn/Unsqueeze_5'}
++        self.assertEqual(allow(*self.args),0)
++    def test_value_type_shape_and_operator_changes_refused(self):
++        for index,value in [(0,'arbitrary_constant'),(1,'Identity'),(2,['upstream']),
++                            (3,[]),(3,['x','y']),(4,(1,[1],[0.])),(4,(7,[],0)),(4,(7,[1],[1]))]:
++            args=copy.deepcopy(self.args);args[index]=value
++            with self.subTest(index=index,value=value),self.assertRaises(ValueError):allow(*args)
++    def test_retained_consumer_refused(self):
++        self.args[6]=set()
++        with self.assertRaises(ValueError):allow(*self.args)
++    def test_nonattention_projection_and_data_input_refused(self):
++        for user in [
++            {'name':'/scorer/readout/Unsqueeze','op':'Unsqueeze','inputs':['x','onnx::Unsqueeze_428']},
++            {'name':'/scorer/layers.0/self_attn/q_proj/Unsqueeze','op':'Unsqueeze','inputs':['x','onnx::Unsqueeze_428']},
++            {'name':'/scorer/layers.0/self_attn/Unsqueeze_4','op':'Unsqueeze','inputs':['onnx::Unsqueeze_428','other_axis']}]:
++            args=copy.deepcopy(self.args);args[5]=[user];args[6]={user['name']}
++            with self.subTest(user=user),self.assertRaises(ValueError):allow(*args)
++    def test_shared_axis_refused_even_if_attention_only(self):
++        self.args[5].append(copy.deepcopy(self.args[5][0]))
++        with self.assertRaises(ValueError):allow(*self.args)
++if __name__=='__main__':unittest.main()--- /dev/null
++++ r4/inspect_removals.py
+@@ -0,0 +1,52 @@
++"""Read-only original graph metadata/dependency audit; never builds a candidate."""
++from pathlib import Path
++import argparse,collections,hashlib,json,sys
++
++def main():
++    p=argparse.ArgumentParser();p.add_argument('--output');args=p.parse_args()
++    base=Path(__file__).resolve().parent
++    plan=json.loads((base/'graph-plan.json').read_bytes())
++    sys.path.insert(0,plan['python_site']);import onnx
++    raw=Path(plan['source']['path']).read_bytes()
++    assert hashlib.sha256(raw).hexdigest()==plan['source']['sha256']=='c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4'
++    m=onnx.ModelProto();m.ParseFromString(raw)
++    producers={o:n for n in m.graph.node for o in n.output};consumers=collections.defaultdict(list)
++    for n in m.graph.node:
++        for x in n.input:consumers[x].append(n)
++    known={v.name for v in m.graph.input}|{i.name for i in m.graph.initializer}
++    def reach(overrides):
++        pending=[o.name for o in m.graph.output];live=set();visited=set()
++        while pending:
++            value=pending.pop()
++            if value in known or value in visited:continue
++            visited.add(value)
++            if value in overrides:pending.extend(overrides[value]);continue
++            n=producers[value];live.add(n.name);pending.extend(x for x in n.input if x)
++        return live
++    original=reach({})
++    overrides={f'/scorer/layers.{i}/self_attn/Reshape_7_output_0':[
++        f'/scorer/layers.{i}/self_attn/Add_output_0',f'/scorer/layers.{i}/self_attn/Add_1_output_0',
++        f'/scorer/layers.{i}/self_attn/v_proj/MatMul_output_0','/scorer/Where_output_0','attention_mask'] for i in range(28)}
++    required=reach(overrides);removed=[n for n in m.graph.node if n.name not in required];removed_names={n.name for n in removed}
++    outside=[n for n in removed if not any(n.name.startswith(f'/scorer/layers.{i}/self_attn/') for i in range(28))]
++    from gate_protocol import removable_attention_axis_constant
++    details=[];layer_counts=[0]*28
++    for n in outside:
++        t=n.attribute[0].t;value=onnx.numpy_helper.to_array(t).tolist()
++        users=[u for o in n.output for u in consumers[o]]
++        row={'name':n.name,'op':n.op_type,'inputs':list(n.input),'outputs':list(n.output),'dtype':t.data_type,'dims':list(t.dims),'values':value,
++            'source_node_sha256':hashlib.sha256(n.SerializeToString(deterministic=True)).hexdigest(),
++            'consumers':[{'name':u.name,'op':u.op_type,'inputs':list(u.input),'retained_after_boundary_substitution':u.name in required} for u in users]}
++        layer=removable_attention_axis_constant(row['name'],row['op'],row['inputs'],row['outputs'],(row['dtype'],row['dims'],row['values']),row['consumers'],removed_names)
++        layer_counts[layer]+=1;details.append(row)
++    projections=[n.name for n in removed if any(part in n.name for part in ['/q_proj/','/k_proj/','/v_proj/','/o_proj/','/q_norm/','/k_norm/'])]
++    assert len(m.graph.node)==7162 and len(original)==7162 and len(removed)==3248 and len(details)==336 and layer_counts==[12]*28 and projections==[]
++    result={'source_sha256':hashlib.sha256(raw).hexdigest(),'scope':'Original graph metadata and boundary-dependency reachability only; no candidate built',
++        'original_nodes':7162,'original_reachable_nodes':7162,'original_dead_nodes':0,'hypothetical_removed_nodes':3248,
++        'hypothetical_removed_op_counts':dict(collections.Counter(n.op_type for n in removed)),
++        'nonattention_removal_count':336,'global_axis_constants_per_layer':layer_counts,'removed_projection_or_qknorm_nodes':projections,'nonattention_nodes':details}
++    if args.output:
++        out=Path(args.output);assert out.parent.resolve()==base and not out.exists()
++        with out.open('x',encoding='utf-8') as f:json.dump(result,f,indent=2);f.write('\n')
++    print(json.dumps({k:v for k,v in result.items() if k!='nonattention_nodes'}))
++if __name__=='__main__':main()

@@ -1,0 +1,47 @@
+--- a/crates/airk-store/src/current/journal.rs
++++ b/crates/airk-store/src/current/journal.rs
+@@ -2262,3 +2262,22 @@
+         Ok(released)
+     }
+ }
++
++impl super::CurrentRead {
++    /// Authenticated journal state in THIS read snapshot, not object integrity
++    /// or a restart capability. An owner must open a fresh read while holding
++    /// the actual logical writer before using it for native-owner enrollment.
++    /// A retained pre-mutation read cannot establish current settled state.
++    pub fn settled_native_head(&self) -> Result<Option<CurrentHead>> {
++        self.with_connection(|connection| {
++            let (phase, head) = state(connection, &self.head().scope)?;
++            ensure!(head == *self.head(), "native owner read snapshot changed");
++            let pending = pending(connection, &head.scope)?;
++            if phase == TransactionPhase::Ready && pending.is_none() {
++                Ok(Some(head))
++            } else {
++                Ok(None)
++            }
++        })
++    }
++}
+--- a/crates/airk-store/src/service_collection_tests.rs
++++ b/crates/airk-store/src/service_collection_tests.rs
+@@ -800,6 +800,11 @@
+     assert_eq!(fs::read(&receipt_path)?, receipt);
+     assert_eq!(owner.anchor(&old)?.head.token()?, token);
+     drop(current);
++    {
++        let applying_read = store.current_read(&scope)?;
++        assert!(applying_read.settled_native_head()?.is_none(),
++            "authenticated Applying base must not be relabelled settled");
++    }
+     drop(writer);
+     // Actual interrupted Applying WAL, using the existing oversized-sidecar
+     // recovery seam. Even a previously opened read cannot mint a new anchor.
+@@ -824,6 +829,7 @@
+     drop(writer);
+     let recovered = store.current_read(&scope)?;
+     assert_eq!(recovered.token()?, pending.target.token()?);
++    assert_eq!(recovered.settled_native_head()?, Some(recovered.head().clone()));
+     let state = owner.anchor(&recovered)?;
+     assert_eq!(state.head.token()?, pending.target.token()?);
+     assert_eq!(state.physical_audit, super::integrity::PhysicalAudit::Unknown);

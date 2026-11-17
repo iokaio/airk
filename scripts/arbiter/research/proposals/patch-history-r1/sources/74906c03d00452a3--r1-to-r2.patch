@@ -1,0 +1,778 @@
+--- a/crates/airk-core/src/arbiter/CONTRACT.md
++++ b/crates/airk-core/src/arbiter/CONTRACT.md
+@@ -1007,3 +1007,9 @@
+ ManagementRequest adds StatusDevice, InitializeDevice, MigrateDevice, ConfigureDevice, ProvisionDevice, CancelDevice, RemoveDevice, RecoverDevice; old variants/payloads remain unchanged CPU semantics. Current private ArbiterImportDevice carries the SAME owner-only NativeOfflineImportRequest as legacy, with identical private role/metadata-relay refusal and frame budgets, returning ArbiterDevice(Box<DeviceStatus3>). Existing legacy replies retain Status2. Private local paths are absent from public management/schema. Shared Rust schema producer emits current types alongside legacy roots; generated clients must consume complete native fields and Rust-emitted semantic cases, not handwritten DTOs.
+ 
+ DeviceMemory required_peak/required_joint_peak fields are declarations, not invented measurements. GpuProbeReservation/1 is separate unqualified host/device/120s request bounds and cannot mint a DeviceExecution or resource pass. Authentic native owner/capacity/synchronization and final-device evidence are still required before production Auto dispatch. G1/config/store code alone does not implement the GPU runtime or relax any existing final promotion/scientific gate.
++
++## Device catalog/source upgrades within configuration4
++
++Ordinary configuration4 decode stays strictly bound to the expected compiled DeviceCatalogBinding; it never accepts arbitrary source/catalog changes. A native-only upgrade may rebind4->4 using authenticated expected OLD and NEW compiled catalog snapshots/descriptor resolvers, exact original raw configurationSHA/revision, unchanged installation and SOURCE catalognamespace, and the live owning authorization predicate. Both catalogs must independently validate their exact manifest/execution references and bound source; unknown ancestors/rows or changed bindings refuse. The transition clones all stage settings (model, enabled state, enrollment/consent, device policy and GPU precision), changes only device_catalog and revision+1, and uses the same existing writer/mutex/OSlock and prior-HANDLE CAS. Prior exact4 bytes are create-new retained and fsynced before atomic replace; no profile/device/task promotion is inferred. No public request accepts old/new catalog objects or an authorization predicate. Native StatusDevice startup must use the owning compiled transition inventory automatically, otherwise return explicit unsupported-upgrade rather than reinterpret stale configuration or require routine manual selection.
++
++ConfigurationBindingObservation is diagnostic metadata only for locating an authenticated old compatibility snapshot. It is not active configuration, source permission or device/model qualification. Native caller must authenticate the old/new snapshots independently before CatalogRebindRequest/rebind_checked; ordinary load stays strict and an unknown snapshot refuses. Once4 publishes, stale expected revision/binding cannot overwrite later settings. Already-committed rebind is observed by loading the new expected binding, not replaying the old CAS.
+--- a/crates/airk-core/src/arbiter/device/state/tests.rs
++++ b/crates/airk-core/src/arbiter/device/state/tests.rs
+@@ -189,3 +189,108 @@
+     assert!(schema["$defs"].get("NativeOfflineImportRequest").is_none());
+     Ok(())
+ }
++
++#[test]
++fn catalog_rebind_validates_both_snapshots_and_preserves_all_user_settings() -> Result<()> {
++    use crate::arbiter::device::tests::literal_profile;
++    let profiles = [
++        literal_profile(SelectedModel::Focus, 1, false)?,
++        literal_profile(SelectedModel::ContextCompact, 2, false)?,
++        literal_profile(SelectedModel::ContextLarge, 3, false)?,
++        literal_profile(SelectedModel::ContextCompact, 4, true)?,
++    ];
++    let row = |i: usize| -> Result<VariantReference> {
++        Ok(VariantReference {
++            manifest: profiles[i].manifest,
++            execution_identity: profiles[i].device_execution_identity()?,
++        })
++    };
++    let old = DeviceCatalog {
++        schema: DEVICE_CATALOG_SCHEMA.into(),
++        focus: vec![row(0)?],
++        context_compact: vec![row(1)?],
++        context_large: vec![row(2)?],
++    };
++    let mut new = old.clone();
++    new.context_compact.push(row(3)?);
++    let resolve = |pin| profiles.iter().find(|profile| profile.manifest == pin);
++    let old_binding = old.binding(Sha256Digest::from_bytes([40; 32]), resolve)?;
++    let new_binding = new.binding(Sha256Digest::from_bytes([41; 32]), resolve)?;
++    let mut current = DeviceConfiguration::disabled(
++        Sha256Digest::from_bytes([1; 32]),
++        Incarnation::from_bytes([2; 16]),
++        old_binding.clone(),
++    );
++    current.context.enabled = true;
++    current.context.selected_model = Some(SelectedModel::ContextCompact);
++    current.context.device_policy = DevicePolicy::Cpu;
++    current.context.gpu_precision = GpuPrecisionPreference::Fp16;
++    current.context.indexes = crate::arbiter::stage_tests::configuration(false, true)
++        .context
++        .indexes;
++    let rebound = current.rebind_catalog(
++        &old_binding,
++        new_binding.clone(),
++        &old,
++        &new,
++        resolve,
++        resolve,
++    )?;
++    assert_eq!(rebound.revision, current.revision + 1);
++    assert_eq!(rebound.device_catalog, new_binding);
++    assert_eq!(rebound.focus, current.focus);
++    assert_eq!(rebound.context, current.context);
++    assert_eq!(rebound.installation, current.installation);
++    assert_eq!(rebound.catalog, current.catalog);
++    let mut wrong_old = old_binding.clone();
++    wrong_old.source = Sha256Digest::from_bytes([99; 32]);
++    assert!(
++        current
++            .rebind_catalog(
++                &wrong_old,
++                new_binding.clone(),
++                &old,
++                &new,
++                resolve,
++                resolve
++            )
++            .is_err()
++    );
++    let mut wrong_new = new_binding.clone();
++    wrong_new.catalog = Sha256Digest::from_bytes([99; 32]);
++    assert!(
++        current
++            .rebind_catalog(&old_binding, wrong_new, &old, &new, resolve, resolve)
++            .is_err()
++    );
++    assert!(
++        current
++            .rebind_catalog(
++                &old_binding,
++                new_binding.clone(),
++                &new,
++                &new,
++                resolve,
++                resolve
++            )
++            .is_err()
++    );
++    assert!(
++        current
++            .rebind_catalog(&old_binding, new_binding, &old, &new, resolve, |_| None)
++            .is_err()
++    );
++    assert!(
++        current
++            .rebind_catalog(
++                &old_binding,
++                old_binding.clone(),
++                &old,
++                &old,
++                resolve,
++                resolve
++            )
++            .is_err()
++    );
++    Ok(())
++}
+--- a/crates/airk-core/src/arbiter/device/state.rs
++++ b/crates/airk-core/src/arbiter/device/state.rs
+@@ -22,6 +22,43 @@
+     }
+ }
+ impl DeviceConfiguration {
++    /// Data-only transition: caller must authenticate old/new compiled snapshots.
++    /// This cannot admit execution or change source namespace/model/consent/policy.
++    pub fn rebind_catalog<'old, 'new>(
++        &self,
++        expected_old: &DeviceCatalogBinding,
++        new_binding: DeviceCatalogBinding,
++        old_catalog: &DeviceCatalog,
++        new_catalog: &DeviceCatalog,
++        resolve_old: impl Fn(Sha256Digest) -> Option<&'old Profile>,
++        resolve_new: impl Fn(Sha256Digest) -> Option<&'new Profile>,
++    ) -> Result<Self> {
++        self.validate()?;
++        ensure!(
++            &self.device_catalog == expected_old,
++            "current catalog is not expected old binding"
++        );
++        ensure!(
++            old_catalog.binding(expected_old.source, resolve_old)? == *expected_old,
++            "old compiled catalog/source proof differs"
++        );
++        ensure!(
++            new_catalog.binding(new_binding.source, resolve_new)? == new_binding,
++            "new compiled catalog/source proof differs"
++        );
++        ensure!(
++            new_binding != *expected_old,
++            "catalog rebind must change exact binding"
++        );
++        let mut value = self.clone();
++        value.device_catalog = new_binding;
++        value.revision = value
++            .revision
++            .checked_add(1)
++            .context("configuration revision exhausted")?;
++        value.validate()?;
++        Ok(value)
++    }
+     pub fn disabled(
+         installation: Sha256Digest,
+         catalog: Incarnation,
+--- a/crates/airk-core/src/arbiter/device/tests.rs
++++ b/crates/airk-core/src/arbiter/device/tests.rs
+@@ -428,7 +428,7 @@
+     }
+     Ok(())
+ }
+-fn literal_profile(slot: SelectedModel, id: u8, gpu: bool) -> Result<Profile> {
++pub(super) fn literal_profile(slot: SelectedModel, id: u8, gpu: bool) -> Result<Profile> {
+     let mut profile = crate::arbiter::stage_tests::current_profile(slot.stage())?;
+     profile.model = slot.model();
+     profile.manifest = Sha256Digest::from_bytes([id; 32]);
+--- a/crates/airk-store/src/service/arbiter/CONTRACT.md
++++ b/crates/airk-store/src/service/arbiter/CONTRACT.md
+@@ -61,3 +61,11 @@
+ Automatic native upgrade may invoke load_or_migrate with authenticated compiled Profile resolution and live source/configuration/deadline checks. It preserves model slot, enablement, consent, all enrollments and original source-catalog namespace, chooses Auto/Auto and advances common revision once. Device-catalog digest/source is a separate required binding supplied by the owning native catalog, not a copied meaning for the old namespace. Actual CPU candidate admission and assets3 custody are separate native gates, never inferred from a digest or successful data migration.
+ 
+ Current apply_checked retains installation/sourcecatalog/devicecatalog identities, exact revision CAS, same writer/OS lock, original check callbacks, canonical staging, prior-handle replacement and readback equality. with_current retains the nonwaiting final-delivery read fence and checks original liveness around bounded I/O; it refuses unmigrated schema3 rather than pretending it is4. Legacy Initialize/CAS cannot overwrite4 because their strict schema3 decoder refuses it. Missing-state inspection is read-only; older v1/v2 requires explicit disabled initialization and exact legacy digest, with old bytes untouched. Initializing valid3 must use migration rather than discard its consent. No new model/source/role capability is minted.
++
++## Device catalog/source upgrades within configuration4
++
++Ordinary configuration4 decode stays strictly bound to the expected compiled DeviceCatalogBinding; it never accepts arbitrary source/catalog changes. A native-only upgrade may rebind4->4 using authenticated expected OLD and NEW compiled catalog snapshots/descriptor resolvers, exact original raw configurationSHA/revision, unchanged installation and SOURCE catalognamespace, and the live owning authorization predicate. Both catalogs must independently validate their exact manifest/execution references and bound source; unknown ancestors/rows or changed bindings refuse. The transition clones all stage settings (model, enabled state, enrollment/consent, device policy and GPU precision), changes only device_catalog and revision+1, and uses the same existing writer/mutex/OSlock and prior-HANDLE CAS. Prior exact4 bytes are create-new retained and fsynced before atomic replace; no profile/device/task promotion is inferred. No public request accepts old/new catalog objects or an authorization predicate. Native StatusDevice startup must use the owning compiled transition inventory automatically, otherwise return explicit unsupported-upgrade rather than reinterpret stale configuration or require routine manual selection.
++
++ConfigurationBindingObservation is diagnostic metadata only for locating an authenticated old compatibility snapshot. It is not active configuration, source permission or device/model qualification. Native caller must authenticate the old/new snapshots independently before CatalogRebindRequest/rebind_checked; ordinary load stays strict and an unknown snapshot refuses. Once4 publishes, stale expected revision/binding cannot overwrite later settings. Already-committed rebind is observed by loading the new expected binding, not replaying the old CAS.
++
++Retained archive AND staged configuration files execute one common file.sync_all fence after either fresh creation/write OR reopening matching existing bytes. Recovery opens ReadWrite for the Windows FlushFileBuffers capability, preserves exact byte/object custody, then fsyncs the file before directory.sync or configuration replacement. Matching bytes or a directory fsync never proves file-data durability. A failed sync propagates before publication; the original active configuration and retained objects remain. Only a later explicit authorized recovery can retry the file fsync. The injectable retention-sync seam is private; public native methods always use real File::sync_all, never a metadata success bit.
+--- a/crates/airk-store/src/service/arbiter/device/tests.rs
++++ b/crates/airk-store/src/service/arbiter/device/tests.rs
+@@ -261,3 +261,331 @@
+     assert!(current.focus.enabled);
+     Ok(())
+ }
++
++#[test]
++fn recovered_archive_and_stage_require_real_fsync_and_preserve_original_custody() -> Result<()> {
++    use std::cell::Cell;
++    let (root, store) = fixture()?;
++    let old = enabled(&store)?;
++    let raw = old.canonical_bytes()?;
++    let profile = profile()?;
++    let directory = store.root.open_dir(OsStr::new(DIRECTORY))?;
++    let archive_name = format!("configuration-v3-{}.retained", digest(&raw));
++    let stage_name = format!("device-configuration-{}.part", old.revision + 1);
++    let calls = Cell::new(0u64);
++    let fail_archive = |_: &File| -> Result<()> {
++        calls.set(calls.get() + 1);
++        anyhow::bail!("injected fsync failure after complete bytes");
++    };
++    assert!(
++        store
++            .device(binding())
++            .migrate_synced(
++                old.revision,
++                digest(&raw),
++                |pin| (pin == profile.manifest).then_some(&profile),
++                || Ok(()),
++                &fail_archive
++            )
++            .is_err()
++    );
++    assert_eq!(calls.get(), 1);
++    assert_eq!(
++        std::fs::read(root.path().join(DIRECTORY).join(CONFIGURATION))?,
++        raw
++    );
++    let archive = directory.open_file(OsStr::new(&archive_name), SetupFileMode::Read)?;
++    let archive_id = crate::store_fs::file_identity(&archive)?;
++    assert_eq!(bounded(&archive)?, raw);
++    drop(archive);
++    let calls = Cell::new(0u64);
++    let fail_stage = |file: &File| -> Result<()> {
++        calls.set(calls.get() + 1);
++        if calls.get() == 2 {
++            anyhow::bail!("injected stage fsync failure");
++        }
++        file.sync_all()?;
++        Ok(())
++    };
++    assert!(
++        store
++            .device(binding())
++            .migrate_synced(
++                old.revision,
++                digest(&raw),
++                |pin| (pin == profile.manifest).then_some(&profile),
++                || Ok(()),
++                &fail_stage
++            )
++            .is_err()
++    );
++    assert_eq!(calls.get(), 2);
++    let stage = directory.open_file(OsStr::new(&stage_name), SetupFileMode::Read)?;
++    let stage_id = crate::store_fs::file_identity(&stage)?;
++    let stage_bytes = bounded(&stage)?;
++    drop(stage);
++    // Both branches now recover matching complete files. A fake bytes==durable
++    // implementation would skip these sync callbacks and publish incorrectly.
++    let calls = Cell::new(0u64);
++    let fail_recovered_archive = |_: &File| -> Result<()> {
++        calls.set(calls.get() + 1);
++        anyhow::bail!("recovered archive is not durable");
++    };
++    assert!(
++        store
++            .device(binding())
++            .migrate_synced(
++                old.revision,
++                digest(&raw),
++                |pin| (pin == profile.manifest).then_some(&profile),
++                || Ok(()),
++                &fail_recovered_archive
++            )
++            .is_err()
++    );
++    assert_eq!(calls.get(), 1);
++    let calls = Cell::new(0u64);
++    let fail_recovered_stage = |file: &File| -> Result<()> {
++        calls.set(calls.get() + 1);
++        if calls.get() == 2 {
++            anyhow::bail!("recovered stage is not durable");
++        }
++        file.sync_all()?;
++        Ok(())
++    };
++    assert!(
++        store
++            .device(binding())
++            .migrate_synced(
++                old.revision,
++                digest(&raw),
++                |pin| (pin == profile.manifest).then_some(&profile),
++                || Ok(()),
++                &fail_recovered_stage
++            )
++            .is_err()
++    );
++    assert_eq!(calls.get(), 2);
++    assert_eq!(
++        std::fs::read(root.path().join(DIRECTORY).join(CONFIGURATION))?,
++        raw
++    );
++    let archive = directory.open_file(OsStr::new(&archive_name), SetupFileMode::Read)?;
++    assert_eq!(crate::store_fs::file_identity(&archive)?, archive_id);
++    drop(archive);
++    let stage = directory.open_file(OsStr::new(&stage_name), SetupFileMode::Read)?;
++    assert_eq!(crate::store_fs::file_identity(&stage)?, stage_id);
++    assert_eq!(bounded(&stage)?, stage_bytes);
++    drop(stage);
++    let current = store.device(binding()).migrate_checked(
++        old.revision,
++        digest(&raw),
++        |pin| (pin == profile.manifest).then_some(&profile),
++        || Ok(()),
++    )?;
++    assert_eq!(current.revision, old.revision + 1);
++    let published = directory.open_file(OsStr::new(CONFIGURATION), SetupFileMode::Read)?;
++    assert_eq!(crate::store_fs::file_identity(&published)?, stage_id);
++    Ok(())
++}
++
++fn catalog_profiles() -> Result<Vec<Profile>> {
++    let focus = profile()?;
++    let mut compact = focus.clone();
++    compact.model = ModelChoice::ContextQwenCompact;
++    compact.stage = Some(Stage::Context);
++    compact.manifest = Sha256Digest::from_bytes([4; 32]);
++    compact.tasks = std::collections::BTreeSet::from([Task::ContextAction]);
++    compact.task_policies = std::collections::BTreeMap::from([(
++        Task::ContextAction,
++        Sha256Digest::from_bytes([9; 32]),
++    )]);
++    compact.abi = ScoreAbi {
++        readout: Readout::DecisionSymbol,
++        inputs: vec![
++            TensorContract {
++                name: "input_ids".into(),
++                element: TensorType::Int64,
++                axes: vec!["batch_1".into(), "tokens".into()],
++            },
++            TensorContract {
++                name: "attention_mask".into(),
++                element: TensorType::Int64,
++                axes: vec!["batch_1".into(), "tokens".into()],
++            },
++            TensorContract {
++                name: "position_ids".into(),
++                element: TensorType::Int64,
++                axes: vec!["batch_1".into(), "tokens".into()],
++            },
++            TensorContract {
++                name: "decision_positions".into(),
++                element: TensorType::Int64,
++                axes: vec!["batch_1".into()],
++            },
++            TensorContract {
++                name: "candidate_positions".into(),
++                element: TensorType::Int64,
++                axes: vec!["batch_1".into(), "options".into()],
++            },
++            TensorContract {
++                name: "option_mask".into(),
++                element: TensorType::Bool,
++                axes: vec!["batch_1".into(), "options".into()],
++            },
++        ],
++        output: TensorContract {
++            name: "scores".into(),
++            element: TensorType::Float32,
++            axes: vec!["batch_1".into(), "options".into()],
++        },
++    };
++    let mut large = compact.clone();
++    large.model = ModelChoice::ContextQwenLarge;
++    large.manifest = Sha256Digest::from_bytes([5; 32]);
++    for value in [&focus, &compact, &large] {
++        value.validate()?;
++    }
++    Ok(vec![focus, compact, large])
++}
++fn catalog(profiles: &[Profile]) -> Result<DeviceCatalog> {
++    use airk_core::arbiter::device::*;
++    let row = |i: usize| -> Result<VariantReference> {
++        Ok(VariantReference {
++            manifest: profiles[i].manifest,
++            execution_identity: profiles[i].device_execution_identity()?,
++        })
++    };
++    Ok(DeviceCatalog {
++        schema: DEVICE_CATALOG_SCHEMA.into(),
++        focus: vec![row(0)?],
++        context_compact: vec![row(1)?],
++        context_large: vec![row(2)?],
++    })
++}
++#[test]
++fn native_four_to_four_rebind_preserves_settings_and_rejects_unknown_or_stale_authority()
++-> Result<()> {
++    let (root, store) = fixture()?;
++    let profiles = catalog_profiles()?;
++    let old_catalog = catalog(&profiles)?;
++    let new_catalog = old_catalog.clone();
++    let resolve = |pin| profiles.iter().find(|profile| profile.manifest == pin);
++    let old_binding = old_catalog.binding(Sha256Digest::from_bytes([40; 32]), resolve)?;
++    let new_binding = new_catalog.binding(Sha256Digest::from_bytes([41; 32]), resolve)?;
++    let original = store
++        .device(old_binding.clone())
++        .initialize_checked(None, || Ok(()))?;
++    let mut settings = original.clone();
++    settings.revision += 1;
++    settings.focus.enabled = true;
++    settings.focus.selected_model = Some(SelectedModel::Focus);
++    settings.focus.device_policy = DevicePolicy::Cpu;
++    settings.focus.gpu_precision = GpuPrecisionPreference::Fp16;
++    settings.focus.indexes = vec![Enrollment {
++        index_id: airk_core::index_catalog::IndexId::from_identity(Incarnation::from_bytes(
++            [4; 16],
++        )),
++        tasks: std::collections::BTreeSet::from([Task::FocusRank]),
++    }];
++    store
++        .device(old_binding.clone())
++        .apply_checked(original.revision, &settings, || Ok(()))?;
++    let raw = settings.canonical_bytes()?;
++    let observed = store
++        .device(new_binding.clone())
++        .inspect_device_binding()?
++        .unwrap();
++    assert_eq!(observed.binding, old_binding);
++    assert_eq!(observed.configuration_sha256, digest(&raw));
++    assert!(store.device(new_binding.clone()).load().is_err()); // strict ordinary decoding is not relaxed
++    let authorize = |old: &DeviceCatalogBinding, new: &DeviceCatalogBinding| -> Result<()> {
++        ensure!(
++            old == &old_binding && new == &new_binding,
++            "native compiled transition owner mismatch"
++        );
++        Ok(())
++    };
++    let denied = |_: &DeviceCatalogBinding, _: &DeviceCatalogBinding| -> Result<()> {
++        anyhow::bail!("native transition revoked")
++    };
++    assert!(
++        store
++            .device(new_binding.clone())
++            .rebind_checked(
++                CatalogRebindRequest {
++                    expected_revision: settings.revision,
++                    expected_configuration: digest(&raw),
++                    expected_old: &old_binding,
++                    old_catalog: &old_catalog,
++                    new_catalog: &new_catalog,
++                    resolve_old: &resolve,
++                    resolve_new: &resolve,
++                    authorize: &denied
++                },
++                || Ok(())
++            )
++            .is_err()
++    );
++    assert!(
++        store
++            .device(new_binding.clone())
++            .rebind_checked(
++                CatalogRebindRequest {
++                    expected_revision: settings.revision,
++                    expected_configuration: Sha256Digest::from_bytes([99; 32]),
++                    expected_old: &old_binding,
++                    old_catalog: &old_catalog,
++                    new_catalog: &new_catalog,
++                    resolve_old: &resolve,
++                    resolve_new: &resolve,
++                    authorize: &authorize
++                },
++                || Ok(())
++            )
++            .is_err()
++    );
++    assert_eq!(
++        std::fs::read(root.path().join(DIRECTORY).join(CONFIGURATION))?,
++        raw
++    );
++    let request = || CatalogRebindRequest {
++        expected_revision: settings.revision,
++        expected_configuration: digest(&raw),
++        expected_old: &old_binding,
++        old_catalog: &old_catalog,
++        new_catalog: &new_catalog,
++        resolve_old: &resolve,
++        resolve_new: &resolve,
++        authorize: &authorize,
++    };
++    let current = store
++        .device(new_binding.clone())
++        .rebind_checked(request(), || Ok(()))?;
++    assert_eq!(current.focus, settings.focus);
++    assert_eq!(current.context, settings.context);
++    assert_eq!(current.revision, settings.revision + 1);
++    assert_eq!(current.device_catalog, new_binding);
++    assert_eq!(current.catalog, settings.catalog);
++    assert_eq!(current.installation, settings.installation);
++    assert_eq!(
++        std::fs::read(
++            root.path()
++                .join(DIRECTORY)
++                .join(format!("configuration-v4-{}.retained", digest(&raw)))
++        )?,
++        raw
++    );
++    assert!(store.device(old_binding.clone()).load().is_err());
++    assert!(
++        store
++            .device(new_binding.clone())
++            .rebind_checked(request(), || Ok(()))
++            .is_err()
++    );
++    let StoredConfiguration::Device(reloaded) = store.device(new_binding).load()? else {
++        panic!("expected current4");
++    };
++    assert_eq!(reloaded, current);
++    Ok(())
++}
+--- a/crates/airk-store/src/service/arbiter/device.rs
++++ b/crates/airk-store/src/service/arbiter/device.rs
+@@ -3,13 +3,31 @@
+ use super::*;
+ use airk_core::arbiter::{
+     Profile,
+-    device::{DeviceCatalogBinding, DeviceConfiguration},
++    device::{DeviceCatalog, DeviceCatalogBinding, DeviceConfiguration},
+ };
+ use sha2::{Digest, Sha256};
+ #[derive(Clone, Debug)]
+ pub enum StoredConfiguration {
+     Legacy(Configuration),
+     Device(DeviceConfiguration),
++}
++#[derive(Clone, Debug)]
++pub struct ConfigurationBindingObservation {
++    pub binding: DeviceCatalogBinding,
++    pub revision: u64,
++    pub configuration_sha256: Sha256Digest,
++}
++/// Native-only transition data, not a serialized permission. The owner supplies
++/// authenticated compiled snapshots and the live authorization predicate.
++pub struct CatalogRebindRequest<'a, 'old, 'new> {
++    pub expected_revision: u64,
++    pub expected_configuration: Sha256Digest,
++    pub expected_old: &'a DeviceCatalogBinding,
++    pub old_catalog: &'a DeviceCatalog,
++    pub new_catalog: &'a DeviceCatalog,
++    pub resolve_old: &'a dyn Fn(Sha256Digest) -> Option<&'old Profile>,
++    pub resolve_new: &'a dyn Fn(Sha256Digest) -> Option<&'new Profile>,
++    pub authorize: &'a dyn Fn(&DeviceCatalogBinding, &DeviceCatalogBinding) -> Result<()>,
+ }
+ pub struct DeviceConfigurationStore<'a> {
+     owner: &'a ConfigurationStore,
+@@ -91,6 +109,43 @@
+         };
+         Ok((value, Some(file), bytes))
+     }
++    /// Diagnostic metadata ONLY. It chooses no catalog and returns no active
++    /// configuration/permission. Native owner must find this binding in its
++    /// authenticated compiled transition inventory before calling rebind_checked.
++    pub fn inspect_device_binding(&self) -> Result<Option<ConfigurationBindingObservation>> {
++        let directory = match self.owner.root.open_dir(OsStr::new(DIRECTORY)) {
++            Ok(directory) => directory,
++            Err(error) if missing(&error) => return Ok(None),
++            Err(error) => return Err(error),
++        };
++        let file = match directory.open_file(OsStr::new(CONFIGURATION), SetupFileMode::Read) {
++            Ok(file) => file,
++            Err(error) if missing(&error) => return Ok(None),
++            Err(error) => return Err(error),
++        };
++        let raw = bounded(&file)?;
++        #[derive(serde::Deserialize)]
++        struct Header {
++            schema: String,
++        }
++        let header: Header = serde_json::from_slice(&raw)?;
++        if header.schema == airk_core::arbiter::CONFIGURATION_SCHEMA {
++            return Ok(None);
++        }
++        let value: DeviceConfiguration = serde_json::from_slice(&raw)?;
++        value.validate()?;
++        ensure!(
++            value.installation == self.owner.installation
++                && value.catalog == self.owner.catalog
++                && value.canonical_bytes()? == raw,
++            "diagnostic binding observation is foreign/noncanonical"
++        );
++        Ok(Some(ConfigurationBindingObservation {
++            binding: value.device_catalog,
++            revision: value.revision,
++            configuration_sha256: digest(&raw),
++        }))
++    }
+     /// Read-only inspection, including an unmigrated exact config3 CPU document.
+     pub fn load(&self) -> Result<StoredConfiguration> {
+         match self.owner.root.open_dir(OsStr::new(DIRECTORY)) {
+@@ -127,27 +182,39 @@
+             .context("Arbiter configuration writer active")?;
+         Ok(lock)
+     }
+-    fn retain(directory: &SetupDirectory, name: &OsStr, bytes: &[u8]) -> Result<File> {
+-        match directory.open_file(name, SetupFileMode::CreateNew) {
++    fn sync_retained(file: &File) -> Result<()> {
++        file.sync_all()
++            .context("retained configuration file fsync failed")
++    }
++    fn retain(
++        directory: &SetupDirectory,
++        name: &OsStr,
++        bytes: &[u8],
++        sync: &impl Fn(&File) -> Result<()>,
++    ) -> Result<File> {
++        let file = match directory.open_file(name, SetupFileMode::CreateNew) {
+             Ok(mut file) => {
+                 file.write_all(bytes)?;
+-                file.sync_all()?;
+-                Ok(file)
++                file
+             }
+             Err(error)
+                 if error
+                     .downcast_ref::<std::io::Error>()
+                     .is_some_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists) =>
+             {
+-                let file = directory.open_file(name, SetupFileMode::Read)?;
++                // ReadWrite is needed for FlushFileBuffers on Windows; exact bytes
++                // and owner-private/no-follow custody still precede the common fsync.
++                let file = directory.open_file(name, SetupFileMode::ReadWrite)?;
+                 ensure!(
+                     bounded(&file)? == bytes,
+                     "conflicting retained Arbiter bytes preserved"
+                 );
+-                Ok(file)
+-            }
+-            Err(error) => Err(error),
+-        }
++                file
++            }
++            Err(error) => return Err(error),
++        };
++        sync(&file)?;
++        Ok(file)
+     }
+     fn publish(
+         &self,
+@@ -156,10 +223,20 @@
+         prior: Option<&File>,
+         check: &impl Fn() -> Result<()>,
+     ) -> Result<DeviceConfiguration> {
++        self.publish_synced(directory, value, prior, check, &Self::sync_retained)
++    }
++    fn publish_synced(
++        &self,
++        directory: &SetupDirectory,
++        value: &DeviceConfiguration,
++        prior: Option<&File>,
++        check: &impl Fn() -> Result<()>,
++        retention_sync: &impl Fn(&File) -> Result<()>,
++    ) -> Result<DeviceConfiguration> {
+         let bytes = value.canonical_bytes()?;
+         check()?;
+         let name = format!("device-configuration-{}.part", value.revision);
+-        let stage = Self::retain(directory, OsStr::new(&name), &bytes)?;
++        let stage = Self::retain(directory, OsStr::new(&name), &bytes, retention_sync)?;
+         check()?;
+         if let Some(prior) = prior {
+             directory.replace_file(OsStr::new(&name), &stage, OsStr::new(CONFIGURATION), prior)?;
+@@ -207,6 +284,22 @@
+         resolve: impl Fn(Sha256Digest) -> Option<&'p Profile>,
+         check: impl Fn() -> Result<()>,
+     ) -> Result<DeviceConfiguration> {
++        self.migrate_synced(
++            expected_revision,
++            expected_configuration,
++            resolve,
++            check,
++            &Self::sync_retained,
++        )
++    }
++    fn migrate_synced<'p>(
++        &self,
++        expected_revision: u64,
++        expected_configuration: Sha256Digest,
++        resolve: impl Fn(Sha256Digest) -> Option<&'p Profile>,
++        check: impl Fn() -> Result<()>,
++        retention_sync: &impl Fn(&File) -> Result<()>,
++    ) -> Result<DeviceConfiguration> {
+         let _writer = self
+             .owner
+             .writer
+@@ -253,10 +346,74 @@
+         check()?;
+         // Create-new exact3 archive is synced BEFORE atomic replacement. Existing
+         // archive must reopen through the same no-follow owner-private guard.
+-        let _archive = Self::retain(&directory, OsStr::new(&archive_name), &raw)?;
++        let _archive = Self::retain(&directory, OsStr::new(&archive_name), &raw, retention_sync)?;
+         directory.sync()?;
+         check()?;
+-        self.publish(&directory, &value, prior.as_ref(), &check)
++        self.publish_synced(&directory, &value, prior.as_ref(), &check, retention_sync)
++    }
++    /// Native automatic-upgrade only. Old/new catalog objects and descriptor
++    /// resolvers must come from the authenticated compiled compatibility owner;
++    /// no public ManagementRequest accepts those snapshots or this predicate.
++    pub fn rebind_checked(
++        &self,
++        request: CatalogRebindRequest<'_, '_, '_>,
++        check: impl Fn() -> Result<()>,
++    ) -> Result<DeviceConfiguration> {
++        let CatalogRebindRequest {
++            expected_revision,
++            expected_configuration,
++            expected_old,
++            old_catalog,
++            new_catalog,
++            resolve_old,
++            resolve_new,
++            authorize,
++        } = request;
++        let _writer = self
++            .owner
++            .writer
++            .lock()
++            .map_err(|_| anyhow::anyhow!("Arbiter writer poisoned"))?;
++        check()?;
++        authorize(expected_old, &self.binding)?;
++        let directory = self.owner.root.open_dir(OsStr::new(DIRECTORY))?;
++        let _lock = Self::lock(&directory)?;
++        check()?;
++        let source = self.owner.device(expected_old.clone());
++        let (document, prior, raw) = source.read(&directory)?;
++        let StoredConfiguration::Device(current) = document else {
++            anyhow::bail!("catalog rebind requires canonical configuration4");
++        };
++        ensure!(
++            prior.is_some()
++                && current.revision == expected_revision
++                && digest(&raw) == expected_configuration,
++            "configuration changed/missing before catalog rebind"
++        );
++        let value = current.rebind_catalog(
++            expected_old,
++            self.binding.clone(),
++            old_catalog,
++            new_catalog,
++            resolve_old,
++            resolve_new,
++        )?;
++        check()?;
++        authorize(expected_old, &self.binding)?;
++        let archive_name = format!("configuration-v4-{}.retained", expected_configuration);
++        let _archive = Self::retain(
++            &directory,
++            OsStr::new(&archive_name),
++            &raw,
++            &Self::sync_retained,
++        )?;
++        directory.sync()?;
++        check()?;
++        authorize(expected_old, &self.binding)?;
++        self.publish(&directory, &value, prior.as_ref(), &|| {
++            check()?;
++            authorize(expected_old, &self.binding)
++        })
+     }
+     pub fn initialize_checked(
+         &self,

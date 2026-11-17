@@ -1,0 +1,671 @@
+--- a/crates/airk-cli/src/project_supervisor.rs
++++ b/crates/airk-cli/src/project_supervisor.rs
+@@ -123,7 +123,11 @@
+             })
+             .stdin(Stdio::piped())
+             .stdout(Stdio::piped())
+-            .stderr(Stdio::null());
++            .stderr(if crate::project_worker::producer_probe::enabled() {
++                Stdio::inherit()
++            } else {
++                Stdio::null()
++            });
+         #[cfg(windows)]
+         {
+             use std::os::windows::process::CommandExt;
+@@ -132,6 +136,7 @@
+         let mut child =
+             crate::native_process::spawn(&mut command).context("start project owner")?;
+         let containment = crate::child_job::ChildJob::attach(&mut child)?;
++        crate::project_worker::producer_probe::spawned(project, child.id(), worker, service);
+         let input = child.stdin.take().context("project input missing")?;
+         let mut output = child.stdout.take().context("project output missing")?;
+         let (sender, receiver) = mpsc::sync_channel(1);
+--- /dev/null
++++ b/crates/airk-cli/src/project_worker/producer_probe.rs
+@@ -0,0 +1,200 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Opt-in isolated qualification output. Never stdout or a public tool response.
++use super::*;
++use airk_store::current::work_probe::{self, Metric, Snapshot};
++use std::{cell::Cell, io::Write, rc::Rc, time::Instant};
++const PREFIX: &str = "AIRK_PRODUCER_V1 ";
++#[derive(Clone)]
++struct Identity {
++    run: String,
++    runtime: String,
++    project: String,
++    job: String,
++    pid: u32,
++    worker: String,
++    service: String,
++    fencing_generation: u64,
++}
++fn configuration(
++    project: airk_core::service::ProjectBinding,
++    job: airk_core::identity::Sha256Digest,
++) -> Option<Identity> {
++    let value = std::env::var("AIRK_PRODUCER_PROBE").ok()?;
++    let (run, runtime) = value.split_once(':')?;
++    if run.len() != 32
++        || runtime.len() != 64
++        || !run
++            .bytes()
++            .chain(runtime.bytes())
++            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
++    {
++        return None;
++    }
++    Some(Identity {
++        run: run.into(),
++        runtime: runtime.into(),
++        project: project.to_string(),
++        job: job.to_string(),
++        pid: std::process::id(),
++        worker: String::new(),
++        service: String::new(),
++        fencing_generation: 0,
++    })
++}
++fn emit(
++    identity: &Identity,
++    sequence: u64,
++    stage: &str,
++    outcome: &str,
++    elapsed_ns: u64,
++    snapshot: Option<&Snapshot>,
++    boundary: Option<Metric>,
++    suppressed: u64,
++) {
++    let mut metrics = serde_json::Map::new();
++    if let Some(snapshot) = snapshot {
++        for metric in [
++            Metric::QueueDecode,
++            Metric::QueueEncode,
++            Metric::QueueSelect,
++            Metric::QueueRetain,
++            Metric::SemanticUpdate,
++            Metric::FullFtsCapture,
++            Metric::FullFtsDocs,
++            Metric::FullFtsShadow,
++            Metric::FullFtsAux,
++            Metric::PublicationPrepare,
++            Metric::PublicationApply,
++            Metric::PublicationCommit,
++            Metric::ResourceRead,
++            Metric::ResourceWrite,
++            Metric::EmbeddingBatch,
++            Metric::JournalMaps,
++            Metric::JournalInputs,
++            Metric::JournalMetadata,
++        ] {
++            let work = snapshot.get(metric);
++            metrics.insert(format!("{metric:?}"), serde_json::json!({"calls":work.calls,"failures":work.failures,
++                "elapsed_ns":work.elapsed_ns,"items":work.items,"bytes":work.bytes,"saturated":work.saturated}));
++        }
++    }
++    let value = serde_json::json!({"schema":1,"run":identity.run,"runtime_install_sha256":identity.runtime,
++        "native_version":env!("CARGO_PKG_VERSION"),"project":identity.project,"job":identity.job,
++        "process_id":identity.pid,"worker":identity.worker,"service":identity.service,"fencing_generation":identity.fencing_generation,"sequence":sequence,"stage":stage,"outcome":outcome,
++        "elapsed_ns":elapsed_ns,"suppressed_samples":suppressed,"metrics":metrics,"boundary":boundary.map(|metric| format!("{metric:?}"))});
++    if let Ok(mut bytes) = serde_json::to_vec(&value) {
++        if bytes.len() + PREFIX.len() + 1 > 16384 {
++            return;
++        }
++        let mut record = Vec::with_capacity(PREFIX.len() + bytes.len() + 1);
++        record.extend_from_slice(PREFIX.as_bytes());
++        record.append(&mut bytes);
++        record.push(b'\n');
++        let _ = std::io::stderr().lock().write_all(&record);
++    }
++}
++pub(super) fn execute_observed(
++    kernel: &Kernel,
++    kind: JobKind,
++    job: airk_core::identity::Sha256Digest,
++    worker_identity: WorkerIdentity,
++) -> Result<JobOutcome> {
++    // Disabled means no scope, clocks, snapshots, serialization or output.
++    let Some(mut identity) = configuration(worker_identity.project, job) else {
++        return super::execute(kernel, kind, job);
++    };
++    identity.worker = worker_identity.worker.to_string();
++    identity.service = worker_identity.service.to_string();
++    identity.fencing_generation = worker_identity.fencing_generation;
++    let started = Instant::now();
++    emit(&identity, 0, "started", "in_progress", 0, None, None, 0);
++    let sequence = Rc::new(Cell::new(0u64));
++    let suppressed = Rc::new(Cell::new(0u64));
++    let (count, dropped, sampled_identity) =
++        (sequence.clone(), suppressed.clone(), identity.clone());
++    let seen = Cell::new(0u64);
++    let failed_seen = Cell::new(false);
++    let (result, snapshot) = work_probe::observe_reported(
++        || super::execute(kernel, kind, job),
++        move |snapshot, metric, failed| {
++            seen.set(seen.get().saturating_add(1));
++            let first_failure = if failed {
++                !failed_seen.replace(true)
++            } else {
++                false
++            };
++            if !first_failure && (count.get() >= 128 || (seen.get() > 16 && seen.get() % 16 != 0)) {
++                dropped.set(dropped.get().saturating_add(1));
++                return;
++            }
++            count.set(count.get() + 1);
++            emit(
++                &sampled_identity,
++                count.get(),
++                "producer_boundary",
++                if failed {
++                    "failed"
++                } else {
++                    "completed_interval"
++                },
++                started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
++                Some(snapshot),
++                Some(metric),
++                dropped.get(),
++            );
++        },
++    );
++    let outcome = match &result {
++        Ok(JobOutcome::Succeeded { .. }) => "execute_succeeded",
++        Ok(JobOutcome::Canceled) => "execute_canceled",
++        Ok(_) => "execute_non_success",
++        Err(_) => "execute_error",
++    };
++    emit(
++        &identity,
++        sequence.get() + 1,
++        "execute_finished",
++        outcome,
++        started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
++        Some(&snapshot),
++        None,
++        suppressed.get(),
++    );
++    result
++}
++
++pub(crate) fn enabled() -> bool {
++    std::env::var("AIRK_PRODUCER_PROBE")
++        .ok()
++        .is_some_and(|value| {
++            value.split_once(':').is_some_and(|(run, runtime)| {
++                run.len() == 32
++                    && runtime.len() == 64
++                    && run
++                        .bytes()
++                        .chain(runtime.bytes())
++                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
++            })
++        })
++}
++pub(crate) fn spawned(
++    project: airk_core::service::ProjectBinding,
++    worker: u32,
++    instance: airk_core::identity::Incarnation,
++    service: airk_core::identity::Incarnation,
++) {
++    let Some(identity) = configuration(
++        project,
++        airk_core::identity::Sha256Digest::from_bytes([0; 32]),
++    ) else {
++        return;
++    };
++    let value = serde_json::json!({"schema":1,"run":identity.run,"runtime_install_sha256":identity.runtime,
++        "parent_process_id":std::process::id(),"worker_process_id":worker,"project":identity.project,"worker":instance.to_string(),"service":service.to_string()});
++    if let Ok(bytes) = serde_json::to_vec(&value) {
++        let mut record = b"AIRK_PRODUCER_OWNER_V1 ".to_vec();
++        record.extend_from_slice(&bytes);
++        record.push(b'\n');
++        let _ = std::io::stderr().lock().write_all(&record);
++    }
++}
+--- a/crates/airk-cli/src/project_worker.rs
++++ b/crates/airk-cli/src/project_worker.rs
+@@ -282,6 +282,8 @@
+         rebind: !busy,
+     }
+ }
++
++pub(crate) mod producer_probe;
+ 
+ fn execute(
+     kernel: &Kernel,
+@@ -705,7 +707,12 @@
+                                 revision: snapshot.publication,
+                             });
+                         }
+-                        let outcome = execute(&kernel, kind, job.id)?;
++                        let outcome = producer_probe::execute_observed(
++                            &kernel,
++                            kind,
++                            job.id,
++                            identity,
++                        )?;
+                         // Successful changes refresh console metadata while this exact job
+                         // still owns its fenced lease. Refreshing the UI must not require
+                         // a second Inspect job to see new counts or semantic readiness.
+--- a/crates/airk-store/src/current/work_probe.rs
++++ b/crates/airk-store/src/current/work_probe.rs
+@@ -48,6 +48,33 @@
+ thread_local! {
+     static ACTIVE: RefCell<Option<Rc<RefCell<Snapshot>>>> = const { RefCell::new(None) };
+ }
++type SampleObserver = Rc<dyn Fn(&Snapshot, Metric, bool)>;
++thread_local! {
++    static OBSERVER: RefCell<Option<(Rc<RefCell<Snapshot>>, SampleObserver)>> = const { RefCell::new(None) };
++}
++struct ObserverScope(Option<(Rc<RefCell<Snapshot>>, SampleObserver)>);
++impl Drop for ObserverScope {
++    fn drop(&mut self) {
++        OBSERVER.with(|observer| *observer.borrow_mut() = self.0.take());
++    }
++}
++/// Qualification-only snapshots at completed semantic turns, including errors.
++/// Callback must perform only bounded content-free reporting and never panic.
++pub fn observe_reported<T>(
++    operation: impl FnOnce() -> T,
++    observer: impl Fn(&Snapshot, Metric, bool) + 'static,
++) -> (T, Snapshot) {
++    let state = Rc::new(RefCell::new(Snapshot::default()));
++    let previous = ACTIVE.with(|active| active.replace(Some(state.clone())));
++    let active_scope = Scope(previous);
++    let prior = OBSERVER.with(|slot| slot.replace(Some((state.clone(), Rc::new(observer)))));
++    let observer_scope = ObserverScope(prior);
++    let result = operation();
++    drop(observer_scope);
++    drop(active_scope);
++    let snapshot = state.borrow().clone();
++    (result, snapshot)
++}
+ struct Scope(Option<Rc<RefCell<Snapshot>>>);
+ impl Drop for Scope {
+     fn drop(&mut self) {
+@@ -95,12 +122,12 @@
+     operation: impl FnOnce() -> anyhow::Result<T>,
+ ) -> anyhow::Result<T> {
+     let state = ACTIVE.with(|active| active.borrow().clone());
+-    let Some(state) = state else {
++    let Some(owner) = state else {
+         return operation();
+     };
+     let started = Instant::now();
+     let result = operation();
+-    let mut state = state.borrow_mut();
++    let mut state = owner.borrow_mut();
+     let work = &mut state.work[metric as usize];
+     increment(&mut work.calls, 1, &mut work.saturated);
+     increment(
+@@ -117,6 +144,26 @@
+         elapsed.min(u64::MAX as u128) as u64,
+         &mut work.saturated,
+     );
++    let sample = if matches!(
++        metric,
++        Metric::SemanticUpdate
++            | Metric::PublicationCommit
++            | Metric::FullFtsCapture
++            | Metric::EmbeddingBatch
++    ) {
++        Some(state.clone())
++    } else {
++        None
++    };
++    drop(state);
++    if let Some(sample) = sample {
++        let observer = OBSERVER.with(|slot| slot.borrow().clone());
++        if let Some((expected, observer)) = observer
++            && Rc::ptr_eq(&expected, &owner)
++        {
++            observer(&sample, metric, result.is_err());
++        }
++    }
+     result
+ }
+ 
+@@ -147,4 +194,24 @@
+         let (_, fresh) = observe(|| ());
+         assert_eq!(fresh.get(Metric::ResourceRead).calls, 0);
+     }
+-}
++
++    #[test]
++    fn nested_plain_scope_cannot_publish_under_outer_reported_owner() {
++        let samples = Rc::new(RefCell::new(Vec::new()));
++        let observed = samples.clone();
++        let (_, outer) = observe_reported(
++            || {
++                let (_, inner) = observe(|| measure(Metric::SemanticUpdate, || Ok(())));
++                assert_eq!(inner.get(Metric::SemanticUpdate).calls, 1);
++                measure(Metric::SemanticUpdate, || Ok(())).unwrap();
++            },
++            move |snapshot, _metric, _failed| {
++                observed
++                    .borrow_mut()
++                    .push(snapshot.get(Metric::SemanticUpdate).calls);
++            },
++        );
++        assert_eq!(&*samples.borrow(), &[1]);
++        assert_eq!(outer.get(Metric::SemanticUpdate).calls, 1);
++    }
++}
+--- a/scripts/benchmark-real-corpora.py
++++ b/scripts/benchmark-real-corpora.py
+@@ -776,7 +776,15 @@
+         isolate(roots, [owner])
+         fixture = clients().Fixture(args.runtime_dir, owner, command_timeout=args.command_timeout, job_timeout=args.job_timeout)
+         primary = None
++        producer_state = producer_module = None
+         try:
++            # Do not inherit opt-in telemetry from an unrelated developer shell.
++            fixture.environment.pop('AIRK_PRODUCER_PROBE', None)
++            if getattr(args, 'producer_work', False):
++                spec = importlib.util.spec_from_file_location('airk_producer_report', repository() / 'scripts/producer-work-report.py')
++                producer_module = importlib.util.module_from_spec(spec)
++                spec.loader.exec_module(producer_module)
++                producer_state = producer_module.install(fixture, uuid.uuid4().hex, runtime)
+             timed_preparation(result, 'owned_service_start_ms', fixture.start)
+             for alias, root, before in zip(('airk', 'bookbuilder'), roots, identity):
+                 data = owner / f'data-{alias}'
+@@ -838,6 +846,13 @@
+             finally:
+                 if cleanup.get('failed_stages'):
+                     result['cleanup_failed'] = True
++                if producer_state is not None:
++                    try:
++                        result['producer_work'] = producer_module.collect(fixture, producer_state)
++                    except Exception:
++                        # Reporting cannot erase the primary campaign/cleanup failure.
++                        result['producer_work'] = {'schema': 1, 'enabled': True, 'coverage': 'unavailable',
++                                                   'code': 'producer_report_unavailable'}
+     result['source_identity_preserved'] = True
+     return result
+ 
+@@ -924,6 +939,7 @@
+     parser.add_argument('--lexical-query', default='configuration')
+     parser.add_argument('--excerpt-path', help='Optional common collection-relative existing path; never written to the report')
+     parser.add_argument('--semantic', action='store_true')
++    parser.add_argument('--producer-work', action='store_true', help='Opt-in bounded content-free producer accounting from owned process logs')
+     args = parser.parse_args()
+     try:
+         report, _ = execute(args)
+--- /dev/null
++++ b/scripts/producer-work-report.py
+@@ -0,0 +1,125 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Strict bounded extraction from this campaign's owned stderr; never copy raw logs."""
++import json
++import re
++
++METRICS = ('QueueDecode', 'QueueEncode', 'QueueSelect', 'QueueRetain', 'SemanticUpdate',
++           'FullFtsCapture', 'FullFtsDocs', 'FullFtsShadow', 'FullFtsAux', 'PublicationPrepare',
++           'PublicationApply', 'PublicationCommit', 'ResourceRead', 'ResourceWrite',
++           'EmbeddingBatch', 'JournalMaps', 'JournalInputs', 'JournalMetadata')
++FIELDS = {'calls', 'failures', 'elapsed_ns', 'items', 'bytes', 'saturated'}
++HEX64 = re.compile('[0-9a-f]{64}')
++KINDS = {'index','reconcile','vectors','model_setup','rebuild','inspect','plan_inspect','configure','maintain','repair','verify','recover'}
++MAX_BYTES, MAX_LINE, MAX_RECORDS, MAX_JOBS = 16 << 20, 16384, 2048, 64
++
++def integer(value):
++    return type(value) is int and 0 <= value <= 2**64 - 1
++
++def install(fixture, nonce, runtime):
++    fixture.environment.pop('AIRK_PRODUCER_PROBE', None)
++    fixture.environment['AIRK_PRODUCER_PROBE'] = nonce + ':' + runtime['install_sha256']
++    state = {'nonce': nonce, 'runtime': runtime, 'parents': set(), 'jobs': {}, 'job_limit': False}
++    rpc, start = fixture.rpc, fixture.start
++    def tracked_rpc(*args, **kwargs):
++        result = rpc(*args, **kwargs)
++        job = result.get('job') if isinstance(result, dict) else None
++        if isinstance(job, dict) and isinstance(job.get('id'), str) and HEX64.fullmatch(job['id']) and isinstance(job.get('project'), str) and HEX64.fullmatch(job['project']):
++            if len(state['jobs']) < MAX_JOBS or job['id'] in state['jobs']:
++                old = state['jobs'].get(job['id'])
++                if old is None or old['project'] == job['project']:
++                    state['jobs'][job['id']] = {'kind': job.get('kind') if job.get('kind') in KINDS else (old.get('kind') if old else None), 'project': job['project'], 'terminal_state': job.get('state') if job.get('state') in ('succeeded', 'failed', 'canceled') else (old.get('terminal_state') if old else None)}
++            else:
++                state['job_limit'] = True
++        return result
++    def tracked_start(*args, **kwargs):
++        result = start(*args, **kwargs)
++        if fixture.child is not None:
++            state['parents'].add(fixture.child.pid)
++        return result
++    fixture.rpc, fixture.start = tracked_rpc, tracked_start
++    return state
++
++def collect(fixture, state):
++    output = {'schema': 1, 'enabled': True, 'interval_basis': 'execute_and_completed_producer_boundaries',
++              'job_terminal_basis': 'existing_owned_rpc_only', 'jobs': [], 'rejected_records': 0,
++              'records_seen': 0, 'truncated': state['job_limit'], 'read_limit_bytes': MAX_BYTES}
++    workers, jobs = {}, {}
++    expected = {'schema', 'run', 'runtime_install_sha256', 'native_version', 'project', 'job',
++                'worker', 'service', 'fencing_generation', 'boundary', 'process_id', 'sequence', 'stage', 'outcome', 'elapsed_ns', 'suppressed_samples', 'metrics'}
++    def reject(): output['rejected_records'] += 1
++    with (fixture.owner / 'service.stderr').open('rb') as stream:
++        consumed = 0
++        while consumed < MAX_BYTES and output['records_seen'] < MAX_RECORDS:
++            raw = stream.readline(min(MAX_LINE + 1, MAX_BYTES - consumed))
++            if not raw: break
++            consumed += len(raw)
++            if len(raw) > MAX_LINE or not raw.endswith(b'\n'):
++                output['truncated'] = True
++                break
++            owner = raw.startswith(b'AIRK_PRODUCER_OWNER_V1 ')
++            if not owner and not raw.startswith(b'AIRK_PRODUCER_V1 '): continue
++            output['records_seen'] += 1
++            try:
++                value = json.loads(raw.split(b' ', 1)[1])
++                if not isinstance(value, dict) or type(value.get('schema')) is not int or value.get('schema') != 1 or value.get('run') != state['nonce'] or value.get('runtime_install_sha256') != state['runtime']['install_sha256']:
++                    reject(); continue
++                if owner:
++                    if set(value) != {'schema','run','runtime_install_sha256','parent_process_id','worker_process_id','project','worker','service'} or value['parent_process_id'] not in state['parents'] or not integer(value['worker_process_id']) or not isinstance(value['project'], str) or not HEX64.fullmatch(value['project']) or len(workers) >= 128:
++                        reject(); continue
++                    if any(not isinstance(value[field],str) or re.fullmatch('[0-9a-f]{32}', value[field]) is None for field in ('worker','service')):
++                        reject(); continue
++                    if any(worker == value['worker'] and (pid != value['worker_process_id'] or binding != (value['project'],value['service'])) for (pid,worker),binding in workers.items()):
++                        reject(); continue
++                    workers[(value['worker_process_id'],value['worker'])] = (value['project'],value['service'])
++                    continue
++                if set(value) != expected or value['native_version'] != state['runtime']['version'] or value['job'] not in state['jobs'] or workers.get((value['process_id'],value['worker'])) != (value['project'],value['service']) or state['jobs'][value['job']]['project'] != value['project']:
++                    reject(); continue
++                if not all(integer(value[key]) for key in ('sequence','elapsed_ns','suppressed_samples','fencing_generation')) or not integer(value['process_id']) or value['process_id'] == 0 or value['fencing_generation'] == 0 or value['sequence'] > 130 or value['stage'] not in ('started','producer_boundary','execute_finished') or value['outcome'] not in ('in_progress','failed','completed_interval','execute_succeeded','execute_canceled','execute_non_success','execute_error'):
++                    reject(); continue
++                allowed = {'started': {'in_progress'}, 'producer_boundary': {'failed','completed_interval'},
++                           'execute_finished': {'execute_succeeded','execute_canceled','execute_non_success','execute_error'}}
++                if value['outcome'] not in allowed[value['stage']] or (value['boundary'] not in ('SemanticUpdate','PublicationCommit','FullFtsCapture','EmbeddingBatch') if value['stage'] == 'producer_boundary' else value['boundary'] is not None):
++                    reject(); continue
++                metrics = value['metrics']
++                if not isinstance(metrics, dict) or (set(metrics) != set(METRICS) if value['stage'] != 'started' else bool(metrics)):
++                    reject(); continue
++                if any(not isinstance(work,dict) or set(work) != FIELDS or type(work['saturated']) is not bool or not all(integer(work[field]) for field in FIELDS - {'saturated'}) or work['failures'] > work['calls'] for work in metrics.values()):
++                    reject(); continue
++                key = (value['job'], value['worker'])
++                if key not in jobs and len(jobs) >= MAX_JOBS:
++                    output['truncated'] = True
++                    continue
++                if key not in jobs:
++                    if value['stage'] != 'started' or value['sequence'] != 0 or value['elapsed_ns'] != 0 or value['suppressed_samples'] != 0:
++                        reject(); continue
++                    jobs[key] = {'job': value['job'], 'project': value['project'], 'process_id':value['process_id'], 'worker':value['worker'], 'service':value['service'], 'fencing_generation':value['fencing_generation'], 'first':value, 'last':value, 'first_failed_interval':None, 'observed_intervals':0, 'sequence_gap':False, 'counter_regression':False, 'invalid_framing':False}
++                row = jobs[key]
++                if row['observed_intervals']:
++                    stable = all(value[field] == row[field] for field in ('project','process_id','worker','service','fencing_generation'))
++                    if not stable or row['last']['stage'] == 'execute_finished' or value['stage'] == 'started' or value['sequence'] != row['last']['sequence'] + 1:
++                        row['invalid_framing'] = True
++                        row['sequence_gap'] |= value['sequence'] != row['last']['sequence'] + 1
++                        reject(); continue
++                previous = row['last']
++                if value['elapsed_ns'] < previous['elapsed_ns'] or value['suppressed_samples'] < previous['suppressed_samples'] or any(
++                        name in previous['metrics'] and any(value['metrics'][name][field] < previous['metrics'][name][field]
++                            for field in FIELDS - {'saturated'}) for name in value['metrics']):
++                    row['counter_regression'] = True
++                row['last'] = value
++                row['observed_intervals'] += 1
++                if value['outcome'] in ('failed','execute_error','execute_non_success','execute_canceled') and row['first_failed_interval'] is None:
++                    row['first_failed_interval'] = value
++            except (ValueError, TypeError, KeyError):
++                reject()
++        if consumed >= MAX_BYTES or output['records_seen'] >= MAX_RECORDS:
++            output['truncated'] = True
++    for row in jobs.values():
++        row['partial'] = row['first']['stage'] != 'started' or row['last']['stage'] != 'execute_finished' or row['sequence_gap'] or row['counter_regression'] or row['invalid_framing']
++        row['job_kind'] = state['jobs'][row['job']].get('kind')
++        row['corpus_alias'] = next((alias for alias, project in fixture.projects.items() if alias in ('airk','bookbuilder') and project.get('binding') == row['project']), None)
++        row['intermediate_intervals_suppressed'] = row['last']['suppressed_samples']
++        row['job_terminal_observed'] = state['jobs'][row['job']]['terminal_state']
++        output['jobs'].append(row)
++    output['missing_job_intervals'] = sum(not any(key[0] == job for key in jobs) for job in state['jobs'])
++    output['coverage'] = 'partial' if output['truncated'] or output['rejected_records'] or output['missing_job_intervals'] or any(row['partial'] for row in output['jobs']) else ('observed' if jobs else 'not_observed')
++    return output
+--- /dev/null
++++ b/scripts/test-producer-work-report.py
+@@ -0,0 +1,145 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Draft parser fixtures only; no native service or source corpus is touched."""
++import importlib.util
++import json
++from pathlib import Path
++import tempfile
++import types
++import unittest
++from unittest.mock import Mock, patch
++
++spec = importlib.util.spec_from_file_location('producer_report', Path(__file__).with_name('producer-work-report.py'))
++report = importlib.util.module_from_spec(spec)
++spec.loader.exec_module(report)
++
++class ParserCases(unittest.TestCase):
++    def fixture(self):
++        owner = tempfile.TemporaryDirectory()
++        self.addCleanup(owner.cleanup)
++        fixture = types.SimpleNamespace(owner=Path(owner.name), projects={'airk':{'binding':'d'*64}})
++        state = {'nonce':'a'*32, 'runtime':{'install_sha256':'b'*64,'version':'1.8.0'},
++                 'parents':{10}, 'jobs':{'c'*64:{'project':'d'*64,'terminal_state':'failed'}}, 'job_limit':False}
++        owned = {'schema':1,'run':'a'*32,'runtime_install_sha256':'b'*64,
++                 'parent_process_id':10,'worker_process_id':11,'project':'d'*64,'worker':'f'*32,'service':'0'*32}
++        return fixture, state, owned
++    def event(self, stage, sequence, outcome, calls=0):
++        return {'schema':1,'run':'a'*32,'runtime_install_sha256':'b'*64,'native_version':'1.8.0',
++                'job':'c'*64,'project':'d'*64,'process_id':11,'worker':'f'*32,'service':'0'*32,'fencing_generation':1,'sequence':sequence,'stage':stage,
++                'outcome':outcome,'elapsed_ns':sequence,'suppressed_samples':0,
++                'boundary':'SemanticUpdate' if stage=='producer_boundary' else None,
++                'metrics':{} if stage=='started' else {name:{'calls':calls,'failures':0,'elapsed_ns':calls,
++                    'items':calls,'bytes':calls,'saturated':False} for name in report.METRICS}}
++    def write(self, fixture, owner, events):
++        lines = [b'AIRK_PRODUCER_OWNER_V1 '+json.dumps(owner).encode()+b'\n']
++        lines += [b'AIRK_PRODUCER_V1 '+json.dumps(event).encode()+b'\n' for event in events]
++        (fixture.owner/'service.stderr').write_bytes(b''.join(lines))
++    def test_failure_survives_later_success_and_missing_finish_is_partial(self):
++        fixture,state,owner=self.fixture()
++        self.write(fixture,owner,[self.event('started',0,'in_progress'),
++            self.event('producer_boundary',1,'failed',1),self.event('producer_boundary',2,'completed_interval',2)])
++        observed=report.collect(fixture,state)
++        row=observed['jobs'][0]
++        self.assertEqual(row['first_failed_interval']['sequence'],1)
++        self.assertTrue(row['partial'])
++        self.assertEqual(row['job_terminal_observed'],'failed')
++    def test_unowned_runtime_and_private_extra_fields_are_rejected_without_copy(self):
++        fixture,state,owner=self.fixture()
++        private=self.event('producer_boundary',1,'failed',1)
++        private['private_path']='SECRET_SOURCE_PATH'
++        wrong=self.event('execute_finished',2,'execute_error',2)
++        wrong['runtime_install_sha256']='e'*64
++        self.write(fixture,owner,[private,wrong])
++        observed=report.collect(fixture,state)
++        self.assertEqual(observed['rejected_records'],2)
++        self.assertNotIn('SECRET_SOURCE_PATH',json.dumps(observed))
++        self.assertEqual(observed['coverage'],'partial')
++    def test_finished_execute_is_not_fabricated_terminal_job_and_counter_reset_is_partial(self):
++        fixture,state,owner=self.fixture()
++        state['jobs']['c'*64]['terminal_state']=None
++        self.write(fixture,owner,[self.event('started',0,'in_progress'),
++            self.event('producer_boundary',1,'completed_interval',9),self.event('execute_finished',2,'execute_succeeded',1)])
++        observed=report.collect(fixture,state)
++        row=observed['jobs'][0]
++        self.assertTrue(row['counter_regression'])
++        self.assertTrue(row['partial'])
++        self.assertIsNone(row['job_terminal_observed'])
++
++    def test_start_requires_zero_sequence_and_complete_initial_frame(self):
++        for field, value in [('sequence',5),('elapsed_ns',1),('suppressed_samples',1)]:
++            with self.subTest(field=field):
++                fixture,state,owner=self.fixture()
++                start=self.event('started',0,'in_progress'); start[field]=value
++                self.write(fixture,owner,[start,self.event('execute_finished',6,'execute_error',1)])
++                observed=report.collect(fixture,state)
++                self.assertEqual(observed['coverage'],'partial')
++                self.assertEqual(observed['jobs'],[])
++                self.assertEqual(observed['missing_job_intervals'],1)
++                self.assertEqual(observed['rejected_records'],2)
++
++    def test_identity_phase_and_terminal_violations_stay_partial_after_valid_finish(self):
++        for violation in ('fence','process','duplicate_start','duplicate_finish','after_finish','sequence_gap'):
++            with self.subTest(violation=violation):
++                fixture,state,owner=self.fixture()
++                start=self.event('started',0,'in_progress')
++                finish=self.event('execute_finished',1,'execute_error',1)
++                if violation == 'fence':
++                    bad=self.event('producer_boundary',1,'failed',1); bad['fencing_generation']=2
++                    events=[start,bad,finish]
++                elif violation == 'process':
++                    bad=self.event('producer_boundary',1,'failed',1); bad['process_id']=12
++                    events=[start,bad,finish]
++                elif violation == 'duplicate_start': events=[start,dict(start),finish]
++                elif violation == 'duplicate_finish': events=[start,finish,self.event('execute_finished',2,'execute_error',2)]
++                elif violation == 'after_finish': events=[start,finish,self.event('producer_boundary',2,'failed',2)]
++                else: events=[start,self.event('producer_boundary',2,'failed',1),finish]
++                self.write(fixture,owner,events)
++                observed=report.collect(fixture,state)
++                self.assertEqual(observed['coverage'],'partial')
++                self.assertGreater(observed['rejected_records'],0)
++                self.assertEqual(observed['jobs'][0]['last']['sequence'],1)
++
++    def test_valid_start_boundary_finish_is_complete_correlated_interval(self):
++        fixture,state,owner=self.fixture()
++        self.write(fixture,owner,[self.event('started',0,'in_progress'),
++            self.event('producer_boundary',1,'failed',1),self.event('execute_finished',2,'execute_error',2)])
++        observed=report.collect(fixture,state)
++        self.assertEqual(observed['coverage'],'observed')
++        self.assertFalse(observed['jobs'][0]['partial'])
++        self.assertEqual(observed['jobs'][0]['first_failed_interval']['sequence'],1)
++
++    def test_probe_import_install_failures_still_close_owned_fixture_and_preserve_primary(self):
++        spec=importlib.util.spec_from_file_location('producer_benchmark_fixture',Path(__file__).with_name('benchmark-real-corpora.py'))
++        bench=importlib.util.module_from_spec(spec); spec.loader.exec_module(bench)
++        for stage in ('import','install'):
++            for close_fails in (False,True):
++                with self.subTest(stage=stage,close_fails=close_fails), tempfile.TemporaryDirectory() as temporary:
++                    owner=Path(temporary).resolve(); opened=[]
++                    class Fixture:
++                        def __init__(self,runtime,directory,**kwargs):
++                            self.owner=directory; self.environment={}; self.child=None
++                            stream=(directory/'service.stderr').open('wb'); opened.append(stream)
++                            def close():
++                                stream.close()
++                                if close_fails: raise OSError('injected close failure')
++                            self.log=types.SimpleNamespace(close=close)
++                    args=types.SimpleNamespace(airk=owner/'a',bookbuilder=owner/'b',runtime_dir=owner/'runtime',
++                        report=owner/'report',state_parent=owner,runtime_sha256='b'*64,samples=1,semantic=False,
++                        excerpt_path=None,command_timeout=1,job_timeout=1,producer_work=True)
++                    primary=RuntimeError('injected telemetry preparation failure')
++                    fake_module=types.SimpleNamespace(install=Mock(side_effect=primary))
++                    fake_spec=types.SimpleNamespace(loader=types.SimpleNamespace(exec_module=lambda module: None))
++                    result={}
++                    with patch.object(bench,'isolate',return_value=[owner/'a',owner/'b']), \
++                         patch.object(bench,'source_identity',return_value={}), \
++                         patch.object(bench,'verify_runtime',return_value={'install_sha256':'b'*64,'version':'1.8.0'}), \
++                         patch.object(bench,'environment_facts',return_value={}), \
++                         patch.object(bench,'clients',return_value=types.SimpleNamespace(Fixture=Fixture)), \
++                         patch.object(bench.importlib.util,'spec_from_file_location',side_effect=primary if stage=='import' else None,return_value=fake_spec), \
++                         patch.object(bench.importlib.util,'module_from_spec',return_value=fake_module):
++                        with self.assertRaises(RuntimeError) as error: bench.run(args,result)
++                    self.assertIs(error.exception,primary)
++                    self.assertTrue(opened[0].closed)
++                    self.assertEqual(result['cleanup_failed'],close_fails)
++                    self.assertEqual(result['cleanup_detail']['failed_stages'],['log_close'] if close_fails else [])
++
++if __name__ == '__main__': unittest.main()

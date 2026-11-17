@@ -1,0 +1,526 @@
+--- /dev/null
++++ b/crates/airk-cli/src/runtime_legacy_retirement.rs
+@@ -0,0 +1,108 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Explicit local runtime administration; never an evidence or MCP write route.
++use super::*;
++use airk_core::{catalog_upgrade_recovery::{UpgradeRetirementPreview, UpgradeRetirementReply,
++    UpgradeRetirementRequest}, identity::Sha256Digest, index_catalog::IndexId};
++use airk_store::service::registry::catalog::upgrade::{self, CatalogUpgrade};
++use std::io::Read;
++
++fn input<T: serde::de::DeserializeOwned>() -> Result<T> {
++    let mut bytes = Vec::new();
++    std::io::stdin().take(airk_core::service::MAX_FRAME_BYTES as u64 + 1).read_to_end(&mut bytes)?;
++    ensure!(bytes.len() <= airk_core::service::MAX_FRAME_BYTES, "legacy retirement input exceeds bound");
++    Ok(serde_json::from_slice(&bytes)?)
++}
++fn installer(root: &Path) -> Result<(PathBuf, Sha256Digest)> {
++    let identity = runtime_pair::engine_identity()?;
++    let control = layout::catalog_control(root, identity)?;
++    Ok((control, identity))
++}
++fn observation(root: &Path, request: &UpgradeRetirementRequest) -> Result<Option<UpgradeRetirementReply>> {
++    request.validate()?;
++    ensure!(request.caller == crate::local_ipc::caller_identity()?, "legacy retirement caller differs from authenticated native caller");
++    ensure!(runtime_pair::engine_identity()? == request.installer_identity,
++        "legacy retirement requires the originally admitted candidate");
++    let control = layout::saved_control(root)?;
++    let saved = upgrade::pending(&control)?.context("retained legacy upgrade journal unavailable")?;
++    ensure!(saved.plan.id == request.upgrade_id && saved.plan_digest == request.plan_digest
++        && saved.plan.installer_identity == request.installer_identity, "retirement plan differs");
++    layout::validate_catalog_control(&control, saved.plan.namespace)?;
++    let reply = upgrade::recovery::legacy_retirement_observation(&control, request)?;
++    if let Some(reply) = &reply { reply.validate()?; }
++    Ok(reply)
++}
++pub(super) fn candidates(root: &Path) -> Result<serde_json::Value> {
++    let _lock = existing_install_lock(root)?;
++    let (control, identity) = installer(root)?;
++    let saved = upgrade::pending(&control)?.context("no pending legacy upgrade")?;
++    ensure!(saved.plan.installer_identity == identity, "saved legacy installer differs");
++    let mut observations = Vec::new();
++    if let Some(journal) = &saved.retirement_recovery {
++        for authorization in &journal.authorizations {
++            observations.push(upgrade::recovery::legacy_retirement_observation(&control,
++                &authorization.preview.request)?.context("saved retirement observation unavailable")?);
++        }
++    }
++    let value = serde_json::json!({"schema":1,"plan":saved.plan,"saved_observations":observations});
++    ensure!(serde_json::to_vec(&value)?.len() <= airk_core::service::MAX_FRAME_BYTES,
++        "legacy candidate list exceeds reply budget");
++    Ok(value)
++}
++pub(super) fn review(root: &Path, index: IndexId) -> Result<UpgradeRetirementReply> {
++    let _lock = existing_install_lock(root)?;
++    let (control, identity) = installer(root)?;
++    let owner = CatalogUpgrade::resume_for_installer(&control, identity)?;
++    let request = owner.prepare_legacy_retirement_request(index, crate::local_ipc::caller_identity()?,
++        airk_kernel::service_broker::new_instance_id()?)?;
++    let preview = owner.preview_legacy_retirement(&request)?;
++    let reply = UpgradeRetirementReply::Review { review_digest: preview.identity()?, preview };
++    reply.validate()?;
++    Ok(reply)
++}
++pub(super) async fn authorize(root: &Path) -> Result<UpgradeRetirementReply> {
++    #[derive(Deserialize)]
++    #[serde(deny_unknown_fields)]
++    struct Reviewed { preview: UpgradeRetirementPreview, review_digest: Sha256Digest }
++    let reviewed: Reviewed = input()?;
++    reviewed.preview.validate()?;
++    ensure!(reviewed.preview.identity()? == reviewed.review_digest, "legacy review changed");
++    let request = reviewed.preview.request;
++    ensure!(request.caller == crate::local_ipc::caller_identity()?, "legacy retirement caller differs from authenticated native caller");
++    let candidate;
++    {
++        let _lock = existing_install_lock(root)?;
++        let (control, identity) = installer(root)?;
++        ensure!(identity == request.installer_identity, "crossed retirement candidate");
++        let owner = CatalogUpgrade::resume_for_installer(&control, identity)?;
++        candidate = activation::legacy_retirement_candidate(root, &control, identity)?;
++        // Validate pending candidate BEFORE saving any authorization. Native Store
++        // then compares exact current preview, saved caller/key and all proofs.
++        owner.authorize_legacy_retirement(&request, reviewed.review_digest)?;
++    } // Release BOTH the catalog maintenance owner and installer lock before activation.
++    activate(root, &candidate).await?;
++    observation(root, &request)?.context("saved retirement outcome unavailable; check exact receipt")
++}
++pub(super) fn receipt(root: &Path) -> Result<serde_json::Value> {
++    let request: UpgradeRetirementRequest = input()?;
++    // Exact durable lookup only: no owner acquisition, source/data open, resume or replay.
++    Ok(serde_json::json!({"schema":1,"observation":observation(root, &request)?}))
++}
++pub(super) async fn resume(root: &Path) -> Result<UpgradeRetirementReply> {
++    let request: UpgradeRetirementRequest = input()?;
++    match observation(root, &request)? {
++        Some(UpgradeRetirementReply::Applied { .. }) => (),
++        Some(UpgradeRetirementReply::Authorized { .. }) => (),
++        _ => bail!("no exact accepted retirement to resume; authorization is never replayed"),
++    }
++    let candidate = {
++        let _lock = existing_install_lock(root)?;
++        let Some(pending) = activation::pending(root)? else {
++            return observation(root, &request)?.context("accepted retirement outcome unavailable");
++        };
++        let _ = pending;
++        let control = layout::saved_control(root)?;
++        activation::legacy_retirement_candidate(root, &control, request.installer_identity)?
++    };
++    activate(root, &candidate).await?;
++    observation(root, &request)?.context("accepted retirement outcome remains unavailable")
++}
+--- a/crates/airk-cli/src/runtime_activation.rs
++++ b/crates/airk-cli/src/runtime_activation.rs
+@@ -397,6 +397,24 @@
+     );
+     resume(root).await?;
+     Ok(true)
++}
++
++/// Read-only binding for explicit legacy retirement before its authorization effect.
++pub(super) fn legacy_retirement_candidate(
++    root: &Path,
++    control: &Path,
++    installer: airk_core::identity::Sha256Digest,
++) -> Result<String> {
++    let intent = pending(root)?.context("legacy activation intent missing")?;
++    intent.validate(root)?;
++    ensure!(intent.phase == Phase::Probe && intent.control == control
++        && (selection(root)? == Some(intent.selected())
++            || (intent.prior.is_none() && selection(root)?.is_none())),
++        "legacy retirement requires its exact saved installer activation");
++    let (main, _) = verify_runtime(root, &intent.candidate)?;
++    ensure!(runtime_pair::engine_identity_at(&main)? == installer,
++        "pending legacy activation candidate changed");
++    Ok(intent.candidate)
+ }
+ 
+ /// Resume under the same installer ownership, preserving the public selection.
+--- a/crates/airk-cli/src/runtime_install.rs
++++ b/crates/airk-cli/src/runtime_install.rs
+@@ -44,6 +44,8 @@
+ pub(crate) mod macos_login;
+ #[path = "runtime_payload_repair.rs"]
+ mod payload_repair;
++#[path = "runtime_legacy_retirement.rs"]
++mod legacy_retirement;
+ #[path = "runtime_retirement.rs"]
+ mod retirement;
+ #[path = "runtime_snapshot.rs"]
+@@ -313,6 +315,17 @@
+         #[arg(last = true, required = true)]
+         args: Vec<OsString>,
+     },
++    /// Review saved unavailable legacy indexes. No source/data reads or activation.
++    LegacyRetirementCandidates { #[arg(long)] install_dir: PathBuf },
++    /// Create one exact retirement review from a saved upgrade index identity.
++    LegacyRetirementReview { #[arg(long)] install_dir: PathBuf,
++        #[arg(long)] index_id: airk_core::index_catalog::IndexId },
++    /// Explicitly authorize exact reviewed stdin JSON and resume the same candidate.
++    LegacyRetirementAuthorize { #[arg(long)] install_dir: PathBuf },
++    /// Read only the exact saved request on stdin; never authorize/replay/resume.
++    LegacyRetirementReceipt { #[arg(long)] install_dir: PathBuf },
++    /// Explicit continuation of an already accepted exact request on stdin.
++    LegacyRetirementResume { #[arg(long)] install_dir: PathBuf },
+     /// Bounded executable/paired-helper self-test, without collection access or inference.
+     SelfTest,
+     /// Installer-only read of a fenced, inactive catalog upgrade. No activation.
+--- a/crates/airk-cli/src/runtime_install_commands.rs
++++ b/crates/airk-cli/src/runtime_install_commands.rs
+@@ -4,6 +4,11 @@
+ 
+ pub async fn run(command: &RuntimeCommand) -> Result<()> {
+     let output = match command {
++        RuntimeCommand::LegacyRetirementCandidates { install_dir } => legacy_retirement::candidates(install_dir)?,
++        RuntimeCommand::LegacyRetirementReview { install_dir, index_id } => serde_json::to_value(legacy_retirement::review(install_dir, *index_id)?)?,
++        RuntimeCommand::LegacyRetirementAuthorize { install_dir } => serde_json::to_value(legacy_retirement::authorize(install_dir).await?)?,
++        RuntimeCommand::LegacyRetirementReceipt { install_dir } => legacy_retirement::receipt(install_dir)?,
++        RuntimeCommand::LegacyRetirementResume { install_dir } => serde_json::to_value(legacy_retirement::resume(install_dir).await?)?,
+         RuntimeCommand::SourceScope {
+             install_dir,
+             expected_control,
+--- /dev/null
++++ b/packages/vscode/src/runtimeLegacyRetirement.ts
+@@ -0,0 +1,108 @@
++// SPDX-License-Identifier: Apache-2.0
++// Trusted native runtime administration. In-memory only; never a saved evidence session.
++import { ServiceError, record, RecordValue, identifier } from './serviceClient';
++import { catalogId } from './indexingCatalog';
++import { isDeepStrictEqual } from 'node:util';
++const LIMIT=64*1024;
++export interface LegacyRetirementHost {
++    legacyRetirementCandidates():Promise<RecordValue>;
++    legacyRetirementReview(index:string):Promise<RecordValue>;
++    legacyRetirementAuthorize(review:RecordValue):Promise<RecordValue>;
++    legacyRetirementReceipt(request:RecordValue):Promise<RecordValue|null>;
++    legacyRetirementResume(request:RecordValue):Promise<RecordValue>;
++}
++function bounded(value:unknown):RecordValue {
++    if(Buffer.byteLength(JSON.stringify(value))>LIMIT)throw new ServiceError('legacy_retirement_reply_oversize');
++    return record(value);
++}
++function nonnegative(value:unknown):number{
++    if(typeof value!=='number'||!Number.isSafeInteger(value)||value<0)throw new ServiceError('invalid_legacy_retirement_count');return value;
++}
++export function validateRetirementReply(value:unknown,expected?:RecordValue):RecordValue {
++    const reply=bounded(value);
++    if(!['review','authorized','applied'].includes(String(reply.status)))throw new ServiceError('invalid_legacy_retirement_reply');
++    const auth=reply.status==='applied'?record(record(reply.receipt).authorization):reply.status==='authorized'?record(reply.authorization):reply;
++    const preview=record(auth.preview),request=record(preview.request);
++    if(preview.schema!==1||request.schema!==1||preview.source_configuration!=='pending_metadata'
++        ||preview.effect!=='retire_and_cancel_with_cleanup_pending')throw new ServiceError('invalid_legacy_retirement_review');
++    identifier(auth.review_digest,32);identifier(preview.request_digest,32);catalogId(request.index_id,'idx_');
++    const key=record(request.key),registration=record(request.registration),work=record(preview.affected_work);
++    identifier(request.caller,16);identifier(request.upgrade_id,16);identifier(key.namespace,16);identifier(key.nonce,16);nonnegative(key.epoch);
++    for(const value of [request.plan_digest,request.installer_identity,request.expected_authorizations_digest,
++        preview.original_backup_digest,preview.original_legacy_data_digest,work.job_ids_digest])identifier(value,32);
++    if(nonnegative(work.jobs)>1024)throw new ServiceError('invalid_legacy_retirement_work');
++    identifier(registration.binding,32);
++    for(const value of [registration.root,registration.data_root]){
++        if(typeof value!=='string'||!value.length||value.length>4096||/[\u0000-\u001f\u007f]/.test(value))throw new ServiceError('invalid_legacy_retirement_registration');
++    }
++    if(typeof registration.collection!=='string'||!registration.collection.length||registration.collection.length>128)throw new ServiceError('invalid_legacy_retirement_registration');
++    if(expected&&!isDeepStrictEqual(request,expected))throw new ServiceError('crossed_legacy_retirement_request');
++    if(reply.status==='applied'){
++        const receipt=record(reply.receipt);
++        if(receipt.schema!==1||receipt.cleanup!=='pending'||nonnegative(receipt.catalog_revision)<1
++            ||!isDeepStrictEqual(receipt.canceled_work,work))throw new ServiceError('invalid_legacy_retirement_cleanup');
++        identifier(receipt.post_effect_legacy_data_digest,32);
++    }
++    return reply; // Full original body, including future native fields, is retained and exported.
++}
++export function retirementRequest(reply:RecordValue):RecordValue {
++    const auth=reply.status==='applied'?record(record(reply.receipt).authorization):reply.status==='authorized'?record(reply.authorization):reply;
++    return record(record(auth.preview).request);
++}
++export class LegacyRetirementSession {
++    private request?:RecordValue;
++    private review?:RecordValue;
++    private dispatched=false;
++    private generation=0;
++    last?:RecordValue;
++    get uncertainOrAccepted():boolean{return this.dispatched;}
++    constructor(private readonly host:LegacyRetirementHost,private readonly trusted:()=>boolean){}
++    restore(value:unknown):RecordValue {
++        this.check(this.generation);if(this.request)throw new ServiceError('legacy_retirement_session_already_selected');
++        const reply=validateRetirementReply(value);
++        if(reply.status==='review')throw new ServiceError('legacy_retirement_saved_authorization_required');
++        const auth=reply.status==='applied'?record(record(reply.receipt).authorization):record(reply.authorization);
++        this.review={status:'review',preview:structuredClone(auth.preview),review_digest:auth.review_digest};
++        this.request=structuredClone(retirementRequest(reply));this.dispatched=true;return this.last=reply;
++    }
++    stop():void {this.generation++;} // Stops UI work; accepted native work is not canceled or replayed.
++    private check(g:number):void {if(!this.trusted()||g!==this.generation)throw new ServiceError('legacy_retirement_review_stopped');}
++    async candidates():Promise<RecordValue>{const g=this.generation;this.check(g);const r=bounded(await this.host.legacyRetirementCandidates());this.check(g);return r;}
++    async prepare(index:string):Promise<RecordValue>{
++        if(this.dispatched)throw new ServiceError('check_exact_legacy_retirement_receipt_first');
++        const g=this.generation;this.check(g);catalogId(index,'idx_');
++        const reply=validateRetirementReply(await this.host.legacyRetirementReview(index));this.check(g);
++        if(reply.status!=='review'||retirementRequest(reply).index_id!==index)throw new ServiceError('crossed_legacy_retirement_review');
++        this.review=structuredClone(reply);this.request=structuredClone(retirementRequest(reply));return this.last=reply;
++    }
++    async authorize(confirmed:RecordValue):Promise<RecordValue>{
++        const g=this.generation;this.check(g);
++        if(this.dispatched||!this.review||!isDeepStrictEqual(confirmed,this.review)||!this.request)throw new ServiceError('legacy_retirement_review_changed');
++        this.dispatched=true; // Set before dispatch; a lost reply can only trigger a read-only exact lookup.
++        const reply=this.accept(await this.host.legacyRetirementAuthorize(this.review));this.check(g);
++        return this.last=reply;
++    }
++    async reconcile():Promise<RecordValue|null>{
++        const g=this.generation;this.check(g);if(!this.request)throw new ServiceError('legacy_retirement_request_missing');
++        const value=await this.host.legacyRetirementReceipt(this.request);this.check(g);
++        if(value===null)return null; // Keep last complete evidence; absence never authorizes replay.
++        return this.last=this.accept(value);
++    }
++    async resume():Promise<RecordValue>{
++        const g=this.generation;this.check(g);
++        if(!this.request||!['authorized','applied'].includes(String(this.last?.status)))throw new ServiceError('legacy_retirement_not_authorized');
++        const reply=this.accept(await this.host.legacyRetirementResume(this.request));this.check(g);
++        return this.last=reply;
++    }
++    private accept(value:unknown):RecordValue {
++        const reply=validateRetirementReply(value,this.request);
++        const auth=reply.status==='applied'?record(record(reply.receipt).authorization):record(reply.authorization);
++        if(!this.review||reply.status==='review'||!isDeepStrictEqual(auth.preview,this.review.preview)
++            ||auth.review_digest!==this.review.review_digest)throw new ServiceError('crossed_legacy_retirement_review');
++        return reply;
++    }
++}
++export function retirementJson(reply:RecordValue):string{return JSON.stringify(reply,null,2);}
++export function retirementMarkdown(reply:RecordValue):string {
++    return '# AIRK legacy upgrade retirement\n\nNative runtime administration; source files are preserved. Physical cleanup remains pending. This is not indexing/read authority. No recovery evidence is persisted by this view.\n\n```json\n'+retirementJson(reply)+'\n```\n';
++}
+--- a/packages/vscode/src/serviceBootstrap.ts
++++ b/packages/vscode/src/serviceBootstrap.ts
+@@ -5,6 +5,7 @@
+ import { runText } from './native';
+ import { NativeControlTransport, ServiceClient, ServiceError, record, RecordValue, identifier, count, ProjectConfigurationRequest, validateConfigurationRequest } from './serviceClient';
+ import type { LifecycleIntent } from './serviceIntents';
++import { validateRetirementReply } from './runtimeLegacyRetirement';
+ 
+ /**
+  * Whether activation may upgrade the installed runtime to the bundled one without asking:
+@@ -406,6 +407,28 @@
+         if(value.schema!==1||value.metadata_only!==true||value.payload_verified!==false)throw new ServiceError('invalid_bootstrap_snapshot');
+         return value;
+     }
++    private async legacyAdmin(action:string,input?:RecordValue,index?:string):Promise<RecordValue|null>{
++        this.active();const bundle=await this.verified();
++        const location=await this.invoke(bundle.main,['runtime','location','--channel',this.options.channel]);
++        const install=this.options.installDir??safePath(location.install_dir);
++        const args=['runtime',`legacy-retirement-${action}`,'--install-dir',install];
++        if(index){if(!/^idx_[0-9a-f]{32}$/.test(index))throw new ServiceError('invalid_legacy_retirement_index');args.push('--index-id',index);}
++        // Use the paired verified bundled candidate, never an older selected predecessor.
++        // Native admission must independently match the saved installer identity.
++        const result=await this.run(bundle.main,args,180000,input?JSON.stringify(input):undefined);this.active();
++        if(action==='receipt'){
++            if(result.schema!==1||!Object.hasOwn(result,'observation'))throw new ServiceError('invalid_legacy_retirement_observation');
++            return result.observation===null?null:validateRetirementReply(result.observation);
++        }
++        return action==='candidates'?record(result):validateRetirementReply(result);
++    }
++    async legacyRetirementCandidates():Promise<RecordValue>{return record(await this.legacyAdmin('candidates'));}
++    async legacyRetirementReview(index:string):Promise<RecordValue>{return record(await this.legacyAdmin('review',undefined,index));}
++    async legacyRetirementAuthorize(review:RecordValue):Promise<RecordValue>{
++        return record(await this.legacyAdmin('authorize',{preview:review.preview,review_digest:review.review_digest}));
++    }
++    async legacyRetirementReceipt(request:RecordValue):Promise<RecordValue|null>{return this.legacyAdmin('receipt',request);}
++    async legacyRetirementResume(request:RecordValue):Promise<RecordValue>{return record(await this.legacyAdmin('resume',request));}
+     async repair(binding:RuntimeBinding,preview?:string):Promise<RecordValue>{
+         this.active();
+         if(binding.lifecycle!=='on-demand')throw new ServiceError('runtime_payload_managed_externally');
+--- a/packages/vscode/src/serviceExtension.ts
++++ b/packages/vscode/src/serviceExtension.ts
+@@ -8,6 +8,7 @@
+ import { setupAgent, AgentSetupHost } from './agentSetup';
+ import { launchArgs, LaunchSpec, McpVerification, unifiedEntry, ServerEntry, UNIFIED_TOOLS } from './model';
+ import { probeMcp, runText } from './native';
++import { LegacyRetirementSession, retirementJson, retirementMarkdown } from './runtimeLegacyRetirement';
+ import { automaticUpgrade, BootstrapObservation, nativeRunner, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
+ import { ConsoleRuntime, ServiceConsole, serviceRuntimeOptions } from './serviceConsole';
+ import { identifier, record, ServiceError } from './serviceClient';
+@@ -68,6 +69,7 @@
+     private readonly status=vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left,40);
+     private readonly workspace:ServiceWorkspace;
+     private host?:RuntimeHost;
++    private legacyRetirement?:LegacyRetirementSession;
+     private uninstallDirectory?:string;
+     private binding?:RuntimeBinding;
+     private diagnosticObservation?:BootstrapObservation;
+@@ -820,6 +822,77 @@
+     }
+     /** Read-only inventory first; logs/caches are purged only after a reviewed plan digest,
+      * and project indexes go through Management's own unregister confirmation. */
++    /** Runtime administration remains separate from evidence tools and SessionStore. */
++    async reviewLegacyUpgrade():Promise<void>{
++        this.trusted();const generation=this.generation;let stopped=false;
++        const current=()=>{this.trusted();if(stopped||generation!==this.generation)throw new ServiceError('legacy_retirement_review_stopped');};
++        const session=this.legacyRetirement??=new LegacyRetirementSession(this.runtime(),()=>{
++            try{this.trusted();return true;}catch{return false;}
++        });
++        return vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:'AIRK legacy upgrade retirement',cancellable:true},async(_progress,token)=>{
++        const cancellation=token.onCancellationRequested(()=>{stopped=true;session.stop();});
++        try{
++        if(!session.last){
++            const candidates=await session.candidates();current();
++            const plan=record(candidates.plan);
++            if(candidates.schema!==1||!Array.isArray(plan.indexes)||!Array.isArray(candidates.saved_observations))throw new ServiceError('invalid_legacy_retirement_candidates');
++            const items:{label:string;description:string;row:Record<string,unknown>;saved?:unknown}[]=plan.indexes.map(value=>{
++                const row=record(value),registration=record(row.registration);
++                return {label:String(registration.root),description:String(row.index_id),row};
++            });
++            for(const value of candidates.saved_observations){
++                const saved=record(value);items.unshift({label:'Check saved retirement receipt',description:String(saved.status),row:{},saved});
++            }
++            const selected=await vscode.window.showQuickPick(items,{title:'AIRK: Review unavailable legacy index retirement',
++                placeHolder:'Saved upgrade indexes only. Sources and physical storage are preserved.'});
++            current();if(!selected){session.stop();return;}
++            if(selected.saved)session.restore(selected.saved);else await session.prepare(String(selected.row.index_id));current();
++        }
++        for(;;){
++            current();const reply=session.last;if(!reply)throw new ServiceError('legacy_retirement_review_missing');
++            const actions=['Show complete details','Copy JSON','Copy Markdown','Export JSON','Export Markdown'];
++            if(!session.uncertainOrAccepted)actions.push('Authorize reviewed retirement');
++            else actions.push('Check exact receipt');
++            if(['authorized','applied'].includes(String(reply.status)))actions.push('Resume accepted same-candidate activation');
++            actions.push('Stop');
++            const action=await vscode.window.showQuickPick(actions,{title:`AIRK legacy retirement: ${reply.status}`,
++                placeHolder:'Logical retirement, physical cleanup and activation readiness are separate. Recovery data stays in memory only.'});
++            current();if(!action||action==='Stop'){session.stop();return;}
++            if(action==='Show complete details'){
++                const document=await vscode.workspace.openTextDocument({language:'json',content:retirementJson(reply)});current();
++                await vscode.window.showTextDocument(document);continue;
++            }
++            if(action==='Copy JSON'||action==='Copy Markdown'){
++                await vscode.env.clipboard.writeText(action==='Copy JSON'?retirementJson(reply):retirementMarkdown(reply));continue;
++            }
++            if(action==='Export JSON'||action==='Export Markdown'){
++                const target=await vscode.window.showSaveDialog({title:'Export complete native legacy retirement receipt',
++                    filters:action==='Export JSON'?{JSON:['json']}:{Markdown:['md']}});current();
++                if(target)await vscode.workspace.fs.writeFile(target,Buffer.from(action==='Export JSON'?retirementJson(reply):retirementMarkdown(reply)));
++                continue;
++            }
++            try{
++                if(action==='Authorize reviewed retirement'){
++                    const yes=await vscode.window.showWarningMessage('Retire only this reviewed unavailable legacy index and cancel its exact accepted work?',
++                        {modal:true,detail:'This is a native administration mutation. Sources and physical storage are preserved. Physical cleanup remains pending. The same candidate may resume activation only after native retirement commits.'},'Authorize retirement');
++                    current();if(yes!=='Authorize retirement')continue;
++                    await session.authorize(reply);current();
++                }else if(action==='Check exact receipt'){
++                    const saved=await session.reconcile();current();
++                    if(saved===null)await vscode.window.showWarningMessage('The exact receipt is unavailable. The previous full observation is retained; no authorization or job was replayed.');
++                }else if(action==='Resume accepted same-candidate activation'){
++                    const yes=await vscode.window.showWarningMessage('Resume this already accepted retirement through the same verified candidate?',
++                        {modal:true,detail:'This continues native activation. It creates no new retirement authorization and does not infer readiness from the logical receipt.'},'Resume accepted activation');
++                    current();if(yes==='Resume accepted activation'){await session.resume();current();}
++                }
++            }catch(error){
++                current();this.output.appendLine(String(error));
++                await vscode.window.showWarningMessage('The native outcome may be incomplete or unknown. Check the exact saved receipt; authorization is never replayed automatically.');
++            }
++        }
++        }finally{cancellation.dispose();}
++        });
++    }
+     async reviewData(run=nativeRunner):Promise<void>{
+         this.trusted();const binding=await this.runtime().ensure();this.trusted();
+         const main=(await this.runtime().discover()).bundle.main;this.trusted();
+@@ -1267,6 +1340,7 @@
+     commands.removeTerminalCommand=()=>controller.removeTerminalCommand();
+     commands.showLastUninstallResult=()=>controller.showLastUninstallResult();
+     commands.reviewData=()=>controller.reviewData();
++    commands.reviewLegacyUpgrade=()=>controller.reviewLegacyUpgrade();
+     commands.retryUpdate=()=>controller.retryUpdate();
+     commands.reloadUpdatedExtension=()=>controller.reloadUpdatedExtension();
+     commands.openTools=()=>controller.openTools();
+--- a/packages/vscode/package.json
++++ b/packages/vscode/package.json
+@@ -339,6 +339,7 @@
+       ]
+     },
+     "commands": [
++      {"command":"airk.reviewLegacyUpgrade","title":"AIRK: Review unavailable legacy upgrade index retirement"},
+       {
+         "command": "airk.explorer.open",
+         "title": "Open Explorer",
+--- a/scripts/package-extension.py
++++ b/scripts/package-extension.py
+@@ -20,7 +20,7 @@
+            "aarch64-apple-darwin": "darwin-arm64", "x86_64-apple-darwin": "darwin-x64"}
+ MODULES = ("extension.js", "extensionUninstall.js", "uninstallHook.js", "diagnosticLogs.js", "diagnosticCaptures.js", "serviceExtension.js", "serviceDashboard.js", "serviceWorkspace.js", "model.js", "native.js", "nativeGate.js", "cliInstall.js", "cliRemove.js", "privateDirectory.js",
+            "usagePanel.js", "usageReport.js", "report.js",
+-           "agentConnections.js", "agentConfig.js", "agentMigration.js", "unifiedAgentConfig.js", "agentSetup.js", "serviceBootstrap.js", "serviceClient.js",
++           "agentConnections.js", "agentConfig.js", "agentMigration.js", "unifiedAgentConfig.js", "agentSetup.js", "serviceBootstrap.js", "runtimeLegacyRetirement.js", "serviceClient.js",
+            "serviceConsole.js", "serviceConsoleController.js", "serviceConsoleView.js", "serviceIntents.js",
+            "mcpStdioSession.js", "explorerSidebar.js", "explorerStatus.js", "explorerController.js", "explorerControl.js",
+            "explorerContracts.js", "explorerErrors.js", "explorerEvidence.js", "explorerFeatures.js", "explorerPanel.js",
+--- /dev/null
++++ b/packages/vscode/src/test/runtimeLegacyRetirement.test.ts
+@@ -0,0 +1,67 @@
++// SPDX-License-Identifier: Apache-2.0
++import {test} from 'node:test';import assert from 'node:assert/strict';
++import {LegacyRetirementSession,LegacyRetirementHost,retirementJson,retirementMarkdown,validateRetirementReply} from '../runtimeLegacyRetirement';
++import {RecordValue} from '../serviceClient';
++const id='idx_'+'1'.repeat(32),hash='2'.repeat(64);
++function review():RecordValue{return {status:'review',review_digest:hash,preview:{schema:1,request_digest:hash,source_configuration:'pending_metadata',
++ original_backup_digest:hash,original_legacy_data_digest:hash,effect:'retire_and_cancel_with_cleanup_pending',affected_work:{jobs:2,job_ids_digest:hash},
++ request:{schema:1,index_id:id,caller:'1'.repeat(32),upgrade_id:'3'.repeat(32),plan_digest:hash,installer_identity:hash,expected_authorizations_digest:hash,
++ key:{namespace:'4'.repeat(32),epoch:0,nonce:'5'.repeat(32)},registration:{binding:hash,root:'/fictional/source',data_root:'/fictional/private',collection:'a'},future:'retained'},future:{proof:'complete'}}};}
++function accepted(r:RecordValue,status='authorized'):RecordValue {
++ const authorization={preview:r.preview,review_digest:r.review_digest};
++ return status==='authorized'?{status,authorization}:{status:'applied',receipt:{schema:1,authorization,catalog_revision:2,
++ canceled_work:(r.preview as RecordValue).affected_work,post_effect_legacy_data_digest:hash,cleanup:'pending',future:{native:'complete'}}};
++}
++function fixture(){let r=review(),auth=0,reads=0,resumes=0,trusted=true,lost=false;let observed:RecordValue|null=null;
++ const host:LegacyRetirementHost={legacyRetirementCandidates:async()=>({schema:1,plan:{indexes:[]}}),legacyRetirementReview:async()=>r,
++ legacyRetirementAuthorize:async()=>{auth++;if(lost)throw new Error('lost response');return observed=accepted(r);},
++ legacyRetirementReceipt:async()=>{reads++;return observed;},legacyRetirementResume:async()=>{resumes++;return accepted(r,'applied');}};
++ const session=new LegacyRetirementSession(host,()=>trusted);
++ return {session,r,host,get auth(){return auth;},get reads(){return reads;},get resumes(){return resumes;},lose(){lost=true;},
++ untrust(){trusted=false;},observe(value:RecordValue|null){observed=value;}};
++}
++test('lost authorization response uses exact readonly receipt and never authorizes twice',async()=>{
++ const f=fixture();await f.session.prepare(id);f.lose();await assert.rejects(f.session.authorize(f.r));
++ await assert.rejects(f.session.authorize(f.r));assert.equal(await f.session.reconcile(),null);assert.equal(f.session.last?.status,'review');
++ f.observe(accepted(f.r));assert.equal((await f.session.reconcile())?.status,'authorized');assert.equal(f.auth,1);assert.equal(f.reads,2);
++});
++test('crossed source, preview and review digest refusals preserve original complete observation',async()=>{
++ const f=fixture();await f.session.prepare(id);f.lose();await assert.rejects(f.session.authorize(f.r));
++ for(const change of ['request','preview','digest']){
++  const crossed=structuredClone(f.r),p=crossed.preview as RecordValue;
++  if(change==='request')(p.request as RecordValue).future='crossed';else if(change==='preview')p.future={proof:'crossed'};else crossed.review_digest='3'.repeat(64);
++  f.observe(accepted(crossed));await assert.rejects(f.session.reconcile());
++ }
++ assert.deepEqual(f.session.last,f.r);
++});
++test('Stop and revoked trust across modal awaits cannot dispatch mutation',async()=>{
++ const f=fixture();await f.session.prepare(id);f.untrust();await assert.rejects(f.session.authorize(f.r));assert.equal(f.auth,0);
++ const g=fixture();const changed=structuredClone(g.r);await g.session.prepare(id);changed.review_digest='4'.repeat(64);
++ await assert.rejects(g.session.authorize(changed));assert.equal(g.auth,0);
++});
++test('Stop during native review drops completion without dispatching authorization',async()=>{
++ const f=fixture();let release!:(value:RecordValue)=>void;
++ f.host.legacyRetirementReview=()=>new Promise(resolve=>{release=resolve;});
++ const pending=f.session.prepare(id);f.session.stop();release(f.r);
++ await assert.rejects(pending);assert.equal(f.auth,0);assert.equal(f.session.last,undefined);
++});
++test('logical Applied keeps cleanup pending and permits explicit same-candidate continuation',async()=>{
++ const f=fixture();await f.session.prepare(id);await f.session.authorize(f.r);f.observe(accepted(f.r,'applied'));await f.session.reconcile();
++ await f.session.resume();assert.equal(f.resumes,1);assert.equal(f.auth,1);
++ assert.match(retirementJson(f.session.last!),/"future"/);assert.match(retirementMarkdown(f.session.last!),/"native": "complete"/);
++ assert.match(retirementMarkdown(f.session.last!),/Physical cleanup remains pending/);
++});
++test('reload restores exact native accepted key for readonly reconciliation without new review or authorization',async()=>{
++ const f=fixture(),saved=accepted(f.r,'applied');f.observe(saved);f.session.restore(saved);
++ assert.deepEqual(await f.session.reconcile(),saved);assert.equal(f.auth,0);assert.equal(f.reads,1);
++ await assert.rejects(f.session.authorize(f.r));assert.equal(f.auth,0);
++});
++test('arbitrary reply, malformed status and false physical completion refuse',()=>{
++ assert.throws(()=>validateRetirementReply({status:'ready'}));const value=accepted(review(),'applied');
++ (value.receipt as RecordValue).cleanup='complete';assert.throws(()=>validateRetirementReply(value));
++ for(const epoch of [-1,'0',0.5,Number.MAX_SAFE_INTEGER+1]){
++  const bad=review();const p=bad.preview as RecordValue;((p.request as RecordValue).key as RecordValue).epoch=epoch;
++  assert.throws(()=>validateRetirementReply(bad));
++ }
++ validateRetirementReply(review()); // Canonical request epoch zero is valid.
++});

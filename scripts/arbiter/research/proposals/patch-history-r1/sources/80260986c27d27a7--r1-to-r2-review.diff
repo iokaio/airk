@@ -1,0 +1,340 @@
+--- private-r1/public_human_visibility.rs
++++ private-r2/public_human_visibility.rs
+@@ -205,6 +205,20 @@
+ }
+ fn positive_span_visible(label: u64, parent: &LocalSpan, spans: &[LocalSpan]) -> bool {
+     label == 1 && covered(parent, spans)
++}
++fn unit_stats_value(
++    ordinal: usize,
++    total: usize,
++    stats: &airk_retrieval::vector_units::VectorUnitStats,
++    elapsed_ns: u128,
++) -> Result<Value> {
++    ensure!(
++        ordinal <= total && total <= 100_000 && stats.units <= 100_000,
++        "bounded returned unit statistics required"
++    );
++    Ok(
++        json!({"ordinal":ordinal,"total":total,"units":stats.units,"body_bytes":stats.body_bytes,"planning_us":stats.planning_us,"file_elapsed_ns":elapsed_ns}),
++    )
+ }
+ fn planned_unit_records(
+     model: &EmbeddingModel,
+@@ -237,7 +251,7 @@
+             )?;
+             continue;
+         }
+-        visit_vector_units(&retained.payload, model, |unit| {
++        let stats = visit_vector_units(&retained.payload, model, |unit| {
+             ensure!(
+                 units.len() < 100_000,
+                 "visibility unit census bound exceeded"
+@@ -263,6 +277,14 @@
+             units.push(json!({"id":units.len(),"file":retained.artifact.path,"input":unit.input,"members":unit.members,"context_prefix":prefix,"context_prefix_bytes":prefix.len(),"native_tokens":tokens,"native_input_tensors":unit_tensors(model,&unit.input)?,"source_sha256":retained.artifact.content_hash,"payload_sha256":retained.payload_digest,"extraction_profile_sha256":retained.profile.identity()?,"published":false}));
+             Ok(())
+         })?;
++        let value = unit_stats_value(
++            ordinal + 1,
++            extracted.len(),
++            &stats,
++            file_started.elapsed().as_nanos(),
++        )?;
++        eprintln!("PUBLIC_HUMAN_UNIT_STATS {value}");
++        std::io::stderr().flush()?;
+         visibility_progress(
+             "unit_file_after",
+             ordinal + 1,
+@@ -633,6 +655,16 @@
+         progress_value("unit_file_after", 2, 3, 7, 11)?,
+         json!({"stage":"unit_file_after","ordinal":2,"total":3,"observed":7,"elapsed_ns":11})
+     );
++    let stats = airk_retrieval::vector_units::VectorUnitStats {
++        units: 7,
++        body_bytes: 19,
++        planning_us: 23,
++    };
++    assert_eq!(
++        unit_stats_value(2, 3, &stats, 29_000)?,
++        json!({"ordinal":2,"total":3,"units":7,"body_bytes":19,"planning_us":23,"file_elapsed_ns":29_000})
++    );
++    assert!(unit_stats_value(3, 2, &stats, 29_000).is_err());
+     assert!(progress_value("source contents", 0, 0, 0, 0).is_err());
+     assert!(progress_value("row_mapping", 3, 2, 1, 0).is_err());
+     assert!(progress_value("row_mapping", 1, 2, 100_001, 0).is_err());
+--- private-r1/public_human_visibility/source_spans.rs
++++ private-r2/public_human_visibility/source_spans.rs
+@@ -11,6 +11,7 @@
+     schema: String,
+     dataset: String,
+     manifest: ResourceFilePin,
++    rights_evidence: Vec<ResourceFilePin>,
+     source_audit: Option<ResourceFilePin>,
+     original_train: Option<ResourceFilePin>,
+     stage_root: PathBuf,
+@@ -104,14 +105,11 @@
+     })
+ }
+ fn equivalent_lines(value: &str) -> String {
+-    value
+-        .replace("\r\n", "\n")
+-        .trim_matches(['\r', '\n'])
+-        .to_owned()
++    value.replace("\r\n", "\n").trim_matches('\n').to_owned()
+ }
+ fn annotation_text(value: &str, start: usize, end: usize) -> Result<String> {
+     let normalized = value.replace("\r\n", "\n");
+-    let lines: Vec<_> = normalized.trim_matches(['\r', '\n']).split('\n').collect();
++    let lines: Vec<_> = normalized.trim_matches('\n').split('\n').collect();
+     let numbered: Option<Vec<(usize, &str)>> = lines
+         .iter()
+         .map(|line| {
+@@ -167,16 +165,22 @@
+     let at = occurrences[0];
+     let end = at + raw.len();
+     ensure!(
++        source.is_char_boundary(at) && source.is_char_boundary(end),
++        "gold UTF8 boundary differs"
++    );
++    ensure!(
+         (at == 0 || source.as_bytes()[at - 1] == b'\n')
+             && (end == source.len()
+                 || raw.ends_with('\n')
+-                || matches!(source.as_bytes().get(end), Some(b'\n' | b'\r'))),
++                || source.as_bytes().get(end) == Some(&b'\n')
++                || source[end..].starts_with("\r\n")),
+         "entire raw gold not at source LF boundaries"
+     );
+     ensure!(
+-        source.is_char_boundary(at) && source.is_char_boundary(end),
+-        "gold UTF8 boundary differs"
+-    );
++        !(raw.ends_with('\r') && source.as_bytes().get(end) == Some(&b'\n')),
++        "gold cannot split a source CRLF pair"
++    );
++
+     Ok(LocalSpan { start: at, end })
+ }
+ fn relative_annotation(file: &str, repo: &str) -> Result<String> {
+@@ -362,6 +366,23 @@
+     );
+     let audit: Value = serde_json::from_slice(&pin_bytes(audit_pin, 64 << 20)?)?;
+     let train: Value = serde_json::from_slice(&pin_bytes(train_pin, 64 << 20)?)?;
++    ensure!(
++        train
++            .as_array()
++            .context("original TRAIN array absent")?
++            .len()
++            == 450
++            && audit["results"]
++                .as_array()
++                .context("source audit cases absent")?
++                .len()
++                == 450,
++        "exact original450 case arrays required"
++    );
++    ensure!(
++        text(&audit, "source_input_sha256")? == train_pin.sha256.to_string(),
++        "source audit/whole TRAIN closure differs"
++    );
+     let originals: BTreeMap<_, _> = train
+         .as_array()
+         .context("original TRAIN array absent")?
+@@ -406,6 +427,11 @@
+             "invalid original repository/revision"
+         );
+         airk_core::index_catalog::relative_path(repo, false)?;
++        ensure!(
++            text(row, "original_inst_id")? == text(original, "original_inst_id")?
++                && text(observation, "original_inst_id")? == text(original, "original_inst_id")?,
++            "original publisher case identity differs"
++        );
+         let question = text(original, "problem_statement")?;
+         ensure!(
+             repo == text(original, "repo")?
+@@ -472,12 +498,72 @@
+         span_count,
+     })
+ }
++const TECHQA_README: &str = "c5a58ed7f2780fb2c4f2e06f8933ec4afbd06b5f29f6797c7857f3812f824060";
++const TECHQA_LICENSE: &str = "e12775d6b5bfdba0bb33fd691dab386f0c7573853fdc4785c40b39739f120d5f";
++fn rights_map(pins: &[ResourceFilePin]) -> Result<BTreeMap<String, String>> {
++    ensure!(
++        !pins.is_empty() && pins.len() <= 1024,
++        "bounded actual rights evidence required"
++    );
++    let mut result = BTreeMap::new();
++    for pin in pins {
++        pin.validate()?;
++        ensure!(
++            result
++                .insert(pin.path.clone(), pin.sha256.to_string())
++                .is_none(),
++            "duplicate/ambiguous rights file"
++        );
++    }
++    Ok(result)
++}
++fn context_rights(manifest: &Value) -> Result<Vec<ResourceFilePin>> {
++    let mut result = BTreeMap::new();
++    for row in manifest["rows"]
++        .as_array()
++        .context("selected case roster absent")?
++    {
++        let pins = row["rights_pins"]
++            .as_array()
++            .context("original source-rights pins absent")?;
++        ensure!(!pins.is_empty(), "case rights evidence missing");
++        for value in pins {
++            let pin = source_pin(value)?;
++            if let Some(old) = result.insert(pin.path.clone(), pin.clone()) {
++                ensure!(old == pin, "ambiguous same-path rights evidence");
++            }
++        }
++    }
++    Ok(result.into_values().collect())
++}
++fn verify_rights(input: &SpanInput, manifest: &Value) -> Result<()> {
++    let actual = rights_map(&input.rights_evidence)?;
++    match input.dataset.as_str() {
++        "techqa" => {
++            let hashes: BTreeSet<_> = actual.values().map(String::as_str).collect();
++            ensure!(
++                actual.len() == 2 && hashes == BTreeSet::from([TECHQA_README, TECHQA_LICENSE]),
++                "authoritative original archive README and CDLA1 PDF pins required"
++            );
++        }
++        "contextbench" => ensure!(
++            actual == rights_map(&context_rights(manifest)?)?,
++            "complete selected-case original rights evidence differs"
++        ),
++        _ => anyhow::bail!("unsupported source-rights dataset"),
++    }
++    for pin in &input.rights_evidence {
++        pin_bytes(pin, 2 << 20)?;
++    }
++    Ok(())
++}
+ fn parse_cohort(input: &SpanInput) -> Result<Cohort> {
+     ensure!(
+         input.schema == "airk.private.public-human-source-span-input/1",
+         "unknown private census input"
+     );
+     let manifest: Value = serde_json::from_slice(&pin_bytes(&input.manifest, 64 << 20)?)?;
++    verify_rights(input, &manifest)?;
+     match input.dataset.as_str() {
+         "techqa" => {
+             ensure!(
+@@ -531,7 +617,7 @@
+ }
+ fn fresh_write(output: &std::path::Path, value: &impl serde::Serialize) -> Result<()> {
+     let bytes = phase("public_spans_serialization", || {
+-        Ok(serde_json::to_vec_pretty(value)?)
++        Ok(serde_json::to_vec(value)?)
+     })?;
+     ensure!(bytes.len() <= 512 << 20, "native output cap exceeded");
+     let mut f = std::fs::OpenOptions::new()
+@@ -687,7 +773,7 @@
+             )?;
+         }
+     }
+-    let report = json!({"schema":"airk.private.public-human-source-span-visibility-result/1","input":input_pin,"dataset":input.dataset,"complete":true,"original_case_denominator":cohort.tasks.len(),"original_span_denominator":cohort.span_count,"cases":records,"groups":group_reports,"actual_units":units,"planning_descriptor":descriptor,"native_binary_sha256":asset_digest()?,"embedding_forwards":null,"focus_forwards":null,"forward_count_observation":"unobserved; original extraction counters retained independently","nonblank_embedding_request_dispatched":false,"focus_scorer_request_dispatched":false,"negative_labels_generated":0,"rights_admission":false,"gold_admission":false,"published":false,"training_gradients":false,"whole_menu_card_terminal_or_context8192_admission":false});
++    let report = json!({"schema":"airk.private.public-human-source-span-visibility-result/1","input":input_pin,"dataset":input.dataset,"source_rights_evidence":input.rights_evidence,"rights_scope":"Pinned original terms only; Context local-research dispositions remain pending unless separately recorded by Root. No approval inferred from metadata.","complete":true,"original_case_denominator":cohort.tasks.len(),"original_span_denominator":cohort.span_count,"cases":records,"groups":group_reports,"actual_units":units,"planning_descriptor":descriptor,"native_binary_sha256":asset_digest()?,"embedding_forwards":null,"focus_forwards":null,"forward_count_observation":"unobserved; original extraction counters retained independently","nonblank_embedding_request_dispatched":false,"focus_scorer_request_dispatched":false,"negative_labels_generated":0,"rights_admission":false,"gold_admission":false,"published":false,"training_gradients":false,"whole_menu_card_terminal_or_context8192_admission":false});
+     fresh_write(&input.output, &report)
+ }
+ fn env_pin(name: &str) -> Result<ResourceFilePin> {
+@@ -701,10 +787,21 @@
+ fn emit_public_human_source_span_input() -> Result<()> {
+     let dataset = std::env::var("AIRK_PUBLIC_SPAN_DATASET")?;
+     let context = dataset == "contextbench";
++    let manifest = env_pin("AIRK_PUBLIC_SPAN_MANIFEST")?;
++    let rights_evidence = if context {
++        let value: Value = serde_json::from_slice(&pin_bytes(&manifest, 64 << 20)?)?;
++        context_rights(&value)?
++    } else {
++        vec![
++            env_pin("AIRK_PUBLIC_SPAN_TECHQA_README")?,
++            env_pin("AIRK_PUBLIC_SPAN_TECHQA_LICENSE")?,
++        ]
++    };
+     let input = SpanInput {
+         schema: "airk.private.public-human-source-span-input/1".into(),
+         dataset,
+-        manifest: env_pin("AIRK_PUBLIC_SPAN_MANIFEST")?,
++        manifest,
++        rights_evidence,
+         source_audit: context
+             .then(|| env_pin("AIRK_PUBLIC_SPAN_SOURCE_AUDIT"))
+             .transpose()?,
+--- private-r1/public_human_visibility/source_spans/tests.rs
++++ private-r2/public_human_visibility/source_spans/tests.rs
+@@ -30,6 +30,28 @@
+             &json!({"start_line":2,"end_line":2,"content":"two"})
+         )
+         .is_err()
++    );
++    assert_eq!(equivalent_lines("\rgold\r"), "\rgold\r");
++    assert!(
++        context_span(
++            "x\ngold\rREST\n",
++            &json!({"start_line":99,"end_line":99,"content":"gold"})
++        )
++        .is_err()
++    );
++    assert!(
++        context_span(
++            "x\ngold\r\nREST\n",
++            &json!({"start_line":99,"end_line":99,"content":"gold\r"})
++        )
++        .is_err()
++    );
++    assert_eq!(
++        context_span(
++            "x\ngold\r\nREST\n",
++            &json!({"start_line":99,"end_line":99,"content":"gold"})
++        )?,
++        LocalSpan { start: 2, end: 6 }
+     );
+     Ok(())
+ }
+@@ -109,5 +131,14 @@
+         )
+         .is_err()
+     );
++    let rights = ResourceFilePin {
++        path: std::env::temp_dir()
++            .join("rights-input.json")
++            .to_string_lossy()
++            .into(),
++        sha256: Sha256Digest::from_bytes([1; 32]),
++    };
++    assert!(rights_map(&[rights.clone(), rights]).is_err());
++    assert!(context_rights(&json!({"rows":[{"rights_pins":[]}]})).is_err());
+     Ok(())
+ }
+--- private-r1/CONTRACT-append.md
++++ private-r2/CONTRACT-append.md
+@@ -37,3 +37,23 @@
+ gold/semantic admission, distribution and product performance remain unqualified.
+ The original120-second operational cutoff/4GiB Job and512MiB report bound remain;
+ this diagnostic does not waive product inference or preregistered cohort gates.
++
++Rights bytes are explicit bounded native input evidence. TechQA requires the exact
++original-archive README (c5a58ed7...) and CDLA-Permissive1 PDF (e12775d6...), not a
++license-name string. Context requires every selected case's actual rights-file
++pins; native code rehashes each file and rejects missing/duplicate/ambiguous pins.
++These pins prove retained source terms, not research/training/distribution
++approval. The24GPL/AGPL local-research dispositions remain pending unless Root
++records a separate scope decision; no metadata flag can grant that authority.
++
++Only LF is trimmed at annotation edges after explicit CRLF-to-LF equivalence.
++BareCR and Unicode/control separators are not accepted as source line boundaries.
++Strict-derived raw gold may end at EOF/LF or before a complete CRLF, never at an
++arbitrary CR or halfway through CRLF. Source offsets remain exact UTF8 ranges.
++
++The current phase/statistics/U8selected guards are preserved. The parent changes
++only by a private child mount. Source-only native input emission is create-only
++outside staged source; full final reports use compact JSON with every original
++field/tensor retained under the unchanged512MiBcap. This changes no existing
++CoSQA output bytes or historical source/image identity. Input byte/count bounds
++are not claims that all cases fit native token/runtime/memory/output limits.

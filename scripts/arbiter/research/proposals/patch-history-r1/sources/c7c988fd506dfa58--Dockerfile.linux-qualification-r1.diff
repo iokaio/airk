@@ -1,0 +1,50 @@
+--- Dockerfile
++++ Dockerfile.local-qualification
+@@ -21,7 +21,9 @@
+ COPY scripts/static-onnx-link-closure.py ./scripts/
+ RUN python3 scripts/provision-static-onnx-runtime.py --destination /build/static-onnx-runtime --download --download-tools --build --parallel 2
+ 
+-FROM toolchain AS source
++FROM toolchain AS checked-toolchain
++RUN rustup component add --toolchain 1.98.0 clippy rustfmt && rustup show active-toolchain && rustup run 1.98.0 rustc --version && rustup which --toolchain 1.98.0 cargo-clippy && rustup which --toolchain 1.98.0 rustfmt
++FROM checked-toolchain AS source
+ COPY --from=static-inference /build/static-onnx-runtime /build/static-onnx-runtime
+ COPY Dockerfile .dockerignore ./
+ COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+@@ -56,7 +58,10 @@
+     cargo fetch --locked \
+     && mkdir -p /build/ci-report \
+     && case "$AIRK_QUALIFICATION" in \
+-      true) python3 scripts/ci-metrics.py run --name test-compile -- cargo nextest run --profile ci --workspace --all-features --locked --offline --no-run \
++      true) python3 scripts/ci-metrics.py run --name formatting -- cargo fmt --all --check \
++        && python3 scripts/ci-metrics.py run --name clippy -- cargo clippy --workspace --all-targets --all-features --locked --offline --timings -- -D warnings \
++        && python3 scripts/ci-metrics.py run --name lightweight-component-compile -- cargo check -p airk-cli --no-default-features --all-targets --locked --offline --timings \
++        && python3 scripts/ci-metrics.py run --name test-compile -- cargo nextest run --profile ci --workspace --all-features --locked --offline --no-run --timings \
+         && python3 scripts/ci-metrics.py run --name test-execution -- cargo nextest run --profile ci --workspace --all-features --locked --offline --ignore-default-filter \
+         && python3 scripts/ci-metrics.py run --name doctests -- cargo test --doc --workspace --locked --offline \
+         && python3 scripts/ci-metrics.py summary \
+@@ -74,6 +79,7 @@
+     sh scripts/container-build-user.sh sh -ec '\
+     python3 scripts/ci-metrics.py run --name release-runtime -- python3 scripts/build-service-container.py --destination /build/out \
+     && cp artifacts/ci/timings.jsonl /build/ci-report/ \
++    && test -d target/cargo-timings && cp -a target/cargo-timings /build/ci-report/cargo-timings \
+     && python3 scripts/ci-prune-target.py'
+ USER 10001:10001
+ 
+@@ -103,3 +109,16 @@
+ USER 10001:10001
+ 
+ FROM runtime AS final
++
++FROM scratch AS retained-local-export
++COPY --from=build /build/ci-report/ /reports/
++COPY --from=build /build/out/runtime/ /runtime/
++
++# Failure recovery reads only the existing cache: no source, compiler or tests.
++FROM toolchain AS failed-cache-evidence
++RUN --mount=type=cache,id=airk-linux-target,target=/build/target,uid=10001,gid=10001,sharing=locked \
++    mkdir -p /cache-evidence && \
++    if test -d /build/target/cargo-timings; then cp -a /build/target/cargo-timings /cache-evidence/cargo-timings; fi && \
++    if test -f /build/target/nextest/ci/junit.xml; then cp -a /build/target/nextest/ci/junit.xml /cache-evidence/junit.xml; fi
++FROM scratch AS failed-cache-export
++COPY --from=failed-cache-evidence /cache-evidence/ /

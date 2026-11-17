@@ -1,0 +1,11 @@
+--- reviewed-incremental0-root
++++ same-runner-frozen-C4
+@@ -38,7 +38,7 @@
+ import tempfile
+ import time
+ 
+-ROOT = Path(r"D:\code\Github\airk")
++ROOT = Path(r"D:\code\Github\airk\artifacts\v190\final-plan\candidate-worktree-r4")
+ SCHEMA = "airk-readiness-command/1"
+ NAME = re.compile(r"[a-z0-9][a-z0-9.-]*")
+ GROUPS = {

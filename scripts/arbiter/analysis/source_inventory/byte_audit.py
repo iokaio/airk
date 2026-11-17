@@ -8,6 +8,10 @@ import subprocess
 def git(root,args,data=None):
     return subprocess.run(['git','-C',str(root),*args],input=data,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True).stdout
 
+def require_mapped_targets(expected, snapshots):
+    missing=sorted(set(expected)-set(snapshots))
+    if missing:raise ValueError('missing required mapped targets: '+', '.join(missing))
+
 def audit(root):
     root=Path(root).resolve()
     attrs=(root/'.gitattributes').read_bytes()
@@ -17,7 +21,7 @@ def audit(root):
         'scripts/cuda-native-execution/helpers/reference_parent_no_site_r2.py':'fe4cc990649d92e041b79cccb3fd7ef1129979a26432b7f02b2d8d28b586ed8d',
         'scripts/cuda-native-execution/helpers/reference_worker.py':'9c04be28ef06c0a06b8e2cffd4c274348ff141046114cc493d725ce527b694c7',
     }; maps=[]
-    owners=list((root/'scripts/arbiter').rglob('source-map.json'))+list((root/'scripts/arbiter').rglob('source-provenance.json'))+[root/'scripts/cuda-static-runtime/build/source-map.json']
+    owners=list((root/'scripts/arbiter').rglob('source-map.json'))+list((root/'scripts/arbiter').rglob('source-provenance.json'))+list((root/'scripts/arbiter').rglob('encoded-source-provenance.json'))+list((root/'scripts/arbiter').rglob('source-recovery.json'))+[root/'scripts/cuda-static-runtime/build/source-map.json']
     for owner in sorted(owners):
         raw=owner.read_bytes(); data=json.loads(raw)
         maps.append({'path':owner.relative_to(root).as_posix(),'sha256':hashlib.sha256(raw).hexdigest()})
@@ -26,10 +30,18 @@ def audit(root):
             if path and sha:
                 if path in expected and expected[path]!=sha: raise ValueError('conflicting mapped target: '+path)
                 expected[path]=sha
+        if data.get('schema')=='airk.observed-source-recovery/1':
+            pins=list(data['code'])
+            for row in data['files']:pins.extend([row['recovery'],*row['notices']])
+            for pin in pins:
+                path=pin['path'];sha=pin['sha256']
+                if path in expected and expected[path]!=sha:raise ValueError('conflicting recovery target: '+path)
+                expected[path]=sha
         for row in data.get('maintained_utilities',[]):
             expected[row['path']]=row['sha256']
     paths=sorted(set(paths)|set(expected))
     snapshots={p:(root/p).read_bytes() for p in paths if (root/p).is_file()}
+    require_mapped_targets(expected,snapshots)
     missing=[p for p in paths if p not in snapshots]
     fmt=git(root,['rev-parse','--show-object-format']).decode().strip()
     selected=list(snapshots)

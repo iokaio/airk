@@ -1,0 +1,12 @@
+{
+  "schema": "airk.observed-browser-verification-key/1",
+  "binary": {
+    "path": "C:/Program Files (x86)/Microsoft/Edge/Application/157.0.4341.60/msedge.dll",
+    "sha256": "e4c51cda4e2bc9f3896f23b14bc35166941d6c4e799428c76d64a7d55163d09d",
+    "bytes": 358210376
+  },
+  "offset": 303285584,
+  "key_bytes": 294,
+  "key_sha256": "b5e4096227b83f82101fc2aa49f2a251accde3d98471464dd17d1819b43786b0",
+  "scope": "Observed retained runtime key and cryptographic consistency only; no new Authenticode, publisher-download or webstore-root trust assertion."
+}

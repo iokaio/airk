@@ -1,0 +1,267 @@
+--- crates/airk-supervisor/src/project_worker/CONTRACT.md
++++ crates/airk-supervisor/src/project_worker/CONTRACT.md
+@@ -22,3 +22,28 @@
+ restores its original bytes before asserting. Source bytes and publication stay
+ unchanged. No wire shape, persisted format, retry allowance or job identity is
+ changed.
++
++## Synchronous optional-control callbacks and async IO
++
++Focus application/ranking and Context application/action/next-read callbacks
++are synchronous Kernel interfaces over the existing native control client.
++They can be invoked from the project owner's async driver as well as a blocking
++worker. Direct ambient Handle::block_on inside an entered runtime is forbidden.
++Every sibling callback uses one shared driver bridge; callback-specific request,
++instance/worker/authority checks, single-attempt transport, original absolute
++deadlines and typed source refusals remain unchanged.
++
++The production project owner has a two-worker multithread Tokio runtime. The
++bridge yields its async worker through block_in_place and drives the callback on
++that same runtime handle. A caller outside Tokio uses a local current-thread IO
++driver. An entered current-thread caller uses one joined scoped IO-driver thread;
++block_in_place is never attempted there. Factories construct timers/IO futures
++inside the selected driver, and no work detaches or outlives the synchronous
++callback. No permanent per-session runtime/thread, process, global queue, retry,
++new request budget or authority is introduced. Existing admission bounds callers.
++
++The direct embedding-pool connector's Score/load/status/settlement operations
++already use their own bounded airk-pool-client communication thread/runtime and
++remain unchanged. Runtime bundle/work observations remain async. Native model
++execution, lease/reservations and completion/drain stay under their existing
++owning service; this transport bridge creates no inference owner.
+--- docs/process-model.md
++++ docs/process-model.md
+@@ -30,6 +30,12 @@
+ | `airkctl` and installer one-shots | Commands that a user types, and installer steps. Claude Code and Codex credential helpers (`airkctl agents credential … --format header-json`) are one-shots too. | Exit when the command finishes. |
+ | PDF parser child | Isolated extraction of one PDF document. | At most one for the whole service, described below. |
+ | `airkctl tools shell` | Interactive terminal tool. | Opened and closed by the user. |
++
++Synchronous optional-model control callbacks use the project owner's existing
++multithread runtime through its blocking boundary. Outside-runtime and
++current-thread callers use local or joined scoped IO drivers; they do not add
++resident processes, permanent per-session runtimes or detached work. All callback
++requests preserve their original authority, attempt and absolute deadline.
+ 
+ Project owners, cleanup owners and the source watcher run on service threads.
+ Each project owner has its own runtime, lock and execution scope. The
+--- crates/airk-supervisor/src/runtime_metadata/arbiter.rs
++++ crates/airk-supervisor/src/runtime_metadata/arbiter.rs
+@@ -13,6 +13,48 @@
+     time::Instant,
+ };
+ 
++/// Drive a synchronous control callback without nesting an async runtime entry.
++/// The factory, including timers/IO resources, is created inside the selected
++/// driver. No callback is retried and no work outlives the synchronous caller.
++fn drive_control<F, Fut, T>(factory: F) -> Result<T>
++where
++    F: FnOnce() -> Fut + Send,
++    Fut: std::future::Future<Output = Result<T>>,
++    T: Send,
++{
++    fn local<F, Fut, T>(factory: F) -> Result<T>
++    where
++        F: FnOnce() -> Fut,
++        Fut: std::future::Future<Output = Result<T>>,
++    {
++        let runtime = tokio::runtime::Builder::new_current_thread()
++            .enable_all()
++            .build()
++            .context("Arbiter control IO driver unavailable")?;
++        runtime.block_on(async move { factory().await })
++    }
++    match tokio::runtime::Handle::try_current() {
++        Ok(handle) if matches!(handle.runtime_flavor(), tokio::runtime::RuntimeFlavor::MultiThread) => {
++            // Production project owners have a two-worker multithread runtime.
++            // Yield this worker's async duties while borrowing that SAME driver.
++            tokio::task::block_in_place(|| handle.block_on(async move { factory().await }))
++        }
++        Ok(_) => std::thread::scope(|scope| {
++            // block_in_place is forbidden on a current-thread runtime. A joined
++            // scoped IO driver needs no ambient reactor and cannot detach work.
++            let thread = std::thread::Builder::new()
++                .name("airk-arbiter-control".into())
++                .spawn_scoped(scope, move || local(factory))
++                .context("Arbiter scoped control driver unavailable")?;
++            match thread.join() {
++                Ok(result) => result,
++                Err(panic) => std::panic::resume_unwind(panic),
++            }
++        }),
++        Err(_) => local(factory),
++    }
++}
++
+ struct Controller(PathBuf);
+ impl NativeController for Controller {
+     fn focus_clock(&self) -> Result<Option<(airk_core::read_attempt::ReadClock, u64)>> {
+@@ -29,7 +71,7 @@
+         authority: ScopedReadRef,
+         publication: &airk_core::evidence::RevisionEnvelope,
+     ) -> Result<Option<FocusApplication>> {
+-        let response = tokio::runtime::Handle::current().block_on(
++        let response = drive_control(|| async {
+             airk_installer::control_client::request_for_version_and_instance_once(
+                 &self.0,
+                 ControlMethod::ArbiterFocusApplication {
+@@ -39,8 +81,8 @@
+                 },
+                 env!("CARGO_PKG_VERSION"),
+                 worker.service,
+-            ),
+-        )?;
++            ).await
++        })?;
+         match response {
+             ControlResponse::ArbiterFocusApplication { application } => {
+                 Ok(application.map(|application| *application))
+@@ -81,7 +123,7 @@
+             "Focus original attempt expired"
+         );
+         let worker = request.worker;
+-        let response = tokio::runtime::Handle::current().block_on(async {
++        let response = drive_control(|| async {
+             tokio::time::timeout_at(
+                 tokio::time::Instant::from_std(deadline),
+                 airk_installer::control_client::request_for_version_and_instance_once(
+@@ -138,7 +180,7 @@
+             "joint original attempt expired"
+         );
+         let worker = request.worker;
+-        let response = tokio::runtime::Handle::current().block_on(async {
++        let response = drive_control(|| async {
+             tokio::time::timeout_at(
+                 tokio::time::Instant::from_std(deadline),
+                 airk_installer::control_client::request_for_version_and_instance_once(
+@@ -169,7 +211,7 @@
+         authority: ScopedReadRef,
+         publication: &airk_core::evidence::RevisionEnvelope,
+     ) -> Result<IndexApplication> {
+-        let response = tokio::runtime::Handle::current().block_on(
++        let response = drive_control(|| async {
+             airk_installer::control_client::request_for_version_and_instance(
+                 &self.0,
+                 ControlMethod::ArbiterApplication {
+@@ -179,8 +221,8 @@
+                 },
+                 env!("CARGO_PKG_VERSION"),
+                 worker.service,
+-            ),
+-        )?;
++            ).await
++        })?;
+         match response {
+             ControlResponse::ArbiterApplication { application } => Ok(*application),
+             ControlResponse::Failure { code } if code == "scoped_read_unavailable" => {
+@@ -220,7 +262,7 @@
+             native_retry_expires_monotonic_ns: None,
+         });
+         let worker = request.worker;
+-        let response = tokio::runtime::Handle::current().block_on(async {
++        let response = drive_control(|| async {
+             tokio::time::timeout_at(
+                 tokio::time::Instant::from_std(deadline),
+                 airk_installer::control_client::request_for_version_and_instance_once(
+@@ -252,3 +294,6 @@
+         .context("Arbiter control root unavailable")?;
+     Ok(Some(Arc::new(Controller(root))))
+ }
++
++#[cfg(test)]
++mod tests;
+--- crates/airk-supervisor/src/runtime_metadata/arbiter/tests.rs
++++ crates/airk-supervisor/src/runtime_metadata/arbiter/tests.rs
+@@ -0,0 +1,93 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Actual async IO driver entry controls. No service/model/NN or forged role.
++use super::drive_control;
++use anyhow::{Context,Result,ensure};
++use std::{io::{Read,Write},net::{SocketAddr,TcpListener},sync::{Arc,atomic::{AtomicUsize,Ordering}},thread::ThreadId,time::{Duration,Instant}};
++use tokio::io::{AsyncReadExt,AsyncWriteExt};
++
++async fn exchange(address:SocketAddr,calls:Arc<AtomicUsize>)->Result<ThreadId> {
++    calls.fetch_add(1,Ordering::SeqCst);
++    let mut stream=tokio::time::timeout(Duration::from_secs(3),tokio::net::TcpStream::connect(address)).await??;
++    stream.write_all(b"ping").await?;
++    let mut reply=[0u8;4];stream.read_exact(&mut reply).await?;
++    ensure!(&reply==b"pong","async IO reply differs");
++    Ok(std::thread::current().id())
++}
++fn actual_io(entry:impl FnOnce(SocketAddr,Arc<AtomicUsize>)->Result<ThreadId>)->Result<()> {
++    let listener=TcpListener::bind((std::net::Ipv4Addr::LOCALHOST,0))?;
++    let address=listener.local_addr()?;listener.set_nonblocking(true)?;
++    let calls=Arc::new(AtomicUsize::new(0));
++    std::thread::scope(|scope|->Result<()> {
++        let server=scope.spawn(move||->Result<()> {
++            let deadline=Instant::now()+Duration::from_secs(3);
++            let mut stream=loop {
++                match listener.accept() {
++                    Ok((stream,_))=>break stream,
++                    Err(error) if error.kind()==std::io::ErrorKind::WouldBlock && Instant::now()<deadline=>std::thread::yield_now(),
++                    Err(error)=>return Err(error.into()),
++                }
++            };
++            stream.set_read_timeout(Some(Duration::from_secs(3)))?;
++            stream.set_write_timeout(Some(Duration::from_secs(3)))?;
++            let mut request=[0u8;4];stream.read_exact(&mut request)?;
++            ensure!(&request==b"ping","async IO request differs");stream.write_all(b"pong")?;Ok(())
++        });
++        let result=entry(address,calls.clone());
++        server.join().map_err(|_|anyhow::anyhow!("test IO peer panicked"))??;
++        result?;ensure!(calls.load(Ordering::SeqCst)==1,"control callback replayed");Ok(())
++    })
++}
++
++#[test]
++fn sync_control_drives_actual_async_io_without_an_ambient_runtime()->Result<()> {
++    actual_io(|address,calls|drive_control(||exchange(address,calls)))
++}
++#[test]
++fn sync_control_drives_actual_async_io_from_entered_multithread_runtime()->Result<()> {
++    let runtime=tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?;
++    actual_io(|address,calls|runtime.block_on(async {
++        drive_control(||async move {
++            ensure!(matches!(tokio::runtime::Handle::current().runtime_flavor(),tokio::runtime::RuntimeFlavor::MultiThread),"production callback did not retain the existing runtime flavor");
++            exchange(address,calls).await
++        })
++    }))
++}
++#[test]
++fn sync_control_drives_actual_async_io_from_entered_current_thread_runtime()->Result<()> {
++    let runtime=tokio::runtime::Builder::new_current_thread().enable_all().build()?;
++    let caller=std::thread::current().id();
++    actual_io(|address,calls|runtime.block_on(async {
++        let thread=drive_control(||exchange(address,calls))?;
++        ensure!(thread!=caller,"current-thread callback nested its own driver");Ok(thread)
++    }))
++}
++#[test]
++fn sync_control_drives_actual_async_io_from_existing_blocking_worker()->Result<()> {
++    let runtime=tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?;
++    actual_io(|address,calls|runtime.block_on(async {
++        tokio::task::spawn_blocking(move||drive_control(||exchange(address,calls))).await?
++    }))
++}
++#[test]
++fn sync_control_preserves_typed_errors_without_retry()->Result<()> {
++    let runtime=tokio::runtime::Builder::new_current_thread().enable_all().build()?;
++    let calls=AtomicUsize::new(0);
++    let result:Result<()>=runtime.block_on(async {
++        drive_control(||async {calls.fetch_add(1,Ordering::SeqCst);Err(airk_core::scoped_reads::ScopeReadRefused.into())})
++    });
++    ensure!(result.is_err_and(|error|error.is::<airk_core::scoped_reads::ScopeReadRefused>()),"typed authority refusal changed");
++    ensure!(calls.load(Ordering::SeqCst)==1,"failed callback retried");Ok(())
++}
++#[test]
++fn sync_control_constructs_timers_inside_driver_and_keeps_expired_original_deadline()->Result<()> {
++    let calls=AtomicUsize::new(0);let deadline=Instant::now()-Duration::from_secs(1);
++    let result:Result<()>=drive_control(|| {
++        calls.fetch_add(1,Ordering::SeqCst);
++        // Construct here, before returning the future: the factory must already
++        // be entered into its driver even when the caller had no runtime.
++        let timeout=tokio::time::timeout_at(tokio::time::Instant::from_std(deadline),std::future::pending::<()>());
++        async move {timeout.await.context("original control deadline exhausted")?;Ok(())}
++    });
++    ensure!(result.is_err_and(|error|error.is::<tokio::time::error::Elapsed>()),"expired original deadline was refreshed");
++    ensure!(calls.load(Ordering::SeqCst)==1,"expired callback replayed");Ok(())
++}

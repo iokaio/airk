@@ -1,0 +1,447 @@
+{
+  "schema": "airk.source-relocation/1",
+  "input_analysis": {
+    "path": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\source-javascript-provenance-r2.json",
+    "sha256": "a43d5e3bc530779a659c8ae3ba7dacc2806fa83bba262eb1b8e80075153a7ed0",
+    "bytes": 7385173
+  },
+  "scope": "Exact historical AIRK sourcePolicy implementation gap; no vendor code",
+  "qualification": false,
+  "historical_code_executed": false,
+  "files": [
+    {
+      "source": "artifacts/editor-update-preflight/run-8ZgfHs/candidate/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-8ZgfHs/extensions/iokaio.airk-1.8.12/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-8ZgfHs/extensions/iokaio.airk-1.8.13/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-8ZgfHs/profile/User/globalStorage/iokaio.airk/interface-cache/82891d61d269329d65b89dbbbe92da5efabc8faa7fbf2f925c90b021116e5b5f/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-8ZgfHs/profile/User/globalStorage/iokaio.airk/interface-cache/ab2a5cb48996e9a02a13c0a25776b654a8e295b705090c551fb130afa2f7722c/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-8ZgfHs/profile/User/globalStorage/iokaio.airk/interface-cache/db7c1999a743511647b7ae97d82f69aaaf05751bfdb1434a4ea686f13906634f/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-HZeyEW/candidate/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-HZeyEW/extensions/iokaio.airk-1.8.12/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-JbTRyQ/candidate/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-JbTRyQ/extensions/iokaio.airk-1.8.12/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-JbTRyQ/extensions/iokaio.airk-1.8.13/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-JbTRyQ/profile/User/globalStorage/iokaio.airk/interface-cache/35e84020fa2e3a672b481669ab0f0f9406657afe1ce4051bbb9c4f0ca6693e31/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-JbTRyQ/profile/User/globalStorage/iokaio.airk/interface-cache/3bfa945f46fa6be2dfe6f5a4bce9f9cf86f038aee181e5e94b7aed787922afda/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-JbTRyQ/profile/User/globalStorage/iokaio.airk/interface-cache/d26311710a3a6956d653a782bdff62af670b8cd986a1b860c3a8551a31f9f73f/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-JbTRyQ/profile/User/globalStorage/iokaio.airk/interface-cache/df8395df9b618efbcaed25870c46ad4a9d56c157b34438a4407d63d71d076706/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-LbzXoi/candidate/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-LbzXoi/extensions/iokaio.airk-1.8.12/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-LbzXoi/extensions/iokaio.airk-1.8.13/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-LbzXoi/profile/User/globalStorage/iokaio.airk/interface-cache/16489d74dbeb2a9c34869af4cf0da9755d42fde6aab582bea3331070a68b9559/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-LbzXoi/profile/User/globalStorage/iokaio.airk/interface-cache/23625842ac506b7b4a530263be88b7160c62168737b02c32a5817ffbaf2b65ca/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-LbzXoi/profile/User/globalStorage/iokaio.airk/interface-cache/9dd285fb6b44913be5e634e45a18c64b9bab95fc51e35586da91f371ccc3c83f/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-LbzXoi/profile/User/globalStorage/iokaio.airk/interface-cache/d8b1960106e91dc2c55a7f3bd0b5aa3f81ff97a835902ccba377b0c88821f2a3/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-aY9GCw/candidate/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-aY9GCw/extensions/iokaio.airk-1.8.12/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-aY9GCw/extensions/iokaio.airk-1.8.13/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-aY9GCw/profile/User/globalStorage/iokaio.airk/interface-cache/423f64325474405b37e0cf6d68fcce5926c67dee74a871af1ffb583187df729f/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-aY9GCw/profile/User/globalStorage/iokaio.airk/interface-cache/8183141f778c9dd1f683512eb9bb7006d78f58a9f81b1d5649045535506e1d01/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-aY9GCw/profile/User/globalStorage/iokaio.airk/interface-cache/97f9566fb245240212bd07c2945e26bb71c5a656739efc55bec0e48d1c719562/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-aY9GCw/profile/User/globalStorage/iokaio.airk/interface-cache/f0e63a55181db41cccf902abec7dd203e44728d59a7bab81a674445d3c281176/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-k5Ecrc/candidate/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-k5Ecrc/extensions/iokaio.airk-1.8.12/out/sourcePolicy.js",
+      "original_sha256": "b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae",
+      "original_bytes": 16898,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b39d1a6a57aa8436ca8785b87280b39e160398239b6bfd7b827c2325d3e619ae--sourcePolicy.js.in",
+      "maintained_sha256": "16c9284e0c07ffa9f0bfe7df4f9403b8a3e30c0549b78798780a01b70737c086",
+      "maintained_bytes": 16937,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    }
+  ]
+}

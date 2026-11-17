@@ -1,0 +1,158 @@
+--- frozen-r5/launch_route.py
++++ private-r6/launch_route.py
+@@ -72,7 +72,32 @@
+         and work['queued_jobs']==[] and work['queue_truncated'] is False
+         and worker.get('restarting') is False and worker.get('automatic_start_blocked') is False)
+ 
+-def await_semantic_population(read,clients,registration,instance,cutoff,record,wait_change):
++def owner_work_idle(packet,clients,registration,health):
++    project=registration['binding']
++    # These are original native responses; never projected into scoped work.
++    for name in ('health_before','health_after'):
++        observed=packet[name]
++        need(observed.get('status')=='health' and isinstance(observed.get('observation'),dict)
++            and all(k in health and observed['observation'].get(k)==health[k]
++                for k in ('instance','process_id','executable_sha256','user','version','protocol')),
++            'Readiness management Health differs from retained original Service')
++    progress,watch,worker=(packet[name] for name in ('progress','watch','worker'))
++    settled=clients.source_work_settled(progress,watch,project)
++    need(worker.get('status')=='worker' and worker.get('project')==project,
++        'Native Worker management observation names a different project')
++    identity=worker.get('identity');sample=progress.get('observation')
++    need(isinstance(identity,dict) and identity.get('service')==health['instance']
++        and identity.get('project')==project and isinstance(sample,dict)
++        and sample.get('worker')==identity
++        and type(identity.get('fencing_generation')) is int
++        and sample.get('current_fencing_generation')==identity['fencing_generation']
++        and sample.get('job',{}).get('fencing_generation')==identity['fencing_generation']
++        and sample.get('progress',{}).get('job')==sample.get('job',{}).get('id'),
++        'Native Progress/Worker samples do not authenticate the current original-instance worker')
++    return (settled and worker.get('restarting') is False
++        and worker.get('automatic_start_blocked') is False)
++
++def await_semantic_population(read,clients,registration,instance,cutoff,record,wait_change,read_work,health):
+     while True:
+         remaining(cutoff)
+         status=read(cutoff)
+@@ -81,7 +106,11 @@
+         if clients.publication_pending(status,registration['collection'],registration['binding']):
+             wait_change(cutoff);remaining(cutoff);continue
+         population=full_semantic_population(status,clients)
+-        if population and canonical_work_idle(status,instance):return status
++        management=read_work(cutoff)
++        record({'owner_management_observation':management})
++        remaining(cutoff)
++        idle=owner_work_idle(management,clients,registration,health)
++        if population and idle:return status
+         if not population:
+             wait_change(cutoff);remaining(cutoff)
+         # Once full population is published, durable job completion can precede
+@@ -143,10 +172,11 @@
+     def retain(self):
+         path=self.root/'route-progress.json'
+         with path.open('w',encoding='utf-8') as stream:json.dump(self.report,stream,indent=2);stream.flush()
+-    def call(self,argv,label,input=None,timeout=None,env=None):
++    def call(self,argv,label,input=None,timeout=None,env=None,check=True):
+         self.counter+=1;directory=self.root/'commands'/f'{self.counter:05d}-{label}';directory.mkdir()
+         budget=min(remaining(self.cutoff),timeout if timeout is not None else 120)
+-        command=[str(x) for x in argv];record={'argv':command,'original_whole_cutoff':self.cutoff,'timeout':budget}
++        need(type(check) is bool,'Explicit command check policy required')
++        command=[str(x) for x in argv];record={'argv':command,'original_whole_cutoff':self.cutoff,'timeout':budget,'check':check}
+         write(directory/'before.json',record);started=time.monotonic();error=None
+         try:
+             result=subprocess.run(command,input=input.encode() if isinstance(input,str) else input,
+@@ -159,7 +189,7 @@
+             'stdout_sha256':hashlib.sha256(out).hexdigest(),'stderr_sha256':hashlib.sha256(err).hexdigest()})
+         remaining(self.cutoff)
+         if error is not None:raise error
+-        need(code==0,'Command '+label+' exited '+str(code)+'; complete streams retained: '+str(directory))
++        if check:need(code==0,'Command '+label+' exited '+str(code)+'; complete streams retained: '+str(directory))
+         return subprocess.CompletedProcess(command,code,out.decode(),err.decode())
+     def cli(self,*argv,**kwargs):return self.call([self.value['airkctl'],*argv],kwargs.pop('label','cli'),**kwargs)
+     def alive(self):need(self.service.poll() is None,'Original Service exited before required observation')
+@@ -213,15 +243,19 @@
+         need(control.samefile(Path(self.value['work'])/'control'),'Actual Ready names a different control directory')
+         # Only a fully authenticated actual record becomes cleanup/control authority.
+         self.ready=candidate;self.control=control;self.report['full_ready']=candidate;self.retain()
+-    def setup(self,clients,changes):
++    def attached_fixture(self,clients):
+         route=self
+         class Attached(clients.Fixture):
+             @property
+             def catalog_authority(self):return True
+             def run(self,*args,input=None,check=True,timeout=None):
+                 need(type(check) is bool,'Native command check policy must be explicit')
+-                # call still requires exit0; query(retry=False) submits one read only.
+-                return route.cli(*args,input=input,timeout=timeout,label='setup')
++                if not check:
++                    need(input is None and tuple(args[-5:])==('tools','call','airk_diagnostics','--args','{"response_mode":"full"}'),
++                        'Unchecked result allowed only for the canonical readiness diagnostics read')
++                # Fixture.query owns typed rejection validation, exact-args replay,
++                # the unchanged41-attempt cap and native-directed pacing.
++                return route.cli(*args,input=input,timeout=timeout,label='setup',check=check)
+             def wait(self,receipt,expected='succeeded'):
+                 # Same exercised FocusR5 observation loop; only read-only Job observations repeat.
+                 # Every real CLI completion is bounded by the ONE original route cutoff; no sleep/retry mutation.
+@@ -231,6 +265,9 @@
+                         need(job['state']==expected,'Native maintenance job failed: '+json.dumps(job));return job
+                     remaining(route.cutoff)
+         fixture=Attached.__new__(Attached);fixture.control=self.control;fixture.projects={};fixture.scopes={}
++        return fixture
++    def setup(self,clients,changes):
++        fixture=self.attached_fixture(clients)
+         data=Path(self.value['index_data']);data.mkdir(exist_ok=False)
+         fixture.register('r154',Path(self.value['source_root']),data)
+         write(self.root/'native-registration-and-selection.json',{'registration':fixture.projects['r154'],'selection':fixture.scopes['r154']})
+@@ -248,11 +285,13 @@
+         try:
+             accepted=await_semantic_population(
+                 lambda until:fixture.query('r154','tools','call','airk_diagnostics','--args',
+-                    '{"response_mode":"full"}',deadline=until,retry=False),
++                    '{"response_mode":"full"}',deadline=until),
+                 clients,fixture.projects['r154'],self.ready['health']['instance'],self.cutoff,
+-                record,lambda until:self.wait_event(watch,until))
++                record,lambda until:self.wait_event(watch,until),
++                lambda until:self.owner_work_observation(fixture,until),self.ready['health'])
+             self.report['full753_semantic_ready_and_no_active_publication_work']={
+-                'sample':observations[-1],'publication':accepted['publication'],
++                'semantic_sample':observations[-2],'owner_management_sample':observations[-1],
++                'publication':accepted['publication'],
+                 'original_whole_cutoff':self.cutoff,'before_scope_emission_and_warm':True}
+             self.retain()
+         finally:watch.close()
+@@ -260,6 +299,19 @@
+         # Rust owns ScopedConnectRequest parsing and all current authority checks.
+         self.publish_reviewed_scope(fixture.scopes)
+         self.report['native_index_setup_complete']=True;self.retain()
++    def owner_work_observation(self,fixture,cutoff):
++        # Scoped diagnostics deliberately hide scheduler metadata. This fixture
++        # separately owns the native registration and its management observations.
++        self.alive();remaining(cutoff)
++        def health():
++            return json.loads(self.cli('--service-runtime-dir',self.control,'service','health',
++                label='readiness-health',timeout=remaining(cutoff)).stdout)
++        packet={'health_before':health()}
++        project=fixture.projects['r154']['binding']
++        for method in ('progress','watch','worker'):
++            packet[method]=fixture.rpc({method:{'project':project}},deadline=cutoff)
++        packet['health_after']=health();remaining(cutoff);self.alive()
++        return packet
+     def publish_reviewed_scope(self,scopes):
+         pin=self.value['source_scope_input'];need(sha(pin['path'])==pin['sha256'],'Frozen original source roots changed')
+         original=json.loads(Path(pin['path']).read_bytes())
+@@ -343,13 +395,13 @@
+             '--native-budget-cases-sha256',v['native_budget_cases']['sha256'],
+             '--context-manifest',v['context_manifest'],'--focus-manifest',v['focus_manifest'],
+             '--sdk-manifest',v['sdk_handoff']['path'],'--sdk-manifest-sha256',v['sdk_handoff']['sha256'],
+-            '--phase-seconds','360','--output',str(work/'r154-fresh-attribution-r5')]
++            '--phase-seconds','360','--output',str(work/'r154-fresh-attribution-r6')]
+         # After handoff the unchanged observer owns exactly one canonical Shutdown, including failures.
+         self.delegated_stop=True;self.report['service_stop_delegated_to_R154']=True;self.retain()
+         failure=None
+         try:self.call(args,'R154-owned-observer',timeout=remaining(self.cutoff))
+         except BaseException as error:failure=error
+-        path=work/'r154-fresh-attribution-r5/owned-execution.json'
++        path=work/'r154-fresh-attribution-r6/owned-execution.json'
+         try:
+             with path.open('rb') as stream:raw=stream.read(8*1024*1024+1)
+             need(len(raw)<=8*1024*1024,'Owned observer receipt exceeds8MiB')

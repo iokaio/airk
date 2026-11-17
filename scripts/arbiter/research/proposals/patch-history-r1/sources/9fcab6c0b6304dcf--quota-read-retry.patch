@@ -1,0 +1,152 @@
+--- a/crates/airk-kernel/src/retrieval_retry.rs
++++ b/crates/airk-kernel/src/retrieval_retry.rs
+@@ -3,6 +3,7 @@
+ use airk_store::{
+     current::{CurrentGateContention, CurrentReadContention},
+     service::collection::SelectionContention,
++    quota::QuotaContention,
+ };
+ use serde::Serialize;
+ 
+@@ -16,7 +17,13 @@
+ }
+ 
+ pub fn read_retry_hint(error: &anyhow::Error) -> Option<ReadRetryHint> {
+-    let (code, retry_after_ms) = if error.downcast_ref::<SelectionContention>().is_some() {
++    let (code, retry_after_ms) = if error.downcast_ref::<SelectionContention>().is_some()
++        || error.downcast_ref::<QuotaContention>().is_some()
++    {
++        // selection_busy is the existing safe READ-admission category: a
++        // selected read cannot observe shared storage until its accounting
++        // gate admits it. This does not retry ledger operations or mutations;
++        // durable job diagnostics retain the distinct quota_ledger_busy code.
+         ("selection_busy", SelectionContention::RETRY_AFTER_MS)
+     } else if error.downcast_ref::<CurrentReadContention>().is_some()
+         || matches!(
+@@ -45,6 +52,7 @@
+         for error in [
+             anyhow::Error::new(SelectionContention),
+             anyhow::Error::new(CurrentReadContention),
++            anyhow::Error::new(std::fs::TryLockError::WouldBlock).context(QuotaContention),
+             anyhow::anyhow!("native lock").context(CurrentGateContention::Applying),
+         ] {
+             let hint = read_retry_hint(&error.context("read request")).unwrap();
+@@ -56,6 +64,12 @@
+                 std::io::ErrorKind::PermissionDenied,
+                 "busy publication",
+             )),
++            anyhow::anyhow!("shared storage accounting ledger is temporarily busy"),
++            anyhow::anyhow!("quota_ledger_busy"),
++            anyhow::Error::new(std::io::Error::new(
++                std::io::ErrorKind::PermissionDenied,
++                "shared storage accounting ledger is temporarily busy",
++            )),
+             anyhow::anyhow!("current revision expired"),
+             anyhow::anyhow!("corrupt index"),
+             anyhow::anyhow!("service incarnation selection is busy; retry after 25 ms"),
+@@ -65,3 +79,21 @@
+         }
+     }
+ }
++
++#[cfg(test)]
++#[test]
++fn quota_read_admission_preserves_wrapped_type_without_reclassifying_text() {
++    let error = anyhow::Error::new(std::fs::TryLockError::WouldBlock)
++        .context(airk_store::quota::QuotaContention)
++        .context("private ledger read context");
++    let hint = read_retry_hint(&error).expect("typed quota read admission");
++    assert_eq!(hint.code, "selection_busy");
++    assert_eq!(hint.retry_after_ms, 25);
++    assert_eq!(hint.action, "repeat_same_request");
++    assert_eq!(serde_json::to_value(hint).unwrap(), serde_json::json!({
++        "status":"retry", "retryable":true, "code":"selection_busy",
++        "retry_after_ms":25, "action":"repeat_same_request"
++    }));
++    assert_eq!(airk_store::diagnostics::failure_code(&error).as_deref(), Some("quota_ledger_busy"));
++    assert!(read_retry_hint(&anyhow::anyhow!("{error}")).is_none());
++}
+--- a/crates/airk-cli/tests/mcp.rs
++++ b/crates/airk-cli/tests/mcp.rs
+@@ -1858,3 +1858,81 @@
+     assert!(replies[0]["result"].is_object());
+     Ok(())
+ }
++
++#[test]
++fn held_quota_ledger_preserves_same_read_hint_through_native_cli_and_mcp() -> anyhow::Result<()> {
++    fn hint(reply: &Value) -> anyhow::Result<Value> {
++        anyhow::ensure!(reply.is_object() && reply["isError"] == true, "{reply}");
++        let blocks = reply["content"].as_array().ok_or_else(|| anyhow::anyhow!("{reply}"))?;
++        anyhow::ensure!(blocks.len() == 1 && blocks[0]["type"] == "text", "{reply}");
++        let value: Value = serde_json::from_str(blocks[0]["text"].as_str().ok_or_else(|| anyhow::anyhow!("{reply}"))?)?;
++        anyhow::ensure!(value == json!({"status":"retry","retryable":true,"code":"selection_busy",
++            "retry_after_ms":25,"action":"repeat_same_request"}), "{reply}");
++        Ok(value)
++    }
++    let root = tempfile::tempdir()?;
++    let data = tempfile::tempdir()?;
++    let original = "QuotaLedgerSentinel original retained source.\n";
++    fs::write(root.path().join("one.txt"), original)?;
++    let service = common::Service::start(root.path(), data.path(), "project-a");
++    service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
++    service.job(airk_core::service::JobKind::Index);
++    assert!(matches!(service.request(airk_core::service::ControlMethod::Pause {
++        project: service.project.binding, paused: true
++    }), airk_core::service::ControlResponse::Registered { project } if project.paused));
++    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
++    let mut direct = runtime.block_on(airk_cli::project_client::Connection::connect(&service.control, service.project.binding))?;
++    let args = json!({"response_mode":"full"});
++    let baseline = runtime.block_on(direct.call("airk_diagnostics".into(), args.as_object().unwrap().clone()))?;
++    anyhow::ensure!(baseline["isError"] != true, "{baseline}");
++    let baseline: Value = serde_json::from_str(baseline["content"][0]["text"].as_str().unwrap())?;
++    let publication = baseline["publication"]["token"].clone();
++    anyhow::ensure!(publication.is_string(), "{baseline}");
++    let mut session = Session::start(root.path(), data.path())?;
++    session.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
++        "protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"quota-read-admission","version":"1"}}}))?;
++    anyhow::ensure!(session.receive(1)?.get("error").is_none());
++    session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
++    let warm = session.call(2, "airk_diagnostics", args)?;
++    anyhow::ensure!(warm.get("error").is_none() && warm["result"]["isError"] != true, "{warm}");
++    let ledger = fs::OpenOptions::new().read(true).write(true)
++        .open(data.path().join(".quota-1.4/ledger.lock"))?;
++    let until = std::time::Instant::now() + Duration::from_secs(5);
++    loop {
++        match ledger.try_lock() {
++            Ok(()) => break,
++            Err(fs::TryLockError::WouldBlock) if std::time::Instant::now() < until => std::thread::sleep(Duration::from_millis(5)),
++            Err(error) => return Err(error.into()),
++        }
++    }
++    for (id, mode) in [(3, "terse"), (4, "full")] {
++        let args = json!({"response_mode":mode});
++        // native read: exactly once while holding the real ledger, so a typed
++        // complete rejection is observed rather than hidden by fixture retries.
++        let native = runtime.block_on(direct.call("airk_diagnostics".into(), args.as_object().unwrap().clone()))?;
++        hint(&native)?;
++        let encoded = args.to_string();
++        let mut command = common::command(root.path(), data.path(), "project-a");
++        command.args(["tools", "call", "airk_diagnostics", "--args", &encoded]);
++        // native read: single complete refusal, never auto-repeat under held lock.
++        let output = common::read_retry::once_until(&command, std::time::Instant::now() + Duration::from_secs(60))?;
++        anyhow::ensure!(output.status.code() == Some(1), "stdout={};stderr={}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
++        let cli: Value = serde_json::from_slice(&output.stdout)?;
++        hint(&cli)?;
++        // native read: single MCP response has the same complete error contract.
++        let wire = session.call(id, "airk_diagnostics", args)?;
++        anyhow::ensure!(wire.get("error").is_none(), "{wire}");
++        hint(&wire["result"])?;
++        assert_eq!(native, cli, "complete native/CLI refusal differs");
++        assert_eq!(native, wire["result"], "complete native/MCP refusal differs");
++    }
++    ledger.unlock()?;
++    drop(ledger);
++    let args = json!({"response_mode":"full"});
++    let recovered = runtime.block_on(direct.call("airk_diagnostics".into(), args.as_object().unwrap().clone()))?;
++    anyhow::ensure!(recovered["isError"] != true, "{recovered}");
++    let recovered: Value = serde_json::from_str(recovered["content"][0]["text"].as_str().unwrap())?;
++    assert_eq!(recovered["publication"]["token"], publication);
++    assert_eq!(fs::read_to_string(root.path().join("one.txt"))?, original);
++    Ok(())
++}

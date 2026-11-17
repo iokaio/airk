@@ -1,0 +1,478 @@
+--- /dev/null
++++ b/packages/vscode/src/referenceRefresh.ts
+@@ -0,0 +1,144 @@
++// SPDX-License-Identifier: Apache-2.0
++/** Native mutation review is separate from evidence reads and explicit requery. */
++import {createHash} from 'node:crypto';
++import {isDeepStrictEqual} from 'node:util';
++import {catalogBound,catalogHex,catalogId,catalogObject,catalogRevision} from './indexingCatalog';
++import type {ConfigurationIntent,ProjectConfigurationRequest,RequestKey,ServiceClient} from './serviceClient';
++import type {IntentJournal} from './serviceIntents';
++type ObjectValue=Record<string,unknown>;
++export const REFRESH_SELECTION_BYTES=12*1024;
++export const REFRESH_NATIVE_BYTES=64*1024;
++export const REFRESH_QUERY_BYTES=16*1024;
++// Original result64 + query16 + native request16 + retained acknowledgment64
++// + latest full lookup64 + bounded local fields fit before any native dispatch.
++export const REFRESH_JOURNAL_BYTES=256*1024;
++export interface ReferenceRefreshIntent {reference_refresh:{configure_project:ConfigurationIntent;original_query:ObjectValue|null;original_result:ObjectValue|null;evidence_retention:'memory_only'|'local_approved'}}
++export function refreshCapability(value:unknown):boolean {try{return catalogObject(catalogObject(value).capabilities).reference_refresh_contract===1;}catch{return false;}}
++export function refreshDigest(value:unknown):string{return createHash('sha256').update(JSON.stringify(value)).digest('hex');}
++function exact(value:ObjectValue,names:string):void {if(Object.keys(value).sort().join(',')!==names.split(',').sort().join(','))throw new Error('invalid_refresh_fields');}
++function array(value:unknown,max:number):unknown[] {if(!Array.isArray(value)||!value.length||value.length>max)throw new Error('invalid_refresh_selection');return value;}
++function path(value:unknown):string {if(typeof value!=='string'||!value||Buffer.byteLength(value)>4096||/[\\:\u0000-\u001f\u007f]/.test(value)||value.split('/').some(v=>!v||v==='.'||v==='..'))throw new Error('invalid_refresh_path');return value;}
++function publication(value:unknown):{text:string;incarnation:string;generation:number} {if(typeof value!=='string')throw new Error('invalid_refresh_publication');const fields=value.split(':');if(fields.length!==4||fields[0]!=='airk-r1'||!/^[1-9][0-9]*$/.test(fields[2]))throw new Error('invalid_refresh_publication');catalogHex(fields[1],32);catalogHex(fields[3],64);const generation=Number(fields[2]);if(!Number.isSafeInteger(generation))throw new Error('invalid_refresh_publication');return {text:value,incarnation:fields[1],generation};}
++export function validateRefreshSelection(input:unknown):ObjectValue {
++    const value=catalogObject(input);catalogBound(value,REFRESH_SELECTION_BYTES);
++    exact(value,'schema,caller,key,original_result_digest,original_evidence_selection_digest,original_query_digest,selection,mode,members');
++    if(value.schema!==1||!['selected_only','full_reconcile_reviewed'].includes(String(value.mode)))throw new Error('invalid_refresh_selection');
++    catalogHex(value.caller,32);for(const key of ['original_result_digest','original_evidence_selection_digest','original_query_digest'])catalogHex(value[key],64);
++    const key=catalogObject(value.key);exact(key,'namespace,epoch,nonce');catalogHex(key.namespace,32);catalogHex(key.nonce,32);catalogRevision(key.epoch);
++    const selected=catalogObject(value.selection);exact(selected,'schema,context_key,namespace,expected_catalog_revision,grant_id,expected_grant_revision,project_ids,index_ids');
++    if(selected.schema!==1||key.namespace!==selected.namespace)throw new Error('crossed_refresh_namespace');catalogHex(selected.namespace,32);catalogHex(selected.context_key,64);catalogRevision(selected.expected_catalog_revision);catalogRevision(selected.expected_grant_revision);catalogId(selected.grant_id,'grt_');
++    const projects=array(selected.project_ids,32).map(v=>catalogId(v,'prj_'));if(new Set(projects).size!==projects.length)throw new Error('duplicate_refresh_project');
++    const indexes=array(selected.index_ids,32).map(v=>catalogId(v,'idx_'));if(new Set(indexes).size!==indexes.length)throw new Error('duplicate_refresh_index');
++    const members=array(value.members,8);let count=0;const seen=new Set<string>();
++    for(const raw of members){const member=catalogObject(raw);exact(member,'index_id,original_publication,sources');const id=catalogId(member.index_id,'idx_');if(!indexes.includes(id)||seen.has(id))throw new Error('crossed_refresh_member');seen.add(id);publication(member.original_publication);
++        const paths=new Set<string>();for(const raw of array(member.sources,64)){const source=catalogObject(raw);exact(source,'source_root_id,source_relative_path,canonical_root,indexed_hash');catalogId(source.source_root_id,'src_');const relative=path(source.source_relative_path);catalogHex(source.indexed_hash,64);
++            if(typeof source.canonical_root!=='string'||Buffer.byteLength(source.canonical_root)>32768||!/^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(source.canonical_root)||/[\u0000-\u001f\u007f]/.test(source.canonical_root))throw new Error('invalid_refresh_original_root');
++            const identity=JSON.stringify([source.source_root_id,relative]);if(paths.has(identity)||++count>64)throw new Error('duplicate_or_oversize_refresh_sources');paths.add(identity);
++        }
++    }return value;
++}
++export function refreshConfiguration(input:unknown):ProjectConfigurationRequest {
++    const value=catalogObject(input),configuration=catalogObject(value.configuration);catalogBound(value,16384);
++    if(!['configuration,incarnation,settings','configuration,incarnation,prepare,settings'].includes(Object.keys(value).sort().join(','))||value.prepare!==undefined&&value.prepare!==false)throw new Error('invalid_refresh_configuration');
++    catalogHex(value.incarnation,32);catalogHex(value.settings,64);exact(configuration,'operation,selection');if(configuration.operation!=='refresh_references')throw new Error('invalid_refresh_operation');validateRefreshSelection(configuration.selection);return input as ProjectConfigurationRequest;
++}
++export function validateRefreshIntent(input:unknown):ReferenceRefreshIntent {
++    const value=catalogObject(input);exact(value,'reference_refresh');const review=catalogObject(value.reference_refresh);exact(review,'configure_project,original_query,original_result,evidence_retention');if(!['memory_only','local_approved'].includes(String(review.evidence_retention)))throw new Error('invalid_refresh_evidence_retention');const configuration=catalogObject(review.configure_project);exact(configuration,'project,caller,key,request');catalogHex(configuration.project,64);catalogHex(configuration.caller,32);
++    const request=refreshConfiguration(configuration.request),selection=catalogObject(request.configuration.selection);if(request.prepare!==undefined)throw new Error('noncanonical_refresh_prepare_field');if(configuration.caller!==selection.caller||!isDeepStrictEqual(configuration.key,selection.key))throw new Error('crossed_refresh_request_key');
++    if(review.original_query===null||review.original_result===null){if(review.original_query!==null||review.original_result!==null||review.evidence_retention!=='memory_only')throw new Error('incomplete_refresh_original');return input as ReferenceRefreshIntent;}
++    const query=catalogObject(review.original_query);catalogBound(query,REFRESH_QUERY_BYTES);exact(query,'tool,arguments');if(typeof query.tool!=='string'||!['airk_search','airk_read_file','airk_list_files','airk_symbols','airk_references','airk_outline','airk_file_info','airk_imports','airk_code_facts','airk_document_facts','airk_changes','airk_context','airk_relationships'].includes(query.tool))throw new Error('invalid_refresh_original_query');catalogObject(query.arguments);
++    const result=catalogObject(review.original_result);catalogBound(result,REFRESH_NATIVE_BYTES);if(selection.original_query_digest!==refreshDigest(query)||selection.original_result_digest!==refreshDigest(result)||selection.original_evidence_selection_digest!==refreshDigest(selection.members))throw new Error('changed_refresh_original_evidence');
++    return input as ReferenceRefreshIntent;
++}
++export function refreshIntentKey(intent:ReferenceRefreshIntent):RequestKey{return intent.reference_refresh.configure_project.key;}
++export function refreshJobId(intent:ReferenceRefreshIntent):string {
++    const request=intent.reference_refresh.configure_project,key=request.key,epoch=Buffer.alloc(8);epoch.writeBigUInt64LE(BigInt(key.epoch));const digest=createHash('sha256').update(Buffer.from('AIRK-DIGEST-1\0'));
++    for(const field of [Buffer.from('airk-service-job/1'),Buffer.from(request.project,'hex'),Buffer.from(request.caller,'hex'),Buffer.from(key.namespace,'hex'),epoch,Buffer.from(key.nonce,'hex')]){const size=Buffer.alloc(8);size.writeBigUInt64BE(BigInt(field.length));digest.update(size).update(field);}return digest.digest('hex');
++}
++export function validateRefreshJob(input:unknown,intent:ReferenceRefreshIntent):ObjectValue {
++    const job=catalogObject(input);if(job.id!==refreshJobId(intent)||job.project!==intent.reference_refresh.configure_project.project||job.kind!=='configure'||!['pending','running','succeeded','failed','canceled'].includes(String(job.state)))throw new Error('crossed_refresh_job');return job;
++}
++export function validateRefreshReceipt(input:unknown,intent:ReferenceRefreshIntent):ObjectValue {
++    const value=catalogObject(input);catalogBound(value,REFRESH_NATIVE_BYTES);if(value.status!=='reference_refresh_receipt'||typeof value.expired!=='boolean')throw new Error('invalid_refresh_receipt');
++    if(value.job===null){if(value.configuration!==null||value.result!==null)throw new Error('unbound_refresh_receipt');return value;}
++    const job=validateRefreshJob(value.job,intent);if(value.expired)throw new Error('crossed_refresh_receipt');
++    if(value.configuration===null){if(value.result!==null)throw new Error('unbound_refresh_result');return value;}
++    const work=catalogObject(value.configuration);catalogHex(work.engine,64);if(!isDeepStrictEqual(work.request,intent.reference_refresh.configure_project.request))throw new Error('changed_refresh_accepted_configuration');
++    if(value.result!==null){const result=catalogObject(value.result),selection=catalogObject(intent.reference_refresh.configure_project.request.configuration.selection),members=array(selection.members,8),member=catalogObject(members[0]);
++        if(result.schema!=='airk.reference-refresh-result/1'||result.original_query_digest!==selection.original_query_digest||result.effective_mode!==selection.mode||result.effective_scope!==(selection.mode==='selected_only'?'selected_sources':'whole_index_explicitly_reviewed')||result.requery_executed!==false||result.before_publication!==member.original_publication)throw new Error('crossed_refresh_result');
++        catalogHex(result.selection_digest,64);const before=publication(result.before_publication),after=publication(result.after_publication);if(after.incarnation!==before.incarnation||after.generation<before.generation||after.generation===before.generation&&after.text!==before.text||catalogObject(catalogObject(result.status).publication).token!==after.text||catalogObject(result.report).generation!==after.generation)throw new Error('crossed_refresh_publication');
++        if(job.state==='succeeded'&&(catalogObject(job.outcome).state!=='succeeded'||catalogObject(job.outcome).revision!==after.text))throw new Error('crossed_refresh_completion');
++    }return value;
++}
++export function refreshComplete(receipt:ObjectValue):boolean{return receipt.job!==null&&catalogObject(receipt.job).state==='succeeded'&&receipt.configuration!==null&&receipt.result!==null;}
++export interface RefreshFlowHost {
++    trusted():boolean;
++    persistEvidenceAllowed?():boolean;
++    confirm(details:string,action:string):Promise<boolean>;
++    // Existing canonical native context read/resolve; must not issue any grant.
++    reconfirm(selection:ObjectValue):Promise<ObjectValue>;
++    // Exactly one existing canonical evidence request, same full tool arguments.
++    query(query:ObjectValue,selection:ObjectValue):Promise<ObjectValue>;
++}
++export class ReferenceRefreshFlow {
++    private submitting=false;
++    private readonly originalEvidence=new Map<string,{query:ObjectValue;result:ObjectValue}>();
++    constructor(private readonly client:ServiceClient,private readonly journal:IntentJournal,private readonly host:RefreshFlowHost){}
++    private requireTrust():void{if(!this.host.trusted())throw new Error('refresh_workspace_not_trusted');}
++    async reviewAndSubmit(input:ReferenceRefreshIntent,capabilities:unknown):Promise<string|undefined>{
++        if(this.submitting)throw new Error('refresh_review_already_in_flight');this.submitting=true;
++        try{return await this.reviewAndSubmitOnce(input,capabilities);}finally{this.submitting=false;}
++    }
++    private async reviewAndSubmitOnce(input:ReferenceRefreshIntent,capabilities:unknown):Promise<string|undefined>{
++        const intent=structuredClone(validateRefreshIntent(input));
++        this.requireTrust();if(intent.reference_refresh.original_query===null||intent.reference_refresh.original_result===null)throw new Error('refresh_original_evidence_not_available');if(intent.reference_refresh.evidence_retention==='local_approved'&&!this.host.persistEvidenceAllowed?.())throw new Error('refresh_evidence_persistence_not_authorized');if(!refreshCapability(capabilities))throw new Error('native_reference_refresh_capability_required');
++        const originalQuery=intent.reference_refresh.original_query,originalResult=intent.reference_refresh.original_result;
++        if(originalQuery===null||originalResult===null)throw new Error('refresh_original_evidence_not_available');
++        if(this.originalEvidence.size>=64)throw new Error('refresh_volatile_evidence_capacity');
++        const key=refreshIntentKey(intent);
++        for(const existing of this.journal.list())if('reference_refresh'in existing.value.intent){
++            const previous=existing.value.intent.reference_refresh.configure_project;
++            if(isDeepStrictEqual(previous.key,key))throw new Error('refresh_already_tracked_check_exact_receipt');
++            const known=existing.value.nativeRefreshReceipt,job=known?.job==null?undefined:catalogObject(known.job);
++            if(previous.project===intent.reference_refresh.configure_project.project&&(!job||!['succeeded','failed','canceled'].includes(String(job.state))))throw new Error('refresh_prior_outcome_requires_exact_receipt');
++        }
++
++        const selection=catalogObject(intent.reference_refresh.configure_project.request.configuration.selection);if(array(selection.members,8).length!==1)throw new Error('native_refresh_requires_one_member');
++        const current=await this.host.reconfirm(catalogObject(selection.selection));this.requireTrust();if(!isDeepStrictEqual(current,selection.selection))throw new Error('refresh_scope_changed_review_required');
++        if(!await this.host.confirm(refreshReviewText(intent),'Refresh reviewed files'))return;
++        this.requireTrust();const id=await this.journal.prepare('Refresh reviewed references',intent);
++        this.originalEvidence.set(id,{query:structuredClone(originalQuery),result:structuredClone(originalResult)});
++        // Persist terminal space before dispatch. Never replay from a saved row.
++        try{const reply=await this.client.submitReferenceRefresh(intent);await this.journal.observeRefresh(id,reply);}
++        catch(error){
++            const native=(error as {nativeResponse?:ObjectValue})?.nativeResponse;
++            if(native)try{await this.journal.observeRefresh(id,native);}catch{/* Full bounded diagnostic was retained, accepted historical proof preserved. */}
++            throw new Error('refresh_outcome_unknown_check_exact_receipt',{cause:error});
++        }
++        return id;
++    }
++    async check(id:string):Promise<ObjectValue>{
++        this.requireTrust();const saved=this.journal.list().find(value=>value.id===id);if(!saved||!('reference_refresh'in saved.value.intent))throw new Error('refresh_intent_not_found');
++        try{const reply=await this.client.referenceRefreshReceipt(saved.value.intent);await this.journal.observeRefresh(id,reply);this.requireTrust();return reply;}
++        catch(error){const native=(error as {nativeResponse?:ObjectValue})?.nativeResponse;if(native)try{await this.journal.observeRefresh(id,native);}catch{/* Keep prior accepted proof. */}throw error;}
++    }
++    async requery(id:string):Promise<{original:ObjectValue;current:ObjectValue;native_receipt:ObjectValue}>{
++        this.requireTrust();const saved=this.journal.list().find(value=>value.id===id);if(!saved||!('reference_refresh'in saved.value.intent))throw new Error('refresh_intent_not_found');
++        const intent=saved.value.intent,original=this.originalEvidence.get(id)??(intent.reference_refresh.original_query!==null&&intent.reference_refresh.original_result!==null?{query:intent.reference_refresh.original_query,result:intent.reference_refresh.original_result}:undefined);
++        if(!original)throw new Error('refresh_original_query_not_retained_reopen_and_review');
++        const receipt=await this.check(id);if(!refreshComplete(receipt))throw new Error('fresh_completed_refresh_receipt_required');
++        const selected=catalogObject(catalogObject(intent.reference_refresh.configure_project.request.configuration.selection).selection),current=await this.host.reconfirm(selected);this.requireTrust();
++        // A fresh catalog revision is expected; every actual authority selector
++        // stays exact. Native resolve remains responsible for current liveness.
++        const before={...selected},after={...current};delete before.expected_catalog_revision;delete after.expected_catalog_revision;
++        if(!isDeepStrictEqual(before,after))throw new Error('refresh_requery_scope_changed_review_required');
++        if(!await this.host.confirm('Run the same saved query once against the newly confirmed current selection? Preserve the original result and verification settings.','Requery current index'))throw new Error('refresh_requery_not_confirmed');
++        this.requireTrust();const response=await this.host.query(structuredClone(original.query),structuredClone(current));this.requireTrust();catalogBound(response,REFRESH_NATIVE_BYTES);
++        return {original:structuredClone(original.result),current:structuredClone(response),native_receipt:structuredClone(receipt)};
++    }
++}
++export function refreshReviewText(intent:ReferenceRefreshIntent):string {const selection=catalogObject(intent.reference_refresh.configure_project.request.configuration.selection);return `${selection.mode==='selected_only'?'Refresh only selected files.':'Full index reconciliation was explicitly selected; unrelated source files in this index may also update.'}\nThe original result stays historical. ${intent.reference_refresh.evidence_retention==='memory_only'?'Query/result text stays in memory; restart recovery retains only native metadata and cannot rerun a missing query.':'This review saves the complete original query/result locally under the approved persistence setting.'} This starts one native job; any later requery requires confirmation.\n${JSON.stringify(selection.members,null,2)}`;}
++export function refreshExport(intent:ReferenceRefreshIntent,latest:ObjectValue|undefined,known:ObjectValue|undefined,requery?:ObjectValue):{json:string;markdown:string}{
++    const value={evidence_retention:intent.reference_refresh.evidence_retention,reviewed_native_request:intent.reference_refresh.configure_project,original_query:intent.reference_refresh.original_query,original_historical_result:intent.reference_refresh.original_result,latest_receipt_lookup:latest??null,last_known_historical_native_receipt:known??null,current_requery_result:requery??null};
++    return {json:JSON.stringify(value,null,2),markdown:`# Refresh from reviewed references\n\nOriginal evidence, historical accepted proof, latest lookup and new query are separate observations.\n\n\`\`\`json\n${JSON.stringify(value,null,2)}\n\`\`\`\n`};
++}
+--- a/packages/vscode/src/serviceClient.ts
++++ b/packages/vscode/src/serviceClient.ts
+@@ -1,6 +1,7 @@
+ // SPDX-License-Identifier: Apache-2.0
+ import { ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
+ import { randomUUID } from 'node:crypto';
++import {ReferenceRefreshIntent,refreshConfiguration,refreshDigest,validateRefreshIntent,validateRefreshJob,validateRefreshReceipt} from './referenceRefresh';
+ import * as path from 'node:path';
+ import { requireNativeExecution } from './nativeGate';
+ import { CatalogApplyIntent, CatalogObject, CatalogRequest, CatalogReview, IndexSetupApplyIntent, IndexSetupReview, catalogBound, catalogFenceObservation, catalogHex, catalogObject, catalogRevision, sameCatalogValue, CATALOG_RECEIPT_BYTES, validateCatalogApply, validateGrantSelection, validateNativeGrantDraft, validateNativeHostContext, validateIndexSetupSelection, validateIndexSetupApply, validateNativeIndexSetupDraft, validateIndexSetupReceipt, indexSetupObservation, validateNativeLegacyBinding } from './indexingCatalog';
+@@ -120,9 +121,10 @@
+     const names:Record<string,string[]>={unregister:[],prepare_derived_cleanup:[],delete_derived:['preview'],bundled_model:[],vectors:['enabled'],detail:['level'],vector_selection:['policy'],
+         add_root:['alias','path'],remove_root:['alias'],install_model:['directory','manifest_sha256'],usage:['mode'],
+         clear_usage:[],reset_scan_limits:[],usage_feedback:['request_id','usefulness'],import_usage:['input'],extraction_policy:['input'],scan_limits:['input'],quota_policy:['input','expected_policy_digest'],
+-        calibrate:['tokenizer','baseline','returned','generation','content_kind','record']};
++        calibrate:['tokenizer','baseline','returned','generation','content_kind','record'],refresh_references:['selection']};
+     if(typeof operation!=='string'||!Object.hasOwn(names,operation)||Object.keys(configuration).sort().join(',')!==['operation',...names[operation]].sort().join(','))throw new ServiceError('invalid_project_configuration');
+     const filePath=(input:unknown)=>{if(typeof input!=='string'||!path.isAbsolute(input)||input.length>4096||/[\u0000-\u001f\u007f]/.test(input))throw new ServiceError('invalid_configuration_path');};
++    if(operation==='refresh_references')refreshConfiguration(input);
+     if(operation==='vectors'&&typeof configuration.enabled!=='boolean')throw new ServiceError('invalid_project_configuration');
+     if(operation==='detail'&&!['essential','agent_lean','balanced','detailed'].includes(String(configuration.level)))throw new ServiceError('invalid_project_configuration');
+     if(operation==='delete_derived')identifier(configuration.preview,32);
+@@ -199,7 +201,7 @@
+     constructor(readonly transport: ControlTransport) {}
+     async rpc(method: unknown, expected?: string): Promise<RecordValue> {
+         const name=typeof method==='string'?method:method&&typeof method==='object'?Object.keys(method)[0]:undefined;
+-        const readOnly=['health','resources','embedding_status','source_status','workers','worker','console','inactive_console','projects','job','configuration_result','request_receipt','inspection','watch','progress','events','plan','plan_items','maintenance','catalog_page','catalog_detail','catalog_context','catalog_receipt','catalog_host_context','catalog_grant_draft','catalog_index_setup_draft','catalog_index_setup_receipt','catalog_legacy_binding','catalog_source_mutation_draft','catalog_source_change_observation','catalog_pending_source_change','catalog_policy_status','catalog_policy_resume_receipt','catalog_split_draft','catalog_split_source_state','catalog_split_status','catalog_split_receipt','catalog_split_recovery_receipt'].includes(String(name));
++        const readOnly=['health','resources','embedding_status','source_status','workers','worker','console','inactive_console','projects','job','configuration_result','reference_refresh_receipt','request_receipt','inspection','watch','progress','events','plan','plan_items','maintenance','catalog_page','catalog_detail','catalog_context','catalog_receipt','catalog_host_context','catalog_grant_draft','catalog_index_setup_draft','catalog_index_setup_receipt','catalog_legacy_binding','catalog_source_mutation_draft','catalog_source_change_observation','catalog_pending_source_change','catalog_policy_status','catalog_policy_resume_receipt','catalog_split_draft','catalog_split_source_state','catalog_split_status','catalog_split_receipt','catalog_split_recovery_receipt'].includes(String(name));
+         let response = await this.transport.request(method);
+         for(let attempt=0;(readOnly||name==='catalog_index_retirement_evidence')&&response.status==='failure'&&response.code==='registry_busy'&&attempt<2;attempt++){
+             await new Promise(resolve=>setTimeout(resolve,25*(attempt+1)));
+@@ -582,7 +584,24 @@
+     async prepareRetry(id: string): Promise<MutationIntent> {
+         return { retry: { id: identifier(id,32), caller: this.caller, key: await this.key() } };
+     }
++    async prepareReferenceRefresh(project:string,draft:ProjectConfigurationRequest,originalQuery:RecordValue,originalResult:RecordValue,persistEvidence=false):Promise<ReferenceRefreshIntent>{
++        const key=await this.key(),selection=structuredClone(record(draft.configuration.selection));
++        selection.caller=this.caller;selection.key=key;selection.original_query_digest=refreshDigest(originalQuery);selection.original_result_digest=refreshDigest(originalResult);selection.original_evidence_selection_digest=refreshDigest(selection.members);
++        const request={...structuredClone(draft),configuration:{operation:'refresh_references',selection}},intent={reference_refresh:{configure_project:{project:identifier(project,32),caller:this.caller,key,request},original_query:structuredClone(originalQuery),original_result:structuredClone(originalResult),evidence_retention:persistEvidence?'local_approved':'memory_only'}};
++        delete (request as ProjectConfigurationRequest).prepare;
++        return validateRefreshIntent(intent);
++    }
++    async submitReferenceRefresh(input:ReferenceRefreshIntent):Promise<RecordValue>{
++        const intent=validateRefreshIntent(input),response=await this.rpc({configure_project:intent.reference_refresh.configure_project},'job');
++        try{validateRefreshJob(response.job,intent);return response;}catch{throw new ServiceError('crossed_reference_refresh_acknowledgment',true,response);}
++    }
++    async referenceRefreshReceipt(input:ReferenceRefreshIntent):Promise<RecordValue>{
++        const intent=validateRefreshIntent(input),request=intent.reference_refresh.configure_project;
++        const response=await this.rpc({reference_refresh_receipt:{caller:request.caller,key:request.key}},'reference_refresh_receipt');
++        try{validateRefreshReceipt(response,intent);return response;}catch{throw new ServiceError('unqualified_reference_refresh_receipt',true,response);}
++    }
+     async prepareConfiguration(project:string,request:ProjectConfigurationRequest):Promise<MutationIntent>{
++        if(request.configuration.operation==='refresh_references')throw new ServiceError('refresh_requires_original_evidence_review');
+         validateConfigurationRequest(request);
+         return {configure_project:{project:identifier(project,32),caller:this.caller,key:await this.key(),request:structuredClone(request)}};
+     }
+@@ -601,6 +620,7 @@
+     }
+     async submitMutation(intent: MutationIntent): Promise<RecordValue> {
+         validateMutationIntent(intent);
++        if('configure_project'in intent&&intent.configure_project.request.configuration.operation==='refresh_references')throw new ServiceError('refresh_requires_exact_receipt_tracking');
+         // The host persists the complete prepared intent before this call and
+         // retires it only after receiving a complete, matching native result.
+         const response = await this.rpc(intent, 'plan_create' in intent ? 'plan' : 'job');
+--- a/packages/vscode/src/serviceIntents.ts
++++ b/packages/vscode/src/serviceIntents.ts
+@@ -1,4 +1,5 @@
+ // SPDX-License-Identifier: Apache-2.0
++import {ReferenceRefreshIntent,REFRESH_JOURNAL_BYTES,refreshIntentKey,validateRefreshIntent,validateRefreshJob,validateRefreshReceipt} from './referenceRefresh';
+ import { SplitIntent, SPLIT_JOURNAL_BYTES, splitIntentKey, validateSplitApply, validateSplitRecover, validateSplitRecoveryReceipt, validateSplitSnapshot } from './indexingSplit';
+ import { createHash } from 'node:crypto';
+ import { isDeepStrictEqual } from 'node:util';
+@@ -11,17 +12,18 @@
+     update(key: string, value: unknown): Thenable<void>;
+ }
+ export interface LifecycleIntent { lifecycle:{caller:string;key:RequestKey;action:'stop'|'restart';expected_instance:string;runtime:string} }
+-export type ConsoleIntent=MutationIntent|LifecycleIntent|CatalogApplyIntent|IndexSetupApplyIntent|SourceResolveIntent|PolicyResumeIntent|SplitIntent;
+-export interface SavedIntent { schema: 1; scope: string; title: string; intent: ConsoleIntent; nativeObservation?:Record<string,unknown>; nativeFenceObservation?:Record<string,unknown>; nativeSetupObservation?:Record<string,unknown>; nativeSourceObservation?:Record<string,unknown>; localDispatchState?:'submitted'|'known_receipt'; reservedObservationBytes?:number; nativeSplitReceipt?:Record<string,unknown>; nativeSplitSnapshot?:Record<string,unknown> }
++export type ConsoleIntent=MutationIntent|LifecycleIntent|CatalogApplyIntent|IndexSetupApplyIntent|SourceResolveIntent|PolicyResumeIntent|SplitIntent|ReferenceRefreshIntent;
++export interface SavedIntent { nativeRefreshReceipt?:Record<string,unknown>;nativeRefreshLookup?:Record<string,unknown>;nativeRefreshValidationError?:string; schema: 1; scope: string; title: string; intent: ConsoleIntent; nativeObservation?:Record<string,unknown>; nativeFenceObservation?:Record<string,unknown>; nativeSetupObservation?:Record<string,unknown>; nativeSourceObservation?:Record<string,unknown>; localDispatchState?:'submitted'|'known_receipt'; reservedObservationBytes?:number; nativeSplitReceipt?:Record<string,unknown>; nativeSplitSnapshot?:Record<string,unknown> }
+ function validate(input:unknown):ConsoleIntent {
+     const object=record(input);
++    if('reference_refresh'in object)return validateRefreshIntent(input);
+     if('catalog_split_apply' in object)return validateSplitApply(input);
+     if('catalog_split_recover' in object)return validateSplitRecover(input);
+     if('catalog_policy_resume' in object)return validatePolicyResumeIntent(input);
+     if('catalog_source_change_resolve' in object)return validateSourceResolveIntent(input);
+     if('catalog_index_setup_apply' in object)return validateIndexSetupApply(input);
+     if('catalog_apply' in object)return validateCatalogApply(input);
+-    if(!('lifecycle' in object))return validateMutationIntent(input);
++    if(!('lifecycle' in object)){const intent=validateMutationIntent(input);if('configure_project'in intent&&intent.configure_project.request.configuration.operation==='refresh_references')throw new ServiceError('refresh_requires_original_evidence_review');return intent;}
+     if(Object.keys(object).join(',')!=='lifecycle')throw new ServiceError('invalid_lifecycle_intent');
+     const value=record(object.lifecycle),key=record(value.key);
+     if(Object.keys(value).sort().join(',')!=='action,caller,expected_instance,key,runtime'
+@@ -31,6 +33,7 @@
+     return input as LifecycleIntent;
+ }
+ function identity(intent:ConsoleIntent):{namespace:string;id:string}{
++    if('reference_refresh'in intent){const key=refreshIntentKey(intent);return {namespace:key.namespace,id:key.nonce};}
+     if('catalog_split_apply' in intent||'catalog_split_recover' in intent){const key=splitIntentKey(intent);return {namespace:key.namespace,id:key.nonce};}
+     if('catalog_policy_resume' in intent)return {namespace:intent.catalog_policy_resume.key.namespace,id:intent.catalog_policy_resume.key.nonce};
+     if('catalog_source_change_resolve' in intent)return {namespace:intent.namespace,id:intent.catalog_source_change_resolve.begin_operation};
+@@ -43,7 +46,9 @@
+ const MAX_BYTES = 65536;
+ const MAX_TOTAL_BYTES = 64 * 32768;
+ function splitIntent(value:unknown):boolean {const intent=record(value);return 'catalog_split_apply' in intent||'catalog_split_recover' in intent;}
+-function chargedRecordBytes(value:unknown):number {const saved=record(value),bytes=Buffer.byteLength(JSON.stringify(saved));return saved.reservedObservationBytes===SPLIT_JOURNAL_BYTES?Math.max(bytes,SPLIT_JOURNAL_BYTES):bytes;}
++function reservedBytes(intent:unknown):number|undefined {const value=record(intent);return 'reference_refresh'in value?REFRESH_JOURNAL_BYTES:splitIntent(value)?SPLIT_JOURNAL_BYTES:undefined;}
++function maximumRecordBytes(intent:unknown):number{return reservedBytes(intent)??MAX_BYTES;}
++function chargedRecordBytes(value:unknown):number {const saved=record(value),bytes=Buffer.byteLength(JSON.stringify(saved));return [SPLIT_JOURNAL_BYTES,REFRESH_JOURNAL_BYTES].includes(Number(saved.reservedObservationBytes))?Math.max(bytes,Number(saved.reservedObservationBytes)):bytes;}
+ /** Each immutable request has its own storage key: windows never rewrite a shared list. */
+ export class IntentJournal {
+     readonly scope: string;
+@@ -61,10 +66,10 @@
+         // of poisoning the journal or discarding an unknown outcome.
+         return keys.filter(key=>key.startsWith(`${PREFIX}${this.scope}.`)).sort().slice(0,LIMIT).map(key=>{
+             const value=record(this.storage.get(key));
+-            if(Buffer.byteLength(JSON.stringify(value))>(splitIntent(value.intent)?SPLIT_JOURNAL_BYTES:MAX_BYTES)||value.schema!==1||value.scope!==this.scope
++            if(Buffer.byteLength(JSON.stringify(value))>maximumRecordBytes(value.intent)||value.schema!==1||value.scope!==this.scope
+                 ||typeof value.title!=='string'||value.title.length>160||value.localDispatchState!==undefined&&!['submitted','known_receipt'].includes(String(value.localDispatchState)))throw new ServiceError('local_intent_record_invalid');
+             const intent=validate(value.intent);
+-            if(splitIntent(intent)?value.reservedObservationBytes!==SPLIT_JOURNAL_BYTES:value.reservedObservationBytes!==undefined)throw new ServiceError('local_intent_terminal_reservation_invalid');
++            if(value.reservedObservationBytes!==reservedBytes(intent))throw new ServiceError('local_intent_terminal_reservation_invalid');
+             const requestKey=identity(intent);
+             if(requestKey.namespace!==this.namespace)throw new ServiceError('local_intent_scope_mismatch');
+             const id=identifier(key.slice(key.lastIndexOf('.')+1),16);
+@@ -78,10 +83,15 @@
+     prepare(title:string,intent:ConsoleIntent,nativeObservation?:Record<string,unknown>):Promise<string> {
+         // Copy before any asynchronous work; the exact persisted bytes are submitted.
+         const copied=validate(JSON.parse(JSON.stringify(intent)));
++        // Native intent/keys/digests are always durable. Query/snippet text is
++        // retained only under an explicit existing persistence approval.
++        if('reference_refresh'in copied&&copied.reference_refresh.evidence_retention==='memory_only'){
++            copied.reference_refresh.original_query=null;copied.reference_refresh.original_result=null;
++        }
+         const key=identity(copied);
+         const id=identifier(key.id,16);
+         if(key.namespace!==this.namespace)throw new ServiceError('local_intent_scope_mismatch');
+-        const value:SavedIntent={schema:1,scope:this.scope,title,intent:copied,...(splitIntent(copied)?{reservedObservationBytes:SPLIT_JOURNAL_BYTES,localDispatchState:'submitted' as const}:{})};
++        const value:SavedIntent={schema:1,scope:this.scope,title,intent:copied,...(reservedBytes(copied)!==undefined?{reservedObservationBytes:reservedBytes(copied),localDispatchState:'submitted' as const}:{})};
+         if('catalog_source_change_resolve' in copied){
+             if(!nativeObservation)throw new ServiceError('native_source_begin_observation_required');const observed=sourceChangeObservation(nativeObservation);if(!observed)throw new ServiceError('native_source_begin_observation_required');
+             const begin=record(observed.begin),metadata=record(begin.metadata),request=record(begin.request);
+@@ -94,7 +104,7 @@
+             value.nativeObservation=structuredClone(nativeObservation);
+         }else if(nativeObservation!==undefined)throw new ServiceError('unexpected_local_native_observation');
+         return this.serialize(async()=>{
+-            if(!title||title.length>160||Buffer.byteLength(JSON.stringify(value))>(splitIntent(copied)?SPLIT_JOURNAL_BYTES:MAX_BYTES))throw new ServiceError('local_intent_record_oversize');
++            if(!title||title.length>160||Buffer.byteLength(JSON.stringify(value))>maximumRecordBytes(copied))throw new ServiceError('local_intent_record_oversize');
+             this.list();
+             const existing=this.storage.get(this.key(id));
+             if(existing!==undefined){
+@@ -108,6 +118,33 @@
+             if(totalBytes+chargedRecordBytes(value)>MAX_TOTAL_BYTES)throw new ServiceError('local_intent_byte_capacity_exceeded');
+             await this.storage.update(this.key(id),value);
+             return id;
++        });
++    }
++    /** Full bounded current lookup and last accepted historical proof stay separate. */
++    observeRefresh(id:string,response:Record<string,unknown>):Promise<void>{
++        const copied=structuredClone(response);
++        return this.serialize(async()=>{
++            const saved=this.list().find(value=>value.id===id);if(!saved||!('reference_refresh'in saved.value.intent))throw new ServiceError('local_refresh_intent_not_found',true);
++            const intent=saved.value.intent;let known=saved.value.nativeRefreshReceipt,error:string|undefined;
++            try{
++                if(copied.status==='job')validateRefreshJob(copied.job,intent);
++                else validateRefreshReceipt(copied,intent);
++                if(copied.job!==null&&(copied.status==='job'||copied.configuration!==null)){
++                    const prior=known?.status==='reference_refresh_receipt'?known:undefined;
++                    if(prior?.result!=null&&copied.result!=null&&!isDeepStrictEqual(prior.result,copied.result))throw new Error('historical_refresh_result_changed');
++                    if(prior?.configuration!=null&&copied.configuration!=null&&!isDeepStrictEqual(prior.configuration,copied.configuration))throw new Error('historical_refresh_work_changed');
++                    const previous=prior&&record(prior.job),next=record(copied.job);
++                    if(previous&&['succeeded','failed','canceled'].includes(String(previous.state))&&!isDeepStrictEqual(previous,next))throw new Error('historical_refresh_terminal_job_changed');
++                    if(!prior||copied.status==='reference_refresh_receipt'&&(prior.result==null||copied.result!=null))known=copied;
++                }
++            }catch(failure){error=failure instanceof Error?failure.message:'invalid_refresh_receipt';}
++            const value:SavedIntent={...saved.value,nativeRefreshLookup:copied,...(known?{nativeRefreshReceipt:structuredClone(known),localDispatchState:'known_receipt' as const}:{}),...(error?{nativeRefreshValidationError:error}:{})};
++            if(!error)delete value.nativeRefreshValidationError;
++            if(Buffer.byteLength(JSON.stringify(value))>REFRESH_JOURNAL_BYTES)throw new ServiceError('local_intent_record_oversize',true);
++            const total=this.storage.keys().filter(key=>key.startsWith(PREFIX)&&key!==this.key(id)).reduce((sum,key)=>{const other=this.storage.get(key);return sum+(other===undefined?0:chargedRecordBytes(other));},chargedRecordBytes(value));
++            if(total>MAX_TOTAL_BYTES)throw new ServiceError('local_intent_byte_capacity_exceeded',true);
++            await this.storage.update(this.key(id),value);
++            if(error)throw new ServiceError(error,true,copied);
+         });
+     }
+     /** Preserve the full authenticated native outcome without changing the immutable request. */
+@@ -129,7 +166,7 @@
+             const setup='catalog_index_setup_apply' in saved.value.intent&&indexSetupObservation(copied);
+             const source='catalog_source_change_resolve' in saved.value.intent,knownSource=sourceChangeObservation(saved.value.nativeObservation??{})?saved.value.nativeObservation:saved.value.nativeSourceObservation;
+             const value:SavedIntent={...saved.value,nativeObservation:copied,...(splitIntent(saved.value.intent)&&knownSplit?{localDispatchState:'known_receipt' as const}:{}),...(splitSnapshot?{nativeSplitSnapshot:structuredClone(splitSnapshot)}:{}),...(splitReceipt&&record(splitReceipt.outcome).outcome!=='unknown'?{nativeSplitReceipt:structuredClone(splitReceipt)}:{}),...(observedFence&&(!wasApplied||isApplied)?{nativeFenceObservation:copied}:{}),...(setup?{nativeSetupObservation:copied}:{}),...(source?{nativeSourceObservation:sourceChangeObservation(copied)?undefined:knownSource}:{}),...('catalog_index_setup_apply' in saved.value.intent?{localDispatchState:copied.status==='catalog_index_setup_receipt'&&copied.receipt!=null?'known_receipt' as const:'submitted' as const}:{})},bytes=Buffer.byteLength(JSON.stringify(value));
+-            if(bytes>(splitIntent(saved.value.intent)?SPLIT_JOURNAL_BYTES:MAX_BYTES))throw new ServiceError('local_intent_record_oversize',true);
++            if(bytes>maximumRecordBytes(saved.value.intent))throw new ServiceError('local_intent_record_oversize',true);
+             const total=this.storage.keys().filter(key=>key.startsWith(PREFIX)&&key!==this.key(id)).reduce((sum,key)=>{const item=this.storage.get(key);return sum+(item===undefined?0:chargedRecordBytes(item));},chargedRecordBytes(value));
+             if(total>MAX_TOTAL_BYTES)throw new ServiceError('local_intent_byte_capacity_exceeded',true);
+             await this.storage.update(this.key(id),value);
+@@ -139,20 +176,20 @@
+         return this.serialize(async()=>{
+             const saved=this.list().find(entry=>entry.id===id);if(!saved)throw new ServiceError('local_intent_not_found');
+             const value:SavedIntent={...saved.value,localDispatchState:'submitted'},bytes=Buffer.byteLength(JSON.stringify(value));
+-            if(bytes>(splitIntent(saved.value.intent)?SPLIT_JOURNAL_BYTES:MAX_BYTES))throw new ServiceError('local_intent_record_oversize');
++            if(bytes>maximumRecordBytes(saved.value.intent))throw new ServiceError('local_intent_record_oversize');
+             const total=this.storage.keys().filter(key=>key.startsWith(PREFIX)&&key!==this.key(id)).reduce((sum,key)=>{const item=this.storage.get(key);return sum+(item===undefined?0:chargedRecordBytes(item));},chargedRecordBytes(value));
+             if(total>MAX_TOTAL_BYTES)throw new ServiceError('local_intent_byte_capacity_exceeded');await this.storage.update(this.key(id),value);
+         });
+     }
+     async reconcile(client:ServiceClient,onReceipt:(response:Record<string,unknown>)=>Promise<void>,onRemoved?:(project:string)=>Promise<void>,onFailure?:(id:string,error:unknown)=>void):Promise<void>{
+-        const candidates=this.list().filter(saved=>!('lifecycle' in saved.value.intent)&&!('plan_create' in saved.value.intent)&&!('catalog_apply' in saved.value.intent)&&!('catalog_index_setup_apply' in saved.value.intent)&&!('catalog_source_change_resolve' in saved.value.intent)&&!('catalog_policy_resume' in saved.value.intent)&&!('catalog_split_apply' in saved.value.intent)&&!('catalog_split_recover' in saved.value.intent));
++        const candidates=this.list().filter(saved=>!('lifecycle' in saved.value.intent)&&!('plan_create' in saved.value.intent)&&!('catalog_apply' in saved.value.intent)&&!('catalog_index_setup_apply' in saved.value.intent)&&!('catalog_source_change_resolve' in saved.value.intent)&&!('catalog_policy_resume' in saved.value.intent)&&!('catalog_split_apply' in saved.value.intent)&&!('catalog_split_recover' in saved.value.intent)&&!('reference_refresh'in saved.value.intent));
+         const after=this.reconcileAfter??'';
+         const batch=[...candidates.filter(saved=>saved.id>after),...candidates.filter(saved=>saved.id<=after)].slice(0,8);
+         for(const saved of batch){
+             this.reconcileAfter=saved.id;
+             try{
+                 const intent=saved.value.intent;
+-                if('lifecycle' in intent||'plan_create' in intent||'catalog_index_setup_apply' in intent||'catalog_source_change_resolve' in intent||'catalog_policy_resume' in intent||'catalog_split_apply' in intent||'catalog_split_recover' in intent)continue;
++                if('lifecycle' in intent||'plan_create' in intent||'catalog_index_setup_apply' in intent||'catalog_source_change_resolve' in intent||'catalog_policy_resume' in intent||'catalog_split_apply' in intent||'catalog_split_recover' in intent||'reference_refresh'in intent)continue;
+                 if('catalog_apply' in intent){
+                     const request=intent.catalog_apply.request;
+                     const result=await client.rpc({catalog_receipt:{caller:request.caller,key:request.key}},'catalog_receipt');
+@@ -181,6 +218,7 @@
+         if(!saved)throw new ServiceError('local_intent_not_found');
+         // Errors, including a lost acknowledgement, preserve the immutable record.
+         const intent=saved.value.intent;
++        if('reference_refresh'in intent)throw new ServiceError('refresh_requires_exact_native_receipt_reconciliation');
+         // Catalog applies are never replayed from a saved journal entry. Only receipt reads may settle them.
+         if('catalog_split_apply' in intent||'catalog_split_recover' in intent)throw new ServiceError('split_requires_exact_native_receipt_reconciliation');
+         if('catalog_apply' in intent)throw new ServiceError('catalog_apply_requires_receipt_reconciliation');
+--- /dev/null
++++ b/packages/vscode/src/test/referenceRefresh.test.ts
+@@ -0,0 +1,90 @@
++// SPDX-License-Identifier: Apache-2.0
++import {strict as assert} from 'node:assert';
++import {test} from 'node:test';
++import {splitFixture} from './fixtures/split';
++import {SPLIT_JOURNAL_BYTES} from '../indexingSplit';
++import {IntentJournal,IntentStorage} from '../serviceIntents';
++import {ServiceClient,ServiceError,ControlTransport} from '../serviceClient';
++import {ReferenceRefreshIntent,ReferenceRefreshFlow,REFRESH_JOURNAL_BYTES,refreshDigest,refreshJobId,validateRefreshIntent,refreshExport,refreshCapability} from '../referenceRefresh';
++type Value=Record<string,unknown>;
++class Memory implements IntentStorage {data=new Map<string,unknown>();keys(){return [...this.data.keys()];}get<T>(key:string){return this.data.get(key) as T|undefined;}async update(key:string,value:unknown){if(value===undefined)this.data.delete(key);else this.data.set(key,structuredClone(value));}}
++const id=(byte:string)=>byte.repeat(32),hash=(byte:string)=>byte.repeat(64);
++function fixture(nonce='4'):ReferenceRefreshIntent {
++    const originalQuery={tool:'airk_search',arguments:{query:'selected original',max_bytes:8192,reply_detail:'full',verification:'required',semantic:'off',future_query:{preserve:true}}};
++    const originalResult={publication_vector:[{index_id:'idx_'+id('6'),publication:'airk-r1:'+id('7')+':1:'+hash('8')}],hits:[{text:'Original historical snippet',content_hash:hash('9')}],future_native:{all_fields:['preserved']}};
++    const members=[{index_id:'idx_'+id('6'),original_publication:'airk-r1:'+id('7')+':1:'+hash('8'),sources:[{source_root_id:'src_'+id('a'),source_relative_path:'one.txt',canonical_root:'/owned/source',indexed_hash:hash('9')}]}];
++    const key={namespace:id('1'),epoch:1,nonce:id(nonce)},caller=id('2');
++    const selection={schema:1,caller,key,original_result_digest:refreshDigest(originalResult),original_query_digest:refreshDigest(originalQuery),original_evidence_selection_digest:refreshDigest(members),mode:'selected_only',selection:{schema:1,context_key:hash('3'),namespace:id('1'),expected_catalog_revision:1,grant_id:'grt_'+id('5'),expected_grant_revision:1,project_ids:['prj_'+id('b')],index_ids:['idx_'+id('6')]},members};
++    return validateRefreshIntent({reference_refresh:{configure_project:{project:hash('c'),caller,key,request:{incarnation:id('7'),settings:hash('d'),configuration:{operation:'refresh_references',selection}}},original_query:originalQuery,original_result:originalResult,evidence_retention:'memory_only'}});
++}
++function receipt(intent:ReferenceRefreshIntent):Value {
++    const selected=intent.reference_refresh.configure_project.request.configuration.selection as Value,members=selected.members as Value[],before=String(members[0].original_publication),after='airk-r1:'+id('7')+':2:'+hash('e');
++    return {status:'reference_refresh_receipt',job:{id:refreshJobId(intent),project:intent.reference_refresh.configure_project.project,kind:'configure',state:'succeeded',fencing_generation:1,attempts:1,outcome:{state:'succeeded',revision:after}},configuration:{engine:hash('f'),request:structuredClone(intent.reference_refresh.configure_project.request)},result:{schema:'airk.reference-refresh-result/1',selection_digest:hash('a'),original_query_digest:selected.original_query_digest,effective_mode:'selected_only',effective_scope:'selected_sources',before_publication:before,after_publication:after,report:{generation:2,path_scoped:true,future_report:'retained'},status:{publication:{token:after},future_status:[1,2,3]},requery_executed:false,future_result:{retained:true}},expired:false,future_envelope:'retained'};
++}
++function environment(intent:ReferenceRefreshIntent,lost=false){
++    let response=receipt(intent),trusted=true,reconfirmChanged=false,queryCalls=0,mutationCalls=0,readCalls=0;const requests:unknown[]=[];
++    const transport:ControlTransport={dispose(){},async request(method){requests.push(structuredClone(method));const name=Object.keys(method as object)[0];if(name==='configure_project'){mutationCalls++;if(lost)throw new ServiceError('lost_native_reply',true);return {status:'job',job:structuredClone(response.job)};}
++        if(name==='reference_refresh_receipt'){readCalls++;return structuredClone(response);}throw new Error('unexpected_native_method:'+name);}};
++    const storage=new Memory(),journal=new IntentJournal(storage,'owned-control',id('1')),client=new ServiceClient(transport);
++    const host={trusted:()=>trusted,confirm:async()=>true,reconfirm:async(selected:Value)=>({...structuredClone(selected),...(reconfirmChanged?{expected_grant_revision:2}:{})}),query:async(query:Value)=>{queryCalls++;assert.deepEqual(query,intent.reference_refresh.original_query);return {publication_vector:[{current:true}],future_query_result:{preserve:true}};}};
++    const flow=new ReferenceRefreshFlow(client,journal,host);
++    return {flow,journal,storage,client,host,requests,setResponse:(value:Value)=>{response=value;},revoke:()=>{trusted=false;},changeGrant:()=>{reconfirmChanged=true;},counts:()=>({queryCalls,mutationCalls,readCalls})};
++}
++test('refresh requires explicit native capability and current reviewed grant before reservation/dispatch',async()=>{
++    const intent=fixture(),e=environment(intent);assert.equal(refreshCapability({capabilities:{policy_contract:2}}),false);
++    await assert.rejects(e.flow.reviewAndSubmit(intent,{capabilities:{policy_contract:2}}),/capability_required/);e.changeGrant();
++    await assert.rejects(e.flow.reviewAndSubmit(intent,{capabilities:{reference_refresh_contract:1}}),/scope_changed/);assert.equal(e.journal.list().length,0);assert.equal(e.counts().mutationCalls,0);
++});
++test('lost response survives restart; only exact read receipt reconciliation can settle',async()=>{
++    const intent=fixture(),e=environment(intent,true);await assert.rejects(e.flow.reviewAndSubmit(intent,{capabilities:{reference_refresh_contract:1}}),/outcome_unknown/);
++    assert.deepEqual(e.counts(),{mutationCalls:1,readCalls:0,queryCalls:0});const saved=e.journal.list()[0];assert.equal(saved.value.reservedObservationBytes,REFRESH_JOURNAL_BYTES);assert.equal((saved.value.intent as ReferenceRefreshIntent).reference_refresh.original_query,null);assert.equal((saved.value.intent as ReferenceRefreshIntent).reference_refresh.original_result,null);
++    const reopened=new IntentJournal(e.storage,'owned-control',id('1'));await assert.rejects(reopened.submit(e.client,saved.id),/receipt_reconciliation/);
++    await e.flow.check(saved.id);assert.deepEqual(e.counts(),{mutationCalls:1,readCalls:1,queryCalls:0});assert.deepEqual(reopened.list()[0].value.nativeRefreshReceipt,receipt(intent));
++});
++test('missing or expired latest lookup preserves complete historical acknowledgment and never replays',async()=>{
++    const intent=fixture(),e=environment(intent);const saved=await e.flow.reviewAndSubmit(intent,{capabilities:{reference_refresh_contract:1}});await e.flow.check(saved!);
++    const known=structuredClone(e.journal.list()[0].value.nativeRefreshReceipt);e.setResponse({status:'reference_refresh_receipt',job:null,configuration:null,result:null,expired:true,future_unknown:'retained'});await e.flow.check(saved!);
++    assert.deepEqual(e.journal.list()[0].value.nativeRefreshReceipt,known);assert.equal(e.journal.list()[0].value.nativeRefreshLookup?.expired,true);await assert.rejects(e.flow.requery(saved!),/fresh_completed/);assert.equal(e.counts().mutationCalls,1);assert.equal(e.counts().queryCalls,0);
++});
++test('explicit requery keeps complete original query/verification and distinct full historical/current results',async()=>{
++    const intent=fixture(),original=structuredClone(intent.reference_refresh.original_result),e=environment(intent);const saved=await e.flow.reviewAndSubmit(intent,{capabilities:{reference_refresh_contract:1}});
++    assert.equal(e.counts().queryCalls,0);const result=await e.flow.requery(saved!);assert.deepEqual(result.original,original);assert.deepEqual(intent.reference_refresh.original_result,original);assert.equal(e.counts().queryCalls,1);
++    const exported=refreshExport(intent,e.journal.list()[0].value.nativeRefreshLookup,e.journal.list()[0].value.nativeRefreshReceipt,result.current);const json=JSON.parse(exported.json);
++    assert.deepEqual(json.original_historical_result,original);assert.deepEqual(json.original_query,intent.reference_refresh.original_query);assert.deepEqual(json.last_known_historical_native_receipt,receipt(intent));assert.deepEqual(json.current_requery_result,result.current);assert.match(exported.markdown,/future_envelope/);assert.match(exported.markdown,/future_query_result/);
++});
++test('crossed native proof is retained for diagnosis without overwriting accepted historical proof',async()=>{
++    const intent=fixture(),e=environment(intent);const saved=await e.flow.reviewAndSubmit(intent,{capabilities:{reference_refresh_contract:1}});await e.flow.check(saved!);const known=structuredClone(e.journal.list()[0].value.nativeRefreshReceipt),bad=receipt(intent);(bad.result as Value).original_query_digest=hash('0');e.setResponse(bad);
++    await assert.rejects(e.flow.check(saved!));assert.deepEqual(e.journal.list()[0].value.nativeRefreshReceipt,known);assert.deepEqual(e.journal.list()[0].value.nativeRefreshLookup,bad);assert.equal(e.counts().mutationCalls,1);
++});
++test('workspace trust loss refuses mutation or later requery without new grant or replay',async()=>{
++    const intent=fixture(),e=environment(intent);const saved=await e.flow.reviewAndSubmit(intent,{capabilities:{reference_refresh_contract:1}});e.revoke();await assert.rejects(e.flow.requery(saved!),/not_trusted/);assert.equal(e.counts().queryCalls,0);assert.equal(e.counts().mutationCalls,1);
++});
++test('all terminal space is reserved before dispatch, aggregate remains2MiB and ordinary record cap remains unchanged',async()=>{
++    const intent=fixture(),e=environment(intent);for(const digit of ['1','2','3','4','5','6','7','8'])await e.journal.prepare('Refresh',fixture(digit));assert.equal(e.journal.list().length,8);
++    await assert.rejects(e.journal.prepare('Would exceed aggregate',fixture('9')),/byte_capacity/);assert.equal(e.counts().mutationCalls,0);
++    const ordinary={enqueue:{project:hash('c'),caller:id('2'),key:{namespace:id('1'),epoch:1,nonce:id('a')},kind:'index' as const}},storage=new Memory(),journal=new IntentJournal(storage,'other-control',id('1'));await journal.prepare('Ordinary',ordinary);const entry=storage.keys()[0],saved=storage.get<Value>(entry)!;assert.equal(saved.reservedObservationBytes,undefined);saved.extra='x'.repeat(65536);await storage.update(entry,saved);assert.throws(()=>journal.list(),/record_invalid/);
++});
++
++test('mixed split/refresh terminal reservations preserve existing192KiB split and2MiB aggregate',async()=>{
++    const split=splitFixture(),storage=new Memory(),journal=new IntentJournal(storage,'mixed-control',split.namespace);
++    const splitId=await journal.prepare('Split',{catalog_split_apply:{draft:split.draft}});assert.equal(journal.list().find(v=>v.id===splitId)?.value.reservedObservationBytes,SPLIT_JOURNAL_BYTES);assert.equal(SPLIT_JOURNAL_BYTES,192*1024);
++    const refresh=(digit:string)=>{const intent=fixture(digit),request=intent.reference_refresh.configure_project,selection=request.request.configuration.selection as Value;request.key.namespace=split.namespace;(selection.key as Value).namespace=split.namespace;(selection.selection as Value).namespace=split.namespace;return validateRefreshIntent(intent);};
++    for(const digit of ['1','2','3','4','6','7','8'])await journal.prepare('Refresh',refresh(digit));
++    await assert.rejects(journal.prepare('Exceeds mixed aggregate',refresh('9')),/byte_capacity/);assert.equal(journal.list().length,8);
++});
++
++test('memory-only restart retains exact native intent without query/snippets and refuses automatic or unavailable requery',async()=>{
++    const intent=fixture(),e=environment(intent);const saved=await e.flow.reviewAndSubmit(intent,{capabilities:{reference_refresh_contract:1}});const reopened=new IntentJournal(e.storage,'owned-control',id('1'));const serialized=JSON.stringify(reopened.list());assert.ok(!serialized.includes('Original historical snippet'));assert.ok(!serialized.includes('selected original'));
++    const restarted=new ReferenceRefreshFlow(e.client,reopened,e.host);await restarted.check(saved!);await assert.rejects(restarted.requery(saved!),/not_retained/);assert.equal(e.counts().mutationCalls,1);assert.equal(e.counts().queryCalls,0);
++});
++test('local evidence retention requires existing explicit approval and preserves complete originals after restart',async()=>{
++    const intent=fixture();intent.reference_refresh.evidence_retention='local_approved';const e=environment(intent);await assert.rejects(e.flow.reviewAndSubmit(intent,{capabilities:{reference_refresh_contract:1}}),/persistence_not_authorized/);assert.equal(e.journal.list().length,0);
++    const flow=new ReferenceRefreshFlow(e.client,e.journal,{...e.host,persistEvidenceAllowed:()=>true});const saved=await flow.reviewAndSubmit(intent,{capabilities:{reference_refresh_contract:1}});const reopened=new IntentJournal(e.storage,'owned-control',id('1'));assert.deepEqual((reopened.list()[0].value.intent as ReferenceRefreshIntent).reference_refresh.original_result,intent.reference_refresh.original_result);
++    const restarted=new ReferenceRefreshFlow(e.client,reopened,{...e.host,persistEvidenceAllowed:()=>true});const result=await restarted.requery(saved!);assert.deepEqual(result.original,intent.reference_refresh.original_result);
++});
++
++test('an uncertain prior intent blocks a newly prepared key for same project instead of blind duplicate job',async()=>{
++    const first=fixture(),e=environment(first,true);await assert.rejects(e.flow.reviewAndSubmit(first,{capabilities:{reference_refresh_contract:1}}));
++    await assert.rejects(e.flow.reviewAndSubmit(fixture('6'),{capabilities:{reference_refresh_contract:1}}),/prior_outcome/);assert.equal(e.counts().mutationCalls,1);
++    await assert.rejects(e.flow.reviewAndSubmit(first,{capabilities:{reference_refresh_contract:1}}),/already_tracked/);assert.equal(e.counts().mutationCalls,1);
++});
+--- a/scripts/package-extension.py
++++ b/scripts/package-extension.py
+@@ -25,7 +25,7 @@
+            "mcpStdioSession.js", "explorerSidebar.js", "explorerStatus.js", "explorerController.js", "explorerControl.js",
+            "explorerContracts.js", "explorerErrors.js", "explorerEvidence.js", "explorerFeatures.js", "explorerPanel.js",
+            "explorerRoutes.js", "explorerSearch.js", "explorerSource.js", "explorerWorkspaceIO.js",
+-           "explorerFacts.js", "explorerInspect.js", "explorerManagement.js", "indexingCatalog.js", "indexingSplit.js", "indexingCatalogController.js", "catalogSession.js", "scopeSelection.js",
++           "explorerFacts.js", "explorerInspect.js", "explorerManagement.js", "indexingCatalog.js", "indexingSplit.js", "referenceRefresh.js", "indexingCatalogController.js", "catalogSession.js", "scopeSelection.js",
+            "explorerCommands.js", "explorerAssistanceHost.js", "explorerAssistanceLaunch.js",
+            "explorerStrategies.js", "explorerStrategyRunner.js",
+            "explorerDrafts.js", "explorerSuggestions.js", "explorerReview.js", "explorerHandoffs.js", "explorerPlanFiles.js",

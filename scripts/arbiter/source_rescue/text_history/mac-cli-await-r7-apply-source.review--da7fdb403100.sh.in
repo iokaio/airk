@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: Apache-2.0
+#!/bin/sh
+# Prepared public-source-only transfer. Root invokes after review; no Cargo here.
+set -eu
+umask 077
+cd "$HOME/code/airk"
+"$PWD/artifacts/tools/neo-python-3.13.18/bin/python3.13" -I -B - <<'PY'
+import base64,hashlib,json,os,stat,subprocess,sys,tempfile
+from pathlib import Path,PurePosixPath
+assert sys.version_info[:3]==(3,13,18)
+payload=json.loads(base64.b64decode('<SEALED_3_PUBLIC_FILE_DELTA_FROM_APPLIED_929>'));root=Path.cwd().resolve()
+def digest(path):return hashlib.sha256(path.read_bytes()).hexdigest()
+def safe(name):
+ rel=PurePosixPath(name)
+ assert not rel.is_absolute() and all(p not in ('..','artifacts','temp','.airk','.git','node_modules') for p in rel.parts),name
+ target=root/name
+ for part in (target,*target.parents):
+  assert not part.is_symlink(),name
+  if part==root:break
+ return target
+processes=subprocess.check_output(['/bin/ps','-axo','comm='],text=True).splitlines()
+assert not any(Path(p.strip()).name in ('cargo','cargo-nextest','rustc','clippy-driver','rustfmt') for p in processes),'Cargo/compiler owner still active'
+base_path=root/payload['base_manifest_path'];assert digest(base_path)==payload['base_manifest_sha256']
+base=json.loads(base_path.read_bytes())
+for name in payload['already_retired']:assert not (root/name).exists(),('Already retired auto-build returned',name)
+for name,row in base['files'].items():
+ path=safe(name);assert path.is_file() and path.stat().st_nlink==1 and digest(path)==row['sha256'],('Mac5 source drift',name)
+for name,sha in payload['preserved_extra_source'].items():
+ path=safe(name);assert path.is_file() and path.stat().st_nlink==1 and digest(path)==sha,('Preserved extra source drift',name)
+known=set(base['files'])|set(payload['preserved_extra_source'])
+for path in (root/'crates').rglob('*'):
+ if path.is_file() and (path.suffix=='.rs' or path.name=='Cargo.toml'):
+  assert path.relative_to(root).as_posix() in known,('Unreviewed extra native source',str(path))
+for name,row in payload['changes'].items():
+ path=safe(name)
+ if row['before_sha256'] is None:assert not path.exists(),('Unexpected new source',name)
+ else:assert path.is_file() and digest(path)==row['before_sha256'],name
+ raw=base64.b64decode(row['content']);assert len(raw)==row['bytes'] and hashlib.sha256(raw).hexdigest()==row['after_sha256'],name
+for name,row in payload['retire'].items():
+ path=safe(name);assert path.is_file() and path.stat().st_nlink==1 and digest(path)==row['before_sha256'],name
+stage=root/'artifacts/advanced-split/receipts/mac-cli-await-transfer-r7';stage.mkdir(mode=0o700)
+recovery=[]
+for name,row in {**payload['changes'],**payload['retire']}.items():
+ path=safe(name)
+ if path.exists():
+  data=path.read_bytes();mode=stat.S_IMODE(path.stat().st_mode);backup=stage/'original'/name;backup.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
+  with backup.open('xb') as f:f.write(data);f.flush();os.fsync(f.fileno())
+  recovery.append({'path':name,'sha256':hashlib.sha256(data).hexdigest(),'mode':mode,'backup':str(backup.relative_to(stage))})
+ else:recovery.append({'path':name,'sha256':None,'backup':None})
+with (stage/'recovery.json').open('x') as f:json.dump(recovery,f,indent=2);f.flush();os.fsync(f.fileno())
+# Every displaced original is durable before the first public name changes.
+for name,row in payload['retire'].items():
+ path=safe(name);assert digest(path)==row['before_sha256'];destination=stage/'retired'/name;destination.parent.mkdir(parents=True,exist_ok=True,mode=0o700);os.replace(path,destination)
+for name,row in payload['changes'].items():
+ path=safe(name)
+ if row['before_sha256'] is None:assert not path.exists(),name
+ else:assert digest(path)==row['before_sha256'],name
+ raw=base64.b64decode(row['content']);path.parent.mkdir(parents=True,exist_ok=True)
+ with tempfile.NamedTemporaryFile(dir=path.parent,prefix='.airk-cli-source-',delete=False) as f:f.write(raw);f.flush();os.fsync(f.fileno());temporary=Path(f.name)
+ temporary.chmod(0o644);os.replace(temporary,path)
+for name,row in payload['manifest']['files'].items():assert digest(safe(name))==row['sha256'],name
+for name in payload['retire']:assert not (root/name).exists(),name
+content=(json.dumps(payload['manifest'],sort_keys=True,indent=2)+'\n').encode();assert hashlib.sha256(content).hexdigest()==payload['manifest_sha256']
+with (root/'artifacts/advanced-split/receipts/mac-cli-await-source-r7.json').open('xb') as f:f.write(content)
+result={'source_set_sha256':payload['manifest']['source_set_sha256'],'verified_files':len(payload['manifest']['files']),'changed_files':len(payload['changes']),'retired_auto_discovery':list(payload['retire']),'recovery':str(stage/'recovery.json'),'scope':'Public source only. All originals retained; no Cargo/model/private-state transfer or execution.'}
+with (stage/'complete.json').open('x') as f:json.dump(result,f,indent=2)
+print(json.dumps(result))
+PY

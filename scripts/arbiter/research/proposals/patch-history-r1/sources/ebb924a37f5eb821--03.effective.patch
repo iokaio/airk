@@ -1,0 +1,197 @@
+--- a/crates/airk-cli/tests/combined_reads.rs
++++ b/crates/airk-cli/tests/combined_reads.rs
+@@ -1006,7 +1006,21 @@
+             .arg(serde_json::to_string(selected)?)
+             .arg("--service-runtime-dir")
+             .arg(&f.control)
+-            .arg("mcp")
++            .arg("mcp");
++        Self::start_command(f, command)
++    }
++    fn start_scoped(f: &Fixture, selected: &ScopedConnectRequest) -> Result<Self> {
++        let mut command = Command::new(&f.candidate);
++        command
++            .arg("--catalog-session")
++            .arg(serde_json::to_string(selected)?)
++            .arg("--service-runtime-dir")
++            .arg(&f.control)
++            .arg("mcp");
++        Self::start_command(f, command)
++    }
++    fn start_command(f: &Fixture, mut command: Command) -> Result<Self> {
++        command
+             .stdin(Stdio::piped())
+             .stdout(Stdio::piped())
+             .stderr(Stdio::from(fs::File::create(
+--- a/crates/airk-kernel/src/scoped_reads.rs
++++ b/crates/airk-kernel/src/scoped_reads.rs
+@@ -628,6 +628,23 @@
+             projects,
+         )))
+     }
++    /// Bounded installed metadata only. Native admission/delivery checks remain
++    /// authoritative; this does not discover the machine catalog or restore grants.
++    pub fn query_scope(
++        &self,
++        args: &airk_core::combined_reads::query_scope::QueryScopeArgs,
++    ) -> Result<serde_json::Value> {
++        self.scoped_read_fingerprint()?;
++        let body = match self.scope_observation() {
++            Some(observation) => {
++                airk_core::combined_reads::query_scope::installed_body(args, observation)?
++            }
++            None => airk_core::combined_reads::query_scope::legacy_body(args)?,
++        };
++        self.scoped_read_fingerprint()?;
++        Ok(body)
++    }
++
+     /// Frozen installed authorization identity, independent of live admission
+     /// and publication. Safe to retain with refusals; never renews authority.
+     pub fn scope_observation(&self) -> Option<&airk_core::scoped_reads::ScopeObservation> {
+--- a/crates/airk-kernel/src/workbench.rs
++++ b/crates/airk-kernel/src/workbench.rs
+@@ -2777,9 +2777,7 @@
+             json!({"revision":revision,"known_hash":args.get("known_hash")}),
+         )?;
+         let mut value = match tool {
+-            "query_scope" => airk_core::combined_reads::query_scope::legacy_body(
+-                &serde_json::from_value(json!(args))?,
+-            )?,
++            "query_scope" => self.query_scope(&serde_json::from_value(json!(args))?)?,
+             "status" => self.status_summary()?,
+             "diagnostics" => {
+                 let mut value = serde_json::to_value(self.status()?)?;
+--- a/crates/airk-mcp/src/combined.rs
++++ b/crates/airk-mcp/src/combined.rs
+@@ -80,7 +80,14 @@
+     let native = crate::local::tools();
+     let mut tools: Vec<_> = crate::unified::tools()
+         .into_iter()
+-        .map(|tool| {
++        .map(|mut tool| {
++            if tool.name == "query_scope" {
++                Arc::make_mut(&mut tool.input_schema)
++                    .get_mut("properties")
++                    .and_then(Value::as_object_mut)
++                    .expect("query scope properties")
++                    .remove("project");
++            }
+             if tool.name != "query_scope"
+                 && native
+                     .iter()
+--- a/crates/airk-mcp/src/lib.rs
++++ b/crates/airk-mcp/src/lib.rs
+@@ -648,9 +648,15 @@
+         &self,
+         Parameters(args): Parameters<combined::QueryScopeParameters>,
+     ) -> CallToolResult {
+-        let arguments = serde_json::to_value(args).expect("query scope serialization");
+-        serde_json::from_value(combined::legacy_discovery(arguments))
+-            .expect("canonical legacy discovery envelope")
++        let _permit = match self.admission.admit(true).await {
++            Ok(permit) => permit,
++            Err(result) => return response::scoped_result(&self.kernel, result),
++        };
++        match self.kernel.query_scope(&args.0) {
++            Ok(body) => serde_json::from_value(unified::success(body))
++                .expect("canonical installed discovery envelope"),
++            Err(error) => response::scoped_error_result(&self.kernel, &error),
++        }
+     }
+ 
+     #[tool(
+--- a/crates/airk-mcp/src/scoped_observation_tests.rs
++++ b/crates/airk-mcp/src/scoped_observation_tests.rs
+@@ -94,6 +94,28 @@
+         typed.validate()?;
+         assert!(!serde_json::to_string(&typed)?.contains(root.to_str().unwrap()));
+     }
++    for args in [
++        json!({"view":"projects"}),
++        json!({"view":"indexes","project_id":native.scope_observation().unwrap().members[0].memberships[0].project_id}),
++        json!({"view":"sources","project_id":native.scope_observation().unwrap().members[0].memberships[0].project_id,
++            "index_id":native.scope_observation().unwrap().members[0].index_id}),
++        json!({"view":"recommendations"}),
++    ] {
++        let canonical = native.query_scope(&serde_json::from_value(args.clone())?)?;
++        let queried = scoped
++            .call("airk_query_scope".into(), args.as_object().unwrap().clone())
++            .await?;
++        assert_eq!(payload(&queried)?, canonical);
++        assert_eq!(canonical["grant"], expected["grant"]);
++        let plan = json!({"schema":"airk.parse.request/1","mode":"execute","verification":"off",
++            "plan":{"steps":[{"id":"scope","tool":"query_scope","args":args}]},"output":{"view":"raw","max_bytes":32768}});
++        let direct = native.evidence_plan(serde_json::from_value(plan.clone())?)?;
++        assert_eq!(direct.steps[0].result.as_ref().unwrap(), &canonical);
++        let parsed = scoped
++            .call("airk_parse".into(), plan.as_object().unwrap().clone())
++            .await?;
++        assert_eq!(payload(&parsed)?["steps"][0]["result"], canonical);
++    }
+     let denied = scoped
+         .call(
+             "airk_status".into(),
+@@ -157,6 +179,14 @@
+         .await?;
+     assert!(payload(&legacy)?.get("scope_observation").is_none());
+     fence.revoke_scoped_reads();
++    let scope_refused = scoped
++        .call(
++            "airk_query_scope".into(),
++            json!({"view":"projects"}).as_object().unwrap().clone(),
++        )
++        .await?;
++    assert_eq!(scope_refused.is_error, Some(true));
++    assert_eq!(payload(&scope_refused)?["scope_observation"], expected);
+     let revoked = scoped
+         .call(
+             "airk_list_files".into(),
+--- a/crates/airk-mcp/src/unified.rs
++++ b/crates/airk-mcp/src/unified.rs
+@@ -75,11 +75,7 @@
+             let mut value = serde_json::to_value(tool).expect("tool serialization");
+             public_text(&mut value);
+             let tool: Tool = serde_json::from_value(value).expect("public native tool");
+-            if tool.name == "query_scope" {
+-                tool
+-            } else {
+-                scoped(tool)
+-            }
++            scoped(tool)
+         })
+         .collect();
+     let legacy: Vec<Tool> = serde_json::from_str(include_str!("unified_explorer.json"))
+@@ -542,10 +538,29 @@
+                 return Ok(self.help(args).await);
+             }
+             if matches!(tool.as_str(), "query_scope" | "airk_query_scope") {
+-                return match self.combined_backend() {
+-                    Some(backend) => backend.call("airk_query_scope".into(), args).await,
+-                    None => Ok(crate::combined::legacy_discovery(Value::Object(args))),
++                if let Some(backend) = self.combined_backend() {
++                    return backend.call("airk_query_scope".into(), args).await;
++                }
++                if self.projects.is_empty() {
++                    return Ok(crate::combined::legacy_discovery(Value::Object(args)));
++                }
++                // Transport project selection is separate from native selectors.
++                // Ambiguity and invalid selections must not become legacy success.
++                let project = match self.select(&mut args) {
++                    Ok(project) => project,
++                    Err(error) => return Ok(error),
+                 };
++                let valid = serde_json::from_value::<
++                    airk_core::combined_reads::query_scope::QueryScopeArgs,
++                >(Value::Object(args.clone()))
++                .map_err(anyhow::Error::from)
++                .and_then(|request| request.validate());
++                if valid.is_ok() {
++                    // The native single-index handler can disclose its installed
++                    // authority. It never invents current catalog metadata or grants.
++                    return project.backend.call("airk_query_scope".into(), args).await;
++                }
++                return Ok(crate::combined::legacy_discovery(Value::Object(args)));
+             }
+             if matches!(
+                 tool.as_str(),

@@ -1,0 +1,703 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Actual service/RPC workers and scoped evidence transports. Component-format
+//! setup is inherited from the existing fixture; this is not installer evidence.
+use super::permanent_trim::{
+    policy_key as key, policy_revision as revision, policy_rpc_cli as rpc_cli,
+};
+use super::*;
+use airk_core::{
+    catalog_host::GrantDraftSelection,
+    catalog_management::CatalogOperation,
+    catalog_split::{
+        SplitFinalizationProgress, SplitRecoveryAction, SplitRecoveryOutcome, SplitRecoveryRequest,
+        SplitRunState, SplitSnapshot, SplitStage,
+    },
+    catalog_split_draft::{
+        SplitCapacitySelection, SplitDraft, SplitDraftSelection, SplitMembershipSelection,
+        SplitProjectSelection,
+    },
+    index_catalog::{PathScope, ScopeAtom},
+};
+
+fn scope_refusal(reply: &Value, session: &CombinedConnectRequest) -> Result<()> {
+    ensure!(
+        reply["isError"] == true,
+        "old authority delivered successful evidence: {reply}"
+    );
+    let refused = body(reply)?;
+    ensure!(
+        matches!(
+            refused["error"]["code"].as_str(),
+            Some("combined_scope_unavailable" | "combined_scope_expired")
+        ) && refused["error"]["retryable"] == false
+            && refused["error"]["query_replay_safe"] == false
+            && refused["requested_scope"]["confirmed"] == false
+            && refused["requested_scope"]["selection"] == serde_json::to_value(session)?,
+        "old authority failed for an unexpected reason: {refused}"
+    );
+    Ok(())
+}
+
+async fn state(f: &Fixture, operation: Incarnation) -> Result<SplitSnapshot> {
+    let response = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::CatalogSplitStatus {
+            operation_id: operation,
+        },
+    )
+    .await?;
+    let ControlResponse::CatalogSplitStatus {
+        snapshot: Some(snapshot),
+        ..
+    } = response
+    else {
+        anyhow::bail!(
+            "native split status omitted exact intent: {}",
+            serde_json::to_string(&response)?
+        );
+    };
+    snapshot.validate()?;
+    Ok(*snapshot)
+}
+
+async fn draft(f: &Fixture, nonce: u8) -> Result<SplitDraft> {
+    let method = ControlMethod::CatalogSplitSourceState {
+        index_id: f.indexes[2],
+        expected_catalog_revision: revision(f)?,
+    };
+    let response = airk_cli::service_runtime::request(&f.control, method.clone()).await?;
+    ensure!(
+        rpc_cli(f, method).await? == serde_json::to_value(&response)?,
+        "CLI split source review reduced canonical result"
+    );
+    let ControlResponse::CatalogSplitSourceState { state, .. } = response else {
+        anyhow::bail!(
+            "native split source review unavailable: {}",
+            serde_json::to_string(&response)?
+        );
+    };
+    let primary = state
+        .policy
+        .roots
+        .iter()
+        .find(|root| root.owner)
+        .context("original source absent")?;
+    let selection = SplitDraftSelection {
+        key: key(f, nonce).await?,
+        expected_catalog_revision: state.catalog_revision,
+        index_id: f.indexes[2],
+        selectors: vec![ScopeAtom {
+            source_root_id: primary.id,
+            kind: PathScope::Subtree,
+            path: "api".into(),
+        }],
+        destination_name: "Process split destination".into(),
+        destination_data_root: f
+            .owner
+            .path()
+            .join(format!("split-data-{nonce}"))
+            .to_str()
+            .context("UTF8 destination")?
+            .into(),
+        destination_collection: format!("split{nonce}"),
+        projects: state
+            .affected_projects
+            .iter()
+            .map(|project| SplitProjectSelection {
+                project_id: project.project_id,
+                retain_original: true,
+                membership: SplitMembershipSelection::PreserveReviewedScope,
+            })
+            .collect(),
+        capacity: SplitCapacitySelection {
+            destination_growth: 256 << 20,
+            destination_temporary: 256 << 20,
+            original_rewrite: 128 << 20,
+            cleanup_allowance: 64 << 20,
+        },
+        require_semantic_ready: false,
+        destination_watch_enabled: false,
+    };
+    let method = ControlMethod::CatalogSplitDraft {
+        selection: Box::new(selection.clone()),
+    };
+    let response = airk_cli::service_runtime::request(&f.control, method.clone()).await?;
+    ensure!(
+        rpc_cli(f, method).await? == serde_json::to_value(&response)?,
+        "CLI split draft reduced canonical result"
+    );
+    let ControlResponse::CatalogSplitDraft { draft } = response else {
+        anyhow::bail!(
+            "native split draft refused: {}",
+            serde_json::to_string(&response)?
+        );
+    };
+    draft.validate()?;
+    let mut stale = selection.clone();
+    stale.expected_catalog_revision = stale.expected_catalog_revision.next()?;
+    let response = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::CatalogSplitDraft {
+            selection: Box::new(stale),
+        },
+    )
+    .await?;
+    ensure!(
+        !matches!(response, ControlResponse::CatalogSplitDraft { .. }),
+        "stale review admitted"
+    );
+    let mut invalid = selection;
+    invalid.selectors[0].path = "../escape".into();
+    let response = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::CatalogSplitDraft {
+            selection: Box::new(invalid),
+        },
+    )
+    .await?;
+    ensure!(
+        !matches!(response, ControlResponse::CatalogSplitDraft { .. }),
+        "escaping selector admitted"
+    );
+    ensure!(
+        !Path::new(&draft.request.destination_registration.data_root).exists(),
+        "read-only review allocated destination"
+    );
+    Ok(*draft)
+}
+
+async fn accept(f: &Fixture, draft: &SplitDraft) -> Result<Incarnation> {
+    // Submit mutation once. Observe immutable exact-key receipt on uncertainty.
+    let response = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::CatalogSplitApply {
+            draft: Box::new(draft.clone()),
+        },
+    )
+    .await?;
+    ensure!(
+        matches!(
+            response,
+            ControlResponse::CatalogSplitAccepted { .. }
+                | ControlResponse::CatalogOutcomeUnknown { .. }
+        ),
+        "native split apply refused: {}",
+        serde_json::to_string(&response)?
+    );
+    let operation = draft.request.operation_id()?;
+    let response = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::CatalogSplitReceipt {
+            caller: draft.request.caller,
+            key: draft.request.key.clone(),
+        },
+    )
+    .await?;
+    ensure!(
+        matches!(response, ControlResponse::CatalogSplitReceipt { snapshot: Some(ref snapshot), .. }
+        if snapshot.receipt.operation_id == operation && snapshot.request == draft.request),
+        "exact acceptance receipt missing"
+    );
+    Ok(operation)
+}
+
+async fn terminal(f: &Fixture, operation: Incarnation, canceled: bool) -> Result<SplitSnapshot> {
+    let deadline = Instant::now() + Duration::from_secs(180);
+    loop {
+        let snapshot = state(f, operation).await?;
+        ensure!(
+            !matches!(snapshot.receipt.state, SplitRunState::NeedsAttention { .. })
+                && snapshot.receipt.cleanup_attention.is_none()
+                && snapshot
+                    .finalization
+                    .as_ref()
+                    .is_none_or(|finalization| finalization.attention.is_none()),
+            "native split needs attention: {}; service:{}",
+            serde_json::to_string(&snapshot)?,
+            fs::read_to_string(f.owner.path().join("service.log")).unwrap_or_default()
+        );
+        if snapshot.finalization.as_ref().is_some_and(|finalization| {
+            finalization.progress == SplitFinalizationProgress::Complete
+        }) {
+            ensure!(
+                if canceled {
+                    matches!(
+                        snapshot.receipt.state,
+                        SplitRunState::CanceledBeforeFence {
+                            cleanup_pending: false
+                        }
+                    )
+                } else {
+                    snapshot.receipt.stage == SplitStage::Complete
+                },
+                "native terminal disposition differs"
+            );
+            return Ok(snapshot);
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "native split deadline exceeded: {}",
+            serde_json::to_string(&snapshot)?
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+async fn fresh_grant(f: &mut Fixture, snapshot: &SplitSnapshot, nonce: u8) -> Result<()> {
+    let response = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::CatalogGrantDraft {
+            context_key: f.session.context_key,
+            selection: GrantDraftSelection {
+                key: key(f, nonce).await?,
+                expected_catalog_revision: revision(f)?,
+                project_ids: vec![f.projects[2]],
+                index_ids: Some(vec![f.indexes[2], snapshot.request.destination.index_id]),
+            },
+        },
+    )
+    .await?;
+    let ControlResponse::CatalogGrantDraft { draft } = response else {
+        anyhow::bail!(
+            "fresh explicit grant refused: {}",
+            serde_json::to_string(&response)?
+        );
+    };
+    let CatalogOperation::CreateGrant { grant } = &draft.request.operation else {
+        anyhow::bail!("grant review operation changed");
+    };
+    let grant = grant.clone();
+    let response = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::CatalogApply {
+            request: draft.request,
+            preview_digest: draft.preview_digest,
+        },
+    )
+    .await?;
+    let ControlResponse::CatalogApplied { receipt, .. } = response else {
+        anyhow::bail!("grant apply refused: {}", serde_json::to_string(&response)?);
+    };
+    f.session.grant_id = grant.id;
+    f.session.expected_grant_revision = grant.revision;
+    f.session.expected_catalog_revision = receipt.catalog_revision;
+    f.session.index_ids = Some(vec![f.indexes[2], snapshot.request.destination.index_id]);
+    Ok(())
+}
+
+#[cfg(feature = "embedding-worker")]
+#[tokio::test]
+async fn split_actual_service_provider_cutover_retains_complete_rpc_cli_mcp_evidence() -> Result<()>
+{
+    let mut f = Fixture::with_helper()?;
+    f.session.project_ids = vec![f.projects[2]];
+    f.session.index_ids = Some(vec![f.indexes[2]]);
+    let registration = &f.registrations[2];
+    airk_kernel::Kernel::open_service_collection(
+        &registration.root,
+        Some(registration.data_root.clone().into()),
+        &registration.collection,
+    )?
+    .configure_vectors(true)?;
+    let model = f.owner.path().join("split-model");
+    fs::create_dir(&model)?;
+    fs::write(
+        model.join("vocabulary.json"),
+        br#"{"boundaryneedle":[1.0,0.0],"original":[0.0,1.0]}"#,
+    )?;
+    fs::write(
+        model.join("model.json"),
+        serde_json::to_vec(&json!({"schema":1,"name":"original-process-split-fixture",
+        "license":"Apache-2.0","dimensions":2,"sha256":airk_cli::runtime_pair::digest_file(&model.join("vocabulary.json"))?}))?,
+    )?;
+    let _service = f.start().await?;
+    fixture_pause(&f, 2, false).await?;
+    fixture_install_model(&f, 2, &model).await?;
+    fixture_job(&f, 2, airk_core::service::JobKind::Index).await?;
+    fixture_job(&f, 2, airk_core::service::JobKind::Vectors).await?;
+    fixture_pause(&f, 2, true).await?;
+    let old = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let mut old_mcp = McpSession::start(&f)?;
+    let vector = json!({"query":"boundaryneedle","mode":"vector","limit":8,"max_bytes":8192,"verification":"off","response_mode":"full"});
+    let warm = native_read(old.as_ref(), "airk_search", &vector).await?;
+    ensure!(
+        warm["isError"] != true
+            && !body(&warm)?["ranking"]
+                .as_array()
+                .context("vector ranking absent")?
+                .is_empty(),
+        "actual native provider did not serve original: {warm}"
+    );
+    let warm_mcp = old_mcp.call(10, "airk_search", vector.clone())?;
+    ensure!(
+        warm_mcp["result"]["isError"] != true,
+        "warm MCP provider refused: {warm_mcp}"
+    );
+    assert_parity(
+        "pre-split actual provider MCP",
+        &body(&warm)?,
+        &body(&warm_mcp["result"])?,
+    )?;
+    let reviewed = draft(&f, 131).await?;
+    let operation = accept(&f, &reviewed).await?;
+    let complete = terminal(&f, operation, false).await?;
+    let removal = complete
+        .receipt
+        .jobs
+        .iter()
+        .find(|job| job.purpose == airk_core::catalog_split::SplitJobPurpose::OriginalRemoval)
+        .context("real original removal child absent")?;
+    let response = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::CatalogReceipt {
+            caller: removal.caller,
+            key: removal.key.clone(),
+        },
+    )
+    .await?;
+    let ControlResponse::CatalogReceipt {
+        fence: Some(airk_core::catalog_fences::FenceObservation::Applied(fence)),
+        ..
+    } = response
+    else {
+        anyhow::bail!(
+            "native original fence receipt absent: {}",
+            serde_json::to_string(&response)?
+        );
+    };
+    fence.validate()?;
+    let obligation = fence
+        .proof
+        .worker_obligation
+        .as_ref()
+        .context("real original worker census absent")?;
+    ensure!(
+        obligation
+            .workers
+            .iter()
+            .any(|worker| worker.project == f.registrations[2].binding)
+        && obligation.providers.iter().any(|provider| matches!(&provider.history,
+            airk_core::catalog_fences::WorkerProviderHistory::Helpers { generations } if !generations.is_empty())),
+        "real provider-bearing original worker was not captured by native cutover: {obligation:?}"
+    );
+    ensure!(
+        complete.receipt.funding_release_receipts.len() == 2
+            && complete
+                .finalization
+                .as_ref()
+                .context("native finalization absent")?
+                .funding_acknowledged
+                .len()
+                == 2,
+        "actual native roots were not acknowledged"
+    );
+    // Old client authority is never renewed across restrictive original cutover.
+    let old_reply = old
+        .call("airk_search".into(), vector.as_object().unwrap().clone())
+        .await
+        .context("old native transport failed unexpectedly instead of returning scoped refusal")?;
+    scope_refusal(&old_reply, &f.session)?;
+    let old_reply = old_mcp
+        .call(11, "airk_search", vector)
+        .context("old MCP transport failed unexpectedly instead of returning scoped refusal")?;
+    scope_refusal(&old_reply["result"], &f.session)?;
+    old.close();
+    old.shutdown().await?;
+    drop(old_mcp);
+    for method in [
+        ControlMethod::CatalogSplitStatus {
+            operation_id: operation,
+        },
+        ControlMethod::CatalogSplitReceipt {
+            caller: reviewed.request.caller,
+            key: reviewed.request.key.clone(),
+        },
+        ControlMethod::CatalogSplitRecoveryReceipt {
+            operation_id: operation,
+            caller: reviewed.request.caller,
+            key: key(&f, 132).await?,
+        },
+    ] {
+        let response = airk_cli::service_runtime::request(&f.control, method.clone()).await?;
+        ensure!(
+            rpc_cli(&f, method).await? == serde_json::to_value(response)?,
+            "actual CLI management result lost fields"
+        );
+    }
+    fresh_grant(&mut f, &complete, 133).await?;
+    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let mut mcp = McpSession::start(&f)?;
+    for (tool, args) in [
+        (
+            "airk_list_files",
+            json!({"prefix":"","limit":16,"max_bytes":16384,"response_mode":"full"}),
+        ),
+        ("airk_status", json!({"response_mode":"full"})),
+        (
+            "airk_search",
+            json!({"query":"boundaryneedle","mode":"lexical","limit":16,"max_bytes":16384,"verification":"off","response_mode":"full"}),
+        ),
+    ] {
+        let native = native_read(backend.as_ref(), tool, &args).await?;
+        ensure!(
+            native["isError"] != true,
+            "post-split evidence refused: {native}"
+        );
+        let cli = f.cli(tool, &args).await?;
+        let mcp_reply = mcp.call(20, tool, args)?;
+        ensure!(
+            cli["isError"] != true && mcp_reply["result"]["isError"] != true,
+            "parity transport returned an error instead of evidence: CLI={cli};MCP={mcp_reply}"
+        );
+        let native_body = body(&native)?;
+        let members = native_body["members"]
+            .as_array()
+            .context("native member census absent")?;
+        let ids = members
+            .iter()
+            .map(|member| serde_json::from_value::<IndexId>(member["index_id"].clone()))
+            .collect::<std::result::Result<std::collections::BTreeSet<_>, _>>()?;
+        ensure!(
+            members.len() == 2
+                && ids
+                    == std::collections::BTreeSet::from([
+                        f.indexes[2],
+                        complete.request.destination.index_id
+                    ]),
+            "native combined result omitted/added a selected member"
+        );
+        assert_parity("post-split full CLI", &body(&native)?, &body(&cli)?)?;
+        assert_parity(
+            "post-split full MCP",
+            &body(&native)?,
+            &body(&mcp_reply["result"])?,
+        )?;
+        if tool == "airk_list_files" {
+            let body = body(&native)?;
+            let mut partition = std::collections::BTreeMap::new();
+            for member in body["members"]
+                .as_array()
+                .context("combined member census absent")?
+            {
+                let result = member_body(&body, member)?;
+                let paths = result["paths"].as_array().context("native paths absent")?;
+                let index: IndexId = serde_json::from_value(member["index_id"].clone())?;
+                ensure!(
+                    result["truncated"] == false,
+                    "native partition census truncated"
+                );
+                partition.insert(
+                    index,
+                    paths
+                        .iter()
+                        .map(|path| path.as_str().context("nontext path").map(str::to_owned))
+                        .collect::<Result<std::collections::BTreeSet<_>>>()?,
+                );
+                let destination =
+                    result["collection"] == complete.request.destination_registration.collection;
+                ensure!(
+                    paths.len() == if destination { 1 } else { 3 }
+                        && paths.iter().all(|path| path
+                            .as_str()
+                            .is_some_and(|path| path.starts_with("api/") == destination)),
+                    "independent native partition returned wrong files: {result}"
+                );
+            }
+            let original = &partition[&f.indexes[2]];
+            let destination = &partition[&complete.request.destination.index_id];
+            ensure!(
+                original.len() == 3
+                    && destination.len() == 1
+                    && original.is_disjoint(destination)
+                    && original
+                        .union(destination)
+                        .cloned()
+                        .collect::<std::collections::BTreeSet<_>>()
+                        == std::collections::BTreeSet::from([
+                            "api/policy.md".into(),
+                            "impl/policy.md".into(),
+                            "private/policy.md".into(),
+                            "api-other/policy.md".into()
+                        ]),
+                "actual partition lost or duplicated an original path"
+            );
+        }
+        if tool == "airk_search" {
+            let result = body(&native)?;
+            let ranking = result["ranking"]
+                .as_array()
+                .context("native ranking absent")?;
+            ensure!(
+                !ranking.is_empty(),
+                "native split search returned no evidence"
+            );
+            for ranked in ranking {
+                let origin = airk_core::combined_reads::materialize_ranked_origin(&result, ranked)?;
+                let destination = origin.index_id == complete.request.destination.index_id;
+                let source = SourceRootId::from_identity(Incarnation::from_bytes([52; 16]));
+                let expected = if destination {
+                    *complete
+                        .request
+                        .destination
+                        .source_ids
+                        .get(&source)
+                        .context("destination source remap absent")?
+                } else {
+                    source
+                };
+                ensure!(
+                    origin.source_root_id == expected
+                        && origin.project_ids == vec![f.projects[2]]
+                        && origin.source_relative_path.starts_with("api/") == destination,
+                    "native split origin changed original location or selected Project"
+                );
+            }
+        }
+    }
+    for (index, path) in [
+        (f.indexes[2], "impl/policy.md"),
+        (complete.request.destination.index_id, "api/policy.md"),
+    ] {
+        let args =
+            json!({"path":path,"index_ids":[index],"verification":"off","response_mode":"full"});
+        let native = native_read(backend.as_ref(), "airk_file_info", &args).await?;
+        let cli = f.cli("airk_file_info", &args).await?;
+        let reply = mcp.call(21, "airk_file_info", args)?;
+        ensure!(
+            native["isError"] != true
+                && cli["isError"] != true
+                && reply["result"]["isError"] != true,
+            "native source-location proof refused"
+        );
+        let result = body(&native)?;
+        let members = result["members"]
+            .as_array()
+            .context("file info members absent")?;
+        ensure!(
+            members.len() == 1 && members[0]["index_id"] == json!(index),
+            "file-info scope changed"
+        );
+        let member = member_body(&result, &members[0])?;
+        ensure!(
+            member["content"]["source"]["root"] == f.registrations[2].root
+                && member["content"]["source"]["relative_path"] == path,
+            "split changed exported original native source coordinates: {member}"
+        );
+        assert_parity("split source location CLI", &result, &body(&cli)?)?;
+        assert_parity(
+            "split source location MCP",
+            &result,
+            &body(&reply["result"])?,
+        )?;
+    }
+    backend.close();
+    backend.shutdown().await?;
+    drop(mcp);
+    f.assert_sources_unchanged()?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn split_actual_service_cancel_has_exact_receipt_without_affecting_healthy_index()
+-> Result<()> {
+    let f = Fixture::new(true)?;
+    let _service = f.start().await?;
+    let reviewed = draft(&f, 141).await?;
+    // This actual exclusive owner exists before the destination registration.
+    // Native worker startup acquires this lease before admitting/claiming work.
+    // Metadata setup/funding may proceed, but no build can cross its real owner.
+    let held_destination = ProjectLease::acquire(
+        &f.control,
+        reviewed.request.destination_registration.binding,
+    )?;
+    let operation = accept(&f, &reviewed).await?;
+    let deadline = Instant::now() + Duration::from_secs(90);
+    let snapshot = loop {
+        let snapshot = state(&f, operation).await?;
+        ensure!(
+            !matches!(snapshot.receipt.state, SplitRunState::NeedsAttention { .. }),
+            "split preparation needs attention under actual held owner: {}",
+            serde_json::to_string(&snapshot)?
+        );
+        if snapshot.receipt.stage == SplitStage::Building {
+            let child = snapshot
+                .receipt
+                .jobs
+                .last()
+                .context("native build child absent")?;
+            let response = airk_cli::service_runtime::request(
+                &f.control,
+                ControlMethod::Job { id: child.job },
+            )
+            .await?;
+            ensure!(
+                matches!(response, ControlResponse::Job { ref job }
+                if job.state == airk_core::service::JobState::Pending),
+                "real held destination lease failed to prevent build claim"
+            );
+            break snapshot;
+        }
+        ensure!(
+            snapshot.receipt.stage < SplitStage::Building && Instant::now() < deadline,
+            "real held-owner build stage not reached: {}",
+            serde_json::to_string(&snapshot)?
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    };
+    let request = SplitRecoveryRequest {
+        caller: reviewed.request.caller,
+        key: key(&f, 142).await?,
+        operation_id: operation,
+        request_digest: snapshot.receipt.request_digest,
+        expected_receipt_digest: snapshot.receipt_digest,
+        expected_finalization_revision: None,
+        action: SplitRecoveryAction::Cancel,
+    };
+    let response: ControlResponse = serde_json::from_value(
+        rpc_cli(
+            &f,
+            ControlMethod::CatalogSplitRecover {
+                request: Box::new(request.clone()),
+            },
+        )
+        .await?,
+    )?;
+    let ControlResponse::CatalogSplitRecovered { receipt, .. } = response else {
+        anyhow::bail!(
+            "native cancellation refused: {}",
+            serde_json::to_string(&response)?
+        );
+    };
+    ensure!(
+        matches!(
+            receipt.outcome,
+            SplitRecoveryOutcome::CancelBeforeFenceAccepted { .. }
+        ),
+        "cancel did not retain accepted cleanup"
+    );
+    drop(held_destination);
+    terminal(&f, operation, true).await?;
+    let response = airk_cli::service_runtime::request(
+        &f.control,
+        ControlMethod::CatalogSplitRecoveryReceipt {
+            operation_id: operation,
+            caller: request.caller,
+            key: request.key,
+        },
+    )
+    .await?;
+    ensure!(
+        matches!(response, ControlResponse::CatalogSplitRecoveryReceipt { receipt: Some(ref saved), .. } if **saved == *receipt),
+        "native immutable cancellation acknowledgment changed during cleanup"
+    );
+    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let healthy = native_read(backend.as_ref(),"airk_search",&json!({"query":"boundaryneedle","mode":"lexical","limit":8,"max_bytes":8192,"verification":"off"})).await?;
+    ensure!(
+        healthy["isError"] != true,
+        "unrelated healthy indexes were poisoned by split cancellation"
+    );
+    backend.close();
+    backend.shutdown().await?;
+    f.assert_sources_unchanged()?;
+    Ok(())
+}

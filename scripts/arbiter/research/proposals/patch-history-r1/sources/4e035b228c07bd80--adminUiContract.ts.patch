@@ -1,0 +1,10 @@
+--- a/packages/vscode/src/adminUiContract.ts
++++ b/packages/vscode/src/adminUiContract.ts
+@@ -61,6 +61,7 @@
+   arbiterStatus: 'arbiter.status',
+   arbiterInitialize: 'arbiter.initialize',
+   arbiterConfigure: 'arbiter.configure',
++  arbiterMigrate: 'arbiter.migrate',
+   arbiterProvision: 'arbiter.provision',
+   arbiterCancel: 'arbiter.cancel',
+   arbiterRemove: 'arbiter.remove',

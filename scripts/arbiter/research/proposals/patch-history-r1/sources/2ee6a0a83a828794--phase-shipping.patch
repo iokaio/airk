@@ -1,0 +1,412 @@
+--- a/crates/airk-kernel/src/inference_owner/evaluation_tests/train_units/public_human_visibility.rs
++++ b/crates/airk-kernel/src/inference_owner/evaluation_tests/train_units/public_human_visibility.rs
+@@ -36,6 +36,75 @@
+     end: usize,
+     sha256: Sha256Digest,
+ }
++fn progress_value(
++    stage: &str,
++    ordinal: usize,
++    total: usize,
++    observed: usize,
++    elapsed_ns: u128,
++) -> Result<Value> {
++    ensure!(
++        matches!(
++            stage,
++            "source_hash"
++                | "unit_file_before"
++                | "unit_file_after"
++                | "unit_file_unmapped"
++                | "row_mapping"
++        ),
++        "unknown progress stage"
++    );
++    ensure!(
++        ordinal <= total && total <= 100_000 && observed <= 100_000,
++        "bounded progress counters required"
++    );
++    Ok(
++        json!({"stage":stage,"ordinal":ordinal,"total":total,"observed":observed,"elapsed_ns":elapsed_ns}),
++    )
++}
++fn visibility_progress(
++    stage: &str,
++    ordinal: usize,
++    total: usize,
++    observed: usize,
++    started: Instant,
++) -> Result<()> {
++    let value = progress_value(
++        stage,
++        ordinal,
++        total,
++        observed,
++        started.elapsed().as_nanos(),
++    )?;
++    eprintln!("PUBLIC_HUMAN_PROGRESS {value}");
++    std::io::stderr().flush()?;
++    Ok(())
++}
++fn validate_encoder_manifest(
++    input: &EncoderInput,
++    manifest: &airk_retrieval::model::OnnxManifest,
++) -> Result<()> {
++    ensure!(
++        manifest.max_tokens == 256
++            && manifest.tokenizer_sha256
++                == "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037",
++        "original256 tokenizer/ABI required"
++    );
++    match input.family.as_str() {
++        "original-mixed-u8-ort130-evaluation" => Ok(()),
++        "original-shipped-u8-ort130-evaluation" => {
++            ensure!(
++                serde_json::to_value(manifest)?
++                    == serde_json::to_value(
++                        airk_retrieval::model_catalog::selected_profile()?.manifest
++                    )?,
++                "shipping descriptor must exactly match native CPU-selected catalog manifest"
++            );
++            Ok(())
++        }
++        _ => anyhow::bail!("unreviewed encoder family; no descriptor relabeling"),
++    }
++}
+ fn pin_bytes(pin: &ResourceFilePin, maximum: usize) -> Result<Vec<u8>> {
+     pin.validate()?;
+     let path = std::path::Path::new(&pin.path);
+@@ -135,6 +204,67 @@
+ fn positive_span_visible(label: u64, parent: &LocalSpan, spans: &[LocalSpan]) -> bool {
+     label == 1 && covered(parent, spans)
+ }
++fn planned_unit_records(
++    model: &EmbeddingModel,
++    source: &std::path::Path,
++    extracted: &[airk_core::RetrievalArtifact],
++) -> Result<Vec<Value>> {
++    let mut units = Vec::new();
++    for (ordinal, retained) in extracted.iter().enumerate() {
++        let file_started = Instant::now();
++        visibility_progress(
++            "unit_file_before",
++            ordinal,
++            extracted.len(),
++            units.len(),
++            file_started,
++        )?;
++        if retained.payload.text.as_bytes() != std::fs::read(source.join(&retained.artifact.path))?
++            || retained
++                .payload
++                .chunks
++                .iter()
++                .any(|chunk| chunk.region.is_some())
++        {
++            continue;
++        }
++        visit_vector_units(&retained.payload, model, |unit| {
++            ensure!(
++                units.len() < 100_000,
++                "visibility unit census bound exceeded"
++            );
++            let tokens = model.planning_tokens(&unit.input)?.len();
++            ensure!(tokens <= 256, "canonical planner overflow");
++            let body = unit
++                .members
++                .iter()
++                .map(|member| {
++                    retained
++                        .payload
++                        .text
++                        .get(member.span.start..member.span.end)
++                        .context("actual member span invalid")
++                })
++                .collect::<Result<Vec<_>>>()?
++                .concat();
++            let prefix = unit
++                .input
++                .strip_suffix(&body)
++                .context("native body is not an unchanged input suffix")?;
++            units.push(json!({"id":units.len(),"file":retained.artifact.path,"input":unit.input,"members":unit.members,"context_prefix":prefix,"context_prefix_bytes":prefix.len(),"native_tokens":tokens,"native_input_tensors":unit_tensors(model,&unit.input)?,"source_sha256":retained.artifact.content_hash,"payload_sha256":retained.payload_digest,"extraction_profile_sha256":retained.profile.identity()?,"published":false}));
++            Ok(())
++        })?;
++        visibility_progress(
++            "unit_file_after",
++            ordinal + 1,
++            extracted.len(),
++            units.len(),
++            file_started,
++        )?;
++    }
++
++    Ok(units)
++}
+ fn focus_compile(compiler: &Compiler, id: &str, question: &str, document: &str) -> Value {
+     match compiler.compile(
+         "",
+@@ -160,7 +290,9 @@
+         path: std::env::var("AIRK_PUBLIC_HUMAN_VISIBILITY_INPUT")?,
+         sha256: std::env::var("AIRK_PUBLIC_HUMAN_VISIBILITY_INPUT_SHA256")?.parse()?,
+     };
+-    let input: VisibilityInput = serde_json::from_slice(&pin_bytes(&input_pin, 4 << 20)?)?;
++    let input: VisibilityInput = phase("public_preflight_input", || {
++        Ok(serde_json::from_slice(&pin_bytes(&input_pin, 4 << 20)?)?)
++    })?;
+     ensure!(
+         input.schema == "airk.private.public-human-native-visibility/1"
+             && input.rows.sha256.to_string() == ROWS_SHA,
+@@ -170,15 +302,22 @@
+         !input.source_rights.is_empty() && input.source_rights.len() <= 1024,
+         "complete source/right pins required"
+     );
+-    for pin in &input.source_rights {
+-        pin_bytes(pin, 64 << 20)?;
+-    }
+-    let intake: Value = serde_json::from_slice(&pin_bytes(&input.rows, 16 << 20)?)?;
++    phase("public_source_rights_pins", || {
++        for pin in &input.source_rights {
++            pin_bytes(pin, 64 << 20)?;
++        }
++        Ok(())
++    })?;
++    let intake: Value = phase("public_original_rows", || {
++        Ok(serde_json::from_slice(&pin_bytes(&input.rows, 16 << 20)?)?)
++    })?;
+     let rows = intake["rows"]
+         .as_array()
+         .context("original row array absent")?;
+     row_ids(rows)?;
+-    let spans: Vec<FunctionSpan> = serde_json::from_slice(&pin_bytes(&input.spans, 4 << 20)?)?;
++    let spans: Vec<FunctionSpan> = phase("public_original_span_map", || {
++        Ok(serde_json::from_slice(&pin_bytes(&input.spans, 4 << 20)?)?)
++    })?;
+     let mut span_map = BTreeMap::new();
+     for span in &spans {
+         ensure!(
+@@ -198,7 +337,8 @@
+     );
+     let source = input.source_root.canonicalize()?;
+     let mut expected = BTreeSet::new();
+-    for file in &input.source_files {
++    let source_started = Instant::now();
++    for (ordinal, file) in input.source_files.iter().enumerate() {
+         airk_core::index_catalog::relative_path(&file.file, false)?;
+         ensure!(expected.insert(file.file.clone()), "duplicate source file");
+         let path = source.join(&file.file);
+@@ -207,9 +347,18 @@
+             "original source path/length differs"
+         );
+         sealed(&path, file.sha256)?;
++        visibility_progress(
++            "source_hash",
++            ordinal + 1,
++            input.source_files.len(),
++            ordinal + 1,
++            source_started,
++        )?;
+     }
+     let mut census = BTreeSet::new();
+-    source_census(&source, &source, &mut census)?;
++    phase("public_closed_source_census", || {
++        source_census(&source, &source, &mut census)
++    })?;
+     ensure!(
+         census == expected,
+         "unexpected/missing original source file"
+@@ -231,54 +380,61 @@
+             "metadata inside readonly source refused"
+         );
+     }
+-    let focus_request: ResourceRunInput =
+-        serde_json::from_slice(&pin_bytes(&input.focus_input, 1 << 20)?)?;
+-    focus_request.validate()?;
+-    let profile: airk_core::arbiter::Profile =
+-        serde_json::from_slice(&pin_bytes(&focus_request.profile, 1 << 20)?)?;
+-    profile.validate()?;
+-    ensure!(
+-        profile.model == airk_core::arbiter::ModelChoice::FocusQwenReranker06B
+-            && profile.max_tokens == 512,
+-        "selected Focus512 required"
+-    );
+-    let asset = |role| -> Result<Vec<u8>> {
+-        let item = profile
+-            .assets
+-            .iter()
+-            .find(|asset| asset.role == role)
+-            .context("Focus asset absent")?;
+-        pin_bytes(
+-            &ResourceFilePin {
+-                path: focus_request
+-                    .files
+-                    .get(&item.name)
+-                    .context("Focus file absent")?
+-                    .clone(),
+-                sha256: item.sha256,
+-            },
+-            16 << 20,
+-        )
+-    };
+-    let compiler =
+-        Compiler::from_verified(&asset(AssetRole::Compiler)?, &asset(AssetRole::Tokenizer)?)?;
++    let compiler = phase("public_focus_profile_compiler", || -> Result<Compiler> {
++        let focus_request: ResourceRunInput =
++            serde_json::from_slice(&pin_bytes(&input.focus_input, 1 << 20)?)?;
++        focus_request.validate()?;
++        let profile: airk_core::arbiter::Profile =
++            serde_json::from_slice(&pin_bytes(&focus_request.profile, 1 << 20)?)?;
++        profile.validate()?;
++        ensure!(
++            profile.model == airk_core::arbiter::ModelChoice::FocusQwenReranker06B
++                && profile.max_tokens == 512,
++            "selected Focus512 required"
++        );
++        let asset = |role| -> Result<Vec<u8>> {
++            let item = profile
++                .assets
++                .iter()
++                .find(|asset| asset.role == role)
++                .context("Focus asset absent")?;
++            pin_bytes(
++                &ResourceFilePin {
++                    path: focus_request
++                        .files
++                        .get(&item.name)
++                        .context("Focus file absent")?
++                        .clone(),
++                    sha256: item.sha256,
++                },
++                16 << 20,
++            )
++        };
++        Compiler::from_verified(&asset(AssetRole::Compiler)?, &asset(AssetRole::Tokenizer)?)
++    })?;
+     let model_bytes = sealed(
+         &input.encoder.directory.join("model.json"),
+         input.encoder.model_json_sha256,
+     )?;
+     let manifest: airk_retrieval::model::OnnxManifest = serde_json::from_slice(&model_bytes)?;
+-    ensure!(
+-        input.encoder.family == "original-mixed-u8-ort130-evaluation"
+-            && manifest.max_tokens == 256
+-            && manifest.tokenizer_sha256
+-                == "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037",
+-        "original MiniLM256 tokenizer/ABI required"
+-    );
++    phase("public_encoder_manifest", || {
++        validate_encoder_manifest(&input.encoder, &manifest)
++    })?;
+     let control = tempfile::tempdir()?;
+-    let lease = Arc::new(airk_store::service::ServiceLease::acquire(control.path())?);
+-    let owner = NativeInferenceOwner::admit(lease)?;
+-    let kernel = crate::Kernel::open(&source, Some(input.data.clone()))?;
+-    let (extracted, extraction_report) = unpublished_extractions(&kernel)?;
++    let lease = phase("public_service_lease", || {
++        Ok(Arc::new(airk_store::service::ServiceLease::acquire(
++            control.path(),
++        )?))
++    })?;
++    let owner = phase("public_inference_owner_admit", || {
++        NativeInferenceOwner::admit(lease)
++    })?;
++    let kernel = phase("public_kernel_open", || {
++        crate::Kernel::open(&source, Some(input.data.clone()))
++    })?;
++    let (extracted, extraction_report) = phase("public_native_extraction", || {
++        unpublished_extractions(&kernel)
++    })?;
+     ensure!(
+         extraction_report.embedding_actual_forwards == 0
+             && extraction_report.embedding_inferences == 0,
+@@ -292,20 +448,13 @@
+         extracted_files.is_subset(&expected),
+         "canonical extraction invented a source path"
+     );
+-    let (units, descriptor, records) = owner.run_encoder_evaluation(input.encoder.model_json_sha256, || -> Result<_> {
+-        let model = EmbeddingModel::open(&input.encoder.directory)?;let descriptor = model.cache_descriptor()?;let mut units = Vec::new();
+-        for retained in &extracted {
+-            if retained.payload.text.as_bytes() != std::fs::read(source.join(&retained.artifact.path))? || retained.payload.chunks.iter().any(|chunk|chunk.region.is_some()) { continue; }
+-            visit_vector_units(&retained.payload, &model, |unit| {
+-                ensure!(units.len() < 100_000, "visibility unit census bound exceeded");
+-                let tokens = model.planning_tokens(&unit.input)?.len();ensure!(tokens <= 256, "canonical planner overflow");
+-                let body = unit.members.iter().map(|member|retained.payload.text.get(member.span.start..member.span.end).context("actual member span invalid")).collect::<Result<Vec<_>>>()?.concat();
+-                let prefix = unit.input.strip_suffix(&body).context("native body is not an unchanged input suffix")?;
+-                units.push(json!({"id":units.len(),"file":retained.artifact.path,"input":unit.input,"members":unit.members,"context_prefix":prefix,"context_prefix_bytes":prefix.len(),"native_tokens":tokens,"native_input_tensors":unit_tensors(&model,&unit.input)?,"source_sha256":retained.artifact.content_hash,"payload_sha256":retained.payload_digest,"extraction_profile_sha256":retained.profile.identity()?,"published":false}));Ok(())
+-            })?;
+-        }
++    let (units, descriptor, records) = phase("public_encoder_evaluation_owner", || {
++        owner.run_encoder_evaluation(input.encoder.model_json_sha256, || -> Result<_> {
++        let model = phase("public_encoder_open", || EmbeddingModel::open(&input.encoder.directory))?;let descriptor = model.cache_descriptor()?;let units = planned_unit_records(&model, &source, &extracted)?;
++        let records = phase("public_row_mapping", || -> Result<Vec<Value>> {
++        let mapping_started = Instant::now();
+         let mut records = Vec::new();
+-        for row in rows {
++        for (ordinal, row) in rows.iter().enumerate() {
+             let id=row["id"].as_str().context("row id absent")?;let question=row["question"].as_str().context("original question absent")?;let document=row["document"].as_str().context("original function absent")?;
+             let span=span_map.get(&row["code_idx"].as_u64().context("code index absent")?).context("original function mapping absent")?;
+             ensure!(expected.contains(&span.file), "function outside original source roster");
+@@ -331,8 +480,12 @@
+             }
+             let mini=if !query_fits {"refused_query_input"} else if !accepted.is_empty(){"accepted"}else{"unknown"};
+             records.push(json!({"original":row,"native_extraction_source_present":extracted_files.contains(&span.file),"focus_compiler_success_is_necessary_not_sufficient":true,"function_span":{"file":span.file,"start":span.start,"end":span.end,"sha256":span.sha256},"minilm":{"visibility":mini,"query_tokens":query.as_ref().ok().map(|tokens|tokens.len()),"query_refusal":query.as_ref().err().map(ToString::to_string),"query_input_tensors":if query_fits{unit_tensors(&model,question)?}else{None},"all_alternative_units":alternatives,"union_complete_function":covered(&parent,&all),"unchanged_complete_unit_ids":accepted,"fragment_positive_labels":false,"gold_admission":false},"focus":focus_compile(&compiler,id,question,document)}));
++            if (ordinal+1)%32==0 || ordinal+1==rows.len() { visibility_progress("row_mapping", ordinal+1, rows.len(), records.len(), mapping_started)?; }
+         }
++        Ok(records)
++        })?;
+         Ok((units,descriptor,records))
++    })
+     })??;
+     ensure!(records.len() == ROWS, "original denominator lost");
+     for file in &input.source_files {
+@@ -347,7 +500,9 @@
+         pin_bytes(pin, 64 << 20)?;
+     }
+     let report = json!({"schema":"airk.private.public-human-native-visibility-result/1","complete":true,"original_denominator":ROWS,"input":input_pin,"source_rights":input.source_rights,"rows":records,"actual_units":units,"planning_descriptor":descriptor,"unit_specification":airk_retrieval::vector_units::VECTOR_UNIT_SPECIFICATION,"extraction_report":extraction_report,"native_binary_sha256":asset_digest()?,"embedding_forwards":null,"focus_forwards":null,"forward_count_observation":"unobserved: this diagnostic has no model-forward observer; extraction_report retains its actual measured extraction counters","nonblank_embedding_request_dispatched":false,"focus_scorer_request_dispatched":false,"dispatch_scope":"Reviewed diagnostic calls native planning/input compilation only; no nonblank embedding or scorer request is dispatched. These dispatch facts are not measured model-forward counts.","training_gradients":false,"gold_admission":false,"rights_admission":false,"published":false,"scope":"Canonical unpublished indexed-unit recipe and full original-pair visibility only. Token-fit is necessary and insufficient; code arm does not fulfill documents/general/cross-language admission."});
+-    let bytes = serde_json::to_vec_pretty(&report)?;
++    let bytes = phase("public_serialization", || {
++        Ok(serde_json::to_vec_pretty(&report)?)
++    })?;
+     ensure!(bytes.len() <= 512 << 20, "visibility output bound exceeded");
+     let mut output = std::fs::OpenOptions::new()
+         .write(true)
+@@ -462,3 +617,41 @@
+     );
+     Ok(())
+ }
++
++#[test]
++fn public_progress_is_bounded_numeric_metadata_only() -> Result<()> {
++    assert_eq!(
++        progress_value("unit_file_after", 2, 3, 7, 11)?,
++        json!({"stage":"unit_file_after","ordinal":2,"total":3,"observed":7,"elapsed_ns":11})
++    );
++    assert!(progress_value("source contents", 0, 0, 0, 0).is_err());
++    assert!(progress_value("row_mapping", 3, 2, 1, 0).is_err());
++    assert!(progress_value("row_mapping", 1, 2, 100_001, 0).is_err());
++    Ok(())
++}
++
++#[test]
++fn shipping_family_requires_exact_native_catalog_and_same_token_abi() -> Result<()> {
++    let mut manifest = airk_retrieval::model_catalog::selected_profile()?.manifest;
++    let mut input = EncoderInput {
++        family: "original-shipped-u8-ort130-evaluation".into(),
++        directory: PathBuf::from("unused"),
++        model_json_sha256: Sha256Digest::from_bytes([0; 32]),
++        oracle: PathBuf::from("unused"),
++        oracle_sha256: Sha256Digest::from_bytes([0; 32]),
++        oracle_result: "unused".into(),
++    };
++    validate_encoder_manifest(&input, &manifest)?;
++    let original = manifest.clone();
++    manifest.model_sha256 = "11".repeat(32);
++    assert!(validate_encoder_manifest(&input, &manifest).is_err());
++    manifest = original.clone();
++    manifest.max_tokens = 512;
++    assert!(validate_encoder_manifest(&input, &manifest).is_err());
++    manifest = original.clone();
++    manifest.tokenizer_sha256 = "22".repeat(32);
++    assert!(validate_encoder_manifest(&input, &manifest).is_err());
++    input.family = "trained-v2-u8".into();
++    assert!(validate_encoder_manifest(&input, &original).is_err());
++    Ok(())
++}

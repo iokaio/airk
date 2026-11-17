@@ -1,0 +1,112 @@
+--- public-focus-recipe-r6/run_public_focus_r6.py
++++ public-focus-recipe-r7/run_public_focus_r7.py
+@@ -37,7 +37,7 @@
+     with path.open('x',encoding='utf-8') as f:json.dump(value,f,indent=2);f.write('\n')
+ 
+ def verify_preparation(expected_sha256):
+-    packet_path=Path(__file__).with_name('public-focus-preparation-r6.json')
++    packet_path=Path(__file__).with_name('public-focus-preparation-r7.json')
+     if digest(packet_path)!=expected_sha256:raise ValueError('reviewed private preparation packet differs')
+     packet=json.loads(packet_path.read_text(encoding='utf-8'))
+     for pin in packet['files']+packet['helper_source_pins']:
+@@ -97,14 +97,33 @@
+     return {'pid':handle.pid,'observation':handle.exit_observation}
+ 
+ 
++def require(value,message):
++    if not value:raise ValueError(message)
++
++def require_restart_scope_continuity(previous,current,previous_instance,current_instance):
++    require(previous_instance!=current_instance,'restart scope needs authentic new service instance')
++    fields={'schema','qualifier','fingerprint','selection','members'}
++    require(set(previous)==fields and set(current)==fields,'unknown restart scope projection')
++    require(previous['schema']==current['schema']==1
++        and previous['qualifier']==current['qualifier']=='selected_subset'
++        and previous['selection']==current['selection'] and previous['members']==current['members'],
++        'persisted public source authority changed across restart')
++    for scope in (previous,current):
++        value=scope['fingerprint']
++        require(isinstance(value,str) and len(value)==64 and all(c in '0123456789abcdef' for c in value),
++            'invalid native authority fingerprint')
++    require(previous['fingerprint']!=current['fingerprint'],
++        'old service-bound authority fingerprint replayed after restart')
++
++
+ def explicit_restart_health(fixture,cutoff,record):
+     result=fixture.service_run('runtime','start','--install-dir',fixture.install,
+-        check=False,timeout=remaining(cutoff))
++        check=False,timeout=min(120,remaining(cutoff)))
+     record('raw-native-explicit-start',{'stdout':result.stdout,'stderr':result.stderr,
+         'exit_code':result.returncode,'operation':'runtime start','install':str(fixture.install)})
+     if result.returncode:
+         raise RuntimeError('native explicit start refused; retain original raw response')
+-    response=fixture.rpc('health')
++    response=fixture.rpc('health',deadline=cutoff)
+     record('actual-restart-health-response',response)
+     if not isinstance(response,dict) or not isinstance(response.get('observation'),dict):
+         raise RuntimeError('actual restarted native Health unavailable; no observation synthesized')
+@@ -163,7 +182,7 @@
+     preparation=verify_preparation(args.preparation_sha256)
+     started=time.monotonic();cutoff=started+args.whole_phase_seconds
+     output.mkdir(exist_ok=False)
+-    fixture=None;handles=[];children=[];settled_instances=set();stop_limits=StopCutoffs(cutoff);stop_attempts=set();report={'schema':'airk.public-focus-native-journey/6',
++    fixture=None;handles=[];children=[];settled_instances=set();stop_limits=StopCutoffs(cutoff);stop_attempts=set();report={'schema':'airk.public-focus-native-journey/7',
+         'scope':'isolated U93 managed public-control fixture; modern I4 installed journey unqualified',
+         'passed':False,'release_qualified':False,'large_public_finalize_exercised':False,
+         'current_public_context_available':False,'native_nn_calls_claimed':False,'observed_native_stops':[],'steps':[]}
+@@ -197,11 +216,11 @@
+         frozen=output/'frozen-source'/'scripts';frozen.mkdir(parents=True)
+         helper_pins={}
+         for name in HELPERS:
+-            data=(Path(__file__).with_name('public-focus-r6-helper-source')/'scripts'/name).read_bytes();(frozen/name).write_bytes(data)
++            data=((Path(__file__).parent.parent/'public-focus-recipe-r6'/'public-focus-r6-helper-source')/'scripts'/name).read_bytes();(frozen/name).write_bytes(data)
+             helper_pins[name]=hashlib.sha256(data).hexdigest()
+             expected=next(pin['sha256'] for pin in preparation['helper_source_pins'] if Path(pin['path']).name==name)
+             if helper_pins[name]!=expected:raise ValueError('helper changed during source freeze: '+name)
+-        private_assertions=Path(__file__).with_name('public_focus_evidence_r6.py').read_bytes()
++        private_assertions=(Path(__file__).parent.parent/'public-focus-recipe-r6'/'public_focus_evidence_r6.py').read_bytes()
+         (frozen/'public_focus_evidence_r6.py').write_bytes(private_assertions)
+         helper_pins['public_focus_evidence_r6.py']=hashlib.sha256(private_assertions).hexdigest()
+         record('helper-inputs',{'sha256':helper_pins,'preparation_packet_sha256':args.preparation_sha256})
+@@ -402,10 +421,30 @@
+         if restarted['configuration']['focus']['enabled'] or profile_row(restarted)['availability']!='missing_assets':
+             raise ValueError('persisted disabled/removed state did not survive native lease reacquisition')
+         record('restarted-state',restarted)
++        # R4 native restart proof: persistent public authority stays identical;
++        # the private service-bound fingerprint must be newly observed.
++        for name in ('a','b'):
++            previous_scope=scope_observations.pop(name)
++            current=canonical_read(name,'diagnostics',['--args','{"response_mode":"full"}'],cutoff)
++            current_scope=current['member_body']['scope_observation']
++            require_restart_scope_continuity(previous_scope,current_scope,
++                first_health['instance'],restarted_health['instance'])
++            record('native-authority-epoch-continuity-'+name,{
++                'previous_service_instance':first_health['instance'],
++                'current_service_instance':restarted_health['instance'],
++                'previous_native_scope':previous_scope,'current_native_scope':current_scope})
++            scope_observations[name]=current_scope
++            restarted_read=tool(name,'search-hybrid.json')
++            assertions.require_hybrid(restarted_read)
++            if assertions.applied_focus(restarted_read):
++                raise ValueError('removed Focus unexpectedly applied after restart')
++            record('restarted-minilm-'+name,restarted_read)
+         stop_key,final_cutoff=begin_stop();stop_attempts.add(stop_key);fixture.close()
+         record('final-native-stop',fixture.managed_stop);record('final-process-exit',handles[-1].wait(final_cutoff))
+         report['observed_native_stops'].append(fixture.managed_stop)
+         settled_instances.add(fixture.managed_health['instance'])
++        if any(digest(Path(p))!=expected for p,expected in {**originals,**import_originals}.items()):
++            raise ValueError('original source/import bytes changed after restart reads')
+         report['source_files_unchanged']=True
+         report['import_source_files_unchanged']=True
+         report['passed']=True
+--- public-focus-recipe-r6/run_owned_public_focus_r6.py
++++ public-focus-recipe-r7/run_owned_public_focus_r7.py
+@@ -45,7 +45,7 @@
+         and first['executable_sha256']==restarted['executable_sha256']==pins['airk_sha256']
+         and first['runtime_sha256']==restarted['runtime_sha256']
+         and first['version']==restarted['version']=='1.8.207'
+-        and first['instance']!=restarted['instance'] and first['process_id']!=restarted['process_id'],
++        and first['instance']!=restarted['instance'],
+         'actual same-image new-instance native lease reacquisition absent')
+     require(first.get('build',{}).get('source_sha256')==restarted.get('build',{}).get('source_sha256')==pins['source_sha256'],
+         'actual native source identity differs')

@@ -1,0 +1,150 @@
+--- crates/airk-cli/src/main.rs
++++ crates/airk-cli/src/main.rs
+@@ -8,6 +8,8 @@
+ use std::path::{Path, PathBuf};
+ #[cfg(feature = "parser-training")]
+ mod parser_training;
++#[cfg(any(test, all(windows, feature = "gpu-cuda")))]
++mod startup_math;
+ 
+ #[derive(Parser)]
+ #[command(
+@@ -292,6 +294,12 @@
+ }
+ 
+ fn main() -> std::process::ExitCode {
++    #[cfg(all(windows, feature = "gpu-cuda"))]
++    // SAFETY: this is the first operation in synchronous main, before run_cli
++    // can initialize ORT or create the CLI worker and Tokio runtime.
++    unsafe {
++        startup_math::initialize_before_workers();
++    }
+     match run_cli() {
+         Ok(()) => std::process::ExitCode::SUCCESS,
+         Err(error) => {
+--- crates/airk-cli/src/startup_math.rs
++++ crates/airk-cli/src/startup_math.rs
+@@ -0,0 +1,35 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Process-local math default before any application worker or ORT initialization.
++use std::ffi::OsString;
++
++fn supply_default(
++    enabled: bool,
++    read: impl FnOnce() -> Option<OsString>,
++    write: impl FnOnce(&'static str),
++) {
++    if enabled && read().is_none() {
++        write("2");
++    }
++}
++
++/// Establish only an absent process-local value; preserve explicit user policy.
++///
++/// # Safety
++/// Call only as the first operation in synchronous main, before starting AIRK
++/// workers, Tokio, ORT, or other application initialization. Never call later
++/// to repair a captured or active math environment.
++#[cfg(all(windows, feature = "gpu-cuda"))]
++pub(super) unsafe fn initialize_before_workers() {
++    supply_default(
++        cfg!(all(windows, feature = "gpu-cuda")),
++        || std::env::var_os("ORT_CUDA_GEMM_OPTIONS"),
++        |value| {
++            // SAFETY: synchronous main calls this before application threads or
++            // ORT initialization. Only this process changes, on Windows only.
++            unsafe { std::env::set_var("ORT_CUDA_GEMM_OPTIONS", value) };
++        },
++    );
++}
++
++#[cfg(test)]
++mod tests;
+--- crates/airk-cli/src/startup_math/tests.rs
++++ crates/airk-cli/src/startup_math/tests.rs
+@@ -0,0 +1,71 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Pure bootstrap decisions. These tests never change the process environment.
++use super::*;
++use std::cell::{Cell, RefCell};
++
++#[test]
++fn absent_cuda_setting_receives_exact_compute32_default_once() {
++    let reads = Cell::new(0);
++    let writes = RefCell::new(Vec::new());
++    supply_default(
++        true,
++        || {
++            reads.set(reads.get() + 1);
++            None
++        },
++        |v| writes.borrow_mut().push(v),
++    );
++    assert_eq!(reads.get(), 1);
++    assert_eq!(*writes.borrow(), ["2"]);
++}
++
++#[test]
++fn explicit_valid_conflicting_and_empty_values_are_preserved() {
++    for value in ["2", "3", "0", "", "unrecognized"] {
++        supply_default(
++            true,
++            || Some(OsString::from(value)),
++            |_| panic!("overwrote explicit value {value:?}"),
++        );
++    }
++}
++
++#[test]
++fn disabled_build_policy_neither_reads_nor_writes_environment() {
++    supply_default(
++        false,
++        || panic!("disabled target read environment"),
++        |_| panic!("disabled target wrote environment"),
++    );
++}
++
++#[test]
++fn repeated_startup_does_not_overwrite_the_supplied_default() {
++    let value = RefCell::new(None);
++    let writes = Cell::new(0);
++    for _ in 0..2 {
++        supply_default(
++            true,
++            || value.borrow().clone(),
++            |v| {
++                writes.set(writes.get() + 1);
++                *value.borrow_mut() = Some(OsString::from(v));
++            },
++        );
++    }
++    assert_eq!(writes.get(), 1);
++    assert_eq!(*value.borrow(), Some(OsString::from("2")));
++}
++
++#[test]
++#[cfg(windows)]
++fn explicit_non_unicode_windows_value_is_preserved() {
++    use std::os::windows::ffi::OsStringExt;
++    let value = OsString::from_wide(&[0xD800]);
++    assert!(value.to_str().is_none());
++    supply_default(
++        true,
++        || Some(value),
++        |_| panic!("overwrote explicit non-Unicode policy"),
++    );
++}
+--- crates/airk-cli/src/startup_math/CONTRACT.md
++++ crates/airk-cli/src/startup_math/CONTRACT.md
+@@ -0,0 +1,11 @@
++# Early CUDA math process default
++
++Owner: the synchronous airk binary entry, startup_math. This bootstrap is the first executable operation in main, before run_cli, bundled verification/ORT paths, the CLI worker thread, Tokio runtime, role admission and every service/login/foreground entry. Source main currently has no application initialization before it. Windows process-local environment updates are thread-safe; the stronger entry-only call order prevents observing/changing the value after any AIRK ORT or worker initialization. The private unsafe function has exactly this caller safety obligation. It must never be moved into an async service handler or called later to repair an initialized process.
++
++Only Windows builds with airk-cli/gpu-cuda invoke it. If ORT_CUDA_GEMM_OPTIONS is absent, set this process's value to exact2. Preserve every explicit OsString unchanged, including2, conflicts, empty and non-Unicode values. Do not set ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO. No parent process, account/OS/registry environment or service-manager definition is changed. CPU/non-CUDA/non-Windows builds do not read or write these settings.
++
++Child overlays alone miss the existing direct Task Scheduler/login, managed-service and explicit foreground entries, which serve in the process the OS/user starts. The common synchronous entry covers them without another process, role, wrapper or public request field. Existing role/image/I4/same-user/start/Stop authority is unchanged; environment initialization grants none.
++
++Retrieval remains read-only: it captures the initial value before ORT and checks immutable GEMM2 for G5. Explicit conflicting values are not silently repaired; existing native F16 refusal remains. Qualified product debug logging stays optional; scientific proof owners explicitly supply debug1. This default is not a GPU/model/precision/fit/qualification claim. Existing FP32/CPU math policies and MiniLM are unchanged.
++
++Pure tests inject read/write functions, exercise absent/explicit/empty/non-Unicode and disabled-target decisions, and prove idempotence without mutating the test process environment. Native artifact/login qualification remains Root-owned and separate.

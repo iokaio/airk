@@ -1,0 +1,387 @@
+--- crates/airk-service/src/service_runtime/arbiter/lifecycle.rs
++++ crates/airk-service/src/service_runtime/arbiter/lifecycle.rs
+@@ -10,6 +10,7 @@
+ 
+ pub(super) struct State {
+     serial: u64,
++    accepted_configure_revision: u64,
+     busy: bool,
+     profile: Option<Sha256Digest>,
+     phase: Availability,
+@@ -22,6 +23,7 @@
+     fn default() -> Self {
+         Self {
+             serial: 0,
++            accepted_configure_revision: 0,
+             busy: false,
+             profile: None,
+             phase: Availability::Disabled,
+@@ -152,6 +154,58 @@
+         admission(expected)?;
+     }
+     current(configuration, expected, stage, cancel)
++}
++
++/// Called while the own-stage lifecycle guard remains held, before the new
++/// cached continuation is prepared. Even identical fields are a fresh intent.
++fn commit_configure(
++    state: &mut State,
++    configuration: &airk_store::service::arbiter::ConfigurationStore,
++    expected_revision: u64,
++    candidate: &Configuration,
++    check: impl Fn() -> Result<()>,
++) -> Result<Configuration> {
++    let selected = configuration.apply_checked(expected_revision, candidate, check)?;
++    state.accepted_configure_revision = selected.revision;
++    state.cancel.cancel();
++    state.pending = None;
++    Ok(selected)
++}
++/// Lifecycle -> Store is the existing Configure order. Keep the intent guard
++/// through the rollback CAS, so an accepted same-stage Configure cannot race
++/// between the check and persisted restoration. Other-stage revisions remain
++/// eligible because they never alter this stage's accepted intent marker.
++fn rollback_current_intent(
++    shared: &Arc<Mutex<State>>,
++    serial: u64,
++    configuration: &airk_store::service::arbiter::ConfigurationStore,
++    expected: &Configuration,
++    prior: &Configuration,
++    stage: Stage,
++) -> Result<Option<Configuration>> {
++    let state = shared
++        .lock()
++        .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
++    if state.serial != serial || state.accepted_configure_revision > expected.revision {
++        return Ok(None);
++    }
++    rollback(configuration, expected, prior, stage)
++}
++
++fn restore_cancellation(
++    state: &mut State,
++    serial: u64,
++    restored_revision: u64,
++    profile: Sha256Digest,
++) -> Result<CancellationToken> {
++    ensure!(
++        state.serial == serial && state.accepted_configure_revision <= restored_revision,
++        "Arbiter rollback operation superseded by accepted Configure"
++    );
++    let cancel = CancellationToken::new();
++    state.cancel = cancel.clone();
++    state.profile = Some(profile);
++    Ok(cancel)
+ }
+ 
+ fn rollback(
+@@ -577,25 +631,32 @@
+                 .map(|error| format!("{error:#}"))
+                 .unwrap_or_default();
+             let restore_result = async {
+-                let Some(restored) = rollback(&configuration, &expected, &prior, stage)? else {
++                let Some(restored) = rollback_current_intent(
++                    &shared,
++                    serial,
++                    &configuration,
++                    &expected,
++                    &prior,
++                    stage,
++                )?
++                else {
+                     return Ok(());
+                 };
+                 if restored.stage(stage).enabled {
+                     let (old, old_source) = restoration.take().context(
+                         "Previous profile has no currently verified rollback capability",
+                     )?;
+-                    let rollback_cancel = CancellationToken::new();
+-                    {
++                    let rollback_cancel = {
+                         let mut state = shared
+                             .lock()
+                             .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
+-                        ensure!(
+-                            state.serial == serial,
+-                            "Arbiter rollback operation superseded"
+-                        );
+-                        state.cancel = rollback_cancel.clone();
+-                        state.profile = Some(old.description().manifest);
+-                    }
++                        restore_cancellation(
++                            &mut state,
++                            serial,
++                            restored.revision,
++                            old.description().manifest,
++                        )?
++                    };
+                     warm(
+                         old,
+                         old_source,
+@@ -633,8 +694,7 @@
+                 ));
+             }
+         }
+-        complete(&shared, serial, &result);
+-        resume_pending(store, configuration, shared, management, serial);
++        settle_and_resume(store, configuration, shared, management, serial, &result);
+     });
+ }
+ fn next_pending(
+@@ -662,14 +722,23 @@
+     Ok(Some((prepared, state.serial, state.cancel.clone())))
+ }
+ 
+-fn resume_pending(
++fn settle_and_take_pending(
++    shared: &Arc<Mutex<State>>,
++    settled_serial: u64,
++    result: &Result<()>,
++) -> Result<Option<(PreparedLaunch, u64, CancellationToken)>> {
++    complete(shared, settled_serial, result);
++    next_pending(shared, settled_serial)
++}
++fn settle_and_resume(
+     store: Arc<AssetStore>,
+     configuration: Arc<airk_store::service::arbiter::ConfigurationStore>,
+     shared: Arc<Mutex<State>>,
+     management: ArbiterManagement,
+     settled_serial: u64,
++    result: &Result<()>,
+ ) {
+-    let next = next_pending(&shared, settled_serial);
++    let next = settle_and_take_pending(&shared, settled_serial, result);
+     match next {
+         Ok(Some((prepared, serial, cancel))) => spawn_launch(
+             prepared,
+@@ -1098,8 +1167,7 @@
+                 phase(&shared,serial,Availability::MissingAssets,"Declared verified assets removed; interrupted recovery stages remain preserved.")?;
+                 Ok(())
+             }.await;
+-            complete(&shared, serial, &result);
+-            resume_pending(store, configuration, shared, management, serial);
++            settle_and_resume(store, configuration, shared, management, serial, &result);
+         });
+         Ok(())
+     }
+@@ -1148,13 +1216,13 @@
+                         .lifecycle
+                         .lock()
+                         .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
+-                    let selected =
+-                        self.configuration
+-                            .apply_checked(expected_revision, &candidate, || {
+-                                super::super::native_admin::check_effect(effect_check.as_ref())
+-                            })?;
+-                    state.cancel.cancel();
+-                    state.pending = None;
++                    let selected = commit_configure(
++                        &mut state,
++                        &self.configuration,
++                        expected_revision,
++                        &candidate,
++                        || super::super::native_admin::check_effect(effect_check.as_ref()),
++                    )?;
+                     (selected, state.handle.clone(), state.busy)
+                 };
+                 if let Some(handle) = handle {
+@@ -1362,8 +1430,11 @@
+                     match self.configuration.apply(expected_revision, &configuration) {
+                         Ok(value) => configuration = value,
+                         Err(error) => {
+-                            complete(
+-                                &self.lifecycle,
++                            settle_and_resume(
++                                self.assets.clone(),
++                                self.configuration.clone(),
++                                self.lifecycle.clone(),
++                                management,
+                                 serial,
+                                 &Err(anyhow::anyhow!("Arbiter removal configuration CAS failed")),
+                             );
+@@ -1586,6 +1657,185 @@
+         assert!(!state.lock().unwrap().busy);
+         Ok(())
+     }
++
++    #[test]
++    fn identical_configure_intent_blocks_old_rollback_before_pending_preparation() -> Result<()> {
++        let root = tempfile::tempdir()?;
++        let store = Arc::new(airk_store::service::arbiter::ConfigurationStore::open(
++            Arc::new(airk_store::service::ServiceLease::acquire(root.path())?),
++            Sha256Digest::from_bytes([1; 32]),
++            airk_core::identity::Incarnation::from_bytes([2; 16]),
++        )?);
++        let prior = store.load()?;
++        let state = Arc::new(Mutex::new(State::default()));
++        let mut candidate = prior.clone();
++        candidate.revision = 2;
++        candidate.context.selected_profile = Some(Sha256Digest::from_bytes([3; 32]));
++        assert!(
++            commit_configure(
++                &mut state.lock().unwrap(),
++                &store,
++                1,
++                &candidate,
++                || anyhow::bail!("effect revoked")
++            )
++            .is_err()
++        );
++        assert_eq!(store.load()?, prior);
++        assert_eq!(state.lock().unwrap().accepted_configure_revision, 0);
++        assert!(!state.lock().unwrap().cancel.is_cancelled());
++        let selected =
++            commit_configure(&mut state.lock().unwrap(), &store, 1, &candidate, || Ok(()))?;
++        let (serial, original_cancel) = start(&state, Sha256Digest::from_bytes([3; 32]), None)?;
++        let (allow_failure, barrier) = std::sync::mpsc::channel();
++        let old = {
++            let state = state.clone();
++            let store = store.clone();
++            let selected = selected.clone();
++            let prior = prior.clone();
++            std::thread::spawn(move || -> Result<Option<Configuration>> {
++                barrier.recv_timeout(Duration::from_secs(5))?;
++                rollback_current_intent(&state, serial, &store, &selected, &prior, Stage::Context)
++            })
++        };
++        let mut identical = selected.clone();
++        identical.revision = 3;
++        let accepted =
++            commit_configure(&mut state.lock().unwrap(), &store, 2, &identical, || Ok(()))?;
++        assert!(original_cancel.is_cancelled());
++        // Exact vulnerable interval: Configure CAS/cancel has completed but no
++        // pending cached intent exists yet. No sleeps, worker or NN required.
++        assert!(state.lock().unwrap().pending.is_none());
++        allow_failure.send(())?;
++        assert_eq!(
++            old.join()
++                .map_err(|_| anyhow::anyhow!("rollback thread panicked"))??,
++            None
++        );
++        assert_eq!(store.load()?, accepted);
++        complete(
++            &state,
++            serial,
++            &Err(anyhow::anyhow!("original warm canceled")),
++        );
++        let (next, _) = start(&state, Sha256Digest::from_bytes([3; 32]), None)?;
++        let mut other = accepted.clone();
++        other.revision = 4;
++        other.focus.selected_profile = Some(Sha256Digest::from_bytes([4; 32]));
++        let other = store.apply(3, &other)?;
++        let restored =
++            rollback_current_intent(&state, next, &store, &accepted, &prior, Stage::Context)?
++                .context("unrelated-stage advance blocked ordinary rollback")?;
++        assert_eq!(restored.revision, 5);
++        assert_eq!(restored.context, prior.context);
++        assert_eq!(restored.focus, other.focus);
++        let old_profile = state.lock().unwrap().profile;
++        let mut newer = restored.clone();
++        newer.revision = 6;
++        let newer = commit_configure(&mut state.lock().unwrap(), &store, 5, &newer, || Ok(()))?;
++        // A fresh identical Configure between rollback CAS and token renewal
++        // must not have its cancellation replaced by the old restoration.
++        let mut guard = state.lock().unwrap();
++        assert!(guard.cancel.is_cancelled());
++        assert!(
++            restore_cancellation(
++                &mut guard,
++                next,
++                restored.revision,
++                Sha256Digest::from_bytes([9; 32])
++            )
++            .is_err()
++        );
++        assert!(guard.cancel.is_cancelled());
++        assert_eq!(guard.profile, old_profile);
++        drop(guard);
++        assert_eq!(store.load()?, newer);
++        Ok(())
++    }
++
++    #[test]
++    fn pre_spawn_remove_cas_failure_settles_and_admits_one_fresh_cached_intent() -> Result<()> {
++        let root = tempfile::tempdir()?;
++        let store = Arc::new(airk_store::service::arbiter::ConfigurationStore::open(
++            Arc::new(airk_store::service::ServiceLease::acquire(root.path())?),
++            Sha256Digest::from_bytes([1; 32]),
++            airk_core::identity::Incarnation::from_bytes([2; 16]),
++        )?);
++        let state = Arc::new(Mutex::new(State::default()));
++        let mut selected = store.load()?;
++        selected.revision = 2;
++        selected.context.enabled = true;
++        selected.context.selected_profile = Some(Sha256Digest::from_bytes([3; 32]));
++        selected.context.indexes = vec![Enrollment {
++            index_id: airk_core::index_catalog::IndexId::from_identity(
++                airk_core::identity::Incarnation::from_bytes([7; 16]),
++            ),
++            tasks: std::collections::BTreeSet::from([Task::ContextAction]),
++        }];
++        let selected =
++            commit_configure(&mut state.lock().unwrap(), &store, 1, &selected, || Ok(()))?;
++        let (serial, canceled) = start(&state, Sha256Digest::from_bytes([3; 32]), None)?;
++        let mut removal = selected.clone();
++        removal.revision = 3;
++        removal.context.enabled = false;
++        let (release, waiting) = std::sync::mpsc::channel();
++        let old = {
++            let store = store.clone();
++            let state = state.clone();
++            std::thread::spawn(
++                move || -> Result<Option<(PreparedLaunch, u64, CancellationToken)>> {
++                    waiting.recv_timeout(Duration::from_secs(5))?;
++                    assert!(
++                        store.apply(2, &removal).is_err(),
++                        "new Configure must win original removal CAS"
++                    );
++                    // Exact settlement seam used by the synchronous Remove CAS error,
++                    // where no asynchronous native removal owner was ever spawned.
++                    settle_and_take_pending(
++                        &state,
++                        serial,
++                        &Err(anyhow::anyhow!("original removal CAS failed")),
++                    )
++                },
++            )
++        };
++        let mut next = selected;
++        next.revision = 3;
++        let accepted = commit_configure(&mut state.lock().unwrap(), &store, 2, &next, || Ok(()))?;
++        assert!(canceled.is_cancelled());
++        assert!(cached_intent_eligible(
++            &accepted,
++            Stage::Context,
++            Some(Phase::Ready)
++        ));
++        let mut prepared = pending_fixture(3, 3)?;
++        prepared.expected = accepted.clone();
++        state.lock().unwrap().pending = Some(prepared);
++        release.send(())?;
++        let (prepared, next_serial, next_cancel) = old
++            .join()
++            .map_err(|_| anyhow::anyhow!("removal thread panicked"))??
++            .context("new cached intent stranded after failed removal")?;
++        assert_eq!(prepared.expected, accepted);
++        assert_ne!(next_serial, serial);
++        assert!(!prepared.download);
++        assert!(!next_cancel.is_cancelled());
++        assert!(state.lock().unwrap().pending.is_none());
++        assert!(state.lock().unwrap().busy);
++        assert!(
++            settle_and_take_pending(
++                &state,
++                serial,
++                &Err(anyhow::anyhow!("stale removal completion"))
++            )?
++            .is_none()
++        );
++        assert_eq!(store.load()?, accepted);
++        complete(&state, next_serial, &Ok(()));
++        assert!(!state.lock().unwrap().busy);
++        Ok(())
++    }
++
+     #[test]
+     fn failed_switch_rollback_uses_actual_configuration_cas_and_preserves_later_choices()
+     -> Result<()> {

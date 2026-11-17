@@ -1,0 +1,66 @@
+--- a/crates/airk-core/src/arbiter/mod.rs
++++ b/crates/airk-core/src/arbiter/mod.rs
+@@ -73,6 +73,7 @@
+     pub tasks: BTreeSet<Task>,
+ }
+ 
++pub mod device;
+ mod stages;
+ pub use stages::*;
+ pub mod focus;
+@@ -163,6 +164,8 @@
+     pub qualified_targets: Vec<QualifiedTarget>,
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub cpu_fit: Option<CpuFit>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub device_execution: Option<device::DeviceExecution>,
+     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+     pub downloads: Vec<AssetDownload>,
+     pub model: ModelChoice,
+@@ -412,13 +415,22 @@
+         }
+         Ok(())
+     }
++    pub fn device_execution_identity(&self) -> Result<String> {
++        match &self.device_execution {
++            Some(execution) => execution.execution_identity(),
++            None => self.cpu_fit.clone().unwrap_or_default().runtime_identity(),
++        }
++    }
+     pub fn validate(&self) -> Result<()> {
+         ensure!(
+-            self.runtime == RUNTIME && !self.profile_id.is_empty() && self.profile_id.len() <= 128,
++            !self.profile_id.is_empty() && self.profile_id.len() <= 128,
+             "unsupported Arbiter profile runtime or identity"
+         );
+-        if let Some(fit) = &self.cpu_fit {
+-            fit.validate()?;
++        if let Some(execution) = &self.device_execution {
++            execution.validate(self)?;
++        } else {
++            ensure!(self.runtime == RUNTIME, "unsupported legacy CPU profile runtime");
++            if let Some(fit) = &self.cpu_fit { fit.validate()?; }
+         }
+         if let Some(stage) = self.model.stage() {
+             self.validate_stage(stage)?;
+@@ -446,12 +458,12 @@
+                 ) && targets.insert(&target.target),
+                 "unknown or duplicate qualification target"
+             );
+-            let fit = self
+-                .cpu_fit
+-                .as_ref()
+-                .ok_or_else(|| anyhow::anyhow!("qualified target lacks explicit execution fit"))?;
+-            ensure!(
+-                target.execution_identity == fit.runtime_identity()?,
++            ensure!(
++                self.device_execution.is_some() || self.cpu_fit.is_some(),
++                "qualified target lacks explicit execution fit"
++            );
++            ensure!(
++                target.execution_identity == self.device_execution_identity()?,
+                 "qualified target execution identity mismatch"
+             );
+         }
+
+# NEW FILES device.rs + device/tests.rs retained under native-proposal

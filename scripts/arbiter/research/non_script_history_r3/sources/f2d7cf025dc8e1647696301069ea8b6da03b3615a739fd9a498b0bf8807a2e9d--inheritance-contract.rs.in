@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Prospective compact split reference. Full policy remains in its native durable owner.
+use airk_core::{identity::Sha256Digest,retention::RetainedProfile,extraction::IndexDetail};
+use anyhow::{ensure,Result};
+use serde::{Serialize,Deserialize};
+#[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SplitExtractionPolicyReference {
+    pub schema:u32,
+    /// Exact bounded canonical stored JSON body, separate from typed configured digest.
+    pub policy_body_digest:Sha256Digest,
+    pub configured_policy_digest:Sha256Digest,
+    pub encoded_bytes:u32,
+    pub retained_profile:RetainedProfile,
+    pub legacy_fallback_detail:IndexDetail,
+    pub required_extraction_contract:u32,
+}
+impl SplitExtractionPolicyReference {
+    pub fn validate(&self)->Result<()> {
+        ensure!(self.schema==1&&self.required_extraction_contract==3&&(1..=131_072).contains(&self.encoded_bytes),"invalid split extraction policy reference");Ok(())
+    }
+    pub fn validate_body(&self,canonical_stored_body:&[u8])->Result<()> {
+        self.validate()?;
+        ensure!(canonical_stored_body.len()==self.encoded_bytes as usize&&airk_core::identity::framed_digest(b"airk/split-extraction-policy-body/1",&[canonical_stored_body])==self.policy_body_digest,"split extraction policy body differs");Ok(())
+    }
+}
+// Store owns a nonserializable captured/saved proof. Core hash validation alone
+// never authorizes reading the original, admitting a job or installing destination policy.

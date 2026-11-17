@@ -1,0 +1,261 @@
+diff --git a/crates/airk-store/src/current/collection.rs b/crates/airk-store/src/current/collection.rs
+--- a/crates/airk-store/src/current/collection.rs
++++ b/crates/airk-store/src/current/collection.rs
+@@ -197,6 +197,20 @@
+     visited_previous: u64,
+ }
+ impl CollectionPlan {
++    pub(crate) fn require_supported_retention(
++        &self,
++        store: &crate::FileStore,
++        scope: &CurrentScope,
++    ) -> Result<()> {
++        if self
++            .state
++            .as_ref()
++            .is_some_and(|state| state.configuration.retained_profile.is_some())
++        {
++            super::database::require_retained_contract(store, scope)?;
++        }
++        Ok(())
++    }
+     pub(crate) fn require_all_previous(&mut self) -> Result<()> {
+         self.required_previous = Some(
+             self.state
+@@ -262,6 +276,20 @@
+         previous: Option<&Artifact>,
+         next: Option<&Artifact>,
+     ) -> Result<()> {
++        if self.state.is_none() {
++            if let Some(profile) = next
++                .and_then(|next| next.retained.as_ref())
++                .and_then(|retained| retained.profile.as_ref())
++            {
++                ensure!(
++                    !matches!(
++                        airk_core::retention::AppliedRetention::from_profile(profile)?,
++                        airk_core::retention::AppliedRetention::Selected { .. }
++                    ),
++                    "selected artifact requires authenticated collection configuration"
++                );
++            }
++        }
+         if let Some(state) = &mut self.state {
+             if let Some(previous) = previous {
+                 self.visited_previous += 1;
+@@ -313,3 +341,69 @@
+         Ok(Some(change))
+     }
+ }
++
++#[cfg(test)]
++mod selected_configuration_guard_tests {
++    use super::*;
++    #[test]
++    fn selected_artifact_cannot_bypass_collection_configuration() -> Result<()> {
++        use airk_core::{
++            ArtifactRef,
++            extraction::ExtractionProfile,
++            retention::{AppliedRetention, RetainedFamily, RetainedProfile},
++        };
++        let legacy = ExtractionProfile {
++            contract_version: 2,
++            adapter_id: "rust".into(),
++            adapter_version: "fixture/1".into(),
++            language: "rust".into(),
++            dialect: None,
++            grammar_identity: None,
++            mapping_version: 1,
++            chunk_version: 1,
++            options: Default::default(),
++            configuration_inputs: Default::default(),
++        };
++        let selected =
++            AppliedRetention::bind(&legacy, RetainedProfile::Lean, RetainedFamily::Code)?;
++        let mut artifact = Artifact {
++            path: "kept.rs".into(),
++            content_hash: "00".repeat(32),
++            bytes: 1,
++            chunks: vec![],
++            language: "rust".into(),
++            extraction_method: "fixture".into(),
++            parse_status: "ok".into(),
++            facts: vec![],
++            retained: Some(ArtifactRef {
++                source_encoding: None,
++                payload_encoding: None,
++                object: "01".repeat(32),
++                object_bytes: 1,
++                raw_source: false,
++                chunks: 0,
++                extracted_bytes: 0,
++                facts: 0,
++                profile: Some(selected),
++            }),
++        };
++        let mut plan = CollectionPlan {
++            prior_selection: Default::default(),
++            state: None,
++            required_previous: None,
++            visited_previous: 0,
++        };
++        assert!(
++            plan.update(None, Some(&artifact)).is_err(),
++            "standalone selected artifact bypassed configured target/owner guard"
++        );
++        assert!(plan.state.is_none());
++        artifact.retained.as_mut().unwrap().profile = Some(legacy);
++        plan.update(None, Some(&artifact))?;
++        assert!(
++            plan.state.is_none(),
++            "legacy low-level adapter unexpectedly created metadata"
++        );
++        Ok(())
++    }
++}
+diff --git a/crates/airk-store/src/current/database.rs b/crates/airk-store/src/current/database.rs
+--- a/crates/airk-store/src/current/database.rs
++++ b/crates/airk-store/src/current/database.rs
+@@ -48,6 +48,30 @@
+     query_projection_version: Option<u32>,
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     required_extraction_contract: Option<crate::service::collection::RequiredExtractionContract>,
++}
++
++/// Called only while CurrentWriter owns the matching writer and exclusive Gate.
++/// Observe both actual capability headers; never create/upgrade ownership here.
++pub(super) fn require_retained_contract(
++    store: &crate::FileStore,
++    scope: &CurrentScope,
++) -> Result<()> {
++    let owner = read_owner(store.directory())?;
++    ensure!(
++        owner.scope == *scope,
++        "foreign retained-profile current owner"
++    );
++    ensure!(
++        store.service_incarnation()? == Some(scope.incarnation),
++        "retained-profile slot identity differs"
++    );
++    let stable = crate::service::collection::required_extraction_contract_for_scope(store, scope)?;
++    ensure!(
++        stable.map(u32::from) == Some(3)
++            && owner.required_extraction_contract.map(u32::from) == Some(3),
++        "selected retention requires native stable and current contract3 capabilities"
++    );
++    Ok(())
+ }
+ 
+ pub(crate) fn check_owner(directory: &Path, scope: &CurrentScope) -> Result<u64> {
+diff --git a/crates/airk-store/src/current/journal.rs b/crates/airk-store/src/current/journal.rs
+--- a/crates/airk-store/src/current/journal.rs
++++ b/crates/airk-store/src/current/journal.rs
+@@ -1593,6 +1593,7 @@
+         let planned_root = {
+             let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
+             let mut collection = super::collection::CollectionPlan::load(&plan, &self.scope, None)?;
++            collection.require_supported_retention(&self.store, &self.scope)?;
+             collection.update(
+                 previous.as_ref().map(|input| &input.artifact),
+                 input.map(|input| &input.artifact),
+@@ -1639,6 +1640,7 @@
+         let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
+         let collection =
+             super::collection::CollectionPlan::load(&plan, &self.scope, Some(configuration))?;
++        collection.require_supported_retention(&self.store, &self.scope)?;
+         let mut changes = collection
+             .finish(&mut plan, &self.scope)?
+             .into_iter()
+@@ -2020,6 +2022,7 @@
+         // change metadata below mutates the plan even when no artifacts exist.
+         let mut collection =
+             super::collection::CollectionPlan::load(&plan, &self.scope, update.configuration)?;
++        collection.require_supported_retention(&self.store, &self.scope)?;
+         let recent_observation = super::recent_events::observe(
+             &self.store,
+             &self.scope,
+diff --git a/crates/airk-store/src/service_collection_tests.rs b/crates/airk-store/src/service_collection_tests.rs
+--- a/crates/airk-store/src/service_collection_tests.rs
++++ b/crates/airk-store/src/service_collection_tests.rs
+@@ -4992,3 +4992,81 @@
+     );
+     Ok(())
+ }
++
++#[test]
++fn selected_collection_publication_requires_actual_both_owner_capabilities() -> Result<()> {
++    use crate::current::collection::CollectionConfiguration;
++    use airk_core::{extraction::IndexDetail, retention::RetainedProfile};
++    let temporary = tempfile::tempdir()?;
++    let base = temporary.path().canonicalize()?;
++    let source = base.join("source");
++    fs::create_dir(&source)?;
++    fs::write(source.join("kept.rs"), b"fn kept() {}")?;
++    let root = source.to_str().context("source UTF8")?;
++    let slot = Incarnation::from_bytes([65; 16]);
++    let collection = Collection::initialize(&base.join("data"), root, "fixture", slot)?;
++    let store = collection.selected_store()?;
++    let token = initialize(&store, root, slot)?;
++    let scope = store
++        .current_scope(root, "fixture")?
++        .context("current scope")?;
++    let quota = Quota::open_service(&base.join("data"))?;
++    let configuration = CollectionConfiguration {
++        retained_profile: Some(RetainedProfile::Lean),
++        source_policy_digest: None,
++        roots: Default::default(),
++        extractor_version: "fixture/1".into(),
++        extraction_policy_digest: Sha256Digest::from_bytes([66; 32]),
++        index_detail: IndexDetail::AgentLean,
++        vector_selection: Default::default(),
++        model: None,
++    };
++    let writer = store.lock()?;
++    {
++        let mut current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
++        assert!(
++            current
++                .initialize_collection(&token, &configuration)
++                .is_err(),
++            "Kernel bypass without native capabilities published selected configuration"
++        );
++        assert_eq!(current.head()?.token()?, token);
++    }
++    collection.require_extraction_contract(&store, &writer, &quota, 3)?;
++    let current_path = store.directory().join("current-owner.json");
++    let exact = fs::read(&current_path)?;
++    // Model an interrupted stable-first handoff, without claiming private bytes
++    // confer authority: lower capability absence must still refuse publication.
++    let lower =
++        String::from_utf8(exact.clone())?.replace(",\"required_extraction_contract\":3", "");
++    assert_ne!(lower.as_bytes(), exact.as_slice());
++    {
++        // Open before removing the lower marker: publication must inspect actual
++        // headers again instead of trusting a cached admitted writer.
++        let mut current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
++        fs::write(&current_path, lower.as_bytes())?;
++        assert!(
++            current
++                .initialize_collection(&token, &configuration)
++                .is_err()
++        );
++        assert_eq!(current.head()?.token()?, token);
++        fs::write(&current_path, &exact)?;
++    }
++    let committed = {
++        let mut current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
++        current.initialize_collection(&token, &configuration)?
++    };
++    drop(writer);
++    let read = store.current_read(&scope)?;
++    assert_eq!(read.token()?, committed.token);
++    assert_eq!(
++        read.collection_state()?
++            .unwrap()
++            .configuration
++            .retained_profile,
++        Some(RetainedProfile::Lean)
++    );
++    assert_eq!(fs::read(source.join("kept.rs"))?, b"fn kept() {}");
++    Ok(())
++}

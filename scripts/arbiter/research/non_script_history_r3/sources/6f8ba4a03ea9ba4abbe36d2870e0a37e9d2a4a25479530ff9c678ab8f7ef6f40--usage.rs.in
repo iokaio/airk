@@ -1,0 +1,1388 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Small transactional daily aggregates, independent of the index writer lock.
+//! A separate lifecycle lock prevents deletion/late-writer resurrection.
+use airk_core::usage::*;
+use anyhow::{Context, Result, ensure};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use serde::{Deserialize, Serialize};
+use std::{
+    fs::{self, File, OpenOptions},
+    path::{Path, PathBuf},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
+
+mod wait;
+
+pub const DAY_MS: u64 = 86_400_000;
+const MAX_DEDUP: usize = 4096;
+const MAX_DIAGNOSTICS: usize = 128;
+const MAX_BUCKET_BYTES: usize = 65_536;
+const CONTENTION_BUDGET: Duration = Duration::from_secs(2);
+
+/// Request-owned cumulative contention-wait allowance. Computation is excluded.
+/// No allowance is cloned/refilled; accepted operations settle normally.
+pub struct AccountingBudget {
+    remaining: std::sync::Mutex<Duration>,
+    cancelled: AccountingCancellation,
+    #[cfg(test)]
+    wait_clock: Option<std::sync::Arc<dyn Fn(&'static str,bool)->Instant+Send+Sync>>,
+}
+#[derive(Clone, Default)]
+pub struct AccountingCancellation {
+    local: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    session: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+}
+impl AccountingCancellation {
+    pub fn cancel(&self) { self.local.store(true, std::sync::atomic::Ordering::Release); }
+    /// One request-local signal plus its owning session's close signal.
+    pub fn request(&self) -> Self { Self { local: Default::default(), session: Some(self.local.clone()) } }
+    fn is_cancelled(&self) -> bool {
+        self.local.load(std::sync::atomic::Ordering::Acquire)
+            || self.session.as_ref().is_some_and(|value| value.load(std::sync::atomic::Ordering::Acquire))
+    }
+}
+impl AccountingBudget {
+    pub fn new(allowance: Duration) -> Self {
+        Self::with_cancellation(allowance, AccountingCancellation::default())
+    }
+    pub fn with_cancellation(allowance: Duration, cancelled: AccountingCancellation) -> Self {
+        Self { remaining: std::sync::Mutex::new(allowance), cancelled,
+            #[cfg(test)] wait_clock: None }
+    }
+    pub fn cancellation(&self) -> AccountingCancellation { self.cancelled.clone() }
+    fn remaining(&self) -> Result<Duration> {
+        ensure!(!self.cancelled.is_cancelled(), "usage accounting cancelled");
+        let left = *self.remaining.lock().unwrap_or_else(|error| error.into_inner());
+        ensure!(!left.is_zero(), "usage accounting admission budget exhausted");
+        Ok(left)
+    }
+    fn check(&self) -> Result<()> { self.remaining().map(|_| ()) }
+    fn charge_wait(&self, elapsed: Duration) {
+        let mut left = self.remaining.lock().unwrap_or_else(|error| error.into_inner());
+        *left = left.saturating_sub(elapsed);
+    }
+    fn wait_now(&self, stage: &'static str, finished: bool) -> Instant {
+        #[cfg(test)] if let Some(clock)=&self.wait_clock { return clock(stage,finished); }
+        let _=(stage,finished); Instant::now()
+    }
+    fn blocked<T>(&self, stage: &'static str, work: impl FnOnce() -> T) -> T {
+        struct Charge<'a>(&'a AccountingBudget, &'static str, Instant);
+        impl Drop for Charge<'_> { fn drop(&mut self) { self.0.charge_wait(self.0.wait_now(self.1,true).saturating_duration_since(self.2)); } }
+        let _charge = Charge(self, stage, self.wait_now(stage,false));
+        work()
+    }
+
+}
+
+pub fn unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64
+}
+
+/// Validate ownership using indexed metadata, without loading source payloads.
+pub fn validate_binding(directory: &Path, root: &str, collection: &str) -> Result<()> {
+    let store = crate::FileStore::new(directory);
+    if directory.join("service-owner.json").try_exists()? {
+        ensure!(
+            store.collection_id()? == collection,
+            "service usage collection mismatch"
+        );
+        crate::service::collection::Collection::existing(
+            store.managed_path()?.root,
+            root,
+            collection,
+        )?;
+        return crate::service::collection::validate_usage_directory(directory);
+    }
+    if let Some(scope) = store.current_owned_scope()? {
+        ensure!(
+            scope.root == root && scope.collection == collection,
+            "usage collection/root binding mismatch"
+        );
+        store.current_read(&scope)?;
+        return Ok(());
+    }
+    let db = Connection::open_with_flags(
+        directory.join("index.sqlite3"),
+        OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    db.busy_timeout(Duration::from_millis(2))?;
+    let (saved_root, saved_collection): (String, String) = db.query_row(
+        "SELECT root,collection FROM revision WHERE id=1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    ensure!(
+        saved_root == root && saved_collection == collection,
+        "usage collection/root binding mismatch"
+    );
+    Ok(())
+}
+
+/// Optional comparison accounting never loads an oversized retained source payload.
+pub fn comparison_snapshot(
+    directory: &Path,
+    root: &str,
+    collection: &str,
+) -> Result<Option<airk_core::Snapshot>> {
+    let db = Connection::open_with_flags(
+        directory.join("index.sqlite3"),
+        OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    db.busy_timeout(Duration::from_millis(2))?;
+    let payload: Option<String> = db.query_row(
+        "SELECT CASE WHEN length(CAST(payload AS BLOB)) <= 8388608 THEN payload ELSE NULL END FROM revision WHERE id=1 AND root=?1 AND collection=?2",
+        params![root, collection], |row| row.get(0)).optional()?.flatten();
+    payload
+        .map(|s| serde_json::from_str(&s).map_err(Into::into))
+        .transpose()
+}
+
+pub struct UsageLock {
+    // Release the OS lock before waking the next local waiter (field drop order).
+    _file: File,
+    _turn: Option<wait::Turn>,
+}
+
+fn lock(path: PathBuf) -> Result<UsageLock> {
+    lock_with_budget(path, Duration::ZERO)
+}
+
+fn lock_with_budget(path: PathBuf, budget: Duration) -> Result<UsageLock> {
+    lock_before(path, Instant::now(), budget, &|| Ok(()), false)
+}
+
+fn lock_before(path: PathBuf, started: Instant, budget: Duration,
+    check: &dyn Fn() -> Result<()>, poll_cancellation: bool) -> Result<UsageLock> {
+    lock_inner(path, started, budget, check, poll_cancellation, None)
+}
+fn lock_accounted(path: PathBuf, accounting: &AccountingBudget) -> Result<UsageLock> {
+    lock_inner(path, Instant::now(), accounting.remaining()?, &|| accounting.check(), true, Some(accounting))
+}
+fn lock_inner(path: PathBuf, started: Instant, budget: Duration,
+    check: &dyn Fn() -> Result<()>, poll_cancellation: bool, accounting: Option<&AccountingBudget>) -> Result<UsageLock> {
+    check()?;
+    // Polling the OS lock alone lets a busy thread repeatedly overtake sleepers.
+    // Queue local callers before contending with other processes. Both waits use
+    // the original deadline; deletion's zero-budget guard remains fail-fast.
+    let turn = if budget.is_zero() {
+        None
+    } else {
+        Some(if accounting.is_some() {
+            wait::acquire_accounted(&path, started, budget, check, poll_cancellation, accounting)?
+        } else { wait::acquire_checked(&path, started, budget, check, poll_cancellation)? })
+    };
+    check()?;
+    if let Ok(metadata) = fs::symlink_metadata(&path) {
+        ensure!(!metadata.file_type().is_symlink(), "linked usage lock");
+    }
+    check()?;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .context("usage state is busy; observation may be dropped")?;
+    loop {
+        check()?;
+        match file.try_lock() {
+            Ok(()) => break,
+            Err(std::fs::TryLockError::WouldBlock) if accounting.is_some() || started.elapsed() < budget => {
+                let left = match accounting { Some(value) => value.remaining()?,
+                    None => budget.saturating_sub(started.elapsed()) };
+                ensure!(!left.is_zero(), "usage state is busy; observation may be dropped");
+                let sleep = || std::thread::sleep(Duration::from_millis(2).min(left));
+                if let Some(value) = accounting { value.blocked("os",sleep); } else { sleep(); }
+            }
+            Err(error) => {
+                return Err(anyhow::Error::from(error)
+                    .context("usage state is busy; observation may be dropped"));
+            }
+        }
+    }
+    Ok(UsageLock {
+        _file: file,
+        _turn: turn,
+    })
+}
+
+fn reserve_write(directory: &Path, bytes: u64) -> Result<crate::quota::Reservation> {
+    let store = crate::FileStore::new(directory);
+    let reservation =
+        crate::quota::Quota::for_store(&store)?.reserve(store.collection_id()?, bytes)?;
+    reservation.charge(bytes)?;
+    Ok(reservation)
+}
+
+fn reserve_ledger(
+    directory: &Path,
+    policy: &UsagePolicy,
+    best_effort: bool,
+) -> Result<crate::quota::Reservation> {
+    reserve_ledger_budgeted(directory, policy, best_effort, None)
+}
+// Admission is for one exact quota attempt and its owned ledger write. The
+// successful attempt may finish reservation/charge/SQLite even after cancellation.
+// A contention failure owns nothing; the next attempt must check again.
+fn admitted_quota_attempt<T>(admission: Option<&AccountingBudget>, legacy_remaining: Duration,
+    operation: impl FnOnce(Duration) -> Result<T>) -> Result<T> {
+    let remaining = match admission { Some(budget) => budget.remaining()?, None => legacy_remaining };
+    operation(remaining)
+}
+
+fn reserve_ledger_budgeted(directory: &Path, policy: &UsagePolicy, best_effort: bool,
+    admission: Option<&AccountingBudget>) -> Result<crate::quota::Reservation> {
+    if let Some(budget) = admission { budget.check()?; }
+    let current =
+        fs::metadata(directory.join("usage.sqlite3")).map_or(0, |metadata| metadata.len());
+    // Local max_page_count already splits the cap between DB and rollback journal.
+    // Charge their maximum additional footprint before allowing SQLite to write.
+    let bytes = policy
+        .max_collection_bytes
+        .saturating_sub(current)
+        .max(16_384);
+    if best_effort || admission.is_some() {
+        let store = crate::FileStore::new(directory);
+        let collection = store.collection_id()?;
+        let quota = crate::quota::Quota::for_store(&store)?;
+        let started = Instant::now();
+        #[cfg(test)] let started=QUOTA_RETRY_START.with(|value|value.get().unwrap_or(started));
+        let reservation = loop {
+            match admitted_quota_attempt(admission,
+                CONTENTION_BUDGET.saturating_sub(started.elapsed()),
+                |remaining| if admission.is_some() { quota.try_reserve_without_wait(collection, bytes) } else { quota.try_reserve(collection, bytes, remaining) }) {
+                Ok(reservation) => break reservation,
+                Err(error)
+                    if matches!(
+                        error.downcast_ref::<std::fs::TryLockError>(),
+                        Some(std::fs::TryLockError::WouldBlock)
+                    ) && (admission.is_some() || started.elapsed() < CONTENTION_BUDGET) =>
+                {
+                    let remaining = match admission {
+                        Some(budget) => budget.remaining()?,
+                        None => CONTENTION_BUDGET.saturating_sub(started.elapsed()),
+                    };
+                    let sleep = || std::thread::sleep(Duration::from_millis(2).min(remaining));
+                    if let Some(budget) = admission { budget.blocked("quota",sleep); } else { sleep(); }
+                }
+                Err(error) => return Err(error),
+            }
+        };
+        reservation.charge(bytes)?;
+        Ok(reservation)
+    } else {
+        reserve_write(directory, bytes)
+    }
+}
+
+pub fn deletion_guard(collection: &Path) -> Result<UsageLock> {
+    lock(collection.join("usage.lock"))
+}
+
+fn operation_guard(collection: &Path) -> Result<UsageLock> {
+    lock_with_budget(collection.join("usage.lock"), CONTENTION_BUDGET)
+}
+
+fn managed(directory: &Path) -> Result<()> {
+    let service = directory.join("service-owner.json").try_exists()?;
+    if service {
+        crate::service::collection::validate_usage_directory(directory)?;
+    }
+    ensure!(
+        !fs::symlink_metadata(directory)?.file_type().is_symlink(),
+        "linked collection usage state"
+    );
+    ensure!(
+        service
+            || directory.join("current.sqlite3").is_file()
+            || directory.join("index.sqlite3").is_file()
+            || directory.join("snapshot.json").is_file(),
+        "collection no longer exists"
+    );
+    for name in ["usage.sqlite3", "usage-policy.json"] {
+        let path = directory.join(name);
+        if let Ok(meta) = fs::symlink_metadata(path) {
+            ensure!(!meta.file_type().is_symlink(), "linked usage file");
+        }
+    }
+    Ok(())
+}
+
+pub fn policy(directory: &Path) -> Result<UsagePolicy> {
+    let path = directory.join("usage-policy.json");
+    if !path.exists() {
+        return Ok(UsagePolicy::default());
+    }
+    ensure!(
+        !fs::symlink_metadata(&path)?.file_type().is_symlink(),
+        "linked usage policy"
+    );
+    ensure!(fs::metadata(&path)?.len() <= 4096, "usage policy too large");
+    let value: UsagePolicy = serde_json::from_slice(&fs::read(path)?)?;
+    validate_policy(&value)?;
+    Ok(value)
+}
+
+fn validate_policy(policy: &UsagePolicy) -> Result<()> {
+    ensure!(
+        (1..=30).contains(&policy.aggregate_retention_days),
+        "retention must be 1..30 days"
+    );
+    ensure!(
+        policy.diagnostic_retention_hours <= 24,
+        "diagnostic retention exceeds 24 hours"
+    );
+    ensure!(
+        (65_536..=1_048_576).contains(&policy.max_collection_bytes),
+        "usage collection cap must be 64 KiB..1 MiB"
+    );
+    ensure!(
+        (policy.max_collection_bytes..=33_554_432).contains(&policy.max_data_root_bytes),
+        "invalid usage data-root cap"
+    );
+    Ok(())
+}
+
+pub fn configure(directory: &Path, value: &UsagePolicy) -> Result<()> {
+    validate_policy(value)?;
+    let _guard = operation_guard(directory)?;
+    managed(directory)?;
+    let _quota = reserve_write(directory, 4096)?;
+    let mut file = tempfile::NamedTempFile::new_in(directory)?;
+    serde_json::to_writer(file.as_file_mut(), value)?;
+    file.as_file_mut().sync_all()?;
+    file.persist(directory.join("usage-policy.json"))?;
+    Ok(())
+}
+
+fn connect(directory: &Path, create: bool) -> Result<Connection> {
+    if let Ok(metadata) = fs::metadata(directory.join("usage.sqlite3")) {
+        ensure!(
+            metadata.len() <= 1_048_576,
+            "usage database exceeds absolute cap"
+        );
+    }
+    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+        | if create {
+            OpenFlags::SQLITE_OPEN_CREATE
+        } else {
+            OpenFlags::empty()
+        };
+    let db = Connection::open_with_flags(directory.join("usage.sqlite3"), flags)?;
+    db.busy_timeout(Duration::from_millis(2))?;
+    let limit = policy(directory)?.max_collection_bytes;
+    db.pragma_update(None, "max_page_count", ((limit - 16_384) / 2 / 4096) as i64)?;
+    // DELETE journaling bounds transient storage and leaves no persistent WAL.
+    db.execute_batch(
+        "PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF;",
+    )?;
+    Ok(db)
+}
+
+fn prune_supplements(tx: &rusqlite::Transaction<'_>, oldest_day: u64) -> Result<()> {
+    if tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='supplemental_daily')",
+        [],
+        |row| row.get::<_, bool>(0),
+    )? {
+        tx.execute(
+            "DELETE FROM supplemental_daily WHERE day<?1",
+            [oldest_day as i64],
+        )?;
+        tx.execute(
+            "DELETE FROM supplemental_seen WHERE timestamp<?1",
+            [(oldest_day * DAY_MS) as i64],
+        )?;
+    }
+    Ok(())
+}
+
+#[derive(Clone)]
+pub struct UsageStore {
+    directory: PathBuf,
+    scope: UsageScope,
+    incarnation: String,
+    best_effort: bool,
+}
+
+impl UsageRecorder for UsageStore {
+    fn record(&self, observation: &UsageObservation) -> Result<()> {
+        UsageStore::record(self, observation)
+    }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct RecordingHealth {
+    pub duplicate_observations: u64,
+    #[serde(default)]
+    pub supplemental_duplicate_observations: u64,
+    pub earliest_retained_unix_ms: Option<u64>,
+    pub latest_retained_unix_ms: Option<u64>,
+    pub retained_days: usize,
+    pub database_bytes: u64,
+    /// Failures before a transaction commits cannot be durably counted by a failed store.
+    pub dropped_observations: Option<u64>,
+    pub deduplication_capacity: usize,
+    pub complete_history: bool,
+    pub useful_feedback: u64,
+    pub partly_useful_feedback: u64,
+    pub not_useful_feedback: u64,
+}
+
+#[derive(Serialize)]
+pub struct StoredUsage {
+    pub buckets: Vec<UsageReport>,
+    pub lifetime: Option<UsageReport>,
+    pub supplemental: Vec<SupplementalBucket>,
+    pub health: RecordingHealth,
+}
+
+impl UsageStore {
+    pub fn open(
+        directory: &Path,
+        scope: &UsageScope,
+        policy: &UsagePolicy,
+    ) -> Result<Option<Self>> {
+        Self::open_mode(directory, scope, policy, false)
+    }
+
+    /// Adapter path: bounded contention waits and quota inventory work.
+    pub fn open_best_effort(
+        directory: &Path,
+        scope: &UsageScope,
+        policy: &UsagePolicy,
+    ) -> Result<Option<Self>> {
+        Self::open_mode(directory, scope, policy, true)
+    }
+
+    pub fn open_best_effort_budgeted(directory: &Path, scope: &UsageScope,
+        policy: &UsagePolicy, admission: &AccountingBudget) -> Result<Option<Self>> {
+        Self::open_mode_budgeted(directory, scope, policy, true, Some(admission))
+    }
+
+    fn open_mode(
+        directory: &Path,
+        scope: &UsageScope,
+        policy: &UsagePolicy,
+        best_effort: bool,
+    ) -> Result<Option<Self>> {
+        Self::open_mode_budgeted(directory, scope, policy, best_effort, None)
+    }
+    fn open_mode_budgeted(directory: &Path, scope: &UsageScope, policy: &UsagePolicy,
+        best_effort: bool, admission: Option<&AccountingBudget>) -> Result<Option<Self>> {
+        if policy.mode == RecordingMode::Disabled {
+            return Ok(None);
+        }
+        validate_policy(policy)?;
+        let _guard = if let Some(budget) = admission {
+            lock_accounted(directory.join("usage.lock"), budget)?
+        } else { operation_guard(directory)? };
+        managed(directory)?;
+        crate::validate_collection(&scope.collection)?;
+        if directory.join("usage.sqlite3").exists() {
+            ensure!(
+                fs::metadata(directory.join("usage.sqlite3"))?.len() <= 1_048_576,
+                "usage database exceeds absolute cap"
+            );
+            // Opening an established ledger does not grow it. Avoid quota scans,
+            // schema writes and journal setup until there is an observation to commit.
+            let db = Connection::open_with_flags(
+                directory.join("usage.sqlite3"),
+                OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )?;
+            db.busy_timeout(Duration::from_millis(2))?;
+            let saved: String =
+                db.query_row("SELECT value FROM meta WHERE key='scope'", [], |r| r.get(0))?;
+            ensure!(
+                serde_json::from_str::<UsageScope>(&saved)? == *scope,
+                "usage history belongs to another root binding"
+            );
+            let incarnation =
+                db.query_row("SELECT value FROM meta WHERE key='incarnation'", [], |r| {
+                    r.get(0)
+                })?;
+            return Ok(Some(Self {
+                directory: directory.to_path_buf(),
+                scope: scope.clone(),
+                incarnation,
+                best_effort,
+            }));
+        }
+        let root = directory
+            .parent()
+            .and_then(Path::parent)
+            .context("invalid collection directory")?;
+        let _quota = if !directory.join("usage.sqlite3").exists() {
+            Some(if let Some(budget) = admission {
+                lock_accounted(root.join("usage-quota.lock"), budget)?
+            } else { lock_with_budget(root.join("usage-quota.lock"), CONTENTION_BUDGET)? })
+        } else {
+            None
+        };
+        // Conservative reservations include each database's maximum rollback journal.
+        // New collections cannot race each other to overcommit the data-root cap.
+        if !directory.join("usage.sqlite3").exists() {
+            let mut reservations = 1u64;
+            let mut entries = Vec::new();
+            for namespace in ["collections-1.2", "collections-1.4"] {
+                if let Some(budget) = admission { budget.check()?; }
+                let path = root.join(namespace);
+                if !path.try_exists()? {
+                    continue;
+                }
+                for entry in fs::read_dir(path)? {
+                    if let Some(budget) = admission { budget.check()?; }
+                    entries.push(entry?);
+                    ensure!(
+                        entries.len() <= 4096,
+                        "usage collection inventory exceeds bound"
+                    );
+                }
+            }
+            for (count, entry) in entries.into_iter().enumerate() {
+                ensure!(count < 4096, "usage collection inventory exceeds bound");
+                if entry.file_type()?.is_dir() && entry.path().join("usage.sqlite3").exists() {
+                    reservations += 1;
+                }
+            }
+            ensure!(
+                reservations.saturating_mul(1_048_576) <= policy.max_data_root_bytes,
+                "usage data-root capacity reached"
+            );
+        }
+        let _managed_quota = reserve_ledger_budgeted(directory, policy, best_effort, admission)?;
+        let mut db = connect(directory, true)?;
+        let pages = ((policy.max_collection_bytes - 16_384) / 2 / 4096).max(6);
+        db.pragma_update(None, "max_page_count", pages as i64)?;
+        db.execute_batch("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS daily (day INTEGER PRIMARY KEY, summary TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS seen (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id BLOB UNIQUE NOT NULL, timestamp INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS diagnostics (id BLOB PRIMARY KEY, timestamp INTEGER NOT NULL, event TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS feedback (id BLOB PRIMARY KEY, usefulness TEXT NOT NULL);")?;
+        let tx = db.transaction()?;
+        let scope_json = serde_json::to_string(scope)?;
+        let existing: Option<String> = tx
+            .query_row("SELECT value FROM meta WHERE key='scope'", [], |r| r.get(0))
+            .optional()?;
+        if let Some(existing) = existing {
+            ensure!(
+                existing == scope_json,
+                "usage history belongs to another root binding"
+            );
+        } else {
+            // Random SQLite bytes identify this collection-history incarnation without paths.
+            tx.execute("INSERT INTO meta VALUES ('scope',?1)", [&scope_json])?;
+            tx.execute(
+                "INSERT INTO meta VALUES ('incarnation',lower(hex(randomblob(16))))",
+                [],
+            )?;
+        }
+        let incarnation =
+            tx.query_row("SELECT value FROM meta WHERE key='incarnation'", [], |r| {
+                r.get(0)
+            })?;
+        tx.commit()?;
+        Ok(Some(Self {
+            directory: directory.to_path_buf(),
+            scope: scope.clone(),
+            incarnation,
+            best_effort,
+        }))
+    }
+
+    fn verify(&self, db: &Connection) -> Result<()> {
+        let identity: String =
+            db.query_row("SELECT value FROM meta WHERE key='incarnation'", [], |r| {
+                r.get(0)
+            })?;
+        ensure!(
+            identity == self.incarnation,
+            "usage history was cleared or collection recreated"
+        );
+        Ok(())
+    }
+
+    pub fn record(&self, event: &UsageObservation) -> Result<()> {
+        self.record_with_budget(event, None)
+    }
+    pub fn record_budgeted(&self, event: &UsageObservation, admission: &AccountingBudget) -> Result<()> {
+        self.record_with_budget(event, Some(admission))
+    }
+    fn record_with_budget(&self, event: &UsageObservation, admission: Option<&AccountingBudget>) -> Result<()> {
+        self.record_admitted(event, admission, || Ok(()))
+    }
+    fn record_admitted(&self, event: &UsageObservation, admission: Option<&AccountingBudget>,
+        before_commit: impl FnOnce() -> Result<()>) -> Result<()> {
+        ensure!(
+            event.scope == self.scope,
+            "usage observation scope mismatch"
+        );
+        let _guard = if let Some(budget) = admission {
+            lock_accounted(self.directory.join("usage.lock"), budget)?
+        } else { operation_guard(&self.directory)? };
+        managed(&self.directory)?;
+        let current_policy = policy(&self.directory)?;
+        if current_policy.mode == RecordingMode::Disabled {
+            return Ok(());
+        }
+        let _quota = reserve_ledger_budgeted(&self.directory, &current_policy, self.best_effort, admission)?;
+        let mut db = connect(&self.directory, false)?;
+        self.verify(&db)?;
+        let now = unix_ms();
+        ensure!(
+            event.unix_ms <= now.saturating_add(60_000),
+            "usage timestamp is in the future"
+        );
+        let oldest_day =
+            (now / DAY_MS).saturating_sub(u64::from(current_policy.aggregate_retention_days) - 1);
+        ensure!(
+            event.unix_ms / DAY_MS >= oldest_day,
+            "usage observation outside retention window"
+        );
+        let tx = db.transaction()?;
+        tx.execute("DELETE FROM daily WHERE day < ?1", [oldest_day as i64])?;
+        prune_supplements(&tx, oldest_day)?;
+        tx.execute(
+            "DELETE FROM seen WHERE timestamp < ?1",
+            [(oldest_day * DAY_MS) as i64],
+        )?;
+        tx.execute(
+            "DELETE FROM diagnostics WHERE timestamp < ?1",
+            [
+                now.saturating_sub(u64::from(current_policy.diagnostic_retention_hours) * 3_600_000)
+                    as i64,
+            ],
+        )?;
+        let inserted = tx.execute(
+            "INSERT OR IGNORE INTO seen(id,timestamp) VALUES (?1,?2)",
+            params![event.event_id.as_slice(), event.unix_ms as i64],
+        )?;
+        if inserted == 0 {
+            tx.execute("INSERT INTO meta VALUES ('duplicates','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1", [])?;
+            tx.commit()?;
+            return Ok(());
+        }
+        let replay_floor: i64 = tx
+            .query_row(
+                "SELECT CAST(value AS INTEGER) FROM meta WHERE key='replay_floor'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?
+            .unwrap_or(-1);
+        ensure!(
+            event.unix_ms as i64 > replay_floor,
+            "observation older than bounded replay protection; dropped rather than counted twice"
+        );
+        let day = event.unix_ms / DAY_MS;
+        let mut aggregate = summarize(
+            &self.scope,
+            day * DAY_MS,
+            (day + 1) * DAY_MS,
+            [event],
+            ByteTokenHeuristic::default(),
+        )?;
+        // A single bounded rollup starts with new observations, never by replaying
+        // retained daily buckets. It participates in the same deduplicated transaction.
+        let saved: Option<String> = tx
+            .query_row("SELECT value FROM meta WHERE key='lifetime'", [], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        let mut lifetime = summarize(
+            &self.scope,
+            day * DAY_MS,
+            (day + 1) * DAY_MS,
+            [],
+            ByteTokenHeuristic::default(),
+        )?;
+        if let Some(saved) = saved {
+            ensure!(
+                saved.len() <= MAX_BUCKET_BYTES,
+                "oversize lifetime aggregate"
+            );
+            lifetime = serde_json::from_str(&saved)?;
+        }
+        lifetime.start_unix_ms = lifetime.start_unix_ms.min(day * DAY_MS);
+        lifetime.end_unix_ms_exclusive = lifetime.end_unix_ms_exclusive.max((day + 1) * DAY_MS);
+        lifetime.merge(&aggregate)?;
+        let saved = serde_json::to_string(&lifetime)?;
+        ensure!(
+            saved.len() <= MAX_BUCKET_BYTES,
+            "lifetime dimensions exceed cap"
+        );
+        tx.execute("INSERT INTO meta VALUES ('lifetime',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [saved])?;
+        let old: Option<String> = tx
+            .query_row(
+                "SELECT summary FROM daily WHERE day=?1",
+                [day as i64],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(old) = old {
+            ensure!(old.len() <= MAX_BUCKET_BYTES, "oversize usage aggregate");
+            aggregate.merge(&serde_json::from_str(&old)?)?;
+        }
+        let encoded = serde_json::to_string(&aggregate)?;
+        ensure!(
+            encoded.len() <= MAX_BUCKET_BYTES,
+            "usage dimensions exceed bucket cap"
+        );
+        tx.execute("INSERT INTO daily VALUES (?1,?2) ON CONFLICT(day) DO UPDATE SET summary=excluded.summary", params![day as i64, encoded])?;
+        let evicted: Option<i64> = tx.query_row("SELECT MAX(timestamp) FROM seen WHERE sequence NOT IN (SELECT sequence FROM seen ORDER BY sequence DESC LIMIT ?1)", [MAX_DEDUP as i64], |r| r.get(0))?;
+        if let Some(floor) = evicted {
+            tx.execute("INSERT INTO meta VALUES ('replay_floor',?1) ON CONFLICT(key) DO UPDATE SET value=MAX(CAST(value AS INTEGER),CAST(excluded.value AS INTEGER))", [floor])?;
+        }
+        tx.execute("DELETE FROM seen WHERE sequence NOT IN (SELECT sequence FROM seen ORDER BY sequence DESC LIMIT ?1)", [MAX_DEDUP as i64])?;
+        tx.execute(
+            "DELETE FROM feedback WHERE id NOT IN (SELECT id FROM seen)",
+            [],
+        )?;
+        if current_policy.mode == RecordingMode::DiagnosticEvents {
+            let encoded = serde_json::to_string(event)?;
+            ensure!(encoded.len() <= 4096, "diagnostic observation too large");
+            tx.execute(
+                "INSERT OR IGNORE INTO diagnostics VALUES (?1,?2,?3)",
+                params![event.event_id.as_slice(), event.unix_ms as i64, encoded],
+            )?;
+            tx.execute("DELETE FROM diagnostics WHERE id NOT IN (SELECT id FROM diagnostics ORDER BY timestamp DESC LIMIT ?1)", [MAX_DIAGNOSTICS as i64])?;
+        } else {
+            tx.execute("DELETE FROM diagnostics", [])?;
+        }
+        before_commit()?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn read(directory: &Path, scope: &UsageScope, start: u64, end: u64) -> Result<StoredUsage> {
+        let mut result = StoredUsage {
+            buckets: Vec::new(),
+            lifetime: None,
+            supplemental: Vec::new(),
+            health: RecordingHealth {
+                deduplication_capacity: MAX_DEDUP,
+                ..Default::default()
+            },
+        };
+        if !directory.join("usage.sqlite3").exists() {
+            return Ok(result);
+        }
+        let _guard = operation_guard(directory)?;
+        managed(directory)?;
+        let db = connect(directory, false)?;
+        let saved: String =
+            db.query_row("SELECT value FROM meta WHERE key='scope'", [], |r| r.get(0))?;
+        ensure!(
+            serde_json::from_str::<UsageScope>(&saved)? == *scope,
+            "usage history belongs to another root binding"
+        );
+        let lifetime: Option<String> = db
+            .query_row("SELECT value FROM meta WHERE key='lifetime'", [], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        if let Some(saved) = lifetime {
+            ensure!(
+                saved.len() <= MAX_BUCKET_BYTES,
+                "oversize lifetime aggregate"
+            );
+            let aggregate: UsageReport = serde_json::from_str(&saved)?;
+            ensure!(aggregate.scope == *scope, "lifetime scope mismatch");
+            result.lifetime = Some(aggregate);
+        }
+        let current_policy = policy(directory)?;
+        let oldest = (unix_ms() / DAY_MS)
+            .saturating_sub(u64::from(current_policy.aggregate_retention_days) - 1)
+            * DAY_MS;
+        let mut query = db.prepare("SELECT summary FROM daily WHERE day*86400000 >= ?1 AND day*86400000 < ?2 ORDER BY day LIMIT 31")?;
+        for encoded in query.query_map(
+            params![i64::try_from(start.max(oldest))?, i64::try_from(end)?],
+            |row| row.get::<_, String>(0),
+        )? {
+            let encoded = encoded?;
+            ensure!(encoded.len() <= MAX_BUCKET_BYTES, "oversize usage bucket");
+            result.buckets.push(serde_json::from_str(&encoded)?);
+        }
+        result.health.duplicate_observations = db
+            .query_row(
+                "SELECT CAST(value AS INTEGER) FROM meta WHERE key='duplicates'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?
+            .unwrap_or(0)
+            .max(0) as u64;
+        result.health.earliest_retained_unix_ms = result.buckets.first().map(|b| b.start_unix_ms);
+        result.health.latest_retained_unix_ms =
+            result.buckets.last().map(|b| b.end_unix_ms_exclusive);
+        result.health.retained_days = result.buckets.len();
+        result.health.database_bytes = fs::metadata(directory.join("usage.sqlite3"))?.len();
+        for row in db.prepare("SELECT usefulness,COUNT(*) FROM feedback JOIN seen USING(id) WHERE timestamp>=?1 AND timestamp<?2 GROUP BY usefulness")?
+            .query_map(params![i64::try_from(start.max(oldest))?,i64::try_from(end)?], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))? {
+            let (label, count) = row?;
+            match label.as_str() {
+                "useful" => result.health.useful_feedback = count.max(0) as u64,
+                "partly_useful" => result.health.partly_useful_feedback = count.max(0) as u64,
+                "not_useful" => result.health.not_useful_feedback = count.max(0) as u64,
+                _ => anyhow::bail!("invalid stored feedback category"),
+            }
+        }
+        if db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='supplemental_daily')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )? {
+            for encoded in db.prepare("SELECT summary FROM supplemental_daily WHERE day*86400000>=?1 AND day*86400000<?2 ORDER BY day LIMIT 31")?
+                .query_map(params![i64::try_from(start.max(oldest))?,i64::try_from(end)?], |row| row.get::<_, String>(0))? {
+                let encoded = encoded?;
+                ensure!(encoded.len() <= MAX_BUCKET_BYTES, "oversize supplemental bucket");
+                result.supplemental.push(serde_json::from_str(&encoded)?);
+            }
+            result.health.supplemental_duplicate_observations = db
+                .query_row(
+                    "SELECT CAST(value AS INTEGER) FROM meta WHERE key='supplemental_duplicates'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?
+                .unwrap_or(0)
+                .max(0) as u64;
+            let days: std::collections::BTreeSet<u64> = result
+                .buckets
+                .iter()
+                .map(|bucket| bucket.start_unix_ms / DAY_MS)
+                .chain(result.supplemental.iter().map(|bucket| bucket.day))
+                .collect();
+            result.health.retained_days = days.len();
+            result.health.earliest_retained_unix_ms = days.first().map(|day| day * DAY_MS);
+            result.health.latest_retained_unix_ms = days.last().map(|day| (day + 1) * DAY_MS);
+        }
+        Ok(result)
+    }
+
+    /// Explicit numeric imports share the same quota, lifecycle, policy and atomicity.
+    /// Only aggregate strata and a bounded opaque deduplication window are retained.
+    pub fn record_supplement(&self, event: &SupplementalMeasurement) -> Result<bool> {
+        event.validate()?;
+        let _guard = operation_guard(&self.directory)?;
+        managed(&self.directory)?;
+        let current = policy(&self.directory)?;
+        ensure!(
+            current.mode != RecordingMode::Disabled,
+            "usage recording is disabled"
+        );
+        let _quota = reserve_ledger(&self.directory, &current, false)?;
+        let now = unix_ms();
+        let oldest = (now / DAY_MS).saturating_sub(u64::from(current.aggregate_retention_days) - 1);
+        ensure!(
+            event.unix_ms <= now.saturating_add(60_000) && event.unix_ms / DAY_MS >= oldest,
+            "supplemental timestamp outside retention window"
+        );
+        let mut db = connect(&self.directory, false)?;
+        self.verify(&db)?;
+        let tx = db.transaction()?;
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS supplemental_daily (day INTEGER PRIMARY KEY, summary TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS session_links (id BLOB PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS supplemental_seen (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, timestamp INTEGER NOT NULL);")?;
+        tx.execute("DELETE FROM daily WHERE day<?1", [oldest as i64])?;
+        tx.execute(
+            "DELETE FROM seen WHERE timestamp<?1",
+            [(oldest * DAY_MS) as i64],
+        )?;
+        tx.execute(
+            "DELETE FROM feedback WHERE id NOT IN (SELECT id FROM seen)",
+            [],
+        )?;
+        if current.mode == RecordingMode::DiagnosticEvents {
+            tx.execute(
+                "DELETE FROM diagnostics WHERE timestamp<?1",
+                [
+                    now.saturating_sub(u64::from(current.diagnostic_retention_hours) * 3_600_000)
+                        as i64,
+                ],
+            )?;
+        } else {
+            tx.execute("DELETE FROM diagnostics", [])?;
+        }
+        tx.execute(
+            "DELETE FROM supplemental_daily WHERE day<?1",
+            [oldest as i64],
+        )?;
+        tx.execute(
+            "DELETE FROM supplemental_seen WHERE timestamp<?1",
+            [(oldest * DAY_MS) as i64],
+        )?;
+        let inserted = tx.execute(
+            "INSERT OR IGNORE INTO supplemental_seen(id,timestamp) VALUES (?1,?2)",
+            params![event.event_id.to_ascii_lowercase(), event.unix_ms as i64],
+        )?;
+        if inserted == 0 {
+            tx.execute("INSERT INTO meta VALUES ('supplemental_duplicates','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1", [])?;
+            tx.commit()?;
+            return Ok(false);
+        }
+        let floor: i64 = tx
+            .query_row(
+                "SELECT CAST(value AS INTEGER) FROM meta WHERE key='supplemental_replay_floor'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(-1);
+        ensure!(
+            event.unix_ms as i64 > floor,
+            "supplemental observation older than bounded replay protection"
+        );
+        tx.execute(
+            "DELETE FROM session_links WHERE id NOT IN (SELECT id FROM seen)",
+            [],
+        )?;
+        for request in &event.airk_request_ids {
+            let id: Vec<u8> = (0..32)
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&request[i..i + 2], 16))
+                .collect::<std::result::Result<_, _>>()?;
+            let retained = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM seen WHERE id=?1)",
+                [&id],
+                |r| r.get::<_, bool>(0),
+            )?;
+            ensure!(
+                retained,
+                "linked AIRK request is unknown, expired or belongs to another collection"
+            );
+            tx.execute("INSERT INTO session_links VALUES (?1)", [&id])
+                .context("AIRK request already linked to another session import")?;
+        }
+        let day = event.unix_ms / DAY_MS;
+        let encoded: Option<String> = tx
+            .query_row(
+                "SELECT summary FROM supplemental_daily WHERE day=?1",
+                [day as i64],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let mut bucket = if let Some(encoded) = encoded {
+            ensure!(
+                encoded.len() <= MAX_BUCKET_BYTES,
+                "oversize supplemental bucket"
+            );
+            serde_json::from_str::<SupplementalBucket>(&encoded)?
+        } else {
+            SupplementalBucket {
+                day,
+                summaries: Vec::new(),
+            }
+        };
+        let new = SupplementSummary::new(event);
+        if let Some(existing) = bucket
+            .summaries
+            .iter_mut()
+            .find(|s| s.stratum == new.stratum)
+        {
+            existing.observe(event)?;
+        } else {
+            ensure!(
+                bucket.summaries.len() < 16,
+                "supplemental dimensions reached daily cap of 16; input was not recorded"
+            );
+            let mut new = new;
+            new.observe(event)?;
+            bucket.summaries.push(new);
+        }
+        let encoded = serde_json::to_string(&bucket)?;
+        ensure!(
+            encoded.len() <= MAX_BUCKET_BYTES,
+            "supplemental aggregate exceeds bucket cap"
+        );
+        tx.execute("INSERT INTO supplemental_daily VALUES (?1,?2) ON CONFLICT(day) DO UPDATE SET summary=excluded.summary", params![day as i64,encoded])?;
+        let evicted: Option<i64> = tx.query_row("SELECT MAX(timestamp) FROM supplemental_seen WHERE sequence NOT IN (SELECT sequence FROM supplemental_seen ORDER BY sequence DESC LIMIT 256)", [], |row| row.get(0))?;
+        if let Some(floor) = evicted {
+            tx.execute("INSERT INTO meta VALUES ('supplemental_replay_floor',?1) ON CONFLICT(key) DO UPDATE SET value=MAX(CAST(value AS INTEGER),CAST(excluded.value AS INTEGER))", [floor])?;
+        }
+        tx.execute("DELETE FROM supplemental_seen WHERE sequence NOT IN (SELECT sequence FROM supplemental_seen ORDER BY sequence DESC LIMIT 256)", [])?;
+        tx.commit()?;
+        Ok(true)
+    }
+}
+
+pub fn feedback(
+    directory: &Path,
+    scope: &UsageScope,
+    request_id: &str,
+    usefulness: Usefulness,
+) -> Result<()> {
+    ensure!(
+        request_id.len() == 32 && request_id.bytes().all(|b| b.is_ascii_hexdigit()),
+        "request ID must be 32 hex digits"
+    );
+    let id: Vec<u8> = (0..32)
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&request_id[i..i + 2], 16))
+        .collect::<std::result::Result<_, _>>()?;
+    let _guard = operation_guard(directory)?;
+    managed(directory)?;
+    ensure!(
+        policy(directory)?.mode != RecordingMode::Disabled,
+        "usage recording is disabled"
+    );
+    let _quota = reserve_ledger(directory, &policy(directory)?, false)?;
+    let db = connect(directory, false)?;
+    let saved: String =
+        db.query_row("SELECT value FROM meta WHERE key='scope'", [], |r| r.get(0))?;
+    ensure!(
+        serde_json::from_str::<UsageScope>(&saved)? == *scope,
+        "feedback belongs to another collection/root"
+    );
+    let label = serde_json::to_string(&usefulness)?;
+    let updated = db.execute("INSERT INTO feedback SELECT id,?2 FROM seen WHERE id=?1 ON CONFLICT(id) DO UPDATE SET usefulness=excluded.usefulness", params![id,label.trim_matches('"')])?;
+    ensure!(
+        updated == 1,
+        "request ID is unknown or outside retained feedback window"
+    );
+    Ok(())
+}
+
+pub fn clear(directory: &Path) -> Result<()> {
+    let _guard = operation_guard(directory)?;
+    managed(directory)?;
+    // Reclaim without a temporary DB/journal or quota reservation when storage is full.
+    // Old writers cannot open a deleted ledger; a recreated ledger has a new incarnation.
+    for name in ["usage.sqlite3", "usage.sqlite3-journal"] {
+        let path = directory.join(name);
+        match fs::remove_file(path) {
+            Ok(()) => (),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+
+#[cfg(test)]
+mod accounting_budget_tests {
+    use super::*;
+
+    use airk_core::{Snapshot, SnapshotStore};
+fn setup() -> anyhow::Result<(tempfile::TempDir, std::path::PathBuf, UsageScope)> {
+    let root = tempfile::tempdir()?;
+    let directory = root.path().join("collections-1.2/project");
+    let mut snapshot = Snapshot::empty("fixture-root".into());
+    snapshot.collection = "project".into();
+    crate::FileStore::new(&directory).save(&snapshot)?;
+    Ok((
+        root,
+        directory,
+        UsageScope {
+            collection: "project".into(),
+            root_binding: [7; 32],
+        },
+    ))
+}
+
+fn observation(scope: &UsageScope, id: u8) -> UsageObservation {
+    UsageObservation {
+        schema_version: USAGE_SCHEMA_VERSION,
+        event_id: [id; 16],
+        scope: scope.clone(),
+        unix_ms: unix_ms(),
+        generation: Some(1),
+        operation: UsageOperation::Search,
+        client: ClientFamily::Codex,
+        content_kind: ContentKind::Markdown,
+        outcome: UsageOutcome::Success,
+        elapsed_us: 10,
+        cache: CacheObservation::Unknown,
+        returned_items: 1,
+        truncated: false,
+        response_representation: ResponseRepresentation::LogicalResultJson,
+        response_utf8_bytes: Some(400),
+        baseline_unavailable: None,
+        baseline: Some(ContextBaseline {
+            kind: BaselineKind::FullReturnedSources,
+            generation: 1,
+            representation: ResponseRepresentation::LogicalResultJson,
+            utf8_bytes: 80,
+            unique_sources: 1,
+        }),
+        index_work: None,
+        resources: None,
+    }
+}
+
+
+    #[test]
+    fn admitted_quota_attempt_finishes_after_cancellation_but_cannot_retry() -> Result<()> {
+        let (_root, directory, _) = setup()?;
+        let file_store = crate::FileStore::new(&directory);
+        let quota = crate::quota::Quota::for_store(&file_store)?;
+        let collection = file_store.collection_id()?;
+        let budget = AccountingBudget::new(Duration::from_secs(5));
+        let cancellation = budget.cancellation();
+        let reservation = admitted_quota_attempt(Some(&budget), Duration::ZERO, |remaining| {
+            // Simulate close after exact admission but during the quota operation.
+            cancellation.cancel();
+            quota.try_reserve(collection, 16_384, remaining)
+        })?;
+        reservation.charge(16_384)?;
+        assert!(admitted_quota_attempt::<()>(Some(&budget), Duration::from_secs(5), |_| {
+            anyhow::bail!("cancelled owner must not invoke another quota attempt")
+        }).is_err());
+        drop(reservation);
+        Ok(())
+    }
+
+    #[test]
+    fn uncontended_accepted_quota_inventory_over_ten_ms_preserves_record_coverage() -> Result<()> {
+        let (_owner,directory,scope)=setup()?;
+        let store=UsageStore::open(&directory,&scope,&UsagePolicy::default())?.unwrap();
+        let event=observation(&scope,80);
+        let budget=AccountingBudget::new(Duration::from_millis(10));
+        let started=Instant::now();
+        crate::quota::with_optional_inventory_hook(||std::thread::sleep(Duration::from_millis(20)),
+            ||store.record_budgeted(&event,&budget))?;
+        assert!(started.elapsed()>=Duration::from_millis(20));
+        assert_eq!(budget.remaining()?,Duration::from_millis(10),"accepted inventory is not lock waiting");
+        let saved=UsageStore::read(&directory,&scope,0,unix_ms()+DAY_MS)?;
+        assert_eq!(saved.lifetime.context("record missing after slow uncontended inventory")?.calls,1);
+        Ok(())
+    }
+
+    #[test]
+    fn admitted_budgeted_record_preserves_default_measurement_values() -> Result<()> {
+        let (_first, first, scope) = setup()?;
+        let (_second, second, second_scope) = setup()?;
+        assert_eq!(scope, second_scope);
+        let policy = UsagePolicy::default();
+        let ordinary = UsageStore::open(&first, &scope, &policy)?.unwrap();
+        let budgeted = UsageStore::open(&second, &scope, &policy)?.unwrap();
+        let event = observation(&scope, 81);
+        ordinary.record(&event)?;
+        budgeted.record_budgeted(&event, &AccountingBudget::new(Duration::from_secs(5)))?;
+        let ordinary = UsageStore::read(&first, &scope, 0, unix_ms() + DAY_MS)?;
+        let budgeted = UsageStore::read(&second, &scope, 0, unix_ms() + DAY_MS)?;
+        assert_eq!(serde_json::to_value(ordinary.lifetime)?, serde_json::to_value(budgeted.lifetime)?);
+        assert_eq!(serde_json::to_value(ordinary.buckets)?, serde_json::to_value(budgeted.buckets)?);
+        Ok(())
+    }
+
+    #[test]
+    fn budgeted_writer_rereads_opt_out_and_cannot_resurrect_cleared_history() -> Result<()> {
+        let (_owner, directory, scope) = setup()?;
+        let store = UsageStore::open(&directory, &scope, &UsagePolicy::default())?.unwrap();
+        configure(&directory, &UsagePolicy { mode: RecordingMode::Disabled, ..Default::default() })?;
+        store.record_budgeted(&observation(&scope, 82), &AccountingBudget::new(Duration::from_secs(5)))?;
+        assert!(UsageStore::read(&directory, &scope, 0, unix_ms() + DAY_MS)?.lifetime.is_none());
+        configure(&directory, &UsagePolicy::default())?;
+        clear(&directory)?;
+        let replacement = UsageStore::open(&directory, &scope, &UsagePolicy::default())?.unwrap();
+        assert!(store.record_budgeted(&observation(&scope, 83), &AccountingBudget::new(Duration::from_secs(5))).is_err());
+        replacement.record_budgeted(&observation(&scope, 84), &AccountingBudget::new(Duration::from_secs(5)))?;
+        assert_eq!(UsageStore::read(&directory, &scope, 0, unix_ms() + DAY_MS)?.lifetime.context("replacement event missing")?.calls, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn accepted_transaction_commits_once_after_cancellation() -> Result<()> {
+        let (_root, directory, scope) = setup()?;
+        let store = UsageStore::open(&directory, &scope, &UsagePolicy::default())?.unwrap();
+        let budget = AccountingBudget::new(Duration::from_secs(5));
+        let cancellation = budget.cancellation();
+        let event = observation(&scope, 91);
+        store.record_admitted(&event, Some(&budget), || {
+            cancellation.cancel();
+            Ok(())
+        })?;
+        assert!(store.record_budgeted(&event, &budget).is_err());
+        // Existing exact dedup still permits an ordinary replay without counting twice.
+        store.record(&event)?;
+        let read = UsageStore::read(&directory, &scope, 0, unix_ms() + DAY_MS)?;
+        assert_eq!(read.lifetime.context("accepted transaction missing")?.calls, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn cancelled_between_lifecycle_and_quota_leaves_no_partial_aggregate() -> Result<()> {
+        let (root, directory, scope) = setup()?;
+        let store = UsageStore::open_best_effort(&directory, &scope, &UsagePolicy::default())?.unwrap();
+        let lifecycle = deletion_guard(&directory)?;
+        let quota = OpenOptions::new().read(true).write(true)
+            .open(root.path().join(".quota-1.2/ledger.lock"))?;
+        quota.lock()?;
+        let budget = AccountingBudget::new(Duration::from_secs(5));
+        let cancellation = budget.cancellation();
+        let (entered, started) = std::sync::mpsc::channel();
+        std::thread::scope(|threads| -> Result<()> {
+            let worker = threads.spawn(|| {
+                entered.send(()).unwrap();
+                store.record_budgeted(&observation(&scope, 92), &budget)
+            });
+            started.recv()?;
+            // Release stage one, hold stage two, and revoke admission. No stage
+            // may replace the request's cancellation with a fresh quota budget.
+            drop(lifecycle);
+            let probe = OpenOptions::new().read(true).write(true).open(directory.join("usage.lock"))?;
+            let until = Instant::now() + Duration::from_secs(4);
+            loop {
+                match probe.try_lock() {
+                    Err(std::fs::TryLockError::WouldBlock) => break,
+                    Ok(()) => { probe.unlock()?; std::thread::yield_now(); }
+                    Err(error) => return Err(error.into()),
+                }
+                ensure!(Instant::now() < until, "worker never reached held quota stage");
+            }
+            cancellation.cancel();
+            assert!(worker.join().expect("accounting worker panicked").is_err());
+            Ok(())
+        })?;
+        drop(quota);
+        let read = UsageStore::read(&directory, &scope, 0, unix_ms() + DAY_MS)?;
+        assert!(read.lifetime.is_none_or(|summary| summary.calls == 0));
+        assert!(read.buckets.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn fresh_open_cancelled_at_root_quota_does_not_bootstrap_a_ledger() -> Result<()> {
+        let (root, directory, scope) = setup()?;
+        let lifecycle = deletion_guard(&directory)?;
+        let root_quota = OpenOptions::new().read(true).write(true).create(true).truncate(false)
+            .open(root.path().join("usage-quota.lock"))?;
+        root_quota.lock()?;
+        let budget = AccountingBudget::new(Duration::from_secs(5));
+        let cancellation = budget.cancellation();
+        let (entered, started) = std::sync::mpsc::channel();
+        std::thread::scope(|threads| -> Result<()> {
+            let worker = threads.spawn(|| {
+                entered.send(()).unwrap();
+                UsageStore::open_best_effort_budgeted(&directory, &scope, &UsagePolicy::default(), &budget)
+            });
+            started.recv()?;
+            drop(lifecycle);
+            let probe = OpenOptions::new().read(true).write(true).open(directory.join("usage.lock"))?;
+            let until = Instant::now() + Duration::from_secs(4);
+            loop {
+                match probe.try_lock() {
+                    Err(std::fs::TryLockError::WouldBlock) => break,
+                    Ok(()) => { probe.unlock()?; std::thread::yield_now(); }
+                    Err(error) => return Err(error.into()),
+                }
+                ensure!(Instant::now() < until, "fresh open never reached held root quota stage");
+            }
+            cancellation.cancel();
+            assert!(worker.join().expect("fresh open worker panicked").is_err());
+            Ok(())
+        })?;
+        drop(root_quota);
+        assert!(!directory.join("usage.sqlite3").exists());
+        assert!(!directory.join("usage.sqlite3-journal").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn real_fifo_os_and_quota_stages_share_wait_allowance_without_wall_refill()->Result<()> {
+        use std::sync::{Arc,atomic::{AtomicU64,AtomicU8,Ordering}};
+        let (root,directory,scope)=setup()?;
+        let store=UsageStore::open_best_effort(&directory,&scope,&UsagePolicy::default())?.unwrap();
+        let UsageLock{_file: held_file,_turn: held_turn}=operation_guard(&directory)?;
+        let quota=OpenOptions::new().read(true).write(true).open(root.path().join(".quota-1.2/ledger.lock"))?;
+        quota.lock()?;
+        let ticks=Arc::new(AtomicU64::new(0));let seen=Arc::new(AtomicU8::new(0));
+        let (entered,stages)=std::sync::mpsc::channel();
+        let origin=Instant::now();let clock_ticks=ticks.clone();
+        let mut budget=AccountingBudget::new(Duration::from_millis(10));
+        budget.wait_clock=Some(Arc::new(move|stage,finished|{
+            let now=origin+Duration::from_millis(clock_ticks.load(Ordering::SeqCst));
+            if !finished {
+                let bit=match stage{"fifo"=>1,"os"=>2,"quota"=>4,_=>unreachable!()};
+                if seen.fetch_or(bit,Ordering::SeqCst)&bit==0 {entered.send(stage).unwrap();}
+            } now
+        }));
+        let event=observation(&scope,79);
+        std::thread::scope(|threads|->Result<()> {
+            let (done,finished)=std::sync::mpsc::channel();
+            struct CancelOnExit(AccountingCancellation);
+            impl Drop for CancelOnExit {fn drop(&mut self){self.0.cancel();}}
+            let _cancel=CancelOnExit(budget.cancellation());
+            let worker=threads.spawn(||{
+                // An old legacy 2 s wall guard must not suppress this next real
+                // quota retry when the shared wait allowance still remains.
+                QUOTA_RETRY_START.with(|value|value.set(Some(Instant::now()-Duration::from_secs(3))));
+                let result=store.record_budgeted(&event,&budget);
+                let _=done.send(());result
+            });
+            assert_eq!(stages.recv_timeout(Duration::from_secs(5))?,"fifo");
+            ticks.store(4,Ordering::SeqCst);drop(held_turn);
+            assert_eq!(stages.recv_timeout(Duration::from_secs(5))?,"os");
+            assert_eq!(budget.remaining()?,Duration::from_millis(6));
+            ticks.store(8,Ordering::SeqCst);held_file.unlock()?;
+            assert_eq!(stages.recv_timeout(Duration::from_secs(5))?,"quota");
+            assert_eq!(budget.remaining()?,Duration::from_millis(2));
+            ticks.store(10,Ordering::SeqCst);
+            if let Err(timeout)=finished.recv_timeout(Duration::from_secs(5)) {
+                budget.cancellation().cancel();
+                let _=quota.unlock();
+                let primary=anyhow::Error::new(timeout).context("staged recorder did not finish after allowance exhaustion");
+                return match worker.join(){Ok(_)=>Err(primary),Err(_)=>Err(primary.context("staged worker also panicked during drain"))};
+            }
+            assert!(worker.join().expect("staged recorder panicked").is_err());
+            assert_eq!(*budget.remaining.lock().unwrap(),Duration::ZERO);
+            Ok(())
+        })?;
+        assert!(budget.check().is_err());drop(quota);drop(held_file);
+        let before=UsageStore::read(&directory,&scope,0,unix_ms()+DAY_MS)?;
+        assert!(before.lifetime.is_none_or(|report|report.calls==0));
+        store.record(&event)?;store.record(&event)?;
+        let after=UsageStore::read(&directory,&scope,0,unix_ms()+DAY_MS)?;
+        assert_eq!(after.lifetime.context("ordinary retry missing")?.calls,1);
+        Ok(())
+    }
+
+    #[test]
+    fn only_actual_waits_consume_one_shared_allowance() -> Result<()> {
+        let budget=AccountingBudget::new(Duration::from_millis(10));
+        budget.charge_wait(Duration::from_millis(4));
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(budget.remaining()?,Duration::from_millis(6));
+        budget.charge_wait(Duration::from_millis(4));
+        assert_eq!(budget.remaining()?,Duration::from_millis(2));
+        budget.charge_wait(Duration::from_millis(2));
+        assert!(budget.check().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn exhausted_or_cancelled_admission_creates_no_lock_file() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        for cancelled in [false, true] {
+            let budget = AccountingBudget::new(if cancelled { Duration::from_secs(1) } else { Duration::ZERO });
+            if cancelled { budget.cancellation().cancel(); }
+            let path = directory.path().join(if cancelled { "cancelled.lock" } else { "expired.lock" });
+            assert!(lock_before(path.clone(), Instant::now(), Duration::from_secs(1), &|| budget.check(), true).is_err());
+            assert!(!path.exists());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cancellation_cannot_revoke_an_already_held_write_guard() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let budget = AccountingBudget::new(Duration::from_secs(1));
+        let (started, allowance) = (Instant::now(), budget.remaining()?);
+        let path = directory.path().join("usage.lock");
+        let guard = lock_before(path.clone(), started, allowance, &|| budget.check(), true)?;
+        budget.cancellation().cancel();
+        assert!(lock(path.clone()).is_err(), "accepted owner keeps its OS lock through settlement");
+        drop(guard);
+        lock(path)?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+thread_local! { static QUOTA_RETRY_START: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) }; }

@@ -1,0 +1,339 @@
+--- crates/airk-kernel/src/arbiter/CONTRACT.md
++++ crates/airk-kernel/src/arbiter/CONTRACT.md
+@@ -77,3 +77,12 @@
+ their assertions. A no-default-features production build omits these unused
+ Context helpers; canonical Focus dispatch, authority and budget behavior do not
+ change, and no local inference capability is added to the lightweight caller.
++
++Canonical Answer reserves its resolved Report/Require saved-source verification
++metadata before optional scoring and final packet packing. The reserve is
++derived from the native typed receipt, actual limits and its existing metadata
++growth allowance; it does not change the public request budget or native frame.
++Explicit Off retains the legacy 4096-byte closed-render reserve. Cumulative
++mandatory Focus custody and final post-application/deadline packing use the same
++additional reserve. Metadata-only refusal remains valid if mandatory custody
++cannot fit; no source verification or uncertain native work is replayed.
+--- crates/airk-kernel/src/verification.rs
++++ crates/airk-kernel/src/verification.rs
+@@ -45,6 +45,52 @@
+         reason: reason.into(),
+     })
+     .collect()
++}
++
++/// Native metadata capacity required before a source-bearing reply is committed.
++/// This uses the same typed receipt/qualifications and existing postwork reserve
++/// as trim_metadata; it performs no index lookup, source read or source check.
++pub fn verification_reply_metadata_floor(budget: VerificationBudget) -> Result<usize> {
++    let mut limits: VerificationLimits = budget.into();
++    limits.effective_deadline_ms = u64::MAX;
++    limits.receipt_bytes_budget = MAX_RECEIPT_BYTES;
++    // The only hit which may be present before trim_metadata runs.
++    limits.hit = vec!["reference_inventory".into()];
++    let receipt = VerificationReceipt {
++        schema: "airk.saved-source-verification/1".into(),
++        method: "sha256-full-saved-source/1".into(),
++        mode: budget.mode,
++        status: "unverified".into(),
++        scope_digest: Sha256Digest::from_bytes([0; 32]),
++        selection_digest: Sha256Digest::from_bytes([0; 32]),
++        observed_from_unix_ms: u64::MAX,
++        observed_to_unix_ms: u64::MAX,
++        publication_fence: "current".into(),
++        inventory_complete: false,
++        all_references_accounted: false,
++        source_rows_omitted: usize::MAX,
++        requirements_satisfied: Some(false),
++        counts: VerificationCounts {
++            references: Some(usize::MAX),
++            references_lower_bound: usize::MAX,
++            requested_sources: Some(usize::MAX),
++            requested_sources_lower_bound: usize::MAX,
++            checked_sources: usize::MAX,
++            matched_sources: usize::MAX,
++            mismatched_sources: usize::MAX,
++            unchecked_sources: Some(usize::MAX),
++            bytes_read: u64::MAX,
++        },
++        limits,
++        origins: vec![],
++        sources: vec![],
++        references: vec![],
++        qualifications: qualifications(),
++        error: None,
++    };
++    let floor = serde_json::to_vec(&receipt)?.len().saturating_add(1024);
++    anyhow::ensure!(floor <= MAX_RECEIPT_BYTES, VerificationReplyBudget);
++    Ok(floor)
+ }
+ 
+ /// Identity of the exact native evidence selection covered by a dated receipt.
+@@ -1311,4 +1357,33 @@
+         );
+         Ok(())
+     }
++    #[test]
++    fn joint_legacy_frame_padding_can_leave_less_than_native_verification_metadata() -> Result<()> {
++        let temp = tempfile::tempdir()?;
++        let root = temp.path().join("source");
++        std::fs::create_dir(&root)?;
++        let kernel = Kernel::open(&root, Some(temp.path().join("data")))?;
++        // Closed metadata-only public verification path: no model/index/source read.
++        let mut value = json!({"status":"unavailable", "padding":""});
++        let target_quoted = airk_core::MAX_RESPONSE_BYTES - 4096;
++        let overhead = serde_json::to_vec(&serde_json::to_string(&value)?)?.len();
++        value["padding"] = json!("x".repeat(target_quoted - overhead));
++        let quoted = serde_json::to_vec(&serde_json::to_string(&value)?)?.len();
++        assert_eq!(quoted + 4096, airk_core::MAX_RESPONSE_BYTES);
++        assert_eq!(receipt_budget_for_reply(&value)?, 1024);
++        assert!(
++            kernel
++                .verify_returned_sources(&value, budget(VerificationMode::Report))
++                .unwrap_err()
++                .is::<VerificationReplyBudget>()
++        );
++        // A genuinely small projection succeeds under the same source budget.
++        let receipt = kernel.verify_returned_sources(
++            &json!({"status":"unavailable"}),
++            budget(VerificationMode::Report),
++        )?;
++        assert_eq!(receipt.counts.bytes_read, 0);
++        assert!(serde_json::to_vec(&receipt)?.len() > 1024);
++        Ok(())
++    }
+ }
+--- crates/airk-kernel/src/arbiter.rs
++++ crates/airk-kernel/src/arbiter.rs
+@@ -70,6 +70,7 @@
+     partition: Option<airk_core::combined_context::PartitionAllowance>,
+     focus: Arc<std::sync::Mutex<focus::Attempt>>,
+     focus_reply_budget: Option<FocusReplyBudget>,
++    context_reply_reserve: usize,
+ }
+ fn observed_application(
+     context: &NativeContext,
+@@ -138,6 +139,7 @@
+             partition: None,
+             focus: Arc::new(std::sync::Mutex::new(focus::Attempt::default())),
+             focus_reply_budget: None,
++            context_reply_reserve: 4096,
+         }));
+         Ok(kernel)
+     }
+--- crates/airk-kernel/src/arbiter/focus.rs
++++ crates/airk-kernel/src/arbiter/focus.rs
+@@ -59,6 +59,23 @@
+         };
+         let mut context = context.as_ref().clone();
+         context.focus_reply_budget = Some(budget);
++        let mut kernel = self.clone();
++        kernel.arbiter_context = Some(Arc::new(context));
++        Ok(kernel)
++    }
++
++    /// Closed native rendering capacity supplied by the canonical Answer owner.
++    /// It is metadata space, never a new work budget or caller authority.
++    pub fn with_context_reply_reserve(&self, reserve: usize) -> Result<Self> {
++        ensure!(
++            reserve <= airk_core::MAX_RESPONSE_BYTES,
++            "Answer metadata reserve exceeds native frame"
++        );
++        let Some(context) = &self.arbiter_context else {
++            return Ok(self.clone());
++        };
++        let mut context = context.as_ref().clone();
++        context.context_reply_reserve = reserve.max(4096);
+         let mut kernel = self.clone();
+         kernel.arbiter_context = Some(Arc::new(context));
+         Ok(kernel)
+@@ -464,7 +481,15 @@
+             0
+         };
+         let frame = if nested {
++            // This frame is in receipt bytes; JSON string embedding may double
++            // them. Match the additional outer packet reserve before dispatch.
+             frame
++                .saturating_sub(
++                    context
++                        .context_reply_reserve
++                        .saturating_sub(4096)
++                        .div_ceil(2),
++                )
+                 .saturating_sub(mandatory)
+                 .saturating_sub(outer_focus_bytes)
+                 .min(
+--- crates/airk-kernel/src/arbiter/joint.rs
++++ crates/airk-kernel/src/arbiter/joint.rs
+@@ -550,6 +550,7 @@
+                 .as_ref(),
+             request.budget.max_bytes,
+             context.partition.is_some(),
++            context.context_reply_reserve,
+         )?;
+         let focus_overrun =
+             airk_core::arbiter::focus::observed_focus_work(&response.records, &request.budget)?
+@@ -627,6 +628,18 @@
+         } else {
+             response.applications = vec![latest];
+         }
++        // Deadline/application observations above may change metadata after
++        // the first pack. Preserve the same original render/verification space.
++        pack(
++            &mut response,
++            self.scope_observation()
++                .map(serde_json::to_value)
++                .transpose()?
++                .as_ref(),
++            request.budget.max_bytes,
++            context.partition.is_some(),
++            context.context_reply_reserve,
++        )?;
+         response.validate(&request.budget)?;
+         Ok(response)
+     }
+@@ -755,6 +768,7 @@
+     scope: Option<&Value>,
+     maximum: usize,
+     reserve_outer_focus: bool,
++    reply_reserve: usize,
+ ) -> Result<()> {
+     let maximum = if reserve_outer_focus {
+         maximum
+@@ -796,7 +810,7 @@
+         if serde_json::to_vec(&value)?.len() <= maximum
+             && serde_json::to_vec(&serde_json::to_string(&value)?)?
+                 .len()
+-                .saturating_add(4096)
++                .saturating_add(reply_reserve.max(4096))
+                 <= airk_core::MAX_RESPONSE_BYTES
+         {
+             break;
+--- crates/airk-kernel/src/arbiter/joint/focus_pack_tests.rs
++++ crates/airk-kernel/src/arbiter/joint/focus_pack_tests.rs
+@@ -153,7 +153,7 @@
+     for unknown in [false, true] {
+         let mut response = packet(unknown)?;
+         let retained = response.records[2].canonical_result.clone();
+-        pack(&mut response, None, 32_768, false)?;
++        pack(&mut response, None, 32_768, false, 4096)?;
+         assert_eq!(
+             response
+                 .records
+@@ -181,7 +181,7 @@
+         interpretation: true,
+     });
+     let records = serde_json::to_vec(&response.records)?;
+-    pack(&mut response, None, 32_768, false)?;
++    pack(&mut response, None, 32_768, false, 4096)?;
+     assert_eq!(serde_json::to_vec(&response.records)?, records);
+     assert!(response.paragraphs.is_empty());
+     assert_eq!(response.stop, PartitionTermination::Budget);
+@@ -194,7 +194,7 @@
+     response.records.remove(1);
+     response.candidate_count = 2;
+     let records = serde_json::to_vec(&response.records)?;
+-    assert!(pack(&mut response, None, 1024, false).is_err());
++    assert!(pack(&mut response, None, 1024, false, 4096).is_err());
+     assert_eq!(serde_json::to_vec(&response.records)?, records);
+     assert!(
+         airk_core::arbiter::focus::observed_focus_work(&response.records, &Budget::default())?
+@@ -224,9 +224,9 @@
+     let outer = crate::combined_reads::context_packet_focus_binding_bytes(&active)?;
+     assert!(outer > 0);
+     let mut fitting = active.clone();
+-    pack(&mut fitting, None, active_bytes + outer, true)?;
++    pack(&mut fitting, None, active_bytes + outer, true, 4096)?;
+     assert_eq!(serde_json::to_vec(&fitting.records)?, charged);
+-    assert!(pack(&mut active, None, active_bytes + outer - 1, true).is_err());
++    assert!(pack(&mut active, None, active_bytes + outer - 1, true, 4096).is_err());
+     assert_eq!(
+         serde_json::to_vec(&active.records)?,
+         charged,
+@@ -247,7 +247,7 @@
+         crate::combined_reads::context_packet_focus_binding_bytes(&off)?,
+         0
+     );
+-    pack(&mut off, None, off_bytes, true)?;
++    pack(&mut off, None, off_bytes, true, 4096)?;
+     assert_eq!(
+         serde_json::to_vec(&off)?,
+         original,
+@@ -255,3 +255,58 @@
+     );
+     Ok(())
+ }
++
++#[test]
++fn derived_verification_reserve_preserves_off_packet_and_trims_only_presentation() -> Result<()> {
++    use airk_core::verification::{VerificationBudget, VerificationMode, receipt_budget_for_reply};
++    fn projection(packet: &ContextResponseV2) -> Result<Value> {
++        let mut value = serde_json::to_value(packet)?;
++        value["request_id"] = json!("f".repeat(32));
++        airk_core::reply::ReplyDetail::annotate(
++            &mut value,
++            Some(airk_core::reply::ReplyDetail::Rich),
++        );
++        airk_core::guidance::annotate(&mut value);
++        Ok(value)
++    }
++    for unknown in [false, true] {
++        let mut packet = packet(unknown)?;
++        packet.records.remove(1);
++        packet.candidate_count = 2;
++        packet.paragraphs.push(GroundedParagraph {
++            text: "x".into(),
++            evidence: vec![digest(82)],
++            interpretation: true,
++        });
++        let current = serde_json::to_vec(&serde_json::to_string(&projection(&packet)?)?)?.len();
++        let target = airk_core::MAX_RESPONSE_BYTES - 4096;
++        packet.paragraphs[0].text = "x".repeat(1 + target - current);
++        assert_eq!(receipt_budget_for_reply(&projection(&packet)?)?, 1024);
++        let original = serde_json::to_vec(&packet)?;
++        let mandatory = serde_json::to_vec(&packet.records)?;
++        let mut off = packet.clone();
++        pack(&mut off, None, 262_144, false, 4096)?;
++        assert_eq!(
++            serde_json::to_vec(&off)?,
++            original,
++            "Off keeps the exact fitting packet"
++        );
++        for mode in [VerificationMode::Report, VerificationMode::Require] {
++            let budget = VerificationBudget {
++                mode,
++                max_sources: 25,
++                max_bytes: 16 * 1024 * 1024,
++                deadline_ms: 2000,
++            };
++            let floor = crate::verification::verification_reply_metadata_floor(budget)?;
++            assert!(floor > 1024);
++            let mut verified = packet.clone();
++            pack(&mut verified, None, 262_144, false, 2048 + 2 * floor)?;
++            assert_eq!(serde_json::to_vec(&verified.records)?, mandatory);
++            assert!(verified.paragraphs.is_empty());
++            assert_eq!(verified.omitted_count, 0);
++            assert!(receipt_budget_for_reply(&projection(&verified)?)? >= floor);
++        }
++    }
++    Ok(())
++}
+--- crates/airk-mcp/src/lib.rs
++++ crates/airk-mcp/src/lib.rs
+@@ -758,6 +758,17 @@
+             args.response,
+             args.verification.controls(),
+             move |kernel| {
++                let reserve = args
++                    .verification
++                    .controls()
++                    .resolve()?
++                    .map(|budget| {
++                        airk_kernel::verification::verification_reply_metadata_floor(budget)
++                            .map(|floor| floor.saturating_mul(2).saturating_add(2048))
++                    })
++                    .transpose()?
++                    .unwrap_or(4096);
++                let kernel = kernel.with_context_reply_reserve(reserve)?;
+                 reader.kernel = kernel.clone();
+                 kernel.answer_with_reader_v2(
+                     args.request,

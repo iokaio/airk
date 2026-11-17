@@ -1,0 +1,483 @@
+--- r2-or-live/crates/airk-retrieval/src/arbiter/compiler/CONTRACT.md
++++ r3/crates/airk-retrieval/src/arbiter/compiler/CONTRACT.md
+@@ -1,121 +1,123 @@
+-# Native Arbiter compilers
+-
+-Core owns `CompilerRecipe`, `CompilerProfile` and stage/task identities. This
+-module owns prompt construction and tokenizer execution. Downloaded profiles
+-bind immutable data; they supply no executable template or model authority.
+-
+-`QwenSingleChoiceV1` renders the fixed Qwen3 system/user chat and the publisher's
+-empty nonthinking assistant prefix. It scores the final prefix position against
+-the ordered A–H option vocabulary rows. Each symbol must encode as one token;
+-appending it must preserve every prefix token. It does not generate an answer,
+-use an Intern decision marker, or transfer an older model's qualification.
+-
+-The Context input is batch one and unpadded, with at most 2,048 tokens and eight
+-complete native options. Order and original option identifiers are preserved.
+-Original state, question, identifier and option text are admitted under their
+-existing byte limits. Control-like `<|NAME|>` text and the nine bound chat,
+-thinking and tool controls are escaped before JSON string quoting. Reserved
+-decision markers, duplicate identifiers and token/option overflow refuse;
+-truncation, refill and reordering are forbidden.
+-
+-The new Qwen compiled-input digest binds the original supplied tuple, exact
+-consumed compiler asset bytes, LF-canonical parent/child source policy and the
+-actual transformed prompt and all six tensors with their batch axes. Original
+-identity and model view remain distinct. Existing recipe digest inputs remain
+-unchanged. A digest is an identity, not permission to execute or read evidence.
+-
+-Qualification tooling emits the selected compiler asset through the Rust
+-owner. The ignored native fixture test compares every prompt/tensor field with
+-an independently frozen publisher-template/tokenizer fixture and retains the
+-actual Rust-emitted bytes. Handwritten research metadata is not a native
+-fixture or a qualification receipt.
+-
+-Context production graphs expose exactly the six declared inputs and the
+-single `scores` output. Diagnostic reference graphs may retain hidden states;
+-they are not the production ABI. The independently owned Focus compiler uses
+-its three-input relevance ABI and raw no/yes readout, with its own policy and
+-qualification. It grants no Context action or source authority.
+-
+-Runtime admission checks shape, padding, positions, masks and closed readout
+-rows before tensor allocation. Executing a graph additionally requires the
+-service compute owner and an authenticated release or native evaluation
+-capability. Compiler parity, synthetic numerical parity and export do not prove
+-task quality, calibration, resource fit, platform qualification or publication.
+-
+-`QwenRerankYesNoV1` has an independent early dispatch, accepting exactly empty
+-state, the original nonempty question and one original candidate identifier plus
+-its explicitly declared complete source window. It enforces the existing
+-question/identifier/window byte limits and binds the exact publisher control
+-catalog, no=2152 and yes=9693. The fixed publisher instruction, prefix and suffix
+-come from native code; question and document never supply instructions or template
+-controls. A single pass doubles original backslashes and quotes angle brackets as
+-literal ASCII `\u003c` and `\u003e` in the model view. This transform is injective;
+-original question, identifier and source-window bytes remain distinct and bound.
+-Actual source bodies and their line endings are never normalized or edited.
+-
+-Focus separately tokenizes the exact publisher prefix, transformed pair body and
+-suffix without added special tokens, concatenates them, and refuses overflow
+-before inference. No cropping or refill occurs. It left-pads to the authenticated
+-profile's maximum tokens with 151643, with mask zero for padding and one for every
+-real token. Position IDs are the full static `0..tokens` sequence; the decision
+-position is its final live token and the metadata readout rows are always
+-`[2152, 9693]` with both enabled. One candidate pair is distinct from these two
+-output labels. The Rust qualification emitter currently emits static512 assets;
+-that does not establish a universal pair count, token allowance or resource tier.
+-
+-The Focus input digest binds the original supplied tuple, exact consumed compiler
+-asset bytes, LF-canonical parent/child native policy plus the owning Core Focus
+-semantic policy, complete transformed prompt,
+-all three actual tensors with batch axes and decision/readout metadata. Service
+-additionally binds the full canonical Hit, exact original source-window offsets,
+-scope and native candidate identity. The task policy is the public owning
+-`compiler::focus::policy_digest`; neither a Context policy nor a caller-chosen
+-digest can substitute. Native parity fixtures must compare against the official
+-reference using the same transformed bytes, including control-like source/query
+-and literal-backslash collision cases. Raw publisher delimiter controls alone
+-prove no escaped-caller parity. Relevance scores grant no sufficiency or source
+-authority.
+-
+-
+-## Private F1/F2 exact-human-pair experiments
+-
+-The test-support Focus experiment owner exposes exactly publisher F0 and one
+-software-evidence instruction F1. This is a private recipe enumeration, not a
+-new production CompilerRecipe, profile, wire/state format or execution grant.
+-Production compile_focus still selects the original publisher instruction.
+-Both experiments call the same injective quoting, independently tokenized
+-prefix/body/suffix, closed no2152/yes9693 catalog and no-crop static512 owner.
+-The full original tuple and recipe/instruction/native-source identity bind
+-every emitted model view. Changing the instruction requires a new census;
+-old publisher512 fit/quality results do not transfer. Editing this source
+-changes the existing full-source policy digest and requires fresh bindings.
+-
+-The emitter reads the pinned original Rust visibility report and frozen role/
+-rights roster, checks all original question/function hashes and labels, and
+-retains every denominator row for both recipes as compiled or explicit refusal.
+-UNKNOWN rights and original overflow remain excluded from loss; fitting a
+-prompt never grants human-label, rights or training authority. A paired
+-comparison uses only the declared intersection with both refusal rosters
+-reported, never refills or recrops. Original DATA/exposure/FINAL restrictions
+-remain. Replay windows require the exact source/span/question/annotation and
+-accepted private-rights claims; compiler fit cannot adjudicate those claims.
+-
+-Actual raw no/yes score observation calls an existing Scorer under the actual
+-service-compute owner and the caller original deadline. It retains both raw
+-finite logits and their bits, input/recipe identities and timings. It mints no
+-query permit, native runtime admission, learned cutoff, probability calibration,
+-terminal/evidence-role gold or qualification. An error after submission stops;
+-no replay, refund or new deadline is permitted.
+-
+-Private training consumes only native-emitted prompt/tensor records, with full
+-vocabulary CE applied to the authentic last-prefix position and original human
+-yes/no target. Prompt tokens have no separate loss. Native inference width512,
+-left padding/positions and source bytes stay unchanged. LoRA adapts only q/k/v/o
+-projections under the frozen rank/rate/batch/epoch/seed/replay and original
+-owned-process/GPU/time caps. Reference checkpoint/head remain complete; merge
+-into a full checkpoint precedes a separate native export/numerical comparison.
+-Pre-score instruction selection, measured resource probe and replay acceptance
+-remain required. This code-only exploratory arm cannot establish broad Step8
+-mixture, fresh FINAL, ranking/retention quality or promotion.
+-
+-General QASPER replay retains the original publisher instruction; only software code rows use the DEV-selected instruction. Both are native-emitted. Code comparisons use the identical selected instruction for original/adapted weights; replay is original human paragraph relevance, never complete evidence.
++# Native Arbiter compilers
++
++Core owns `CompilerRecipe`, `CompilerProfile` and stage/task identities. This
++module owns prompt construction and tokenizer execution. Downloaded profiles
++bind immutable data; they supply no executable template or model authority.
++
++`QwenSingleChoiceV1` renders the fixed Qwen3 system/user chat and the publisher's
++empty nonthinking assistant prefix. It scores the final prefix position against
++the ordered A–H option vocabulary rows. Each symbol must encode as one token;
++appending it must preserve every prefix token. It does not generate an answer,
++use an Intern decision marker, or transfer an older model's qualification.
++
++The Context input is batch one and unpadded, with at most 2,048 tokens and eight
++complete native options. Order and original option identifiers are preserved.
++Original state, question, identifier and option text are admitted under their
++existing byte limits. Control-like `<|NAME|>` text and the nine bound chat,
++thinking and tool controls are escaped before JSON string quoting. Reserved
++decision markers, duplicate identifiers and token/option overflow refuse;
++truncation, refill and reordering are forbidden.
++
++The new Qwen compiled-input digest binds the original supplied tuple, exact
++consumed compiler asset bytes, LF-canonical parent/child source policy and the
++actual transformed prompt and all six tensors with their batch axes. Original
++identity and model view remain distinct. Existing recipe digest inputs remain
++unchanged. A digest is an identity, not permission to execute or read evidence.
++
++Qualification tooling emits the selected compiler asset through the Rust
++owner. The ignored native fixture test compares every prompt/tensor field with
++an independently frozen publisher-template/tokenizer fixture and retains the
++actual Rust-emitted bytes. Handwritten research metadata is not a native
++fixture or a qualification receipt.
++
++Context production graphs expose exactly the six declared inputs and the
++single `scores` output. Diagnostic reference graphs may retain hidden states;
++they are not the production ABI. The independently owned Focus compiler uses
++its three-input relevance ABI and raw no/yes readout, with its own policy and
++qualification. It grants no Context action or source authority.
++
++Runtime admission checks shape, padding, positions, masks and closed readout
++rows before tensor allocation. Executing a graph additionally requires the
++service compute owner and an authenticated release or native evaluation
++capability. Compiler parity, synthetic numerical parity and export do not prove
++task quality, calibration, resource fit, platform qualification or publication.
++
++`QwenRerankYesNoV1` has an independent early dispatch, accepting exactly empty
++state, the original nonempty question and one original candidate identifier plus
++its explicitly declared complete source window. It enforces the existing
++question/identifier/window byte limits and binds the exact publisher control
++catalog, no=2152 and yes=9693. The fixed publisher instruction, prefix and suffix
++come from native code; question and document never supply instructions or template
++controls. A single pass doubles original backslashes and quotes angle brackets as
++literal ASCII `\u003c` and `\u003e` in the model view. This transform is injective;
++original question, identifier and source-window bytes remain distinct and bound.
++Actual source bodies and their line endings are never normalized or edited.
++
++Focus separately tokenizes the exact publisher prefix, transformed pair body and
++suffix without added special tokens, concatenates them, and refuses overflow
++before inference. No cropping or refill occurs. It left-pads to the authenticated
++profile's maximum tokens with 151643, with mask zero for padding and one for every
++real token. Position IDs are the full static `0..tokens` sequence; the decision
++position is its final live token and the metadata readout rows are always
++`[2152, 9693]` with both enabled. One candidate pair is distinct from these two
++output labels. The Rust qualification emitter currently emits static512 assets;
++that does not establish a universal pair count, token allowance or resource tier.
++
++The Focus input digest binds the original supplied tuple, exact consumed compiler
++asset bytes, LF-canonical parent/child native policy plus the owning Core Focus
++semantic policy, complete transformed prompt,
++all three actual tensors with batch axes and decision/readout metadata. Service
++additionally binds the full canonical Hit, exact original source-window offsets,
++scope and native candidate identity. The task policy is the public owning
++`compiler::focus::policy_digest`; neither a Context policy nor a caller-chosen
++digest can substitute. Native parity fixtures must compare against the official
++reference using the same transformed bytes, including control-like source/query
++and literal-backslash collision cases. Raw publisher delimiter controls alone
++prove no escaped-caller parity. Relevance scores grant no sufficiency or source
++authority.
++
++
++## Private F1/F2 exact-human-pair experiments
++
++The test-support Focus experiment owner exposes exactly publisher F0 and one
++software-evidence instruction F1. This is a private recipe enumeration, not a
++new production CompilerRecipe, profile, wire/state format or execution grant.
++Production compile_focus still selects the original publisher instruction.
++Both experiments call the same injective quoting, independently tokenized
++prefix/body/suffix, closed no2152/yes9693 catalog and no-crop static512 owner.
++The full original tuple and recipe/instruction/native-source identity bind
++every emitted model view. Changing the instruction requires a new census;
++old publisher512 fit/quality results do not transfer. Editing this source
++changes the existing full-source policy digest and requires fresh bindings.
++
++The emitter reads the pinned original Rust visibility report and frozen role/
++rights roster, checks all original question/function hashes and labels, and
++retains every denominator row for both recipes as compiled or explicit refusal.
++UNKNOWN rights and original overflow remain excluded from loss; fitting a
++prompt never grants human-label, rights or training authority. A paired
++comparison uses only the declared intersection with both refusal rosters
++reported, never refills or recrops. Original DATA/exposure/FINAL restrictions
++remain. Replay windows require the exact source/span/question/annotation and
++accepted private-rights claims; compiler fit cannot adjudicate those claims.
++
++Actual raw no/yes score observation calls an existing Scorer under the actual
++service-compute owner and the caller original deadline. It retains both raw
++finite logits and their bits, input/recipe identities and timings. It mints no
++query permit, native runtime admission, learned cutoff, probability calibration,
++terminal/evidence-role gold or qualification. An error after submission stops;
++no replay, refund or new deadline is permitted.
++
++Private training consumes only native-emitted prompt/tensor records, with full
++vocabulary CE applied to the authentic last-prefix position and original human
++yes/no target. Prompt tokens have no separate loss. Native inference width512,
++left padding/positions and source bytes stay unchanged. LoRA adapts only q/k/v/o
++projections under the frozen rank/rate/batch/epoch/seed/replay and original
++owned-process/GPU/time caps. Reference checkpoint/head remain complete; merge
++into a full checkpoint precedes a separate native export/numerical comparison.
++Pre-score instruction selection, measured resource probe and replay acceptance
++remain required. This code-only exploratory arm cannot establish broad Step8
++mixture, fresh FINAL, ranking/retention quality or promotion.
++
++General QASPER replay retains the original publisher instruction; only software code rows use the DEV-selected instruction. Both are native-emitted. Code comparisons use the identical selected instruction for original/adapted weights; replay is original human paragraph relevance, never complete evidence.
++
++The private instruction-census emitter additionally reports native_focus_task_policy from the actual owning Rust policy_digest and focus_compiler_source_lf_sha256 from the actual compiled focus.rs bytes with CRLF→LF normalization and lone-CR refusal. These are emitted source identities, not guessed caller/profile values. A pending exact CPU compatibility row may consume them only after actual original1955publisher full-view/refusal parity,13focused compiler controls and the closed-row refusal controls. No arbitrary stale policy is accepted or old numeric/CAL proof transferred.
+--- r2-or-live/crates/airk-retrieval/src/arbiter/compiler/focus/experiment/tests/emission.rs
++++ r3/crates/airk-retrieval/src/arbiter/compiler/focus/experiment/tests/emission.rs
+@@ -274,7 +274,16 @@
+     let image_sha = Sha256Digest::from_bytes(hasher.finalize().into());
+     let output = PathBuf::from(env("AIRK_F2_CENSUS_OUTPUT")?);
+     ensure!(output.is_absolute(), "absolute fresh output required");
+-    let result = serde_json::json!({"schema":"airk.private.focus-instruction-emission/1","native_report":report_sha,"frozen_role_roster":roster_sha,"replay_roster":replay_pin,"tokenizer":tokenizer_sha,"native_image":{"path":image,"sha256":image_sha},"package_version":env!("CARGO_PKG_VERSION"),"compiler":profile,"census":census,"elapsed_us":started.elapsed().as_micros(),"model_requests_dispatched":false,"training_gradients":false,"qualification":false});
++    let native_focus_task_policy = super::super::super::policy_digest()?;
++    let focus_source =
++        std::str::from_utf8(include_bytes!("../../../focus.rs"))?.replace("\r\n", "\n");
++    ensure!(
++        !focus_source.contains('\r'),
++        "lone CR in actual Focus compiler source"
++    );
++    let focus_compiler_source_lf_sha256 =
++        Sha256Digest::from_bytes(Sha256::digest(focus_source.as_bytes()).into());
++    let result = serde_json::json!({"schema":"airk.private.focus-instruction-emission/1","native_report":report_sha,"frozen_role_roster":roster_sha,"replay_roster":replay_pin,"tokenizer":tokenizer_sha,"native_image":{"path":image,"sha256":image_sha},"package_version":env!("CARGO_PKG_VERSION"),"native_focus_task_policy":native_focus_task_policy,"focus_compiler_source_lf_sha256":focus_compiler_source_lf_sha256,"compiler":profile,"census":census,"elapsed_us":started.elapsed().as_micros(),"model_requests_dispatched":false,"training_gradients":false,"qualification":false});
+     let bytes = serde_json::to_vec(&result)?;
+     ensure!(
+         bytes.len() <= 128 * 1024 * 1024 && Instant::now() < deadline,
+--- r2-or-live/crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition/CONTRACT.md
++++ r3/crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition/CONTRACT.md
+@@ -1,46 +1,71 @@
+-# Closed legacy Focus CPU source transition
+-
+-The native ExecutionProfile owner may retain the original public Focus profile
+-04821eda only in an exact pre-1.9 native release series. The new private witness
+-is not deserializable and does not grant model, lease, source-read, reservation
+-or execution authority. Existing release/local-candidate and EvaluationOwner
+-admission, consent, hardware fit, same-worker leases and original deadlines remain.
+-
+-The row binds the complete canonical Rust Profile value SHA73d884fb1c2b37709d4d1b1daa93fd65687ce310cbd4096af0ef106a615e608c
+-and its unique immutable native catalog member, including every graph/external
+-weight/tokenizer/compiler/CAL/notice/fixture identity, byte length, ABI, CpuFit,
+-resource/token/candidate limits, task, qualification and public URL. Actual native
+-Scorer/AssetSource still authenticate physical asset bytes. Existing bytes/URLs
+-are never rewritten. GPU execution descriptors and both Context profiles refuse.
+-
+-Exact source mapping: legacy Focus Core ddd9dbc7.../task cfbcbe4c... to current
+-Focus Core77fa25e4.../task5add2b52..., with compiler.rs09c3120d... and
+-compiler/focus.rs66f9231b... unchanged. Current source mismatches refuse; future
+-source updates require a newly reviewed row, not broad prefix compatibility.
+-The changed Core runtime predicate accepts exactly the same CPU literal and adds
+-strict device identities on separate paths; CPU ranking/window/ordering/scoring
+-constraints and compiler arrays/quoting/readout are retained. The new /2 empty
+-Context calibration has no effect on Focus. No public Context1271 compatibility
+-or private8192Compact admission/promotion is inferred.
+-
+-Native runtime integration must retain this witness inside ExecutionProfile and
+-repeat it at from_release, release_asset_profile, EvaluationCatalog construction
+-and lookup, and Scorer admission, replacing duplicated Focus policy equality only
+-for this exact closed CPU row. Current policies remain the default; no unchecked
+-Profile-shaped JSON value acquires a capability. Compilation and actual native
+-CPU refusal/recovery tests precede activation.
+-
+-The existing current Rust Compiler still creates NEW source-bound input digests.
+-The native owner records each such digest with a separate source-transition
+-record/binding immediately after compilation; it never relabels old numeric/CAL
+-evidence as current. This record is private native execution provenance, no new
+-public DTO or qualification. Actual native image/build/source receipts remain
+-separate and must be retained. Original CPU Profile serialization and advice
+-runtime literal remain unchanged. No CPU-as-GPU label or old proof transfer.
+-
+-The row binds exact legacy runtime source d2879546ba9e949fdd8b135a244923de2adb781e8598539cc33f4d7d6f0794eb
+-to reviewed proposed runtime hook source9e539508f52e403368124ee38f91085f4b318f87fcffe45f898728cf9c0db49d.
+-The native module rehashes its compiled runtime source; mismatches refuse. Source
+-review, combined compilation and native controls remain pending; none is claimed
+-from private preparation. Future runtime/source changes need a new exact row,
+-never arbitrary stale-policy fallback.
++# Closed legacy Focus CPU source transition
++
++The native ExecutionProfile owner may retain the original public Focus profile
++04821eda only in an exact pre-1.9 native release series. The new private witness
++is not deserializable and does not grant model, lease, source-read, reservation
++or execution authority. Existing release/local-candidate and EvaluationOwner
++admission, consent, hardware fit, same-worker leases and original deadlines remain.
++
++The row binds the complete canonical Rust Profile value SHA73d884fb1c2b37709d4d1b1daa93fd65687ce310cbd4096af0ef106a615e608c
++and its unique immutable native catalog member, including every graph/external
++weight/tokenizer/compiler/CAL/notice/fixture identity, byte length, ABI, CpuFit,
++resource/token/candidate limits, task, qualification and public URL. Actual native
++Scorer/AssetSource still authenticate physical asset bytes. Existing bytes/URLs
++are never rewritten. GPU execution descriptors and both Context profiles refuse.
++
++Exact source mapping: legacy Focus Core ddd9dbc7.../task cfbcbe4c... to current
++Focus Core77fa25e4.../task5add2b52..., with compiler.rs09c3120d... and
++compiler/focus.rs66f9231b... unchanged. Current source mismatches refuse; future
++source updates require a newly reviewed row, not broad prefix compatibility.
++The changed Core runtime predicate accepts exactly the same CPU literal and adds
++strict device identities on separate paths; CPU ranking/window/ordering/scoring
++constraints and compiler arrays/quoting/readout are retained. The new /2 empty
++Context calibration has no effect on Focus. No public Context1271 compatibility
++or private8192Compact admission/promotion is inferred.
++
++Native runtime integration must retain this witness inside ExecutionProfile and
++repeat it at from_release, release_asset_profile, EvaluationCatalog construction
++and lookup, and Scorer admission, replacing duplicated Focus policy equality only
++for this exact closed CPU row. Current policies remain the default; no unchecked
++Profile-shaped JSON value acquires a capability. Compilation and actual native
++CPU refusal/recovery tests precede activation.
++
++The existing current Rust Compiler still creates NEW source-bound input digests.
++The native owner records each such digest with a separate source-transition
++record/binding immediately after compilation; it never relabels old numeric/CAL
++evidence as current. This record is private native execution provenance, no new
++public DTO or qualification. Actual native image/build/source receipts remain
++separate and must be retained. Original CPU Profile serialization and advice
++runtime literal remain unchanged. No CPU-as-GPU label or old proof transfer.
++
++The row binds exact legacy runtime source d2879546ba9e949fdd8b135a244923de2adb781e8598539cc33f4d7d6f0794eb
++to reviewed proposed runtime hook source9e539508f52e403368124ee38f91085f4b318f87fcffe45f898728cf9c0db49d.
++The native module rehashes its compiled runtime source; mismatches refuse. Source
++review, combined compilation and native controls remain pending; none is claimed
++from private preparation. Future runtime/source changes need a new exact row,
++never arbitrary stale-policy fallback.
++
++
++## Pending exact F1/F2 publisher-preserving source row
++
++The private F1/F2 compiler adds one explicit software-evidence recipe while
++production compile_focus retains its original publisher instruction through a
++shared native packing helper. This changes the full compiler source identity.
++The present04821/73d884legacy descriptor/catalog/asset/CAL/ABI/CpuFit/download
++bytes and pre1.9CPU-only restrictions remain immutable. This preparation does
++not change or activate runtime source constants or permit arbitrary stale policy.
++
++A later reviewed exact current row must obtain CURRENT_TASK from the genuine
++Rust census field native_focus_task_policy and FOCUS_COMPILER_SOURCE from its
++actual focus_compiler_source_lf_sha256. Values are pending, never fabricated or
++Python-framed. The current compiler.rs/Core and separately reviewed runtime
++source mapping remain independently pinned; G5runtime9e→DDE composition is a
++separate proof. No wildcard, prefix, profile relabel, GPU-as-CPU or policy alias
++is added.
++
++Activation requires actual all1,955publisher prompt/tensor/full-view/refusal
++parity against retained native output,13focused Focus controls and every closed
++row descriptor/source/refusal and existing native-consumer gate. New compiled-input identities
++and transition rows are retained as new evidence, never old task/quality/CAL
++qualification. Fresh /3 metadata remains a distinct unqualified private route;
++it cannot silently replace the installed/public legacy descriptor.
+--- r2/launch_owned.py
++++ r3/launch_owned.py
+@@ -9,6 +9,34 @@
+     settled=bool(owned and owned['owned_descendants_settled']and not owned['owned_job_forced_termination']and owned['owned_job_final_active_processes']==0 and not owned['owned_job_final_member_pids']and all(r['exit_observed']for r in owned['retained_member_exits']))
+     passed=bool(settled and owned['exit_code']==0 and not owned['timed_out']and not owned['log_oversized']and owned['owned_total_processes']==1 and worker and worker['complete'])
+     return {'naturally_settled':settled,'known_natural_nonzero':bool(settled and owned['exit_code']!=0),'passed':passed,'ownership_unknown_or_unsettled':not settled}
++
++def finalize_receipt(owned,worker,plan,plan_path,plan_sha,started,command,identity,failure,deadline,*,clock=time.monotonic,hash_file=digest,flush_log=None):
++    # The last clock sample follows every consumed hash and the receipt body.
++    # Only the final timing-field replacement/serialization/write is excluded.
++    state=disposition(owned,worker);errors=[];hashes={}
++    def observe(label,path,expected=None):
++        try:
++            actual=hash_file(path);hashes[label]={'path':str(path),'sha256':actual}
++            if expected is not None and actual!=expected:errors.append({'stage':label,'kind':'hash_mismatch','expected':expected,'observed':actual})
++            return actual
++        except BaseException as error:
++            errors.append({'stage':label,'kind':'hash_error','type':type(error).__name__,'message':str(error)});return None
++    if flush_log is not None:
++        try:flush_log()
++        except BaseException as error:errors.append({'stage':'child_stdout_flush','kind':'flush_error','type':type(error).__name__,'message':str(error)})
++    result_path=Path(plan['worker_output'])/'result.json'
++    result_sha=observe('worker_result',result_path)if worker is not None else None
++    observe('child_stdout_log',Path(plan['log_dir'])/'stdout.log')
++    observe('actual_execution_plan',plan_path,plan_sha)
++    for name,pin in sorted(plan['execution_sources'].items()):observe('consumed_source:'+name,Path(pin['path']),pin['sha256'])
++    if errors:state['passed']=False
++    if owned and owned.get('peak_host_committed_bytes',0)>plan['limits']['host_committed_bytes']:state['passed']=False
++    receipt={'schema':'airk.private.F1-F2-owned-execution/1','plan_sha256':plan_sha,'argv':command,'identity':identity,'elapsed_seconds':None,'original_deadline':deadline,'limits':plan['limits'],'owned':owned,'failure':failure,'worker_result_path':str(result_path),'worker_result_sha256':result_sha,'disposition':state,'final_hashes':hashes,'final_hash_failures':errors,'qualification':False,'promotion':False,'no_retry':True,'timing_scope':'Includes launch/actual owned settlement, worker finally retention, every final result/log/plan/consumed-source hash and receipt-body construction/validation. Excludes only final elapsed/disposition insertion, final execution.json serialization/write and terminal reporting.'}
++    # Validate/construct the entire potentially large body before final sampling.
++    json.dumps(receipt)
++    elapsed=clock()-started;receipt['elapsed_seconds']=elapsed
++    if not 0<=elapsed<plan['limits']['wall_seconds']:state['passed']=False
++    return receipt
+ 
+ def launch(path,sha):
+     path=Path(path).resolve()
+@@ -59,11 +87,7 @@
+             failure={'type':type(error).__name__,'message':str(error),'owned_cleanup':getattr(error,'owned_cleanup',None)}
+             raise
+         finally:
+-            state=disposition(owned,worker)
+-            elapsed=time.monotonic()-started
+-            if elapsed>plan['limits']['wall_seconds']:state['passed']=False
+-            if owned and owned.get('peak_host_committed_bytes',0)>plan['limits']['host_committed_bytes']:state['passed']=False
+-            receipt={'schema':'airk.private.F1-F2-owned-execution/1','plan_sha256':sha,'argv':command,'identity':identity,'elapsed_seconds':elapsed,'original_deadline':deadline,'limits':plan['limits'],'owned':owned,'failure':failure,'worker_result_path':str(Path(plan['worker_output'])/'result.json'),'worker_result_sha256':digest(Path(plan['worker_output'])/'result.json')if worker else None,'disposition':state,'qualification':False,'promotion':False,'no_retry':True}
++            receipt=finalize_receipt(owned,worker,plan,path,sha,started,command,identity,failure,deadline,flush_log=log.flush)
+             (out/'execution.json').write_text(json.dumps(receipt,indent=2)+'\n',encoding='utf8')
+     if not receipt['disposition']['passed']:raise RuntimeError('F1/F2 owned execution nonpass; original evidence retained')
+     print(json.dumps(receipt))
+--- r2/test_final_clock.py
++++ r3/test_final_clock.py
+@@ -0,0 +1,35 @@
++import unittest
++from launch_owned import finalize_receipt
++class FinalClockControls(unittest.TestCase):
++    def owned(self,exit_code=0):return{'owned_descendants_settled':True,'owned_job_forced_termination':False,'owned_job_final_active_processes':0,'owned_job_final_member_pids':[],'retained_member_exits':[{'exit_observed':True,'exit_code':exit_code}],'exit_code':exit_code,'timed_out':False,'log_oversized':False,'owned_total_processes':1,'peak_host_committed_bytes':12}
++    def plan(self):return{'worker_output':'D:/owned/worker','log_dir':'D:/owned','execution_sources':{'last.py':{'path':'D:/last.py','sha256':'sourceSHA'}},'limits':{'wall_seconds':120,'host_committed_bytes':100}}
++    def finalize(self,hash_file,clock,owned=None,failure=None):return finalize_receipt(self.owned()if owned is None else owned,{'complete':True},self.plan(),'D:/plan.json','planSHA',0,['actual-argv'],{'sid':'human1002'},failure,120,hash_file=hash_file,clock=clock)
++    def test_injected_slow_final_source_hash_is_charged_before_last_clock(self):
++        ticks=[119.];events=[]
++        def hash_file(path):
++            path=str(path);events.append(path)
++            if path.endswith('last.py'):ticks[0]+=2;return'sourceSHA'
++            return'planSHA'if path.endswith('plan.json')else'observed'
++        def clock():events.append('FINAL_CLOCK');return ticks[0]
++        receipt=self.finalize(hash_file,clock);self.assertEqual(receipt['elapsed_seconds'],121.);self.assertFalse(receipt['disposition']['passed']);self.assertEqual(events[-1],'FINAL_CLOCK');self.assertTrue(receipt['disposition']['naturally_settled'])
++    def test_injected_slow_result_hash_is_not_hidden_by_pre_hash_elapsed(self):
++        ticks=[0.]
++        def hash_file(path):
++            path=str(path)
++            if path.endswith('result.json'):ticks[0]=120.
++            return'sourceSHA'if path.endswith('last.py')else'planSHA'if path.endswith('plan.json')else'observed'
++        receipt=self.finalize(hash_file,lambda:ticks[0]);self.assertEqual(receipt['elapsed_seconds'],120.);self.assertFalse(receipt['disposition']['passed'])
++    def test_hash_error_preserves_original_nonzero_failure_and_still_samples_clock(self):
++        failure={'type':'OriginalChildFailure','message':'retained actual failure'};ticks=[]
++        def hash_file(path):
++            if str(path).endswith('stdout.log'):raise OSError('injected final log hash failure')
++            return'sourceSHA'if str(path).endswith('last.py')else'planSHA'if str(path).endswith('plan.json')else'observed'
++        receipt=self.finalize(hash_file,lambda:ticks.append('sample')or 3.,owned=self.owned(7),failure=failure)
++        self.assertIs(receipt['failure'],failure);self.assertEqual(receipt['owned']['exit_code'],7);self.assertTrue(receipt['disposition']['known_natural_nonzero']);self.assertFalse(receipt['disposition']['passed']);self.assertEqual(len(receipt['final_hash_failures']),1);self.assertEqual(ticks,['sample'])
++    def test_source_mismatch_fails_without_inventing_unsettled_process(self):
++        def hash_file(path):return'planSHA'if str(path).endswith('plan.json')else'wrongsource'if str(path).endswith('last.py')else'observed'
++        receipt=self.finalize(hash_file,lambda:2.);self.assertFalse(receipt['disposition']['passed']);self.assertTrue(receipt['disposition']['naturally_settled']);self.assertFalse(receipt['disposition']['ownership_unknown_or_unsettled'])
++    def test_fast_complete_hashes_can_pass_with_explicit_receipt_write_exclusion(self):
++        def hash_file(path):return'sourceSHA'if str(path).endswith('last.py')else'planSHA'if str(path).endswith('plan.json')else'observed'
++        receipt=self.finalize(hash_file,lambda:3.);self.assertTrue(receipt['disposition']['passed']);self.assertEqual(len(receipt['final_hashes']),4);self.assertIn('execution.json serialization/write',receipt['timing_scope'])
++if __name__=='__main__':unittest.main(verbosity=2)
+--- r2/WORKER-CONTRACT.md
++++ r3/WORKER-CONTRACT.md
+@@ -11,3 +11,5 @@
+ General QASPER replay retains the original publisher instruction; only software code rows use the DEV-selected instruction. Both are native-emitted. Code comparisons use the identical selected instruction for original/adapted weights; replay is original human paragraph relevance, never complete evidence.
+ 
+ R2 actual-owned continuity: DEV selection consumes a pinned naturally successful SCORE receipt/start/plan/result. A pure immutable key binds checkpoint/model/runtime/data/fullsource/owner/baseimage/versions/commonenvironment/deviceidentity/host+GPUcaps across stages. Only mode, output-local caches, wall and selection/probe evidence vary; the selected instruction is verified separately. Probe→train also preserves the selected instruction. Exactly85score list entries and unique IDs are required before mapping. R1 remains preserved; no oldrun is relabelled.
++
++R3 parent clock closure: after actual maintained owned settlement (including worker finally output retention), parent hashes final worker result, child log, actual plan and every consumed execution-source pin, preserving hash failures separately from the original owned result/failure. It constructs/validates the full receipt body, then samples the original clock LAST; at/after original wall cap is nonpass. Only final elapsed/disposition insertion, final execution.json serialization/write and terminal reporting are excluded. Hash exceptions/mismatches never erase original natural-nonzero versus unsettled evidence or create a pass. No clock renewal, replay, extra model run or process-control change.

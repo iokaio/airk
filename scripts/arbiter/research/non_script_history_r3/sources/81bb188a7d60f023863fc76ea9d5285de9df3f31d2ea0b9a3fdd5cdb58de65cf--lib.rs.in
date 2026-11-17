@@ -1,0 +1,192 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Local persistent candidate engines and bounded evidence responses.
+pub mod bounded;
+pub mod embedding_batch;
+pub mod embedding_worker;
+pub mod intent;
+#[cfg(any(test, all(feature = "local-inference", target_os = "macos")))]
+mod macho_identity;
+pub mod model;
+pub mod model_catalog;
+#[cfg(feature = "local-inference")]
+mod onnx;
+#[cfg(not(feature = "local-inference"))]
+#[path = "remote_onnx.rs"]
+mod onnx;
+pub mod remote_model;
+pub mod vector;
+pub mod vector_units;
+use airk_core::{Citation, Hit, SearchQuery, SearchResponse, Snapshot};
+use anyhow::{Result, ensure};
+use std::collections::{BTreeMap, BTreeSet};
+
+pub struct LexicalIndex {
+    postings: BTreeMap<String, BTreeSet<usize>>,
+    chunks: Vec<(String, usize)>,
+}
+
+impl LexicalIndex {
+    pub fn build(snapshot: &Snapshot) -> Self {
+        let mut index = Self {
+            postings: BTreeMap::new(),
+            chunks: Vec::new(),
+        };
+        for (path, artifact) in &snapshot.artifacts {
+            for (ordinal, chunk) in artifact.chunks.iter().enumerate() {
+                let id = index.chunks.len();
+                index.chunks.push((path.clone(), ordinal));
+                for term in terms(&format!("{path} {}", chunk.text)) {
+                    index.postings.entry(term).or_default().insert(id);
+                }
+            }
+        }
+        index
+    }
+
+    pub fn search(&self, snapshot: &Snapshot, query: &SearchQuery) -> Result<SearchResponse> {
+        query.validate()?;
+        let query_terms = terms(&query.text);
+        ensure!(
+            !query_terms.is_empty(),
+            "query must contain a letter or number"
+        );
+        let mut sets = query_terms.iter().map(|term| self.postings.get(term));
+        let mut candidates = sets.next().flatten().cloned().unwrap_or_default();
+        for set in sets {
+            match set {
+                Some(set) => candidates.retain(|id| set.contains(id)),
+                None => candidates.clear(),
+            }
+        }
+        let mut response = SearchResponse {
+            execution: None,
+            publication: None,
+            semantic_readiness: None,
+            discovery_readiness: None,
+            generation: snapshot.generation,
+            collection: snapshot.collection.clone(),
+            hits: Vec::new(),
+            truncated: false,
+        };
+        let mut remaining = query.max_bytes;
+        for id in candidates {
+            let (path, ordinal) = &self.chunks[id];
+            if query
+                .path_prefix
+                .as_ref()
+                .is_some_and(|prefix| !path.starts_with(prefix))
+            {
+                continue;
+            }
+            if remaining == 0 || response.hits.len() == query.limit {
+                response.truncated = true;
+                break;
+            }
+            let artifact = &snapshot.artifacts[path];
+            let chunk = &artifact.chunks[*ordinal];
+            let (text, truncated) = truncate_utf8(&chunk.text, remaining);
+            remaining -= text.len();
+            response.truncated |= truncated;
+            response.hits.push(Hit {
+                citation: Citation {
+                    path: path.clone(),
+                    content_hash: artifact.content_hash.clone(),
+                    start_line: chunk.start_line,
+                    end_line: chunk.end_line,
+                    location: chunk.location.clone(),
+                },
+                text,
+                truncated,
+            });
+        }
+        Ok(response)
+    }
+}
+
+pub use airk_core::lexical::terms;
+
+pub fn truncate_utf8(text: &str, max_bytes: usize) -> (String, bool) {
+    let mut end = max_bytes.min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    (text[..end].to_owned(), end < text.len())
+}
+
+/// Select an original UTF-8 span around query terms under the result allowance.
+pub fn focus_span(text: &str, query: &str, allowance: usize) -> airk_core::location::ByteSpan {
+    use airk_core::location::ByteSpan;
+    if text.len() <= allowance {
+        return ByteSpan {
+            start: 0,
+            end: text.len(),
+        };
+    }
+    // Focus a selected chunk on its contiguous query spelling when available.
+    // This changes only the excerpt, never AND matching or candidate ordering.
+    let literal = query.trim();
+    let literal = literal
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .filter(|value| !value.is_empty())
+        .unwrap_or(literal);
+    if allowance > 0 && !literal.is_empty()
+        && let Some(found) = text.find(literal)
+    {
+        let before = allowance.saturating_sub(literal.len()).min(allowance / 4);
+        let mut start = found.saturating_sub(before);
+        while !text.is_char_boundary(start) {
+            start += 1;
+        }
+        let mut end = text.len().min(start.saturating_add(allowance));
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        return ByteSpan { start, end };
+    }
+    let query = terms(query);
+    let mut selected = None;
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let start = offset + line.len() - line.trim_start().len();
+        if start < offset + line.len() {
+            let score = terms(line).intersection(&query).count();
+            if selected.is_none_or(|(_, _, best)| score > best) {
+                selected = Some((start, offset + line.len(), score));
+            }
+        }
+        offset += line.len();
+    }
+    let (mut start, end, score) = selected.unwrap_or((0, text.len(), 0));
+    if score > 0 {
+        let mut word = None;
+        for (index, character) in text[start..end]
+            .char_indices()
+            .chain(std::iter::once((end - start, ' ')))
+        {
+            if character.is_alphanumeric() || character == '_' {
+                word.get_or_insert(index);
+            } else if let Some(begin) = word.take()
+                && !terms(&text[start + begin..start + index]).is_disjoint(&query)
+            {
+                if begin >= allowance {
+                    start += begin.saturating_sub(allowance / 4);
+                }
+                break;
+            }
+        }
+    }
+    while !text.is_char_boundary(start) {
+        start -= 1;
+    }
+    let mut end = text.len().min(start.saturating_add(allowance));
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    // A one-byte allowance may not fit a complete scalar; its full source span
+    // remains valid while the final UTF8 byte-budget truncation returns no text.
+    if end == start {
+        end = start + text[start..].chars().next().map_or(0, char::len_utf8);
+    }
+    ByteSpan { start, end }
+}

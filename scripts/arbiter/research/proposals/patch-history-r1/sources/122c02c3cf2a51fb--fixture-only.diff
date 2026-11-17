@@ -1,0 +1,33 @@
+--- before-ann_query.rs
++++ fixture-split-ann_query.rs
+@@ -1103,16 +1103,23 @@
+         ]),
+     };
+     let citation = json!({"path":"literal.txt","content_hash":hash,"start_line":1,"end_line":1,"location":{"Lines":{"start":1,"end":1}}});
++    let verification_counts = json!({"references":1,"references_lower_bound":1,"requested_sources":1,"requested_sources_lower_bound":1,"checked_sources":0,"matched_sources":0,"mismatched_sources":0,"unchecked_sources":1,"bytes_read":0});
++    let verification_limits = json!({"max_sources":8,"max_bytes":16777216,"deadline_ms":2000,"effective_deadline_ms":2000,"stream_bytes":65536,"eof_probe_reserve_bytes":1,"concurrency":1,"reference_inventory_max":4096,"receipt_bytes_max":32768,"receipt_bytes_budget":32768,"hit":["sources"]});
++    let verification_origins = json!([{"id":"origin-0","index_id":index,"legacy_project":hash,"collection":"literal","incarnation":publication.incarnation,"publication":publication.token,"project_ids":[]}]);
++    let verification_sources = json!([{"id":source_id,"origin_id":"origin-0","source_root_id":root,"original_root":"literal-root","source_relative_path":"literal.txt","path":"literal.txt","expected_hash":hash,"observed_hash":null,"profile_digest":hash,"project_ids":[],"reference_ids":["ref-0"],"state":"budget_exhausted","reason":"sources","observed_from_unix_ms":1,"observed_to_unix_ms":2,"bytes_read":0}]);
++    let verification_references = json!([{"id":"ref-0","source_id":source_id,"result_pointer":"/hits/0/citation","kind":"citation"}]);
++    let scope_observation = json!({"schema":1,"qualifier":"selected_subset","fingerprint":hash,"selection":{"owner":"agent","scope_identity":hash,"catalog_revision":1},"members":[{"index_id":index,"memberships":[],"source_root_ids":[root],"source_revision":1,"policy_epoch":0,"policy_digest":null}]});
++    let source_verification = json!({"schema":"airk.saved-source-verification/1","method":"sha256-full-saved-source/1","mode":"report","status":"partial","scope_digest":hash,"selection_digest":hash,"observed_from_unix_ms":1,"observed_to_unix_ms":2,"publication_fence":"current","inventory_complete":true,"all_references_accounted":true,"source_rows_omitted":0,"requirements_satisfied":false,
++            "counts":verification_counts,
++            "limits":verification_limits,
++            "origins":verification_origins,
++            "sources":verification_sources,
++            "references":verification_references,"qualifications":[]});
+     let body = json!({"collection":"literal","generation":7,"publication":publication,"hits":[{"citation":citation,"text":"literal text","truncated":false}],"truncated":false,
+         "execution":{"version":1,"requested_mode":"vector","served_mode":"vector","incomplete":false},
+         "read_scope":{"index_ids":[index],"source":"named"},
+-        "scope_observation":{"schema":1,"qualifier":"selected_subset","fingerprint":hash,"selection":{"owner":"agent","scope_identity":hash,"catalog_revision":1},"members":[{"index_id":index,"memberships":[],"source_root_ids":[root],"source_revision":1,"policy_epoch":0,"policy_digest":null}]},
+-        "source_verification":{"schema":"airk.saved-source-verification/1","method":"sha256-full-saved-source/1","mode":"report","status":"partial","scope_digest":hash,"selection_digest":hash,"observed_from_unix_ms":1,"observed_to_unix_ms":2,"publication_fence":"current","inventory_complete":true,"all_references_accounted":true,"source_rows_omitted":0,"requirements_satisfied":false,
+-            "counts":{"references":1,"references_lower_bound":1,"requested_sources":1,"requested_sources_lower_bound":1,"checked_sources":0,"matched_sources":0,"mismatched_sources":0,"unchecked_sources":1,"bytes_read":0},
+-            "limits":{"max_sources":8,"max_bytes":16777216,"deadline_ms":2000,"effective_deadline_ms":2000,"stream_bytes":65536,"eof_probe_reserve_bytes":1,"concurrency":1,"reference_inventory_max":4096,"receipt_bytes_max":32768,"receipt_bytes_budget":32768,"hit":["sources"]},
+-            "origins":[{"id":"origin-0","index_id":index,"legacy_project":hash,"collection":"literal","incarnation":publication.incarnation,"publication":publication.token,"project_ids":[]}],
+-            "sources":[{"id":source_id,"origin_id":"origin-0","source_root_id":root,"original_root":"literal-root","source_relative_path":"literal.txt","path":"literal.txt","expected_hash":hash,"observed_hash":null,"profile_digest":hash,"project_ids":[],"reference_ids":["ref-0"],"state":"budget_exhausted","reason":"sources","observed_from_unix_ms":1,"observed_to_unix_ms":2,"bytes_read":0}],
+-            "references":[{"id":"ref-0","source_id":source_id,"result_pointer":"/hits/0/citation","kind":"citation"}],"qualifications":[]}});
++        "scope_observation":scope_observation,
++        "source_verification":source_verification});
+     let modes=["lexical","vector","hybrid"].map(|mode|Mode {mode:mode.into(),arguments:json!({"query":"literal query","mode":mode,"limit":10,"max_bytes":65536,"response_mode":"full"}),capture_pointer:format!("/representative/attempts/{}",match mode {"lexical"=>0,"vector"=>1,_=>2})});
+     let attempts=modes.iter().map(|mode|json!({"case":"literal-q1","mode":mode.mode,"input":{"query":"literal query"},"status":"ok","native_attempt":{"request":{"name":"airk_search","arguments":mode.arguments},"budget":{"operation_deadline_ms":120000,"sha256":hash}},"native_result":body})).collect::<Vec<_>>();
+     let capture = json!({"binary_sha256":hash,"binary_sha256_after":hash,"airkctl_sha256":hash,"representative":{"source_oracle":{"selection":{"index_id":index,"namespace":input.expected_namespace},"request_scope":{"index_ids":[index]}},"attempts":attempts}});

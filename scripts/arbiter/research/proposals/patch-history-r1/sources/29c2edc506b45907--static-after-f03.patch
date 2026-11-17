@@ -1,0 +1,63 @@
+--- a/crates/airk-cli/src/runtime_install.rs
++++ b/crates/airk-cli/src/runtime_install.rs
+@@ -394,14 +394,18 @@
+     Ok(())
+ }
+ 
+-/// Verify the selected payload without electing a service or starting project work.
++/// Validate frontend selection metadata without authorizing executable payloads.
+ pub fn installed_metadata_control(root: &Path) -> Result<PathBuf> {
+     // External policy can be pinned before its supervisor starts the service.
+     // Selection is published only after matching health, so the first client
+     // must validate the pin before asking ensure to observe that health.
+     let approval = match managed::read(root)? {
++        // Managed policy remains on its existing full verification route in this
++        // first slice. Its source/pin rules are not selected.json semantics.
+         Some(policy) => policy.verify()?.1,
+-        None => selected(root)?.2,
++        // This authenticates bounded manifest/pair metadata and the selected
++        // identity. It is not a VerifiedSelection and cannot authorize a start.
++        None => selected_preflight(root)?.approval,
+     };
+     ensure!(
+         approval.version == env!("CARGO_PKG_VERSION"),
+--- a/crates/airk-cli/src/runtime_install_tests.rs
++++ b/crates/airk-cli/src/runtime_install_tests.rs
+@@ -898,3 +898,37 @@
+     assert!(!rebound.exists(), "scope rejection must not initialize the new service");
+     Ok(())
+ }
++
++
++#[test]
++fn frontend_metadata_defers_missing_payload_to_locked_native_verification() -> Result<()> {
++    let (_owner, root, identity) = selected_connection_fixture()?;
++    let control = layout::control(&root)?;
++    let payload = root.join("runtimes").join(&identity);
++    fs::remove_file(payload.join(main_name()))?;
++    fs::remove_file(payload.join(helper_name()))?;
++    fs::write(payload.join("LICENSE"), b"changed inert ancillary fixture")?;
++    assert_eq!(installed_metadata_control(&root)?, control);
++    let lock = install_lock(&root)?;
++    let authority = InstallerAuthority { root: &root, _lock: &lock };
++    assert!(selected_verified(&authority).is_err());
++    assert!(!root.join("bootstrap.json").exists());
++    assert!(!root.join(format!("startup-{identity}.json")).exists());
++    Ok(())
++}
++
++#[test]
++fn frontend_metadata_still_authenticates_pair_and_selection() -> Result<()> {
++    let (_owner, root, identity) = selected_connection_fixture()?;
++    let pair = root.join("runtimes").join(&identity).join("airk-runtime.json");
++    let original = fs::read(&pair)?;
++    fs::write(&pair, b"{}")?;
++    assert!(installed_metadata_control(&root).is_err());
++    fs::write(&pair, original)?;
++    assert_eq!(installed_metadata_control(&root)?, layout::control(&root)?);
++    replace_json(&root, "selected.json", &Selection {
++        schema: 1, active: "0".repeat(64), previous: None,
++    })?;
++    assert!(installed_metadata_control(&root).is_err());
++    Ok(())
++}

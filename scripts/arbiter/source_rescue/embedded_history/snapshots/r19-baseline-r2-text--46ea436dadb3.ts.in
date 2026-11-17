@@ -1,0 +1,3 @@
+// SPDX-License-Identifier: Apache-2.0
+const catalogRequests = createCatalogRequests({ run, setItems, setCursor, setHeader });
+  const load = (after: unknown): Promise<void> => catalogRequests.load(after, props, filter, items);

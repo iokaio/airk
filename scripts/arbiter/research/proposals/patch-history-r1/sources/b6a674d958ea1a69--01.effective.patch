@@ -1,0 +1,287 @@
+--- /dev/null
++++ b/crates/airk-cli/tests/combined_reads/changes_verification.rs
+@@ -0,0 +1,63 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Current remembered evidence must retain exact native saved-source authority.
++use super::*;
++
++#[tokio::test]
++async fn current_changes_source_receipts_preserve_attribution_through_native_cli_and_mcp()
++-> Result<()> {
++    let f = Fixture::new(false)?;
++    let _service = f.start().await?;
++    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
++    let mut mcp = McpSession::start(&f)?;
++    let arguments = json!({"project_ids":[f.projects[0]],"index_ids":[f.indexes[0]],
++        "selectors":[{"kind":"path","path":"api/policy.md"}],"limit":4,"max_bytes":8192,
++        "verification":"require","verification_max_sources":4,"verification_max_bytes":8192,
++        "verification_deadline_ms":4000,"response_mode":"full"});
++    let native = native_read(backend.as_ref(), "airk_changes", &arguments).await?;
++    let cli = f.cli("airk_changes", &arguments).await?;
++    let wire = mcp.call(2, "changes", arguments)?;
++    let expected = body(&native)?;
++    assert_parity("verified current changes CLI", &expected, &body(&cli)?)?;
++    assert_parity(
++        "verified current changes MCP",
++        &expected,
++        &body(&wire["result"])?,
++    )?;
++    let members = expected["members"]
++        .as_array()
++        .context("changes members absent")?;
++    assert_eq!(members.len(), 1, "{expected}");
++    let member = member_body(&expected, &members[0])?;
++    assert_eq!(
++        member["validations"][0]["outcome"], "index-current",
++        "{member}"
++    );
++    let receipt = &member["source_verification"];
++    assert_eq!(receipt["publication_fence"], "current", "{receipt}");
++    assert_eq!(receipt["status"], "verified", "{receipt}");
++    assert_eq!(receipt["requirements_satisfied"], true, "{receipt}");
++    assert_eq!(receipt["counts"]["references"], 1, "{receipt}");
++    assert_eq!(receipt["counts"]["checked_sources"], 1, "{receipt}");
++    assert_eq!(
++        receipt["references"][0]["result_pointer"],
++        "/validations/0/current"
++    );
++    let sources = receipt["sources"]
++        .as_array()
++        .context("checked sources absent")?;
++    assert_eq!(sources.len(), 1, "{receipt}");
++    assert_eq!(sources[0]["state"], "matched", "{receipt}");
++    assert_eq!(sources[0]["path"], "api/policy.md");
++    assert_eq!(
++        sources[0]["source_root_id"],
++        json!(SourceRootId::from_identity(Incarnation::from_bytes(
++            [50; 16]
++        )))
++    );
++    assert_eq!(sources[0]["project_ids"], json!([f.projects[0]]));
++    assert_eq!(sources[0]["expected_hash"], sources[0]["observed_hash"]);
++    backend.close();
++    backend.shutdown().await?;
++    f.assert_sources_unchanged()?;
++    Ok(())
++}
+--- a/crates/airk-cli/tests/combined_reads.rs
++++ b/crates/airk-cli/tests/combined_reads.rs
+@@ -6,6 +6,9 @@
+ 
+ #[path = "combined_reads/permanent_trim.rs"]
+ mod permanent_trim;
++
++#[path = "combined_reads/changes_verification.rs"]
++mod changes_verification;
+ 
+ #[cfg(feature = "embedding-worker")]
+ #[path = "combined_reads/reference_refresh.rs"]
+--- a/crates/airk-core/src/verification/inventory.rs
++++ b/crates/airk-core/src/verification/inventory.rs
+@@ -68,7 +68,7 @@
+             complete: true,
+             ..Self::default()
+         };
+-        inventory.visit(value, "", None, false, 0);
++        inventory.visit(value, "", None, false, 0, true);
+         inventory
+     }
+ 
+@@ -162,6 +162,88 @@
+         });
+     }
+ 
++    /// Only the canonical changes projection binds a validation's current
++    /// endpoint to the exact observed publication. Remembered input paths are
++    /// routing metadata when that endpoint already accounts for their source.
++    fn visit_changes_validation(
++        &mut self,
++        value: &Value,
++        pointer: &str,
++        publication: RevisionToken,
++        historical: bool,
++        depth: usize,
++    ) {
++        self.visited += 1;
++        if depth > 32 || self.visited > 32_768 {
++            self.complete = false;
++            return;
++        }
++        let Some(object) = value.as_object() else {
++            self.complete = false;
++            return;
++        };
++        if let Some(current) = object.get("current").filter(|endpoint| {
++            endpoint.get("path").is_some() && endpoint.get("source_hash").is_some()
++        }) {
++            // FileState.path is relative to its original root. The native
++            // validation's resolved_path is the collection citation locator;
++            // retain both explicitly so an @alias cannot open a primary file.
++            let locator = object.get("resolved_path").and_then(Value::as_str);
++            let mut endpoint = current.clone();
++            if let Some(locator) = locator {
++                endpoint["citation_path"] = Value::String(locator.into());
++            }
++            self.add(
++                &endpoint,
++                format!("{pointer}/current"),
++                "graph_endpoint",
++                Some(publication),
++                historical || locator.is_none(),
++            );
++        } else {
++            // Missing/removed/ambiguous remembered evidence is not silently
++            // turned into a verified empty subset.
++            for key in ["requested_path", "resolved_path"] {
++                if let Some(path) = object.get(key).filter(|path| path.is_string()) {
++                    self.add(
++                        path,
++                        format!("{pointer}/{key}"),
++                        "unsupported_file_reference",
++                        Some(publication),
++                        true,
++                    );
++                }
++            }
++            if let Some(selector) = object
++                .get("selector")
++                .filter(|selector| selector.get("path").is_some())
++            {
++                self.add(
++                    selector,
++                    format!("{pointer}/selector"),
++                    "unsupported_file_reference",
++                    Some(publication),
++                    true,
++                );
++            }
++        }
++        if let Some(candidates) = object.get("candidates").and_then(Value::as_array) {
++            for (index, candidate) in candidates.iter().enumerate() {
++                self.add(
++                    candidate,
++                    format!("{pointer}/candidates/{index}"),
++                    "graph_endpoint",
++                    Some(publication),
++                    true,
++                );
++                if self.references_lower_bound > MAX_REFERENCES {
++                    self.complete = false;
++                    break;
++                }
++            }
++        }
++    }
++
+     fn visit(
+         &mut self,
+         value: &Value,
+@@ -169,6 +251,10 @@
+         inherited: Option<RevisionToken>,
+         historical: bool,
+         depth: usize,
++        // Only root reads and known native envelope/member/step results may
++        // qualify a changes response. Producer evidence rows never gain this
++        // authority by coincidentally containing changes-shaped attributes.
++        read_projection: bool,
+     ) {
+         self.visited += 1;
+         if depth > 32 || self.visited > 32_768 {
+@@ -215,6 +301,7 @@
+                             None,
+                             historical,
+                             depth + 1,
++                            read_projection,
+                         ),
+                         Err(_) => {
+                             // Preserve honest known inline locator lower bounds,
+@@ -227,6 +314,7 @@
+                                 None,
+                                 historical,
+                                 depth + 1,
++                                false,
+                             );
+                         }
+                     }
+@@ -254,6 +342,7 @@
+                 inherited,
+                 historical,
+                 depth + 1,
++                read_projection,
+             );
+         }
+         let previous_origin = self.member_origin.clone();
+@@ -293,6 +382,25 @@
+             .and_then(Value::as_str)
+             .and_then(|token| token.parse().ok())
+             .or(inherited);
++        // This exact response fence belongs to native ChangesResponse. Do not
++        // infer current authority from a row named `current`, the owner's head,
++        // a historical event endpoint, or an unqualified nested projection.
++        let changes_current = object
++            .get("current")
++            .and_then(Value::as_str)
++            .and_then(|token| token.parse::<RevisionToken>().ok())
++            .filter(|token| {
++                read_projection
++                    && object.get("status").and_then(Value::as_str) == Some("ready")
++                    && object.get("baseline_status").is_some()
++                    && object.get("validations").is_some_and(Value::is_array)
++                    && Some(*token) == publication
++                    && object
++                        .get("to")
++                        .and_then(Value::as_str)
++                        .and_then(|token| token.parse::<RevisionToken>().ok())
++                        == Some(*token)
++            });
+         if let Some(citation) = object.get("citation") {
+             self.add(
+                 citation,
+@@ -368,13 +476,21 @@
+             if let Some(rows) = object.get(key).and_then(Value::as_array) {
+                 for (index, row) in rows.iter().enumerate() {
+                     let row_pointer = format!("{pointer}/{key}/{index}");
+-                    if key == "files"
++                    if key == "validations" && changes_current.is_some() {
++                        self.visit_changes_validation(
++                            row,
++                            &row_pointer,
++                            changes_current.expect("qualified changes publication"),
++                            historical,
++                            depth + 1,
++                        );
++                    } else if key == "files"
+                         && row.get("path").is_some()
+                         && row.get("content_hash").is_none()
+                     {
+                         self.add(row, row_pointer, "file_path", publication, historical);
+                     } else {
+-                        self.visit(row, &row_pointer, publication, historical, depth + 1);
++                        self.visit(row, &row_pointer, publication, historical, depth + 1, false);
+                     }
+                     if self.visited > 32_768 || self.references_lower_bound > MAX_REFERENCES {
+                         self.complete = false;
+@@ -470,6 +586,7 @@
+                             publication,
+                             historical,
+                             depth + 1,
++                            false,
+                         );
+                         if self.visited > 32_768 || self.references_lower_bound > MAX_REFERENCES {
+                             self.complete = false;
+@@ -483,6 +600,7 @@
+                         publication,
+                         historical,
+                         depth + 1,
++                        false,
+                     );
+                 }
+             }
+@@ -496,6 +614,7 @@
+                         publication,
+                         historical,
+                         depth + 1,
++                        read_projection,
+                     );
+                 }
+                 if self.visited > 32_768 || self.references_lower_bound > MAX_REFERENCES {

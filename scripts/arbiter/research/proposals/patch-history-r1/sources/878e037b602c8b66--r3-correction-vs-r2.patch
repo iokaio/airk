@@ -1,0 +1,321 @@
+--- r2/owner-projection-proposal/owned_projection.rs
++++ r3/owner-projection-proposal/owned_projection.rs
+@@ -48,6 +48,66 @@
+     settled_owner(&owner)?;
+     committed(&owner["owned"], reservation)?;
+     Ok(owner)
++}
++
++fn typed_execution(
++    profile: &Profile,
++    input: &ResourceRunInput,
++    input_pin: PinnedFile,
++    capture: &Value,
++    capture_pin: PinnedFile,
++    owner: PinnedFile,
++    native_binary: PinnedFile,
++) -> Result<Execution> {
++    let gate = match capture["schema"].as_str() {
++        Some("airk.arbiter.native-resource/2") => Gate::NativeResource,
++        Some("airk.arbiter.native-numeric-result/2") => Gate::NativeNumerical,
++        _ => anyhow::bail!("retained native primitive schema absent/unknown"),
++    };
++    ensure!(
++        capture["input_sha256"] == json!(input_pin.sha256)
++            && capture["native_binary_sha256"] == json!(native_binary.sha256),
++        "typed execution original input/image binding differs"
++    );
++    let target = capture["target"]
++        .as_str()
++        .context("actual native capture target absent")?;
++    ensure!(!target.is_empty(), "actual native capture target empty");
++    Ok(Execution {
++        schema: "airk.private.software-v2-native-execution/1".into(),
++        gate,
++        binding: binding(profile, input.profile.sha256, target)?,
++        policy_digest: input.policy.digest()?,
++        input: input_pin,
++        capture: capture_pin,
++        owner,
++        native_binary,
++    })
++}
++fn output_path(name: &str, raw: &Path) -> Result<PathBuf> {
++    let output = PathBuf::from(std::env::var(name)?);
++    ensure!(
++        output.is_absolute()
++            && fs::canonicalize(output.parent().context("projection output parent absent")?)?
++                == fs::canonicalize(raw.parent().context("original raw parent absent")?)?,
++        "projection outputs must be in the original protected raw-run directory"
++    );
++    Ok(output)
++}
++fn retain_output(path: &Path, bytes: &[u8]) -> Result<PinnedFile> {
++    let mut file = fs::OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .open(path)?;
++    std::io::Write::write_all(&mut file, bytes)?;
++    file.sync_all()?;
++    let pin = PinnedFile {
++        path: path.into(),
++        bytes: bytes.len() as u64,
++        sha256: sha(bytes),
++    };
++    pinned(&pin)?;
++    Ok(pin)
+ }
+ 
+ #[test]
+@@ -103,16 +163,52 @@
+     pinned(&stdout)?;
+     let journal: PinnedFile = serde_json::from_value(owner["operation_journal"].clone())?;
+     ensure!(!pinned(&journal)?.is_empty(), "retained journal empty");
+-    owner["original_raw_execution"] = serde_json::to_value(raw_pin)?;
++    owner["original_raw_execution"] = serde_json::to_value(&raw_pin)?;
+     // Full source/target/selector/input closure and RecordedDecision approval stay
+-    // with owned_execution/source_closure. Projection creates no such authority.
+-    let output = PathBuf::from(std::env::var("AIRK_SOFTWARE_V2_CANONICAL_OWNER_OUTPUT")?);
+-    let mut file = fs::OpenOptions::new()
+-        .write(true)
+-        .create_new(true)
+-        .open(output)?;
+-    std::io::Write::write_all(&mut file, &serde_json::to_vec_pretty(&owner)?)?;
+-    file.sync_all()?;
++    // with owned_execution/source_closure. Neither projection grants authority.
++    let owner_output = output_path("AIRK_SOFTWARE_V2_CANONICAL_OWNER_OUTPUT", &raw_pin.path)?;
++    let execution_output =
++        output_path("AIRK_SOFTWARE_V2_CANONICAL_EXECUTION_OUTPUT", &raw_pin.path)?;
++    ensure!(
++        owner_output != execution_output,
++        "distinct canonical output files required"
++    );
++    let native_binary = PinnedFile {
++        path: PathBuf::from(
++            raw["native_image"]["path"]
++                .as_str()
++                .context("preserved native image path absent")?,
++        ),
++        bytes: raw["native_image"]["bytes"]
++            .as_u64()
++            .context("preserved native image length absent")?,
++        sha256: serde_json::from_value(raw["native_image"]["sha256"].clone())?,
++    };
++    seal(&owner, &native_binary.path, native_binary.sha256)?;
++    let owner_bytes = serde_json::to_vec_pretty(&owner)?;
++    let owner_pin = PinnedFile {
++        path: owner_output.clone(),
++        bytes: owner_bytes.len() as u64,
++        sha256: sha(&owner_bytes),
++    };
++    let input_pin = PinnedFile {
++        path: PathBuf::from(&input_pin.path),
++        bytes: fs::symlink_metadata(&input_pin.path)?.len(),
++        sha256: input_pin.sha256,
++    };
++    let execution = typed_execution(
++        &profile,
++        &input,
++        input_pin,
++        &capture,
++        capture_pin,
++        owner_pin,
++        native_binary,
++    )?;
++    // Validate both typed projections before creating either immutable output.
++    let execution_bytes = serde_json::to_vec_pretty(&execution)?;
++    retain_output(&owner_output, &owner_bytes)?;
++    retain_output(&execution_output, &execution_bytes)?;
+     Ok(())
+ }
+ 
+@@ -203,3 +299,83 @@
+     assert!(project(&raw, &changed, capture_sha, input, &policy, 1000).is_err());
+     Ok(())
+ }
++
++#[test]
++fn owned_projection_emits_existing_typed_execution_and_refuses_wrong_scope() -> Result<()> {
++    let mut profile: Profile = serde_json::from_slice(include_bytes!(
++        "../../../../../../../fixtures/arbiter/profile-downloads.json"
++    ))?;
++    let digest = Sha256Digest::from_bytes([11; 32]);
++    profile.model = ModelChoice::ContextQwenCompact;
++    profile.stage = Some(Stage::Context);
++    profile.cpu_fit = Some(CpuFit::default());
++    profile.task_policies.insert(Task::ContextAction, digest);
++    let pin = PinnedFile {
++        path: PathBuf::from("SYNTHETIC-ONLY"),
++        bytes: 1,
++        sha256: digest,
++    };
++    let input = ResourceRunInput {
++        schema: "airk.arbiter.resource-run/2".into(),
++        profile: ResourceFilePin {
++            path: "SYNTHETIC-ONLY".into(),
++            sha256: digest,
++        },
++        source_manifest: ResourceFilePin {
++            path: "SYNTHETIC-ONLY".into(),
++            sha256: digest,
++        },
++        files: BTreeMap::new(),
++        policy: ResourcePolicy::software_v2(),
++        policy_digest: ResourcePolicy::software_v2().digest()?,
++        numeric_fixture: None,
++    };
++    for (schema, gate) in [
++        ("airk.arbiter.native-resource/2", Gate::NativeResource),
++        (
++            "airk.arbiter.native-numeric-result/2",
++            Gate::NativeNumerical,
++        ),
++    ] {
++        let capture = json!({"schema":schema,"input_sha256":digest,
++            "native_binary_sha256":digest,"target":"x86_64-pc-windows-msvc"});
++        let make = |capture: &Value| {
++            typed_execution(
++                &profile,
++                &input,
++                pin.clone(),
++                capture,
++                pin.clone(),
++                pin.clone(),
++                pin.clone(),
++            )
++        };
++        let execution = make(&capture)?;
++        let encoded = serde_json::to_value(&execution)?;
++        let decoded: Execution = serde_json::from_value(encoded.clone())?;
++        assert_eq!(decoded.gate, gate);
++        assert_eq!(
++            decoded.binding,
++            binding(&profile, digest, "x86_64-pc-windows-msvc")?
++        );
++        assert_eq!(
++            encoded["schema"],
++            "airk.private.software-v2-native-execution/1"
++        );
++        assert_eq!(encoded["input"], serde_json::to_value(&pin)?);
++        for (field, value) in [
++            ("schema", json!("airk.arbiter.native-resource/1")),
++            ("target", Value::Null),
++            ("input_sha256", json!(Sha256Digest::from_bytes([12; 32]))),
++            ("native_binary_sha256", Value::Null),
++        ] {
++            let mut changed = capture.clone();
++            changed[field] = value;
++            assert!(make(&changed).is_err(), "{field}");
++        }
++        let mut unknown = encoded;
++        unknown["approved"] = json!(true);
++        assert!(serde_json::from_value::<Execution>(unknown).is_err());
++    }
++    Ok(())
++}
+--- r2/owner-projection-proposal/CONTRACT.md
++++ r3/owner-projection-proposal/CONTRACT.md
+@@ -396,3 +396,12 @@
+ execution stays a retained refusal, with its original model outputs preserved.
+ Final `owned_execution`/`source_closure` still authenticate full source/image/
+ selector/input custody and require separately recorded exact result approval.
++
++The same zero-NN emitter also serializes the existing native `Execution` type.
++It derives Gate from the retained native resource/2 or numeric-result/2 schema,
++and Binding through the existing native `binding(Profile, profile SHA, actual
++capture target)` owner. Input/capture/owner/preserved-image pins are the actual
++retained files. Both canonical outputs are create-new siblings of the original
++protected raw-run document. Emission does not populate any approved-SHA set;
++separate post-result source/metric review and RecordedDecision remain mandatory.
++Raw execution, stdout, journal and both canonical projections remain distinct.
+--- r2/operation-proposal/CONTRACT.md
++++ r3/operation-proposal/CONTRACT.md
+@@ -256,7 +256,7 @@
+ 
+ The test-only software_v2 operation module emits create-new, append-only
+ OUTPUT.with_extension("operations.jsonl") observations for resource load,
+-warmup0 and samples1ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“20, or numeric load and each original full fixture row.
++warmup0 and samples 1 through 20, or numeric load and each original full fixture row.
+ It has no production Scorer hook, new provider, caller signal or public API.
+ An event binds the pinned native run-input/profile/image, actual process ID,
+ strict sequence, kind/ordinal and exact compiled input digest where present.
+--- r2/launch_native.py
++++ r3/launch_native.py
+@@ -98,6 +98,20 @@
+ 
+ def write(path,value):
+     with Path(path).open('x',encoding='utf-8') as output:json.dump(value,output,indent=2);output.write('\n')
++
++def finish_observations(receipt,started,deadline,stdout_path,clock=time.monotonic,hash_file=digest):
++    # All original source/input/body/journal observations precede this call.
++    # Stdout retention is the final hash; only then sample the phase clock once.
++    if stdout_path.is_file():
++        receipt['stdout']={'path':str(stdout_path),'sha256':hash_file(stdout_path),'bytes':stdout_path.stat().st_size}
++    observed=clock()
++    receipt['whole_phase_expired']=observed>=deadline
++    receipt['elapsed_seconds']=observed-started
++    if receipt['post_input_drift'] or receipt['whole_phase_expired']:
++        receipt['complete']=False;receipt['measurement_passed']=False
++        if receipt['failure'] is None:
++            receipt['failure']={'type':'FinalObservationRefusal','message':'original input/whole-phase observation failed'}
++    # Serializing the immutable owner record follows the observation scope.
+ 
+ def run(args,plan,request,started):
+     deadline=started+plan['limits']['whole_process_seconds']
+@@ -196,13 +210,7 @@
+             try:
+                 if digest(path)!=expected:receipt['post_input_drift'].append(path)
+             except OSError:receipt['post_input_drift'].append(path)
+-        receipt['whole_phase_expired']=time.monotonic()>deadline
+-        if receipt['post_input_drift'] or receipt['whole_phase_expired']:
+-            receipt['complete']=False;receipt['measurement_passed']=False
+-            if receipt['failure'] is None:receipt['failure']={'type':'FinalObservationRefusal','message':'original input/whole-phase observation failed'}
+-        if log_path.is_file():
+-            receipt['stdout']={'path':str(log_path),'sha256':digest(log_path),'bytes':log_path.stat().st_size}
+-        receipt['elapsed_seconds']=time.monotonic()-started
++        finish_observations(receipt,started,deadline,log_path)
+         write(output/'execution.json',receipt)
+     print(json.dumps({'output':str(output),'measurement_passed':receipt['measurement_passed'],
+         'qualification_granted':False,'failure':receipt['failure']}))
+--- /dev/null
++++ r3/test_final_observation.py
+@@ -0,0 +1,39 @@
++"""Literal final-retention deadline controls; zero filesystem/native/model activity."""
++import unittest
++from types import SimpleNamespace
++from launch_native import finish_observations
++
++class RetainedStdout:
++    def is_file(self):return True
++    def stat(self):return SimpleNamespace(st_size=3)
++    def __str__(self):return 'SYNTHETIC-ONLY-STDOUT'
++
++class FinalObservation(unittest.TestCase):
++    def receipt(self):return {'complete':True,'measurement_passed':True,'failure':None,'post_input_drift':[]}
++    def test_final_stdout_hash_can_expire_original_phase(self):
++        now=[99];calls=[];receipt=self.receipt()
++        def retain(_):calls.append('hash');now[0]=101;return 'synthetic-sha'
++        def clock():calls.append('clock');return now[0]
++        finish_observations(receipt,0,100,RetainedStdout(),clock,retain)
++        self.assertEqual(calls,['hash','clock'])
++        self.assertEqual(receipt['elapsed_seconds'],101)
++        self.assertIs(receipt['whole_phase_expired'],True)
++        self.assertIs(receipt['complete'],False)
++        self.assertIs(receipt['measurement_passed'],False)
++        self.assertEqual(receipt['failure']['type'],'FinalObservationRefusal')
++    def test_before_final_boundary_uses_same_single_clock_sample(self):
++        receipt=self.receipt();calls=[]
++        def clock():calls.append(99);return 99
++        finish_observations(receipt,10,100,RetainedStdout(),clock,lambda _:'synthetic-sha')
++        self.assertEqual(calls,[99]);self.assertEqual(receipt['elapsed_seconds'],89)
++        self.assertIs(receipt['whole_phase_expired'],False)
++        self.assertIs(receipt['complete'],True)
++
++    def test_exact_whole_phase_expiry_refuses(self):
++        receipt=self.receipt()
++        finish_observations(receipt,10,100,RetainedStdout(),lambda:100,lambda _:'synthetic-sha')
++        self.assertEqual(receipt['elapsed_seconds'],90)
++        self.assertIs(receipt['whole_phase_expired'],True)
++        self.assertIs(receipt['measurement_passed'],False)
++
++if __name__=='__main__':unittest.main()

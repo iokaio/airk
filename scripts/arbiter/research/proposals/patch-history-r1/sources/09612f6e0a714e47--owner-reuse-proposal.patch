@@ -1,0 +1,166 @@
+--- a/CF454/capacity.py (preserved)
++++ b/capacity_resource20.py
+@@ -39,7 +39,7 @@
+         self.peak_commit=max(self.peak_commit,memory['peak_job_commit'])
+         sample={'files':{k:v['bytes'] for k,v in files.items()},'memory':dict(memory)}
+         self.latest=sample;now=self.clock()
+-        if sample!=self.last and (self.last_sample_time is None or now-self.last_sample_time>=.1):
++        if sample!=self.last and (self.last_sample_time is None or now-self.last_sample_time>=1.0):
+             need(len(self.samples)<4096,'Original bounded capacity observation population exceeded')
+             self.samples.append(sample);self.last=sample;self.last_sample_time=now
+         for name,row in files.items():
+@@ -50,7 +50,7 @@
+     def proof(self):
+         return {'observations':self.observations,'peak_process_rss_bytes':self.peak_rss,
+             'peak_job_committed_bytes':self.peak_commit,'last_files':self.files,'changed_samples':self.samples,'final_observation':self.latest,
+-            'sampling_interval_ms':100,'peak_memory_source':'OS persistent peak counters; not isolated RSS sum',
++            'sampling_interval_ms':100,'detailed_snapshot_interval_ms':1000,'peak_memory_source':'OS persistent peak counters; not isolated RSS sum',
+             'file_bound_scope':'live100ms/event observations plus native/final append-only optimized file checks'}
+ 
+ class WindowsRead:
+--- a/CF454/watch.py (preserved)
++++ b/watch_resource20.py
+@@ -2,7 +2,7 @@
+ import ctypes,math,time
+ from ctypes import wintypes as w
+ from pathlib import Path
+-from capacity import Capacity,WindowsRead
++from capacity_resource20 import Capacity,WindowsRead
+ 
+ def make_watch(base,journal,stdout,identity,roster,deadline_ms,root):
+     class Watch(base.WindowsWatch):
+@@ -31,7 +31,7 @@
+                 while True:
+                     self.inspect();now=self.now();self.state.check_expiry(now)
+                     remaining=whole_deadline-time.monotonic()
+-                    if remaining<=0:raise base.ObservationFailure('Original360s phase expired')
++                    if remaining<=0:raise base.ObservationFailure('Original3600s resource phase expired')
+                     # A bounded WaitForMultipleObjects timeout is a live capacity
+                     # observation tick, not a sleep, retry or renewed operation.
+                     seconds=min(remaining,.1)
+@@ -44,7 +44,7 @@
+                         code=w.DWORD()
+                         if not api.GetExitCodeProcess(info.process,ctypes.byref(code)):raise ctypes.WinError(ctypes.get_last_error())
+                         if code.value==0 and (self.state.position!=len(self.state.roster) or self.state.active is None or self.state.active['phase']!='returned'):
+-                            raise base.ObservationFailure('Original2operation population incomplete')
++                            raise base.ObservationFailure('Original22operation population incomplete')
+                         return {'worker_pid':int(info.pid),'operation_watch':{**self.state.proof(),
+                             'actual_process_exit_observed':True,'exit_code':int(code.value),'whole_deadline_not_renewed':True},
+                             'capacity_watch':self.capacity.proof()},[]
+--- a/launch_native.py (preserved)
++++ b/launch_resource20_current.py
+@@ -14,6 +14,7 @@
+ import time
+ sys.dont_write_bytecode=True
+ BASE=Path(__file__).resolve().parent
++CF_BASE=BASE.parent/'compact-native-diagnostic-owner-r1'
+ 
+ def digest(path):
+     with Path(path).open('rb') as source:return hashlib.file_digest(source,'sha256').hexdigest()
+@@ -32,7 +33,10 @@
+ def plan_input(args, full=False):
+     path=pin(args.plan,args.plan_sha256);plan=json.loads(path.read_bytes())
+     if plan.get('schema')!='airk.private.software-v2-owned-native-plan/1':raise ValueError('wrong execution plan')
+-    if plan['mode'] not in ('resource','numeric'):raise ValueError('unreviewed native operation mode')
++    if plan['mode']!='resource':raise ValueError('Only original20-sample resource campaign admitted')
++    required={'whole_process_seconds':3600,'host_committed_bytes':32<<30,'log_bytes':64<<20,'operation_journal_bytes':131072,'per_operation_ms':120000}
++    if plan['limits']!=required or plan['reservation_bytes']!=16<<30:raise ValueError('Original Compact resource limits differ')
++    if plan['input_seals'].get(str(Path(__file__).resolve()))!=digest(__file__):raise ValueError('Actual resource launcher omitted from seals')
+     for source,expected in plan['input_seals'].items():
+         path=Path(source)
+         if full or path.stat().st_size<=16*1024*1024:pin(source,expected)
+@@ -113,6 +117,15 @@
+             receipt['failure']={'type':'FinalObservationRefusal','message':'original input/whole-phase observation failed'}
+     # Serializing the immutable owner record follows the observation scope.
+ 
++def resource_result(body,plan):
++    if (body.get('schema')!='airk.arbiter.native-resource/2' or body.get('candidate_resource_passed') is not True
++        or body.get('numeric_status')!='unavailable_in_resource_only_run'
++        or body['resource']['complete'] is not True or body['resource']['attempted_samples']!=20
++        or len(body['resource']['samples'])!=20 or body['resource']['failure'] is not None
++        or body['resource']['reservation_bytes']!=plan['reservation_bytes']):
++        raise ValueError('Original full resource20 denominator incomplete')
++    if body['input']!=plan['expected_resource_input']:
++        raise ValueError('Complete actual Rust-compiled resource input differs')
+ def run(args,plan,request,started):
+     deadline=started+plan['limits']['whole_process_seconds']
+     plan,request=plan_input(args,full=True)
+@@ -124,7 +137,13 @@
+     parent=load(BASE/'owned/reference_parent_no_site_r2.py','reviewed_native_parent')
+     ownership=load(BASE/'owned/reference_owned.py','reviewed_native_job')
+     if parent.worker.windows_sid()!=plan['human_sid']:raise ValueError('verified logged-in human SID required')
+-    from native_operations_watchdog import WindowsWatch
++    sys.path.insert(0,str(CF_BASE))
++    cf=load(CF_BASE/'runner.py','resource_verified_cf_owner')
++    cf_card=cf.source_modules()
++    cf.capacity_smoke(json.loads(pin(plan['capacity_os_control']['path'],plan['capacity_os_control']['sha256']).read_bytes()),cf_card,parent)
++    base_watch=load(BASE/'native_operations_watchdog.py','resource_native_operation_owner')
++    memory_watch=load(BASE/'watch_resource20.py','resource_actual_capacity_watch')
++    parent.worker.verify_loaded_runtime(plan)
+     output=Path(args.output).absolute()
+     if output.exists() or output.parent.resolve()!=Path(plan['output_parent']).resolve():raise ValueError('fresh immediate owned run directory required')
+     output.mkdir()
+@@ -144,7 +163,7 @@
+         'whole_phase_expired':False,'no_automatic_retry':True,'other_processes_touched':False,
+         'failure':None,'post_input_drift':[],
+         'input_seals':dict(plan['input_seals']) | {image['path']:image['sha256']},
+-        'committed_memory_passed':False,
++        'committed_memory_passed':False,'resource_only':True,'native_numeric_status':'unavailable_in_resource_only_run','live_guard_interval_ms':100,'detailed_snapshot_interval_ms':1000,
+         'coexistence_proven':False,'scope':plan['scope']}
+     write(output/'started.json',receipt)
+     watch=None
+@@ -153,12 +172,14 @@
+         proof=parent.suspended_authentication(api,info,deadline,child_deadline,plan['human_sid'],image,ownership.image_proof)
+         identity={'input_sha256':plan['native_input']['sha256'],'profile':plan['profile'],
+             'process_id':int(info.pid),'native_binary_sha256':image['sha256']}
+-        watch=WindowsWatch(journal,log_path,identity,plan['native_operation_roster'],
+-            plan['policy']['deadline_ms'],plan['mode']=='numeric')
++        watch=memory_watch.make_watch(base_watch,journal,log_path,identity,plan['native_operation_roster'],
++            plan['policy']['deadline_ms'],output)
++        watch.process,watch.job=info.process,job
++        watch.inspect()
+         return proof
+     def after_resume(api,job,info,child_deadline):
+         if child_deadline>deadline:raise ValueError('child original process deadline extended')
+-        return watch.run(api,info,deadline)
++        return watch.run(api,job,info,deadline)
+     try:
+         with (output/'stdin.bin').open('xb'):pass
+         remaining=deadline-time.monotonic()
+@@ -169,6 +190,7 @@
+                 after_resume=after_resume,absolute_deadline=deadline)
+         receipt['owned']=owned
+         receipt['operation_watch']=owned['before_GO']['operation_watch']
++        receipt['capacity_watch']=owned['before_GO']['capacity_watch']
+         if not parent.settled(owned):raise ValueError('native direct child did not naturally settle with zero exit and empty actual Job')
+         text=log_path.read_text(encoding='utf-8',errors='replace')
+         if not re.search(r'(?m)^running 1 test\s*$',text):raise ValueError('actual native selector did not select exactly one test')
+@@ -181,10 +203,7 @@
+             or body.get('cpu_fit')!=plan['cpu_fit'] or body.get('complete') is not True
+             or body.get('measurement_identity')!='native-original-operation-start-to-post-end-retention/1'):
+             raise ValueError('native result/process/input/policy/measurement identity incomplete')
+-        if plan['mode']=='resource' and (body.get('candidate_resource_passed') is not True
+-            or body['resource']['complete'] is not True
+-            or body['resource']['attempted_samples']!=plan['policy']['required_warm_samples']):
+-            raise ValueError('native original full resource series incomplete')
++        resource_result(body,plan)
+         receipt['native_body_pin']={'path':str(raw),'sha256':digest(raw),'bytes':raw.stat().st_size}
+         receipt['operation_journal_pin']={'path':str(journal),'sha256':digest(journal),'bytes':journal.stat().st_size}
+         receipt['committed_memory_passed']=(isinstance(owned.get('peak_host_committed_bytes'),int)
+@@ -196,6 +215,7 @@
+     except BaseException as error:
+         receipt['failure']={'type':type(error).__name__,'message':str(error)}
+         if hasattr(error,'operation_watch'):receipt['operation_watch']=error.operation_watch
++        if watch is not None:receipt['capacity_watch']=watch.capacity.proof()
+         if hasattr(error,'owned_cleanup'):receipt['owned_cleanup']=error.owned_cleanup
+         for label,path in [('native_body_pin',raw),('operation_journal_pin',journal)]:
+             if path.is_file():receipt[label]={'path':str(path),'bytes':path.stat().st_size,'sha256':digest(path)}
+@@ -210,6 +230,8 @@
+             try:
+                 if digest(path)!=expected:receipt['post_input_drift'].append(path)
+             except OSError:receipt['post_input_drift'].append(path)
++        try:parent.worker.verify_loaded_runtime(plan)
++        except BaseException as error:receipt['post_input_drift'].append('loaded Python runtime: '+str(error))
+         finish_observations(receipt,started,deadline,log_path)
+         write(output/'execution.json',receipt)
+     print(json.dumps({'output':str(output),'measurement_passed':receipt['measurement_passed'],

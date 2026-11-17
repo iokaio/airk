@@ -1,0 +1,3242 @@
+{
+  "schema": "airk.source-relocation/1",
+  "input_analysis": {
+    "path": "D:\\code\\Github\\airk\\artifacts\\v190\\final-plan\\exec-20261116T052942Z\\source-javascript-provenance-r2.json",
+    "sha256": "a43d5e3bc530779a659c8ae3ba7dacc2806fa83bba262eb1b8e80075153a7ed0",
+    "bytes": 7385173
+  },
+  "scope": "Unresolved standalone AIRK editor driver/test and help-search source only",
+  "qualification": false,
+  "historical_code_executed": false,
+  "files": [
+    {
+      "source": "artifacts/advanced-split/help-source-preview-b84fe5bd/search.js",
+      "original_sha256": "2ac78be4462d88811737a4fe21ce0d8dca93e94c9e9f07a46a03d259319ca98b",
+      "original_bytes": 529,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2ac78be4462d88811737a4fe21ce0d8dca93e94c9e9f07a46a03d259319ca98b--search.js.in",
+      "maintained_sha256": "2ac78be4462d88811737a4fe21ce0d8dca93e94c9e9f07a46a03d259319ca98b",
+      "maintained_bytes": 529,
+      "transformations": []
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-3f7gk2/driver/driver.js",
+      "original_sha256": "1d6025321897a7a39c2cb7c3d4952d14fef5a6f6c476a19b1d84d9bc7febebe6",
+      "original_bytes": 2890,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/1d6025321897a7a39c2cb7c3d4952d14fef5a6f6c476a19b1d84d9bc7febebe6--driver.js.in",
+      "maintained_sha256": "f493df910bd96dfffd81e4f83dd83270a4c24f1b61949013f18cf9d4abf78a72",
+      "maintained_bytes": 2929,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-42pNvp/driver/driver.js",
+      "original_sha256": "acd441318a83231c1fcfe7a86fb72d83f41c1cabf159d10966e195b6513df4fe",
+      "original_bytes": 8065,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/acd441318a83231c1fcfe7a86fb72d83f41c1cabf159d10966e195b6513df4fe--driver.js.in",
+      "maintained_sha256": "806dd4b227e9de79065171892ff160791b20c3cec4c096f3eef593c3d2004723",
+      "maintained_bytes": 8104,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-5HBTwc/driver/driver.js",
+      "original_sha256": "0d5e5a705d326264ff493945db87feb3d5f1452566a61143d426acbf28a4e9b5",
+      "original_bytes": 2890,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0d5e5a705d326264ff493945db87feb3d5f1452566a61143d426acbf28a4e9b5--driver.js.in",
+      "maintained_sha256": "8a0d1438be99f20b9fb6be98001b51c2a8fecf06411a2b16265b8de4233b8652",
+      "maintained_bytes": 2929,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-5jxrCB/driver/driver.js",
+      "original_sha256": "b1eadab8c6c30f70147c1f4062bbdd368478f7cb501c3fed5b8a2de071beab6c",
+      "original_bytes": 8071,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b1eadab8c6c30f70147c1f4062bbdd368478f7cb501c3fed5b8a2de071beab6c--driver.js.in",
+      "maintained_sha256": "05b3c122f54799415b21c7269cfbb81d1cc2fc271d22e0b38e71e2987d2eda7d",
+      "maintained_bytes": 8110,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-7FtYYS/driver/driver.js",
+      "original_sha256": "e049713f6ea2542a129f2442105ec970bee042ea32465ec6203e5c5288f32afe",
+      "original_bytes": 6601,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/e049713f6ea2542a129f2442105ec970bee042ea32465ec6203e5c5288f32afe--driver.js.in",
+      "maintained_sha256": "82720d37adbd020dc1175d8f95a8f92d3daf4e2e1584c1a6a817abebd61729ad",
+      "maintained_bytes": 6640,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-7OJyff/driver/driver.js",
+      "original_sha256": "a84ab45c6fcc02c977bb3a19310a20544c86dda6118e54d7e1617cfe4d75e0c0",
+      "original_bytes": 8065,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/a84ab45c6fcc02c977bb3a19310a20544c86dda6118e54d7e1617cfe4d75e0c0--driver.js.in",
+      "maintained_sha256": "b48cb8d53b8fdb9b82dc1cc0608fd0384b76b9ea39e3ccabf82d281b734c706e",
+      "maintained_bytes": 8104,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-7WNymf/driver/driver.js",
+      "original_sha256": "aef5e01514d8510fe44877d095e9f157c824f5dd4e556cfc020c26550878dc24",
+      "original_bytes": 6615,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/aef5e01514d8510fe44877d095e9f157c824f5dd4e556cfc020c26550878dc24--driver.js.in",
+      "maintained_sha256": "fd8b8baf39475eabc0befa1c2e4ba5a295e76ebc82af61012ae57248c62df25e",
+      "maintained_bytes": 6654,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-7XXZj1/driver/driver.js",
+      "original_sha256": "85ac72595a80f18f537c9d70bf1f598bc882cc43555156cccd2580efe1a5878c",
+      "original_bytes": 8065,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/85ac72595a80f18f537c9d70bf1f598bc882cc43555156cccd2580efe1a5878c--driver.js.in",
+      "maintained_sha256": "ffc455aead6df2ba07ed9ddaa6e0f975ac94b4f4037e178d78b22d49aa6a96de",
+      "maintained_bytes": 8104,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-8pqgkb/driver/driver.js",
+      "original_sha256": "e5b8de095315d83dac44bacfed0ffacd1f242c16ed91552f723e32240580c89c",
+      "original_bytes": 8386,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/e5b8de095315d83dac44bacfed0ffacd1f242c16ed91552f723e32240580c89c--driver.js.in",
+      "maintained_sha256": "2b76ebef36811bbc5f2fbe5d19bad342be51070afe1781791513015d880eacdb",
+      "maintained_bytes": 8425,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-9al84G/driver/driver.js",
+      "original_sha256": "d58999cf78a92634582c81177757c8c248a265f6222349e9963bf24eb2a4b407",
+      "original_bytes": 3461,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d58999cf78a92634582c81177757c8c248a265f6222349e9963bf24eb2a4b407--driver.js.in",
+      "maintained_sha256": "99a0ef5847137d59435f3da76012ea824cfb1112e40424de40a508f0793cc2d4",
+      "maintained_bytes": 3500,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-9gJ0xS/driver/driver.js",
+      "original_sha256": "b657a45b28701527d66222996f714f87cb7947089807e40b6dbc5f223fbdc219",
+      "original_bytes": 8065,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b657a45b28701527d66222996f714f87cb7947089807e40b6dbc5f223fbdc219--driver.js.in",
+      "maintained_sha256": "0f05449f364e1a3a62edfc88293d4a0d88b2ad24c3ac1e6c886915072be82893",
+      "maintained_bytes": 8104,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-BKFmpH/driver/driver.js",
+      "original_sha256": "0a26280ec4cdf9a1b7dfede0f338a079a20f3a9facf7dff989a0e82703375e25",
+      "original_bytes": 6563,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0a26280ec4cdf9a1b7dfede0f338a079a20f3a9facf7dff989a0e82703375e25--driver.js.in",
+      "maintained_sha256": "8403de0b49098c619c6613054825fc291465a11dde0b21117ec7bd26083dbdda",
+      "maintained_bytes": 6602,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-H2PFTO/driver/driver.js",
+      "original_sha256": "5a5dc1db29d1c227b80f9fec72f028c0c9af6655d801863b6b62d357170d0c48",
+      "original_bytes": 8065,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/5a5dc1db29d1c227b80f9fec72f028c0c9af6655d801863b6b62d357170d0c48--driver.js.in",
+      "maintained_sha256": "cb62f00d437c391d9d3bf601ad46517018c787f6bc62914e1c15a9a12a82145b",
+      "maintained_bytes": 8104,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-JWB1Lo/driver/driver.js",
+      "original_sha256": "c757ef7363a9a9a73ebaf0b02f8d951ab8d2874844d9ebaf815ef0a5ba59125b",
+      "original_bytes": 6601,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/c757ef7363a9a9a73ebaf0b02f8d951ab8d2874844d9ebaf815ef0a5ba59125b--driver.js.in",
+      "maintained_sha256": "f8b363cccec891e3ec1e97e897d15adf3a71b862e461b30a583eab1e17ab3de3",
+      "maintained_bytes": 6640,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-LBJjzu/driver/driver.js",
+      "original_sha256": "96710c802468fe1636d4f65e257f046ce3dafd10a747d6fd720185e562a6c396",
+      "original_bytes": 8071,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/96710c802468fe1636d4f65e257f046ce3dafd10a747d6fd720185e562a6c396--driver.js.in",
+      "maintained_sha256": "e1663802485f019335e16e3e4a8501f259aabb317f6ce7f498d6099a6d7e3ede",
+      "maintained_bytes": 8110,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-LNSC6M/driver/driver.js",
+      "original_sha256": "8330d28f498999bc525eb658b8edcb1282ae80259b963916d0901fb29209bef5",
+      "original_bytes": 5976,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/8330d28f498999bc525eb658b8edcb1282ae80259b963916d0901fb29209bef5--driver.js.in",
+      "maintained_sha256": "74cb3a39e4d1c10fb7d8260338655721683b3e035a3d6097e8c9f646b0bb8857",
+      "maintained_bytes": 6015,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-VhoaRv/driver/driver.js",
+      "original_sha256": "13d00a97fb4002116876ab7181e99e58dd976b8eb0385e874a281ecd1d9aa923",
+      "original_bytes": 5908,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/13d00a97fb4002116876ab7181e99e58dd976b8eb0385e874a281ecd1d9aa923--driver.js.in",
+      "maintained_sha256": "e31c7b53657f0bb52a60ae58b8d620a5351c47d4ecde219995a3a408038e1cb3",
+      "maintained_bytes": 5947,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-Z0prjz/driver/driver.js",
+      "original_sha256": "a101af07a410cf979f2669f94fbbe81bc58eaf146c58a5dbc83ad2bbdc6e8b84",
+      "original_bytes": 8071,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/a101af07a410cf979f2669f94fbbe81bc58eaf146c58a5dbc83ad2bbdc6e8b84--driver.js.in",
+      "maintained_sha256": "96594ca0787cffe09c0f81bda7356fecfc4b6368f9c9a905da9f6258821dcfa8",
+      "maintained_bytes": 8110,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-ZCQnrP/driver/driver.js",
+      "original_sha256": "475a26b38454c9909d4c6ce4c2c3142d12aebf175026facb2c4c830a9e57f7fd",
+      "original_bytes": 6615,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/475a26b38454c9909d4c6ce4c2c3142d12aebf175026facb2c4c830a9e57f7fd--driver.js.in",
+      "maintained_sha256": "735dc2cdbe61a879ebed4c7fad4d475255ce0a6deee3bc07d6bf40adb38614ea",
+      "maintained_bytes": 6654,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-aKxn7y/driver/driver.js",
+      "original_sha256": "905066010304b04dde03c1de45bef4c1fb90fa7c9c54c9f5166b158794910e89",
+      "original_bytes": 2890,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/905066010304b04dde03c1de45bef4c1fb90fa7c9c54c9f5166b158794910e89--driver.js.in",
+      "maintained_sha256": "126c299ebfbb7ddd621d822f08cfce5d57872383f799b372c7eb7de483db6c7a",
+      "maintained_bytes": 2929,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-gyqwOi/driver/driver.js",
+      "original_sha256": "769b8e19d3fb78e0b955e82b7d32ad0d6bfe79a5ad94c66fb110cf1cfe93523d",
+      "original_bytes": 6601,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/769b8e19d3fb78e0b955e82b7d32ad0d6bfe79a5ad94c66fb110cf1cfe93523d--driver.js.in",
+      "maintained_sha256": "e6b8786a9af6a4f3c4634d69a764f0ea1a974493f4ec19f717119277f4652e04",
+      "maintained_bytes": 6640,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-hqx22I/driver/driver.js",
+      "original_sha256": "dc5cea7654e43b58b09ab617929610fd03d1e3592b00ac5589df49a5cf05f160",
+      "original_bytes": 6605,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/dc5cea7654e43b58b09ab617929610fd03d1e3592b00ac5589df49a5cf05f160--driver.js.in",
+      "maintained_sha256": "01e932f1d68c2ec3530424988635a666a6a7504fcc9a9b1db7771b1a5fe74fcd",
+      "maintained_bytes": 6644,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-j21Wxp/driver/driver.js",
+      "original_sha256": "60328f36d13ad9fa996c05d0beb15ef087b83c026937da11d09d57812abe3896",
+      "original_bytes": 6605,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/60328f36d13ad9fa996c05d0beb15ef087b83c026937da11d09d57812abe3896--driver.js.in",
+      "maintained_sha256": "d7e93560228b4bece6c0604d433f05c3b423bfda7269f46ba01fbc4259b834fb",
+      "maintained_bytes": 6644,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-oURxbi/driver/driver.js",
+      "original_sha256": "268eee36ec5c079615250e4e6409fcd59434a5b5b8ffa8f7910b5c040589192c",
+      "original_bytes": 9416,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/268eee36ec5c079615250e4e6409fcd59434a5b5b8ffa8f7910b5c040589192c--driver.js.in",
+      "maintained_sha256": "cae3ad4ecc8ba2d5b19ac0610858667a7ee72605a483d42ddbe40bb8b6ff1da4",
+      "maintained_bytes": 9455,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-u2b9fp/driver/driver.js",
+      "original_sha256": "7a7f94593bf90d2519a9bc534103916e2fcfecdad33dff22fcb377ba37c640ec",
+      "original_bytes": 6615,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7a7f94593bf90d2519a9bc534103916e2fcfecdad33dff22fcb377ba37c640ec--driver.js.in",
+      "maintained_sha256": "944de73c087f96267a6d9af45e452b99063a9b839e2b79148482b0e89a9b297f",
+      "maintained_bytes": 6654,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/agent-install-uzuJit/driver/driver.js",
+      "original_sha256": "48db3799f685db12762a3406b4e77b686071115238a99fecdc56d67a2964ceed",
+      "original_bytes": 6559,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/48db3799f685db12762a3406b4e77b686071115238a99fecdc56d67a2964ceed--driver.js.in",
+      "maintained_sha256": "26cb6394fc2491a3358b449b0d25850584461a4186e45df6fd21b5858661123e",
+      "maintained_bytes": 6598,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-338QpG/driver/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-338QpG/extensions/local-test.airk-local-test-driver-0.0.1/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-BmOULA/driver/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-BmOULA/extensions/local-test.airk-local-test-driver-0.0.1/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-CPbiPG/driver/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-CPbiPG/extensions/local-test.airk-local-test-driver-0.0.1/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-CbnPQv/driver/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-CbnPQv/extensions/local-test.airk-local-test-driver-0.0.1/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-JE17qn/driver/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-JE17qn/extensions/local-test.airk-local-test-driver-0.0.1/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-MAIIYF/driver/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-MAIIYF/extensions/local-test.airk-local-test-driver-0.0.1/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-W0nIuT/extensions/local-test.airk-local-test-driver-0.0.1/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-WqPfLT/driver/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-WqPfLT/extensions/local-test.airk-local-test-driver-0.0.1/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-YEI9sC/driver/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-YEI9sC/extensions/local-test.airk-local-test-driver-0.0.1/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-f6nuel/driver/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-f6nuel/extensions/local-test.airk-local-test-driver-0.0.1/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-jfIphW/driver/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-jfIphW/extensions/local-test.airk-local-test-driver-0.0.1/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-jhUPKV/driver/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-jhUPKV/extensions/local-test.airk-local-test-driver-0.0.1/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-tuTDvj/driver/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-tuTDvj/extensions/local-test.airk-local-test-driver-0.0.1/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-uuUGup/driver/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-uuUGup/extensions/local-test.airk-local-test-driver-0.0.1/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-vxX8Nl/driver/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-vxX8Nl/extensions/local-test.airk-local-test-driver-0.0.1/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-yRvo0w/extensions/local-test.airk-local-test-driver-0.0.1/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-z1BwyL/driver/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-z1BwyL/extensions/local-test.airk-local-test-driver-0.0.1/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-zPrAeN/driver/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-zPrAeN/extensions/local-test.airk-local-test-driver-0.0.1/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-zUfjiA/driver/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/installed-zUfjiA/extensions/local-test.airk-local-test-driver-0.0.1/driver.js",
+      "original_sha256": "d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f",
+      "original_bytes": 517,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/d18918ddc2f116322d6b0881ed715040690cca2b61d33b7a3df1da250b53119f--driver.js.in",
+      "maintained_sha256": "6605a1eb13c1ae83c805f0aede962e65019a2ca6d41c832638001850e1aa8c3e",
+      "maintained_bytes": 556,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-07pAnQ/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-0qMHLq/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-1z6Ku9/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-29dqHy/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-35op5w/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-6hm18L/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-7S4W3Z/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-7aJINR/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-7hsMbi/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-BFtiFV/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-CJ1JJO/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-DoH7d3/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-FoYP3C/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-GIoHFl/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-GTMKJo/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-Ils5Pw/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-KBbwrh/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-Mx2oY5/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-O7KMLG/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-OU8Sf0/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-RYRz2n/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-SlmrRI/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-VcKOHU/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-W3h53j/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-WRrjOj/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-XDYMGh/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-XQdvm6/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-ZAEtr6/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-bJJecU/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-bfHdZc/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-c51Xtf/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-dvVyO5/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-fHEJKL/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-fS8JCX/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-fudstj/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-gyZuXS/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-m9dTLj/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-mVXk4D/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-mdMATC/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-pGrPHQ/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-pKUR8a/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-s49hlZ/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-u7OHo2/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-weAJWu/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-x1NPEf/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-yQ2XWA/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-ye2QlY/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-zuL4B1/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-BeyRnR/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-CAKbXR/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-LOEszi/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-LXj47g/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-Mye22Y/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-OfmAOX/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-PMEywi/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-PVT8pZ/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-QERREK/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-RWfynm/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-Rm0nYF/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-VL37wf/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-VweaMj/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-XLv5XU/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-XoIcFC/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-dUbmen/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-hH2YSM/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-hn2NHW/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-ih0RGW/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-isb3Pz/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-lvstpm/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-m8iVJo/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-mhaZP9/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-nb6TqL/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-r5wsKy/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-rXK8W6/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-tktIPr/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-stage-xRlweu/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe",
+      "original_bytes": 516,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0f16275e1bcde7e693979b46495cf0289d571683b0e10b1ad482e9f58d8c3dbe--driver.js.in",
+      "maintained_sha256": "6af4b98753e9471fe96e83c936cadd0434d65ae824292e44abb05fc6f8bdbe43",
+      "maintained_bytes": 555,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-1G96R7/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-1vOUqp/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-5XizEw/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-6cDFZ5/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-93FzxF/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-9IVA5G/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-B59iqn/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-DkurtA/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-FJw2oI/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-FhS5tj/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-J4sSbu/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-K2NeRt/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-KKmCTx/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-P9Oy7n/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-SvhRg4/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-T0ieet/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-UcQ9IO/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-Ujos45/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-VZLIKf/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-XW0Bay/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-a6SAHY/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-b5z0FZ/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-e1Erzt/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-gSWrVc/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-jyJBWR/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-lhvxEe/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-mOcwTV/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-mPvQJQ/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-pid1qa/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-qlTYEE/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-t10e7L/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-tv5E5p/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-uLgnkj/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-uip3Fh/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-utodMM/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-wrMfuw/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c",
+      "original_bytes": 551,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7d3b427808130a6fac36f00288364045b8c54564918486b76469af7659acec3c--driver.js.in",
+      "maintained_sha256": "e2d511d1ca618ba5173dd89644bb7f99044741a0c11e42cee015233eb568653e",
+      "maintained_bytes": 590,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-b1bqLY/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "b2da80e29946f195deb9990a0962f572eb9f61b068cd4e5839113c4ec7ae6a9d",
+      "original_bytes": 588,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b2da80e29946f195deb9990a0962f572eb9f61b068cd4e5839113c4ec7ae6a9d--driver.js.in",
+      "maintained_sha256": "f17826ae99c37da3958308c374272ada78c33629c5f0005f323c16aa060965ad",
+      "maintained_bytes": 627,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-qualification/native-installed-rbt1K2/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "b2da80e29946f195deb9990a0962f572eb9f61b068cd4e5839113c4ec7ae6a9d",
+      "original_bytes": 588,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b2da80e29946f195deb9990a0962f572eb9f61b068cd4e5839113c4ec7ae6a9d--driver.js.in",
+      "maintained_sha256": "f17826ae99c37da3958308c374272ada78c33629c5f0005f323c16aa060965ad",
+      "maintained_bytes": 627,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-8ZgfHs/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-HZeyEW/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-JbTRyQ/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-LbzXoi/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-aY9GCw/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-k5Ecrc/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-5Umlnv/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-7safkW/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-80KC3I/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-B81lfr/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-BqQ5tl/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-F2R8xl/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-LsY4Af/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-VhsafJ/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-ZYigdc/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-bYFI7Z/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-cGqWJ5/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-hWq45W/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-r2V7Mc/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/candidate-worktree-r1/artifacts/installed-explorer-preflight/run-7J0wYu/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/candidate-worktree-r2/artifacts/installed-explorer-preflight/run-EbSEMq/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/candidate-worktree-r3/artifacts/installed-explorer-preflight/run-QGaK3I/driver/driver.js",
+      "original_sha256": "2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910",
+      "original_bytes": 24,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2e3a9fc8cab5a1275057c7b3938f40e9dc98433e5318def3a6385803ef7cc910--driver.js.in",
+      "maintained_sha256": "adbd874a3de025dd58d88aa3c17072a68a500c9872bb15458c461480d29d41a0",
+      "maintained_bytes": 63,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-8ZgfHs/driver/test.js",
+      "original_sha256": "0598f24fa84208c6f45a0cb9f636c7717c97748f231de1f6a80961b73bc0d546",
+      "original_bytes": 4077,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/0598f24fa84208c6f45a0cb9f636c7717c97748f231de1f6a80961b73bc0d546--test.js.in",
+      "maintained_sha256": "a03997fe7d05c7f0bac6caf426be9cbe8de12308bbd1090ddf0ebf59d76ddd84",
+      "maintained_bytes": 4116,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-HZeyEW/driver/test.js",
+      "original_sha256": "88b3353027984fa57c7ca30f5cadc7b184ecc649618b274d94c09cc518ac0463",
+      "original_bytes": 3972,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/88b3353027984fa57c7ca30f5cadc7b184ecc649618b274d94c09cc518ac0463--test.js.in",
+      "maintained_sha256": "13bb4209cf23a52d918d8745dbfb9060801334047e49f8d715fe13f518d948db",
+      "maintained_bytes": 4011,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-JbTRyQ/driver/test.js",
+      "original_sha256": "23471094e21143f5d8ec9dd2f1cad3bacc00c2d1328b8dbc5c5b4a7234810c7a",
+      "original_bytes": 4264,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/23471094e21143f5d8ec9dd2f1cad3bacc00c2d1328b8dbc5c5b4a7234810c7a--test.js.in",
+      "maintained_sha256": "6ccd709cca4f6b6a31bc511b631f3d7af66a0003c26b774172dd9b1947f5c111",
+      "maintained_bytes": 4303,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-LbzXoi/driver/test.js",
+      "original_sha256": "04fecd6a29c8810dc0d7881dd1cc593ab194cacc3da83948058de58ff746c09c",
+      "original_bytes": 3972,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/04fecd6a29c8810dc0d7881dd1cc593ab194cacc3da83948058de58ff746c09c--test.js.in",
+      "maintained_sha256": "d37b0f2396cc7afa3fc93cc58966aeb351e516b5a173a6a9775760ba0a30d6fd",
+      "maintained_bytes": 4011,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-aY9GCw/driver/test.js",
+      "original_sha256": "2b3c0c85d5ea93ecc20a51017c7a7e965687528c270ee25b0d5fa57b8e205f36",
+      "original_bytes": 4232,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/2b3c0c85d5ea93ecc20a51017c7a7e965687528c270ee25b0d5fa57b8e205f36--test.js.in",
+      "maintained_sha256": "479338818c27a675ef40973e4a6a2aed350164df6a4c98247d7ec6bf31f74738",
+      "maintained_bytes": 4271,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/editor-update-preflight/run-k5Ecrc/driver/test.js",
+      "original_sha256": "800ee0b2361be55c69a4685202037bf8972d0d14eabe0f822aa9f28576784130",
+      "original_bytes": 3972,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/800ee0b2361be55c69a4685202037bf8972d0d14eabe0f822aa9f28576784130--test.js.in",
+      "maintained_sha256": "475d70d537faaf2dd105eb629b05bedc4b8376c131d68610eb5464915ebb7bba",
+      "maintained_bytes": 4011,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-5Umlnv/driver/test.js",
+      "original_sha256": "18eb2550add1bb81103d3fd04e818e35812214b3d5d0e35266f9b9f4ebf7e794",
+      "original_bytes": 5209,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/18eb2550add1bb81103d3fd04e818e35812214b3d5d0e35266f9b9f4ebf7e794--test.js.in",
+      "maintained_sha256": "de121ef3edda35d869b6672be57501988b9f3624c4bc8db2aae47c354065c12f",
+      "maintained_bytes": 5248,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-7safkW/driver/test.js",
+      "original_sha256": "38b9e34bb923cbc61c1793bf911a5bdeda24be5453c94303230c7d1d455e6479",
+      "original_bytes": 5206,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/38b9e34bb923cbc61c1793bf911a5bdeda24be5453c94303230c7d1d455e6479--test.js.in",
+      "maintained_sha256": "27d3b02965392a989934639919907402dd3ea112a7afcbd04d51babf8ae7f88c",
+      "maintained_bytes": 5245,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-80KC3I/driver/test.js",
+      "original_sha256": "c4c0fb3ad40202874ee7604de1a5be12fe00ea61d11b03315bcb1c9baa1c13f7",
+      "original_bytes": 5206,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/c4c0fb3ad40202874ee7604de1a5be12fe00ea61d11b03315bcb1c9baa1c13f7--test.js.in",
+      "maintained_sha256": "44a5ff5050a59ca5a279f3794e64f581daf93f2224356f9c77c5352394780ba1",
+      "maintained_bytes": 5245,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-B81lfr/driver/test.js",
+      "original_sha256": "6b2ea72a47f45819cc524e1ddc61d9a87c48226b143a69290e907ef78d8b3921",
+      "original_bytes": 5125,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/6b2ea72a47f45819cc524e1ddc61d9a87c48226b143a69290e907ef78d8b3921--test.js.in",
+      "maintained_sha256": "66c166826778827a5424eec192c1332ebda4562ce47933f80c6b06e109aa4ea6",
+      "maintained_bytes": 5164,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-BqQ5tl/driver/test.js",
+      "original_sha256": "5ea2e76fda20795ed91849b348707c0a14b238d383c21380c773fcb296b50d6b",
+      "original_bytes": 5208,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/5ea2e76fda20795ed91849b348707c0a14b238d383c21380c773fcb296b50d6b--test.js.in",
+      "maintained_sha256": "ff39569537e63509eb52427acd94549a64205393efa451bffa61a49a9f09f5ef",
+      "maintained_bytes": 5247,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-F2R8xl/driver/test.js",
+      "original_sha256": "8a7d6563488916c8e7029e38ecdf9637c8dc0b247e37d03615f4eb775b12a11f",
+      "original_bytes": 5211,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/8a7d6563488916c8e7029e38ecdf9637c8dc0b247e37d03615f4eb775b12a11f--test.js.in",
+      "maintained_sha256": "4f83f8c3cc659c70e76195c02b2eec5463aba7051235fa241d65f661776b7767",
+      "maintained_bytes": 5250,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-LsY4Af/driver/test.js",
+      "original_sha256": "f1ea16f0c6ae91ebf52e2e03f544c1a6c4030c8fde43fa30bb83e48bdba11b4c",
+      "original_bytes": 5210,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/f1ea16f0c6ae91ebf52e2e03f544c1a6c4030c8fde43fa30bb83e48bdba11b4c--test.js.in",
+      "maintained_sha256": "dd8e16bf1ec950c8e4cb5bef355cc18de761856e74731635712c2771f0d928b5",
+      "maintained_bytes": 5249,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-VhsafJ/driver/test.js",
+      "original_sha256": "73d679bdd8cb7dc2c0dff1b4099edac6554331d34fd3e3898d1b0d3bd1910097",
+      "original_bytes": 5204,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/73d679bdd8cb7dc2c0dff1b4099edac6554331d34fd3e3898d1b0d3bd1910097--test.js.in",
+      "maintained_sha256": "d7c7da5ba2a8b3f1bc8e6d7ad20eaab3828e0ca6470ac3d054b1bc812d8d8cb0",
+      "maintained_bytes": 5243,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-ZYigdc/driver/test.js",
+      "original_sha256": "50ffd018913f85108c5d616d68c9077c384a4ebf56f826a5728f64f169f2c490",
+      "original_bytes": 5128,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/50ffd018913f85108c5d616d68c9077c384a4ebf56f826a5728f64f169f2c490--test.js.in",
+      "maintained_sha256": "62f357810913ccb2b9b2ff9166140c766d3dd1e6218e6d740bbedb809dbda9d9",
+      "maintained_bytes": 5167,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-bYFI7Z/driver/test.js",
+      "original_sha256": "bcba69ba6f64a8b81ad5a18c9f2408df8fb0877883dc96b21a4a50635510943c",
+      "original_bytes": 5209,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/bcba69ba6f64a8b81ad5a18c9f2408df8fb0877883dc96b21a4a50635510943c--test.js.in",
+      "maintained_sha256": "a1c4241e0ddd24cb8c06df3dc458eeadd8dc6c2552c0043eeb93e20fed28a8ab",
+      "maintained_bytes": 5248,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-cGqWJ5/driver/test.js",
+      "original_sha256": "b4e57cf6da85036995ee3acb60fc3f64a99a1d91a838a64242c3f36a0f8f4925",
+      "original_bytes": 5210,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/b4e57cf6da85036995ee3acb60fc3f64a99a1d91a838a64242c3f36a0f8f4925--test.js.in",
+      "maintained_sha256": "1559d3e14c25571a1c782e7f9b2fc240b05c7a0ad63935e7a835355b341aeba6",
+      "maintained_bytes": 5249,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-hWq45W/driver/test.js",
+      "original_sha256": "7034b0b7f06ccd0d1095ef88620fe28eba4d4713d230fc1f117b3e8445998789",
+      "original_bytes": 5210,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/7034b0b7f06ccd0d1095ef88620fe28eba4d4713d230fc1f117b3e8445998789--test.js.in",
+      "maintained_sha256": "871ec88f584d6f3f3548e9720f75d035417387c99e4480a8400ba298f438fa3d",
+      "maintained_bytes": 5249,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/installed-explorer-preflight/run-r2V7Mc/driver/test.js",
+      "original_sha256": "73f2d4e3381387e2ce86d134f7342575ac6a01ce3c4d1f7752d50f6fef8ddb55",
+      "original_bytes": 5028,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/73f2d4e3381387e2ce86d134f7342575ac6a01ce3c4d1f7752d50f6fef8ddb55--test.js.in",
+      "maintained_sha256": "ca2a4a69d9d21649cc359afcab332715bc371df31a05a91ea38bb03ffb7736ec",
+      "maintained_bytes": 5067,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/candidate-worktree-r1/artifacts/installed-explorer-preflight/run-7J0wYu/driver/test.js",
+      "original_sha256": "9692c3f7754b2500595a1260bb3da1028ead6d745b0e07d6198ea7101d99c5b7",
+      "original_bytes": 5506,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/9692c3f7754b2500595a1260bb3da1028ead6d745b0e07d6198ea7101d99c5b7--test.js.in",
+      "maintained_sha256": "92523512b51daed32cb7900ecc0fc3fb9857813f502a2d681168ad8446197ede",
+      "maintained_bytes": 5545,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/candidate-worktree-r2/artifacts/installed-explorer-preflight/run-EbSEMq/driver/test.js",
+      "original_sha256": "e2809be94beb7f226cbcf94d71ecdba9f223a31c448cef157207b841c3d95ed4",
+      "original_bytes": 5466,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/e2809be94beb7f226cbcf94d71ecdba9f223a31c448cef157207b841c3d95ed4--test.js.in",
+      "maintained_sha256": "69264843b0ac0e21bb5def9e06b3c97c490f29f07186d5105c783166bf690170",
+      "maintained_bytes": 5505,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/v190/final-plan/candidate-worktree-r3/artifacts/installed-explorer-preflight/run-QGaK3I/driver/test.js",
+      "original_sha256": "e0f3a9642415986856762611a916ade3f3d37913771145400bcb144a8a952836",
+      "original_bytes": 5466,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/e0f3a9642415986856762611a916ade3f3d37913771145400bcb144a8a952836--test.js.in",
+      "maintained_sha256": "2a557bcd04b99a743dda631652592a45c8a6015e5fad639ae18a580aaab9f0f5",
+      "maintained_bytes": 5505,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/worktree-retention/2026-11-10/p10-worktree/ignored-artifacts/editor-qualification/native-installed-1S3hQB/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "4995faca00b8c3c2fc1d344d75fd8070378162fa1659da4f21abcb4f5410237e",
+      "original_bytes": 547,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/4995faca00b8c3c2fc1d344d75fd8070378162fa1659da4f21abcb4f5410237e--driver.js.in",
+      "maintained_sha256": "7678578c42c02d69690cd3e00d312d8799ebb70d1a67b617288228652f55bb5d",
+      "maintained_bytes": 586,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/worktree-retention/2026-11-10/p10-worktree/ignored-artifacts/editor-qualification/native-installed-I8ic3Y/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "4995faca00b8c3c2fc1d344d75fd8070378162fa1659da4f21abcb4f5410237e",
+      "original_bytes": 547,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/4995faca00b8c3c2fc1d344d75fd8070378162fa1659da4f21abcb4f5410237e--driver.js.in",
+      "maintained_sha256": "7678578c42c02d69690cd3e00d312d8799ebb70d1a67b617288228652f55bb5d",
+      "maintained_bytes": 586,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/worktree-retention/2026-11-10/p10-worktree/ignored-artifacts/editor-qualification/native-installed-QvepgF/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "4995faca00b8c3c2fc1d344d75fd8070378162fa1659da4f21abcb4f5410237e",
+      "original_bytes": 547,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/4995faca00b8c3c2fc1d344d75fd8070378162fa1659da4f21abcb4f5410237e--driver.js.in",
+      "maintained_sha256": "7678578c42c02d69690cd3e00d312d8799ebb70d1a67b617288228652f55bb5d",
+      "maintained_bytes": 586,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/worktree-retention/2026-11-10/p10-worktree/ignored-artifacts/editor-qualification/native-installed-TDTi6t/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "4995faca00b8c3c2fc1d344d75fd8070378162fa1659da4f21abcb4f5410237e",
+      "original_bytes": 547,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/4995faca00b8c3c2fc1d344d75fd8070378162fa1659da4f21abcb4f5410237e--driver.js.in",
+      "maintained_sha256": "7678578c42c02d69690cd3e00d312d8799ebb70d1a67b617288228652f55bb5d",
+      "maintained_bytes": 586,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/worktree-retention/2026-11-10/p10-worktree/ignored-artifacts/editor-qualification/native-installed-XGFMHQ/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "4995faca00b8c3c2fc1d344d75fd8070378162fa1659da4f21abcb4f5410237e",
+      "original_bytes": 547,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/4995faca00b8c3c2fc1d344d75fd8070378162fa1659da4f21abcb4f5410237e--driver.js.in",
+      "maintained_sha256": "7678578c42c02d69690cd3e00d312d8799ebb70d1a67b617288228652f55bb5d",
+      "maintained_bytes": 586,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/worktree-retention/2026-11-10/p10-worktree/ignored-artifacts/editor-qualification/native-installed-cUDfG8/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "4995faca00b8c3c2fc1d344d75fd8070378162fa1659da4f21abcb4f5410237e",
+      "original_bytes": 547,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/4995faca00b8c3c2fc1d344d75fd8070378162fa1659da4f21abcb4f5410237e--driver.js.in",
+      "maintained_sha256": "7678578c42c02d69690cd3e00d312d8799ebb70d1a67b617288228652f55bb5d",
+      "maintained_bytes": 586,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/worktree-retention/2026-11-10/p10-worktree/ignored-artifacts/editor-qualification/native-installed-lKgu1x/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "4995faca00b8c3c2fc1d344d75fd8070378162fa1659da4f21abcb4f5410237e",
+      "original_bytes": 547,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/4995faca00b8c3c2fc1d344d75fd8070378162fa1659da4f21abcb4f5410237e--driver.js.in",
+      "maintained_sha256": "7678578c42c02d69690cd3e00d312d8799ebb70d1a67b617288228652f55bb5d",
+      "maintained_bytes": 586,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/worktree-retention/2026-11-10/p10-worktree/ignored-artifacts/editor-qualification/native-installed-syaQID/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "4995faca00b8c3c2fc1d344d75fd8070378162fa1659da4f21abcb4f5410237e",
+      "original_bytes": 547,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/4995faca00b8c3c2fc1d344d75fd8070378162fa1659da4f21abcb4f5410237e--driver.js.in",
+      "maintained_sha256": "7678578c42c02d69690cd3e00d312d8799ebb70d1a67b617288228652f55bb5d",
+      "maintained_bytes": 586,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/worktree-retention/2026-11-10/p10-worktree/ignored-artifacts/editor-qualification/native-installed-yRHlt6/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "4995faca00b8c3c2fc1d344d75fd8070378162fa1659da4f21abcb4f5410237e",
+      "original_bytes": 547,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/4995faca00b8c3c2fc1d344d75fd8070378162fa1659da4f21abcb4f5410237e--driver.js.in",
+      "maintained_sha256": "7678578c42c02d69690cd3e00d312d8799ebb70d1a67b617288228652f55bb5d",
+      "maintained_bytes": 586,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    },
+    {
+      "source": "artifacts/worktree-retention/2026-11-10/p10-worktree/ignored-artifacts/editor-qualification/native-installed-z38fCa/extensions/local-test.airk-driver-0.0.1/driver.js",
+      "original_sha256": "4995faca00b8c3c2fc1d344d75fd8070378162fa1659da4f21abcb4f5410237e",
+      "original_bytes": 547,
+      "destination": "scripts/arbiter/research/javascript_history_r1/sources/4995faca00b8c3c2fc1d344d75fd8070378162fa1659da4f21abcb4f5410237e--driver.js.in",
+      "maintained_sha256": "7678578c42c02d69690cd3e00d312d8799ebb70d1a67b617288228652f55bb5d",
+      "maintained_bytes": 586,
+      "transformations": [
+        {
+          "kind": "spdx-prefix",
+          "prefix": "// SPDX-License-Identifier: Apache-2.0\n"
+        }
+      ]
+    }
+  ]
+}

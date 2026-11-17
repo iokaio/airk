@@ -1,0 +1,324 @@
+--- a/scripts/check-usage-inputs.py
++++ b/scripts/check-usage-inputs.py
+@@ -1,13 +1,14 @@
+ # SPDX-License-Identifier: Apache-2.0
+ """Exercise explicit content-free usage inputs through the built public CLI."""
+ import argparse
+-from contextlib import ExitStack
++from contextlib import ExitStack, contextmanager, closing
+ from concurrent.futures import ThreadPoolExecutor
+ import hashlib
+ import importlib.util
+ import json
+ import os
+ import queue
++import sqlite3
+ from pathlib import Path
+ import subprocess
+ import tempfile
+@@ -20,18 +21,149 @@
+ spec.loader.exec_module(clients)
+ 
+ 
++# Diagnostics and setup only. The measured workload below remains unchanged.
++class UsageFixture(clients.Fixture):
++    def __init__(self, *args, **kwargs):
++        super().__init__(*args, **kwargs)
++        self.failed_read_local = threading.local()
++        self.failed_read_lock = threading.Lock()
++        self.failed_read_count = 0
++
++    def run(self, *args, **kwargs):
++        result = super().run(*args, **kwargs)
++        if getattr(self.failed_read_local, "active", False):
++            self.failed_read_local.last = (args, result)
++        return result
++
++    def query(self, *args, **kwargs):
++        self.failed_read_local.active = True
++        self.failed_read_local.last = None
++        try:
++            return super().query(*args, **kwargs)
++        except BaseException as error:
++            try:
++                with self.failed_read_lock:
++                    assert self.failed_read_count < 32, "Failed-read diagnostic cap reached"
++                    self.failed_read_count += 1
++                    sequence = self.failed_read_count
++                last = self.failed_read_local.last
++                command, result = last if last is not None else ((), None)
++                def bounded(raw):
++                    raw = raw or b""
++                    if isinstance(raw, str):
++                        raw = raw.encode("utf-8", errors="replace")
++                    return {"utf8": raw[:65536].decode("utf-8", errors="replace"),
++                            "total_bytes": len(raw), "truncated": len(raw) > 65536}
++                path = self.owner / f"failed-read-{sequence:02d}.json"
++                with path.open("x", encoding="utf-8") as output:
++                    json.dump({"command": [str(self.binary), *map(str, command)],
++                               "query": [str(value) for value in args], "options": kwargs,
++                               "returncode": result.returncode if result is not None else None,
++                               "stdout": bounded(result.stdout if result is not None else getattr(error, "stdout", None)),
++                               "stderr": bounded(result.stderr if result is not None else getattr(error, "stderr", None)),
++                               "failure": str(error)[:4096]}, output, indent=2)
++                error.add_note(f"Bounded exact failed-read evidence: {path}")
++            except BaseException as diagnostic_error:
++                error.add_note(f"Diagnostic retention failed: {diagnostic_error}")
++            raise
++        finally:
++            self.failed_read_local.active = False
++
++
++@contextmanager
++def retained_usage_fixture():
++    temporary = tempfile.TemporaryDirectory(prefix="airk-usage-inputs-")
++    try:
++        yield temporary.name
++    except BaseException as error:
++        temporary._finalizer.detach()
++        error.add_note(f"Owned fictional usage fixture retained: {temporary.name}")
++        print(json.dumps({"status": "failed", "retained_fixture": temporary.name}), flush=True)
++        raise
++    else:
++        temporary.cleanup()
++
++
++def usage_quiescence(fixture, project):
++    """One atomic read-only metadata observation; never changes audit state."""
++    binding = fixture.projects[project]["binding"]
++    registry = (fixture.control / "service-1.4.sqlite3").resolve(strict=True)
++    assert registry.is_relative_to(fixture.owner), "Usage registry escaped fictional owner"
++    with closing(sqlite3.connect(registry.as_uri() + "?mode=ro", uri=True, timeout=2)) as connection:
++        row = connection.execute(
++            "SELECT paused,"
++            "(SELECT count(*) FROM service_jobs WHERE project=p.binding AND state IN('pending','running')),"
++            "(SELECT count(*) FROM service_recovery_budget WHERE scope=?) "
++            "FROM projects p WHERE binding=?", ("integrity:" + binding, binding)).fetchone()
++    assert row is not None, "Usage fixture registration absent"
++    assert row[0] in (0, 1) and row[1] >= 0 and row[2] in (0, 1), row
++    return {"paused": bool(row[0]), "active_jobs": row[1], "audit_veto": row[2] != 0}
++
++
++@contextmanager
++def stable_usage_publication(fixture, project):
++    """Real audited, paused and quiescent owner before fixture writer exclusion.
++
++    Pause is only a temporary desired-state setting of this fictional fixture.
++    A claimed audit must drain while unpaused; a veto is never reset or ignored.
++    No measured search or any whole-read replay is submitted by this preflight.
++    """
++    binding = fixture.projects[project]["binding"]
++    prior = usage_quiescence(fixture, project)["paused"]
++    primary = None
++    try:
++        if prior:
++            fixture.rpc({"pause": {"project": binding, "paused": False}})
++        # Native Verify succeeds only with actual complete physical proof. This
++        # explicit setup job is outside the later 41-search accounting window.
++        fixture.wait(fixture.enqueue(project, "verify"))
++        deadline = time.monotonic() + 90
++        for attempt in range(4):
++            while True:
++                observed = usage_quiescence(fixture, project)
++                assert not observed["paused"], "Unexpected pause during audit drain"
++                if observed["active_jobs"] == 0:
++                    assert not observed["audit_veto"], ("Unresolved audit before usage measurement", observed)
++                    break
++                assert time.monotonic() < deadline, ("Usage preflight drain deadline", observed)
++                time.sleep(min(0.025, clients.remaining(deadline, 90)))
++            fixture.rpc({"pause": {"project": binding, "paused": True}})
++            observed = usage_quiescence(fixture, project)
++            assert observed["paused"], ("Pause was not retained", observed)
++            if observed["active_jobs"] == 0 and not observed["audit_veto"]:
++                break
++            # A job can be claimed between the prior observation and Pause.
++            # Restore execution and drain that actual job; never leave a live
++            # Verify suspended behind the writer lock or clear its veto.
++            fixture.rpc({"pause": {"project": binding, "paused": False}})
++            assert attempt < 3 and time.monotonic() < deadline, ("Usage preflight raced repeatedly", observed)
++        with fixture.hold_publication(project):
++            yield
++    except BaseException as error:
++        primary = error
++        raise
++    finally:
++        try:
++            fixture.rpc({"pause": {"project": binding, "paused": prior}})
++        except BaseException as error:
++            if primary is None:
++                raise
++            primary.add_note(f"Failed to restore original fixture pause state: {error}")
++
++
++
+ def main():
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument("--binary", type=Path, required=True)
+     binary = parser.parse_args().binary.resolve(strict=True)
+-    with tempfile.TemporaryDirectory(prefix="airk-usage-inputs-") as temporary, ExitStack() as stack:
++    with retained_usage_fixture() as temporary, ExitStack() as stack:
+         base = Path(temporary).resolve(strict=True)
+         root = base / "sources"
+         root.mkdir()
+         (root / "fixture.txt").write_text("Original bounded usage fixture.\n", encoding="utf-8")
+         state = base / "state"
+         state.mkdir()
+-        fixture = clients.Fixture(binary.parent, base)
++        fixture = UsageFixture(binary.parent, base)
+         assert fixture.binary == binary
+         fixture.environment.pop("AIRK_USAGE_MODE", None)
+         stack.enter_context(fixture)
+@@ -68,7 +200,7 @@
+         indexed = run("index")
+         # Each measured query is submitted once; only explicitly unsubmitted admission may wait.
+         # Hold only this fixture's actual native writer advisory file; release before mutations.
+-        with fixture.hold_publication("usage-fixture"):
++        with stable_usage_publication(fixture, "usage-fixture"):
+             request = run("search", "--mode", "lexical", "fixture")
+             native_calls = run("usage", "report")["report"]["calls"]
+             with ThreadPoolExecutor(max_workers=4) as workers:
+--- /dev/null
++++ b/scripts/tests/test_usage_stable_publication.py
+@@ -0,0 +1,142 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Pure harness-state regressions; these do not qualify a native audit."""
++import ast
++import importlib.util
++from pathlib import Path
++import tempfile
++import unittest
++from unittest.mock import patch
++
++spec = importlib.util.spec_from_file_location("usage_stable_driver", Path(__file__).resolve().parents[1] / "check-usage-inputs.py")
++driver = importlib.util.module_from_spec(spec)
++spec.loader.exec_module(driver)
++
++
++class Fixture:
++    def __init__(self, states):
++        self.states = iter(states)
++        self.calls = []
++        self.projects = {"p": {"binding": "actual-fixture-binding"}}
++
++    def observe(self, *_):
++        state = next(self.states)
++        self.calls.append(("observe", state))
++        return state
++
++    def rpc(self, method):
++        self.calls.append(("pause", method["pause"]["paused"]))
++
++    def enqueue(self, project, kind):
++        self.calls.append(("enqueue", project, kind))
++        return {"job": {"id": "saved-job"}}
++
++    def wait(self, receipt):
++        self.calls.append(("wait", receipt))
++
++    @driver.contextmanager
++    def hold_publication(self, project):
++        self.calls.append(("hold", project))
++        try:
++            yield
++        finally:
++            self.calls.append(("release", project))
++
++    def query(self, *_args, **_kwargs):
++        raise AssertionError("Preflight must not submit a measured query")
++
++
++def state(paused=False, active=0, veto=False):
++    return {"paused": paused, "active_jobs": active, "audit_veto": veto}
++
++
++class StablePublicationTests(unittest.TestCase):
++    def enter(self, fixture):
++        return patch.object(driver, "usage_quiescence", fixture.observe)
++
++    def test_unresolved_false_clean_never_enters_writer_hold(self):
++        f = Fixture([state(), state(veto=True)])
++        with self.enter(f), self.assertRaisesRegex(AssertionError, "Unresolved audit"):
++            with driver.stable_usage_publication(f, "p"):
++                self.fail("Veto was waived")
++        self.assertNotIn(("hold", "p"), f.calls)
++        self.assertEqual(f.calls[-1], ("pause", False))
++
++    def test_paused_running_verify_drains_before_hold_and_restores_pause(self):
++        f = Fixture([state(True, 1, True), state(False, 1, True), state(), state(True)])
++        with self.enter(f), patch.object(driver.time, "sleep"):
++            with driver.stable_usage_publication(f, "p"):
++                self.assertEqual(f.calls[-1], ("hold", "p"))
++        self.assertEqual(f.calls[1:3], [("pause", False), ("enqueue", "p", "verify")])
++        self.assertEqual(f.calls[-2:], [("release", "p"), ("pause", True)])
++
++    def test_claim_between_drain_and_pause_is_resumed_and_drained(self):
++        f = Fixture([state(), state(), state(True, 1, True), state(False, 1, True), state(), state(True)])
++        with self.enter(f), patch.object(driver.time, "sleep"):
++            with driver.stable_usage_publication(f, "p"):
++                pass
++        self.assertEqual(sum(call[0] == "enqueue" for call in f.calls), 1)
++        self.assertEqual([call for call in f.calls if call[0] == "pause"],
++                         [("pause", True), ("pause", False), ("pause", True), ("pause", False)])
++        self.assertEqual(sum(call[0] == "hold" for call in f.calls), 1)
++
++    def test_repeated_race_fails_without_hold_and_restores_prior(self):
++        f = Fixture([state(), *[value for _ in range(4) for value in (state(), state(True, 1))]])
++        with self.enter(f), self.assertRaisesRegex(AssertionError, "raced repeatedly"):
++            with driver.stable_usage_publication(f, "p"):
++                self.fail("Repeated race admitted measurement")
++        self.assertNotIn(("hold", "p"), f.calls)
++        self.assertEqual(f.calls[-1], ("pause", False))
++
++    def test_measurement_failure_releases_hold_before_pause_restore(self):
++        f = Fixture([state(), state(), state(True)])
++        original_rpc = f.rpc
++        def restore_fails(method):
++            original_rpc(method)
++            if method["pause"]["paused"] is False:
++                raise RuntimeError("restore failure")
++        f.rpc = restore_fails
++        with self.enter(f), self.assertRaisesRegex(RuntimeError, "original failure") as captured:
++            with driver.stable_usage_publication(f, "p"):
++                raise RuntimeError("original failure")
++        self.assertEqual(f.calls[-2:], [("release", "p"), ("pause", False)])
++        self.assertTrue(any("restore failure" in note for note in captured.exception.__notes__))
++
++    def test_atomic_metadata_detects_running_job_and_actual_veto(self):
++        with tempfile.TemporaryDirectory() as temporary:
++            f = Fixture([])
++            f.owner = Path(temporary).resolve()
++            f.control = f.owner / "control"
++            f.control.mkdir()
++            path = f.control / "service-1.4.sqlite3"
++            with driver.closing(driver.sqlite3.connect(path)) as sql:
++                sql.executescript("CREATE TABLE projects(binding TEXT,paused INTEGER);"
++                    "CREATE TABLE service_jobs(project TEXT,state TEXT);"
++                    "CREATE TABLE service_recovery_budget(scope TEXT);")
++                sql.execute("INSERT INTO projects VALUES(?,1)", (f.projects["p"]["binding"],))
++                sql.execute("INSERT INTO service_jobs VALUES(?,'running')", (f.projects["p"]["binding"],))
++                sql.execute("INSERT INTO service_recovery_budget VALUES(?)", ("integrity:" + f.projects["p"]["binding"],))
++                sql.commit()
++            before = path.read_bytes()
++            self.assertEqual(driver.usage_quiescence(f, "p"), state(True, 1, True))
++            self.assertEqual(path.read_bytes(), before)
++
++    def test_original_measured_body_and_exact_count_assertions_are_preserved(self):
++        source = Path(driver.__file__).read_text(encoding="utf-8")
++        tree = ast.parse(source)
++        holds = [node for node in ast.walk(tree) if isinstance(node, ast.With)
++                 and any(isinstance(item.context_expr, ast.Call)
++                         and isinstance(item.context_expr.func, ast.Name)
++                         and item.context_expr.func.id == "stable_usage_publication" for item in node.items)]
++        self.assertEqual(len(holds), 1)
++        segment = ast.get_source_segment(source, holds[0])
++        for exact in ["max_workers=4", "range(40)", '== 40', '== 41', 'native_calls += 40']:
++            self.assertIn(exact, segment)
++        self.assertIn('retry=False, admission_only=True', source)
++        self.assertEqual(sum(isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
++                             and node.func.id == "run" and node.args
++                             and isinstance(node.args[0], ast.Constant) and node.args[0].value == "search"
++                             for node in ast.walk(holds[0])), 2)
++
++
++if __name__ == "__main__":
++    unittest.main()

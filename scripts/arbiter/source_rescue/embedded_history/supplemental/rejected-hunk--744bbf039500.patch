@@ -1,0 +1,37 @@
+diff a/artifacts/v190/p11b-composed-p11a-r2/tree/crates/airk-kernel/src/profile_families.rs b/artifacts/v190/p11b-composed-p11a-r2/tree/crates/airk-kernel/src/profile_families.rs	(rejected hunks)
+@@ -54,10 +58,7 @@
+             Err(error) => return Err(error),
+         };
+         let mut support = BTreeMap::from([(Family::SavedIdentity, Support::Supported)]);
+-        if let Some(descriptor) = registry
+-            .get(&profile.adapter_id)
+-            .filter(|descriptor| descriptor.profile.adapter_version == profile.adapter_version)
+-        {
++        if let Some(capabilities) = registry.effective_capabilities(path, profile) {
+             let observed = |value| {
+                 if value {
+                     Support::Supported
+@@ -65,19 +66,10 @@
+                     Support::Unsupported
+                 }
+             };
+-            support.insert(
+-                Family::LexicalCandidates,
+-                observed(descriptor.capabilities.lexical),
+-            );
+-            support.insert(
+-                Family::Declarations,
+-                observed(descriptor.capabilities.definitions),
+-            );
+-            support.insert(Family::Imports, observed(descriptor.capabilities.imports));
+-            support.insert(
+-                Family::WrittenCalls,
+-                observed(descriptor.capabilities.call_candidates),
+-            );
++            support.insert(Family::LexicalCandidates, observed(capabilities.lexical));
++            support.insert(Family::Declarations, observed(capabilities.definitions));
++            support.insert(Family::Imports, observed(capabilities.imports));
++            support.insert(Family::WrittenCalls, observed(capabilities.call_candidates));
+         }
+         // FileInfo carries metadata/counts, never underlying facts/text/vectors.
+         // Final renderer identity projection is unobserved here; keep it unknown.

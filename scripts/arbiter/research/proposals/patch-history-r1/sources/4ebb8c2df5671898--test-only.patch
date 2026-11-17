@@ -1,0 +1,55 @@
+--- a/crates/airk-supervisor/src/runtime_metadata/build_tests.rs
++++ b/crates/airk-supervisor/src/runtime_metadata/build_tests.rs
+@@ -203,25 +203,37 @@
+     );
+     let source = serde_json::to_string(&fixture.receipt["source"])?;
+     let duplicates = [
+-        raw.replacen(
+-            "\"runtime\":",
+-            &format!("\"runtime\":{runtime},\"runtime\":"),
+-            1,
+-        ),
+-        raw.replacen(&runtime, &duplicate_runtime, 1),
+-        raw.replacen(
+-            "\"source\":",
+-            &format!("\"source\":{source},\"source\":"),
+-            1,
+-        ),
+-        raw.replacen("\"files\":1834", "\"files\":0,\"files\":1834", 1),
++        (
++            "top runtime",
++            raw.replacen(
++                "\"runtime\":",
++                &format!("\"runtime\":{runtime},\"runtime\":"),
++                1,
++            ),
++        ),
++        ("runtime CLI", raw.replacen(&runtime, &duplicate_runtime, 1)),
++        (
++            "top source",
++            raw.replacen(
++                &format!("\"source\":{source}"),
++                &format!("\"source\":{source},\"source\":{source}"),
++                1,
++            ),
++        ),
++        (
++            "source files",
++            raw.replacen("\"files\":1834", "\"files\":0,\"files\":1834", 1),
++        ),
+     ];
+-    for duplicate in duplicates {
+-        assert_ne!(duplicate, raw);
++    for (ordinal, (name, duplicate)) in duplicates.into_iter().enumerate() {
++        assert_ne!(
++            duplicate, raw,
++            "literal control not injected: {ordinal} ({name})"
++        );
+         fixture.save_bytes(duplicate.as_bytes(), &fixture.metadata, None)?;
+         assert!(
+             build(&fixture.main, &fixture.executable).is_err(),
+-            "accepted duplicate original bytes"
++            "accepted duplicate original bytes: {ordinal} ({name})"
+         );
+     }
+     Ok(())

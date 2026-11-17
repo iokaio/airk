@@ -1,0 +1,179 @@
+--- R1/device.rs
++++ R2/device.rs
+@@ -193,6 +193,21 @@
+             SelectedModel::ContextCompact => &self.context_compact,
+             SelectedModel::ContextLarge => &self.context_large,
+         }
++    }
++    /// Resolves immutable descriptive bytes only. This never constructs native
++    /// ExecutionProfile or bypasses release qualification/asset/source gates.
++    pub fn materialize<'a>(
++        &self,
++        slot: SelectedModel,
++        manifest: Sha256Digest,
++        resolve: impl Fn(Sha256Digest) -> Option<&'a Profile>,
++    ) -> Result<&'a Profile> {
++        self.validate(&resolve)?;
++        ensure!(
++            self.slot(slot).iter().any(|row| row.manifest == manifest),
++            "variant is outside selected model slot"
++        );
++        resolve(manifest).context("native variant disappeared during materialization")
+     }
+     pub fn validate<'a>(
+         &self,
+@@ -300,8 +315,8 @@
+     }
+ }
+ impl DeviceConfiguration {
+-    /// Explicit migration preserves consent/indexes and forces historical CPU,
+-    /// never implicitly opts an existing enabled stage into another device.
++    /// Explicit migration preserves consent/indexes and uses the user-approved Auto policy while preserving exact model,
++    /// consent and enrollment. Existing /4 Cpu settings are never migrated.
+     pub fn migrate_legacy<'a>(
+         legacy: &Configuration,
+         resolve: impl Fn(Sha256Digest) -> Option<&'a Profile>,
+@@ -327,7 +342,7 @@
+                 let value = DeviceStageConfiguration {
+                     enabled: old.enabled,
+                     selected_model,
+-                    device_policy: DevicePolicy::Cpu,
++                    device_policy: DevicePolicy::Auto,
+                     indexes: old.indexes.clone(),
+                 };
+                 value.validate(expected)?;
+@@ -406,53 +421,19 @@
+         },
+     )
+ }
+-/// Actual native observation; pure data is never a reservation/dispatch capability.
+-/// No Deserialize: this input comes from the owning native adapter/admission observer.
++/// Advisory diagnostic facts ONLY: no Deserialize and no qualification/admission
++/// authority. In particular Profile+target+None cannot construct a native permit.
++/// Production Auto remains REFUSED until Inference holds real ExecutionProfile,
++/// OptionalReservation/OptionalReuse and authentic device-runtime/capacity witness.
+ #[derive(Clone, Debug)]
+-pub struct ObservedCandidate {
+-    manifest: Sha256Digest,
+-    model: SelectedModel,
+-    execution_identity: String,
+-    backend: Option<GpuBackend>,
+-    adapter_key: String,
+-    capability_epoch: u64,
+-    rejection: Option<SelectionReason>,
+-}
+-impl ObservedCandidate {
+-    /// Shape/declared qualification validation, NOT final-promoter authentication.
+-    /// The production owner resolves only compiled, admitted Profile bytes and
+-    /// retains its actual native observation/reservation proof independently.
+-    pub fn observe(
+-        profile: &Profile,
+-        target: &str,
+-        adapter_key: String,
+-        capability_epoch: u64,
+-        native_rejection: Option<SelectionReason>,
+-    ) -> Result<Self> {
+-        profile.validate()?;
+-        let identity = profile.device_execution_identity()?;
+-        let qualified = profile.qualification.is_some()
+-            && profile
+-                .qualified_targets
+-                .iter()
+-                .any(|row| row.target == target && row.execution_identity == identity);
+-        Ok(Self {
+-            manifest: profile.manifest,
+-            model: SelectedModel::from_model(profile.model)?,
+-            execution_identity: identity,
+-            backend: profile
+-                .device_execution
+-                .as_ref()
+-                .map(|execution| execution.backend),
+-            adapter_key,
+-            capability_epoch,
+-            rejection: if qualified {
+-                native_rejection
+-            } else {
+-                Some(SelectionReason::Unqualified)
+-            },
+-        })
+-    }
++pub struct AdvisoryCandidate {
++    pub manifest: Sha256Digest,
++    pub model: SelectedModel,
++    pub execution_identity: String,
++    pub backend: Option<GpuBackend>,
++    pub adapter_key: String,
++    pub capability_epoch: u64,
++    pub rejection: Option<SelectionReason>,
+ }
+ #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+ #[serde(deny_unknown_fields)]
+@@ -478,6 +459,7 @@
+     pub policy: DevicePolicy,
+     pub selected: Option<SelectedVariant>,
+     pub reasons: Vec<CandidateRejection>,
++    pub operation_failure: Option<SelectionReason>,
+ }
+ /// Advisory deterministic ordering ONLY. Caller must recheck source/consent,
+ /// qualification, actual capacity, epoch and original deadline before native dispatch.
+@@ -486,17 +468,22 @@
+     policy: DevicePolicy,
+     epoch: u64,
+     remaining_us: u64,
+-    candidates: &[ObservedCandidate],
++    candidates: &[AdvisoryCandidate],
+ ) -> Result<DeviceSelection> {
+-    ensure!(candidates.len() <= 16, "device observation capacity");
++    ensure!(
++        epoch > 0 && candidates.len() <= 16,
++        "device observation epoch/capacity"
++    );
+     let mut result = DeviceSelection {
+         schema: DEVICE_STATUS_SCHEMA.into(),
+         model,
+         policy,
+         selected: None,
+         reasons: Vec::new(),
++        operation_failure: None,
+     };
+     if remaining_us == 0 {
++        result.operation_failure = Some(SelectionReason::DeadlineExpired);
+         result.reasons.push(CandidateRejection {
+             manifest: None,
+             adapter_key: None,
+@@ -504,12 +491,35 @@
+         });
+         return Ok(result);
+     }
++    // These are operation-wide failures, including when seen on an unselected
++    // adapter or under forced Cpu. Never continue to any other candidate.
++    if let Some(reason) = candidates
++        .iter()
++        .filter_map(|candidate| candidate.rejection)
++        .find(|reason| {
++            matches!(
++                reason,
++                SelectionReason::AuthorityChanged
++                    | SelectionReason::SettlementUnknown
++                    | SelectionReason::DeadlineExpired
++            )
++        })
++    {
++        result.operation_failure = Some(reason);
++        result.reasons.push(CandidateRejection {
++            manifest: None,
++            adapter_key: None,
++            reason,
++        });
++        return Ok(result);
++    }
+     let mut seen = BTreeSet::new();
+     for candidate in candidates {
+         ensure!(
+             candidate.model == model
+                 && !candidate.execution_identity.is_empty()
+                 && candidate.execution_identity.len() <= 4096
++                && !candidate.adapter_key.is_empty()
+                 && candidate.adapter_key.len() <= 256
+                 && candidate.capability_epoch > 0
+                 && seen.insert((candidate.manifest, candidate.adapter_key.clone())),

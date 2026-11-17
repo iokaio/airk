@@ -1,0 +1,483 @@
+--- crates\airk-core\src\arbiter\mod.rs
++++ artifacts\advanced-split\model-download-origin-preparation-r1\core-contract-r1\proposed\crates\airk-core\src\arbiter\mod.rs
+@@ -139,6 +139,9 @@
+ #[serde(deny_unknown_fields)]
+ pub struct AssetPart {
+     pub url: String,
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    #[schemars(length(max = 2))]
++    pub backup_urls: Vec<String>,
+     pub bytes: u64,
+     pub sha256: Sha256Digest,
+ }
+@@ -373,7 +376,7 @@
+ }
+ impl Profile {
+     /// A compiled qualified release must bind every logical asset and each
+-    /// bounded GitHub release part. Downloaded metadata cannot supply this list.
++    /// bounded part with complete reviewed source ordinals. Downloaded metadata cannot supply this list.
+     pub fn validate_release_downloads(&self) -> Result<()> {
+         self.validate()?;
+         ensure!(
+@@ -391,35 +394,9 @@
+                 .iter()
+                 .find(|asset| asset.name == download.asset_name)
+                 .ok_or_else(|| anyhow::anyhow!("unknown Arbiter asset download"))?;
+-            ensure!(
+-                !download.parts.is_empty() && download.parts.len() <= 16,
+-                "Arbiter asset part limit"
+-            );
++            download.source_count()?;
+             let mut bytes = 0_u64;
+-            let mut urls = BTreeSet::new();
+             for part in &download.parts {
+-                ensure!(
+-                    part.bytes > 0 && part.bytes <= 1_u64 << 30 && urls.insert(&part.url),
+-                    "invalid Arbiter asset part"
+-                );
+-                let path = part
+-                    .url
+-                    .strip_prefix("https://github.com/iokaio/airk/releases/download/")
+-                    .ok_or_else(|| anyhow::anyhow!("unapproved Arbiter asset source"))?;
+-                let pieces = path.split('/').collect::<Vec<_>>();
+-                ensure!(
+-                    pieces.len() == 2
+-                        && pieces.iter().all(|piece| {
+-                            !piece.is_empty()
+-                                && piece.len() <= 192
+-                                && *piece != "."
+-                                && *piece != ".."
+-                                && piece.bytes().all(|byte| {
+-                                    byte.is_ascii_alphanumeric() || b"._-".contains(&byte)
+-                                })
+-                        }),
+-                    "invalid Arbiter release asset URL"
+-                );
+                 bytes = bytes
+                     .checked_add(part.bytes)
+                     .ok_or_else(|| anyhow::anyhow!("Arbiter part byte overflow"))?;
+@@ -923,6 +900,9 @@
+     }
+ }
+ 
++mod downloads;
++pub use downloads::{DownloadOrigin, download_origin};
++
+ pub mod context_action;
+ pub mod literal;
+ pub mod schema;
+--- crates\airk-core\src\arbiter\downloads.rs
++++ artifacts\advanced-split\model-download-origin-preparation-r1\core-contract-r1\proposed\crates\airk-core\src\arbiter\downloads.rs
+@@ -0,0 +1,104 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Compiled immutable acquisition locations; never source or execution authority.
++use super::*;
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum DownloadOrigin {
++    GitHubRelease,
++    HuggingFace,
++}
++
++fn safe_component(value: &str) -> bool {
++    !value.is_empty()
++        && value.len() <= 192
++        && value != "."
++        && value != ".."
++        && value
++            .bytes()
++            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
++}
++/// Validate the exact initial source. Redirects remain a separate transport fence.
++pub fn download_origin(url: &str) -> Result<DownloadOrigin> {
++    ensure!(url.len() <= 2048, "Arbiter source URL byte limit");
++    if let Some(path) = url.strip_prefix("https://github.com/iokaio/airk/releases/download/") {
++        let pieces: Vec<_> = path.split('/').collect();
++        ensure!(
++            pieces.len() == 2 && pieces.iter().all(|piece| safe_component(piece)),
++            "invalid Arbiter release asset URL"
++        );
++        return Ok(DownloadOrigin::GitHubRelease);
++    }
++    let path = url
++        .strip_prefix("https://huggingface.co/")
++        .ok_or_else(|| anyhow::anyhow!("unapproved Arbiter asset source"))?;
++    let pieces: Vec<_> = path.split('/').collect();
++    ensure!(
++        pieces.len() == 5 && pieces[2] == "resolve",
++        "invalid immutable Arbiter model URL"
++    );
++    ensure!(
++        matches!(
++            (pieces[0], pieces[1]),
++            (
++                "Qwen",
++                "Qwen3-Reranker-0.6B" | "Qwen3-0.6B-Base" | "Qwen3-1.7B" | "Qwen3-4B"
++            ) | ("onnx-community", "Qwen3-Reranker-0.6B-ONNX")
++        ),
++        "unreviewed Arbiter model repository"
++    );
++    ensure!(
++        pieces[3].len() == 40
++            && pieces[3]
++                .bytes()
++                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
++            && safe_component(pieces[4]),
++        "invalid immutable Arbiter model revision or file"
++    );
++    Ok(DownloadOrigin::HuggingFace)
++}
++impl AssetPart {
++    pub fn validate(&self) -> Result<()> {
++        ensure!(
++            self.bytes > 0 && self.bytes <= 1_u64 << 30 && self.backup_urls.len() <= 2,
++            "invalid Arbiter asset part"
++        );
++        let mut seen = BTreeSet::new();
++        for url in std::iter::once(&self.url).chain(self.backup_urls.iter()) {
++            ensure!(seen.insert(url), "duplicate Arbiter part source");
++            download_origin(url)?;
++        }
++        Ok(())
++    }
++    /// Zero is primary; later ordinals inherit this SAME part's bytes and SHA.
++    pub fn source_url(&self, ordinal: usize) -> Option<&str> {
++        if ordinal == 0 {
++            Some(&self.url)
++        } else {
++            self.backup_urls.get(ordinal - 1).map(String::as_str)
++        }
++    }
++}
++impl AssetDownload {
++    /// A source choice always has a complete ordered roster for the whole asset.
++    pub fn source_count(&self) -> Result<usize> {
++        ensure!(
++            !self.parts.is_empty() && self.parts.len() <= 16,
++            "Arbiter asset part limit"
++        );
++        let backups = self.parts[0].backup_urls.len();
++        let mut seen = BTreeSet::new();
++        for part in &self.parts {
++            part.validate()?;
++            ensure!(
++                part.backup_urls.len() == backups,
++                "incomplete Arbiter whole-asset backup roster"
++            );
++            for url in std::iter::once(&part.url).chain(part.backup_urls.iter()) {
++                ensure!(seen.insert(url), "duplicate Arbiter asset part location");
++            }
++        }
++        Ok(1 + backups)
++    }
++}
++#[cfg(test)]
++mod tests;
+--- crates\airk-core\src\arbiter\downloads\tests.rs
++++ artifacts\advanced-split\model-download-origin-preparation-r1\core-contract-r1\proposed\crates\airk-core\src\arbiter\downloads\tests.rs
+@@ -0,0 +1,215 @@
++// SPDX-License-Identifier: Apache-2.0
++use super::*;
++use serde_json::json;
++use sha2::{Digest, Sha256};
++const HF: &str = "https://huggingface.co/Qwen/Qwen3-0.6B-Base/resolve/da87bfb608c14b7cf20ba1ce41287e8de496c0cd/LICENSE";
++const HF_BACKUP: &str = "https://huggingface.co/Qwen/Qwen3-1.7B/resolve/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e/LICENSE";
++fn part() -> AssetPart {
++    AssetPart {
++        url: HF.into(),
++        backup_urls: vec![],
++        bytes: 11_343,
++        sha256: "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e"
++            .parse()
++            .unwrap(),
++    }
++}
++fn profile() -> Result<Profile> {
++    Ok(serde_json::from_slice(include_bytes!(
++        "../../../../../fixtures/arbiter/profile-downloads.json"
++    ))?)
++}
++#[test]
++fn empty_backups_preserve_exact_retained_part_and_profile_identity() -> Result<()> {
++    let original = br#"{"url":"https://github.com/iokaio/airk/releases/download/v1.9.0/model.bin","bytes":17,"sha256":"1111111111111111111111111111111111111111111111111111111111111111"}"#;
++    let value: AssetPart = serde_json::from_slice(original)?;
++    assert!(value.backup_urls.is_empty());
++    assert_eq!(serde_json::to_vec(&value)?, original);
++    let mut explicit: serde_json::Value = serde_json::from_slice(original)?;
++    explicit["backup_urls"] = json!([]);
++    assert_eq!(
++        serde_json::to_vec(&serde_json::from_value::<AssetPart>(explicit)?)?,
++        original
++    );
++    let raw = include_bytes!("../../../../../fixtures/arbiter/profile-downloads.json");
++    assert_eq!(
++        format!("{:x}", Sha256::digest(raw)),
++        "d0064974be46e7cb56099a71c248587d81cd93eccd1405ec9e736664c199d593"
++    );
++    let original = profile()?;
++    original.validate_release_downloads()?;
++    let mut explicit = serde_json::to_value(&original)?;
++    for download in explicit["downloads"].as_array_mut().unwrap() {
++        for part in download["parts"].as_array_mut().unwrap() {
++            part["backup_urls"] = json!([]);
++        }
++    }
++    let decoded: Profile = serde_json::from_value(explicit)?;
++    assert_eq!(
++        serde_json::to_vec(&decoded)?,
++        serde_json::to_vec(&original)?
++    );
++    assert_eq!(decoded.manifest, original.manifest);
++    Ok(())
++}
++#[test]
++fn immutable_reviewed_download_origins_are_closed() -> Result<()> {
++    for (repo, revision, file) in [
++        (
++            "Qwen/Qwen3-Reranker-0.6B",
++            "e61197ed45024b0ed8a2d74b80b4d909f1255473",
++            "tokenizer.json",
++        ),
++        (
++            "Qwen/Qwen3-0.6B-Base",
++            "da87bfb608c14b7cf20ba1ce41287e8de496c0cd",
++            "LICENSE",
++        ),
++        (
++            "Qwen/Qwen3-1.7B",
++            "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
++            "tokenizer.json",
++        ),
++        (
++            "Qwen/Qwen3-4B",
++            "1cfa9a7208912126459214e8b04321603b3df60c",
++            "tokenizer.json",
++        ),
++        (
++            "onnx-community/Qwen3-Reranker-0.6B-ONNX",
++            "9995c50e2310679108a55f5ccd16ba8be9f17c20",
++            "tokenizer.json",
++        ),
++    ] {
++        assert_eq!(
++            download_origin(&format!(
++                "https://huggingface.co/{repo}/resolve/{revision}/{file}"
++            ))?,
++            DownloadOrigin::HuggingFace
++        );
++    }
++    assert_eq!(
++        download_origin("https://github.com/iokaio/airk/releases/download/v1.9.0/part01")?,
++        DownloadOrigin::GitHubRelease
++    );
++    for url in [
++        HF.replace("https:", "http:"),
++        HF.replace("huggingface.co/", "user@huggingface.co/"),
++        HF.replace("huggingface.co/", "huggingface.co:443/"),
++        HF.replace("huggingface.co/", "huggingface.co.evil/"),
++        HF.replace("Qwen/Qwen3-0.6B-Base", "unknown/repo"),
++        HF.replace("Qwen/Qwen3-0.6B-Base", "iokaio/airk-models"),
++        HF.replace("da87bfb608c14b7cf20ba1ce41287e8de496c0cd", "main"),
++        HF.replace(
++            "da87bfb608c14b7cf20ba1ce41287e8de496c0cd",
++            "DA87BFB608C14B7CF20BA1CE41287E8DE496C0CD",
++        ),
++        HF.replace("/LICENSE", "/../LICENSE"),
++        HF.replace("/LICENSE", "/%2e%2e"),
++        HF.replace("/LICENSE", "/."),
++        HF.replace("/LICENSE", "/nested/LICENSE"),
++        format!("{HF}?token=secret"),
++        format!("{HF}#fragment"),
++    ] {
++        assert!(download_origin(&url).is_err(), "{url}");
++    }
++    Ok(())
++}
++#[test]
++fn complete_backup_ordinals_share_exact_part_identity_and_asset_bounds() -> Result<()> {
++    let mut value = part();
++    value.backup_urls = vec![HF_BACKUP.into()];
++    value.validate()?;
++    assert_eq!(value.source_url(0), Some(HF));
++    assert_eq!(value.source_url(1), Some(HF_BACKUP));
++    assert_eq!(value.source_url(2), None);
++    let mut duplicate = value.clone();
++    duplicate.backup_urls.push(HF.into());
++    assert!(duplicate.validate().is_err());
++    duplicate.backup_urls = vec![HF_BACKUP.into(), HF_BACKUP.into()];
++    assert!(duplicate.validate().is_err());
++    duplicate.backup_urls = vec![HF_BACKUP.into(); 3];
++    assert!(duplicate.validate().is_err());
++    duplicate = value.clone();
++    duplicate.bytes = 0;
++    assert!(duplicate.validate().is_err());
++    duplicate.bytes = (1_u64 << 30) + 1;
++    assert!(duplicate.validate().is_err());
++    let mut profile = profile()?;
++    for download in &mut profile.downloads {
++        for part in &mut download.parts {
++            let filename = part.url.rsplit('/').next().unwrap();
++            part.backup_urls = vec![format!(
++                "https://huggingface.co/Qwen/Qwen3-1.7B/resolve/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e/{filename}"
++            )];
++        }
++    }
++    profile.validate_release_downloads()?;
++    let mut three = profile.clone();
++    for download in &mut three.downloads {
++        for part in &mut download.parts {
++            let filename = part.url.rsplit('/').next().unwrap();
++            part.backup_urls.push(format!("https://huggingface.co/Qwen/Qwen3-4B/resolve/1cfa9a7208912126459214e8b04321603b3df60c/{filename}"));
++        }
++        assert_eq!(download.source_count()?, 3);
++    }
++    three.validate_release_downloads()?;
++    let last = profile.downloads.len() - 1;
++    assert_eq!(profile.downloads[last].source_count()?, 2);
++    let mut incomplete = profile.clone();
++    incomplete.downloads[last].parts[1].backup_urls.clear();
++    assert!(incomplete.validate_release_downloads().is_err());
++    let mut repeated = profile.clone();
++    repeated.downloads[last].parts[1].backup_urls =
++        repeated.downloads[last].parts[0].backup_urls.clone();
++    assert!(repeated.validate_release_downloads().is_err());
++    let mut short = profile.clone();
++    short.downloads[last].parts[1].bytes += 1;
++    assert!(short.validate_release_downloads().is_err());
++    let mut singleton = profile.clone();
++    singleton.downloads[0].parts[0].sha256 = Sha256Digest::from_bytes([9; 32]);
++    assert!(singleton.validate_release_downloads().is_err());
++    let mut raw = serde_json::to_value(value)?;
++    raw["backup_bytes"] = json!(1);
++    assert!(serde_json::from_value::<AssetPart>(raw).is_err());
++    Ok(())
++}
++#[test]
++fn native_download_origin_semantic_fixture_emitter() -> Result<()> {
++    let original = profile()?;
++    original.validate_release_downloads()?;
++    let hf = part();
++    hf.validate()?;
++    let mut actual_hf_backup = hf.clone();
++    actual_hf_backup.backup_urls = vec![HF_BACKUP.into()];
++    actual_hf_backup.validate()?;
++    // Transport shape only. No working GitHub backup or publication is invented.
++    let mut configured_gh_backup = hf.clone();
++    configured_gh_backup.backup_urls = vec![original.downloads[0].parts[0].url.clone()];
++    configured_gh_backup.validate()?;
++    let incomplete = AssetDownload {
++        asset_name: "structural-two-part".into(),
++        parts: vec![actual_hf_backup.clone(), hf.clone()],
++    };
++    assert!(incomplete.source_count().is_err());
++    let mut empty = incomplete.clone();
++    empty.parts.clear();
++    assert!(empty.source_count().is_err());
++    let document = json!({"schema":"airk.arbiter.download-origin-cases/1","qualification":false,"network_executed":false,
++        "hf_primary_no_backup":{"part":hf,"origin":"hugging_face","source_count":1,"public_metadata_identity_only":true},
++        "hf_primary_actual_same_byte_hf_backup":{"part":actual_hf_backup,"source_count":2,"public_metadata_identity_only":true},
++        "hf_primary_configured_gh_backup_structural_only":{"part":configured_gh_backup,"source_count":2,"working_gh_backup_asserted":false},
++        "retained_profile":{"profile":original,"empty_backups_omit":true,"old_profile_fixture_sha256":"d0064974be46e7cb56099a71c248587d81cd93eccd1405ec9e736664c199d593"},
++        "incomplete_backup_roster":{"download":incomplete,"valid":false},"empty_parts":{"download":empty,"valid":false},
++        "schema_document":crate::arbiter::schema::document()});
++    if let Some(path) = std::env::var_os("AIRK_WRITE_ARBITER_DOWNLOAD_ORIGIN_CASES") {
++        std::fs::write(path, serde_json::to_vec_pretty(&document)?)?;
++    }
++    if let Some(path) = std::env::var_os("AIRK_WRITE_ARBITER_SCHEMA") {
++        std::fs::write(
++            path,
++            serde_json::to_vec_pretty(&crate::arbiter::schema::document())?,
++        )?;
++    }
++    Ok(())
++}
+--- crates\airk-core\src\arbiter\stage_tests.rs
++++ artifacts\advanced-split\model-download-origin-preparation-r1\core-contract-r1\proposed\crates\airk-core\src\arbiter\stage_tests.rs
+@@ -329,7 +329,7 @@
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     cpu_fit: Option<CpuFit>,
+     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+-    downloads: Vec<AssetDownload>,
++    downloads: Vec<RetainedAssetDownload>,
+     model: ModelChoice,
+     profile_id: String,
+     manifest: Sha256Digest,
+@@ -345,6 +345,21 @@
+     memory_reservation_bytes: u64,
+     peak_disk_bytes: u64,
+     assets: Vec<Asset>,
++}
++// Retain the old nested owner too: using current AssetPart here would mask
++// accidental insertion into an existing persisted profile's canonical bytes.
++#[derive(Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct RetainedAssetPart {
++    url: String,
++    bytes: u64,
++    sha256: Sha256Digest,
++}
++#[derive(Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct RetainedAssetDownload {
++    asset_name: String,
++    parts: Vec<RetainedAssetPart>,
+ }
+ #[test]
+ fn retained_profile_bytes_have_no_stage_insertion_or_digest_reidentification() -> Result<()> {
+--- crates\airk-core\src\arbiter\CONTRACT.md
++++ artifacts\advanced-split\model-download-origin-preparation-r1\core-contract-r1\proposed\crates\airk-core\src\arbiter\CONTRACT.md
+@@ -399,9 +399,9 @@
+ 
+ ## Explicit compiled asset transport decision (2026-11-14)
+ 
+-Profile's optional `downloads` list is omitted when empty, preserving legacy qualification-profile bytes. It contains Rust-owned `AssetDownload { asset_name, parts: Vec<AssetPart { url, bytes, sha256 }> }`. A product compiled release requires a complete unique download row for every declared logical asset, including compiler, calibration, fixture and notices. Developer qualification may omit transport but cannot become a provisionable release profile that way.
+-
+-Each ordered part is positive and at most 1 GiB, at most sixteen parts per logical asset, and has its own length/SHA-256. URLs are exact `https://github.com/iokaio/airk/releases/download/<tag>/<filename>` with bounded safe ASCII tag/filename components, no credentials/query/fragment/percent escapes/traversal. Part lengths sum to logical Asset.bytes; a singleton also has the logical hash. The native download transaction hashes every part and the entire concatenation before publication. Only the exact profile compiled into the native authenticated catalog supplies transport authority; local/downloaded metadata and candidate exports never do.
++Profile's optional `downloads` list is omitted when empty, preserving legacy qualification-profile bytes. It contains Rust-owned `AssetDownload { asset_name, parts: Vec<AssetPart { url, backup_urls, bytes, sha256 }> }`. A product compiled release requires a complete unique download row for every declared logical asset, including compiler, calibration, fixture and notices. Developer qualification may omit transport but cannot become a provisionable release profile that way.
++
++Each ordered part is positive and at most 1 GiB, at most sixteen parts per logical asset, and has its own length/SHA-256. Primary and optional backup URLs use Core `download_origin`: exact `https://github.com/iokaio/airk/releases/download/<tag>/<filename>` or the reviewed immutable HF forms below, with bounded safe ASCII components and no credentials/query/fragment/percent escapes/traversal. Part lengths sum to logical Asset.bytes; a singleton also has the logical hash. The native download transaction hashes every part and the entire concatenation before publication. Only the exact profile compiled into the native authenticated catalog supplies transport authority; local/downloaded metadata and candidate exports never do.
+ 
+ ## Private evaluation admission decision (2026-11-14)
+ 
+@@ -840,3 +840,41 @@
+ current Context profiles use it explicitly. Historical four-model fixtures remain
+ unchanged and gain no selected-model eligibility. No wire field, tokenizer/model
+ math, budget, persisted format or historical qualification identity changes.
++
++
++### Immutable model acquisition origins and complete backup ordinals
++
++The recorded optional-source decision adds AssetPart.backup_urls, serde default
++and omitted when empty. At most two distinct backups share the SAME part bytes
++and SHA; no alternate payload identity exists. Empty lists retain original part
++and Profile canonical bytes, demonstrated by literal old part bytes and the
++retained old nested Rust Profile serializer/hashed fixture. No airk-state/1
++fixture is rewritten. Nonempty release descriptors require a new authenticated
++manifest/catalog through final promotion, never rewritten consent or enablement.
++
++Core download_origin is the sole initial-source predicate. Existing official
++iokaio/airk GitHub release URLs retain their exact safe tag/file rules. HF URLs
++are HTTPS huggingface.co with exact reviewed repositories Qwen/Qwen3-Reranker-0.6B,
++Qwen/Qwen3-0.6B-Base, Qwen/Qwen3-1.7B, Qwen/Qwen3-4B and
++onnx-community/Qwen3-Reranker-0.6B-ONNX, then resolve/40-lowercase-hex/safe-single-file.
++No credentials, explicit ports, branches, query, fragment, escapes or traversal;
++no derived AIRK repository is invented. Metadata/source shape does not establish
++actual availability, rights or payload qualification. Redirect admission remains
++an independently bounded native transport duty.
++
++AssetDownload.source_count validates a complete same-count backup ordinal on
++EVERY ordered part, at most initial+two alternatives. AssetPart.source_url(0)
++returns primary and later ordinals its declared backup, without changing bytes
++or SHA. Part locations are distinct across the asset; existing positive/1GiB
++part bounds, sixteen-part cap, full length sum and singleton whole SHA remain.
++Profile.validate_release_downloads validates this entire closure.
++
++Only explicit Provision acquires network bytes. Recover stays local reconciliation
++and warm; startup/query/status/import grant no download. Whole-asset fallback
++requires narrow Store-owned sealed-partial restart, no failed-part append or
++mutation of completed/foreign/unsealed files. Every original per-part900s deadline,
++30s response/idle limit and shared four redirects per part remain across source
++attempts; no retry or new time follows from a backup. Cancellation, supersession,
++revocation or local custody failure stops immediately. Native publication lists
++only actual GitHub-hosted files; all HF descriptors stay in authenticated catalog
++closure. Rust structural GH-backup cases assert no working URL or publication.

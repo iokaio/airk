@@ -1,0 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
+'use strict';
+const input=document.querySelector('#help-search');
+if(input){const rows=[...document.querySelectorAll('[data-search]')];const count=document.querySelector('#search-count');input.addEventListener('input',()=>{const terms=input.value.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);let found=0;for(const row of rows){row.hidden=!terms.every(term=>row.dataset.search.includes(term));if(!row.hidden)found++;}count.textContent=`${found} of ${rows.length} topics`;});}

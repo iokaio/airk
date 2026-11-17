@@ -1,0 +1,68 @@
+--- a/final-placement.patch
++++ b/final-placement.patch
+@@ -11,7 +11,7 @@
+ +using AirkOrtPlacementCallbackV1 = int32_t(__cdecl*)(
+ +    void*, uint64_t, const char*, size_t, const char*, size_t,
+ +    const char*, size_t, const char*, size_t);
+-+extern "C" int32_t __cdecl airk_ort_collect_final_placement_v1(
+++extern "C" __declspec(dllexport) int32_t __cdecl airk_ort_collect_final_placement_v1(
+ +    const OrtApiBase* base, const OrtSession* session,
+ +    AirkOrtPlacementCallbackV1 callback, void* user,
+ +    uint64_t max_nodes, uint64_t max_string_bytes,
+--- a/cuda-runtime-producer-lock.json
++++ b/cuda-runtime-producer-lock.json
+@@ -100,9 +100,10 @@
+   "final_placement": {
+     "path": "onnxruntime/core/session/onnxruntime_c_api.cc",
+     "before_sha256": "5ba4ae260bafb56a32bf697c970ae0fb19cc311da9dbb7ab2630d759b475d425",
+-    "after_sha256": "c7d3d18d4546ae9895c5b60dfb18fc275702df9e5e13e6f99a54ef49393f14bb",
+-    "patch_sha256": "9e3dd53a50759cace649f130ff7b6ad19d7e048b8036a73d5580887c4e4bd475",
++    "after_sha256": "b8fb1b76bfb49b9d6963e20b1aa44d1f657782db1fd12c604e72d0762381aa2d",
++    "patch_sha256": "3b8a4e79f72da0ff52e2b9597578d48b83a552e9e78282054f46d5d40c0a9b23",
+     "symbol": "airk_ort_collect_final_placement_v1",
+-    "abi": "Windows x64 __cdecl, same static core, final live SessionState tree; no API table changes"
++    "abi": "Windows x64 __cdecl, same static core, final live SessionState tree; no API table changes",
++    "symbol_resolution": "Windows PE optional export from actual static-core-containing EXE; typed lookup in module containing OrtGetApiBase; missing export refuses GPU before model work"
+   }
+ }
+--- a/CONTRACT.md
++++ b/CONTRACT.md
+@@ -36,4 +36,10 @@
+ 
+ The synchronous caller holds the actual session mutex/lifetime. Enumerate every final SessionState GraphViewer node and recurse through all live control-flow child states. Reconcile graph attributes against the owned child-state map; missing/extra/null state means incomplete/refusal. Graph IDs are root0 then deterministic preorder sorted by parent nodeIndex/attribute name; node order is GraphViewer::Nodes order. Callback gives exact name/domain/op/provider strings with explicit byte lengths and graphID; copies must finish during callback. Empty node/domain strings are allowed, empty op/provider is incomplete. No callback may unwind. Only return0 means complete collection; partial callbacks/counters on any nonzero status are diagnostics and cannot qualify placement.
+ 
+-Hard caps: caller max_nodes1..65536, string-byte cap1..16MiB,4096bytes per string,4096graphs and depth32. Callback rejection, native exceptions, missing state, caps and foreign base return typed integer failures; no exception crosses C. No device/model work or timeout reset occurs. The same-core export is pulled into the static service by the Rust externC reference, not a separate helper DLL/library. This source patch and exact before/after hashes join the GPU producer's source identity and real GNU patch controls before full build.
++Hard caps: caller max_nodes1..65536, string-byte cap1..16MiB,4096bytes per string,4096graphs and depth32. Callback rejection, native exceptions, missing state, caps and foreign base return typed integer failures; no exception crosses C. No device/model work or timeout reset occurs. The CAPI object is linked by the existing OrtGetApiBase reference; its explicit export directive publishes the application-private function. Rust uses typed optional lookup in that same authenticated image, not a direct custom extern or separate helper DLL/library. This source patch and exact before/after hashes join the GPU producer's source identity and real GNU patch controls before full build.
++
++## R7 optional PE export decision
++
++The same Windows function definition is explicitly __declspec(dllexport). Its CAPI archive object's linker export directive must be retained in the actual static-core-containing EXE. ABI/header fields and function behavior are unchanged. Rust resolves only this known symbol from the authenticated module containing the actual linked OrtGetApiBase function, using typed GetProcAddress and held module/image custody. Missing export in a CPU-only binary is RuntimeUnavailable before model work; CPU-only --all-features has no unresolved custom extern. Version alone never establishes GPU support: approved producer/source/static-core/runtime closure pins remain mandatory. No new core, DLL, process or API-table entry is introduced.
++
++Actual PE export inspection after the authorized build is required; this patch/control proof does not claim an export already exists in any binary. Fresh producer output stays cu6 (R6 was never executed), exactly matching the enforced lock/card; R6 remains immutable.
+--- a/run_real_patch_controls.py
++++ b/run_real_patch_controls.py
+@@ -4,7 +4,7 @@
+ ROOT=Path('D:/code/Github/airk');HERE=Path(__file__).resolve().parent;BASE=HERE.parent
+ CPU=ROOT/'artifacts/advanced-split/ort130-x64-owned-r5'
+ INPUT=Path('C:/Users/tdotn/AppData/Local/airk-final-exec-20261116T052942Z/gpu-runtime-inputs-r1')
+-OUT=INPUT.parent/'gpu-patch-controls-r6'
++OUT=INPUT.parent/'gpu-patch-controls-r7'
+ def main():
+  lock=json.loads((HERE/'cuda-runtime-producer-lock.json').read_text(encoding='utf8'))
+  spec=importlib.util.spec_from_file_location('cpu_owner',ROOT/'scripts/provision-static-onnx-runtime.py');o=importlib.util.module_from_spec(spec);spec.loader.exec_module(o)
+--- a/README.md
++++ b/README.md
+@@ -1,9 +1,7 @@
+-# R6 final placement producer review
++# R7 optional export handoff
+ 
+-R5 is preserved unexecuted after its EOL correction and four real patch controls. R6 adds one fifth exact source patch to existing onnxruntime_c_api.cc. The Windows-only C export observes the real initialized SessionState final GraphViewer nodes and all owned live control-flow child states. It compares the caller's base to the same static OrtGetApiBase, requires exact1.30.0, reconciles graph-attribute children, sorts deterministic graph IDs, enforces node/graph/depth/string caps and contains exceptions. No API24 basic-map retagging, vtable offset guess, new runtime/DLL, weighted graph save or inference call occurs. airk_ort_final_placement_v1.h records the exact synchronous borrowed-string ABI/status codes for the Rust caller.
++R6 remains immutable/unexecuted. R7 adds only __declspec(dllexport) to the reviewed Windows final-map function definition; its CAPI archive object is already linked through OrtGetApiBase and must carry the export directive into the actual service EXE. The exact ABI/header, bounded final SessionState traversal and producer script remain unchanged. Rust uses typed optional GetProcAddress from the authenticated module containing the linked OrtGetApiBase function; CPU-only builds need no custom extern and report missing export as RuntimeUnavailable before model work. Native producer/runtime/source authority remains mandatory; an export/version alone never proves a GPU path. No second core or helper DLL is introduced.
+ 
+-All five actual GNU patch stages passed on fresh authenticated archive-derived target copies, with exact before/after SHA checks and naturally settled owned child processes. The real patch receipt is68bd072d... under protected gpu-patch-controls-r6. Twelve Python producer/refusal controls pass. The C++ export has been independently source-reviewed by model_data; actual C++ compilation/native walker controls remain unrun. Do not turn source review into a runtime-placement or qualification pass.
++All five real GNU patch stages passed on fresh archive-derived copies using the canonical owned runner and exact target before/after hashes. Receipt2d7eba4b... is retained under protected gpu-patch-controls-r7. Twelve Python controls pass. There has been no C++ build, CMake configure, native selected-model/GPU call or Cargo work by this agent. Actual PE export inspection and native walker controls remain post-build gates.
+ 
+-The producer enforces exact fresh cu6 from the lock and retains all R5 exact LF corrections. It still uses one combined CUDA-capable static core, optional same-build provider DLLs, Flash/memory-efficient kernels compiledON, SM86/FlashThreads1/NVCC2/sharedparallel2. CPU/FP32 unfused/TF32off is the first model path; FP16 efficient mask/export/admission remains separate later G5. Original model/resource budgets and all old CPU evidence identities remain unchanged.
+-
+-After the frontend header syntax and CMake configure stages, compile the session static target first to catch the new owner before broad CUDA kernel compilation, then continue the same build tree's all/re2 targets under the original10800-second shared/outer observer. No duplicate core/rebuild/DLL mixing occurs. Root must authorize the actual job after final combined source review. This packet itself runs no C++/Cargo/model/installer and emits no native qualification authority.
++The exact fresh output remains cu6, matching enforced lock/card (R6 never ran). R4/cu3 failure and R5/R6 source proofs are preserved. LF corrections, full closure rechecks, combined Flash/memory-efficient runtime, FP32-unfused/TF32off first gate and separate later FP16 G5 are unchanged. The real job needs Root's direct trigger under its original10800-second owned observer; this review packet does not launch it.

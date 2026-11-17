@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: Apache-2.0
+#!/bin/sh
+# Root-only single public harness correction; no native source or model transfer.
+set -eu
+umask 077
+cd "$HOME/code/airk"
+"$PWD/artifacts/tools/neo-python-3.13.18/bin/python3.13" -I -B - <<'PY'
+import base64,hashlib,json,os,subprocess,sys
+from pathlib import Path
+assert sys.version_info[:3]==(3,13,18)
+[sealed base64 payload omitted; exactly one public script plus source-hash manifest]
+root=Path.cwd().resolve();assert os.path.samefile(root,Path.home()/'code/airk')
+def digest(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+def safe(p):
+ for q in (p,*p.parents):
+  assert not q.is_symlink(),q
+  if q==root:return p
+ raise ValueError('Outside checkout')
+active=[p for p in subprocess.check_output(['/bin/ps','-axo','comm='],text=True).splitlines() if Path(p.strip()).name in ('cargo','cargo-nextest','rustc','clippy-driver','rustfmt')];assert not active,active
+bp=safe(root/payload['base_manifest_path']);assert digest(bp)==payload['base_manifest_sha256'];base=json.loads(bp.read_bytes())
+for name,row in base['files'].items():
+ p=safe(root/name);assert p.is_file() and digest(p)==row['sha256'],name
+for name in base['retired_auto_discovery']:assert not (root/name).exists(),name
+name='scripts/dev/receipt_runner.py';target=safe(root/name);assert digest(target)==payload['before_sha256']
+content=base64.b64decode(payload['content']);assert hashlib.sha256(content).hexdigest()==payload['after_sha256']
+stage=safe(root/'artifacts/advanced-split/receipts/mac-cli-await-transfer-r12');stage.mkdir(mode=0o700,exist_ok=False)
+original=target.read_bytes();backup=stage/'receipt_runner.before.py'
+with backup.open('xb') as f:f.write(original);f.flush();os.fsync(f.fileno())
+assert digest(backup)==payload['before_sha256']
+recovery={'base_native_seal':base['source_set_sha256'],'path':name,'before_sha256':payload['before_sha256'],'after_sha256':payload['after_sha256'],'backup':str(backup),'native_files_changed':0}
+(stage/'recovery.json').write_text(json.dumps(recovery,indent=2)+'\n')
+assert digest(target)==payload['before_sha256']
+# Open the existing proven regular source without replacing its ownership/mode.
+with target.open('r+b') as f:f.write(content);f.truncate();f.flush();os.fsync(f.fileno())
+assert digest(target)==payload['after_sha256']
+manifest=(json.dumps(payload['manifest'],sort_keys=True,indent=2)+'\n').encode();assert hashlib.sha256(manifest).hexdigest()==payload['manifest_sha256']
+for name,row in payload['manifest']['files'].items():assert digest(safe(root/name))==row['sha256'],name
+mp=safe(root/'artifacts/advanced-split/receipts/mac-cli-await-source-r12.json')
+with mp.open('xb') as f:f.write(manifest);f.flush();os.fsync(f.fileno())
+print(json.dumps({'source_set_sha256':payload['manifest']['source_set_sha256'],'native_base_seal':base['source_set_sha256'],'changed_files':1,'native_files_changed':0,'recovery':str(stage/'recovery.json')}))
+PY

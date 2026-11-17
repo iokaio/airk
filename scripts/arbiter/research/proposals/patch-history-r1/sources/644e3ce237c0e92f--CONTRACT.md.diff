@@ -1,0 +1,10 @@
+--- crates/airk-service/src/service_runtime/arbiter/CONTRACT.md
++++ crates/airk-service/src/service_runtime/arbiter/CONTRACT.md
+@@ -360,3 +360,7 @@
+ deadline, whole phase deadline and 128-observation ceiling remain unchanged.
+ No sleeps, scoring probes, failed-operation retries or registry-file readiness
+ assumptions are introduced. Prior failed attempts remain failed.
++
++The warm journal seam is compiled only for native unit-test fixtures with
++local-inference and test-support. Feature-enabled non-test libraries expose no
++observer attachment or lifecycle hook; no integration or product caller owns it.

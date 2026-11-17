@@ -1,0 +1,47 @@
+--- compact/run_tiny.py
++++ large/run_tiny.py
+@@ -2,12 +2,12 @@
+ import argparse,json,math,os,re,sys,time
+ from pathlib import Path
+ BASE=Path(__file__).resolve().parent
+-OWNER=BASE.parent/'compact-native-diagnostic-owner-r1'
++OWNER=Path(r'D:\code\Github\airk\artifacts\advanced-split\models\actual-composed-service-r2\compact-native-diagnostic-owner-r1')
+ sys.path.insert(0,str(OWNER))
+ from runner import SID,need,pin,load,digest,write,unaliased,source_modules,final_observation
+ from security import observe
+-SELECTORS={17:'inference_engine::pool::arbiter::qualification::software_v2::attention_diagnostic::software_v2_synthetic_gqa_allocation_t17',
+-8192:'inference_engine::pool::arbiter::qualification::software_v2::attention_diagnostic::software_v2_synthetic_gqa_allocation_t8192'}
++SELECTORS={17:'inference_engine::pool::arbiter::qualification::software_v2::attention_diagnostic::software_v2_synthetic_large_gqa_allocation_t17',
++8192:'inference_engine::pool::arbiter::qualification::software_v2::attention_diagnostic::software_v2_synthetic_large_gqa_allocation_t8192'}
+ def main():
+     started=time.monotonic();deadline=started+120
+     parser=argparse.ArgumentParser(description=__doc__)
+@@ -34,8 +34,8 @@
+     parent=load(owner_card['source_pins']['reference_parent']['path'],'tiny_native_parent')
+     owner=load(owner_card['source_pins']['reference_owner']['path'],'tiny_native_owned')
+     need(worker.windows_sid()==SID,'Wrong actual human SID');worker.verify_loaded_runtime(runtime)
+-    output=BASE.parent/f'compact-tiny-t{a.tokens}-r3'
+-    need(not output.exists() and unaliased(output.parent)==BASE.parent and observe(output.parent)==owner_card['approved_output_parent_security'],'Fresh approved human output required; no retries')
++    output=BASE.parent/f'large-tiny-t{a.tokens}-r1'
++    need(not output.exists() and unaliased(output.parent)==BASE.parent and observe(output.parent)==card['approved_output_parent_security'],'Fresh approved human output required; no retries')
+     if not a.execute_reviewed:
+         print(json.dumps({'preflight_passed':True,'tokens':a.tokens,'native_image_sha256':image['sha256'],'native_executed':False}));return 0
+     output.mkdir();(output/'temp').mkdir();raw=output/'native-result.json';stdout=output/'stdout.log';stdin=output/'stdin.bin'
+@@ -43,7 +43,7 @@
+     argv=[str(pin(image)),'--ignored','--exact',SELECTORS[a.tokens],'--nocapture']
+     env=dict(os.environ);env.update({'TEMP':str(output/'temp'),'TMP':str(output/'temp'),'TMPDIR':str(output/'temp'),
+         'ORT_GQA_DISABLE_FLASH_ATTENTION':'0','AIRK_GQA_TINY_GRAPH':str(fixture),'AIRK_GQA_TINY_GRAPH_SHA256':card['fixture']['sha256'],'AIRK_GQA_TINY_OUTPUT':str(raw)})
+-    receipt={'schema':'airk.private.compact-tiny-native-owned/1','complete':False,'failure':None,'post_input_drift':[],
++    receipt={'schema':'airk.private.large-tiny-native-owned/1','complete':False,'failure':None,'post_input_drift':[],
+         'tokens':a.tokens,'preparation_sha256':a.preparation_sha256,'image_inventory':packet_pin,'command':argv,'limits':{'original_seconds':120,'containment_bytes':8<<30,'log_bytes':64<<20},
+         'fixture':card['fixture'],'model_weights_loaded':False,'human_or_release_qualification':False,'pins':{}}
+     write(output/'started.json',receipt)
+@@ -65,7 +65,7 @@
+     except BaseException as error:
+         receipt['failure']={'type':type(error).__name__,'message':str(error)}
+         if hasattr(error,'owned_cleanup'):receipt['owned_cleanup']=error.owned_cleanup
+-        for name,path in [('body',raw),*[(f'partial-{v.name}',v) for v in output.glob('synthetic-gqa-*')]]:
++        for name,path in [('body',raw),*[(f'partial-{v.name}',v) for v in output.glob('synthetic-large-gqa-*')]]:
+             if path.is_file() and path.stat().st_size<=64<<20:receipt['pins'][name]={'path':str(path),'bytes':path.stat().st_size,'sha256':digest(path)}
+     finally:
+         for path,sha in seals.items():

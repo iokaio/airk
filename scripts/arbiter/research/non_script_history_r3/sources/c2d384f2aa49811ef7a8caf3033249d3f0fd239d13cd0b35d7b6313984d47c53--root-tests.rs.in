@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: Apache-2.0
+#[cfg(test)]
+mod source_backend_sequence_tests {
+    use super::*;
+
+    #[test]
+    fn old_namespace_observation_cannot_repopulate_replaced_backend() {
+        let project = "ab".repeat(32).parse().unwrap();
+        let old_namespace = airk_core::identity::Incarnation::from_bytes([1; 16]);
+        let new_namespace = airk_core::identity::Incarnation::from_bytes([2; 16]);
+        let mut cache = SourceBackendCache::default();
+        assert!(cache.admit_sequence(1));
+        cache.current = Some(((project, old_namespace), crate::project_client::source_tools(PathBuf::new(), project)));
+        assert!(cache.admit_sequence(3));
+        let replacement = crate::project_client::source_tools(PathBuf::new(), project);
+        cache.current = Some(((project, new_namespace), replacement.clone()));
+        // Snapshot 2 was taken in namespace 1, but resumes after namespace 2 won.
+        assert!(!cache.admit_sequence(2));
+        let (key, retained) = cache.current.as_ref().unwrap();
+        assert_eq!(*key, (project, new_namespace));
+        assert!(Arc::ptr_eq(retained, &replacement));
+    }
+}

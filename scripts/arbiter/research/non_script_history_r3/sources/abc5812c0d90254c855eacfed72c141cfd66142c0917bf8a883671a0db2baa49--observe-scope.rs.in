@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: Apache-2.0
+    pub fn resolve(&self, control: &Path) -> Result<RootResolution> {
+        Ok(self.observe(control)?.resolution)
+    }
+    pub(crate) fn observe(&self, control: &Path) -> Result<RootObservation> {
+        if !control.join("service-1.4.sqlite3").try_exists()? {
+            return Ok(RootObservation { resolution: RootResolution::Missing, fence: None });
+        }
+        let mut registry = airk_store::service::registry::ServiceRegistry::open_saved(control)?;
+        let observed = registry.observe_source_scope(&self.root, self.collection.as_deref())?;
+        use airk_store::service::registry::SavedScopeResolution;
+        let (resolution, fence) = match observed.resolution {
+            SavedScopeResolution::Registered(project) => {
+                let fence = crate::project_client::SourceFence {
+                    namespace: observed.namespace, revision: observed.revision,
+                    project: project.registration.binding, fencing_generation: project.fencing_generation,
+                };
+                (RootResolution::Registered(project.registration), Some(fence))
+            }
+            SavedScopeResolution::Missing => (RootResolution::Missing, None),
+            SavedScopeResolution::Removed => (RootResolution::Removed, None),
+            SavedScopeResolution::Ambiguous => (RootResolution::Ambiguous, None),
+        };
+        Ok(RootObservation { resolution, fence })
+    }

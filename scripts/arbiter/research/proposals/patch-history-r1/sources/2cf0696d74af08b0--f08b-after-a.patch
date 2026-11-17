@@ -1,0 +1,435 @@
+--- a/packages/vscode/src/serviceConsoleController.ts
++++ b/packages/vscode/src/serviceConsoleController.ts
+@@ -41,6 +41,12 @@
+ function code(error:unknown):string{return error instanceof ServiceError?error.code:'console_operation_failed';}
+ export class ServiceConsoleController {
+     readonly state:ServiceConsoleState;
++    private observationToken=randomUUID();
++    private observedInstance?:string;
++    private observationBinding?:string;
++    private registryObservationSuspended=false;
++    /** Internal host ownership fence; never serialized into a webview/native schema. */
++    get observationIdentity():string{return this.observationToken;}
+     private binding?:RuntimeBinding;
+     private bootstrap?:BootstrapObservation;
+     private client?:ServiceClient;
+@@ -109,6 +115,11 @@
+                 this.cachedSnapshot(this.bootstrap.inspection);return;
+             }
+             this.binding=this.host.runtime.binding(this.bootstrap.inspection,this.bootstrap.installDir);
++            const scope=JSON.stringify([this.binding.installDir,this.binding.controlDir,this.binding.executable,this.binding.runtimeSha256,this.binding.version,this.binding.lifecycle]);
++            if(this.observationBinding!==scope){
++                this.observationBinding=scope;this.observedInstance=undefined;
++                this.observationToken=randomUUID();this.clearRegistryObservation();
++            }
+             if(this.binding.payloadVerified!==false&&this.binding.version===this.host.version)this.client=this.host.runtime.client(this.binding);
+             this.state.lifecycle=this.binding.lifecycle;
+             if(typeof this.bootstrap.inspection.registry_namespace==='string')this.restoreJournal(this.bootstrap.inspection.registry_namespace);
+@@ -179,6 +190,13 @@
+         if(!this.client){await this.savedSnapshot(this.pageStart.after,this.pageStart.revision);return;}
+         try{
+             const value=await this.rpc('health','health');
++            const instance=identifier(record(value.observation).instance,16);
++            if(this.observedInstance!==instance){
++                this.observedInstance=instance;this.observationToken=randomUUID();
++                // Health authenticates the service, not the registry/page from a
++                // previous incarnation. Hide those rows until request_epoch/page.
++                this.clearRegistryObservation();
++            }
+             this.state.health={state:'live',value,checkedAt:Date.now()};this.state.connected=true;
+             // Health is independently usable while optional observations continue.
+             // This reports the authenticated service, not index or inference readiness.
+@@ -210,16 +228,33 @@
+         }
+         if(this.state.plan)await this.plan(false);
+     }
++    private clearRegistryObservation():void{
++        this.registryObservationSuspended=true;
++        this.state.page=undefined;this.state.activePage=undefined;this.state.workers=undefined;
++        this.state.selected.clear();this.state.serviceEvents=undefined;
++        for(const name of ['resources','model','sources'] as const){
++            if(this.state[name].value)this.state[name]={...this.state[name],state:'cached'};
++        }
++        this.state.events=[];this.eventCursor=null;this.state.historyOmitted=false;
++        this.state.plan=undefined;this.state.preview=undefined;this.state.configurationResults=undefined;
++        this.state.configurationResultsOmitted=false;this.state.pending=[];
++        this.legacyReview=undefined;this.state.legacyReview=undefined;this.state.legacyReceipts=undefined;this.state.legacyResult=undefined;
++        this.pageStart={after:null,revision:null};
++    }
+     private restoreJournal(namespace:string):void{
+         const journal=new IntentJournal(this.host.storage,this.binding!.controlDir,identifier(namespace,16));
+         if(this.journal?.scope!==journal.scope){
++            this.observationToken=randomUUID();this.clearRegistryObservation();
+             this.journal=journal;this.state.selected.clear();this.eventCursor=null;this.state.events=[];this.state.page=undefined;this.state.activePage=undefined;
+             this.legacyReview=undefined;this.state.legacyReview=undefined;this.state.legacyReceipts=undefined;
+             this.state.preview=undefined;
+             this.state.configurationResults=undefined;
+             this.pageStart={after:null,revision:null};
++        }
++        if(this.registryObservationSuspended){
+             const saved=this.host.storage.get<string>(`airk.service.plan.${journal.scope}`);
+             this.state.plan=saved?{value:{id:identifier(saved,32)},items:[],after:null}:undefined;
++            this.registryObservationSuspended=false;
+         }
+         this.pending();
+     }
+--- a/packages/vscode/src/explorerControl.ts
++++ b/packages/vscode/src/explorerControl.ts
+@@ -11,7 +11,7 @@
+  * retries, confirmations and page-scoped validation behave exactly as they do today.
+  */
+ export interface ControlSource {
+-    readonly controller: { readonly state: ServiceConsoleState };
++    readonly controller: { readonly state: ServiceConsoleState; readonly observationIdentity?: string };
+     run(action: string, fields?: Record<string, unknown>): Promise<void>;
+     retain(): { dispose(): void };
+     onDidChangeState(listener: (state: ServiceConsoleState) => void): { dispose(): void };
+@@ -72,6 +72,7 @@
+ export class ExplorerControl {
+     constructor(private readonly source: ControlSource, private readonly extensionVersion: string) {}
+     get state(): ServiceConsoleState { return this.source.controller.state; }
++    get observationIdentity(): string | undefined { return this.source.controller.observationIdentity; }
+     projects(): ProjectSummary[] { return projectSummaries(this.state); }
+     connection(): ConnectionState { return connectionOf(this.state, this.extensionVersion); }
+     observedAt(): number | undefined { return (this.state.inactiveProjects ? this.state.activePage : this.state.page)?.observed_unix_ms; }
+--- a/packages/vscode/src/explorerController.ts
++++ b/packages/vscode/src/explorerController.ts
+@@ -85,6 +85,8 @@
+     private searchSequence = 0;
+     private status?: StatusSummary;
+     private statusFor?: string;
++    private statusIdentity?: string;
++    private observedIdentity?: string;
+     private statusLoading?: Promise<void>;
+     private notice?: ExplorerError;
+     private revision = 0;
+@@ -123,7 +125,10 @@
+     /** Studio and Planner draft revisions last reported by the webview (for agent draft conflicts). */
+     draftRevisions: { studio?: number; planner?: number } = {};
+     /** Publication of the selected project's last status, if observed. */
+-    get publication(): string | undefined { return this.status?.publication; }
++    get publication(): string | undefined {
++        return this.host.trusted() && this.statusFor===this.selected
++            && this.statusIdentity===this.control.observationIdentity ? this.status?.publication : undefined;
++    }
+     get assistanceStatus(): Pick<AssistanceWindowStatus, 'active_route' | 'binding_generation' | 'blockers' | 'selected_project'> {
+         return { active_route: this.route.replace(/^#/, ''), binding_generation: this.selectionEpoch, selected_project: this.selected,
+             blockers: [...(!this.host.trusted() ? ['WORKSPACE_UNTRUSTED'] : []), ...(!this.selected ? ['NO_PROJECT'] : []),
+@@ -166,7 +171,7 @@
+             ...(this.selected ? { selectedProject: this.selected } : {}),
+             ...(this.selected && this.host.trusted() && this.sourceFiles.get(this.selected) ? { sourceFile: this.sourceFiles.get(this.selected) } : {}),
+             selectionEpoch: this.selectionEpoch,
+-            ...(this.host.trusted() && this.status && this.statusFor === this.selected ? { status: this.status } : {}),
++            ...(this.host.trusted() && this.status && this.statusFor === this.selected && this.statusIdentity === this.control.observationIdentity ? { status: this.status } : {}),
+             features: FEATURES,
+             ...(this.notice ? { notice: this.notice } : {}),
+             ...(this.control.message() ? { controlMessage: this.control.message()!.slice(0, 600) } : {}),
+@@ -225,6 +230,11 @@
+     }
+ 
+     private observedControl(): void {
++        if(this.observedIdentity!==this.control.observationIdentity){
++            this.observedIdentity=this.control.observationIdentity;
++            this.status=undefined;this.statusFor=undefined;this.statusIdentity=undefined;this.notice=undefined;
++            this.lastAutomaticStatusCheck=0;
++        }
+         // Refresh published status when the cached console reports a different publication.
+         const row = this.control.projects().find(entry => entry.project === this.selected);
+         if (this.retained&&this.panel.open&&(Date.now()-this.lastAutomaticStatusCheck>=5000
+@@ -281,14 +291,15 @@
+         const spec = this.host.specs().find(entry => entry.service?.project === project);
+         if (!project || !this.host.trusted() || !spec) { return Promise.resolve(); }
+         const binding = JSON.stringify(spec), generation = this.panel.generation;
++        const identity = this.control.observationIdentity;
+         const bound = () => !this.disposed && this.host.trusted() && project === this.selected
+-            && epoch === this.selectionEpoch
++            && identity === this.control.observationIdentity && epoch === this.selectionEpoch
+             && JSON.stringify(this.host.specs().find(entry => entry.service?.project === project)) === binding;
+         const current = () => bound() && this.panel.open && generation === this.panel.generation;
+         this.statusLoading = (async () => {
+             try {
+                 const result = await this.session().call('airk_diagnostics', { response_mode: 'full' }, { timeout: 90000, supersede: 'status' });
+-                if (current()) { this.status = statusSummary(result.payload); this.statusFor = project; this.notice = undefined; }
++                if (current()) { this.status = statusSummary(result.payload); this.statusFor = project; this.statusIdentity = identity; this.notice = undefined; }
+             } catch (error) {
+                 if (current() && failure(error).code !== 'NO_PROJECT') { this.notice = failure(error); }
+             } finally {
+@@ -334,7 +345,7 @@
+             }
+             case 'details.copy': {
+                 if(!this.host.trusted())throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED'));
+-                const status=message.project===this.selected&&this.statusFor===this.selected?this.status:undefined;
++                const status=message.project===this.selected&&this.statusFor===this.selected&&this.statusIdentity===this.control.observationIdentity?this.status:undefined;
+                 const text=panelDetails(managementView(this.control.state),message.section,this.host.version,message.project,status);
+                 await vscode.env.clipboard.writeText(text);return {copied:true};
+             }
+@@ -446,19 +457,24 @@
+                 const project = this.requireProject();
+                 const args = searchArgs(typed);
+                 const selectionEpoch = this.selectionEpoch, sequence = ++this.searchSequence;
++                const binding = JSON.stringify(this.host.specs().find(entry => entry.service?.project === project));
+                 const { query, mode, limit, maxBytes, fullChunks } = typed;
+                 this.searchState = { project, selectionEpoch, form: { query, mode, limit, maxBytes, fullChunks, pathPrefix: typed.pathPrefix ?? '' }, busy: true, page: 0 };
+                 const publish = () => { this.panel.post({ v: MESSAGE_VERSION, type: 'search.session', session: this.searchState! }); };
+-                const current = () => !this.disposed && selectionEpoch === this.selectionEpoch && sequence === this.searchSequence;
++                const current = () => !this.disposed && this.host.trusted() && project === this.selected
++                    && selectionEpoch === this.selectionEpoch && sequence === this.searchSequence
++                    && JSON.stringify(this.host.specs().find(entry => entry.service?.project === project)) === binding;
+                 publish();
+                 try {
+                     const result = await this.session().call('airk_search', args, { supersede: 'search', timeout: 30000 });
+                     if (!current()) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
+-                    const status = this.statusFor === project ? this.status : undefined;
++                    const status = this.statusFor === project && this.statusIdentity === this.control.observationIdentity ? this.status : undefined;
+                     const view = searchView(project, typed, result.payload, result.publication, this.refs,
+                         { ...(status?.semantic ? { semantic: status.semantic } : {}), ...(status?.vectorsEnabled !== undefined ? { vectorsEnabled: status.vectorsEnabled } : {}) });
+                     this.searchState = { ...this.searchState!, result: view, busy: false }; publish();
+-                    return view;
++                    // Search evidence travels once through search.session. The
++                    // correlated response only releases the requesting waiter.
++                    return { completed: true };
+                 } catch (error) {
+                     if (current()) { this.searchState = { ...this.searchState!, result: undefined, busy: false, error: failure(error).message }; publish(); }
+                     throw error;
+@@ -713,7 +729,7 @@
+         const checked = validatePlan(value);
+         if (!checked.ok) { throw new EvidenceFailure(explorerError('INVALID_SCHEMA', checked.errors.slice(0, 5).join('; '))); }
+         return renderPlan(checked.plan, { workspace: vscode.workspace.name ?? 'workspace', extensionVersion: this.host.version,
+-            ...(this.status?.publication ? { currentPublication: this.status.publication } : {}) });
++            ...(this.publication ? { currentPublication: this.publication } : {}) });
+     }
+ 
+     dispose(): void {
+--- a/packages/vscode/src/test/explorerShell.test.ts
++++ b/packages/vscode/src/test/explorerShell.test.ts
+@@ -179,7 +179,9 @@
+     try {
+         explorer.open('#search/query'); const first = panels.at(-1);
+         first.send({ v: 1, type: 'ready', requestId: 'ready' }); await flush();
+-        const result = await (explorer as any).dispatch({ v: 1, type: 'search.run', requestId: 'run', query: 'x', mode: 'lexical', limit: 5, maxBytes: 8192, fullChunks: false });
++        const acknowledgment = await (explorer as any).dispatch({ v: 1, type: 'search.run', requestId: 'run', query: 'x', mode: 'lexical', limit: 5, maxBytes: 8192, fullChunks: false });
++        assert.deepEqual(acknowledgment, { completed: true });
++        const result = first.posted.filter((entry: any) => entry.type === 'search.session' && entry.session.result).at(-1).session.result;
+         const epoch = explorer.snapshot().selectionEpoch!;
+         await (explorer as any).dispatch({ v: 1, type: 'search.form', requestId: 'draft', project, selectionEpoch: epoch,
+             query: 'unsent edit', mode: 'hybrid', pathPrefix: 'src/', limit: 100, maxBytes: 16384, fullChunks: true });
+@@ -214,6 +216,8 @@
+         const restored = reopened.posted.filter((entry: any) => entry.type === 'search.session').at(-1).session;
+         assert.equal(restored.busy, false); assert.equal(restored.result.hits[0].text, 'late result');
+         assert.ok(!reopened.posted.some((entry: any) => entry.type === 'result' && entry.requestId === 'w1'));
++        assert.equal([...first.posted, ...reopened.posted].filter((entry: any) => entry.type === 'search.session' && entry.session.result).length, 1,
++            'late authorized evidence is delivered once to the current panel, with no old completion response');
+     } finally { explorer.dispose(); }
+ });
+ 
+@@ -542,15 +546,16 @@
+     const promise=new Promise<T>(done=>{resolve=done;});
+     return {promise,resolve};
+ }
+-function promptFeedbackHost(context:any,blockedMethod='resources') {
++function promptFeedbackHost(context:any,blockedMethod='resources',savedCounts=false) {
+     const other='cd'.repeat(32),namespace='12'.repeat(16),instance='34'.repeat(16),version='1.8.0';
+     let trusted=true,retained=0,current!:InstanceType<typeof ServiceConsoleController>;
++    let liveInstance=instance,liveNamespace=namespace,epochGate:ReturnType<typeof f08Deferred<void>>|undefined;
+     const changed=new Set<(state:any)=>void>(),specChanges=new Set<()=>void>(),values=new Map<string,unknown>();
+     const clientSignals:Array<ReturnType<typeof f08Deferred<void>>>=[],gates:Array<{entered:ReturnType<typeof f08Deferred<void>>;release:ReturnType<typeof f08Deferred<void>>}>=[];
+     const evidenceSignals:Array<ReturnType<typeof f08Deferred<void>>>=[],evidence:Array<{project:string;spec:any;result:ReturnType<typeof f08Deferred<any>>}>=[];
+     const polls:Promise<void>[]=[],consoleSnapshots:any[]=[];
+     let specs=[project,other].map((binding,index)=>({command:'/launcher',root:`/src/prompt-${index}`,dataDir:`/data/${index}`,collection:`prompt-${index}`,name:`prompt-${index}`,service:{installDir:'/install',project:binding}}));
+-    const page={revision:1,cached:true,observed_unix_ms:1,after:null,projects:specs.map(spec=>({project:{registration:{binding:spec.service.project,root:spec.root,data_root:spec.dataDir,collection:spec.collection},paused:false,fencing_generation:1},progress:null,inspection:null}))};
++    const page={revision:1,cached:true,observed_unix_ms:1,after:null,projects:specs.map(spec=>({project:{registration:{binding:spec.service.project,root:spec.root,data_root:spec.dataDir,collection:spec.collection},paused:false,fencing_generation:1},progress:null,inspection:savedCounts?{snapshot:{index_state:'available',publication:'saved-old-registry-publication',indexed_files:99}}:null}))};
+     const binding={installDir:'/install',controlDir:'/control',executable:'/main',launcher:null,runtimeSha256:'56'.repeat(32),version,lifecycle:'on-demand',verificationBasis:'trusted_distribution'};
+     const runtime:any={
+         discover:async()=>({bundle:{main:'/main',helper:'/helper',source:'/bundle',digest:binding.runtimeSha256,version,platform:'test'},installDir:'/install',installed:true,location:{},inspection:{control_dir:'/control',registry_namespace:namespace,approval:{version},console:page}}),
+@@ -561,15 +566,16 @@
+             return new ServiceClient({dispose(){},async request(method:any){
+                 const name=typeof method==='string'?method:Object.keys(method)[0];
+                 if(name===blockedMethod){gate.entered.resolve();await gate.release.promise;}
++                if(name==='request_epoch'&&epochGate)await epochGate.promise;
+                 switch(name){
+-                    case 'health':return {status:'health',observation:{instance,version,policy:{accepting:true}}};
++                    case 'health':return {status:'health',observation:{instance:liveInstance,version,policy:{accepting:true}}};
+                     case 'resources':return {status:'resources',observation:{configuration:{preset:'balanced'}}};
+                     case 'embedding_status':return {status:'embedding_status',available:false,loads:0};
+                     case 'source_status':return {status:'source_status',available:false};
+-                    case 'request_epoch':return {status:'request_epoch',namespace,epoch:1};
++                    case 'request_epoch':return {status:'request_epoch',namespace:liveNamespace,epoch:1};
+                     case 'console':case 'inactive_console':return {status:'console',page};
+                     case 'workers':return {status:'workers',observations:page.projects.map(row=>({project:row.project.registration.binding,identity:null,restarting:false,automatic_start_blocked:false})),age_ms:1};
+-                    case 'events':return {status:'events',page:{namespace,retained_prefix_lost:false,events:[],next:null,tail:{namespace,project:null,after:0,through:null}}};
++                    case 'events':return {status:'events',page:{namespace:liveNamespace,retained_prefix_lost:false,events:[],next:null,tail:{namespace:liveNamespace,project:null,after:0,through:null}}};
+                     case 'logs':return {status:'logs',page:{schema:1,records:[]}};
+                     default:throw new Error(`Unexpected prompt-feedback metadata operation ${name}`);
+                 }
+@@ -604,10 +610,22 @@
+         release(index=0){gates[index].release.resolve();},
+         async requested(index=0){await(evidenceSignals[index]??=f08Deferred<void>()).promise;return evidence[index];},
+         finish(index=0,result:any=unavailable){evidence[index].result.resolve(result);},
++        async settleStatus(){
++            // Initial unknown ownership may invalidate the first diagnostics;
++            // complete each independently admitted replacement, never relabel it.
++            for(let turn=0;turn<12&&!explorer.snapshot().status;turn++){
++                for(const request of evidence)request.result.resolve(unavailable);
++                await flush();
++            }
++            assert.ok(explorer.snapshot().status,'current identity needs its own completed observation');
++        },
++        restartIdentity(){liveInstance='78'.repeat(16);liveNamespace='9a'.repeat(16);epochGate=f08Deferred<void>();},
++        releaseEpoch(){epochGate?.resolve();},
++        poll(){return startPoll();},
+         trust(value:boolean){trusted=value;},
+         changeSpec(){specs=specs.map((spec,index)=>index?spec:{...spec,command:'/new-approved-launcher'});for(const listener of specChanges)listener();},
+         reset(){current.dispose();current=new ServiceConsoleController(consoleHost);if(retained)void startPoll();},
+-        async cleanup(){explorer.dispose();current.dispose();for(const gate of gates)gate.release.resolve();for(const request of evidence)request.result.resolve(unavailable);await Promise.all(polls);},
++        async cleanup(){explorer.dispose();current.dispose();epochGate?.resolve();for(const gate of gates)gate.release.resolve();for(const request of evidence)request.result.resolve(unavailable);await Promise.all(polls);},
+     };
+ }
+ 
+@@ -619,12 +637,12 @@
+             await f.blocked();await f.requested();
+             const early=panel.posted.filter((entry:any)=>entry.type==='state'&&entry.state.connection==='ready').at(-1)?.state;
+             assert.ok(early,`verified connection must reach the real Explorer before ${blocked}`);
+-            assert.equal(early.selectedProject,project);assert.equal(early.projects.length,2);
++            assert.equal(early.selectedProject,project);assert.equal(early.projects.length,0,'saved rows wait for current registry continuity');
+             assert.equal(early.status,undefined,'deferred detailed evidence is not fabricated from healthy service');
+             assert.ok(early.projects.every((entry:any)=>entry.publication===undefined&&entry.indexedFiles===undefined));
+             assert.equal(f.console.state.busy,true);
+             const captured=structuredClone(early);
+-            f.release();await f.console.whenIdle();f.finish();await flush();
++            f.release();await f.console.whenIdle();f.finish();await f.settleStatus();await flush();
+             assert.deepEqual(early,captured,'captured postMessage value does not change when later controller fields change');
+             const final=panel.posted.filter((entry:any)=>entry.type==='state').at(-1).state;
+             assert.equal(final.status.indexState,'unavailable');assert.equal(final.status.publication,undefined);
+@@ -676,3 +694,132 @@
+         }finally{await f.cleanup();context.mock.restoreAll();}
+     }
+ });
++
++const r03Request=(requestId:string)=>({v:1,type:'search.run',requestId,query:'x',mode:'lexical',limit:5,maxBytes:8192,fullChunks:false});
++const r03Evidence=(text='one-full-evidence-delivery')=>({publication:'airk-r1:t',payload:{truncated:false,
++    publication:{token:'airk-r1:t'},hits:[{citation:{path:'a.ts',start_line:2,end_line:4,content_hash:'cd'.repeat(32)},text,truncated:false}]}});
++function r03Pending(explorer:InstanceType<typeof ExplorerController>){
++    const requests:Array<{resolve:(value:any)=>void;reject:(error:Error)=>void}>=[];
++    (explorer as any).session=()=>({call:(tool:string)=>tool==='airk_search'
++        ?new Promise((resolve,reject)=>{requests.push({resolve,reject});})
++        :Promise.resolve({payload:{index_state:'available',publication:{token:'airk-r1:t'}}})});
++    return requests;
++}
++
++test('Search posts one complete evidence session and a small correctly correlated acknowledgment',async()=>{
++    const {explorer}=controller();
++    try{
++        explorer.open('#search/query');const panel=panels.at(-1);
++        panel.send({v:1,type:'ready',requestId:'ready'});await flush();
++        const before=panel.posted.length;
++        panel.send(r03Request('r03-complete'));await flush();
++        const posted=panel.posted.slice(before),sessions=posted.filter((row:any)=>row.type==='search.session');
++        assert.equal(sessions.length,2,'one busy observation and one completed observation');
++        assert.equal(sessions[0].session.busy,true);assert.equal(sessions[0].session.result,undefined);
++        assert.equal(sessions[1].session.busy,false);
++        const result=sessions[1].session.result;
++        assert.equal(result.hits[0].text,'x');
++        assert.equal((explorer as any).refs.get(result.hits[0].ref,project).path,'a.ts');
++        const replies=posted.filter((row:any)=>row.type==='result');
++        assert.deepEqual(replies,[{v:1,type:'result',requestId:'r03-complete',ok:true,data:{completed:true}}]);
++        assert.equal(posted.filter((row:any)=>row.session?.result||row.data?.hits).length,1);
++        assert.equal(replies[0].data.hits,undefined);assert.equal(replies[0].data.publication,undefined);
++        // Reopening is an intentional retained-session delivery, not a duplicate response.
++        panel.dispose();explorer.open();const reopened=panels.at(-1);
++        reopened.send({v:1,type:'ready',requestId:'ready'});await flush();
++        assert.deepEqual(reopened.posted.find((row:any)=>row.type==='search.session').session.result,result);
++        assert.ok(!reopened.posted.some((row:any)=>row.type==='result'&&row.requestId==='r03-complete'));
++    }finally{explorer.dispose();}
++});
++
++test('Search native failure preserves busy/error delivery and a correlated failure without success acknowledgment',async()=>{
++    const {explorer}=controller();
++    try{
++        explorer.open();const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await flush();
++        const pending=r03Pending(explorer),before=panel.posted.length;
++        panel.send(r03Request('r03-failed'));pending[0].reject(new Error('Original search failure'));await flush();
++        const posted=panel.posted.slice(before),sessions=posted.filter((row:any)=>row.type==='search.session');
++        assert.equal(sessions.length,2);assert.equal(sessions[0].session.busy,true);
++        assert.equal(sessions[1].session.busy,false);assert.match(sessions[1].session.error,/Original search failure/);
++        assert.equal(sessions[1].session.result,undefined);
++        const replies=posted.filter((row:any)=>row.type==='result');
++        assert.equal(replies.length,1);assert.equal(replies[0].requestId,'r03-failed');assert.equal(replies[0].ok,false);
++        assert.equal(replies[0].data,undefined);
++    }finally{explorer.dispose();}
++});
++
++test('superseded Search keeps one winning evidence delivery and independently correlated outcomes',async()=>{
++    const {explorer}=controller();
++    try{
++        explorer.open();const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await flush();
++        const pending=r03Pending(explorer),before=panel.posted.length;
++        panel.send(r03Request('r03-old'));panel.send(r03Request('r03-new'));
++        pending[1].resolve(r03Evidence());await flush();
++        pending[0].resolve(r03Evidence('stale-evidence-must-not-appear'));await flush();
++        const posted=panel.posted.slice(before),complete=posted.filter((row:any)=>row.type==='search.session'&&row.session.result);
++        assert.equal(complete.length,1);assert.equal(complete[0].session.result.hits[0].text,'one-full-evidence-delivery');
++        assert.equal(JSON.stringify(posted).split('one-full-evidence-delivery').length-1,1);
++        assert.ok(!JSON.stringify(posted).includes('stale-evidence-must-not-appear'));
++        const replies=posted.filter((row:any)=>row.type==='result');assert.equal(replies.length,2);
++        assert.deepEqual(replies.find((row:any)=>row.requestId==='r03-new').data,{completed:true});
++        const stale=replies.find((row:any)=>row.requestId==='r03-old');
++        assert.equal(stale.ok,false);assert.equal(stale.error.code,'REQUEST_SUPERSEDED');
++    }finally{explorer.dispose();}
++});
++
++test('late Search cannot deliver evidence or success acknowledgment after project spec or trust scope changes',async()=>{
++    for(const change of ['project','spec','trust'] as const){
++        const {explorer,host}=controller();
++        try{
++            explorer.open();const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await flush();
++            const pending=r03Pending(explorer);panel.send(r03Request('r03-scope'));
++            if(change==='project')(explorer as any).select(undefined);
++            else if(change==='trust')host.trusted=()=>false;
++            else{const saved=host.specs();host.specs=()=>saved.map(spec=>({...spec,command:'/changed-launcher'}));}
++            const before=panel.posted.length;pending[0].resolve(r03Evidence('wrong-scope-evidence'));await flush();
++            const posted=panel.posted.slice(before);
++            assert.ok(!posted.some((row:any)=>row.type==='search.session'&&row.session.result));
++            assert.ok(!JSON.stringify(posted).includes('wrong-scope-evidence'));
++            const reply=posted.find((row:any)=>row.type==='result'&&row.requestId==='r03-scope');
++            assert.equal(reply.ok,false);assert.equal(reply.error.code,'REQUEST_SUPERSEDED');
++        }finally{explorer.dispose();}
++    }
++});
++
++
++test('actual Explorer fences same-spec diagnostics and saved counts across authenticated instance and delayed registry rebind',async context=>{
++    const f=promptFeedbackHost(context,'resources',true);
++    try{
++        f.explorer.open();const panel=panels.at(-1);
++        panel.send({v:1,type:'ready',requestId:'ready'});await f.blocked();await f.requested();
++        const early=panel.posted.filter((entry:any)=>entry.type==='state'&&entry.state.connection==='ready').at(-1).state;
++        assert.equal(early.projects.length,0,'first authenticated health cannot relabel unconfirmed saved registry counts');
++        f.release();await f.console.whenIdle();f.finish();await f.settleStatus();
++        assert.equal((f.console.state.page?.projects[0].inspection as any)?.snapshot.indexed_files,99,
++            'the transport really supplied saved counts before the ownership change');
++        const spec=structuredClone(f.host.specs());
++        const oldRequest=f.evidence.length;
++        panel.send({v:1,type:'status.refresh',requestId:'old-scope-status'});
++        await f.requested(oldRequest);await f.console.whenIdle();
++        const oldIdentity=f.console.observationIdentity;
++        f.restartIdentity();const poll=f.poll();await flush();
++        assert.notEqual(f.console.observationIdentity,oldIdentity);
++        assert.equal(f.console.state.busy,true,'new epoch reply remains independently blocked');
++        assert.deepEqual(f.host.specs(),spec,'runtime and registry ownership can change under identical launch specs');
++        const boundary=panel.posted.length;
++        const current=panel.posted.filter((entry:any)=>entry.type==='state').at(-1).state;
++        assert.equal(current.connection,'ready');assert.deepEqual(current.projects,[]);
++        assert.equal(current.status,undefined);
++        assert.equal(f.explorer.publication,undefined,'Assistance/export publication access shares the same ownership fence');
++        f.finish(oldRequest,{payload:{index_state:'available',publication:{token:'old-delayed-diagnostics'},files:777,chunks:888}});
++        await flush();
++        assert.equal(f.explorer.snapshot().status,undefined);
++        assert.ok(!panel.posted.slice(boundary).some((entry:any)=>entry.state?.status?.publication==='old-delayed-diagnostics'));
++        const replacement=await f.requested(oldRequest+1);
++        assert.deepEqual(replacement.spec,spec[0],'replacement is admitted for the same bytes under new ownership');
++        f.releaseEpoch();await poll;
++        f.finish(oldRequest+1);await f.settleStatus();
++        assert.equal(f.explorer.snapshot().status?.indexState,'unavailable');
++        assert.ok(!panel.posted.slice(boundary).some((entry:any)=>entry.state?.status?.files===777));
++    }finally{await f.cleanup();context.mock.restoreAll();}
++});

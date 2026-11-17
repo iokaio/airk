@@ -1,0 +1,205 @@
+diff --git a/packages/ui/test/answer.dom.test.mjs b/packages/ui/test/answer.dom.test.mjs
+index 4d81a71f..e654882b 100644
+--- a/packages/ui/test/answer.dom.test.mjs
++++ b/packages/ui/test/answer.dom.test.mjs
+@@ -60,9 +60,19 @@ test('actual Workbench cited context navigates retained records, discloses gaps
+       [{ type: 'copy', turn, format: 'json' }, { type: 'export', turn, format: 'json' }]);
+     stage = 'answer-question-budget-controls';
+     await browser.evaluate(`{const input=document.querySelector('textarea[aria-label="Request indexed evidence"]');input.value='Explicit context question';input.dispatchEvent(new Event('input',{bubbles:true}));}`);
++    assert.equal(await browser.evaluate(`document.querySelector('[aria-label="Context question"]')===null`),true,'context form is absent until requested from Plus');
++    await browser.evaluate(`document.querySelector('button[aria-controls="evidence-options"]').click()`);
++    await browser.observed(`document.querySelector('#evidence-options[role="menu"]')`);
++    await browser.evaluate(`[...document.querySelectorAll('[role="menuitem"]')].find(button=>button.textContent==='Gather cited context…').click()`);
++    await browser.observed(`document.querySelector('[aria-label="Context question"]')?.value==='Explicit context question'`);
+     await browser.observed(`[...document.querySelectorAll('button')].some(button=>button.textContent==='Gather cited context'&&!button.disabled)`);
+     await browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent==='Gather cited context').click()`);
+     assert.deepEqual(await browser.evaluate(`window.requests.find(message=>message.type==='answer')`), { type: 'answer', question: 'Explicit context question' });
++    await browser.observed(`document.querySelector('#evidence-options')===null`);
++    await browser.evaluate(`document.querySelector('button[aria-controls="evidence-options"]').click()`);
++    await browser.evaluate(`[...document.querySelectorAll('[role="menuitem"]')].find(button=>button.textContent==='Gather cited context…').click()`);
++    await browser.observed(`document.querySelector('[aria-label="Context question"]')`);
++    await browser.evaluate(`[...document.querySelectorAll('#evidence-options summary')].find(summary=>summary.textContent==='Adjust native budget').click()`);
+     await browser.evaluate(`(()=>{const question=document.querySelector('[aria-label="Context question"]');question.value='é'.repeat(8192);question.dispatchEvent(new Event('input',{bubbles:true}));const budget=document.querySelector('[aria-label="Native context budget"]');budget.value=JSON.stringify({calls:2,rounds:1,fanout:2,input_tokens:512,candidates:4,max_bytes:4096,deadline_ms:1200});budget.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+     await browser.observed(`[...document.querySelectorAll('button')].some(button=>button.textContent==='Gather with this budget'&&!button.disabled)`);
+     await browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent==='Gather with this budget').click()`);
+diff --git a/packages/vscode/src/workbenchWebview/main.tsx b/packages/vscode/src/workbenchWebview/main.tsx
+index a36b008e..bb58ac48 100644
+--- a/packages/vscode/src/workbenchWebview/main.tsx
++++ b/packages/vscode/src/workbenchWebview/main.tsx
+@@ -174,7 +174,7 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
+         {!turn.envelope&&(state.busy&&state.session?.turns.at(-1)?.id===turn.id?<p role="status">Collecting evidence…</p>:<button disabled={state.busy} onClick={()=>send({type:'rerun',turn:turn.id})}>Re-run with current evidence</button>)}
+     </article>;
+ }
+-type Menu = 'history' | 'settings' | 'add' | 'selection';
++type Menu = 'history' | 'settings' | 'add' | 'selection' | 'context' | 'options' | 'forms';
+ /** (U105) Choose explicitly named indexes and index sets (read whole, as a union) instead of the window's search scope. */
+ function SelectionPicker({state,onDone}:{state:WorkbenchState;onDone:()=>void}){
+     const choices=state.scopeChoices,current=state.openSelection;
+@@ -232,6 +232,27 @@ function App(){
+     };
+     const setScope=(scope:string)=>changeForm({scope}),setRecipe=(recipe:string)=>changeForm({recipe});
+     const composer=useRef<HTMLTextAreaElement>(null),transcript=useRef<HTMLDivElement>(null),menuTrigger=useRef<string>(),openMenu=useRef<Menu>();
++    const plusOpen=menu==='add'||menu==='context'||menu==='options'||menu==='forms';
++    const closeMenu=(restore=false)=>{setMenu(undefined);if(restore)requestAnimationFrame(()=>document.querySelector<HTMLButtonElement>(`button[aria-controls="${menuTrigger.current}"]`)?.focus());};
++    const showContext=()=>{setContextQuestion(question=>question||input.trim());setContextIssue('');setMenu('context');};
++    const gatherContext=(custom=false)=>{
++        if(!state.project||state.busy)return;
++        try{
++            const message=parseWorkbenchMessage({type:'answer',question:contextQuestion,...(custom?{budget:JSON.parse(contextBudget)}:{})});
++            if(!message)throw new Error('Provide a nonempty question within 16,384 UTF-8 bytes and every integer native budget field.');
++            send(message);setContextIssue('');setContextQuestion('');setInput('');closeMenu(true);
++        }catch(error){setContextIssue(error instanceof Error?error.message:String(error));}
++    };
++    const menuKeys=(event:KeyboardEvent)=>{
++        const items=[...document.querySelectorAll<HTMLButtonElement>('#evidence-options [role="menuitem"]')].filter(button=>!button.disabled),position=items.indexOf(document.activeElement as HTMLButtonElement);
++        if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)&&items.length){event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?items.length-1:event.key==='ArrowDown'?(position+1)%items.length:(position-1+items.length)%items.length;items[next]?.focus();}
++        else if(event.key==='Tab'){event.preventDefault();setMenu(undefined);requestAnimationFrame(()=>{const next=event.shiftKey?document.querySelector<HTMLButtonElement>('button[aria-controls="evidence-options"]'):document.querySelector<HTMLButtonElement>('.send-button:not(:disabled)');(next??composer.current)?.focus();});}
++    };
++    useLayoutEffect(()=>{
++        if(!plusOpen)return;
++        const panel=document.getElementById('evidence-options'),selector=menu==='add'?'[role="menuitem"]:not(:disabled)':menu==='context'?'[aria-label="Context question"]':menu==='options'?'input':'[aria-label="Operation"]';
++        (panel?.querySelector<HTMLElement>(selector)??panel?.querySelector<HTMLButtonElement>('button'))?.focus();
++    },[menu]);
+     const latest=state.session?.turns.at(-1);
+     // Reveal each new request from its query, including when results arrive.
+     // Keep the question above its timestamp, plan and evidence. Status/save refreshes,
+@@ -244,9 +265,9 @@ function App(){
+     },[state.session?.id,latest?.id,!!latest?.envelope,latest?.error]);
+     openMenu.current=menu;
+     const toggle=(next:Menu,event:Event)=>{menuTrigger.current=(event.currentTarget as HTMLElement).getAttribute('aria-controls')??undefined;setMenu(menu===next?undefined:next);setTitle(state.session?.title??'');};
+-    useEffect(()=>{const listener=(event:MessageEvent)=>{if(['state','status','saved','formDraft'].includes(event.data?.type)){setState(previous=>{const next=applyWorkbenchUpdate(previous,event.data);liveState.current=next;return next;});}else if(event.data?.type==='prefillForm'){setMenu('add');}else if(event.data?.type==='prefill'&&typeof event.data.input==='string'){setInput(event.data.input);composer.current?.focus();}};window.addEventListener('message',listener);send({type:'ready'});return()=>window.removeEventListener('message',listener);},[]);
++    useEffect(()=>{const listener=(event:MessageEvent)=>{if(['state','status','saved','formDraft'].includes(event.data?.type)){setState(previous=>{const next=applyWorkbenchUpdate(previous,event.data);liveState.current=next;return next;});}else if(event.data?.type==='prefillForm'){menuTrigger.current='evidence-options';setMenu('forms');}else if(event.data?.type==='prefill'&&typeof event.data.input==='string'){setInput(event.data.input);composer.current?.focus();}};window.addEventListener('message',listener);send({type:'ready'});return()=>window.removeEventListener('message',listener);},[]);
+     useEffect(()=>{setHistory(-1);setFormIssue('');},[state.session?.id]);
+-    useEffect(()=>{const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'&&openMenu.current){setMenu(undefined);requestAnimationFrame(()=>{document.querySelector<HTMLButtonElement>(`button[aria-controls="${menuTrigger.current}"]`)?.focus();});}},outside=(event:PointerEvent)=>{if(!(event.target as Element).closest('.menu-anchor'))setMenu(undefined);};document.addEventListener('keydown',escape);document.addEventListener('pointerdown',outside);return()=>{document.removeEventListener('keydown',escape);document.removeEventListener('pointerdown',outside);};},[]);
++    useEffect(()=>{const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'&&openMenu.current){event.preventDefault();setMenu(undefined);requestAnimationFrame(()=>{document.querySelector<HTMLButtonElement>(`button[aria-controls="${menuTrigger.current}"]`)?.focus();});}},outside=(event:PointerEvent)=>{if(!(event.target as Element).closest('.menu-anchor'))setMenu(undefined);};document.addEventListener('keydown',escape);document.addEventListener('pointerdown',outside);return()=>{document.removeEventListener('keydown',escape);document.removeEventListener('pointerdown',outside);};},[]);
+     const run=(prepare=false)=>{const current=currentDraft();if(current&&!state.busy&&(input.trim()||current.recipe)){send({type:'run',input,prepare,pathPrefix:current.scope,...(current.recipe?{recipe:current.recipe}:{})});setInput('');setHistory(-1);setMenu(undefined);}};
+     const action=(message:WorkbenchMessage)=>{send(message);if(['new','clear','fork'].includes(message.type))setInput('');setMenu(undefined);};
+     return <main>
+@@ -270,28 +291,38 @@ function App(){
+         <div class="transcript" ref={transcript}>{!state.session?.turns.length?<section class="welcome"><h1>Explore your project</h1><p>Search indexed files and collect cited evidence.</p><div class="suggestions">{['/search retry --mode lexical','/symbols EvidenceClient','/files'].map(example=><button onClick={()=>{setInput(example);composer.current?.focus();}}>{example}</button>)}</div>{!state.projects.length&&<p>No reviewed AIRK Index or Project scope is active in this window. Trust the workspace and finish setup if needed, then review and use a scope in Management. <button onClick={()=>action({type:'manage'})}>Open Management</button></p>}</section>:state.session.turns.map(turn=><Turn key={turn.id} turn={turn} state={state}/>)}</div>
+         <div class="composer">
+             {(scope||recipe)&&<div class="compose-context">{scope&&<button title="Clear scope" onClick={()=>setScope('')}>{scope} ×</button>}{recipe&&<button title="Clear recipe" onClick={()=>setRecipe('')}>{RECIPES.find(([id])=>id===recipe)?.[1]} ×</button>}</div>}
+-            <button type="button" disabled={!state.project || state.busy || !input.trim()} onClick={() => { send({ type: 'answer', question: input.trim() }); setInput(''); }}>Gather cited context</button>
+-            <p class="note">Cited context uses bounded canonical reads and reports gaps. Optional local Arbiter models require explicit Service enrollment; unavailable models never imply a successful model decision.</p>
+-            <details><summary>Cited context question and budget</summary>
+-                <label>Context question (up to 16,384 UTF-8 bytes)<textarea aria-label="Context question" maxLength={16384} value={contextQuestion} onInput={e=>setContextQuestion(e.currentTarget.value)}/></label>
+-                <label>Native context budget (JSON)<textarea aria-label="Native context budget" maxLength={2048} value={contextBudget} onInput={e=>setContextBudget(e.currentTarget.value)}/></label>
+-                <p class="note">The native service validates budget limits. A smaller budget can return gaps or omissions.</p>
+-                {contextIssue&&<p role="alert">{contextIssue}</p>}
+-                <button type="button" disabled={!state.project||state.busy||!contextQuestion.trim()} onClick={()=>{
+-                    try { const message=parseWorkbenchMessage({type:'answer',question:contextQuestion,budget:JSON.parse(contextBudget)});
+-                        if(!message)throw new Error('Provide a nonempty question within 16,384 UTF-8 bytes and every integer native budget field.');
+-                        setContextIssue('');send(message);
+-                    } catch(error) { setContextIssue(error instanceof Error?error.message:String(error)); }
+-                }}>Gather with this budget</button>
+-            </details>
+             {input.startsWith('/')&&!input.includes(' ')&&<div class="commands" aria-label="Commands">{COMMANDS.filter(c=>c.startsWith(input)).map(c=><button onClick={()=>{setInput(`${c} `);composer.current?.focus();}}>{c}</button>)}</div>}
+             <textarea ref={composer} maxLength={4096} aria-label="Request indexed evidence" placeholder={recipe?'Enter a name or statement for this recipe':'Ask about this project, or type /'} value={input} onInput={e=>{setInput(e.currentTarget.value);setHistory(-1);}} onKeyDown={e=>{
+                 if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();run();}
+                 if(e.key==='ArrowUp'&&!input&&state.session?.turns.length){e.preventDefault();const next=history<0?state.session.turns.length-1:Math.max(0,history-1);setHistory(next);setInput(state.session.turns[next].input);}
+             }}/>
+-            <div class="compose-actions"><div class="menu-anchor add-anchor"><button class="icon-button add-button" title="Add scope, recipe or tool" aria-label="Add scope, recipe or tool" aria-expanded={menu==='add'} aria-controls="evidence-options" onClick={e=>toggle('add',e)}><Icon name="plus"/></button>
+-                {menu==='add'&&<section class="popover above" id="evidence-options" aria-label="Evidence options"><h2>Collect evidence</h2><label>Scope<input aria-label="Literal collection-relative path prefix" placeholder="Project root, or src/component/" maxLength={1024} value={scope} onInput={e=>setScope(e.currentTarget.value)}/></label><label>Recipe<select aria-label="Recipe" value={recipe} onChange={e=>setRecipe(e.currentTarget.value)}><option value="">Command or supported request</option>{RECIPES.map(([id,label])=><option value={id}>{label}</option>)}</select></label><button disabled={!state.project||state.busy||!input.trim()&&!recipe} onClick={()=>run(true)}>Prepare plan before running</button><button disabled={!state.project} onClick={()=>send({type:'forms'})}>Tool forms</button>{state.operations&&<ToolForm state={state} issue={formIssue} currentDraft={currentDraft} onSelect={tool=>changeForm({tool})} onField={(tool,name,value)=>changeForm({tool,field:{name,value}})} onReset={tool=>changeForm({tool},true)} onIssue={setFormIssue}/>}<button onClick={()=>action({type:'help'})}>Commands and help</button></section>}
+-            </div><small title={state.save||'Requests read the local index'}>Sources read-only · Refresh requires review (no generative AI used in AIRK Workbench)</small>{state.busy?<button class="icon-button send-button" aria-label="Stop collecting evidence" title="Stop" onClick={()=>send({type:'stop'})}><Icon name="stop"/></button>:<button class="icon-button send-button" aria-label="Run request" title="Run · Enter (Shift+Enter for a new line)" disabled={!state.project||!input.trim()&&!recipe} onClick={()=>run()}><Icon name="send"/></button>}</div>
++            <div class="compose-actions"><div class="menu-anchor add-anchor"><button class="icon-button add-button" title="Evidence options" aria-label="Evidence options" aria-haspopup={menu==='context'||menu==='options'||menu==='forms'?'dialog':'menu'} aria-expanded={plusOpen} aria-controls="evidence-options" onClick={e=>plusOpen?closeMenu():toggle('add',e)}><Icon name="plus"/></button>
++                {menu==='add'&&<section class="popover above evidence-menu" id="evidence-options" role="menu" aria-label="Evidence options" onKeyDown={menuKeys}>
++                    <h2 role="presentation">Evidence options</h2>
++                    <div role="group" aria-label="Collect"><h3 role="presentation">Collect</h3>
++                        <button type="button" role="menuitem" disabled={!state.project||state.busy} onClick={showContext}>Gather cited context…</button>
++                        <button type="button" role="menuitem" disabled={!state.project||state.busy} onClick={()=>{setMenu('forms');send({type:'forms'});}}>Tool forms…</button></div>
++                    <div role="group" aria-label="Request options"><h3 role="presentation">Request options</h3>
++                        <button type="button" role="menuitem" disabled={!state.session} onClick={()=>setMenu('options')}>Scope and recipe…</button>
++                        <button type="button" role="menuitem" disabled={!state.project||state.busy||!input.trim()&&!recipe} onClick={()=>run(true)}>Prepare plan before running</button></div>
++                    <div role="group" aria-label="Help"><button type="button" role="menuitem" onClick={()=>action({type:'help'})}>Commands and help</button></div>
++                </section>}
++                {plusOpen&&menu!=='add'&&<section class="popover above evidence-panel" id="evidence-options" role="dialog" aria-label={menu==='context'?'Gather cited context':menu==='options'?'Scope and recipe':'Tool forms'}>
++                    <div class="popover-heading"><button type="button" class="icon-button" aria-label="Back to evidence options" title="Back to evidence options" onClick={()=>setMenu('add')}>←</button><h2>{menu==='context'?'Gather cited context':menu==='options'?'Scope and recipe':'Tool forms'}</h2><button type="button" class="icon-button" aria-label="Close evidence options" title="Close" onClick={()=>closeMenu(true)}>×</button></div>
++                    {menu==='context'?<>
++                        <label>Question<textarea aria-label="Context question" maxLength={16384} value={contextQuestion} onInput={e=>setContextQuestion(e.currentTarget.value)}/></label>
++                        <p class="note">Collects cited evidence with bounded canonical reads and reports gaps. Optional Arbiter models require explicit Service enrollment.</p>
++                        <button type="button" class="context-submit" disabled={!state.project||state.busy||!contextQuestion.trim()} onClick={()=>gatherContext()}>{state.busy?'Collecting evidence…':'Gather cited context'}</button>
++                        <details><summary>Adjust native budget</summary><label>Native context budget (JSON)<textarea aria-label="Native context budget" maxLength={2048} value={contextBudget} onInput={e=>setContextBudget(e.currentTarget.value)}/></label>
++                            <p class="note">The native service validates budget limits. A smaller budget can return gaps or omissions.</p>
++                            <button type="button" disabled={!state.project||state.busy||!contextQuestion.trim()} onClick={()=>gatherContext(true)}>Gather with this budget</button></details>
++                        {contextIssue&&<p role="alert">{contextIssue}</p>}
++                    </>:menu==='options'?<>
++                        <label>Scope<input aria-label="Literal collection-relative path prefix" placeholder="Project root, or src/component/" maxLength={1024} value={scope} onInput={e=>setScope(e.currentTarget.value)}/></label>
++                        <label>Recipe<select aria-label="Recipe" value={recipe} onChange={e=>setRecipe(e.currentTarget.value)}><option value="">Command or supported request</option>{RECIPES.map(([id,label])=><option value={id}>{label}</option>)}</select></label>
++                    </>:state.operations?<ToolForm state={state} issue={formIssue} currentDraft={currentDraft} onSelect={tool=>changeForm({tool})} onField={(tool,name,value)=>changeForm({tool,field:{name,value}})} onReset={tool=>changeForm({tool},true)} onIssue={setFormIssue}/>:<><p role="status">Loading tool forms…</p><button type="button" disabled={!state.project||state.busy} onClick={()=>send({type:'forms'})}>Retry tool forms</button></>}
++                </section>}
++            </div><small title="Requests read the local index. Refresh requires review.">Sources read-only</small>{state.busy?<button class="icon-button send-button" aria-label="Stop collecting evidence" title="Stop" onClick={()=>send({type:'stop'})}><Icon name="stop"/></button>:<button class="icon-button send-button" aria-label="Run request" title="Run · Enter (Shift+Enter for a new line)" disabled={!state.project||!input.trim()&&!recipe} onClick={()=>run()}><Icon name="send"/></button>}</div>
+         </div><div class="sr-only" aria-live="polite">{state.busy?'Collecting evidence':'Ready'}</div>
+     </main>;
+ }
+diff --git a/packages/vscode/src/workbenchWebview/style.css b/packages/vscode/src/workbenchWebview/style.css
+index f43e123e..5e0bb914 100644
+--- a/packages/vscode/src/workbenchWebview/style.css
++++ b/packages/vscode/src/workbenchWebview/style.css
+@@ -46,3 +46,11 @@ main{height:100%;padding:8px 12px 12px;gap:6px;min-width:0}
+ .tool-form-toolbar{display:flex;align-items:flex-end;gap:4px}.tool-form-toolbar>label{flex:1;min-width:0;margin-right:0}.tool-form-toolbar>.icon-button{margin:0 0 9px;flex:none}
+ .discovery-details{padding:4px 10px;overflow-wrap:anywhere}.discovery-details:empty{display:none}.discovery-details>details{margin:6px 0}.discovery-details small{display:block;color:var(--vscode-descriptionForeground);padding:2px 6px}.discovery-details ul{padding-left:20px}.discovery-details button{margin:3px 0;max-width:100%;white-space:normal;text-align:left}
+ .popover .choices{border:0;margin:4px 6px;padding:0}.popover .choices legend{font-weight:600;padding:0}.popover label.check{flex-direction:row;align-items:center;margin:4px 0;overflow-wrap:anywhere}.popover label.check input{width:auto;flex:none}.popover textarea{width:100%;min-width:0;resize:vertical}
++
++.evidence-menu [role=group]+[role=group]{border-top:1px solid var(--vscode-panel-border);margin-top:4px;padding-top:4px}
++.evidence-menu h3{font-size:.85em;color:var(--vscode-descriptionForeground);font-weight:500;margin:4px 8px}
++.evidence-menu [role=menuitem]{display:block;width:100%;border:0;background:transparent;text-align:left;padding:7px 8px;border-radius:4px}
++.evidence-menu [role=menuitem]:focus{background:var(--vscode-list-hoverBackground,var(--vscode-button-secondaryHoverBackground))}
++.evidence-panel{width:340px}.popover-heading{display:flex;align-items:center;gap:4px}.popover-heading h2{flex:1;margin:4px 0}
++.evidence-panel>.context-submit{margin:6px}.evidence-panel textarea{min-height:80px;max-height:24vh;border:1px solid var(--vscode-input-border,var(--vscode-panel-border));background:var(--vscode-input-background)}
++.evidence-panel [role=alert],.evidence-panel [role=status]{margin:8px 6px}
+diff --git a/scripts/native-editor-workbench.cjs b/scripts/native-editor-workbench.cjs
+index 53532b51..25399a05 100644
+--- a/scripts/native-editor-workbench.cjs
++++ b/scripts/native-editor-workbench.cjs
+@@ -31,8 +31,11 @@ async function workbenchAction(request,actions){
+     if(request.action==='workbenchRead'){
+         if(typeof request.tool!=='string'||!request.tool||request.tool.length>64||!request.fields||Array.isArray(request.fields)||typeof request.fields!=='object'||Object.keys(request.fields).length>32)throw Error('Invalid Workbench read request');
+         for(const [label,value]of Object.entries(request.fields))fieldExpressions(label,value);
+-        if(!await actions.observe("!!document.querySelector('#evidence-options')"))await mutate(selectorExpressions('button[aria-controls="evidence-options"]'));
+-        if(!await actions.observe("!!document.querySelector('.tool-form')"))await click('Tool forms',"document.querySelector('#evidence-options')");
++        if(!await actions.observe("!!document.querySelector('.tool-form')")&&!await actions.observe(`!!document.querySelector('#evidence-options[role="dialog"][aria-label="Tool forms"]')`)){
++            if(!await actions.observe("!!document.querySelector('#evidence-options')"))await mutate(selectorExpressions('button[aria-controls="evidence-options"]'));
++            else if(!await actions.observe(`!!document.querySelector('#evidence-options[role="menu"]')`))await mutate(selectorExpressions('button[aria-label="Back to evidence options"]'));
++            await click('Tool forms…',"document.querySelector('#evidence-options')");
++        }
+         await actions.wait("!!document.querySelector('.tool-form select[aria-label=\"Operation\"]')",'actual Workbench operation catalog');
+         const select=`document.querySelector('.tool-form select[aria-label="Operation"]')`;
+         const selectOperation=async name=>{
+diff --git a/scripts/render-workbench.cjs b/scripts/render-workbench.cjs
+index ab2a7a24..b12316db 100644
+--- a/scripts/render-workbench.cjs
++++ b/scripts/render-workbench.cjs
+@@ -97,7 +97,7 @@ async function main(){
+                 symbols:{type:'object',properties:{name:{type:'string'},name_match:{type:'string',enum:['exact','suffix','contains']},compact:{type:'boolean'},include_count:{type:'boolean'}}},
+                 references:{type:'object',required:['name'],properties:{name:{type:'string'},order:{type:'string',enum:['index','path','code_first']},include_files:{type:'boolean'}}}};
+             await evaluate(`window.fixture.operations=${JSON.stringify(operations)};window.fixture.session.title='Session alpha';window.fixture.sessionEpoch=0;window.alphaId=window.fixture.session.id;window.fixtureSessions.set(window.alphaId,structuredClone(window.fixture.session));window.betaId='browser-session-beta';window.fixtureSessions.set(window.betaId,{...structuredClone(window.fixture.session),id:window.betaId,title:'Session beta',turns:[],formDraft:{activeTool:'search',values:{},revision:0,scope:'',recipe:''}});window.fixture.recent=[...window.fixtureSessions.values()].map(session=>({id:session.id,title:session.title,updatedAt:session.updatedAt,turns:0}));window.dispatchEvent(new MessageEvent('message',{data:{type:'state',state:structuredClone(window.fixture)}}));`);
+-            const openForm=async()=>{if(!await evaluate(`!!document.querySelector('#evidence-options')`))await evaluate(`document.querySelector('[aria-label="Add scope, recipe or tool"]').click()`);await until(`!!document.querySelector('.tool-form form')`);};
++            const openForm=async()=>{if(!await evaluate(`!!document.querySelector('#evidence-options')`))await evaluate(`document.querySelector('button[aria-controls="evidence-options"]').click()`);if(!await evaluate(`!!document.querySelector('.tool-form form')`)){if(!await evaluate(`!!document.querySelector('#evidence-options[role="menu"]')`))await evaluate(`document.querySelector('[aria-label="Back to evidence options"]').click()`);await evaluate(`[...document.querySelectorAll('#evidence-options [role="menuitem"]')].find(button=>button.textContent==='Tool forms…').click()`);}await until(`!!document.querySelector('.tool-form form')`);};
+             const fieldValue=label=>evaluate(`document.querySelector('.tool-form [aria-label=${JSON.stringify(label)}]')?.value`);
+             const setField=async(label,value)=>{await evaluate(`(()=>{const field=document.querySelector('.tool-form [aria-label=${JSON.stringify(label)}]');if(!field)throw new Error('Missing field');field.value=${JSON.stringify(value)};field.dispatchEvent(new Event(field.tagName==='SELECT'?'change':'input',{bubbles:true}));})()`);await delay(25);};
+             const selectTool=async tool=>{await setField('Operation',tool);await until(`document.querySelector('.tool-form [aria-label="Operation"]').value===${JSON.stringify(tool)}`);};
+@@ -200,7 +200,7 @@ async function main(){
+             assert.equal(await evaluate(`Object.hasOwn(window.fixture.session.turns[0].envelope,'source_coverage')`),false,'display warning does not manufacture native coverage metadata');
+             checks.push({check:'legacy textual zero-hit fallback warns whole-query unknown without invented typed metadata/count/continuation',passed:true});
+ 
+-            await evaluate(`document.querySelector('[aria-label="Add scope, recipe or tool"]').click()`);await until(`!!document.querySelector('.tool-form form')`);
++            await evaluate(`document.querySelector('button[aria-controls="evidence-options"]').click()`);await until(`!!document.querySelector('#evidence-options[role="menu"]')`);await evaluate(`[...document.querySelectorAll('#evidence-options [role="menuitem"]')].find(button=>button.textContent==='Tool forms…').click()`);await until(`!!document.querySelector('.tool-form form')`);
+             await evaluate(`(()=>{const select=document.querySelector('.tool-form [aria-label=\"Operation\"]');select.value='symbols';select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+             await until(`!!document.querySelector('.tool-form [aria-label="Name matching"]')`);
+             const setField=async(label,value)=>{
+@@ -388,12 +388,12 @@ async function main(){
+             }
+             if(scene==='welcome'){
+                 assert.equal(await evaluate(`!!document.querySelector('.session')||!!document.querySelector('.tool-form')||document.body.textContent.includes('Publication unavailable')`),false,'advanced UI starts out of the transcript');
+-                await evaluate(`document.querySelector('[aria-label="Add scope, recipe or tool"]').click()`);await until(`!!document.querySelector('#evidence-options input')`);
++                await evaluate(`document.querySelector('button[aria-controls="evidence-options"]').click()`);await until(`!!document.querySelector('#evidence-options[role="menu"]')`);
+                 if(width===650){const png=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});await fs.writeFile(path.join(output,'workbench-1.7.1-add-menu.png'),Buffer.from(png.data,'base64'));}
+                 assert.equal(await evaluate(`(()=>{const r=document.querySelector('#evidence-options').getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;})()`),true,'add menu remains in the viewport');
+-                await evaluate(`(()=>{const el=document.querySelector('#evidence-options input');el.value='src/';el.dispatchEvent(new Event('input',{bubbles:true}));})()`);
++                await evaluate(`[...document.querySelectorAll('#evidence-options [role="menuitem"]')].find(button=>button.textContent==='Scope and recipe…').click()`);await until(`!!document.querySelector('#evidence-options input')`);await evaluate(`(()=>{const el=document.querySelector('#evidence-options input');el.value='src/';el.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+                 await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);await until(`!document.querySelector('#evidence-options')`);
+-                await until(`document.activeElement?.getAttribute('aria-label')==='Add scope, recipe or tool'`);
++                await until(`document.activeElement?.getAttribute('aria-label')==='Evidence options'`);
+                 await evaluate(`document.querySelector('[aria-label="Settings and session actions"]').click()`);await until(`!!document.querySelector('#session-settings')`);
+                 await evaluate(`document.querySelector('.transcript').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))`);await until(`!document.querySelector('#session-settings')`);
+                 await evaluate(`document.querySelector('[aria-label="Session history"]').click()`);await until(`document.querySelector('#session-history')?.textContent.includes('No saved sessions yet')`);

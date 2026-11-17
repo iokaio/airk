@@ -1,0 +1,33 @@
+--- a/crates/airk-core/src/catalog_refresh.rs
++++ b/crates/airk-core/src/catalog_refresh.rs
+@@ -226,6 +226,30 @@
+         }
+     }
+     #[test]
++    fn refresh_selection_identity_matches_workbench_cross_language_golden() -> Result<()> {
++        let mut selected = selection();
++        selected.members[0].sources[0].canonical_root = "//owned/source/é".into();
++        selected.members[0].sources[0].source_relative_path = "api/é-政策😀.md".into();
++        let canonical = r#"{"schema":1,"caller":"01010101010101010101010101010101","key":{"namespace":"01010101010101010101010101010101","epoch":1,"nonce":"01010101010101010101010101010101"},"original_result_digest":"0202020202020202020202020202020202020202020202020202020202020202","original_evidence_selection_digest":"0202020202020202020202020202020202020202020202020202020202020202","original_query_digest":"0202020202020202020202020202020202020202020202020202020202020202","selection":{"schema":1,"context_key":"0202020202020202020202020202020202020202020202020202020202020202","namespace":"01010101010101010101010101010101","expected_catalog_revision":1,"grant_id":"grt_01010101010101010101010101010101","expected_grant_revision":1,"project_ids":["prj_01010101010101010101010101010101"],"index_ids":["idx_01010101010101010101010101010101"]},"mode":"selected_only","members":[{"index_id":"idx_01010101010101010101010101010101","original_publication":"airk-r1:01010101010101010101010101010101:1:0202020202020202020202020202020202020202020202020202020202020202","sources":[{"source_root_id":"src_01010101010101010101010101010101","source_relative_path":"api/é-政策😀.md","canonical_root":"//owned/source/é","indexed_hash":"0202020202020202020202020202020202020202020202020202020202020202"}]}]}"#;
++        assert_eq!(serde_json::to_vec(&selected)?, canonical.as_bytes());
++        assert_eq!(selected.identity()?.to_string(), "4630540e46f495609e14aec592677c465636aa0f32edd24c2b0b8f9f7a220298");
++        // Input maps may arrive in any order; typed deserialization restores
++        // struct order, while unknown request fields never disappear silently.
++        let mut wire: serde_json::Value = serde_json::from_str(canonical)?;
++        let roundtrip: RefreshSelection = serde_json::from_value(wire.clone())?;
++        assert_eq!(roundtrip.identity()?, selected.identity()?);
++        wire["future_request_field"] = serde_json::json!(true);
++        assert!(serde_json::from_value::<RefreshSelection>(wire).is_err());
++        let mut nested: serde_json::Value = serde_json::from_str(canonical)?;
++        nested["members"][0]["sources"][0]["future_request_field"] = serde_json::json!(true);
++        assert!(serde_json::from_value::<RefreshSelection>(nested).is_err());
++        let invalid_surrogate = canonical.replace("api/é-政策😀.md", r"api/\ud800.md");
++        assert!(serde_json::from_str::<RefreshSelection>(&invalid_surrogate).is_err());
++        selected.members[0].sources[0].source_relative_path = format!("api/{}.md", '\u{85}');
++        assert!(selected.identity().is_err());
++        Ok(())
++    }
++    #[test]
+     fn refresh_digest_binds_original_query_evidence_grant_member_and_mode() -> Result<()> {
+         let original = selection();
+         let digest = original.identity()?;

@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: Apache-2.0
+fn retired_union_refusal(reply: &Value, session: &CombinedConnectRequest) -> Result<()> {
+    ensure!(reply["isError"] == true,"old default union unexpectedly succeeded: {reply}");
+    let value = body(reply)?;
+    ensure!(matches!(value["error"]["code"].as_str(),Some("combined_scope_unavailable"|"combined_scope_expired"))
+        && value["error"]["retryable"] == false && value["error"]["query_replay_safe"] == false
+        && value["requested_scope"]["confirmed"] == false
+        && value["requested_scope"]["selection"] == serde_json::to_value(session)?,
+        "old default union failed for an unexpected reason: {value}");
+    Ok(())
+}
+
+async fn retire_default_union_and_review_same_project(
+    f: &mut Fixture,
+    old_mcp: &mut McpSession,
+    expected_b: &Value,
+) -> Result<()> {
+    use airk_core::catalog_management::{CatalogEntity,CatalogItem};
+    let old_session = f.session.clone();
+    let old_native = airk_cli::combined_frontend::resolve(None,Some(&f.control),&old_session).await?;
+    let mut registry = ServiceRegistry::open_saved(&f.control)?;
+    let frozen = registry.catalog_detail(&CatalogEntity::Grant{id:old_session.grant_id},Some(policy_revision(f)?))?.item.context("original grant history absent")?;
+    let project_before = registry.catalog_detail(&CatalogEntity::Project{id:f.projects[2]},Some(policy_revision(f)?))?.item.context("default Project absent")?;
+    drop(registry);
+    let CatalogItem::Project(project_before) = project_before else { anyhow::bail!("default Project kind changed"); };
+    let b_path = Path::new(&f.registrations[1].root).join("api/policy.md");
+    let b_source = fs::read(&b_path)?;
+    let retirement = policy_draft(f,223,SourceMutationSelection::RetireIndex).await?;
+    let expected_scope_revision = project_before.scope_revision.next()?;
+    let expected_defaults_revision = project_before.defaults_revision.next()?;
+    ensure!(retirement.preview.before.iter().any(|item|matches!(item,CatalogItem::Membership(value) if value.project_id==f.projects[2] && value.index_id==f.indexes[2])),
+        "Retire review omitted the current A membership");
+    ensure!(retirement.preview.after.iter().any(|item|matches!(item,CatalogItem::Project(value)
+        if value.id==f.projects[2] && value.default_indexes==vec![f.indexes[1]]
+        && value.scope_revision==expected_scope_revision
+        && value.defaults_revision==expected_defaults_revision)),
+        "Retire review omitted the resulting same-Project default scope");
+    apply_policy(f,&retirement).await?;
+    let deadline = Instant::now()+Duration::from_secs(90);
+    loop {
+        let registry = ServiceRegistry::open_saved(&f.control)?;
+        if registry.project_was_removed(f.registrations[2].binding)? {break;}
+        ensure!(Instant::now()<deadline,"default-union A physical cleanup did not settle");
+        drop(registry);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    // A restrictive catalog change expires the OLD exact grant/selection. Do not
+    // silently shrink it, reuse its transport, or convert this into a healthy read.
+    let args = deletion_query();
+    let native = old_native.call("airk_search".into(),args.as_object().unwrap().clone()).await?;
+    retired_union_refusal(&native,&old_session)?;
+    let wire = old_mcp.call(240,"airk_search",args.clone())?;
+    ensure!(wire.get("error").is_none() && wire["result"].is_object(),"old MCP scope transport failed unexpectedly: {wire}");
+    retired_union_refusal(&wire["result"],&old_session)?;
+    old_native.close();old_native.shutdown().await?;
+    // A fresh CLI cannot even construct the old scoped backend. Its documented
+    // setup refusal is a terminal code on stderr, not a reduced evidence reply.
+    let mut command = Command::new(&f.candidate);
+    command.arg("--combined-session").arg(serde_json::to_string(&old_session)?)
+        .arg("--service-runtime-dir").arg(&f.control)
+        .args(["tools","call","airk_search","--args"]).arg(args.to_string());
+    let output = tokio::task::spawn_blocking(move||command.output()).await??;
+    ensure!(output.status.code()==Some(1) && output.stdout.is_empty()
+        && String::from_utf8_lossy(&output.stderr).contains("scoped_read_unavailable:"),
+        "old CLI scope failed unexpectedly: exit={:?};stdout={};stderr={}",output.status.code(),String::from_utf8_lossy(&output.stdout),String::from_utf8_lossy(&output.stderr));
+    let mut registry = ServiceRegistry::open_saved(&f.control)?;
+    ensure!(registry.catalog_detail(&CatalogEntity::Grant{id:old_session.grant_id},None)?.item==Some(frozen),
+        "Retire/physical cleanup rewrote immutable old grant history");
+    let detail = registry.catalog_detail(&CatalogEntity::Project{id:f.projects[2]},None)?;
+    ensure!(matches!(detail.item,Some(CatalogItem::Project(value)) if value.default_indexes==vec![f.indexes[1]]),
+        "A survived in current same-Project defaults after cleanup");
+    ensure!(registry.catalog_detail(&CatalogEntity::Membership{project_id:f.projects[2],index_id:f.indexes[2]},None)?.item.is_none(),
+        "A survived in current Project membership after cleanup");
+    drop(registry);
+    // Explicitly review a NEW grant using the SAME default Project selector.
+    // No index_ids=B convenience subset or implicit grant rewrite is permitted.
+    let response = airk_cli::service_runtime::request(&f.control,ControlMethod::CatalogGrantDraft {
+        context_key:old_session.context_key,selection:GrantDraftSelection {
+            key:policy_key(f,224).await?,expected_catalog_revision:policy_revision(f)?,
+            project_ids:old_session.project_ids.clone(),index_ids:None,
+        },
+    }).await?;
+    let ControlResponse::CatalogGrantDraft{draft}=response else {anyhow::bail!("fresh same-default Project review refused: {}",serde_json::to_string(&response)?);};
+    let CatalogOperation::CreateGrant{grant}=&draft.request.operation else {anyhow::bail!("fresh default grant operation changed");};
+    let grant=grant.clone();
+    ensure!(grant.memberships.len()==1 && grant.memberships[0].membership.index_id==f.indexes[1]
+        && grant.memberships[0].membership.project_id==f.projects[2],"fresh default review retained A or lost B: {grant:?}");
+    let response=airk_cli::service_runtime::request(&f.control,ControlMethod::CatalogApply{request:draft.request,preview_digest:draft.preview_digest}).await?;
+    let ControlResponse::CatalogApplied{receipt,..}=response else {anyhow::bail!("fresh same-default grant apply refused: {}",serde_json::to_string(&response)?);};
+    f.session.grant_id=grant.id;f.session.expected_grant_revision=grant.revision;
+    f.session.expected_catalog_revision=receipt.catalog_revision;
+    ensure!(f.session.project_ids==old_session.project_ids && f.session.index_ids.is_none(),"cleanup test narrowed the default Project selection");
+    let backend=airk_cli::combined_frontend::resolve(None,Some(&f.control),&f.session).await?;
+    let native=native_read(backend.as_ref(),"airk_search",&args).await;
+    backend.close();backend.shutdown().await?;let native=native?;
+    let cli=f.cli("airk_search",&args).await?;
+    let mut fresh=McpSession::start(f)?;
+    let wire=fresh.call(241,"airk_search",args)?;
+    ensure!(wire.get("error").is_none() && wire["result"].is_object(),"fresh default MCP transport failed: {wire}");
+    for value in [&native,&cli,&wire["result"]] {
+        ensure!(value.get("isError").is_none_or(|flag|flag==&json!(false)),"fresh default evidence failed: {value}");
+    }
+    policy_parity("fresh same-default Project native/CLI after A cleanup",&native,&cli)?;
+    policy_parity("fresh same-default Project native/MCP after A cleanup",&native,&wire["result"])?;
+    let value=body(&native)?;
+    let members=value["members"].as_array().context("fresh default member inventory absent")?;
+    ensure!(members.len()==1 && members[0]["index_id"]==json!(f.indexes[1]),"fresh default Project retained A: {value}");
+    ensure!(union_healthy_identity(&value,f.indexes[1])?==*expected_b,"A cleanup changed B publication/hits: {value}");
+    ensure!(fs::read(b_path)?==b_source,"A retirement/cleanup changed healthy B source bytes");
+    Ok(())
+}

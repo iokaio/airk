@@ -1,0 +1,59 @@
+--- private/producer-r2.py
++++ private/producer-r3.py
+@@ -47,6 +47,27 @@
+         meta = item.lstat()
+         need(not item.is_symlink() and not getattr(meta, "st_file_attributes", 0) & 0x400, "Aliased input/output ancestry refused: " + str(item))
+     return path.resolve(strict=True)
++
++def python_source_workspace(path):
++    """Same actual source directory with ordinary Win32 spelling for Python include traversal.
++
++    Rust/native FilePins keep their observed canonical verbatim paths. Python's
++    maintained source parser intentionally checks unresolved relative includes;
++    Win32 verbatim paths do not normalize their literal .. components.
++    """
++    supplied=os.fspath(path)
++    need(Path(supplied).is_absolute() and not any(part in ('.','..') for part in re.split(r'[\\/]',supplied)), 'Absolute non-dot source workspace required')
++    observed=unaliased(supplied)
++    text=str(observed)
++    if text.startswith('\\\\?\\UNC\\'):
++        ordinary=Path('\\\\'+text[8:])
++    elif text.startswith('\\\\?\\'):
++        ordinary=Path(text[4:])
++    else:
++        ordinary=observed
++    ordinary=unaliased(ordinary)
++    need(observed.is_dir() and ordinary.is_dir() and observed.samefile(ordinary), 'Python/native source workspace identity differs')
++    return ordinary
+ 
+ def native_path(path):
+     """Observe the actual native final path; never assume a verbatim-prefix spelling."""
+@@ -118,7 +139,7 @@
+ def prepare(args):
+     actor = identity()
+     freeze, corpus, roster = static_inputs()
+-    source = unaliased(args.source)
++    source = python_source_workspace(args.source)
+     quality = load_script(source / "scripts/check-retrieval-quality.py", "fresh_ann_quality")
+     runtime = unaliased(args.runtime)
+     need(quality.clients.classify_runtime(runtime)["topology"] == "split_pair", "Exact current paired runtime required")
+@@ -187,7 +208,7 @@
+     need(plan["schema"] == "airk.private.fresh-ann-prepared/1", "Prepared run schema differs")
+     for value in plan["pins"].values(): check_pin(value)
+     freeze, corpus, roster = static_inputs()
+-    quality = load_script(Path(plan["source"]) / "scripts/check-retrieval-quality.py", "fresh_ann_quality")
++    quality = load_script(python_source_workspace(plan["source"]) / "scripts/check-retrieval-quality.py", "fresh_ann_quality")
+     need(quality.source_identity() == plan["source_identity"], "Candidate real full/dirty source changed after prepare")
+     need(quality.clients.runtime_builder().source_identity() == plan["candidate_consumed_c7"], "Candidate C7 consumed inputs changed")
+     need(quality.native_read_budget() == plan["native_read_budget"], "Rust emitted native read budget changed")
+--- private/runner-r2.py
++++ private/runner-r3.py
+@@ -74,7 +74,7 @@
+     producer=load(STATE/'producer.py','actual_ann_producer')
+     actor=producer.identity()
+     for value in plan['pins'].values():producer.check_pin(value)
+-    quality=producer.load_script(Path(plan['source'])/'scripts/check-retrieval-quality.py','ann_owned_frozen_quality')
++    quality=producer.load_script(producer.python_source_workspace(plan['source'])/'scripts/check-retrieval-quality.py','ann_owned_frozen_quality')
+     need(quality.source_identity()==plan['source_identity'],'Actual consumed candidate full/dirty source changed')
+     need(quality.clients.runtime_builder().source_identity()==plan['candidate_consumed_c7'],'Immutable runtime C7 source changed')
+     need(time.monotonic()<deadline,'Original phase expired during actual preflight')

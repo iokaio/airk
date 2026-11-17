@@ -1,0 +1,20 @@
+--- crates/airk-kernel/src/inference_owner/context_action_calibration_tests.rs
++++ crates/airk-kernel/src/inference_owner/context_action_calibration_tests.rs
+@@ -180,6 +180,11 @@
+             "d10876d7b5b3da240fac17228985714f24aabbb6c53df35a8398b28fa04ed7bc"
+         }
+         ModelChoice::LargeKev => "83e19e51906b2a7024af2432f6815ab6b032cd5945cf50ac5496f149c1a9f5e9",
++        ModelChoice::FocusQwenReranker06B
++        | ModelChoice::ContextQwenCompact
++        | ModelChoice::ContextQwenLarge => anyhow::bail!(
++            "Historical CAL fixture does not admit selected-stage models; use selected CAL owner"
++        ),
+         ModelChoice::FocusQwenReranker06B
+         | ModelChoice::ContextQwenCompact
+         | ModelChoice::ContextQwenLarge => anyhow::bail!(
+@@ -596,3 +601,5 @@
+     );
+     Ok(())
+ }
++
++mod selected;

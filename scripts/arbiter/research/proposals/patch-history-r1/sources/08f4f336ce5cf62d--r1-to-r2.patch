@@ -1,0 +1,77 @@
+--- r1/CONTRACT.md
++++ r2/CONTRACT.md
+@@ -19,3 +19,5 @@
+ Frozen limits remain matching raw<=.001, matching mass Focus<=.00001/Context<=.05, original-FP32 raw Focus<=.25/Context<=.001, original mass<=.05, finite and identical argmax. Independent Torch original and half recipes, full native tensor provenance, genuine process settlement, numerical/resources/placement and full Answer latency gates remain required. Literal controls qualify only exporter mechanics, never selected models or GPU execution.
+ 
+ The selected original graphs have no learned projection bias. Unexpected learned bias refuses rather than silently converting an unreviewed add/broadcast boundary. The implementation does not expose a command that bypasses the existing native admission owner. export_after_owner_admission is a library API for a future reviewed owner, not evidence that such admission currently exists. Original source closure authentication precedes conversion and is repeated afterward; the caller owns the immutable input/process/identity fence and the single absolute deadline.
++
++R2 independent-review correction: every learned source FP32 chunk is checked finite, including protected norm scales and the Focus readout head. Their bytes remain unchanged when finite. Authenticated original Constant masks are not learned weights and retain their exact source semantics. Frozen R1 and its passing controls remain preserved under their original identities.
+--- r1/export_half.py
++++ r2/export_half.py
+@@ -30,10 +30,14 @@
+         except OverflowError as exc: raise ValueError('binary16 overflow') from exc
+     return bytes(out)
+ 
+-def half_chunk(raw, np):
++def finite_f32_chunk(raw, np):
+     require(len(raw) % 4 == 0, 'unaligned FP32')
+     values = np.frombuffer(raw, dtype='<f4')
+-    require(bool(np.isfinite(values).all()), 'nonfinite FP32')
++    require(bool(np.isfinite(values).all()), 'nonfinite FP32 learned weight')
++    return values
++
++def half_chunk(raw, np):
++    values = finite_f32_chunk(raw, np)
+     with np.errstate(over='ignore', invalid='ignore'):
+         converted = values.astype('<f2')
+     require(bool(np.isfinite(converted).all()), 'binary16 overflow')
+@@ -275,7 +279,9 @@
+                     size=min(4*1024*1024,length-pos)
+                     chunk=handle.read(size) if handle else raw[pos:pos+size]
+                     require(len(chunk)==size,'short initializer read'); ih.update(chunk)
+-                    data=half_chunk(chunk,np) if half else chunk
++                    if half:data=half_chunk(chunk,np)
++                    else:
++                        finite_f32_chunk(chunk,np);data=chunk
+                     out.write(data);oh.update(data);pos+=size
+             finally:
+                 if handle:handle.close()
+--- r1/test_export_half.py
++++ r2/test_export_half.py
+@@ -205,6 +205,26 @@
+             root=pathlib.Path(tmp);t=h.make_tensor('x',T.FLOAT,[1],[float('inf')]);m=h.make_model(h.make_graph([],'x',[],[],[t]));before=m.SerializeToString()
+             with self.assertRaisesRegex(ValueError,'nonfinite'):e.convert_arrays(m,copy.deepcopy(m),{'x':'embedding_half'},root,root/'weights.bin',np,10,clock=lambda:0)
+             self.assertEqual(m.SerializeToString(),before)
++    def test_protected_learned_roles_reject_nonfinite(self):
++        for role in ['norm_fp32','readout_fp32']:
++            for value in [float('nan'),float('inf'),-float('inf')]:
++                with self.subTest(role=role,value=value), tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).parent) as tmp:
++                    root=pathlib.Path(tmp);t=h.make_tensor('protected',T.FLOAT,[2],[1,value]);m=h.make_model(h.make_graph([],'x',[],[],[t]));before=m.SerializeToString()
++                    with self.assertRaisesRegex(ValueError,'nonfinite FP32 learned weight'):e.convert_arrays(m,copy.deepcopy(m),{'protected':role},root,root/'weights.bin',np,10,clock=lambda:0)
++                    self.assertEqual(m.SerializeToString(),before)
++                    self.assertEqual((root/'weights.bin').stat().st_size,0)
++    def test_protected_finite_readout_preserves_bits(self):
++        with tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).parent) as tmp:
++            root=pathlib.Path(tmp);t=T();t.name='head';t.data_type=T.FLOAT;t.dims.extend([4]);raw=bytes.fromhex('0000000000000080010000000000803f');t.raw_data=raw
++            m=h.make_model(h.make_graph([],'x',[],[],[t]));report=e.convert_arrays(m,copy.deepcopy(m),{'head':'readout_fp32'},root,root/'weights.bin',np,10,clock=lambda:0)
++            self.assertEqual((root/'weights.bin').read_bytes(),raw)
++            self.assertEqual(report[0]['source_sha256'],report[0]['output_sha256'])
++    def test_original_mask_constant_is_not_learned_weight(self):
++        with tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).parent) as tmp:
++            root=pathlib.Path(tmp);weight=h.make_tensor('weight',T.FLOAT,[1],[1]);constant=h.make_node('Constant',[],['mask'],name='original_mask',value=h.make_tensor('mask',T.FLOAT,[2],[0,-float('inf')]))
++            m=h.make_model(h.make_graph([constant],'x',[],[],[weight]));candidate=copy.deepcopy(m)
++            e.convert_arrays(m,candidate,{'weight':'norm_fp32'},root,root/'weights.bin',np,10,clock=lambda:0)
++            self.assertEqual(candidate.graph.node[0].SerializeToString(),constant.SerializeToString())
+     def test_external_range_and_path_refusal(self):
+         with tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).parent) as tmp:
+             root=pathlib.Path(tmp);(root/'data').write_bytes(struct.pack('<2f',1,2))
+--- r1/README.md
++++ r2/README.md
+@@ -13,3 +13,7 @@
+ The final grouped literal suite passed26/26 in2.848s (process3.202s), zero skips/failures. Tests use independent IEEE754 bit literals and CPython half conversion vs numpy, synthetic complete-layer metadata, exact mask/head/index assertions, tiny real array streaming, source preservation, overlap/path refusal and original deadline expiry. Synthetic graph tensors deliberately contain only tiny placeholder data and are never inferred; this proves rewrite structure, not selected-graph schema/shape execution. No selected graph checker, model quality, placement, numeric/resource/latency or end-to-end Answer claim is made. Original-FP32/half independent Torch, native full tensor comparisons, frozen tolerances, actual Flash/MEA observations and new profiles remain required.
+ 
+ First mechanical run:21/21, prioridentity retained. Self-review then added external Constant overlap/junction/subgraph hardening and five failure/full-census controls; final26/26 is the current source identity. Root must review combined code before any actual export. No original source, graph or weight file changed.
++
++## R2 independent-review correction
++
++Harness migration independently identified that retained norm/readout learned FP32 chunks needed a finite check. R2 validates all learned chunks before preserving/casting. Three additional controls cover NaN/positiveInf/negativeInf across both protected roles, bit-exact finite readout preservation, and unchanged authenticated Constant-mask semantics. Current grouped suite passed29/29 in2.865s, process3.195578s; zero failures/skips. R1 source and26-pass evidence remain unchanged. No selected graphs, weights, native/GPU or NN ran. All other held requirements above remain.

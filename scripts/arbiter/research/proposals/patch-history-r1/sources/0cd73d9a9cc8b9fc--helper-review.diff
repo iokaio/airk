@@ -1,0 +1,90 @@
+--- reviewed-stop-on-failure-platform-owner.py
++++ next-native-name-diagnostic-owner.py
+@@ -1,6 +1,6 @@
+ # Prepared only. Root must review exact packet before executing; this preparation never runs Cargo.
+ from pathlib import Path
+-import os,sys,json,time,hashlib,stat,subprocess,importlib.util,resource,shutil
++import os,sys,json,time,hashlib,stat,subprocess,importlib.util,resource,shutil,re
+ from datetime import datetime,timezone
+ C=None
+ 
+@@ -11,7 +11,7 @@
+  assert value['commit']!='dda749cbdf77b3e2106003ff10a683ec3aec3202', 'unchanged failed DDA input cannot replay'
+  seal=value.get('raw_c7');assert isinstance(seal,dict) and isinstance(seal.get('files'),int) and seal['files']>0
+  digest=seal.get('sha256');assert isinstance(digest,str) and len(digest)==64 and all(c in '0123456789abcdef' for c in digest)
+- assert [x['name'] for x in value.get('commands',[])]==['installer-clippy', 'legacy-process-tests', 'exact-cli-replacement', 'workspace-clippy', 'workspace-tests', 'doctests']
++ assert [x['name'] for x in value.get('commands',[])]==['scoped-clippy', 'name-boundary-controls', 'private-log-controls', 'exact-reference-refresh']
+  return value
+ 
+ def read_config():
+@@ -48,6 +48,56 @@
+  assert sha(C['static_environment'])==C['static_sha256']
+  return source,base
+ 
++def capture_final_refresh(out):
++ actor();base=Path(C['base']);log=out/'receipts'/'neo-native-name-exact-reference-refresh-r1.log'
++ metadata=log.lstat();assert stat.S_ISREG(metadata.st_mode) and metadata.st_uid==501 and metadata.st_nlink==1 and metadata.st_size<=8*1024*1024 and not log.is_symlink()
++ names=re.findall(r'^failed refresh fixture retained: (.+?)(?:; secondary diagnostic capture failed:.*)?$',log.read_text(encoding='utf-8'),re.MULTILINE)
++ assert len(names)<=1
++ if not names:
++  fresh(out/'refresh-final-capture.json',{'found':False,'scope':'No retained fixture path emitted; no raw cause or cleanup claim fabricated.'});return
++ fixture=Path(names[0]);allowed=out/'fixtures/exact-reference-refresh'
++ assert fixture.parent==allowed and re.fullmatch(r'airk-combined-[A-Za-z0-9_.-]{1,110}',fixture.name)
++ def ancestry(path):
++  assert path.is_relative_to(base)
++  for index in range(len(path.relative_to(base).parts)+1):
++   q=base.joinpath(*path.relative_to(base).parts[:index]);st=q.lstat();assert stat.S_ISDIR(st.st_mode) and st.st_uid==501 and q.resolve()==q and not q.is_symlink()
++ ancestry(fixture);paths=[];metadata_only=[]
++ for name,cap in [('reference-refresh-failure/observations.json',256<<10),('reference-refresh-failure/raw-export.json',64<<10),('reference-refresh-failure/raw-errors.jsonl',16<<20),('service.log',1<<20),('resources.json',64<<10),('control/job-errors-1.owner.json',4096)]:paths.append((fixture/name,cap))
++ ring=fixture/'control/job-errors-1'
++ if os.path.lexists(ring):
++  ancestry(ring)
++  for q in sorted(ring.iterdir()):
++   st=q.lstat();assert stat.S_ISREG(st.st_mode) and st.st_uid==501 and st.st_nlink==1 and not q.is_symlink()
++   if q.name=='writer.lock':
++    assert st.st_size==0;metadata_only.append({'path':str(q),'bytes':0,'uid':501,'inode':st.st_ino,'role':'known writer lock; metadata only'});continue
++   assert q.name=='current.jsonl' or re.fullmatch(r'previous-(?:[1-9]|1[0-9]|20)\.jsonl',q.name), 'unknown raw ring entry'
++   paths.append((q,10_000_000))
++ selected=[]
++ for q,cap in paths:
++  if not os.path.lexists(q):selected.append((q,cap,None));continue
++  ancestry(q.parent);st=q.lstat();assert stat.S_ISREG(st.st_mode) and st.st_uid==501 and st.st_nlink==1 and st.st_size<=cap and not q.is_symlink();selected.append((q,cap,st))
++ assert sum(st.st_size for q,cap,st in selected if st is not None)<=32<<20, 'complete physical capture exceeds32MiB; no truncation'
++ destination=out/'retained-reference-refresh-final';assert not destination.exists();destination.mkdir(mode=0o700);entries=[]
++ for q,cap,before in selected:
++  relative=q.relative_to(fixture)
++  if before is None:entries.append({'path':str(relative),'exists':False});continue
++  fd=os.open(q,os.O_RDONLY|os.O_NOFOLLOW)
++  try:
++   opened=os.fstat(fd);assert (opened.st_dev,opened.st_ino,opened.st_uid,opened.st_nlink,opened.st_size)==(before.st_dev,before.st_ino,501,1,before.st_size)
++   raw=bytearray()
++   while True:
++    block=os.read(fd,min(65536,cap+1-len(raw)))
++    if not block:break
++    raw.extend(block);assert len(raw)<=cap
++   after=q.lstat();assert len(raw)==before.st_size and (after.st_dev,after.st_ino,after.st_uid,after.st_nlink,after.st_size,after.st_mode,after.st_mtime_ns,after.st_ctime_ns)==(before.st_dev,before.st_ino,501,1,before.st_size,before.st_mode,before.st_mtime_ns,before.st_ctime_ns)
++  finally:os.close(fd)
++  target=destination/relative;target.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
++  with target.open('xb') as stream:stream.write(raw);stream.flush();os.fsync(stream.fileno())
++  assert sha(target)==hashlib.sha256(raw).hexdigest() and target.lstat().st_uid==501
++  entries.append({'path':str(relative),'exists':True,'bytes':len(raw),'sha256':sha(target),'uid':501,'inode':before.st_ino,'metadata_unchanged':True,'atime_unchanged':before.st_atime_ns==after.st_atime_ns})
++ fresh(out/'refresh-final-capture.json',{'found':True,'fixture':str(fixture),'destination':str(destination),'entries':entries,'metadata_only':metadata_only,'scope':'Complete original live snapshot plus final physical private ring after actual owned descendants settled. No source/DB/corpus reads, writer flush/control/retry/signal, gracefulStop or service HANDLE claim.'})
++
++
+ def main():
+  global C
+  C=read_config()
+@@ -72,7 +122,12 @@
+    ok=owner.successful(result) and natural
+    record={'phase':name,'result':result,'natural_unix_settlement':natural,'passed':ok};records.append(record);fresh(out/(name+'-outer-result.json'),record)
+    print(json.dumps({'phase':name,'passed':ok,'result':result}),flush=True)
+-   if not ok:raise RuntimeError('failed '+name+'; remaining phases stopped, no replay')
++   if not ok:
++    if name=='exact-reference-refresh' and natural:
++     try:capture_final_refresh(out)
++     except BaseException as failure:
++      fresh(out/'refresh-final-capture-error.json',{'type':type(failure).__name__,'message':str(failure),'primary_phase_failed':name,'scope':'Secondary evidence failure; original native test remains failed and retained.'})
++    raise RuntimeError('failed '+name+'; remaining phases stopped, no replay')
+   passed=True
+  except BaseException as failure:
+   error={'type':type(failure).__name__,'message':str(failure)};passed=False

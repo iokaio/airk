@@ -1,0 +1,417 @@
+diff --git a/crates/airk-kernel/tests/integration/index_detail.rs b/crates/airk-kernel/tests/integration/index_detail.rs
+--- a/crates/airk-kernel/tests/integration/index_detail.rs
++++ b/crates/airk-kernel/tests/integration/index_detail.rs
+@@ -5,6 +5,54 @@
+ use airk_store::FileStore;
+ use anyhow::Result;
+ use std::fs;
++
++fn write_retention_observations(
++    name: &str,
++    observations: &[serde_json::Value],
++    limits: &str,
++) -> Result<()> {
++    let Some(directory) = std::env::var_os("AIRK_P11B_RESOURCE_OUTPUT_DIR") else {
++        return Ok(());
++    };
++    let directory = std::path::PathBuf::from(directory);
++    anyhow::ensure!(
++        directory.is_absolute()
++            && fs::symlink_metadata(&directory)?.is_dir()
++            && !fs::symlink_metadata(&directory)?.file_type().is_symlink(),
++        "explicit existing owned report directory required"
++    );
++    let bytes = serde_json::to_vec_pretty(
++        &serde_json::json!({"schema":"airk.p11b.retention-observations/1","observations":observations,"limits":limits}),
++    )?;
++    anyhow::ensure!(
++        bytes.len() <= 1 << 20,
++        "bounded retention observations exceeded1MiB"
++    );
++    use std::io::Write;
++    let mut file = fs::OpenOptions::new()
++        .create_new(true)
++        .write(true)
++        .open(directory.join(name))?;
++    file.write_all(&bytes)?;
++    file.write_all(b"\n")?;
++    file.sync_all()?;
++    Ok(())
++}
++
++fn record_kernel_retention(
++    observations: &mut Vec<serde_json::Value>,
++    phase: &str,
++    started: std::time::Instant,
++    data: &std::path::Path,
++    report: Option<&airk_ingest::IndexReport>,
++) -> Result<()> {
++    if std::env::var_os("AIRK_P11B_RESOURCE_OUTPUT_DIR").is_some() {
++        let wall_us = started.elapsed().as_micros();
++        let quota = airk_store::quota::Quota::open_service(data)?.status()?;
++        observations.push(serde_json::json!({"phase":phase,"wall_us":wall_us,"quota":quota,"index_report":report}));
++    }
++    Ok(())
++}
+ 
+ fn facts() -> FactQuery {
+     FactQuery {
+@@ -186,6 +234,7 @@
+ fn explicit_native_retention_migration_keeps_old_publication_then_reuses_only_equal_effective_files()
+ -> Result<()> {
+     use airk_core::retention::RetainedProfile;
++    let mut observations = Vec::new();
+     let root = tempfile::tempdir()?;
+     let data = tempfile::tempdir()?;
+     let files = [
+@@ -206,7 +255,22 @@
+     let kernel =
+         Kernel::open_service_collection(root.path(), Some(data.path().into()), "retained")?;
+     kernel.configure_vectors(false)?;
+-    kernel.index()?;
++    record_kernel_retention(
++        &mut observations,
++        "owned_before_cold",
++        std::time::Instant::now(),
++        data.path(),
++        None,
++    )?;
++    let phase_started = std::time::Instant::now();
++    let cold = kernel.index()?;
++    record_kernel_retention(
++        &mut observations,
++        "legacy_cold",
++        phase_started,
++        data.path(),
++        Some(&cold),
++    )?;
+     let registration = airk_core::service::ProjectRegistration::new(
+         root.path().canonicalize()?.to_string_lossy().into_owned(),
+         data.path().canonicalize()?.to_string_lossy().into_owned(),
+@@ -224,6 +288,7 @@
+         .state
+         .profile_id;
+     drop(before);
++    let phase_started = std::time::Instant::now();
+     let review = kernel.preview_retained_migration(RetainedProfile::Lean)?;
+     let configured = kernel.configure_retained_migration(&review)?;
+     assert!(configured.source_pass_requested);
+@@ -236,6 +301,13 @@
+     assert!(pending.pending_reindex);
+     assert_eq!(pending.publication, Some(token));
+     let migrated = kernel.index()?;
++    record_kernel_retention(
++        &mut observations,
++        "lean_migration",
++        phase_started,
++        data.path(),
++        Some(&migrated),
++    )?;
+     assert_eq!(migrated.indexed, 3);
+     assert_eq!(migrated.reused, 1);
+     let status = kernel.extraction_policy()?;
+@@ -292,8 +364,16 @@
+     let mut full = ordinary.clone();
+     full.root_bytes = observed.used_bytes + observed.reserved_bytes;
+     quota.configure(full)?;
++    let phase_started = std::time::Instant::now();
+     let failed = kernel.index();
+     quota.configure(ordinary)?;
++    record_kernel_retention(
++        &mut observations,
++        "rich_quota_refused",
++        phase_started,
++        data.path(),
++        failed.as_ref().ok(),
++    )?;
+     assert!(
+         failed.is_err(),
+         "Rich source publication unexpectedly bypassed full native quota"
+@@ -326,6 +406,7 @@
+         !restored.pending_reindex,
+         "no-op publication choice left another pending desired policy saved"
+     );
++    let phase_started = std::time::Instant::now();
+     let noop = kernel.preview_retained_migration(RetainedProfile::Lean)?;
+     assert!(
+         !kernel
+@@ -333,6 +414,13 @@
+             .source_pass_requested
+     );
+     let unchanged = kernel.index()?;
++    record_kernel_retention(
++        &mut observations,
++        "lean_noop",
++        phase_started,
++        data.path(),
++        Some(&unchanged),
++    )?;
+     assert_eq!(unchanged.indexed, 0);
+     assert_eq!(unchanged.reused, 4);
+     let unchanged_snapshot = store.current_test_catalog()?.unwrap();
+@@ -343,6 +431,7 @@
+         );
+     }
+     drop(unchanged_snapshot);
++    let phase_started = std::time::Instant::now();
+     let mut rules = kernel.extraction_policy()?.policy;
+     rules
+         .rules
+@@ -355,6 +444,13 @@
+         });
+     kernel.configure_extraction_policy(rules)?;
+     let overridden = kernel.index()?;
++    record_kernel_retention(
++        &mut observations,
++        "lean_one_rule_override",
++        phase_started,
++        data.path(),
++        Some(&overridden),
++    )?;
+     assert_eq!(overridden.indexed, 1);
+     assert_eq!(overridden.reused, 3);
+     let overridden_snapshot = store.current_test_catalog()?.unwrap();
+@@ -371,11 +467,19 @@
+         .map(|(path, artifact)| (path.clone(), artifact.retained.clone()))
+         .collect::<std::collections::BTreeMap<_, _>>();
+     drop(overridden_snapshot);
++    let phase_started = std::time::Instant::now();
+     fs::write(
+         root.path().join("sample.rs"),
+         "pub fn changed() { called(); }\n",
+     )?;
+     let edited = kernel.index()?;
++    record_kernel_retention(
++        &mut observations,
++        "lean_one_source_edit",
++        phase_started,
++        data.path(),
++        Some(&edited),
++    )?;
+     assert_eq!(edited.indexed, 1);
+     assert_eq!(edited.reused, 3);
+     let edited_snapshot = store.current_test_catalog()?.unwrap();
+@@ -394,5 +498,10 @@
+     for (path, text) in files.into_iter().filter(|(path, _)| *path != "sample.rs") {
+         assert_eq!(fs::read_to_string(root.path().join(path))?, text);
+     }
++    write_retention_observations(
++        "kernel-retention.json",
++        &observations,
++        "Wall time covers the named existing action, excluding quota observation. Quota is logical used/reserved including retained publication history; not allocated physical bytes, peak RSS, CPU or a pruned-format comparison. Vectors are disabled in this fixture; model cost is observed separately by actual helper.",
++    )?;
+     Ok(())
+ }
+diff --git a/crates/airk-cli/tests/combined_reads/retention.rs b/crates/airk-cli/tests/combined_reads/retention.rs
+--- a/crates/airk-cli/tests/combined_reads/retention.rs
++++ b/crates/airk-cli/tests/combined_reads/retention.rs
+@@ -4,7 +4,7 @@
+ use airk_core::{
+     graph_storage::GraphRecordReader,
+     retention::RetainedProfile,
+-    usage::{IndexMetric, IndexSummary},
++    usage::{IndexMetric, IndexSummary, OperationSummary},
+ };
+ 
+ // Keep positive transport flags and exact scoped members before unwrapping.
+@@ -38,6 +38,69 @@
+         .filter(|value| value.is_object())
+         .with_context(|| format!("{label} RPC result absent: {wire}"))?;
+     retained_body(reply, index, label)
++}
++
++fn write_retention_observations(
++    name: &str,
++    observations: &[serde_json::Value],
++    limits: &str,
++) -> Result<()> {
++    let Some(directory) = std::env::var_os("AIRK_P11B_RESOURCE_OUTPUT_DIR") else {
++        return Ok(());
++    };
++    let directory = std::path::PathBuf::from(directory);
++    anyhow::ensure!(
++        directory.is_absolute()
++            && fs::symlink_metadata(&directory)?.is_dir()
++            && !fs::symlink_metadata(&directory)?.file_type().is_symlink(),
++        "explicit existing owned report directory required"
++    );
++    let bytes = serde_json::to_vec_pretty(
++        &serde_json::json!({"schema":"airk.p11b.retention-observations/1","observations":observations,"limits":limits}),
++    )?;
++    anyhow::ensure!(
++        bytes.len() <= 1 << 20,
++        "bounded retention observations exceeded1MiB"
++    );
++    use std::io::Write;
++    let mut file = fs::OpenOptions::new()
++        .create_new(true)
++        .write(true)
++        .open(directory.join(name))?;
++    file.write_all(&bytes)?;
++    file.write_all(b"\n")?;
++    file.sync_all()?;
++    Ok(())
++}
++
++fn record_helper_retention(
++    observations: &mut Vec<Value>,
++    phase: &str,
++    started: Instant,
++    f: &Fixture,
++    operation: &OperationSummary,
++    snapshot: &Value,
++) -> Result<()> {
++    if std::env::var_os("AIRK_P11B_RESOURCE_OUTPUT_DIR").is_some() {
++        let wall_us = started.elapsed().as_micros();
++        let quota =
++            airk_store::quota::Quota::open_service(Path::new(&f.registrations[2].data_root))?
++                .status()?;
++        let records = snapshot["vectors"]
++            .as_array()
++            .context("positive graph record inventory missing")?;
++        let bytes = records.iter().try_fold(0usize, |sum, row| {
++            sum.checked_add(
++                row["vector_and_adjacency_bytes"]
++                    .as_array()
++                    .context("graph record bytes missing")?
++                    .len(),
++            )
++            .context("graph byte count overflow")
++        })?;
++        observations.push(json!({"phase":phase,"wall_us":wall_us,"quota":quota,"native_index_operation_cumulative":operation,"model_and_graph":snapshot,"retained_vector_record_bytes":bytes,"graph_records":records.len()}));
++    }
++    Ok(())
+ }
+ 
+ async fn configure(f: &Fixture, name: &str, draft: Value) -> Result<()> {
+@@ -71,7 +134,7 @@
+     Ok(())
+ }
+ 
+-async fn counters(f: &Fixture) -> Result<IndexSummary> {
++async fn counters(f: &Fixture) -> Result<OperationSummary> {
+     let mut cursor = None;
+     let mut assembled = Value::Null;
+     for _ in 0..8 {
+@@ -108,7 +171,7 @@
+         if cursor.is_none() {
+             return Ok(serde_json::from_value(
+                 assembled
+-                    .pointer("/value/report/operations/index/index_work")
++                    .pointer("/value/report/operations/index")
+                     .context("native index work counters absent")?
+                     .clone(),
+             )?);
+@@ -163,6 +226,7 @@
+ #[tokio::test]
+ async fn actual_helper_retention_migration_rebinds_evidence_without_new_embedding_inputs()
+ -> Result<()> {
++    let mut observations = Vec::new();
+     let mut f = Fixture::with_helper()?;
+     f.session.project_ids = vec![f.projects[2]];
+     f.session.index_ids = Some(vec![f.indexes[2]]);
+@@ -197,6 +261,7 @@
+         )?,
+     )?;
+     let _service = f.start().await?;
++    let phase_started = Instant::now();
+     fixture_pause(&f, 2, false).await?;
+     fixture_install_model(&f, 2, &model).await?;
+     fixture_job(&f, 2, airk_core::service::JobKind::Index).await?;
+@@ -220,14 +285,23 @@
+     );
+     let original = graph(&f)?;
+     let mut before = counters(&f).await?;
+-    ensure!(
+-        metric(&before, IndexMetric::EmbeddingInputs)? > 0,
++    record_helper_retention(
++        &mut observations,
++        "baseline_model_build",
++        phase_started,
++        &f,
++        &before,
++        &original,
++    )?;
++    ensure!(
++        metric(&before.index_work, IndexMetric::EmbeddingInputs)? > 0,
+         "warm fixture did not record actual model input work"
+     );
+     for (name, target) in [
+         ("lean", RetainedProfile::Lean),
+         ("rich", RetainedProfile::Rich),
+     ] {
++        let phase_started = Instant::now();
+         fixture_pause(&f, 2, false).await?;
+         configure(
+             &f,
+@@ -253,16 +327,17 @@
+             "native migration was not applied"
+         );
+         let usage = counters(&f).await?;
+-        ensure!(
+-            metric(&usage, IndexMetric::EmbeddingInputs)?
+-                == metric(&before, IndexMetric::EmbeddingInputs)?
+-                && metric(&usage, IndexMetric::EmbeddingCacheMisses)?
+-                    == metric(&before, IndexMetric::EmbeddingCacheMisses)?,
++        record_helper_retention(&mut observations, name, phase_started, &f, &usage, &after)?;
++        ensure!(
++            metric(&usage.index_work, IndexMetric::EmbeddingInputs)?
++                == metric(&before.index_work, IndexMetric::EmbeddingInputs)?
++                && metric(&usage.index_work, IndexMetric::EmbeddingCacheMisses)?
++                    == metric(&before.index_work, IndexMetric::EmbeddingCacheMisses)?,
+             "retention-only migration sent new inputs to model or lost exact cache identity"
+         );
+         ensure!(
+-            metric(&usage, IndexMetric::VectorReusedInputs)?
+-                > metric(&before, IndexMetric::VectorReusedInputs)?,
++            metric(&usage.index_work, IndexMetric::VectorReusedInputs)?
++                > metric(&before.index_work, IndexMetric::VectorReusedInputs)?,
+             "migration did not demonstrate actual graph-input reuse"
+         );
+         before = usage;
+@@ -345,6 +420,7 @@
+         backend.shutdown().await?;
+     }
+     // A repeated selected profile completes Configure but does not schedule source/model work.
++    let phase_started = Instant::now();
+     fixture_pause(&f, 2, false).await?;
+     configure(
+         &f,
+@@ -354,11 +430,21 @@
+     .await?;
+     split::pause_quiescent_original(&f, 2).await?;
+     let noop = counters(&f).await?;
+-    ensure!(
+-        metric(&noop, IndexMetric::EmbeddingInputs)?
+-            == metric(&before, IndexMetric::EmbeddingInputs)?
+-            && metric(&noop, IndexMetric::VectorReusedInputs)?
+-                == metric(&before, IndexMetric::VectorReusedInputs)?,
++    if std::env::var_os("AIRK_P11B_RESOURCE_OUTPUT_DIR").is_some() {
++        record_helper_retention(
++            &mut observations,
++            "rich_noop",
++            phase_started,
++            &f,
++            &noop,
++            &graph(&f)?,
++        )?;
++    }
++    ensure!(
++        metric(&noop.index_work, IndexMetric::EmbeddingInputs)?
++            == metric(&before.index_work, IndexMetric::EmbeddingInputs)?
++            && metric(&noop.index_work, IndexMetric::VectorReusedInputs)?
++                == metric(&before.index_work, IndexMetric::VectorReusedInputs)?,
+         "no-op profile selection scheduled native index/model work"
+     );
+     for (path, bytes) in sources {
+@@ -367,5 +453,10 @@
+             "retention migration modified source bytes"
+         );
+     }
++    write_retention_observations(
++        "helper-retention.json",
++        &observations,
++        "Native operation counters are cumulative; subtract only observed adjacent phases. Existing native resource counter semantics exclude overlapped intervals and may omit CPU counters; absent is unknown, not zero. Wall time covers existing Configure/Index/Vectors/idle work, excluding quota observation. Logical quota includes retained history, not physical disk or service peak RSS. This actual tiny wordvector helper is not ONNX/default-model qualification; no extra model runs were added.",
++    )?;
+     Ok(())
+ }

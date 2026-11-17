@@ -1,0 +1,88 @@
+--- a/packages/vscode/src/referenceRefresh.ts
++++ b/packages/vscode/src/referenceRefresh.ts
+@@ -21,6 +21,7 @@
+     if(tool===undefined)throw new Error('invalid_refresh_original_query');
+     return tool;
+ }
++function requestEpoch(value:unknown):number {if(typeof value!=='number'||!Number.isSafeInteger(value)||value<0)throw new Error('invalid_refresh_request_epoch');return value;}
+ function exact(value:ObjectValue,names:string):void {if(Object.keys(value).sort().join(',')!==names.split(',').sort().join(','))throw new Error('invalid_refresh_fields');}
+ function array(value:unknown,max:number):unknown[] {if(!Array.isArray(value)||!value.length||value.length>max)throw new Error('invalid_refresh_selection');return value;}
+ function path(value:unknown):string {if(typeof value!=='string'||!value||Buffer.byteLength(value)>4096||/[\\:\u0000-\u001f\u007f]/.test(value)||value.split('/').some(v=>!v||v==='.'||v==='..'))throw new Error('invalid_refresh_path');return value;}
+@@ -30,7 +31,7 @@
+     exact(value,'schema,caller,key,original_result_digest,original_evidence_selection_digest,original_query_digest,selection,mode,members');
+     if(value.schema!==1||!['selected_only','full_reconcile_reviewed'].includes(String(value.mode)))throw new Error('invalid_refresh_selection');
+     catalogHex(value.caller,32);for(const key of ['original_result_digest','original_evidence_selection_digest','original_query_digest'])catalogHex(value[key],64);
+-    const key=catalogObject(value.key);exact(key,'namespace,epoch,nonce');catalogHex(key.namespace,32);catalogHex(key.nonce,32);catalogRevision(key.epoch);
++    const key=catalogObject(value.key);exact(key,'namespace,epoch,nonce');catalogHex(key.namespace,32);catalogHex(key.nonce,32);requestEpoch(key.epoch);
+     const selected=catalogObject(value.selection);exact(selected,'schema,context_key,namespace,expected_catalog_revision,grant_id,expected_grant_revision,project_ids,index_ids');
+     if(selected.schema!==1)throw new Error('invalid_refresh_selection_schema');catalogHex(selected.namespace,32);catalogHex(selected.context_key,64);catalogRevision(selected.expected_catalog_revision);catalogRevision(selected.expected_grant_revision);catalogId(selected.grant_id,'grt_');
+     const projects=array(selected.project_ids,32).map(v=>catalogId(v,'prj_'));if(new Set(projects).size!==projects.length)throw new Error('duplicate_refresh_project');
+--- a/packages/vscode/src/test/referenceRefresh.test.ts
++++ b/packages/vscode/src/test/referenceRefresh.test.ts
+@@ -13,7 +13,7 @@
+     const originalQuery={tool:'airk_search',arguments:{query:'selected original',max_bytes:8192,reply_detail:'full',verification:'required',semantic:'off',future_query:{preserve:true}}};
+     const originalResult={publication_vector:[{index_id:'idx_'+id('6'),publication:'airk-r1:'+id('7')+':1:'+hash('8')}],hits:[{text:'Original historical snippet',content_hash:hash('9')}],future_native:{all_fields:['preserved']}};
+     const members=[{index_id:'idx_'+id('6'),original_publication:'airk-r1:'+id('7')+':1:'+hash('8'),sources:[{source_root_id:'src_'+id('a'),source_relative_path:'one.txt',canonical_root:'/owned/source',indexed_hash:hash('9')}]}];
+-    const key={namespace:id('1'),epoch:1,nonce:id(nonce)},caller=id('2');
++    const key={namespace:id('1'),epoch:0,nonce:id(nonce)},caller=id('2');
+     const selection={schema:1,caller,key,original_result_digest:refreshDigest(originalResult),original_query_digest:refreshDigest(originalQuery),original_evidence_selection_digest:refreshDigest(members),mode:'selected_only',selection:{schema:1,context_key:hash('3'),namespace:id('e'),expected_catalog_revision:1,grant_id:'grt_'+id('5'),expected_grant_revision:1,project_ids:['prj_'+id('b')],index_ids:['idx_'+id('6')]},members};
+     return validateRefreshIntent({reference_refresh:{configure_project:{project:hash('c'),caller,key,request:{incarnation:id('7'),settings:hash('d'),configuration:{operation:'refresh_references',selection}}},original_query:originalQuery,original_result:originalResult,evidence_retention:'memory_only'}});
+ }
+@@ -134,6 +134,8 @@
+     const separated=JSON.parse(canonical) as Value;(separated.selection as Value).namespace='03'.repeat(16);
+     assert.notEqual((separated.key as Value).namespace,(separated.selection as Value).namespace);
+     assert.equal(refreshSelectionIdentity(separated),'a3610bdf29b2117a4ac43d8fc6838b7dad405c5b4dc36a56e206f628fb6591d4');
++    const initial=structuredClone(separated);(initial.key as Value).epoch=0;
++    assert.equal(refreshSelectionIdentity(initial),'be7b6287f8cdacaee862bc8be0746b05502630b49cf2bd523b5cbf2e5ccede35');
+     const reverse=(value:unknown):unknown=>Array.isArray(value)?value.map(reverse):value!==null&&typeof value==='object'?Object.fromEntries(Object.entries(value as Value).reverse().map(([k,v])=>[k,reverse(v)])):value;
+     assert.equal(refreshSelectionIdentity(reverse(selection)),expected);
+     assert.throws(()=>refreshSelectionIdentity({...selection,future_request_field:true}),/fields/);
+@@ -207,9 +209,29 @@
+     const crossedKey=structuredClone(intent);crossedKey.reference_refresh.configure_project.key={...request.key,namespace:id('a')};
+     assert.throws(()=>validateRefreshIntent(crossedKey),/request_key/);
+     for(const field of ['namespace','nonce','epoch']){
+-        const bad=structuredClone(selection);(bad.key as Value)[field]=field==='epoch'?0:'invalid';
++        const bad=structuredClone(selection);(bad.key as Value)[field]=field==='epoch'?-1:'invalid';
+         assert.throws(()=>refreshSelectionIdentity(bad));
+     }
+     const badCatalog=structuredClone(selection);(badCatalog.selection as Value).namespace='invalid';
+     assert.throws(()=>refreshSelectionIdentity(badCatalog));
+ });
++
++
++test('request epoch zero is canonical and independent of positive catalog revisions',()=>{
++    const intent=fixture(),request=intent.reference_refresh.configure_project,selection=request.request.configuration.selection as Value;
++    assert.equal(request.key.epoch,0);assert.notEqual(request.key.namespace,(selection.selection as Value).namespace);
++    assert.deepEqual(validateRefreshIntent(intent),intent);
++    const zero=refreshSelectionIdentity(selection);
++    for(const epoch of [1,Number.MAX_SAFE_INTEGER]){
++        const valid=structuredClone(selection);(valid.key as Value).epoch=epoch;
++        assert.notEqual(refreshSelectionIdentity(valid),zero);
++    }
++    for(const epoch of [-1,'0','1',0.5,Number.MAX_SAFE_INTEGER+1,NaN,Infinity,null]){
++        const bad=structuredClone(selection);(bad.key as Value).epoch=epoch;
++        assert.throws(()=>refreshSelectionIdentity(bad),/request_epoch/);
++    }
++    for(const field of ['expected_catalog_revision','expected_grant_revision']){
++        const bad=structuredClone(selection);(bad.selection as Value)[field]=0;
++        assert.throws(()=>refreshSelectionIdentity(bad),/catalog_revision/);
++    }
++});
+--- a/packages/vscode/src/test/referenceRefreshControlHost.test.ts
++++ b/packages/vscode/src/test/referenceRefreshControlHost.test.ts
+@@ -12,7 +12,7 @@
+   if(name==='catalog_host_context')return {status:name,descriptor:{schema:1,namespace,host:h('9'),key:h('7'),catalog_revision:1,context:null}};
+   if(name==='catalog_detail'){const entity=(method as any).catalog_detail.entity;return {status:name,capabilities:{reference_refresh_contract:1},detail:{namespace,revision:1,item:entity.kind==='grant'?{kind:'grant',value:{grant:{id:selection.grant_id,revision:1,host:h('9'),revoked,memberships:[{membership:{project_id:project,index_id:index}}]}}}:{kind:'index',value:{id:index,tombstone:false,backing:{binding}}}}};}
+   if(name==='inspection')return {status:name,observation:{snapshot:{project:binding,incarnation:id('5'),settings_digest:h('a'),publication:token,source_state:'available',recovery_required:pending}}};
+-  if(name==='request_epoch')return {status:name,namespace,epoch:1};
++  if(name==='request_epoch')return {status:name,namespace,epoch:0};
+   throw new Error('unexpected native mutation/read '+name);
+  }});
+  const controller=new ServiceConsoleController({version:'1.8.8',authority:'fixture',storage,trusted:()=>true,changed(){},runtime:{prepareConfiguration:async()=>{throw new Error('generic CLI prepare must not run');}},confirm:async()=>true} as any);
+@@ -21,5 +21,5 @@
+  const host={trusted:()=>true,confirm:async()=>true,persistEvidenceAllowed:()=>false,reconfirm:async(value:RecordValue)=>value,query:async()=>({})};
+  return {controller,storage,calls,selection,members,query,result,host,revoke:()=>{revoked=true;},pending:()=>{pending=true;}};
+ }
+-test('shared native host prepares exact refresh from context grant index and inspection without enqueue or CLI preparation',async()=>{const f=fixture();try{const ready=await f.controller.referenceRefreshPrepare(f.selection,f.members,'selected_only',f.query,f.result,f.host,()=>true);assert.deepEqual(ready.intent.reference_refresh.original_query,f.query);assert.deepEqual(ready.intent.reference_refresh.original_result,f.result);assert.equal(ready.intent.reference_refresh.evidence_retention,'memory_only');const request=ready.intent.reference_refresh.configure_project.request;assert.equal(request.incarnation,id('5'));assert.equal(request.settings,h('a'));assert.equal(ready.intent.reference_refresh.configure_project.project,binding);assert.deepEqual(f.calls,['catalog_host_context','catalog_detail','catalog_detail','inspection','request_epoch']);assert.equal(f.storage.data.size,0,'review preparation reserves no mutation journal row');}finally{f.controller.dispose();}});
++test('shared native host prepares exact refresh from context grant index and inspection without enqueue or CLI preparation',async()=>{const f=fixture();try{const ready=await f.controller.referenceRefreshPrepare(f.selection,f.members,'selected_only',f.query,f.result,f.host,()=>true);assert.deepEqual(ready.intent.reference_refresh.original_query,f.query);assert.deepEqual(ready.intent.reference_refresh.original_result,f.result);assert.equal(ready.intent.reference_refresh.evidence_retention,'memory_only');assert.equal(ready.intent.reference_refresh.configure_project.key.epoch,0);const request=ready.intent.reference_refresh.configure_project.request;assert.equal(request.incarnation,id('5'));assert.equal(request.settings,h('a'));assert.equal(ready.intent.reference_refresh.configure_project.project,binding);assert.deepEqual(f.calls,['catalog_host_context','catalog_detail','catalog_detail','inspection','request_epoch']);assert.equal(f.storage.data.size,0,'review preparation reserves no mutation journal row');}finally{f.controller.dispose();}});
+ test('revoked native grant and pending recovery refuse before key journal or mutation dispatch',async()=>{for(const reason of ['grant','recovery']){const f=fixture();try{if(reason==='grant')f.revoke();else f.pending();await assert.rejects(f.controller.referenceRefreshPrepare(f.selection,f.members,'full_reconcile_reviewed',f.query,f.result,f.host,()=>true),/review_required/);assert.ok(!f.calls.includes('request_epoch'));assert.equal(f.storage.data.size,0);assert.ok(!f.calls.includes('enqueue')&&!f.calls.includes('configure_project'));}finally{f.controller.dispose();}}});

@@ -1,0 +1,62 @@
+--- crates/airk-service/src/service_runtime.rs
++++ crates/airk-service/src/service_runtime.rs
+@@ -1483,16 +1483,33 @@
+         ) -> Result<EvaluationOwner>
+         + Send,
+ >;
++#[cfg(all(feature = "local-inference", feature = "test-support"))]
++type EvaluationStartupGuard =
++    Box<dyn FnOnce(&Arc<airk_store::service::ServiceLease>) -> Result<()> + Send>;
+ enum OwnerFactory {
+     Product,
+     #[cfg(all(feature = "local-inference", feature = "test-support"))]
+-    Evaluation(EvaluationFactory),
++    Evaluation(EvaluationFactory, Option<EvaluationStartupGuard>),
+ }
+ /// Private native fixture only. Startup still acquires the actual single-instance
+ /// lease, baseline admission, catalog gate, workers and canonical transports.
+ #[cfg(all(feature = "local-inference", feature = "test-support"))]
+ pub async fn serve_evaluation_fixture(root: &Path, factory: EvaluationFactory) -> Result<()> {
+-    serve_owned(root, None, None, OwnerFactory::Evaluation(factory)).await
++    serve_owned(root, None, None, OwnerFactory::Evaluation(factory, None)).await
++}
++#[cfg(all(test, feature = "local-inference", feature = "test-support"))]
++async fn serve_restarted_evaluation_fixture(
++    root: &Path,
++    factory: EvaluationFactory,
++    guard: EvaluationStartupGuard,
++) -> Result<()> {
++    serve_owned(
++        root,
++        None,
++        None,
++        OwnerFactory::Evaluation(factory, Some(guard)),
++    )
++    .await
+ }
+ async fn serve_with_admission(
+     root: &Path,
+@@ -1545,6 +1562,14 @@
+         }
+     }
+     let _ownership = Arc::new(lease);
++    #[cfg(all(feature = "local-inference", feature = "test-support"))]
++    let mut owner_factory = owner_factory;
++    #[cfg(all(feature = "local-inference", feature = "test-support"))]
++    if let OwnerFactory::Evaluation(_, guard) = &mut owner_factory {
++        if let Some(guard) = guard.take() {
++            guard(&_ownership)?;
++        }
++    }
+     _ownership.prepare_control_endpoint()?;
+     local_ipc::prepare_control_endpoint(_ownership.root())?;
+     let instance = new_instance_id()?;
+@@ -1677,7 +1702,7 @@
+             .map(|gate| arbiter::Owner::new(_ownership.clone(), gate))
+             .transpose()?,
+         #[cfg(all(feature = "local-inference", feature = "test-support"))]
+-        OwnerFactory::Evaluation(factory) => {
++        OwnerFactory::Evaluation(factory, _) => {
+             let gate = catalog_gate.clone().ok_or_else(|| {
+                 anyhow::anyhow!("private evaluation requires the actual activated native catalog")
+             })?;

@@ -1,0 +1,54 @@
+--- compact/check_shapes.py
++++ large/check_shapes.py
+@@ -20,17 +20,17 @@
+     from onnxruntime.tools.symbolic_shape_infer import SymbolicShapeInference
+     from transformer import NS
+     original=model
+-    # Pinned Compact metadata: external tensors are learned Float weights,
++    # Pinned Large metadata: external tensors are learned Float weights,
+     # never shape-value constants. Keep dtype/dims, prohibit external value IO.
+     external_names={v.name for v in original.graph.initializer if v.data_location==onnx.TensorProto.EXTERNAL}
+-    need(len(external_names)==254 and all(v.data_type==onnx.TensorProto.FLOAT and all(d>0 for d in v.dims)
++    need(len(external_names)==326 and all(v.data_type==onnx.TensorProto.FLOAT and all(d>0 for d in v.dims)
+         for v in original.graph.initializer if v.name in external_names),'Exact external learned-weight metadata required')
+     need(not any(a.HasField('t') and a.t.data_location==onnx.TensorProto.EXTERNAL
+         for n in original.graph.node for a in n.attribute),'External Constant attribute values not supported')
+     by_name={n.name:n for n in model.graph.node}
+     gqa=[n for n in model.graph.node if n.op_type=='GroupQueryAttention']
+-    need(len(gqa)==28 and [n.name for n in model.graph.output]==['scores'],'Exact internal GQA/scores-only boundary required')
+-    for i in range(28):
++    need(len(gqa)==36 and [n.name for n in model.graph.output]==['scores'],'Exact internal GQA/scores-only boundary required')
++    for i in range(36):
+         prefix=NS+str(i)+'/'
+         for name,source in [('q','/scorer/layers.'+str(i)+'/self_attn/Add_output_0'),
+                             ('k','/scorer/layers.'+str(i)+'/self_attn/Add_1_output_0')]:
+@@ -68,24 +68,24 @@
+         witnesses=[]
+         for n in [v for v in inferred.graph.node if v.op_type=='GroupQueryAttention']:
+             attrs={a.name:onnx.helper.get_attribute_value(a) for a in n.attribute}
+-            need(attrs.get('num_heads')==16 and attrs.get('kv_num_heads')==8 and attrs.get('causal')==1
++            need(attrs.get('num_heads')==32 and attrs.get('kv_num_heads')==8 and attrs.get('causal')==1
+                 and attrs.get('local_window_size')==-1 and attrs.get('do_rotary')==0
+                 and attrs.get('softcap')==0. and attrs.get('smooth_softmax')==0
+                 and struct.pack('<f',attrs.get('scale',0.)).hex()=='f304b53d','Native GQA head/scale/causal/position contract differs')
+             need(len(n.output)==3 and all(n.output) and len(n.input)==11 and not any(n.input[3:5]) and not any(n.input[7:10]),'Internal present outputs/no-past boundary required')
+             need(n.input[5]==NS+'seqlen32' and n.input[6]==NS+'total32'
+                 and n.input[10]=='/scorer/Where_output_0','Original mask or full physical seqlen dependency changed')
+-            for value,expected in [(n.input[0],[1,tokens,2048]),(n.input[1],[1,tokens,1024]),
+-                (n.input[2],[1,tokens,1024]),(n.input[10],[1,1,tokens,tokens]),(n.output[0],[1,tokens,2048])]:
++            for value,expected in [(n.input[0],[1,tokens,4096]),(n.input[1],[1,tokens,1024]),
++                (n.input[2],[1,tokens,1024]),(n.input[10],[1,1,tokens,tokens]),(n.output[0],[1,tokens,4096])]:
+                 need(value in known and shape(known[value])==(onnx.TensorProto.FLOAT,expected),'GQA type/shape unresolved or wrong: '+value)
+             for value in n.input[5:7]:need(value in known and shape(known[value])==(onnx.TensorProto.INT32,[1]),'GQA sequence-length type/shape differs')
+             # Actual CPU source: with no past, physical totalT sets present
+             # shape [batch,kv_heads,totalT,head_size]. No guessed/unknown axis.
+             cache=[1,8,tokens,128]
+             for name in n.output[1:]:need(name in known and shape(known[name])==(onnx.TensorProto.FLOAT,cache),'Pinned no-past cache resolution failed')
+-            witnesses.append({'node':n.name,'context':[1,tokens,2048],
++            witnesses.append({'node':n.name,'context':[1,tokens,4096],
+                 'cache_shapes_resolved_by_pinned_cpu_compute':[cache,cache],
+                 'actual_allocation_proof':'pending native profiling; annotations are not allocation'})
+         need(shape(known['scores'])==(onnx.TensorProto.FLOAT,[1,options]),'Final trained readout shape unresolved/wrong')
+-        result.append({'tokens':tokens,'options':options,'all28_resolved':len(witnesses)==28,'external_weight_value_policy':value_policy,'witnesses':witnesses})
++        result.append({'tokens':tokens,'options':options,'all36_resolved':len(witnesses)==36,'external_weight_value_policy':value_policy,'witnesses':witnesses})
+     return result

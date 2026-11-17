@@ -1,0 +1,58 @@
+--- a/scripts/benchmark-service.py
++++ b/scripts/benchmark-service.py
+@@ -220,6 +220,12 @@
+         assert provider["process_id"] is None, "In-process provider unexpectedly reports a helper PID"
+     return {"resources": resources, "embedding_status": provider,
+             "processes": process_observation(fixture) if fixture.single_image and include_processes else {"available": False, "reason": "not_sampled_at_this_boundary" if fixture.single_image else "historical_fixture"}}
++
++
++def retained_snapshot(fixture, journal, phase, include_processes=False):
++    observed = snapshot(fixture, include_processes=include_processes)
++    journal.note(phase, native=observed)
++    return observed
+ 
+ 
+ def semantic_pipeline(runtime):
+@@ -464,16 +470,16 @@
+             assert all("success_ms" in reply for reply in warmup), "Every distinct semantic client must execute its warm read"
+             semantic_warmup = {"order":"sequential_once_per_client","results":warmup,
+                                "latency":latency([reply["success_ms"] for reply in warmup])}
+-            semantic_observations["after_sequential_warmup"] = snapshot(fixture, include_processes=False)
++            semantic_observations["after_sequential_warmup"] = retained_snapshot(fixture, journal, "after_sequential_warmup")
+             stable_semantic_owner(before, semantic_observations["after_sequential_warmup"])
+             journal.note("semantic_warmup_complete", results=warmup, native=semantic_observations["after_sequential_warmup"])
+         with ThreadPoolExecutor(max_workers=client_count) as pool:
+             first_query = wave(pool, "first", 1)
+             if semantic:
+-                semantic_observations["after_first_concurrent_wave"] = snapshot(fixture, include_processes=False)
++                semantic_observations["after_first_concurrent_wave"] = retained_snapshot(fixture, journal, "after_first_concurrent_wave")
+             idle = wave(pool, "idle")
+             if semantic:
+-                semantic_observations["after_idle_concurrent_waves"] = snapshot(fixture, include_processes=False)
++                semantic_observations["after_idle_concurrent_waves"] = retained_snapshot(fixture, journal, "after_idle_concurrent_waves")
+             for path in originals:
+                 content = originals[path] + b"Updated original load text.\n" * 1024
+                 path.write_bytes(content)
+@@ -483,7 +489,7 @@
+             journal.note("source_update_accepted", receipts=accepted)
+             during = wave(pool, "during", require_ready=not semantic)
+             if semantic:
+-                semantic_observations["after_source_update_concurrent_waves"] = snapshot(fixture, include_processes=False)
++                semantic_observations["after_source_update_concurrent_waves"] = retained_snapshot(fixture, journal, "after_source_update_concurrent_waves")
+             observed = [fixture.rpc({"job": {"id": receipt["job"]["id"]}})["job"]["state"] for receipt in accepted]
+             for receipt in accepted:
+                 fixture.wait(receipt)
+@@ -524,11 +530,11 @@
+                 assert http_fixture.parity_envelope(mcp) == http_fixture.parity_envelope(api) == http_fixture.parity_envelope(cli), "Complete read parity differs"
+                 parity.append({"project": name, "mcp": mcp, "json_api": api, "native_cli": cli})
+                 journal.note("full_result_parity", **parity[-1])
+-        final = snapshot(fixture)
++        final = retained_snapshot(fixture, journal, "settled_native", include_processes=True)
+         session_ids = [session.session_sha256 for session, _ in sessions] if fixture.single_image else None
+         for session, _ in sessions:
+             session.close()
+-        after_close = snapshot(fixture)
++        after_close = retained_snapshot(fixture, journal, "after_client_close_native", include_processes=True)
+         if semantic:
+             semantic_observations.update(before_clients=before, connected=connected, settled=final, after_client_close=after_close)
+             for observation in semantic_observations.values():

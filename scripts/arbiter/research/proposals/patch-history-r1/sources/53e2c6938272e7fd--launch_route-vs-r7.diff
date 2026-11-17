@@ -1,0 +1,26 @@
+--- frozen-r7/launch_route.py
++++ prepared-r8/launch_route.py
+@@ -172,6 +172,7 @@
+ def verify(value):
+     need(value.get('pending_actual_service_binding') is False,
+         'Genuine corrected Service inventory/build/component binding is still pending')
++    load(PROPOSAL_BASE/'bind_r8.py','r154_r8_binding').validate_active_binding(value)
+     verify_source_cohort(value)  # Must refuse before every Popen, including outer-owner creation.
+     for path,expected in value['pins'].items(): need(sha(path)==expected,'Immutable input changed: '+path)
+     staging=json.loads(Path(value['staging_receipt']['path']).read_bytes())
+@@ -417,13 +418,13 @@
+             '--native-budget-cases-sha256',v['native_budget_cases']['sha256'],
+             '--context-manifest',v['context_manifest'],'--focus-manifest',v['focus_manifest'],
+             '--sdk-manifest',v['sdk_handoff']['path'],'--sdk-manifest-sha256',v['sdk_handoff']['sha256'],
+-            '--phase-seconds','360','--output',str(work/'r154-fresh-attribution-r7')]
++            '--phase-seconds','360','--output',str(work/'r154-fresh-attribution-r8')]
+         # After handoff the unchanged observer owns exactly one canonical Shutdown, including failures.
+         self.delegated_stop=True;self.report['service_stop_delegated_to_R154']=True;self.retain()
+         failure=None
+         try:self.call(args,'R154-owned-observer',timeout=remaining(self.cutoff))
+         except BaseException as error:failure=error
+-        path=work/'r154-fresh-attribution-r7/owned-execution.json'
++        path=work/'r154-fresh-attribution-r8/owned-execution.json'
+         try:
+             with path.open('rb') as stream:raw=stream.read(8*1024*1024+1)
+             need(len(raw)<=8*1024*1024,'Owned observer receipt exceeds8MiB')

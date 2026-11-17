@@ -1,0 +1,901 @@
+--- a/crates/airk-cli/src/runtime_install_commands.rs
++++ b/crates/airk-cli/src/runtime_install_commands.rs
+@@ -314,7 +314,10 @@
+                 }
+                 _ => None,
+             };
+-            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher,"universal_launcher":universal_launcher,"managed_policy":policy,"control_dir":control.ok(),"state_error":state_error,"lifecycle":lifecycle,"registry_namespace":registry_namespace,"payload_verified":true,"payload_repair":payload_repair::status(install_dir)?})
++            // Optional, current receipt observations only; not an execution proof
++            // across lock waits. Actual native startup retains all locked guards.
++            let connection_observation = connection_observation(install_dir);
++            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher,"universal_launcher":universal_launcher,"managed_policy":policy,"control_dir":control.ok(),"state_error":state_error,"lifecycle":lifecycle,"registry_namespace":registry_namespace,"payload_verified":true,"payload_repair":payload_repair::status(install_dir)?,"connection_observation":connection_observation})
+         }
+         RuntimeCommand::Remove {
+             install_dir,
+@@ -488,3 +491,30 @@
+     println!("{}", serde_json::to_string(&output)?);
+     Ok(())
+ }
++
++
++fn connection_observation(root: &Path) -> Option<serde_json::Value> {
++    match (activation::pending(root), launcher_repair::pending(root)) {
++        (Ok(activation), Ok(launcher)) => Some(serde_json::json!({"schema":1,
++            "activation_pending":activation.is_some(),"launcher_repair_pending":launcher.is_some()})),
++        _ => None,
++    }
++}
++
++#[cfg(test)]
++mod connection_observation_tests {
++    use super::*;
++    #[test]
++    fn current_pending_or_malformed_activation_cannot_report_settled() -> Result<()> {
++        let (_owner, root, identity) = super::super::tests::unselected_fixture()?;
++        assert_eq!(connection_observation(&root),Some(serde_json::json!({"schema":1,
++            "activation_pending":false,"launcher_repair_pending":false})));
++        replace_json(&root,"selected.json",&Selection {schema:1,active:identity.clone(),previous:None})?;
++        replace_json(&root,"activation.json",&serde_json::json!({"schema":1,"install":root,
++            "control":layout::control(&root)?,"candidate":identity,"prior":null,"manager":false,"phase":"probe"}))?;
++        assert_eq!(connection_observation(&root).context("valid current intent was not observed")?["activation_pending"],true);
++        fs::write(root.join("activation.json"),b"{")?;
++        assert!(connection_observation(&root).is_none(),"malformed receipt is unknown, never settled");
++        Ok(())
++    }
++}
+--- a/packages/vscode/src/explorerAssistanceHost.ts
++++ b/packages/vscode/src/explorerAssistanceHost.ts
+@@ -10,7 +10,7 @@
+ import { ASSISTANCE_IPC_LIMIT, type AssistanceIpcReply, type AssistanceWindowStatus, type ExplorerHandoff, parseWindowDescriptor, WINDOW_DESCRIPTOR_LIMIT, WINDOW_SCHEMA, type WindowDescriptor } from './explorerContracts';
+ import { DRAFT_KINDS, type DraftKind } from './explorerDrafts';
+ import type { DraftClient, Submission, SuggestionStore } from './explorerSuggestions';
+-import { restrictWindowsDirectory } from './privateDirectory';
++import { restrictWindowsDirectory, type PrivateDirectoryGuard } from './privateDirectory';
+ 
+ export const DESCRIPTOR_TTL_MS = 30 * 60_000;
+ export const ROTATE_MS = 10 * 60_000;
+@@ -36,15 +36,22 @@
+ export const windowsDirectory = (directory: string) => path.join(directory, 'windows');
+ 
+ /** Write a user-only file atomically: temporary sibling, then rename. */
+-export function writePrivate(file: string, content: string): void {
+-    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+-    if (process.platform !== 'win32') { fs.chmodSync(path.dirname(file), 0o700); }
+-    else { restrictWindowsDirectory(path.dirname(file)); }
+-    const temporary = `${file}.${randomBytes(8).toString('hex')}.tmp`;
+-    try {
+-        fs.writeFileSync(temporary, content, { flag: 'wx', mode: 0o600 });
+-        fs.renameSync(temporary, file);
+-    } finally { fs.rmSync(temporary, { force: true }); }
++export async function preparePrivateDirectory(directory:string,valid:()=>boolean=()=>true):Promise<PrivateDirectoryGuard>{
++    if(!valid())throw new Error('Assistance setup is no longer authorized.');
++    await fs.promises.mkdir(directory,{recursive:true,mode:0o700});
++    let guard:PrivateDirectoryGuard={assertCurrent:()=>{if(!valid())throw new Error('Assistance setup is no longer authorized.');}};
++    if(process.platform!=='win32')await fs.promises.chmod(directory,0o700);
++    else guard=await restrictWindowsDirectory(directory,undefined,valid);
++    guard.assertCurrent();return guard;
++}
++export async function writePrivate(file:string,content:string,valid:()=>boolean=()=>true):Promise<void>{
++    const guard=await preparePrivateDirectory(path.dirname(file),valid);
++    guard.assertCurrent();
++    if(!valid())throw new Error('Assistance publication is no longer authorized.');
++    const temporary=`${file}.${randomBytes(8).toString('hex')}.tmp`;
++    // No await splits this accepted, atomic owned publication.
++    try{fs.writeFileSync(temporary,content,{flag:'wx',mode:0o600});fs.renameSync(temporary,file);}
++    finally{fs.rmSync(temporary,{force:true});}
+ }
+ 
+ /** Remove expired or unreadable window descriptors left by windows that did not close cleanly. */
+@@ -70,23 +77,33 @@
+ 
+ export class AssistanceIpcHost {
+     private readonly session = randomBytes(16).toString('hex');
+-    private credential = randomBytes(32).toString('hex');
++    private credential:string;
++    private rotating?:Promise<void>;
+     private readonly server: net.Server;
+     private readonly timer: NodeJS.Timeout;
+     private readonly fingerprint: string;
+     private disposed = false;
+ 
+     private constructor(private readonly port: AssistanceHostPort, private readonly roots: readonly string[], private readonly endpoint: string, private readonly socketDirectory?: string) {
++        this.credential=randomBytes(32).toString('hex'); // constructor follows successful ACL preparation
+         this.fingerprint = createHash('sha256').update([this.session, ...roots].join('\0')).digest('hex').slice(0, 16);
+         this.server = net.createServer(socket => this.accept(socket));
+-        this.timer = setInterval(() => this.rotate(), ROTATE_MS);
++        this.timer = setInterval(() => {void this.rotate().catch(()=>{});}, ROTATE_MS);
+         this.timer.unref();
+     }
+ 
+     /** Listen and publish this window's descriptor; undefined when the window has no usable folder. */
+     static async start(port: AssistanceHostPort): Promise<AssistanceIpcHost | undefined> {
+-        const roots = [...new Set(port.roots.flatMap(root => { try { return [fs.realpathSync.native(root)]; } catch { return []; } }))].slice(0, 32);
++        const roots:string[]=[];
++        for(const root of port.roots.slice(0,32)){
++            if(port.authorized?.()===false)throw new Error('Assistance setup is no longer authorized.');
++            try{const canonical=await fs.promises.realpath(root);if(!roots.includes(canonical))roots.push(canonical);}catch(error){
++                if(port.authorized?.()===false)throw error;
++            }
++        }
+         if (!roots.length) { return undefined; }
++        await preparePrivateDirectory(windowsDirectory(port.directory),()=>port.authorized?.()!==false);
++        if(port.authorized?.()===false)throw new Error('Assistance setup is no longer authorized.');
+         sweepExpired(port.directory);
+         let endpoint: string, socketDirectory: string | undefined;
+         if (process.platform === 'win32') {
+@@ -101,26 +118,31 @@
+         try {
+             await new Promise<void>((resolve, reject) => { host.server.once('error', reject); host.server.listen(endpoint, () => { host.server.off('error', reject); resolve(); }); });
+             if (socketDirectory) { fs.chmodSync(endpoint, 0o600); }
+-            host.publish();
++            await host.publish();
+             return host;
+         } catch (error) { host.dispose(); throw error; }
+     }
+ 
+     private get file(): string { return path.join(windowsDirectory(this.port.directory), `${this.session}.json`); }
+ 
+-    private publish(): void {
+-        const descriptor: WindowDescriptor = { schema: WINDOW_SCHEMA, session_id: this.session, endpoint: this.endpoint, credential: this.credential,
++    private async publish(credential=this.credential):Promise<void> {
++        if(this.disposed||this.port.authorized?.()===false)throw new Error('Assistance publication is no longer authorized.');
++        const descriptor: WindowDescriptor = { schema: WINDOW_SCHEMA, session_id: this.session, endpoint: this.endpoint, credential,
+             roots: this.roots, binding_fingerprint: this.fingerprint, extension_version: this.port.version, expires_unix_ms: Date.now() + DESCRIPTOR_TTL_MS };
+-        writePrivate(this.file, JSON.stringify(descriptor));
++        await writePrivate(this.file,JSON.stringify(descriptor),()=>!this.disposed&&this.port.authorized?.()!==false);
+     }
+ 
+     /** New credential and expiry; a server holding the old credential must reread the descriptor. */
+-    rotate(): void {
+-        if (this.disposed) { return; }
+-        const previous = this.credential;
+-        this.credential = randomBytes(32).toString('hex');
+-        // Keep answering the published credential if the new descriptor could not be written.
+-        try { this.publish(); } catch { this.credential = previous; }
++    rotate():Promise<void>{
++        if(this.rotating)return this.rotating;
++        this.rotating=(async()=>{
++            if(this.disposed)return;
++            await preparePrivateDirectory(path.dirname(this.file),()=>!this.disposed&&this.port.authorized?.()!==false);
++            const next=randomBytes(32).toString('hex');
++            // Keep accepting the previously published credential until commit.
++            await this.publish(next);this.credential=next;
++        })().finally(()=>{this.rotating=undefined;});
++        return this.rotating;
+     }
+ 
+     private accept(socket: net.Socket): void {
+--- a/packages/vscode/src/explorerAssistanceLaunch.ts
++++ b/packages/vscode/src/explorerAssistanceLaunch.ts
+@@ -5,7 +5,7 @@
+ import { createHash } from 'node:crypto';
+ import * as fs from 'node:fs';
+ import * as path from 'node:path';
+-import { writePrivate } from './explorerAssistanceHost';
++import { preparePrivateDirectory, writePrivate } from './explorerAssistanceHost';
+ 
+ export const LAUNCH_SCHEMA = 'airk-explorer-assistance-launch/1';
+ export const SERVER_FILE = path.join('out', 'explorerAssistance.js');
+@@ -27,7 +27,8 @@
+  * Rewrite the launch descriptor atomically when anything it names changed. Called on
+  * every trusted activation, so extension or editor updates take effect on the next start.
+  */
+-export function writeLaunchDescriptor(storage: string, extensionRoot: string, version: string, runtime = editorRuntime()): boolean {
++export async function writeLaunchDescriptor(storage: string, extensionRoot: string, version: string, runtime = editorRuntime(),valid:()=>boolean=()=>true):Promise<boolean>{
++    await preparePrivateDirectory(assistanceDirectory(storage),valid);
+     const server = path.join(extensionRoot, SERVER_FILE);
+     const fields = { schema: LAUNCH_SCHEMA, extension_version: version, extension_root: extensionRoot, server,
+         server_sha256: createHash('sha256').update(fs.readFileSync(server)).digest('hex'), runtime: { path: runtime.path, electron: runtime.electron } };
+@@ -36,6 +37,6 @@
+         const { written_unix_ms: _, ...existing } = JSON.parse(fs.readFileSync(file, 'utf8'));
+         if (JSON.stringify(existing) === JSON.stringify(fields)) { return false; }
+     } catch { /* missing or unreadable: rewrite */ }
+-    writePrivate(file, JSON.stringify({ ...fields, written_unix_ms: Date.now() }));
++    await writePrivate(file,JSON.stringify({...fields,written_unix_ms:Date.now()}),valid);
+     return true;
+ }
+--- a/packages/vscode/src/privateDirectory.ts
++++ b/packages/vscode/src/privateDirectory.ts
+@@ -1,20 +1,55 @@
+ // SPDX-License-Identifier: Apache-2.0
+-// Windows owner-only directory ACLs for editor-written descriptors. Runs only the
+-// fixed system tools whoami.exe and icacls.exe with fixed arguments; never AIRK,
+-// a shell or anything derived from drafts or requests.
++// Fixed system tools only; no shell, request-derived executable or credential.
+ import * as childProcess from 'node:child_process';
++import * as fs from 'node:fs';
+ import * as path from 'node:path';
+-
+-const restricted = new Set<string>();
+-/** Windows ignores POSIX modes and profile ACLs may grant extra groups (for example
+- * sandbox or backup accounts). Replace inherited entries with the current user,
+- * SYSTEM and Administrators so descriptors and credentials stay private. */
+-export function restrictWindowsDirectory(directory: string, run: typeof childProcess.execFileSync = childProcess.execFileSync): void {
+-    if (process.platform !== 'win32' || restricted.has(directory)) { return; }
+-    const system32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
+-    const user = /"(S-1-5-[0-9-]+)"/.exec(String(run(path.join(system32, 'whoami.exe'), ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8', windowsHide: true })))?.[1];
+-    if (!user) { throw new Error('Could not resolve the current Windows account for the Assistance descriptor ACL.'); }
+-    run(path.join(system32, 'icacls.exe'), [directory, '/inheritance:r', '/grant:r', `*${user}:(OI)(CI)F`, '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F'],
+-        { windowsHide: true, stdio: 'ignore' });
+-    restricted.add(directory);
++export type AclRunner = (file:string,args:readonly string[])=>Promise<string>;
++const run:AclRunner=(file,args)=>new Promise((resolve,reject)=>{
++    childProcess.execFile(file,[...args],{encoding:'utf8',windowsHide:true,timeout:10000,maxBuffer:128*1024},
++        (error,stdout)=>error?reject(error):resolve(stdout));
++});
++interface Stamp {physical:string;changed:bigint}
++const restricted=new Map<string,Promise<Stamp>>();
++async function stamp(directory:string):Promise<Stamp>{
++    const value=await fs.promises.lstat(directory,{bigint:true});
++    if(!value.isDirectory()||value.isSymbolicLink())throw new Error('The Assistance directory was replaced or redirected.');
++    if(value.ino===0n||value.birthtimeNs<=0n)throw new Error('Physical Assistance directory identity is unavailable.');
++    return {physical:`${value.dev}:${value.ino}:${value.birthtimeNs}`,changed:value.ctimeNs};
+ }
++function authorized(valid:()=>boolean):void{if(!valid())throw new Error('Assistance setup is no longer authorized.');}
++export interface PrivateDirectoryGuard {assertCurrent():void}
++/** Async ACL completion precedes every credential/descriptor write. The cache is
++ * physical-object/replacement aware, process-local and never a native ACL proof. */
++export async function restrictWindowsDirectory(directory:string,execute:AclRunner=run,valid:()=>boolean=()=>true):Promise<PrivateDirectoryGuard>{
++    authorized(valid);
++    if(process.platform!=='win32')return {assertCurrent:()=>authorized(valid)};
++    const before=await stamp(directory);authorized(valid);
++    let pending=restricted.get(before.physical);
++    if(pending){
++        try{const cached=await pending;authorized(valid);if(cached.changed!==before.changed){restricted.delete(before.physical);pending=undefined;}}
++        catch{authorized(valid);if(restricted.get(before.physical)===pending)restricted.delete(before.physical);pending=undefined;}
++    }
++    if(!pending){
++        pending=(async()=>{
++            const systemRoot=process.env.SystemRoot||'C:\\Windows';
++            if(!path.isAbsolute(systemRoot)||/[\u0000-\u001f]/.test(systemRoot))throw new Error('Windows system directory is unavailable.');
++            const system32=path.join(systemRoot,'System32');
++            const user=/"(S-1-5-[0-9-]+)"/.exec(await execute(path.join(system32,'whoami.exe'),['/user','/fo','csv','/nh']))?.[1];
++            authorized(valid);if(!user)throw new Error('Could not resolve the current Windows account for Assistance.');
++            await execute(path.join(system32,'icacls.exe'),[directory,'/inheritance:r','/grant:r',`*${user}:(OI)(CI)F`,'*S-1-5-18:(OI)(CI)F','*S-1-5-32-544:(OI)(CI)F']);
++            authorized(valid);const after=await stamp(directory);authorized(valid);
++            if(after.physical!==before.physical)throw new Error('The Assistance directory changed during setup.');
++            return after;
++        })();
++        restricted.set(before.physical,pending);
++        if(restricted.size>128)restricted.delete(restricted.keys().next().value!);
++        pending.catch(()=>{if(restricted.get(before.physical)===pending)restricted.delete(before.physical);});
++    }
++    const accepted=await pending;authorized(valid);
++    const guard:PrivateDirectoryGuard={assertCurrent:()=>{
++        authorized(valid);const value=fs.lstatSync(directory,{bigint:true});
++        if(!value.isDirectory()||value.isSymbolicLink()||`${value.dev}:${value.ino}:${value.birthtimeNs}`!==accepted.physical||value.ctimeNs!==accepted.changed)
++            throw new Error('The Assistance directory changed before publication.');
++    }};
++    guard.assertCurrent();return guard;
++}
+--- a/packages/vscode/src/serviceBootstrap.ts
++++ b/packages/vscode/src/serviceBootstrap.ts
+@@ -163,7 +163,7 @@
+ export class RuntimeHost {
+     private bundle?:Promise<VerifiedBundle>;
+     private preparing?:Promise<RuntimeBinding>;
+-    private discovering?:Promise<BootstrapObservation>;
++    private discovering?:{execution:Promise<BootstrapObservation>;full:Promise<BootstrapObservation>};
+     private tested?:Promise<void>;
+     private readonly transitionReviews=new WeakSet<RuntimeTransitionReview>();
+     private readonly projectReviews=new WeakSet<ProjectRegistrationReview>();
+@@ -185,9 +185,49 @@
+     private verified():Promise<VerifiedBundle>{
+         this.bundle??=verifyBundledRuntime(this.extensionPath,this.version).catch(error=>{this.bundle=undefined;throw error;});return this.bundle;
+     }
+-    discover():Promise<BootstrapObservation>{
+-        this.discovering??=this.discoverOnce().finally(()=>{this.discovering=undefined;});
+-        return this.discovering.then(value=>structuredClone(value));
++    private discovery():NonNullable<RuntimeHost['discovering']>{
++        if(this.discovering)return this.discovering;
++        const execution=this.discoverOnce();
++        const attempt={execution,full:Promise.resolve({} as BootstrapObservation)};
++        attempt.full=execution.then(async value=>{
++            const observation=structuredClone(value);
++            if(observation.installed){
++                try{observation.diagnosis=await this.invoke(observation.bundle.main,['runtime','diagnose','--install-dir',observation.installDir]);}
++                catch{this.active();observation.error??='runtime_diagnostics_unavailable';}
++            }
++            return observation;
++        }).finally(()=>{if(this.discovering===attempt)this.discovering=undefined;});
++        // A connection-only waiter must not create an unhandled optional failure;
++        // full discovery retains the actual result and reports it to its caller.
++        void attempt.full.catch(()=>{});
++        this.discovering=attempt;return attempt;
++    }
++    discover():Promise<BootstrapObservation>{return this.discovery().full.then(value=>structuredClone(value));}
++    /** Current verified execution metadata + exact existing healthy service only.
++     * Never starts/elects a process or settles lifecycle work. Missing native
++     * recovery observations, managed pins and pending work keep full discovery. */
++    async discoverForConnection():Promise<BootstrapObservation>{
++        const attempt=this.discovery(),observed=await attempt.execution;this.active();
++        const inspection=observed.inspection;
++        if(!inspection||observed.error||inspection.payload_verified!==true||inspection.metadata_only===true||this.options.managed)
++            {const complete=await attempt.full;this.active();return structuredClone(complete);}
++        const lifecycle=record(inspection.lifecycle??{});
++        if(lifecycle.explicitly_stopped===true)throw new ServiceError('service_explicitly_stopped');
++        const binding=this.binding(inspection,observed.installDir);
++        if(binding.version!==this.version)throw new ServiceError('explicit_runtime_upgrade_or_matching_extension_required');
++        const recovery=record(inspection.connection_observation??{}),repair=record(inspection.payload_repair??{});
++        if(recovery.schema!==1||recovery.activation_pending!==false||recovery.launcher_repair_pending!==false
++            ||!['none','completed'].includes(String(repair.phase))||lifecycle.explicitly_stopped!==false||lifecycle.pending!==null
++            ||typeof inspection.registry_namespace!=='string'||!/^[a-f0-9]{32}$/.test(inspection.registry_namespace))
++            {const complete=await attempt.full;this.active();return structuredClone(complete);}
++        const client=this.client(binding);
++        try{
++            const response=await client.rpc('health','health');this.active();const health=record(response.observation);
++            if(health.version!==this.version||health.runtime_sha256!==binding.runtimeSha256||record(health.policy).accepting!==true)
++                throw new ServiceError('runtime_selection_changed_review_again');
++            identifier(health.instance,16);
++            return structuredClone(observed);
++        }finally{client.dispose();}
+     }
+     private async discoverOnce():Promise<BootstrapObservation>{
+         const bundle=await this.verified();
+@@ -209,8 +249,6 @@
+                 if(snapshot.schema===1&&snapshot.metadata_only===true&&snapshot.payload_verified===false){observation.inspection=snapshot;observation.error='selected_runtime_payload_unverified';}}
+             catch{/* Preserve unavailable state without nominating a different installation. */}
+         }
+-        try {observation.diagnosis=await this.invoke(bundle.main,['runtime','diagnose','--install-dir',installDir]);}
+-        catch {observation.error??='runtime_diagnostics_unavailable';}
+         return observation;
+     }
+     /** A verified installation can reconnect without running install/ensure again.
+--- a/packages/vscode/src/serviceExtension.ts
++++ b/packages/vscode/src/serviceExtension.ts
+@@ -65,12 +65,14 @@
+     private generation=0;
+     private disposed=false;
+     private specs:LaunchSpec[]=[];
++    // Early UI availability is deliberately separate from complete workspace MCP scopes.
++    private selectedEligible?:{spec:LaunchSpec;opened:string;generation:number;folders:string;host:RuntimeHost};
+     private roots:{opened:string;canonical:string}[]=[];
+     private readonly checks=new Map<string,McpVerification>();
+     private connectionCheck?:McpVerification;
+     private checking?:Promise<void>;
+     private startup?:{message:string;startedAt:number;failed?:boolean};
+-    private refreshing?:Promise<void>;
++    private refreshing?:{generation:number;promise:Promise<void>};
+     private observedFolders?:string;
+     private settingUp?:Promise<void>;
+     private migratedConnections=false;
+@@ -140,7 +142,7 @@
+             reviewTransition:(binding,action)=>this.runtime().reviewTransition(binding,action),transition:(binding,review)=>this.runtime().transition(binding,review),
+             lifecycle:(binding,intent,force)=>this.runtime().lifecycle(binding,intent,force),abandonLifecycle:(binding,intent,id)=>this.runtime().abandonLifecycle(binding,intent,id)};
+         this.workspace=new ServiceWorkspace(context.globalState,{reviewProject:(...args)=>this.runtime().reviewProject(...args),
+-            registerProject:(...args)=>this.runtime().registerProject(...args)},()=>vscode.workspace.isTrusted&&!this.disposed);
++            registerProject:(...args)=>this.runtime().registerProject(...args)},()=>vscode.workspace.isTrusted&&!this.disposed&&!this.extensionUpdate&&nativeExecutionAllowed());
+         this.console=new ServiceConsole(context,runtime,{register:()=>this.registerWorkspace(),currentProjects:()=>this.currentProjects(),removed:async project=>{
+             if(this.binding){
+                 await this.workspace.withdrawProject(this.binding,project);this.trusted();
+@@ -184,9 +186,43 @@
+     isCurrent(spec:LaunchSpec):boolean{return !this.disposed&&this.currentBinding()&&this.specs.some(current=>current.command===spec.command&&current.dataDir===spec.dataDir&&current.collection===spec.collection&&current.service?.project===spec.service?.project&&JSON.stringify(launchArgs(current))===JSON.stringify(launchArgs(spec)));}
+     subscribe(panel:vscode.WebviewPanel):void{this.context.subscriptions.push(panel);}
+     verification(spec:LaunchSpec):McpVerification|undefined{return this.checks.get(spec.service!.project);}
++    private uiSpecs():LaunchSpec[]{
++        const early=this.selectedEligible;
++        if(!early||!this.selectedFence(early))return this.specs;
++        return [early.spec,...(this.currentBinding()?this.specs:[]).filter(spec=>spec.service?.project!==early.spec.service?.project)];
++    }
++    private isUiCurrent(spec:LaunchSpec):boolean{return this.uiSpecs().some(current=>JSON.stringify(current)===JSON.stringify(spec));}
++    private selectedFence(value:NonNullable<ServiceExtension['selectedEligible']>):boolean{
++        return !this.disposed&&vscode.workspace.isTrusted&&!this.extensionUpdate&&nativeExecutionAllowed()
++            &&value.generation===this.generation&&value.host===this.host
++            &&value.folders===JSON.stringify(this.folders().map(folder=>folder.uri.fsPath));
++    }
++    private async observeSelected(binding:RuntimeBinding):Promise<Awaited<ReturnType<typeof readWorkspaceRegistrations>>>{
++        this.trusted();const host=this.runtime(),generation=this.generation;
++        const folders=this.folders(),identity=JSON.stringify(folders.map(folder=>folder.uri.fsPath));
++        const valid=()=>{this.trusted();if(generation!==this.generation||host!==this.host||identity!==JSON.stringify(this.folders().map(folder=>folder.uri.fsPath)))throw new ServiceError('workspace_registration_changed');};
++        const client=host.client(binding);
++        let observed:Awaited<ReturnType<typeof readWorkspaceRegistrations>>;
++        try{observed=await readWorkspaceRegistrations(binding,async(after,revision,inactive)=>{
++            const page=await client.projects(after,revision,32,inactive);valid();return page;
++        });}finally{client.dispose();}
++        valid();
++        const active=vscode.window.activeTextEditor&&vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri);
++        const explicit=this.explorerLoaded?.assistanceStatus.selected_project;
++        const chosen=this.specs.find(spec=>spec.service?.project===explicit);
++        const opened=chosen&&this.roots.find(root=>same(root.canonical,chosen.root))?.opened;
++        const folder=opened&&folders.find(folder=>same(folder.uri.fsPath,opened))
++            ||active&&folders.find(folder=>same(folder.uri.fsPath,active.uri.fsPath))||folders[0];
++        const selected=folder&&await this.workspace.selectedObservation(binding,folder.uri.fsPath,observed);valid();
++        this.selectedEligible=folder&&selected?.kind==='registered'?{spec:selected.spec,opened:folder.uri.fsPath,generation,folders:identity,host}:undefined;
++        this.treeChanges.fire(); // Explorer/Workbench only: never definitions.fire here.
++        return observed;
++    }
+     async refresh(observation?:BootstrapObservation):Promise<void>{
+-        if(this.refreshing)return this.refreshing;
+-        this.refreshing=this.refreshOnce(observation).finally(()=>{this.refreshing=undefined;});return this.refreshing;
++        if(this.refreshing?.generation===this.generation)return this.refreshing.promise;
++        const owner={generation:this.generation,promise:Promise.resolve()};
++        owner.promise=this.refreshOnce(observation).finally(()=>{if(this.refreshing===owner)this.refreshing=undefined;});
++        this.refreshing=owner;return owner.promise;
+     }
+     private async refreshOnce(observation?:BootstrapObservation):Promise<void>{
+         if(this.checkForExtensionUpdate()){this.renderUpdateStatus();return;}
+@@ -199,13 +235,32 @@
+         const generation=this.generation;
+         // Observe into locals and publish once: readers never see an empty registration
+         // list in the middle of a refresh, only the previous or the new result.
+-        const clear=()=>{this.specs=[];this.roots=[];this.binding=undefined;};
++        const clear=()=>{this.specs=[];this.roots=[];this.binding=undefined;this.selectedEligible=undefined;};
+         try{
+-            this.trusted();const runtime=this.runtime();observation??=await runtime.discover();this.trusted();
++            this.trusted();const runtime=this.runtime();
++            if(!observation){
++                try{observation=await runtime.discoverForConnection();}
++                catch(error){
++                    // Stop forbids early eligibility/election, but does not erase
++                    // the complete saved workspace MCP declaration.
++                    if(error instanceof ServiceError&&error.code==='service_explicitly_stopped')observation=await runtime.discover();
++                    else throw error;
++                }
++            }
++            this.trusted();
+             if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');
+             if(!observation.inspection||observation.inspection.payload_verified===false||observation.inspection.metadata_only===true){clear();this.status.text='AIRK: setup';return;}
+             const binding=this.runtime().binding(observation.inspection,observation.installDir);
+             if(binding.version!==this.runningVersion)throw new ServiceError('explicit_runtime_upgrade_or_matching_extension_required');
++            const lifecycle=record(observation.inspection.lifecycle??{}),recovery=record(observation.inspection.connection_observation??{});
++            try{
++                if(runtime.options.managed||lifecycle.explicitly_stopped===true||lifecycle.pending||recovery.activation_pending===true
++                    ||recovery.launcher_repair_pending===true||observation.diagnosis?.pending_activation)this.selectedEligible=undefined;
++                else await this.observeSelected(binding);
++            }catch(error){
++                if(generation===this.generation){this.selectedEligible=undefined;this.output.appendLine(`Selected project availability is unconfirmed: ${String(error)}`);}
++            }
++            this.trusted();if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');
+             const roots:{opened:string;canonical:string}[]=[];
+             for(const folder of this.folders()){
+                 try{roots.push({opened:folder.uri.fsPath,canonical:await fs.realpath(folder.uri.fsPath)});}catch{/* Saved missing-source bindings remain readable. */}
+@@ -215,8 +270,12 @@
+             this.binding=binding;this.roots=roots;this.specs=specs;
+             this.observedFolders=folderIdentity;
+             this.status.text=`AIRK: ${this.specs.length} registered`;
+-        }catch(error){if(!this.disposed&&generation===this.generation){clear();this.status.text='AIRK: inspect service';this.output.appendLine(String(error));}}
+-        finally{if(!this.disposed){this.treeChanges.fire();if(previous!==JSON.stringify(this.specs.map(spec=>[spec.command,launchArgs(spec)])))this.definitions.fire();}}
++        }catch(error){if(!this.disposed&&generation===this.generation){
++            if(this.selectedEligible&&this.selectedFence(this.selectedEligible)){
++                this.status.text='AIRK: selected project ready';this.output.appendLine(`Other workspace preparation needs attention: ${String(error)}`);
++            }else{clear();this.status.text='AIRK: inspect service';this.output.appendLine(String(error));}
++        }}
++        finally{if(!this.disposed&&generation===this.generation){this.treeChanges.fire();if(previous!==JSON.stringify(this.specs.map(spec=>[spec.command,launchArgs(spec)])))this.definitions.fire();}}
+     }
+     async registerWorkspace():Promise<void>{
+         this.trusted();
+@@ -349,7 +408,8 @@
+             this.renderNativeDisabled();this.treeChanges.fire();return;
+         }
+         this.startup={message:'Connecting to the installed AIRK runtime…',startedAt};this.treeChanges.fire();
+-        try{await this.automaticInstall();if(!this.binding)await this.refresh();
++        const early=this.refresh(); // owned refresh may publish UI while full diagnostics continue
++        try{await this.automaticInstall();if(!this.binding)await early;
+             if(!this.disposed)this.startup=this.startup?.failed?this.startup:this.installationFailed?{...this.startup,message:'AIRK startup needs attention. Open Logs for the recorded failure.',failed:true}:undefined;
+         }catch(error){if(!this.disposed){this.startup={startedAt,message:String(error),failed:true};this.output.appendLine(String(error));}}
+         finally{if(!this.disposed)this.treeChanges.fire();}
+@@ -386,9 +446,9 @@
+         };
+     }
+     private async embeddedUsage(spec:LaunchSpec,current:()=>boolean):Promise<import('./explorerController').EmbeddedUsage>{
+-        this.trusted();if(!current()||!this.isCurrent(spec))throw new ServiceError('project_configuration_selection_changed');
++        this.trusted();if(!current()||!this.isUiCurrent(spec))throw new ServiceError('project_configuration_selection_changed');
+         await this.runtime().ensure();this.trusted();
+-        const generation=this.generation,valid=()=>generation===this.generation&&this.isCurrent(spec)&&current();
++        const generation=this.generation,valid=()=>generation===this.generation&&this.isUiCurrent(spec)&&current();
+         let value:object={},receive:(message:unknown)=>Promise<void>=async()=>undefined,dispose=()=>{};
+         await openUsagePanel(spec,valid,this.usageWriter(spec,valid),{
+             render:next=>{value=next;},onMessage:listener=>{receive=listener;return {dispose(){receive=async()=>{throw new ServiceError('usage_session_disposed');};}};},onDispose:listener=>{dispose=listener;},
+@@ -749,14 +809,10 @@
+     }
+     private async prepareWorkspaceProjects(binding:RuntimeBinding,observation:import('./serviceBootstrap').BootstrapObservation):Promise<void>{
+         this.trusted();
++        const generation=this.generation,observed=await this.observeSelected(binding);this.trusted();
+         const folders=this.folders(),specs=await this.workspace.definitions(binding,folders.map(folder=>folder.uri.fsPath));
+-        const dataRoot=await this.projectDataRoot(observation);
+-        const generation=this.generation,client=this.runtime().client(binding);
+-        let observed:Awaited<ReturnType<typeof readWorkspaceRegistrations>>;
+-        try{observed=await readWorkspaceRegistrations(binding,async(after,revision,inactive)=>{
+-            const page=await client.projects(after,revision,32,inactive);this.trusted();
+-            if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');return page;
+-        });}finally{client.dispose();}
++        const dataRoot=await this.projectDataRoot(observation);this.trusted();
++        if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');
+         const restored:LaunchSpec[]=[];
+         for(const folder of folders){
+             try{await fs.realpath(folder.uri.fsPath);}
+@@ -859,17 +915,17 @@
+             connectionCheck:()=>this.connectionCheck,startup:()=>this.startup,
+             workbenchVisible:()=>this.workbench?.visible??false,toggleWorkbench:async()=>{await this.workbench?.toggle();},
+             onDidChangeWorkbenchVisibility:this.workbench?.onDidChangeVisibility,
+-            trusted:()=>vscode.workspace.isTrusted&&!this.disposed,specs:()=>this.specs,
++            trusted:()=>vscode.workspace.isTrusted&&!this.disposed,specs:()=>this.uiSpecs(),
+             activeProject:()=>{
+                 const active=vscode.window.activeTextEditor&&vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri);
+                 const root=active&&this.roots.find(root=>same(root.opened,active.uri.fsPath));
+-                return root?this.specs.find(spec=>same(spec.root,root.canonical))?.service?.project:undefined;
++                return root?this.uiSpecs().find(spec=>same(spec.root,root.canonical))?.service?.project:this.selectedEligible&&this.selectedFence(this.selectedEligible)?this.selectedEligible.spec.service?.project:undefined;
+             },
+             usage:(spec,valid)=>this.embeddedUsage(spec,valid),
+             onDidChangeSpecs:this.treeChanges.event,control:this.console,log:line=>this.output.appendLine(line),
+             setStatusBar:(text,tooltip)=>{if(!this.disposed&&!this.renderUpdateStatus()){this.status.text=text;this.status.tooltip=tooltip;}},workspaceState:this.context.workspaceState,suggestions:this.suggestions,handoffs:this.handoffs};
+     }
+-    private readonly handoffs=new HandoffStore({authorized:()=>this.assistanceEnabled(),binding:()=>this.assistanceHost?.bindingFingerprint??'',
++    private readonly handoffs=new HandoffStore({authorized:()=>generation===this.assistanceGeneration&&this.assistanceEnabled(),binding:()=>this.assistanceHost?.bindingFingerprint??'',
+         revisions:()=>this.explorerLoaded?.draftRevisions??{},publication:()=>this.explorerLoaded?.publication});
+     private assistanceEnabled():boolean{return vscode.workspace.isTrusted&&!this.disposed&&!this.extensionUpdate&&vscode.workspace.getConfiguration('airk').get<boolean>('explorer.assistance.enabled',true);}
+     private assistanceFolders():vscode.WorkspaceFolder[]{return (vscode.workspace.workspaceFolders??[]).filter(folder=>folder.uri.scheme==='file'||folder.uri.scheme==='vscode-remote');}
+@@ -879,8 +935,10 @@
+         this.assistanceHost?.dispose();this.assistanceHost=undefined;
+         if(!this.assistanceEnabled())return;
+         const storage=this.context.globalStorageUri.fsPath,version=this.runningVersion;
+-        try{writeLaunchDescriptor(storage,this.context.extensionPath,version);}
++        try{await writeLaunchDescriptor(storage,this.context.extensionPath,version,undefined,
++            ()=>generation===this.assistanceGeneration&&this.assistanceEnabled());}
+         catch(error){this.output.appendLine(`Explorer Assistance launch descriptor was not written: ${error instanceof Error?error.message:String(error)}`);}
++        if(generation!==this.assistanceGeneration||!this.assistanceEnabled())return;
+         try{
+             const host=await AssistanceIpcHost.start({directory:assistanceDirectory(storage),version,roots:this.assistanceFolders().map(folder=>folder.uri.fsPath),
+                 authorized:()=>this.assistanceEnabled(),
+@@ -908,7 +966,7 @@
+     async verifyAssistance(spec:LaunchSpec):Promise<string[]>{
+         this.trusted();
+         const entry=this.connectionEntries(spec)[0];
+-        writeLaunchDescriptor(this.context.globalStorageUri.fsPath,this.context.extensionPath,this.runningVersion);
++        await writeLaunchDescriptor(this.context.globalStorageUri.fsPath,this.context.extensionPath,this.runningVersion,undefined,()=>this.assistanceEnabled());
+         const result=await probeMcp(spec,28,this.runningVersion,entry);this.trusted();
+         return result.tools;
+     }
+@@ -927,7 +985,7 @@
+         if(nativeExecutionAllowed()){this.status.text='AIRK';this.status.command='airk.explorer.open';this.status.tooltip=undefined;}
+         this.reset();this.definitions.fire();void this.start();
+     }
+-    reset():void{this.generation++;this.host=undefined;this.specs=[];this.binding=undefined;this.checks.clear();this.checking=undefined;this.connectionCheck=undefined;this.console.reset();void this.refresh();}
++    reset():void{this.generation++;this.host=undefined;this.selectedEligible=undefined;this.specs=[];this.binding=undefined;this.checks.clear();this.checking=undefined;this.connectionCheck=undefined;this.console.reset();void this.refresh();}
+     dispose():void{if(this.disposed)return;this.disposed=true;this.generation++;this.assistanceGeneration++;this.assistanceHost?.dispose();this.assistanceDefinitions.dispose();void this.explorer?.then(explorer=>explorer.dispose(),()=>undefined);this.console.dispose();this.status.dispose();this.definitions.dispose();this.treeChanges.dispose();this.output.dispose();}
+ }
+ 
+@@ -1006,7 +1064,7 @@
+         resolveMcpServerDefinition:value=>controller.resolveAssistanceDefinition(value)}));
+     const assistanceChanged=()=>{void controller.startAssistance();controller.assistanceDefinitions.fire();controller.definitions.fire();};
+     context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(()=>{assistanceChanged();return controller.automaticInstall().then(()=>controller.refresh());}),
+-        vscode.workspace.onDidGrantWorkspaceTrust(()=>{assistanceChanged();void controller.automaticInstall().then(()=>controller.refresh());}),
++        vscode.workspace.onDidGrantWorkspaceTrust(()=>{controller.reset();assistanceChanged();void controller.automaticInstall().then(()=>controller.refresh());}),
+         vscode.workspace.onDidChangeConfiguration(event=>{
+             if(event.affectsConfiguration('airk.explorer.assistance'))assistanceChanged();
+             if(event.affectsConfiguration('airk.runtime.nativeExecution'))controller.nativeExecutionChanged();
+--- a/packages/vscode/src/serviceWorkspace.ts
++++ b/packages/vscode/src/serviceWorkspace.ts
+@@ -12,6 +12,11 @@
+ const ACTIVE='airk.service.workspace.active.1.';
+ interface SavedProject {schema:1;opened:string;registration:ProjectRegistrationReview}
+ export interface WorkspaceRegistrations { active:ProjectRegistrationReview[]; inactive:ProjectRegistrationReview[] }
++const nativeObservations=new WeakMap<WorkspaceRegistrations,{binding:string;revision:number}>();
++const bindingIdentity=(binding:RuntimeBinding)=>JSON.stringify([binding.installDir,binding.controlDir,binding.runtimeSha256,binding.version,binding.executable,binding.launcher,binding.universalLauncher??null,binding.lifecycle,binding.verificationBasis,binding.payloadVerified??null]);
++export type SelectedRootObservation =
++    {kind:'registered';spec:LaunchSpec;revision:number}
++    |{kind:'removed'|'missing';revision:number};
+ function absolute(value:unknown):string {
+     if(typeof value!=='string'||value.length>4096||!path.isAbsolute(value)||/[\u0000-\u001f\u007f]/.test(value))throw new ServiceError('invalid_saved_workspace_path');
+     return value;
+@@ -50,6 +55,9 @@
+             after=page.after;
+         }while(after!==null);
+     }
++    for(const project of [...result.active,...result.inactive])Object.freeze(project);
++    Object.freeze(result.active);Object.freeze(result.inactive);Object.freeze(result);
++    nativeObservations.set(result,{binding:bindingIdentity(binding),revision:revision??0});
+     return result;
+ }
+ /** Workspace state remembers reviewed/native bindings; sources remain read-only. */
+@@ -62,6 +70,27 @@
+         this.active();
+         return this.saved().some(value=>same(value.opened,opened)&&same(value.registration.installDir,binding.installDir)
+             &&same(value.registration.controlDir,binding.controlDir));
++    }
++    /** Early UI evidence only. Saved choices select among current native rows;
++     * they never turn absence, removal or ambiguity into a registration. */
++    async selectedObservation(binding:RuntimeBinding,opened:string,observed:WorkspaceRegistrations):Promise<SelectedRootObservation>{
++        this.active();const native=nativeObservations.get(observed);
++        if(!native||native.binding!==bindingIdentity(binding))throw new ServiceError('workspace_observation_not_authoritative');
++        const saved=(await this.definitions(binding,[opened]))[0];this.active();
++        let root:string;
++        try{root=await fs.realpath(opened);}catch(error){
++            if(!saved||!['ENOENT','ENOTDIR','EACCES','EPERM'].includes((error as NodeJS.ErrnoException).code??''))throw error;
++            root=saved.root;
++        }
++        this.active();const candidates=observed.active.filter(project=>same(project.root,root)&&(!saved||project.collection===saved.collection));
++        const exact=saved&&candidates.find(project=>project.binding===saved.service!.project);
++        if(!exact&&candidates.length>1)throw new ServiceError('workspace_binding_review_required');
++        const project=exact??candidates[0];
++        if(!project)return {kind:observed.inactive.some(project=>same(project.root,root)&&(!saved||project.collection===saved.collection))?'removed':'missing',revision:native.revision};
++        if(!binding.launcher)throw new ServiceError('stable_launcher_unavailable');
++        return {kind:'registered',revision:native.revision,spec:{command:binding.universalLauncher??binding.launcher,
++            root:project.root,dataDir:project.data_root,collection:project.collection,name:path.basename(opened),
++            service:{installDir:binding.installDir,project:project.binding,...(binding.universalLauncher?{universal:true}:{})}}};
+     }
+     /** Trusted startup may recreate a lost registration; native removal remains authoritative. */
+     async reconcileStartup(binding:RuntimeBinding,opened:string,observed:WorkspaceRegistrations):Promise<'registered'|'removed'|'missing'>{
+--- a/packages/vscode/src/test/explorerAssistanceHost.test.ts
++++ b/packages/vscode/src/test/explorerAssistanceHost.test.ts
+@@ -41,12 +41,12 @@
+     try { return fs.readdirSync(windowsDirectory(directory)); } catch { return []; }
+ }
+ 
+-test('the launch descriptor names the bundled server by digest and is rewritten only when something changed', t => {
++test('the launch descriptor names the bundled server by digest and is rewritten only when something changed', async t => {
+     const root = scratch(t), storage = path.join(root, 'storage'), extension = path.join(root, 'extension');
+     fs.mkdirSync(path.join(extension, 'out'), { recursive: true });
+     fs.writeFileSync(path.join(extension, 'out', 'explorerAssistance.js'), 'one');
+     const runtime = { path: process.execPath, electron: true };
+-    assert.equal(writeLaunchDescriptor(storage, extension, '1.5.0', runtime), true);
++    assert.equal(await writeLaunchDescriptor(storage, extension, '1.5.0', runtime), true);
+     const file = launchDescriptorPath(storage);
+     assert.equal(file, path.join(storage, 'explorer-assistance', 'launch-1.json'), 'the native forwarder accepts only this location');
+     const descriptor = JSON.parse(fs.readFileSync(file, 'utf8'));
+@@ -56,9 +56,9 @@
+     assert.equal(descriptor.server_sha256, createHash('sha256').update('one').digest('hex'));
+     assert.deepEqual(descriptor.runtime, runtime);
+     if (process.platform !== 'win32') { assert.equal(fs.statSync(file).mode & 0o077, 0); assert.equal(fs.statSync(path.dirname(file)).mode & 0o077, 0); }
+-    assert.equal(writeLaunchDescriptor(storage, extension, '1.5.0', runtime), false, 'unchanged inputs keep the existing file');
++    assert.equal(await writeLaunchDescriptor(storage, extension, '1.5.0', runtime), false, 'unchanged inputs keep the existing file');
+     fs.writeFileSync(path.join(extension, 'out', 'explorerAssistance.js'), 'two');
+-    assert.equal(writeLaunchDescriptor(storage, extension, '1.5.0', runtime), true);
++    assert.equal(await writeLaunchDescriptor(storage, extension, '1.5.0', runtime), true);
+     assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).server_sha256, createHash('sha256').update('two').digest('hex'));
+     assert.deepEqual(fs.readdirSync(path.dirname(file)), ['launch-1.json'], 'no temporary files remain');
+ 
+@@ -121,7 +121,7 @@
+     assert.equal(await ask(first.endpoint, JSON.stringify({ v: 1, credential: '0'.repeat(64), type: 'status' })), '', 'a wrong credential gets no reply');
+     assert.match(await ask(first.endpoint, JSON.stringify({ v: 1, credential: first.credential, type: 'run_command' })), /INVALID_SCHEMA/);
+     assert.match(await ask(first.endpoint, JSON.stringify({ v: 2, credential: first.credential, type: 'status' })), /SCHEMA_UNSUPPORTED/);
+-    host.rotate();
++    await host.rotate();
+     const rotated = read();
+     assert.notEqual(rotated.credential, first.credential);
+     assert.ok(rotated.expires_unix_ms >= first.expires_unix_ms);
+@@ -223,16 +223,41 @@
+     assert.equal(contains('/work/book','/work/book-other','linux'),false);
+ });
+ 
+-test('Windows descriptor directories replace inherited profile entries with user, SYSTEM and Administrators', { skip: process.platform !== 'win32' }, () => {
+-    const calls: { file: string; args: readonly string[] }[] = [];
+-    const run = ((file: string, args: readonly string[]) => {
+-        calls.push({ file, args });
+-        return file.endsWith('whoami.exe') ? '"host\fixture","S-1-5-21-1-2-3-1001"\r\n' : '';
+-    }) as unknown as typeof import('node:child_process').execFileSync;
+-    const directory = path.join(os.tmpdir(), `airk-acl-fixture-${process.pid}`);
+-    restrictWindowsDirectory(directory, run);
+-    restrictWindowsDirectory(directory, run);
+-    assert.equal(calls.length, 2, 'each directory is restricted once per process');
+-    assert.match(calls[1].file, /icacls\.exe$/);
+-    assert.deepEqual(calls[1].args, [directory, '/inheritance:r', '/grant:r', '*S-1-5-21-1-2-3-1001:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F']);
+-});
++test('Windows ACL setup is async and caches the physical directory rather than its old pathname',{skip:process.platform!=='win32'},async()=>{
++    const root=await fs.promises.mkdtemp(path.join(os.tmpdir(),'airk-acl-physical-')),directory=path.join(root,'private');
++    await fs.promises.mkdir(directory);const calls:{file:string;args:readonly string[]}[]=[];
++    const run=async(file:string,args:readonly string[])=>{calls.push({file,args});return file.endsWith('whoami.exe')?'"host\\fixture","S-1-5-21-1-2-3-1001"\r\n':'';};
++    try{
++        await restrictWindowsDirectory(directory,run);await restrictWindowsDirectory(directory,run);
++        assert.equal(calls.length,2);
++        await fs.promises.rename(directory,path.join(root,'old'));await fs.promises.mkdir(directory);
++        await restrictWindowsDirectory(directory,run);assert.equal(calls.length,4,'replacement must run ACL setup again');
++        assert.match(calls[1].file,/icacls\.exe$/);
++        assert.deepEqual(calls[1].args,[directory,'/inheritance:r','/grant:r','*S-1-5-21-1-2-3-1001:(OI)(CI)F','*S-1-5-18:(OI)(CI)F','*S-1-5-32-544:(OI)(CI)F']);
++    }finally{await fs.promises.rm(root,{recursive:true,force:true});}
++});
++
++test('Windows directory replaced during ACL completion is refused',{skip:process.platform!=='win32'},async()=>{
++    const root=await fs.promises.mkdtemp(path.join(os.tmpdir(),'airk-acl-race-')),directory=path.join(root,'private');
++    await fs.promises.mkdir(directory);
++    try{
++        await assert.rejects(restrictWindowsDirectory(directory,async(file)=>{
++            if(file.endsWith('whoami.exe'))return '"fixture","S-1-5-21-1-2-3-1001"';
++            await fs.promises.rename(directory,path.join(root,'old'));await fs.promises.mkdir(directory);return '';
++        }),/changed during setup/);
++    }finally{await fs.promises.rm(root,{recursive:true,force:true});}
++});
++
++test('Assistance ACL wait leaves executor responsive and trust loss publishes no credential',{skip:process.platform!=='win32'},async context=>{
++    const root=await fs.promises.mkdtemp(path.join(os.tmpdir(),'airk-acl-host-')),source=path.join(root,'source'),directory=path.join(root,'assistance');
++    await fs.promises.mkdir(source);let trusted=true,entered!:()=>void,release!:()=>void;
++    const began=new Promise<void>(resolve=>{entered=resolve;}),held=new Promise<void>(resolve=>{release=resolve;});
++    context.mock.method(require('../privateDirectory'),'restrictWindowsDirectory',async()=>{entered();await held;return {assertCurrent(){}};});
++    try{
++        const pending=AssistanceIpcHost.start({directory,version:'1.8.0',roots:[source],authorized:()=>trusted,explorerOpen:()=>false});
++        await began;assert.equal(await Promise.resolve(42),42);
++        assert.deepEqual(fs.readdirSync(windowsDirectory(directory)),[]);
++        trusted=false;release();await assert.rejects(pending,/no longer authorized/);
++        assert.deepEqual(fs.readdirSync(windowsDirectory(directory)),[]);
++    }finally{release?.();await fs.promises.rm(root,{recursive:true,force:true});}
++});
+--- a/packages/vscode/src/test/explorerAssistanceNative.test.ts
++++ b/packages/vscode/src/test/explorerAssistanceNative.test.ts
+@@ -29,7 +29,7 @@
+         const spec = await fixture.register('assistance');
+         const version = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'package.json'), 'utf8')).version;
+         // Node stands in for the editor's runtime here; the forwarder treats both the same apart from ELECTRON_RUN_AS_NODE.
+-        writeLaunchDescriptor(storage, extensionRoot, version, { path: process.execPath, electron: false });
++        await writeLaunchDescriptor(storage, extensionRoot, version, { path: process.execPath, electron: false });
+         const legacy = assistanceEntry(spec, launchDescriptorPath(storage))!;
+         const entry = unifiedEntry(spec, launchDescriptorPath(storage));
+         const result = await probeAssistance(legacy, spec.root, 'native-test');
+--- a/packages/vscode/src/test/serviceBootstrap.test.ts
++++ b/packages/vscode/src/test/serviceBootstrap.test.ts
+@@ -493,3 +493,79 @@
+         assert.equal(automaticUpgrade(from, to), false, `${from} → ${to}`);
+     }
+ });
++
++
++test('healthy authenticated connection discovery does not wait for optional diagnostics', {timeout:30000},async()=>{
++    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
++    const inspection={selection:{active:f.digest},approval:{manifest_sha256:f.digest,version:'1.4.0',verification_basis:'trusted_distribution'},
++        executable:path.join(f.source,f.main),launcher:path.join(install,'launcher'),control_dir:path.join(install,'control'),payload_verified:true,
++        lifecycle:{explicitly_stopped:false,pending:null},payload_repair:{phase:'none'},registry_namespace:'12'.repeat(16),
++        connection_observation:{schema:1,activation_pending:false,launcher_repair_pending:false}};
++    let release!:()=>void,entered!:()=>void,fullDone=false;
++    const held=new Promise<void>(resolve=>{release=resolve;}),began=new Promise<void>(resolve=>{entered=resolve;}),calls:string[][]=[];
++    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},async(_command,args)=>{
++        calls.push(args);
++        switch(args[1]){case 'self-test':return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
++            case 'location':return {protocol:1,install_dir:install};case 'inspect':return inspection;
++            case 'diagnose':entered();await held;return {};default:throw new Error('Unexpected native effect');}
++    });
++    host.client=()=>new ServiceClient({async request(){return {status:'health',observation:{version:'1.4.0',runtime_sha256:f.digest,instance:'34'.repeat(16),policy:{accepting:true}}};},dispose(){}});
++    const full=host.discover().then(value=>{fullDone=true;return value;});
++    try{
++        const connection=host.discoverForConnection();await began;
++        const current=await connection;assert.equal(current.inspection?.payload_verified,true);assert.equal(fullDone,false);
++        assert.equal(calls.filter(args=>args[1]==='self-test').length,1);assert.equal(calls.filter(args=>args[1]==='inspect').length,1);
++        assert.equal(calls.filter(args=>args[1]==='ensure'||args[1]==='activate').length,0);
++        release();assert.deepEqual((await full).diagnosis,{});
++    }finally{release();await full.catch(()=>{});await f.cleanup();}
++});
++
++test('connection discovery refuses mandatory self-test failure before diagnostics',async()=>{
++    const f=await fixture();let diagnostics=0;
++    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable'},async(_command,args)=>{
++        if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'failed',metadata_console:1};
++        if(args[1]==='diagnose')diagnostics++;throw new Error('Mandatory failure must stop discovery');
++    });
++    try{await assert.rejects(host.discoverForConnection(),/service_runtime_self_test_failed/);assert.equal(diagnostics,0);}
++    finally{await f.cleanup();}
++});
++
++
++test('pending or unavailable current recovery observation keeps diagnostics in the connection barrier',{timeout:30000},async()=>{
++    for(const connection_observation of [undefined,{schema:1,activation_pending:true,launcher_repair_pending:false}]){
++        const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
++        let release!:()=>void,entered!:()=>void,done=false,health=0;
++        const held=new Promise<void>(resolve=>{release=resolve;}),began=new Promise<void>(resolve=>{entered=resolve;});
++        const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},async(_command,args)=>{
++            if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
++            if(args[1]==='location')return {protocol:1,install_dir:install};
++            if(args[1]==='inspect')return {selection:{active:f.digest},approval:{manifest_sha256:f.digest,version:'1.4.0',verification_basis:'trusted_distribution'},
++                executable:path.join(f.source,f.main),launcher:null,control_dir:path.join(install,'control'),payload_verified:true,
++                lifecycle:{explicitly_stopped:false,pending:null},payload_repair:{phase:'none'},registry_namespace:'12'.repeat(16),connection_observation};
++            if(args[1]==='diagnose'){entered();await held;return {pending_activation:connection_observation?{phase:'probe'}:null};}
++            throw new Error('Unexpected lifecycle execution');
++        });
++        host.client=()=>{health++;throw new Error('Unsettled observation must not probe a healthy shortcut');};
++        const pending=host.discoverForConnection().then(value=>{done=true;return value;});
++        try{await began;await Promise.resolve();assert.equal(done,false);assert.equal(health,0);release();await pending;}
++        finally{release();await pending.catch(()=>{});await f.cleanup();}
++    }
++});
++
++
++test('explicit Stop refuses the connection shortcut while optional diagnose is still blocked',{timeout:30000},async()=>{
++    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);let release!:()=>void,entered!:()=>void;
++    const held=new Promise<void>(resolve=>{release=resolve;}),began=new Promise<void>(resolve=>{entered=resolve;});
++    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},async(_command,args)=>{
++        if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
++        if(args[1]==='location')return {protocol:1,install_dir:install};
++        if(args[1]==='inspect')return {selection:{active:f.digest},approval:{manifest_sha256:f.digest,version:'1.4.0',verification_basis:'trusted_distribution'},
++            executable:path.join(f.source,f.main),launcher:null,control_dir:path.join(install,'control'),payload_verified:true,lifecycle:{explicitly_stopped:true,pending:null}};
++        if(args[1]==='diagnose'){entered();await held;return {};}
++        throw new Error('Explicit Stop cannot admit native lifecycle work');
++    });
++    host.client=()=>{throw new Error('Stopped observation cannot admit health or registry query');};
++    const full=host.discover();
++    try{await began;await assert.rejects(host.discoverForConnection(),/service_explicitly_stopped/);}
++    finally{release();await full.catch(()=>{});await f.cleanup();}
++});
+--- a/packages/vscode/src/test/serviceExtension.test.ts
++++ b/packages/vscode/src/test/serviceExtension.test.ts
+@@ -20,10 +20,13 @@
+     await new ServiceWorkspace(storage,{reviewProject:async()=>registration,registerProject:async()=>registration},()=>true)
+         .register(binding,source,registration.data_root,registration.collection,async()=>true);
+     let discoveries=0,ensures=0,stopped=false,provider:any;const outputShows:Array<[string,boolean]>=[];
++    context.mock.method(RuntimeHost.prototype,'discoverForConnection',function(this:RuntimeHost){return this.discover();});
+     context.mock.method(RuntimeHost.prototype,'discover',async()=>{discoveries++;return {bundle:{},installDir:root,installed:true,location:{},inspection:{
+         selection:{active:binding.runtimeSha256},approval:{manifest_sha256:binding.runtimeSha256,version:'1.4.0',verification_basis:'trusted_distribution'},
+         executable:binding.executable,launcher:binding.launcher,control_dir:binding.controlDir}};});
+     context.mock.method(RuntimeHost.prototype,'ensure',async(explicit?:boolean)=>{ensures++;assert.notEqual(explicit,true);if(stopped)throw new ServiceError('service_explicitly_stopped');return binding;});
++    context.mock.method(RuntimeHost.prototype,'client',()=>({projects:async(_after:unknown,_revision:unknown,_limit:unknown,inactive:boolean)=>({revision:1,cached:true,observed_unix_ms:1,after:null,
++        projects:inactive?[]:[{project:{registration}}]}),dispose(){}}) as any);
+     const disposable={dispose(){}},event=()=>disposable;
+     const stub:any={workspace:{isTrusted:true,workspaceFolders:[{name:'Fixture',uri:{scheme:'file',fsPath:source}}],
+         getConfiguration:()=>({get:(key:string,fallback?:unknown)=>key==='explorer.assistance.enabled'?false:fallback,inspect:(key:string)=>({globalValue:key==='mcp.responseMode'?'full':key==='cli.autoInstall'?false:undefined})}),
+@@ -64,3 +67,44 @@
+         const before=ensures;await assert.rejects(provider.resolveMcpServerDefinition(definitions[0]),/runtime_client_no_longer_authorized/);assert.equal(ensures,before);
+     }finally{extension?.deactivate();loader._load=original;delete require.cache[require.resolve('../serviceExtension')];await fs.rm(root,{recursive:true,force:true});}
+ });
++
++
++test('selected Explorer project is available while other root waits without narrowing workspace MCP scope',{timeout:30000},async context=>{
++    const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-selected-startup-')),source=path.join(root,'first'),other=path.join(root,'second');
++    await fs.mkdir(source);await fs.mkdir(other);const canonical=await fs.realpath(source),otherCanonical=await fs.realpath(other);
++    const values=new Map<string,unknown>(),storage={keys:()=>[...values.keys()],get:<T>(key:string)=>values.get(key) as T|undefined,update:async(key:string,value:unknown)=>{values.set(key,value);}};
++    const binding={installDir:root,controlDir:path.join(root,'control'),executable:path.join(root,'selected'),launcher:path.join(root,'launcher'),runtimeSha256:'ab'.repeat(32),version:'1.8.0',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
++    const registrations=[{...binding,binding:'cd'.repeat(32),root:canonical,data_root:path.join(root,'data'),collection:'first'},
++        {...binding,binding:'ef'.repeat(32),root:otherCanonical,data_root:path.join(root,'data'),collection:'second'}];
++    const workspace=new ServiceWorkspace(storage,{reviewProject:async(_binding,opened)=>registrations[opened===source?0:1],registerProject:async(_binding,review)=>review},()=>true);
++    for(const [index,opened] of [source,other].entries())await workspace.register(binding,opened,registrations[index].data_root,registrations[index].collection,async()=>true);
++    context.mock.method(RuntimeHost.prototype,'discoverForConnection',function(this:RuntimeHost){return this.discover();});
++    context.mock.method(RuntimeHost.prototype,'discover',async()=>({bundle:{},installDir:root,installed:true,location:{},inspection:{selection:{active:binding.runtimeSha256},approval:{manifest_sha256:binding.runtimeSha256,version:binding.version,verification_basis:binding.verificationBasis},executable:binding.executable,launcher:binding.launcher,control_dir:binding.controlDir}}) as any);
++    context.mock.method(RuntimeHost.prototype,'client',()=>({projects:async(_after:unknown,_revision:unknown,_limit:unknown,inactive:boolean)=>({revision:7,cached:true,observed_unix_ms:1,after:null,projects:inactive?[]:registrations.map(registration=>({project:{registration}}))}),dispose(){}}) as any);
++    let release!:()=>void,published!:()=>void,host:any,definitionsChanged=0;
++    const held=new Promise<void>(resolve=>{release=resolve;}),selected=new Promise<void>(resolve=>{published=resolve;});
++    const nativeFs=require('node:fs/promises'),realpath=nativeFs.realpath;
++    context.mock.method(nativeFs,'realpath',async(value:any,...args:any[])=>{if(String(value)===other)await held;return realpath(value,...args);});
++    const disposable={dispose(){}},event=()=>disposable;
++    class Emitter {private listeners:Array<()=>void>=[];event=(listener:()=>void)=>{this.listeners.push(listener);return disposable;};fire(){for(const listener of this.listeners)listener();}dispose(){}}
++    class Workbench {visible=false;onDidChangeVisibility=event;constructor(_context:unknown,value:any){host=value;value.onDidChangeSpecs(()=>{if(value.specs().length===1)published();});}dispose(){}async toggle(){}}
++    const stub:any={workspace:{isTrusted:true,workspaceFolders:[source,other].map((fsPath,index)=>({name:String(index),uri:{scheme:'file',fsPath}})),
++        getConfiguration:()=>({get:(key:string,fallback?:unknown)=>key==='explorer.assistance.enabled'?false:fallback,inspect:(key:string)=>({globalValue:key==='cli.autoInstall'?false:undefined})}),onDidChangeWorkspaceFolders:event,onDidGrantWorkspaceTrust:event,onDidChangeConfiguration:event},
++        window:{createOutputChannel:()=>({appendLine(){},dispose(){}}),createStatusBarItem:()=>({show(){},dispose(){}}),registerWebviewViewProvider:()=>disposable,createTreeView:()=>disposable,onDidChangeActiveTextEditor:event,showWarningMessage:async()=>undefined},
++        commands:{registerCommand:()=>disposable,executeCommand:async()=>{}},lm:{registerMcpServerDefinitionProvider:(name:string,provider:any)=>{if(name==='airk.collections')provider.onDidChangeMcpServerDefinitions(()=>{definitionsChanged++;});return disposable;}},
++        env:{},StatusBarAlignment:{Left:1},EventEmitter:Emitter,TreeItem:class{},Uri:{file:(fsPath:string)=>({fsPath})},McpStdioServerDefinition:class{cwd:unknown;constructor(public label:string,public command:string,public args:string[],public env:unknown,public version:string){}}};
++    const loader=Module as unknown as {_load:(...args:any[])=>any},original=loader._load;let extension:any;
++    loader._load=function(request:string,...args:any[]){return request==='vscode'?stub:request==='./workbenchView'?{WorkbenchView:Workbench}:original.call(this,request,...args);};
++    try{
++        delete require.cache[require.resolve('../serviceExtension')];extension=require('../serviceExtension');
++        const api=await extension.activate({extensionPath:root,extension:{packageJSON:{version:binding.version}},globalState:storage,workspaceState:storage,subscriptions:[]} as any);
++        await selected;assert.equal(host.specs()[0].service.project,registrations[0].binding);
++        assert.equal(definitionsChanged,0,'early UI publication cannot emit a partial MCP definition');
++        let completed=false;const definitions=api.getServerDefinitions().then((value:any)=>{completed=true;return value;});
++        await Promise.resolve();assert.equal(completed,false,'complete workspace scopes still await the other root');
++        release();const result=await definitions;assert.equal(result.length,1);
++        assert.ok(result[0].args.includes('--no-default-project'));
++        assert.ok(result[0].args.includes('--additional-root'));assert.ok(result[0].args.includes(otherCanonical));
++        stub.workspace.isTrusted=false;assert.deepEqual(await api.getServerDefinitions(),[]);
++    }finally{release?.();extension?.deactivate();loader._load=original;delete require.cache[require.resolve('../serviceExtension')];await fs.rm(root,{recursive:true,force:true});}
++});
+--- a/packages/vscode/src/test/serviceWorkspace.test.ts
++++ b/packages/vscode/src/test/serviceWorkspace.test.ts
+@@ -4,7 +4,7 @@
+ import * as fs from 'node:fs/promises';
+ import * as os from 'node:os';
+ import * as path from 'node:path';
+-import { renamedDefaultDataRoot, ServiceWorkspace } from '../serviceWorkspace';
++import { readWorkspaceRegistrations, renamedDefaultDataRoot, ServiceWorkspace } from '../serviceWorkspace';
+ import { ProjectRegistrationReview, RuntimeBinding } from '../serviceBootstrap';
+ 
+ test('saved historical defaults follow the renamed native root while custom and existing locations stay selected',async()=>{
+@@ -124,3 +124,24 @@
+         assert.equal(values.size,0);
+     }finally{await fs.rm(root,{recursive:true,force:true});}
+ });
++
++
++test('early selected UI spec requires complete authoritative observations and preserves removal and ambiguity',async()=>{
++    const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-selected-observation-')),source=path.join(root,'source');await fs.mkdir(source);
++    const binding:RuntimeBinding={installDir:root,controlDir:path.join(root,'control'),runtimeSha256:'ab'.repeat(32),version:'1.8.0',executable:path.join(root,'airk'),launcher:path.join(root,'launcher'),lifecycle:'on-demand',verificationBasis:'trusted_distribution'};
++    const registration={installDir:root,controlDir:binding.controlDir,runtimeSha256:binding.runtimeSha256,root:await fs.realpath(source),data_root:path.join(root,'data'),collection:'fixture',binding:'cd'.repeat(32)};
++    const values=new Map<string,unknown>(),workspace=new ServiceWorkspace({keys:()=>[...values.keys()],get:<T>(key:string)=>values.get(key) as T|undefined,update:async(key,value)=>{values.set(key,value);}},
++        {reviewProject:async()=>registration,registerProject:async()=>registration},()=>true);
++    const observe=(active:typeof registration[],inactive:typeof registration[]=[])=>readWorkspaceRegistrations(binding,async(_after,_revision,removed)=>({revision:9,cached:true,observed_unix_ms:1,after:null,projects:(removed?inactive:active).map(registration=>({project:{registration}}))}));
++    try{
++        await assert.rejects(workspace.selectedObservation(binding,source,{active:[registration],inactive:[]}),/not_authoritative/);
++        const actual=await observe([registration]);const selected=await workspace.selectedObservation(binding,source,actual);
++        assert.equal(selected.kind,'registered');if(selected.kind==='registered')assert.equal(selected.spec.service?.project,registration.binding);
++        assert.ok(Object.isFrozen(actual.active));
++        await assert.rejects(workspace.selectedObservation({...binding,controlDir:path.join(root,'other-control')},source,actual),/not_authoritative/);
++        await assert.rejects(workspace.selectedObservation(binding,source,await observe([registration,{...registration,binding:'ef'.repeat(32)}])),/review_required/);
++        await workspace.register(binding,source,registration.data_root,registration.collection,async()=>true);
++        assert.equal((await workspace.selectedObservation(binding,source,await observe([], [registration]))).kind,'removed','saved receipt cannot override authoritative removal');
++        assert.equal((await workspace.selectedObservation(binding,source,await observe([]))).kind,'missing','saved receipt cannot authorize a missing registration');
++    }finally{await fs.rm(root,{recursive:true,force:true});}
++});

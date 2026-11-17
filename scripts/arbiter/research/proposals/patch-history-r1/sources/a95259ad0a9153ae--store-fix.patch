@@ -1,0 +1,82 @@
+--- a/crates/airk-store/src/service.rs
++++ b/crates/airk-store/src/service.rs
+@@ -167,6 +167,14 @@
+     pub fn identity(&self) -> (airk_core::service::ProjectBinding, Option<u64>) {
+         (self.binding, self.epoch)
+     }
++    /// Compare exact native custody without resolving a new path or implying an admitted epoch.
++    pub(crate) fn matches_registration(
++        &self,
++        control: &Path,
++        binding: airk_core::service::ProjectBinding,
++    ) -> bool {
++        self.binding == binding && self.root == control
++    }
+ }
+ 
+ pub struct ServiceLease {
+--- a/crates/airk-store/src/quota/retired.rs
++++ b/crates/airk-store/src/quota/retired.rs
+@@ -45,7 +45,7 @@
+         mut checkpoint: impl FnMut(SettlementPoint) -> Result<()>,
+     ) -> Result<Self> {
+         ensure!(
+-            lease.identity().0 == registration.binding && lease.root == control,
++            lease.matches_registration(control, registration.binding),
+             "foreign retired collection lease"
+         );
+         registration.validate()?;
+@@ -235,7 +235,8 @@
+     }
+     pub(crate) fn revalidate(&self) -> Result<()> {
+         ensure!(
+-            self.project.identity().0 == self.binding && self.project.root == self.control_path,
++            self.project
++                .matches_registration(&self.control_path, self.binding),
+             "retired project custody changed"
+         );
+         ensure_current_root(&self.root_path)?;
+--- a/crates/airk-store/src/service_catalog_upgrade_recovery.rs
++++ b/crates/airk-store/src/service_catalog_upgrade_recovery.rs
+@@ -750,7 +750,7 @@
+         let fixture = fixture()?;
+         let request = request(&fixture)?;
+         let original = fixture.owner.receipt()?;
+-        let backup = fixture.owner.qualified_backup(&original)?.clone();
++        let backup = serde_json::to_value(fixture.owner.qualified_backup(&original)?)?;
+         let before_db = fs::read(fixture.owner.control().join(DATABASE))?;
+         let before_intent = fs::read(fixture.owner.control().join(INTENT))?;
+         let preview = fixture.owner.preview_legacy_retirement(&request)?;
+@@ -778,7 +778,10 @@
+         assert_eq!(after.plan, original.plan);
+         assert_eq!(after.plan_digest, original.plan_digest);
+         assert_eq!(after.legacy_data_digest, original.legacy_data_digest);
+-        assert_eq!(fixture.owner.qualified_backup(&after)?, &backup);
++        assert_eq!(
++            serde_json::to_value(fixture.owner.qualified_backup(&after)?)?,
++            backup
++        );
+         assert_eq!(fs::read(fixture.owner.control().join(DATABASE))?, before_db);
+         assert_eq!(fs::read(&fixture.b_sentinel)?, b"healthy original B bytes");
+         assert!(!Path::new(&fixture.a.root).exists() && !Path::new(&fixture.a.data_root).exists());
+@@ -939,7 +942,7 @@
+         let (request, host) = authorize_and_qualify(&fixture)?;
+         let original = fixture.owner.receipt()?;
+         let original_plan = serde_json::to_vec(&original.plan)?;
+-        let backup = fixture.owner.qualified_backup(&original)?.clone();
++        let backup = serde_json::to_value(fixture.owner.qualified_backup(&original)?)?;
+         let control = fixture.owner.control().to_path_buf();
+         assert!(
+             terminal::settle_owned(&fixture.owner, host, |stage| {
+@@ -964,7 +967,10 @@
+         assert_eq!(completed.stage, UpgradeStage::Settled);
+         assert_eq!(serde_json::to_vec(&completed.plan)?, original_plan);
+         assert_eq!(completed.legacy_data_digest, original.legacy_data_digest);
+-        assert_eq!(fixture.owner.qualified_backup(&completed)?, &backup);
++        assert_eq!(
++            serde_json::to_value(fixture.owner.qualified_backup(&completed)?)?,
++            backup
++        );
+         let result =
+             legacy_retirement_receipt(&control, &request)?.context("terminal receipt absent")?;
+         assert_eq!(result.cleanup, UpgradeRetirementCleanup::Pending);

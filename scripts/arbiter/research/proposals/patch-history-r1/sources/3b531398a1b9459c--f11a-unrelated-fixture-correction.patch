@@ -1,0 +1,41 @@
+--- a/crates/airk-store/src/service_background.rs
++++ b/crates/airk-store/src/service_background.rs
+@@ -292,7 +292,7 @@
+         registry.pause(project, false)?;
+         let due = registry.due_background_jobs(None, 1)?[0];
+         assert_eq!(due.2, JobKind::Index);
+-        let foreign = registry.enqueue_internal(project, nonce(2), JobKind::Verify, nonce(4))?;
++        let foreign = registry.enqueue_internal(project, nonce(2), JobKind::Inspect, nonce(4))?;
+         assert!(
+             registry
+                 .enqueue_background_job(project, due.1, due.2, nonce(2), nonce(5))
+--- a/crates/airk-store/src/service_freshness.rs
++++ b/crates/airk-store/src/service_freshness.rs
+@@ -182,13 +182,13 @@
+         let failed = registry.source_freshness(project, 104)?;
+         assert_eq!(failed.state, FreshnessState::Failed);
+         assert_eq!(failed.error.as_deref(), Some("source_unavailable"));
+-        let verify = registry.enqueue_internal(project, nonce(1), JobKind::Verify, nonce(3))?;
+-        registry
+-            .claim_job_id(&lease, verify.id)?
+-            .context("verify not claimable")?;
++        let inspection = registry.enqueue_internal(project, nonce(1), JobKind::Inspect, nonce(3))?;
++        registry
++            .claim_job_id(&lease, inspection.id)?
++            .context("inspection not claimable")?;
+         registry.complete_job_at(
+             &lease,
+-            verify.id,
++            inspection.id,
+             JobOutcome::Succeeded { revision: None },
+             105,
+         )?;
+@@ -297,7 +297,7 @@
+                     code: "source_unavailable".into(),
+                 },
+             ),
+-            (4, JobKind::Verify, JobOutcome::Succeeded { revision: None }),
++            (4, JobKind::Inspect, JobOutcome::Succeeded { revision: None }),
+         ] {
+             let job =
+                 registry.enqueue_internal(project.binding, nonce(1), kind, nonce(sequence))?;

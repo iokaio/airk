@@ -1,0 +1,125 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Native-only refresh admission and existing Configure-job completion.
+use airk_core::{
+    catalog_management::{CatalogEntity,CatalogItem},
+    catalog_refresh::{RefreshSelection,RefreshMode},
+    identity::Incarnation,
+    service::{ProjectBinding,RequestKey,ScopedConnectRequest,JobRecord,JobOutcome},
+    service_configuration::{ConfigurationRequest,ProjectConfiguration},
+};
+use airk_store::service::{ProjectLease,registry::ServiceRegistry};
+use anyhow::{Context,Result,ensure};
+
+fn selected(request:&ConfigurationRequest)->Result<&RefreshSelection> {
+    request.validate()?;
+    ensure!(!request.prepare,"refresh never defers native preparation");
+    let ProjectConfiguration::RefreshReferences {selection}=&request.configuration else {
+        anyhow::bail!("native refresh selection missing");
+    };
+    ensure!(selection.members.len()==1,"native refresh currently admits one exact selected member");
+    Ok(selection)
+}
+
+/// Reuse canonical authenticated host/grant/catalog/backing construction.
+/// This creates no grant, default preference, bearer credential or worker.
+fn qualify(
+    registry:&mut ServiceRegistry,
+    project:ProjectBinding,
+    request:&ConfigurationRequest,
+)->Result<airk_kernel::Kernel> {
+    let selection=selected(request)?;
+    let member=&selection.members[0];
+    let scoped=ScopedConnectRequest {schema:1,
+        context_key:selection.selection.context_key,namespace:selection.selection.namespace,
+        expected_catalog_revision:selection.selection.expected_catalog_revision,
+        grant_id:selection.selection.grant_id,expected_grant_revision:selection.selection.expected_grant_revision,
+        index_id:member.index_id,project_ids:selection.selection.project_ids.clone()};
+    let native=crate::catalog_coordinator::native_scoped_selection(registry,&scoped)?;
+    ensure!(native.backing==project,"refresh target differs from selected native backing");
+    let authority=crate::catalog_authority::build_catalog_read_authority(registry,&native)?;
+    let detail=registry.catalog_detail(&CatalogEntity::Index {id:member.index_id},Some(scoped.expected_catalog_revision))?;
+    let Some(CatalogItem::Index(index))=detail.item else {anyhow::bail!("refresh index unavailable")};
+    ensure!(index.backing.binding==project,"refresh backing changed");
+    let kernel=airk_kernel::Kernel::open_existing_service_observer(&index.backing)?;
+    let scoped_kernel=kernel.with_scoped_reads(authority.clone())?;
+    // Partial grants cannot authorize a broader fallback. Root/alias/profile
+    // metadata is read only after canonical full-index metadata admission.
+    scoped_kernel.qualify_reference_refresh(selection,&authority.sources)?;
+    kernel.validate_service_configuration(project,request)?;
+    let observed=kernel.inspect_service(project)?;
+    ensure!(observed.source_state==airk_core::service_inspection::SourceState::Available
+        && observed.recovery_required==Some(false),
+        "refresh sources/recovery are not ready; preserve publication and review again");
+    Ok(kernel)
+}
+
+pub(crate) fn admit(
+    registry:&mut ServiceRegistry,
+    project:ProjectBinding,
+    caller:Incarnation,
+    key:&RequestKey,
+    request:&ConfigurationRequest,
+)->Result<JobRecord> {
+    let selection=selected(request)?;
+    ensure!(selection.caller==caller && selection.key==*key,"refresh exact caller/key binding changed");
+    // Exact already-accepted work remains a dated receipt after later catalog
+    // changes. Store compares the complete immutable request before returning.
+    if registry.request_receipt(caller,key)?.0.is_none() {
+        qualify(registry,project,request)?;
+    }
+    registry.enqueue_native_reference_refresh(project,caller,key,request,crate::runtime_pair::engine_identity()?)
+}
+
+/// Exact saved acknowledgment, independent of current/superseding grants,
+/// settings and engine. Missing/pruned evidence is unknown, never replay leave.
+pub(crate) fn receipt(
+    registry:&ServiceRegistry,caller:Incarnation,key:&RequestKey,
+)->Result<airk_core::service::ControlResponse> {
+    let (job,expired)=registry.request_receipt(caller,key)?;
+    let (configuration,result)=if let Some(job)=&job {
+        let work=registry.configuration_work(job.id)?;
+        if let Some(work)=&work {
+            let selection=selected(&work.request)?;
+            ensure!(selection.caller==caller && selection.key==*key,
+                "saved refresh receipt belongs to a different intent");
+        }
+        ensure!(job.kind==airk_core::service::JobKind::Configure,"saved key is not a refresh configuration job");
+        let result=if work.is_some() {registry.configuration_result(job.id)?} else {None};
+        (work,result)
+    } else {(None,None)};
+    Ok(airk_core::service::ControlResponse::ReferenceRefreshReceipt {job,configuration,result,expired})
+}
+
+pub(crate) fn execute(
+    kernel:&airk_kernel::Kernel,
+    registry:&mut ServiceRegistry,
+    lease:&ProjectLease,
+    job:airk_core::identity::Sha256Digest,
+)->Result<JobOutcome> {
+    let project=registry.job(job)?.project;
+    let work=registry.configuration_work(job)?.context("accepted refresh work missing")?;
+    ensure!(work.engine==crate::runtime_pair::engine_identity()?,"refresh engine changed; new review required");
+    let selection=selected(&work.request)?;
+    // A queued operation rechecks current grant/context/backing before its
+    // first effect; a changed grant does not silently expand permission.
+    qualify(registry,project,&work.request)?;
+    let before=selection.members[0].original_publication;
+    ensure!(selection.mode==RefreshMode::FullReconcileReviewed,"selected refresh requires authenticated control provenance");
+    let report=kernel.refresh_service_references(project,&work.request)?;
+    let updated=kernel.refresh_service_snapshot()?;
+    let after=updated.status_summary()?;
+    let publication:airk_core::identity::RevisionToken=serde_json::from_value(after["publication"]["token"].clone())?;
+    // Complete native output is saved or the job remains failed/unknown. Never
+    // truncate to fit the result slot or attach new hashes to original snippets.
+    let result=serde_json::json!({"schema":"airk.reference-refresh-result/1",
+        "selection_digest":selection.identity()?,"original_query_digest":selection.original_query_digest,
+        "effective_mode":selection.mode,"effective_scope":"whole_index_explicitly_reviewed",
+        "before_publication":before,"after_publication":publication,
+        "report":report,"status":after,"requery_executed":false});
+    airk_core::index_catalog::encoded_size(&result,airk_core::service_configuration::MAX_CONFIGURATION_BYTES)?;
+    registry.record_configuration_result(lease,job,&result)?;
+    let state=after["semantic_readiness"]["state"].as_str();
+    registry.set_background_pending(lease,airk_core::service::JobKind::Vectors,
+        matches!(state,Some("pending"|"partial")))?;
+    Ok(JobOutcome::Succeeded {revision:Some(publication)})
+}

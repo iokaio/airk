@@ -1,0 +1,261 @@
+--- a/crates/airk-cli/tests/combined_reads.rs
++++ b/crates/airk-cli/tests/combined_reads.rs
+@@ -1438,6 +1438,21 @@
+         (
+             "airk_document_facts",
+             json!({"kind":"section","limit":4,"max_bytes":4096}),
++            false,
++        ),
++        (
++            "airk_symbols",
++            json!({"language":"klingon","limit":4,"max_bytes":4096}),
++            false,
++        ),
++        (
++            "airk_code_facts",
++            json!({"kind":"bogus_kind","limit":4,"max_bytes":4096}),
++            false,
++        ),
++        (
++            "airk_document_facts",
++            json!({"kind":"bogus_kind","limit":4,"max_bytes":4096}),
+             false,
+         ),
+         (
+--- a/crates/airk-core/src/discovery.rs
++++ b/crates/airk-core/src/discovery.rs
+@@ -52,6 +52,10 @@
+ /// The budget counts each complete serialized record; envelope/array framing is additional.
+ #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+ pub struct DiscoveryPage {
++    /// Qualified observations about open exact labels, not a global catalog or
++    /// a claim that an unobserved producer label is unsupported.
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub filter_observations: Vec<FilterObservation>,
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub cursor: Option<String>,
+     /// Minimum budget for the next record when no record could be returned.
+--- a/crates/airk-core/src/guidance.rs
++++ b/crates/airk-core/src/guidance.rs
+@@ -202,6 +202,21 @@
+         advice.add(Reason::Stale,"source_work_watermark","freshness.requested_watermark/completed_watermark","Observed source work has not caught up. This is a work-watermark observation, not proof that any particular cited file differs on disk.",NextRead::InspectSourceStatus);
+     }
+     let page = get("page");
++    if get("filter_observations")
++        .or_else(|| page.and_then(|value| value.get("filter_observations")))
++        .and_then(Value::as_array)
++        .is_some_and(|rows| !rows.is_empty())
++    {
++        advice.add(Reason::Unknown,"requested_filters","filter_observations",
++            "The exact filter labels were not observed in this complete selected query. Check their spelling and file_info language/profile labels. Valid absent native and retained producer labels remain valid; this is not a global unsupported-language finding.",NextRead::InspectFileInfo);
++    }
++    if get("truncation_reasons")
++        .and_then(Value::as_array)
++        .is_some_and(|rows| !rows.is_empty())
++    {
++        advice.add(Reason::Truncated,"relationship_traversal","truncation_reasons/bounds",
++            "This bounded relationship traversal reports the actual limits or incomplete navigation it observed. There is no graph continuation cursor. Narrow path_prefix or the exact written target, reduce hops, or explicitly increase result/byte budgets within the reported bounds. Missing edges do not prove absence.",NextRead::ReadSelectedPassage);
++    }
+     let cursor = [get("cursor"), page.and_then(|v| v.get("cursor"))]
+         .into_iter()
+         .flatten()
+--- a/crates/airk-mcp/src/scoped_observation_tests.rs
++++ b/crates/airk-mcp/src/scoped_observation_tests.rs
+@@ -139,6 +139,32 @@
+         payload(&parsed)?["steps"][0]["result"]["scope_observation"],
+         expected
+     );
++    for (tool, args) in [
++        ("symbols", json!({"language":"klingon"})),
++        ("code_facts", json!({"kind":"bogus_kind"})),
++        ("document_facts", json!({"kind":"bogus_kind"})),
++    ] {
++        let mut wire_args = args.as_object().unwrap().clone();
++        wire_args.insert("verification".into(), json!("off"));
++        wire_args.insert("response_mode".into(), json!("full"));
++        let actual = scoped.call(format!("airk_{tool}"), wire_args).await?;
++        let body = payload(&actual)?;
++        assert_ne!(actual.is_error, Some(true), "{body}");
++        assert!(
++            body["filter_observations"]
++                .as_array()
++                .is_some_and(|rows| !rows.is_empty()),
++            "{body}"
++        );
++        assert!(body.get("cursor").is_none());
++        let plan = json!({"schema":"airk.parse.request/1","mode":"execute","verification":"off",
++            "plan":{"steps":[{"id":"filtered","tool":tool,"args":args}]},"output":{"view":"raw","max_bytes":32768}});
++        let direct = native.evidence_plan(serde_json::from_value(plan)?)?;
++        assert_eq!(
++            direct.steps[0].result.as_ref().unwrap()["filter_observations"],
++            body["filter_observations"]
++        );
++    }
+     let help = scoped
+         .call(
+             "airk_help".into(),
+--- a/crates/airk-store/src/current/discovery.rs
++++ b/crates/airk-store/src/current/discovery.rs
+@@ -209,6 +209,15 @@
+         fact_options: &FactDiscoveryOptions,
+     ) -> Result<CurrentFactPage> {
+         airk_core::validate_budget(query.limit, query.max_bytes)?;
++        for (field, value) in [
++            ("kind", query.kind.as_deref()),
++            ("language", query.language.as_deref()),
++        ] {
++            if value.is_some_and(|value| value.is_empty() || value.len() > 128) {
++                return Err(airk_core::read_arguments::ReadArgumentError::new("invalid_filter",field,
++                    format!("{field} must contain 1..128 UTF-8 bytes; native and retained producer labels are matched exactly")).into());
++            }
++        }
+         ensure!(
+             fact_options.name_match.is_none()
+                 || query.name.as_ref().is_some_and(|name| !name.is_empty()),
+@@ -281,7 +290,9 @@
+         let exact_name = fact_options
+             .name_match
+             .map_or(query.exact_name, |mode| mode == NameMatch::Exact);
+-        let lookup = if let Some(name) = query.name.as_deref().filter(|_| exact_name) {
++        let lookup = if let Some(language) = query.language.as_deref() {
++            Lookup::Language(language)
++        } else if let Some(name) = query.name.as_deref().filter(|_| exact_name) {
+             if self.terminal_call_postings_complete()?
+                 || query.kind.as_deref().is_some_and(|kind| kind != "call")
+             {
+@@ -303,20 +314,25 @@
+         let mut imported_paths = projected_import
+             .as_ref()
+             .map(|projection| {
+-                self.observe_private_integrity(projection.lookup_paths(
+-                    Lookup::Files,
+-                    &query.path_prefix,
+-                    if query.path_exact {
+-                        None
+-                    } else {
+-                        after.as_ref().map(|key| key.path.as_str())
+-                    },
+-                    if query.path_exact {
+-                        1
+-                    } else {
+-                        MAX_FILES_PER_PAGE + 1
+-                    },
+-                ))
++                self.observe_private_integrity(
++                    projection.lookup_paths(
++                        query
++                            .language
++                            .as_deref()
++                            .map_or(Lookup::Files, Lookup::Language),
++                        &query.path_prefix,
++                        if query.path_exact {
++                            None
++                        } else {
++                            after.as_ref().map(|key| key.path.as_str())
++                        },
++                        if query.path_exact {
++                            1
++                        } else {
++                            MAX_FILES_PER_PAGE + 1
++                        },
++                    ),
++                )
+             })
+             .transpose()?
+             .unwrap_or_default();
+@@ -353,15 +369,20 @@
+             (page.paths, page.next_after.is_some())
+         };
+         if !query.path_exact {
+-            paths.extend(
+-                imported_facts
+-                    .keys()
+-                    .filter(|path| {
+-                        path.starts_with(&query.path_prefix)
+-                            && after.as_ref().is_none_or(|key| *path > &key.path)
+-                    })
+-                    .cloned(),
+-            );
++            for path in imported_facts.keys().filter(|path| {
++                path.starts_with(&query.path_prefix)
++                    && after.as_ref().is_none_or(|key| *path > &key.path)
++            }) {
++                let language_matches = match query.language.as_deref() {
++                    None => true,
++                    Some(language) => self
++                        .artifact(path)?
++                        .is_some_and(|artifact| artifact.language == language),
++                };
++                if language_matches {
++                    paths.push(path.clone());
++                }
++            }
+             paths.extend(
+                 imported_paths
+                     .iter()
+@@ -411,6 +432,18 @@
+             let compact = self
+                 .artifact(&path)?
+                 .context("current fact candidate artifact missing")?;
++            if query
++                .language
++                .as_ref()
++                .is_some_and(|language| language != &compact.language)
++            {
++                last = Some(DiscoveryKey {
++                    path,
++                    ordinal: FILE_END,
++                    ..Default::default()
++                });
++                continue;
++            }
+             let retained = compact
+                 .retained
+                 .as_ref()
+@@ -649,6 +682,18 @@
+                 .map(|key| discovery::encode(&binding, key))
+                 .transpose()?;
+         }
++        if after.is_none() && !response.truncated && matched == 0 {
++            for (field, value) in [
++                ("kind", query.kind.as_deref()),
++                ("language", query.language.as_deref()),
++            ] {
++                if let Some(value) = value {
++                    response.page.filter_observations.push(
++                        airk_core::discovery::FilterObservation::no_matching_records(field, value),
++                    );
++                }
++            }
++        }
+         if fact_options.include_count {
+             let complete = after.is_none() && !response.truncated;
+             response.page.match_count = Some(MatchCount {
+--- a/crates/airk-store/src/current/tests.rs
++++ b/crates/airk-store/src/current/tests.rs
+@@ -328,13 +328,24 @@
+     facts: Vec<airk_core::extraction::LocalFact>,
+     capture_bytes: u64,
+ ) -> Result<CapturedInput> {
++    retained_input_with_facts_language_budget(fixture, path, text, facts, capture_bytes, "text")
++}
++
++fn retained_input_with_facts_language_budget(
++    fixture: &Fixture,
++    path: &str,
++    text: &str,
++    facts: Vec<airk_core::extraction::LocalFact>,
++    capture_bytes: u64,
++    language: &str,
++) -> Result<CapturedInput> {
+     use airk_core::extraction::{ExtractionPayload, ExtractionProfile, LocalChunk, LocalSpan};
+     use std::collections::BTreeMap;
+     let profile = ExtractionProfile {
+         contract_version: 1,
+         adapter_id: "text".into(),
+         adapter_version: "current-test/1".into(),
+-        language: "text".into(),
++        language: language.into(),
+         dialect: None,
+         grammar_identity: None,
+         mapping_version: 1,

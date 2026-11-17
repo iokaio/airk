@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: Apache-2.0
+#[derive(Default)]
+struct SourceBackendCache {
+    latest_sequence: Option<u64>,
+    current: Option<((ProjectBinding, airk_core::identity::Incarnation), Arc<crate::project_client::Backend>)>,
+}
+impl SourceBackendCache {
+    fn admit_sequence(&mut self, sequence: u64) -> bool {
+        if self.latest_sequence.is_some_and(|latest| sequence < latest) { return false; }
+        self.latest_sequence = Some(sequence);
+        true
+    }
+}
+struct RootNative {
+    scope: crate::service_frontend::RootScope,
+    control: PathBuf,
+    install: PathBuf,
+    ready: Arc<RuntimeReadiness>,
+    client: std::sync::Mutex<airk_core::usage::ClientFamily>,
+    sequence: std::sync::atomic::AtomicU64,
+    backend: tokio::sync::Mutex<SourceBackendCache>,
+}
+impl RemoteTools for RootNative {
+    fn client(&self, client: airk_core::usage::ClientFamily) {
+        *self.client.lock().unwrap() = client;
+    }
+    fn call(&self, tool: String, arguments: Map<String, Value>) -> RemoteFuture<'_> {
+        Box::pin(async move {
+            self.ready.ensure(&self.install, &self.control).await?;
+            let sequence = self.sequence.fetch_update(
+                std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed,
+                |value| value.checked_add(1),
+            ).map_err(|_| anyhow::anyhow!("source observation sequence exhausted"))?;
+            let control = self.control.clone();
+            let scope = self.scope.clone();
+            let observed = control.clone();
+            let observed = tokio::task::spawn_blocking(move || scope.observe(&observed)).await??;
+            let mut cached = self.backend.lock().await;
+            // An older snapshot cannot resurrect a backend/receipt namespace
+            // after a later request already admitted its replacement.
+            if !cached.admit_sequence(sequence) {
+                return Ok(crate::project_client::source_scope_superseded());
+            }
+            let registration = match observed.resolution {
+                crate::service_frontend::RootResolution::Registered(registration) => registration,
+                other => {
+                    cached.current = None;
+                    let (code, state, message) = root_failure(other);
+                    return Ok(if tool == "airk_status" {
+                        airk_mcp::unified::success(
+                            json!({"version":env!("CARGO_PKG_VERSION"),"health":"needs_attention","index_state":"unavailable","files":null,"chunks":null,"publication":null,"registration_state":state,"source_root":self.scope.root,"index_error":{"code":code,"message":message}}),
+                        )
+                    } else { airk_mcp::unified::failure(code, message) });
+                }
+            };
+            let fence = observed.fence.context("registered source observation has no fence")?;
+            ensure!(fence.project == registration.binding, "crossed source observation");
+            let key = (registration.binding, fence.namespace);
+            if cached.current.as_ref().is_none_or(|(current, _)| *current != key) {
+                cached.current = Some((key, crate::project_client::source_tools(control, registration.binding)));
+            }
+            let backend = cached.current.as_ref().unwrap().1.clone();
+            drop(cached);
+            backend.client(*self.client.lock().unwrap());
+            backend.call_observed(tool, arguments, fence).await
+        })
+    }
+}

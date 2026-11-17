@@ -1,0 +1,139 @@
+--- crates/airk-service/src/service_runtime/evaluation_fixture_tests.rs
++++ crates/airk-service/src/service_runtime/evaluation_fixture_tests.rs
+@@ -18,6 +18,7 @@
+ };
+ 
+ mod execution_observer;
++mod restart;
+ mod warm_journal;
+ 
+ const LIMIT: usize = 1024 * 1024;
+@@ -324,8 +325,21 @@
+         &parent_pin,
+         work.file_name().context("private work name missing")?,
+     )?;
+-    let control = work.join("control");
+-    let _control_pin = crate::ipc::endpoint::create_root_at(&work_pin, OsStr::new("control"))?;
++    let restart = restart::from_env(expected, &prepared)?;
++    let control = restart
++        .as_ref()
++        .map_or_else(|| work.join("control"), |saved| saved.control.clone());
++    let _control_pin = if restart.is_none() {
++        Some(crate::ipc::endpoint::create_root_at(
++            &work_pin,
++            OsStr::new("control"),
++        )?)
++    } else {
++        None
++    };
++    if let Some(saved) = &restart {
++        write(&work, "restart-owner.json", saved)?;
++    }
+     crate::ipc::private_record::write_private(&work, "inputs.json", &inputs, LIMIT, false)?;
+     for (index, entry) in prepared.iter().enumerate() {
+         crate::ipc::private_record::write_private(
+@@ -340,7 +354,11 @@
+     // Use the actual first-start transaction, actual engine identity and real
+     // activation/readiness producer; do not seed catalog rows or fake I4.
+     let lease = airk_store::service::ServiceLease::acquire(&control)?;
+-    let lease = first_start::ensure_catalog(lease)?;
++    let lease = if restart.is_none() {
++        first_start::ensure_catalog(lease)?
++    } else {
++        lease
++    };
+     drop(lease);
+     let prepared = Arc::new(prepared);
+     let context_observer = match std::env::var("AIRK_SELECTED_CONTEXT_CAL_OBSERVER") {
+@@ -356,6 +374,22 @@
+     let mut warm_recorder = warm_journal::Recorder::from_env(&work)?;
+     let warm_observer = warm_recorder.as_ref().map(|recorder| recorder.observer());
+     let warm_observer_id = warm_recorder.as_ref().map(|recorder| recorder.id());
++    let restart_guard: Option<EvaluationStartupGuard> = restart.as_ref().map(|saved| {
++        let expected = saved.configuration.clone();
++        Box::new(move |lease: &Arc<airk_store::service::ServiceLease>| {
++            EvaluationOwner::verify_restart_settled(lease)?;
++            let store = airk_store::service::arbiter::ConfigurationStore::open(
++                lease.clone(),
++                expected.installation,
++                expected.catalog,
++            )?;
++            ensure!(
++                store.load()? == expected,
++                "Restart configuration changed before supervisor startup"
++            );
++            Ok(())
++        }) as EvaluationStartupGuard
++    });
+     let source = prepared.clone();
+     let (seeded, seed_ready) = tokio::sync::oneshot::channel();
+     let factory: EvaluationFactory = Box::new(move |lease, gate| {
+@@ -363,12 +397,25 @@
+             .catalog_clock()
+             .context("actual fixture catalog clock missing")?
+             .namespace;
+-        let mut owner = EvaluationOwner::new(
+-            lease,
+-            gate,
+-            source.iter().map(|entry| entry.profile.clone()).collect(),
+-        )?;
+-        for entry in source.iter() {
++        let mut owner = if let Some(saved) = &restart {
++            ensure!(
++                namespace == saved.configuration.catalog,
++                "Restart catalog namespace changed"
++            );
++            EvaluationOwner::reopen_same_configuration(
++                lease,
++                gate,
++                source.iter().map(|entry| entry.profile.clone()).collect(),
++                &saved.configuration,
++            )?
++        } else {
++            EvaluationOwner::new(
++                lease,
++                gate,
++                source.iter().map(|entry| entry.profile.clone()).collect(),
++            )?
++        };
++        for entry in source.iter().filter(|_| restart.is_none()) {
+             owner.seed(entry.profile.manifest, &mut |asset| {
+                 entry
+                     .sources
+@@ -381,7 +428,11 @@
+         ensure!(
+             {
+                 let configuration = owner.configuration()?;
+-                !configuration.result().focus.enabled && !configuration.result().context.enabled
++                restart
++                    .as_ref()
++                    .is_some_and(|saved| configuration.result() == &saved.configuration)
++                    || (!configuration.result().focus.enabled
++                        && !configuration.result().context.enabled)
+             },
+             "private fixture must start disabled"
+         );
+@@ -400,7 +451,13 @@
+         Ok(owner)
+     });
+     let root = control.clone();
+-    let mut service = tokio::spawn(async move { serve_evaluation_fixture(&root, factory).await });
++    let mut service = tokio::spawn(async move {
++        if let Some(guard) = restart_guard {
++            serve_restarted_evaluation_fixture(&root, factory, guard).await
++        } else {
++            serve_evaluation_fixture(&root, factory).await
++        }
++    });
+     let mut observed_service_exit = false;
+     let startup = async {
+         let namespace = tokio::select! {
+@@ -1015,7 +1072,7 @@
+         ready.schema == "airk.private-arbiter-fixture/1"
+             && ready.evaluation
+             && !ready.release_qualified
+-            && ready.control_root == work.join("control"),
++            && restart::matches_control(&work, &ready)?,
+         "actual private fixture binding differs"
+     );
+     let current = crate::ipc::control::request_once(

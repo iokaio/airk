@@ -1,0 +1,3033 @@
+--- /dev/null
++++ b/crates/airk-host/src/gpu_runtime/CONTRACT.md
+@@ -0,0 +1,20 @@
++# Native installed CUDA admission adapter
++
++The adapter derives the optional runtime root from the actual native image
++parent; manifest name is airk-cuda-runtime.json and provider DLLs are siblings.
++It accepts no client/config-supplied mapping. Explicit root/manifest arguments
++must equal those derived locations before the Retrieval bridge runs.
++
++admit takes the actual Arc<ServiceLease>, original Instant deadline and an
++already-entered existing native ServiceComputeScope. It starts no second
++inference owner or service. Retrieval retains the real lease; fields/hashes or
++an advisory Core decision never stand in for it. CPU paths do not call this
++module and need no optional GPU DLLs. Absent compiled runtime approval, absent
++final-placement export or absent native CUDA capability returns unavailable.
++
++Retrieval's cuda/CONTRACT owns held file/ACL/PE/hash/driver/module custody,
++compiled runtime source approval, same-core provider dispatch, device capacity,
++actual synchronization and final-placement observations. The public path tuple
++is descriptive data only. No installer/package/1.9 qualification is claimed;
++actual same-build closure, native optional-dependency absence checks, model
++numerics/resources, consent/fallback, lifecycle and transport gates remain.
+--- /dev/null
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/CONTRACT.md
+@@ -0,0 +1,104 @@
++# Native CUDA runtime custody and selected scorer
++
++This additive owner is enabled only by gpu-cuda on Windows x64. CPU open and
++MiniLM do not enumerate adapters or open optional DLLs. One CUDA-capable static
++ORT1.30 core serves both CPU and CUDA. Loading another onnxruntime core refuses.
++
++RuntimeManifest/1 is Rust-owned authenticated build input, not a Core permit.
++It describes the successful producer receipt, exact static build, payload DLL
++bytes/import+delay-import closure/order and an explicit System32 import set.
++Only the SHA compiled as AIRK_APPROVED_CUDA_MANIFEST_SHA256 and static producer
++SHA compiled as AIRK_STATIC_CUDA_BUILD_SHA256 admit it. Neither variable has a
++default. Root may bind those only after reviewing the genuine successful C++
++producer, PE census and same-source static/provider outputs. No available,
++qualified or approved JSON boolean grants authority. An absent pin refuses GPU.
++The native assembly factory emits unapproved observations only; it cannot add
++compiled authority. No Python/TypeScript runtime DTO mirror is introduced.
++
++Host's safe adapter retains the actual Arc<ServiceLease>. Its only unsafe
++Retrieval bridge requires that exact lease and an already-entered ordinary
++ServiceComputeScope. No client descriptor, advisory selection or scalar receipt
++constructs a runtime/device/capacity witness. Witnesses have private fields and
++no Deserialize implementation. Module/file custody may remain process-global
++because ORT's static provider bridge retains provider function pointers; the
++service lease itself is not made process-global. Device contexts and service
++charges remain owner-held through real completion, synchronization and teardown.
++
++Payload directories/files are opened no-follow with original ancestors pinned.
++Actual held-handle DACL/owner checks precede execution; payloads are human-owned,
++only the owner/SYSTEM/Administrators may receive access. Every DLL is held with
++read sharing alone, stream-hashed before loading and rechecked afterward. Native
++PE64 imports/delay-imports must exactly match the admitted manifest and resolve
++only to those authenticated payloads or explicit System32 imports. Loading uses
++absolute paths and DLL_LOAD_DIR|SYSTEM32 only; no PATH/cwd/user DLL discovery or
++diagnostic recursive probing. Any already-loaded GPU/core basename outside its
++expected held object refuses. Loaded paths and identities are reconciled after
++each load and before calls. The driver is the native System32/nvcuda.dll only,
++non-writable by untrusted principals and trusted by held-file WinVerifyTrust.
++
++Native driver calls observe API/driver version, every adapter UUID, CC, total
++VRAM and current free VRAM. Context-scoped queries/synchronization use the exact
++retained device primary context and restore the caller context. An observed
++adapter/epoch is not model qualification. Missing driver, unknown state, changed
++module/driver/adapter identity or failed synchronization refuses and poisons the
++witness. No successful receipt is synthesized from optional library presence.
++
++Cold-load claims reserve an explicit cold peak plus headroom against current
++free VRAM and other not-yet-spent claims. After actual session loading and device
++synchronization that claim ends: current free VRAM already includes resident
++allocations. Warm work reserves only separately declared/measured incremental
++workspace plus headroom. It never subtracts a full model peak again atop its
++already-resident allocation. Approved phase requirements are exact-variant
++native qualification inputs, while test-support probe bounds remain explicitly
++unqualified. Arena limits are not total VRAM hard limits or peak measurements.
++The external owning actor/qualification observer still enforces actual peaks.
++
++FP32 CUDA sessions bind actual G1 DeviceExecution, runtime/compiled policy and
++graph identity, use CUDA error_on_failure, TF32off and no CPU provider plus
++session.disable_cpu_ep_fallback=1. BoundedHybrid and FP16 remain refused in this
++first implementation. Complete actual final SessionState placement plus kernel/profile proof is
++required; verbose logs or API24 basic/minimal maps cannot substitute. The
++AIRK-only same-TU C API extension receives Session's public AsPointer, checks
++the exact same OrtApiBase and walks final GraphViewer nodes plus child
++SessionStates through the owning public accessors. It shares the same static
++core and uses no guessed vtable offset, weighted save or second ORT core.
++
++GPU score requires the caller's original Instant deadline through
++score_with_deadline; legacy score is CPU-only. Every run result, including an
++error, is followed by actual device synchronization before claim release or
++CPU fallback. Deadline expiry never creates a new budget. A failed wait poisons
++and retains the outstanding claim; the owning actor must retain the resident,
++host charge and service lease until actual teardown settles or the process ends.
++A late successful wait may prove settlement while still returning a timeout.
++No new release capability or G4 qualification is claimed by this module.
++
++The first compiled compatibility policy is Windows x64 SM86, driver API>=12080.
++A later driver image/API or adapter UUID requires fresh exact variant evidence;
++compiled qualified fits pin all three actual numerical/resource/placement
++records distinctly, plus the adapter/driver, immutable execution and measured
++host warm-extra requirement. Missing fit/evidence yields no qualified GPU.
++Zero incremental bytes are permitted only as explicit measured/declared values;
++absence is not zero. Headroom remains explicit and concurrent claims preserve
++the largest outstanding headroom. Runtime DLLs and manifest are direct children
++of the native image directory, as required by the hardened legacy provider
++loader. Native System32 hardlinks may be legitimate; private payloads require
++one link. Failed partial module loading retains held files and refuses reuse
++until process restart. A failed primary-context release likewise retains the
++real service lease and poisons the GPU runtime rather than inventing cleanup.
++
++PE imports use a shared bounded metadata reader: at most1MiB headers and1MiB
++per import directory, not multi-GiB DLL copies before host-model admission.
++Native hashed bytes remain streamed under the original deadline. Before any
++optional GPU mapping, the process DLL default search is restricted to the
++native application directory and System32, so later dependency-internal basename
++loads do not reintroduce cwd/PATH. This is process-lifetime hardening, not a
++system/user environment edit, and requires affected provider regression checks.
++
++The final-placement symbol is optional at Rust link time. Resolve it only from
++GetModuleHandleEx(FROM_ADDRESS) for the actual statically linked OrtGetApiBase,
++which must be the native main image, then use its exact typed private C header.
++The GPU core's owning C API TU exports that function explicitly; old CPU cores
++have no export and GPU admission returns RuntimeUnavailable before model work.
++This preserves CPU --all-features linking without any CUDA build/dependencies.
++The compiled producer/static-build pins and authenticated closure are still
++mandatory: a version string or an available export alone grants no GPU runtime.
+--- a/crates/airk-host/Cargo.toml
++++ b/crates/airk-host/Cargo.toml
+@@ -13,6 +13,7 @@
+ default = []
+ local-inference = ["airk-kernel/local-inference", "airk-retrieval/local-inference", "bundled-model"]
+ bundled-model = []
++gpu-cuda = ["local-inference", "airk-retrieval/gpu-cuda"]
+ parser-training = []
+ # Test helpers for the tests of crates built on this one (never production).
+ test-support = []
+--- /dev/null
++++ b/crates/airk-host/src/gpu_runtime.rs
+@@ -0,0 +1,30 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Native installed GPU runtime adapter. No config/client path is authority.
++use anyhow::{Context, Result};
++use std::{path::PathBuf, sync::Arc, time::Instant};
++pub fn installed_paths() -> Result<(PathBuf, PathBuf)> {
++    let image = std::env::current_exe()?;
++    let root = image
++        .parent()
++        .context("native service image has no parent")?
++        .to_path_buf();
++    Ok((root.clone(), root.join("airk-cuda-runtime.json")))
++}
++pub fn admit(
++    lease: Arc<airk_store::service::ServiceLease>,
++    root: &std::path::Path,
++    manifest: &std::path::Path,
++    deadline: Instant,
++) -> Result<Arc<airk_retrieval::arbiter::runtime::cuda::CudaRuntime>> {
++    anyhow::ensure!(
++        (root.to_owned(), manifest.to_owned()) == installed_paths()?,
++        "GPU runtime location is not the native image layout"
++    );
++    // SAFETY: real exclusive service lease; Retrieval independently requires
++    // ServiceComputeScope and retains this exact lease through native work.
++    unsafe {
++        airk_retrieval::arbiter::runtime::cuda::CudaRuntime::from_native_lease(
++            lease, root, manifest, deadline,
++        )
++    }
++}
+--- a/crates/airk-host/src/lib.rs
++++ b/crates/airk-host/src/lib.rs
+@@ -34,3 +34,6 @@
+ pub mod session_protocol;
+ pub mod source_protocol;
+ pub mod user_paths;
++
++#[cfg(feature = "gpu-cuda")]
++pub mod gpu_runtime;
+--- a/crates/airk-retrieval/Cargo.toml
++++ b/crates/airk-retrieval/Cargo.toml
+@@ -13,6 +13,8 @@
+ default = ["local-inference"]
+ local-inference = ["dep:ort", "dep:tokenizers"]
+ test-support = []
++# One static CUDA-capable ORT core; optional providers remain unloaded for CPU.
++gpu-cuda = ["local-inference", "ort/cuda", "dep:windows-sys"]
+ 
+ [dependencies]
+ airk-core.workspace = true
+@@ -31,3 +33,6 @@
+ # Actual service-lease ownership for native component qualification only.
+ [dev-dependencies]
+ airk-store.workspace = true
++
++[target.'cfg(windows)'.dependencies]
++windows-sys = { workspace = true, optional = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_WinTrust", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_LibraryLoader", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_SystemServices"] }
+--- /dev/null
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/manifest.rs
+@@ -0,0 +1,180 @@
++// SPDX-License-Identifier: Apache-2.0
++use super::*;
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub(super) struct RuntimeFile {
++    pub name: String,
++    pub bytes: u64,
++    pub sha256: Sha256Digest,
++    pub imports: BTreeSet<String>,
++    pub delay_imports: BTreeSet<String>,
++}
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub(super) struct VariantFit {
++    pub manifest: Sha256Digest,
++    pub execution_identity: String,
++    pub cold_peak_bytes: u64,
++    pub warm_extra_bytes: u64,
++    pub headroom_bytes: u64,
++    pub host_warm_extra_bytes: u64,
++    pub evidence: DeviceEvidence,
++    pub adapter_uuid: [u8; 16],
++    pub driver_api_version: i32,
++    pub driver_image_sha256: Sha256Digest,
++}
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub(super) struct RuntimeManifest {
++    pub schema: String,
++    pub ort_version: String,
++    pub static_core_build: Sha256Digest,
++    pub producer_name: String,
++    pub producer_bytes: u64,
++    pub producer_sha256: Sha256Digest,
++    pub files: Vec<RuntimeFile>,
++    pub load_order: Vec<String>,
++    pub system_imports: BTreeSet<String>,
++    pub fits: Vec<VariantFit>,
++}
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
++fn name(value: &str) -> bool {
++    !value.is_empty()
++        && value.len() <= 128
++        && value == value.to_ascii_lowercase()
++        && value
++            .bytes()
++            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
++        && !value.contains("..")
++}
++impl RuntimeManifest {
++    #[cfg(any(test, all(windows, target_arch = "x86_64")))]
++    pub fn validate(&self) -> Result<()> {
++        ensure!(
++            self.schema == "airk.native.cuda-runtime-manifest/1" && self.ort_version == "1.30.0",
++            "unknown CUDA runtime manifest"
++        );
++        ensure!(
++            self.static_core_build == self.producer_sha256
++                && name(&self.producer_name)
++                && self.producer_bytes > 0
++                && self.producer_bytes <= 16 << 20,
++            "producer/static-core closure mismatch"
++        );
++        ensure!(
++            (2..=64).contains(&self.files.len())
++                && self.fits.len() <= 16
++                && self.system_imports.len() <= 256,
++            "CUDA closure capacity"
++        );
++        let mut names = BTreeSet::new();
++        let mut total = 0u64;
++        for file in &self.files {
++            ensure!(
++                name(&file.name)
++                    && file.name.ends_with(".dll")
++                    && file.name != "onnxruntime.dll"
++                    && file.name != "nvcuda.dll"
++                    && file.bytes > 0
++                    && file.bytes <= 2u64 << 30
++                    && names.insert(file.name.clone()),
++                "invalid or duplicate CUDA payload"
++            );
++            total = total
++                .checked_add(file.bytes)
++                .context("CUDA closure overflow")?;
++            ensure!(
++                total <= 8u64 << 30 && file.imports.len() <= 256 && file.delay_imports.len() <= 256,
++                "CUDA closure byte/import capacity"
++            );
++        }
++        ensure!(
++            names.contains("onnxruntime_providers_shared.dll")
++                && names.contains("onnxruntime_providers_cuda.dll"),
++            "same-build provider pair missing"
++        );
++        ensure!(
++            self.load_order.len() == names.len()
++                && self.load_order.iter().cloned().collect::<BTreeSet<_>>() == names,
++            "invalid CUDA load order"
++        );
++        ensure!(
++            self.system_imports.iter().all(|v| name(v)
++                && v.ends_with(".dll")
++                && !names.contains(v)
++                && v != "onnxruntime.dll"),
++            "invalid system import closure"
++        );
++        for file in &self.files {
++            ensure!(
++                file.imports
++                    .iter()
++                    .chain(&file.delay_imports)
++                    .all(|v| names.contains(v) || self.system_imports.contains(v)),
++                "unresolved native DLL import"
++            );
++        }
++        let mut manifests = BTreeSet::new();
++        for fit in &self.fits {
++            ensure!(
++                manifests.insert(fit.manifest) && !fit.execution_identity.is_empty(),
++                "duplicate CUDA fit"
++            );
++            DeviceCapacityPlan::new(
++                fit.cold_peak_bytes,
++                fit.warm_extra_bytes,
++                fit.headroom_bytes,
++            )?;
++            ensure!(
++                fit.adapter_uuid != [0; 16]
++                    && fit.driver_api_version >= 12080
++                    && fit.evidence.numerical != fit.evidence.resources
++                    && fit.evidence.numerical != fit.evidence.placement
++                    && fit.evidence.resources != fit.evidence.placement
++                    && [
++                        fit.evidence.numerical,
++                        fit.evidence.resources,
++                        fit.evidence.placement,
++                        fit.driver_image_sha256
++                    ]
++                    .iter()
++                    .all(|v| *v != Sha256Digest::from_bytes([0; 32]))
++                    && fit.evidence.target == super::super::current_target()
++                    && fit.evidence.execution_identity == fit.execution_identity,
++                "invalid native GPU evidence/host phase fit"
++            );
++        }
++        Ok(())
++    }
++    #[cfg(any(test, all(windows, target_arch = "x86_64")))]
++    pub fn approved(bytes: &[u8]) -> Result<(Self, Sha256Digest)> {
++        let approved = option_env!("AIRK_APPROVED_CUDA_MANIFEST_SHA256")
++            .context(RuntimeUnavailable::new("manifest approval not compiled"))?;
++        let static_build = option_env!("AIRK_STATIC_CUDA_BUILD_SHA256")
++            .context(RuntimeUnavailable::new("static build provenance absent"))?;
++        let digest = Sha256Digest::from_bytes(Sha256::digest(bytes).into());
++        ensure!(
++            digest.to_string() == approved,
++            "unapproved runtime manifest bytes"
++        );
++        let value: Self = serde_json::from_slice(bytes)?;
++        value.validate()?;
++        ensure!(
++            value.static_core_build.to_string() == static_build,
++            "GPU DLLs differ from linked static runtime build"
++        );
++        Ok((value, digest))
++    }
++}
++pub fn compatibility_policy_digest() -> Sha256Digest {
++    airk_core::identity::framed_digest(b"airk.native.cuda.compatibility/1",&[b"windows-x64;ort1.30;single-static-core;api22;cuda-driver-primary-context;sm=86;driver-api>=12080"])
++}
++pub fn provider_options_digest() -> Sha256Digest {
++    airk_core::identity::framed_digest(b"airk.native.cuda.provider-options/1",&[b"cuda-only;error-on-failure;disable-cpu-fallback=1;tf32=0;cuda-graph=0;arena=declared-cold-peak;cpu-score-output;synchronize=ORT-default+primary-context"])
++}
++pub fn math_policy_digest() -> Sha256Digest {
++    airk_core::identity::framed_digest(
++        b"airk.native.cuda.math-policy/1",
++        &[b"fp32;tf32=0;original-six-input-and-scores-abi;unchanged-numeric-limits"],
++    )
++}
+--- /dev/null
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/pe.rs
+@@ -0,0 +1,153 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Bounded PE64 metadata, shared byte/file reader. Never executes dependency probes.
++use super::*;
++fn u16_at(b: &[u8], at: usize) -> Result<u16> {
++    Ok(u16::from_le_bytes(
++        b.get(at..at + 2).context("truncated PE u16")?.try_into()?,
++    ))
++}
++fn u32_at(b: &[u8], at: usize) -> Result<u32> {
++    Ok(u32::from_le_bytes(
++        b.get(at..at + 4).context("truncated PE u32")?.try_into()?,
++    ))
++}
++#[cfg(test)]
++pub(super) fn imports(bytes: &[u8]) -> Result<(BTreeSet<String>, BTreeSet<String>)> {
++    inspect(bytes.len() as u64, |at, n| {
++        Ok(bytes
++            .get(at..at.checked_add(n).context("PE read overflow")?)
++            .context("truncated PE data")?
++            .to_vec())
++    })
++}
++#[cfg(all(windows, target_arch = "x86_64"))]
++pub(super) fn imports_file(
++    file: &std::fs::File,
++    deadline: Instant,
++) -> Result<(BTreeSet<String>, BTreeSet<String>)> {
++    use std::os::windows::fs::FileExt;
++    inspect(file.metadata()?.len(), |at, n| {
++        in_time(deadline)?;
++        let mut bytes = vec![0u8; n];
++        let mut read = 0;
++        while read < n {
++            let got = file.seek_read(&mut bytes[read..], (at + read) as u64)?;
++            ensure!(got > 0, "truncated native PE metadata");
++            read += got;
++        }
++        Ok(bytes)
++    })
++}
++fn inspect(
++    length: u64,
++    read: impl Fn(usize, usize) -> Result<Vec<u8>>,
++) -> Result<(BTreeSet<String>, BTreeSet<String>)> {
++    ensure!(length >= 64, "truncated PE DOS header");
++    let dos = read(0, 64)?;
++    ensure!(dos.starts_with(b"MZ"), "not a PE image");
++    let pe = usize::try_from(u32_at(&dos, 0x3c)?)?;
++    ensure!(pe <= 1 << 20, "PE header offset exceeds bound");
++    let coff = read(pe, 24)?;
++    ensure!(
++        coff.get(..4) == Some(b"PE\0\0") && u16_at(&coff, 4)? == 0x8664,
++        "CUDA DLL must be PE64 AMD64"
++    );
++    let sections = usize::from(u16_at(&coff, 6)?);
++    let optional_size = usize::from(u16_at(&coff, 20)?);
++    ensure!(
++        (1..=96).contains(&sections) && (240..=4096).contains(&optional_size),
++        "unsupported PE64 header size"
++    );
++    let header = read(pe + 24, optional_size + sections * 40)?;
++    ensure!(
++        u16_at(&header, 0)? == 0x20b && u32_at(&header, 108)? >= 14,
++        "unsupported PE64 metadata"
++    );
++    let headers = usize::try_from(u32_at(&header, 60)?)?;
++    ensure!(headers <= 1 << 20, "PE header region exceeds bound");
++    let rva = |value: u32| -> Result<usize> {
++        let value = usize::try_from(value)?;
++        if value < headers {
++            ensure!((value as u64) < length, "PE RVA outside headers");
++            return Ok(value);
++        }
++        for n in 0..sections {
++            let row = optional_size + n * 40;
++            let start = usize::try_from(u32_at(&header, row + 12)?)?;
++            let size = usize::try_from(u32_at(&header, row + 16)?)?;
++            let raw = usize::try_from(u32_at(&header, row + 20)?)?;
++            if value >= start && value - start < size {
++                let at = raw
++                    .checked_add(value - start)
++                    .context("PE section overflow")?;
++                ensure!((at as u64) < length, "PE RVA outside file");
++                return Ok(at);
++            }
++        }
++        anyhow::bail!("PE RVA has no raw section")
++    };
++    let string = |value: u32| -> Result<String> {
++        let at = rva(value)?;
++        let size = 129usize.min(usize::try_from(length - at as u64)?);
++        let bytes = read(at, size)?;
++        let end = bytes
++            .iter()
++            .position(|v| *v == 0)
++            .context("PE import name exceeds bound")?;
++        let name = std::str::from_utf8(&bytes[..end])?.to_ascii_lowercase();
++        ensure!(
++            !name.is_empty()
++                && name.ends_with(".dll")
++                && name
++                    .bytes()
++                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
++                && !name.contains(".."),
++            "invalid PE import name"
++        );
++        Ok(name)
++    };
++    let parse = |index: usize,
++                 stride: usize,
++                 name_offset: usize,
++                 delay: bool|
++     -> Result<BTreeSet<String>> {
++        let entry = 112 + index * 8;
++        let address = u32_at(&header, entry)?;
++        let size = usize::try_from(u32_at(&header, entry + 4)?)?;
++        if address == 0 {
++            ensure!(size == 0, "inconsistent empty PE import directory");
++            return Ok(BTreeSet::new());
++        }
++        ensure!(
++            size >= stride && size <= 1 << 20,
++            "PE import metadata exceeds bound"
++        );
++        let start = rva(address)?;
++        ensure!(
++            (start as u64)
++                .checked_add(size as u64)
++                .is_some_and(|v| v <= length),
++            "PE import directory truncated"
++        );
++        let data = read(start, size)?;
++        let mut found = BTreeSet::new();
++        let mut terminated = false;
++        for row in data.chunks_exact(stride).take(513) {
++            if row.iter().all(|v| *v == 0) {
++                terminated = true;
++                break;
++            }
++            ensure!(found.len() < 512, "too many PE imports");
++            if delay {
++                ensure!(u32_at(row, 0)? == 1, "legacy VA delay imports unsupported");
++            }
++            ensure!(
++                found.insert(string(u32_at(row, name_offset)?)?),
++                "duplicate PE import descriptor"
++            );
++        }
++        ensure!(terminated, "unterminated PE import directory");
++        Ok(found)
++    };
++    Ok((parse(1, 20, 12, false)?, parse(13, 32, 4, true)?))
++}
+--- /dev/null
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/placement.rs
+@@ -0,0 +1,260 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Final SessionState graph placement from the same-core owning C API extension.
++use super::*;
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
++use std::ffi::c_void;
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
++const MAX_NODES: u64 = 65536;
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
++const MAX_BYTES: u64 = 16 << 20;
++#[derive(Clone, Debug, Serialize)]
++pub struct PlacedNode {
++    pub subgraph_index: u64,
++    pub name: String,
++    pub domain: String,
++    pub op: String,
++    pub ep: String,
++}
++#[derive(Clone, Debug, Serialize)]
++pub struct PlacementObservation {
++    pub scope: &'static str,
++    pub complete: bool,
++    pub shim_status: i32,
++    pub ort_error_code: i32,
++    pub reported_nodes: u64,
++    pub reported_string_bytes: u64,
++    pub nodes: Vec<PlacedNode>,
++}
++impl PlacementObservation {
++    pub fn validate_strict(&self) -> Result<()> {
++        ensure!(
++            self.complete
++                && !self.nodes.is_empty()
++                && self.nodes.iter().all(|n| n.ep == "CUDAExecutionProvider"),
++            "native final SessionState assignment is incomplete or not strictly CUDA"
++        );
++        Ok(())
++    }
++}
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
++struct Sink {
++    nodes: Vec<PlacedNode>,
++    bytes: u64,
++    failed: bool,
++}
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
++unsafe fn text(pointer: *const u8, len: usize) -> Result<String> {
++    ensure!(
++        len <= 4096 && (len == 0 || !pointer.is_null()),
++        "invalid native placement string"
++    );
++    if len == 0 {
++        return Ok(String::new());
++    }
++    // SAFETY: admitted native shim owns each borrowed string through callback.
++    Ok(std::str::from_utf8(unsafe { std::slice::from_raw_parts(pointer, len) })?.to_owned())
++}
++#[cfg(all(windows, target_arch = "x86_64"))]
++type Callback = unsafe extern "C" fn(
++    *mut c_void,
++    u64,
++    *const u8,
++    usize,
++    *const u8,
++    usize,
++    *const u8,
++    usize,
++    *const u8,
++    usize,
++) -> i32;
++#[cfg(all(windows, target_arch = "x86_64"))]
++pub(super) type Collector = unsafe extern "C" fn(
++    *const c_void,
++    *const c_void,
++    Callback,
++    *mut c_void,
++    u64,
++    u64,
++    *mut u64,
++    *mut u64,
++    *mut i32,
++) -> i32;
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
++unsafe extern "C" fn collect_row(
++    user: *mut c_void,
++    index: u64,
++    name: *const u8,
++    name_len: usize,
++    domain: *const u8,
++    domain_len: usize,
++    op: *const u8,
++    op_len: usize,
++    ep: *const u8,
++    ep_len: usize,
++) -> i32 {
++    if user.is_null() {
++        return 1;
++    }
++    // SAFETY: one synchronous call lends this live unique Sink; no async callback.
++    let sink = unsafe { &mut *user.cast::<Sink>() };
++    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
++        ensure!(
++            !sink.failed && (sink.nodes.len() as u64) < MAX_NODES,
++            "placement node capacity"
++        );
++        let bytes = [name_len, domain_len, op_len, ep_len]
++            .iter()
++            .try_fold(0u64, |a, b| {
++                a.checked_add(*b as u64).context("placement overflow")
++            })?;
++        let total = sink
++            .bytes
++            .checked_add(bytes)
++            .context("placement overflow")?;
++        ensure!(total <= MAX_BYTES, "placement string capacity");
++        let row = PlacedNode {
++            subgraph_index: index,
++            name: unsafe { text(name, name_len)? },
++            domain: unsafe { text(domain, domain_len)? },
++            op: unsafe { text(op, op_len)? },
++            ep: unsafe { text(ep, ep_len)? },
++        };
++        ensure!(
++            !row.op.is_empty() && !row.ep.is_empty(),
++            "native placement op/provider missing"
++        );
++        sink.bytes = total;
++        sink.nodes.push(row);
++        Ok(())
++    }));
++    if matches!(result, Ok(Ok(()))) {
++        0
++    } else {
++        sink.failed = true;
++        1
++    }
++}
++#[cfg(all(windows, target_arch = "x86_64"))]
++pub(super) unsafe fn observe(
++    collect: Collector,
++    session: &ort::session::Session,
++) -> PlacementObservation {
++    use ort::AsPointer;
++    let mut sink = Sink {
++        nodes: Vec::new(),
++        bytes: 0,
++        failed: false,
++    };
++    let (mut nodes, mut bytes, mut error) = (0, 0, 0);
++    // SAFETY: same statically linked core API base and live Session under owning
++    // Mutex. Extension uses exact owning InferenceSession/SessionState accessors, callback is synchronous and bounded.
++    let status = unsafe {
++        collect(
++            ort::sys::OrtGetApiBase().cast(),
++            session.ptr().cast(),
++            collect_row,
++            (&mut sink as *mut Sink).cast(),
++            MAX_NODES,
++            MAX_BYTES,
++            &mut nodes,
++            &mut bytes,
++            &mut error,
++        )
++    };
++    PlacementObservation {
++        scope: "onnxruntime-final-session-state-ep-placement",
++        complete: status == 0
++            && error == 0
++            && !sink.failed
++            && nodes == sink.nodes.len() as u64
++            && bytes == sink.bytes
++            && nodes > 0,
++        shim_status: status,
++        ort_error_code: error,
++        reported_nodes: nodes,
++        reported_string_bytes: bytes,
++        nodes: sink.nodes,
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn partial_or_cpu_assignment_cannot_be_a_strict_gpu_proof() {
++        let mut p = PlacementObservation {
++            scope: "synthetic",
++            complete: true,
++            shim_status: 0,
++            ort_error_code: 0,
++            reported_nodes: 1,
++            reported_string_bytes: 0,
++            nodes: vec![PlacedNode {
++                subgraph_index: 0,
++                name: "independent".into(),
++                domain: "".into(),
++                op: "MatMul".into(),
++                ep: "CPUExecutionProvider".into(),
++            }],
++        };
++        assert!(p.validate_strict().is_err());
++        p.nodes[0].ep = "CUDAExecutionProvider".into();
++        assert!(p.validate_strict().is_ok());
++        p.complete = false;
++        assert!(p.validate_strict().is_err());
++    }
++    #[test]
++    fn callback_refuses_invalid_strings_and_never_unwinds() {
++        let mut sink = Sink {
++            nodes: Vec::new(),
++            bytes: 0,
++            failed: false,
++        };
++        let p = (&mut sink as *mut Sink).cast();
++        assert_ne!(
++            unsafe {
++                collect_row(
++                    p,
++                    0,
++                    std::ptr::null(),
++                    1,
++                    std::ptr::null(),
++                    0,
++                    b"MatMul".as_ptr(),
++                    6,
++                    b"CUDAExecutionProvider".as_ptr(),
++                    21,
++                )
++            },
++            0
++        );
++        assert!(sink.failed);
++        assert!(sink.nodes.is_empty());
++    }
++}
++
++#[derive(Debug)]
++pub struct PlacementRefusal {
++    pub observation: PlacementObservation,
++}
++impl std::fmt::Display for PlacementRefusal {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        write!(
++            f,
++            "native final placement refused: status{} ort{} complete{} rows{}",
++            self.observation.shim_status,
++            self.observation.ort_error_code,
++            self.observation.complete,
++            self.observation.nodes.len()
++        )
++    }
++}
++impl std::error::Error for PlacementRefusal {}
++impl PlacementObservation {
++    pub(crate) fn require_strict(self) -> Result<()> {
++        if self.validate_strict().is_err() {
++            return Err(PlacementRefusal { observation: self }.into());
++        }
++        Ok(())
++    }
++}
+--- /dev/null
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/tests.rs
+@@ -0,0 +1,167 @@
++// SPDX-License-Identifier: Apache-2.0
++use super::*;
++#[test]
++fn phase_capacity_uses_incremental_work_after_resident_memory_is_counted() -> Result<()> {
++    let mut claims = Claims::default();
++    let cold = claims.reserve(120, 100, 20)?;
++    assert!(claims.reserve(120, 1, 20).is_err());
++    claims.unspent.remove(&cold);
++    // Native free80 already excludes resident40; only warm20+headroom20 is due.
++    let warm = claims.reserve(80, 20, 20)?;
++    assert_eq!(claims.unspent[&warm], (20, 20));
++    assert!(
++        Claims::default().reserve(80, 100, 20).is_err(),
++        "never reserve full100 atop resident40"
++    );
++    Ok(())
++}
++#[test]
++fn concurrent_claims_preserve_largest_headroom_and_refuse_overflow() -> Result<()> {
++    let mut c = Claims::default();
++    c.reserve(100, 30, 50)?;
++    assert!(c.reserve(100, 30, 1).is_err());
++    assert!(Claims::default().reserve(u64::MAX, u64::MAX, 1).is_err());
++    assert!(DeviceCapacityPlan::new(100, 101, 1).is_err());
++    assert!(DeviceCapacityPlan::new(1, 1, 0).is_err());
++    Ok(())
++}
++fn manifest() -> manifest::RuntimeManifest {
++    let f = |name: &str| manifest::RuntimeFile {
++        name: name.into(),
++        bytes: 12,
++        sha256: Sha256Digest::from_bytes([1; 32]),
++        imports: BTreeSet::new(),
++        delay_imports: BTreeSet::new(),
++    };
++    manifest::RuntimeManifest {
++        schema: "airk.native.cuda-runtime-manifest/1".into(),
++        ort_version: "1.30.0".into(),
++        static_core_build: Sha256Digest::from_bytes([2; 32]),
++        producer_name: "producer.json".into(),
++        producer_bytes: 10,
++        producer_sha256: Sha256Digest::from_bytes([2; 32]),
++        files: vec![
++            f("onnxruntime_providers_shared.dll"),
++            f("onnxruntime_providers_cuda.dll"),
++        ],
++        load_order: vec![
++            "onnxruntime_providers_shared.dll".into(),
++            "onnxruntime_providers_cuda.dll".into(),
++        ],
++        system_imports: BTreeSet::new(),
++        fits: Vec::new(),
++    }
++}
++#[test]
++fn manifest_observation_is_not_compiled_approval_and_cannot_name_second_core() -> Result<()> {
++    let mut m = manifest();
++    m.validate()?;
++    assert!(manifest::RuntimeManifest::approved(b"{}").is_err());
++    m.files[0].name = "onnxruntime.dll".into();
++    assert!(m.validate().is_err());
++    Ok(())
++}
++#[test]
++fn manifest_refuses_ambient_imports_paths_duplicates_and_wrong_static_build() -> Result<()> {
++    let mut m = manifest();
++    m.files[0].imports.insert("evil.dll".into());
++    assert!(m.validate().is_err());
++    let mut m = manifest();
++    m.system_imports.insert("../evil.dll".into());
++    assert!(m.validate().is_err());
++    let mut m = manifest();
++    m.load_order[1] = m.load_order[0].clone();
++    assert!(m.validate().is_err());
++    let mut m = manifest();
++    m.static_core_build = Sha256Digest::from_bytes([3; 32]);
++    assert!(m.validate().is_err());
++    Ok(())
++}
++#[test]
++fn pe_parser_refuses_invalid_or_truncated_images() {
++    for b in [b"".as_slice(), b"MZ", b"MZnot a native DLL"] {
++        assert!(pe::imports(b).is_err());
++    }
++}
++#[test]
++fn pe_import_census_reads_literal_import_and_rejects_va_delay_descriptor() -> Result<()> {
++    let mut b = vec![0u8; 1024];
++    b[0..2].copy_from_slice(b"MZ");
++    b[0x3c..0x40].copy_from_slice(&64u32.to_le_bytes());
++    b[64..68].copy_from_slice(b"PE\0\0");
++    b[68..70].copy_from_slice(&0x8664u16.to_le_bytes());
++    b[70..72].copy_from_slice(&1u16.to_le_bytes());
++    b[84..86].copy_from_slice(&240u16.to_le_bytes());
++    b[88..90].copy_from_slice(&0x20bu16.to_le_bytes());
++    b[148..152].copy_from_slice(&1024u32.to_le_bytes());
++    b[196..200].copy_from_slice(&16u32.to_le_bytes());
++    b[208..212].copy_from_slice(&512u32.to_le_bytes());
++    b[212..216].copy_from_slice(&40u32.to_le_bytes());
++    b[524..528].copy_from_slice(&600u32.to_le_bytes());
++    b[600..613].copy_from_slice(b"kernel32.dll\0");
++    assert_eq!(
++        pe::imports(&b)?,
++        (BTreeSet::from(["kernel32.dll".into()]), BTreeSet::new())
++    );
++    b[304..308].copy_from_slice(&640u32.to_le_bytes());
++    b[308..312].copy_from_slice(&64u32.to_le_bytes());
++    b[644..648].copy_from_slice(&600u32.to_le_bytes());
++    assert!(pe::imports(&b).is_err());
++    Ok(())
++}
++
++#[test]
++fn native_fault_classifier_is_typed_and_excludes_input_source_deadline_errors() {
++    use ort::ErrorCode;
++    for code in [
++        ErrorCode::ExecutionProviderFailure,
++        ErrorCode::RuntimeException,
++        ErrorCode::EngineError,
++    ] {
++        let e = run_failure(ort::Error::new_with_code(
++            code,
++            "literal native execution fault",
++        ));
++        assert!(super::super::is_native_device_failure(&e));
++    }
++    for code in [
++        ErrorCode::InvalidArgument,
++        ErrorCode::InvalidGraph,
++        ErrorCode::InvalidProtobuf,
++        ErrorCode::NoSuchFile,
++    ] {
++        let e = run_failure(ort::Error::new_with_code(
++            code,
++            "CUDA failure text cannot change class",
++        ));
++        assert!(!super::super::is_native_device_failure(&e));
++    }
++    for text in [
++        "original deadline expired",
++        "authority changed",
++        "source digest differs",
++        "cancelled",
++        "CUDA allocation failed",
++    ] {
++        assert!(!super::super::is_native_device_failure(&anyhow::anyhow!(
++            text
++        )));
++    }
++}
++#[test]
++fn explicit_zero_incremental_requirement_is_not_missing_or_full_peak() {
++    assert!(DeviceCapacityPlan::new(100, 0, 20).is_ok());
++    let mut c = Claims::default();
++    let id = c.reserve(20, 0, 20).unwrap();
++    assert_eq!(c.unspent[&id], (0, 20));
++    assert!(c.reserve(19, 0, 20).is_err());
++}
++
++#[test]
++fn missing_or_invalid_runtime_approval_is_not_a_native_execution_failure() {
++    let error = manifest::RuntimeManifest::approved(b"{}").err().unwrap();
++    assert!(!super::super::is_native_device_failure(&error));
++    assert!(!super::super::is_native_device_failure(
++        &anyhow::Error::new(RuntimeUnavailable::new("literal unavailable"))
++    ));
++}
+--- /dev/null
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda/windows.rs
+@@ -0,0 +1,810 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Windows x64 held-file CUDA loader; no ambient dependency search.
++use super::*;
++use airk_process::directory::{ObjectIdentity, OpenedDirectory};
++use std::{
++    ffi::{CStr, OsStr, c_void},
++    fs::{File, OpenOptions},
++    os::windows::{
++        ffi::OsStrExt,
++        fs::{MetadataExt, OpenOptionsExt},
++        io::AsRawHandle,
++    },
++    path::PathBuf,
++    sync::OnceLock,
++};
++use windows_sys::Win32::{
++    Foundation::{CloseHandle, HMODULE, LocalFree},
++    Security::WinTrust::*,
++    Security::{Authorization::*, *},
++    Storage::FileSystem::*,
++    System::{
++        LibraryLoader::*,
++        ProcessStatus::*,
++        SystemInformation::GetSystemDirectoryW,
++        SystemServices::{ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE},
++        Threading::*,
++    },
++};
++fn wide(path: &Path) -> Vec<u16> {
++    path.as_os_str().encode_wide().chain(Some(0)).collect()
++}
++fn win(ok: i32) -> Result<()> {
++    ensure!(
++        ok != 0,
++        "Windows GPU custody: {}",
++        std::io::Error::last_os_error()
++    );
++    Ok(())
++}
++struct Allocation(*mut c_void);
++impl Drop for Allocation {
++    fn drop(&mut self) {
++        unsafe {
++            LocalFree(self.0);
++        }
++    }
++}
++fn sid(value: PSID) -> Result<String> {
++    ensure!(
++        !value.is_null() && unsafe { IsValidSid(value) } != 0,
++        "invalid GPU custody SID"
++    );
++    let mut text = std::ptr::null_mut();
++    win(unsafe { ConvertSidToStringSidW(value, &mut text) })?;
++    let _owned = Allocation(text.cast());
++    let mut len = 0;
++    while len < 256 && unsafe { *text.add(len) } != 0 {
++        len += 1;
++    }
++    ensure!(len < 256, "SID text too long");
++    Ok(String::from_utf16(unsafe {
++        std::slice::from_raw_parts(text, len)
++    })?)
++}
++fn current_user() -> Result<String> {
++    let mut token = std::ptr::null_mut();
++    win(unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) })?;
++    let result = (|| {
++        let mut size = 0;
++        unsafe { GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut size) };
++        ensure!(size > 0 && size <= 65536, "native token bound");
++        let mut data = vec![0u64; (size as usize).div_ceil(8)];
++        win(unsafe {
++            GetTokenInformation(token, TokenUser, data.as_mut_ptr().cast(), size, &mut size)
++        })?;
++        sid(unsafe { (*data.as_ptr().cast::<TOKEN_USER>()).User.Sid })
++    })();
++    unsafe { CloseHandle(token) };
++    result
++}
++fn security(file: &File, private: bool) -> Result<()> {
++    let mut owner = std::ptr::null_mut();
++    let mut acl = std::ptr::null_mut();
++    let mut descriptor = std::ptr::null_mut();
++    let status = unsafe {
++        GetSecurityInfo(
++            file.as_raw_handle(),
++            SE_FILE_OBJECT,
++            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
++            &mut owner,
++            std::ptr::null_mut(),
++            &mut acl,
++            std::ptr::null_mut(),
++            &mut descriptor,
++        )
++    };
++    ensure!(
++        status == 0 && !descriptor.is_null() && !acl.is_null(),
++        "unknown/null GPU custody descriptor"
++    );
++    let _owned = Allocation(descriptor);
++    let user = current_user()?;
++    let owner = sid(owner)?;
++    let trusted = |s: &str| {
++        s == "S-1-5-18"
++            || s == "S-1-5-32-544"
++            || s == "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
++    };
++    ensure!(
++        if private {
++            owner == user
++        } else {
++            trusted(&owner)
++        },
++        "GPU payload/system owner mismatch"
++    );
++    let count = unsafe { (*acl).AceCount };
++    for i in 0..u32::from(count) {
++        let mut ace = std::ptr::null_mut();
++        win(unsafe { GetAce(acl, i, &mut ace) })?;
++        ensure!(!ace.is_null(), "missing native ACE");
++        let header = unsafe { &*ace.cast::<ACE_HEADER>() };
++        if header.AceType == ACCESS_DENIED_ACE_TYPE as u8 {
++            continue;
++        }
++        ensure!(
++            header.AceType == ACCESS_ALLOWED_ACE_TYPE as u8
++                && usize::from(header.AceSize) >= std::mem::size_of::<ACCESS_ALLOWED_ACE>(),
++            "unsupported GPU custody ACE"
++        );
++        let allow = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
++        let who = sid(std::ptr::addr_of!(allow.SidStart).cast_mut().cast())?;
++        if private {
++            ensure!(
++                who == user || trusted(&who),
++                "GPU payload grants foreign access"
++            );
++        } else {
++            ensure!(
++                trusted(&who) || allow.Mask & 0x500d0156 == 0,
++                "system GPU dependency grants foreign writes"
++            );
++        }
++    }
++    Ok(())
++}
++struct HeldFile {
++    file: File,
++    path: PathBuf,
++    id: ObjectIdentity,
++    bytes: u64,
++    sha: Sha256Digest,
++    _parent: OpenedDirectory,
++    private: bool,
++}
++impl HeldFile {
++    fn open(
++        parent: &OpenedDirectory,
++        path: &Path,
++        private: bool,
++        deadline: Instant,
++    ) -> Result<Self> {
++        in_time(deadline)?;
++        ensure!(path.is_absolute(), "GPU payload must be a direct child");
++        let file = OpenOptions::new()
++            .read(true)
++            .share_mode(FILE_SHARE_READ)
++            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
++            .open(path)?;
++        let meta = file.metadata()?;
++        ensure!(
++            meta.is_file()
++                && meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0
++                && (!private || single_link(&file)?),
++            "redirected/nonregular/hardlinked GPU payload"
++        );
++        security(&file, private)?;
++        let id = airk_process::directory::identity(&file)?;
++        let sha = hash(&file, deadline)?;
++        Ok(Self {
++            file,
++            path: path.to_owned(),
++            id,
++            bytes: meta.len(),
++            sha,
++            _parent: parent.clone(),
++            private,
++        })
++    }
++    fn recheck(&self, deadline: Instant) -> Result<()> {
++        in_time(deadline)?;
++        security(&self.file, self.private)?;
++        ensure!(
++            self.file.metadata()?.len() == self.bytes
++                && airk_process::directory::identity(&self.file)? == self.id
++                && hash(&self.file, deadline)? == self.sha,
++            "held CUDA payload drift"
++        );
++        let current = OpenOptions::new()
++            .read(true)
++            .share_mode(FILE_SHARE_READ)
++            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
++            .open(&self.path)?;
++        ensure!(
++            airk_process::directory::identity(&current)? == self.id,
++            "named CUDA payload drift"
++        );
++        Ok(())
++    }
++}
++fn single_link(file: &File) -> Result<bool> {
++    let mut value: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
++    win(unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut value) })?;
++    Ok(value.nNumberOfLinks == 1)
++}
++fn hash(file: &File, deadline: Instant) -> Result<Sha256Digest> {
++    use std::os::windows::fs::FileExt;
++    let mut hasher = Sha256::new();
++    let mut bytes = [0u8; 1 << 20];
++    let mut offset = 0u64;
++    loop {
++        in_time(deadline)?;
++        let n = file.seek_read(&mut bytes, offset)?;
++        if n == 0 {
++            break;
++        }
++        hasher.update(&bytes[..n]);
++        offset = offset
++            .checked_add(n as u64)
++            .context("GPU hash byte overflow")?;
++    }
++    Ok(Sha256Digest::from_bytes(hasher.finalize().into()))
++}
++fn read(file: &File, max: u64) -> Result<Vec<u8>> {
++    use std::os::windows::fs::FileExt;
++    let length = file.metadata()?.len();
++    ensure!(length <= max, "GPU native input too large");
++    let mut bytes = vec![0u8; usize::try_from(length)?];
++    let mut offset = 0;
++    while offset < bytes.len() {
++        let n = file.seek_read(&mut bytes[offset..], offset as u64)?;
++        ensure!(n > 0, "GPU native input truncated");
++        offset += n;
++    }
++    Ok(bytes)
++}
++fn system_directory() -> Result<PathBuf> {
++    let mut text = vec![0u16; 32768];
++    let n = unsafe { GetSystemDirectoryW(text.as_mut_ptr(), text.len() as u32) };
++    ensure!(
++        n > 0 && (n as usize) < text.len(),
++        "native System32 unavailable"
++    );
++    Ok(PathBuf::from(String::from_utf16(&text[..n as usize])?))
++}
++fn module_path(module: HMODULE) -> Result<PathBuf> {
++    let mut text = vec![0u16; 32768];
++    let n = unsafe { GetModuleFileNameW(module, text.as_mut_ptr(), text.len() as u32) };
++    ensure!(
++        n > 0 && (n as usize) < text.len(),
++        "loaded module path unavailable"
++    );
++    Ok(PathBuf::from(String::from_utf16(&text[..n as usize])?))
++}
++fn gpu_name(name: &str) -> bool {
++    name == "onnxruntime.dll"
++        || name == "nvcuda.dll"
++        || [
++            "onnxruntime_providers_",
++            "cudnn",
++            "cublas",
++            "cudart",
++            "cufft",
++            "nvrtc",
++            "nvjitlink",
++        ]
++        .iter()
++        .any(|p| name.starts_with(p))
++}
++fn reconcile(files: &[HeldFile]) -> Result<()> {
++    let mut modules = vec![std::ptr::null_mut(); 4096];
++    let mut needed = 0;
++    win(unsafe {
++        K32EnumProcessModules(
++            GetCurrentProcess(),
++            modules.as_mut_ptr(),
++            (modules.len() * std::mem::size_of::<HMODULE>()) as u32,
++            &mut needed,
++        )
++    })?;
++    ensure!(
++        needed as usize <= modules.len() * std::mem::size_of::<HMODULE>(),
++        "loaded module inventory exceeds bound"
++    );
++    for module in modules
++        .into_iter()
++        .take(needed as usize / std::mem::size_of::<HMODULE>())
++    {
++        let path = module_path(module)?;
++        let name = path
++            .file_name()
++            .and_then(OsStr::to_str)
++            .context("module basename unavailable")?
++            .to_ascii_lowercase();
++        if let Some(held) = files.iter().find(|f| {
++            f.path
++                .file_name()
++                .and_then(OsStr::to_str)
++                .is_some_and(|n| n.eq_ignore_ascii_case(&name))
++        }) {
++            let named = OpenOptions::new()
++                .read(true)
++                .share_mode(FILE_SHARE_READ)
++                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
++                .open(&path)?;
++            ensure!(
++                airk_process::directory::identity(&named)? == held.id,
++                "loaded CUDA dependency differs from held file"
++            );
++        } else {
++            ensure!(
++                !gpu_name(&name),
++                "unapproved preloaded CUDA/ORT core module: {name}"
++            );
++        }
++    }
++    Ok(())
++}
++fn trusted_driver(file: &HeldFile) -> Result<()> {
++    let name = wide(&file.path);
++    let mut info = WINTRUST_FILE_INFO {
++        cbStruct: std::mem::size_of::<WINTRUST_FILE_INFO>() as u32,
++        pcwszFilePath: name.as_ptr(),
++        hFile: file.file.as_raw_handle(),
++        pgKnownSubject: std::ptr::null_mut(),
++    };
++    let mut state = WINTRUST_DATA {
++        cbStruct: std::mem::size_of::<WINTRUST_DATA>() as u32,
++        dwUIChoice: WTD_UI_NONE,
++        fdwRevocationChecks: WTD_REVOKE_NONE,
++        dwUnionChoice: WTD_CHOICE_FILE,
++        Anonymous: WINTRUST_DATA_0 { pFile: &mut info },
++        dwStateAction: WTD_STATEACTION_VERIFY,
++        dwProvFlags: WTD_CACHE_ONLY_URL_RETRIEVAL | WTD_REVOCATION_CHECK_NONE,
++        ..Default::default()
++    };
++    let mut action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
++    let result = unsafe {
++        WinVerifyTrust(
++            std::ptr::null_mut(),
++            &mut action,
++            (&mut state as *mut WINTRUST_DATA).cast(),
++        )
++    };
++    state.dwStateAction = WTD_STATEACTION_CLOSE;
++    unsafe {
++        WinVerifyTrust(
++            std::ptr::null_mut(),
++            &mut action,
++            (&mut state as *mut WINTRUST_DATA).cast(),
++        )
++    };
++    ensure!(
++        result == 0,
++        "native System32 CUDA driver signature is not trusted"
++    );
++    Ok(())
++}
++fn load(path: &Path) -> Result<usize> {
++    let value = unsafe {
++        LoadLibraryExW(
++            wide(path).as_ptr(),
++            std::ptr::null_mut(),
++            LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32,
++        )
++    };
++    ensure!(
++        !value.is_null(),
++        "authenticated GPU module load failed: {}",
++        std::io::Error::last_os_error()
++    );
++    Ok(value as usize)
++}
++unsafe fn symbol<T: Copy>(module: usize, name: &CStr) -> Result<T> {
++    let value = unsafe { GetProcAddress(module as HMODULE, name.as_ptr().cast()) }
++        .context("native CUDA driver API missing")?;
++    ensure!(
++        std::mem::size_of::<T>() == std::mem::size_of_val(&value),
++        "native API pointer size mismatch"
++    );
++    Ok(unsafe { std::mem::transmute_copy(&value) })
++}
++type ContextHandle = *mut c_void;
++struct Driver {
++    get: unsafe extern "system" fn(*mut i32, i32) -> i32,
++    init: unsafe extern "system" fn(u32) -> i32,
++    version: unsafe extern "system" fn(*mut i32) -> i32,
++    count: unsafe extern "system" fn(*mut i32) -> i32,
++    uuid: unsafe extern "system" fn(*mut [u8; 16], i32) -> i32,
++    cc: unsafe extern "system" fn(*mut i32, *mut i32, i32) -> i32,
++    total: unsafe extern "system" fn(*mut usize, i32) -> i32,
++    retain: unsafe extern "system" fn(*mut ContextHandle, i32) -> i32,
++    release: unsafe extern "system" fn(i32) -> i32,
++    push: unsafe extern "system" fn(ContextHandle) -> i32,
++    pop: unsafe extern "system" fn(*mut ContextHandle) -> i32,
++    memory: unsafe extern "system" fn(*mut usize, *mut usize) -> i32,
++    sync: unsafe extern "system" fn() -> i32,
++}
++fn cuda(result: i32) -> Result<()> {
++    if result != 0 {
++        return Err(super::native_fault(format!(
++            "native CUDA driver call failed ({result})"
++        )));
++    }
++    Ok(())
++}
++impl Driver {
++    unsafe fn from(module: usize) -> Result<Self> {
++        Ok(Self {
++            get: unsafe { symbol(module, c"cuDeviceGet")? },
++            init: unsafe { symbol(module, c"cuInit")? },
++            version: unsafe { symbol(module, c"cuDriverGetVersion")? },
++            count: unsafe { symbol(module, c"cuDeviceGetCount")? },
++            uuid: unsafe { symbol(module, c"cuDeviceGetUuid_v2")? },
++            cc: unsafe { symbol(module, c"cuDeviceComputeCapability")? },
++            total: unsafe { symbol(module, c"cuDeviceTotalMem_v2")? },
++            retain: unsafe { symbol(module, c"cuDevicePrimaryCtxRetain")? },
++            release: unsafe { symbol(module, c"cuDevicePrimaryCtxRelease_v2")? },
++            push: unsafe { symbol(module, c"cuCtxPushCurrent_v2")? },
++            pop: unsafe { symbol(module, c"cuCtxPopCurrent_v2")? },
++            memory: unsafe { symbol(module, c"cuMemGetInfo_v2")? },
++            sync: unsafe { symbol(module, c"cuCtxSynchronize")? },
++        })
++    }
++}
++pub(super) struct PrimaryContext {
++    _native_lease: Option<Arc<dyn Send + Sync>>,
++    handle: usize,
++    ordinal: i32,
++    device: i32,
++    driver: &'static Driver,
++}
++impl Drop for PrimaryContext {
++    fn drop(&mut self) {
++        if unsafe { (self.driver.release)(self.device) } != 0 {
++            FAILED.store(true, Ordering::Release);
++            if let Some(lease) = self._native_lease.take() {
++                std::mem::forget(lease);
++            }
++        }
++    }
++}
++impl PrimaryContext {
++    fn with_current<T>(&self, call: impl FnOnce() -> Result<T>) -> Result<T> {
++        cuda(unsafe { (self.driver.push)(self.handle as ContextHandle) })?;
++        let result = call();
++        let mut previous = std::ptr::null_mut();
++        let restored = cuda(unsafe { (self.driver.pop)(&mut previous) }).and_then(|()| {
++            ensure!(
++                previous as usize == self.handle,
++                "native CUDA context stack changed"
++            );
++            Ok(())
++        });
++        match (result, restored) {
++            (Ok(v), Ok(())) => Ok(v),
++            (Err(e), Ok(())) | (Ok(_), Err(e)) => Err(e),
++            (Err(e), Err(r)) => Err(e.context(format!("context restoration also failed: {r:#}"))),
++        }
++    }
++}
++pub(super) struct LoadedRuntime {
++    collector: super::placement::Collector,
++    files: Vec<HeldFile>,
++    _modules: Vec<usize>,
++    driver: Driver,
++    identity: Sha256Digest,
++}
++static LOADED: OnceLock<LoadedRuntime> = OnceLock::new();
++static ADMISSION: Mutex<()> = Mutex::new(());
++static FAILED: AtomicBool = AtomicBool::new(false);
++struct Attempt {
++    files: Option<Vec<HeldFile>>,
++    modules: Vec<usize>,
++    started: bool,
++}
++impl Drop for Attempt {
++    fn drop(&mut self) {
++        if let Some(files) = self.files.take() {
++            if self.started {
++                FAILED.store(true, Ordering::Release);
++                std::mem::forget(files);
++                std::mem::forget(std::mem::take(&mut self.modules));
++            }
++        }
++    }
++}
++pub(super) fn admit(
++    root: &Path,
++    manifest_path: &Path,
++    deadline: Instant,
++) -> Result<(
++    &'static LoadedRuntime,
++    manifest::RuntimeManifest,
++    Sha256Digest,
++)> {
++    let _exclusive = ADMISSION
++        .lock()
++        .map_err(|_| anyhow::anyhow!("GPU module admission poisoned"))?;
++    ensure!(
++        !FAILED.load(Ordering::Acquire),
++        "prior GPU DLL admission failed; process restart required"
++    );
++    ensure!(
++        manifest_path.parent() == Some(root),
++        "CUDA manifest must be a direct runtime child"
++    );
++    let directory = OpenedDirectory::open(root)?;
++    let image = std::env::current_exe()?;
++    let image_parent =
++        OpenedDirectory::open(image.parent().context("native image has no parent")?)?;
++    ensure!(
++        directory.identity()? == image_parent.identity()?,
++        "CUDA payload root differs from linked native image directory"
++    );
++    security(directory.as_file(), true)?;
++    let description = HeldFile::open(&directory, manifest_path, true, deadline)?;
++    let bytes = read(&description.file, 128 << 10)?;
++    let (manifest, identity) = manifest::RuntimeManifest::approved(&bytes)?;
++    crate::onnx::initialize_runtime()?;
++    use ort::execution_providers::ExecutionProvider;
++    ensure!(
++        ort::execution_providers::CUDAExecutionProvider::default().is_available()?,
++        "linked native core was not compiled CUDA-capable"
++    );
++    let collector = final_collector()?;
++    if let Some(existing) = LOADED.get() {
++        ensure!(
++            existing.identity == identity,
++            "another CUDA runtime is already mapped"
++        );
++        existing.recheck(deadline)?;
++        return Ok((existing, manifest, identity));
++    }
++    let producer = HeldFile::open(
++        &directory,
++        &root.join(&manifest.producer_name),
++        true,
++        deadline,
++    )?;
++    ensure!(
++        producer.bytes == manifest.producer_bytes && producer.sha == manifest.producer_sha256,
++        "actual CUDA producer receipt differs"
++    );
++    let system_path = system_directory()?;
++    let system = OpenedDirectory::open(&system_path)?;
++    security(system.as_file(), false)?;
++    let driver_file = HeldFile::open(
++        &system,
++        &system_path.as_path().join("nvcuda.dll"),
++        false,
++        deadline,
++    )?;
++    trusted_driver(&driver_file)?;
++    let mut files = vec![description, producer, driver_file];
++    for item in &manifest.files {
++        let held = HeldFile::open(&directory, &root.join(&item.name), true, deadline)?;
++        ensure!(
++            held.sha == item.sha256 && held.bytes == item.bytes,
++            "GPU payload hash/size mismatch"
++        );
++        let imports = super::pe::imports_file(&held.file, deadline)?;
++        ensure!(
++            imports == (item.imports.clone(), item.delay_imports.clone()),
++            "actual GPU PE imports differ from approved closure"
++        );
++        files.push(held);
++    }
++    for name in &manifest.system_imports {
++        if name == "nvcuda.dll"
++            || name.starts_with("api-ms-win-")
++            || name.starts_with("ext-ms-win-")
++        {
++            continue;
++        }
++        files.push(HeldFile::open(
++            &system,
++            &system_path.as_path().join(name),
++            false,
++            deadline,
++        )?);
++    }
++    reconcile(&files)?;
++    win(unsafe {
++        SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32)
++    })?;
++    let mut attempt = Attempt {
++        files: Some(files),
++        modules: Vec::new(),
++        started: true,
++    };
++    attempt.modules.push(load(&system_path.join("nvcuda.dll"))?);
++    reconcile(attempt.files.as_ref().unwrap())?;
++    for name in &manifest.load_order {
++        in_time(deadline)?;
++        attempt.modules.push(load(&root.join(name))?);
++        reconcile(attempt.files.as_ref().unwrap())?;
++    }
++    let driver = unsafe { Driver::from(attempt.modules[0])? };
++    cuda(unsafe { (driver.init)(0) })?;
++    for file in attempt.files.as_ref().unwrap() {
++        file.recheck(deadline)?;
++    }
++    in_time(deadline)?;
++    let files = attempt.files.take().unwrap();
++    let modules = std::mem::take(&mut attempt.modules);
++    LOADED
++        .set(LoadedRuntime {
++            collector,
++            files,
++            _modules: modules,
++            driver,
++            identity,
++        })
++        .map_err(|_| anyhow::anyhow!("GPU module owner raced"))?;
++    let loaded = LOADED.get().unwrap();
++    Ok((loaded, manifest, identity))
++}
++impl LoadedRuntime {
++    fn recheck(&self, deadline: Instant) -> Result<()> {
++        reconcile(&self.files)?;
++        for file in &self.files {
++            file.recheck(deadline)?;
++        }
++        Ok(())
++    }
++    pub fn retain_primary(
++        &'static self,
++        ordinal: i32,
++        lease: Arc<dyn Send + Sync>,
++    ) -> Result<PrimaryContext> {
++        let mut device = 0;
++        cuda(unsafe { (self.driver.get)(&mut device, ordinal) })?;
++        let mut context = std::ptr::null_mut();
++        cuda(unsafe { (self.driver.retain)(&mut context, device) })?;
++        ensure!(!context.is_null(), "native CUDA primary context missing");
++        Ok(PrimaryContext {
++            _native_lease: Some(lease),
++            handle: context as usize,
++            ordinal,
++            device,
++            driver: &self.driver,
++        })
++    }
++    pub fn adapters(
++        &'static self,
++        deadline: Instant,
++        lease: Arc<dyn Send + Sync>,
++    ) -> Result<Vec<AdapterObservation>> {
++        self.recheck(deadline)?;
++        let mut count = 0;
++        cuda(unsafe { (self.driver.count)(&mut count) })?;
++        ensure!(
++            (0..=64).contains(&count),
++            "invalid native CUDA adapter count"
++        );
++        let mut values = Vec::new();
++        for ordinal in 0..count {
++            let context = self.retain_primary(ordinal, lease.clone())?;
++            values.push(self.observe(ordinal, &context, deadline)?);
++            drop(context);
++            ensure!(
++                !runtime_poisoned(),
++                "CUDA primary context release did not settle"
++            );
++        }
++        Ok(values)
++    }
++    pub fn observe(
++        &self,
++        ordinal: i32,
++        context: &PrimaryContext,
++        deadline: Instant,
++    ) -> Result<AdapterObservation> {
++        in_time(deadline)?;
++        reconcile(&self.files)?;
++        ensure!(ordinal == context.ordinal, "CUDA context/ordinal mismatch");
++        context.with_current(||{let(mut uuid,mut major,mut minor,mut driver,mut total,mut free,mut actual_total)=([0;16],0,0,0,0usize,0usize,0usize);cuda(unsafe{(self.driver.uuid)(&mut uuid,context.device)})?;cuda(unsafe{(self.driver.cc)(&mut major,&mut minor,context.device)})?;cuda(unsafe{(self.driver.version)(&mut driver)})?;cuda(unsafe{(self.driver.total)(&mut total,context.device)})?;cuda(unsafe{(self.driver.memory)(&mut free,&mut actual_total)})?;ensure!(uuid!=[0;16]&&total>0&&actual_total>0&&actual_total<=total&&free<=actual_total&&driver>=12080,"invalid/unsupported actual CUDA device observation");in_time(deadline)?;Ok(AdapterObservation{uuid,ordinal,compute_major:major,compute_minor:minor,driver_api_version:driver,driver_image_sha256:self.files.iter().find(|f|f.path.file_name().and_then(OsStr::to_str).is_some_and(|n|n.eq_ignore_ascii_case("nvcuda.dll"))).context("held driver identity missing")?.sha,physical_total_bytes:total as u64,total_bytes:actual_total as u64,free_bytes:free as u64,epoch:0})})
++    }
++    pub fn synchronize(&self, context: &PrimaryContext) -> Result<()> {
++        reconcile(&self.files)?;
++        context.with_current(|| cuda(unsafe { (self.driver.sync)() }))
++    }
++}
++
++#[cfg(feature = "test-support")]
++pub(super) fn observe_assembly(input: RuntimeAssemblyInput, deadline: Instant) -> Result<Vec<u8>> {
++    let directory = OpenedDirectory::open(&input.directory)?;
++    security(directory.as_file(), true)?;
++    ensure!(
++        !input.producer_name.contains(['\\', '/']) && input.module_names.len() <= 64,
++        "invalid assembly names"
++    );
++    let producer = HeldFile::open(
++        &directory,
++        &input.directory.join(&input.producer_name),
++        true,
++        deadline,
++    )?;
++    ensure!(
++        producer.sha == input.producer_sha256,
++        "actual reviewed producer receipt pin differs"
++    );
++    let receipt: serde_json::Value = serde_json::from_slice(&read(&producer.file, 16 << 20)?)?;
++    ensure!(
++        receipt["status"] == "PASS_PRODUCER_ONLY_UNQUALIFIED",
++        "producer is not naturally completed successful unqualified build"
++    );
++    let provider_rows = receipt["provider_dlls"]
++        .as_array()
++        .context("actual provider outputs missing")?;
++    ensure!(
++        provider_rows.len() == 2,
++        "provider pair output must be exact"
++    );
++    let mut files = Vec::new();
++    let mut held = vec![producer];
++    for name in &input.module_names {
++        ensure!(
++            !name.contains(['\\', '/']) && name.ends_with(".dll"),
++            "invalid assembly DLL name"
++        );
++        let value = HeldFile::open(&directory, &input.directory.join(name), true, deadline)?;
++        let (imports, delay_imports) = super::pe::imports_file(&value.file, deadline)?;
++        if name.starts_with("onnxruntime_providers_") {
++            ensure!(
++                provider_rows
++                    .iter()
++                    .filter(|v| v["path"]
++                        .as_str()
++                        .is_some_and(|p| p.rsplit('/').next() == Some(name.as_str()))
++                        && v["sha256"].as_str() == Some(value.sha.to_string().as_str())
++                        && v["bytes"].as_u64() == Some(value.bytes))
++                    .count()
++                    == 1,
++                "provider DLL does not match actual same-build producer output"
++            );
++        }
++        files.push(manifest::RuntimeFile {
++            name: name.clone(),
++            bytes: value.bytes,
++            sha256: value.sha,
++            imports,
++            delay_imports,
++        });
++        held.push(value);
++    }
++    let manifest = manifest::RuntimeManifest {
++        schema: "airk.native.cuda-runtime-manifest/1".into(),
++        ort_version: "1.30.0".into(),
++        static_core_build: input.producer_sha256,
++        producer_name: input.producer_name,
++        producer_bytes: held[0].bytes,
++        producer_sha256: input.producer_sha256,
++        files,
++        load_order: input.load_order,
++        system_imports: input.system_imports,
++        fits: Vec::new(),
++    };
++    manifest.validate()?;
++    for file in &held {
++        file.recheck(deadline)?;
++    }
++    in_time(deadline)?;
++    Ok(serde_json::to_vec(&manifest)?)
++}
++
++pub(super) fn runtime_poisoned() -> bool {
++    FAILED.load(Ordering::Acquire)
++}
++
++impl LoadedRuntime {
++    pub fn placement(&self, session: &ort::session::Session) -> Result<PlacementObservation> {
++        reconcile(&self.files)?;
++        // SAFETY: exact same statically linked ORT owner; live Session is held
++        // under its native Mutex for this bounded synchronous observation.
++        Ok(unsafe { super::placement::observe(self.collector, session) })
++    }
++}
++
++fn final_collector() -> Result<super::placement::Collector> {
++    let mut module = std::ptr::null_mut();
++    // FROM_ADDRESS interprets this parameter as a code address, not UTF16 text.
++    // No reference count is changed; the native main image has process lifetime.
++    win(unsafe {
++        GetModuleHandleExW(
++            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
++            ort::sys::OrtGetApiBase as *const () as *const u16,
++            &mut module,
++        )
++    })?;
++    ensure!(
++        module == unsafe { GetModuleHandleW(std::ptr::null()) },
++        "ORT API base is not in the authenticated single static-core native image"
++    );
++    // Optional export: CPU --all-features builds still link without this symbol.
++    // Missing/old core refuses GPU; no second core or API offset is attempted.
++    unsafe { symbol(module as usize, c"airk_ort_collect_final_placement_v1") }
++        .context(RuntimeUnavailable::new("final-placement capability absent"))
++}
+--- /dev/null
++++ b/crates/airk-retrieval/src/arbiter/runtime/cuda.rs
+@@ -0,0 +1,656 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Opaque native CUDA witnesses. No serialized value grants execution.
++use airk_core::{
++    arbiter::{Profile, device::*},
++    identity::Sha256Digest,
++};
++use anyhow::{Context, Result, ensure};
++use serde::{Deserialize, Serialize};
++use sha2::{Digest, Sha256};
++use std::{
++    collections::{BTreeMap, BTreeSet},
++    path::Path,
++    sync::{
++        Arc, Mutex, Weak,
++        atomic::{AtomicBool, AtomicU64, Ordering},
++    },
++    time::Instant,
++};
++mod manifest;
++#[cfg(any(test, all(windows, target_arch = "x86_64")))]
++mod pe;
++mod placement;
++pub use manifest::{compatibility_policy_digest, math_policy_digest, provider_options_digest};
++pub use placement::{PlacedNode, PlacementObservation, PlacementRefusal};
++#[cfg(test)]
++mod tests;
++#[cfg(all(windows, target_arch = "x86_64"))]
++mod windows;
++static NEXT_EPOCH: AtomicU64 = AtomicU64::new(1);
++fn in_time(deadline: Instant) -> Result<()> {
++    ensure!(
++        Instant::now() < deadline,
++        "original GPU operation deadline expired"
++    );
++    Ok(())
++}
++#[derive(Clone, Debug, Serialize)]
++pub struct AdapterObservation {
++    pub uuid: [u8; 16],
++    pub ordinal: i32,
++    pub compute_major: i32,
++    pub compute_minor: i32,
++    pub driver_api_version: i32,
++    pub driver_image_sha256: Sha256Digest,
++    pub physical_total_bytes: u64,
++    pub total_bytes: u64,
++    pub free_bytes: u64,
++    pub epoch: u64,
++}
++#[derive(Clone, Copy, Debug)]
++pub struct DeviceCapacityPlan {
++    cold_peak_bytes: u64,
++    warm_extra_bytes: u64,
++    headroom_bytes: u64,
++}
++impl DeviceCapacityPlan {
++    fn new(cold: u64, warm: u64, headroom: u64) -> Result<Self> {
++        ensure!(
++            cold > 0 && headroom > 0 && warm <= cold,
++            "invalid GPU phase capacity requirements"
++        );
++        cold.checked_add(headroom)
++            .context("GPU cold capacity overflow")?;
++        Ok(Self {
++            cold_peak_bytes: cold,
++            warm_extra_bytes: warm,
++            headroom_bytes: headroom,
++        })
++    }
++    pub fn cold_peak_bytes(&self) -> u64 {
++        self.cold_peak_bytes
++    }
++    pub fn warm_extra_bytes(&self) -> u64 {
++        self.warm_extra_bytes
++    }
++    pub fn headroom_bytes(&self) -> u64 {
++        self.headroom_bytes
++    }
++    #[cfg(any(test, feature = "test-support"))]
++    pub fn probe(cold: u64, warm: u64, headroom: u64) -> Result<Self> {
++        Self::new(cold, warm, headroom)
++    }
++}
++#[derive(Default)]
++struct Claims {
++    next: u64,
++    unspent: BTreeMap<u64, (u64, u64)>,
++}
++impl Claims {
++    fn reserve(&mut self, free: u64, bytes: u64, headroom: u64) -> Result<u64> {
++        ensure!(headroom > 0, "GPU claim must have explicit bounds");
++        let pending = self.unspent.values().try_fold(0u64, |a, b| {
++            a.checked_add(b.0).context("GPU claims overflow")
++        })?;
++        let required = pending
++            .checked_add(bytes)
++            .and_then(|v| {
++                v.checked_add(
++                    self.unspent
++                        .values()
++                        .map(|v| v.1)
++                        .max()
++                        .unwrap_or(0)
++                        .max(headroom),
++                )
++            })
++            .context("GPU capacity overflow")?;
++        if free < required {
++            return Err(native_fault(format!(
++                "actual free VRAM {free} cannot cover pending work+headroom {required}"
++            )));
++        }
++        self.next = self
++            .next
++            .checked_add(1)
++            .context("GPU claim generation overflow")?;
++        self.unspent.insert(self.next, (bytes, headroom));
++        Ok(self.next)
++    }
++}
++/// No Deserialize, no public field constructor. Host retains the actual service lease.
++pub struct CudaRuntime {
++    #[cfg(all(windows, target_arch = "x86_64"))]
++    loaded: &'static windows::LoadedRuntime,
++    manifest: manifest::RuntimeManifest,
++    identity: Sha256Digest,
++    _native_lease: Arc<dyn Send + Sync>,
++    devices: Mutex<BTreeMap<[u8; 16], Weak<CudaDevice>>>,
++}
++impl CudaRuntime {
++    /// # Safety
++    /// Host must pass its actual exclusive native ServiceLease and retain the
++    /// ordinary ServiceComputeScope. No caller metadata/flags can replace it.
++    pub unsafe fn from_native_lease(
++        lease: Arc<dyn Send + Sync>,
++        root: &Path,
++        manifest_path: &Path,
++        deadline: Instant,
++    ) -> Result<Arc<Self>> {
++        crate::native_inference::require_service_compute()?;
++        in_time(deadline)?;
++        #[cfg(all(windows, target_arch = "x86_64"))]
++        {
++            let (loaded, manifest, identity) = windows::admit(root, manifest_path, deadline)?;
++            in_time(deadline)?;
++            Ok(Arc::new(Self {
++                loaded,
++                manifest,
++                identity,
++                _native_lease: lease,
++                devices: Mutex::new(BTreeMap::new()),
++            }))
++        }
++        #[cfg(not(all(windows, target_arch = "x86_64")))]
++        {
++            let _ = (lease, root, manifest_path);
++            anyhow::bail!(RuntimeUnavailable::new("unsupported platform"))
++        }
++    }
++    pub fn runtime_build(&self) -> Sha256Digest {
++        self.manifest.static_core_build
++    }
++    pub fn manifest_identity(&self) -> Sha256Digest {
++        self.identity
++    }
++    pub fn adapters(&self, deadline: Instant) -> Result<Vec<AdapterObservation>> {
++        crate::native_inference::require_service_compute()?;
++        in_time(deadline)?;
++        #[cfg(all(windows, target_arch = "x86_64"))]
++        {
++            self.loaded.adapters(deadline, self._native_lease.clone())
++        }
++        #[cfg(not(all(windows, target_arch = "x86_64")))]
++        {
++            anyhow::bail!("CUDA unavailable")
++        }
++    }
++    pub fn device(self: &Arc<Self>, uuid: [u8; 16], deadline: Instant) -> Result<Arc<CudaDevice>> {
++        let mut devices = self
++            .devices
++            .lock()
++            .map_err(|_| anyhow::anyhow!("GPU adapter owner poisoned"))?;
++        if let Some(device) = devices.get(&uuid).and_then(Weak::upgrade) {
++            device.observation(deadline)?;
++            return Ok(device);
++        }
++        let observed = self
++            .adapters(deadline)?
++            .into_iter()
++            .find(|v| v.uuid == uuid)
++            .context("native adapter UUID unavailable")?;
++        ensure!(
++            observed.compute_major == 8 && observed.compute_minor == 6,
++            "CUDA compute capability differs from compiled SM86 native policy"
++        );
++        #[cfg(all(windows, target_arch = "x86_64"))]
++        let context = self
++            .loaded
++            .retain_primary(observed.ordinal, self._native_lease.clone())?;
++        let epoch = NEXT_EPOCH
++            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| v.checked_add(1))
++            .map_err(|_| anyhow::anyhow!("GPU capability epoch exhausted"))?;
++        let device = Arc::new(CudaDevice {
++            runtime: self.clone(),
++            observed,
++            epoch: AtomicU64::new(epoch),
++            poisoned: AtomicBool::new(false),
++            claims: Mutex::new(Claims::default()),
++            #[cfg(all(windows, target_arch = "x86_64"))]
++            context,
++        });
++        devices.insert(uuid, Arc::downgrade(&device));
++        Ok(device)
++    }
++}
++pub struct CudaDevice {
++    runtime: Arc<CudaRuntime>,
++    observed: AdapterObservation,
++    epoch: AtomicU64,
++    poisoned: AtomicBool,
++    claims: Mutex<Claims>,
++    #[cfg(all(windows, target_arch = "x86_64"))]
++    context: windows::PrimaryContext,
++}
++impl CudaDevice {
++    pub fn uuid(&self) -> [u8; 16] {
++        self.observed.uuid
++    }
++    pub fn pending_claims(&self) -> Option<usize> {
++        self.claims.lock().ok().map(|c| c.unspent.len())
++    }
++    pub fn epoch(&self) -> u64 {
++        self.epoch.load(Ordering::Acquire)
++    }
++    pub fn poisoned(&self) -> bool {
++        self.poisoned.load(Ordering::Acquire) || {
++            #[cfg(all(windows, target_arch = "x86_64"))]
++            {
++                windows::runtime_poisoned()
++            }
++            #[cfg(not(all(windows, target_arch = "x86_64")))]
++            {
++                false
++            }
++        }
++    }
++    fn poison(&self) {
++        self.poisoned.store(true, Ordering::Release);
++        self.epoch.fetch_add(1, Ordering::AcqRel);
++    }
++    pub fn observation(&self, deadline: Instant) -> Result<AdapterObservation> {
++        crate::native_inference::require_service_compute()?;
++        in_time(deadline)?;
++        ensure!(!self.poisoned(), "CUDA adapter is poisoned");
++        #[cfg(all(windows, target_arch = "x86_64"))]
++        {
++            let result =
++                self.runtime
++                    .loaded
++                    .observe(self.observed.ordinal, &self.context, deadline);
++            match result {
++                Ok(mut value) => {
++                    if value.uuid != self.observed.uuid
++                        || value.driver_api_version != self.observed.driver_api_version
++                        || value.driver_image_sha256 != self.observed.driver_image_sha256
++                        || value.compute_major != self.observed.compute_major
++                        || value.compute_minor != self.observed.compute_minor
++                        || value.physical_total_bytes != self.observed.physical_total_bytes
++                    {
++                        self.poison();
++                        anyhow::bail!("CUDA adapter/driver epoch changed");
++                    }
++                    value.epoch = self.epoch();
++                    Ok(value)
++                }
++                Err(error) => {
++                    self.poison();
++                    Err(error)
++                }
++            }
++        }
++        #[cfg(not(all(windows, target_arch = "x86_64")))]
++        {
++            anyhow::bail!("CUDA unavailable")
++        }
++    }
++    pub fn synchronize(&self, deadline: Instant) -> Result<()> {
++        #[cfg(all(windows, target_arch = "x86_64"))]
++        {
++            // Cleanup is never skipped merely because the original deadline expired.
++            if let Err(error) = self.runtime.loaded.synchronize(&self.context) {
++                self.poison();
++                return Err(error);
++            }
++            in_time(deadline)
++        }
++        #[cfg(not(all(windows, target_arch = "x86_64")))]
++        {
++            let _ = deadline;
++            anyhow::bail!("CUDA unavailable")
++        }
++    }
++    fn reserve(
++        self: &Arc<Self>,
++        bytes: u64,
++        headroom: u64,
++        deadline: Instant,
++    ) -> Result<DeviceReservation> {
++        let mut claims = self
++            .claims
++            .lock()
++            .map_err(|_| anyhow::anyhow!("GPU capacity owner poisoned"))?;
++        let observed = self.observation(deadline)?;
++        let id = claims.reserve(observed.free_bytes, bytes, headroom)?;
++        Ok(DeviceReservation {
++            device: self.clone(),
++            id: Some(id),
++            deadline,
++            attempted: false,
++            _thread: std::marker::PhantomData,
++        })
++    }
++    pub fn reserve_cold_load(
++        self: &Arc<Self>,
++        bytes: u64,
++        headroom: u64,
++        deadline: Instant,
++    ) -> Result<DeviceReservation> {
++        self.reserve(bytes, headroom, deadline)
++    }
++    pub fn reserve_warm_work(
++        self: &Arc<Self>,
++        extra_bytes: u64,
++        headroom: u64,
++        deadline: Instant,
++    ) -> Result<DeviceReservation> {
++        self.reserve(extra_bytes, headroom, deadline)
++    }
++    pub(super) fn validate_profile(&self, profile: &Profile) -> Result<()> {
++        ensure!(!self.poisoned(), "CUDA adapter is poisoned");
++        let policy = profile
++            .device_execution
++            .as_ref()
++            .context("CPU profile cannot acquire CUDA execution")?;
++        policy.validate(profile)?;
++        ensure!(
++            policy.backend == GpuBackend::Cuda
++                && policy.precision == DevicePrecision::Float32
++                && !policy.tf32
++                && policy.placement == PlacementPolicy::StrictGpu
++                && policy.runtime_build == self.runtime.runtime_build()
++                && policy.compatibility_policy == compatibility_policy_digest()
++                && policy.provider_options == provider_options_digest()
++                && policy.math_policy == math_policy_digest(),
++            "GPU model/runtime/policy/precision is not the native FP32 strict variant"
++        );
++        Ok(())
++    }
++    pub(super) fn qualified_plan(&self, profile: &Profile) -> Result<DeviceCapacityPlan> {
++        self.validate_profile(profile)?;
++        let identity = profile.device_execution_identity()?;
++        let fit = self
++            .runtime
++            .manifest
++            .fits
++            .iter()
++            .find(|v| v.manifest == profile.manifest && v.execution_identity == identity)
++            .context("exact native variant has no compiled measured phase capacity")?;
++        ensure!(
++            matches!(&profile.device_execution.as_ref().unwrap().memory,DeviceMemory::Dedicated{required_peak_bytes,headroom_bytes} if *required_peak_bytes==fit.cold_peak_bytes&&*headroom_bytes==fit.headroom_bytes),
++            "native measured phase fit differs from immutable device requirements"
++        );
++        ensure!(
++            fit.adapter_uuid == self.observed.uuid
++                && fit.driver_api_version == self.observed.driver_api_version
++                && fit.driver_image_sha256 == self.observed.driver_image_sha256,
++            "GPU fit is not qualified for the actual adapter/driver"
++        );
++        DeviceCapacityPlan::new(
++            fit.cold_peak_bytes,
++            fit.warm_extra_bytes,
++            fit.headroom_bytes,
++        )
++    }
++    pub(super) fn placement(
++        &self,
++        session: &ort::session::Session,
++    ) -> Result<PlacementObservation> {
++        #[cfg(all(windows, target_arch = "x86_64"))]
++        {
++            self.runtime.loaded.placement(session)
++        }
++        #[cfg(not(all(windows, target_arch = "x86_64")))]
++        {
++            let _ = session;
++            anyhow::bail!("CUDA placement unavailable")
++        }
++    }
++    pub(super) fn ordinal(&self) -> i32 {
++        self.observed.ordinal
++    }
++}
++/// A pending future-work charge, not a resident allocation or model permit.
++pub struct DeviceReservation {
++    device: Arc<CudaDevice>,
++    id: Option<u64>,
++    deadline: Instant,
++    attempted: bool,
++    _thread: std::marker::PhantomData<std::rc::Rc<()>>,
++}
++impl DeviceReservation {
++    fn finish(&mut self) -> Result<()> {
++        self.attempted = true;
++        let result = self.device.synchronize(self.deadline);
++        if !self.device.poisoned() {
++            if let Some(id) = self.id.take() {
++                self.device
++                    .claims
++                    .lock()
++                    .map_err(|_| anyhow::anyhow!("GPU capacity owner poisoned"))?
++                    .unspent
++                    .remove(&id);
++            }
++        }
++        result
++    }
++    pub fn settle(mut self) -> Result<()> {
++        self.finish()
++    }
++}
++impl Drop for DeviceReservation {
++    fn drop(&mut self) {
++        if self.id.is_some() {
++            if !self.attempted {
++                let _ = self.finish();
++            }
++            if self.device.poisoned() {
++                std::mem::forget(self.device.clone());
++            }
++        }
++    }
++}
++
++#[derive(Clone)]
++pub(super) struct Binding {
++    pub device: Arc<CudaDevice>,
++    pub plan: DeviceCapacityPlan,
++    pub load_deadline: Instant,
++    pub evidence: Option<DeviceEvidence>,
++    pub host_warm_extra_bytes: Option<u64>,
++    log: Arc<Mutex<(Vec<String>, usize, bool)>>,
++}
++impl Binding {
++    pub fn qualified(
++        device: Arc<CudaDevice>,
++        profile: &Profile,
++        deadline: Instant,
++    ) -> Result<Self> {
++        in_time(deadline)?;
++        let plan = device.qualified_plan(profile)?;
++        let fit = device
++            .runtime
++            .manifest
++            .fits
++            .iter()
++            .find(|v| {
++                v.manifest == profile.manifest
++                    && v.execution_identity
++                        == profile.device_execution_identity().unwrap_or_default()
++            })
++            .context("GPU variant fit missing")?;
++        ensure!(
++            fit.host_warm_extra_bytes <= profile.memory_reservation_bytes,
++            "native GPU host extra exceeds admitted profile peak"
++        );
++        let evidence = fit.evidence.clone();
++        let host = fit.host_warm_extra_bytes;
++        Ok(Self {
++            device,
++            plan,
++            load_deadline: deadline,
++            evidence: Some(evidence),
++            host_warm_extra_bytes: Some(host),
++            log: Arc::new(Mutex::new((Vec::new(), 0, false))),
++        })
++    }
++    #[cfg(any(test, feature = "test-support"))]
++    pub fn probe(
++        device: Arc<CudaDevice>,
++        profile: &Profile,
++        plan: DeviceCapacityPlan,
++        deadline: Instant,
++    ) -> Result<Self> {
++        in_time(deadline)?;
++        device.validate_profile(profile)?;
++        ensure!(
++            profile.qualification.is_none(),
++            "probe cannot relabel release qualification"
++        );
++        Ok(Self {
++            device,
++            plan,
++            load_deadline: deadline,
++            evidence: None,
++            host_warm_extra_bytes: None,
++            log: Arc::new(Mutex::new((Vec::new(), 0, false))),
++        })
++    }
++    pub fn configure(
++        &self,
++        builder: ort::session::builder::SessionBuilder,
++    ) -> Result<ort::session::builder::SessionBuilder> {
++        in_time(self.load_deadline)?;
++        let log = self.log.clone();
++        let builder = builder
++            .with_execution_providers([ort::execution_providers::CUDAExecutionProvider::default()
++                .with_device_id(self.device.ordinal())
++                .with_tf32(false)
++                .with_cuda_graph(false)
++                .with_memory_limit(usize::try_from(self.plan.cold_peak_bytes)?)
++                .build()
++                .error_on_failure()])
++            .map_err(run_failure)?;
++        Ok(builder
++            .with_config_entry("session.disable_cpu_ep_fallback", "1")?
++            .with_log_level(ort::logging::LogLevel::Verbose)?
++            .with_log_verbosity(1)?
++            .with_logger(Box::new(
++                move |_level, _category, _id, location, message| {
++                    // Native bounded observations only, never a placement permit.
++                    if let Ok(mut sink) = log.lock() {
++                        let entry = format!("{location}: {message}");
++                        if entry.len() > 4096 || sink.1.saturating_add(entry.len()) > 65536 {
++                            sink.2 = true;
++                        } else {
++                            sink.1 += entry.len();
++                            sink.0.push(entry);
++                        }
++                    }
++                },
++            ))?)
++    }
++}
++
++/// Metadata-only native factory input. Its output is unapproved until the
++/// genuine receipt/PE closure is reviewed and its exact SHA is compiled.
++#[cfg(feature = "test-support")]
++pub struct RuntimeAssemblyInput {
++    pub directory: std::path::PathBuf,
++    pub producer_name: String,
++    pub producer_sha256: Sha256Digest,
++    pub module_names: Vec<String>,
++    pub load_order: Vec<String>,
++    pub system_imports: BTreeSet<String>,
++}
++#[cfg(feature = "test-support")]
++/// # Safety
++/// The caller retains its actual ServiceLease/ServiceComputeScope while observing
++/// this private build closure. This creates no runtime, device or execution permit.
++pub unsafe fn observe_runtime_assembly(
++    _native_lease: Arc<dyn Send + Sync>,
++    input: RuntimeAssemblyInput,
++    deadline: Instant,
++) -> Result<Vec<u8>> {
++    crate::native_inference::require_service_compute()?;
++    in_time(deadline)?;
++    #[cfg(all(windows, target_arch = "x86_64"))]
++    {
++        windows::observe_assembly(input, deadline)
++    }
++    #[cfg(not(all(windows, target_arch = "x86_64")))]
++    {
++        let _ = input;
++        anyhow::bail!("CUDA assembly factory requires Windows x64")
++    }
++}
++
++#[derive(Debug)]
++pub(crate) struct NativeDeviceFailure {
++    message: String,
++    source: Option<ort::Error>,
++}
++impl std::fmt::Display for NativeDeviceFailure {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        write!(f, "{}", self.message)
++    }
++}
++impl std::error::Error for NativeDeviceFailure {
++    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
++        self.source.as_ref().map(|v| v as _)
++    }
++}
++pub(super) fn native_fault(message: String) -> anyhow::Error {
++    NativeDeviceFailure {
++        message,
++        source: None,
++    }
++    .into()
++}
++pub(super) fn run_failure(error: ort::Error) -> anyhow::Error {
++    use ort::ErrorCode;
++    if matches!(
++        error.code(),
++        ErrorCode::GenericFailure
++            | ErrorCode::EngineError
++            | ErrorCode::RuntimeException
++            | ErrorCode::NotImplemented
++            | ErrorCode::ExecutionProviderFailure
++    ) {
++        NativeDeviceFailure {
++            message: "native CUDA/ORT execution failed".into(),
++            source: Some(error),
++        }
++        .into()
++    } else {
++        error.into()
++    }
++}
++impl CudaDevice {
++    pub fn driver_api_version(&self) -> i32 {
++        self.observed.driver_api_version
++    }
++    pub fn driver_image_sha256(&self) -> Sha256Digest {
++        self.observed.driver_image_sha256
++    }
++}
++impl CudaRuntime {
++    pub fn poisoned(&self) -> bool {
++        self.devices.is_poisoned() || {
++            #[cfg(all(windows, target_arch = "x86_64"))]
++            {
++                windows::runtime_poisoned()
++            }
++            #[cfg(not(all(windows, target_arch = "x86_64")))]
++            {
++                false
++            }
++        }
++    }
++}
++
++#[derive(Debug)]
++pub struct RuntimeUnavailable {
++    reason: &'static str,
++}
++impl RuntimeUnavailable {
++    pub(super) fn new(reason: &'static str) -> Self {
++        Self { reason }
++    }
++}
++impl std::fmt::Display for RuntimeUnavailable {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        write!(f, "GPU runtime unavailable: {}", self.reason)
++    }
++}
++impl std::error::Error for RuntimeUnavailable {}
+--- /dev/null
++++ b/crates/airk-retrieval/src/arbiter/runtime/session_owner.rs
+@@ -0,0 +1,69 @@
++// SPDX-License-Identifier: Apache-2.0
++//! Retain actual GPU session and lease on uncertain native/device settlement.
++use super::*;
++use std::{
++    mem::ManuallyDrop,
++    ops::{Deref, DerefMut},
++    time::Instant,
++};
++pub(super) struct SessionOwner {
++    session: ManuallyDrop<Session>,
++    #[cfg(feature = "gpu-cuda")]
++    gpu: Option<cuda::Binding>,
++}
++impl SessionOwner {
++    pub fn new(session: Session, #[cfg(feature = "gpu-cuda")] gpu: Option<cuda::Binding>) -> Self {
++        Self {
++            session: ManuallyDrop::new(session),
++            #[cfg(feature = "gpu-cuda")]
++            gpu,
++        }
++    }
++    pub fn device_settled(&self) -> bool {
++        #[cfg(feature = "gpu-cuda")]
++        if let Some(g) = &self.gpu {
++            return !g.device.poisoned() && g.device.pending_claims() == Some(0);
++        }
++        true
++    }
++    pub fn synchronize(&self, deadline: Instant) -> Result<()> {
++        #[cfg(feature = "gpu-cuda")]
++        if let Some(g) = &self.gpu {
++            return g.device.synchronize(deadline);
++        }
++        let _ = deadline;
++        Ok(())
++    }
++}
++impl Deref for SessionOwner {
++    type Target = Session;
++    fn deref(&self) -> &Session {
++        &self.session
++    }
++}
++impl DerefMut for SessionOwner {
++    fn deref_mut(&mut self) -> &mut Session {
++        &mut self.session
++    }
++}
++impl Drop for SessionOwner {
++    fn drop(&mut self) {
++        #[cfg(feature = "gpu-cuda")]
++        if let Some(gpu) = &self.gpu {
++            let _ = gpu.device.synchronize(gpu.load_deadline);
++            if gpu.device.poisoned() {
++                std::mem::forget(gpu.clone());
++                return;
++            }
++        }
++        // SAFETY: exactly once, only after native work is actually settled.
++        unsafe { ManuallyDrop::drop(&mut self.session) };
++        #[cfg(feature = "gpu-cuda")]
++        if let Some(gpu) = &self.gpu {
++            let _ = gpu.device.synchronize(gpu.load_deadline);
++            if gpu.device.poisoned() {
++                std::mem::forget(gpu.clone());
++            }
++        }
++    }
++}
+--- a/crates/airk-retrieval/src/arbiter/runtime.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime.rs
+@@ -23,6 +23,8 @@
+     sync::{Arc, Mutex},
+ };
+ 
++#[cfg(feature = "gpu-cuda")]
++pub mod cuda;
+ #[cfg(test)]
+ mod embedded_catalog_tests;
+ mod input;
+@@ -32,6 +34,7 @@
+ mod local_test_tests;
+ #[cfg(feature = "test-support")]
+ pub mod qualification;
++mod session_owner;
+ 
+ /// Source-policy checks precede asset reads/session construction. New Context
+ /// compiler policy is distinct from the whole-card semantic task policy.
+@@ -141,6 +144,8 @@
+     description: Profile,
+     release: bool,
+     evaluation: Option<Arc<dyn Send + Sync>>,
++    #[cfg(feature = "gpu-cuda")]
++    gpu: Option<cuda::Binding>,
+ }
+ /// Descriptions come from the same immutable native owner as execution. A
+ /// listed candidate is not an execution capability or qualification claim.
+@@ -173,6 +178,10 @@
+             .find(|profile| profile.manifest == manifest)
+             .context("Arbiter profile is not release-qualified")?;
+         description.validate()?;
++        ensure!(
++            description.device_execution.is_none(),
++            "GPU release requires actual native device witness"
++        );
+         description.validate_release_downloads()?;
+         validate_selected_policies(&description)?;
+         release_qualification_gate(&description, env!("CARGO_PKG_VERSION"))?;
+@@ -201,6 +210,8 @@
+             description,
+             release: true,
+             evaluation: None,
++            #[cfg(feature = "gpu-cuda")]
++            gpu: None,
+         })
+     }
+     #[cfg(any(test, feature = "test-support"))]
+@@ -210,6 +221,8 @@
+             description,
+             release: false,
+             evaluation: None,
++            #[cfg(feature = "gpu-cuda")]
++            gpu: None,
+         })
+     }
+     pub fn execution_authorized(&self) -> bool {
+@@ -299,6 +312,8 @@
+             description,
+             release: false,
+             evaluation: Some(self.lease.clone()),
++            #[cfg(feature = "gpu-cuda")]
++            gpu: None,
+         })
+     }
+ }
+@@ -306,7 +321,7 @@
+ pub struct Scorer {
+     profile: ExecutionProfile,
+     compiler: Compiler,
+-    session: Mutex<Session>,
++    session: Mutex<session_owner::SessionOwner>,
+     _environment: crate::onnx::SessionEnvironmentLease,
+     physical_cores: usize,
+     joint_calibration:
+@@ -353,11 +368,33 @@
+         crate::native_inference::require_service_compute()?;
+         profile.description.validate()?;
+         validate_selected_policies(profile.description())?;
+-        ensure!(
+-            profile.description.runtime == crate::model::ONNX_RUNTIME_ENGINE,
++        #[cfg(feature = "gpu-cuda")]
++        let gpu = profile.gpu.clone();
++        #[cfg(feature = "gpu-cuda")]
++        if let Some(binding) = &gpu {
++            binding.device.validate_profile(profile.description())?;
++            cuda::in_time(binding.load_deadline)?;
++        }
++        ensure!(
++            profile.description.runtime == crate::model::ONNX_RUNTIME_ENGINE || {
++                #[cfg(feature = "gpu-cuda")]
++                {
++                    gpu.is_some()
++                }
++                #[cfg(not(feature = "gpu-cuda"))]
++                {
++                    false
++                }
++            },
+             "Arbiter runtime differs from native image"
+         );
+-        let fit = profile.description.cpu_fit.clone().unwrap_or_default();
++        let fit = profile
++            .description
++            .device_execution
++            .as_ref()
++            .map(|v| v.host_fit.clone())
++            .or_else(|| profile.description.cpu_fit.clone())
++            .unwrap_or_default();
+         fit.validate()?;
+         let physical_cores = airk_process::cpu_fit::usable_physical_cores()
+             .context("usable physical-core observation unavailable")?;
+@@ -431,17 +468,38 @@
+         let large_initializers = external_data::large_initializers(&graph, &external)?;
+         crate::onnx::initialize_runtime()?;
+         let environment = crate::onnx::acquire_session_environment()?;
++        #[cfg(feature = "gpu-cuda")]
++        let cold = match &gpu {
++            Some(b) => Some(b.device.reserve_cold_load(
++                b.plan.cold_peak_bytes(),
++                b.plan.headroom_bytes(),
++                b.load_deadline,
++            )?),
++            None => None,
++        };
+         let mut builder = Session::builder()?
+             .with_intra_threads(fit.intra_threads)?
+             .with_inter_threads(fit.inter_threads)?
+             .with_optimization_level(GraphOptimizationLevel::Level3)?
+             .with_parallel_execution(false)?
+             .with_memory_pattern(false)?
+-            .with_execution_providers([CPUExecutionProvider::default()
+-                .with_arena_allocator(false)
+-                .build()])?
+             .with_config_entry("session.intra_op.allow_spinning", "0")?
+             .with_config_entry("session.inter_op.allow_spinning", "0")?;
++        #[cfg(feature = "gpu-cuda")]
++        {
++            builder = match &gpu {
++                Some(binding) => binding.configure(builder)?,
++                None => builder.with_execution_providers([CPUExecutionProvider::default()
++                    .with_arena_allocator(false)
++                    .build()])?,
++            };
++        }
++        #[cfg(not(feature = "gpu-cuda"))]
++        {
++            builder = builder.with_execution_providers([CPUExecutionProvider::default()
++                .with_arena_allocator(false)
++                .build()])?;
++        }
+         builder = configure(builder)?;
+         for asset in profile
+             .description
+@@ -488,9 +546,34 @@
+         }
+         // Every external reference has been audited and supplied from verified
+         // memory. Native loading never reopens an asset path or source file.
++        #[cfg(feature = "gpu-cuda")]
++        if let Some(binding) = &gpu {
++            cuda::in_time(binding.load_deadline)?;
++        }
+         let session = builder
+             .commit_from_memory(&graph)
++            .map_err(|error| {
++                #[cfg(feature = "gpu-cuda")]
++                if gpu.is_some() {
++                    return cuda::run_failure(error);
++                }
++                anyhow::Error::from(error)
++            })
+             .context("Arbiter native model load failed")?;
++        let session = session_owner::SessionOwner::new(
++            session,
++            #[cfg(feature = "gpu-cuda")]
++            gpu.clone(),
++        );
++        #[cfg(feature = "gpu-cuda")]
++        if let Some(claim) = cold {
++            claim.settle()?;
++        }
++        #[cfg(feature = "gpu-cuda")]
++        if let Some(binding) = &gpu {
++            binding.device.placement(&session)?.require_strict()?;
++        }
++
+         let focus = profile.description.abi.readout == Readout::FocusYesNo;
+         let output_name = if focus { "logits" } else { "scores" };
+         let expected = if focus {
+@@ -652,7 +735,32 @@
+         self.compiler.compile(state, question, candidates)
+     }
+     pub fn score(&self, input: &CompiledInput) -> Result<Vec<f32>> {
++        #[cfg(feature = "gpu-cuda")]
++        ensure!(
++            self.profile.gpu.is_none(),
++            "GPU scoring requires caller original deadline"
++        );
++        self.score_owned(input, None)
++    }
++    pub fn score_with_deadline(
++        &self,
++        input: &CompiledInput,
++        deadline: std::time::Instant,
++    ) -> Result<Vec<f32>> {
++        ensure!(
++            std::time::Instant::now() < deadline,
++            "original scorer deadline expired"
++        );
++        self.score_owned(input, Some(deadline))
++    }
++    fn score_owned(
++        &self,
++        input: &CompiledInput,
++        deadline: Option<std::time::Instant>,
++    ) -> Result<Vec<f32>> {
+         crate::native_inference::require_service_compute()?;
++        #[cfg(not(feature = "gpu-cuda"))]
++        let _ = deadline;
+         let tokens = input.input_ids.len();
+         let candidates = input.candidate_positions.len();
+         let focus = self.profile.description.abi.readout == Readout::FocusYesNo;
+@@ -667,9 +775,27 @@
+             .session
+             .lock()
+             .map_err(|_| anyhow::anyhow!("Arbiter native session poisoned"))?;
++        #[cfg(feature = "gpu-cuda")]
++        let work = match &self.profile.gpu {
++            Some(binding) => Some(binding.device.reserve_warm_work(
++                binding.plan.warm_extra_bytes(),
++                binding.plan.headroom_bytes(),
++                deadline.context("original GPU score deadline required")?,
++            )?),
++            None => None,
++        };
+         let output_name = if focus { "logits" } else { "scores" };
+-        let options =
+-            RunOptions::new()?.with_outputs(OutputSelector::no_default().with(output_name));
++        let selected = OutputSelector::no_default().with(output_name);
++        #[cfg(feature = "gpu-cuda")]
++        let selected = if self.profile.gpu.is_some() {
++            selected.preallocate(
++                output_name,
++                Tensor::from_array(([1, candidates], vec![0.0_f32; candidates]))?,
++            )
++        } else {
++            selected
++        };
++        let options = RunOptions::new()?.with_outputs(selected);
+         let outputs = if focus { session.run_with_options(ort::inputs![
+             "input_ids" => Tensor::from_array(([1,tokens],input.input_ids.clone()))?,
+             "attention_mask" => Tensor::from_array(([1,tokens],input.attention_mask.clone()))?,
+@@ -681,13 +807,37 @@
+             "decision_positions" => Tensor::from_array(([1],vec![input.decision_position]))?,
+             "candidate_positions" => Tensor::from_array(([1,candidates],input.candidate_positions.clone()))?,
+             "option_mask" => Tensor::from_array(([1,candidates],input.option_mask.clone()))?,
+-        ],&options) }.context("Arbiter full trained readout execution failed")?;
++        ],&options) }.map_err(|error|{
++            #[cfg(feature="gpu-cuda")] if self.profile.gpu.is_some(){return cuda::run_failure(error);}
++            anyhow::Error::from(error)
++        }).context("Arbiter full trained readout execution failed");
++        #[cfg(feature = "gpu-cuda")]
++        let settlement = match work {
++            Some(claim) => claim.settle(),
++            None => Ok(()),
++        };
++        #[cfg(feature = "gpu-cuda")]
++        let outputs = match (outputs, settlement) {
++            (Ok(v), Ok(())) => v,
++            (Err(e), Ok(())) | (Ok(_), Err(e)) => return Err(e),
++            (Err(e), Err(wait)) => {
++                return Err(e.context(format!("GPU settlement also failed: {wait:#}")));
++            }
++        };
++        #[cfg(not(feature = "gpu-cuda"))]
++        let outputs = outputs?;
+         let (shape, scores) = outputs[output_name].try_extract_tensor::<f32>()?;
+         ensure!(
+             shape.as_ref() == [1, candidates as i64]
+                 && scores.iter().all(|score| score.is_finite()),
+             "Arbiter score shape or finite-value contract changed"
+         );
++        if let Some(deadline) = deadline {
++            ensure!(
++                std::time::Instant::now() < deadline,
++                "original scorer deadline expired before delivery"
++            );
++        }
+         Ok(scores.to_vec())
+     }
+ }
+@@ -986,3 +1136,225 @@
+ 
+ #[cfg(test)]
+ mod dense_synthetic_tests;
++
++/// Exact embedded bytes, never a caller supplied catalog/descriptor digest.
++pub fn catalog_source_digest() -> Sha256Digest {
++    airk_core::identity::framed_digest(
++        b"airk.native.arbiter-catalog-source/1",
++        &[include_bytes!("release-catalog.json")],
++    )
++}
++pub fn device_catalog() -> Result<airk_core::arbiter::device::DeviceCatalog> {
++    use airk_core::arbiter::device::*;
++    let profiles = catalog_profiles()?;
++    let mut value = DeviceCatalog {
++        schema: DEVICE_CATALOG_SCHEMA.into(),
++        focus: Vec::new(),
++        context_compact: Vec::new(),
++        context_large: Vec::new(),
++    };
++    for p in &profiles {
++        let row = VariantReference {
++            manifest: p.manifest,
++            execution_identity: p.device_execution_identity()?,
++        };
++        match SelectedModel::from_model(p.model)? {
++            SelectedModel::Focus => value.focus.push(row),
++            SelectedModel::ContextCompact => value.context_compact.push(row),
++            SelectedModel::ContextLarge => value.context_large.push(row),
++        }
++    }
++    value.validate(|sha| profiles.iter().find(|p| p.manifest == sha))?;
++    Ok(value)
++}
++impl ExecutionProfile {
++    pub fn device_evidence(&self) -> Option<airk_core::arbiter::device::DeviceEvidence> {
++        #[cfg(feature = "gpu-cuda")]
++        {
++            self.gpu.as_ref().and_then(|b| b.evidence.clone())
++        }
++        #[cfg(not(feature = "gpu-cuda"))]
++        {
++            None
++        }
++    }
++    pub fn host_warm_extra_bytes(&self) -> Option<u64> {
++        #[cfg(feature = "gpu-cuda")]
++        {
++            self.gpu.as_ref().and_then(|b| b.host_warm_extra_bytes)
++        }
++        #[cfg(not(feature = "gpu-cuda"))]
++        {
++            None
++        }
++    }
++    #[cfg(feature = "gpu-cuda")]
++    pub fn cuda_device(&self) -> Option<Arc<cuda::CudaDevice>> {
++        self.gpu.as_ref().map(|b| b.device.clone())
++    }
++    #[cfg(feature = "gpu-cuda")]
++    pub fn bound_device_epoch(&self) -> Option<u64> {
++        self.gpu.as_ref().map(|b| b.device.epoch())
++    }
++    #[cfg(feature = "gpu-cuda")]
++    pub fn bound_device_uuid(&self) -> Option<[u8; 16]> {
++        self.gpu.as_ref().map(|b| b.device.uuid())
++    }
++    #[cfg(feature = "gpu-cuda")]
++    pub fn bind_cuda_device(
++        mut self,
++        device: Arc<cuda::CudaDevice>,
++        deadline: std::time::Instant,
++    ) -> Result<Self> {
++        crate::native_inference::require_service_compute()?;
++        ensure!(
++            self.execution_authorized(),
++            "GPU binding requires native release/evaluation capability"
++        );
++        self.gpu = Some(cuda::Binding::qualified(
++            device,
++            self.description(),
++            deadline,
++        )?);
++        Ok(self)
++    }
++    #[cfg(all(feature = "gpu-cuda", any(test, feature = "test-support")))]
++    pub fn bind_cuda_probe(
++        mut self,
++        device: Arc<cuda::CudaDevice>,
++        plan: cuda::DeviceCapacityPlan,
++        deadline: std::time::Instant,
++    ) -> Result<Self> {
++        crate::native_inference::require_service_compute()?;
++        ensure!(
++            self.execution_authorized() && self.evaluation() && !self.release,
++            "unqualified GPU probe requires actual native evaluation lease"
++        );
++        self.gpu = Some(cuda::Binding::probe(
++            device,
++            self.description(),
++            plan,
++            deadline,
++        )?);
++        Ok(self)
++    }
++    #[cfg(feature = "gpu-cuda")]
++    pub fn from_release_device(
++        manifest: Sha256Digest,
++        device: Arc<cuda::CudaDevice>,
++        deadline: std::time::Instant,
++    ) -> Result<Self> {
++        crate::native_inference::require_service_compute()?;
++        let description = catalog_profiles()?
++            .into_iter()
++            .find(|p| p.manifest == manifest)
++            .context("GPU variant is outside compiled release catalog")?;
++        description.validate()?;
++        description.validate_release_downloads()?;
++        validate_selected_policies(&description)?;
++        ensure!(
++            description.device_execution.is_some()
++                && description.qualification.is_some()
++                && description
++                    .qualified_targets
++                    .iter()
++                    .any(|row| row.target == current_target()),
++            "GPU variant has no native release qualification"
++        );
++        Self {
++            description,
++            release: true,
++            evaluation: None,
++            gpu: None,
++        }
++        .bind_cuda_device(device, deadline)
++    }
++}
++impl Scorer {
++    pub fn device_settled(&self) -> bool {
++        self.session
++            .lock()
++            .map(|s| s.device_settled())
++            .unwrap_or(false)
++    }
++    pub fn synchronize(&self, deadline: std::time::Instant) -> Result<()> {
++        self.session
++            .lock()
++            .map_err(|_| anyhow::anyhow!("native session owner poisoned"))?
++            .synchronize(deadline)
++    }
++    #[cfg(feature = "gpu-cuda")]
++    pub fn device_observation(
++        &self,
++        deadline: std::time::Instant,
++    ) -> Result<Option<cuda::AdapterObservation>> {
++        self.profile
++            .gpu
++            .as_ref()
++            .map(|b| b.device.observation(deadline))
++            .transpose()
++    }
++}
++
++/// Asset-management description only. This creates no execution capability.
++pub fn release_asset_profile(manifest: Sha256Digest) -> Result<Profile> {
++    let profile = catalog_profiles()?
++        .into_iter()
++        .find(|p| p.manifest == manifest)
++        .context("profile is outside compiled release catalog")?;
++    profile.validate()?;
++    profile.validate_release_downloads()?;
++    validate_selected_policies(&profile)?;
++    if profile.device_execution.is_some() {
++        ensure!(
++            profile.qualification.is_some()
++                && profile
++                    .qualified_targets
++                    .iter()
++                    .any(|v| v.target == current_target()),
++            "GPU assets have no native release evidence"
++        );
++    } else {
++        release_qualification_gate(&profile, env!("CARGO_PKG_VERSION"))?;
++    }
++    Ok(profile)
++}
++
++#[cfg(feature = "gpu-cuda")]
++impl Scorer {
++    pub fn device_placement(&self) -> Result<Option<cuda::PlacementObservation>> {
++        crate::native_inference::require_service_compute()?;
++        let session = self
++            .session
++            .lock()
++            .map_err(|_| anyhow::anyhow!("native session owner poisoned"))?;
++        self.profile
++            .gpu
++            .as_ref()
++            .map(|b| b.device.placement(&session))
++            .transpose()
++    }
++}
++
++/// Only private typed native execution faults qualify. Input, source, deadline,
++/// authority and cancellation strings are never a device-failure heuristic.
++pub fn is_native_device_failure(error: &anyhow::Error) -> bool {
++    #[cfg(feature = "gpu-cuda")]
++    {
++        error.chain().any(|v| v.is::<cuda::NativeDeviceFailure>())
++    }
++    #[cfg(not(feature = "gpu-cuda"))]
++    {
++        let _ = error;
++        false
++    }
++}
++
++#[cfg(feature = "test-support")]
++impl ExecutionProfile {
++    pub fn matches_evaluation_lease(&self, lease: &Arc<dyn Send + Sync>) -> bool {
++        self.evaluation
++            .as_ref()
++            .is_some_and(|actual| Arc::ptr_eq(actual, lease))
++    }
++}

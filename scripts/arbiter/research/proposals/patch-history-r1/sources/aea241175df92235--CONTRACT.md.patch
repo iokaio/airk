@@ -1,0 +1,17 @@
+--- crates/airk-retrieval/src/model_catalog/CONTRACT.md
++++ crates/airk-retrieval/src/model_catalog/CONTRACT.md
+@@ -68,3 +68,14 @@
+ all four A6 conditions bind that same chosen MiniLM plus actual Focus/Context
+ profiles and frozen data/rubric/source/budget closure. Changed-pipeline calibration
+ does not transfer, and no old FINAL205 experiment is reopened.
++
++
++An authenticated active ONNX manifest also requires the captured graph, tokenizer
++and license reference lengths and digests to match that same active catalog
++closure. A contradictory declared length is a metadata error, not Ready or a
++retired-model Pending result. This comparison reads only bounded authenticated
++ModelJson and compiled catalog metadata; it never opens model/tokenizer/license
++payloads. The existing exact owner/thread-local evaluation lease remains the
++separate private exception. Independent controls use the owning metadata planner
++and shared-set sealer to recompute legitimate set identities with wrong neural
++lengths; metadata descriptor equality alone cannot establish active eligibility.
