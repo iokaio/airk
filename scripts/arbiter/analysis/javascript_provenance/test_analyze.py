@@ -38,6 +38,11 @@ class Analysis(unittest.TestCase):
         with patch.object(a,'read',return_value=b'abd'):
             with self.assertRaisesRegex(ValueError,'input drift'):a.unchanged(Path('input'),b'abc',100)
         with patch.object(a,'read',return_value=b'abc'):a.unchanged(Path('input'),b'abc',100)
+    def test_declarations_are_explicitly_nonemitting(self):
+        self.assertFalse(a.emits_javascript('packages/vscode/src/generated/i3.d.ts'))
+        self.assertFalse(a.emits_javascript('types.d.ts'))
+        self.assertTrue(a.emits_javascript('packages/vscode/src/nativeMetadataCodec.ts'))
+        self.assertTrue(a.emits_javascript('d.ts'))
     def test_duplicate_path_refuses(self):
         with self.assertRaises(ValueError):a.select([{'path':'a.js'},{'path':'a.js'}])
     def test_expired_child_never_starts(self):

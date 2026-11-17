@@ -79,6 +79,10 @@ def repository_path(value):
     return path
 
 
+def emits_javascript(path):
+    return str(path).endswith('.ts') and not str(path).endswith('.d.ts')
+
+
 def select(rows):
     chosen=[r for r in rows if Path(r['path']).suffix=='.js']
     if len({r['path'] for r in chosen})!=len(chosen):
@@ -92,7 +96,9 @@ const request=JSON.parse(fs.readFileSync(0,'utf8'));
 const ts=require(path.resolve(request.compiler)),out=[];
 const opts=ts.convertCompilerOptionsFromJson(request.options,'packages/vscode').options;
 for(const row of request.rows){
- const result=ts.transpileModule(row.text,{compilerOptions:opts,fileName:row.path}).outputText;
+ let result;
+ try {result=ts.transpileModule(row.text,{compilerOptions:opts,fileName:row.path}).outputText;}
+ catch(error){throw Error('TypeScript candidate '+row.path+' SHA256 '+row.key+': '+String(error));}
  const raw=Buffer.from(result);out.push({key:row.key,bytes:raw.length,sha256:crypto.createHash('sha256').update(raw).digest('hex')});
 }
 process.stdout.write(JSON.stringify(out));
@@ -161,7 +167,8 @@ def main():
         if hashlib.sha1(b'blob '+str(size).encode()+b'\0'+data).hexdigest()!=oid:raise ValueError('Git blob identity differs')
         key=sha(data)
         candidates.setdefault(key,{'key':key,'path':path,'text':data.decode('utf8'),'source':{'git_head':head,'git_blob_oid':oid,'git_path_label':path,'sha256':key,'bytes':size}})
-    values=list(candidates.values())
+    declarations=[{'path':row['path'],'source':row['source'],'status':'nonemitting_typescript_declaration'} for row in candidates.values() if not emits_javascript(row['path'])]
+    values=[row for row in candidates.values() if emits_javascript(row['path'])]
     for offset in range(0,len(values),96):
         batch=values[offset:offset+96]
         emitted=json.loads(command([str(node_path),'-e',NODE],deadline,json.dumps({'compiler':str(COMPILER),'options':options,'rows':batch}).encode()))
@@ -185,7 +192,7 @@ def main():
         group['proof']=proofs.get(digest)
     if pin(Path(__file__),deadline)!=owner:raise ValueError('analyzer source drift')
     check(deadline)
-    report={'schema':'airk.private.javascript-provenance-analysis/1','delta':{'path':str(args.delta),'sha256':args.delta_sha256},'head':head,'git_object_format':'sha1','node':node,'node_version':node_version,'owner':owner,'compiler':compiler,'config':config,'qualification':False,'historical_javascript_executed':False,'filesystem_emission':False,'selected_paths':len(rows),'unique_hashes':len(groups),'candidate_typescript_bodies':len(candidates),'proved_paths':sum(len(g['paths']) for h,g in groups.items() if h in proofs),'proved_hashes':len(proofs),'elapsed_seconds':time.monotonic()-start,'groups':list(groups.values())}
+    report={'schema':'airk.private.javascript-provenance-analysis/1','delta':{'path':str(args.delta),'sha256':args.delta_sha256},'head':head,'git_object_format':'sha1','node':node,'node_version':node_version,'owner':owner,'compiler':compiler,'config':config,'qualification':False,'historical_javascript_executed':False,'filesystem_emission':False,'selected_paths':len(rows),'unique_hashes':len(groups),'candidate_typescript_bodies':len(candidates),'emitting_typescript_bodies':len(values),'nonemitting_declarations':declarations,'proved_paths':sum(len(g['paths']) for h,g in groups.items() if h in proofs),'proved_hashes':len(proofs),'elapsed_seconds':time.monotonic()-start,'groups':list(groups.values())}
     print(json.dumps(report,indent=2))
 
 
