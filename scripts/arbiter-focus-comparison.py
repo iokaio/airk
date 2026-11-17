@@ -163,7 +163,8 @@ def validate_result(result, expected):
             for label in ('no', 'yes'):
                 require(struct.unpack('<I', struct.pack('<f', observed[label + '_logit']))[0] == observed[label + '_bits'], 'raw logit bits changed')
         require(actual['loaded_state']['tied_pointer'] and actual['loaded_state']['matched_parameters'] == 310, 'loaded state authentication absent')
-        require(actual['teardown']['model_collected'] and actual['teardown']['allocator_returned'], 'model teardown unproved')
+        require(actual['teardown']['model_collected'] and actual['teardown']['allocator_returned']
+                and actual['teardown']['errors'] == [], 'model teardown unproved')
     require(result['parameter_proof']['non_target_exact'] and result['parameter_proof']['non_target_count'] == 198, 'parameter proof absent')
 
 
@@ -340,34 +341,65 @@ def infer(torch, model, value, counters, check):
             'yes_bits': struct.unpack('<I', struct.pack('<f', yes))[0], 'elapsed_seconds': time.monotonic() - started}
 
 
-def score_arm(torch, directory, entries, hashes, expected, rows, result, check, math_config):
+def settle_arm(torch, reference, baseline, check):
+    # cuBLAS keeps process-owned workspaces beyond model lifetime. The pinned
+    # Torch leak checker explicitly releases them before checking allocation.
+    # Keep the original exact baseline; never subtract an unexplained residual.
+    errors = []
+    def observe(stage, callback):
+        try:
+            return callback()
+        except BaseException as error:
+            errors.append({'stage': stage, 'type': type(error).__name__, 'message': str(error)})
+            return None
+    before = observe('allocated_before_release', torch.cuda.memory_allocated)
+    observe('synchronize_before_release', torch.cuda.synchronize)
+    observe('collect_model', gc.collect)
+    observe('clear_cublas_workspaces', lambda: torch._C._cuda_clearCublasWorkspaces())
+    observe('empty_cache', torch.cuda.empty_cache)
+    observe('synchronize_after_release', torch.cuda.synchronize)
+    after = observe('allocated_after_release', torch.cuda.memory_allocated)
+    result = {'model_observed': reference is not None,
+              'model_collected': reference is not None and reference() is None,
+              'allocator_returned': after == baseline,
+              'baseline_allocated': baseline, 'allocated_before_release': before,
+              'allocated_after': after, 'errors': errors}
+    observe('original_deadline', check)
+    return result
+
+
+def score_arm(torch, directory, entries, hashes, expected, rows, result, check, math_config, output):
     from transformers import AutoModelForCausalLM
     baseline = torch.cuda.memory_allocated()
-    model, info = AutoModelForCausalLM.from_pretrained(directory, local_files_only=True, trust_remote_code=False,
-                    use_safetensors=True, dtype=torch.float32, attn_implementation='eager', output_loading_info=True)
-    require(not any(info.get(k) for k in ('missing_keys', 'unexpected_keys', 'mismatched_keys', 'error_msgs')), 'full checkpoint load differs')
-    require(config_math(model.config.to_dict(), strict=False) == math_config
-            and model.config._attn_implementation == 'eager', 'actual loaded math configuration differs')
-    model = model.to('cuda').eval().requires_grad_(False)
-    reference = weakref.ref(model)
-    output = {'rows': []}
+    model = info = reference = None
+    failed = False
     try:
+        model, info = AutoModelForCausalLM.from_pretrained(directory, local_files_only=True, trust_remote_code=False,
+                        use_safetensors=True, dtype=torch.float32, attn_implementation='eager', output_loading_info=True)
+        reference = weakref.ref(model)
+        require(not any(info.get(k) for k in ('missing_keys', 'unexpected_keys', 'mismatched_keys', 'error_msgs')), 'full checkpoint load differs')
+        require(config_math(model.config.to_dict(), strict=False) == math_config
+                and model.config._attn_implementation == 'eager', 'actual loaded math configuration differs')
+        model = model.to('cuda').eval().requires_grad_(False)
         output['loaded_state'] = loaded_state(torch, model, entries, hashes, check)
         with torch.inference_mode():
             for frozen in expected:
                 check()
                 native = rows[frozen['id']][frozen['recipe']]['input']
                 output['rows'].append(dict(frozen, **infer(torch, model, native, result, check)))
+    except BaseException as error:
+        failed = True
+        output['failure'] = {'type': type(error).__name__, 'message': str(error)}
+        raise
     finally:
-        del model
-        gc.collect()
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-        check()
-        output['teardown'] = {'model_collected': reference() is None,
-                              'allocator_returned': torch.cuda.memory_allocated() == baseline,
-                              'baseline_allocated': baseline, 'allocated_after': torch.cuda.memory_allocated()}
-        require(output['teardown']['model_collected'] and output['teardown']['allocator_returned'], 'model teardown/allocator settlement unknown')
+        # Drop loading metadata too; retain only scalar evidence. On failure an
+        # exception traceback may still own model frames: report that honestly.
+        model = info = None
+        output['teardown'] = settle_arm(torch, reference, baseline, check)
+        settled = (not output['teardown']['errors'] and output['teardown']['model_collected']
+                   and output['teardown']['allocator_returned'])
+        if not settled and not failed:
+            raise ValueError('model teardown/allocator settlement unknown')
     return output
 
 
@@ -440,7 +472,8 @@ def worker(plan, sha):
     try:
         for arm, directory, entries, hashes in [('original', plan['original_directory'], original, original_hashes),
                 ('adapted', str(adapted_path.parent), adapted, adapted_hashes)]:
-            result['arms'][arm] = score_arm(torch, directory, entries, hashes, expected, rows, result, check, math_config)
+            result['arms'][arm] = {'rows': []}
+            score_arm(torch, directory, entries, hashes, expected, rows, result, check, math_config, result['arms'][arm])
             reference.verify_loaded_runtime(plan['reference_plan'])
         validate_result(result, expected)
         result['summary'] = summarize(result, logic.metrics)

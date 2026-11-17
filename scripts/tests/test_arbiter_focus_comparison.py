@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Pure comparison admission/custody/counter controls; no Torch or model calls."""
 import copy
+from contextlib import nullcontext
 import hashlib
 import importlib.util
 import io
@@ -40,7 +41,7 @@ def result_fixture():
     expected = M.population(frozen_rows(), 'software_evidence_v1')
     rows = [dict(x, no_logit=0., yes_logit=1., no_bits=0, yes_bits=1065353216) for x in expected]
     arm = {'rows': rows, 'loaded_state': {'tied_pointer': True, 'matched_parameters': 310},
-           'teardown': {'model_collected': True, 'allocator_returned': True}}
+           'teardown': {'model_collected': True, 'allocator_returned': True, 'errors': []}}
     return {'complete': True, 'forward_attempts': 260, 'forward_calls': 260, 'backward_attempts': 0, 'gradient_steps': 0,
             'arms': {'original': copy.deepcopy(arm), 'adapted': copy.deepcopy(arm)},
             'parameter_proof': {'non_target_exact': True, 'non_target_count': 198}}, expected
@@ -54,6 +55,51 @@ def config():
             'sliding_window': None, 'tie_word_embeddings': True, 'use_cache': True, 'use_sliding_window': False,
             'vocab_size': 151669, 'rope_theta': 1000000, 'rope_scaling': None, 'torch_dtype': 'bfloat16',
             'transformers_version': '4.51.3'}
+
+
+def arm_runtime(*, keep_model=False, clear_failure=False, fail_at=None):
+    state = {'allocated': 0, 'workspace': 0, 'calls': 0}
+    events, retained = [], []
+    class Model:
+        def __init__(self):
+            state['allocated'] += 100
+            self.config = types.SimpleNamespace(to_dict=lambda: {}, _attn_implementation='eager')
+        def __del__(self): state['allocated'] -= 100
+        def to(self, device): return self
+        def eval(self): return self
+        def requires_grad_(self, value): return self
+    def load(*args, **kwargs):
+        model = Model()
+        if keep_model: retained.append(model)
+        # Metadata can itself hold a reference; owner must release both locals.
+        return model, {'retained_for_test': model}
+    def clear():
+        events.append('clear')
+        if clear_failure: raise RuntimeError('workspace release failed')
+        state['allocated'] -= state['workspace']; state['workspace'] = 0
+    def infer(torch, model, value, counters, check):
+        state['calls'] += 1
+        if state['calls'] == fail_at: raise LookupError('original inference failure')
+        if not state['workspace']:
+            state['workspace'] = 8; state['allocated'] += 8
+        return {'no_logit': 0., 'yes_logit': 1.}
+    cuda = types.SimpleNamespace(memory_allocated=lambda: state['allocated'],
+        synchronize=lambda: events.append('sync'), empty_cache=lambda: events.append('empty'))
+    torch = types.SimpleNamespace(cuda=cuda, _C=types.SimpleNamespace(_cuda_clearCublasWorkspaces=clear),
+                                  float32='float32', inference_mode=nullcontext)
+    transformers = types.SimpleNamespace(AutoModelForCausalLM=types.SimpleNamespace(from_pretrained=load))
+    return torch, transformers, infer, state, events, retained
+
+
+def run_fake_arm(runtime, output, check=lambda: None):
+    torch, transformers, infer, *_ = runtime
+    expected = [{'id': 'first', 'recipe': 'publisher'}, {'id': 'second', 'recipe': 'publisher'}]
+    rows = {r['id']: {'publisher': {'input': {}}} for r in expected}
+    with patch.dict(sys.modules, {'transformers': transformers}), \
+         patch.object(M, 'config_math', new=lambda *a, **k: {}), \
+         patch.object(M, 'loaded_state', new=lambda *a: {'matched_parameters': 310, 'tied_pointer': True}), \
+         patch.object(M, 'infer', new=infer):
+        return M.score_arm(torch, 'unused', {}, {}, expected, rows, {}, check, {}, output)
 
 
 class ComparisonControls(unittest.TestCase):
@@ -120,13 +166,14 @@ class ComparisonControls(unittest.TestCase):
 
     def test_exact260_rows_raw_bits_and_sequential_teardown(self):
         result, expected = result_fixture(); M.validate_result(result, expected)
-        for mutate in ['calls', 'subset', 'bits', 'input', 'teardown', 'loaded']:
+        for mutate in ['calls', 'subset', 'bits', 'input', 'teardown', 'cleanup', 'loaded']:
             result, expected = result_fixture()
             if mutate == 'calls': result['forward_calls'] = 259
             elif mutate == 'subset': result['arms']['adapted']['rows'].pop()
             elif mutate == 'bits': result['arms']['adapted']['rows'][0]['yes_bits'] = 0
             elif mutate == 'input': result['arms']['adapted']['rows'][0]['input_digest'] = 'changed'
             elif mutate == 'teardown': result['arms']['original']['teardown']['allocator_returned'] = False
+            elif mutate == 'cleanup': result['arms']['original']['teardown']['errors'] = [{'stage': 'original_deadline'}]
             else: result['arms']['adapted']['loaded_state']['tied_pointer'] = False
             with self.assertRaises(ValueError): M.validate_result(result, expected)
 
@@ -176,6 +223,62 @@ class ComparisonControls(unittest.TestCase):
             elif mutate == 'proof': del bad['final_hashes']['worker_result']
             else: bad['failure'] = {'type': 'ParentFinalHashError'}
             with self.assertRaises(ValueError): M.accepted_execution(bad, result, expected)
+
+
+    def test_process_workspace_survives_empty_cache_and_is_explicitly_released(self):
+        runtime = arm_runtime(); torch, _, infer, state, events, _ = runtime
+        infer(None, None, {}, {}, lambda: None)
+        torch.cuda.empty_cache()
+        self.assertEqual(state['allocated'], 8)  # old teardown fails exact zero
+        evidence = M.settle_arm(torch, lambda: None, 0, lambda: events.append('clock'))
+        self.assertEqual(evidence['allocated_before_release'], 8)
+        self.assertEqual(evidence['allocated_after'], 0)
+        self.assertTrue(evidence['allocator_returned'])
+        self.assertEqual(events[-5:], ['sync', 'clear', 'empty', 'sync', 'clock'])
+
+    def test_arm_drops_model_and_loading_metadata_then_restores_exact_baseline(self):
+        runtime = arm_runtime(); output = {'rows': []}
+        run_fake_arm(runtime, output)
+        self.assertEqual(len(output['rows']), 2)
+        self.assertTrue(output['teardown']['model_collected'])
+        self.assertEqual(output['teardown']['allocated_before_release'], 8)
+        self.assertEqual(output['teardown']['allocated_after'], 0)
+        self.assertEqual(output['teardown']['errors'], [])
+
+    def test_real_model_reference_leak_still_refuses_and_retains_rows(self):
+        runtime = arm_runtime(keep_model=True); output = {'rows': []}
+        with self.assertRaisesRegex(ValueError, 'settlement'):
+            run_fake_arm(runtime, output)
+        self.assertEqual(len(output['rows']), 2)
+        self.assertFalse(output['teardown']['model_collected'])
+        self.assertFalse(output['teardown']['allocator_returned'])
+        self.assertEqual(output['teardown']['allocated_after'], 100)
+        runtime[-1].clear()
+
+    def test_cleanup_failure_retains_evidence_and_does_not_mask_original_error(self):
+        runtime = arm_runtime(clear_failure=True, fail_at=2); output = {'rows': []}
+        with self.assertRaisesRegex(LookupError, 'original inference failure'):
+            run_fake_arm(runtime, output)
+        self.assertEqual(len(output['rows']), 1)
+        self.assertEqual(output['failure']['type'], 'LookupError')
+        self.assertEqual(output['teardown']['errors'][0]['stage'], 'clear_cublas_workspaces')
+        self.assertIn('empty', runtime[-2])
+
+    def test_workspace_release_error_alone_never_passes(self):
+        runtime = arm_runtime(clear_failure=True); output = {'rows': []}
+        with self.assertRaisesRegex(ValueError, 'settlement'):
+            run_fake_arm(runtime, output)
+        self.assertEqual(len(output['rows']), 2)
+        self.assertFalse(output['teardown']['allocator_returned'])
+
+    def test_original_deadline_remains_last_and_failed_cleanup_cannot_pass(self):
+        runtime = arm_runtime(); events = runtime[-2]
+        def expired():
+            events.append('clock')
+            raise TimeoutError('original cutoff')
+        evidence = M.settle_arm(runtime[0], lambda: None, 0, expired)
+        self.assertEqual(events[-1], 'clock')
+        self.assertEqual(evidence['errors'], [{'stage': 'original_deadline', 'type': 'TimeoutError', 'message': 'original cutoff'}])
 
 
 if __name__ == '__main__': unittest.main()

@@ -7521,3 +7521,85 @@ cheaply and retain the failed receipt before a fresh reviewed run. Do not relax
 weakref collection or exact allocator-return assertions. All outputs are human-owned.
 Repository checks pass3643 public files; whitespace passes. No native/Cargo
 build has run in this resumed batch; Mac script tests proceed independently.
+
+### 2026-11-17 15:54Z — Parallel Mac script checks and local guard milestone
+
+Reviewed guard/concurrency documentation is committed locally as109da699 with
+configured human Tyler Jensen identity and verified DCO trailer; no push.
+README/documentation index/release1.8.207/VSIX text retain truthful candidate
+and qualification scope; no second version increment or package retag.
+
+Neo SSH UID501 matches its console user before the independent Mac batch.
+Exactly3 historical launcher/library script cases run on an isolated current
+7-file snapshot, preserving the existing checkout. Ad-hoc library-load and
+sealed-copy cases pass(.598864/.306091s). Developer ID signing fails at the actual
+first codesign with errSecInternalComponent(.105432s), despite the existing
+certificate matching the pinned identity. No retry, keychain change or policy
+workaround. All52 retained remote entries are UID501-owned;7 source hashes remain
+unchanged and compiler/signing processes settle. Receipt E/mac-script-resume-r1/
+neo-receipt.json SHA9d5f24e054501ba4f5311f4912a36816f0b9cb8e9f13e8d3ca8e1b1a6c9cc70f,
+plus3 logs. No Cargo target created, so no target cleanup applies. These close
+2 script fixture gaps, not modern installed/GPU/package qualification.
+
+### 2026-11-17 15:59Z — Genuine two-arm Focus comparison passes
+
+Primary reviews corrected cleanup and pinned Torch's own leak-checker workspace
+release.19/19 controls reproduce persistent-workspace and true-reference-leak
+cases, preserve partial rows/errors and require exact baseline/weakref settlement;
+no assertion or limit is relaxed. Original R1 attribution remains unknown because
+its teardown facts were omitted. Corrected source1c660786, contract0e68c191 and
+tests23d317fa feed fresh plan171f07b99f793193c0abc8ae0bd4f0f27762b3e3b8da4e18405084c3f55f23d5.
+
+Actual R2 completes260/260 forwards,0updates, both exact310-parameter/tied-head
+loads,198 unchanged non-target tensors, full85DEV+45replay each arm. Both model
+weakrefs clear; each releases33554432B cuBLAS workspace and returns exactly to
+baseline0 with no cleanup errors. OriginalPID9412 exits0 naturally, emptyJob,
+retainedHANDLE exit0, no force/source drift;71.8091712s under original600s.
+Host peak10676576256B, CUDA allocator2474869760/reserved2497708032B remain under
+original16GiB/8GiB. All new outputs are human-owned.
+Receipt E/f2-comparison-plan-preparation-r2/comparison-execution/execution.json
+SHA5b518a4dc2dd13ab3add883b3ff649436811dcf3d27106c4f76e37915804ff66;
+worker b88931231b2fdc38eeafef4ae9febe1196bcb400af0240fa570984a4d20e59f8.
+
+Exploratory component-macro DEV AUROC .5542582689641513 -> .5652604476133888;
+pooled .5434285714285715 -> .5634285714285714; fixed-zero balanced accuracy
+.5757142857142857 -> .5842857142857143. Positive-only replay fraction stays
+.5333333333333333; mean margin declines .6369421402613322 -> .17996531592475043.
+Three DEV components and positive-only replay do not establish significance,
+ranking/whole-evidence/teacher/CAL/task promotion. No model is promoted here.
+Native ONNX export/reference/device/resource qualification remains separate.
+
+### 2026-11-17 16:02Z — First actual native FP32 component reaches loader refusal
+
+Maintained component owner e12e2443/contractfb2ec6c6/tests662f3ec2 passes59/59
+controls after independent review adds original UTC/monotonic receipt timestamps.
+Concrete plan1a0143cf82a943cc6be4a623335586cbb3e6f760fba263223c38bbd58a6ce7ba
+retains actualbc55 native image/af6 manifest and204 verified seals, original120s,
+process16GiB/Job24GiB/log64MiB/cleanup5. Existing human console437 and private
+output ancestry pass; no alternate account/process-control path is introduced.
+
+Actual native selector runs1, fails1 before model load: authenticated GPU module
+LoadLibraryEx reports Windows1114 (DLL initialization routine failed). Original
+PID40388 exits101 naturally, emptyJob/retainedHANDLE exit101/unforced;69.1236511s
+whole phase including final proofs, no source drift or owner errors. Peak Job
+commit295448576B, final native RSS216580096B; actual Job flags8968 and16/24GiB
+bounds match. Empty operation journal correctly fails its final nonempty proof.
+Native conservatively retains uncertain CUDA/control/host charge until process
+exit; parent natural process settlement is separate evidence. No model forward,
+GPU numeric/placement/resource/qualification pass is claimed.
+U/gpu-compact17-component-owned-r1/execution.json SHA
+3d2338666dfa0b84cdc4c68186a2cd78eb28a661c37cd41745994317816139eb;
+native-result.json3e3248a8097c1704e1c05e6c645c73b5061cdd6f8ca6b9658a6e0c279125c4ff,
+where U is the approved human LocalAppData campaign root. Original outputs persist.
+
+Two independent read-only source traces identify a likely ordering defect:
+AIRK manually preloads the CUDA provider before ORT ProviderSharedLibrary::Ensure
+calls Provider_SetHost. The pinned CUDA provider's static initializer calls
+Provider_GetHost()->GetProviderHostCPU. Exact failing DLL is not reported by the
+old native error, so this remains a source-backed hypothesis pending focused
+reproduction/correction. No unchanged retry or memory-limit increase.
+
+Separately, maintained FP16 conversion owner edc932a3 passes30/30 pure controls;
+independent combined component/conversion review passes89/89. Review closes
+unbounded PowerShell guard timeout and final UTC timing gaps before any conversion.
+Actual FP16 conversion/nativeG5 remains held behind first FP32 and its own gates.

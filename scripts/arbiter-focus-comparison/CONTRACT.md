@@ -53,3 +53,15 @@ are equal. Only BF16-to-FP32 descriptive dtype, pinned serializer version and
 explicitly normalized default RoPE/layer/pad serialization differ. Unknown raw
 config keys refuse. Each actual loaded config matches this math signature with
 eager attention before inference; equal parameter bytes alone cannot prove it.
+
+Teardown retains each arm in the result before loading/scoring, so a failed arm
+keeps every completed row, loading proof and cleanup observation. After dropping
+model and loading-info references, synchronize, collect Python objects, explicitly
+release pinned Torch cuBLAS workspaces, empty the cache and synchronize again.
+Record allocation before release and afterward; require the original exact
+pre-arm allocation and collected model weakref, with no residual subtraction.
+The original deadline is sampled after cleanup observations. Every cleanup error
+is retained and prevents success; an earlier loading/scoring exception remains
+the primary failure. No changed math, work budget, model or allocator threshold
+is introduced. The first failed run lacked teardown facts, so persistent cuBLAS
+workspace is a reproduced failure class, not a retrospective attribution.
