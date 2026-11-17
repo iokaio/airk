@@ -119,3 +119,29 @@ release state, not manifest equality. Service may deduplicate repeated borrowing
 of one charge without forgetting distinct unresolved charges. NativeConfiguration
 selection equality retains the complete typed document and selected descriptions;
 it never narrows configuration4 to a CPU model-only identity.
+
+
+## G4 scoped device diagnostics (additive read contract)
+
+Canonical airk_diagnostics may carry scoped_device_status, schema
+airk.arbiter.scoped-device-status/1. Its exact ScopeBinding and per-stage
+IndexApplication distinguish this index's eligibility from complete native
+DeviceStageStatus residency/selection observations. No configuration document or
+global enrollment list is serialized. Typed unavailable uses revision0 and no
+invented stage/model state. Observations are descriptive, never execution or
+qualification capabilities. Scalar status and Search/Answer schemas are unchanged.
+
+The native read-only ArbiterDeviceRead method carries actual worker/scope, pinned
+publication and original ReadAttemptBudget; response uses the same typed name.
+Service repeats actual scope gates and original monotonic budget before/after;
+Kernel repeats actual scope/publication fences. Only strict current4 reads and
+metadata snapshots are permitted: no migration/CAS/rebind, model/device load or
+probe, downloads or native continuation. Default absent controller/original
+attempt omits the optional observation. Native absent/retained/corrupt4 yields
+truthful unavailable, never fake disabled/current configuration.
+
+Combined diagnostics keeps the complete observation under each corresponding
+member.result; it never fuses authorities or global enrollment state. Complete
+copy/export retains precision, native fallback reasons and all variant metadata.
+The additional observation is bounded256KiB inside unchanged original reply/frame
+ceilings. No retries or replacement clock are introduced.

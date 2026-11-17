@@ -166,6 +166,12 @@ pub enum ControlMethod {
     Arbiter {
         request: crate::arbiter::ManagementRequest,
     },
+    ArbiterDeviceRead {
+        worker: WorkerIdentity,
+        authority: ScopedReadRef,
+        publication: crate::evidence::RevisionEnvelope,
+        read_attempt: crate::read_attempt::ReadAttemptBudget,
+    },
     ArbiterApplication {
         worker: WorkerIdentity,
         authority: ScopedReadRef,
@@ -808,7 +814,7 @@ impl ControlMethod {
             Self::ValidateCombinedDelivery {context_bindings,..} if !context_bindings.is_empty()=> {
                 return Some("console_private_setup_forbidden");
             }
-            Self::Arbiter { .. } | Self::ArbiterApplication { .. } | Self::ArbiterNextRead { .. } | Self::ArbiterContextAction { .. } | Self::ArbiterFocusApplication { .. } | Self::ArbiterFocusRank { .. } | Self::ArbiterImport { .. } | Self::ArbiterImportDevice { .. } => {
+            Self::Arbiter { .. } | Self::ArbiterDeviceRead { .. } | Self::ArbiterApplication { .. } | Self::ArbiterNextRead { .. } | Self::ArbiterContextAction { .. } | Self::ArbiterFocusApplication { .. } | Self::ArbiterFocusRank { .. } | Self::ArbiterImport { .. } | Self::ArbiterImportDevice { .. } => {
                 return Some("console_private_setup_forbidden");
             }
             Self::Connect { .. } | Self::ConnectScoped { .. } => {
@@ -1282,6 +1288,7 @@ impl ControlMethod {
     pub fn response_frame_budget(&self) -> usize {
         match self {
             Self::Arbiter { .. }
+            | Self::ArbiterDeviceRead { .. }
             | Self::ArbiterFocusApplication { .. }
             | Self::ArbiterFocusRank { .. }
             | Self::ArbiterImport { .. }
@@ -1408,6 +1415,9 @@ pub enum ControlResponse {
     AdminNativeClosed {},
     Arbiter {
         observation: Box<crate::arbiter::Status>,
+    },
+    ArbiterDeviceRead {
+        observation: Box<crate::arbiter::device::ScopedDeviceStatus>,
     },
     ArbiterApplication {
         application: Box<crate::arbiter::IndexApplication>,

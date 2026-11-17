@@ -948,6 +948,24 @@ fn canonical_control(
                     code: "arbiter_catalog_required".into(),
                 },
             },
+            ControlMethod::ArbiterDeviceRead {
+                worker,
+                authority,
+                publication,
+                read_attempt,
+            } => match &state.arbiter {
+                Some(owner) => {
+                    match owner.device_read_status(worker, authority, publication, read_attempt) {
+                        Ok(observation) => ControlResponse::ArbiterDeviceRead {
+                            observation: Box::new(observation),
+                        },
+                        Err(error) => arbiter::failure(error),
+                    }
+                }
+                None => ControlResponse::Failure {
+                    code: "arbiter_catalog_required".into(),
+                },
+            },
             ControlMethod::ArbiterApplication {
                 worker,
                 authority,

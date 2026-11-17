@@ -3430,6 +3430,84 @@
       ],
       "type": "object"
     },
+    "ScopedDeviceObservation": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "context": {
+              "$ref": "#/$defs/ScopedDeviceStage"
+            },
+            "focus": {
+              "$ref": "#/$defs/ScopedDeviceStage"
+            },
+            "state": {
+              "const": "observed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "focus",
+            "context"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "state": {
+              "const": "unavailable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ScopedDeviceStage": {
+      "additionalProperties": false,
+      "properties": {
+        "application": {
+          "$ref": "#/$defs/IndexApplication"
+        },
+        "status": {
+          "$ref": "#/$defs/DeviceStageStatus"
+        }
+      },
+      "required": [
+        "application",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ScopedDeviceStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "observation": {
+          "$ref": "#/$defs/ScopedDeviceObservation"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/ScopeBinding"
+        }
+      },
+      "required": [
+        "schema",
+        "scope",
+        "observation"
+      ],
+      "type": "object"
+    },
     "ScoreAbi": {
       "additionalProperties": false,
       "properties": {
@@ -4152,6 +4230,7 @@
     "DeviceConfiguration",
     "DeviceStageConfiguration",
     "DeviceStatus",
+    "ScopedDeviceStatus",
     "DeviceStageStatus",
     "DeviceCatalog",
     "DeviceSelection",

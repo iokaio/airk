@@ -711,6 +711,8 @@ pub fn fallback_permitted(
 #[cfg(test)]
 mod tests;
 
+mod read_status;
+pub use read_status::*;
 mod state;
 pub use state::*;
 

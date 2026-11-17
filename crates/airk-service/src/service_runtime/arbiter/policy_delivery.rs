@@ -73,7 +73,7 @@ impl ReadDeliveryGuard for PolicyDelivery {
                 .with_current(
                     || self.live(),
                     |current| {
-                        device.with_selection(current, || {
+                        device.with_selection(current, &self.expected, || {
                             validate_native_policy(&device.policy, &self.expected)?;
                             self.live()?;
                             Ok(effect())
@@ -176,7 +176,7 @@ pub(in crate::service_runtime) fn factory(
                 .as_ref()
                 .context("native policy owner unavailable")?
                 .context
-                .device_delivery()?
+                .device_delivery(expected)?
         };
         Ok(Arc::new(PolicyDelivery {
             #[cfg(feature = "local-inference")]

@@ -24,6 +24,7 @@ pub(super) struct Probe {
     pub host: Arc<Reservation>,
     #[cfg(all(feature = "test-support", feature = "gpu-cuda"))]
     pub evaluation: Option<EvaluationProbe>,
+    pub retained: Option<Sha256Digest>,
     pub model: SelectedModel,
     pub deadline: Instant,
     pub authority: Arc<dyn Fn() -> bool + Send + Sync>,
@@ -41,6 +42,7 @@ fn live(probe: &Probe) -> Result<()> {
 pub(super) fn probe(
     owner: &airk_kernel::inference_owner::NativeInferenceOwner,
     probe: &Probe,
+    shared: &Arc<Shared>,
 ) -> Result<DeviceProbe> {
     ensure!(
         owner.same_lease(&probe.lease),
@@ -61,6 +63,7 @@ pub(super) fn probe(
     };
     #[cfg(not(feature = "gpu-cuda"))]
     {
+        let _ = shared;
         for profile in runtime::catalog_profiles()?
             .into_iter()
             .filter(|p| p.model == probe.model.model() && p.device_execution.is_some())
@@ -105,7 +108,30 @@ pub(super) fn probe(
                 return Ok(result);
             }
         };
-        let adapters = match runtime.adapters(probe.deadline) {
+        // Product discovery observes metadata only. It chooses ONE supported
+        // adapter before retaining a context; /1 uses explicit evaluation above.
+        require_product_runtime(runtime.is_product())?;
+        let discovered = {
+            runtime.discover_adapters(probe.deadline).map(|values| {
+                values
+                    .into_iter()
+                    .filter_map(|metadata| {
+                        product_adapter_rank(
+                            metadata.compute_major,
+                            metadata.compute_minor,
+                            metadata.dedicated_memory,
+                            metadata.physical_total_bytes,
+                            metadata.ordinal,
+                        )
+                        .map(|rank| (rank, metadata.uuid))
+                    })
+                    .min_by_key(|(rank, _)| *rank)
+                    .map(|(_, uuid)| uuid)
+                    .into_iter()
+                    .collect::<Vec<_>>()
+            })
+        };
+        let adapters = match discovered {
             Ok(adapters) if adapters.len().saturating_mul(variants.len()) <= 16 => adapters,
             _ => {
                 live(probe)?;
@@ -119,16 +145,26 @@ pub(super) fn probe(
                 return Ok(result);
             }
         };
-        for adapter in adapters {
+        if adapters.is_empty() {
+            for profile in variants {
+                result.rejections.push(CandidateRejection {
+                    manifest: Some(profile.manifest),
+                    adapter_key: None,
+                    reason: SelectionReason::DeviceUnsupported,
+                });
+            }
+            return Ok(result);
+        }
+        for uuid in adapters {
             live(probe)?;
-            let device = match runtime.device(adapter.uuid, probe.deadline) {
+            let device = match runtime.device(uuid, probe.deadline) {
                 Ok(device) => device,
                 Err(_) => {
                     live(probe)?;
                     for profile in &variants {
                         result.rejections.push(CandidateRejection {
                             manifest: Some(profile.manifest),
-                            adapter_key: Some(adapter_key(adapter.uuid)),
+                            adapter_key: Some(adapter_key(uuid)),
                             reason: SelectionReason::DeviceUnsupported,
                         });
                     }
@@ -146,7 +182,7 @@ pub(super) fn probe(
                     Err(_) => {
                         result.rejections.push(CandidateRejection {
                             manifest: Some(description.manifest),
-                            adapter_key: Some(adapter_key(adapter.uuid)),
+                            adapter_key: Some(adapter_key(uuid)),
                             reason: SelectionReason::Unqualified,
                         });
                         continue;
@@ -158,7 +194,7 @@ pub(super) fn probe(
                 else {
                     result.rejections.push(CandidateRejection {
                         manifest: Some(profile.description().manifest),
-                        adapter_key: Some(adapter_key(adapter.uuid)),
+                        adapter_key: Some(adapter_key(uuid)),
                         reason: SelectionReason::Unqualified,
                     });
                     continue;
@@ -166,8 +202,21 @@ pub(super) fn probe(
                 if profile.device_evidence().is_none() {
                     result.rejections.push(CandidateRejection {
                         manifest: Some(profile.description().manifest),
-                        adapter_key: Some(adapter_key(adapter.uuid)),
+                        adapter_key: Some(adapter_key(uuid)),
                         reason: SelectionReason::Unqualified,
+                    });
+                    continue;
+                }
+                let native = NativeDevice {
+                    device: device.clone(),
+                    _private: (),
+                };
+                if eligibility::require_memo_open(shared, profile.description(), &native).is_err() {
+                    live(probe)?;
+                    result.rejections.push(CandidateRejection {
+                        manifest: Some(profile.description().manifest),
+                        adapter_key: Some(adapter_key(uuid)),
+                        reason: SelectionReason::CircuitOpen,
                     });
                     continue;
                 }
@@ -175,11 +224,8 @@ pub(super) fn probe(
                 result.candidates.push(BoundDeviceCandidate {
                     profile,
                     probe_only: false,
-                    device: NativeDevice {
-                        device: device.clone(),
-                        _private: (),
-                    },
-                    uuid: adapter.uuid,
+                    device: native,
+                    uuid,
                     epoch: device.epoch(),
                     host_warm_extra_bytes: extra,
                 });
@@ -237,6 +283,13 @@ impl GuardedResident {
     pub fn scorer(&self) -> &Scorer {
         &self.session.scorer
     }
+    #[cfg(feature = "gpu-cuda")]
+    pub(super) fn source(&self) -> &(dyn AssetSource + Send) {
+        self.session._source.as_ref()
+    }
+    pub(super) fn native_device(&self) -> Option<&NativeDevice> {
+        self.native_device.as_ref()
+    }
     pub fn charge(&self) -> &Arc<Reservation> {
         &self.charge
     }
@@ -271,7 +324,7 @@ impl<S: NativeSettlement> Drop for GuardedResident<S> {
             || self
                 .native_device
                 .as_ref()
-                .is_some_and(|device| device.poisoned())
+                .is_some_and(|device| !device.settlement_observed())
         {
             if let Some(shared) = self.shared.upgrade() {
                 shared.unsettled.store(true, Ordering::Release);
@@ -307,6 +360,16 @@ impl NativeDevice {
         #[cfg(not(feature = "gpu-cuda"))]
         {
             unreachable!("no native device witness exists in this build")
+        }
+    }
+    pub(super) fn settlement_observed(&self) -> bool {
+        #[cfg(feature = "gpu-cuda")]
+        {
+            !self.device.poisoned() && self.device.pending_claims() == Some(0)
+        }
+        #[cfg(not(feature = "gpu-cuda"))]
+        {
+            false
         }
     }
     pub fn poisoned(&self) -> bool {
@@ -564,4 +627,25 @@ fn stable_circuit_key(key: DeviceFaultKey, dispatch_epoch: u64) -> Result<Device
     );
     // A wrapper/dispatch epoch is freshness evidence, never a circuit reset.
     Ok(key)
+}
+
+#[cfg(any(feature = "gpu-cuda", test))]
+pub(super) fn product_adapter_rank(
+    major: i32,
+    minor: i32,
+    dedicated: bool,
+    physical: u64,
+    ordinal: i32,
+) -> Option<(std::cmp::Reverse<u64>, i32)> {
+    (major == 8 && minor == 6 && dedicated && physical > 0 && ordinal >= 0)
+        .then_some((std::cmp::Reverse(physical), ordinal))
+}
+
+#[cfg(any(feature = "gpu-cuda", test))]
+pub(super) fn require_product_runtime(product: bool) -> Result<()> {
+    ensure!(
+        product,
+        "scientific RuntimeManifest/1 cannot create a production GPU candidate"
+    );
+    Ok(())
 }

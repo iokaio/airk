@@ -18,6 +18,17 @@ use std::{
 /// Service composition supplies the native owner. No public fingerprint or
 /// downloaded model descriptor constructs this controller.
 pub trait NativeController: Send + Sync {
+    fn device_read_status(
+        &self,
+        _worker: airk_core::service::WorkerIdentity,
+        _authority: airk_core::service::ScopedReadRef,
+        _publication: &airk_core::evidence::RevisionEnvelope,
+        _attempt: airk_core::read_attempt::ReadAttemptBudget,
+        _deadline: Instant,
+    ) -> Result<Option<device::ScopedDeviceStatus>> {
+        Ok(None)
+    }
+
     fn focus_application(
         &self,
         _worker: airk_core::service::WorkerIdentity,
@@ -128,6 +139,52 @@ fn observed_application(
     }
 }
 impl crate::Kernel {
+    /// Read-only scoped diagnostics. No native owner/original attempt means no observation.
+    pub fn scoped_device_status(
+        &self,
+        deadline: Option<Instant>,
+    ) -> Result<Option<device::ScopedDeviceStatus>> {
+        let Some(context) = &self.arbiter_context else {
+            return Ok(None);
+        };
+        let (Some(attempt), Some(deadline)) = (context.attempt, deadline) else {
+            return Ok(None);
+        };
+        ensure!(
+            Instant::now() < deadline,
+            "original device observation deadline exhausted"
+        );
+        self.require_source_policy_scope()?;
+        let authority = self.scoped_read_fingerprint()?;
+        let publication = self.arbiter_publication()?;
+        let observed = context.owner.device_read_status(
+            context.worker,
+            context.authority,
+            &publication,
+            attempt,
+            deadline,
+        )?;
+        self.require_source_policy_scope()?;
+        ensure!(
+            self.scoped_read_fingerprint()? == authority
+                && self.arbiter_publication()? == publication,
+            airk_core::scoped_reads::ScopeReadRefused
+        );
+        ensure!(
+            Instant::now() < deadline,
+            "original device observation deadline exhausted"
+        );
+        if let Some(value) = &observed {
+            ensure!(
+                value.scope.index_id == context.authority.index_id
+                    && value.scope.authorization == context.authority.fingerprint
+                    && value.scope.publication == publication,
+                airk_core::scoped_reads::ScopeReadRefused
+            );
+            value.validate()?;
+        }
+        Ok(observed)
+    }
     fn arbiter_publication(&self) -> Result<airk_core::evidence::RevisionEnvelope> {
         // Published identity only; a partial scope must never request whole
         // index status/counts merely to bind its own evidence reads.

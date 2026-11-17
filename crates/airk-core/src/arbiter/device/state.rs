@@ -221,6 +221,23 @@ impl DeviceStageStatus {
                 && self.reason.len() <= 1024,
             "device stage requested identity/reason differs"
         );
+        self.validate_observation(stage)?;
+        ensure!(
+            self.availability != Availability::Ready || configuration.enabled,
+            "ready device stage lacks enabled configuration"
+        );
+        Ok(())
+    }
+    /// Descriptive validation only; does not grant enrollment or execution authority.
+    pub(crate) fn validate_observation(&self, stage: Stage) -> Result<()> {
+        ensure!(
+            !self.reason.is_empty()
+                && self.reason.len() <= 1024
+                && self
+                    .selected_model
+                    .is_none_or(|model| model.stage() == stage),
+            "invalid device stage reason/model"
+        );
         let expected = match stage {
             Stage::Focus => BTreeSet::from([SelectedModel::Focus]),
             Stage::Context => {
@@ -376,9 +393,7 @@ impl DeviceStageStatus {
         if self.availability == Availability::Ready {
             let (model, variant) = active.context("ready device stage lacks resident variant")?;
             ensure!(
-                configuration.enabled
-                    && Some(model) == self.selected_model
-                    && variant.availability == Availability::Ready,
+                Some(model) == self.selected_model && variant.availability == Availability::Ready,
                 "ready device stage lacks enabled selected model"
             );
             let selected = self

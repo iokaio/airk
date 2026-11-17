@@ -7,7 +7,7 @@ use airk_kernel::arbiter::device_runtime::NativeConfiguration;
 use {
     airk_core::identity::Sha256Digest,
     airk_inference::inference_engine::pool::arbiter::{
-        DeviceFault, DeviceFaultKey, Handle, NativeDevice, ResidentPermit,
+        DeviceFault, DeviceFaultKey, Handle, NativeDevice, ResidentEligibility, ResidentPermit,
     },
     airk_retrieval::arbiter::runtime::{self, ExecutionProfile},
     airk_store::service::arbiter_assets::{AssetStore, Phase},
@@ -55,13 +55,61 @@ pub(super) struct DeviceState {
     document: Option<DeviceConfiguration>,
     selected: BTreeMap<Stage, Profile>,
     ready: std::collections::BTreeSet<Stage>,
+    eligibilities: BTreeMap<Stage, ResidentEligibility>,
     selection: BTreeMap<Stage, DeviceSelection>,
     devices: BTreeMap<Stage, (NativeDevice, u64)>,
     warm_extra: BTreeMap<Stage, u64>,
     evidence: BTreeMap<Sha256Digest, DeviceEvidence>,
 }
 #[cfg(feature = "local-inference")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ReadDiagnosticStamp {
+    generation: u64,
+    document: Option<DeviceConfiguration>,
+    ready: std::collections::BTreeSet<Stage>,
+    selected: BTreeMap<Stage, Sha256Digest>,
+    devices: BTreeMap<Stage, (u64, u64, bool)>,
+    eligibilities: BTreeMap<Stage, (Sha256Digest, bool)>,
+    intent_generation: BTreeMap<Stage, u64>,
+    selection: Vec<u8>,
+    pending: std::collections::BTreeSet<Stage>,
+    runners: std::collections::BTreeSet<Stage>,
+}
+#[cfg(feature = "local-inference")]
 impl Shared {
+    /// Data-only before/after fence; no Store mutation, native call or permit.
+    pub(super) fn read_diagnostic_stamp(&self) -> Result<ReadDiagnosticStamp> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native device diagnostic stamp unavailable"))?;
+        Ok(ReadDiagnosticStamp {
+            generation: self.generation.load(std::sync::atomic::Ordering::Acquire),
+            document: state.document.clone(),
+            ready: state.ready.clone(),
+            selected: state
+                .selected
+                .iter()
+                .map(|(stage, profile)| (*stage, profile.manifest))
+                .collect(),
+            devices: state
+                .devices
+                .iter()
+                .map(|(stage, (device, cached))| {
+                    (*stage, (*cached, device.epoch(), device.poisoned()))
+                })
+                .collect(),
+            eligibilities: state
+                .eligibilities
+                .iter()
+                .map(|(stage, proof)| (*stage, (proof.profile(), proof.current())))
+                .collect(),
+            intent_generation: state.intent_generation.clone(),
+            selection: serde_json::to_vec(&state.selection)?,
+            pending: state.pending.keys().copied().collect(),
+            runners: state.runners.clone(),
+        })
+    }
     fn policy(&self, current: DeviceConfiguration) -> Result<NativeConfiguration> {
         let state = self
             .state
@@ -115,6 +163,7 @@ impl Shared {
             .map_err(|_| anyhow::anyhow!("native device selection unavailable"))?;
         let mut selected = state.selected.clone();
         let mut ready = state.ready.clone();
+        let mut eligibilities = state.eligibilities.clone();
         let mut devices = state.devices.clone();
         let mut warm_extra = state.warm_extra.clone();
         let mut selections = state.selection.clone();
@@ -124,12 +173,14 @@ impl Shared {
         }) {
             selected.remove(&other(stage));
             ready.remove(&other(stage));
+            eligibilities.remove(&other(stage));
             devices.remove(&other(stage));
             warm_extra.remove(&other(stage));
             selections.remove(&other(stage));
         }
         selected.remove(&stage);
         ready.remove(&stage);
+        eligibilities.remove(&stage);
         devices.remove(&stage);
         warm_extra.remove(&stage);
         selections.remove(&stage);
@@ -161,6 +212,7 @@ impl Shared {
         state.document = Some(document);
         state.selected = selected;
         state.ready = ready;
+        state.eligibilities = eligibilities;
         state.devices = devices;
         state.warm_extra = warm_extra;
         state.selection = selections;
@@ -174,6 +226,7 @@ impl Shared {
         document: &DeviceConfiguration,
         stage: Stage,
         profile: &Profile,
+        eligibilities: BTreeMap<Stage, ResidentEligibility>,
         validate: impl FnOnce() -> Result<()>,
     ) -> Result<()> {
         validate()?;
@@ -196,6 +249,24 @@ impl Shared {
                 .is_none_or(|(device, epoch)| !device.poisoned() && device.epoch() == *epoch),
             "native device epoch changed before ready commit"
         );
+        state.eligibilities = eligibilities
+            .into_iter()
+            .filter(|(stage, proof)| {
+                proof.current()
+                    && state
+                        .selected
+                        .get(stage)
+                        .is_some_and(|profile| profile.manifest == proof.profile())
+            })
+            .collect();
+        ensure!(
+            profile.device_execution.is_none()
+                || state
+                    .eligibilities
+                    .get(&stage)
+                    .is_some_and(ResidentEligibility::current),
+            "actual local device eligibility is not current"
+        );
         state.ready.insert(stage);
         Ok(())
     }
@@ -208,7 +279,7 @@ fn other(stage: Stage) -> Stage {
     }
 }
 #[cfg(feature = "local-inference")]
-fn binding() -> Result<DeviceCatalogBinding> {
+pub(super) fn binding() -> Result<DeviceCatalogBinding> {
     let catalog = runtime::device_catalog()?;
     let profiles = runtime::catalog_profiles()?;
     catalog.binding(runtime::catalog_source_digest(), |id| {
@@ -705,7 +776,10 @@ fn validate_current_enrollments(
 }
 #[cfg(feature = "local-inference")]
 impl StageOwner {
-    fn device_stage_status(&self, document: &DeviceConfiguration) -> Result<DeviceStageStatus> {
+    pub(super) fn device_stage_status(
+        &self,
+        document: &DeviceConfiguration,
+    ) -> Result<DeviceStageStatus> {
         let profiles = runtime::catalog_profiles()?;
         let requested = document.stage(self.stage);
         let life = self
@@ -733,12 +807,20 @@ impl StageOwner {
                 .as_ref()
                 .is_some_and(|handle| handle.resident(profile).is_ok())
         });
+        let device_eligible = state
+            .selected
+            .get(&self.stage)
+            .is_none_or(|profile| profile.device_execution.is_none())
+            || state
+                .eligibilities
+                .get(&self.stage)
+                .is_some_and(ResidentEligibility::current);
         let resident = ready_from_observation(
             &state,
             document,
             self.stage,
             observation.as_ref(),
-            actual_resident,
+            actual_resident && device_eligible,
         );
         let models = match self.stage {
             Stage::Focus => vec![SelectedModel::Focus],
@@ -772,6 +854,8 @@ impl StageOwner {
                         },
                         if ready {
                             "Actual authenticated native variant is resident."
+                        } else if actual_resident&&active==Some(profile.manifest)&&backend.is_some()&&!device_eligible {
+                            "The GPU session remains resident, but local eligibility is not current; Recover can reaccept it under a bounded management operation."
                         } else if admitted {
                             "Native model is admitted; this variant is not active."
                         } else {
@@ -866,6 +950,8 @@ impl StageOwner {
             reason: bounded_reason(if !epoch_live {
                 "Native device epoch changed or settlement is unknown; no execution is admitted."
                     .into()
+            } else if actual_resident && !device_eligible {
+                "The GPU session remains resident, but local eligibility is absent or stale; explicit Auto management must reaccept it within its original allowance.".into()
             } else if !life.reason.is_empty() {
                 life.reason.clone()
             } else if resident {
@@ -1192,8 +1278,9 @@ impl Launch {
         profile: &Profile,
         cancel: &CancellationToken,
     ) -> Result<()> {
+        let eligibilities = handle.resident_eligibilities()?;
         self.devices
-            .finish_activation(&self.document, self.stage, profile, || {
+            .finish_activation(&self.document, self.stage, profile, eligibilities, || {
                 self.current(Some(cancel))?;
                 let observed = handle.observation_for(self.stage)?;
                 ensure!(
@@ -1220,6 +1307,119 @@ impl Launch {
                 self.fault_notifier(handle, profile, cancel)?;
                 self.current(Some(cancel))
             })
+    }
+    fn require_open_retained_population(
+        &self,
+        handle: &Handle,
+        cancel: &CancellationToken,
+    ) -> Result<()> {
+        self.current(Some(cancel))?;
+        if self.document.stage(self.stage).device_policy == DevicePolicy::Cpu {
+            return Ok(());
+        }
+        let actual = [Stage::Focus, Stage::Context]
+            .into_iter()
+            .map(|stage| {
+                handle
+                    .observation_for(stage)
+                    .map(|value| (stage, value.active_profile))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let state = self
+            .devices
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("retained GPU circuit observation unavailable"))?;
+        ensure!(
+            state.document.as_ref() == Some(&self.document),
+            "retained population source/configuration changed"
+        );
+        let targets = retained_gpu_targets(
+            actual,
+            state.selected.iter().map(|(stage, profile)| {
+                (*stage, profile.manifest, profile.device_execution.is_some())
+            }),
+        );
+        for (stage, manifest) in targets {
+            let profile = state
+                .selected
+                .get(&stage)
+                .filter(|profile| profile.manifest == manifest)
+                .context("retained GPU selection changed")?;
+            let (device, epoch) = state
+                .devices
+                .get(&stage)
+                .context("retained GPU device observation missing")?;
+            ensure!(
+                !device.poisoned() && device.epoch() == *epoch,
+                "retained GPU settlement/epoch unknown"
+            );
+            let key = airk_inference::inference_engine::pool::arbiter::circuit_key(
+                profile,
+                device,
+                &self.document,
+            )?;
+            ensure!(
+                !state.circuits.contains(&key),
+                "an actual retained GPU eligibility circuit is open; recover that affected stage explicitly before reaccepting this population"
+            );
+        }
+        Ok(())
+    }
+    fn record_prework_fault(
+        &self,
+        handle: &Handle,
+        current: Sha256Digest,
+        error: &anyhow::Error,
+        cancel: &CancellationToken,
+    ) -> Result<Option<Sha256Digest>> {
+        let failed = recordable_fault_profile(
+            prework_device_failure(error),
+            handle.unknown_device_work(),
+            airk_inference::inference_engine::pool::arbiter::eligibility_failure_profile(error),
+            current,
+        );
+        let Some(failed) = failed else {
+            return Ok(None);
+        };
+        if self.current(Some(cancel)).is_err() {
+            return Ok(None);
+        }
+        let mut state = self
+            .devices
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native fault recorder unavailable"))?;
+        ensure!(
+            state.document.as_ref() == Some(&self.document),
+            "fault source/configuration changed"
+        );
+        let profile = state
+            .selected
+            .values()
+            .find(|description| description.manifest == failed)
+            .context("actual failed native resident is no longer selected")?;
+        let stage = profile
+            .declared_stage()
+            .context("failed native stage absent")?;
+        let (device, epoch) = state
+            .devices
+            .get(&stage)
+            .context("actual failed device is absent")?;
+        if device.poisoned() || device.epoch() != *epoch {
+            return Ok(None);
+        }
+        let key = airk_inference::inference_engine::pool::arbiter::circuit_key(
+            profile,
+            device,
+            &self.document,
+        )?;
+        ensure!(
+            state.circuits.contains(&key) || state.circuits.len() < 16,
+            "native fault circuit capacity occupied"
+        );
+        state.circuits.insert(key);
+        Ok(Some(failed))
     }
     fn fault_notifier(
         &self,
@@ -1775,6 +1975,38 @@ impl Launch {
                     evidence.clone(),
                 )?;
                 handle.configure_native(policy)?;
+                if profile.device_execution.is_some()
+                    && !handle
+                        .resident_eligibilities()?
+                        .get(&self.stage)
+                        .is_some_and(ResidentEligibility::current)
+                {
+                    self.require_open_retained_population(&handle, cancel)?;
+                    let resident = handle.resident(profile.manifest)?;
+                    let receive = handle.reaccept_device(
+                        self.lease.clone(),
+                        model,
+                        resident,
+                        self.deadline,
+                        probe_live.clone(),
+                    )?;
+                    let returned = tokio::time::timeout_at(
+                        tokio::time::Instant::from_std(self.deadline),
+                        receive,
+                    )
+                    .await
+                    .context("original retained eligibility cutoff exhausted")?
+                    .context("retained eligibility owner closed without an observed outcome")?;
+                    if let Err(error) = returned {
+                        if let Err(guard) =
+                            self.record_prework_fault(&handle, profile.manifest, &error, cancel)
+                        {
+                            return Err(secondary_fault_error(error, guard));
+                        }
+                        return Err(error.context("retained local eligibility failed; original management attempt stops without replay"));
+                    }
+                    self.current(Some(cancel))?;
+                }
                 self.finish_resident_activation(&handle, &profile, cancel)?;
                 return super::lifecycle::phase(
                     &self.lifecycle,
@@ -1791,6 +2023,7 @@ impl Launch {
                 self.drain(&handle, old).await?;
             }
             self.current(Some(cancel))?;
+            self.require_open_retained_population(&handle, cancel)?;
             let reservation = if cold_probe_charge
                 .as_ref()
                 .is_some_and(|charge| charge.bytes() >= profile.memory_reservation_bytes)
@@ -1881,11 +2114,11 @@ impl Launch {
                         serial,
                         Availability::Ready,
                         if profile.device_execution.is_some() {
-                            "Authenticated GPU execution is active for the selected model."
+                            "Authenticated GPU execution is active for the selected model on the single metadata-selected compatible dedicated SM86 adapter; other adapters were not initialized."
                         } else if requested.device_policy == DevicePolicy::Cpu {
                             "FP32 CPU execution is active by request."
                         } else {
-                            "FP32 CPU fallback is active for the selected model; no admitted GPU variant was selected."
+                            "FP32 CPU fallback is active for the selected model. GPU policy considers one compatible dedicated SM86 adapter by physical capacity; other adapters are not initialized or claimed unable to fit."
                         },
                     );
                 }
@@ -1922,36 +2155,24 @@ impl Launch {
                     self.current(Some(cancel))?;
                     // Source/input/cancellation/deadline/owner errors are not device
                     // faults and cannot be relabeled as a fallback authorization.
-                    if !runtime::is_native_device_failure(&error) {
-                        return Err(
-                            error.context("non-device warm failure; automatic fallback refused")
-                        );
-                    }
-                    if let Some(device) = &candidate.device {
-                        let key = airk_inference::inference_engine::pool::arbiter::circuit_key(
-                            &profile,
-                            device,
-                            &self.document,
-                        )?;
-                        let mut state = self
-                            .devices
-                            .state
-                            .lock()
-                            .map_err(|_| anyhow::anyhow!("device fault circuit unavailable"))?;
-                        ensure!(
-                            state.document.as_ref() == Some(&self.document),
-                            "source/configuration changed before fault circuit commit"
-                        );
-                        ensure!(
-                            state.circuits.contains(&key) || state.circuits.len() < 16,
-                            "device fault circuit capacity occupied"
-                        );
-                        state.circuits.insert(key);
+                    let recorded = match self.record_prework_fault(
+                        &handle,
+                        profile.manifest,
+                        &error,
+                        cancel,
+                    ) {
+                        Ok(recorded) => recorded,
+                        Err(guard) => return Err(secondary_fault_error(error, guard)),
+                    };
+                    match recorded {
+                        Some(failed) if failed==profile.manifest=>{},
+                        Some(_)=>return Err(error.context("a retained GPU resident failed eligibility; current candidate is not declared unfit and the original attempt stops")),
+                        None=>return Err(error.context("unsettled or non-device warm failure; automatic fallback and fault circuit refused")),
                     }
                     rejections.push(CandidateRejection {
                         manifest: Some(profile.manifest),
                         adapter_key: Some(candidate.adapter),
-                        reason: SelectionReason::ProviderInitializationFailed,
+                        reason: prework_device_reason(&error),
                     });
                 }
             }
@@ -1980,6 +2201,7 @@ pub(super) struct Delivery {
     shared: Arc<Shared>,
     generation: u64,
     devices: Vec<(NativeDevice, u64)>,
+    eligibilities: BTreeMap<Stage, ResidentEligibility>,
 }
 #[cfg(feature = "local-inference")]
 impl Delivery {
@@ -1997,6 +2219,12 @@ impl Delivery {
                 .all(|(device, epoch)| !device.poisoned() && device.epoch() == *epoch),
             "native device epoch/settlement changed before delivery"
         );
+        ensure!(
+            self.eligibilities
+                .values()
+                .all(ResidentEligibility::current),
+            "local GPU eligibility changed before delivery"
+        );
         Ok(())
     }
     pub fn current(&self, current: &DeviceConfiguration) -> Result<()> {
@@ -2013,6 +2241,7 @@ impl Delivery {
     pub fn with_selection<T>(
         &self,
         current: &DeviceConfiguration,
+        expected: &[airk_core::combined_context::ContextDeliveryBinding],
         effect: impl FnOnce() -> Result<T>,
     ) -> Result<T> {
         // Lock order: Store configuration -> native selection -> credential/source/IO.
@@ -2035,6 +2264,25 @@ impl Delivery {
             actual.same_selection(&self.policy),
             "native selected variant changed before commit"
         );
+        for binding in expected {
+            if binding.profile.is_some()
+                && let NativeConfiguration::Device { selected, .. } = &self.policy
+                && selected
+                    .get(&binding.stage)
+                    .is_some_and(|profile| profile.device_execution.is_some())
+            {
+                ensure!(
+                    state.ready.contains(&binding.stage)
+                        && self
+                            .eligibilities
+                            .get(&binding.stage)
+                            .is_some_and(
+                                |proof| Some(proof.profile()) == binding.profile && proof.current()
+                            ),
+                    "native GPU result lost live local eligibility before effect"
+                );
+            }
+        }
         let result = effect();
         drop(state);
         result
@@ -2042,7 +2290,10 @@ impl Delivery {
 }
 #[cfg(feature = "local-inference")]
 impl StageOwner {
-    pub(super) fn device_delivery(&self) -> Result<Option<Delivery>> {
+    pub(super) fn device_delivery(
+        &self,
+        expected: &[airk_core::combined_context::ContextDeliveryBinding],
+    ) -> Result<Option<Delivery>> {
         let policy = self.read_configuration()?;
         let NativeConfiguration::Device { ref document, .. } = policy else {
             return Ok(None);
@@ -2062,6 +2313,13 @@ impl StageOwner {
             .generation
             .load(std::sync::atomic::Ordering::Acquire);
         let devices = state.devices.values().cloned().collect();
+        let eligibilities = expected_eligibilities(
+            &state.eligibilities,
+            expected
+                .iter()
+                .map(|binding| (binding.stage, binding.profile)),
+            ResidentEligibility::profile,
+        );
         drop(state);
         let delivery = Delivery {
             binding,
@@ -2069,6 +2327,7 @@ impl StageOwner {
             shared: self.devices.clone(),
             generation,
             devices,
+            eligibilities,
         };
         delivery.live()?;
         Ok(Some(delivery))
@@ -2253,6 +2512,9 @@ fn cancel_device_stage(
     } = &mut *state;
     cancel_continuations(pending, intent_generation, stage)?;
     state.ready.remove(&stage);
+    if let Some(proof) = state.eligibilities.remove(&stage) {
+        proof.revoke();
+    }
     super::lifecycle::cancel_current(lifecycle);
     lifecycle.cancel.cancel();
     Ok(())
@@ -2285,4 +2547,89 @@ fn cancel_continuations<T>(
     generations.insert(stage, next);
     pending.remove(&stage);
     Ok(())
+}
+
+#[cfg(feature = "local-inference")]
+fn prework_device_failure(error: &anyhow::Error) -> bool {
+    if runtime::is_native_device_failure(error) {
+        return true;
+    }
+    #[cfg(feature = "gpu-cuda")]
+    {
+        runtime::cuda::is_device_eligibility_failure(error)
+    }
+    #[cfg(not(feature = "gpu-cuda"))]
+    {
+        false
+    }
+}
+
+#[cfg(feature = "local-inference")]
+fn prework_device_reason(error: &anyhow::Error) -> SelectionReason {
+    #[cfg(feature = "gpu-cuda")]
+    {
+        if runtime::cuda::is_device_capacity_failure(error) {
+            return SelectionReason::DeviceMemoryInsufficient;
+        }
+        if !runtime::is_native_device_failure(error)
+            && runtime::cuda::is_device_eligibility_failure(error)
+        {
+            return SelectionReason::Unqualified;
+        }
+    }
+    let _ = error;
+    SelectionReason::ProviderInitializationFailed
+}
+
+#[cfg(feature = "local-inference")]
+fn expected_eligibilities<T: Clone>(
+    all: &BTreeMap<Stage, T>,
+    expected: impl IntoIterator<Item = (Stage, Option<Sha256Digest>)>,
+    profile: impl Fn(&T) -> Sha256Digest,
+) -> BTreeMap<Stage, T> {
+    let bindings = expected
+        .into_iter()
+        .filter_map(|(stage, id)| id.map(|id| (stage, id)))
+        .collect::<std::collections::BTreeSet<_>>();
+    all.iter()
+        .filter(|(stage, proof)| bindings.contains(&(**stage, profile(proof))))
+        .map(|(stage, proof)| (*stage, proof.clone()))
+        .collect()
+}
+
+#[cfg(feature = "local-inference")]
+fn recordable_fault_profile(
+    genuine: bool,
+    unknown: bool,
+    failed: Option<Sha256Digest>,
+    current: Sha256Digest,
+) -> Option<Sha256Digest> {
+    (genuine && !unknown).then_some(failed.unwrap_or(current))
+}
+
+#[cfg(feature = "local-inference")]
+fn retained_gpu_targets(
+    active: impl IntoIterator<Item = (Stage, Option<Sha256Digest>)>,
+    selected: impl IntoIterator<Item = (Stage, Sha256Digest, bool)>,
+) -> Vec<(Stage, Sha256Digest)> {
+    let selected = selected
+        .into_iter()
+        .filter(|(_, _, gpu)| *gpu)
+        .map(|(stage, profile, _)| (stage, profile))
+        .collect::<BTreeMap<_, _>>();
+    active
+        .into_iter()
+        .filter_map(|(stage, profile)| {
+            profile
+                .filter(|profile| selected.get(&stage) == Some(profile))
+                .map(|profile| (stage, profile))
+        })
+        .collect()
+}
+
+#[cfg(feature = "local-inference")]
+fn secondary_fault_error(error: anyhow::Error, secondary: anyhow::Error) -> anyhow::Error {
+    error.context(format!(
+        "secondary native fault recorder refused: {secondary:#}"
+    ))
 }

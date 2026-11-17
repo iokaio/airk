@@ -2317,6 +2317,7 @@
   {
    "item": "native_arbiter_scope",
    "methods": [
+    "ArbiterDeviceRead",
     "ArbiterApplication",
     "ArbiterNextRead",
     "ArbiterContextAction",

@@ -12,6 +12,8 @@ use std::{
 };
 
 mod device;
+mod eligibility;
+pub use eligibility::{ResidentEligibility, failed_profile as eligibility_failure_profile};
 #[cfg(feature = "test-support")]
 pub mod execution_observer;
 pub use device::{
@@ -219,6 +221,7 @@ struct Warm {
 }
 #[derive(Default)]
 struct Queue {
+    eligibility: eligibility::State,
     closed: bool,
     configuration: Option<NativeConfiguration>,
     device_failure: BTreeMap<Stage, DeviceFailureNotifier>,
@@ -260,6 +263,7 @@ impl Drop for LaneCompleted {
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 queue.closed = true;
                 queue.device_failure.clear();
+                queue.eligibility.invalidate();
                 queue.probes.clear();
                 queue.jobs.clear();
                 queue.warm.clear();
@@ -375,6 +379,7 @@ impl Handle {
             host,
             #[cfg(all(feature = "test-support", feature = "gpu-cuda"))]
             evaluation: None,
+            retained: None,
             model,
             deadline,
             authority,
@@ -385,6 +390,83 @@ impl Handle {
         self.0.wake.notify_one();
         self.0.changed.notify_waiters();
         Ok(receive)
+    }
+    /// Reaccept actual retained sessions on the existing management lane. This
+    /// borrows the exact resident charge; it cannot load a second model.
+    pub fn reaccept_device(
+        &self,
+        lease: Arc<airk_store::service::ServiceLease>,
+        model: airk_core::arbiter::device::SelectedModel,
+        resident: ResidentPermit,
+        deadline: Instant,
+        authority: Arc<dyn Fn() -> bool + Send + Sync>,
+    ) -> Result<oneshot::Receiver<Result<DeviceProbe>>> {
+        device::warm_admission(Some(deadline), Some(authority.as_ref()), Instant::now)?;
+        let mut queue = self
+            .0
+            .queue
+            .lock()
+            .map_err(|_| anyhow::anyhow!("retained eligibility queue unavailable"))?;
+        ensure!(
+            !queue.closed && !self.0.closing.load(Ordering::Acquire) && queue.probes.len() < 2,
+            "retained eligibility admission closed"
+        );
+        ensure!(
+            queue.active_profiles.get(&model.stage()) == Some(&resident.profile)
+                && queue
+                    .residents
+                    .get(&model.stage())
+                    .and_then(std::sync::Weak::upgrade)
+                    .is_some_and(|charge| Arc::ptr_eq(&charge, &resident.reservation)),
+            "retained eligibility requires exact current charged resident"
+        );
+        let (compute, delivery) = self.0.accounting.admit(self.0.service)?;
+        let (reply, receive) = oneshot::channel();
+        queue.probes.push_back(device::Probe {
+            lease,
+            host: resident.reservation,
+            retained: Some(resident.profile),
+            #[cfg(all(feature = "test-support", feature = "gpu-cuda"))]
+            evaluation: None,
+            model,
+            deadline,
+            authority,
+            reply,
+            compute,
+            _delivery: delivery,
+        });
+        self.0.wake.notify_one();
+        self.0.changed.notify_waiters();
+        Ok(receive)
+    }
+    /// Native observation only; false alone is never a completion permit.
+    /// Fault recording additionally requires an actual returned typed outcome.
+    pub fn unknown_device_work(&self) -> bool {
+        if self.0.unsettled.load(Ordering::Acquire) {
+            return true;
+        }
+        #[cfg(feature = "gpu-cuda")]
+        {
+            airk_retrieval::arbiter::runtime::cuda::process_poisoned()
+        }
+        #[cfg(not(feature = "gpu-cuda"))]
+        {
+            false
+        }
+    }
+    pub fn resident_eligibilities(&self) -> Result<BTreeMap<Stage, ResidentEligibility>> {
+        let queue = self
+            .0
+            .queue
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native eligibility observation unavailable"))?;
+        ensure!(!queue.closed, "native eligibility owner closed");
+        Ok(queue
+            .eligibility
+            .captured(queue.configuration.as_ref())
+            .into_iter()
+            .filter(|(stage, proof)| queue.active_profiles.get(stage) == Some(&proof.profile()))
+            .collect())
     }
     /// Unqualified native evaluation only: the exact original lease, explicit
     /// Core bounds and actual resource reservation are required independently.
@@ -442,6 +524,7 @@ impl Handle {
         queue.probes.push_back(device::Probe {
             lease,
             host,
+            retained: None,
             model,
             deadline,
             authority,
@@ -585,6 +668,14 @@ impl Handle {
                 }
             }
         }
+        if queue
+            .configuration
+            .as_ref()
+            .is_none_or(|previous| !previous.same_selection(&configuration))
+        {
+            queue.eligibility.invalidate();
+        }
+        queue.eligibility.configure(&configuration);
         queue.configuration = Some(configuration);
         let current = queue.configuration.clone();
         queue.warm.retain(|warm| {
@@ -950,6 +1041,7 @@ impl Lane {
                             retains_resident(queue.configuration.as_ref(), *stage, resident.scorer().profile().manifest, &queue.release_profiles)
                         });
                         if shared.unsettled.load(Ordering::Acquire) { queue.closed=true; break; }
+                        queue.eligibility.reconcile(&residents)?;
                         queue.active_profiles.retain(|stage, _| residents.contains_key(stage));
                         queue.joint_calibrations.retain(|stage, _| residents.contains_key(stage));
                         queue.residents.retain(|stage, _| residents.contains_key(stage));
@@ -957,7 +1049,23 @@ impl Lane {
                         shared.changed.notify_waiters();
                         if let Some(mut probe)=queue.probes.pop_front() {
                             probe.compute.running();shared.running.store(1,Ordering::Release);queue.running_stage=Some(probe.model.stage());drop(queue);
-                            let result=device::probe(&ownership,&probe);
+                            let result=if let Some(profile)=probe.retained {
+                                let result=(|| {
+                                    ensure!(ownership.same_lease(&probe.lease),"retained eligibility belongs to another native lease");
+                                    let resident=residents.get(&probe.model.stage()).context("retained eligibility resident missing")?;
+                                    ensure!(resident.scorer().profile().manifest==profile&&Arc::ptr_eq(resident.charge(),&probe.host),"retained eligibility differs from actual resident/charge");
+                                    eligibility::refresh(&shared,&residents,probe.model.stage(),Some(probe.deadline),Some(probe.authority.clone()))?;
+                                    Ok(DeviceProbe{candidates:vec![],rejections:vec![]})
+                                })();
+                                if residents.values().any(|resident|!resident.scorer().device_settled()) {shared.unsettled.store(true,Ordering::Release);}
+                                result
+                            }else {device::probe(&ownership,&probe,&shared)};
+                            #[cfg(feature="gpu-cuda")]
+                            if airk_retrieval::arbiter::runtime::cuda::process_poisoned(){shared.unsettled.store(true,Ordering::Release);}
+                            if shared.unsettled.load(Ordering::Acquire) {
+                                let error=match result {Err(error)=>error.context("native probe/eligibility settlement unknown; custody retained"),Ok(value)=>{std::mem::forget(value);anyhow::anyhow!("native probe/eligibility settlement unknown; custody retained")}};
+                                let _=probe.reply.send(Err(error));std::mem::forget((probe.lease,probe.host,probe.compute,probe._delivery,ownership.clone()));break;
+                            }
                             let _=probe.reply.send(result);
                             shared.queue.lock().map_err(|_|anyhow::anyhow!("Arbiter queue unavailable"))?.running_stage=None;
                             shared.running.store(0,Ordering::Release);shared.changed.notify_waiters();continue;
@@ -969,42 +1077,7 @@ impl Lane {
                             queue.warming_profile = Some((warm.stage, warm.profile.description().manifest));
                             queue.running_stage = Some(warm.stage);
                             drop(queue);
-                            let native_device=device::saved_device(&warm.profile);
-                            let loaded = if device::warm_admission(warm.deadline,warm.authority.as_deref(),Instant::now).is_ok() {Scorer::open(warm.profile, warm.source.as_ref())} else {Err(anyhow::anyhow!("original native warm deadline expired before load"))};
-                            if native_device.as_ref().is_some_and(|device|device.poisoned()) {
-                                shared.unsettled.store(true,Ordering::Release);
-                                let _=warm.reply.send(Err(anyhow::anyhow!("native GPU load settlement unknown; custody retained")));
-                                std::mem::forget((warm.source,warm._reservation,warm._compute,warm._delivery,native_device,ownership.clone()));
-                                break;
-                            }
-                            let warm_current=device::warm_admission(warm.deadline,warm.authority.as_deref(),Instant::now).is_ok();
-                            let mut queue = shared
-                                .queue
-                                .lock()
-                                .map_err(|_| anyhow::anyhow!("Arbiter queue unavailable"))?;
-                            let result = match loaded {
-                                Ok(loaded)=>{
-                                    let manifest=loaded.profile().manifest;
-                                    let charge=warm._reservation;
-                                    let resident=device::GuardedResident::new(ResidentSession{scorer:loaded,_source:warm.source},charge.clone(),ownership.clone(),&shared,warm.deadline,native_device.clone());
-                                    if !queue.closed && !queue.release_profiles.contains(&manifest)
-                                        && warm_current
-                                        && warm.deadline.is_none_or(|deadline|Instant::now()<deadline)
-                                        && queue.configuration.as_ref().is_some_and(|config|selected_profile(config,warm.stage)==Some(manifest)) {
-                                        if let Some(calibration)=resident.scorer().joint_calibration(){queue.joint_calibrations.insert(warm.stage,calibration);}else{queue.joint_calibrations.remove(&warm.stage);}
-                                        queue.residents.insert(warm.stage,Arc::downgrade(&charge));
-                                        residents.insert(warm.stage,resident);queue.active_profiles.insert(warm.stage,manifest);
-                                        shared.accounting.arbiter_cached_count(residents.len());Ok(())
-                                    }else{drop(resident);Err(anyhow::anyhow!("Arbiter warm revoked or original deadline expired"))}
-                                },
-                                Err(error)=>Err(error),
-                            };
-                            queue.warming_profile = None;
-                            queue.running_stage = None;
-                            drop(queue);
-                            shared.running.store(0, Ordering::Release);
-                            shared.changed.notify_waiters();
-                            let _ = warm.reply.send(result);
+                            if !eligibility::warm(warm,&ownership,&shared,&mut residents)? {break;}
                             continue;
                         }
                         if !queue.jobs.is_empty() {
@@ -1024,7 +1097,8 @@ impl Lane {
                                     queue.configuration.as_ref(),
                                     &job,
                                     scorer.profile().manifest,
-                                ) && job.resident.profile==scorer.profile().manifest
+                                ) && queue.eligibility.current(stage,queue.configuration.as_ref())
+                                    && job.resident.profile==scorer.profile().manifest
                                     && Arc::ptr_eq(charge,&job.resident.reservation)
                                     && scorer.profile().tasks.contains(&job.task)
                                     && !queue.release_profiles.contains(&scorer.profile().manifest)
@@ -1053,7 +1127,7 @@ impl Lane {
                                 ensure!(input.input_ids.len() <= job.max_input_tokens,"Arbiter original input-token budget exhausted before native execution");
                                 ensure!(Instant::now() < job.deadline,"Arbiter original deadline exhausted during compilation");
                                 let current={let queue=shared.queue.lock().map_err(|_|anyhow::anyhow!("Arbiter queue unavailable"))?;
-                                    !queue.closed && !queue.release_profiles.contains(&scorer.profile().manifest) && permitted(queue.configuration.as_ref(),&job,scorer.profile().manifest)};
+                                    !queue.closed && !queue.release_profiles.contains(&scorer.profile().manifest) && queue.eligibility.current(stage,queue.configuration.as_ref()) && permitted(queue.configuration.as_ref(),&job,scorer.profile().manifest)};
                                 ensure!(current && (job.authority)(&job.scope),"Arbiter source authority expired during compilation");
                                 ensure!(compiled_delivered && !job.reply.is_closed(),"Arbiter delivery canceled before native dispatch");
                                 let started=Instant::now();
@@ -1093,6 +1167,7 @@ impl Lane {
                                     queue.running_index=None;
                                     queue.running_stage=None;
                                     ensure!(source_live && !queue.closed
+                                        && queue.eligibility.current(stage,queue.configuration.as_ref())
                                         && !queue.release_profiles.contains(&scorer.profile().manifest)
                                         && permitted(queue.configuration.as_ref(), &job, scorer.profile().manifest),
                                         "Arbiter delivery revoked");
@@ -1122,6 +1197,7 @@ impl Lane {
                             .queue
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        queue.eligibility.invalidate();
                         queue.active_profiles.clear();
                         queue.joint_calibrations.clear();
                         queue.residents.clear();

@@ -79,6 +79,7 @@ fn final_device_delivery_refuses_generation_revision_and_compiled_source_binding
         shared: shared.clone(),
         generation,
         devices: vec![],
+        eligibilities: BTreeMap::new(),
     };
     delivery.current(&document)?;
     let mut changed = document.clone();
@@ -159,13 +160,17 @@ fn retained_same_resident_reactivation_restores_ready_only_after_exact_validatio
         ));
         assert!(
             shared
-                .finish_activation(&doc, Stage::Context, &profile, || anyhow::bail!(
-                    "retained native validation failed"
-                ))
+                .finish_activation(
+                    &doc,
+                    Stage::Context,
+                    &profile,
+                    BTreeMap::new(),
+                    || anyhow::bail!("retained native validation failed")
+                )
                 .is_err()
         );
         assert!(!shared.state.lock().unwrap().ready.contains(&Stage::Context));
-        shared.finish_activation(&doc, Stage::Context, &profile, || Ok(()))?;
+        shared.finish_activation(&doc, Stage::Context, &profile, BTreeMap::new(), || Ok(()))?;
         assert!(ready_from_observation(
             &shared.state.lock().unwrap(),
             &doc,
@@ -209,10 +214,11 @@ fn device_selection_install_cannot_cross_final_effect_and_later_commit_refuses()
         shared: shared.clone(),
         generation: shared.generation.load(std::sync::atomic::Ordering::Acquire),
         devices: vec![],
+        eligibilities: BTreeMap::new(),
     };
     std::thread::scope(|threads| -> Result<()> {
         let (entered, observed) = std::sync::mpsc::channel();
-        let install = delivery.with_selection(&doc, || {
+        let install = delivery.with_selection(&doc, &[], || {
             assert!(
                 shared.state.try_lock().is_err(),
                 "selection owner lock must survive the last sample through the effect"
@@ -235,7 +241,7 @@ fn device_selection_install_cannot_cross_final_effect_and_later_commit_refuses()
     let effects = std::cell::Cell::new(0);
     assert!(
         delivery
-            .with_selection(&doc, || {
+            .with_selection(&doc, &[], || {
                 effects.set(effects.get() + 1);
                 Ok(())
             })
@@ -402,4 +408,167 @@ fn cancel_clears_queued_command_and_revokes_idle_fault_notifier_without_restarti
         "refused canceled command never becomes active"
     );
     Ok(())
+}
+
+#[cfg(feature = "local-inference")]
+#[test]
+fn read_only_device_stamp_fences_intent_selection_ready_and_generation_without_runtime_calls()
+-> Result<()> {
+    let shared = Shared::default();
+    let original = shared.read_diagnostic_stamp()?;
+    shared
+        .state
+        .lock()
+        .unwrap()
+        .intent_generation
+        .insert(Stage::Context, 1);
+    let intent = shared.read_diagnostic_stamp()?;
+    assert_ne!(intent, original);
+    shared.state.lock().unwrap().ready.insert(Stage::Context);
+    let ready = shared.read_diagnostic_stamp()?;
+    assert_ne!(ready, intent);
+    shared.state.lock().unwrap().selection.insert(
+        Stage::Context,
+        DeviceSelection {
+            schema: DEVICE_STATUS_SCHEMA.into(),
+            model: SelectedModel::ContextCompact,
+            policy: DevicePolicy::Auto,
+            gpu_precision: GpuPrecisionPreference::Auto,
+            selected: None,
+            reasons: vec![],
+            operation_failure: Some(SelectionReason::DeviceMemoryInsufficient),
+        },
+    );
+    let selection = shared.read_diagnostic_stamp()?;
+    assert_ne!(selection, ready);
+    shared
+        .generation
+        .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    assert_ne!(shared.read_diagnostic_stamp()?, selection);
+    assert!(!prework_device_failure(&anyhow::anyhow!(
+        "source authority revoked"
+    )));
+    assert!(!prework_device_failure(&anyhow::anyhow!(
+        "independent fixture malformed"
+    )));
+    assert!(!prework_device_failure(&anyhow::anyhow!(
+        "original deadline expired"
+    )));
+    Ok(())
+}
+
+#[cfg(feature = "local-inference")]
+#[test]
+fn delivery_ignores_unrelated_stale_gpu_proof_but_rejects_the_same_expected_gpu_and_mixed_roster() {
+    // Data-only stand-ins test the exact capture filter; no GPU proof is minted.
+    let gpu = Sha256Digest::from_bytes([91; 32]);
+    let cpu = Sha256Digest::from_bytes([92; 32]);
+    let stale = BTreeMap::from([(Stage::Context, (gpu, false))]);
+    let cpu_only = expected_eligibilities(&stale, [(Stage::Focus, Some(cpu))], |proof| proof.0);
+    assert!(cpu_only.is_empty());
+    assert!(cpu_only.values().all(|proof| proof.1));
+    let same_gpu = expected_eligibilities(&stale, [(Stage::Context, Some(gpu))], |proof| proof.0);
+    assert_eq!(same_gpu, BTreeMap::from([(Stage::Context, (gpu, false))]));
+    assert!(!same_gpu.values().all(|proof| proof.1));
+    let mixed = expected_eligibilities(
+        &stale,
+        [(Stage::Focus, Some(cpu)), (Stage::Context, Some(gpu))],
+        |proof| proof.0,
+    );
+    assert!(!mixed.values().all(|proof| proof.1));
+    assert!(
+        expected_eligibilities(&stale, [(Stage::Context, None)], |proof| proof.0).is_empty(),
+        "unenrolled index cannot inherit a global GPU requirement"
+    );
+    assert!(
+        expected_eligibilities(&stale, [(Stage::Context, Some(cpu))], |proof| proof.0).is_empty(),
+        "another profile is not the expected proof"
+    );
+}
+#[cfg(feature = "local-inference")]
+#[test]
+fn retained_and_cold_fault_attribution_share_typed_settled_rules_and_preserve_actual_resident() {
+    let own = Sha256Digest::from_bytes([93; 32]);
+    let other = Sha256Digest::from_bytes([94; 32]);
+    assert_eq!(recordable_fault_profile(true, false, None, own), Some(own));
+    assert_eq!(
+        recordable_fault_profile(true, false, Some(other), own),
+        Some(other)
+    );
+    assert_eq!(recordable_fault_profile(true, true, Some(other), own), None);
+    assert_eq!(
+        recordable_fault_profile(false, false, Some(other), own),
+        None
+    );
+    assert!(!prework_device_failure(&anyhow::anyhow!(
+        "source authority revoked"
+    )));
+    assert!(!prework_device_failure(&anyhow::anyhow!(
+        "original management deadline expired"
+    )));
+}
+
+#[cfg(feature = "local-inference")]
+#[test]
+fn retained_population_precheck_includes_other_failed_gpu_and_excludes_drained_self_or_cpu() {
+    let failed = Sha256Digest::from_bytes([95; 32]);
+    let current = Sha256Digest::from_bytes([96; 32]);
+    let targets = retained_gpu_targets(
+        [(Stage::Focus, Some(failed)), (Stage::Context, None)],
+        [
+            (Stage::Focus, failed, true),
+            (Stage::Context, current, true),
+        ],
+    );
+    assert_eq!(
+        targets,
+        [(Stage::Focus, failed)],
+        "recovering Context cannot omit the actual retained failed Focus"
+    );
+    let circuits = std::collections::BTreeSet::from([failed]);
+    assert!(
+        !targets
+            .iter()
+            .all(|(_, profile)| !circuits.contains(profile))
+    );
+    let after_self_drain = retained_gpu_targets(
+        [(Stage::Focus, None), (Stage::Context, Some(current))],
+        [
+            (Stage::Focus, failed, true),
+            (Stage::Context, current, true),
+        ],
+    );
+    assert_eq!(after_self_drain, [(Stage::Context, current)]);
+    assert!(
+        after_self_drain
+            .iter()
+            .all(|(_, profile)| !circuits.contains(profile)),
+        "old drained self selection cannot prevent its replacement"
+    );
+    assert!(
+        retained_gpu_targets(
+            [(Stage::Focus, Some(failed))],
+            [(Stage::Focus, failed, false)]
+        )
+        .is_empty()
+    );
+}
+
+#[cfg(feature = "local-inference")]
+#[test]
+fn secondary_fault_recorder_error_keeps_original_typed_cause() {
+    #[derive(Debug)]
+    struct NativeCause;
+    impl std::fmt::Display for NativeCause {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("actual native cause")
+        }
+    }
+    impl std::error::Error for NativeCause {}
+    let error = secondary_fault_error(
+        anyhow::Error::new(NativeCause),
+        anyhow::anyhow!("recorder lock poisoned"),
+    );
+    assert!(error.downcast_ref::<NativeCause>().is_some());
+    assert!(format!("{error:#}").contains("recorder lock poisoned"));
 }

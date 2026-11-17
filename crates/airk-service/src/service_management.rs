@@ -1210,6 +1210,7 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::EmbeddingStatus
         | ControlMethod::SourceStatus
         | ControlMethod::Arbiter { .. }
+        | ControlMethod::ArbiterDeviceRead { .. }
         | ControlMethod::ArbiterApplication { .. }
         | ControlMethod::ArbiterNextRead { .. }
         | ControlMethod::ArbiterContextAction { .. }

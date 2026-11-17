@@ -567,3 +567,82 @@ Focus remains current-policy-only and has no CPU transition path. Context has
 no compatibility exception. Raw Profile metadata or a manifest-specific branch
 cannot grant this admission. All source/deadline/native-session/delivery fences
 remain as before.
+
+
+## Product G3 live local eligibility
+
+Product GPU Ready requires the provider's live non-Deserialize DeviceEligibility,
+not an artifact description or declared/scientific fit. One existing explicit
+management operation keeps its original absolute<=120s cutoff for actual load,
+full placement, one complete independent canonical roster and synchronization.
+Affected retained GPU sessions are reaccepted with their same scorer/source/lease
+and original charges within that SAME cutoff; no per-session renewal or reload.
+Failed/unfinished acceptance cannot retain stale Ready. No per-user20/p95/peak or
+release qualification is asserted. Scientific RuntimeManifest/1 remains unchanged.
+
+Explicit Cpu management never performs a GPU self-check. If its actual residency
+change invalidates another GPU witness, that stage remains constrained until an
+appropriate explicit Auto management operation succeeds. Evidence queries never
+establish eligibility, retry the failed query or receive a fresh budget. A joint
+change alone is not a device fault and does not schedule fault recovery.
+
+The native lane derives ephemeral configuration/source/joint keys from exact
+Core4 canonical bytes, the actual compiled catalog source, and real retained
+stage/profile/device UUID+epoch/charge identities. One native management nonce is
+shared across the affected population. Actor revocation only removes readiness;
+only real provider validation creates proof. Session removal/drop, configuration,
+joint residency or device changes invalidate proof. Entry and final delivery
+retain original authority/deadline and current proof. Unknown settlement retains
+actual session/source/device/host charge/lease and an incomplete barrier.
+
+
+
+## G4 scoped device diagnostics (additive read contract)
+
+Canonical airk_diagnostics may carry scoped_device_status, schema
+airk.arbiter.scoped-device-status/1. Its exact ScopeBinding and per-stage
+IndexApplication distinguish this index's eligibility from complete native
+DeviceStageStatus residency/selection observations. No configuration document or
+global enrollment list is serialized. Typed unavailable uses revision0 and no
+invented stage/model state. Observations are descriptive, never execution or
+qualification capabilities. Scalar status and Search/Answer schemas are unchanged.
+
+The native read-only ArbiterDeviceRead method carries actual worker/scope, pinned
+publication and original ReadAttemptBudget; response uses the same typed name.
+Service repeats actual scope gates and original monotonic budget before/after;
+Kernel repeats actual scope/publication fences. Only strict current4 reads and
+metadata snapshots are permitted: no migration/CAS/rebind, model/device load or
+probe, downloads or native continuation. Default absent controller/original
+attempt omits the optional observation. Native absent/retained/corrupt4 yields
+truthful unavailable, never fake disabled/current configuration.
+
+Combined diagnostics keeps the complete observation under each corresponding
+member.result; it never fuses authorities or global enrollment state. Complete
+copy/export retains precision, native fallback reasons and all variant metadata.
+The additional observation is bounded256KiB inside unchanged original reply/frame
+ceilings. No retries or replacement clock are introduced.
+
+Product /2 observes adapter metadata without retaining every primary context.
+It selects only one compatible dedicated SM86 adapter: greatest physical total,
+native ordinal tie. Only that context is retained and its actual free capacity,
+cold requirement/headroom and full eligibility are checked. Failure describes
+that selected device, not every GPU. Other adapters are not initialized. Native
+same-model precision/CPU choices keep the original budget; no selector expands.
+
+
+Diagnostics additionally requires positive physical current4 binding observations before/after each strict read (canonical raw SHA, revision and native catalog binding), repeated around the complete stage snapshot. Management load() synthesized disabled defaults are never accepted as physical current4. Both stages also require equal read-only Shared selection/residency stamps before/after: actual generation, cached document, selected manifests/reasons, ready and intent maps, eligibility and cached/native epoch/poison state. Changed selection/eligibility yields unavailable. This does not claim atomic unrelated download or work-progress counters. No CUDA probe is permitted.
+
+Delivery captures local eligibility only for stages named by the existing exact
+expected result bindings. A known-settled failed GPU refresh cannot block an
+unrelated admitted CPU result. The same GPU result still requires its current
+proof. Operation-wide unknown settlement, generation and native epoch/poison
+fences remain unchanged; no replay, renewed cutoff or relaxed input is allowed.
+
+Retained reaccept and cold warm use the same actual returned typed-fault recorder.
+Only known-settled genuine faults under current original authority create a
+stable circuit for the actual failed resident, including another retained stage.
+All actual retained GPU targets are checked for open circuits before reaccept
+or cold native work, after any replaced self has really drained. Explicit Cpu
+is exempt from GPU self-check. No unchanged failed retained roster is replayed
+by recovering an unrelated stage. Generic production probe refuses scientific
+RuntimeManifest/1 before context/candidates; only explicit evaluation may use /1.

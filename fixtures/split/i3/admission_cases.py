@@ -720,7 +720,7 @@ def operations():
 
 
 NEVER = [
-    {"item": "native_arbiter_scope", "methods": ["ArbiterApplication", "ArbiterNextRead", "ArbiterContextAction", "ArbiterFocusApplication", "ArbiterFocusRank", "ArbiterImport", "ArbiterImportDevice"],
+    {"item": "native_arbiter_scope", "methods": ["ArbiterDeviceRead", "ArbiterApplication", "ArbiterNextRead", "ArbiterContextAction", "ArbiterFocusApplication", "ArbiterFocusRank", "ArbiterImport", "ArbiterImportDevice"],
      "reason": "Actual native worker and redeemed source authority are owner-pipe internal only."},
     {"item": "bearer_credentials", "methods": [],
      "reason": "Bearer tokens and credential files never leave the owner plane."},

@@ -531,3 +531,49 @@ metadata before measured CUDA work; no scalar request or metadata grants product
 admission, class support or release qualification. Unknown GPU settlement
 retains the full real native custody. Historical CPU qualification and timing
 records retain their original identities.
+
+
+## Product G3 live local eligibility
+
+Product GPU Ready requires the provider's live non-Deserialize DeviceEligibility,
+not an artifact description or declared/scientific fit. One existing explicit
+management operation keeps its original absolute<=120s cutoff for actual load,
+full placement, one complete independent canonical roster and synchronization.
+Affected retained GPU sessions are reaccepted with their same scorer/source/lease
+and original charges within that SAME cutoff; no per-session renewal or reload.
+Failed/unfinished acceptance cannot retain stale Ready. No per-user20/p95/peak or
+release qualification is asserted. Scientific RuntimeManifest/1 remains unchanged.
+
+Explicit Cpu management never performs a GPU self-check. If its actual residency
+change invalidates another GPU witness, that stage remains constrained until an
+appropriate explicit Auto management operation succeeds. Evidence queries never
+establish eligibility, retry the failed query or receive a fresh budget. A joint
+change alone is not a device fault and does not schedule fault recovery.
+
+The native lane derives ephemeral configuration/source/joint keys from exact
+Core4 canonical bytes, the actual compiled catalog source, and real retained
+stage/profile/device UUID+epoch/charge identities. One native management nonce is
+shared across the affected population. Actor revocation only removes readiness;
+only real provider validation creates proof. Session removal/drop, configuration,
+joint residency or device changes invalidate proof. Entry and final delivery
+retain original authority/deadline and current proof. Unknown settlement retains
+actual session/source/device/host charge/lease and an incomplete barrier.
+
+Product /2 observes adapter metadata without retaining every primary context.
+It selects only one compatible dedicated SM86 adapter: greatest physical total,
+native ordinal tie. Only that context is retained and its actual free capacity,
+cold requirement/headroom and full eligibility are checked. Failure describes
+that selected device, not every GPU. Other adapters are not initialized. Native
+same-model precision/CPU choices keep the original budget; no selector expands.
+
+Known-settled typed eligibility/load failure is also memoized synchronously by
+the serialized native lane before reply/dequeue. The bounded16 memo reuses the
+actual stable DeviceFaultKey; renewed management nonce, joint generation and
+wrapper epoch cannot clear it. Every actual retained target and every queued cold
+load is checked before native work. Product probe filters memoed variants. This
+fences populations queued before the asynchronous Service recorder runs. Only
+actual returned genuine faults under original live authority/cutoff and proven
+settlement are memoized; source/fixture/auth/deadline/cancel/unknown are not.
+Unknown custody/barrier is unchanged. Saturation fails closed without evicting
+a row. Only relevant typed configuration/catalog/source scope change prunes it.
+No new actor/lane/proof/clock or current-query replay is introduced.

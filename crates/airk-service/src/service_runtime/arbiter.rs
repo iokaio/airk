@@ -27,6 +27,7 @@ mod joint_scoring;
 #[cfg(feature = "local-inference")]
 mod lifecycle;
 pub(super) mod policy_delivery;
+mod read_device_status;
 mod scoring;
 #[cfg(all(test, feature = "local-inference", feature = "test-support"))]
 pub(super) mod warm_observer;

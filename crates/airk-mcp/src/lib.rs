@@ -52,6 +52,8 @@ mod context_action_capture_tests;
 #[cfg(test)]
 mod focus_handler_tests;
 #[cfg(test)]
+mod scoped_device_diagnostics_tests;
+#[cfg(test)]
 mod scoped_observation_tests;
 #[cfg(test)]
 mod ui_pilot_cases;
@@ -1095,6 +1097,7 @@ impl AirkServer {
         args.response.include_status = true;
         let runtime = self.runtime.read().ok().and_then(|runtime| runtime.clone());
         let work = self.work.read().ok().and_then(|work| work.clone());
+        let deadline = self.read_attempt.as_ref().map(|context| context.deadline());
         self.execute_response(UsageOperation::Status, args.response, move |kernel| {
             let mut status = match kernel.status() {
                 Ok(status) => {
@@ -1121,6 +1124,9 @@ impl AirkServer {
             );
             status["work"] = work
                 .unwrap_or_else(|| serde_json::json!({"error":"native_work_context_unavailable"}));
+            if let Some(observation) = kernel.scoped_device_status(deadline)? {
+                status["scoped_device_status"] = serde_json::to_value(observation)?;
+            }
             if status.get("rebuild").is_none() && status.get("rebuild_unavailable").is_none() {
                 status = kernel.attach_rebuild_observation(status)?;
             }

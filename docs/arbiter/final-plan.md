@@ -1071,7 +1071,7 @@ Earlier R2 and later diagnostics retain their identities; no artifact is retagge
 | 15 | blocked | Exactly-three qualified optional profiles, rights/source maps and genuine final publication capture are unavailable. Final-series refusal gates remain strict. |
 | 16 | in_progress | Historical c9fe/059a full Clippy/4825 regressions retain their identities. Current D06 rebuilt R5/R8 delivery evidence remains separately bounded. Applied Mac alias correction passes Windows Clippy/25 tests, Mac Clippy/one metadata case and all37 continuation tests, including exact refresh. The continuation batch remains nonpass on automatic cleanup; separately reviewed manual cleanup removes6426 isolated target entries with unchanged sources and reobserved absence. Core/Store generation2/2 and repaired166/166 pass. Higher77-file consumers pass eleven-crate all-target/all-feature Clippy33.958642s; grouped native regressions now pass105/105. UI110 tests/typechecks pass under source-only scope. C++ core settles naturally; the full provider batch fails its original08:27Z cutoff while attention kernels remain. A separately bounded remaining-target plan is being prepared; no old failure is relabelled. No GPU model, final-workspace, installed or release pass follows. |
 | 17 | in_progress | Version 1.8.207 and the signed c547 R3 EXE/native ZIP/VSIX delivery retain their verified byte, signature, notices and client/UI proofs. Real Code 1.146.0 production VSIX Explorer activation/close-reopen/CSS checks pass on a private profile in 8.109072s; native_execution is false. Code parent exit 0 and a private-profile CIM observation are retained without claiming every descendant HANDLE. No native production activation or I4 installed journey follows. The user's 1.8.206 installation/configuration remain preserved; no qualified final-series release or publication is claimed. |
-| 18 | in_progress | Current delivery, verification limits, platform failures and Core/Store/GPU progress retain their exact identities. Signed c547 R3 remains the delivered CPU candidate; e306 R5/R8 are separate current evidence. FP32 then efficient FP16 and remaining gates stay open; no old-candidate packaging expansion, score-floor change or release claim. Outside analyses remain ignored as implementation input. Deadline2026-11-19T05:29:42Z; latest08:35Z self-check2 passed/10 in_progress/6 blocked, next10:35Z. No publication authorization. |
+| 18 | in_progress | Current delivery, verification limits, platform failures and Core/Store/GPU progress retain their exact identities. Signed c547 R3 remains the delivered CPU candidate; e306 R5/R8 are separate current evidence. FP32 then efficient FP16 and remaining gates stay open; no old-candidate packaging expansion, score-floor change or release claim. Outside analyses remain ignored as implementation input. Deadline2026-11-19T05:29:42Z; latest08:35Z self-check2 passed/10 in_progress/6 blocked, next12:35Z. No publication authorization. |
 
 The user approved reviewed in-scope tracked-file content edits while preserving
 existing ownership and ACLs. This resolves the source-edit constraint and does
@@ -1375,10 +1375,11 @@ Current D08 status: reviewed Core/Store device contracts and migration are
 implemented with scoped Clippy and166/166 regressions passing; native schema,
 49 semantic cases and generated types are current. Higher runtime/service/
 transport/UI foundations are committed with grouped scoped checks; product
-eligibility and scoped diagnostics are under review. Actual GPU model execution
-and qualification remain pending. CUDA core compilation settles naturally, but the full provider batch has exhausted
-its original cutoff. Remaining attention targets need separately bounded build
-sections; no GPU model has executed.
+eligibility and scoped diagnostics pass grouped native regression checks. Actual GPU model execution
+and qualification remain pending. The original R12 full provider batch remains failed at its cutoff. Separately
+bounded warm Flash, LLM and final provider sections now settle naturally, and
+checkpoint composition and the genuine96-input static aggregate pass. Native
+assembly and actual GPU model qualification remain pending. No GPU model has executed.
 Existing CPU results retain their original identities.
 
 ### G5 — FP16 with efficient attention, after FP32 works

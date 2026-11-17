@@ -517,3 +517,32 @@ silent mode, an end-to-end Provision of the three models, loading them in the
 service, doctests, the full Nextest remainder, real-transport parity suites,
 macOS and Linux.
 
+
+## Open execution issue — 17 November 2026: CUDA compiler child lifetime
+
+The current checkpointed Flash section has completed its compiler work, but its
+owned process tree remains open. Read-only observations at09:37Z and09:43Z find
+only the pinned MSVC VCTIP telemetry child (PID42204); no nvcc/cicc/ptxas/cl/Ninja
+process remains. This census is not original parent HANDLE exit proof and does
+not qualify the section. The original cutoff and complete-tree requirement stay
+unchanged; no helper exemption, forced-success cleanup, registry/IDE policy or
+tool-binary mutation is introduced. The prior R12 cutoff failure remains failed.
+
+The bounded investigation finds no verified invocation-local control for the
+installed MSVC toolset. Embedded upload/timeout options do not establish a
+supported graceful shutdown of the running child. This blocks a successful
+CUDA producer/composition and actual GPU model execution while it persists.
+Preserve warm outputs and continue independent product, metadata and platform
+work. Current evidence: artifacts/v190/final-plan/exec-20261116T052942Z/
+gpu-flash-lifetime-observation-r1/observation.json; the actual section/outer
+receipts remain under the approved human-owned cu8-checkpoint roots.
+
+### Resolution of the first Flash lifetime hold — 17 November 2026
+
+The child settled naturally within the original cutoff; Flash completes09:45Z
+with48 verified outputs, no timeout/force and finalJob0. This was observed10:07Z;
+the receipt SHA is12e9054e6a39f96585cb49ec33c3000ce47998ab0c50275a78a7e34332affb8d.
+No registry/tool/ACL change or descendant exemption was used. LLM then passes
+43 outputs (da0eda4c) and final provider closure passes1860 outputs (5bf52327),
+both naturally. Final composition passes with explicit checkpointed-warm scope
+(f9fac8eb). The original R12 failure remains failed; model qualification is pending.

@@ -6878,3 +6878,84 @@ must also refuse scientific /1 artifacts; explicit scientific evaluation remains
 separate. The actual Flash target continues under its fixed cutoff. GPU model
 execution, product /2 artifacts and qualification remain pending. D: free space
 was431.97GiB; no Windows warm target is cleaned.
+
+### 2026-11-17 09:43Z — Actual metadata and compiler-lifetime blocker
+
+Native current-policy /3 metadata regeneration passes1/1 in24.296570s for the
+original Focus5072/Compactc79/Largef8 closures (NN_invocations0). The actual
+report pins current image1bb04080 and source1fab33b8; E/gpu-g3-original3-
+metadata-emission-r1.json preserves the exact command and direct-child scope.
+Current images were separately preserved from genuine Cargo JSON in
+O/gpu-g3-current-native-preservation-r1. A measured Windows locator binding
+retains original report/preparation bytes while proving the Root-supplied
+forward-slash request locator names the identical hashed file as the planned
+backslash locator. No substantive result is normalized or model executed.
+
+The Flash checkpoint remains RUNNING/unqualified: compiler processes have gone
+but VCTIP keeps the complete owned tree open. E/gpu-flash-lifetime-observation-r1
+and the dated knownissues row record the actual read-only census. No verified
+local compiler opt-out or supported running-child shutdown is established;
+original deadline/natural whole-tree acceptance is unchanged. Continue useful
+work; do not infer a producer pass from object files.
+
+G3 actor independent review finds and is correcting an additional already-queued
+population race: Service's post-reply fault recorder can run after the lane
+starts another retained validation. A synchronous native-lane failure fence is
+required before another population, preserving typed known-settled rules and
+original clocks. Actor/G4 remains unapplied pending that correction.
+
+### 2026-11-17 10:35Z — Two-hour critical-path check
+
+The explicit question remains: Am I completing final-plan.md, or getting
+sidetracked? E/critical-path-selfcheck-20261117T1035Z.json records the candid
+answer: useful large sections pass, but preparation consumed too much time and
+first actual FP32 is still critical. A22-minute Flash completion-observation gap
+is retained; an agent now monitors actual receipts and reports promptly. No
+old receipt, quality floor or cutoff is retagged. Next12:35Z; counts remain
+2 passed/10 in_progress/6 blocked, deadline2026-11-19T05:29:42.2081757Z.
+
+All3 actual CUDA target sections pass naturally: Flash48outputs/2911.437158s
+SHA12e9054e; LLM43/796.203570s SHAda0eda4c; final1860/364.678376s SHA5bf52327.
+The separate300s composition passes26.539s outer, raw composite SHAf9fac8eb
+and statusPASS_CHECKPOINTED_PRODUCER_ONLY_UNQUALIFIED. All ownedJobs settle0
+without force; original R12 remains failed. This is warm-composed build evidence,
+not a cold-three-hour claim, activation or neural qualification.
+
+G3actor/G4 scoped diagnostics apply32 reviewed files with preserved ownership,
+ACLs and fileIDs. Eleven-crate all-target/all-feature Clippy passes30.949293s;
+186/186 grouped native regressions pass28.501528s including build (1.886s tests),
+2117 filtered. E/gpu-g3-g4-integrated-regressions-r2.json ties native sealafa8812e
+and JUnitb8b60dd0. The original185/186 failure remains: a test wrongly assumed
+Initialize leftonefile. Store explicitly creates configuration.json and persistent
+configuration.lock; corrected full named byte snapshots strengthen its read-only
+assertions. Scoped Service Clippy passes40.005000s. Earlier JSONValue test
+construction E0308 was corrected without changing its refusal assertion.
+
+Rust generation passes3/3 (43.684212s), schema3a86f542 and4 scoped cases
+e353647a. Maintained client generation preserves owner/ACL/fileIDs; Admin/editor
+no-emit typechecks pass4.090309s/8.308558s. Sealed committed Admin assets verify
+5.375863s, fresh E/admin-assets-g3-g4.json; no composer layout change. Current
+numeric template emissions pass1+1+1 with0NN, and the exact18-row/124-score
+reference audit is bound create-new; no historical model verdict transfers.
+
+Next: actual96archive aggregate, reviewed native checkpoint/package bridge,
+then first FP32 model. FP16 exporterR2 has29/29 synthetic controls and independent
+source closure, but selected weights/graphs and actual FP16 execution remain held.
+
+### 2026-11-17 10:43Z — G3/G4 review and actual CUDA aggregate
+
+Root completed primary review; independent review closed the final native
+checkpoint bridge16-path closure and maintained aggregate source. Current
+G3/G4 native checks pass186/186, generation3/3, both client typechecks and
+sealed assets; repository3589 and whitespace checks pass. Format check found
+two cosmetic layouts only; exact in-place correction preserves owner/ACL/IDs.
+
+Actual aggregate outer passes39.278s, original inner300s unchanged. Inner
+archive operation passes7.896787s naturally with complete tree/Job0. The exact
+96 configured static inputs yield899807276 bytes, SHA042c970193bf3d2fc7c80f53b055f74130c653d561f7735142fc01b01cebac00,
+920 genuine static COFF members and the final-placement export, no import members.
+Inner receipt a5a29c9bfc4653e17209574a30ab069e48d5c9c5ae620312ee65fb74c3714682;
+outer8a321f61. Environment/4 SHAa348c538e349e8311841654ddce2365c229fb5972670f0b33cd0c71a3c882ef2
+retains five static keys, activation=false and unqualified scope. Evidence is
+under the approved human-owned cu8 roots. No neural execution is claimed.
+D: free427.37GiB; prior22.17GiB incremental cleanup retained, warm cache preserved.

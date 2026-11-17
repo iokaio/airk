@@ -212,7 +212,12 @@ impl LocalTools {
         if let Some(attempt) = context.captured_transport_attempt()
             && matches!(
                 name.as_str(),
-                "airk_answer" | "answer" | "airk_search" | "search"
+                "airk_answer"
+                    | "answer"
+                    | "airk_search"
+                    | "search"
+                    | "airk_diagnostics"
+                    | "diagnostics"
             )
         {
             server.kernel = match context.context_partition() {

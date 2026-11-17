@@ -774,6 +774,26 @@ export type ScopeBinding = {
     publication: RevisionEnvelope;
 };
 
+export type ScopedDeviceObservation = {
+    context: ScopedDeviceStage;
+    focus: ScopedDeviceStage;
+    state: "observed";
+} | {
+    reason: string;
+    state: "unavailable";
+};
+
+export type ScopedDeviceStage = {
+    application: IndexApplication;
+    status: DeviceStageStatus;
+};
+
+export type ScopedDeviceStatus = {
+    observation: ScopedDeviceObservation;
+    schema: string;
+    scope: ScopeBinding;
+};
+
 export type ScoreAbi = {
     inputs: Array<TensorContract>;
     output: TensorContract;

@@ -106,6 +106,41 @@ fn next_read_budget(
 
 struct Controller(PathBuf);
 impl NativeController for Controller {
+    fn device_read_status(
+        &self,
+        worker: WorkerIdentity,
+        authority: ScopedReadRef,
+        publication: &airk_core::evidence::RevisionEnvelope,
+        read_attempt: airk_core::read_attempt::ReadAttemptBudget,
+        deadline: Instant,
+    ) -> Result<Option<device::ScopedDeviceStatus>> {
+        let response = drive_control(|| {
+            clipped(
+                deadline,
+                "scoped device status",
+                airk_installer::control_client::request_for_version_and_instance(
+                    &self.0,
+                    ControlMethod::ArbiterDeviceRead {
+                        worker,
+                        authority,
+                        publication: publication.clone(),
+                        read_attempt,
+                    },
+                    env!("CARGO_PKG_VERSION"),
+                    worker.service,
+                ),
+            )
+        })?;
+        match response {
+            ControlResponse::ArbiterDeviceRead { observation } => Ok(Some(*observation)),
+            ControlResponse::Failure { code } if code == "scoped_read_unavailable" => {
+                Err(airk_core::scoped_reads::ScopeReadRefused.into())
+            }
+            ControlResponse::Failure { code } if code == "arbiter_catalog_required" => Ok(None),
+            _ => anyhow::bail!("scoped device observation unavailable"),
+        }
+    }
+
     fn focus_clock(&self) -> Result<Option<(airk_core::read_attempt::ReadClock, u64)>> {
         let clock = if cfg!(windows) {
             airk_core::read_attempt::ReadClock::WindowsPerformanceCounter

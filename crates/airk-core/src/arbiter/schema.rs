@@ -34,6 +34,7 @@ pub fn document() -> serde_json::Value {
     root::<device::DeviceConfiguration>(&mut generator, &mut roots);
     root::<device::DeviceStageConfiguration>(&mut generator, &mut roots);
     root::<device::DeviceStatus>(&mut generator, &mut roots);
+    root::<device::ScopedDeviceStatus>(&mut generator, &mut roots);
     root::<device::DeviceStageStatus>(&mut generator, &mut roots);
     root::<device::DeviceCatalog>(&mut generator, &mut roots);
     root::<device::DeviceSelection>(&mut generator, &mut roots);

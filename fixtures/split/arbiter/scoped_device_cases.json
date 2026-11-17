@@ -1,0 +1,538 @@
+{
+  "cases": [
+    {
+      "id": "both_disabled_auto",
+      "status": {
+        "observation": {
+          "context": {
+            "application": {
+              "availability": "disabled",
+              "profile": null,
+              "reason": "Optional stage is disabled.",
+              "scope": {
+                "authorization": "0606060606060606060606060606060606060606060606060606060606060606",
+                "catalog": "02020202020202020202020202020202",
+                "configuration_revision": 1,
+                "index_id": "idx_05050505050505050505050505050505",
+                "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                "publication": {
+                  "collection": "fixture",
+                  "generation": 1,
+                  "incarnation": "03030303030303030303030303030303",
+                  "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+                  "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+                }
+              }
+            },
+            "status": {
+              "active_profile": null,
+              "availability": "disabled",
+              "device_policy": "auto",
+              "gpu_precision": "auto",
+              "models": [
+                {
+                  "availability": "unqualified",
+                  "model": "context_compact",
+                  "reason": "Synthetic no compiled variant; no qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ],
+                  "variants": []
+                },
+                {
+                  "availability": "unqualified",
+                  "model": "context_large",
+                  "reason": "Synthetic no compiled variant; no qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ],
+                  "variants": []
+                }
+              ],
+              "queued": 0,
+              "reason": "Literal native-contract structural fixture; no execution authority",
+              "running": 0,
+              "selected_model": null,
+              "selection": null
+            }
+          },
+          "focus": {
+            "application": {
+              "availability": "disabled",
+              "profile": null,
+              "reason": "Optional stage is disabled.",
+              "scope": {
+                "authorization": "0606060606060606060606060606060606060606060606060606060606060606",
+                "catalog": "02020202020202020202020202020202",
+                "configuration_revision": 1,
+                "index_id": "idx_05050505050505050505050505050505",
+                "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                "publication": {
+                  "collection": "fixture",
+                  "generation": 1,
+                  "incarnation": "03030303030303030303030303030303",
+                  "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+                  "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+                }
+              }
+            },
+            "status": {
+              "active_profile": null,
+              "availability": "disabled",
+              "device_policy": "auto",
+              "gpu_precision": "auto",
+              "models": [
+                {
+                  "availability": "unqualified",
+                  "model": "focus",
+                  "reason": "Synthetic no compiled variant; no qualification",
+                  "tasks": [
+                    "airk.focus_rank.v1"
+                  ],
+                  "variants": []
+                }
+              ],
+              "queued": 0,
+              "reason": "Literal native-contract structural fixture; no execution authority",
+              "running": 0,
+              "selected_model": null,
+              "selection": null
+            }
+          },
+          "state": "observed"
+        },
+        "schema": "airk.arbiter.scoped-device-status/1",
+        "scope": {
+          "authorization": "0606060606060606060606060606060606060606060606060606060606060606",
+          "catalog": "02020202020202020202020202020202",
+          "configuration_revision": 1,
+          "index_id": "idx_05050505050505050505050505050505",
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "publication": {
+            "collection": "fixture",
+            "generation": 1,
+            "incarnation": "03030303030303030303030303030303",
+            "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+            "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+          }
+        }
+      }
+    },
+    {
+      "id": "context_compact_requested_fp16_actual_cpu_fallback",
+      "status": {
+        "observation": {
+          "context": {
+            "application": {
+              "availability": "ready",
+              "profile": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+              "reason": "Synthetic native typed state; NOT an execution/qualification claim",
+              "scope": {
+                "authorization": "0606060606060606060606060606060606060606060606060606060606060606",
+                "catalog": "02020202020202020202020202020202",
+                "configuration_revision": 1,
+                "index_id": "idx_05050505050505050505050505050505",
+                "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                "publication": {
+                  "collection": "fixture",
+                  "generation": 1,
+                  "incarnation": "03030303030303030303030303030303",
+                  "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+                  "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+                }
+              }
+            },
+            "status": {
+              "active_profile": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+              "availability": "ready",
+              "device_policy": "auto",
+              "gpu_precision": "fp16",
+              "models": [
+                {
+                  "availability": "ready",
+                  "model": "context_compact",
+                  "reason": "Synthetic native model-admission observation; no inferred client permission",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ],
+                  "variants": [
+                    {
+                      "availability": "ready",
+                      "backend": null,
+                      "cpu_fit": {
+                        "inter_threads": 1,
+                        "intra_threads": 1,
+                        "minimum_physical_cores": 1,
+                        "sequential": true,
+                        "spinning": false
+                      },
+                      "device_evidence": null,
+                      "download_bytes": 1073741831,
+                      "execution_identity": "onnxruntime-cpu/1.30.0/physical1/intra1/inter1/sequential/spinning0",
+                      "manifest": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+                      "memory_reservation_bytes": 1048576,
+                      "model_admission": "local_candidate",
+                      "precision": null,
+                      "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                      "tasks": [
+                        "airk.context_action.v1"
+                      ]
+                    },
+                    {
+                      "availability": "unqualified",
+                      "backend": "cuda",
+                      "device_evidence": null,
+                      "download_bytes": 1073741831,
+                      "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/b52f0ce83d1207e968c7a34424a41244198639564cd532878d8216c71eeea944",
+                      "manifest": "2020202020202020202020202020202020202020202020202020202020202020",
+                      "memory_reservation_bytes": 1048576,
+                      "model_admission": "unavailable",
+                      "precision": "float32",
+                      "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                      "tasks": [
+                        "airk.context_action.v1"
+                      ]
+                    },
+                    {
+                      "availability": "unqualified",
+                      "backend": "cuda",
+                      "device_evidence": null,
+                      "download_bytes": 1073741831,
+                      "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/7beb89a105c967a497268ad384d2c14ab4257531948f923b5a4e5aded5d3980b",
+                      "manifest": "2121212121212121212121212121212121212121212121212121212121212121",
+                      "memory_reservation_bytes": 1048576,
+                      "model_admission": "unavailable",
+                      "precision": "float16",
+                      "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                      "tasks": [
+                        "airk.context_action.v1"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "availability": "unqualified",
+                  "model": "context_large",
+                  "reason": "Synthetic no compiled variant; no qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ],
+                  "variants": []
+                }
+              ],
+              "queued": 0,
+              "reason": "Synthetic native typed state; NOT an execution/qualification claim",
+              "running": 0,
+              "selected_model": "context_compact",
+              "selection": {
+                "gpu_precision": "fp16",
+                "model": "context_compact",
+                "operation_failure": null,
+                "policy": "auto",
+                "reasons": [
+                  {
+                    "adapter_key": null,
+                    "manifest": null,
+                    "reason": "runtime_unavailable"
+                  }
+                ],
+                "schema": "airk.arbiter.device-status/1",
+                "selected": {
+                  "adapter_key": "native-cpu-profile",
+                  "backend": null,
+                  "capability_epoch": 1,
+                  "execution_identity": "onnxruntime-cpu/1.30.0/physical1/intra1/inter1/sequential/spinning0",
+                  "manifest": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+                  "precision": null
+                }
+              }
+            }
+          },
+          "focus": {
+            "application": {
+              "availability": "disabled",
+              "profile": null,
+              "reason": "Optional stage is disabled.",
+              "scope": {
+                "authorization": "0606060606060606060606060606060606060606060606060606060606060606",
+                "catalog": "02020202020202020202020202020202",
+                "configuration_revision": 1,
+                "index_id": "idx_05050505050505050505050505050505",
+                "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                "publication": {
+                  "collection": "fixture",
+                  "generation": 1,
+                  "incarnation": "03030303030303030303030303030303",
+                  "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+                  "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+                }
+              }
+            },
+            "status": {
+              "active_profile": null,
+              "availability": "disabled",
+              "device_policy": "auto",
+              "gpu_precision": "auto",
+              "models": [
+                {
+                  "availability": "unqualified",
+                  "model": "focus",
+                  "reason": "Synthetic no compiled variant; no qualification",
+                  "tasks": [
+                    "airk.focus_rank.v1"
+                  ],
+                  "variants": []
+                }
+              ],
+              "queued": 0,
+              "reason": "Literal native-contract structural fixture; no execution authority",
+              "running": 0,
+              "selected_model": null,
+              "selection": null
+            }
+          },
+          "state": "observed"
+        },
+        "schema": "airk.arbiter.scoped-device-status/1",
+        "scope": {
+          "authorization": "0606060606060606060606060606060606060606060606060606060606060606",
+          "catalog": "02020202020202020202020202020202",
+          "configuration_revision": 1,
+          "index_id": "idx_05050505050505050505050505050505",
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "publication": {
+            "collection": "fixture",
+            "generation": 1,
+            "incarnation": "03030303030303030303030303030303",
+            "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+            "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+          }
+        }
+      }
+    },
+    {
+      "id": "context_large_fp16_qualified_gpu",
+      "status": {
+        "observation": {
+          "context": {
+            "application": {
+              "availability": "ready",
+              "profile": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+              "reason": "Synthetic native typed state; NOT an execution/qualification claim",
+              "scope": {
+                "authorization": "0606060606060606060606060606060606060606060606060606060606060606",
+                "catalog": "02020202020202020202020202020202",
+                "configuration_revision": 1,
+                "index_id": "idx_05050505050505050505050505050505",
+                "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                "publication": {
+                  "collection": "fixture",
+                  "generation": 1,
+                  "incarnation": "03030303030303030303030303030303",
+                  "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+                  "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+                }
+              }
+            },
+            "status": {
+              "active_profile": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+              "availability": "ready",
+              "device_policy": "auto",
+              "gpu_precision": "fp16",
+              "models": [
+                {
+                  "availability": "unqualified",
+                  "model": "context_compact",
+                  "reason": "Synthetic no compiled variant; no qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ],
+                  "variants": []
+                },
+                {
+                  "availability": "ready",
+                  "model": "context_large",
+                  "reason": "Synthetic native model-admission observation; no inferred client permission",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ],
+                  "variants": [
+                    {
+                      "availability": "requested",
+                      "backend": null,
+                      "cpu_fit": {
+                        "inter_threads": 1,
+                        "intra_threads": 1,
+                        "minimum_physical_cores": 1,
+                        "sequential": true,
+                        "spinning": false
+                      },
+                      "device_evidence": null,
+                      "download_bytes": 1073741831,
+                      "execution_identity": "onnxruntime-cpu/1.30.0/physical1/intra1/inter1/sequential/spinning0",
+                      "manifest": "2929292929292929292929292929292929292929292929292929292929292929",
+                      "memory_reservation_bytes": 1048576,
+                      "model_admission": "qualified",
+                      "precision": null,
+                      "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                      "tasks": [
+                        "airk.context_action.v1"
+                      ]
+                    },
+                    {
+                      "availability": "requested",
+                      "backend": "cuda",
+                      "device_evidence": {
+                        "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/b52f0ce83d1207e968c7a34424a41244198639564cd532878d8216c71eeea944",
+                        "numerical": "3333333333333333333333333333333333333333333333333333333333333333",
+                        "placement": "3535353535353535353535353535353535353535353535353535353535353535",
+                        "resources": "3434343434343434343434343434343434343434343434343434343434343434",
+                        "target": "x86_64-pc-windows-msvc"
+                      },
+                      "download_bytes": 1073741831,
+                      "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/b52f0ce83d1207e968c7a34424a41244198639564cd532878d8216c71eeea944",
+                      "manifest": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
+                      "memory_reservation_bytes": 1048576,
+                      "model_admission": "qualified",
+                      "precision": "float32",
+                      "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                      "tasks": [
+                        "airk.context_action.v1"
+                      ]
+                    },
+                    {
+                      "availability": "ready",
+                      "backend": "cuda",
+                      "device_evidence": {
+                        "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/7beb89a105c967a497268ad384d2c14ab4257531948f923b5a4e5aded5d3980b",
+                        "numerical": "3333333333333333333333333333333333333333333333333333333333333333",
+                        "placement": "3535353535353535353535353535353535353535353535353535353535353535",
+                        "resources": "3434343434343434343434343434343434343434343434343434343434343434",
+                        "target": "x86_64-pc-windows-msvc"
+                      },
+                      "download_bytes": 1073741831,
+                      "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/7beb89a105c967a497268ad384d2c14ab4257531948f923b5a4e5aded5d3980b",
+                      "manifest": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+                      "memory_reservation_bytes": 1048576,
+                      "model_admission": "qualified",
+                      "precision": "float16",
+                      "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                      "tasks": [
+                        "airk.context_action.v1"
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "queued": 0,
+              "reason": "Synthetic native typed state; NOT an execution/qualification claim",
+              "running": 0,
+              "selected_model": "context_large",
+              "selection": {
+                "gpu_precision": "fp16",
+                "model": "context_large",
+                "operation_failure": null,
+                "policy": "auto",
+                "reasons": [],
+                "schema": "airk.arbiter.device-status/1",
+                "selected": {
+                  "adapter_key": "synthetic-adapter",
+                  "backend": "cuda",
+                  "capability_epoch": 1,
+                  "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/7beb89a105c967a497268ad384d2c14ab4257531948f923b5a4e5aded5d3980b",
+                  "manifest": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+                  "precision": "float16"
+                }
+              }
+            }
+          },
+          "focus": {
+            "application": {
+              "availability": "disabled",
+              "profile": null,
+              "reason": "Optional stage is disabled.",
+              "scope": {
+                "authorization": "0606060606060606060606060606060606060606060606060606060606060606",
+                "catalog": "02020202020202020202020202020202",
+                "configuration_revision": 1,
+                "index_id": "idx_05050505050505050505050505050505",
+                "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                "publication": {
+                  "collection": "fixture",
+                  "generation": 1,
+                  "incarnation": "03030303030303030303030303030303",
+                  "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+                  "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+                }
+              }
+            },
+            "status": {
+              "active_profile": null,
+              "availability": "disabled",
+              "device_policy": "auto",
+              "gpu_precision": "auto",
+              "models": [
+                {
+                  "availability": "unqualified",
+                  "model": "focus",
+                  "reason": "Synthetic no compiled variant; no qualification",
+                  "tasks": [
+                    "airk.focus_rank.v1"
+                  ],
+                  "variants": []
+                }
+              ],
+              "queued": 0,
+              "reason": "Literal native-contract structural fixture; no execution authority",
+              "running": 0,
+              "selected_model": null,
+              "selection": null
+            }
+          },
+          "state": "observed"
+        },
+        "schema": "airk.arbiter.scoped-device-status/1",
+        "scope": {
+          "authorization": "0606060606060606060606060606060606060606060606060606060606060606",
+          "catalog": "02020202020202020202020202020202",
+          "configuration_revision": 1,
+          "index_id": "idx_05050505050505050505050505050505",
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "publication": {
+            "collection": "fixture",
+            "generation": 1,
+            "incarnation": "03030303030303030303030303030303",
+            "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+            "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+          }
+        }
+      }
+    },
+    {
+      "id": "current_configuration_unavailable",
+      "status": {
+        "observation": {
+          "reason": "Current configuration4 unavailable; no migration or probe performed",
+          "state": "unavailable"
+        },
+        "schema": "airk.arbiter.scoped-device-status/1",
+        "scope": {
+          "authorization": "0606060606060606060606060606060606060606060606060606060606060606",
+          "catalog": "02020202020202020202020202020202",
+          "configuration_revision": 0,
+          "index_id": "idx_05050505050505050505050505050505",
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "publication": {
+            "collection": "fixture",
+            "generation": 1,
+            "incarnation": "03030303030303030303030303030303",
+            "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+            "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+          }
+        }
+      }
+    }
+  ],
+  "qualification": false,
+  "schema": "airk.scoped-device-semantic-cases/1"
+}
