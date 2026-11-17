@@ -7129,3 +7129,112 @@ integration remain required before use. Initial repository check encountered the
 new in-progress contract's not-yet-created test target; after coherent packet
 freeze, repository3601-public-file and whitespace checks pass. Format passes.
 No rerun or relaxed selector was used to hide a behavior failure.
+
+### 2026-11-17 13:05Z — Focus pilot native implementation and grouped controls
+
+Step10 is now in_progress for the admitted narrow exploratory binary target;
+current counts2 passed/11 in_progress/5 blocked. The12:35self-check counts retain
+their historical snapshot; next scheduled self-check14:35Z. Full Step8/broader
+labels/promotion remain unresolved; binary human labels are not this pilot blocker.
+
+Root applies the six-path F1/F2R3 native packet72b536a3 contract-first. Existing
+owner/ACL/fileIDs stay unchanged; new modules are human-owned. SourceFocusa5824302
+is intentionally new, so the old closed CPU transition currently refuses it in
+working source. Do not commit/activate that row until the actual all1955publisher
+view/refusal census and native current-policy emission plus closed-row tests pass.
+Preserved first-FP32 imagebc55 and its source572397d7 stay separately identified;
+new source edits do not retag that artifact or its pending component run.
+
+First scoped Clippy fails8.090093s only on a redundant Ok(...?) in the ignored
+census emitter. Root removes that lint-only wrapper (currentemitterb08ba586);
+production Focusa582 and runtime9e stay unchanged. Repaired all-target/all-feature
+Clippy passes6.990735s, E/f2-native-compiler-clippy-r2.json. Grouped native Focus
+regressions pass13/13 in82.211571s including build (.120s tests,210 skipped),
+E/f2-native-compiler-regressions-r1.json, JUnit6e1a9fc9b49c14cfa521f7f181e681acbea2dc80a4415bc247092f352dcf0cf1.
+Source dbc89b3c, target/, incremental0. Format/whitespace pass. No quality,
+real-model scoring, gradient pilot or release result is claimed.
+
+The optimized CPU compiler-only Retrieval test image build is running under
+release-local/local-inference+test-support, reusing the warm target. It consumes
+native+fixtures seals only; independent harness work does not alter those inputs.
+The actual census will retain original120s/4GiB/owned HANDLE+Job bounds. Parent
+R3 now charges final result/log/plan/source hashes before its final clock; five
+injected slow-hash/error controls pass, with a final parent-exception classification
+control being added before real execution. Native emits current task/source pins;
+no Python digest mirror or guessed compatibility constant is introduced.
+
+### 2026-11-17 14:10Z — Genuine Focus census, exact source row, retained pre-model failure
+
+This session reverified TYAI\tdotn SID S-1-5-21-3678370870-3858642417-826968105-1002
+against active quser before first filesystem work. All execution remains through
+same-user require_escalated shells; no account/ACL/ownership changes. AIRK binding
+is installed1.8.206/index idx_454850af/publication587, live_source_verified=false;
+Root uses live bytes for edits. D: free424.65GiB; prior22.17GiB cleanup retained.
+
+Actual CPU optimized Retrieval image build passes252.137262s, release-local opt3/
+debug0/default+local-inference+test-support, native dbc89b3c, target/, incremental0.
+Receipt E/f2-native-census-optimized-image-metadata-r1.json75aa28c4. Exact independent
+human-owned27,640,320B image60b8d3e5 is preserved under E/f2-native-census-images-r1,
+with unchanged original fileID/mtime; no CUDA image is retagged.
+
+Actual compiler-only census executes1/1 and passes4.1601598s (2.76s native),
+originalPID68948/HANDLE exit0, Job0/unforced, peak699437056B below4GiB. Body
+237d7cd102961c80a6004f7fb0b1f1caa2631208829b36c83dc7b812a3be7d33/30026400B;
+receipt8d2d8428674f2a0b76674c3606575e82bcb9afea4e228c31ed9971a2362caf55.
+Full1955 publisher prompt/tensor/readout/refusal parity passes, excluding only
+new source-bound inputdigest as declared;45replay stays in2000denominator.
+Both recipes1998compiled/2refused. Native taskcc25cb7e.../FocusLF a5824302... are
+emitted by Rust. Model dispatch=false/unknown forward counts stay separate.
+
+Independent review closes current native F1 source and actual R1 receipt/proofs.
+A late maintained adapter finding identifies missing final-proof skip; actual R1
+has BOTH report237d/log8a47 hashes and original settlement, so it remains valid.
+Exact executed d0e85 and firstfixab78 sources are preserved in private CPU history.
+Final maintained helper fe772654 requires per-label actual hash callbacks and
+mandatory SHA rows, then samples the SAME original deadline after postconditions.
+Root grouped18/18 controls pass .055s tests/.613108s process, receipt
+E/f2-compiler-census-final-controls-r1.json, harness8ba40540. No old helper,
+actual R1 receipt, model, bounds or clock was modified; no R1 retag/retry.
+
+Contract-first exact CPU transition changes only current task5add->cc25 and
+FocusSource66f->a582; every legacy04821/73d884 descriptor/asset/CAL/URL/CPU-fit/
+pre1.9 guard remains. All-target/all-feature scoped Clippy passes7.691828s and
+21/21 grouped native controls pass21.538353s incl build (.199s tests,203skipped),
+receipts E/f2-cpu-source-row-{clippy,regressions}-r1.json, source925ed357,
+JUnit20d614a448188476db6cc3e7d028f2513e1e31d78c1824de0f8c0d51a65a7d7c.
+No old numeric/CAL/task verdict transfers; G5 runtimeDDE remains unapplied.
+
+Root's pre-score check finds fullroleTRAIN418:400 permitted native-fit,17 unknown
+rights,1 permitted knownoverflow. Original400-ID membership is independently equal
+to the original pre-score native-F0 artifact. Additive R4 binds frozen eligibility,
+not post-F1 outcome, retains entire original denominator, and refuses any new
+admitted-row compile failure.37 pure controls pass; mathworker340f and parent241a
+remain unchanged. All85DEV rows have permitted rights and fit both recipes.
+
+Actual F1 SCORE R2/plan6f1cf1c8 fails before Torch/model load in verify_plan on old
+Cargo.lock. It produces no scores/result. Natural originalPID53700 exit1, Job0/
+HANDLEclose/no force,98.740502s,32,837,632B committed. Receipt95dd778f44543fb0f92817280ac35599cafac050b5de2df1277aaa2e50b99204
+and stdout4a2607c5d47d9f98a6e8619330ce403c7d128890e55261d8ace35da0b7a90446
+are retained. Root should have audited the complete inherited closure before
+launch; no unchanged failed retry follows.
+
+Complete13274-file/9,546,358,785B audit passes8.741352s with exactly8 stale Root
+native/build-context seals and13266 identical runtime/checkpoint/math/data/source
+seals. Audit5c105066 is retained. Read-only trace proves prepare_reference127-134
+copied historical native context; F2 uses windows_sid/verify_loaded_runtime and
+pinned3b7 verify_assets/load_official, never reference.native_documents/execute.
+Root records contract decision: only exact8 hashes may advance FROM authentic
+75aa/dbc source catalog; retain all13274 keys and every other value, old reference
+plan/failure unchanged, new epoch FilePin in immutable SCORE/probe/train continuity.
+Private R5 passes43 pure controls and full13292-seal audit0mismatch/7.764093s;
+plan3063 is unrun. Root then finds source-provenance gap:0 sealed.pyc, no prefix,
+while original reference parent explicitly used fresh-Xpycache_prefix. Additive
+R6 seals one absent stable approved C-prefix and parent startup flags; no foreign
+cache is deleted, no arithmetic/input/runtime pin or limit changes.45 pure controls
+are reported passing; exact R6 plan review precedes another actual launch.
+
+G5 half-reference R2 c2543b8d corrects authentic Context scorer.text namespace and
+Focus int/bool types;28 CPU controls pass15.3457485s, CUDA remains uninitialized.
+Actual selected-model/precision-loss/whole-DAG/efficient-backend gates remain open.
+Automatic approval rejection of new GPU component-runner private files remains
+pending user clarification; no alternate writer/path was used for that action.

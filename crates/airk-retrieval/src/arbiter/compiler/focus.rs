@@ -108,6 +108,16 @@ impl Compiler {
         question: &str,
         options: &[Candidate],
     ) -> Result<CompiledInput> {
+        self.compile_focus_instruction(state, question, options, INSTRUCTION)
+    }
+
+    fn compile_focus_instruction(
+        &self,
+        state: &str,
+        question: &str,
+        options: &[Candidate],
+        instruction: &str,
+    ) -> Result<CompiledInput> {
         validate_profile(&self.profile)?;
         ensure!(
             state.is_empty() && options.len() == 1,
@@ -126,7 +136,7 @@ impl Compiler {
         );
         let original = serde_json::to_vec(&(state, question, options))?;
         let body = format!(
-            "<Instruct>: {INSTRUCTION}\n<Query>: {}\n<Document>: {}",
+            "<Instruct>: {instruction}\n<Query>: {}\n<Document>: {}",
             model_view(question),
             model_view(&option.text)
         );
@@ -203,3 +213,6 @@ pub fn compiler_profile(tokenizer_bytes: &[u8]) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod experiment;

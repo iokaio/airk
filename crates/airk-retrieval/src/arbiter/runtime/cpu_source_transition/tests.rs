@@ -27,7 +27,7 @@ fn exact_legacy_descriptor_and_public_sources_remain_byte_stable() -> Result<()>
     );
     assert_eq!(
         record["current_task_policy"],
-        "5add2b52410e5c891aac185c130535ea59451034e51835a4ceee6f9bba1944ee"
+        "cc25cb7e3a3b6ea4cb78f232c0c1bf6764005e79775af20a1d0b3aa5d8d1bdab"
     );
     assert_eq!(record["task_qualification_transferred"], false);
     assert_eq!(record["public_source_rewritten"], false);
@@ -179,5 +179,45 @@ fn current_runtime_predicate_preserves_the_exact_legacy_cpu_literal() -> Result<
     ] {
         assert!(!airk_core::arbiter::device::valid_advice_runtime(runtime));
     }
+    Ok(())
+}
+
+#[test]
+fn publisher_census_row_refuses_old_task_and_preserves_legacy_payload() -> Result<()> {
+    assert_eq!(
+        source_sha(include_bytes!("../../compiler/focus.rs"))?.to_string(),
+        "a58243020b534c08c7cc049cb9155d4bdfe4e220f96112967a048692a0813015"
+    );
+    assert!(
+        validate_current_sources(
+            digest("77fa25e4623f32e568a7163553cf7531cd4425dbb157ea2b67fef7940998c57f")?,
+            digest("5add2b52410e5c891aac185c130535ea59451034e51835a4ceee6f9bba1944ee")?,
+        )
+        .is_err()
+    );
+    let profile = legacy_focus()?;
+    let original = serde_json::to_vec(&profile)?;
+    let metadata = serde_json::to_value(&profile)?;
+    let witness = CpuSourceTransition::admit(&profile)?;
+    let record = serde_json::to_value(witness.record(&profile)?)?;
+    assert_eq!(
+        record["current_task_policy"],
+        "cc25cb7e3a3b6ea4cb78f232c0c1bf6764005e79775af20a1d0b3aa5d8d1bdab"
+    );
+    assert_eq!(
+        record["legacy_task_policy"],
+        "cfbcbe4cce111b9f802918488dae82feefb075666a0a7e7a9f93dd082b71c331"
+    );
+    assert_eq!(record["task_qualification_transferred"], false);
+    assert_eq!(record["public_source_rewritten"], false);
+    let after = serde_json::to_value(&profile)?;
+    for field in ["calibration", "assets", "downloads"] {
+        assert_eq!(after[field], metadata[field], "legacy {field} changed");
+    }
+    assert_eq!(serde_json::to_vec(&profile)?, original);
+    assert_eq!(
+        profile_sha(&profile)?.to_string(),
+        "73d884fb1c2b37709d4d1b1daa93fd65687ce310cbd4096af0ef106a615e608c"
+    );
     Ok(())
 }

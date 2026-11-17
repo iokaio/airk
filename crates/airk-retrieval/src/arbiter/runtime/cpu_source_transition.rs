@@ -18,10 +18,10 @@ const CURRENT_RUNTIME_SOURCE: Option<&str> =
     Some("9e539508f52e403368124ee38f91085f4b318f87fcffe45f898728cf9c0db49d");
 const LEGACY_CORE: &str = "ddd9dbc76ae2c7e92c3b57b58a9443161fb045bbc175596f57bb41c9b1b5bbe6";
 const CURRENT_CORE: &str = "77fa25e4623f32e568a7163553cf7531cd4425dbb157ea2b67fef7940998c57f";
-const CURRENT_TASK: &str = "5add2b52410e5c891aac185c130535ea59451034e51835a4ceee6f9bba1944ee";
+const CURRENT_TASK: &str = "cc25cb7e3a3b6ea4cb78f232c0c1bf6764005e79775af20a1d0b3aa5d8d1bdab";
 const COMPILER_SOURCE: &str = "09c3120dd83152db417a03959d7cdf1c241f43eb7699154ec3b43d976b951627";
 const FOCUS_COMPILER_SOURCE: &str =
-    "66f9231b91e5fd4091e43d5b2cd2d831d6b8ccc2dee405a847b4818e41289358";
+    "a58243020b534c08c7cc049cb9155d4bdfe4e220f96112967a048692a0813015";
 
 /// Native owner-only witness. A decoded Profile alone is not execution authority.
 /// Actual release/evaluation ownership, admission, custody and fit remain required.

@@ -577,3 +577,35 @@ and static buildf9fac8eb, retaining fits=[] and unapproved status. This resolves
 metadata assembly only. First FP32 inference and GPU qualification remain open.
 Automatic approval review separately blocks new component-runner file creation;
 the clarification request remains pending.
+
+## Focus pilot preflight — 17 November 2026
+
+The compiler-only F1/F2 census passes all original1955 publisher full-view/refusal
+comparisons under original120s/4GiB bounds, with natural original HANDLE exit/Job0.
+It retains2000rows including45replay; each recipe compiles1998/refuses2. The exact
+new source row cc25task/a582Focus passes21 grouped native controls. These are
+source/compiler facts, not task or model qualification.
+
+A pre-score data check finds401 permitted role-TRAIN rows, including one already
+excluded native overflow. Additive workerR4 preserves the original eligibility:
+exact400 pre-score IDs enter loss; overflow, unknown-rights and DEV remain outside.
+No post-F1 fit filtering, new labels, crop or refill. All old plans remain preserved.
+
+First actual SCORE R2 then fails before Torch/model load on the inherited old
+Cargo.lock seal,98.740502s, original PID53700 exit1 naturally, empty Job/no force.
+Receipt95dd778f remains failed. Complete13274-seal audit finds exactly8 historical
+native/build-context drifts and13266 identical other seals. A new closed source
+epoch advances only those8 values from authentic CPU build75aa, preserving all
+keys, original reference plan and every model/runtime/math/data pin. No old
+numeric/resource/CAL verdict transfers. No-score/no-gradient status remains.
+The original reference runner also used a fresh Python cache prefix; the new
+scorer must retain that protection because -B alone still reads old unsealed
+bytecode. A sealed absent prefix is being added before any further score run.
+
+Independent G5 review finds and corrects Context reference nonprojection names
+from scorer.* to authentic scorer.text.* plus strict Focus int/bool ABI checks.
+Private R2 passes28 CPU controls, with CUDA uninitialized. No selected half model
+or precision-loss result exists; whole graph/cast and efficient-backend proof
+remain separate unpassed gates. The native GPU component-runner private-file
+creation rejection remains pending user clarification; this CPU pilot does not
+resolve that authorization blocker or establish ONNX GPU qualification.

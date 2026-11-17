@@ -1,0 +1,302 @@
+// SPDX-License-Identifier: Apache-2.0
+use super::*;
+use anyhow::Context;
+use std::{
+    collections::BTreeMap,
+    fs::{self, OpenOptions},
+    io::{Read, Write},
+    path::{Path, PathBuf},
+};
+#[derive(Deserialize)]
+struct Original {
+    id: String,
+    question: String,
+    document: String,
+    question_sha256: Sha256Digest,
+    document_sha256: Sha256Digest,
+    published_human_relevance_label: u8,
+}
+#[derive(Deserialize)]
+struct OldFocus {
+    compiled: Option<CompiledInput>,
+}
+#[derive(Deserialize)]
+struct NativeRow {
+    original: Original,
+    focus: OldFocus,
+}
+#[derive(Deserialize)]
+struct NativeReport {
+    schema: String,
+    complete: bool,
+    original_denominator: usize,
+    rows: Vec<NativeRow>,
+}
+#[derive(Deserialize)]
+struct Role {
+    id: String,
+    label: u8,
+    role: String,
+    rights_review: String,
+    eligibility: String,
+    question_sha256: Sha256Digest,
+    function_sha256: Sha256Digest,
+}
+fn env(name: &str) -> Result<String> {
+    std::env::var(name).with_context(|| format!("missing {name}"))
+}
+fn file(name: &str, max: u64) -> Result<(Vec<u8>, Sha256Digest)> {
+    let path = PathBuf::from(env(name)?);
+    ensure!(path.is_absolute(), "absolute sealed path required");
+    let meta = fs::symlink_metadata(&path)?;
+    ensure!(
+        meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= max,
+        "sealed native input type/size refused"
+    );
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        ensure!(
+            meta.file_attributes() & 0x400 == 0,
+            "native input reparse refused"
+        );
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(path)?
+        .take(max + 1)
+        .read_to_end(&mut bytes)?;
+    ensure!(
+        bytes.len() as u64 == meta.len(),
+        "sealed native input length changed"
+    );
+    let digest = Sha256Digest::from_bytes(Sha256::digest(&bytes).into());
+    ensure!(
+        digest == env(&format!("{name}_SHA256"))?.parse()?,
+        "sealed native input hash differs"
+    );
+    Ok((bytes, digest))
+}
+fn same_view(a: &CompiledInput, b: &CompiledInput) -> bool {
+    a.prompt == b.prompt
+        && a.input_ids == b.input_ids
+        && a.attention_mask == b.attention_mask
+        && a.position_ids == b.position_ids
+        && a.decision_position == b.decision_position
+        && a.candidate_positions == b.candidate_positions
+        && a.option_mask == b.option_mask
+}
+fn replay_pairs(raw: &[u8]) -> Result<Vec<Pair>> {
+    let document: serde_json::Value = serde_json::from_slice(raw)?;
+    let rows = document
+        .as_array()
+        .or_else(|| document.get("rows").and_then(serde_json::Value::as_array))
+        .context("replay rows absent")?;
+    ensure!(
+        rows.len() == 45,
+        "entire fixed45replay candidate roster required; no refill"
+    );
+    rows.iter()
+        .map(|row| {
+            let text = |name: &str| -> Result<&str> {
+                row[name]
+                    .as_str()
+                    .with_context(|| format!("replay {name} absent"))
+            };
+            ensure!(
+                row["label"].as_u64() == Some(1)
+                    && text("rights_review")? == "PERMITTED_PRIVATE_RESEARCH_SCOPE",
+                "original reviewed positive replay required"
+            );
+            ensure!(
+                row["human_claim"]["complete_evidence_or_terminal_label"].as_bool() == Some(false),
+                "replay cannot claim complete evidence/terminal gold"
+            );
+            let source = &row["source_pin"];
+            let path = Path::new(source["path"].as_str().context("replay source path")?);
+            let size = source["bytes"].as_u64().context("replay source bytes")?;
+            ensure!(
+                path.is_absolute() && size <= 8 * 1024 * 1024,
+                "bounded absolute replay source required"
+            );
+            let meta = fs::symlink_metadata(path)?;
+            ensure!(
+                meta.is_file() && !meta.file_type().is_symlink() && meta.len() == size,
+                "replay source type/size differs"
+            );
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::MetadataExt;
+                ensure!(
+                    meta.file_attributes() & 0x400 == 0,
+                    "replay source reparse refused"
+                );
+            }
+            let mut bytes = Vec::new();
+            fs::File::open(path)?
+                .take(size + 1)
+                .read_to_end(&mut bytes)?;
+            ensure!(bytes.len() as u64 == size, "replay source grew");
+            let digest = Sha256Digest::from_bytes(Sha256::digest(&bytes).into());
+            ensure!(
+                digest
+                    == source["sha256"]
+                        .as_str()
+                        .context("replay source SHA")?
+                        .parse()?,
+                "replay source hash differs"
+            );
+            let start = usize::try_from(row["span"]["start"].as_u64().context("replay start")?)?;
+            let end = usize::try_from(row["span"]["end"].as_u64().context("replay end")?)?;
+            let window = std::str::from_utf8(&bytes)?
+                .get(start..end)
+                .context("original UTF8 replay span differs")?;
+            let window_sha256 = Sha256Digest::from_bytes(Sha256::digest(window.as_bytes()).into());
+            ensure!(
+                window_sha256 == text("window_sha256")?.parse()?,
+                "original replay window hash differs"
+            );
+            Ok(Pair {
+                id: text("id")?.into(),
+                question: text("question")?.into(),
+                document: window.into(),
+                question_sha256: text("question_sha256")?.parse()?,
+                document_sha256: window_sha256,
+                label: 1,
+                role: "REPLAY".into(),
+                rights_scope: text("rights_review")?.into(),
+            })
+        })
+        .collect()
+}
+#[test]
+#[ignore = "NN0 original1955human roster+actual selectedtokenizer+optional fixed45replay; compiler census only, no model"]
+fn emit_original_human_pair_instruction_census() -> Result<()> {
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(120);
+    let (report, report_sha) = file("AIRK_F2_NATIVE_REPORT", 256 * 1024 * 1024)?;
+    let native: NativeReport = serde_json::from_slice(&report)?;
+    ensure!(
+        native.schema == "airk.private.public-human-native-visibility-result/1"
+            && native.complete
+            && native.original_denominator == 1955
+            && native.rows.len() == 1955,
+        "complete original1955native report required"
+    );
+    let (roster, roster_sha) = file("AIRK_F2_ROSTER", 8 * 1024 * 1024)?;
+    let roles: Vec<Role> = serde_json::from_slice(&roster)?;
+    ensure!(
+        roles.len() == 1955,
+        "full frozen1955role denominator required"
+    );
+    let roles = roles
+        .into_iter()
+        .map(|x| (x.id.clone(), x))
+        .collect::<BTreeMap<_, _>>();
+    ensure!(roles.len() == 1955, "duplicate role identity");
+    let (tokenizer, tokenizer_sha) = file("AIRK_F2_TOKENIZER", 64 * 1024 * 1024)?;
+    let profile = super::super::super::compiler_profile(&tokenizer)?;
+    let compiler = Compiler::from_verified(&profile, &tokenizer)?;
+    let mut pairs = Vec::new();
+    let mut expected = Vec::new();
+    for row in native.rows {
+        let original = row.original;
+        let role = roles
+            .get(&original.id)
+            .context("original missing frozenrole")?;
+        ensure!(
+            role.label == original.published_human_relevance_label
+                && role.question_sha256 == original.question_sha256
+                && role.function_sha256 == original.document_sha256,
+            "original human label/question/function changed"
+        );
+        if role.eligibility == "NATIVE_FIT_SUPPORTED_PAIR" {
+            ensure!(
+                role.rights_review == "PERMITTED_PRIVATE_RESEARCH_SCOPE"
+                    && row.focus.compiled.is_some(),
+                "role native/rightsfit differs"
+            );
+        }
+        pairs.push(Pair {
+            id: original.id,
+            question: original.question,
+            document: original.document,
+            question_sha256: original.question_sha256,
+            document_sha256: original.document_sha256,
+            label: role.label,
+            role: role.role.clone(),
+            rights_scope: role.rights_review.clone(),
+        });
+        expected.push(row.focus.compiled);
+    }
+    let replay_pin = match (
+        std::env::var_os("AIRK_F2_REPLAY"),
+        std::env::var_os("AIRK_F2_REPLAY_SHA256"),
+    ) {
+        (None, None) => None,
+        (Some(_), Some(_)) => {
+            let (raw, pin) = file("AIRK_F2_REPLAY", 8 * 1024 * 1024)?;
+            pairs.extend(replay_pairs(&raw)?);
+            Some(pin)
+        }
+        _ => anyhow::bail!("replay path/hash must be supplied together"),
+    };
+    let census = census(&compiler, pairs, deadline)?;
+    for (row, old) in census.rows.iter().zip(&expected) {
+        match (row.publisher.input(), old.as_ref()) {
+            (Some(new), Some(old)) => ensure!(
+                same_view(new, old),
+                "publisher full native input view changed: {}",
+                row.pair.id
+            ),
+            (None, None) => (),
+            _ => anyhow::bail!("publisher original refusal status changed: {}", row.pair.id),
+        }
+    }
+    ensure!(
+        Instant::now() < deadline,
+        "original120scensus deadline expired"
+    );
+    let image = std::env::current_exe()?;
+    let mut hasher = Sha256::new();
+    let mut image_file = fs::File::open(&image)?;
+    let mut chunk = [0_u8; 1024 * 1024];
+    loop {
+        let n = image_file.read(&mut chunk)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&chunk[..n]);
+        ensure!(
+            Instant::now() < deadline,
+            "original deadline expired hashing own image"
+        );
+    }
+    let image_sha = Sha256Digest::from_bytes(hasher.finalize().into());
+    let output = PathBuf::from(env("AIRK_F2_CENSUS_OUTPUT")?);
+    ensure!(output.is_absolute(), "absolute fresh output required");
+    let native_focus_task_policy = super::super::super::policy_digest()?;
+    let focus_source =
+        std::str::from_utf8(include_bytes!("../../../focus.rs"))?.replace("\r\n", "\n");
+    ensure!(
+        !focus_source.contains('\r'),
+        "lone CR in actual Focus compiler source"
+    );
+    let focus_compiler_source_lf_sha256 =
+        Sha256Digest::from_bytes(Sha256::digest(focus_source.as_bytes()).into());
+    let result = serde_json::json!({"schema":"airk.private.focus-instruction-emission/1","native_report":report_sha,"frozen_role_roster":roster_sha,"replay_roster":replay_pin,"tokenizer":tokenizer_sha,"native_image":{"path":image,"sha256":image_sha},"package_version":env!("CARGO_PKG_VERSION"),"native_focus_task_policy":native_focus_task_policy,"focus_compiler_source_lf_sha256":focus_compiler_source_lf_sha256,"compiler":profile,"census":census,"elapsed_us":started.elapsed().as_micros(),"model_requests_dispatched":false,"training_gradients":false,"qualification":false});
+    let bytes = serde_json::to_vec(&result)?;
+    ensure!(
+        bytes.len() <= 128 * 1024 * 1024 && Instant::now() < deadline,
+        "bounded original-deadline output required"
+    );
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)?
+        .write_all(&bytes)?;
+    ensure!(
+        Instant::now() < deadline,
+        "original census deadline expired retaining output"
+    );
+    Ok(())
+}

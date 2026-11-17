@@ -75,3 +75,49 @@ reference using the same transformed bytes, including control-like source/query
 and literal-backslash collision cases. Raw publisher delimiter controls alone
 prove no escaped-caller parity. Relevance scores grant no sufficiency or source
 authority.
+
+
+## Private F1/F2 exact-human-pair experiments
+
+The test-support Focus experiment owner exposes exactly publisher F0 and one
+software-evidence instruction F1. This is a private recipe enumeration, not a
+new production CompilerRecipe, profile, wire/state format or execution grant.
+Production compile_focus still selects the original publisher instruction.
+Both experiments call the same injective quoting, independently tokenized
+prefix/body/suffix, closed no2152/yes9693 catalog and no-crop static512 owner.
+The full original tuple and recipe/instruction/native-source identity bind
+every emitted model view. Changing the instruction requires a new census;
+old publisher512 fit/quality results do not transfer. Editing this source
+changes the existing full-source policy digest and requires fresh bindings.
+
+The emitter reads the pinned original Rust visibility report and frozen role/
+rights roster, checks all original question/function hashes and labels, and
+retains every denominator row for both recipes as compiled or explicit refusal.
+UNKNOWN rights and original overflow remain excluded from loss; fitting a
+prompt never grants human-label, rights or training authority. A paired
+comparison uses only the declared intersection with both refusal rosters
+reported, never refills or recrops. Original DATA/exposure/FINAL restrictions
+remain. Replay windows require the exact source/span/question/annotation and
+accepted private-rights claims; compiler fit cannot adjudicate those claims.
+
+Actual raw no/yes score observation calls an existing Scorer under the actual
+service-compute owner and the caller original deadline. It retains both raw
+finite logits and their bits, input/recipe identities and timings. It mints no
+query permit, native runtime admission, learned cutoff, probability calibration,
+terminal/evidence-role gold or qualification. An error after submission stops;
+no replay, refund or new deadline is permitted.
+
+Private training consumes only native-emitted prompt/tensor records, with full
+vocabulary CE applied to the authentic last-prefix position and original human
+yes/no target. Prompt tokens have no separate loss. Native inference width512,
+left padding/positions and source bytes stay unchanged. LoRA adapts only q/k/v/o
+projections under the frozen rank/rate/batch/epoch/seed/replay and original
+owned-process/GPU/time caps. Reference checkpoint/head remain complete; merge
+into a full checkpoint precedes a separate native export/numerical comparison.
+Pre-score instruction selection, measured resource probe and replay acceptance
+remain required. This code-only exploratory arm cannot establish broad Step8
+mixture, fresh FINAL, ranking/retention quality or promotion.
+
+General QASPER replay retains the original publisher instruction; only software code rows use the DEV-selected instruction. Both are native-emitted. Code comparisons use the identical selected instruction for original/adapted weights; replay is original human paragraph relevance, never complete evidence.
+
+The private instruction-census emitter additionally reports native_focus_task_policy from the actual owning Rust policy_digest and focus_compiler_source_lf_sha256 from the actual compiled focus.rs bytes with CRLF→LF normalization and lone-CR refusal. These are emitted source identities, not guessed caller/profile values. A pending exact CPU compatibility row may consume them only after actual original1955publisher full-view/refusal parity,13focused compiler controls and the closed-row refusal controls. No arbitrary stale policy is accepted or old numeric/CAL proof transferred.
