@@ -6277,3 +6277,215 @@ Root explicitly self-reviews combined contracts/implementation/diagnostics;
 no independent-review claim is made for that primary review. Delegated reviews
 are retained separately. Repository check3509files and whitespace pass.
 Next actual work is owned native Large metadata/template, then model execution.
+
+
+### 2026-11-16 — current Large numerical refusal and independent continuation
+
+DCO milestone59580fa6e6742e8101fd35346a2b999621671278/treeb5803839f4c7bfbf946b24b81cf1a9df8f7a6b49
+commits the reviewed native198f section. Signed-off-by human identity verified;
+no push. Actualbuild ancestry remainsf5 with dirty198f, never retagged as clean595.
+
+Large native metadata/template emitters pass under original120s/8GiB owners.
+New native Large blank is byte-identical to original9dd159bd03110c31c853595ebea5daaecc0ce62b53d858b8f92d7778d5ac8116.
+Actual Large tiny17 and8192 pass1.005986s/2.866033s, original120s/8GiB.
+Root independently decodes actual785B optimized protobuf and verifies actualCPU
+three allocated output shapes/bytes. Reviewbea805f5164434d193e6b97fe21f93028dca8f3a9c384e1fb9dd8a884cdb65a5.
+
+Actual first full Large8192/N8 GQA diagnostic FAILS numerical gate,141.220708s
+whole: native load38.632208s, score71.422945s (native71.422132s), peakRSS
+33,825,910,784B/Job33,872,461,824B below original40GiB. Both native operation
+return markers record success, then original FP32 acceptance rejects rawerror
+.001331329345703125 >unchanged.001. Mass.000080849013289086/argmaxtrue do not
+waive raw gate; three of eight logits exceed it. Natural native exit101/emptyJob/
+no force/all1708seals unchanged. Original120s operation/360s outer/48GiB Job
+limits remain unchanged. Actual48GiB process+Job flags/counters observed before
+resume; historical32/16 API smoke remains historical. Receipt
+P/large-native-profiled-execution-r1/execution.json SHAbd9ab0634491570cfb1be02b0c35827fb4afede6da27c0f900571964e527e70c.
+Owner top-level cleanup wording is generic; the actual failure is numerical
+refusal, not timeout or unsettled descendants. No passing Large qualification.
+
+Bounded source review finds no concrete semantic graph bug. Actual36CPU GQA
+shapes/grouping/scale and original initializers/readout hold. Tiled FP32 running
+softmax/GEMM ordering differs from eager originalCUDA; accumulated rounding is
+plausible, not established. Existing CPU disable-flash setting1 selects dense
+FP32 with8GiB attention buffer, not FP64; current native/card explicitly freeze0.
+No threshold, assertion, artifact or runtime configuration is changed/retried.
+Large remains blocked; independent Compact and product/platform work continues.
+
+R154 independent flat23asset copies actually complete, each source/destination
+hash and original owner/ACL/file identity verified; no original mutation.
+Staging receipt037919617d9cd3e59b72ef295ad91361a9179ebb8d9640ef643287ac014450d0;
+evaluation manifest55719e6943a992271bd9cfa1e98046dc4b946332b22bdf146efb0d8b487b6656.
+No Service admission/warm/Answer success follows from staging. Genuine original
+UI handoff3411049b matches223C3 outputs/308 caller sources under separate
+compatibility proof; original build ancestry remains exact.
+
+Mac UID501 guarded receiver verifies actual595 source3509/rawC7e3356c7a1942,
+13delta/no deletions, source clean and original dirty checkout preserved.
+Separate helper transfer succeeds; Root launches scopedClippy plus exact two
+independent diagnostics. Scoped MacClippy actually passes139.440s; exact tests
+remain in progress. Source/helper result files under
+E/neo-current-diagnostics-preparation-r1/bridge-59580fa6-r1/ retain original
+stdin/source/config identities. Full workspace success is not claimed.
+
+Current Compact original-source roster NN0 emission actually passes, bound to
+a9c5cc62 current-input/198f build. Fresh six-reference plans are staged with
+original600s/48GiB host/20GiB CUDA/2threads limits, not yet executed.
+Current Compact Resource20 is running with original1warmup+20samples, full8192/N8,
+120s each/3600s whole/16GiB RSS+commit/32GiB containment. Original1699inputseals
+and source freeze remain in force; no other Windows model/Cargo work competes.
+
+
+### 2026-11-16 — user36-hour deadline and actual Compact Resource20 pass
+
+The user explicitly extends the campaign to36hours TOTAL and prioritizes quality
+for morning review. This supersedes old24/48 timing; T0 is NOT reset. Newdeadline
+2026-11-17T17:29:42.2081757Z /17November10:29:42America/Denver. All frozen
+per-operation/experiment/qualification limits and acceptance thresholds stand.
+User status:3/18stepspassed,9inprogress,6blocked; about17h elapsed. Estimated
+remaining independent product work4–8h is a forecast, not completed evidence.
+
+Current198f Compact Resource20 actually PASS1857.379232s whole:1warmup plus
+20measured full8192/N8 samples, all22load/warm/sample operations and44markers
+complete. Native nearest-rank p95=86.049136s/max86.297421s; Root independently
+recomputes entire20samplepopulation. Actual peakRSS15,093,575,680B and persistent
+Jobcommit15,103,381,504B below16GiB; original120soperation/3600swhole/32GiBJob
+unchanged. PID48124naturalexit0/emptyJob/noforce/all1699sealsunchanged. Receipt
+P/compact-resource20-execution-r2/execution.json
+SHA5f6f5b802c00a1d40364f1ba8801ccb75d6a754578e7f37bd399a8b416228413.
+Root arithmetic/custody review retained beside it; no numerical/task/CAL/composed
+qualification follows. Plan/ledger are outside measurement seals; no consumed
+native input was edited during the quiet run. Fresh current originalFP32
+three-shape reference capture actually passes96.152459s; same-artifact3rows
+remain running in their own original600s/48GiBhost/20GiBCUDA/2CPU owner.
+
+Mac actual final raw732B record matches failedjobdc966.../project5703... and
+untruncated chain scan_sources ->workspace discovery failed ->native naming
+boundary unavailable: ancestor_open. This is distinct from the first live0-byte
+export. A metadata-only probe first refused the normal writer.lock; reviewed
+guard correction reads only known732Brecord/86Bownerreceipt, UID501, no source
+writes or native rerun. Final exactrecordSHA0ff2d2411459f7310305f6e114cdeeec8fe6a3ac467fc787df720b574aa625fb;
+causalhandoff E/neo-current-diagnostics-monitor-r1/final-causal-record-report-r1.json
+SHA63a881b58254c1d751a98f33676ed1d3cb598a5f05cd7b1e8b05c6ae8dbd6071.
+Actual OSerror/path remain unknown; /etc redirect is a source-based hypothesis,
+not an established cause. Root reviews a four-file private-only diagnostic
+proposal preserving exact publicDisplay/Debug/source/downcasts, refusal and
+no-follow/case/absence behavior; it remains unapplied during model sourcefreeze.
+
+
+### 2026-11-16 — 22:35 UTC critical-path update: component passes and remaining Answer/platform gates
+
+The 22:35 UTC self-check was sent; the next is due 17 November at 00:35 UTC.
+The user's 36-hour total deadline remains 17 November at 17:29:42.2081757 UTC
+(10:29:42 America/Denver), from original T0. Frozen limits and acceptance rules
+are unchanged. No step is newly marked passed by this update.
+
+Here P is `artifacts/advanced-split/models/actual-composed-service-r2/`, A is
+`P/final-plan-current-policy-preparation-20261116T085632Z/`, and E is
+`artifacts/v190/final-plan/exec-20261116T052942Z/`.
+
+Compact's current native 198f Resource20 PASS remains p95 86.049136s/max
+86.297421s over exactly 20 samples, peak RSS 15,093,575,680B and persistent Job
+commit 15,103,381,504B, both below 16GiB. Receipt
+`P/compact-resource20-execution-r2/execution.json`, SHA256
+`5f6f5b802c00a1d40364f1ba8801ccb75d6a754578e7f37bd399a8b416228413`.
+All six fresh original/same-artifact Torch references now pass. Formal native
+17/128/8192 numerical checks also PASS in 156.623729s; the 8192 score takes
+85.362604s, maximum original/same-artifact raw error is 0.00019073486328125,
+and argmax matches. Receipt `P/compact-formal-numeric-execution-r1/execution.json`,
+SHA256 `49b88566a51cf1f8b3326247d2c8584cb0035162208491034fa95c048ead76bb`.
+These complete component measurements, not task, CAL, composed or promotion gates.
+
+Public Focus R7 passes its whole isolated U93 journey: Provision/Import, actual
+scoring, removal, explicit restart, A/B MiniLM reads and two actual Stops with
+original HANDLE exit 0. Child 82.613815s/outer 82.857620s. Receipts
+`A/public-focus-native-r7/receipt.json` SHA256
+`5429041dc3c08c9348ca7a5e5c9640569189a8c66b4728d1cf44460b4f777d51`
+and `A/public-focus-owned-runtime-r7/receipt.json` SHA256
+`d1aae9cdbe10dea6b0e56b1bcf1bd9d74728095629c0f55d21f24f8bfd266b49`.
+Earlier failed journeys remain failed; modern I4 and all-three qualification
+are not established by this public Focus pass.
+
+Fresh R154 R1's Ready sharing-mode defect was corrected using an actual Win32
+reproduction; R2's wrong scope root was corrected. R3 reaches actual Ready and
+index success, then refuses `exactly one actual readable membership` at the
+native emitter. Its reported route takes 111.641799s; outer observation takes
+112.530117s and retains failure/exit 1 with naturally settled empty Job. No warm
+or Answer event occurs. Native canonical Stop, original HANDLE exit 0 and
+`artifacts/v190/final-plan/candidate-worktree-r3/artifacts/r154-fresh-current-section-r1/work-r3/closed.json`
+retain shutdown and lease reacquisition, independently of the failed route.
+The original inaccessible observer is not reconstructed or relabelled.
+
+Mac source 59580fa6 exact replacement passes 1/1 and refresh fails 1/1. Its 732-byte
+causal record is `scan_sources → workspace discovery failed; previous generation
+retained → native naming boundary unavailable: ancestor_open`. Actual errno/path
+remain unknown; the earlier zero-byte live export stays historical. A bounded
+private diagnostic remains pending. Large Dense graph-only construction separately
+passes 24.689469s under original 30s/8GiB limits, with no NN: graph SHA256
+`cc22f22b86f21b41e201b1be830a26353f2792edf1655fa8426ebbd9c485bb89`, proof
+`P/large-gqa-proposal-r1/dense-mask-proposal-r1/dense-mask-graph-r1/model.proof.json`
+SHA256 `bac3b330da612b5f62acc19a0bc54ab5f91d9ed58ef5d28b4c82165ac4dea781`.
+The prior Large numerical refusal and unchanged 0.001 threshold remain intact.
+
+Root applied the reviewed seven Dense and four Mac diagnostic files, contract
+first. Their native 5d37 source passes five-crate all-target/all-feature Clippy
+in 58.844280s, with unchanged inputs: `E/dense-private-diagnostics-section-clippy-r1.json`,
+SHA256 `a57adf217774cd614c59fe494ffe683374be4a37f505cf4c9ca7a762806efd96`.
+No new Rust tests or native/model executions of those changes are claimed.
+Model measurements retain baseline native 198f and original f5 build ancestry.
+
+
+### 2026-11-16 — Dense build/controls, retained timeout and real Explorer artifact checks
+
+Later evidence supersedes the previous pending-check statements without changing
+any historical receipt or step status. Native 5d37 whole-workspace/all-feature
+CargoJSON no-run build PASS: 432.523835s, `E/dense-private-diagnostics-images-build-r1.json`,
+SHA256 `6ee3115cc4c4db080b79a51e2f701c508f4b83ac97e4351a33640eb4b5108400`.
+The actual five-image inventory is
+`A/current-orchestration/dense-private-diagnostics-native-preservation-r1/native-test-images-dense-private-diagnostics-r1.json`,
+SHA256 `a86e6b2cf3b303ce6f8cfb075fd28e03da581d8d5879c362caabeb15cf1a0aa8`.
+Grouped controls PASS 41/41 in 7.913540s (0.263s tests),
+`E/dense-private-diagnostics-controls-r1.json`, SHA256
+`3861310b2387db6171c8bd1f339c1dd4b7dc32326d96c90e5c407d59e7357892`;
+JUnit SHA256 `9091a50a641ce32fc9460209dc3e984b876de3db9e4e14efbdc281f7f35ad3ea`.
+These do not retrospectively pass the old full-suite failure. The actual ORT
+repository pin is version 1.30.0, commit prefix f2c39.
+
+Large Dense native NN0 metadata/template emission passes 13.056270s/13.807798s;
+its blank template remains exactly SHA256
+`9dd159bd03110c31c853595ebea5daaecc0ce62b53d858b8f92d7778d5ac8116`.
+Six tiny controls at 17/128 pass in 1.055834s/1.133131s, maximum error 8.34465e-7;
+those owners settle naturally with exit 0/empty Job. The full Dense 8192 attempt
+FAILS in 191.893830s: load returns in 39.093627s, but score does not return at
+the original 120-second cutoff. The original watchdog forces only its owned
+PID 58052 to exit 77; original handles settle, Job is empty, and input drift is
+empty. Peak RSS 33,826,385,920B/Job commit 33,872,953,344B stay below 40GiB.
+No numerical result exists. Receipt
+`P/large-gqa-proposal-r1/dense-mask-proposal-r1/dense-native-profiled-execution-r1/execution.json`,
+SHA256 `a5ed266cafb38a6d03da8229092b6bba4237d4a0c2fa341e5930453114d31e87`.
+The prior Flash raw-error refusal 0.001331329 > 0.001 remains failed; no Large
+qualification, relaxed threshold, unchanged retry or additional Large branch.
+
+Actual Code 1.146.0 privately activates the production R3 VSIX and passes the
+Explorer singleton/close-reopen/same-version CSS handoff in 8.109072s.
+`E/ui-installed-explorer-r3/execution.json`, SHA256
+`28172ec30e4581ac151b226820574952981183d02cb7613a7ba7449c51d1867d`.
+Native execution is false. Code parent closes with exit 0 and Root's later CIM
+snapshot finds no Code using that private profile. This is not an all-descendant
+HANDLE settlement claim, native activation or an I4 installed journey.
+
+Linux human identity is now verified through explicit WSL Ubuntu: tyler/UID 1000
+matches DefaultUid and the human HKCU registration. User-space toolchain
+provisioning is pending; the host is not unavailable. Existing running default-root
+distros are not used. No Linux build/test result is claimed.
+
+R154's two Project memberships are valid automatic U103 plus explicit grant.
+The three-file contract-first private-emitter correction selects the exact native
+grant and validates source/membership, preserving old unselected ambiguity refusal.
+New native c9fe whole-workspace/all-target/all-feature Clippy PASS 85.696478s,
+`E/final-integrated-workspace-clippy-r1.json`; all-feature CargoJSON no-run build
+PASS 29.518880s, `E/final-integrated-images-build-r1.json`. Ten private-emitter
+controls PASS 2.725886s (0.187s tests),
+`E/final-explicit-membership-controls-r1.json` (JUnit prefix 41d06428).
+Corrected actual R154 warm/Answer has not run. No current full test-suite,
+composed, task/CAL, model promotion or new step-completion claim follows.

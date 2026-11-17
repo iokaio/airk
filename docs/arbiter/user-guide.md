@@ -139,20 +139,31 @@ together for every candidate, so passage length and candidate count affect both
 memory and latency. Context adds its own token, assessment and read work. The
 combined profile must account for both stages, MiniLM and ordinary indexing.
 
-The current Windows x64 CPU candidates have these declared reservations and
-input limits. Individual component measurements have passed; combined service
-and final profile qualification is still pending.
+The current Windows x64 CPU diagnostic candidates have these declared
+reservations and frozen input limits. They remain separate from the profiles
+actually offered by an installed catalog. Combined service, task-quality and
+final profile qualification remain pending.
 
 | Stage | Usable physical CPU cores | Model memory reservation | Maximum input |
 | --- | --- | --- | --- |
 | Focus | 4 | 4 GiB | 512 tokens, 4 candidates |
-| Context — Compact | 4 | 16 GiB | 2,048 tokens, 8 evidence cards |
-| Context — Large | 16 | 40 GiB | 2,048 tokens, 8 evidence cards |
+| Context — Compact | 4 | 16 GiB | 8,192 tokens, 8 evidence cards |
+| Context — Large | 16 | 40 GiB | 8,192 tokens, 8 evidence cards |
 
 These are model reservations, not whole-machine RAM recommendations. Both
 resident stages need their separate reservations, plus capacity for MiniLM,
 indexing, AIRK and other applications. Final installed catalog requirements take
 precedence; these measurements do not establish support on another platform.
+
+Current component measurements use 20 samples and the unchanged 120-second
+limit. Focus records p95 2.116398 seconds; Compact records p95 86.049136 seconds
+and passes its separate 17/128/8192-token numerical checks. These are component
+results, not end-to-end Answer latency or task qualification. Large remains
+unqualified: its faster attention path exceeds the numerical-error tolerance,
+and its separate dense path exceeds the 120-second scoring deadline. No
+precision or deadline fallback is qualified. Historical 2,048-token/30-second
+results remain historical. See the [current outcomes](final-plan.md#10-current-execution-outcomes)
+and [exact execution evidence](../simplify/one-process-ledger.md).
 
 There is no universal RAM minimum, guaranteed CPU latency or assumed GPU support.
 The service must report measured requirements for the qualified model precision,

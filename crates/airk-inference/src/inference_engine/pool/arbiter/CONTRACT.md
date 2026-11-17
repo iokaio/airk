@@ -418,3 +418,51 @@ allocated output bytes and original process/Job settlement are required; the
 structural proof alone cannot authorize inference or claim resource/p95 gates.
 Original failed Large120s evidence stays failed. Full20-warm qualification is
 separate from this one diagnostic forward.
+
+## Private Large explicit-mask dense attention proposal
+
+This additive test-support proposal keeps the ordinary Scorer/open_configured
+builder and scoring body byte-identical. No provider, runtime, crate, public DTO,
+wire shape, persisted format, qualification source or production fork is added.
+Global ORT_GQA_DISABLE_FLASH_ATTENTION stays literal0; Compact's causal1 path,
+prior Large flash controls, profile identities and failures remain historical.
+
+The candidate graph uses the existing CPU GQA causal0 branch, preserving the
+full original additive causal AND padding bias. Its exact native regeneration
+proof/profile/source/asset closure is a separate Retrieval-owned gate. The new
+full diagnostic requires modelLarge AND profile_id
+private-large-fp32-explicit-mask-dense-diagnostic-v1. An old flash descriptor
+cannot be called Dense, and the Dense descriptor cannot use the old flash
+measurement identity. Native numeric/source/file admission remains unchanged.
+
+New tiny Dense controls are only17/128 under the existing8GiB/120s toy owner,
+CPU16/Q32/KV8/head128/context4096. Each size runs three separate sessions and
+retains a separate actual profile/optimized tiny graph for each: (1) explicit
+causal prefix mean; (2) zero-bias full mean independent of query position,
+which MUST refuse a causal1 kernel; (3) explicit causal bias with key1 masked
+and key0 always valid, checking the exact mean of allowed keys. Values contain
+nonzero head/dimension and time sentinels. Only the padding-hole control adds
+a literal+0.25 value spike at key1: correct masking excludes it without changing
+the required mean, while ignoring that padding yields error above0.0001 for
+every affected query at17/128. Other control vectors and all model math remain
+unchanged; zero tensors cannot satisfy them.
+Only tiny graphs may be saved optimized. Every session requires exactly one
+CPU GQA event, positive native duration and all3 exact output allocations.
+These tests have no learned weights, selected-model or full8192 authority.
+The older FlashTiny8192 result, including failure, never certifies Dense8192.
+
+The separate ignored full Dense8192/N8 diagnostic retains original all-live
+native tensors and independent original-publisher FP32 arrays. It keeps actual
+CPU16, inter1/sequential/no-spin,40GiB RSS/native reservation, original120s
+load/score Journal deadlines, raw<=.001/mass<=.05/exactargmax, input/source
+postchecks and36 unique CPU GQA events. Exact outputs are [1,T,4096] plus
+[1,8,T,128] twice, totaling T*6144*4bytes per node. Full-model optimized saving
+stays forbidden. Distinct receipt kind large_dense_attention_diagnostic and
+measurement large-fp32-explicit-mask-dense-profiled/1 never relabel an old run.
+
+Tiny tests and structural shape support do not establish full-model dense
+correctness, memory or latency. Full original Dense8192 must actually execute
+and pass its own unchanged gates; unsupported shapes or OOM/timeouts stay
+refusals. Structural all1..8192 preservation belongs to the independently
+validated native graph/source chain, not inferred interpolation of tiny results.
+No task/data/training/CAL/release qualification is granted by this proposal.

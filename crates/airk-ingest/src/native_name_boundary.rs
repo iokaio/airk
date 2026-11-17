@@ -19,9 +19,27 @@ pub const PROFILE: &str = "airk-native-name-boundary/linux-known-noncasefold-v1"
 pub const PROFILE: &str = "airk-native-name-boundary/unsupported-v1";
 
 /// No source locator is included in this error's public display.
-#[derive(Debug)]
 pub struct NativeNameBoundaryUnavailable {
     reason: &'static str,
+    open: Option<PrivateOpenFailure>,
+}
+
+struct PrivateOpenFailure {
+    native_code: Option<i32>,
+    class: &'static str,
+    component: usize,
+    attempted: String,
+    path_truncated: bool,
+}
+
+const MAX_PRIVATE_OPEN_PATH_BYTES: usize = 4096;
+
+impl std::fmt::Debug for NativeNameBoundaryUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NativeNameBoundaryUnavailable")
+            .field("reason", &self.reason)
+            .finish()
+    }
 }
 
 impl NativeNameBoundaryUnavailable {
@@ -32,10 +50,20 @@ impl NativeNameBoundaryUnavailable {
             } else {
                 "unsupported_boundary"
             },
+            open: None,
         }
     }
     pub fn reason(&self) -> &'static str {
         self.reason
+    }
+    /// Only the existing owner-private raw-error sink consumes this detail.
+    /// Public Display/Debug and the standard error source remain unchanged.
+    pub fn private_open_detail(&self) -> Option<String> {
+        let open = self.open.as_ref()?;
+        Some(format!(
+            "native naming open detail: native_code={:?}; class={}; component={}; attempted_path={}; path_truncated={}",
+            open.native_code, open.class, open.component, open.attempted, open.path_truncated
+        ))
     }
 }
 
@@ -49,6 +77,59 @@ impl std::error::Error for NativeNameBoundaryUnavailable {}
 
 fn unavailable(reason: &'static str) -> anyhow::Error {
     NativeNameBoundaryUnavailable::new(reason).into()
+}
+
+fn unavailable_open(
+    reason: &'static str,
+    error: std::io::Error,
+    attempted: std::path::PathBuf,
+    class: &'static str,
+    component: usize,
+) -> anyhow::Error {
+    let mut failure = NativeNameBoundaryUnavailable::new(reason);
+    // Debug spelling escapes non-text native names. Only a bounded diagnostic
+    // prefix is retained; it is never reopened or used as source authority.
+    let mut attempted = format!("{attempted:?}");
+    let path_truncated = attempted.len() > MAX_PRIVATE_OPEN_PATH_BYTES;
+    if path_truncated {
+        let mut end = MAX_PRIVATE_OPEN_PATH_BYTES;
+        while !attempted.is_char_boundary(end) {
+            end -= 1;
+        }
+        attempted.truncate(end);
+    }
+    failure.open = Some(PrivateOpenFailure {
+        native_code: error.raw_os_error(),
+        class,
+        component,
+        attempted,
+        path_truncated,
+    });
+    failure.into()
+}
+
+#[cfg(unix)]
+fn open_directory_at(parent: &File, name: &std::ffi::CStr) -> std::io::Result<File> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    // SAFETY: borrowed live parent and NUL-terminated name. A successful fresh
+    // descriptor is transferred exactly once; every original no-follow flag stays.
+    let fd = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY
+                | libc::O_DIRECTORY
+                | libc::O_NOFOLLOW
+                | libc::O_CLOEXEC
+                | libc::O_NONBLOCK,
+        )
+    };
+    if fd < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        // SAFETY: successful openat returned a fresh owned descriptor.
+        Ok(unsafe { File::from_raw_fd(fd) })
+    }
 }
 
 /// Qualify the source root and existing directory ancestors of a portable locator.
@@ -98,16 +179,13 @@ pub(crate) fn qualify_directory_handle(file: &File) -> Result<()> {
 fn qualify_path(root: &Path, suffix: &[&str]) -> Result<()> {
     use std::{
         ffi::CString,
-        os::{
-            fd::{AsRawFd, FromRawFd},
-            unix::{ffi::OsStrExt, fs::OpenOptionsExt},
-        },
+        os::unix::{ffi::OsStrExt, fs::OpenOptionsExt},
     };
     let first = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open("/")
-        .map_err(|_| unavailable("root_open"))?;
+        .map_err(|error| unavailable_open("root_open", error, "/".into(), "root_anchor", 0))?;
     qualify_directory_handle(&first)?;
     let mut held = vec![first];
     let root_names: Vec<_> = root
@@ -122,31 +200,33 @@ fn qualify_path(root: &Path, suffix: &[&str]) -> Result<()> {
         .copied()
         .map(|name| (name, false))
         .chain(suffix.iter().map(|name| (std::ffi::OsStr::new(name), true)));
-    for (name, may_be_missing) in names {
+    for (index, (name, may_be_missing)) in names.enumerate() {
         let name = CString::new(name.as_bytes()).map_err(|_| unavailable("invalid_component"))?;
-        // SAFETY: valid held directory and NUL-terminated name; ownership is
-        // transferred only after checking the returned descriptor.
-        let fd = unsafe {
-            libc::openat(
-                held.last().unwrap().as_raw_fd(),
-                name.as_ptr(),
-                libc::O_RDONLY
-                    | libc::O_DIRECTORY
-                    | libc::O_NOFOLLOW
-                    | libc::O_CLOEXEC
-                    | libc::O_NONBLOCK,
-            )
-        };
-        if fd < 0 {
-            if may_be_missing
-                && std::io::Error::last_os_error().kind() == std::io::ErrorKind::NotFound
-            {
-                return Ok(());
+        let file = match open_directory_at(held.last().unwrap(), &name) {
+            Ok(file) => file,
+            Err(error) => {
+                if may_be_missing && error.kind() == std::io::ErrorKind::NotFound {
+                    return Ok(());
+                }
+                let attempted = root_names
+                    .iter()
+                    .copied()
+                    .chain(suffix.iter().copied().map(std::ffi::OsStr::new))
+                    .take(index + 1)
+                    .fold(std::path::PathBuf::from("/"), |path, name| path.join(name));
+                return Err(unavailable_open(
+                    "ancestor_open",
+                    error,
+                    attempted,
+                    if may_be_missing {
+                        "relative_suffix"
+                    } else {
+                        "root_ancestor"
+                    },
+                    index + 1,
+                ));
             }
-            return Err(unavailable("ancestor_open"));
-        }
-        // SAFETY: successful openat returned a fresh owned descriptor.
-        let file = unsafe { File::from_raw_fd(fd) };
+        };
         qualify_directory_handle(&file)?;
         held.push(file);
     }
@@ -162,6 +242,7 @@ fn qualify_path(root: &Path, suffix: &[&str]) -> Result<()> {
     };
     let mut path = std::path::PathBuf::new();
     let mut held = Vec::new();
+    let mut component = 0;
     let parts = root.components().map(|p| (p, false)).chain(
         suffix
             .iter()
@@ -182,10 +263,25 @@ fn qualify_path(root: &Path, suffix: &[&str]) -> Result<()> {
             Err(error) if may_be_missing && error.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(());
             }
-            Err(_) => return Err(unavailable("ancestor_open")),
+            Err(error) => {
+                return Err(unavailable_open(
+                    "ancestor_open",
+                    error,
+                    path.clone(),
+                    if may_be_missing {
+                        "relative_suffix"
+                    } else if component == 0 {
+                        "root_anchor"
+                    } else {
+                        "root_ancestor"
+                    },
+                    component,
+                ));
+            }
         };
         qualify_directory_handle(&file)?;
         held.push(file);
+        component += 1;
     }
     Ok(())
 }
@@ -300,6 +396,93 @@ fn platform_qualify(_: &File) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn open_diagnostic_keeps_public_identity_and_error_classification_unchanged() {
+        let secret = std::path::PathBuf::from("private-diagnostic-locator");
+        let error = unavailable_open(
+            "ancestor_open",
+            std::io::Error::from_raw_os_error(13),
+            secret,
+            "relative_suffix",
+            2,
+        );
+        let native = error
+            .downcast_ref::<NativeNameBoundaryUnavailable>()
+            .unwrap();
+        assert_eq!(native.reason(), "ancestor_open");
+        assert_eq!(
+            error.to_string(),
+            "native naming boundary unavailable: ancestor_open"
+        );
+        assert!(!format!("{native:?}").contains("private-diagnostic-locator"));
+        assert_eq!(error.chain().count(), 1);
+        assert!(!error.is::<std::io::Error>());
+        let detail = native.private_open_detail().unwrap();
+        assert!(detail.contains("native_code=Some(13)"));
+        assert!(detail.contains("class=relative_suffix; component=2"));
+        assert!(detail.contains("private-diagnostic-locator"));
+    }
+
+    #[test]
+    fn private_open_path_prefix_is_utf8_bounded_and_explicitly_truncated() {
+        let error = unavailable_open(
+            "ancestor_open",
+            std::io::Error::from_raw_os_error(13),
+            std::path::PathBuf::from("\u{1f980}".repeat(8192)),
+            "root_ancestor",
+            256,
+        );
+        let native = error
+            .downcast_ref::<NativeNameBoundaryUnavailable>()
+            .unwrap();
+        let open = native.open.as_ref().unwrap();
+        assert!(open.path_truncated);
+        assert!(open.attempted.len() <= 4096);
+        assert!(open.attempted.is_char_boundary(open.attempted.len()));
+        let detail = native.private_open_detail().unwrap();
+        assert!(detail.contains("native_code=Some(13)"));
+        assert!(detail.contains("path_truncated=true"));
+        assert!(detail.len() <= 4096 + 256);
+        assert_eq!(
+            error.to_string(),
+            "native naming boundary unavailable: ancestor_open"
+        );
+        assert!(!error.is::<std::io::Error>());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn actual_openat_failure_retains_exact_errno_and_keeps_symlink_unfollowed() -> Result<()> {
+        use anyhow::Context;
+        use std::os::unix::{ffi::OsStrExt, fs::symlink};
+        let owner = tempfile::tempdir()?;
+        let target = owner.path().join("target");
+        std::fs::create_dir(&target)?;
+        std::fs::write(target.join("source.txt"), b"source remains unchanged")?;
+        let link = owner.path().join("redirected");
+        symlink(&target, &link)?;
+        let parent = File::open(owner.path())?;
+        let name = std::ffi::CString::new(link.file_name().unwrap().as_bytes())?;
+        let error = open_directory_at(&parent, &name).unwrap_err();
+        let code = error.raw_os_error().context("native errno absent")?;
+        assert!(matches!(code, libc::ELOOP | libc::ENOTDIR));
+        let failure = unavailable_open("ancestor_open", error, link.clone(), "relative_suffix", 1);
+        let detail = failure
+            .downcast_ref::<NativeNameBoundaryUnavailable>()
+            .unwrap()
+            .private_open_detail()
+            .unwrap();
+        assert!(detail.contains(&format!("native_code=Some({code})")));
+        assert!(detail.contains("redirected"));
+        assert!(std::fs::symlink_metadata(&link)?.file_type().is_symlink());
+        assert_eq!(
+            std::fs::read(target.join("source.txt"))?,
+            b"source remains unchanged"
+        );
+        assert!(!failure.is::<std::io::Error>());
+        Ok(())
+    }
 
     #[test]
     fn unknown_case_modes_and_filesystems_refuse() {

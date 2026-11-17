@@ -147,3 +147,52 @@ test-support-only selected-model entry point uses exact CompactQ16/2048/CPU4
 or LargeQ32/4096/CPU16 with sharedKV8/head128 and private caches. Other models
 refuse. This changes no ordinary scorer constructor, public input/output ABI,
 production provider selection, native operation deadline or memory policy.
+
+
+## Private Large explicit-mask dense candidate (/2)
+
+Step12 adds exactly one private override variant, large_dense_graph, mutually
+exclusive with compact_graph and large_graph. The /1 path admits none. Existing
+/2 Compact and Large flash inputs, IDs and proof rules remain unchanged. The
+new value contains candidate and prior, each the existing four ResourceFilePins.
+Rust independently reauthenticates the exact existing Large graph e4cd63d2...,
+shape proof6a9cc23d... and naturally settled creator2dcad613..., and requires
+identical original8192 baseline pins. A candidate identical to the prior flash
+graph or original f8ba5d3e... graph refuses. The candidate has a distinct private
+profile ID private-large-fp32-explicit-mask-dense-diagnostic-v1, graph SHA,
+manifest, calibration and creator/proof identity; nothing is retagged.
+
+The reviewed producer accepts only exact e4cd63d2... source and f8ba5d3e...
+original ancestry. It changes only the36 Large GroupQueryAttention causal
+attributes1→0. Reverting them must recover the entire prior ModelProto bytes.
+All original tensor/external ranges, projections/QKnorm/rotary/readout nodes,
+six inputs and scores-only public ABI, Q32/KV8/head128/context4096 and exact
+float32 scale f304b53d remain unchanged. The full original causal+padding bias
+/scorer/Where_output_0 remains input10 on every GQA node. Its complete original
+29-entry closure must remain byte-identical with SHA
+8bf893388fce7d661bc12b012aa8fb35d25cf23c8c4d226209304f5622387f22.
+Rust dense proof admission binds these facts and new owner schema
+ airk.private.large-dense-graph-owner/1. The source manifest pins the entire
+nested prior/candidate closure even when the report's graph_override displays
+only the candidate. The exact native Source/build receipts remain mandatory.
+
+Pinned CPU ORT1.30 selects ApplyAttention for causal0 even with unchanged
+global ORT_GQA_DISABLE_FLASH_ATTENTION=0. With no past/window and the retained
+original full bias, that path computes full physical-row Softmax(scale·QK+B)
+thenV, the original unfused expression for every1<=T<=8192. This is operator/
+mathematical equivalence, not bitwise or numerical acceptance. It is not a
+FP64 accumulation claim. The existing dense allocator uses one FP32[1,32,T,T]
+workspace (8GiB at8192); actual fit must remain within the originalCPU16/40GiB
+and120s boundaries. No production Scorer constructor or shared format/digest
+policy changes. Compact keeps its original flash configuration. No sink/debug
+output, artificial dependency, added weight or padding-coverage trick is used.
+
+Before full execution, new dense-only17/128 native tiny populations must prove
+explicit causal bias, zero-bias full attention (which rejects hidden causal1)
+and an actual padding-hole effect in separate sessions. Historical flash8192
+tiny results are not dense evidence. The full8192/N8 path must independently
+retain36 actual allocated CPU GQA events, original full tensors and independent
+FP32 arrays, raw<=.001/mass<=.05/unchanged argmax, real process/Job settlement,
+memory/time and source custody. The failed flash numerical run stays failed.
+No promotion, terminal labels, model-training acceptance, public source URL,
+release authority or scope/limit waiver is created by this private proposal.

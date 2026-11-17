@@ -27,6 +27,8 @@ struct Input {
     compact_graph: Option<compact_graph::Input>,
     #[serde(default)]
     large_graph: Option<compact_graph::Input>,
+    #[serde(default)]
+    large_dense_graph: Option<compact_graph::DenseInput>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -34,9 +36,9 @@ struct OriginalCatalog {
     schema: String,
     profiles: Vec<Profile>,
 }
+#[cfg(test)]
 fn graph_request_scope(schema: &str, compact: bool, large: bool) -> bool {
-    (schema == "airk.private.context-metadata-regeneration/1" && !compact && !large)
-        || (schema == "airk.private.context-metadata-regeneration/2" && (compact ^ large))
+    graph_request_scope_dense(schema, compact, large, false)
 }
 
 #[test]
@@ -64,6 +66,50 @@ fn graph_request_scope_preserves_legacy_and_refuses_mixed_overrides() {
         ("unknown", false, true),
     ] {
         assert!(!graph_request_scope(schema, compact, large));
+    }
+}
+
+fn graph_request_scope_dense(schema: &str, compact: bool, large: bool, dense: bool) -> bool {
+    (schema == "airk.private.context-metadata-regeneration/1" && !compact && !large && !dense)
+        || (schema == "airk.private.context-metadata-regeneration/2"
+            && usize::from(compact) + usize::from(large) + usize::from(dense) == 1)
+}
+#[test]
+fn graph_request_scope_dense_refuses_mixed_and_legacy_dense() {
+    assert!(graph_request_scope_dense(
+        "airk.private.context-metadata-regeneration/2",
+        false,
+        false,
+        true
+    ));
+    for (schema, compact, large, dense) in [
+        (
+            "airk.private.context-metadata-regeneration/1",
+            false,
+            false,
+            true,
+        ),
+        (
+            "airk.private.context-metadata-regeneration/2",
+            true,
+            false,
+            true,
+        ),
+        (
+            "airk.private.context-metadata-regeneration/2",
+            false,
+            true,
+            true,
+        ),
+        (
+            "airk.private.context-metadata-regeneration/2",
+            true,
+            true,
+            true,
+        ),
+        ("unknown", false, false, true),
+    ] {
+        assert!(!graph_request_scope_dense(schema, compact, large, dense));
     }
 }
 
@@ -280,17 +326,25 @@ fn emit_current_policy_profiles_from_verified_original_assets() -> Result<()> {
     };
     let input: Input = serde_json::from_slice(&pinned_metadata(&request_pin, 1 << 20)?)?;
     ensure!(
-        graph_request_scope(
+        graph_request_scope_dense(
             &input.schema,
             input.compact_graph.is_some(),
-            input.large_graph.is_some()
+            input.large_graph.is_some(),
+            input.large_dense_graph.is_some()
         ) && input.output.is_absolute()
             && !input.output.exists()
             && input.asset_root.is_absolute(),
         "fresh private metadata-regeneration scope required"
     );
-    let graph = input.compact_graph.as_ref().or(input.large_graph.as_ref());
-    let graph_model = if input.large_graph.is_some() {
+    let graph = input
+        .compact_graph
+        .as_ref()
+        .or(input.large_graph.as_ref())
+        .or(input
+            .large_dense_graph
+            .as_ref()
+            .map(|value| &value.candidate));
+    let graph_model = if input.large_graph.is_some() || input.large_dense_graph.is_some() {
         ModelChoice::ContextQwenLarge
     } else {
         ModelChoice::ContextQwenCompact
@@ -385,13 +439,17 @@ fn emit_current_policy_profiles_from_verified_original_assets() -> Result<()> {
                     path: originals.join(&asset.name),
                 })
                 .collect();
-            if let Some(graph) = graph {
+            if let Some(dense) = &input.large_dense_graph {
+                compact_graph::apply_dense(dense, &mut source_assets)?;
+            } else if let Some(graph) = graph {
                 compact_graph::apply(graph, &mut source_assets, graph_model)?;
             }
             let mut prepared = prepare_with_limits(
                 ProfileInput {
                     model: old.model,
-                    profile_id: if graph.is_some() {
+                    profile_id: if input.large_dense_graph.is_some() {
+                        compact_graph::dense_profile_id().into()
+                    } else if graph.is_some() {
                         compact_graph::profile_id(graph_model)?.into()
                     } else {
                         format!("private-final-policy-v2-{model_name}")
@@ -436,7 +494,9 @@ fn emit_current_policy_profiles_from_verified_original_assets() -> Result<()> {
                     &policy,
                 )?;
             }
-            if let Some(graph) = graph {
+            if let Some(dense) = &input.large_dense_graph {
+                compact_graph::validate_prepared_dense(dense, &prepared)?;
+            } else if let Some(graph) = graph {
                 compact_graph::validate_prepared(graph, &prepared)?;
             }
             ensure!(

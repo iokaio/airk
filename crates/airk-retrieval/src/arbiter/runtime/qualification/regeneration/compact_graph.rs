@@ -11,6 +11,13 @@ pub(super) struct Input {
     pub baseline_input: ResourceFilePin,
 }
 
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DenseInput {
+    pub candidate: Input,
+    pub prior: Input,
+}
+
 struct Family {
     layers: usize,
     width: usize,
@@ -54,7 +61,49 @@ pub(super) fn profile_id(model: ModelChoice) -> Result<&'static str> {
 }
 
 fn graph_evidence(proof: &Value, owner: &Value, input: &Input, model: ModelChoice) -> Result<()> {
-    let selected = family(model)?;
+    graph_evidence_mode(proof, owner, input, model, false)
+}
+fn selected_family(model: ModelChoice, dense: bool) -> Result<Family> {
+    let mut selected = family(model)?;
+    if dense {
+        ensure!(
+            model == ModelChoice::ContextQwenLarge,
+            "dense candidate is Large only"
+        );
+        selected.profile_id = crate::arbiter::runtime::LARGE_DENSE_DIAGNOSTIC_PROFILE_ID;
+        selected.owner_schema = "airk.private.large-dense-graph-owner/1";
+    }
+    Ok(selected)
+}
+pub(super) fn dense_profile_id() -> &'static str {
+    crate::arbiter::runtime::LARGE_DENSE_DIAGNOSTIC_PROFILE_ID
+}
+fn graph_evidence_mode(
+    proof: &Value,
+    owner: &Value,
+    input: &Input,
+    model: ModelChoice,
+    dense: bool,
+) -> Result<()> {
+    let selected = selected_family(model, dense)?;
+    if dense {
+        ensure!(
+            proof["attention_mode"] == "large_explicit_mask_dense/1"
+                && proof["causal_attribute"] == 0
+                && proof["global_flash_setting"] == "0"
+                && proof["rewrite_input_sha256"]
+                    == "e4cd63d26c1e5b8bbfd28c65cb04f5ab3946f57e5511d2cd09e125cdf46c4aca"
+                && proof["prior_shape_proof_sha256"]
+                    == "6a9cc23d3d9172fab09fe370207361830f33003ec61bded61f7d3adddc41e42b"
+                && proof["only_prior_graph_causal_attributes_changed"] == true
+                && proof["original_bias_name"] == "/scorer/Where_output_0"
+                && proof["original_bias_closure_sha256"]
+                    == "8bf893388fce7d661bc12b012aa8fb35d25cf23c8c4d226209304f5622387f22"
+                && proof["original_bias_closure_entries"] == 29
+                && proof["original_bias_preserved_verbatim"] == true,
+            "exact original explicit-mask dense source/mode proof required"
+        );
+    }
     ensure!(
         proof["new_graph_sha256"] == json!(input.graph.sha256)
             && proof["source_sha256"] == selected.source
@@ -166,12 +215,20 @@ fn baseline(input: &Input, model: ModelChoice) -> Result<(ResourceRunInput, Prof
     Ok((request, profile))
 }
 pub(super) fn apply(input: &Input, assets: &mut [AssetInput], model: ModelChoice) -> Result<()> {
-    let selected = family(model)?;
+    apply_mode(input, assets, model, false)
+}
+fn apply_mode(
+    input: &Input,
+    assets: &mut [AssetInput],
+    model: ModelChoice,
+    dense: bool,
+) -> Result<()> {
+    let selected = selected_family(model, dense)?;
     let (request, old) = baseline(input, model)?;
     let graph = pinned_metadata(&input.graph, 64 << 20)?;
     let proof: Value = serde_json::from_slice(&pinned_metadata(&input.shape_proof, 1 << 20)?)?;
     let owner: Value = serde_json::from_slice(&pinned_metadata(&input.owned_creation, 1 << 20)?)?;
-    graph_evidence(&proof, &owner, input, model)?;
+    graph_evidence_mode(&proof, &owner, input, model, dense)?;
     ensure!(
         proof["bytes"] == graph.len() && owner["graph"]["bytes"] == graph.len(),
         "actual graph length differs"
@@ -201,7 +258,10 @@ pub(super) fn apply(input: &Input, assets: &mut [AssetInput], model: ModelChoice
     Ok(())
 }
 pub(super) fn validate_prepared(input: &Input, prepared: &PreparedProfile) -> Result<()> {
-    let selected = family(prepared.profile.model)?;
+    validate_prepared_mode(input, prepared, false)
+}
+fn validate_prepared_mode(input: &Input, prepared: &PreparedProfile, dense: bool) -> Result<()> {
+    let selected = selected_family(prepared.profile.model, dense)?;
     let (request, old) = baseline(input, prepared.profile.model)?;
     let new = &prepared.profile;
     ensure!(
@@ -437,5 +497,216 @@ fn selected_graph_families_preserve_literal_cpu_memory_width_and_source() -> Res
         "f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94"
     );
     assert!(family(ModelChoice::FocusQwenReranker06B).is_err());
+    Ok(())
+}
+
+fn dense_source_identity(input: &DenseInput) -> Result<()> {
+    ensure!(
+        input.prior.graph.sha256.to_string()
+            == "e4cd63d26c1e5b8bbfd28c65cb04f5ab3946f57e5511d2cd09e125cdf46c4aca"
+            && input.prior.shape_proof.sha256.to_string()
+                == "6a9cc23d3d9172fab09fe370207361830f33003ec61bded61f7d3adddc41e42b"
+            && input.prior.owned_creation.sha256.to_string()
+                == "2dcad61358578701be588d20b56787c0e169835d5329a5c760bdd662db2f857a"
+            && input.candidate.graph.sha256 != input.prior.graph.sha256
+            && input.candidate.graph.sha256.to_string()
+                != "f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94"
+            && input.candidate.baseline_input.path == input.prior.baseline_input.path
+            && input.candidate.baseline_input.sha256 == input.prior.baseline_input.sha256,
+        "dense prior actual graph/creator/baseline closure differs"
+    );
+    Ok(())
+}
+fn dense_prior(input: &DenseInput) -> Result<()> {
+    dense_source_identity(input)?;
+    let bytes = pinned_metadata(&input.prior.graph, 64 << 20)?;
+    let proof: Value =
+        serde_json::from_slice(&pinned_metadata(&input.prior.shape_proof, 1 << 20)?)?;
+    let owner: Value =
+        serde_json::from_slice(&pinned_metadata(&input.prior.owned_creation, 1 << 20)?)?;
+    graph_evidence(&proof, &owner, &input.prior, ModelChoice::ContextQwenLarge)?;
+    ensure!(proof["bytes"] == bytes.len(), "prior graph bytes changed");
+    baseline(&input.prior, ModelChoice::ContextQwenLarge)?;
+    Ok(())
+}
+pub(super) fn apply_dense(input: &DenseInput, assets: &mut [AssetInput]) -> Result<()> {
+    dense_prior(input)?;
+    apply_mode(
+        &input.candidate,
+        assets,
+        ModelChoice::ContextQwenLarge,
+        true,
+    )
+}
+pub(super) fn validate_prepared_dense(
+    input: &DenseInput,
+    prepared: &PreparedProfile,
+) -> Result<()> {
+    dense_prior(input)?;
+    validate_prepared_mode(&input.candidate, prepared, true)
+}
+
+#[test]
+fn large_dense_proof_refuses_wrong_mode_mask_source_and_flash_identity() -> Result<()> {
+    let input = Input {
+        graph: ResourceFilePin {
+            path: "C:/private/model.onnx".into(),
+            sha256: Sha256Digest::from_bytes([1; 32]),
+        },
+        shape_proof: ResourceFilePin {
+            path: "C:/private/proof.json".into(),
+            sha256: Sha256Digest::from_bytes([2; 32]),
+        },
+        owned_creation: ResourceFilePin {
+            path: "C:/private/owner.json".into(),
+            sha256: Sha256Digest::from_bytes([3; 32]),
+        },
+        baseline_input: ResourceFilePin {
+            path: "C:/private/input.json".into(),
+            sha256: Sha256Digest::from_bytes([4; 32]),
+        },
+    };
+    let cases = [(1,1),(17,3),(128,8),(8192,8)].into_iter().map(|(t,n)| json!({
+        "tokens":t,"options":n,"all36_resolved":true,
+        "external_weight_value_policy":{"external_required_values_refused":0},
+        "witnesses":(0..36).map(|_|json!({"context":[1,t,4096],
+            "cache_shapes_resolved_by_pinned_cpu_compute":[[1,8,t,128],[1,8,t,128]]})).collect::<Vec<_>>()
+    })).collect::<Vec<_>>();
+    let proof = json!({"new_graph_sha256":input.graph.sha256,
+        "source_sha256":"f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94",
+        "gqa_nodes":36,"original_scale_float32_bits":"f304b53d","original_initializers":398,
+        "original_external_initializers":326,"original_scores_output_preserved_verbatim":true,
+        "attention_mode":"large_explicit_mask_dense/1","causal_attribute":0,"global_flash_setting":"0",
+        "rewrite_input_sha256":"e4cd63d26c1e5b8bbfd28c65cb04f5ab3946f57e5511d2cd09e125cdf46c4aca",
+        "prior_shape_proof_sha256":"6a9cc23d3d9172fab09fe370207361830f33003ec61bded61f7d3adddc41e42b",
+        "only_prior_graph_causal_attributes_changed":true,"original_bias_name":"/scorer/Where_output_0",
+        "original_bias_closure_sha256":"8bf893388fce7d661bc12b012aa8fb35d25cf23c8c4d226209304f5622387f22",
+        "original_bias_closure_entries":29,"original_bias_preserved_verbatim":true,
+        "original_nodes_preserved_verbatim":true,"original_initializers_and_external_ranges_preserved_verbatim":true,
+        "all6inputs_scores_only":true,"cache_outputs_internal_only":true,"model_forward":false,
+        "custom_shape_gate_pending":false,"native_kernel_gate_pending":true,
+        "onnx_checker":"original and candidate; real original external-data context; custom kernel ownership separate",
+        "custom_shape_witnesses":cases});
+    let owner = json!({"schema":"airk.private.large-dense-graph-owner/1","complete":true,"failure":null,
+        "graph_only":true,"model_forward":false,"original_phase_expired":false,"post_input_drift":[],
+        "graph":{"path":input.graph.path,"sha256":input.graph.sha256},
+        "shape_proof":{"path":input.shape_proof.path,"sha256":input.shape_proof.sha256},
+        "owned":{"exit_code":0,"timed_out":false,"log_oversized":false,"owned_descendants_settled":true,
+            "owned_job_forced_termination":false,"owned_job_final_active_processes":0,
+            "owned_job_final_member_pids":[],"parent_assigned_to_job":false,"child_assigned_before_resume":true}});
+    graph_evidence_mode(&proof, &owner, &input, ModelChoice::ContextQwenLarge, true)?;
+    assert!(graph_evidence(&proof, &owner, &input, ModelChoice::ContextQwenLarge).is_err());
+    assert!(selected_family(ModelChoice::ContextQwenCompact, true).is_err());
+    for (path, value) in [
+        (
+            "/source_sha256",
+            json!("c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4"),
+        ),
+        ("/gqa_nodes", json!(28)),
+        ("/causal_attribute", json!(1)),
+        ("/global_flash_setting", json!("1")),
+        ("/attention_mode", json!("flash")),
+        ("/original_bias_name", json!("other")),
+        ("/original_bias_closure_sha256", json!("changed")),
+        ("/original_bias_preserved_verbatim", json!(false)),
+        ("/only_prior_graph_causal_attributes_changed", json!(false)),
+        ("/original_external_initializers", json!(254)),
+        ("/original_scores_output_preserved_verbatim", json!(false)),
+        ("/original_initializers", json!(310)),
+        ("/custom_shape_witnesses", json!([])),
+        ("/custom_shape_witnesses/3/tokens", json!(2048)),
+        (
+            "/custom_shape_witnesses/3/witnesses/0/context",
+            json!([1, 2048, 2048]),
+        ),
+        (
+            "/custom_shape_witnesses/3/external_weight_value_policy/external_required_values_refused",
+            json!(1),
+        ),
+        ("/all6inputs_scores_only", json!(false)),
+        ("/model_forward", json!(true)),
+    ] {
+        let mut changed = proof.clone();
+        *changed
+            .pointer_mut(path)
+            .context("literal proof mutation")? = value;
+        assert!(
+            graph_evidence_mode(
+                &changed,
+                &owner,
+                &input,
+                ModelChoice::ContextQwenLarge,
+                true
+            )
+            .is_err()
+        );
+    }
+    for (path, value) in [
+        ("/complete", json!(false)),
+        ("/owned/exit_code", json!(1)),
+        ("/owned/owned_job_forced_termination", json!(true)),
+        ("/owned/owned_job_final_member_pids", json!([1])),
+        ("/graph/sha256", json!(Sha256Digest::from_bytes([9; 32]))),
+        ("/post_input_drift", json!(["changed"])),
+    ] {
+        let mut changed = owner.clone();
+        *changed
+            .pointer_mut(path)
+            .context("literal owner mutation")? = value;
+        assert!(
+            graph_evidence_mode(
+                &proof,
+                &changed,
+                &input,
+                ModelChoice::ContextQwenLarge,
+                true
+            )
+            .is_err()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn dense_source_identity_refuses_retagged_flash_or_changed_prior() -> Result<()> {
+    fn source(graph: Sha256Digest) -> Input {
+        Input {
+            graph: ResourceFilePin {
+                path: "C:/private/graph".into(),
+                sha256: graph,
+            },
+            shape_proof: ResourceFilePin {
+                path: "C:/private/proof".into(),
+                sha256: "6a9cc23d3d9172fab09fe370207361830f33003ec61bded61f7d3adddc41e42b"
+                    .parse()
+                    .unwrap(),
+            },
+            owned_creation: ResourceFilePin {
+                path: "C:/private/creator".into(),
+                sha256: "2dcad61358578701be588d20b56787c0e169835d5329a5c760bdd662db2f857a"
+                    .parse()
+                    .unwrap(),
+            },
+            baseline_input: ResourceFilePin {
+                path: "C:/private/baseline".into(),
+                sha256: Sha256Digest::from_bytes([4; 32]),
+            },
+        }
+    }
+    let prior: Sha256Digest =
+        "e4cd63d26c1e5b8bbfd28c65cb04f5ab3946f57e5511d2cd09e125cdf46c4aca".parse()?;
+    let mut input = DenseInput {
+        candidate: source(Sha256Digest::from_bytes([5; 32])),
+        prior: source(prior),
+    };
+    dense_source_identity(&input)?;
+    input.candidate.graph.sha256 = prior;
+    assert!(dense_source_identity(&input).is_err());
+    input.candidate.graph.sha256 = Sha256Digest::from_bytes([5; 32]);
+    input.candidate.baseline_input.path = "C:/different".into();
+    assert!(dense_source_identity(&input).is_err());
+    input.candidate.baseline_input.path = "C:/private/baseline".into();
+    input.prior.owned_creation.sha256 = Sha256Digest::from_bytes([9; 32]);
+    assert!(dense_source_identity(&input).is_err());
     Ok(())
 }

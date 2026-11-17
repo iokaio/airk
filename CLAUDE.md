@@ -270,12 +270,13 @@ Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:
   merge, publication or deployment is authorized.
 - Current task: implement all steps of docs/arbiter/final-plan.md, authorized
   by the user on 15 November 2026. Execution T0 is recorded in the ledger;
-  target 24 hours and hard maximum 48 hours apply across sessions.
+  the updated 36-hour total deadline applies across sessions: 17 November 2026
+  at 17:29:42 UTC (10:29:42 a.m. America/Denver), with original T0 unchanged.
 - The final plan supersedes the old advanced-split execution deadline and
   campaign ordering. Preserve prior ledger entries as historical evidence.
-- For this authorized implementation, target 24 hours with a hard 48-hour
-  maximum from its recorded execution start. Use only this Windows machine and
-  Mac Neo. Deliver a Windows candidate first, then attempt all applicable
+- For this authorized implementation, the user superseded the original 24-hour
+  target/48-hour cap with 36 hours total from the recorded execution start. Use
+  only this Windows machine and Mac Neo. Deliver a Windows candidate first, then attempt all applicable
   supported-platform gates and report genuine blockers. No paid/cloud compute
   or cloud teachers.
 - Preserve the selected bundled MiniLM plus independent optional Focus

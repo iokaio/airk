@@ -30,6 +30,12 @@ impl FailureDetail {
             if writeln!(&mut output, "{position}: {cause}").is_err() {
                 break;
             }
+            if let Some(detail) =
+                airk_kernel::diagnostics::private_native_name_boundary_detail(cause)
+                && writeln!(&mut output, "  private: {detail}").is_err()
+            {
+                break;
+            }
         }
         Self {
             chain: output.text,
@@ -243,6 +249,29 @@ pub fn export_to(root: &Path, output: &mut impl Write) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn native_open_locator_is_captured_only_in_private_failure_detail() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let missing = owner
+            .path()
+            .canonicalize()?
+            .join("private-open-diagnostic-marker");
+        let error = airk_ingest::native_name_boundary::qualify(&missing, "", true).unwrap_err();
+        let native = error
+            .downcast_ref::<airk_ingest::native_name_boundary::NativeNameBoundaryUnavailable>()
+            .context("typed naming refusal lost")?;
+        assert_eq!(native.reason(), "ancestor_open");
+        assert!(!format!("{error:#}").contains("private-open-diagnostic-marker"));
+        assert!(!error.is::<std::io::Error>());
+        let detail = FailureDetail::capture(&error);
+        assert!(detail.chain.contains("private-open-diagnostic-marker"));
+        assert!(detail.chain.contains("native_code=Some("));
+        assert!(!detail.truncated);
+        assert!(!missing.exists());
+        Ok(())
+    }
+
     #[test]
     fn client_errors_share_retention_with_a_live_job_error_writer_and_require_no_job() -> Result<()>
     {

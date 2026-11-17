@@ -16,6 +16,17 @@ impl std::fmt::Display for IndexFailureStage {
 }
 impl std::error::Error for IndexFailureStage {}
 
+/// The owner-private raw log sink needs native open diagnostics without
+/// changing public error Display/source or adding a dependency back to Ingest.
+/// Never return this detail through a read/control/error wire response.
+pub fn private_native_name_boundary_detail(
+    cause: &(dyn std::error::Error + 'static),
+) -> Option<String> {
+    cause
+        .downcast_ref::<airk_ingest::native_name_boundary::NativeNameBoundaryUnavailable>()?
+        .private_open_detail()
+}
+
 pub fn indexing_failure_code(error: &anyhow::Error) -> Option<String> {
     let cause = airk_store::diagnostics::failure_code(error).or_else(|| {
         if error.is::<airk_store::blobs::MissingRetainedObject>() {

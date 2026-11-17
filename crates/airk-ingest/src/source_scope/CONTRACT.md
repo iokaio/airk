@@ -58,3 +58,14 @@ metadata still refuses with the actual failing locator and native error code.
 The focused verbatim-path regression loads an actual exclusion and confirms
 source and control bytes remain unchanged. No naming normalization substitutes
 a different source authority or changes policy/ignore precedence.
+
+Native naming-open refusals preserve their original reason, public Display/Debug
+and standard error source/downcast identity. Native syscall code, component class
+and ordinal, and the attempted locator are retained only as private error metadata.
+The diagnostic locator is an escaped UTF-8 prefix of at most 4096 bytes with an
+explicit truncation flag, never a reopened capture path. The existing Kernel-to-Host
+raw-error capture appends that metadata through its existing 8 KiB bounded/truncated
+private sink; public read/control/error projections gain
+no locator, field or changed refusal class. The no-follow flags, supported case-mode
+checks and missing-future-suffix handling remain unchanged. This diagnostic does not
+qualify a redirected or previously unsupported ancestor.

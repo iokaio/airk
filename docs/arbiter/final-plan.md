@@ -3,8 +3,8 @@
 Planning date: 15 November 2026 (America/Denver).
 Status: execution underway on feat/arbiter-final; all seven user decisions recorded.
 The original planning request authorized this runbook only. The user authorized
-implementation on 15 November 2026; public publication remains separately
-authorized. Current execution evidence and blockers are in section 10.
+implementation on 15 November 2026; public publication requires separate
+authorization. Current execution evidence and blockers are in section 10.
 
 This plan combines [knownissues.md](knownissues.md) and
 [weights-v2-plan.md](weights-v2-plan.md). It orders product repairs, reliable
@@ -31,7 +31,7 @@ D07 records the follow-up latency decision. No planning decision remains pending
 | ID | Decision | Answer/status | Dependent work |
 | --- | --- | --- | --- |
 | D01 | Delivery platforms and stopping point | APPROVED: Windows candidate first, then all supported-platform release gates; report genuine blockers. | Steps 15–18 |
-| D02 | Training/evaluation compute, elapsed-time cap and teachers | APPROVED: “Just use this machine and the Neo. Max duration for this work is 48 hours. Target is 24.” No paid/cloud compute or cloud teachers. Inventory: Threadripper PRO 5975WX, 32 physical cores, approximately 128 GiB RAM, NVIDIA RTX A6000; driver/free VRAM/training availability remain to verify. | Steps 7–14 |
+| D02 | Training/evaluation compute, elapsed-time cap and teachers | APPROVED: “Just use this machine and the Neo. Max duration for this work is 48 hours. Target is 24.” Execution update (16 November): the user sets a 36-hour total deadline from original T0, superseding the original 24-hour target/48-hour cap only. No paid/cloud compute or cloud teachers. Inventory: Threadripper PRO 5975WX, 32 physical cores, approximately 128 GiB RAM, NVIDIA RTX A6000; driver/free VRAM/training availability remain to verify. | Steps 7–14 |
 | D03 | Human-reviewed labels for unattended work | APPROVED: use suitable existing human-reviewed labels; finish other work and block only unsupported promotion when labels are missing. Agent judgments are not human gold. | Data acceptance, terminals and FINAL |
 | D04 | Shared-folder automatic agent-config editing | APPROVED: allow automatic edits only when the entire file and recovery path meet a reviewed safe policy; otherwise provide the complete manual entry. Token-free AIRK fields alone do not qualify a path. | Step 2 |
 | D05 | Context terminal-class contract extension | APPROVED: include the extension; leave Sufficient, Clarify and NoJustifiedRead unavailable unless each class's evidence passes. | Steps 2, 11, 13 |
@@ -71,8 +71,9 @@ D07 records the follow-up latency decision. No planning decision remains pending
    fabricated download URL or overwrite of an existing release is implied.
    GitHub-only availability remains disclosed.
 9. Keep the old advanced-split deadline as history. This plan cannot make a
-   missed deadline current or use it to waive gates. D02 supplies a 24-hour
-   execution target and 48-hour maximum; it does not alter correctness requirements.
+   missed deadline current or use it to waive gates. The user superseded the original
+   24-hour target/48-hour cap with a 36-hour total deadline on 16 November. T0 is unchanged;
+   correctness requirements and frozen per-run limits are unchanged.
 10. Public publication is a separate final action on concrete reviewed artifacts.
     Prepare artifacts, rights/source-map proofs and a readiness report first.
     Missing final upload authorization does not stop independent local work.
@@ -141,7 +142,7 @@ cheaply and correct the cause. A repeated failure requires a revised diagnosis
 and cheap regression before the next attempt. Never retry unchanged failed
 inputs, broaden limits, relax assertions, fabricate cleanup or tune on FINAL.
 
-A blocked branch does not block independent work. At D02's 48-hour cap, retain results
+A blocked branch does not block independent work. At the updated 36-hour total deadline, retain results
 and identify remaining work; do not promise scientific success or mark unmet
 release criteria complete. User silence is not an answer to a pending decision.
 
@@ -840,20 +841,22 @@ A packaged file without installed checks is a candidate, not a qualified release
    never stage private data or broad artifact directories. No PR.
 5. Deliver Windows artifacts first, then the platform/qualification report.
    Distinguish implementation, measured model gains, rejected experiments,
-   compilation, installed outcomes and public availability. If the 48-hour cap
-   arrives, stop new work, settle owned processes and hand off honest remaining
-   blockers; do not mark an unmet goal complete.
+   compilation, installed outcomes and public availability. If the user-updated
+   36-hour total deadline arrives, stop new work, settle owned processes and hand
+   off honest remaining blockers; do not mark an unmet goal complete.
 6. Only after concrete artifacts and all required release gates are ready may
    public publication be proposed for separate approval. Do not request a
    blanket release approval during this planning task.
 
 ## 5. Time budget and unattended scheduling
 
-The user selected a **24-hour target and 48-hour maximum for the work**, using
-only this Windows machine and Mac Neo. At execution start, record T0 in UTC and
-America/Denver plus exact T0+24h/T0+48h timestamps. The cap applies to the
-implementation campaign, not just GPU training. Do not borrow elapsed time
-from a fresh session or reset the clock after a failed run.
+The original planning allocation was 24 hours with a 48-hour maximum. During
+execution on 16 November, the user sets a **36-hour total deadline**, with quality
+prioritized, using the same Windows machine and Mac Neo. Original T0 remains
+2026-11-16T05:29:42.2081757Z; the new deadline is 2026-11-17T17:29:42.2081757Z
+(17 November at 10:29:42 America/Denver). This supersedes the old campaign timing,
+not frozen acceptance rules or per-run limits. The clock never restarts.
+The early rows below remain original scheduling targets, not completed outcomes.
 
 | Elapsed target | Main outcome | Parallel independent work |
 | --- | --- | --- |
@@ -863,17 +866,19 @@ from a fresh session or reset the clock after a failed run.
 | 12–15h | Finalist seeds and exact artifact/resource freeze | Windows candidate checks and maintained qualification harnesses |
 | 15–20h | CAL, fit, composed and held-out runs that fit their frozen caps | Documentation and available noncompeting platform preparation |
 | 20–24h | Windows delivery, integrated gates and status at target | Report remaining qualification blockers and justified extension work |
-| 24–44h, if needed | Only remaining acceptance criteria, diagnosed repairs and required validation | No optional new research branch |
-| 44–48h | Finish already justified bounded checks, packaging, settlement and handoff | No new long experiment; reserve time for an honest final report |
+| 24–32h, updated | Remaining acceptance criteria, diagnosed repairs and required validation | No optional new research branch |
+| 32–36h, updated | Complete justified bounded gates, packaging, settlement and review handoff | Reserve time to report every unmet criterion honestly |
 
 These are scheduling targets, not claims that a six-hour CAL allowance or human
 labeling fits automatically. Before each long run, estimate measured duration
 plus recovery/settlement and confirm it fits both its own protocol and remaining
-campaign time. Review the entire inventory at least every four hours.
+campaign time. Review the entire inventory at least every four hours. Every
+two hours ask: am I completing final-plan.md, or getting sidetracked? Report
+actual progress against the plan and the next critical outcomes to the user.
 
 At hour 12, stop optional exploration if it threatens core export/qualification.
 At hour 24, continue unattended toward unfulfilled acceptance criteria within
-the authorized 48 hours; no new permission is needed merely for the extension.
+the updated 36-hour total deadline; the user has already authorized this extension.
 Missing human labels, unavailable hosts or a failing profile cause a local
 blocker and continued independent work, not a weaker claim.
 
@@ -1013,35 +1018,37 @@ This handoff updates branch/instruction state without starting implementation.
 ## 10. Current execution outcomes
 
 Execution started 15 November 2026 at 22:29:42 America/Denver
-(2026-11-16T05:29:42.2081757Z). The 24-hour target and 48-hour hard cap remain
-16 and 17 November at 22:29:42 Denver. The
+(2026-11-16T05:29:42.2081757Z). The user sets a 36-hour total deadline from original
+T0: 17 November 2026 at 10:29:42 America/Denver (17:29:42 UTC). The
 [existing ledger](../simplify/one-process-ledger.md) retains exact commands,
 source/artifact identities, failed attempts, test counts and private receipt
 paths. This table reports current state; it grants no missing qualification.
-The current matched Windows runtime is the 6c241079 R2 build (C7 f435/1937);
-earlier 1933a393/dda749cb checks and later optimized diagnostics retain their
-original source/artifact identities.
+The delivered signed Windows R3 candidate is the c547e654 build (C7 a8d7983b/1941).
+Model results retain their native 198f and 5d37 source/image identities and original
+build ancestry. Current R154 repair source c9fe has full-workspace Clippy/build and
+ten focused control passes, without a corrected actual Answer yet. Earlier R2 and
+later diagnostics retain their identities; no artifact is retagged as another.
 
 | Step | Status | Observed outcome and remaining work |
 | --- | --- | --- |
 | 1 | passed | Clean starting source/branch/contributor recorded; human Windows identity verified; existing human-owned warm target audited; issue/input/platform inventory retained. Foreign and unreadable inputs preserved. |
 | 2 | passed | D04 manual/refusal, D05 terminal /2 and D06 budget/resource contracts and Rust-owned fixtures are implemented. Core367/367 and subsequent current/historical policy controls pass; generated consumers match. This freezes semantics, not model fit or promotion. Original owner/ACL and historical fixtures remain preserved. |
 | 3 | in_progress | Rust-owned manual configuration, whole-file shared-parent refusal, eleven tokenless harness migrations and per-session status repair are implemented. Current c547 genesis-only bootstrap repair preserves authority refusals and passes its actual genesis0/configured1 regression. Rebuilt R3 unsigned client/model preflight passes139.120s; actual signed R3 preflight passes144.210s, including cold sequential/concurrent scoped reads. Signed service StopComplete is observed; parent-owned service HANDLE exit0 is not recorded. Earlier failed signed reads and diagnostics remain retained. |
-| 4 | in_progress | Original-attempt preservation and metadata/cancellation regressions pass. Default 8192/120 and Rust-generated 125s delivery timeout are applied. Native census records all 126 requests with 0 refusals: 121 shrink/5 grow, compact 643–1088 tokens, original 595–2027, all fit 2048. Exact failed R154 observer remains inaccessible; original question, manifest and 753 source files are verified unchanged. A separately identified fresh-runtime diagnostic is prepared. Current R2 transport comparisons pass; neither an exact failed-observer replay nor successful 8192-token Context inference is claimed. |
-| 5 | passed | Task-oriented Service/Agents, complete canonical manual Copy, twelve-icon rail/titles and compact Plus-menu Workbench composer are implemented. Sealed candidate R3 retains65/65 DOM passes and exact compiled bytes. Actual signed R3 Workbench passes16 full comparisons/two Answer routes; Admin passes8 full comparisons,24 navigation/all12 title/icon and wide/narrow checks. Both native processes complete Stop with original HANDLE exit0; Edge closes naturally and clipboard is restored. Ten complete200 responses of48 issued support comparisons;38 observation gaps add no coverage. Installed native Workbench remains a separate Step17 gate. |
-| 6 | in_progress | Original acquisition failure remains failed; the independent 23-asset byte census is retained. Repaired actual 16GB Large finalization and restart cached verification pass 1/1 with responsive Health, preserved cancellation/I/O/lease custody, joined work and exclusive lease reacquisition. Current R2 public Focus R5 reaches import/cached Provision/load, stale Configure refusal, actual four-of-eight ranking, enrollment isolation, Disable/Unenroll/Remove and Stop/PID exit0. R5 whole journey remains failed. The separately identified corrective retained-state R4 restart passes (8.821s child/12.277s outer): disabled/MissingAssets persist, A/B complete hybrid MiniLM reads preserve publication/public scope, new authority epochs are retained, and actual Stop/handle exit0/natural Job settlement pass with 910 unchanged postpins. No I4, all-three public Provision, resource, quality or CAL qualification follows. |
+| 4 | in_progress | Default 8192/120 and Rust-generated 125-second delivery are applied; the 126-request tokenizer census retains all cards with zero refusals. Compact full-8192 numerical/resource passes are separate evidence. Fresh R154 R3 reaches Ready/index success, then fails the native readable-membership emitter before warm/Answer. Diagnosis identifies two valid Project memberships (automatic U103 plus explicit grant). The contract-first correction selects the exact native grant and validates source/membership; all ten focused controls pass and old unselected ambiguity still refuses. Corrected actual warm/Answer remains unrun. Earlier canonical Stop, original HANDLE exit 0 and closed/lease proof remain separate from the failed route. The exact old observer is inaccessible; no exact replay or composed qualification is claimed. |
+| 5 | passed | Task-oriented Service/Agents, canonical manual Copy, twelve-icon navigation and the compact Workbench composer are implemented. Signed R3 Workbench retains sixteen full comparisons/two Answer routes; Admin retains eight full comparisons and wide/narrow navigation/title/icon checks. Both native processes have Stop/original HANDLE exit 0 proof. Real Code 1.146.0 activates the production R3 VSIX installed in a private profile and passes Explorer singleton/close-reopen/same-version CSS handoff in 8.109072s. Code parent exits 0 and a later CIM snapshot finds no Code using that private profile; no all-descendant HANDLE proof or native I4 claim follows. Historical observation gaps remain uncounted. |
+| 6 | in_progress | The original acquisition failure remains failed; the independent 23-asset census and repaired Large finalization/cached verification passes are retained. Public Focus R7 now passes its complete isolated U93 journey in 82.614s: Provision/Import, scoring, removal, explicit restart, A/B MiniLM reads, two actual Stops and original HANDLE exit 0. Both native and owned-runtime receipts pass. Earlier R4/R5 failures remain historical. This proves the exercised public Focus lifecycle, not modern I4, all-three public Context availability, task quality, CAL or release qualification. |
 | 7 | in_progress | The earlier identified matched-runtime baseline captures 27/27 lexical/vector/hybrid results across nine original queries with actual Stop/PID exit. Eighteen vector/hybrid verification receipts remain partial under the original source budget. Exact/ANN same-vector diagnostics accept the current canonical singleton without weakening scope/source fences; scoped Clippy, six ANN and five human-visibility controls pass. Genuine native pins and the nine-query comparison retain exactly nine uncached forwards, exact/ANN order agreement on all ten live vectors, natural exit/empty Job and original 120s/8GiB bounds. Population equals k10; no quality or scale improvement is claimed. Later optimized CoSQA visibility has its own offline source/image identity, not Debug product p95 evidence. |
 | 8 | in_progress | Public human labels are acquired and audited: CoSQA/CodeSearchNet joins 1,955 judged pairs across 38 repository families; ContextBench retains 150 source-complete multifile TRAIN cases; original TechQA provenance leaves 290 positive pairs/254 documents, only fifteen complete original menus. After two failed Debug censuses, the optimized full 1,955-row census passes 34.137539s under unchanged 120s/4GiB bounds, retaining 16,386 native units across 316 files. Only 21 strict whole-input MiniLM matches (five functions/four repositories) pass visibility; 1,934 stay unknown. Focus fits 1,953 original full-function pairs with two positive overflows; within the supported private rights scope, 1,867 pairs fit (932 positive/935 negative, 37 repositories/437 functions). Eighty-six unknown-rights rows remain unknown. These are visibility/fit observations, not semantic training admission. Other native mappings, splits/clones/chronology, pre-score sample/power freeze and exact label-scope acceptance remain unresolved; unknown pairs are not negatives. |
 | 9 | blocked | M1 gradients depend on Step8 acceptance. Original MiniLM weights remain in use; no adaptation or measured gain is claimed. |
 | 10 | blocked | Software F1/F2 training depends on Step8 acceptance. Original Focus full512-token numerical checks and20-sample resource measurement now pass component gates; p95 is2.116398s and peak Job committed memory is below4GiB. These are not task-quality, composed latency, CAL or promotion evidence. |
 | 11 | blocked | Terminal /2 contracts, global-winner/no-fallback behavior and per-class refusal fixtures pass native checks. Training and terminal promotion remain blocked by unresolved Step8 data/rights/split/label-scope acceptance and exact CAL/confirmation; terminal classes stay unavailable. |
-| 12 | in_progress | Original Focus numerical/20-sample component gates pass under retained identities, p95=2.116398s. Original Compact/Large eager8192 runs remain120s failures. The Compact GQA rewrite preserves weights/compiler and passes structural plus actual synthetic17/8192 gates. Two optimized-save diagnostics fail16GiB during load; source review shows that mode retains initializers differently. The production-retention profiling-only diagnostic now passes119.223s whole: load15.387s, full8192/N8 score84.449s, raw error0.000190735/mass0.000017567/argmax retained, peak RSS15,093,829,632B and Job15,103,348,736B below16GiB, all28 CPU layers/three allocated outputs verified. This is one numerical diagnostic, not p95/task/CAL qualification. Full current-graph same-artifact numerical references,20-sample resource measurement and a bounded Large GQA attempt remain pending. |
+| 12 | in_progress | Focus and Compact retain their separate numerical/resource component passes; Compact formal 17/128/8192 checks have maximum raw error 0.000190735 and 20-sample p95 86.049136s below 120s/16GiB. Large Flash remains numerically refused at 0.001331329 > 0.001. The separate Dense graph-only transformation passes; native NN0 metadata/template emission and six tiny 17/128 controls also pass, with maximum error 8.34465e-7. Full Dense 8192 fails in 191.893830s: load returns in 39.093627s but score does not return within its original 120s; the watchdog terminates owned PID 58052, exit 77, with settled handles/empty Job/no drift. Peak RSS 33,826,385,920B and Job 33,872,953,344B remain below 40GiB. No Dense numerical result, Large qualification or extra Large branch is claimed. Task/CAL/composed/promotion gates remain separate. |
 | 13 | blocked | Exact-artifact CAL/confirmation and composed qualification require the unresolved baseline/profile/data gates. |
 | 14 | blocked | No current held-out promotion comparison is admitted; consumed historical FINAL populations stay evaluation-only. |
 | 15 | blocked | Exactly-three qualified optional profiles, rights/source maps and genuine final publication capture are unavailable. Final-series refusal gates remain strict. |
-| 16 | in_progress | Windows native6ad5 full restored-filter Nextest executes4806:4783pass/23fail; all23 inherited-GIT_PAGER fixture failures subsequently pass in a separate56/56 controlled environment run. Original batch remains failed. Doctest command passes19suites/0cases. Current reviewed eleven-file native198f section passes scoped Clippy44.909s, wholeworkspace allfeature build372.091s and78/78 focused regressions16.908s. A prior build fails OS1455 paging/commit exhaustion; invocation-only jobs2 resolves it without target clean or policy change. Mac f5 fullworkspace Clippy passes170.184s and11 observer controls pass; exact replacement fails ENOENT after verified Stop, then independent remaining tests execute273pass/1failed refresh/3ignored with known replacement explicitly filtered. Current diagnostic seams preserve missing-path context and failed-job raw logs; causal repairs and current full/platform gates remain open. Linux verified-human execution and occupied Windows I4 namespace remain blockers. |
-| 17 | in_progress | Version1.8.207 is synchronized. Current c547 R3 matched runtime passes real unsigned and signed16-file/model preflights (139.120s/144.210s). R3 universal VSIX is packaged and copied with complete byte/dependency proof. Current EXE and native ZIP signatures and all846 runtime archive members verify; data-only installer extraction matches844 payload files, including eleven research companions/original TechQA PDF. Fresh local installer/native/VSIX delivery files are complete, with Root independently rechecking all seven EXE/ZIP companion hashes and the installer signature. No activation occurs. Actual user1.8.206 installation/configuration are preserved. No I4 installed journey, qualified final-series release or publication is claimed. |
-| 18 | in_progress | Local DCO milestones1933a393,dda749cb,6c241079,c547e654,f5f9dcec record reviewed implementation under exact source/artifact identities. Signed c547 R3 Windows delivery, legal bundle and UI/client checks pass. Current native198f eleven-file Large diagnostic and Mac failure-observation section passes scoped Clippy/build/78 focused cases and awaits its local DCO milestone. Actual Compact8192 numerical diagnostic passes under earlier6ad5; resource20/current-artifact references, Large forward, composed Answer, data/CAL, current integrated and installed/platform qualification remain open. No push or publication is authorized. |
+| 16 | in_progress | The old Windows full 6ad5 test batch remains failed; its 23 GIT_PAGER cases later pass separately. Doctests retain nineteen suites/zero cases. Native 5d37 passes full-workspace all-feature no-run build in 432.523835s and 41/41 focused tests in 7.913540s (0.263s tests). New c9fe passes whole-workspace all-target/all-feature Clippy in 85.696478s, no-run build in 29.518880s and 10/10 private-emitter controls in 2.725886s (0.187s tests). No current full test-suite pass follows. Mac 59580fa6 replacement passes 1/1; refresh fails 1/1 with the retained ancestor_open chain and unknown errno/path. Linux identity is now verified in explicit WSL Ubuntu as human tyler / UID 1000, matching DefaultUid and human HKCU; user-space toolchain provisioning is pending and existing root distros are unused. Platform, installed and occupied Windows I4 gates remain open. |
+| 17 | in_progress | Version 1.8.207 and the signed c547 R3 EXE/native ZIP/VSIX delivery retain their verified byte, signature, notices and client/UI proofs. Real Code 1.146.0 production VSIX Explorer activation/close-reopen/CSS checks pass on a private profile in 8.109072s; native_execution is false. Code parent exit 0 and a private-profile CIM observation are retained without claiming every descendant HANDLE. No native production activation or I4 installed journey follows. The user's 1.8.206 installation/configuration remain preserved; no qualified final-series release or publication is claimed. |
+| 18 | in_progress | Existing local DCO milestones and signed c547 R3 delivery keep their identities. Native 5d37 build/41 controls and c9fe whole-workspace Clippy/build/10 private-emitter controls pass in their exact scopes. Public Focus, Compact components and real Explorer passes remain distinct from Large Dense timeout, corrected R154 warm/Answer not yet run, Mac causal diagnosis, data/CAL and remaining full/platform/installed gates. Linux identity is verified; toolchain work remains. The 36-hour deadline and 00:35 UTC next self-check are unchanged. No new step is marked passed, and no push/publication is authorized. |
 
 The user approved reviewed in-scope tracked-file content edits while preserving
 existing ownership and ACLs. This resolves the source-edit constraint and does
@@ -1059,12 +1066,12 @@ and synchronized once across the four native/extension manifest/lock owners.
 | Original issue | Current disposition and evidence limit |
 | --- | --- |
 | Unqualified optional profiles | Retained unqualified; no training/promotion without accepted labels and exact native CAL/confirmation/resource/composed evidence. |
-| GitHub-only model source | Retained by D02/source-map decision. All 23 logical assets and the independent 24,130,010,313-byte census are retained; the original acquisition run remains failed. Post-fix actual Large finalization/cached verification passes, and current Focus import/cache/load/ranking/lifecycle components are observed. Compact/Large 8192-token numeric operations return two rows then fail their original 120s deadlines. No qualified all-three public catalog or new Context URL/publication is invented. |
+| GitHub-only model source | Original release assets and the independent 23-asset census remain intact. Public Focus R7 and repaired Large finalization/cache components pass. Private Compact 8192 numerical/resource checks pass. Historical eager failures, Large Flash numerical refusal and Large Dense score timeout remain failed. No qualified all-three public catalog or new Context URL/publication is invented. |
 | Pre-1.9 local-test admission | Retained as a disclosed local candidate mechanism; final-series/native publication gates stay strict. Current terminal source changes require new Context metadata and invalidate old policy identities. |
 | Missing qualified publication capture | Blocked by absent qualified three-profile catalog. No synthetic capture or fabricated public URL is substituted. |
-| Larger default/client timeout chain | Native default8192/120000 and Rust-emitted125000ms delivery chain pass literal/refusal and transport cases. Current signed c547 R3 cold sequential/concurrent reads pass after bounded genesis publication repair. Compact profiling-only/2 actual full8192/N8 passes84.449s score/119.223s whole under6ad5. Earlier eager Context120s failures remain failed; no p95, task, CAL or composed latency qualification follows from this single diagnostic. |
-| R154 Answer timeout | Exact failed observer remains inaccessible. Original-attempt clipping repairs and current R2 transport/Stop probes pass, while the original question/manifest/753 source files remain unchanged. A separate fresh-runtime diagnostic is prepared; no exact failed-observer replay or repair by extending its allowance is claimed. |
+| Larger default/client timeout chain | Native defaults 8192/120000 and the Rust-emitted 125000ms delivery chain pass literal/refusal and transport cases. Signed c547 R3 cold reads pass after the bounded genesis repair. Compact now has formal 17/128/8192 numerical and 20-sample resource passes, including p95 86.049136s. Those component results do not establish task quality, CAL or composed Answer latency. |
+| R154 Answer timeout | The exact failed observer stays inaccessible. Fresh R3 reaches Ready/index success but fails the readable-membership emitter before warm/Answer; its shutdown/lease/original HANDLE proof is separate. Two valid Project memberships are now diagnosed and the exact-grant correction passes ten controls, preserving unselected ambiguity refusal. No corrected actual Answer, exact replay or extended-allowance repair is claimed. |
 | Context prompt fit | Complete native126-request census passes with121 shrinks/5growths/0refusals, all within original2048. The original shrink-only test remains failed. This does not qualify new8192 graphs or reconstruct missing R154 bytes. |
 | Historical accepted failures/90% threshold | Superseded by this plan; no acceptance waiver. Native private-boundary tests pass under verified human identity; config49/49 pass with only disposable fixture GIT_PAGER removed. Other reported failure classes are repaired or awaiting current grouped native checks. |
 | Completion criterion wording | Frozen gate is at least.75 completion, at most.02 completion regression, and at least.10 paired common-success external-turn reduction. Historical '.02 gain' prose is not the acceptance rule. |
-| Platforms and installed artifacts | Signed c547 R3 EXE/nativeZIP/VSIX delivery, client preflights and signed UI comparisons pass under exact retained identities. Current Windows native198f build/78 focused regressions pass; prior6ad5 full test batch has a separately passing56-case environment follow-up, not a retrospective full-green claim. Mac f5 full Clippy/observer controls pass while exact replacement and first Lean refresh remain failed and queued for diagnostic evidence. Linux human execution and occupied actual Windows I4 namespace remain blockers. No installed/cross-platform/final-release qualification is claimed. |
+| Platforms and installed artifacts | Signed c547 R3 delivery/client/UI proofs and real private Code 1.146.0 Explorer checks are retained; native I4 is not exercised. Native 5d37 build/41 focused tests and c9fe whole-workspace Clippy/build/10 controls pass, without a current full test-suite claim. Mac replacement passes while refresh/errno/path diagnosis remain open. Explicit WSL Ubuntu human tyler / UID 1000 is verified; Rust toolchain provisioning is pending. Existing root distros are unused, and the actual Windows I4 namespace remains occupied. No cross-platform/final-release qualification is claimed. |
