@@ -6800,3 +6800,57 @@ an embedded current runtime or real transport pass. Base README, documentation
 index, historical1.9 release note and extension Marketplace text remain accurate
 for source1.8.207 and unqualified1.9 work. The Arbiter README documents native
 model/device/precision controls while preserving its research-notice tail.
+
+### 2026-11-17 08:35Z — Critical-path review and current CPU runtime
+
+Local DCO milestones are85c1b4c7 (Mac alias) andc02643ad (device/runtime
+foundations); the reviewed source checkpoint is clean before the next correction.
+R6 matched CPU pair builds222.984135s and its actual16-file/MiniLM client
+preflight passes117.575521s. Native StopComplete is reported; original service
+HANDLE exit is not observed. Receipts E/windows-runtime-debug-r6-build-r1.json
+and E/windows-runtime-debug-r6-preflight-r1.json retain unchanged source/runtime
+inputs. This is current CPU/canonical-client evidence, not GPU execution.
+
+CPU local feature Clippy passes55.531990s. No-inference matrix finds one unused
+internal Readiness.reason field; its existing inference-only consumer boundary
+now controls that internal field/assignment. Public status reasons are unchanged.
+Scoped no-inference Service Clippy passes5.450587s; the original failed batch
+remains E/gpu-no-inference-feature-clippy-r1.json. No lint is suppressed.
+
+CUDA R12 reaches its original08:27:32Z cutoff with attention kernels remaining.
+Its core command settles naturally; ALL exits77 with timeout/forced termination,
+then actual final Job count0. The failed receipt SHA is
+3a4c18932dbafbcc719cb77b30f616372b220cc315a1acdba82df24a9734c026.
+The warm outputs remain unqualified. A revised plan splits the remaining Flash,
+LLM and final closure targets into separately fixed-bound sections; it does not
+reset the old cutoff or claim a cold three-hour build pass. Native model120-second
+and quality gates are unchanged. No GPU model has run.
+
+The explicit self-question is retained in
+E/critical-path-selfcheck-20261117T0835Z.json: preparation consumed too much time;
+first native FP32, then efficient FP16 remain critical. Necessary G3 eligibility/
+public provenance and G4 scoped diagnostics are under source review; two G4
+absence/selection-consistency findings are being corrected before application.
+No new data acquisition, old-candidate packaging or CPU attention experiment is
+started. Counts remain2 passed/10 in_progress/6 blocked. Next10:35Z review;
+deadline remains2026-11-19T05:29:42.2081757Z. The plan is incomplete.
+
+### 2026-11-17 — Checkpointed CUDA work and no-inference correction
+
+The no-inference Readiness field/assignment cfg correction passes scoped Service
+Clippy in E/gpu-no-inference-feature-clippy-r2.json (5.450587s). Format, repository
+checks (3572 public files) and whitespace pass. This does not extend GPU evidence.
+
+Root reviews first Flash checkpoint runner b382a216 and input68a5f310 against
+approved target plan6bee6b8b. The first outer launch fails before native work
+because its compiler-scrubbed environment cannot find pwsh. The failed naturally
+settled outer receipt is preserved at Canchor/cu8-checkpoint-flash-outer-r1.
+The corrected fresh outer-r2 uses the verified human tool environment; the
+inner compiler environment is unchanged. Actual Flash target compilation starts
+under one fixed10800s outer bound and the existing campaign cutoff. No GPU model
+has run, no checkpoint section has passed yet, and R12 remains failed.
+
+D: has432.25GiB free at this checkpoint. Preserve warm Windows outputs; the
+previous22.170GiB Windows cleanup and separate4.036GiB Mac cleanup remain the
+observed recovery evidence. G3 eligibility and G4 diagnostics remain private
+source review; no applied/tested capability is inferred from their proposals.

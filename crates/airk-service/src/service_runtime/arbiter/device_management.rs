@@ -36,6 +36,7 @@ pub(in crate::service_runtime) fn current_request(request: &ManagementRequest) -
 }
 pub(super) struct Readiness {
     pub availability: Availability,
+    #[cfg(feature = "local-inference")]
     pub reason: String,
 }
 #[cfg(feature = "local-inference")]
@@ -280,6 +281,7 @@ impl StageOwner {
         let status = self.status()?;
         Ok(Readiness {
             availability: status.availability,
+            #[cfg(feature = "local-inference")]
             reason: status.reason,
         })
     }
