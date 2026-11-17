@@ -131,7 +131,7 @@ target directory and incremental setting. Preserve original failed attempts.
 
 | Owner | Files/outcome | Scheduling rule |
 | --- | --- | --- |
-| Primary/native integration | Ledger, contracts, shared Rust owners, runtime custody, final review and all Cargo processes | One Cargo owner, including remote batches; explicitly hand off only after compiler descendants exit. |
+| Primary/native integration | Ledger, contracts, shared Rust owners, runtime custody, final review and all Cargo processes | One Cargo owner per host/target; Windows and Mac Neo may build concurrently. Hand off each target only after its compiler descendants exit. |
 | Transport/config | airkctl agent configuration and I2, open-read adapters, affected harnesses and real-transport tests | Contract decisions first; coordinate shared Core/Service edits with primary. |
 | UI | Explorer/Admin Service, Agents and rail, generated consumers, behavior tests and Help | Can implement against frozen Rust fixtures while native work proceeds; do not handwrite DTOs/config builders. |
 | Data/evaluation | Rights, splits, labels, native alignment, rubrics, evaluator and untouched FINAL reservation | Keep scoring/labels independent of model implementation; honor D03. |
@@ -1356,7 +1356,7 @@ is authorized by D08.
 Execution order now: retain and settle current owned work; G1 plus a cheap CUDA
 dependency/graph probe; implement reviewed G2/G3; run grouped G4 gates and package
 only if they pass. Nonconflicting CPU/Linux/Mac repairs continue, with one Cargo
-owner and one GPU-heavy job at a time. The R154 fresh CPU route retains its
+owner per host/target and one GPU-heavy job at a time. The R154 fresh CPU route retains its
 original fixture identity; it is not retrospectively a GPU comparison.
 
 The user-approved72-hour deadline is2026-11-19T05:29:42Z. At the dual-precision

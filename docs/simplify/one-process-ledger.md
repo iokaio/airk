@@ -7463,3 +7463,61 @@ untracked-file whitespace check had not covered. Corrected only that trailing
 blank line; assertions and test identities are unchanged. Prior test/source-map
 receipts retain their pre-whitespace identities. Final staged and committed
 whitespace checks are rerun explicitly; no model or test replay is needed.
+
+### 2026-11-17 15:46Z — Resume, access repair, checked execution and parallel owners
+
+Resume verifies effective TYAI\tdotn, token default owner and current-session
+Explorer/interactive logon SID S-1-5-21-3678370870-3858642417-826968105-1002.
+AIRK remains bound to this checkout/publication587; live bytes govern edits.
+TRAIN09b0d14d and custody2d02dbac retain their exact hashes. Independent Focus
+comparison review passes13/13 pure controls and authenticates all three retained
+checkpoint files; actual comparison remains pending.
+
+The user explicitly requests repair of the four inaccessible historical fixture
+output trees under artifacts/v190/final-plan/exec-20261116T052942Z/
+platform-batch-preparation-r1/controls-r1/fixtures/{unknown,success-and-copy,
+signaled,failed-and-copy}/output. All roots already have human ownership, but
+protected DACLs grant only SYSTEM and Administrators. Set-Acl fails for missing
+SeSecurityPrivilege. Same-user icacls /grant *SID1002:(OI)(CI)F /T /L succeeds
+on the four exact trees, preserving other entries and contents. Complete audit
+opens all29 files and checks18 descendant directories, with no foreign owners
+or reparse points. No file content, historical receipt or ownership was changed.
+This is the user's specific access repair, not general ACL-workaround authority.
+
+Maintained read-only guard scripts/dev/assert-human-execution.ps1 and its tests
+are implemented and independently reviewed. Primary catches access-error and
+OWNER RIGHTS deny gaps before use; corrected37/37 controls pass3.752s including
+live human/source audit. Guard SHA094603c693f9a51a4fe4a6e1302fd505ac01bc25c231996df1374de73bb77404.
+New files are SID1002-owned. The helper checks effective/default/interactive
+identity, local path/reparse boundaries, parent owner/inherited policy and output
+owner; callers still enumerate outputs and preserve child tokens. It is not
+atomic path confinement or a general Windows Authz evaluator.
+
+The user authorizes one Cargo owner per host/target, allowing separate Windows
+and Mac Neo batches concurrently. Shared target/ remains single-owner and warm;
+no extra cold Windows target is created. Independent script tests/preparation
+run concurrently; measured GPU latency/memory runs remain isolated. Active lanes:
+maintained first FP32 component runner, Focus comparison, FP16 readiness and
+platform gate inventory. No new native build or model run yet in this resume.
+
+### 2026-11-17 15:50Z — First Focus comparison preserves teardown failure
+
+Fresh comparison plan b6c5b3ed43a5a1ec5633a6dd9e6d810ede50ecdaad18eb9adf768510c73d5129
+is prepared with the maintained owner from authentic TRAIN09b0/custody2d02.
+Primary and independent reviews authenticate all13309 input seals,43 execution
+sources and fixed85DEV+45replay for both arms. Original600s/16GiB host/8GiB CUDA
+bounds and no-site/nonwriting bootstrap remain unchanged. Output preflight and
+postcreation audits use the reviewed human guard.
+
+Actual comparison completes original130/130 forwards but fails its strict model
+teardown/allocator-return check before the adapted arm. No quality comparison
+is claimed. OriginalPID19168 exits1 naturally, no timeout or force, empty original
+Job and retained HANDLE exit1;45.4870785s, host peak8240250880B, final input/source
+hash failures0. E/f2-comparison-plan-preparation-r1/comparison-execution/execution.json
+SHAb8727a9ac243c331193de031375a2103144f20e32d535bf315dad7504b186a7f;
+worker result SHAb7609d950dc796d28dbc2c59993cebef07fa7bd92606a41575779fead61f820f.
+This exposes missing partial-arm/teardown-fact retention on error; investigate
+cheaply and retain the failed receipt before a fresh reviewed run. Do not relax
+weakref collection or exact allocator-return assertions. All outputs are human-owned.
+Repository checks pass3643 public files; whitespace passes. No native/Cargo
+build has run in this resumed batch; Mac script tests proceed independently.

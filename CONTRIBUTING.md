@@ -43,6 +43,25 @@ Install Git, Rust as pinned in [rust-toolchain.toml](rust-toolchain.toml), nativ
 
 For the native Mac workflow and architecture-specific release steps, see [the macOS build guide](docs/macos-build.md). For the app and extension together, see [Windows build/review](docs/windows-local-build.md). Extension development also needs Node.js 24.15.0/npm; use `npm ci --ignore-scripts --no-audit --no-fund --prefix packages/vscode` and `npm test --prefix packages/vscode`. `npm run compile` compiles the host modules with `tsc`, typechecks the AIRK Explorer webview (`tsconfig.webview.json`) and the Explorer Assistance MCP server (`tsconfig.assistance.json`), and bundles them with the pinned esbuild into flat `out/explorerWebview.js`/`.css` and `out/explorerAssistance.js` files. The optional Explorer adapter bundle may load Node built-ins only. The native unified MCP catalog snapshots its strict UI schemas in crates/airk-mcp/src/unified_explorer.json; the offline template catalog in `crates/airk-mcp/src/explorer_templates.json` also embeds the extension version. After an intentional adapter schema or package version change, compile the TypeScript modules first, then regenerate with `node packages/vscode/scripts/build-explorer.cjs --write-mcp-catalog` and review the diff. Normal compilation rejects drift. Strategies prompt and plan output is checked against golden files in `packages/vscode/src/test/fixtures/explorer/`; after an intended output change, run the test once with `AIRK_UPDATE_GOLDEN=1` and review the diff before committing. esbuild works without install scripts through its locked optional platform packages. New host modules must be added to the `MODULES` list in `scripts/package-extension.py` (paths below `out/`, including `airkctl/...`), and new bundles to `BUNDLES`. Import index modules by name (`./airkctl/index`), not by directory: the packager applies the isolated update loader's `x`, `x.js`, `x.json` resolution rule and refuses anything else.
 
+### Checked Windows execution
+
+For the same-user campaign execution rule, dot-source
+`scripts/dev/assert-human-execution.ps1` in the verified human shell. Call
+`Assert-AirkHumanExecution -ExpectedSid <human-SID>` to verify the effective
+user, default owner and current-session Explorer owner. Before each write, call
+`Assert-AirkOutputParent -Path <absolute-output> -Root <approved-root> -ExpectedSid <human-SID>`;
+then audit each output with `Assert-AirkCreatedOutput` using the same arguments
+before consuming it. Create and audit missing parents one level at a time.
+Include child-process outputs and caches. The helper is read-only and refuses
+foreign owners, ambiguous paths and unsupported access policies; it does not
+repair permissions, confine processes atomically or enumerate outputs for you.
+Run its focused controls with `pwsh -NoProfile -File scripts/tests/test-human-execution.ps1`.
+
+Assign one Cargo owner per host and target directory. Windows and Mac Neo may
+build concurrently with separate targets; never share a target between concurrent
+owners. Reuse warm targets. Independent tests with isolated state can run in
+parallel, while resource/latency qualification retains its prescribed isolation.
+
 ### Local product builds (split, Windows)
 
 The split products are built locally, before CI, by three wrappers (split plan §10.5.1, U21/U37). Each requires `-ForceBuild`, writes a fresh timestamped folder under `artifacts/` (never reusing an earlier artifact; the Cargo target and npm caches are still reused), stops at the first failing step with a non-zero exit, prints the produced file and its receipt, and never installs, starts, trusts or publishes anything:

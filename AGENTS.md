@@ -211,7 +211,7 @@ Tests:
 
 Primary development host: Windows with PowerShell (`pwsh`); commands use PowerShell quoting and repository-relative paths except Mac Neo commands, whose shell is specified in Current work.
 
-- One Cargo owner at a time, covering builds and platform batches. Verify compiler descendants have exited before handing off.
+- One Cargo owner per host and target directory at a time. Windows and Mac Neo may build concurrently on their separate targets. Verify compiler descendants have exited before handing off a target; never share a target between concurrent owners.
 - Reuse the persistent checkout target or the existing isolated target (see Current work). Do not routinely `cargo clean` or replace warm targets on Windows; rebuilding them is slow.
 - Development incremental defaults: on for Windows, off elsewhere. Do not change release or CI policy to match local iteration.
 - Keep Cargo `--timings` for necessary builds and Clippy.
@@ -220,7 +220,7 @@ Primary development host: Windows with PowerShell (`pwsh`); commands use PowerSh
 
 ## Parallel agents
 
-Use them when independent investigation, implementation or review helps. Give each clear file ownership and acceptance criteria. The primary agent reviews the combined change and may reassign work within the approved scope. Parallel agents edit and investigate; only the single Cargo owner builds.
+Use them when independent investigation, implementation or review helps. Give each clear file ownership and acceptance criteria. The primary agent reviews the combined change and may reassign work within the approved scope. Parallel agents edit, investigate and run independent tests. Only the assigned Cargo owner for each host/target builds; separate Windows and Mac Neo owners may build concurrently.
 
 ## Navigation
 
@@ -308,8 +308,8 @@ Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:
   remains the selected disk-backed vector engine. The superseded installed-editor
   repair does not resume.
 - Resume from live source, the final plan, ledger and exact receipts. Keep
-  contract-first ordering, explicit parallel file ownership, a single Cargo
-  owner and primary review before expensive integrated runs. A failing model
+  contract-first ordering, explicit parallel file ownership, one Cargo
+  owner per host/target and primary review before expensive integrated runs. A failing model
   or unavailable host does not stop independent product checks.
 - User exception approved during implementation: reviewed in-scope tracked-file
   content edits may proceed while preserving each existing owner and ACL exactly.
@@ -318,9 +318,11 @@ Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:
 - Restart checkpoint requested on 17 November 2026. Read the final restart
   checkpoint in docs/simplify/one-process-ledger.md before resuming. No new model
   run or native build was started after the pause request. The permanent checked
-  execution helper is unfinished; mandatory manual effective-user, default-owner
-  and interactive-logon proof remains required before all writes. Complete and
-  review the helper before further campaign implementation on resume.
+  execution helper was unfinished at that checkpoint. It is now implemented and
+  reviewed as scripts/dev/assert-human-execution.ps1. Dot-source it through the
+  verified human shell, call Assert-AirkOutputParent before writes and
+  Assert-AirkCreatedOutput before consuming outputs. Enumerate child/cache outputs;
+  the guard is a read-only metadata preflight, not atomic confinement.
 - The user explicitly authorizes repairing foreign ownership in this repository
   to TYAI\tdotn, SID S-1-5-21-3678370870-3858642417-826968105-1002. The user is
   handling existing owner/access repair through the Windows UI. This supersedes
