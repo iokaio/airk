@@ -7020,3 +7020,56 @@ F1/replay/worker remain implementation work; DEV3 clusters cannot support two-si
 .05 promotion. Broader evidence/terminal labels remain unavailable. G5 export,
 math and resource proposals remain private/unrun pending first FP32 and review.
 D: free427.04GiB, warm cache preserved; no additional cleaning is justified yet.
+
+### 2026-11-17 12:35Z — Checkpoint origin fixed; genuine native assembly passes
+
+Self-check: Am I completing final-plan.md, or getting sidetracked? Native CUDA
+build/assembly advances, but preparation has taken too long; first GPU neural
+execution remains0. Counts2 passed/10 in_progress/6 blocked; next14:35Z. Score
+floors and72-hour deadline unchanged. D: free426.76GiB, prior22.17GiB cleanup
+retained and warm target preserved.
+
+R2 protected-copy staging closes the valid historical warm-baseline refusal
+without security changes. Custody/request pass9.768016/9.663561s. Assembly then
+fails3.997140s naturally, receiptcaa02366cf4f33cd7de86733660ce196ecede9586ad48f107b4cc1f5b71a7031:
+overall composer04:08:52Z was incorrectly equated with later R12 start05:27:32Z.
+Contract-first three-file correction authenticates the original first-start pin
+and retains original clocks/limits. All-target/all-feature scoped Clippy passes
+21.905924s;81/81 regressions pass51.486596s including build (.668s tests,292skipped).
+Receipts E/gpu-checkpoint-origin-clippy-r1.json and
+E/gpu-checkpoint-origin-regressions-r1.json, source572397d7, incremental0, target/.
+Actual raw timing arithmetic passes unchanged; no relaxed tolerances/assertions.
+
+Corrected CUDA-linked images are preserved at O/gpu-native-checkpoint-clock-images-r1;
+inventory90179eb4, Inference9e8bf3f9/242712064B, Retrieval47aa46c5/45307392B.
+R3 adds the exact1322-byte first-start protected copy. Native custody/request pass
+10.214276/10.090566s naturally. R3 assembly passes12.868392s, PID3848 exit0/Job0,
+no drift, receiptb0d3dbbdb53f5e2e05bd35b9c7e41634d3d30fccda03a99ac89f40370ac93037.
+Actual native manifest5465B SHAaf6d1ec57f9e93e9d92b23024d5b7de76576af182f152769f78c288441480d45
+authenticates13 DLLs and buildf9fac8eb. Native receiptcb8f8ba1 retains approved=false,
+model_requests_dispatched=false, fits_empty=true. No GPU model/quality/resource/CAL
+or release pass follows. Existing reviewed Prepare/profile NN0 workflow is next.
+
+Automatic approval review twice rejects new component-runner packet creation,
+asserting a private-state write restriction despite absent destination and human
+ownership. No rejected files are created or alternate writer used. User
+clarification is pending; independent compliant work continues. F1/F2 worker and
+G5 export/reference/resource implementations remain private/unrun against selected
+models; missing binary labels are not the narrow Focus pilot blocker.
+
+Native Compact Prepare/profile metadata now pass23.183034/23.570370s, selected1/1
+per exact selector, original exit0/Job0/no drift. Receipts2d020f30/3179f80f; native
+profile23482648, input8cd9e3db, request1262a090, CAL5be92877 all originate in Rust.
+The actual manifest-baked CUDA no-run image build passes52.814253s under native
+seal572397d7, incremental0/target/, receipt435d1539; original command/static link
+and two compile-time pins retained. Reviewed direct-runtime independent image
+preservation passes, inventoryd504ee02; the Inference image resides beside the
+exact scientific runtime manifest. No testcase/model or qualification is claimed.
+Root primary review covers the complete G5R3 native diff and direct-runtime
+preserver delta; independent G5 review6788a682 is retained. G5 remains unapplied
+until first FP32. Format, repository3595-public-file and whitespace checks pass;
+first format invocation had missing cargo PATH, then explicit pinned cargo passed.
+Version review corrects one stale README1.9.0 source-version sentence to1.8.207;
+release promotion remains reserved. Initial documentation-edit helper failed
+before writes because legacy PowerShell module import was unavailable; verified
+PowerShell7 ACL checks and in-place edits then preserved owner/ACL/fileIDs.

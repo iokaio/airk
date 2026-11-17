@@ -560,3 +560,20 @@ and this failed attempt. No ACL/owner change or loader/proof-policy broadening i
 used. Actual receipt: approved human C anchor/gpu-first-fp32-assembly-owned-r1/
 execution.json, SHA70b85630acc8b3a2e9e6b9b535b164cc09b578c806ff81514a6dfc6e04ba065d.
 First FP32 neural execution remains pending while this input correction proceeds.
+
+### Metadata assembly resolution — 17 November 2026
+
+R2 closes the valid warm-baseline custody refusal through the existing protected
+copy mechanism, without security changes. It then refuses checkpoint composition
+timing (receiptcaa02366): overall first-attempt04:08:52Z was incorrectly compared
+to later R12 start05:27:32Z. Native now authenticates the original first-start
+FilePin and retains overall <=R12 <=first section, all original clocks/limits and
+settlement requirements. Scoped Clippy and81/81 regressions pass, including actual
+unaltered raw timing arithmetic. No receipt, threshold or clock is reset.
+
+Fresh corrected-image R3 assembly passes12.868392s, PID3848 exit0 naturally,
+original Job0/no drift; receiptb0d3dbbd. Native manifestaf6d1ec5 authenticates13 DLLs
+and static buildf9fac8eb, retaining fits=[] and unapproved status. This resolves
+metadata assembly only. First FP32 inference and GPU qualification remain open.
+Automatic approval review separately blocks new component-runner file creation;
+the clarification request remains pending.

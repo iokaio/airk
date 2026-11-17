@@ -59,7 +59,11 @@ fn fixture() -> Result<(Memory, ResourceFilePin, ResourceFilePin, Authority)> {
     let first_input = m.bytes("first-input", b"synthetic first input".to_vec());
     let next_input = m.bytes("next-input", b"synthetic next input".to_vec());
     let composer = m.bytes("composer.py", b"synthetic composer".to_vec());
-    let composer_input = m.bytes("composer-input", b"synthetic composer input".to_vec());
+    let origin=m.json("first-attempt-start",json!({"schema":"airk.private.combined-cuda-runtime-execution/1","started_utc":"2026-11-17T04:08:52.667055Z","argv":["python","-S","-B","literal-producer"],"actual_destination":"literal-first-destination","destination_decision":"literal first attempt remains historical","producer_preparation_sha256":Sha256Digest::from_bytes([62;32]),"first_model_gate":"FP32 first; no model run","combined_kernels_available_not_FP16_qualification":true,"outer_timeout_seconds":10800,"passed":false}));
+    let composer_input = m.json(
+        "composer-input",
+        json!({"schema":"airk.private.checkpoint-composer-input/1","first_attempt_start":origin}),
+    );
     let ninja = m.bytes("b/Release/build.ninja", b"synthetic Ninja graph".to_vec());
     let source_inventory = m.json(
         "source.json",
@@ -186,7 +190,7 @@ fn fixture() -> Result<(Memory, ResourceFilePin, ResourceFilePin, Authority)> {
         json!({"frontend_inventory_sha256":frontend.sha256,"cuda_inventory_sha256":cuda.sha256,"frozen_original_inputs_sha256":inputs.sha256,"ninja_sha256":ninja.sha256,"target_closure_sha256":target_hash,"configure_argv":configure,"configured_preflight":preflight,"toolchain":tools}).as_object().unwrap().clone(),
     );
     raw_value.as_object_mut().unwrap().extend(
-        json!({"policy":policy,"libraries":libraries,"provider_dlls":dlls,"original_attempt_started_utc":"2026-11-17T05:27:32Z","completed_utc":"2026-11-17T11:00:11Z","global_campaign_cutoff_utc":"2026-11-19T05:29:42Z","total_active_section_seconds":30,"wall_since_first_attempt_seconds":19959}).as_object().unwrap().clone(),
+        json!({"policy":policy,"libraries":libraries,"provider_dlls":dlls,"original_attempt_started_utc":"2026-11-17T04:08:52.667055Z","completed_utc":"2026-11-17T11:00:11Z","global_campaign_cutoff_utc":"2026-11-19T05:29:42Z","total_active_section_seconds":30,"wall_since_first_attempt_seconds":24678.332945}).as_object().unwrap().clone(),
     );
     raw_value.as_object_mut().unwrap().extend(
         json!({"output_policy":{"owner":"synthetic-only"},"metadata_composition_seconds":1})
@@ -366,5 +370,83 @@ fn canonical_proof_float_unknown_and_duplicate_keys_refuse() -> Result<()> {
     assert!(validate_with_authority(&m, &r, &p, &a).is_err());
     assert!(strict::parse(br#"{"schema":"a","schema":"b"}"#).is_err());
     assert!(canonical_sha(&json!({"elapsed_seconds":1.5})).is_err());
+    Ok(())
+}
+
+#[test]
+fn all_attempt_origin_is_distinct_from_later_r12_and_cannot_be_relabelled() -> Result<()> {
+    let (mut m, r, p, a) = fixture()?;
+    let raw = json(&m, &r)?;
+    assert_eq!(
+        raw["original_attempt_started_utc"],
+        "2026-11-17T04:08:52.667055Z"
+    );
+    let r12 = pin(&raw["original_failed_build"])?.json(&m)?;
+    assert_eq!(r12["original_start_utc"], "2026-11-17T05:27:32Z");
+    validate_with_authority(&m, &r, &p, &a)?;
+    let mut changed = raw;
+    changed["original_attempt_started_utc"] = r12["original_start_utc"].clone();
+    let proof = json(&m, &p)?;
+    let (r, p) = reseal(&mut m, changed, proof);
+    refuse(
+        validate_with_authority(&m, &r, &p, &a)
+            .err()
+            .context("expected origin refusal")?,
+        "checkpoint composition timing refused",
+    );
+    Ok(())
+}
+#[test]
+fn first_origin_pin_and_unknown_fields_are_closed() -> Result<()> {
+    let (mut m, r, _, _) = fixture()?;
+    let raw = json(&m, &r)?;
+    let input = pin(&raw["input_contract"])?.json(&m)?;
+    assert_eq!(
+        first_attempt_start(&m, &input)?,
+        utc("2026-11-17T04:08:52.667055Z")?
+    );
+    let mut wrong = input.clone();
+    wrong["first_attempt_start"]["sha256"] = json!(Sha256Digest::from_bytes([99; 32]));
+    refuse(
+        first_attempt_start(&m, &wrong).unwrap_err(),
+        "pinned private projection input differs",
+    );
+    let mut unknown = input.clone();
+    unknown["schema"] = json!("airk.private.checkpoint-composer-input/2");
+    refuse(
+        first_attempt_start(&m, &unknown).unwrap_err(),
+        "unknown checkpoint composer input schema",
+    );
+    let mut first = pin(&input["first_attempt_start"])?.json(&m)?;
+    first["unknown"] = json!(true);
+    let next = m.json("unknown-first-attempt", first);
+    let mut unknown = input.clone();
+    unknown["first_attempt_start"] = serde_json::to_value(next)?;
+    refuse(
+        first_attempt_start(&m, &unknown).unwrap_err(),
+        "unknown field",
+    );
+    Ok(())
+}
+#[test]
+fn actual_recorded_section_floats_preserve_the_existing_sum_and_limits() -> Result<()> {
+    let actual=strict::parse(br#"{"total":4072.3191043999977,"sections":[2911.4371581999585,796.2035699000116,364.6783763000276],"wall":22970.575546,"metadata":26.443864800035954}"#)?;
+    let sum = rows(&actual["sections"])?
+        .iter()
+        .map(finite)
+        .collect::<Result<Vec<_>>>()?
+        .iter()
+        .sum::<f64>();
+    let total = finite(&actual["total"])?;
+    let wall = finite(&actual["wall"])?;
+    assert!(
+        total >= sum,
+        "actual total {total:?} ({:x}) vs parsed section sum {sum:?} ({:x})",
+        total.to_bits(),
+        sum.to_bits()
+    );
+    assert!(
+        total <= 32400.0 && wall >= sum && (0.0..=300.0).contains(&finite(&actual["metadata"])?)
+    );
     Ok(())
 }

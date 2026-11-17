@@ -141,6 +141,47 @@ struct Composite {
     output_policy: Value,
     metadata_composition_seconds: f64,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FirstAttemptStart {
+    schema: String,
+    started_utc: String,
+    argv: Vec<String>,
+    actual_destination: String,
+    destination_decision: String,
+    producer_preparation_sha256: Sha256Digest,
+    first_model_gate: String,
+    #[serde(rename = "combined_kernels_available_not_FP16_qualification")]
+    combined_kernels_available_not_fp16_qualification: bool,
+    outer_timeout_seconds: u64,
+    passed: bool,
+}
+fn first_attempt_start(source: &dyn Source, input: &Value) -> Result<i128> {
+    ensure!(
+        input["schema"] == "airk.private.checkpoint-composer-input/1",
+        "unknown checkpoint composer input schema"
+    );
+    let origin = pin(&input["first_attempt_start"])?.json(source)?;
+    let start: FirstAttemptStart = typed(&origin)?;
+    ensure!(
+        start.schema == "airk.private.combined-cuda-runtime-execution/1"
+            && !start.passed
+            && start.combined_kernels_available_not_fp16_qualification
+            && start.outer_timeout_seconds == 10800
+            && !start.argv.is_empty()
+            && start.argv.len() <= 128
+            && start.argv.iter().all(|s| !s.is_empty() && s.len() <= 8192)
+            && !start.actual_destination.is_empty()
+            && start.actual_destination.len() <= 4096
+            && !start.destination_decision.is_empty()
+            && start.destination_decision.len() <= 4096
+            && nonzero(start.producer_preparation_sha256)
+            && !start.first_model_gate.is_empty()
+            && start.first_model_gate.len() <= 4096,
+        "checkpoint first-attempt start identity/history differs"
+    );
+    utc(&start.started_utc)
+}
 pub(in crate::arbiter::runtime::cuda) struct CheckpointedProducer {
     pub static_core_build: Sha256Digest,
     pub provider_dlls: Vec<PublicFile>,
@@ -490,7 +531,8 @@ fn validate_with_authority(
         "checkpoint composer/input is not reviewed authority"
     );
     p.producer_source.read(source)?;
-    p.input_contract.read(source)?;
+    let composer_input = p.input_contract.json(source)?;
+    let overall_origin = first_attempt_start(source, &composer_input)?;
     let failed = p.original_failed_build.json(source)?;
     let last = rows(&failed["commands"])?
         .last()
@@ -608,6 +650,7 @@ fn validate_with_authority(
     let mut history = Vec::new();
     let mut elapsed = 0.0;
     let mut previous_end = None;
+    let mut first_section_start = None;
     let mut previous_receipt = None;
     let mut previous_warm = None;
     for (index, row) in p.sections.iter().enumerate() {
@@ -683,6 +726,9 @@ fn validate_with_authority(
         );
         natural(&v["command"])?;
         let (started, finished, seconds) = clocks(&v)?;
+        if index == 0 {
+            first_section_start = Some(started);
+        }
         ensure!(
             previous_end.is_none_or(|end| end <= started),
             "checkpoint sections overlap or reorder"
@@ -758,10 +804,15 @@ fn validate_with_authority(
     let complete = utc(&p.completed_utc)?;
     let campaign = utc(&p.global_campaign_cutoff_utc)?;
     ensure!(
-        first
-            == utc(failed["original_start_utc"]
+        first == overall_origin
+            && first
+                <= utc(failed["original_start_utc"]
+                    .as_str()
+                    .context("R12 attempt start absent")?)?
+            && utc(failed["original_start_utc"]
                 .as_str()
-                .context("original attempt start absent")?)?
+                .context("R12 attempt start absent")?)?
+                <= first_section_start.context("first checkpoint section absent")?
             && campaign == utc("2026-11-19T05:29:42Z")?
             && first <= previous_end.context("last section absent")?
             && previous_end.is_some_and(|end| end <= complete)
