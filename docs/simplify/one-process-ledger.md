@@ -7073,3 +7073,59 @@ Version review corrects one stale README1.9.0 source-version sentence to1.8.207;
 release promotion remains reserved. Initial documentation-edit helper failed
 before writes because legacy PowerShell module import was unavailable; verified
 PowerShell7 ACL checks and in-place edits then preserved owner/ACL/fileIDs.
+
+### 2026-11-17 12:50Z — Ordinary CUDA startup policy and actual toy gradients
+
+Contract-first four-path CLI startup change supplies process-local GEMM2 only
+when absent, at the first synchronous main operation on Windows CUDA builds.
+Explicit valid/conflicting/empty/non-Unicode values remain untouched; no debug,
+parent/account/registry/service-manager change. Direct/login entries share this
+entry. Retrieval initialization remains read-only and G5 qualification stays open.
+Root primary plus transport independent source review close exactmain dcc73319,
+helperbeefe040, contract4c928602 and tests5faf1795. Same-human source writes retain
+main owner/ACL/fileID; new files are human-owned.
+
+Scoped CLI all-target/all-feature Clippy passes76.541376s. Five actual native
+regressions pass115.478912s including build (.031s tests,5 skipped); receipts
+E/gpu-product-startup-clippy-r1.json and E/gpu-product-startup-regressions-r1.json,
+source57c1adf1, target/, incremental0. JUnit780ab4ee44d85352db9e22307a3da0001899964aebd33796aad37c3bcde4ee2f.
+No installed login/native GPU model or final-workspace evidence follows.
+
+Primary review of the complete F1/F2 native/worker/schedule/selection/continuation
+packet identifies one remaining parent result-hash/final-clock ordering defect;
+fix is required before actual scoring/training. Four meaningful actual toy CPU
+Torch controls pass .138s tests/2.734604s process: full-vocabulary loss/gradients,
+LoRA frozen-base/target roster, merge/tied-head and final partial accumulation.
+Receipt E/f2-cpu-torch-gradient-controls-r1.json, Torch2.10.0+cu128; GPU initialized
+false before/after, CUDA hidden, no selected checkpoint or model run. Prior28 pure
+controls retain scope; no pilot gradient or quality promotion is claimed.
+
+Pinned CUDA source confirms GQA activation HALF/BF16 only, but actual original
+Compactc79 has zeroGQA:7162 standard-domain nodes/253MatMul/28Softmax/310F32
+initializers. Therefore that restriction does not block the selected first FP32
+probe. Original Focus19b is likewise unfused; selected FocusW8 has source-supported
+197MatMulNBits. FP32GQA LargeDensecc22 is incompatible and stays distinct. Static
+source inspection proves capability only; strict placement/numerics/resource fit
+remain actual-run questions. No files/models changed by that investigation.
+
+### 2026-11-17 12:59Z — Truthful process GPU-memory observation seam
+
+Maintained scripts/arbiter-gpu-memory.py plus owning contract and portable tests
+provide a lazy explicit Windows x64 D3DKMT current-usage sampler. Original borrowed
+HANDLE/PID/creation/liveness and caller-verified adapterLUID/node remain bound;
+System32-only API load, no process-open-by-PID, driver/global settings or CUDA/model
+activation. Original deadlines, raw statuses/errors, sequential segment timings,
+gaps and complete-valid sampled maxima are explicit. Lifetime peak remains null,
+admission authority/final qualification false; stronger peak gates are unchanged.
+Root primary and transport independent review close exact helperd998dd8c and
+tests36d5eedf. A contract-only clarification names required SYNCHRONIZE alongside
+PROCESS_QUERY_INFORMATION (final contract1384a802), matching the already-reviewed
+liveness check; executable/test bytes unchanged.
+
+Twenty injected controls pass .007s tests/.395650s process; receipt
+E/gpu-process-memory-controls-r1.json, harnessca11ed0a. No actual Windows API,
+GPU/model or integration call occurred. Actual UUID/LUID mapping and parent sampler
+integration remain required before use. Initial repository check encountered the
+new in-progress contract's not-yet-created test target; after coherent packet
+freeze, repository3601-public-file and whitespace checks pass. Format passes.
+No rerun or relaxed selector was used to hide a behavior failure.

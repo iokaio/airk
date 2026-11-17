@@ -8,6 +8,8 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 #[cfg(feature = "parser-training")]
 mod parser_training;
+#[cfg(any(test, all(windows, feature = "gpu-cuda")))]
+mod startup_math;
 
 #[derive(Parser)]
 #[command(
@@ -292,6 +294,12 @@ fn on_cli_stack<T: Send + 'static>(test: impl FnOnce() -> T + Send + 'static) ->
 }
 
 fn main() -> std::process::ExitCode {
+    #[cfg(all(windows, feature = "gpu-cuda"))]
+    // SAFETY: this is the first operation in synchronous main, before run_cli
+    // can initialize ORT or create the CLI worker and Tokio runtime.
+    unsafe {
+        startup_math::initialize_before_workers();
+    }
     match run_cli() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
