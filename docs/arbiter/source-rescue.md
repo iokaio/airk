@@ -1,7 +1,10 @@
 # Source rescue from ignored artifacts
 
-Status: source-capture checkpoint `c787da29` is committed; additional source
-families and broad reconciliation remain in progress, 17 November 2026.
+Status: source-capture checkpoint `c787da29` and broad source checkpoint
+`5c238473f7921c5dd295a9ab0daa9bcd56c16641` are committed, 17 November 2026.
+The latter records 4,226 changed paths; this catalogue contains 190 links, including 189 receiving READMEs.
+Aggregate inventory-union verification, its performance audit and bounded source
+cleanup remain open. Neither checkpoint establishes coverage of all directories.
 All 104 previously reported access-denied directories are readable after the user
 repaired their permissions. That observation does not close deeper inspection gaps.
 The scoped 10,356-candidate reconciliation has zero unresolved sources after fresh

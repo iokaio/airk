@@ -184,7 +184,7 @@ release criteria complete. User silence is not an answer to a pending decision.
    Save the starting manifest; do not overwrite the two source documents.
 2. Reconcile AGENTS/CLAUDE using the standing rule, then run the repository check.
    Inventory the current version instead of copying stale 1.9.0 prose.
-3. Verify the persistent Cargo target `artifacts/v190/p10-target`, pinned tools,
+3. Verify the persistent Cargo target `target/`, pinned tools,
    static ORT inputs, and `AIRK_BUNDLED_MODEL_DIR` pointing to the verified
    `artifacts/advanced-split/bundled-model-v3` assets. Do not clean Windows
    targets or reuse the same target simultaneously across checkouts.
@@ -949,32 +949,47 @@ selection. Do not run cargo check before equivalent Clippy.
 | VSIX package | `python scripts/package-extension.py --channel stable --output artifacts/<fresh-output>` |
 | Repository | `pwsh -NoProfile -File scripts/check-repo.ps1`; `git diff --check` |
 
-Use persistent `artifacts/v190/p10-target` and Windows incremental on; preserve
+Use persistent `target/` and Windows incremental on; preserve
 Cargo timings. Read [CONTRIBUTING](../../CONTRIBUTING.md) and
 [CI/build instructions](../ci-and-builds.md) for provisioning, vector-performance,
 signing and installed commands. Select real platform/features from live source.
 
-### Selected-Qwen harness anchors: inspect and adapt before use
+### Maintained harness owners and required operational transitions
 
-These private paths were inspected during planning; they are historical source
-anchors, not ready-to-run current packets. Root:
-`artifacts/advanced-split/models/selected-native-goal-driver-r1/`.
+Use the [maintained Section 7 source mapping](../../scripts/arbiter/evaluation/research_history/SECTION7.md)
+for the exact historical CAL, certificate, raw Context, selected A6 and composed
+source versions. The original artifact paths are provenance references only:
+never execute or import ignored historical implementations for a remaining run.
+The source-rescue checkpoint does not make archived programs current adapters.
 
-| Operation | Existing anchor and required behavior |
+| Operation | Maintained owner and remaining prerequisite |
 | --- | --- |
-| CAL chunks | `chunked-cal-r1/collector/prepare_packets.py`, then `run_controller.py --packet ... --packet-sha256 ... --decision ... --decision-sha256 ...`; child `capture_chunk.py` stays inside owned controller. |
-| CAL aggregation | `chunked-cal-r1/proof/aggregate_chunks.py`; bind protocol/controller/decision and all thirteen phase-execution/hash pairs; output original capture and closure. |
-| Independent certificate | `cal-completion-owned-r1/prepare_phase.py --phase certificate` and its owned `run_phase_reviewed.py`; producer `source/prepare_selected_cal_reference_certificates.py` pins capture/corpus/rubric/source manifest/task policy. |
-| Raw Context | `native-cal-owned-r1/prepare_raw_packet.py --model arbiter-context-qwen3-17b`, then the 4b model; `run_raw_reviewed.py` consumes fresh reviewed packet/hash/decision. Current selector: `inference_owner::context_action_tests::selected::selected_context_cal_complete_readout_raw_scores`. |
-| Generic native fit | `inference_owner::context_action_calibration_tests::selected::fit_selected_context_generic_read_calibration`; env `AIRK_CONTEXT_ACTION_FIT_INPUT`, `_INPUT_SHA256`, `_OUTPUT`, `AIRK_SELECTED_CONTEXT_PROFILES_SHA256`, `AIRK_SELECTED_CONTEXT_CORPUS_SHA256`. Terminal support needs the reviewed new native path. |
-| Composed | `artifacts/advanced-split/actual-composed-service-preparation-r1/run_composed.py <reviewed-plan-path> <fresh-output>`; consumes a pinned Rust execution plan and owned descendants. |
-| Selected A6 | Private `source/run_goal_condition.py --split confirmation --campaign-freeze <path> --campaign-freeze-sha256 <sha> --focus-profile <manifest>`, plus actual runtime/fixture/scope/request/rubric/assets/output pins and selected arm. Public `tools/retrieval-train/run_goal_condition.py` has legacy development/final flags and is not interchangeable. |
-| Native final promotion | `service_runtime::arbiter::final_distribution::tests::emit_final_selected_distribution_from_recorded_proofs`; env `AIRK_FINAL_DISTRIBUTION_INPUT`, `_INPUT_SHA256`, `_OUTPUT`; requires actual approved proofs/source maps/rights and all three profiles. |
+| CAL chunks and aggregation | `scripts/arbiter/evaluation/research_history/selected_native_goal/` preserves the mapped packet/controller/capture/aggregation sources. Implement reviewed operational owners under `scripts/arbiter/evaluation/selected_goal/`; keep the capture child inside its owned controller and bind all thirteen phase-execution/hash pairs. |
+| Independent certificate and raw Context | The same mapped historical family preserves the exact preparation and owned execution sources. A current adapter must bind capture/corpus/rubric/source/task-policy inputs and separately reviewed Compact/Large profiles. Inspect the live `inference_owner::context_action_tests::selected::selected_context_cal_complete_readout_raw_scores` selector before use. |
+| Generic native fit | Inspect `inference_owner::context_action_calibration_tests::selected::fit_selected_context_generic_read_calibration` and its current `AIRK_CONTEXT_ACTION_FIT_INPUT`, `_INPUT_SHA256`, `_OUTPUT`, `AIRK_SELECTED_CONTEXT_PROFILES_SHA256` and `AIRK_SELECTED_CONTEXT_CORPUS_SHA256` inputs. Terminal support still needs its reviewed native path. |
+| Selected A6 | Adapt the mapped selected **confirmation** `run_goal_condition` and its complete helper closure under `scripts/arbiter/evaluation/selected_goal/`. `tools/retrieval-train/run_goal_condition.py` has a distinct development/final interface and is not interchangeable. |
+| Composed | `scripts/arbiter/evaluation/research_history/composed_service_r1/` and `composed_orchestration/` preserve distinct historical/current-policy source versions. Implement `scripts/arbiter/evaluation/composed_service/` against the current Rust-emitted plan, SDK, native images and maintained process observer; review the entire selected helper closure. |
+| GPU diagnostic and incremental core | Current entrypoints are `scripts/cuda-component-execution.py`, `scripts/cuda-static-incremental.py` and `scripts/cuda-static-checkpointed.py`, with their owning contracts. The committed collector patch is `scripts/cuda-static-runtime/final-graph-metadata/collector.patch`. Current graph integration and an executable, reviewed input recipe remain prerequisites; these paths alone authorize no run. |
+| FP16 preparation/execution | `scripts/arbiter-fp16-execution.py` owns bounded preparation and execution. Its genuine FP32-success and reviewed native G5 prerequisites must pass; placeholders or renamed historical receipts cannot satisfy them. |
+| Native final promotion | Inspect `service_runtime::arbiter::final_distribution::tests::emit_final_selected_distribution_from_recorded_proofs` and current `AIRK_FINAL_DISTRIBUTION_INPUT`, `_INPUT_SHA256`, `_OUTPUT` inputs; require actual approved proofs/source maps/rights and all three profiles. |
+
+The proposed `selected_goal/` and `composed_service/` operational directories
+are not implemented at this checkpoint. Before each remaining run, finish and
+review the needed adapter in maintained source, pin its current source epoch and
+every consumed helper, native image, model/profile, SDK and private input, and
+emit a fresh plan/packet through the owning producer. Rescue maps recover exact
+historical bodies; they do not establish API compatibility, private-input
+availability or a current executable seal. Never repair a seal by retagging an
+old receipt or substituting a same-named helper from another experiment.
 
 Do not reuse historical packet deadlines, fixture lifetimes, approvals, selected
-IDs or hashes. Check maintained tool availability under the logged-in user and
-write the full exact command in each new receipt. Rust emits native profiles,
-schema/semantic cases and publication projections; no Python protocol mirror.
+IDs or hashes. Reconcile historical composed 30-second request/event caps through
+the approved 120-second native/client contract before execution; simply changing
+a Python constant does not qualify the path. Check maintained tool availability
+under the logged-in user and retain the full exact command and source closure in
+each new receipt. Rust emits native profiles, schema/semantic cases and publication
+projections; no Python protocol mirror. Historical receipts and private research
+outputs stay preserved under their original identities.
 
 ## 8. Coverage of both input documents
 
@@ -1038,7 +1053,60 @@ original T0: 18 November2026 at10:29:42 p.m. America/Denver
 (19 November05:29:42 UTC). The earlier36-hour deadline is superseded. The
 [existing ledger](../simplify/one-process-ledger.md) retains exact commands,
 source/artifact identities, failed attempts, test counts and private receipt
-paths. This table reports current state; it grants no missing qualification.
+paths. No source-only checkpoint grants missing runtime qualification.
+
+### Source checkpoint and remaining execution work — 17 November 2026
+
+The reviewed broad source rescue is committed locally as
+`5c238473f7921c5dd295a9ab0daa9bcd56c16641`; no push or publication follows.
+The [source-rescue catalogue](source-rescue.md) links maintained owners and
+historical families with their receiving READMEs. Exact maps/inverse proofs and
+the staged-byte audit support this committed scope. Neither that scope nor the finite 830-document review proves that all
+artifact contents have been inventoried, rescued or safely removed.
+
+Aggregate reconciliation/performance work remains open: R1 was interrupted after
+repeated immutable Git lookups, and R2 reached its original 900-second deadline
+before candidate workers. Retain both outcomes. Continue with reviewed phase
+diagnostics and parallel verification of independent inputs, not an unchanged
+retry, broader timeout or invented aggregate pass. Cleanup also remains open:
+no originals were deleted at the source checkpoint. Default preservation tests
+must transition to committed inverse/hash/length verification, with original
+custody established separately by present originals or bound pre-removal/removal
+proofs. Historical live helper dependencies, mixed evidence containers, private
+inputs and retained research outputs are not disposable build caches.
+
+GPU source preservation is not GPU qualification. The final-graph collector patch
+and Rust diagnostic/provenance source are committed, but the new C++ collector
+has not been compiled into a fresh core. The
+`scripts/cuda-component-execution/graph_provenance.py` draft remains unwired and
+excluded from executable authority. The earlier native source group
+`1a271ce38dcbf874bda463bdf737b3575b4dfd5cdda5dae472bb804ff109fcb2`
+passed scoped Retrieval/Inference Clippy and 161 focused regressions using the
+old static core. Those checks establish compilation/synthetic controls for that
+source, not the new collector, actual final-graph capture, inference or GPU
+qualification. The prior FP32 component refused CPU-assigned nodes and did not
+produce passing inference rows; efficient FP16 and its native G5 transition
+remain dependent work.
+
+Next: complete maintained current adapters/helper seals from section 7 and the
+reviewed graph provenance integration; freeze a genuine fresh incremental-core
+recipe and its producer identity, build/relink only after combined review, then
+attempt bounded graph diagnosis and FP32 execution under the original gates.
+New static core, native manifest, profile and image identities must remain
+separate from the old qualified or unqualified artifacts. Do not silently admit
+CPU nodes, promote a model or mark a plan step complete to bypass missing proof.
+The shared 8192-token/120-second requirement, Focus's 512-token graph limit,
+D01–D08, original T0 and current 72-hour deadline remain unchanged.
+
+### Prior execution snapshot — historical evidence, not current source qualification
+
+The following detailed snapshot predates the maintained-source rescue. Its
+results and blockers retain their original dates/source identities; its pending
+claims, approval blockers and scheduled update times are not a current execution
+instruction. The checkpoint above and latest ledger entries govern remaining
+work. No row below qualifies the new collector/core or marks the rescue, cleanup
+or final delivery complete.
+
 The delivered signed Windows R3 candidate is the c547e654 build (C7 a8d7983b/1941).
 Model results retain their native 198f and 5d37 source/image identities and original
 build ancestry. Native c9fe, committed in 059a2a89, now has full-workspace

@@ -8142,3 +8142,14 @@ At 2026-11-17T22:45:07Z the user requested hourly overall-plan updates covering
 completed work, outstanding tasks, blockers and next actions. Continue that
 cadence while actively working; the next update is due at 23:45:07Z. No hosted
 conversation scheduler is available, so this is an active-work reporting duty.
+Broad rescue checkpoint committed as 5c238473f7921c5dd295a9ab0daa9bcd56c16641;
+human DCO verified and 46 newly changed Git outputs audited to the human SID.
+The 4,226-path staged selection excluded the independent rk/native feature and
+unwired graph draft. Correction to the catalogue count above: there are 190
+valid links, of which 189 point to receiving READMEs. No rescue content is missing
+from that correction. The updated final plan now uses target/ and maintained
+Section 7 source owners, explicitly distinguishes historical source from pending
+operational adapters, and preserves D01-D08, numerical gates and the deadline.
+Aggregate verification and cleanup still remain separate unfinished duties.
+Native alias R3 scoped Clippy passes in 22.1104603s, with source pins retained
+under E/rk-native-windows-r3; no native test or installed-platform pass follows yet.
