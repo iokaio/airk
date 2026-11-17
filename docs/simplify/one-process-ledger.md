@@ -7238,3 +7238,73 @@ Focus int/bool types;28 CPU controls pass15.3457485s, CUDA remains uninitialized
 Actual selected-model/precision-loss/whole-DAG/efficient-backend gates remain open.
 Automatic approval rejection of new GPU component-runner private files remains
 pending user clarification; no alternate writer/path was used for that action.
+
+### 2026-11-17 14:30Z — Critical-path review and actual Focus bootstrap refusal
+
+Self-check: Am I completing final-plan.md, or getting sidetracked? About33 of72
+hours have elapsed. Counts remain2 passed/11 in_progress/5 blocked. Product
+repairs and the signed CPU candidate retain their evidence, but no native ONNX
+GPU forward or adapted Focus score exists. Bootstrap/evidence preparation has
+consumed too much time; actual scores and first native FP32 remain the next
+outcomes. Next self-check/report is due16:30Z. Floors and all per-run caps remain
+unchanged; deadline2026-11-19T05:29:42.2081757Z is not reset.
+
+Identity reverified through the same-user escalated shell: TYAI\tdotn,
+SID S-1-5-21-3678370870-3858642417-826968105-1002, matching active quser tdotn.
+D: has455935238144B free (424.6GiB). Retain the warm Cargo target and preserved
+failed evidence; no broad clean is needed at this free-space level.
+
+Actual SCORE R4/plan6809e1c9 failed naturally before model loading because Torch
+reports a bare UUID and NVML reports the same128bits prefixed GPU-. Original
+PID68172 exits1/Job0/unforced in17.546424s; receipt480d9e25 is retained. R7
+normalizes only this exact optional prefix/canonical hexadecimal representation,
+retains name/capability/free-memory/parent-driver guards, emits raw metadata
+before model loading, and preserves the entire arithmetic tail byte-for-byte.
+49/49 pure controls pass;13295 seals/9582805146B audit passes0mismatch7.828791s.
+Root reviews the actual delta and math-preservation proof before the next launch.
+
+Fresh actual SCORE R5/planffbc0ef5 passes UUID/name/capability/reserve checks and
+loads all310 official checkpoint weights. It then refuses BEFORE scoring because
+implicit site startup imported unsealed base-Python pywin32_bootstrap.py. This
+is not a numerical/model failure. OriginalPID67152 exits1 naturally, Job0, retained
+HANDLE exit and closure proven, no force,35.140643s, peak8397475840B. Actual
+receipt E/f1-score-plan-preparation-r5/score-execution/execution.json SHA
+3cc1a31ac97f22566a3cb1ecb0467848ec4bde5e6063e4d6e34f8957196d700b;
+stdout2ac9155ef814ab4bda785d008d87811e485aa50aa8b118349396f75b28b1012e.
+No score, training or qualification pass follows. Revised diagnosis targets the
+whole implicit-site/.pth bootstrap class using the original no-site owner pattern;
+keep runtime verification and every original model/math/data pin intact. No
+unchanged failed retry or arbitrary ambient-runtime seal expansion is authorized.
+
+Independent progress: integrate the already reviewed maintained FP16 exporter
+source/tests/contracts, without selected conversion or GPU execution. Review the
+existing GPU script/builder batch and G5 whole-graph/Cast proof independently.
+The separately rejected new private GPU component-runner creation remains stopped
+pending the existing clarification; no alternate path/writer circumvents it.
+### 2026-11-17 14:34Z — Maintained half exporter integration
+
+Root reviews the integrated exact library/CLI/tests and owning contract against
+frozen R2/run-plan bytes. Four new maintained source files are human SID1002-owned;
+no existing file/ACL/ID changes. All29 actual synthetic controls pass2.894s tests/
+3.220988s process; AST3/3 and whitespace pass. Receipt
+E/gpu-fp16-export-integration-r1/receipt.json SHA
+0bbd64477de8287b650f90503daad304ff42644e7737d21a08c175807852f19a.
+Library32b705af, CLI92480736, tests18da1a3c retain reviewed source bytes.
+Contract wording is then corrected without behavior change: CLI authenticates
+source pins and converts only; caller owns FP32/nativeG5 preconditions. It does
+not enforce a native capability or activate/qualify a model. Final contract
+8bfcfce9e3e699ac93c9c73c5985e60a29a21e3e2e56511ed308c593f0b46a4b;
+prior test receipt retains its original contract identity. No29-control rerun for
+prose alone. No selected conversion/weights/model/native/GPU/Cargo work occurred.
+Arbiter README links the maintained contract and reflects the admitted narrow
+human-label pilot, retaining the original publisher/underlying-code rights.
+
+Independent review finds a material remaining G5 proof gap: learned-initializer
+bytes and selected attention edge checks do not prove the entire output-reachable
+graph, Cast chains or protected islands. Implement complete independent
+original-to-candidate structural validation in the maintained reference owner;
+no exporter report/self-comparison can replace this gate. FP16 remains held.
+Primary self-review of the combined exporter/documentation change closes before
+commit. Repository checks pass3614 public files; staged whitespace passes. README,
+documentation index, release1.8.207 and VSIX text retain truthful current-version
+and unqualified-device claims. No artifact/version bump or package retag occurs.

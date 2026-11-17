@@ -46,11 +46,22 @@ and `--legacy` retain CPU configuration/3 and status/2 semantics; active device
 state that they cannot represent is refused. The [native CLI contract](../../crates/airkctl/src/contract/CONTRACT.md#d08-additive-native-device-management-transport)
 owns these flags and compatibility rules.
 
+## FP16 development tooling
+
+The maintained [graph exporter](../../scripts/export-arbiter-fp16.py) implements
+half-precision learned weights with protected FP32 operations. Its
+[contract](../../scripts/arbiter-fp16-export/CONTRACT.md) records exact source
+lineages, conversion rules, attention semantics and numerical gates. Synthetic
+controls validate conversion mechanics only. Selected-model conversion remains
+held until the actual FP32 and native G5 preconditions pass; this tool cannot
+activate or qualify a model. Independent whole-graph, numerical, backend,
+resource and product checks remain required.
+
 ## Research credits and permitted-use boundaries
 
 | Source | Authors and citation | AIRK research scope and rights |
 | --- | --- | --- |
-| CoSQA / CoCLR | Junjie Huang, Duyu Tang, Linjun Shou, Ming Gong, Ke Xu, Daxin Jiang, Ming Zhou, and Nan Duan (2021), [*CoSQA: 20,000+ Web Queries for Code Search and Question Answering*](https://aclanthology.org/2021.acl-long.442/), ACL-IJCNLP, 5690–5700. Publisher: Beihang University, MSRA NLC and STCA NLP. | Candidate software-relevance source under rights/revision review; no training admission is asserted. The [publisher declaration](https://github.com/Jun-jie-Huang/CoCLR/blob/14ebcacf9e9bc3e7109102632bc63047876f27d2/README.md) assigns MIT to code and C-UDA to data. Preserve underlying-code provenance and notices. |
+| CoSQA / CoCLR | Junjie Huang, Duyu Tang, Linjun Shou, Ming Gong, Ke Xu, Daxin Jiang, Ming Zhou, and Nan Duan (2021), [*CoSQA: 20,000+ Web Queries for Code Search and Question Answering*](https://aclanthology.org/2021.acl-long.442/), ACL-IJCNLP, 5690–5700. Publisher: Beihang University, MSRA NLC and STCA NLP. | A reviewed existing-byte subset supports the preregistered exploratory binary-relevance pilot; no trained-model or promotion pass is asserted. The [publisher declaration](https://github.com/Jun-jie-Huang/CoCLR/blob/14ebcacf9e9bc3e7109102632bc63047876f27d2/README.md) assigns MIT to code and C-UDA to data. Preserve underlying-code provenance and notices. |
 | CodeSearchNet | Hamel Husain, Ho-Hsiang Wu, Tiferet Gazit, Miltiadis Allamanis, and Marc Brockschmidt (2019), [*CodeSearchNet Challenge: Evaluating the State of Semantic Code Search*](https://arxiv.org/abs/1909.09436). | Candidate code-search research/evaluation source; no new trained weights are asserted. The 99-query human judgments are evaluation-only; function/docstring pairs are mechanical supervision. [MIT covers tooling/docs; corpus code has separate licenses](https://github.com/github/CodeSearchNet/blob/106e827405c968597da938f6b373d30183918869/README.md#licenses), retained in language-specific `_licenses.pkl` metadata. |
 | ContextBench | Han Li, Letian Zhu, Bohan Zhang, Rili Feng, Jiaming Wang, Yue Pan, Earl T. Barr, Federica Sarro, Zhaoyang Chu, and He Ye (2026), [*ContextBench: A Benchmark for Context Retrieval in Coding Agents*](https://arxiv.org/abs/2602.05892v1). | Candidate TRAIN records used for source/rights audits only; no native admission, gradient update or neural scoring is asserted. [Apache-2.0 benchmark wrapper](https://github.com/EuniAI/ContextBench/tree/1436c28a8eb95496da4ea69ad458b9f8a8eb7d61) is separate from each underlying repository's own revision, license and notices. |
 | TechQA | Vittorio Castelli et al. (2020), [*The TechQA Dataset*](https://aclanthology.org/2020.acl-main.117/), ACL, 1269–1278; full authors below. | Original IBM publisher TRAIN source/split/rights audit only; no native admission, training or neural scoring. The original QA dataset and Technote corpus use CDLA-Permissive-1.0; NVIDIA/PrimeQA wrapper metadata does not replace that grant. No raw corpus is bundled. |
