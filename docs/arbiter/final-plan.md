@@ -1,7 +1,9 @@
 # AIRK final implementation plan
 
 Planning date: 15 November 2026 (America/Denver).
-Status: execution underway on feat/arbiter-final; all seven user decisions recorded.
+Status: execution underway on feat/arbiter-final; D01–D08 recorded.
+Scope update: automatic GPU execution with qualified CPU fallback is included
+by the user's 17 November execution instruction; see section 11.
 The original planning request authorized this runbook only. The user authorized
 implementation on 15 November 2026; public publication requires separate
 authorization. Current execution evidence and blockers are in section 10.
@@ -26,7 +28,9 @@ native publication catalog. A useful local candidate is a separate milestone.
 
 The user answered D01–D06 during this planning conversation. These are recorded
 planning decisions for later implementation, not claims that checks have passed.
-D07 records the follow-up latency decision. No planning decision remains pending.
+D07 records the follow-up latency decision. D08 records the execution-time GPU
+expansion and explicit automatic GPU/CPU selection requirement. Detailed new
+contract encodings must be recorded before implementation; see section 11.
 
 | ID | Decision | Answer/status | Dependent work |
 | --- | --- | --- | --- |
@@ -37,6 +41,7 @@ D07 records the follow-up latency decision. No planning decision remains pending
 | D05 | Context terminal-class contract extension | APPROVED: include the extension; leave Sufficient, Clarify and NoJustifiedRead unavailable unless each class's evidence passes. | Steps 2, 11, 13 |
 | D06 | Shipping read budget | APPROVED: qualify 8192 tokens / 120 seconds as the new default, including all client timeouts. The 2048/30 configuration remains a historical/control population. Focus stays a static 512-token pair unless separately re-exported. | Steps 2, 4, 7, 12–15 |
 | D07 | p95 latency limit for the new profile | APPROVED: set the new profile's measured p95 qualification limit to 120 seconds and report actual component and end-to-end latency. Historical 30-second measurements remain historical. | New resource-policy freeze and qualification |
+| D08 | Automatic local GPU execution and CPU fallback | APPROVED during execution: detect whether each user's GPU can safely run the selected model, use a qualified GPU variant when it can, otherwise automatically select a qualified fitting CPU variant for that same model. Report the device/reason; preserve consent, budgets and qualification gates. CUDA first on available NVIDIA hardware; DirectML/CoreML capability and applicable platform evidence follow section 11. | Additional Step 2 contracts; Steps 6–7, 12–18; G1–G4 |
 
 ### Settled rules; do not ask again
 
@@ -902,7 +907,7 @@ profile's policy only.
 | Approximate export | Raw-logit drift <= .25; normalized-mass diagnostic drift <= .05; identical fixture argmax under the frozen rule. New real near-boundary cases supplement these gates. |
 | New default | Shared 8192 input tokens / 120000 ms; compatible actual graph/profile; complete client timeout propagation; no work-budget reset. Focus remains 512 per admitted pair. |
 | New latency | Measured p95 <= 120 seconds for the new profile; report actual component and end-to-end cold/warm latency and failure costs. Preserve the frozen sample/quantile protocol and original 30-second evidence separately. |
-| Resources | Measured actual CPU/ISA/provider/threads, memory/disk/load peaks and resident coexistence at shipped inputs; no unsupported transfer from old reservations or hosts. |
+| Resources | Measured actual CPU/ISA/provider/threads, memory/disk/load peaks and resident coexistence at shipped inputs; no unsupported transfer from old reservations or hosts. D08 additionally requires measured device memory/placement and automatic qualified CPU fallback; section 11. |
 | Catalog/package | Exactly three qualified selected optional profiles, native emitted catalog/capture, complete rights/source maps, final-series local-test refusal and verified payload census. |
 | Release claims | All applicable workspace, transport, platform, installed and artifact gates actually pass. Missing platform/public availability remains explicit. |
 
@@ -1025,16 +1030,20 @@ source/artifact identities, failed attempts, test counts and private receipt
 paths. This table reports current state; it grants no missing qualification.
 The delivered signed Windows R3 candidate is the c547e654 build (C7 a8d7983b/1941).
 Model results retain their native 198f and 5d37 source/image identities and original
-build ancestry. Current R154 repair source c9fe has full-workspace Clippy/build and
-ten focused control passes, without a corrected actual Answer yet. Earlier R2 and
-later diagnostics retain their identities; no artifact is retagged as another.
+build ancestry. Native c9fe, committed in 059a2a89, now has full-workspace
+Clippy, 4,825/4,825 restored-filter regressions and three separately provisioned
+vector controls passing. Doctests compile nineteen suites with zero cases. Fresh
+R154 has demonstrated actual Focus/Compact warm; its Answer is still unqualified
+after publication changed during scoring and a later readiness-observer failure.
+D08 adds pending automatic device selection and GPU qualification (section 11).
+Earlier R2 and later diagnostics retain their identities; no artifact is retagged as another.
 
 | Step | Status | Observed outcome and remaining work |
 | --- | --- | --- |
 | 1 | passed | Clean starting source/branch/contributor recorded; human Windows identity verified; existing human-owned warm target audited; issue/input/platform inventory retained. Foreign and unreadable inputs preserved. |
-| 2 | passed | D04 manual/refusal, D05 terminal /2 and D06 budget/resource contracts and Rust-owned fixtures are implemented. Core367/367 and subsequent current/historical policy controls pass; generated consumers match. This freezes semantics, not model fit or promotion. Original owner/ACL and historical fixtures remain preserved. |
+| 2 | in_progress | Original D04–D06 CPU/manual/terminal/budget contracts and Rust fixtures pass their recorded controls. D08 reopens only the additional device/runtime/Auto-fallback decisions and generated consumers in G1; no GPU contract or qualification is implemented yet. |
 | 3 | in_progress | Rust-owned manual configuration, whole-file shared-parent refusal, eleven tokenless harness migrations and per-session status repair are implemented. Current c547 genesis-only bootstrap repair preserves authority refusals and passes its actual genesis0/configured1 regression. Rebuilt R3 unsigned client/model preflight passes139.120s; actual signed R3 preflight passes144.210s, including cold sequential/concurrent scoped reads. Signed service StopComplete is observed; parent-owned service HANDLE exit0 is not recorded. Earlier failed signed reads and diagnostics remain retained. |
-| 4 | in_progress | Default 8192/120 and Rust-generated 125-second delivery are applied; the 126-request tokenizer census retains all cards with zero refusals. Compact full-8192 numerical/resource passes are separate evidence. Fresh R154 R3 reaches Ready/index success, then fails the native readable-membership emitter before warm/Answer. Diagnosis identifies two valid Project memberships (automatic U103 plus explicit grant). The contract-first correction selects the exact native grant and validates source/membership; all ten focused controls pass and old unselected ambiguity still refuses. Corrected actual warm/Answer remains unrun. Earlier canonical Stop, original HANDLE exit 0 and closed/lease proof remain separate from the failed route. The exact old observer is inaccessible; no exact replay or composed qualification is claimed. |
+| 4 | in_progress | Native8192/120 defaults,125-second delivery and126-request input census remain evidenced. The exact old R154 observer is inaccessible. Fresh R4 now warms Focus/Compact and runs four Focus forwards; Answer correctly refuses after concurrent semantic publication changes, before Context. R5 waits for readiness but its observer fails on typed publication_busy and unavailable scoped workload fields before warm/Answer. Both actual services stop with original HANDLE exit0. R6 private observer has34 cheap controls and awaits primary review/launch. No composed pass or exact replay. D08 preserves this CPU route identity and adds separate GPU/fallback coverage. |
 | 5 | passed | Task-oriented Service/Agents, canonical manual Copy, twelve-icon navigation and the compact Workbench composer are implemented. Signed R3 Workbench retains sixteen full comparisons/two Answer routes; Admin retains eight full comparisons and wide/narrow navigation/title/icon checks. Both native processes have Stop/original HANDLE exit 0 proof. Real Code 1.146.0 activates the production R3 VSIX installed in a private profile and passes Explorer singleton/close-reopen/same-version CSS handoff in 8.109072s. Code parent exits 0 and a later CIM snapshot finds no Code using that private profile; no all-descendant HANDLE proof or native I4 claim follows. Historical observation gaps remain uncounted. |
 | 6 | in_progress | The original acquisition failure remains failed; the independent 23-asset census and repaired Large finalization/cached verification passes are retained. Public Focus R7 now passes its complete isolated U93 journey in 82.614s: Provision/Import, scoring, removal, explicit restart, A/B MiniLM reads, two actual Stops and original HANDLE exit 0. Both native and owned-runtime receipts pass. Earlier R4/R5 failures remain historical. This proves the exercised public Focus lifecycle, not modern I4, all-three public Context availability, task quality, CAL or release qualification. |
 | 7 | in_progress | The earlier identified matched-runtime baseline captures 27/27 lexical/vector/hybrid results across nine original queries with actual Stop/PID exit. Eighteen vector/hybrid verification receipts remain partial under the original source budget. Exact/ANN same-vector diagnostics accept the current canonical singleton without weakening scope/source fences; scoped Clippy, six ANN and five human-visibility controls pass. Genuine native pins and the nine-query comparison retain exactly nine uncached forwards, exact/ANN order agreement on all ten live vectors, natural exit/empty Job and original 120s/8GiB bounds. Population equals k10; no quality or scale improvement is claimed. Later optimized CoSQA visibility has its own offline source/image identity, not Debug product p95 evidence. |
@@ -1046,9 +1055,9 @@ later diagnostics retain their identities; no artifact is retagged as another.
 | 13 | blocked | Exact-artifact CAL/confirmation and composed qualification require the unresolved baseline/profile/data gates. |
 | 14 | blocked | No current held-out promotion comparison is admitted; consumed historical FINAL populations stay evaluation-only. |
 | 15 | blocked | Exactly-three qualified optional profiles, rights/source maps and genuine final publication capture are unavailable. Final-series refusal gates remain strict. |
-| 16 | in_progress | The old Windows full 6ad5 test batch remains failed; its 23 GIT_PAGER cases later pass separately. Doctests retain nineteen suites/zero cases. Native 5d37 passes full-workspace all-feature no-run build in 432.523835s and 41/41 focused tests in 7.913540s (0.263s tests). New c9fe passes whole-workspace all-target/all-feature Clippy in 85.696478s, no-run build in 29.518880s and 10/10 private-emitter controls in 2.725886s (0.187s tests). No current full test-suite pass follows. Mac 59580fa6 replacement passes 1/1; refresh fails 1/1 with the retained ancestor_open chain and unknown errno/path. Linux identity is now verified in explicit WSL Ubuntu as human tyler / UID 1000, matching DefaultUid and human HKCU; user-space toolchain provisioning is pending and existing root distros are unused. Platform, installed and occupied Windows I4 gates remain open. |
+| 16 | in_progress | Nativec9fe/committed059a passes full-workspace all-target/all-feature Clippy85.696478s and restored-filter Nextest4,825/4,825 in2265.989429s; doctests compile19suites/0cases. Three provisioned ignored vector controls pass60.406855s after an earlier missing-model-environment failure. Mac059a scoped Clippy/name/log controls pass; exact refresh fails at ancestor_open native20 on/etc, with protected OS-alias diagnosis and clean target removal. Linux same-human user-space toolchain and actual ORT C++ compilation pass; whole static provisioning fails at the ar tool alias, before aggregation. Linux application gates, modern I4 and D08 GPU/device gates remain open. |
 | 17 | in_progress | Version 1.8.207 and the signed c547 R3 EXE/native ZIP/VSIX delivery retain their verified byte, signature, notices and client/UI proofs. Real Code 1.146.0 production VSIX Explorer activation/close-reopen/CSS checks pass on a private profile in 8.109072s; native_execution is false. Code parent exit 0 and a private-profile CIM observation are retained without claiming every descendant HANDLE. No native production activation or I4 installed journey follows. The user's 1.8.206 installation/configuration remain preserved; no qualified final-series release or publication is claimed. |
-| 18 | in_progress | Existing local DCO milestones and signed c547 R3 delivery keep their identities. Native 5d37 build/41 controls and c9fe whole-workspace Clippy/build/10 private-emitter controls pass in their exact scopes. Public Focus, Compact components and real Explorer passes remain distinct from Large Dense timeout, corrected R154 warm/Answer not yet run, Mac causal diagnosis, data/CAL and remaining full/platform/installed gates. Linux identity is verified; toolchain work remains. The 36-hour deadline and 00:35 UTC next self-check are unchanged. No new step is marked passed, and no push/publication is authorized. |
+| 18 | in_progress | Local DCO app059a, user-original61003cf9 and Markdown/assetsc3e0bb02 remain separate identities; outside analyses are ignored as implementation input. R3 remains the signed CPU delivery; C4 overlay transfer is preparation only. Current Windows full passes, Focus lifecycle and Compact component evidence remain distinct from Large refusal, pending composed Answer, Mac/Linux/platform/installed and data/CAL blockers. D08 is recorded with automatic GPU-or-CPU selection; implementation and qualification are pending. Deadline remains2026-11-17T17:29:42Z; next two-hour self-check02:35Z. No publication authorization. |
 
 The user approved reviewed in-scope tracked-file content edits while preserving
 existing ownership and ACLs. This resolves the source-edit constraint and does
@@ -1070,8 +1079,236 @@ and synchronized once across the four native/extension manifest/lock owners.
 | Pre-1.9 local-test admission | Retained as a disclosed local candidate mechanism; final-series/native publication gates stay strict. Current terminal source changes require new Context metadata and invalidate old policy identities. |
 | Missing qualified publication capture | Blocked by absent qualified three-profile catalog. No synthetic capture or fabricated public URL is substituted. |
 | Larger default/client timeout chain | Native defaults 8192/120000 and the Rust-emitted 125000ms delivery chain pass literal/refusal and transport cases. Signed c547 R3 cold reads pass after the bounded genesis repair. Compact now has formal 17/128/8192 numerical and 20-sample resource passes, including p95 86.049136s. Those component results do not establish task quality, CAL or composed Answer latency. |
-| R154 Answer timeout | The exact failed observer stays inaccessible. Fresh R3 reaches Ready/index success but fails the readable-membership emitter before warm/Answer; its shutdown/lease/original HANDLE proof is separate. Two valid Project memberships are now diagnosed and the exact-grant correction passes ten controls, preserving unselected ambiguity refusal. No corrected actual Answer, exact replay or extended-allowance repair is claimed. |
+| R154 Answer timeout | Old observer remains inaccessible. Fresh R4 reaches actual Focus/Compact warm and four Focus scores; delivery correctly refuses a changed semantic publication before Context. R5 readiness observer then fails before warm on typed publication_busy/hidden workload diagnostics. Shutdown/original HANDLE exit0 proofs are retained separately. R6 observer correction awaits primary review/actual launch; no composed success or exact replay. |
 | Context prompt fit | Complete native126-request census passes with121 shrinks/5growths/0refusals, all within original2048. The original shrink-only test remains failed. This does not qualify new8192 graphs or reconstruct missing R154 bytes. |
 | Historical accepted failures/90% threshold | Superseded by this plan; no acceptance waiver. Native private-boundary tests pass under verified human identity; config49/49 pass with only disposable fixture GIT_PAGER removed. Other reported failure classes are repaired or awaiting current grouped native checks. |
 | Completion criterion wording | Frozen gate is at least.75 completion, at most.02 completion regression, and at least.10 paired common-success external-turn reduction. Historical '.02 gain' prose is not the acceptance rule. |
-| Platforms and installed artifacts | Signed c547 R3 delivery/client/UI proofs and real private Code 1.146.0 Explorer checks are retained; native I4 is not exercised. Native 5d37 build/41 focused tests and c9fe whole-workspace Clippy/build/10 controls pass, without a current full test-suite claim. Mac replacement passes while refresh/errno/path diagnosis remain open. Explicit WSL Ubuntu human tyler / UID 1000 is verified; Rust toolchain provisioning is pending. Existing root distros are unused, and the actual Windows I4 namespace remains occupied. No cross-platform/final-release qualification is claimed. |
+| Platforms and installed artifacts | Signed R3 client/UI and real private Code Explorer proofs remain CPU candidate evidence. Current nativec9fe full4,825/4,825 and three provisioned vector controls pass; Mac exact refresh still fails at the protected/etc OS alias despite positive scoped controls and clean target removal. Linux toolchain/ORT C++ compilation passes; aggregation/tool-alias correction is pending and no Linux application gate passes. Modern Windows I4 namespace remains occupied. D08 GPU paths are planned, unimplemented and unqualified. |
+
+## 11. Automatic GPU execution and CPU fallback (D08)
+
+Added during execution on 17 November 2026 UTC at the user's request.
+D08 expands implementation scope; the subsequent instruction explicitly requires
+AIRK to choose a usable GPU for each user's machine and otherwise use CPU.
+This section supersedes CPU-only execution assumptions for optional Arbiter
+profiles. It does not claim that GPU support has already been implemented.
+
+### Required user behavior and scope
+
+After the user enables/enrolls an optional stage, its default device policy is
+**Auto: prefer a qualified GPU; otherwise use a qualified CPU path for the same
+selected model**. Device selection requires no routine user intervention.
+Optional stages stay off by default and existing consent/enrollment remains.
+The service, CLI, Admin and Workbench expose the actual selected device and the
+reason for CPU selection. A GPU being present is not evidence of model fit.
+
+Keep MiniLM's existing CPU U8/S8 paths and vector identity unchanged in this
+extension. Prioritize Context Compact/Large, where CPU time is consequential.
+Preserve independent Focus/Context selection; Focus keeps its CPU path unless a
+separately qualified GPU variant offers a measured benefit. Do not silently
+substitute Compact for Large, change precision, reduce input width or reset the
+operation budget to make a device fit.
+
+CPU fallback is conditional on a qualified, currently fitting CPU execution
+variant. If neither device can run the selected model safely, return a typed
+unavailable reason and preserve ordinary MiniLM operation. Large's existing CPU
+numerical/deadline failures are not qualified fallbacks.
+
+### Verified starting point and backend order
+
+Read-only Windows inventory at 2026-11-17T01:57–02:00Z found an NVIDIA RTX A6000,
+compute capability 8.6, driver 597.06, 49,140 MiB total and approximately
+38,400 MiB free VRAM. Free memory is a transient observation, not a reservation.
+CUDA_PATH names Toolkit 12.8; compatible CUDA/cuDNN libraries, their provenance
+and actual native execution remain unverified. Mac Neo has an Apple A18 Pro and
+8 GiB unified RAM. It cannot be assumed to fit either Context model.
+
+| Priority | Platform/backend | Work and acceptance limit |
+| --- | --- | --- |
+| 1 | Windows NVIDIA / CUDA | First bounded compatibility and native qualification target on the actual A6000. Pin compatible runtime, driver requirements and dependent libraries. |
+| 2 | macOS / CoreML | Inspect exact graph coverage and available unified memory on Neo; run only fitting bounded probes. Distinguish GPU, Neural Engine and CPU placement; report a genuine fit/coverage blocker. |
+| 2 | Windows DX12 / DirectML | Implement a provider capability path after a bounded graph-coverage probe. Test on available hardware; A6000 success cannot qualify AMD/Intel devices or drivers. |
+| 3 | Linux NVIDIA / CUDA | Reuse the capability design; qualify an actual same-user WSL GPU path only if device access and compatible libraries are verified. CPU Linux gates continue independently; WSL is not a native-Linux hardware proof. |
+
+DirectML remains supported but is in sustained engineering, with new development
+directed to WinML. Its sessions require sequential execution and disabled memory
+patterns. CoreML compute-unit selection does not prove that every operation ran
+on the GPU. These constraints inform the implementation; neither provider is
+assumed to support the selected transformer graphs.
+Sources: [DirectML](https://onnxruntime.ai/docs/execution-providers/DirectML-ExecutionProvider.html),
+[CoreML](https://onnxruntime.ai/docs/execution-providers/CoreML-ExecutionProvider.html).
+
+TensorRT, WebGPU, ROCm/MIGraphX, OpenVINO and QNN are deferred beyond this
+extension. Do not introduce a new process, cloud compute, driver installation,
+global environment changes or a runtime selected through an ambient DLL path.
+
+### G1 — Record native device and compatibility contracts
+
+Reopen the device-dependent part of Step 2 before dependent code changes.
+Core currently binds CpuFit and onnxruntime-cpu/1.30.0; this is more than a
+session option. Record the precise additive/versioned device-fit, resource,
+profile, execution-identity, status and qualification decisions in the owning
+contracts. Preserve historical CPU descriptors/receipts and prove their retained
+fixture bytes. Do not silently reinterpret them as GPU-qualified.
+
+Rust owns Auto/Cpu policy, device capability/selection outcomes, typed reasons
+and generated client views. Bind provider/build identity, OS/architecture,
+device compatibility, precision/math mode, graph assets, memory requirements,
+placement policy and relevant provider options. Bind the actually selected
+execution identity into dependent caches and qualification evidence. Keep
+existing model identity and CPU vector compatibility unchanged. If a persisted
+or wire shape must change, first record its exact version/migration/refusal
+decision; this scope approval does not approve an unspecified encoding.
+
+The selection contract must cover:
+
+1. Enumerate actual adapters and providers, choose a compatible device
+   deterministically, and compare the exact model variant with runtime/driver,
+   operator/shape support and validated device requirements. Do not treat
+   adapter name, a successful allocation or a provider list as sufficient.
+2. Evaluate usable free memory and measured load/workspace peaks with headroom,
+   existing reservations, both resident optional stages, MiniLM and other work.
+   Unified memory is one shared pool. Free-memory observations can race; retain
+   real admission/ownership and handle allocation failure.
+3. In Auto, try only qualified compatible GPU variants. When absent, unsupported,
+   out of memory, inaccessible or unable to initialize before dispatch, select
+   a qualified fitting CPU variant and report the precise reason. Recheck
+   authority, capacity and the original deadline before dispatch.
+4. Hold device/resident charges until actual native and device work settles.
+   No fallback replays uncertain work, refunds unknown work or grants a new
+   timeout/token budget. An in-flight GPU failure permits same-request CPU work
+   only after proven settlement and admission within the original shared budget;
+   otherwise report that failure and select CPU for subsequent fitting work.
+   Avoid repeatedly retrying a known broken provider; invalidate its diagnostic
+   state on a relevant device/driver/runtime/configuration change.
+5. CPU remains usable when optional GPU dependencies are missing. Forced CPU
+   selection is available for diagnosis/reproducibility. Keep nonselected
+   devices and unrelated applications untouched.
+
+Owners: Core arbiter/resource-policy and inference-provider contracts,
+Retrieval runtime/publication/qualification, Inference pool, Service admission,
+native schemas and the approved generated I2/I3/UI consumers.
+
+### G2 — Prove runtime and graph compatibility cheaply
+
+Inspect pinned ORT 1.30.0 and ort 2.0.0-rc.10 rather than assuming current web
+examples match the native build. CUDA supports FP32 generally; FP16 conversion
+is not inherently required. However, the pinned CUDA GroupQueryAttention kernel
+registers F16/BF16 activation types, whereas the retained GQA artifacts use FP32.
+Registering CUDA alone therefore cannot qualify those graphs as all-GPU.
+
+First probe a supported FP32 graph with unchanged math using tiny 17/128 inputs
+and an actual placement trace. If unsupported or impractical, register one
+controlled GPU graph/export branch with supported attention and, only as needed,
+mixed/F16 precision. Preserve causal/padding masks, positions, projections,
+decision rows and output ABI. The current large-initializer path supports F32/U8;
+a precision change also needs validated native initializer loading and new
+asset identities. No blanket cast or unreviewed community export.
+
+Use error_on_failure for provider registration. For a strict GPU session,
+disable implicit CPU EP fallback and do not also register CPU EP explicitly:
+the pinned runtime rejects that combination. CPU fallback means a separately
+selected qualified CPU session, not invisible CPU placement inside a GPU claim.
+If shape/control operations require CPU, define and qualify an explicit bounded
+hybrid placement policy with full profiler coverage; reject unexpected CPU
+compute and disclose the placement. An enabled provider is not utilization proof.
+See [ort registration behavior](https://docs.rs/ort/2.0.0-rc.10/ort/execution_providers/struct.ExecutionProviderDispatch.html).
+
+Freeze TF32 and other numerical/provider options explicitly. CUDA defaults can
+change float32 arithmetic. Keep applicable numerical tolerances unchanged,
+including the existing stricter selected-model reference gates; no threshold
+is loosened after a failure. Profile complete optimized graphs/subgraphs.
+Measure copies and synchronization; use I/O binding where beneficial rather
+than assuming the small token input/output must always remain on-device.
+Provider arena limits do not cap all GPU allocations: measure actual device
+peak, workspaces and joint residency separately.
+Source: [CUDA options and requirements](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html).
+
+### G3 — Build authenticated runtime variants and recovery
+
+Keep the CPU static build, its failed-attempt history and reusable outputs.
+Do not weaken its existing version/engine checks into accepting arbitrary ORT.
+Extend the provision/build identity and verifier for explicit GPU-enabled
+variants at the same pinned ORT API/source, or record a separate reviewed
+version decision if compatibility requires it.
+
+Decide the single-process runtime/link/load strategy before implementation.
+Do not co-load incompatible CPU/GPU ORT copies. Demonstrate that the selected
+strategy preserves MiniLM and CPU fallback on machines without GPU libraries.
+Authenticate application-owned provider libraries and dependencies through
+explicit protected package paths; validate compatibility and reject ambient
+DLL substitution. Drivers remain system prerequisites, never bundled or
+automatically installed.
+
+Record exact source/download hashes, dependency closure, redistribution
+permissions, notices, signing, installer ownership and uninstall/recovery.
+Provider binaries and CUDA/cuDNN dependencies make a single-static-binary claim
+conditional; do not invent a mandatory packaging layout before the link audit.
+Extend the native runtime/package metadata and maintained builders, not private
+qualification bypasses. Retest installation with missing, mismatched, corrupted
+and removed provider dependencies while preserving a working CPU service.
+
+### G4 — Qualify selection, each model/device variant and delivery
+
+Group cheap policy/contract/initializer/provider tests before expensive native
+runs. Cover no GPU, unsupported driver/operators, low memory, allocation races,
+multiple adapters, both resident stages, missing libraries, registration failure,
+CPU fallback, explicit CPU, stale configuration and source withdrawal. Mocked
+capability results establish decision logic only.
+
+For every supported model/backend/precision/OS/architecture combination:
+run actual 17/128/8192 numerical checks for Context (Focus remains 512), actual
+placement tracing, cold/load and twenty-sample warm resource measurements with
+the existing nearest-rank p95 <=120 seconds, device/host memory and coexistence.
+Measure composed Answer end-to-end latency separately. Preserve original
+8192/120000 and 125000ms transport delivery limits and actual settlement.
+Exercise cancellation, device failure/OOM, disable/Remove/restart and CPU
+recovery with native owners. Report unsupported combinations explicitly.
+
+Any changed graph, precision, runtime or execution identity needs its own exact
+artifact CAL/confirmation and task evidence before promotion; CPU component
+passes do not transfer. Existing missing labels, consumed FINAL populations
+and terminal-class restrictions remain blockers. GPU speed cannot manufacture
+data acceptance or qualify Large by itself.
+
+Generate full device/status/reason results for CLI/session, MCP, Admin and
+Workbench. The normal UI shows a concise device choice; details and manual CPU
+selection belong in Service/settings, with no new permanent composer notice.
+Compare complete canonical results and exercise real transports.
+
+Package only tested variants with verified legal notices in the installer,
+base README and Arbiter README. New GPU variants receive new artifact identities
+and candidate qualification; retain the delivered R3 CPU candidate unchanged.
+No new immutable model URL, publication, deployment or user-install mutation
+is authorized by D08.
+
+### Integration into ongoing work and schedule
+
+| Existing steps/work | Change after D08 |
+| --- | --- |
+| 2 | CPU/terminal/budget decisions remain evidenced; additional G1 device contract work is pending before GPU consumers. |
+| 3–6 | Continue operational repairs, real composed readiness/Answer, lifecycle and client parity. Add device/refusal/fallback cases when G1/G2 are frozen. |
+| 7, 12 | Add a separately identified GPU baseline and exact runtime/graph/resource freeze; prioritize one bounded CUDA Context path over further CPU Large attention experiments. |
+| 8–11 | Rights, supervision, split and acceptance blockers are unchanged. GPU work does not restart open-ended data acquisition or invent human labels. |
+| 13–15 | Require variant-specific numerics/resources/CAL/task/promotion proofs. Keep the selected Focus/Compact/Large requirement; device variants are not extra selected model families. |
+| 16–17 | Finish useful CPU platform/candidate work on frozen inputs; extend applicable native, real transport, signed package and installed gates for GPU variants. Do not discard completed Linux CPU compilation or retag R3/R4 as GPU-tested. |
+| 18 | Report implementation, automatic CPU fallback, tested adapters/backends and remaining unsupported combinations separately. |
+
+Execution order now: retain and settle current owned work; G1 plus a cheap CUDA
+dependency/graph probe; implement reviewed G2/G3; run grouped G4 gates and package
+only if they pass. Nonconflicting CPU/Linux/Mac repairs continue, with one Cargo
+owner and one GPU-heavy job at a time. The R154 fresh CPU route retains its
+original fixture identity; it is not retrospectively a GPU comparison.
+
+At this addition, about fifteen hours remain before the unchanged
+2026-11-17T17:29:42Z deadline. D08 expands scope without extending that deadline.
+Reserve the final four hours for justified gates, packaging, settlement and
+handoff. A credible estimate for full provider/platform coverage follows the
+compatibility probe; do not promise universal GPU support or the attachment's
+unmeasured 10–50x speedups, few-second latency or 12–16 GB fit. If a gate cannot
+finish in the remaining time, retain the implementation/evidence and identify
+the exact unmet criterion rather than weakening it.
+
+Current D08 status: planning and read-only hardware/source analysis complete;
+device contracts, automatic selection, GPU execution and qualification
+**not yet implemented**. Existing CPU results retain their original identities.

@@ -6489,3 +6489,73 @@ controls PASS 2.725886s (0.187s tests),
 `E/final-explicit-membership-controls-r1.json` (JUnit prefix 41d06428).
 Corrected actual R154 warm/Answer has not run. No current full test-suite,
 composed, task/CAL, model promotion or new step-completion claim follows.
+
+### D08 — Automatic GPU execution and CPU fallback plan expansion
+
+17 November 2026 UTC. The user explicitly expands final-plan.md to local ONNX
+GPU use and requires automatic per-user GPU capability/fit selection with CPU
+fallback. Section 11 and D08 record contract-first G1–G4, CUDA-first Context work,
+DirectML/CoreML compatibility and applicable Linux CUDA evidence, device-specific
+qualification, native status/parity and authenticated package requirements.
+This is planning, not GPU implementation or a model/platform pass.
+
+Human execution reverified as TYAI\tdotn, SID
+S-1-5-21-3678370870-3858642417-826968105-1002, matching active quser tdotn.
+Read-only NVIDIA inventory: RTX A6000, CC8.6, driver597.06,
+49,140MiB total/38,400MiB free VRAM; CUDA_PATH12.8 is only an environment
+observation. It does not verify cuDNN compatibility or reserve free memory.
+The attached guidance is reviewed against live native owners, pinned ORT1.30.0,
+ort2.0.0-rc.10 and official provider documentation. The ignored outside analysis
+documents are not implementation authority.
+
+Corrections to the proposed approach: FP16 is not universally required by CUDA,
+but the pinned CUDA GQA kernel accepts F16/BF16 rather than the retained FP32
+activation graph. Strict no-CPU-fallback sessions cannot also explicitly register
+CPU EP in the pinned runtime. GPU provider registration does not prove placement.
+Existing CPU numerics/resources do not qualify a new device, precision or graph.
+Keep numerical/deadline gates unchanged; GPU support does not fix data/CAL gold.
+
+Auto chooses a qualified fitting GPU variant, otherwise a qualified fitting CPU
+variant of the same selected model, with native typed status/reason. No hidden
+model/precision changes, unqualified Large CPU fallback, unknown-work replay,
+budget reset or early resource release. Missing optional GPU dependencies must
+leave a working CPU service. No global DLL/driver/configuration mutation,
+co-loaded incompatible ORT, new process/cloud service or actual user-install
+change is authorized.
+
+Ongoing Windows c9fe full Clippy and4,825/4,825 regressions pass; provisioned
+vector controls3/3 pass; doctests19suites/0cases are compilation evidence.
+These retain their exact E/final-integrated-* receipts. R154's R4 post-score
+publication refusal is legitimate: semantic indexing advanced the source
+publication. R5 stopped before warm/Answer on typed publication_busy after the
+observer incorrectly required zero process exit before handling retryable
+envelopes; genuine runtime workload fields are unavailable on the scoped route.
+R6 private observer proposal has34 cheap controls but still awaits primary
+review and actual launch. No corrected composed Answer or exact old replay.
+
+Mac059a scoped Clippy and name/log controls pass; exact refresh still fails
+at ancestor_open native20 on /etc. Live private error export and final ring
+bytes match SHA3a2c551e6ebb72b356fd5940d9cbe832677d7fbdb30af27191e2b643e7ea547a;
+target cleanup passes. Read-only metadata confirms the root-owned protected
+/etc -> private/etc alias. A control-only capability proposal is not an applied
+fix; generic source no-follow boundaries remain strict.
+
+Linux same-human user-space toolchain/source custody is provisioned. Actual ORT
+CMake configuration and C++ compilation pass, producing99 archives. Whole
+provisioning remains FAILED at aggregation because /usr/bin/ar is a symlink.
+The outer collector's passed=true label is not acceptance; its correction
+sidecar and authoritative guest exit1 are retained. A private canonical-tool
+proposal passes11 cheap controls and actual read-only archive closure checks;
+no aggregation retry or Linux application Cargo gate has run.
+
+C4 frozen059a source/compiled overlay transfer passes; no new runtime,
+signature, package or GPU evidence follows. R3 remains the delivered CPU
+candidate. User-original document commit61003cf9 and Markdown/assets commit
+c3e0bb02 are separate from app059a and ignored as implementation input.
+
+The36-hour deadline remains2026-11-17T17:29:42Z; it is not extended by D08.
+Critical path: G1 and cheap CUDA dependency/graph compatibility, then reviewed
+runtime/device changes and grouped native qualification, alongside independent
+composed/platform/candidate work. No further CPU Large attention research,
+data fishing, relaxed tolerances or universal GPU speed claims. Retain a final
+four-hour gate/settlement/handoff reserve and report remaining unmet criteria.
