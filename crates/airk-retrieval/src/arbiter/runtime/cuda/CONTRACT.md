@@ -657,7 +657,9 @@ source patch inputs and the same-build provider pair. The original raw compile
 receipt supplies the static build identity. The produced assembly manifest
 starts with an empty fit roster.
 
-The acceptance path remains closed until the reviewed current recipe and
-compile owner identities are authorized after the native build. The production
-proof does not derive from historical incremental or checkpointed receipts.
-The existing manifest, package provenance and runtime activation gates apply.
+The acceptance path pins the reviewed Windows recipe
+d10eb3ced57d17901e3749f05864e1f230b0d8988558a3ddaa98d72f61c1a863
+and compile owner
+9baab4661425582367f636c46d2a02871d43f8567d1b6c0e68445197e99813da
+from the completed current-toolchain native build. The existing manifest,
+package provenance and runtime activation gates apply.

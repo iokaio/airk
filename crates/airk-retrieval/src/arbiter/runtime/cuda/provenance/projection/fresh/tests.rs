@@ -244,12 +244,24 @@ fn cuda_fresh_windows_uses_independent_authority_before_consuming_candidate_sour
         "schema":"airk.private.cuda-fresh-static-build-proof/1", "build_receipt":receipt,
     });
     let wrong = Sha256Digest::from_bytes([1; 32]);
-    assert!(
-        validate(&fs, &raw, &proof, &anchor, wrong, wrong)
+    let recipe_sha = pin(&recipe, false)?.sha256;
+    let driver_sha = pin(&driver, false)?.sha256;
+    for (reviewed_recipe, reviewed_driver) in [(wrong, driver_sha), (recipe_sha, wrong)] {
+        assert_eq!(
+            validate(&fs, &raw, &proof, &anchor, reviewed_recipe, reviewed_driver)
+                .err()
+                .unwrap()
+                .to_string(),
+            "fresh producer approval or configure recipe identity differs"
+        );
+    }
+    let proof_file = fs.json(&root.join("proof.json"), &proof);
+    assert_eq!(
+        try_validate_fresh_producer(&fs, &raw, &pin(&proof_file, false)?.resource())
             .err()
             .unwrap()
-            .to_string()
-            .contains("approval")
+            .to_string(),
+        "fresh producer approval or configure recipe identity differs"
     );
     let mut raw = raw;
     raw.sha256 = wrong;
@@ -802,7 +814,7 @@ fn verify_producer_fixture(
 }
 
 #[test]
-fn cuda_fresh_windows_dispatch_refuses_unapproved_fresh_authority() -> Result<()> {
+fn cuda_fresh_windows_dispatch_leaves_historical_proof_to_its_owner() -> Result<()> {
     let root = std::env::current_dir()?.join("fixture");
     let mut fs = Memory::default();
     let actual = fs.put(&root.join("producer.json"), b"staged producer");
@@ -814,18 +826,5 @@ fn cuda_fresh_windows_dispatch_refuses_unapproved_fresh_authority() -> Result<()
     assert!(
         try_validate_fresh_producer(&fs, &raw, &pin(&historical, false)?.resource())?.is_none()
     );
-    if REVIEWED_COMPILER_OWNER.is_none() {
-        let current = fs.json(
-            &root.join("fresh.json"),
-            &json!({"schema":"airk.private.cuda-fresh-static-build-proof/1"}),
-        );
-        assert!(
-            try_validate_fresh_producer(&fs, &raw, &pin(&current, false)?.resource())
-                .err()
-                .unwrap()
-                .to_string()
-                .contains("no reviewed authority")
-        );
-    }
     Ok(())
 }

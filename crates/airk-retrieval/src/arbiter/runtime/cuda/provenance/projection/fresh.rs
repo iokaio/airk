@@ -7,9 +7,10 @@ const FRESH_BUILD_SCHEMA: &str = "airk.private.cuda-fresh-static-build-proof/1";
 const CONFIGURE_RECIPE: &str = "airk.private.cuda-fresh-configure-recipe/1";
 const CONFIGURED: &str = "airk.private.cuda-fresh-configured/1";
 const COMPILED: &str = "airk.private.cuda-fresh-compiled/1";
-const REVIEWED_RECIPE: &str = "286e6226f4f7f85ab5f79f717138e49604a555ca6f9fd8a27bbf50fd6532695e";
+const REVIEWED_RECIPE: &str = "d10eb3ced57d17901e3749f05864e1f230b0d8988558a3ddaa98d72f61c1a863";
 // Set only when the producer owner has reviewed and frozen the actual compile driver.
-const REVIEWED_COMPILER_OWNER: Option<&str> = None;
+const REVIEWED_COMPILER_OWNER: Option<&str> =
+    Some("9baab4661425582367f636c46d2a02871d43f8567d1b6c0e68445197e99813da");
 const CAMPAIGN_END: &str = "2026-11-19T05:29:42+00:00";
 const ANCHOR: &str = "C:/Users/tdotn/AppData/Local/airk-final-exec-20261116T052942Z";
 const COLLECTOR: &str = "onnxruntime/core/session/onnxruntime_c_api.cc";

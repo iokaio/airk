@@ -3,8 +3,9 @@
 ## Fresh Windows CUDA static build
 
 The fresh build uses the pinned Visual Studio 2022 MSVC compiler
-19.44.35230 and Windows SDK 10.0.26100.0. CMake 3.31.6 completed native
-C and C++ compiler identification and ABI detection with this combination.
+19.44.35230 and Windows SDK 10.0.26100.0. CMake 3.31.6 completed the native
+compiler checks, CUDA provider build, and static archive assembly with
+this toolchain on Windows.
 The CUDA configuration selects CUDA Toolkit 12.8.1 (nvcc 12.8.93),
 cuDNN 9.10.2.21, Ninja 1.12.1, Python 3.13.7 and GNU patch 2.7.6.
 The CUDA build targets SM86 and uses C++20. The configure driver
