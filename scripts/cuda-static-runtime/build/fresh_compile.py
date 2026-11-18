@@ -91,10 +91,17 @@ def build_deadline(configured, recipe, *, now_utc=None, now_monotonic=None):
     return deadline
 
 
-def build_commands(root, cmake):
+def parallel_workers(recipe):
+    workers = recipe.get("parallel_workers", 2)
+    require(type(workers) is int and workers in (2, 8), "fresh CUDA Ninja workers must be 2 or 8")
+    return workers
+
+
+def build_commands(root, cmake, recipe):
+    workers = parallel_workers(recipe)
     return [
         (stage, [cmake, "--build", str(root / "b/Release"), "--config", "Release",
-                 "--target", *targets, "--parallel", "2"])
+                 "--target", *targets, "--parallel", str(workers)])
         for stage, targets in STAGE_TARGETS
     ]
 
@@ -354,7 +361,7 @@ def verify_compile_stages(pins, chain, compiled, deadline):
             and valid_seconds(elapsed) and elapsed < effective
             and elapsed < (cutoff - started).total_seconds(),
             "fresh compile elapsed or original cutoff differs")
-    commands = build_commands(root, recipe["tools"]["cmake"]["path"])
+    commands = build_commands(root, recipe["tools"]["cmake"]["path"], recipe)
     require(len(compiled["stages"]) == len(commands), "fresh compile stage count differs")
     previous = started
     retained = []
@@ -441,7 +448,7 @@ def execute(configured_path, configured_sha, script_sha):
             "fresh compiler environment differs from pinned toolchain")
     env.update(TEMP=str(root / "tmp"), TMP=str(root / "tmp"), TMPDIR=str(root / "tmp"),
                CUDA_CACHE_PATH=str(root / "cuda-cache"), PYTHONNOUSERSITE="1")
-    commands = build_commands(root, tools["cmake"]["path"])
+    commands = build_commands(root, tools["cmake"]["path"], recipe)
     stages = []
     retained = []
     for stage, argv in commands:

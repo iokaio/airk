@@ -35,10 +35,22 @@ class FreshCompileTests(unittest.TestCase):
     def test_actual_commands_are_the_two_existing_target_stages(self):
         cmake = "C:/tools/bin/cmake.exe"
         common = [cmake, "--build", str(self.build), "--config", "Release", "--target"]
-        self.assertEqual(OWNER.build_commands(self.root, cmake), [
+        self.assertEqual(OWNER.build_commands(self.root, cmake, {}), [
             ("core-session-build", [*common, "onnxruntime_session", "--parallel", "2"]),
             ("build", [*common, "all", "re2", "--parallel", "2"]),
         ])
+
+    def test_exact_eight_worker_recipe_controls_both_stages(self):
+        cmake = "C:/reviewed/cmake.exe"
+        prefix = [cmake, "--build", str(self.build), "--config", "Release", "--target"]
+        self.assertEqual(OWNER.build_commands(self.root, cmake, {"parallel_workers": 8}), [
+            ("core-session-build", [*prefix, "onnxruntime_session", "--parallel", "8"]),
+            ("build", [*prefix, "all", "re2", "--parallel", "8"]),
+        ])
+        self.assertEqual(OWNER.parallel_workers({"parallel_workers": 2}), 2)
+        for workers in (None, True, "8", 8.0, 0, 4, 64):
+            with self.subTest(workers=workers), self.assertRaisesRegex(ValueError, "workers must be 2 or 8"):
+                OWNER.build_commands(self.root, cmake, {"parallel_workers": workers})
 
     def test_compile_deadline_intersects_utc_remainder_with_original_counter(self):
         now = dt.datetime.fromisoformat("2026-11-18T22:08:00+00:00")

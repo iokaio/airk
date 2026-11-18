@@ -239,7 +239,22 @@ fn command_line(args: &[String]) -> String {
     line
 }
 
-fn expected_build_command(cmake: &Pin, build: &Path, targets: &[&str]) -> Result<Vec<String>> {
+fn parallel_workers(recipe: &Value) -> Result<u64> {
+    let Some(workers) = recipe.get("parallel_workers") else {
+        return Ok(2);
+    };
+    workers
+        .as_u64()
+        .filter(|workers| matches!(*workers, 2 | 8))
+        .context("fresh configure recipe parallel_workers must be integer 2 or 8")
+}
+
+fn expected_build_command(
+    cmake: &Pin,
+    build: &Path,
+    targets: &[&str],
+    workers: u64,
+) -> Result<Vec<String>> {
     let mut argv = vec![
         cmake.path.clone(),
         "--build".into(),
@@ -252,7 +267,7 @@ fn expected_build_command(cmake: &Pin, build: &Path, targets: &[&str]) -> Result
         "--target".into(),
     ];
     argv.extend(targets.iter().map(|target| (*target).to_owned()));
-    argv.extend(["--parallel".into(), "2".into()]);
+    argv.extend(["--parallel".into(), workers.to_string()]);
     Ok(argv)
 }
 
@@ -1014,6 +1029,7 @@ fn validate(
         recipe["output_audit_owner"] == compiled["driver"],
         "fresh configure output audit owner differs from the reviewed compile driver"
     );
+    let workers = parallel_workers(&recipe)?;
     at(&compile_pin, &root.join("fresh-compile.json"))?;
     at(&configure_pin, &root.join("fresh-configure.json"))?;
     at(
@@ -1099,7 +1115,7 @@ fn validate(
             receipt.json(source)? == *stage,
             "fresh retained compile stage receipt differs"
         );
-        let command = expected_build_command(&cmake, &build, targets)?;
+        let command = expected_build_command(&cmake, &build, targets, workers)?;
         let (began, finish) =
             verify_stage(source, &root, stage, name, &command, times.compile_cutoff)?;
         ensure!(

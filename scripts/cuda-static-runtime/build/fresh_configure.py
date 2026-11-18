@@ -117,6 +117,7 @@ def execute(recipe_path, expected_sha):
     audit_owner = pins.check_pin(recipe["output_audit_owner"], deadline)
     require(audit_owner == HERE / "fresh_compile.py", "fresh output audit owner path differs")
     audit = load(audit_owner, "fresh_configure_output_audit")
+    audit.parallel_workers(recipe)
     sources = load(owners["source_stage"], "fresh_cuda_source")
     processes = load(owners["process_stage"], "fresh_cuda_process")
     lock = pins.read(owners["lock"])

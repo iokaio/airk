@@ -34,6 +34,10 @@ The Windows parent build has up to 10,800 seconds from configure launch
 through compilation and archive assembly. The campaign cutoff can shorten
 this window. Stage receipts include natural settlement of the owned command
 and its descendants.
+The reviewed recipe can set `parallel_workers` to 2 or 8. Omitting it
+selects two. Eight Ninja slots require measured host headroom for several
+simultaneous NVCC pipelines. Both target stages record the same selected
+worker count, and the existing NVCC and Flash thread settings still apply.
 
 Compile consumes the settled configure receipt. Aggregate consumes a
 reviewed archive recipe and the compile receipt. CUDA compiler detection, the

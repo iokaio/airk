@@ -360,6 +360,34 @@ fn cuda_fresh_windows_recomputes_ninja_and_rejects_resealed_graph_changes() -> R
 
 #[test]
 fn cuda_fresh_windows_reconstructs_proof_and_returns_only_observed_providers() -> Result<()> {
+    verify_producer_fixture(None, ["2", "2"], None)
+}
+
+#[test]
+fn cuda_fresh_windows_binds_worker_count_in_both_retained_commands() -> Result<()> {
+    const REFUSAL: &str = "fresh stage command or natural owned settlement differs";
+    verify_producer_fixture(Some(8), ["8", "8"], None)?;
+    verify_producer_fixture(Some(8), ["2", "8"], Some(REFUSAL))?;
+    verify_producer_fixture(Some(8), ["8", "2"], Some(REFUSAL))?;
+    assert_eq!(parallel_workers(&json!({"parallel_workers":2}))?, 2);
+    for workers in [
+        json!(null),
+        json!(true),
+        json!("8"),
+        json!(8.0),
+        json!(-2),
+        json!(4),
+    ] {
+        assert!(parallel_workers(&json!({"parallel_workers":workers})).is_err());
+    }
+    Ok(())
+}
+
+fn verify_producer_fixture(
+    workers: Option<u64>,
+    stage_workers: [&str; 2],
+    expected_refusal: Option<&str>,
+) -> Result<()> {
     let anchor = std::env::current_dir()?.join("fixture");
     let root = anchor.join("fresh");
     let build = root.join("b").join("Release");
@@ -399,7 +427,7 @@ fn cuda_fresh_windows_reconstructs_proof_and_returns_only_observed_providers() -
         "windows_sdk":"10.0.26100.0", "msvc_toolset":"14.44.35207",
     });
     let nvcc = fs.put(&root.join("nvcc.exe"), b"nvcc");
-    let recipe = json!({
+    let mut recipe = json!({
         "schema":"airk.private.cuda-fresh-configure-recipe/1", "repository_root":repo, "fresh_output":root,
         "execution_authorized":true,"qualification":false,"wall_seconds":600,
         "msvc_ciso646_compat":true,"output_audit_owner":driver,
@@ -418,6 +446,9 @@ fn cuda_fresh_windows_reconstructs_proof_and_returns_only_observed_providers() -
         "checked_guard":checked_guard,"powershell":powershell,
         "source_archive":source_archive,"dependency_archives":{},
     });
+    if let Some(workers) = workers {
+        recipe["parallel_workers"] = json!(workers);
+    }
     let recipe_pin = fs.json(&anchor.join("recipe.json"), &recipe);
     let collector = fs.fixed(
         &root.join("source/onnxruntime/core/session/onnxruntime_c_api.cc"),
@@ -540,10 +571,13 @@ fn cuda_fresh_windows_reconstructs_proof_and_returns_only_observed_providers() -
     let configured_pin = fs.json(&root.join("fresh-configure.json"), &configured);
     let mut stage_rows = Vec::new();
     let mut stage_pins = Vec::new();
-    for (label, targets, minute) in [
+    for ((label, targets, minute), workers) in [
         ("core-session-build", "onnxruntime_session", 3),
         ("build", "all re2", 4),
-    ] {
+    ]
+    .into_iter()
+    .zip(stage_workers)
+    {
         let mut arg_vec = vec![
             cmake["path"].as_str().unwrap().to_owned(),
             "--build".into(),
@@ -553,7 +587,7 @@ fn cuda_fresh_windows_reconstructs_proof_and_returns_only_observed_providers() -
             "--target".into(),
         ];
         arg_vec.extend(targets.split(' ').map(str::to_owned));
-        arg_vec.extend(["--parallel".into(), "2".into()]);
+        arg_vec.extend(["--parallel".into(), workers.into()]);
         let args = command_line(&arg_vec[1..]);
         let value = stage(&mut fs, &root, label, &arg_vec, &args, minute, 899);
         stage_pins.push(fs.json(
@@ -598,7 +632,13 @@ fn cuda_fresh_windows_reconstructs_proof_and_returns_only_observed_providers() -
         &anchor,
         approved_recipe,
         approved_driver,
-    )?;
+    );
+    if let Some(expected) = expected_refusal {
+        let error = result.err().expect("mixed worker command must fail");
+        assert!(error.to_string().contains(expected), "{error}");
+        return Ok(());
+    }
+    let result = result?;
     assert_eq!(result.static_core_build, raw.sha256);
     assert_eq!(
         result.provider_dlls[1].name,
@@ -607,6 +647,11 @@ fn cuda_fresh_windows_reconstructs_proof_and_returns_only_observed_providers() -
     assert!(fs.rechecked.get());
 
     for (field, changed, expected) in [
+        (
+            "parallel_workers",
+            json!("8"),
+            "parallel_workers must be integer 2 or 8",
+        ),
         (
             "msvc_ciso646_compat",
             json!(false),

@@ -18,6 +18,11 @@ entrypoint in fresh_configure.py. Its separate private recipe pins the exact
 updated compiler closure, maintained stage owners, original acquisition inputs,
 toolkit and SDK inputs, checked PowerShell guard and the fresh output root. It
 uses the existing campaign cutoff and original parent-build wall ceiling.
+The recipe may bind two or eight Ninja workers with a fixed target order.
+The original recipe shape without the field retains two. Compile dispatch
+and verification reconstruct the whole argv from that pinned recipe. The
+worker count leaves the internal NVCC thread settings, attention and SM flags,
+resource controls and qualification gates in place.
 The historical rebuild manifest stays read-only and keeps its prior meaning.
 The pinned Windows environment includes PATHEXT with .EXE for Toolkit
 helper lookup by nvcc after Visual Studio environment setup.
