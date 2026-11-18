@@ -1228,7 +1228,7 @@ and actual native execution remain unverified. Mac Neo has an Apple A18 Pro and
 | 1 | Windows NVIDIA / CUDA | First bounded compatibility and native qualification target on the actual A6000. Pin compatible runtime, driver requirements and dependent libraries. |
 | 2 | macOS / CoreML | Inspect exact graph coverage and available unified memory on Neo; run only fitting bounded probes. Distinguish GPU, Neural Engine and CPU placement; report a genuine fit/coverage blocker. |
 | 2 | Windows DX12 / DirectML | Implement a provider capability path after a bounded graph-coverage probe. Test on available hardware; A6000 success cannot qualify AMD/Intel devices or drivers. |
-| 3 | Linux NVIDIA / CUDA | Reuse the capability design; qualify an actual same-user WSL GPU path only if device access and compatible libraries are verified. CPU Linux gates continue independently; WSL is not a native-Linux hardware proof. |
+| 3 | Linux x86_64 / CUDA on WSL2 | Qualify FP32 and efficient FP16 on the existing same-user WSL2 instance after Windows qualification. Verify device access and the compatible Linux stack. CPU Linux gates continue independently. |
 
 DirectML remains supported but is in sustained engineering, with new development
 directed to WinML. Its sessions require sequential execution and disabled memory
@@ -1504,6 +1504,35 @@ Compact and12–16GB for Large, not measured hardware minima. Without genuinely
 efficient attention, half precision might still require12–16GB for Compact and
 24GB for Large at8192 tokens. These guesses never grant native admission.
 The actual available-memory and qualified per-variant policy decides Auto.
+
+## Addendum — Linux CUDA qualification on WSL2
+
+After Windows qualification is complete, proceed directly to FP32 and FP16
+Linux qualification in the existing WSL2 instance on this machine. This step
+can start without another kickoff. Run Windows and WSL2 GPU-heavy jobs in
+sequence on the shared NVIDIA GPU.
+
+Verify the Windows human account and the corresponding WSL2 Linux UID before
+the batch. Record the distribution, WSL kernel, mapped NVIDIA driver, GPU,
+available memory and compatible Linux CUDA and cuDNN versions. Verify actual
+CUDA device access and the loaded library paths. Use the existing Windows
+host driver and the provisioned Linux user-space toolchain. Report missing
+access or dependencies with the exact affected gate.
+[NVIDIA CUDA on WSL](https://docs.nvidia.com/cuda/wsl-user-guide/index.html)
+
+Build and seal the Linux x86_64 runtime and its CUDA provider in an isolated,
+same-user WSL2 target. Use the reviewed source revision and exact model graph
+and weight identities. Run the existing Compact and Large FP32 graphs at 17
+and 128 tokens, then at 8,192 tokens after the initial probes pass. Repeat
+with the separately pinned FP16 variants and verify efficient attention,
+required mask behavior and the FP32 output ABI.
+
+Apply the existing G4 and G5 gates for each applicable variant, including
+actual placement, numerical parity and precision loss, peak memory, cold and
+warm p95 latency at or below 120 seconds, and Auto and admitted CPU fallback
+behavior. Retain the exact model, runtime, driver, command, placement and
+timing receipts. Report qualification for the recorded Linux x86_64 WSL2
+configuration and preserve any variant-specific refusal or failure.
 
 ## Addendum — Datagram macOS FP32 and FP16 weekend
 

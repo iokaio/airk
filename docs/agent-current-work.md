@@ -25,9 +25,13 @@ Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:
   at 05:29:42 UTC (18 November, 10:29:42 p.m. America/Denver), with T0 unchanged.
 - The final plan supersedes the old advanced-split execution deadline and
   campaign ordering. Preserve prior ledger entries as historical evidence.
-- For this authorized implementation, use only this Windows machine and Mac Neo. Deliver a Windows candidate first, then attempt all applicable
-  supported-platform gates and report genuine blockers. No paid/cloud compute
-  or cloud teachers.
+- For the current implementation, use this Windows machine, its existing WSL2
+  instance and Mac Neo. Complete Windows qualification before beginning the
+  authorized Linux FP32 and FP16 gates on WSL2. Start those gates directly
+  once Windows is complete and report genuine blockers.
+- The Datagram weekend has a separate manual kickoff after Windows
+  qualification under the final plan addendum. Current execution remains local.
+  No cloud teachers are authorized.
 ## Models and qualification
 
 - D08 now includes FP32 GPU execution first, then FP16 with efficient attention,
