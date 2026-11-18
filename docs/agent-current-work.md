@@ -42,6 +42,20 @@ Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:
   allowance. The 24 GiB device budget, original 120-second deadline and all
   numerical/placement criteria still apply. Keep the earlier 16/24 GiB
   attempt evidence under its own identity.
+- The approved FP32 Context matrix for Compact and Large is 32, 128, 1024
+  and 8192 tokens. Reuse exact independent results for unchanged 128 and
+  8192 inputs. Generate independently pinned references for the new 32 and
+  1024 inputs. Retain the 17-token evidence under its original identity.
+- Run the approved bounded-hybrid experiment with full final graph and CPU
+  tensor bounds checked before scoring. Measure actual runtime profiling
+  and verify scores against both independent references. Use one loaded
+  session for the first four-case profiling pass within the original
+  deadline. Collect required cold and warm qualification separately.
+- A measured Large FP32 host-cap constraint authorizes a fresh 48 GiB
+  process and 48 GiB aggregate Job with the full host reservation and
+  actual headroom checks. Run one Large FP32 process at a time with
+  exclusive use of the GPU. Observe empty Job and host reservation
+  settlement before starting the next process.
 - Preserve the selected bundled MiniLM plus independent optional Focus
   (Qwen3-Reranker-0.6B) and Context Compact/Large (Qwen3-1.7B/4B). Terminal
   classes stay unavailable until their own evidence passes. Use suitable

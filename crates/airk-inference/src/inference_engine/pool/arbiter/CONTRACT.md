@@ -207,6 +207,18 @@ limits are0.001 versus both references; Focus retains0.25/0.05 publisher and
 0.001/0.00001 same-artifact limits. Native-produced scores are never expected
 references. Missing producer/reference evidence is unavailable, not acceptance.
 
+The private Context FP32 four-width profiling matrix uses 32, 128, 1024 and
+8192 all-live tokens for both selected Context models. Its separate no-NN
+selector `emit_software_v2_additional_context_numeric_template` emits blank
+32- and 1024-token rows with eight closed readouts under the current
+authenticated compiler and resource input. The 32-token synthetic diagnostic
+has its own input digest domain and no production prompt. The 1024-token row
+uses the current native Qwen prompt compiler. Both require separately executed
+same-artifact and original FP32 references before use. The exact retained
+128- and 8192-token rows and both independent references may be reused. The
+historical three-row CPU selector and its 17-token evidence retain their
+original identities.
+
 These primitive observations establish neither human task quality, calibrated
 terminal support, actual composed service allocation/end-to-end latency, load
 fit on another platform, product RAM floors nor release/publication eligibility.

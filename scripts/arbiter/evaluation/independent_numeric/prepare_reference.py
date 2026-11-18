@@ -106,6 +106,11 @@ def prepare(args):
             Path(request['profile']['path']), Path(request['source_manifest']['path']), REPOSITORY / 'tools/retrieval-train/training_execution.py']:
         item = pin(path)
         seals[item['path']] = item['sha256']
+    if getattr(args, 'execution_powershell', None) is not None:
+        for path in [args.execution_powershell, REPOSITORY / 'scripts/cuda-component-execution.py',
+                     REPOSITORY / 'scripts/dev/assert-human-execution.ps1']:
+            item = pin(path)
+            seals[item['path']] = item['sha256']
     for path in request['files'].values():
         item = pin(path)
         seals[item['path']] = item['sha256']
@@ -188,6 +193,7 @@ def main():
     parser.add_argument('--minimum-cuda-free-gib', type=int)
     parser.add_argument('--threads', type=int)
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--execution-powershell', type=Path)
     args = parser.parse_args()
     if args.inventory:
         inventory(args.state_root)

@@ -94,6 +94,37 @@ fn software_v2_numeric_comparison_refuses_nonfinite_cardinality_and_keeps_argmax
     Ok(())
 }
 
+#[test]
+fn context_diagnostic_32_binds_all_live_tensors_and_compiler() -> Result<()> {
+    let compiler = Sha256Digest::from_bytes([7; 32]);
+    let symbols = (32..40).collect::<Vec<_>>();
+    let input = context_diagnostic_32(compiler, symbols.clone())?;
+    assert!(input.prompt.is_empty());
+    assert_eq!(input.input_ids, (1..33).collect::<Vec<_>>());
+    assert_eq!(input.attention_mask, [1; 32]);
+    assert_eq!(input.position_ids, (0..32).collect::<Vec<_>>());
+    assert_eq!(input.decision_position, 31);
+    assert_eq!(input.candidate_positions, [32, 33, 34, 35, 36, 37, 38, 39]);
+    assert_eq!(input.option_mask, [true; 8]);
+    assert_eq!(
+        input.input_digest,
+        context_diagnostic_32(compiler, symbols.clone())?.input_digest
+    );
+    assert_ne!(
+        input.input_digest,
+        context_diagnostic_32(Sha256Digest::from_bytes([8; 32]), symbols.clone())?.input_digest
+    );
+    let mut changed = symbols;
+    changed.swap(0, 1);
+    assert_ne!(
+        input.input_digest,
+        context_diagnostic_32(compiler, changed.clone())?.input_digest
+    );
+    changed.pop();
+    assert!(context_diagnostic_32(compiler, changed).is_err());
+    Ok(())
+}
+
 fn numeric_fixture(model: ModelChoice) -> Result<(Profile, NumericFixture, ResourcePolicy)> {
     let mut profile: Profile = serde_json::from_slice(&std::fs::read(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/arbiter/profile-downloads.json"),

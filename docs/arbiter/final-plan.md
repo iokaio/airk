@@ -1298,8 +1298,12 @@ registers F16/BF16 activation types, whereas the retained GQA artifacts use FP32
 Registering CUDA alone therefore cannot qualify those graphs as all-GPU.
 
 Use the existing original unfused FP32 Compact (c79c6725...) and Large
-(f8ba5d3e...) graphs first. Probe tiny 17/128 inputs with unchanged math and an
-actual placement trace, then the original 8192 boundary if those pass. Preserve
+(f8ba5d3e...) graphs first. The approved FP32 Context matrix is 32, 128, 1024
+and 8192 tokens, with unchanged math and actual placement. Use exact retained
+independent reference scores for unchanged 128 and 8192 inputs, and obtain
+independently pinned scores for 32 and 1024. Retain earlier 17-token evidence
+under its original identity. Use one loaded session for the initial profiled
+pass within its original deadline. Preserve
 causal/padding masks, positions, projections, decision rows and the FP32 output
 ABI. This first milestone does not change precision or use FP16 to conceal an
 FP32 failure. Preserve a failed FP32 result under its original identity.
@@ -1384,7 +1388,8 @@ CPU fallback, explicit CPU, stale configuration and source withdrawal. Mocked
 capability results establish decision logic only.
 
 For every supported model/backend/precision/OS/architecture combination:
-run actual 17/128/8192 numerical checks for Context (Focus remains 512), actual
+run actual numerical checks at 32, 128, 1024 and 8192 tokens for FP32 Context,
+the G5 matrix for FP16 Context, and 512 tokens for Focus. Collect actual
 placement tracing, cold/load and twenty-sample warm resource measurements with
 the existing nearest-rank p95 <=120 seconds, device/host memory and coexistence.
 Measure composed Answer end-to-end latency separately. Preserve original

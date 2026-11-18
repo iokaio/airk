@@ -549,26 +549,28 @@ fn numeric_shape(
         "numeric fixture is not the exact current compiler/model/resource identity"
     );
     let focus = profile.model == ModelChoice::FocusQwenReranker06B;
+    let shapes = if focus {
+        &[(512, 2); 12][..]
+    } else {
+        &[(17, 3), (128, 8), (8192, 8)][..]
+    };
+    numeric_rows(&fixture.rows, shapes, focus)
+}
+
+fn numeric_rows(rows: &[NumericCase], shapes: &[(usize, usize)], focus: bool) -> Result<()> {
     ensure!(
-        fixture.rows.len() == if focus { 12 } else { 3 },
+        rows.len() == shapes.len(),
         "complete independent native numeric roster required"
     );
     ensure!(
-        fixture
-            .rows
-            .iter()
+        rows.iter()
             .map(|row| &row.name)
             .collect::<BTreeSet<_>>()
             .len()
-            == fixture.rows.len(),
+            == rows.len(),
         "numeric case identities must be distinct"
     );
-    for (index, row) in fixture.rows.iter().enumerate() {
-        let (tokens, options) = if focus {
-            (512, 2)
-        } else {
-            [(17, 3), (128, 8), (8192, 8)][index]
-        };
+    for (row, &(tokens, options)) in rows.iter().zip(shapes) {
         ensure!(
             !row.name.is_empty()
                 && row.name.len() <= 128
@@ -799,6 +801,129 @@ fn emit_software_v2_native_numeric_template() -> Result<()> {
         rows,
     };
     numeric_shape(&fixture, &profile, &input.policy)?;
+    let output = PathBuf::from(std::env::var("AIRK_SOFTWARE_V2_NATIVE_OUTPUT")?);
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)?;
+    file.write_all(&serde_json::to_vec_pretty(&fixture)?)?;
+    file.sync_all()?;
+    Ok(())
+}
+
+#[cfg(test)]
+fn context_diagnostic_32(
+    compiler: Sha256Digest,
+    candidate_positions: Vec<i64>,
+) -> Result<CompiledInput> {
+    ensure!(
+        candidate_positions.len() == 8,
+        "eight authenticated Context readouts required"
+    );
+    let prompt = String::new();
+    let input_ids = (1..=32).collect::<Vec<_>>();
+    let attention_mask = vec![1; 32];
+    let position_ids = (0..32).collect::<Vec<_>>();
+    let decision_position = 31;
+    let option_mask = vec![true; 8];
+    let tensors = serde_json::to_vec(&(
+        &prompt,
+        &input_ids,
+        &attention_mask,
+        &position_ids,
+        decision_position,
+        &candidate_positions,
+        &option_mask,
+    ))?;
+    let input_digest = framed_digest(
+        b"airk.private-context-numeric-diagnostic32/1",
+        &[compiler.as_bytes(), &tensors],
+    );
+    Ok(CompiledInput {
+        prompt,
+        input_ids,
+        attention_mask,
+        position_ids,
+        decision_position,
+        candidate_positions,
+        option_mask,
+        input_digest,
+    })
+}
+
+#[test]
+#[ignore = "authenticated Context compiler/assets and fresh private template required; no NN"]
+fn emit_software_v2_additional_context_numeric_template() -> Result<()> {
+    let (input, profile, files, _) = inputs()?;
+    ensure!(
+        matches!(
+            profile.model,
+            ModelChoice::ContextQwenCompact | ModelChoice::ContextQwenLarge
+        ),
+        "only selected Context models use these supplemental widths"
+    );
+    let asset = |role| {
+        profile
+            .assets
+            .iter()
+            .find(|asset| asset.role == role)
+            .context("Context compiler or tokenizer asset unavailable")
+    };
+    let compiler = Compiler::from_verified(
+        &files.read_asset(asset(AssetRole::Compiler)?)?,
+        &files.read_asset(asset(AssetRole::Tokenizer)?)?,
+    )?;
+    let options = (0..8)
+        .map(|index| Candidate {
+            id: format!("option-{index}"),
+            text: format!("Synthetic option {index}"),
+        })
+        .collect::<Vec<_>>();
+    let (mut low, mut high) = (0usize, 1024usize);
+    let compiled = loop {
+        ensure!(
+            low <= high,
+            "exact native 1024-token Context input unavailable"
+        );
+        let repeat = low + (high - low) / 2;
+        let compiled = compiler.compile(
+            &" source".repeat(repeat),
+            "Select one synthetic option.",
+            &options,
+        )?;
+        match compiled.input_ids.len().cmp(&1024) {
+            std::cmp::Ordering::Less => low = repeat + 1,
+            std::cmp::Ordering::Equal => break compiled,
+            std::cmp::Ordering::Greater => {
+                high = repeat
+                    .checked_sub(1)
+                    .context("Context prompt minimum exceeds 1024 tokens")?;
+            }
+        }
+    };
+    let diagnostic = context_diagnostic_32(profile.compiler, compiled.candidate_positions.clone())?;
+    let rows = [
+        ("diagnostic-all-live-32", diagnostic),
+        ("native-all-live-1024", compiled),
+    ]
+    .into_iter()
+    .map(|(name, input)| NumericCase {
+        name: name.into(),
+        input,
+        reference_same_artifact: None,
+        reference_original_fp32: None,
+    })
+    .collect();
+    let fixture = NumericFixture {
+        schema: "airk.arbiter.native-numeric/2".into(),
+        model: profile.model,
+        compiler: profile.compiler,
+        resource_policy: input.policy_digest,
+        reference_producer: None,
+        original_reference_assets: vec![],
+        rows,
+    };
+    numeric_rows(&fixture.rows, &[(32, 8), (1024, 8)], false)?;
     let output = PathBuf::from(std::env::var("AIRK_SOFTWARE_V2_NATIVE_OUTPUT")?);
     let mut file = OpenOptions::new()
         .write(true)
