@@ -664,3 +664,16 @@ dispatch and settlement. The CPU and CUDA comparisons use the same
 frozen request, corpus and underlying model assets. The observed backend
 and compiled input must agree with the intended measurement. The paired
 timing is private component and transport evidence.
+
+The ignored `emit_paired_compact_cpu_comparator` selector stages only private
+CPU profile metadata. It takes the reviewed CPU profile, held CUDA profile and
+its exact raw all-unavailable CAL/2 as three SHA-pinned inputs. It requires
+matching current Context limits, model assets, compiler and task policy,
+unchanged CPU fit, and the original CUDA calibration bytes. It emits a
+separate CPU manifest and byte-identical CUDA calibration under artifacts.
+The normal Answer actor validates that calibration before dispatch and
+applies its empty rules after native scoring. Verify real matched native
+dispatch and successful score return on both backends. The resulting timing
+covers the actual pipe, native scoring and abstention on the shared frozen
+input. Positive choice timing and calibration qualification require their own
+evidence.
