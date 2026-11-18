@@ -646,3 +646,18 @@ The independently authenticated maintained producer owns compilation and COFF ar
 New manifest/Profile/CAL/native-input/probe request and compiled manifest/static-build pins must be emitted from the fresh derivation. Old3179 metadata remains historical. No model execution follows from descriptive metadata success.
 
 The maintained validator is fail-closed until its exact reviewed recipe authority is frozen; this is source implementation, not producer or runtime qualification.
+
+## Fresh current-toolchain Windows assembly
+
+Assembly recognizes the private cuda-fresh-static-build-proof/1 in the
+existing checkpointed-proof slot by its exact schema. It requires a separately
+reviewed current configure recipe and compile owner, directly held original
+configure and compile evidence, the observed CMake/Ninja graph, all eight
+source patch inputs and the same-build provider pair. The original raw compile
+receipt supplies the static build identity. The produced assembly manifest
+starts with an empty fit roster.
+
+The acceptance path remains closed until the reviewed current recipe and
+compile owner identities are authorized after the native build. The production
+proof does not derive from historical incremental or checkpointed receipts.
+The existing manifest, package provenance and runtime activation gates apply.

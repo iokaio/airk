@@ -1050,7 +1050,7 @@ pub(super) fn observe_assembly(input: RuntimeAssemblyInput, deadline: Instant) -
     } else {
         None
     };
-    let checkpointed = if let Some(proof) = &input.checkpointed_proof {
+    let (checkpointed, fresh) = if let Some(proof) = &input.checkpointed_proof {
         let raw = airk_core::arbiter::resource_policy::ResourceFilePin {
             path: input
                 .directory
@@ -1060,21 +1060,47 @@ pub(super) fn observe_assembly(input: RuntimeAssemblyInput, deadline: Instant) -
                 .into(),
             sha256: input.producer_sha256,
         };
-        let verified = super::provenance::projection::validate_checkpointed_producer(
+        let fresh = super::provenance::projection::try_validate_fresh_producer(
             &checkpoint_source,
             &raw,
             proof,
         )?;
-        ensure!(
-            verified.static_core_build == input.producer_sha256,
-            "checkpointed raw composition differs from reviewed native static identity"
-        );
-        Some(verified)
+        if let Some(verified) = &fresh {
+            ensure!(
+                verified.static_core_build == input.producer_sha256,
+                "fresh raw compile differs from reviewed native static identity"
+            );
+            (None, fresh)
+        } else {
+            let verified = super::provenance::projection::validate_checkpointed_producer(
+                &checkpoint_source,
+                &raw,
+                proof,
+            )?;
+            ensure!(
+                verified.static_core_build == input.producer_sha256,
+                "checkpointed raw composition differs from reviewed native static identity"
+            );
+            (Some(verified), None)
+        }
     } else {
-        None
+        (None, None)
     };
+    let verified_providers = incremental
+        .as_ref()
+        .map(|verified| verified.provider_dlls.as_slice())
+        .or_else(|| {
+            fresh
+                .as_ref()
+                .map(|verified| verified.provider_dlls.as_slice())
+        })
+        .or_else(|| {
+            checkpointed
+                .as_ref()
+                .map(|verified| verified.provider_dlls.as_slice())
+        });
     // Historical schema/status remains exact and is never an alias for checkpointed success.
-    let receipt = if checkpointed.is_none() && incremental.is_none() {
+    let receipt = if verified_providers.is_none() {
         Some(serde_json::from_slice::<serde_json::Value>(&read(
             &producer.file,
             16 << 20,
@@ -1106,18 +1132,8 @@ pub(super) fn observe_assembly(input: RuntimeAssemblyInput, deadline: Instant) -
         let (imports, delay_imports) = super::pe::imports_file(&value.file, deadline)?;
         if name.starts_with("onnxruntime_providers_") {
             ensure!(
-                if let Some(verified) = &incremental {
-                    verified
-                        .provider_dlls
-                        .iter()
-                        .filter(|v| {
-                            v.name == *name && v.sha256 == value.sha && v.bytes == value.bytes
-                        })
-                        .count()
-                        == 1
-                } else if let Some(verified) = &checkpointed {
-                    verified
-                        .provider_dlls
+                if let Some(providers) = verified_providers {
+                    providers
                         .iter()
                         .filter(|v| {
                             v.name == *name && v.sha256 == value.sha && v.bytes == value.bytes
@@ -1349,6 +1365,34 @@ impl super::provenance::projection::Source for ProjectionSource {
             .context("projection held input missing")?;
         let raw = read(&held.file, maximum)?;
         in_time(self.deadline)?;
+        Ok(raw)
+    }
+    fn read_retained_configure_receipt(&self, root: &Path, maximum: u64) -> Result<Vec<u8>> {
+        in_time(self.deadline)?;
+        let parent_path = root.join("logs");
+        let path = parent_path.join("configure.receipt.json");
+        let text = path
+            .to_str()
+            .context("configure receipt path is not UTF-8")?;
+        ensure!(
+            root.is_absolute() && !self.custody.mapped(text)? && !self.historical.mapped(text)?,
+            "configure stage receipt must use its original direct path"
+        );
+        let mut files = self.files.borrow_mut();
+        let held = match files.entry(path.clone()) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                let parent = OpenedDirectory::open(&parent_path)?;
+                security(parent.as_file(), true)?;
+                entry.insert(HeldFile::open(&parent, &path, true, self.deadline)?)
+            }
+        };
+        ensure!(
+            held.private && held.path == path && held.bytes <= maximum,
+            "invalid held configure receipt custody or capacity"
+        );
+        let raw = read(&held.file, maximum)?;
+        held.recheck(self.deadline)?;
         Ok(raw)
     }
     fn authenticate(

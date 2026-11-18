@@ -4,7 +4,11 @@ use super::*;
 use airk_core::arbiter::resource_policy::ResourceFilePin;
 use serde_json::Value;
 mod checkpoint;
+#[cfg(windows)]
+mod fresh;
 mod incremental;
+#[cfg(windows)]
+pub(in crate::arbiter::runtime::cuda) use fresh::try_validate_fresh_producer;
 pub(in crate::arbiter::runtime::cuda) use incremental::validate_incremental_producer;
 mod strict;
 pub(in crate::arbiter::runtime::cuda) use checkpoint::validate_checkpointed_producer;
@@ -12,6 +16,16 @@ pub(in crate::arbiter::runtime::cuda) use checkpoint::validate_checkpointed_prod
 pub(in crate::arbiter::runtime::cuda) trait Source {
     /// The actual native caller retains no-follow/owner/held-object custody.
     fn read(&self, pin: &ResourceFilePin, maximum: u64) -> Result<Vec<u8>>;
+    /// Read the configure stage's redundant copy under direct same-human custody.
+    /// The caller must compare it with the pinned producer's embedded proof.
+    #[cfg(windows)]
+    fn read_retained_configure_receipt(
+        &self,
+        _root: &std::path::Path,
+        _maximum: u64,
+    ) -> Result<Vec<u8>> {
+        anyhow::bail!("held configure stage receipt source unavailable")
+    }
     /// Stream-authenticate large DLL bytes without allocating an entire DLL.
     fn authenticate(&self, pin: &ResourceFilePin, bytes: u64, maximum: u64) -> Result<()>;
     /// Inert historical build-tool evidence only; never execute/load a copy.
