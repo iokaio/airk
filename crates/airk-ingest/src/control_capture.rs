@@ -130,7 +130,18 @@ impl ControlPath {
         if let Some(anchor) = &self.anchor {
             return anchor.qualify(self.relative(), directory);
         }
-        crate::control_snapshot::qualify_strict(&self.original, directory)
+        let path = &self.original;
+        ensure!(path.is_absolute(), "control locator is not absolute");
+        let anchor = path
+            .ancestors()
+            .last()
+            .ok_or_else(|| anyhow::anyhow!("control locator has no root"))?;
+        let relative = path
+            .strip_prefix(anchor)?
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("non-UTF8 control locator"))?
+            .replace('\\', "/");
+        crate::native_name_boundary::qualify(anchor, &relative, directory)
     }
     pub(crate) fn metadata(&self) -> std::io::Result<Metadata> {
         #[cfg(target_os = "macos")]

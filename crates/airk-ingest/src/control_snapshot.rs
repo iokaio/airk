@@ -401,20 +401,6 @@ pub(crate) fn qualify_locator(path: &Path, directory: bool) -> Result<()> {
         .qualify(directory)
 }
 
-pub(crate) fn qualify_strict(path: &Path, directory: bool) -> Result<()> {
-    ensure!(path.is_absolute(), "control locator is not absolute");
-    let anchor = path
-        .ancestors()
-        .last()
-        .ok_or_else(|| anyhow::anyhow!("control locator has no root"))?;
-    let relative = path
-        .strip_prefix(anchor)?
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("non-UTF8 control locator"))?
-        .replace('\\', "/");
-    crate::native_name_boundary::qualify(anchor, &relative, directory)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
