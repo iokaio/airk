@@ -112,3 +112,10 @@ The fresh verification call returns unqualified observations, with
 activation_pins_available false. Actual platform, provider, manifest, product
 and model acceptance remain with their owning gates. Environment/1 through /5
 retain their original request and proof semantics.
+
+
+Fresh provider staging creates the exact direct gpu-provider-stage child
+and retains the original fresh-compile.json and same-build CUDA/shared
+provider DLL bytes there. It audits source and target custody under one
+caller deadline and retains private staging evidence. Full runtime
+dependencies and native manifest acceptance remain with their owners.
