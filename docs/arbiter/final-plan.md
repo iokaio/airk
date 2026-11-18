@@ -1572,3 +1572,31 @@ Before the pass ends, copy the permitted receipts, traces and results to
 the local campaign evidence root. Record the qualification scope and any
 remaining blockers in the ledger. Datagram wipes the machine after the
 pass. [Datagram weekend pass](https://datagram.net/day-pass)
+
+
+## Addendum — Deferred AMD GPU testing
+
+Schedule this after the Datagram macOS testing. Confirm the host, budget,
+permitted inputs and manual kickoff before renting hardware. Keep the
+current Windows and WSL2 CUDA campaign under D02.
+
+For Linux AMD testing, build the native ONNX Runtime MIGraphX provider with
+a pinned ROCm and driver combination. A single DigitalOcean AMD Instinct
+MI350X or MI355X Spot GPU Droplet is a candidate for short compatibility and
+profiling runs. Check regional availability and compare the live rate with
+an on-demand MI300X. Export permitted receipts after each completed phase
+and record spot interruptions as incomplete runs. Verify the GPU, runtime,
+driver and model asset identities on the rented host.
+[Spot pricing](https://www.digitalocean.com/pricing/gpu-droplets#spot-plans) ·
+[GPU availability](https://docs.digitalocean.com/products/droplets/details/gpu-availability/) ·
+[AMD ONNX Runtime setup](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/inference/onnxruntime.html)
+
+Windows Radeon qualification needs a Windows host with a representative
+Radeon or Radeon Pro GPU and the actual AIRK Windows provider package.
+DigitalOcean's Linux Instinct evidence covers the tested Linux configuration.
+Start with Compact FP32 at 32, 128, 1024 and 8192 tokens on each applicable
+backend. Record actual placement, score parity, peak device and host memory,
+and cold and warm latency. Advance to Large and separately pinned FP16
+variants using G4 and G5 as applicable. Exercise Auto, explicit precision and
+qualified CPU fallback on the shipping Windows path before admitting Radeon
+to production Auto. [DirectML provider](https://onnxruntime.ai/docs/execution-providers/DirectML-ExecutionProvider.html)
