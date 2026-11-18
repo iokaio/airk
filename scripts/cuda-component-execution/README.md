@@ -42,3 +42,6 @@ Crossings describe observed placement edges. For fixed-shape INT64 and BOOL
 values, the report also counts ranks and static payload bytes. Dynamic and
 other shapes remain separate. Allocator overhead and actual transfers require
 runtime profiling.
+
+The separate [Compact four-width profiling owner](BOUNDED-HYBRID.md) reuses the
+retained graph, held CUDA build provenance and independent references.

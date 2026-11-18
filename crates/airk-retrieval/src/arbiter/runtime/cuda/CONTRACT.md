@@ -663,3 +663,22 @@ and compile owner
 9baab4661425582367f636c46d2a02871d43f8567d1b6c0e68445197e99813da
 from the completed current-toolchain native build. The existing manifest,
 package provenance and runtime activation gates apply.
+
+## Private fixed-graph Compact FP32 scoring
+
+The Windows x64 test-support entry opens the ordinary same-lease evaluation
+session with profiling and accepts its exact reviewed mixed placement only
+after the live complete graph matches the reviewed diagnostic's ordered rows
+and counters. The reviewed diagnostic pin, profile manifest and active
+adapter/driver identity are required. The private scorer owns the admitted
+session and a separate policy identity. Strict execution, diagnostic, and
+release paths keep their existing placement checks.
+
+The gate accepts one resolved root graph with only CUDA and CPU providers.
+Every present CPU incident value must be a scalar or fixed vector of at most
+five INT64 or BOOL elements, up to 40 bytes per value and 34,131 bytes across
+distinct values. CPU implicit inputs are refused because this ORT profiler
+does not describe them. Each forward uses the native validation and device
+lifetime path at 32, 128, 1024 or 8192 tokens under the original deadline.
+The raw ORT profile is separate evidence for the caller to validate. Value
+payload bounds do not measure allocation peaks or physical transfers.

@@ -14,8 +14,8 @@ Scorer/AssetSource still authenticate physical asset bytes. Existing bytes/URLs
 are never rewritten. GPU execution descriptors and both Context profiles refuse.
 
 Exact source mapping: legacy Focus Core ddd9dbc7.../task cfbcbe4c... to current
-Focus Core77fa25e4.../taskcc25cb7e..., with compiler.rs09c3120d... and
-compiler/focus.rsa5824302... under the exact census-backed supplement below.
+Focus Core91469204.../task25c96233..., with compiler.rs09c3120d... and
+compiler/focus.rsa5824302... under the exact supplements below.
 The preceding task5add2b52.../focus.rs66f9231b... row is historical, not an
 alternate accepted current identity. Current source mismatches refuse; future
 source updates require a newly reviewed row, not broad prefix compatibility.
@@ -201,3 +201,42 @@ truthfully truncated selected logs solely for graph evidence, with all exact
 metadata/placement/custody checks intact. Incremental producer validation uses
 fresh static-core identities; no old runtime profile is retagged. G5 must rebase
 onto this current runtime source rather than historical9e/DDE/254f bytes.
+
+## Core boundary and private Compact source supplement
+
+The current row binds runtime source
+6bb97b2f5ccaba894b304ae6ec3f1b0f8260bbc2b6e3a2c19c427227af0fcd8f,
+Focus Core semantics
+914692048e6d833e0d18c10485e7d9f57f2e0c8874f428b31002bcf7c09cdeef,
+and the task policy
+25c96233573bd34cd71d03317bc757677d31e48ffbe362c462499d5fb1b7eff7.
+Previous rows and source-derived input receipts retain their original identities.
+
+Core boundary commit b58a100d rehomes the Focus allowance, scope records and
+request size constant. Reversing its import and constant qualification changes
+reconstructs native_focus.rs SHA256
+68d908d7703bbb1380c6fa58328678071a80ff387ab029ef697817ba84079357
+from current SHA256 f5ea44d0e7a91480ac5b08de1659d1549385674f334da76929e867fb2675f414.
+The relocated structs, derives, serialization, validation and accounting methods
+match the prior definitions after resolving their paths. WorkerIdentity, Budget
+and the 128 KiB request limit are identical. The original framing over the
+resolved source bytes reproduces both historical and current Core/task pairs.
+
+The six runtime hooks add the Windows x64 test-support Compact scorer and its
+separate graph-gated placement mode. Reversing those hooks reproduces runtime
+SHA256 a59c063c5d08e1bf5adc7c531336c2715078adeb50d3f9b90faa8f93951b3ff5.
+The normal Focus CPU path retains its asset checks, compiler, ABI and session
+ownership. Legacy descriptor/catalog, admission checks, qualification flags,
+task calibration and downloads retain their existing bytes and meanings. This
+source-only mapping requires its scoped native controls before use.
+
+### Fresh Windows CUDA assembly source
+
+Commit 64b91a86 advances cuda/windows.rs from
+34903ab00d2d9c6921f0d2ffb99ffb8e64de0517b44141ebd9082ad1c0be6503 to
+9d2bb4ce4d9063e2f9c940b1bb007648c65b07561c5ee0e2c8a2737ffab221c2.
+Restoring the prior test-support assembly function and removing the added
+retained configure receipt reader reproduces the exact prior file. The
+runtime loader, graph collector and CPU source row retain their checked
+identities. The owned 32 GiB Compact graph observation binds this exact
+Windows source under its original receipt, independently of the CPU proof.

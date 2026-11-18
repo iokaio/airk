@@ -4,7 +4,8 @@ Planning date: 15 November 2026 (America/Denver).
 Status: execution underway on feat/arbiter-final; D01–D08 recorded.
 Scope update: deliver FP32 GPU execution first, then FP16 with efficient
 attention, with both options available for version 1.9.0 and automatic CPU
-fallback; see section 11. The user authorizes 72 hours total from original T0.
+fallback; see section 11. The user authorizes continuing beyond the original
+72-hour checkpoint with T0 and per-run limits preserved.
 The original planning request authorized this runbook only. The user authorized
 implementation on 15 November 2026; public publication requires separate
 authorization. Current execution evidence and blockers are in section 10.
@@ -36,7 +37,7 @@ contract encodings must be recorded before implementation; see section 11.
 | ID | Decision | Answer/status | Dependent work |
 | --- | --- | --- | --- |
 | D01 | Delivery platforms and stopping point | APPROVED: Windows candidate first, then all supported-platform release gates; report genuine blockers. | Steps 15–18 |
-| D02 | Training/evaluation compute, elapsed-time cap and teachers | APPROVED: “Just use this machine and the Neo. Max duration for this work is 48 hours. Target is 24.” Execution updates: the user first set 36 hours total, then explicitly approved 72 hours total on 17 November UTC for FP32 followed by FP16 with efficient attention. Original T0 is unchanged; the earlier 24-hour target/48-hour cap and 36-hour deadline are historical. No paid/cloud compute or cloud teachers. Inventory: Threadripper PRO 5975WX, 32 physical cores, approximately 128 GiB RAM, NVIDIA RTX A6000; driver/free VRAM/training availability remain to verify. | Steps 7–14 |
+| D02 | Training/evaluation compute, elapsed-time cap and teachers | APPROVED: “Just use this machine and the Neo. Max duration for this work is 48 hours. Target is 24.” Execution updates: the user first set 36 hours total, then explicitly approved 72 hours total on 17 November UTC for FP32 followed by FP16 with efficient attention. On 18 November the user authorized continuing past the 72-hour checkpoint. Original T0 and per-run limits apply. No paid/cloud compute or cloud teachers. Inventory: Threadripper PRO 5975WX, 32 physical cores, approximately 128 GiB RAM, NVIDIA RTX A6000; driver/free VRAM/training availability remain to verify. | Steps 7–14 |
 | D03 | Human-reviewed labels for unattended work | APPROVED: use suitable existing human-reviewed labels; finish other work and block only unsupported promotion when labels are missing. Agent judgments are not human gold. | Data acceptance, terminals and FINAL |
 | D04 | Shared-folder automatic agent-config editing | APPROVED: allow automatic edits only when the entire file and recovery path meet a reviewed safe policy; otherwise provide the complete manual entry. Token-free AIRK fields alone do not qualify a path. | Step 2 |
 | D05 | Context terminal-class contract extension | APPROVED: include the extension; leave Sufficient, Clarify and NoJustifiedRead unavailable unless each class's evidence passes. | Steps 2, 11, 13 |
@@ -80,7 +81,8 @@ contract encodings must be recorded before implementation; see section 11.
    missed deadline current or use it to waive gates. The user superseded the original
    24-hour target/48-hour cap first with 36 hours total, then explicitly with
    72 hours total for the expanded FP32-first/FP16 goal on 17 November UTC.
-   T0, correctness requirements and frozen per-run limits are unchanged.
+   On 18 November the user authorized continuing past that checkpoint.
+   T0, correctness requirements and frozen per-run limits still apply.
 10. Public publication is a separate final action on concrete reviewed artifacts.
     Prepare artifacts, rights/source-map proofs and a readiness report first.
     Missing final upload authorization does not stop independent local work.
@@ -149,9 +151,9 @@ cheaply and correct the cause. A repeated failure requires a revised diagnosis
 and cheap regression before the next attempt. Never retry unchanged failed
 inputs, broaden limits, relax assertions, fabricate cleanup or tune on FINAL.
 
-A blocked branch does not block independent work. At the updated 72-hour total deadline, retain results
-and identify remaining work; do not promise scientific success or mark unmet
-release criteria complete. User silence is not an answer to a pending decision.
+Continue independent work when a branch is blocked. At the 72-hour checkpoint,
+retain results, identify remaining work and continue under the user's 18 November
+authorization. Report observed outcomes against the release criteria.
 
 ## 3. Dependency order
 
@@ -848,9 +850,9 @@ A packaged file without installed checks is a candidate, not a qualified release
    never stage private data or broad artifact directories. No PR.
 5. Deliver Windows artifacts first, then the platform/qualification report.
    Distinguish implementation, measured model gains, rejected experiments,
-   compilation, installed outcomes and public availability. If the user-updated
-   72-hour total deadline arrives, stop new work, settle owned processes and hand
-   off honest remaining blockers; do not mark an unmet goal complete.
+   compilation, installed outcomes and public availability. At the 72-hour
+   checkpoint, record remaining blockers and continue under the user's
+   18 November authorization.
 6. Only after concrete artifacts and all required release gates are ready may
    public publication be proposed for separate approval. Do not request a
    blanket release approval during this planning task.
@@ -862,10 +864,10 @@ by a user-approved 36-hour total deadline. On 17 November UTC, the user approves
 **72 hours total** for FP32 GPU execution first and then FP16 with efficient
 attention, both available for version 1.9.0. Use the same Windows machine and
 Mac Neo, with quality prioritized. Original T0 remains
-2026-11-16T05:29:42.2081757Z; the current deadline is
+2026-11-16T05:29:42.2081757Z. The 72-hour checkpoint is
 **2026-11-19T05:29:42.2081757Z (Wednesday, 18 November at 10:29:42 p.m.
-America/Denver)**. The extension adds36 hours to the prior deadline; it changes
-no frozen acceptance rule or per-run limit. The clock never restarts.
+America/Denver)**. On 18 November the user authorized continuing beyond it.
+Keep the original campaign clock, acceptance rules and per-run limits.
 The early rows below remain historical scheduling targets, not completed outcomes.
 
 | Elapsed target | Main outcome | Parallel independent work |
@@ -890,10 +892,9 @@ two hours ask: am I completing final-plan.md, or getting sidetracked? Report
 actual progress against the plan and the next critical outcomes to the user.
 
 At hour 12, stop optional exploration if it threatens core export/qualification.
-At hour 24, continue unattended toward unfulfilled acceptance criteria within
-the updated 72-hour total deadline; the user explicitly authorized this extension
-for the sequential FP32/FP16 scope. A working FP32 path is a milestone, not
-completion of the now-expanded dual-precision goal.
+At hour 24 and beyond the 72-hour checkpoint, continue toward unfulfilled
+acceptance criteria under the user's 18 November authorization. Finish FP32,
+then advance to the separately qualified FP16 path.
 Missing human labels, unavailable hosts or a failing profile cause a local
 blocker and continued independent work, not a weaker claim.
 
@@ -1432,7 +1433,7 @@ only if they pass. Nonconflicting CPU/Linux/Mac repairs continue, with one Cargo
 owner per host/target and one GPU-heavy job at a time. The R154 fresh CPU route retains its
 original fixture identity; it is not retrospectively a GPU comparison.
 
-The user-approved72-hour deadline is2026-11-19T05:29:42Z. At the dual-precision
+The prior 72-hour deadline was 2026-11-19T05:29:42Z. At the dual-precision
 scope decision (approximately17 November03:05Z), the engineering estimate is
 36–48 additional hours of work; the extension provides roughly50 calendar hours.
 Target both implemented paths, applicable native qualification and a reviewed
@@ -1440,7 +1441,7 @@ Windows candidate by Wednesday18 November10:29p.m. Denver. This is an estimate,
 not a claim of future passes or a guarantee that external label/rights/platform
 blockers disappear. FP32 integration is the next milestone; FP16 efficient
 attention follows, then both-variant selection/recovery/package qualification.
-Reserve the final four hours for justified gates, settlement and handoff.
+The user authorized continuing beyond that checkpoint on 18 November.
 Do not promise universal GPU support or the attachment's unmeasured10–50x
 speedups, few-second latency or12–16GB fit. If a gate cannot finish, retain its
 evidence and exact unmet criterion rather than weakening it.

@@ -2206,3 +2206,8 @@ fn graph_diagnostic_rejects_incomplete_graph_and_node_provider_mismatch() -> Res
     assert!(graph_diagnostic_evidence(true, Some(&changed), false, true, true, false).is_err());
     Ok(())
 }
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+mod bounded_hybrid;
+#[cfg(all(windows, target_arch = "x86_64"))]
+mod hybrid_profile_trace;

@@ -23,6 +23,20 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+#[cfg(all(
+    feature = "gpu-cuda",
+    feature = "test-support",
+    windows,
+    target_arch = "x86_64"
+))]
+mod bounded_hybrid;
+#[cfg(all(
+    feature = "gpu-cuda",
+    feature = "test-support",
+    windows,
+    target_arch = "x86_64"
+))]
+pub use bounded_hybrid::BoundedHybridScorer;
 mod cpu_source_transition;
 #[cfg(feature = "gpu-cuda")]
 pub mod cuda;
@@ -368,6 +382,13 @@ pub struct Scorer {
     session: Mutex<session_owner::SessionOwner>,
     _environment: crate::onnx::SessionEnvironmentLease,
     physical_cores: usize,
+    #[cfg(all(
+        feature = "gpu-cuda",
+        feature = "test-support",
+        windows,
+        target_arch = "x86_64"
+    ))]
+    bounded_hybrid: Option<bounded_hybrid::GraphEvidence>,
     joint_calibration:
         Option<Arc<airk_core::arbiter::context_action::calibration::JointCalibration>>,
 }
@@ -392,6 +413,13 @@ enum OpenMode {
     PlacementDiagnostic,
     #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
     GraphMetadataDiagnostic,
+    #[cfg(all(
+        feature = "gpu-cuda",
+        feature = "test-support",
+        windows,
+        target_arch = "x86_64"
+    ))]
+    BoundedHybrid(Box<bounded_hybrid::GraphGate>),
 }
 impl Scorer {
     pub fn open(profile: ExecutionProfile, source: &dyn AssetSource) -> Result<Self> {
@@ -597,6 +625,15 @@ impl Scorer {
             cuda::diagnostic::require_diagnostic_profile(&profile)?;
             builder = builder.with_config_entry("session.disable_cpu_ep_fallback", "0")?;
         }
+        #[cfg(all(
+            feature = "gpu-cuda",
+            feature = "test-support",
+            windows,
+            target_arch = "x86_64"
+        ))]
+        if matches!(_mode, OpenMode::BoundedHybrid(_)) {
+            builder = builder.with_config_entry("session.disable_cpu_ep_fallback", "0")?;
+        }
         for asset in profile
             .description
             .assets
@@ -672,23 +709,28 @@ impl Scorer {
         if let Some(claim) = cold {
             claim.settle()?;
         }
+        #[cfg(all(
+            feature = "gpu-cuda",
+            feature = "test-support",
+            windows,
+            target_arch = "x86_64"
+        ))]
+        let mut bounded_hybrid = None;
         #[cfg(feature = "gpu-cuda")]
         if let Some(binding) = &gpu {
-            let diagnostic = {
+            match &_mode {
                 #[cfg(feature = "test-support")]
-                {
-                    matches!(
-                        _mode,
-                        OpenMode::PlacementDiagnostic | OpenMode::GraphMetadataDiagnostic
-                    )
+                OpenMode::PlacementDiagnostic | OpenMode::GraphMetadataDiagnostic => {}
+                #[cfg(all(
+                    feature = "gpu-cuda",
+                    feature = "test-support",
+                    windows,
+                    target_arch = "x86_64"
+                ))]
+                OpenMode::BoundedHybrid(gate) => {
+                    bounded_hybrid = Some(gate.verify_session(binding, &session)?);
                 }
-                #[cfg(not(feature = "test-support"))]
-                {
-                    false
-                }
-            };
-            if !diagnostic {
-                binding.device.placement(&session)?.require_strict()?;
+                OpenMode::Execution => binding.device.placement(&session)?.require_strict()?,
             }
         }
 
@@ -820,6 +862,13 @@ impl Scorer {
             session: Mutex::new(session),
             _environment: environment,
             physical_cores,
+            #[cfg(all(
+                feature = "gpu-cuda",
+                feature = "test-support",
+                windows,
+                target_arch = "x86_64"
+            ))]
+            bounded_hybrid,
             joint_calibration,
         }))
     }

@@ -1,0 +1,220 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Validate the owned ORT profiler's ordered per-forward node and tensor evidence.
+use super::*;
+use airk_retrieval::arbiter::runtime::cuda::GraphMetadataRow;
+
+const CPU: &str = "CPUExecutionProvider";
+
+#[derive(Default, Serialize)]
+pub(super) struct ProfiledRun {
+    tokens: usize,
+    model_run_us: u64,
+    node_count: usize,
+    cpu_nodes: usize,
+    cpu_input_bytes: u64,
+    cpu_output_bytes: u64,
+    cpu_max_tensor_bytes: u64,
+}
+
+fn duration(event: &Value) -> Result<u64> {
+    event["dur"].as_u64().context("ORT event duration missing")
+}
+
+fn interval(event: &Value) -> Result<(u64, u64)> {
+    let start = event["ts"].as_u64().context("ORT event time missing")?;
+    let end = start
+        .checked_add(duration(event)?)
+        .context("ORT event time overflow")?;
+    Ok((start, end))
+}
+
+fn control_tensors(values: &Value) -> Result<(u64, u64)> {
+    let mut total = 0;
+    let mut maximum = 0;
+    for value in values.as_array().context("ORT tensor IO roster missing")? {
+        let fields = value
+            .as_object()
+            .context("ORT typed tensor entry is not an object")?;
+        ensure!(fields.len() == 1, "ORT typed tensor entry is ambiguous");
+        let (kind, dims) = fields.iter().next().unwrap();
+        let width = match kind.as_str() {
+            "int64" => 8,
+            "bool" => 1,
+            _ => anyhow::bail!("non-control ORT CPU tensor type {kind}"),
+        };
+        let dims = dims.as_array().context("ORT tensor shape missing")?;
+        let elements = match dims.as_slice() {
+            [] => 1,
+            [axis] => axis
+                .as_u64()
+                .filter(|n| *n <= 5)
+                .context("CPU vector exceeded length five")?,
+            _ => anyhow::bail!("CPU tensor exceeds scalar or fixed vector scope"),
+        };
+        let bytes = width * elements;
+        total += bytes;
+        maximum = maximum.max(bytes);
+    }
+    Ok((total, maximum))
+}
+
+fn arg_u64(args: &Value, key: &str) -> Result<u64> {
+    args[key]
+        .as_str()
+        .with_context(|| format!("missing ORT {key}"))?
+        .parse()
+        .with_context(|| format!("invalid ORT {key}"))
+}
+
+fn record_cpu_event(run: &mut ProfiledRun, args: &Value) -> Result<()> {
+    let (input, input_max) = control_tensors(&args["input_type_shape"])?;
+    let (output, output_max) = control_tensors(&args["output_type_shape"])?;
+    ensure!(
+        arg_u64(args, "activation_size")?.checked_add(arg_u64(args, "parameter_size")?)
+            == Some(input)
+            && arg_u64(args, "output_size")? == output,
+        "ORT CPU tensor shape bytes differ from observed input/output bytes"
+    );
+    run.cpu_nodes += 1;
+    run.cpu_input_bytes += input;
+    run.cpu_output_bytes += output;
+    run.cpu_max_tensor_bytes = run.cpu_max_tensor_bytes.max(input_max).max(output_max);
+    Ok(())
+}
+
+pub(super) fn profiled_runs(
+    bytes: &[u8],
+    graph: &[GraphMetadataRow],
+    widths: &[usize],
+) -> Result<Vec<ProfiledRun>> {
+    let events: Vec<Value> = serde_json::from_slice(bytes)?;
+    let mut nodes = BTreeMap::new();
+    for row in graph {
+        if let GraphMetadataRow::Node {
+            graph,
+            node,
+            op,
+            ep,
+            ..
+        } = row
+        {
+            ensure!(
+                *graph == 0 && nodes.insert(*node, (op, ep)).is_none(),
+                "profile requires a complete unique root node roster"
+            );
+        }
+    }
+    ensure!(!nodes.is_empty(), "profile graph contains no nodes");
+    let mut spans = events
+        .iter()
+        .filter(|event| event["cat"] == "Session" && event["name"] == "model_run")
+        .map(interval)
+        .collect::<Result<Vec<_>>>()?;
+    spans.sort_unstable();
+    ensure!(
+        spans.len() == widths.len()
+            && spans.iter().all(|(start, end)| start < end)
+            && spans.windows(2).all(|spans| spans[0].1 <= spans[1].0),
+        "ORT profile lacks the complete serial model_run windows"
+    );
+    let mut seen = vec![BTreeSet::new(); spans.len()];
+    let mut runs = spans
+        .iter()
+        .zip(widths)
+        .map(|(&(start, end), &tokens)| ProfiledRun {
+            tokens,
+            model_run_us: end - start,
+            ..ProfiledRun::default()
+        })
+        .collect::<Vec<_>>();
+    for event in events.iter().filter(|event| event["cat"] == "Node") {
+        let args = &event["args"];
+        let node = arg_u64(args, "node_index")?;
+        let (op, ep) = nodes
+            .get(&node)
+            .context("profiled node missing from final graph")?;
+        ensure!(
+            args["op_name"] == op.as_str() && args["provider"] == ep.as_str(),
+            "profiled node operator or provider drifted"
+        );
+        let (start, end) = interval(event)?;
+        let index = spans
+            .iter()
+            .position(|&(first, last)| first <= start && start < last && end <= last)
+            .context("node kernel is outside a single forward window")?;
+        ensure!(
+            seen[index].insert(node),
+            "duplicate ORT node kernel in one forward"
+        );
+        let run = &mut runs[index];
+        run.node_count += 1;
+        if ep.as_str() == CPU {
+            record_cpu_event(run, args)?;
+        }
+    }
+    let cpu_count = nodes.values().filter(|(_, ep)| ep.as_str() == CPU).count();
+    ensure!(
+        runs.iter()
+            .all(|run| run.node_count == nodes.len() && run.cpu_nodes == cpu_count),
+        "ORT forward lacks the complete final-node census"
+    );
+    Ok(runs)
+}
+
+#[test]
+fn compact_profile_refuses_missing_duplicate_or_non_control_nodes() -> Result<()> {
+    let graph = [GraphMetadataRow::Node {
+        graph: 0,
+        node: 9,
+        name: "test".into(),
+        domain: String::new(),
+        op: "Gather".into(),
+        ep: CPU.into(),
+        version: 13,
+    }];
+    let run = json!({"cat":"Session","name":"model_run","ts":1,"dur":20});
+    let entry = json!({"cat":"Node","name":"test_kernel_time","ts":9,"dur":0,
+        "args":{"node_index":"9","op_name":"Gather","provider":CPU,
+            "input_type_shape":[{"int64":[5]},{"bool":[]}],"output_type_shape":[{"int64":[]}],
+            "activation_size":"1","parameter_size":"40","output_size":"8"}});
+    let valid = profiled_runs(
+        &serde_json::to_vec(&[run.clone(), entry.clone()])?,
+        &graph,
+        &[32],
+    )?;
+    assert_eq!(valid[0].node_count, 1);
+    assert_eq!(valid[0].cpu_input_bytes, 41);
+    assert_eq!(valid[0].cpu_output_bytes, 8);
+    assert_eq!(valid[0].cpu_max_tensor_bytes, 40);
+    for (field, drift) in [
+        ("/ts", json!(30)),
+        ("/args/node_index", json!("8")),
+        ("/args/input_type_shape/0", json!({"float":[5]})),
+        ("/args/input_type_shape/0", json!({"int64":[6]})),
+        ("/args/activation_size", json!("0")),
+        ("/args/provider", json!("CUDAExecutionProvider")),
+    ] {
+        let mut changed = entry.clone();
+        *changed.pointer_mut(field).unwrap() = drift;
+        assert!(
+            profiled_runs(&serde_json::to_vec(&[run.clone(), changed])?, &graph, &[32]).is_err()
+        );
+    }
+    assert!(
+        profiled_runs(
+            &serde_json::to_vec(std::slice::from_ref(&run))?,
+            &graph,
+            &[32]
+        )
+        .is_err()
+    );
+    assert!(
+        profiled_runs(
+            &serde_json::to_vec(&[run, entry.clone(), entry])?,
+            &graph,
+            &[32]
+        )
+        .is_err()
+    );
+    Ok(())
+}

@@ -214,3 +214,24 @@ The graph_metadata object is the Retrieval-owned airk.private.ort-final-graph-me
 New-mode receipt serialization is compact and bounded during encoding to16MiB before the output file is changed. Existing modes retain their old pretty serialization. The receipt is synchronized and its retention checked against the unchanged original deadline. Serialization overflow cannot replace a previous partial receipt with truncated JSON or become a successful diagnostic. Primary model/load errors and actual cleanup facts remain explicit.
 
 Pure controls cover missing/failed metadata evidence, log-completeness disclosure, serializer failure before output mutation, compact JSON preservation and byte caps. They do not prove actual graph capture, CUDA execution or model qualification. Integration requires scoped Clippy and selected native tests after combined review.
+## Private Compact bounded-hybrid profiling
+
+The Windows x64 ignored four-width selector uses the original 120-second
+deadline, the approved 32 GiB process and Job limits and 24 GiB device
+budget. It authenticates the exact retained graph-only receipt, original
+native Probe request, and the retained and supplemental Compact reference
+fixtures and producers before opening one private profiled scorer. It
+checks both independent arrays and unchanged numerical tolerances for
+32, 128, 1024 and 8192 in order. Each load and forward uses the shared
+original-operation journal and retains its actual elapsed interval.
+
+The separate result and raw ORT trace prove only this private component
+experiment. Trace validation associates every complete final root node
+with its actual provider and one serial model-run window. CPU trace inputs
+and outputs must be fixed scalar or short INT64/BOOL values and match the
+actual input and output size fields. Report CPU bytes per explicit kernel
+event and the maximum single tensor. Physical copy traffic and comprehensive
+device allocator peaks remain unavailable in this pinned ORT profile.
+Release requires actual clean session and device settlement, empty outer
+native device/host custody, post-pin verification and the original expiry.
+Production admission, unprofiled latency and task qualification are separate.

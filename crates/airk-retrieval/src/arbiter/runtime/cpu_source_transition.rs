@@ -15,10 +15,10 @@ const LEGACY_RUNTIME_SOURCE: &str =
     "d2879546ba9e949fdd8b135a244923de2adb781e8598539cc33f4d7d6f0794eb";
 // Exact runtime owner hook bytes. A different build source requires a new reviewed row.
 const CURRENT_RUNTIME_SOURCE: Option<&str> =
-    Some("a59c063c5d08e1bf5adc7c531336c2715078adeb50d3f9b90faa8f93951b3ff5");
+    Some("6bb97b2f5ccaba894b304ae6ec3f1b0f8260bbc2b6e3a2c19c427227af0fcd8f");
 const LEGACY_CORE: &str = "ddd9dbc76ae2c7e92c3b57b58a9443161fb045bbc175596f57bb41c9b1b5bbe6";
-const CURRENT_CORE: &str = "77fa25e4623f32e568a7163553cf7531cd4425dbb157ea2b67fef7940998c57f";
-const CURRENT_TASK: &str = "cc25cb7e3a3b6ea4cb78f232c0c1bf6764005e79775af20a1d0b3aa5d8d1bdab";
+const CURRENT_CORE: &str = "914692048e6d833e0d18c10485e7d9f57f2e0c8874f428b31002bcf7c09cdeef";
+const CURRENT_TASK: &str = "25c96233573bd34cd71d03317bc757677d31e48ffbe362c462499d5fb1b7eff7";
 const COMPILER_SOURCE: &str = "09c3120dd83152db417a03959d7cdf1c241f43eb7699154ec3b43d976b951627";
 const FOCUS_COMPILER_SOURCE: &str =
     "a58243020b534c08c7cc049cb9155d4bdfe4e220f96112967a048692a0813015";

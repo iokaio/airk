@@ -20,9 +20,10 @@ Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:
 - Branch: feat/arbiter-final, created from feat/advanced-split. Commit locally; no push to this new branch, PR,
   merge, publication or deployment is authorized.
 - Current task: implement all steps of docs/arbiter/final-plan.md, authorized
-  by the user on 15 November 2026. Execution T0 is recorded in the ledger;
-  the updated 72-hour total deadline applies across sessions: 19 November 2026
-  at 05:29:42 UTC (18 November, 10:29:42 p.m. America/Denver), with T0 unchanged.
+  by the user on 15 November 2026. Execution T0 is recorded in the ledger.
+  On 18 November the user authorized continuing past the 72-hour checkpoint
+  at 10:29:42 p.m. America/Denver. Continue the campaign across sessions
+  unless the user changes direction. Original T0 and per-run limits apply.
 - The final plan supersedes the old advanced-split execution deadline and
   campaign ordering. Preserve prior ledger entries as historical evidence.
 - For the current implementation, use this Windows machine, its existing WSL2
