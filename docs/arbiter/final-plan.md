@@ -1217,6 +1217,18 @@ settlement is proven. Persist the setting across restart and expose the
 actual device and reason through the service, CLI, Admin and Workbench.
 The existing per-stage CPU policy remains available for narrower control.
 
+In Admin, show the compatible GPU families and representative cards beside
+the Focus and Context Arbiter enable controls and **Allow GPU use**.
+For Windows CUDA, include the RTX A6000 and GeForce RTX 30 series (SM86),
+GeForce RTX 40 and RTX 6000 Ada (SM89), and GeForce RTX 50 and the RTX PRO 6000
+Blackwell family (SM120) where the installed build includes those targets.
+Link to the full vendor architecture table. Show the detected adapter and
+whether the selected model and precision can use it. Surface the existing
+driver, available VRAM, qualification, experimental opt-in and CPU fallback
+reasons alongside that choice. Render compatibility and qualification from
+the canonical service device policy and installed manifest. Reading these
+controls must not initialize a GPU or trigger a model load.
+
 ### Verified starting point and backend order
 
 Read-only Windows inventory at 2026-11-17T01:57–02:00Z found an NVIDIA RTX A6000,
@@ -1385,6 +1397,13 @@ memory. Use an admitted fitting same-model CPU path or report unavailable
 when the user's GPU cannot run the selected variant. The current workstation
 has only the SM86 A6000. Compile checks for SM89 and SM120 can run here.
 Runtime qualification needs access to representative RTX 40 and 50 cards.
+The SM120 target includes the RTX PRO 6000 Blackwell Workstation, Max-Q
+Workstation and Server editions. Include the Workstation Edition in the
+Blackwell validation scope when hardware is available. An RTX 5090 and
+RTX 4090 are representative GeForce targets for SM120 and SM89. Use a
+lower-memory card when available to exercise model fit and CPU fallback
+under the same placement, ownership and deadline rules.
+[NVIDIA CUDA compute capabilities](https://developer.nvidia.com/cuda/gpus)
 
 A native, non-deserializable eligibility witness requires one actual management load,
 complete placement observation, independent synthetic numeric roster and
@@ -1416,6 +1435,9 @@ active work, including explicit FP32/FP16 and experimental opt-in. Verify
 cancellation or natural settlement, released sessions and reservations,
 and disabled state after restart. Exercise Radeon opt-in, manual disable,
 recoverable provider failures, and uncertain GPU settlement separately.
+Exercise the Admin compatibility list beside the Arbiter enable controls for
+the installed candidate, including a supported class with insufficient memory,
+an unavailable class, experimental support and GPU use disabled.
 Mocked capability results establish decision logic only.
 
 For every supported model/backend/precision/OS/architecture combination:
@@ -1626,3 +1648,12 @@ If GPU work has uncertain settlement, stop the request and keep the GPU
 path unavailable until safe recovery. Turning off the Radeon experiment
 returns Radeon-only systems to CPU selection. The service-wide GPU switch
 takes precedence over this experiment.
+
+Add the applicable Radeon families and representative cards to the same
+Admin compatibility list beside the Arbiter enable controls when the
+installed build exposes the experiment. Label the Radeon entries
+**Experimental** and show the per-user opt-in state, detected adapter,
+tested scope and actual availability. Show the reason when the selected
+model uses CPU, including opt-out, provider or operator failure, and
+insufficient VRAM. Read these details from the same service metadata as
+the NVIDIA entries.
