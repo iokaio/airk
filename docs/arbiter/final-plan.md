@@ -1227,7 +1227,7 @@ and actual native execution remain unverified. Mac Neo has an Apple A18 Pro and
 | --- | --- | --- |
 | 1 | Windows NVIDIA / CUDA | First bounded compatibility and native qualification target on the actual A6000. Pin compatible runtime, driver requirements and dependent libraries. |
 | 2 | macOS / CoreML | Inspect exact graph coverage and available unified memory on Neo; run only fitting bounded probes. Distinguish GPU, Neural Engine and CPU placement; report a genuine fit/coverage blocker. |
-| 2 | Windows DX12 / DirectML | Implement a provider capability path after a bounded graph-coverage probe. Test on available hardware; A6000 success cannot qualify AMD/Intel devices or drivers. |
+| 2 | Windows DX12 / DirectML | Implement a provider capability path after a bounded graph-coverage probe. For Radeon, follow the deferred AMD addendum and use Linux AMD qualification as the build basis. Scope any hardware results to the tested adapter and driver. |
 | 3 | Linux x86_64 / CUDA on WSL2 | Qualify FP32 and efficient FP16 on the existing same-user WSL2 instance after Windows qualification. Verify device access and the compatible Linux stack. CPU Linux gates continue independently. |
 
 DirectML remains supported but is in sustained engineering, with new development
@@ -1591,12 +1591,17 @@ driver and model asset identities on the rented host.
 [GPU availability](https://docs.digitalocean.com/products/droplets/details/gpu-availability/) ·
 [AMD ONNX Runtime setup](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/inference/onnxruntime.html)
 
-Windows Radeon qualification needs a Windows host with a representative
-Radeon or Radeon Pro GPU and the actual AIRK Windows provider package.
-DigitalOcean's Linux Instinct evidence covers the tested Linux configuration.
-Start with Compact FP32 at 32, 128, 1024 and 8192 tokens on each applicable
-backend. Record actual placement, score parity, peak device and host memory,
-and cold and warm latency. Advance to Large and separately pinned FP16
-variants using G4 and G5 as applicable. Exercise Auto, explicit precision and
-qualified CPU fallback on the shipping Windows path before admitting Radeon
-to production Auto. [DirectML provider](https://onnxruntime.ai/docs/execution-providers/DirectML-ExecutionProvider.html)
+Qualify AMD on Linux Instinct using G4 and G5 as applicable. Start with
+Compact FP32 at 32, 128, 1024 and 8192 tokens. Record actual placement, score
+parity, peak device and host memory, and cold and warm latency. Advance to
+Large and separately pinned FP16 variants. Scope qualification to the tested
+Linux GPU, driver, runtime and model variants.
+
+A Windows Radeon qualification host is unavailable for this work. Use Linux
+AMD qualification as the basis for building and packaging Windows Radeon
+support on the development machine. Proceed on the assumption that the
+Windows DX12/DirectML provider will work on compatible Radeon hardware.
+Apply Windows provider availability, device fit, precision selection and
+qualified CPU fallback checks at runtime. Record Windows Radeon hardware
+behavior as unverified in release and qualification notes.
+[DirectML provider](https://onnxruntime.ai/docs/execution-providers/DirectML-ExecutionProvider.html)
