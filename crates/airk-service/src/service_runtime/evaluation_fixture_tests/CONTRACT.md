@@ -15,6 +15,10 @@ configuration error. A refusal or unknown result follows existing startup-failur
 shutdown/owned-task settlement; it cannot emit Ready. No retries, fixed sleeps,
 extra work deadline or modified admission rule is introduced.
 
+When startup refuses, the fixture retains the existing unknown marker and
+joins the actual service task. If that task failed, its error is reported
+alongside the startup-phase error after the observers close.
+
 A configured ceiling does not establish host fit, available RAM, model load,
 provider/CPU readiness or safe coexistence. Real snapshots retain all native
 pressure, telemetry, reservation and resource facts; subsequent actual warm and

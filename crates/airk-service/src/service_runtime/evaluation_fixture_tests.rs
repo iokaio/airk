@@ -787,16 +787,26 @@ async fn run_actual_private_arbiter_fixture(
             // Seed timeout drops its receiver, making the factory fail as soon
             // as its current actual descriptor transaction returns. Retain the
             // task until native ownership truly completes, even after refusal.
-            if !observed_service_exit {
-                let _ = service.await;
-            }
+            let service_failure = if observed_service_exit {
+                None
+            } else {
+                match service.await {
+                    Ok(Ok(())) => None,
+                    Ok(Err(failure)) => Some(failure),
+                    Err(failure) => Some(failure.into()),
+                }
+            };
             if let Some(recorder) = execution_recorder.take() {
                 let _ = recorder.finish().await;
             }
             if let Some(recorder) = warm_recorder.take() {
                 let _ = recorder.finish().await;
             }
-            return Err(error.context(
+            let failure = match service_failure {
+                Some(failure) => failure.context(format!("{error:#}")),
+                None => error,
+            };
+            return Err(failure.context(
                 "private fixture startup refused; no Ready or successful closure was claimed",
             ));
         }
