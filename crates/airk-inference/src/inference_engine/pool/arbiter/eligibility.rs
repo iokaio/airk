@@ -668,10 +668,35 @@ pub(super) fn warm(
             }
             device::warm_admission(warm.deadline, warm.authority.as_deref(), Instant::now)
         });
-    let loaded = match admission {
-        Ok(()) => Scorer::open(warm.profile, warm.source.as_ref()),
-        Err(error) => Err(error),
-    };
+    #[cfg(all(
+        windows,
+        target_arch = "x86_64",
+        feature = "test-support",
+        feature = "gpu-cuda"
+    ))]
+    let mut evaluation_answer_deadline: Option<EvaluationAnswerDeadline> = None;
+    let loaded = admission.and_then(|()| match warm.route {
+        WarmRoute::Standard => Scorer::open(warm.profile, warm.source.as_ref()),
+        #[cfg(all(
+            windows,
+            target_arch = "x86_64",
+            feature = "test-support",
+            feature = "gpu-cuda"
+        ))]
+        WarmRoute::EvaluationAnswer(graph) => {
+            let (scorer, proof) = Scorer::open_compact_bounded_hybrid_answer(
+                warm.profile,
+                warm.source.as_ref(),
+                &graph.reviewed_result,
+                graph.expected_sha256,
+                graph.expires,
+            )?;
+            evaluation_answer_deadline = Some(Box::new(move |deadline| {
+                proof.require_operation_deadline(deadline)
+            }));
+            Ok(scorer)
+        }
+    });
     #[cfg(feature = "gpu-cuda")]
     let loaded = match loaded {
         Err(error) => {
@@ -720,6 +745,13 @@ pub(super) fn warm(
                 ResidentSession {
                     scorer: loaded,
                     _source: warm.source,
+                    #[cfg(all(
+                        windows,
+                        target_arch = "x86_64",
+                        feature = "test-support",
+                        feature = "gpu-cuda"
+                    ))]
+                    evaluation_answer_deadline,
                 },
                 warm._reservation,
                 ownership.clone(),

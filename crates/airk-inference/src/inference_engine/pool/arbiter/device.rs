@@ -288,6 +288,18 @@ impl GuardedResident {
     pub fn scorer(&self) -> &Scorer {
         &self.session.scorer
     }
+    #[cfg(all(
+        windows,
+        target_arch = "x86_64",
+        feature = "test-support",
+        feature = "gpu-cuda"
+    ))]
+    pub(super) fn require_evaluation_answer_deadline(&self, deadline: Instant) -> Result<()> {
+        if let Some(require_deadline) = &self.session.evaluation_answer_deadline {
+            require_deadline(deadline)?;
+        }
+        Ok(())
+    }
     #[cfg(feature = "gpu-cuda")]
     pub(super) fn source(&self) -> &(dyn AssetSource + Send) {
         self.session._source.as_ref()

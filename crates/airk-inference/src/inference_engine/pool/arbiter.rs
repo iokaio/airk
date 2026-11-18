@@ -201,15 +201,75 @@ struct Job {
 struct ResidentSession<S> {
     scorer: S,
     _source: Box<dyn AssetSource + Send>,
+    #[cfg(all(
+        windows,
+        target_arch = "x86_64",
+        feature = "test-support",
+        feature = "gpu-cuda"
+    ))]
+    evaluation_answer_deadline: Option<EvaluationAnswerDeadline>,
 }
+#[cfg(all(
+    windows,
+    target_arch = "x86_64",
+    feature = "test-support",
+    feature = "gpu-cuda"
+))]
+type EvaluationAnswerDeadline = Box<dyn Fn(Instant) -> Result<()> + Send>;
 impl<S> std::ops::Deref for ResidentSession<S> {
     type Target = S;
     fn deref(&self) -> &S {
         &self.scorer
     }
 }
+enum WarmRoute {
+    Standard,
+    #[cfg(all(
+        windows,
+        target_arch = "x86_64",
+        feature = "test-support",
+        feature = "gpu-cuda"
+    ))]
+    EvaluationAnswer(EvaluationAnswerGraph),
+}
+#[cfg(all(
+    windows,
+    target_arch = "x86_64",
+    feature = "test-support",
+    feature = "gpu-cuda"
+))]
+#[derive(Clone)]
+pub struct EvaluationAnswerGraph {
+    reviewed_result: Arc<[u8]>,
+    expected_sha256: Sha256Digest,
+    expires: Instant,
+}
+#[cfg(all(
+    windows,
+    target_arch = "x86_64",
+    feature = "test-support",
+    feature = "gpu-cuda"
+))]
+impl EvaluationAnswerGraph {
+    pub fn new(
+        reviewed_result: Arc<[u8]>,
+        expected_sha256: Sha256Digest,
+        expires: Instant,
+    ) -> Self {
+        Self {
+            reviewed_result,
+            expected_sha256,
+            expires,
+        }
+    }
+
+    pub fn expires(&self) -> Instant {
+        self.expires
+    }
+}
 struct Warm {
     stage: Stage,
+    route: WarmRoute,
     profile: ExecutionProfile,
     source: Box<dyn AssetSource + Send>,
     _reservation: Arc<Reservation>,
@@ -704,7 +764,14 @@ impl Handle {
             profile.description().device_execution.is_none(),
             "GPU warm requires original native lifecycle deadline"
         );
-        self.warm_inner(profile, source, Arc::new(reservation), None, None)
+        self.warm_inner(
+            profile,
+            source,
+            Arc::new(reservation),
+            None,
+            None,
+            WarmRoute::Standard,
+        )
     }
     pub fn warm_with_charge(
         &self,
@@ -724,6 +791,43 @@ impl Handle {
             reservation,
             Some(deadline),
             Some(authority),
+            WarmRoute::Standard,
+        )
+    }
+    /// Admit a same-lease private Answer graph through the existing resident warm queue.
+    #[cfg(all(
+        windows,
+        target_arch = "x86_64",
+        feature = "test-support",
+        feature = "gpu-cuda"
+    ))]
+    pub fn warm_evaluation_answer(
+        &self,
+        profile: ExecutionProfile,
+        source: Box<dyn AssetSource + Send>,
+        reservation: Arc<Reservation>,
+        deadline: Instant,
+        authority: Arc<dyn Fn() -> bool + Send + Sync>,
+        graph: EvaluationAnswerGraph,
+    ) -> Result<oneshot::Receiver<Result<()>>> {
+        let now = Instant::now();
+        ensure!(
+            profile.evaluation()
+                && !profile.release_qualified()
+                && profile.description().declared_stage() == Some(Stage::Context)
+                && profile.cuda_device().is_some()
+                && now < deadline
+                && deadline <= graph.expires
+                && deadline.duration_since(now) <= Duration::from_secs(120),
+            "private GPU Answer requires an exact evaluation binding and original warm deadline"
+        );
+        self.warm_inner(
+            profile,
+            source,
+            reservation,
+            Some(deadline),
+            Some(authority),
+            WarmRoute::EvaluationAnswer(graph),
         )
     }
     fn warm_inner(
@@ -733,6 +837,7 @@ impl Handle {
         reservation: Arc<Reservation>,
         deadline: Option<Instant>,
         authority: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+        route: WarmRoute,
     ) -> Result<oneshot::Receiver<Result<()>>> {
         ensure!(
             profile.execution_authorized(),
@@ -777,6 +882,7 @@ impl Handle {
         let (reply, response) = oneshot::channel();
         queue.warm.push_back(Warm {
             stage,
+            route,
             profile,
             source,
             _reservation: reservation,
@@ -1137,6 +1243,8 @@ impl Lane {
                                 let started=Instant::now();
                                 ensure!(airk_kernel::service_resource_observations::available_memory().is_some_and(|available|available>=job.admission.warm_extra_bytes().saturating_add(256<<20)),"optional native score has no fresh OS headroom");
                                 job.admission.validate(&job.resident.reservation)?;
+                                #[cfg(all(windows, target_arch = "x86_64", feature = "test-support", feature = "gpu-cuda"))]
+                                resident.require_evaluation_answer_deadline(job.deadline)?;
                                 #[cfg(feature = "test-support")]
                                 let prepared_observation=job.observer.as_ref().and_then(|observer|observer.prepare(&job,&receipt));
                                 dispatch_before_original_deadline(job.deadline,Instant::now,||job.reply.is_closed(),|| {

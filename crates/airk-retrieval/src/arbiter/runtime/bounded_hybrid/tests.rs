@@ -127,6 +127,25 @@ fn bounded_hybrid_cpu_value_gate_refuses_unprofiled_or_non_control_tensors() -> 
 }
 
 #[test]
+fn compact_answer_uses_original_operation_and_fixture_expiries() -> Result<()> {
+    let load_end = Instant::now();
+    let now = load_end + Duration::from_secs(1);
+    let expiry = now + Duration::from_secs(120);
+    let whole_expiry = expiry + Duration::from_secs(1);
+    let limit = Duration::from_secs(120);
+    require_answer_deadline(now, expiry, whole_expiry, limit)?;
+    for (deadline, overall) in [
+        (now, whole_expiry),
+        (load_end, whole_expiry),
+        (expiry + Duration::from_nanos(1), whole_expiry),
+        (expiry, expiry - Duration::from_nanos(1)),
+    ] {
+        assert!(require_answer_deadline(now, deadline, overall, limit).is_err());
+    }
+    Ok(())
+}
+
+#[test]
 fn compact_resource_operations_keep_independent_deadlines_and_exact_width() -> Result<()> {
     let load_expiry = Instant::now() + Duration::from_secs(120);
     let now = load_expiry + Duration::from_secs(1);

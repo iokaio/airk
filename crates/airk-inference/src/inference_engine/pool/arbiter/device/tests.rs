@@ -106,6 +106,13 @@ fn actual_guard_drops_session_then_pins_then_host_charge_only_after_known_settle
                     deadline,
                 },
                 _source: Box::new(SyntheticPins(events.clone())),
+                #[cfg(all(
+                    windows,
+                    target_arch = "x86_64",
+                    feature = "test-support",
+                    feature = "gpu-cuda"
+                ))]
+                evaluation_answer_deadline: None,
             }),
             charge: std::mem::ManuallyDrop::new(charge),
             owner: Arc::new(SyntheticOwner(events.clone())),
@@ -144,6 +151,13 @@ fn failed_native_wait_retains_pins_host_charge_owner_and_incomplete_lane_barrier
                 deadline,
             },
             _source: Box::new(SyntheticPins(events.clone())),
+            #[cfg(all(
+                windows,
+                target_arch = "x86_64",
+                feature = "test-support",
+                feature = "gpu-cuda"
+            ))]
+            evaluation_answer_deadline: None,
         }),
         charge: std::mem::ManuallyDrop::new(charge),
         owner: Arc::new(SyntheticOwner(events.clone())),

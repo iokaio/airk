@@ -44,6 +44,20 @@ impl<T> EvaluationResult<T> {
 pub struct EvaluationOwner {
     owner: Owner,
 }
+
+#[cfg(all(
+    windows,
+    target_arch = "x86_64",
+    feature = "test-support",
+    feature = "gpu-cuda"
+))]
+pub(super) struct CudaAnswerEvaluation {
+    pub(super) lease: Arc<airk_store::service::ServiceLease>,
+    pub(super) gate: airk_catalog_control::catalog_admission::NativeCatalogAdmission,
+    pub(super) manifest: Sha256Digest,
+    pub(super) adapter: [u8; 16],
+    pub(super) graph: airk_inference::inference_engine::pool::arbiter::EvaluationAnswerGraph,
+}
 impl EvaluationOwner {
     pub(in crate::service_runtime) fn into_owner_for(
         self,
@@ -128,6 +142,49 @@ impl EvaluationOwner {
         owner.context.evaluation = Some(catalog);
         Ok(Self { owner })
     }
+    #[cfg(all(
+        windows,
+        target_arch = "x86_64",
+        feature = "test-support",
+        feature = "gpu-cuda"
+    ))]
+    pub fn with_cuda_answer(
+        self,
+        manifest: Sha256Digest,
+        adapter: [u8; 16],
+        graph: airk_inference::inference_engine::pool::arbiter::EvaluationAnswerGraph,
+    ) -> Result<Self> {
+        let profile = self.owner.context.execution_profile(manifest)?;
+        ensure!(
+            profile.evaluation()
+                && !profile.release_qualified()
+                && profile.description().model == ModelChoice::ContextQwenCompact
+                && profile.description().device_execution.is_some()
+                && adapter != [0; 16]
+                && Instant::now() < graph.expires(),
+            "private CUDA Answer requires an exact Compact evaluation graph and adapter"
+        );
+        let mut state = self
+            .owner
+            .context
+            .lifecycle
+            .lock()
+            .map_err(|_| anyhow::anyhow!("private CUDA Answer lifecycle unavailable"))?;
+        ensure!(
+            state.cuda_answer.is_none() && !state.busy && !state.stopping,
+            "private CUDA Answer must be attached to an idle, isolated evaluation owner"
+        );
+        state.cuda_answer = Some(Arc::new(CudaAnswerEvaluation {
+            lease: self.owner.ownership.clone(),
+            gate: self.owner.gate.clone(),
+            manifest,
+            adapter,
+            graph,
+        }));
+        drop(state);
+        Ok(self)
+    }
+
     /// Observe an already admitted request without dispatching Context scoring.
     /// Source/configuration/deadline postchecks still decide the canonical reply.
     /// Separate compiler census/recording work is not a deployed-model timing.

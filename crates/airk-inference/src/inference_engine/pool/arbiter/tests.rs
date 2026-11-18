@@ -351,6 +351,13 @@ fn resident_session_retains_exact_asset_pins_until_actual_scorer_teardown() {
     let resident = ResidentSession {
         scorer: Native(pins.clone(), native_done.clone()),
         _source: Box::new(Source(pins.clone(), native_done.clone())),
+        #[cfg(all(
+            windows,
+            target_arch = "x86_64",
+            feature = "test-support",
+            feature = "gpu-cuda"
+        ))]
+        evaluation_answer_deadline: None,
     };
     assert!(pins.load(Ordering::Acquire));
     assert!(!native_done.load(Ordering::Acquire));

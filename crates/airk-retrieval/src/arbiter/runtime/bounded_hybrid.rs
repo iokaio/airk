@@ -2,7 +2,7 @@
 //! Private fixed-graph Compact FP32 experiment.
 
 use super::*;
-use airk_core::identity::framed_digest;
+use airk_core::{arbiter::resource_policy::ResourcePolicy, identity::framed_digest};
 use cuda::{GraphMetadataObservation, GraphMetadataRow};
 use serde_json::Value;
 use std::{
@@ -35,6 +35,33 @@ pub struct BoundedHybridScorer {
     evidence: GraphEvidence,
     deadline: Instant,
     profiling: Profiling,
+}
+
+/// Custody of the actual graph checked on the paired Answer session.
+pub struct CompactBoundedHybridAnswerProvenance {
+    evidence: GraphEvidence,
+    overall_deadline: Instant,
+    maximum_operation: Duration,
+}
+
+impl CompactBoundedHybridAnswerProvenance {
+    pub fn policy_identity(&self) -> Sha256Digest {
+        self.evidence.policy_identity
+    }
+
+    pub fn graph_metadata(&self) -> &GraphMetadataObservation {
+        &self.evidence.graph
+    }
+
+    /// The owning evaluation resident checks this at each actual dispatch.
+    pub fn require_operation_deadline(&self, deadline: Instant) -> Result<()> {
+        require_answer_deadline(
+            Instant::now(),
+            deadline,
+            self.overall_deadline,
+            self.maximum_operation,
+        )
+    }
 }
 
 impl GraphGate {
@@ -274,6 +301,29 @@ fn require_resource_operation(
     Ok(())
 }
 
+fn require_answer_deadline(
+    now: Instant,
+    deadline: Instant,
+    overall_deadline: Instant,
+    maximum_operation: Duration,
+) -> Result<()> {
+    ensure!(
+        now < deadline
+            && deadline <= overall_deadline
+            && deadline.duration_since(now) <= maximum_operation,
+        "Compact Answer operation exceeded its original deadline"
+    );
+    Ok(())
+}
+
+fn measurement_capacity_is_reviewed(binding: &cuda::Binding) -> bool {
+    (
+        binding.plan.cold_peak_bytes(),
+        binding.plan.warm_extra_bytes(),
+        binding.plan.headroom_bytes(),
+    ) == (22 << 30, 16 << 30, 2 << 30)
+}
+
 impl Scorer {
     pub fn open_compact_bounded_hybrid_profiled(
         profile: ExecutionProfile,
@@ -307,6 +357,67 @@ impl Scorer {
         )
     }
 
+    /// Opens the unprofiled scorer for the actual private Context Answer actor.
+    /// The caller retains its returned proof with this same resident and uses
+    /// the proof's deadline check at each native dispatch.
+    pub fn open_compact_bounded_hybrid_answer(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        reviewed_graph_result: &[u8],
+        reviewed_graph_sha: Sha256Digest,
+        overall_deadline: Instant,
+    ) -> Result<(Self, CompactBoundedHybridAnswerProvenance)> {
+        cuda::diagnostic::require_diagnostic_profile(&profile)?;
+        let description = profile.description();
+        let policy = ResourcePolicy::software_v2();
+        ensure!(
+            description.max_tokens == policy.context_input_tokens
+                && description.max_candidates == policy.maximum_context_candidates
+                && description.tasks.contains(&Task::ContextAction),
+            "Compact Answer requires the original Context action limits"
+        );
+        let policy_digest = policy.digest()?;
+        let maximum_operation = Duration::from_millis(policy.deadline_ms);
+        let binding = profile
+            .gpu
+            .as_ref()
+            .context("bounded hybrid CUDA binding missing")?;
+        ensure!(
+            measurement_capacity_is_reviewed(binding),
+            "Compact Answer capacity differs from the reviewed experiment"
+        );
+        let load_deadline = binding.load_deadline;
+        require_answer_deadline(
+            Instant::now(),
+            load_deadline,
+            overall_deadline,
+            maximum_operation,
+        )?;
+        let (scorer, mut evidence) = Self::open_reviewed_compact_graph(
+            profile,
+            source,
+            reviewed_graph_result,
+            reviewed_graph_sha,
+            None,
+        )?;
+        cuda::in_time(load_deadline)?;
+        evidence.policy_identity = framed_digest(
+            b"airk.private.compact-cuda-bounded-hybrid-answer/1",
+            &[
+                evidence.policy_identity.as_bytes(),
+                policy_digest.as_bytes(),
+            ],
+        );
+        Ok((
+            scorer,
+            CompactBoundedHybridAnswerProvenance {
+                evidence,
+                overall_deadline,
+                maximum_operation,
+            },
+        ))
+    }
+
     fn open_compact_bounded_hybrid(
         profile: ExecutionProfile,
         source: &dyn AssetSource,
@@ -328,35 +439,19 @@ impl Scorer {
                     "Compact resource load deadline exceeds the original experiment expiry"
                 );
                 ensure!(
-                    (
-                        binding.plan.cold_peak_bytes(),
-                        binding.plan.warm_extra_bytes(),
-                        binding.plan.headroom_bytes()
-                    ) == (22 << 30, 16 << 30, 2 << 30),
+                    measurement_capacity_is_reviewed(binding),
                     "Compact resource capacity differs from the reviewed experiment"
                 );
                 (overall_deadline, None)
             }
         };
-        let gate = GraphGate::new(reviewed_graph_result, reviewed_graph_sha)?;
-        gate.verify_profile(
-            profile.description(),
-            binding.device.observation(load_deadline)?,
-        )?;
-        let mut scorer = Self::open_internal(
+        let (scorer, mut evidence) = Self::open_reviewed_compact_graph(
             profile,
             source,
-            |builder| match profiling_prefix {
-                Some(prefix) => Ok(builder.with_profiling(prefix)?),
-                None => Ok(builder),
-            },
-            OpenMode::BoundedHybrid(Box::new(gate)),
-        )?
-        .context("bounded hybrid scorer missing")?;
-        let mut evidence = scorer
-            .bounded_hybrid
-            .take()
-            .context("same-session graph evidence missing")?;
+            reviewed_graph_result,
+            reviewed_graph_sha,
+            profiling_prefix,
+        )?;
         let profiling = if profiling_prefix.is_some() {
             Profiling::Active
         } else {
@@ -372,6 +467,39 @@ impl Scorer {
             deadline,
             profiling,
         })
+    }
+
+    fn open_reviewed_compact_graph(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        reviewed_graph_result: &[u8],
+        reviewed_graph_sha: Sha256Digest,
+        profiling_prefix: Option<&Path>,
+    ) -> Result<(Self, GraphEvidence)> {
+        let binding = profile
+            .gpu
+            .as_ref()
+            .context("bounded hybrid CUDA binding missing")?;
+        let gate = GraphGate::new(reviewed_graph_result, reviewed_graph_sha)?;
+        gate.verify_profile(
+            profile.description(),
+            binding.device.observation(binding.load_deadline)?,
+        )?;
+        let mut scorer = Self::open_internal(
+            profile,
+            source,
+            |builder| match profiling_prefix {
+                Some(prefix) => Ok(builder.with_profiling(prefix)?),
+                None => Ok(builder),
+            },
+            OpenMode::BoundedHybrid(Box::new(gate)),
+        )?
+        .context("bounded hybrid scorer missing")?;
+        let evidence = scorer
+            .bounded_hybrid
+            .take()
+            .context("same-session graph evidence missing")?;
+        Ok((scorer, evidence))
     }
 }
 

@@ -650,3 +650,17 @@ or cold native work, after any replaced self has really drained. Explicit Cpu
 is exempt from GPU self-check. No unchanged failed retained roster is replayed
 by recovering an unrelated stage. Generic production probe refuses scientific
 RuntimeManifest/1 before context/candidates; only explicit evaluation may use /1.
+
+### Private Windows CUDA Answer comparison
+
+The ignored CUDA Answer fixture opens the actual isolated evaluation
+service with an exact Context Compact FP32 profile, adapter and graph result
+pin. Only the private EvaluationFactory can attach this mode. Its 32 GiB
+host charge and R2 22 GiB CUDA arena, 16 GiB warm declaration and 2 GiB
+headroom fit under the existing 24 GiB device budget. Probe and load share
+the original 120-second warm deadline clipped to the fixture lifetime.
+The standard Answer request uses the ordinary service transport, compiler,
+dispatch and settlement. The CPU and CUDA comparisons use the same
+frozen request, corpus and underlying model assets. The observed backend
+and compiled input must agree with the intended measurement. The paired
+timing is private component and transport evidence.

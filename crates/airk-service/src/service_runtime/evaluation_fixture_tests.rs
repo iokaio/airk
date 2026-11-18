@@ -18,6 +18,8 @@ use std::{
 };
 
 mod acquisition;
+#[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
+mod cuda_answer;
 mod execution_observer;
 mod readable_selection;
 mod restart;
@@ -388,7 +390,7 @@ fn native_software_v2_context_template_has_literal_budget_and_complete_response_
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "private actual native evaluation service; explicit frozen inputs and lifetime required"]
 async fn actual_private_arbiter_fixture() -> Result<()> {
-    run_actual_private_arbiter_fixture(answer_template()?, None).await
+    run_actual_private_arbiter_fixture(answer_template()?, None, false).await
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -397,7 +399,7 @@ async fn actual_private_arbiter_fixture_software_v2() -> Result<()> {
     let consent = std::env::var("AIRK_ARBITER_EVALUATION_RESOURCE_CONSENT")
         .context("current fixture requires explicit resource configuration consent")?;
     let resources = software_v2_resource_configuration(&consent)?;
-    run_actual_private_arbiter_fixture(software_v2_answer_template()?, Some(resources)).await
+    run_actual_private_arbiter_fixture(software_v2_answer_template()?, Some(resources), false).await
 }
 
 fn software_v2_resource_configuration(
@@ -492,7 +494,9 @@ fn current_private_fixture_resources_require_explicit_consent_and_exact_native_c
 async fn run_actual_private_arbiter_fixture(
     context_request: serde_json::Value,
     resource_configuration: Option<airk_core::service_resources::ResourceConfiguration>,
+    cuda_answer: bool,
 ) -> Result<()> {
+    let started = Instant::now();
     // The selector's Rust owner supplies the whole frozen request, including
     // current MCP response options. Environment/input metadata cannot rewrite it.
     let decoded: airk_mcp::AnswerArgs = serde_json::from_value(context_request.clone())?;
@@ -529,6 +533,18 @@ async fn run_actual_private_arbiter_fixture(
             .context("private fixture work name missing")?,
     );
     let (inputs, prepared) = prepare(&input, expected)?;
+    #[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
+    let cuda_answer = cuda_answer
+        .then(|| {
+            cuda_answer::Input::read(
+                &artifacts,
+                &prepared,
+                started + Duration::from_secs(seconds),
+            )
+        })
+        .transpose()?;
+    #[cfg(not(all(windows, target_arch = "x86_64", feature = "gpu-cuda")))]
+    let _ = (cuda_answer, started);
     let parent_pin = OpenedDirectory::open(&parent)?;
     let work_pin = crate::ipc::endpoint::create_root_at(
         &parent_pin,
@@ -654,6 +670,14 @@ async fn run_actual_private_arbiter_fixture(
             },
             "private fixture must start disabled"
         );
+        #[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
+        if let Some(input) = cuda_answer {
+            ensure!(
+                restart.is_none() && context_observer.is_none(),
+                "paired CUDA Answer requires actual scoring in a fresh isolated service"
+            );
+            owner = owner.with_cuda_answer(input.manifest, input.adapter, input.graph)?;
+        }
         if let Some(observer) = context_observer {
             owner = owner.observe_context(observer);
         }

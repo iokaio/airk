@@ -29,6 +29,13 @@ pub(super) struct State {
     pub(super) handle: Option<Handle>,
     pending: Option<PreparedLaunch>,
     pub(super) source_log: Option<airk_host::service_logs::Log>,
+    #[cfg(all(
+        windows,
+        target_arch = "x86_64",
+        feature = "test-support",
+        feature = "gpu-cuda"
+    ))]
+    pub(super) cuda_answer: Option<Arc<super::evaluation::CudaAnswerEvaluation>>,
     #[cfg(all(test, feature = "test-support"))]
     pub(super) warm_observer: Option<super::warm_observer::Observer>,
 }
@@ -49,6 +56,13 @@ impl Default for State {
             handle: None,
             pending: None,
             source_log: None,
+            #[cfg(all(
+                windows,
+                target_arch = "x86_64",
+                feature = "test-support",
+                feature = "gpu-cuda"
+            ))]
+            cuda_answer: None,
             #[cfg(all(test, feature = "test-support"))]
             warm_observer: None,
         }
@@ -400,6 +414,20 @@ async fn warm(
         admission,
     } = context;
     let manifest = profile.description().manifest;
+    #[cfg(all(windows, target_arch = "x86_64", feature = "test-support", feature = "gpu-cuda"))]
+    let cuda_answer = shared.lock()
+        .map_err(|_| anyhow::anyhow!("private CUDA Answer lifecycle unavailable"))?
+        .cuda_answer.as_ref()
+        .filter(|answer| answer.manifest == manifest)
+        .cloned();
+    let host_bytes = profile.description().memory_reservation_bytes;
+    #[cfg(all(windows, target_arch = "x86_64", feature = "test-support", feature = "gpu-cuda"))]
+    let host_bytes = if let Some(answer) = &cuda_answer {
+        ensure!(Instant::now() < answer.graph.expires(), "private CUDA Answer fixture expired");
+        32 << 30
+    } else {
+        host_bytes
+    };
     admitted_current(configuration, expected, stage, cancel, admission)?;
     ensure!(
         configuration.load()? == *expected,
@@ -446,7 +474,7 @@ async fn warm(
         "Verifying complete compiled Arbiter asset closure.",
     )?;
     let reservation = match management
-        .reserve(profile.description().memory_reservation_bytes)
+        .reserve(host_bytes)
         .await
     {
         Ok(reservation) => reservation,
@@ -485,7 +513,7 @@ async fn warm(
             )?;
             admitted_current(configuration, expected, stage, cancel, admission)?;
             management
-                .reserve(profile.description().memory_reservation_bytes)
+                .reserve(host_bytes)
                 .await
                 .context("New profile still cannot fit after actual prior charge release")?
         }
@@ -511,6 +539,65 @@ async fn warm(
     )?;
     admitted_current(configuration, expected, stage, cancel, admission)?;
     let local_test = airk_retrieval::arbiter::runtime::is_local_test_profile(profile.description());
+    #[cfg(all(windows, target_arch = "x86_64", feature = "test-support", feature = "gpu-cuda"))]
+    let local_test = local_test || cuda_answer.is_some();
+    #[cfg(all(windows, target_arch = "x86_64", feature = "test-support", feature = "gpu-cuda"))]
+    let receiver = if let Some(answer) = cuda_answer.as_ref() {
+        let deadline = (Instant::now() + Duration::from_secs(120)).min(answer.graph.expires());
+        let authority = {
+            let expected = expected.clone();
+            let configuration = configuration.clone();
+            let cancel = cancel.clone();
+            let gate = answer.gate.clone();
+            Arc::new(move || {
+                Instant::now() < deadline
+                    && !cancel.is_cancelled()
+                    && gate.catalog_clock().is_some_and(|clock| clock.namespace == expected.catalog)
+                    && configuration.load().is_ok_and(|current| current == expected)
+            })
+        };
+        let host = Arc::new(reservation);
+        let probe = handle.probe_evaluation_device(
+            answer.lease.clone(),
+            profile,
+            airk_retrieval::arbiter::runtime::cuda::DeviceCapacityPlan::probe(
+                22 << 30, 16 << 30, 2 << 30,
+            )?,
+            answer.adapter,
+            host.clone(),
+            airk_core::arbiter::device::GpuProbeReservation {
+                schema: "airk.arbiter.gpu-probe-reservation/1".into(),
+                host_limit_bytes: host_bytes,
+                device_limit_bytes: 24 << 30,
+                deadline_ms: 120_000,
+            },
+            deadline,
+            authority.clone(),
+        )?;
+        let mut bound = tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), probe)
+            .await
+            .context("original private CUDA Answer probe deadline")?
+            .context("private CUDA Answer probe delivery closed")??;
+        ensure!(
+            bound.rejections.is_empty()
+                && bound.candidates.len() == 1
+                && bound.candidates[0].probe_only
+                && bound.candidates[0].uuid == answer.adapter
+                && bound.candidates[0].profile.description().manifest == manifest,
+            "exact private CUDA Answer probe binding unavailable"
+        );
+        handle.warm_evaluation_answer(
+            bound.candidates.remove(0).profile,
+            source,
+            host,
+            deadline,
+            authority,
+            answer.graph.clone(),
+        )?
+    } else {
+        handle.warm(profile, source, reservation)?
+    };
+    #[cfg(not(all(windows, target_arch = "x86_64", feature = "test-support", feature = "gpu-cuda")))]
     let receiver = handle.warm(profile, source, reservation)?;
     #[cfg(all(test, feature = "test-support"))]
     if let Some(observation) = observation.as_mut() { observation.activation_path = super::warm_observer::ActivationPath::NativeWarmAdmitted; }

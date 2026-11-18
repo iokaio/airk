@@ -702,3 +702,22 @@ and a separate fixed expiry for the whole experiment. A warm operation may
 outlive the completed load's deadline and remains limited to 120 seconds and
 the original experiment expiry. The normal native scorer owns synchronization,
 claim release and teardown for both experiments.
+
+### Private Compact Answer timing
+
+The Windows x64 test-support Answer open uses the same exact graph and CPU
+value gate, device capacity plan and normal native session ownership. It
+requires an evaluation Compact FP32 Context action profile with the current
+8192-token and eight-option ResourcePolicy/2 limits. The native scorer keeps
+the normal tokenizer, compiler, calibration, input ABI, synchronization and
+settlement. The caller supplies the original load and fixture expiries and
+retains the returned graph provenance with that same evaluation resident.
+Each native dispatch checks its original operation deadline against the
+fixture expiry and the 120-second operation limit. Normal validated Context
+inputs may use any admitted width and option count.
+
+The Answer mode leaves ORT profiling disabled. Its policy identity binds the
+same-session graph evidence and current resource policy in a distinct private
+domain. Resource20 continues to require its exact all-live T8192/N8 input.
+Past profiling and resource receipts retain their source, image and policy
+identities. Normal and product open paths continue to require strict placement.

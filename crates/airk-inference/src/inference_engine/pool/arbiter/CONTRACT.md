@@ -638,3 +638,14 @@ provider activation or capability is created; the real held Source repeats
 protected custody checks at consumption. Incorrect role, duplicate/cross-class
 mapping, mismatch and expired deadline refuse. The process receipt records only
 this actual metadata scope, not future parent Job settlement or observed NN0.
+
+### Private CUDA Answer timing
+
+The test-support Windows Compact Answer warm route requires an opaque
+same-lease evaluation profile from the native probe and the exact reviewed
+graph. It uses the original warm queue, host and GPU charge, current
+authorization and original warm deadline. The ordinary Context compiler
+and scorer run inside the guarded resident. Before dispatch the resident
+checks its typed graph policy against the operation and fixture deadlines.
+The original settlement and retained-custody rules apply. This private
+mode does not produce a product eligibility witness.
