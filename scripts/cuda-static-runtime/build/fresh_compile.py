@@ -344,6 +344,12 @@ def verify_receipt(compile_pin, deadline):
             and configured["collector_source"] == compiled["collector_source"],
             "fresh compile ancestry differs")
     guard_paths([Path(compile_pin["path"]), Path(compiled["configured"]["path"])], True, deadline)
+    stages = ("configure", *(stage for stage, _ in STAGE_TARGETS))
+    stage_paths = [
+        root / "logs" / (stage + suffix)
+        for stage in stages for suffix in (*STAGE_SUFFIXES.values(), ".receipt.json")
+    ]
+    guard_paths(stage_paths, True, deadline)
     require(pins.check_pin(compiled["driver"], deadline) == Path(__file__).resolve(),
             "fresh compile driver changed")
     require(verify_inputs(pins, chain, deadline) == compiled["ninja"], "fresh compile Ninja pins differ")

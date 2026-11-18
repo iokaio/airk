@@ -6,6 +6,7 @@ import importlib.util
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import Mock, patch
 
 
 sys.dont_write_bytecode = True
@@ -91,6 +92,40 @@ class FreshCompileTests(unittest.TestCase):
                      self.build / "CMakeFiles/onnxruntime_session.dir/onnxruntime_c_api.cc.obj"):
             with self.subTest(path=path), self.assertRaisesRegex(ValueError, "previous compilation output"):
                 OWNER.require_clean_build(self.root, [path])
+
+
+
+    def test_read_only_compile_verification_audits_all_retained_stage_files(self):
+        compile_pin = {"path": str(self.root / "fresh-compile.json")}
+        config_pin = {"path": str(self.root / "fresh-configure.json")}
+        fields = {"recipe": {}, "toolchain": {}, "configured_graph": {}, "collector_source": {}}
+        compiled = {
+            **fields, "schema": "airk.private.cuda-fresh-compiled/1",
+            "status": "COMPILED_UNQUALIFIED", "qualification": False,
+            "configured": config_pin, "build_root": str(self.build),
+        }
+        guard_paths = Mock(side_effect=[None, ValueError("retained log owner differs")])
+        with (
+            patch.object(OWNER, "load", return_value=Mock()),
+            patch.object(OWNER, "read_pinned", return_value=compiled),
+            patch.object(OWNER, "load_chain", return_value=(fields, {}, self.root, {"guards": Mock()})),
+            patch.object(OWNER, "output_guard", return_value=guard_paths),
+            patch.object(OWNER, "verify_inputs") as verify_inputs,
+            self.assertRaisesRegex(ValueError, "retained log owner differs"),
+        ):
+            OWNER.verify_receipt(compile_pin, 60)
+        checked, created, cutoff = guard_paths.call_args.args
+        self.assertIs(created, True)
+        self.assertEqual(cutoff, 60)
+        expected = {
+            self.root / "logs" / (stage + suffix)
+            for stage in ("configure", "core-session-build", "build")
+            for suffix in (".request.json", ".stdout.log", ".stderr.log", ".outer.log",
+                           ".started.json", ".tree.json", ".receipt.json")
+        }
+        self.assertEqual(set(checked), expected)
+        self.assertEqual(len(checked), len(expected))
+        verify_inputs.assert_not_called()
 
 
 if __name__ == "__main__":

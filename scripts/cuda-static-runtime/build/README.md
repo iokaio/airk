@@ -31,6 +31,11 @@ Compile consumes the settled configure receipt. Aggregate consumes a
 reviewed archive recipe and the compile receipt. CUDA compiler detection, the
 session target and archive assembly each require their corresponding receipts.
 
+`fresh_verify.py` reopens an aggregate by its reviewed file pin and
+checks the recorded compile lineage, archive membership, exports and
+process settlement. Its caller supplies a read-only deadline. The check
+returns observed facts in memory and preserves the recorded execution window.
+
 ## Historical parent source capture
 
 The versioned r8, r12 and checkpoint-v1 packages capture the actual producer,
