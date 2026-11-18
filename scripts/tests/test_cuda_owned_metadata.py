@@ -30,6 +30,50 @@ def wire(pin):
     return {key: pin[key] for key in ('path', 'sha256')}
 
 
+def stat_with(value, **changed):
+    fields = ('st_mode', 'st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns',
+              'st_file_attributes')
+    observed = {field: getattr(value, field, 0) for field in fields}
+    return types.SimpleNamespace(**{**observed, **changed})
+
+
+class FileObservation(unittest.TestCase):
+    def test_uses_comparable_windows_handle_metadata(self):
+        path = Path(__file__).resolve()
+        expected = path.read_bytes()
+        path_stat = Path.stat
+
+        def inspect(candidate, *args, **kwargs):
+            result = path_stat(candidate, *args, **kwargs)
+            if candidate == path:
+                return stat_with(result, st_ctime_ns=result.st_ctime_ns + 1)
+            return result
+
+        with patch.object(Path, 'stat', autospec=True, side_effect=inspect):
+            observed, raw = M.file_observation(path, time.monotonic() + 5, keep=True)
+        self.assertEqual(raw, expected)
+        self.assertEqual(observed, {'path': str(path), 'bytes': len(expected),
+                                    'sha256': hashlib.sha256(expected).hexdigest()})
+
+    def test_rejects_a_different_file_at_reopen(self):
+        path = Path(__file__).resolve()
+        fstat = os.fstat
+        observations = 0
+
+        def inspect(descriptor):
+            nonlocal observations
+            observations += 1
+            result = fstat(descriptor)
+            if observations == 3:
+                return stat_with(result, st_ino=result.st_ino + 1)
+            return result
+
+        with patch.object(os, 'fstat', side_effect=inspect):
+            with self.assertRaisesRegex(ValueError, 'input changed while reading'):
+                M.file_observation(path, time.monotonic() + 5)
+        self.assertEqual(observations, 3)
+
+
 def profile_fixture():
     target = Path(R) / 'profile'
     names = ('profile.json', 'native-input.json', 'probe-request.json', 'commands.json',

@@ -121,7 +121,11 @@ def file_observation(path, deadline, *, cap=None, keep=False):
             if data is not None:
                 data.extend(block)
         after = os.fstat(stream.fileno())
-    require(size == before.st_size and identity(before) == identity(after) == identity(path.stat()),
+        check(deadline)
+        # Windows stat and fstat can assign different meanings to st_ctime.
+        with canonical_file(path).open('rb') as reopened:
+            named = os.fstat(reopened.fileno())
+    require(size == before.st_size and identity(before) == identity(after) == identity(named),
             f'input changed while reading: {path}')
     check(deadline)
     pin = {'path': str(path), 'bytes': size, 'sha256': digest.hexdigest()}

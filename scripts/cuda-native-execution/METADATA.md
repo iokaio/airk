@@ -21,6 +21,9 @@ The original `input_seals` maps canonical absolute file paths to their exact
 SHA-256 values. Seal the listed FilePins, all three maintained custody helpers,
 the required native sources, and the original CUDA or CPU inputs used by the
 stage. The dispatcher adds the plan's separately reviewed SHA to the receipt.
+Each streamed hash retains the original file handle. The dispatcher rechecks
+the canonical path and compares the original handle to a fresh open of that
+path using the same Windows metadata API on both handles.
 
 Point `wrapper` to this entry's Python source, `custody_owner` to
 `scripts/cuda-native-execution.py`, and `component_owner` to
