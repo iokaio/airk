@@ -48,6 +48,7 @@ class MetadataInputTests(unittest.TestCase):
                   [self.catalog, self.receipt, self.census, self.build, self.sources]}
         result = self.freeze()
         request = json.loads(self.request.read_text(encoding="utf-8"))
+        self.assertEqual(request["schema"], "airk.private.context-metadata-regeneration/1")
         self.assertEqual(request["source_catalog"]["sha256"],
                          hashlib.sha256(before[self.catalog]).hexdigest())
         self.assertEqual(request["acquisition_receipt"]["sha256"],
@@ -58,6 +59,15 @@ class MetadataInputTests(unittest.TestCase):
         self.assertFalse(self.output.exists())
         for path, content in before.items():
             self.assertEqual(path.read_bytes(), content)
+
+    def test_source_only_focus_transition_is_an_explicit_native_request(self):
+        result = self.freeze(source_only_focus_policy_transition=True)
+        request = json.loads(self.request.read_text(encoding="utf-8"))
+        self.assertEqual(request["schema"], "airk.private.context-metadata-regeneration/3")
+        self.assertEqual(request["acquisition_receipt"]["sha256"],
+                         hashlib.sha256(self.receipt.read_bytes()).hexdigest())
+        self.assertFalse(result["metadata_regenerated"])
+        self.assertFalse(self.output.exists())
 
     def test_existing_output_refuses_before_request_write(self):
         self.output.mkdir()

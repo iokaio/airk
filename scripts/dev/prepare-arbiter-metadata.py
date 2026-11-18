@@ -61,7 +61,8 @@ def workspace_output(path: Path, repository: Path) -> Path:
 
 def build_request(*, repository: Path, catalog: Path, acquisition_receipt: Path,
                   asset_census: Path, native_build_receipt: Path, asset_root: Path, output: Path,
-                  request: Path, source_files: list[Path], source_commit: str) -> dict:
+                  request: Path, source_files: list[Path], source_commit: str,
+                  source_only_focus_policy_transition: bool = False) -> dict:
     repository = repository.resolve(strict=True)
     output = workspace_output(output, repository)
     request = workspace_output(request, repository)
@@ -74,8 +75,9 @@ def build_request(*, repository: Path, catalog: Path, acquisition_receipt: Path,
     sources = [file_pin(path) for path in source_files]
     if not sources or len({row["path"] for row in sources}) != len(sources):
         raise ValueError("Distinct frozen source files are required")
+    schema_version = 3 if source_only_focus_policy_transition else 1
     value = {
-        "schema": "airk.private.context-metadata-regeneration/1",
+        "schema": f"airk.private.context-metadata-regeneration/{schema_version}",
         "repository_root": str(repository),
         "native_build_receipt": file_pin(native_build_receipt),
         "source_catalog": file_pin(catalog),
@@ -107,6 +109,8 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--request", type=Path, required=True)
     parser.add_argument("--source-file", type=Path, action="append")
+    parser.add_argument("--source-only-focus-policy-transition", action="store_true",
+                        help="freeze a /3 request to regenerate current source-bound Focus policy metadata")
     args = parser.parse_args()
     repository = args.repository_root.resolve(strict=True)
     source_files = args.source_file or [repository / path for path in DEFAULT_SOURCE_FILES]
@@ -115,7 +119,8 @@ def main() -> None:
     result = build_request(repository=repository, catalog=args.catalog,
         acquisition_receipt=args.acquisition_receipt, asset_census=args.asset_census, native_build_receipt=args.native_build_receipt,
         asset_root=args.asset_root, output=args.output, request=args.request,
-        source_files=source_files, source_commit=commit)
+        source_files=source_files, source_commit=commit,
+        source_only_focus_policy_transition=args.source_only_focus_policy_transition)
     print(json.dumps(result, ensure_ascii=False))
 
 

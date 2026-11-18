@@ -313,8 +313,14 @@ def output_values(kind, outputs, rows, plan, inputs, owned, read):
             and all(probe.get(key) == prepared.get(key) for key in ('runtime_manifest', 'bounds',
                     'cold_bytes', 'warm_bytes', 'headroom_bytes', 'job_limit_bytes')),
             'native profile, calibration, input and probe links differ')
-    selectors = (['cuda_selected_focus_fp32_512_component'] if profile['model'] == 'arbiter-focus-qwen3-reranker-06b'
-                 else ['cuda_original_context_fp32_t17_component', 'cuda_original_context_fp32_t128_component'])
+    if profile['model'] == 'arbiter-focus-qwen3-reranker-06b':
+        selectors = ['cuda_selected_focus_fp32_512_component']
+    else:
+        selectors = [
+            'cuda_original_context_fp32_t17_component',
+            'cuda_original_context_fp32_t128_component',
+            'cuda_original_context_fp32_t8192_component',
+        ]
     commands = read(outputs[3])
     require(isinstance(commands, list) and len(commands) == len(selectors)
             and all(command.get('args') == ['--exact', PREFIX + selector, '--ignored', '--nocapture']

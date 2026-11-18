@@ -53,6 +53,10 @@ empty and actual native resources/numeric/task/platform checks remain required.
 
 ## Private current-policy metadata regeneration
 
+Use `scripts/dev/prepare-arbiter-metadata.py --source-only-focus-policy-transition`
+to freeze an explicit source-only Focus policy transition request (/3) from the
+reviewed original acquisition and current native build inputs.
+
 The ignored native `regeneration::emit_current_policy_profiles_from_verified_original_assets`
 consumer takes a SHA-pinned original Rust catalog, original acquisition receipt,
 independent saved-asset census, exact source-file pins and fresh private output.

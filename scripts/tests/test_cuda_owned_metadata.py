@@ -98,7 +98,7 @@ def profile_fixture():
                  'args': ['--exact', P + f'cuda_original_context_fp32_t{count}_component',
                           '--ignored', '--nocapture'],
                  'env': {Q: rows[2]['path'], Q + '_SHA256': H}}
-                for count in (17, 128)]
+                for count in (17, 128, 8192)]
     values = dict(zip(paths[:-1], [
         {'model': 'arbiter-context-qwen3-17b', 'manifest': H,
          'assets': [{'role': 'calibration', 'name': 'cal.json', 'bytes': 17, 'sha256': H}]},
@@ -227,9 +227,20 @@ class OwnedMetadataTests(unittest.TestCase):
             bad[paths[4]][key] = mutation
             with self.subTest(key=key), self.assertRaises(ValueError):
                 M.output_values('metadata', paths, rows, plan, inputs, {}, bad.__getitem__)
+        commands = values[paths[3]]
+        for roster in (commands[:2], [commands[0], commands[2], commands[1]],
+                       [commands[0], commands[1], commands[1]]):
+            values[paths[3]] = roster
+            with self.assertRaisesRegex(ValueError, 'command metadata differs'):
+                M.output_values('metadata', paths, rows, plan, inputs, {}, values.__getitem__)
+
+        focus = 'arbiter-focus-qwen3-reranker-06b'
+        values[paths[0]]['model'] = focus
+        values[paths[4]]['model'] = focus
+        inputs['cpu_model'] = focus
+        values[paths[3]] = [commands[0]]
         values[paths[3]][0]['args'][1] = P + 'cuda_selected_focus_fp32_512_component'
-        with self.assertRaisesRegex(ValueError, 'command metadata differs'):
-            M.output_values('metadata', paths, rows, plan, inputs, {}, values.__getitem__)
+        M.output_values('metadata', paths, rows, plan, inputs, {}, values.__getitem__)
 
     def test_frozen_metadata_consumer_accepts_compatible_six_output_receipt(self):
         stage, _, paths, rows, native = profile_fixture()

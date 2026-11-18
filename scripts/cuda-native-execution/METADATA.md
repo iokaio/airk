@@ -71,6 +71,10 @@ a calibration asset. The owner independently derives its leaf from the
 emitted profile, reopens its bytes, and checks that it is the only additional
 file and that the emitted native input names it.
 
+Context metadata must list the exact 17-, 128- and 8192-token component
+selectors in order. Focus metadata lists the single 512-token selector. Every
+row binds the held native image and emitted probe request.
+
 Consume only a successful, complete `airk.private.owned-cuda-profile-nn0/1`
 receipt with `kind=metadata` at the component's `metadata()` boundary.
 That receipt carries the original plan, complete original input seals and
