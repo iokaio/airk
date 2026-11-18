@@ -188,8 +188,20 @@ def validate_recipe(r):
     require(r['required_exports'] == EXPORTS, 'collector export pair differs')
     require(r['source_patch']['base'] == r['base_source']
         and r['source_patch']['after']['sha256'] == r['new_source_sha256']
-        and r['source_patch']['after']['bytes'] == r['new_source_bytes']
-        and r['approved_new_dependencies'] == [], 'reviewed source patch/dependency authority differs')
+        and r['source_patch']['after']['bytes'] == r['new_source_bytes'],
+        'reviewed source patch authority differs')
+    supplemental = r['approved_new_dependencies']
+    if supplemental:
+        require(len(supplemental) == 324 and 'base_header_observation' in r,
+                'the complete reviewed toolchain header supplement is required')
+        roots = tuple(Path(path) for path in r['environment']['INCLUDE'].split(';') if path)
+        headers = [os.path.normcase(str(Path(row['path']))) for row in
+                   r['compiler_dependencies'] + supplemental]
+        require(len(set(headers)) == len(headers), 'duplicate project or toolchain header')
+        require(all(any(Path(row['path']).is_relative_to(root) for root in roots)
+                    for row in supplemental), 'supplemental header outside recorded INCLUDE roots')
+    else:
+        require('base_header_observation' not in r, 'empty toolchain header supplement')
     tool_files = {x['path'] for x in r['compiler_tool_files']}
     require(all(cmd[0] in tool_files for cmd in r['commands'].values()), 'unfrozen compiler tool')
     require(r['commands']['session'] == [r['commands']['session'][0], '/nologo', '/machine:x64',
@@ -237,6 +249,62 @@ def settled(owned, executable):
         {'path':executable['path'], 'sha256':executable['sha256']}
         and s.get('component_job') == dict(process_bytes=16 << 30, job_bytes=24 << 30,
                                          flags=0x2308, active_limit=2), 'suspended identity/Job differs')
+
+def base_header_command(recipe, preprocessed):
+    original = recipe["original_compile_argv"]
+    require(original.count("-c") == 1 and original.count("/showIncludes") == 1,
+            "unchanged compiler input must be the single observed translation unit")
+    require(original[-1] == recipe["base_source"]["path"], "original compiler source differs")
+    require(sum(arg.startswith("/Fo") for arg in original) == 1
+            and sum(arg.startswith("/Fd") for arg in original) == 1,
+            "expected original object and PDB options")
+    require(not any(arg.startswith(("@", "/Fi", "/Fa", "/Fe")) for arg in original[1:]),
+            "unexpected additional compiler output or response file")
+    return [recipe["commands"]["compile"][0], "/P", "/Fi" + str(preprocessed), *(
+        arg for arg in original[1:]
+        if arg not in ("-c", "/FS") and not arg.startswith(("/Fo", "/Fd"))
+    )]
+
+
+def verify_base_header_observation(recipe, deadline):
+    require(recipe.get('approved_new_dependencies') and 'base_header_observation' in recipe,
+            'executing or verifying the collector requires the complete base header observation')
+    observation = read(check_pin(recipe['base_header_observation'], deadline))
+    baseline = read(check_pin(observation['recipe'], deadline))
+    original_keys = ('base_source', 'original_compile_argv', 'parent_context', 'compiler_tool_files')
+    require(all(baseline[key] == recipe[key] for key in original_keys),
+            'independent baseline recipe inputs differ')
+    base_environment = {key: value for key, value in baseline['environment'].items()
+                        if key not in ('TEMP', 'TMP')}
+    compile_environment = {key: value for key, value in recipe['environment'].items()
+                           if key not in ('TEMP', 'TMP')}
+    require(base_environment == compile_environment, 'independent baseline environment differs')
+    probe = Path(__file__).resolve().parent / 'cuda-static-incremental/probe_headers.py'
+    require(pin(probe, deadline) == observation['probe_source'], 'reviewed header probe differs')
+    compiler = next(row for row in recipe['compiler_tool_files']
+                    if row['path'] == recipe['commands']['compile'][0])
+    require(observation['schema'] == 'airk.private.collector-base-header-observation/1'
+            and observation['qualification'] is False
+            and observation['skip_devshell_telemetry'] is False
+            and finite(observation['elapsed_seconds'])
+            and 0 < observation['elapsed_seconds'] < 120
+            and observation['source'] == recipe['base_source']
+            and observation['compiler'] == compiler
+            and observation['compiler_dependencies'] == len(recipe['compiler_dependencies'])
+            and observation['all_header_count'] ==
+                len(recipe['compiler_dependencies']) + len(recipe['approved_new_dependencies'])
+            and observation['toolchain_headers'] == recipe['approved_new_dependencies'],
+            'unchanged source header observation differs from recipe')
+    settled(observation['owned'], compiler)
+    log = check_pin(observation['log'], deadline)
+    expected_cwd = Path(recipe['parent_context']['destination']) / 'b/Release'
+    require(Path(observation['cwd']) == expected_cwd
+            and observation['command'] == base_header_command(recipe, log.parent / 'base.i'),
+            'unchanged source preprocessing command differs')
+    include_recipe = dict(recipe, fresh_output=observation['cwd'])
+    includes(log.read_bytes(), include_recipe)
+    deadline_check(deadline)
+
 
 def validate_clocks(receipt, recipe):
     a,z,d = (receipt[k] for k in ('started_monotonic','finished_monotonic','original_deadline_monotonic'))
@@ -342,7 +410,8 @@ def verify_incremental(destination, incremental_root, incremental_proposal, rece
     require(Path(v['recipe']['path']) == proposal / 'recipe.json'
         and validate_recipe(r) == root and Path(r['repo_root']) == repo and v['producer_source'] == r['producer_source']
         and file_pin(__file__) == r['producer_source'], 'reviewed producer/recipe binding differs')
-    frozen_inputs(r,deadline)
+    frozen_inputs(r, deadline)
+    verify_base_header_observation(r, deadline)
     require(Path(r['source_patch']['after']['path']).read_bytes().startswith(Path(r['base_source']['path']).read_bytes()), 'historical TU prefix changed')
     parent = parent_proof(r, repo,deadline)
     _, archive = modules(r, repo,deadline)
@@ -438,7 +507,8 @@ def execute(recipe_path, expected_sha, repo_root):
     require(r['execution_authorized'] is True and not out.exists(), 'proposal/unfresh output cannot execute')
     require(pin(__file__,deadline) == r['producer_source'], 'reviewed runner changed')
     repo = Path(repo_root)
-    frozen_inputs(r,deadline)
+    frozen_inputs(r, deadline)
+    verify_base_header_observation(r, deadline)
     require(Path(r['source_patch']['after']['path']).read_bytes().startswith(Path(r['base_source']['path']).read_bytes()), 'historical TU prefix changed')
     deadline_check(deadline)
     c,archive = modules(r,repo,deadline)
@@ -497,14 +567,18 @@ def execute(recipe_path, expected_sha, repo_root):
                 cmd['owned'] = owner.run_windows_owned_training(argv,out,output,cutoff-time.monotonic(),
                     r['environment'],initial,16<<30,before_resume=authenticate,cleanup_seconds=5,absolute_deadline=cutoff)
             # Every output, including PDB/temp, is audited before another phase can consume it.
-            observed = complete_stage(stage,
-                lambda: c.guard_many(r,[out,*out.rglob('*')],True,deadline=cutoff),
-                lambda: includes(log.read_bytes(),r),cutoff)
+            def audit_outputs():
+                c.guard_many(r, [out, *out.rglob('*')], True, deadline=cutoff)
+                cmd['stdout'] = pin(log, cutoff)
+
+            try:
+                observed = complete_stage(
+                    stage, audit_outputs, lambda: includes(log.read_bytes(), r), cutoff)
+            finally:
+                cmd['finished_utc'] = dt.datetime.now(dt.timezone.utc).isoformat()
+                cmd['finished_monotonic'] = time.monotonic()
             if stage == 'compile':
                 v['actual_include_pins'] = observed
-            cmd['stdout'] = pin(log,cutoff)
-            cmd['finished_utc'] = dt.datetime.now(dt.timezone.utc).isoformat()
-            cmd['finished_monotonic'] = time.monotonic()
             require(cmd['finished_monotonic'] < cutoff, 'command final observation expired')
             settled(cmd['owned'],executable)
 

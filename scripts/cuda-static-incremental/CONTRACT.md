@@ -2,7 +2,13 @@
 
 This owner derives a new static core from authenticated historical checkpoint producer f9fac8eb2fe1a1cb5191118124503782792ca6d3aff14d02326167cd7276b178 and aggregate042c970193bf3d2fc7c80f53b055f74130c653d561f7735142fc01b01cebac00. Historical proof/2 and all old source, object, archive, provider and Ninja files remain immutable. The raw fresh producer receives its own identity; old whole-source inventories and Ninja identity are explicitly inherited ancestry, not a new full build claim.
 
-The externally reviewed recipe pins this maintained runner, helper sources, guard and PowerShell, exact MSVC/SDK environment, original command,482 actual header dependencies,40 session object inputs and96 aggregate archive inputs. It pins the source base/after/patch. Only the existing onnxruntime_c_api.cc TU is replaced, retaining its old byte prefix and placement-v1 export while adding final-graph-metadata-v1. No header or API-table change and no new included dependency is admitted by this recipe. A future change needs a new reviewed recipe/contract decision, not a default discovery fallback.
+The externally reviewed recipe pins this maintained runner, helper sources, guard and PowerShell, exact MSVC/SDK environment, original command, 482 Ninja dependencies, 324 independently observed toolchain headers, 40 session object inputs and 96 aggregate archive inputs. It pins the source base/after/patch. Only the existing onnxruntime_c_api.cc TU is replaced, retaining its old byte prefix and placement-v1 export while adding final-graph-metadata-v1. No header or API-table change is admitted. The approved full-header contract
+requires the naturally settled preprocessing observation of the unchanged base
+TU, its exact compiler and log, and all 806 observed header byte pins. The
+324 toolchain headers supplement the historical Ninja roster in the existing
+approved_new_dependencies field. They establish current toolchain bytes.
+The actual collector include set must equal the union exactly. Missing
+historical header bytes are outside the resulting proof.
 
 Every new path is below a fresh, guarded human-owned producer root. /Fo, /Fd, session and aggregate outputs are relocated. The fresh source directory contains only the TU; its original parent is an explicit include directory before the original include roots to preserve quoted-local lookup. Actual /showIncludes must exactly match the frozen canonical header set immediately after compile, before any archive operation. No response-file substitution, second source, source overwrite, compiler flag drift or provider import archive is accepted. All40 objects and96 archive inputs are ordered explicitly; exactly one old object and one old session archive are replaced. The95 other archives and both CUDA provider DLLs retain their original identities.
 

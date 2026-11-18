@@ -15,3 +15,14 @@ Run python -B scripts/cuda-static-incremental/freeze_inputs.py --seed <reviewed-
 The retained private `freeze-inputs.py` SHA256 `c16e504cf4e8096b198ed2bf3af4f74ece45f7bab4fc6793dc44e2a0dc43a58d` is superseded operationally by maintained `freeze_inputs.py` (configurable, externally pinned seed; same metadata query and input-freeze logic).
 
 The retained private `validate-recipe.py` SHA256 `8a37bbf3a4de3175343f567da506e201e3be2e14bdd37546d0ce73d36b7d566e` is superseded by `validate_recipe` in the maintained owner and independent focused tests. Historical files and receipts retain their old identities; they are not imported or executed by the maintained producer.
+
+## Observe the unchanged base header closure
+
+Run python -B -S scripts/cuda-static-incremental/probe_headers.py --recipe PATH
+--recipe-sha256 SHA --output FRESH_DIRECTORY in the checked human shell.
+The approved recipe supplies the unchanged base translation unit, actual
+compiler pin, environment and compiler arguments. The probe changes the compile
+operation to preprocessing and routes temporary files into the fresh directory.
+It retains the bounded compiler log and a private observation with independently
+hashed toolchain headers. This measures current local toolchain bytes and
+produces no archive, runtime, or qualification result.

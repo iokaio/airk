@@ -87,6 +87,25 @@ class RecipeTests(unittest.TestCase):
     def test_raised_limit(self): self.r['proposed_limits']['process_bytes']+=1; self.reject()
     def test_provider_import_aggregate(self): self.r['aggregate_input_paths'][0]='provider.lib'; self.reject()
     def test_unapproved_headers(self): self.r['approved_new_dependencies']=[{}]; self.reject()
+    def test_toolchain_header_supplement_is_exact_and_disjoint(self):
+        root = Path(self.r['fresh_output']).parent / 'toolchain'
+        self.r['environment']['INCLUDE'] = str(root)
+        supplement = [dict(path=str(root / f'{index}.h'), bytes=1, sha256='b'*64)
+                      for index in range(324)]
+        self.r['approved_new_dependencies'] = supplement
+        self.reject()
+        self.r['base_header_observation'] = dict(path=str(root / 'observation.json'),
+                                                 bytes=1, sha256='c'*64)
+        M.validate_recipe(self.r)
+        supplement[-1] = supplement[0]
+        self.reject()
+        supplement[-1] = dict(path=str(root.parent / 'foreign.h'), bytes=1, sha256='b'*64)
+        self.reject()
+
+    def test_old_recipe_cannot_execute_without_unchanged_base_observation(self):
+        with self.assertRaisesRegex(ValueError, 'complete base header observation'):
+            M.verify_base_header_observation(self.r, 120)
+
     def test_patch_base_lie(self): self.r['source_patch']['base']={}; self.reject()
 
 class PhaseTests(unittest.TestCase):
