@@ -75,24 +75,80 @@ fn component_selector_keeps_complete_original_denominator_and_literal_widths() -
         .find(|v| v.model == ModelChoice::ContextQwenCompact)
         .unwrap();
     let rows = fixture(context, &[17, 128, 8192]);
-    assert_eq!(selected_rows(CaseKind::Context17, context, &rows)?, [0]);
-    assert_eq!(selected_rows(CaseKind::Context128, context, &rows)?, [1]);
+    assert_eq!(
+        selected_rows(
+            CaseKind::Context {
+                index: 0,
+                tokens: 17
+            },
+            context,
+            &rows
+        )?,
+        [0]
+    );
+    assert_eq!(
+        selected_rows(
+            CaseKind::Context {
+                index: 1,
+                tokens: 128
+            },
+            context,
+            &rows
+        )?,
+        [1]
+    );
     assert!(selected_rows(CaseKind::Focus512, context, &rows).is_err());
     let rows = fixture(focus, &[512; 12]);
     assert_eq!(
         selected_rows(CaseKind::Focus512, focus, &rows)?,
         (0..12).collect::<Vec<_>>()
     );
-    assert!(selected_rows(CaseKind::Context17, focus, &rows).is_err());
+    assert!(
+        selected_rows(
+            CaseKind::Context {
+                index: 0,
+                tokens: 17
+            },
+            focus,
+            &rows
+        )
+        .is_err()
+    );
     assert!(selected_rows(CaseKind::Focus512, focus, &fixture(focus, &[512; 11])).is_err());
     assert!(
         selected_rows(
-            CaseKind::Context128,
+            CaseKind::Context {
+                index: 1,
+                tokens: 128
+            },
             context,
             &fixture(context, &[17, 127, 8192])
         )
         .is_err()
     );
+    Ok(())
+}
+
+#[test]
+fn context_8192_selector_requires_all_live_original_eight_option_row() -> Result<()> {
+    let profiles = airk_retrieval::arbiter::runtime::catalog_profiles()?;
+    for model in [
+        ModelChoice::ContextQwenCompact,
+        ModelChoice::ContextQwenLarge,
+    ] {
+        let profile = profiles.iter().find(|p| p.model == model).unwrap();
+        let case = CaseKind::Context {
+            index: 2,
+            tokens: 8192,
+        };
+        let mut rows = fixture(profile, &[17, 128, 8192]);
+        assert!(selected_rows(case, profile, &rows).is_err());
+        rows.rows[2].input.candidate_positions = (32..40).collect();
+        rows.rows[2].input.option_mask = vec![true; 8];
+        assert_eq!(selected_rows(case, profile, &rows)?, [2]);
+        rows.rows[2].input.attention_mask[0] = 0;
+        assert!(selected_rows(case, profile, &rows).is_err());
+    }
     Ok(())
 }
 

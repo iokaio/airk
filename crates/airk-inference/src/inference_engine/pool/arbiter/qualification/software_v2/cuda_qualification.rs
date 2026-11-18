@@ -133,8 +133,7 @@ fn final_host_peak(peak: Option<u64>, limit: u64) -> Result<u64> {
 }
 #[derive(Clone, Copy)]
 enum CaseKind {
-    Context17,
-    Context128,
+    Context { index: usize, tokens: usize },
     Focus512,
 }
 fn selected_rows(
@@ -143,7 +142,7 @@ fn selected_rows(
     fixture: &NumericFixture,
 ) -> Result<Vec<usize>> {
     match kind {
-        CaseKind::Context17 | CaseKind::Context128 => {
+        CaseKind::Context { index, tokens } => {
             ensure!(
                 matches!(
                     profile.model,
@@ -151,16 +150,26 @@ fn selected_rows(
                 ),
                 "Context selector cannot consume Focus"
             );
-            let index = if matches!(kind, CaseKind::Context17) {
-                0
-            } else {
-                1
-            };
-            let width = if index == 0 { 17 } else { 128 };
             ensure!(
-                fixture.rows.len() == 3 && fixture.rows[index].input.input_ids.len() == width,
+                fixture.rows.len() == 3,
+                "literal native Context roster differs"
+            );
+            let row = fixture
+                .rows
+                .get(index)
+                .context("literal native Context row absent")?;
+            ensure!(
+                row.input.input_ids.len() == tokens,
                 "literal native Context row differs"
             );
+            if tokens == 8192 {
+                ensure!(
+                    row.input.attention_mask.len() == tokens
+                        && row.input.attention_mask.iter().all(|&token| token == 1)
+                        && row.input.candidate_positions.len() == 8,
+                    "unchanged all-live Context 8192/N8 row required"
+                );
+            }
             Ok(vec![index])
         }
         CaseKind::Focus512 => {
@@ -476,6 +485,7 @@ fn emit_cuda_fp32_probe_metadata() -> Result<()> {
         vec![
             "cuda_original_context_fp32_t17_component",
             "cuda_original_context_fp32_t128_component",
+            "cuda_original_context_fp32_t8192_component",
         ]
     };
     let prefix =
@@ -590,7 +600,7 @@ fn probe(kind: CaseKind) -> Result<()> {
         .create_new(true)
         .open(&output)?;
     let binary = file_hash(&std::env::current_exe()?)?;
-    let mut receipt = json!({"schema":"airk.private.cuda-component-result/1","complete":false,"qualified":false,"product_admission":false,"measured_peak_device_bytes":null,"request":request_pin,"native_input":gpu_input,"profile":profile.manifest,"model":profile.model,"fixture":fixture_pin,"reference_producer":producer,"source_manifest":input.source_manifest,"runtime_manifest":runtime_manifest,"pid":std::process::id(),"native_binary_sha256":binary,"execution_user":airk_ipc::endpoint::current_user()?,"bounds":bounds,"actual_job":actual_job,"native_host_reservation_bytes":charge.bytes(),"resource_snapshot":resource_snapshot,"original_expires_monotonic_ns":expires_ns,"rows":[],"scope":"Actual component CUDA score, final placement and exact independent references at stated rows only; no full8192, resources20, semantic/CAL, product lane or public qualification"});
+    let mut receipt = json!({"schema":"airk.private.cuda-component-result/1","complete":false,"qualified":false,"product_admission":false,"measured_peak_device_bytes":null,"request":request_pin,"native_input":gpu_input,"profile":profile.manifest,"model":profile.model,"fixture":fixture_pin,"reference_producer":producer,"source_manifest":input.source_manifest,"runtime_manifest":runtime_manifest,"pid":std::process::id(),"native_binary_sha256":binary,"execution_user":airk_ipc::endpoint::current_user()?,"bounds":bounds,"actual_job":actual_job,"native_host_reservation_bytes":charge.bytes(),"resource_snapshot":resource_snapshot,"original_expires_monotonic_ns":expires_ns,"rows":[],"scope":"Actual component CUDA score, final placement and exact independent references at stated rows only; Resource20, semantic/CAL, product lane and public qualification remain separate"});
     flush(&mut file, &receipt)?;
     let mut operations = operation::Journal::create_until(
         &output,
@@ -682,12 +692,26 @@ fn probe(kind: CaseKind) -> Result<()> {
 #[test]
 #[ignore = "actual approved CUDA runtime + current native metadata + exact independent references; original120s/host/device/Job caps"]
 fn cuda_original_context_fp32_t17_component() -> Result<()> {
-    probe(CaseKind::Context17)
+    probe(CaseKind::Context {
+        index: 0,
+        tokens: 17,
+    })
 }
 #[test]
 #[ignore = "actual approved CUDA runtime + current native metadata + exact independent references; original120s/host/device/Job caps"]
 fn cuda_original_context_fp32_t128_component() -> Result<()> {
-    probe(CaseKind::Context128)
+    probe(CaseKind::Context {
+        index: 1,
+        tokens: 128,
+    })
+}
+#[test]
+#[ignore = "actual approved CUDA runtime + current native metadata + exact independent all-live Context8192/N8 references; original120s/host/device/Job caps"]
+fn cuda_original_context_fp32_t8192_component() -> Result<()> {
+    probe(CaseKind::Context {
+        index: 2,
+        tokens: 8192,
+    })
 }
 #[test]
 #[ignore = "actual approved CUDA runtime + current native Focus512 metadata + all twelve independent cases; original120s/caps"]

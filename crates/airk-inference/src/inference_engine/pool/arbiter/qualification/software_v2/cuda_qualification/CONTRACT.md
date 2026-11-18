@@ -17,9 +17,10 @@ Probe request and literal native executable commands. No old profile/CAL or
 reference bytes are overwritten. Native current-policy /3 and Core unavailable
 /2 dependencies must be applied before generating those inputs.
 
-The three component score selectors consume only the emitted Probe variant.
-Context17/128 retain the complete three-row original numeric denominator and
-execute the selected exact native tensor row only; they do not establish8192.
+The four component score selectors consume only the emitted Probe variant.
+Context at 17, 128 or 8192 tokens retains the complete three-row original numeric
+fixture and executes its selected exact native tensor row. The 8192-token case
+requires eight candidate positions and an entirely live attention mask.
 Focus consumes all twelve genuine512-token reference cases, including their
 original padding/hostile/model-view cases. Each selected row requires both
 complete finite independent references and pinned producer/original asset
@@ -56,9 +57,9 @@ pins are rechecked after actual teardown.
 Native elapsed_us_to_final_report_start deliberately excludes final report
 retention; original expiry is checked after retention and refuses if exceeded.
 Whole owned-process duration/hashes/Job settlement remain the parent's genuine
-receipt. This component proof does not replace G4 full8192/resource20/coexistence,
-G5 FP16 dispatch/math, semantic labels, public provenance/package or product
-Auto/future-request recovery qualification.
+receipt. G4 still requires its complete 8192-token, Resource20 and coexistence
+evidence. G5 FP16 dispatch/math, semantic labels, public provenance, packaging
+and product Auto/future-request recovery each retain their qualification gates.
 
 The actual final persistent peak RSS is sampled after adapter observation,
 session teardown, exact post-input hashing and native control cleanup, before
