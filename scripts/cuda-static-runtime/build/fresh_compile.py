@@ -2,6 +2,7 @@
 """Compile an exact, separately reviewed, fresh Windows CUDA configuration."""
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import datetime as dt
 import hashlib
 import importlib.util
@@ -134,8 +135,25 @@ def load_chain(pins, configured_pin, deadline):
 
 def output_guard(component, recipe):
     def guard_paths(paths, created, deadline):
-        for offset in range(0, len(paths), 128):
-            component.guard_many(recipe, paths[offset:offset+128], created, deadline=deadline)
+        batch_size = 48
+        if len(paths) <= batch_size:
+            if paths:
+                component.guard_many(recipe, paths, created, deadline=deadline)
+            return
+
+        workers = 8
+        wave_size = workers * batch_size
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            for start in range(0, len(paths), wave_size):
+                # Each guard independently observes every path in its own batch.
+                end = min(start + wave_size, len(paths))
+                checks = [
+                    executor.submit(component.guard_many, recipe, paths[offset:min(offset + batch_size, end)],
+                                    created, deadline=deadline)
+                    for offset in range(start, end, batch_size)
+                ]
+                for check in checks:
+                    check.result()
     return guard_paths
 
 

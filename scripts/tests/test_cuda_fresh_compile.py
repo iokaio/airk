@@ -128,5 +128,32 @@ class FreshCompileTests(unittest.TestCase):
         verify_inputs.assert_not_called()
 
 
+
+    def test_compile_audit_batches_cover_every_path_under_one_deadline(self):
+        paths = [self.root / str(index) for index in range(408)]
+        component = Mock()
+        recipe = {"frozen": True}
+        OWNER.output_guard(component, recipe)(paths, True, 60)
+        calls = component.guard_many.call_args_list
+        self.assertEqual(sorted(len(call.args[1]) for call in calls), [24, *([48] * 8)])
+        self.assertEqual(sorted(path for call in calls for path in call.args[1]), sorted(paths))
+        self.assertTrue(all(call.args[0] is recipe and call.args[2] is True
+                            and call.kwargs == {"deadline": 60} for call in calls))
+
+    def test_compile_audit_refusal_stops_before_dispatching_the_next_wave(self):
+        paths = [self.root / str(index) for index in range(408)]
+        component = Mock()
+
+        def audit(_recipe, batch, _created, *, deadline):
+            if paths[0] in batch:
+                raise ValueError("guard refused first batch")
+
+        component.guard_many.side_effect = audit
+        with self.assertRaisesRegex(ValueError, "guard refused first batch"):
+            OWNER.output_guard(component, {})(paths, True, 60)
+        self.assertEqual(component.guard_many.call_count, 8)
+        self.assertTrue(all(paths[-1] not in call.args[1] for call in component.guard_many.call_args_list))
+
+
 if __name__ == "__main__":
     unittest.main()
