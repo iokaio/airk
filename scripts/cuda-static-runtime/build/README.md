@@ -59,6 +59,11 @@ up to eight workers. A timed-out batch can be split into smaller batches under
 the same original deadline. Each new call uses the existing ten-second guard
 limit and rechecks every path. Other guard refusals propagate immediately.
 
+For a read-only timing comparison on 128 retained generated paths, run
+`python -B -S scripts/cuda-static-runtime/build/audit_budget_probe.py --recipe PATH --recipe-sha256 SHA --human-sid SID`.
+The probe tries 10 and 16 seconds in separate child processes and prints
+the sample identity, elapsed time and complete-audit result for each.
+
 ## Historical parent source capture
 
 The versioned r8, r12 and checkpoint-v1 packages capture the actual producer,
