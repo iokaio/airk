@@ -46,6 +46,26 @@ impl StageOwner {
         manifest: airk_core::identity::Sha256Digest,
     ) -> Result<Box<dyn AssetSource + Send>> {
         let profile = self.execution_profile(manifest)?;
+        #[cfg(all(
+            windows,
+            target_arch = "x86_64",
+            feature = "test-support",
+            feature = "gpu-cuda"
+        ))]
+        if let Some(answer) = self
+            .lifecycle
+            .lock()
+            .map_err(|_| anyhow::anyhow!("private CUDA Answer lifecycle unavailable"))?
+            .cuda_answer
+            .as_ref()
+            .filter(|answer| answer.manifest == manifest)
+        {
+            ensure!(
+                Instant::now() < answer.graph.expires(),
+                "private CUDA Answer fixture expired"
+            );
+            return Ok(Box::new(answer.assets.clone()));
+        }
         Ok(Box::new(Source {
             store: self.assets.clone(),
             profile: profile.description().clone(),

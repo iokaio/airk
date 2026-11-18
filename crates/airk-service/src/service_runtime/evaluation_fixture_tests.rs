@@ -649,7 +649,34 @@ async fn run_actual_private_arbiter_fixture(
                 source.iter().map(|entry| entry.profile.clone()).collect(),
             )?
         };
-        for entry in source.iter().filter(|_| restart.is_none()) {
+        #[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
+        let private_cuda_manifest = if let Some(input) = cuda_answer {
+            ensure!(
+                restart.is_none() && context_observer.is_none(),
+                "paired CUDA Answer requires actual scoring in a fresh isolated service"
+            );
+            let entry = source
+                .iter()
+                .find(|entry| entry.profile.manifest == input.manifest)
+                .context("private CUDA Answer asset profile missing")?;
+            owner =
+                owner.with_cuda_answer(input.manifest, input.adapter, input.graph, |asset| {
+                    entry
+                        .sources
+                        .get(&asset.name)
+                        .context("original private CUDA asset descriptor missing")?
+                        .try_clone()
+                        .map_err(Into::into)
+                })?;
+            Some(input.manifest)
+        } else {
+            None
+        };
+        #[cfg(not(all(windows, target_arch = "x86_64", feature = "gpu-cuda")))]
+        let private_cuda_manifest = None;
+        for entry in source.iter().filter(|entry| {
+            restart.is_none() && Some(entry.profile.manifest) != private_cuda_manifest
+        }) {
             owner.seed(entry.profile.manifest, &mut |asset| {
                 entry
                     .sources
@@ -670,14 +697,6 @@ async fn run_actual_private_arbiter_fixture(
             },
             "private fixture must start disabled"
         );
-        #[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
-        if let Some(input) = cuda_answer {
-            ensure!(
-                restart.is_none() && context_observer.is_none(),
-                "paired CUDA Answer requires actual scoring in a fresh isolated service"
-            );
-            owner = owner.with_cuda_answer(input.manifest, input.adapter, input.graph)?;
-        }
         if let Some(observer) = context_observer {
             owner = owner.observe_context(observer);
         }

@@ -39,6 +39,31 @@ pub(super) struct State {
     #[cfg(all(test, feature = "test-support"))]
     pub(super) warm_observer: Option<super::warm_observer::Observer>,
 }
+impl State {
+    fn has_private_cuda_assets(&self, manifest: Sha256Digest) -> bool {
+        #[cfg(all(
+            windows,
+            target_arch = "x86_64",
+            feature = "test-support",
+            feature = "gpu-cuda"
+        ))]
+        {
+            self.cuda_answer
+                .as_ref()
+                .is_some_and(|answer| answer.manifest == manifest)
+        }
+        #[cfg(not(all(
+            windows,
+            target_arch = "x86_64",
+            feature = "test-support",
+            feature = "gpu-cuda"
+        )))]
+        {
+            let _ = manifest;
+            false
+        }
+    }
+}
 impl Default for State {
     fn default() -> Self {
         Self {
@@ -647,14 +672,10 @@ async fn warm(
     result
 }
 
-fn cached_intent_eligible(
-    configuration: &Configuration,
-    stage: Stage,
-    phase: Option<Phase>,
-) -> bool {
+fn cached_intent_eligible(configuration: &Configuration, stage: Stage, assets_ready: bool) -> bool {
     configuration.stage(stage).enabled
         && !configuration.stage(stage).indexes.is_empty()
-        && phase == Some(Phase::Ready)
+        && assets_ready
 }
 
 fn recovery_removal(
@@ -796,12 +817,13 @@ fn spawn_launch(prepared: PreparedLaunch, context: LaunchContext) {
                     // observed actual session/charge drain. It cannot download,
                     // renew cancellation, or retry unchanged failed inputs.
                     let latest = management_snapshot(&configuration, &expected, stage, &cancel)?;
-                    let drained = shared
-                        .lock()
-                        .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?
-                        .phase
-                        != Availability::Draining;
-                    if !drained
+                    let may_continue = {
+                        let state = shared
+                            .lock()
+                            .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
+                        state.phase != Availability::Draining && !state.has_private_cuda_assets(manifest)
+                    };
+                    if !may_continue
                         || cancel.is_cancelled()
                         || latest.revision <= warming_revision
                         || latest.stage(stage) != expected.stage(stage)
@@ -1141,6 +1163,11 @@ impl StageOwner {
                     )
                 } else if active == Some(profile.manifest) {
                     (Availability::Requested,"Previous native session is retained but is not admitted for the current enabled selection.".into())
+                } else if state.has_private_cuda_assets(profile.manifest) {
+                    (
+                        Availability::Requested,
+                        "Verified read-only private CUDA assets are retained for the exact graph-bound fixture.".into(),
+                    )
                 } else {
                     match self.assets.phase(profile)?{Some(Phase::Ready)=>(Availability::Requested,"Completed provisioning receipt retained; native activation requires re-verification and the selected enabled choice.".into()),Some(Phase::Downloading)|Some(Phase::Failed)|Some(Phase::Canceled)=>(Availability::Failed,"Asset acquisition did not complete. Use a new explicit Provision or verified local Import; Recover does not download.".into()),Some(Phase::Removing)=>(Availability::Failed,"An unfinished asset removal requires local Recover; no download was resumed.".into()),_=>(Availability::MissingAssets,"Explicit provisioning is required.".into())}
                 };
@@ -1509,11 +1536,14 @@ impl StageOwner {
                         .selected_profile
                         .context("Arbiter profile missing")?;
                     let profile = self.execution_profile(manifest)?;
-                    if cached_intent_eligible(
-                        &selected,
-                        self.stage,
-                        self.assets.phase(profile.description())?,
-                    ) {
+                    let has_private_assets = self
+                        .lifecycle
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?
+                        .has_private_cuda_assets(manifest);
+                    let assets_ready = has_private_assets
+                        || self.assets.phase(profile.description())? == Some(Phase::Ready);
+                    if cached_intent_eligible(&selected, self.stage, assets_ready) {
                         if busy {
                             let source = self.asset_source(manifest)?;
                             let restoration = previous
@@ -2202,21 +2232,9 @@ mod tests {
             ),
             tasks: std::collections::BTreeSet::from([Task::FocusRank]),
         }];
-        assert!(cached_intent_eligible(
-            &cached,
-            Stage::Focus,
-            Some(Phase::Ready)
-        ));
-        assert!(!cached_intent_eligible(
-            &cached,
-            Stage::Focus,
-            Some(Phase::Failed)
-        ));
-        assert!(!cached_intent_eligible(
-            &cached,
-            Stage::Context,
-            Some(Phase::Ready)
-        ));
+        assert!(cached_intent_eligible(&cached, Stage::Focus, true));
+        assert!(!cached_intent_eligible(&cached, Stage::Focus, false));
+        assert!(!cached_intent_eligible(&cached, Stage::Context, true));
         Ok(())
     }
     #[test]
@@ -2384,11 +2402,7 @@ mod tests {
         next.revision = 3;
         let accepted = commit_configure(&mut state.lock().unwrap(), &store, 2, &next, || Ok(()))?;
         assert!(canceled.is_cancelled());
-        assert!(cached_intent_eligible(
-            &accepted,
-            Stage::Context,
-            Some(Phase::Ready)
-        ));
+        assert!(cached_intent_eligible(&accepted, Stage::Context, true));
         let mut prepared = pending_fixture(3, 3)?;
         prepared.expected = accepted.clone();
         state.lock().unwrap().pending = Some(prepared);
@@ -2611,7 +2625,7 @@ mod tests {
         assert!(!state.lock().unwrap().busy);
         let mut configuration = latest.expected;
         assert!(
-            !cached_intent_eligible(&configuration, Stage::Context, Some(Phase::Ready)),
+            !cached_intent_eligible(&configuration, Stage::Context, true),
             "unenrolled selection must not warm"
         );
         configuration.stage_mut(Stage::Context).indexes = vec![Enrollment {
@@ -2620,23 +2634,19 @@ mod tests {
             ),
             tasks: std::collections::BTreeSet::from([Task::ContextNextRead]),
         }];
-        assert!(cached_intent_eligible(
-            &configuration,
-            Stage::Context,
-            Some(Phase::Ready)
-        ));
+        assert!(cached_intent_eligible(&configuration, Stage::Context, true));
         assert!(
-            !cached_intent_eligible(&configuration, Stage::Context, None),
+            !cached_intent_eligible(&configuration, Stage::Context, false),
             "missing cache never queues a download"
         );
         assert!(!cached_intent_eligible(
             &configuration,
             Stage::Context,
-            Some(Phase::Failed)
+            false
         ));
         configuration.stage_mut(Stage::Context).enabled = false;
         assert!(
-            !cached_intent_eligible(&configuration, Stage::Context, Some(Phase::Ready)),
+            !cached_intent_eligible(&configuration, Stage::Context, true),
             "off invalidates cached activation"
         );
         let (draining, _) = start(&state, Sha256Digest::from_bytes([5; 32]), None)?;

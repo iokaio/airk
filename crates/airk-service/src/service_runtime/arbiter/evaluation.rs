@@ -56,7 +56,80 @@ pub(super) struct CudaAnswerEvaluation {
     pub(super) gate: airk_catalog_control::catalog_admission::NativeCatalogAdmission,
     pub(super) manifest: Sha256Digest,
     pub(super) adapter: [u8; 16],
+    pub(super) assets: CudaAnswerAssets,
     pub(super) graph: airk_inference::inference_engine::pool::arbiter::EvaluationAnswerGraph,
+}
+
+#[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
+#[derive(Clone)]
+pub(super) struct CudaAnswerAssets(Arc<Mutex<std::collections::BTreeMap<String, (Asset, File)>>>);
+
+#[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
+impl CudaAnswerAssets {
+    fn retain(
+        profile: &Profile,
+        mut source: impl FnMut(&Asset) -> Result<File>,
+        deadline: Instant,
+    ) -> Result<Self> {
+        use sha2::{Digest, Sha256};
+
+        let mut files = std::collections::BTreeMap::new();
+        let mut buffer = [0_u8; 65536];
+        for asset in &profile.assets {
+            let mut file = source(asset)?;
+            ensure!(
+                file.metadata()?.len() == asset.bytes,
+                "private CUDA asset length differs"
+            );
+            file.seek(SeekFrom::Start(0))?;
+            let mut digest = Sha256::new();
+            let mut remaining = asset.bytes;
+            while remaining > 0 {
+                ensure!(
+                    Instant::now() < deadline,
+                    "original private CUDA asset deadline"
+                );
+                let limit = usize::try_from(remaining.min(buffer.len() as u64))?;
+                let read = file.read(&mut buffer[..limit])?;
+                ensure!(read > 0, "private CUDA asset shortened");
+                digest.update(&buffer[..read]);
+                remaining -= u64::try_from(read)?;
+            }
+            ensure!(
+                file.read(&mut [0])? == 0
+                    && Sha256Digest::from_bytes(digest.finalize().into()) == asset.sha256,
+                "private CUDA asset bytes changed"
+            );
+            files.insert(asset.name.clone(), (asset.clone(), file));
+        }
+        Ok(Self(Arc::new(Mutex::new(files))))
+    }
+}
+
+#[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
+impl airk_retrieval::arbiter::runtime::AssetSource for CudaAnswerAssets {
+    fn read_asset(&self, asset: &Asset) -> Result<Vec<u8>> {
+        let mut files = self
+            .0
+            .lock()
+            .map_err(|_| anyhow::anyhow!("private CUDA asset descriptors unavailable"))?;
+        let (declared, file) = files
+            .get_mut(&asset.name)
+            .context("private CUDA asset missing")?;
+        ensure!(declared == asset, "private CUDA asset declaration changed");
+        let length = usize::try_from(asset.bytes)?;
+        let limit = asset
+            .bytes
+            .checked_add(1)
+            .context("private CUDA asset size overflow")?;
+        file.seek(SeekFrom::Start(0))?;
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(length)?;
+        file.take(limit).read_to_end(&mut bytes)?;
+        ensure!(bytes.len() == length, "private CUDA asset length changed");
+        // Scorer independently checks the exact SHA and graph it consumes.
+        Ok(bytes)
+    }
 }
 impl EvaluationOwner {
     pub(in crate::service_runtime) fn into_owner_for(
@@ -153,6 +226,7 @@ impl EvaluationOwner {
         manifest: Sha256Digest,
         adapter: [u8; 16],
         graph: airk_inference::inference_engine::pool::arbiter::EvaluationAnswerGraph,
+        source: impl FnMut(&Asset) -> Result<File>,
     ) -> Result<Self> {
         let profile = self.owner.context.execution_profile(manifest)?;
         ensure!(
@@ -164,6 +238,7 @@ impl EvaluationOwner {
                 && Instant::now() < graph.expires(),
             "private CUDA Answer requires an exact Compact evaluation graph and adapter"
         );
+        let assets = CudaAnswerAssets::retain(profile.description(), source, graph.expires())?;
         let mut state = self
             .owner
             .context
@@ -179,6 +254,7 @@ impl EvaluationOwner {
             gate: self.owner.gate.clone(),
             manifest,
             adapter,
+            assets,
             graph,
         }));
         drop(state);

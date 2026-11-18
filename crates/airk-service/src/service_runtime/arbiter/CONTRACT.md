@@ -677,3 +677,14 @@ dispatch and successful score return on both backends. The resulting timing
 covers the actual pipe, native scoring and abstention on the shared frozen
 input. Positive choice timing and calibration qualification require their own
 evidence.
+
+The private CUDA fixture authenticates the complete declared asset closure
+through the retained read-only source descriptors under its original
+deadline. Only the exact graph-bound Compact manifest can use that source
+for this fresh, same-lease Context activation. Its ordinary native scorer
+also verifies the bytes it consumes. Status projects the private source
+availability while the normal Configure, scope, graph and model load
+checks continue to govern Ready. No legacy or device asset receipt is
+created for that GPU manifest. Legacy seeding for the other profiles keeps
+its existing Store contract. Private CUDA failures retain their original
+result without a legacy cached continuation.
