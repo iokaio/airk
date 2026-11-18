@@ -803,6 +803,24 @@ class GpuServiceRuntimeBuildTests(unittest.TestCase):
                     "static_link_closure_sha256", "static_link_supplement_sha256",
                     "static_link_recovery_sha256", "verified_inputs_sha256"})
 
+    def test_bounded_fresh_handoff_deadline_reaches_maintained_owner(self):
+        builder = self.builder()
+        root = Path(__file__).resolve().parents[2]
+        owner = mock.Mock()
+        owner.verify_handoff.return_value = self.handoff(root)
+        with mock.patch.object(builder.platform, "system", return_value="Windows"), \
+             mock.patch.object(builder.platform, "machine", return_value="AMD64"), \
+             mock.patch.object(builder.time, "monotonic", return_value=10), \
+             mock.patch.object(builder, "load_script", return_value=owner):
+            builder.cuda_handoff(root / "environment.json", "f" * 64, 600)
+            owner.verify_handoff.assert_called_once_with(
+                root / "environment.json", "f" * 64, builder.ROOT, deadline=610,
+            )
+            for seconds in (True, 0, 601, float("nan")):
+                with self.subTest(seconds=seconds), self.assertRaisesRegex(RuntimeError, "bounded"):
+                    builder.cuda_handoff(root / "environment.json", "f" * 64, seconds)
+            self.assertEqual(owner.verify_handoff.call_count, 1)
+
     def test_paired_cargo_cpu_default_and_explicit_gpu_match_exact_tree_features(self):
         builder = self.builder()
         with tempfile.TemporaryDirectory() as temporary:

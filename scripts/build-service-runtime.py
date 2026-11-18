@@ -95,13 +95,18 @@ CUDA_STATIC_KEYS = {"LIBONNXRUNTIME_NO_PKG_CONFIG", "ORT_SKIP_DOWNLOAD", "ORT_PR
                     "ORT_LIB_LOCATION", "ORT_LIB_PROFILE"}
 
 
-def cuda_handoff(path, expected_sha256):
+def cuda_handoff(path, expected_sha256, verification_seconds=None):
     """Reopen the maintained genuine GPU build+aggregate proof; no activation grant."""
     if platform.system() != "Windows" or platform.machine().lower() not in ("amd64", "x86_64"):
         raise RuntimeError("CUDA shipping runtime is supported only on Windows x86_64")
     if not isinstance(expected_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
         raise RuntimeError("An explicit reviewed CUDA environment SHA-256 is required")
-    verified = load_script("cuda-runtime-environment").verify_handoff(path, expected_sha256, ROOT)
+    verification = {}
+    if verification_seconds is not None:
+        if type(verification_seconds) is not int or not 1 <= verification_seconds <= 600:
+            raise RuntimeError("CUDA handoff verification must be bounded to 1 through 600 seconds")
+        verification["deadline"] = time.monotonic() + verification_seconds
+    verified = load_script("cuda-runtime-environment").verify_handoff(path, expected_sha256, ROOT, **verification)
     environment = verified["environment"]
     if (set(environment) != CUDA_STATIC_KEYS
             or environment["LIBONNXRUNTIME_NO_PKG_CONFIG"] != "1"
@@ -120,12 +125,15 @@ def cuda_handoff(path, expected_sha256):
 
 
 def prepare_cuda_inputs(environment_path, environment_sha256, projection_path, projection_sha256,
-                        native_execution_receipt, native_execution_sha256):
+                        native_execution_receipt, native_execution_sha256, *, verification_seconds=None):
     """Consume genuine native-output custody through its maintained owner, never a manifest mirror."""
     for pin in (projection_sha256, native_execution_sha256):
         if not isinstance(pin, str) or not re.fullmatch(r"[0-9a-f]{64}", pin):
             raise RuntimeError("Explicit native CUDA projection/execution SHA-256 pins are required")
-    verified, child = cuda_handoff(environment_path, environment_sha256)
+    request = (environment_path, environment_sha256)
+    if verification_seconds is not None:
+        request += (verification_seconds,)
+    verified, child = cuda_handoff(*request)
     owner = load_script("cuda-package-provenance")
     native = owner.require_native_activation_projection(
         projection_path, projection_sha256, verified,
@@ -151,7 +159,7 @@ def prepare_cuda_inputs(environment_path, environment_sha256, projection_path, p
         raise RuntimeError("Verified CUDA consumer identity exceeds its bound")
     static["verified_inputs_sha256"] = hashlib.sha256(
         b"airk.gpu-runtime-build-inputs/1\0" + canonical).hexdigest()
-    return {"request": (environment_path, environment_sha256), "handoff": verified,
+    return {"request": request, "handoff": verified,
             "projection": native, "static_ort": static, "environment": child}
 
 
@@ -920,6 +928,8 @@ def main():
     parser.add_argument("--cuda-environment", type=Path,
                         help="Opt in to shipping gpu-cuda with a genuine same-build static environment")
     parser.add_argument("--cuda-environment-sha256")
+    parser.add_argument("--cuda-verification-seconds", type=int, choices=range(1, 601), metavar="SECONDS",
+                        help="Required for a fresh environment/6 handoff (1 through 600 per verification)")
     parser.add_argument("--cuda-projection", type=Path, help="Actual Rust-emitted complete native public file projection")
     parser.add_argument("--cuda-projection-sha256")
     parser.add_argument("--cuda-native-execution-receipt", type=Path,
@@ -930,6 +940,8 @@ def main():
                    args.cuda_projection_sha256, args.cuda_native_execution_receipt,
                    args.cuda_native_execution_receipt_sha256)
     cuda_requested = any(value is not None for value in cuda_values)
+    if args.cuda_verification_seconds is not None and not cuda_requested:
+        raise SystemExit("--cuda-verification-seconds requires explicit CUDA inputs")
     if cuda_requested and not all(value is not None for value in cuda_values):
         raise SystemExit("All six explicit CUDA environment/projection/native-execution path+SHA inputs are required")
     if cuda_requested and (platform.system() != "Windows" or platform.machine().lower() not in ("amd64", "x86_64")):
@@ -964,7 +976,10 @@ def main():
             check_lightweight_dependencies()
     source = source_identity()
     load_script("int8-policy").catalog()
-    cuda = prepare_cuda_inputs(*cuda_values) if cuda_requested else None
+    verification = {}
+    if args.cuda_verification_seconds is not None:
+        verification["verification_seconds"] = args.cuda_verification_seconds
+    cuda = prepare_cuda_inputs(*cuda_values, **verification) if cuda_requested else None
     if cuda is not None:
         static_inputs = cuda["static_ort"]
         check_lightweight_dependencies(unified=True, features=CUDA_PAIR_FEATURES,

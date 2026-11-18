@@ -43,6 +43,27 @@ def _execution_owner():
  import importlib.util
  p=Path(__file__).with_name('cuda-native-execution.py');spec=importlib.util.spec_from_file_location('cuda_package_native_custody',p);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);return m
 
+FRESH_BUILD_SCHEMA = 'airk.private.cuda-fresh-static-build-proof/1'
+PACKAGE_BUILD_SCHEMAS = (
+    'airk.cuda-static-build-proof/1',
+    'airk.cuda-static-build-proof/2',
+    'airk.cuda-static-build-proof/3',
+    FRESH_BUILD_SCHEMA,
+)
+PROVIDER_NAMES = {'onnxruntime_providers_shared.dll', 'onnxruntime_providers_cuda.dll'}
+
+
+def verify_fresh_provider_projection(build, rows):
+    providers = build.get('provider_dlls', [])
+    if (build.get('qualification') is not False or build.get('activation_pins_available') is not False
+            or not isinstance(providers, list) or len(providers) != len(PROVIDER_NAMES)):
+        raise ValueError('exact unqualified current-build provider proof required')
+    projected = {row['name']: (row['bytes'], row['sha256']) for row in rows if row['name'] in PROVIDER_NAMES}
+    expected = {Path(row['path']).name: (row['bytes'], row['sha256']) for row in providers}
+    if set(expected) != PROVIDER_NAMES or projected != expected:
+        raise ValueError('native projection does not use the verified fresh provider pair')
+
+
 def require_native_activation_projection(projection_path=None,projection_sha256=None,verified_handoff=None,*,native_execution_receipt=None,repo_root=None,source_root=None):
  # This consumes only the descriptive Rust-emitted projection, never RuntimeManifest.
  import hashlib,json
@@ -56,7 +77,7 @@ def require_native_activation_projection(projection_path=None,projection_sha256=
  value=owner.read(projection_path,1<<20)
  if set(value)!={'schema','descriptor','static_core_build','files','scope','activation','qualification'} or value['schema']!='airk.native.cuda-package-projection/1' or value['activation'] is not False or value['qualification'] is not False:raise ValueError('exact descriptive native package projection required')
  build=verified_handoff.get('gpu_build',{})
- if verified_handoff.get('activation_pins_available') is not False or build.get('schema') not in ('airk.cuda-static-build-proof/1','airk.cuda-static-build-proof/2','airk.cuda-static-build-proof/3') or value['static_core_build']!=build.get('build_receipt',{}).get('sha256'):raise ValueError('native projection/static-core producer mismatch')
+ if verified_handoff.get('activation_pins_available') is not False or build.get('schema') not in PACKAGE_BUILD_SCHEMAS or value['static_core_build']!=build.get('build_receipt',{}).get('sha256'):raise ValueError('native projection/static-core producer mismatch')
  descriptor=value['descriptor']
  if not isinstance(descriptor,dict) or set(descriptor)!={'name','bytes','sha256'} or descriptor['name']!='airk-cuda-runtime.json' or (descriptor['bytes'],descriptor['sha256'])!=(plan['descriptor']['bytes'],plan['descriptor']['sha256']):raise ValueError('actual native descriptor pin differs')
  rows=value['files']
@@ -73,6 +94,7 @@ def require_native_activation_projection(projection_path=None,projection_sha256=
   total+=row['bytes'];files[name]=row['sha256']
  if total>4<<30:raise ValueError('native optional payload exceeds4GiB')
  exact_optional_payload({},native,legal)
+ if build['schema']==FRESH_BUILD_SCHEMA:verify_fresh_provider_projection(build,rows)
  if {str(root.joinpath(*PurePosixPath(name).parts)):sha for name,sha in files.items()}!={r['path']:r['sha256'] for r in plan['runtime_files']}:raise ValueError('projection omits/invents an original runtime custody file')
  if files.get(descriptor['name'])!=descriptor['sha256']:raise ValueError('native descriptor omitted from exact files')
  return {'files':files,'source_root':root,'native_projection':projection,'native_execution_receipt':owner.pin(native_execution_receipt[0]),'static_core_build':value['static_core_build'],'descriptor':descriptor,'activation':False,'qualification':False,'_repo_root':str(Path(repo_root))}

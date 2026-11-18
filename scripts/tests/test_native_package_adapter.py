@@ -139,6 +139,19 @@ class NativeProjectionLegalBoundary(unittest.TestCase):
    with patch.object(p,'_execution_owner',return_value=owner):
     p.stage_native_projection(observed,destination,handoff)
    self.assertEqual({file.name:file.read_bytes() for file in destination.iterdir()},payload)
+ def test_fresh_proof_binds_both_actual_projected_provider_images(self):
+  with tempfile.TemporaryDirectory(dir=HERE) as t:
+   root=Path(t);_,value,projection,execution,plan,owner,handoff=self.literal(root)
+   handoff['gpu_build'].update(schema='airk.private.cuda-fresh-static-build-proof/1',
+    qualification=False,activation_pins_available=False,
+    provider_dlls=[row for row in plan['runtime_files'] if Path(row['path']).name.startswith('onnxruntime_providers_')])
+   self.consume(value,projection,execution,owner,handoff)
+   provider=handoff['gpu_build']['provider_dlls'][0]
+   for change in ({'bytes':provider['bytes']+1},{'sha256':'0'*64}):
+    with self.subTest(change=change),self.assertRaisesRegex(ValueError,'verified fresh provider pair'):
+     bad=dict(handoff,gpu_build=dict(handoff['gpu_build'],
+      provider_dlls=[dict(provider,**change),handoff['gpu_build']['provider_dlls'][1]]))
+     self.consume(value,projection,execution,owner,bad)
  def test_mutated_legal_names_are_refused_at_the_real_projection_boundary(self):
   import copy
   with tempfile.TemporaryDirectory(dir=HERE) as t:

@@ -567,7 +567,10 @@ optional Windows x86_64 route requires all three explicit path/SHA pairs:
 `--cuda-projection-sha256`, and `--cuda-native-execution-receipt` /
 `--cuda-native-execution-receipt-sha256`. Partial or unsupported-host inputs refuse
 before Cargo. Run it only as the existing single Cargo owner, after the checked
-Admin inventory and bundled-model prerequisites.
+Admin inventory and bundled-model prerequisites. A fresh environment/6 handoff
+also requires `--cuda-verification-seconds` from 1 to 600. Each handoff
+verification uses that budget and preserves the original recorded build deadline.
+The fresh projection must include the exact two provider DLLs from that build.
 
 The maintained CUDA environment owner reopens the genuine completed producer and
 aggregate. The native-output consumer reopens the actual Rust-emitted
