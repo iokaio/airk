@@ -193,6 +193,8 @@ fn parse_role(arguments: &[OsString]) -> Result<RoleRequest> {
             let mut mode = None;
             let mut wrapper_script = None;
             let mut wrapper_silent = false;
+            let mut cli_alias = None;
+            let mut cli_alias_search_path = None;
             let mut rest = arguments[1..].iter();
             while let Some(flag) = rest.next() {
                 match flag.to_str() {
@@ -209,6 +211,42 @@ fn parse_role(arguments: &[OsString]) -> Result<RoleRequest> {
                             .context("role_admission_refused: recovery field required")?
                             .parse()?;
                         mode = Some(crate::setup_role::SetupMode::RecoveryField(field));
+                    }
+                    Some("--cli-alias") if cli_alias.is_none() => {
+                        let name = rest
+                            .next()
+                            .and_then(|value| value.to_str())
+                            .context("role_admission_refused: CLI alias name required")?;
+                        ensure!(
+                            !name.is_empty()
+                                && name.len() <= 32
+                                && name.as_bytes()[0].is_ascii_alphabetic()
+                                && name.bytes().all(|byte| byte.is_ascii_alphanumeric()
+                                    || matches!(byte, b'_' | b'-')),
+                            "role_admission_refused: invalid CLI alias name"
+                        );
+                        cli_alias =
+                            Some(crate::setup_role::CliAliasSelection::Named(name.to_owned()));
+                    }
+                    Some("--no-cli-alias") if cli_alias.is_none() => {
+                        cli_alias = Some(crate::setup_role::CliAliasSelection::None);
+                    }
+                    Some("--auto-cli-alias") if cli_alias.is_none() => {
+                        cli_alias = Some(crate::setup_role::CliAliasSelection::Auto);
+                    }
+                    Some("--cli-alias-search-path") if cli_alias_search_path.is_none() => {
+                        let value = rest
+                            .next()
+                            .and_then(|value| value.to_str())
+                            .context("role_admission_refused: CLI alias search path required")?;
+                        ensure!(
+                            value.len() <= 32768 && !value.contains('\0'),
+                            "role_admission_refused: invalid CLI alias search path"
+                        );
+                        cli_alias_search_path = Some(value.to_owned());
+                    }
+                    Some("--probe-cli-alias") if mode.is_none() => {
+                        mode = Some(crate::setup_role::SetupMode::AliasProbe);
                     }
                     Some("--wrapper-silent") if !wrapper_silent => {
                         wrapper_silent = true;
@@ -244,6 +282,32 @@ fn parse_role(arguments: &[OsString]) -> Result<RoleRequest> {
                 !wrapper_silent || mode == Some(crate::setup_role::SetupMode::WrapperLease),
                 "role_admission_refused: --wrapper-silent requires wrapper lease script"
             );
+            let mode = mode.unwrap_or(crate::setup_role::SetupMode::Complete);
+            let selects_alias = matches!(
+                cli_alias,
+                Some(
+                    crate::setup_role::CliAliasSelection::Named(_)
+                        | crate::setup_role::CliAliasSelection::Auto
+                )
+            );
+            ensure!(
+                selects_alias == cli_alias_search_path.is_some(),
+                "role_admission_refused: named or automatic CLI alias requires exactly one search path"
+            );
+            ensure!(
+                cli_alias.is_none()
+                    || matches!(
+                        mode,
+                        crate::setup_role::SetupMode::Prepare
+                            | crate::setup_role::SetupMode::AliasProbe
+                            | crate::setup_role::SetupMode::WrapperLease
+                    ),
+                "role_admission_refused: CLI alias selection requires prepare, wrapper lease or probe"
+            );
+            ensure!(
+                mode != crate::setup_role::SetupMode::AliasProbe || selects_alias,
+                "role_admission_refused: CLI alias probe requires named or automatic selection"
+            );
             let operation = operation.context("role_admission_refused: --operation is required")?;
             ensure!(
                 operation.is_absolute(),
@@ -251,9 +315,11 @@ fn parse_role(arguments: &[OsString]) -> Result<RoleRequest> {
             );
             Ok(RoleRequest::Setup(crate::setup_role::SetupRequest {
                 operation,
-                mode: mode.unwrap_or(crate::setup_role::SetupMode::Complete),
+                mode,
                 wrapper_script,
                 wrapper_silent,
+                cli_alias,
+                cli_alias_search_path,
             }))
         }
         "service-login-current" => {

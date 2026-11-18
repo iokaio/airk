@@ -44,10 +44,12 @@ candidate set, and a relevance score is not a sufficiency guarantee.
 **Connect (U110).** In the Explorer's **Management → Agents**, pick the agent
 (Claude Code, Codex or VS Code / GitHub Copilot) and **Connect**; the page then
 shows its status, the endpoint with **Copy**, and this window's workspace
-default. From a terminal:
+default. These examples use `rk`, the shortcut for `airkctl`; see
+[Windows, macOS, Linux and portable invocation](cli.md#run-commands-with-rk)
+for PATH prerequisites. From a terminal:
 
 ```console
-airkctl agents connect --client claude|codex|vscode [--user] [--project <folder>]
+rk agents connect --client claude|codex|vscode [--user] [--project <folder>]
 ```
 
 Connect writes only AIRK's entry in the agent's configuration file: the
@@ -55,9 +57,9 @@ endpoint URL and the header `X-AIRK-Response-Mode: terse`. It writes no
 `Authorization`, no `headersHelper`/`http_headers_helper` and creates no
 connection; entries are recognized by URL. Other servers, comments, disabled
 states and policies are kept. `--connection-id` and `--selection-file` are
-refused; `--open` is accepted and ignored. `airkctl agents list` reports older
+refused; `--open` is accepted and ignored. `rk agents list` reports older
 entries that still carry a token, a helper or a `<connection-id>` placeholder
-as needing repair (`https_unknown_connection` with that detail), and `airkctl
+as needing repair (`https_unknown_connection` with that detail), and `rk
 agents repair` strips those fields. `agents credential`, `info`, `verify`,
 `revoke`, `default` and `launch` remain in the CLI but no longer affect agents;
 the credential machinery is unused and will be removed separately.
@@ -93,13 +95,13 @@ the agent's next call without a reconnect or configuration rewrite. From a
 terminal:
 
 ```console
-airkctl scope default --workspace <abs-folder>… [--index <id>]… [--set <id>]…
-airkctl scope defaults
+rk scope default --workspace <abs-folder>… [--index <id>]… [--set <id>]…
+rk scope defaults
 ```
 
 With no `--index`/`--set`, `scope default` clears the folders' default. Both
 print `{"schema":1,"entries":[{folder,index_ids,index_set_ids,applied_unix_ms}]}`.
-`airkctl tools call --workspace <folder>` follows the same resolution as MCP.
+`rk tools call --workspace <folder>` follows the same resolution as MCP.
 
 **MCP roots.** When a read names no selectors and no `workspace`, and the client
 declared the MCP `roots` capability, the service asks the client (`roots/list`,
@@ -119,7 +121,7 @@ not a boundary: any agent can name any index.
 
 A named index is read whole (every enabled source root); an index set is read as
 its member indexes, each whole. Index and index-set descriptions are edited in
-the Explorer's Search scope (**Edit description**) or with `airkctl library
+the Explorer's Search scope (**Edit description**) or with `rk library
 describe --index <idx_…>|--set <prj_…> --text <text>|--clear --yes`; without a
 stored description, `list_scopes` generates one from the name and source paths.
 Removing an agent in Management → Agents deletes AIRK's entry from its
@@ -417,13 +419,13 @@ reuse an old namespace or silently broaden the client selection.
 Without the Explorer, write the entry and, optionally, a workspace default:
 
 ```console
-airkctl agents connect --client codex
-airkctl scope default --workspace <abs-folder> --set <index-set-name> --index <index-name>
-airkctl tools call search --workspace <abs-folder> --args '{"query":"…"}'
+rk agents connect --client codex
+rk scope default --workspace <abs-folder> --set <index-set-name> --index <index-name>
+rk tools call search --workspace <abs-folder> --args '{"query":"…"}'
 ```
 
 `--index` and `--set` take ids or exact names and replace the folder's whole
-default; with neither, the default is cleared. `airkctl tools call --workspace`
+default; with neither, the default is cleared. `rk tools call --workspace`
 resolves scope exactly as an MCP read passing `workspace` does, and `airkctl
 tools call --index/--set` reads named indexes and sets through the same read
 path. Pass `limit_per_index` in `--args`, for example

@@ -22,6 +22,7 @@ def module(name, filename):
 native = module("portable_native", "package-native.py")
 layouts = module("portable_layouts", "package-standalone-linux.py")
 contract = module("portable_contract", "standalone-installer-contract.py")
+shortcuts = module("portable_shortcuts", "installer_shortcuts.py")
 
 
 def instructions(version, target):
@@ -32,6 +33,7 @@ def instructions(version, target):
     recovery = (f'\nTo resume a retained setup operation, use the matching verified CLI:\n'
                 f'{prefix}"{cli}" service setup --resume "<absolute retained operation-request.json>" --portable\n'
                 'Keep the original request unchanged. Do not add location overrides or use a PID as authority.\n') if tuple(map(int, version.split('.'))) >= (1, 8, 201) else ""
+    shortcut = ("\nPackage-local shortcut: .\\rk.cmd --help\n" if windows else "\nPackage-local shortcut: ./rk --help\n") if shortcuts.enabled(version) else ""
     return f"""AIRK {version} portable ({target})
 
 Extract the complete ZIP into a private folder owned by your account. Keep every
@@ -48,7 +50,7 @@ Setup verifies the runtime, signatures where supported, inventory and locations.
 It does not add PATH, login startup or certificate trust. Run the CLI by its full
 path. Optional --data, --state, --cache and --logs accept absolute private roots.
 The bundled embedding model works offline; source documents remain read-only.
-Use CLI help for creating an index, indexing documents and evidence search.
+Use CLI help for creating an index, indexing documents and evidence search.{shortcut}
 
 {prefix}"{cli}" service stop
 {prefix}"{cli}" service uninstall
@@ -125,6 +127,11 @@ def package(native_dir, output, channel="stable"):
     (stage / "README.txt").write_text(text,encoding="utf-8",newline="\n")
     (stage / "manual.html").write_text('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>AIRK portable manual</title><main><h1>AIRK portable</h1><pre style="white-space:pre-wrap">'+html.escape(text)+'</pre></main></html>\n',encoding="utf-8",newline="\n")
     (stage / "payload-inventory.json").write_text(json.dumps(inventory,indent=1)+"\n",encoding="utf-8",newline="\n")
+    shortcut = shortcuts.portable(version, target)
+    if shortcut is not None:
+        name, body, executable = shortcut
+        (stage / name).write_bytes(body)
+        (stage / name).chmod(0o755 if executable else 0o644)
     bound = native.inventory(stage)
     embedded = {"schema":"airk-portable/1","version":version,"target":target,"runtime_prefix":"runtime/",
                 "native_manifest_sha256":native.sha256(native_dir / "manifest.json"),"files":bound}
@@ -133,7 +140,7 @@ def package(native_dir, output, channel="stable"):
     publish = output / "publish"
     publish.mkdir()
     portable = publish / contract.portable_artifact(version,target)
-    native.write_archive(stage,portable,payload,tuple("runtime/"+name for name in images))
+    native.write_archive(stage,portable,payload,tuple("runtime/"+name for name in images) + ((shortcut[0],) if shortcut is not None and shortcut[2] else ()))
     manifest = publish / contract.portable_manifest(version,target)
     document = {"schema":"airk-portable-candidate/1","version":version,"target":target,"archive":portable.name,
                 "archive_sha256":native.sha256(portable),"payload":payload,"native_candidate_sha256":native.sha256(native_dir / "manifest.json"),
@@ -172,8 +179,11 @@ def verify(publish_dir, native_receipt, native_manifest_sha256, published=False,
             or receipt["native_candidate_sha256"]!=native_manifest_sha256 or receipt["archive_sha256"]!=native.sha256(archive)):
         raise ValueError("Portable candidate identity differs")
     payload=receipt["payload"]
+    shortcut = shortcuts.portable(version, target)
     expected_names={"README.txt","manual.html","payload-inventory.json","portable-manifest.json"}|{"runtime/"+name for name in native_receipt["payload"]}
-    if not isinstance(payload,dict) or set(payload)!=expected_names or len(payload)>native.MAX_PAYLOAD_FILES+4:
+    if shortcut is not None:
+        expected_names.add(shortcut[0])
+    if not isinstance(payload,dict) or set(payload)!=expected_names or len(payload)>native.MAX_PAYLOAD_FILES+5:
         raise ValueError("Portable complete roster differs")
     for name,digest in payload.items():
         layouts.safe_name(name)
@@ -185,17 +195,22 @@ def verify(publish_dir, native_receipt, native_manifest_sha256, published=False,
     with zipfile.ZipFile(archive) as bounded:
         if len(bounded.infolist())!=len(expected_names) or sum(info.file_size for info in bounded.infolist())>native.MAX_PAYLOAD_BYTES+(16<<20):
             raise ValueError("Portable archive exceeds total payload budget")
-    native.verify_archive(archive,payload,tuple("runtime/"+name for name in images))
+    native.verify_archive(archive,payload,tuple("runtime/"+name for name in images) + ((shortcut[0],) if shortcut is not None and shortcut[2] else ()))
     with zipfile.ZipFile(archive) as zipped:
         for info in zipped.infolist():
             if stat.S_IFMT(info.external_attr>>16)!=stat.S_IFREG:
                 raise ValueError("Portable archive includes a non-regular entry")
-            expected_mode=0o755 if info.filename in {"runtime/"+image for image in images} else 0o644
+            executable_names = {"runtime/"+image for image in images}
+            if shortcut is not None and shortcut[2]:
+                executable_names.add(shortcut[0])
+            expected_mode=0o755 if info.filename in executable_names else 0o644
             if stat.S_IMODE(info.external_attr>>16)!=expected_mode:
                 raise ValueError("Portable file mode differs")
         for name in ("README.txt","manual.html","payload-inventory.json","portable-manifest.json"):
             if zipped.getinfo(name).file_size>4<<20:
                 raise ValueError("Portable metadata exceeds bound")
+        if shortcut is not None and (zipped.getinfo(shortcut[0]).file_size != len(shortcut[1]) or zipped.read(shortcut[0]) != shortcut[1]):
+            raise ValueError("Portable launcher differs from reviewed bytes")
         embedded=json.loads(zipped.read("portable-manifest.json"))
         if embedded!={"schema":"airk-portable/1","version":version,"target":target,"runtime_prefix":"runtime/",
                      "native_manifest_sha256":native_manifest_sha256,"files":{name:digest for name,digest in payload.items() if name!="portable-manifest.json"}}:

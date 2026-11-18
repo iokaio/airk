@@ -15,6 +15,7 @@ mod inno;
 mod mac_login;
 mod predecessor_roster;
 mod recovery;
+mod shortcuts;
 mod transaction;
 mod wrapper_lease;
 pub use recovery::RecoveryField;
@@ -64,6 +65,7 @@ pub enum SetupMode {
     AdmitRemoval,
     RecoveryField(RecoveryField),
     WrapperLease,
+    AliasProbe,
 }
 
 /// An admitted `setup` request (role admission checked its syntax).
@@ -73,6 +75,16 @@ pub struct SetupRequest {
     pub mode: SetupMode,
     pub wrapper_script: Option<PathBuf>,
     pub wrapper_silent: bool,
+    pub cli_alias: Option<CliAliasSelection>,
+    pub cli_alias_search_path: Option<String>,
+}
+
+/// Explicit shortcut choice; absence preserves legacy no-alias behavior.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CliAliasSelection {
+    Named(String),
+    None,
+    Auto,
 }
 
 /// The injected clock (Unix milliseconds).
@@ -120,6 +132,7 @@ async fn run_with(request: SetupRequest, clock: Clock) -> Result<()> {
     if request.mode == SetupMode::SealInno {
         return inno::seal(&request);
     }
+    let read_only = matches!(request.mode, SetupMode::Plan | SetupMode::AliasProbe);
     let bytes = files::read_operation(&request.operation)?;
     let operation_sha256 = files::digest_bytes(&bytes);
     // The receipt is found through the operation's own state location; the
@@ -155,7 +168,9 @@ async fn run_with(request: SetupRequest, clock: Clock) -> Result<()> {
             .map_err(|code| anyhow::anyhow!("{code}: operation {}", operation.operation_id))?;
     }
     let mode = match request.mode {
-        SetupMode::Plan | SetupMode::Prepare | SetupMode::SealInno => Mode::Prepare,
+        SetupMode::Plan | SetupMode::AliasProbe | SetupMode::Prepare | SetupMode::SealInno => {
+            Mode::Prepare
+        }
         SetupMode::RecoveryField(_) | SetupMode::WrapperLease => {
             unreachable!("recovery dispatched before setup")
         }
@@ -179,11 +194,13 @@ async fn run_with(request: SetupRequest, clock: Clock) -> Result<()> {
         SetupMode::RecoveryField(_) | SetupMode::WrapperLease => {
             unreachable!("recovery dispatched before setup")
         }
-        SetupMode::Plan | SetupMode::Prepare | SetupMode::SealInno => request
-            .operation
-            .parent()
-            .context("operation folder")?
-            .join(INVENTORY_FILE),
+        SetupMode::Plan | SetupMode::AliasProbe | SetupMode::Prepare | SetupMode::SealInno => {
+            request
+                .operation
+                .parent()
+                .context("operation folder")?
+                .join(INVENTORY_FILE)
+        }
     };
     let external_inventory = request
         .operation
@@ -196,7 +213,7 @@ async fn run_with(request: SetupRequest, clock: Clock) -> Result<()> {
         inventory_path
     };
     let inventory = files::read_inventory(&inventory_path, operation.payload_inventory_sha256)?;
-    let _lock = if request.mode == SetupMode::Plan {
+    let _lock = if read_only {
         None
     } else {
         Some(files::lock()?)
@@ -208,12 +225,12 @@ async fn run_with(request: SetupRequest, clock: Clock) -> Result<()> {
     // takeover"); Plan only reports it.
     let takeover = if plan::removes(operation.kind) {
         None
-    } else if request.mode == SetupMode::Plan {
+    } else if read_only {
         transaction::abandoned_owner(&pointer_path, &operation, clock())?.map(|(found, _)| found)
     } else {
         transaction::supersede_abandoned(&pointer_path, &operation, clock())?
     };
-    let owner = if request.mode == SetupMode::Plan {
+    let owner = if read_only {
         None
     } else {
         transaction::Owner::load(&pointer_path, &operation)?
@@ -257,11 +274,7 @@ async fn run_with(request: SetupRequest, clock: Clock) -> Result<()> {
         takeover,
         retained: None,
     };
-    if let Some(found) = setup
-        .takeover
-        .as_ref()
-        .filter(|_| request.mode != SetupMode::Plan)
-    {
+    if let Some(found) = setup.takeover.as_ref().filter(|_| !read_only) {
         setup.receipt.leftovers.push(Leftover {
             item: format!("setup operation {}", found.operation_id),
             reason: format!(
@@ -271,7 +284,36 @@ async fn run_with(request: SetupRequest, clock: Clock) -> Result<()> {
             restarts_old_service: false,
         });
     }
-    if request.mode == SetupMode::Plan {
+    if request.mode == SetupMode::AliasProbe {
+        let context = setup.alias_context()?;
+        let choice = request
+            .cli_alias
+            .as_ref()
+            .context("alias probe requires a choice")?;
+        let search = request
+            .cli_alias_search_path
+            .as_deref()
+            .context("alias probe requires original PATH")?;
+        let scalar = match choice {
+            CliAliasSelection::Named(name) => {
+                // Named collision is data for the installer choice, not a setup failure.
+                let extensions = shortcuts::executable_extensions()?;
+                shortcuts::probe(&context, name, search, &extensions)?.to_owned()
+            }
+            CliAliasSelection::Auto => shortcuts::select(&context, choice, search)?
+                .alias
+                .context("auto selection missing")?,
+            CliAliasSelection::None => bail!("no-alias does not need a probe"),
+        };
+        files::write_owner_file(
+            request.operation.parent().context("operation parent")?,
+            "cli-alias-probe.txt",
+            format!("{scalar}\n").as_bytes(),
+        )?;
+        println!("{scalar}");
+        return Ok(());
+    }
+    if read_only {
         if setup.existing.is_none() {
             setup.retained = transaction::retained_for(&pointer_path, &setup.operation.locations)?;
         }
@@ -280,6 +322,7 @@ async fn run_with(request: SetupRequest, clock: Clock) -> Result<()> {
         }
         return setup.plan_report();
     }
+    setup.bind_alias_intent(&request)?;
     if request.mode == SetupMode::AdmitRemoval {
         use airk_core::install_record::setup_recovery::active::{
             EXPECTED_POINTER_FILE, EXPECTED_RECORD_FILE,
@@ -1333,6 +1376,7 @@ impl Setup {
         let old_cli = plan::program_file(&program, &prior.record.executables.airkctl.path);
         if prior.record.installed_by.installer != Installer::Portable {
             let _ = self.remove_link(&program, &old_cli);
+            self.remove_rk(&root, &program, &old_cli, prior.record.install_id);
         }
         let listed = inventory.files.keys().cloned().collect();
         for relative in plan::program_removal(&listed, &inventory.executables.airk) {
@@ -1536,6 +1580,15 @@ impl Setup {
             .as_ref()
             .context("setup owner missing")?
             .pinned_root("program")?;
+        if let Some(program_pin) = &program
+            && let Some(installed) = &self.existing
+            && plan::removes_owned_shortcuts(installed.record.installed_by.installer)
+        {
+            let id = installed.record.install_id;
+            let root = PathBuf::from(&installed.record.locations.program);
+            let target = plan::program_file(&root, &installed.record.executables.airkctl.path);
+            self.remove_rk(program_pin, &root, &target, id);
+        }
         let removed = if let Some(program) = program {
             files::remove_record(
                 &program,
@@ -1740,7 +1793,129 @@ impl Setup {
         )
     }
 
+    fn remove_rk(
+        &mut self,
+        program_pin: &airk_process::directory::OpenedDirectory,
+        program: &Path,
+        airkctl: &Path,
+        install_id: Incarnation,
+    ) {
+        let result = airk_host::user_paths::home()
+            .and_then(|home| shortcuts::remove(program_pin, &home, airkctl, install_id));
+        if let Err(error) = result {
+            self.leave(
+                program.join(shortcuts::RECEIPT).display().to_string(),
+                format!("CLI shortcut and ownership evidence preserved: {error:#}"),
+                false,
+            );
+        }
+        if let Err(error) = airk_host::user_paths::home()
+            .and_then(|home| shortcuts::remove_note(program_pin, &home, airkctl, install_id))
+        {
+            self.leave(
+                program.join("airkctl-aliases.txt").display().to_string(),
+                format!("alias note preserved: {error:#}"),
+                false,
+            );
+        }
+    }
+
+    fn alias_context(&self) -> Result<shortcuts::AliasContext> {
+        let program = self.program();
+        Ok(shortcuts::AliasContext {
+            target: plan::program_file(&program, &self.inventory.executables.airkctl),
+            allow_owned: self.existing.as_ref().is_some_and(|old| {
+                old.record.locations.program == self.operation.locations.program
+            }) || self.owner.is_some()
+                && self.receipt.reached(SetupPhase::PointerWritten),
+            program,
+            home: airk_host::user_paths::home()?,
+            install_id: self.install_id(),
+            lookup_directory: std::env::current_dir()?,
+        })
+    }
+
+    fn bind_alias_intent(&self, request: &SetupRequest) -> Result<()> {
+        if plan::removes(self.operation.kind) || self.operation.requested_by == "airkctl-portable" {
+            ensure!(
+                request.cli_alias.is_none() && request.cli_alias_search_path.is_none(),
+                "CLI alias selection is not supported for removal/portable setup"
+            );
+            return Ok(());
+        }
+        shortcuts::bind(
+            &self.operation_path,
+            self.receipt.operation_sha256,
+            &self.alias_context()?,
+            request.cli_alias.as_ref(),
+            request.cli_alias_search_path.as_deref(),
+            self.owner.is_some() || !self.receipt.steps.is_empty(),
+        )
+    }
+
+    fn complete_alias(&mut self) -> Result<()> {
+        let Some(intent) =
+            shortcuts::load_intent(&self.operation_path, self.receipt.operation_sha256)?
+        else {
+            return Ok(());
+        };
+        let mut context = self.alias_context()?;
+        context.lookup_directory = intent.lookup_directory.clone();
+        let program = self
+            .owner
+            .as_ref()
+            .context("setup owner missing")?
+            .pinned_root("program")?
+            .context("program root missing")?;
+        if let Some(alias) = &intent.alias {
+            ensure!(
+                shortcuts::probe(
+                    &context,
+                    alias,
+                    &intent.search_path,
+                    &intent.path_extensions
+                )? != "collision",
+                "cli_alias_collision: chosen alias became occupied after admission"
+            );
+        }
+        if let Some(old) =
+            shortcuts::previous_alias(&program, &context.home, &context.target, context.install_id)?
+            && Some(old.as_str()) != intent.alias.as_deref()
+        {
+            shortcuts::remove(&program, &context.home, &context.target, context.install_id)?;
+        }
+        if let Some(alias) = &intent.alias {
+            shortcuts::install(
+                &program,
+                &context.home,
+                &context.target,
+                context.install_id,
+                alias,
+                |_| Ok(()),
+            )?;
+        }
+        shortcuts::write_note(
+            &program,
+            &context.home,
+            &context.target,
+            context.install_id,
+            intent.alias.as_deref(),
+        )
+    }
+
     fn close(&mut self) -> Result<()> {
+        if !plan::removes(self.operation.kind)
+            && self.readiness.is_none()
+            && self.receipt.failure.is_none()
+            && let Err(error) = self.complete_alias()
+        {
+            self.leave(
+                "CLI alias".to_owned(),
+                format!("shortcut unavailable; ownership evidence retained: {error:#}"),
+                false,
+            );
+            return Err(error.context("cli_alias_unavailable"));
+        }
         let custody = airk_process::directory::OpenedDirectory::open(
             self.operation_path
                 .parent()

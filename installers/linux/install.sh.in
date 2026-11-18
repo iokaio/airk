@@ -14,6 +14,7 @@
 set -eu
 umask 077
 # Native images are verified; standard tools resolve only from OS-owned locations.
+invoking_path=${PATH-}
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
 LC_ALL=C
@@ -40,6 +41,8 @@ Usage: ./install.sh [options]
   --acknowledge-reset confirm that earlier AIRK installations and their
                       indexes are removed (required unattended when found)
   --silent            unattended: no prompts; take the options and defaults
+  --cli-alias NAME    choose an unoccupied CLI alias instead of automatic rk/rk1/...
+  --no-cli-alias      install no shortcut; keep canonical airkctl
   --no-login-startup  do not start AIRK Service at login
   --no-start          do not start AIRK Service after installing
   --help              show this help
@@ -49,9 +52,19 @@ EOF
 
 program='' data='' state='' cache='' logs='' resume=''
 overrides=false
+alias_option=false alias_mode=auto alias_name=''
 acknowledged=false unattended=false login=true start=true
 while [ $# -gt 0 ]; do
     case $1 in
+        --cli-alias)
+            overrides=true
+            [ "$alias_option" = false ] || fail 'choose only one CLI alias option.'
+            [ $# -ge 2 ] && [ -n "$2" ] || fail '--cli-alias needs a nonempty name.'
+            alias_option=true; alias_mode=name; alias_name=$2; shift 2; continue ;;
+        --no-cli-alias)
+            overrides=true
+            [ "$alias_option" = false ] || fail 'choose only one CLI alias option.'
+            alias_option=true; alias_mode=none; shift; continue ;;
         --resume)
             [ $# -ge 2 ] || fail "--resume needs the absolute original operation-request.json."
             [ -z "$resume" ] || fail "--resume may be supplied only once."
@@ -149,10 +162,18 @@ lease_wrapper() {
     case $held in
         true) return 0 ;;
         false)
-            if [ "$unattended" = true ]; then
-                exec "$image" __airk_role setup --operation "$1" --wrapper-lease-script "$package_dir/install.sh" --wrapper-silent
+            fresh_choice=${2:-}
+            set -- "$image" __airk_role setup --operation "$1" --wrapper-lease-script "$package_dir/install.sh"
+            if [ "$fresh_choice" = fresh ]; then
+                case $alias_mode in
+                    auto) set -- "$@" --auto-cli-alias --cli-alias-search-path "$invoking_path" ;;
+                    name) set -- "$@" --cli-alias "$alias_name" --cli-alias-search-path "$invoking_path" ;;
+                    none) set -- "$@" --no-cli-alias ;;
+                    *) fail 'invalid CLI alias selection.' ;;
+                esac
             fi
-            exec "$image" __airk_role setup --operation "$1" --wrapper-lease-script "$package_dir/install.sh" ;;
+            [ "$unattended" = false ] || set -- "$@" --wrapper-silent
+            exec "$@" ;;
         *) fail 'invalid native wrapper lease observation.' ;;
     esac
 }
@@ -284,6 +305,29 @@ run_setup() { # image [mode]
 }
 
 
+# Native owns name validation, PATH collision checks and saved operation intent.
+choose_cli_alias() {
+    [ "$alias_mode" != none ] || return 0
+    if [ "$alias_mode" = auto ]; then
+        [ "$interactive" = true ] || return 0
+        alias_name=rk
+    fi
+    while :; do
+        alias_status=$("$image" __airk_role setup --operation "$operation" --probe-cli-alias --cli-alias "$alias_name" --cli-alias-search-path "$invoking_path") \
+            || fail 'the CLI alias could not be reviewed.'
+        case $alias_status in
+            available|owned) alias_mode=name; return 0 ;;
+            collision)
+                [ "$alias_mode" = auto ] && [ "$interactive" = true ] \
+                    || fail 'the requested CLI alias is occupied; choose --cli-alias NAME or --no-cli-alias.'
+                printf 'Command %s already exists. Enter another alias (blank for no alias): ' "$alias_name" >&2
+                IFS= read -r alias_name || fail 'alias choice cancelled; nothing was installed.'
+                if [ -z "$alias_name" ]; then alias_mode=none; return 0; fi ;;
+            *) fail 'invalid native CLI alias observation.' ;;
+        esac
+    done
+}
+
 # U13 disclosure: setup --plan reports what it found; nothing changes.
 if [ -n "$resume" ]; then
     operation=$resume
@@ -300,6 +344,7 @@ plan=$(cat -- "$folder/plan.json")
 tr -d '\r' < "$folder/plan.txt"
 case $plan in *'"location_problems":[]'*) ;; *) fail 'choose other locations (see above).' ;; esac
 case $plan in *'"blockers":[]'*) ;; *) fail 'resolve the native setup blockers before installation (see above).' ;; esac
+choose_cli_alias
 case $plan in *'"removed":true'*) needs_acknowledgement=true ;; *) needs_acknowledgement=false ;; esac
 printf 'AIRK Service %s will be installed in %s\n  index data %s\n  state %s\n  cache %s\n  logs %s\n' \
     "$version" "$program" "$data" "$state" "$cache" "$logs"
@@ -320,7 +365,7 @@ fi
 trust=skip
 [ "$interactive" = false ] || trust=ask
 write_operation install "$acknowledged" "$login" "$trust" "$start"
-lease_wrapper "$operation"
+lease_wrapper "$operation" fresh
 run_setup "$image" --prepare || { setup_failure; fail 'setup did not prepare the installation; nothing was placed.'; }
 
 fi
@@ -373,4 +418,12 @@ if [ -d "$bin" ] && [ ! -L "$bin" ]; then
 else
     printf 'airkctl is %s (add its folder to PATH yourself; no shell startup file was changed).\n' "$airkctl"
 fi
-printf 'AIRK Service %s is installed. Open the admin pages with: airkctl admin open\n' "$version"
+# Display the native completion note; it records the actual saved alias and
+# canonical absolute client path, including no-alias recovery.
+if [ -f "$program/airkctl-aliases.txt" ] && [ ! -L "$program/airkctl-aliases.txt" ]; then
+    cat "$program/airkctl-aliases.txt"
+fi
+printf 'Canonical CLI: %s\n' "$airkctl"
+printf 'If these commands are not found, add ~/.local/bin to PATH; no profile was edited.\n'
+printf '%s\n' 'For this shell: export PATH="$HOME/.local/bin:$PATH"'
+printf 'AIRK Service %s is installed. Use the canonical CLI path above with admin open\n' "$version"

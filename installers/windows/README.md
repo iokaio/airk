@@ -1,13 +1,14 @@
 # AIRK standalone Windows installer
 
-The Inno Setup package contains the verified native CLI/MCP runtime, bundled
-models and legal notices. It installs per user without elevation and opens
-`airk setup --runtime-source <payload> --approved-sha256 <distributor pin>`.
-The native installer owns managed runtime activation, upgrades, source selection
-and client enrollment. The package does not contain or install VS Code or a VSIX.
+The Inno Setup package contains the verified AIRK service/client payload,
+bundled models and legal notices. It installs per user without elevation.
+The packaged service's native setup role owns the installation transaction;
+Inno passes the reviewed operation, places the payload, and completes that same
+operation. The package does not install VS Code or a VSIX.
 
-After native setup succeeds, the package adds its verified bootstrap runtime
-directory to the current user's `PATH`, so `airk` is available in new terminals.
+After native setup succeeds, the package adds its owned `bin` directory to the
+current user's `PATH`, making the canonical `airkctl.exe` available in new
+terminals. The optional CLI alias is a native-owned `.cmd` in that directory.
 It preserves the raw other entries and the existing `REG_SZ`/`REG_EXPAND_SZ`
 registry value type. Literal existing directory entries are compared without
 case, outer-quote or slash differences and are never claimed as installer-owned.
@@ -16,6 +17,25 @@ literal `REG_SZ` expands variables. Inno Setup broadcasts the environment change
 already-running terminals keep their inherited environment. A terminal opened
 from an application that has not refreshed its environment can require restarting
 that application first.
+
+## CLI alias choice
+
+The default shortcut is `rk`. Interactive setup offers another name or a blank
+choice for no alias when a command conflicts on PATH. Unattended setup chooses
+the first available name: `rk`, `rk1`, `rk2`, and so on. The installed
+`airkctl-aliases.txt` records the actual selection and canonical client path.
+
+Use `/CLIALIAS=name` for a specific name, `/NOCLIALIAS=1` for no alias, or
+`/AUTOCLIALIAS=1` for the default automatic choice. These options are mutually
+exclusive; an explicitly selected occupied name refuses installation. Existing
+commands remain untouched. `/AIRKOPERATION` recovery reuses the saved choice and
+rejects alias overrides. The canonical `airkctl` works with every choice.
+
+For example, `rk service status` and `airkctl service status` are equivalent;
+substitute the selected name if setup records a different alias. These installed
+choices do not change portable packages' local `.\rk.cmd` launcher.
+
+## PATH ownership and recovery
 
 The per-user `user-path-owner.txt` receipt records a pending update before writing
 `PATH` and marks it owned only after the saved value is verified. Interrupted or
@@ -26,8 +46,8 @@ Failed native setup never publishes a new `PATH` entry. Failed native uninstall
 does not remove it or the packaged bootstrap files.
 
 After the user confirms Add/Remove Programs removal, the `usUninstall` callback
-invokes `airk uninstall --yes` before removing the package's tracked bootstrap
-files. Initialization only verifies the packaged binary; cancellation launches
+runs the native removal operation before removing the package's tracked
+payload files. Initialization only verifies the packaged binary; cancellation launches
 no native process and changes no PATH entry. A native or PATH failure displays
 the error and uses Inno's supported `Abort` from `usUninstall` to stop that cleanup.
 Native uninstall

@@ -511,6 +511,12 @@ pub(crate) fn removes_owned_program(
     }
 }
 
+/// Dynamic shortcut cleanup belongs to native setup on every platform,
+/// independently of which owner removes the static payload.
+pub(crate) fn removes_owned_shortcuts(installer: airk_core::install_record::Installer) -> bool {
+    installer != airk_core::install_record::Installer::Portable
+}
+
 /// The link a link receipt owns, when the receipt is well formed and names
 /// exactly this installation's `airkctl` as its target. Only an absolute
 /// `…/.local/bin/airkctl` without `.`/`..` components is accepted.

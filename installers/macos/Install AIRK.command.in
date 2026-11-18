@@ -11,6 +11,7 @@
 set -euo pipefail
 umask 077
 # Native images are verified; standard tools resolve only from OS-owned locations.
+invoking_path=${PATH-}
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
 export LC_ALL=C
@@ -28,9 +29,19 @@ fail() { printf 'AIRK installer: %s\n' "$*" >&2; exit 1; }
 
 program='' data='' state='' cache='' logs='' resume=''
 overrides=false
+alias_option=false alias_mode=auto alias_name=''
 acknowledged=false unattended=false start=true login=true
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --cli-alias)
+            overrides=true
+            [ "$alias_option" = false ] || fail 'choose only one CLI alias option.'
+            [ $# -ge 2 ] && [ -n "$2" ] || fail '--cli-alias needs a nonempty name.'
+            alias_option=true; alias_mode=name; alias_name=$2; shift 2; continue ;;
+        --no-cli-alias)
+            overrides=true
+            [ "$alias_option" = false ] || fail 'choose only one CLI alias option.'
+            alias_option=true; alias_mode=none; shift; continue ;;
         --resume)
             [ $# -ge 2 ] || fail "--resume needs the absolute original operation-request.json."
             [ -z "$resume" ] || fail "--resume may be supplied only once."
@@ -48,7 +59,7 @@ while [[ $# -gt 0 ]]; do
         --no-start) overrides=true; start=false; shift ;;
         -h|--help)
             printf '%s\n' 'Options: --resume ORIGINAL-REQUEST (no overrides), --program-dir, --data-dir, --state-dir, --cache-dir, --logs-dir DIR;' \
-                '--acknowledge-reset (unattended, when earlier AIRK installations are found); --silent (or --yes); --no-login-startup; --no-start.'
+                '--acknowledge-reset (unattended, when earlier AIRK installations are found); --silent (or --yes); --no-login-startup; --no-start; --cli-alias NAME; --no-cli-alias.'
             exit 0 ;;
         *) fail "unknown option $1 (see --help)." ;;
     esac
@@ -113,10 +124,18 @@ lease_wrapper() {
     case $held in
         true) return 0 ;;
         false)
-            if [ "$unattended" = true ]; then
-                exec "$image" __airk_role setup --operation "$1" --wrapper-lease-script "$installer_dir/Install AIRK.command" --wrapper-silent
+            fresh_choice=${2:-}
+            set -- "$image" __airk_role setup --operation "$1" --wrapper-lease-script "$installer_dir/Install AIRK.command"
+            if [ "$fresh_choice" = fresh ]; then
+                case $alias_mode in
+                    auto) set -- "$@" --auto-cli-alias --cli-alias-search-path "$invoking_path" ;;
+                    name) set -- "$@" --cli-alias "$alias_name" --cli-alias-search-path "$invoking_path" ;;
+                    none) set -- "$@" --no-cli-alias ;;
+                    *) fail 'invalid CLI alias selection.' ;;
+                esac
             fi
-            exec "$image" __airk_role setup --operation "$1" --wrapper-lease-script "$installer_dir/Install AIRK.command" ;;
+            [ "$unattended" = false ] || set -- "$@" --wrapper-silent
+            exec "$@" ;;
         *) fail 'invalid native wrapper lease observation.' ;;
     esac
 }
@@ -236,6 +255,28 @@ setup_failure() {
 }
 
 
+choose_cli_alias() {
+    [ "$alias_mode" != none ] || return 0
+    if [ "$alias_mode" = auto ]; then
+        [ "$interactive" = true ] || return 0
+        alias_name=rk
+    fi
+    while :; do
+        alias_status=$("$image" __airk_role setup --operation "$operation" --probe-cli-alias --cli-alias "$alias_name" --cli-alias-search-path "$invoking_path") \
+            || fail 'the CLI alias could not be reviewed.'
+        case $alias_status in
+            available|owned) alias_mode=name; return 0 ;;
+            collision)
+                [ "$alias_mode" = auto ] && [ "$interactive" = true ] \
+                    || fail 'the requested CLI alias is occupied; choose --cli-alias NAME or --no-cli-alias.'
+                printf 'Command %s already exists. Enter another alias (blank for no alias): ' "$alias_name" >&2
+                IFS= read -r alias_name || fail 'alias choice cancelled; nothing was installed.'
+                if [ -z "$alias_name" ]; then alias_mode=none; return 0; fi ;;
+            *) fail 'invalid native CLI alias observation.' ;;
+        esac
+    done
+}
+
 if [ -n "$resume" ]; then
     operation=$resume
     folder=$(dirname -- "$operation")
@@ -251,6 +292,7 @@ plan=$(/bin/cat "$folder/plan.json")
 /usr/bin/tr -d '\r' < "$folder/plan.txt"
 [[ $plan == *'"location_problems":[]'* ]] || fail 'choose other locations (see above).'
 [[ $plan == *'"blockers":[]'* ]] || fail 'resolve the native setup blockers before installation (see above).'
+choose_cli_alias
 needs_acknowledgement=false
 [[ $plan != *'"removed":true'* ]] || needs_acknowledgement=true
 printf 'AIRK Service %s will be installed in %s\n' "$version" "$program"
@@ -266,7 +308,7 @@ fi
 trust=skip
 [[ $interactive == false ]] || trust=ask
 write_operation install "$acknowledged" "$login" "$trust" "$start"
-lease_wrapper "$operation"
+lease_wrapper "$operation" fresh
 run_setup "$image" --prepare || { setup_failure; fail 'setup did not prepare the installation; nothing was placed.'; }
 
 fi
@@ -326,4 +368,12 @@ if [[ -d $home/.local/bin && ! -L $home/.local/bin ]]; then
 else
     printf 'airkctl is %s (add its folder to PATH yourself; no shell startup file was changed).\n' "$airkctl"
 fi
-printf 'AIRK Service %s is installed. Run "airkctl service status" to inspect startup; start it with "airkctl service start" when needed.\n' "$version"
+# Display the native completion note; it records the actual saved alias and
+# canonical absolute client path, including no-alias recovery.
+if [ -f "$program/airkctl-aliases.txt" ] && [ ! -L "$program/airkctl-aliases.txt" ]; then
+    cat "$program/airkctl-aliases.txt"
+fi
+printf 'Canonical CLI: %s\n' "$airkctl"
+printf 'If these commands are not found, add ~/.local/bin to PATH; no profile was edited.\n'
+printf '%s\n' 'For this shell: export PATH="$HOME/.local/bin:$PATH"'
+printf 'AIRK Service %s is installed. Use the canonical CLI path above with service status or service start.\n' "$version"

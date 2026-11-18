@@ -86,6 +86,10 @@ function CloseHandle(Handle: THandle): Boolean;
 
 var
   DataPage: TInputDirWizardPage;
+  AliasPage: TInputQueryWizardPage;
+  AliasOriginalPath: String;
+  AliasOption: String;
+  AliasMode: String;
   DisclosurePage: TWizardPage;
   DisclosureMemo: TNewMemo;
   AcknowledgeBox: TNewCheckBox;
@@ -720,7 +724,8 @@ begin
     Arg := Uppercase(ParamStr(I));
     if (Pos('/DIR=', Arg) = 1) or (Pos('/DATA=', Arg) = 1) or
        (Pos('/CACHE=', Arg) = 1) or (Pos('/TRUST', Arg) = 1) or
-       (Pos('/ACKNOWLEDGE-RESET', Arg) = 1) then
+       (Pos('/ACKNOWLEDGE-RESET', Arg) = 1) or (Pos('/CLIALIAS', Arg) = 1) or
+       (Pos('/NOCLIALIAS', Arg) = 1) or (Pos('/AUTOCLIALIAS', Arg) = 1) then
       RaiseException('/AIRKOPERATION resumes original locations and options; overrides are forbidden.');
   end;
   if (not FileExists(RecoveryOperation)) or (not FileExists(ExtractFileDir(RecoveryOperation) + '\payload-inventory.json')) then
@@ -756,7 +761,7 @@ end;
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
   Result := (RecoveryOperation <> '') and
-    ((PageID = wpSelectDir) or (PageID = DataPage.ID) or (PageID = DisclosurePage.ID));
+    ((PageID = wpSelectDir) or (PageID = DataPage.ID) or (PageID = AliasPage.ID) or (PageID = DisclosurePage.ID));
 end;
 
 { ---------- Wizard: data locations and the U13 disclosure ---------- }
@@ -764,6 +769,34 @@ end;
 procedure AcknowledgeClicked(Sender: TObject);
 begin
   WizardForm.NextButton.Enabled := (not NeedsAcknowledgement) or AcknowledgeBox.Checked;
+end;
+
+function AliasFlags: String;
+var
+  Name: String;
+begin
+  if WizardSilent then begin
+    if AliasMode = 'none' then Result := '--no-cli-alias'
+    else if AliasMode = 'auto' then Result := '--auto-cli-alias'
+    else Result := '--cli-alias ' + QuoteArgument(AliasOption);
+  end else begin
+    Name := Trim(AliasPage.Values[0]);
+    if Name = '' then Result := '--no-cli-alias'
+    else Result := '--cli-alias ' + QuoteArgument(Name);
+  end;
+  if Result <> '--no-cli-alias' then
+    Result := Result + ' --cli-alias-search-path ' + QuoteArgument(AliasOriginalPath);
+end;
+
+function ProbeAlias(const Flags: String): String;
+var
+  Operation: String;
+begin
+  Operation := WriteOperation('install', InstallLocations, '{#AirkInventorySHA}', 'keep',
+    False, True, False, True);
+  if RunSetup(PreflightImage(Operation), Operation, '--probe-cli-alias ' + Flags) <> 0 then
+    RaiseException(SetupFailure(Operation));
+  Result := Trim(ReadText(ExtractFileDir(Operation) + '\cli-alias-probe.txt'));
 end;
 
 procedure InitializeWizard;
@@ -785,7 +818,27 @@ begin
   DataPage.Values[1] := ExpandConstant('{param:CACHE|' +
     GetPreviousData('CacheRoot', DefaultRoot) + '}');
 
-  DisclosurePage := CreateCustomPage(DataPage.ID, 'Earlier AIRK installations',
+  AliasOriginalPath := GetEnv('PATH');
+  AliasOption := ExpandConstant('{param:CLIALIAS|}');
+  if ((AliasOption <> '') and ((ExpandConstant('{param:NOCLIALIAS|0}') <> '0') or
+      (ExpandConstant('{param:AUTOCLIALIAS|0}') <> '0'))) or
+      ((ExpandConstant('{param:NOCLIALIAS|0}') <> '0') and
+      (ExpandConstant('{param:AUTOCLIALIAS|0}') <> '0')) then
+    RaiseException('Choose only /CLIALIAS=name, /NOCLIALIAS=1 or /AUTOCLIALIAS=1.');
+  AliasMode := 'named';
+  if ExpandConstant('{param:NOCLIALIAS|0}') <> '0' then AliasMode := 'none'
+  else if AliasOption = '' then AliasMode := 'auto';
+  AliasPage := CreateInputQueryPage(DataPage.ID, 'CLI shortcut',
+    'Choose an optional short command for airkctl.',
+    'Setup checks existing commands before creating the shortcut. Choose another name ' +
+    'if the command is already in use, or leave this empty for no shortcut. ' +
+    'The canonical airkctl command is always available.');
+  AliasPage.Add('Shortcut name (empty means no shortcut):', False);
+  if AliasMode = 'none' then AliasPage.Values[0] := ''
+  else if AliasMode = 'auto' then AliasPage.Values[0] := 'rk'
+  else AliasPage.Values[0] := AliasOption;
+
+  DisclosurePage := CreateCustomPage(AliasPage.ID, 'Earlier AIRK installations',
     'Review what this installation changes before anything is changed.');
   DisclosureMemo := TNewMemo.Create(DisclosurePage);
   DisclosureMemo.Parent := DisclosurePage.Surface;
@@ -817,6 +870,24 @@ var
   Text: String;
 begin
   Result := True;
+  if CurPageID = AliasPage.ID then begin
+    if Trim(AliasPage.Values[0]) = '' then Exit;
+    try
+      Text := ProbeAlias(AliasFlags);
+      if Text = 'collision' then begin
+        Text := ProbeAlias('--auto-cli-alias --cli-alias-search-path ' + QuoteArgument(AliasOriginalPath));
+        AliasPage.Values[0] := Text;
+        MsgBox('That command is already in use. Suggested available shortcut: ' + Text +
+          '. Review this name, choose another, or leave it empty for no shortcut.', mbInformation, MB_OK);
+        Result := False;
+      end else if (Text <> 'available') and (Text <> 'owned') then
+        RaiseException('Invalid native shortcut probe result.');
+    except
+      MsgBox(GetExceptionMessage, mbError, MB_OK);
+      Result := False;
+    end;
+    Exit;
+  end;
   if CurPageID = DataPage.ID then begin
     try
       { Exec waits while processing window messages, so the marquee keeps
@@ -902,7 +973,7 @@ begin
       Acknowledged, True, Trust, True);
     AcquireWrapperLease(PreflightImage(SetupOperation), SetupOperation);
     { Retirement and the drain run before any file is replaced (section 9.6). }
-    if RunSetup(PreflightImage(SetupOperation), SetupOperation, '--prepare') <> 0 then
+    if RunSetup(PreflightImage(SetupOperation), SetupOperation, '--prepare ' + AliasFlags) <> 0 then
       Result := SetupFailure(SetupOperation);
   except
     Result := GetExceptionMessage;

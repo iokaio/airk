@@ -89,3 +89,34 @@ training examples or private fixtures enter the notice bundle. Research credits
 are not public-model/training admission, endorsement or model qualification.
 This is legal attribution; filesystem owners/ACLs are unchanged. Changed legal
 payloads require fresh artifact packaging/qualification before delivery.
+
+
+## Optional CLI shortcuts (from 1.9.0)
+
+The canonical CLI remains airkctl; shortcuts are shell launchers, never a third
+native executable or a renamed/hard-linked CLI image. Installed aliases are
+optional native-owned files outside the static two-image payload. The installer
+offers another safe alias or no alias when PATH already resolves a foreign
+command; airkctl remains available. Native setup owns alias validation, conflict
+checks, exact target/byte receipts and conservative removal, as defined by its
+setup-role contract. Shell profiles are not edited.
+
+Portable ZIPs instead contain a package-local rk.cmd (Windows) or executable rk
+(macOS/Linux), forwarding arguments and exit status to the canonical relative
+runtime path. Invoke these as .\rk.cmd or ./rk; they do not install an alias or
+change PATH. Their exact reviewed bytes and modes belong to the outer portable
+manifest, not the unchanged canonical runtime inventory. Verification rejects a
+changed launcher even if outer digest inventories were resealed. Versions before
+1.9.0 retain their original roster. Windows batch forwarding follows cmd.exe
+quoting rules; it is not a shell-independent native executable entry point.
+
+Windows interactive setup offers a shortcut name (default rk) or an empty choice
+for no alias. The native installation probe checks PATH and destination ownership;
+a collision offers the first available numbered name for review. Silent setup
+uses automatic rk, rk1, rk2 selection unless /CLIALIAS=name or /NOCLIALIAS=1
+is supplied; /AUTOCLIALIAS=1 selects that default explicitly. These choices are
+mutually exclusive. Explicit conflicting names fail without replacing foreign
+commands. The native airkctl-aliases.txt note records the chosen name. Inno passes
+the original PATH and choice only during initial prepare; recovery forbids option
+overrides and uses the native operation-bound intent. No alias enters Inno's
+tracked uninstall list: the native receipt owner creates and removes it.

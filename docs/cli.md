@@ -12,7 +12,74 @@ complete/selected exports retain applicable reasons without additional reads.
 
 Since split Phase 4, `airk` is the service only and `airkctl` is the command-line client. `airk` with no arguments starts the installed service in the background (through the `airkctl` installed beside it) or says it is already running; with any other arguments it says that `airk` takes no commands and reports whether the service is running. This guide explains how the `airkctl` commands fit together. The [CLI reference](cli-reference.md) documents every public command and option exactly as `airkctl <command> --help` prints them; it is generated from the parser, and a test keeps it current. [Running AIRK headless](headless-cli.md) maps each VS Code feature to its command.
 
-For each command's purpose, implementation, tests and guarded behavior, see the [CLI developer guide](cli-developer-guide.md). The [MCP developer guide](mcp-developer-guide.md) covers the corresponding agent interface. In the unpublished 1.8.14 implementation, `airkctl tools list`, `tools help`, `tools call` and `tools shell` use the public HTTPS tool catalog and its shared alias and argument validation. Historical `airk_<operation>` aliases remain accepted. The selected native backend retains the same reviewed scope; public routing neither grants access nor attaches an unrelated Explorer window. Scoped diagnostics explicitly report unavailable process/work context where exposing project-wide information would exceed that scope. Native management commands provide their separately authorized lifecycle observations.
+For each command's purpose, implementation, tests and guarded behavior, see the [CLI developer guide](cli-developer-guide.md). The [MCP developer guide](mcp-developer-guide.md) covers the corresponding agent interface. In the unpublished 1.8.14 implementation, `rk tools list`, `tools help`, `tools call` and `tools shell` use the public HTTPS tool catalog and its shared alias and argument validation. Historical `airk_<operation>` aliases remain accepted. The selected native backend retains the same reviewed scope; public routing neither grants access nor attaches an unrelated Explorer window. Scoped diagnostics explicitly report unavailable process/work context where exposing project-wide information would exceed that scope. Native management commands provide their separately authorized lifecycle observations.
+
+## Run commands with rk
+
+The 1.9.0 installer offers `rk` as the default shortcut for the canonical
+`airkctl` executable. For example, `rk service status` and
+`airkctl service status` run the same CLI operation with the same arguments,
+output and exit status. Help and executable identities may still say `airkctl`.
+If `rk` already exists anywhere on PATH, interactive setup offers a different
+alias name or no alias. Unattended setup automatically selects the first
+available name: `rk`, then `rk1`, `rk2`, and so on. The installed
+`airkctl-aliases.txt` records the selected alias. Windows uses a `.cmd` launcher;
+macOS and Linux use a shell launcher. Examples below use the default `rk`;
+substitute the selected name, or use `airkctl` when you chose no alias. The
+canonical `airkctl` remains available with every choice. Earlier payloads may
+only provide `airkctl`.
+
+For an explicit choice, the Linux installer and macOS `Install AIRK.command`
+accept `--cli-alias NAME` or `--no-cli-alias`. The Windows installer accepts
+`/CLIALIAS=name` or `/NOCLIALIAS=1`; `/AUTOCLIALIAS=1` explicitly selects its
+normal automatic choice. Choose only one alias option. An explicitly requested
+occupied name refuses installation. Recovery uses the original saved choice:
+do not add alias options to `--resume` (Unix) or `/AIRKOPERATION` (Windows).
+
+After installation, open a new terminal. The following examples assume the
+installation's command directory is on that terminal's `PATH`:
+
+| Platform | Default installed shortcut | Example |
+|---|---|---|
+| Windows (PowerShell or Command Prompt) | `rk.cmd` beside `airkctl.exe` in the installed `bin` directory | `rk --help` |
+| macOS | `~/.local/bin/rk` forwards to the installed `airkctl` | `rk --help` |
+| Linux | `~/.local/bin/rk` forwards to the installed `airkctl` | `rk --help` |
+
+On Windows, the installer uses its owned `bin` PATH integration. On macOS and
+Linux, setup does not edit your shell profile. If `~/.local/bin` is not already
+on `PATH`, invoke `"$HOME/.local/bin/rk" --help` directly, or add it for the
+current shell:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+rk --help
+rk service status
+```
+
+To make that PATH change persistent, add the export to the startup file used by
+your shell. Setup preserves existing commands when it selects another alias
+or you choose no alias.
+
+Portable packages do not register PATH. From the extracted package's root:
+
+```powershell
+.\rk.cmd --help
+.\rk.cmd service status
+```
+
+```sh
+# macOS or Linux
+./rk --help
+./rk service status
+```
+
+The portable shortcut selects its packaged matching client, including the app
+bundle layout on macOS. You can also invoke the canonical client directly:
+`.\runtime\airkctl.exe --help` on Windows, `./runtime/airkctl --help` on Linux,
+or `./runtime/AIRK.app/Contents/MacOS/airkctl --help` on macOS. CLI help works
+without starting the service; service commands still need their normal setup
+and runtime prerequisites. See [native installation](service-installation.md)
+for setup, portable registration and recovery.
 
 ## Complete read results in 1.8.7
 
@@ -22,9 +89,9 @@ JSON. This is independent of retained indexing detail. Omitting it preserves
 the inherited defaults described below; conflicts with legacy projection flags
 reject instead of choosing precedence.
 
-CLI tool calls, dedicated read commands and Workbench plans share the MCP read handlers. Full results retain provenance, publication, readiness, coverage, continuations and error/retry details. `airkctl tools call airk_status` returns its MCP envelope, while `airkctl parse --execute '/status'` places the complete status result under `steps[].result`, including `query_concurrency`. The shell pretty-prints the same tool content. Defaults can differ between convenience commands; use matching arguments and [the parity audit](read-interface-parity.md) when comparing results.
+CLI tool calls, dedicated read commands and Workbench plans share the MCP read handlers. Full results retain provenance, publication, readiness, coverage, continuations and error/retry details. `rk tools call airk_status` returns its MCP envelope, while `rk parse --execute '/status'` places the complete status result under `steps[].result`, including `query_concurrency`. The shell pretty-prints the same tool content. Defaults can differ between convenience commands; use matching arguments and [the parity audit](read-interface-parity.md) when comparing results.
 
-For explicit plans, put a JSON object in the `plan` field and pass the request through `airkctl tools call airk_parse --args-file request.json`. Do not encode the plan object as a string. Workbench's complete JSON/Markdown exports retain the full response; selected-evidence exports identify their selected subset.
+For explicit plans, put a JSON object in the `plan` field and pass the request through `rk tools call airk_parse --args-file request.json`. Do not encode the plan object as a string. Workbench's complete JSON/Markdown exports retain the full response; selected-evidence exports identify their selected subset.
 
 MCP-compatible status results can report `status_timeout` with `index_error.stage: setup`, unknown readiness and null evidence. Later polls preserve that explicit setup-deadline outcome after already accepted work drains. Apply the existing bounded read-retry contract with the same scope; genuine setup failures and ordinary session cancellation retain their failure handling. See the [status contract](mcp.md).
 
@@ -33,12 +100,12 @@ MCP-compatible status results can report `status_timeout` with `index_error.stag
 The unpublished **1.8.8 P11a working build** adds an explicit opt-in to FileInfo:
 
 ```sh
-airkctl info src/example.rs --include-profile-families --verification off
+rk info src/example.rs --include-profile-families --verification off
 
-airkctl tools call airk_file_info --args '{"path":"src/example.rs","include_profile_families":true,"verification":"off"}'
+rk tools call airk_file_info --args '{"path":"src/example.rs","include_profile_families":true,"verification":"off"}'
 ```
 
-Inside `airkctl tools shell`, enter the same JSON directly, without shell quoting:
+Inside `rk tools shell`, enter the same JSON directly, without shell quoting:
 
 ```text
 call airk_file_info {"path":"src/example.rs","include_profile_families":true,"verification":"off"}
@@ -67,7 +134,7 @@ P11a qualification and primary review passed. P11a is accepted for unpublished l
 
 ## Identifier navigation
 
-For a known type/function, use compact `airkctl symbol` first, scoped `airkctl refs` for textual uses, and `airkctl read`/`context` to inspect a selected location. `airkctl outline` reads one file's structure in source order; it does not propose an Explorer screen. Search remains useful for concepts and supplementary passages, with bounded same-publication definition pointers where available.
+For a known type/function, use compact `rk symbol` first, scoped `rk refs` for textual uses, and `rk read`/`context` to inspect a selected location. `rk outline` reads one file's structure in source order; it does not propose an Explorer screen. Search remains useful for concepts and supplementary passages, with bounded same-publication definition pointers where available.
 
 `symbol` and `code-facts` keep exact matching by default; `--name-match suffix|contains` explicitly expands simple/qualified names case-sensitively. `--include-count` requests a qualified count, whose total can remain unknown under bounded scanning. Search and refs accept indexed `--language`, `--evidence-kind code|document|configuration|unknown` and literal `--exclude-path-prefix`, applied before candidate ranking rather than to a tiny returned top-k.
 
@@ -78,7 +145,7 @@ References add `--order index|path|code_first`, `--include-files`, `--include-co
 - Ordinary one-shot commands print JSON on stdout. Help, text/CSV/Markdown exports and interactive `tools shell` have their own output formats. `airkctl session` is a framed protocol stream for one editor window.
 - A failure exits non-zero and writes a message to stderr. Add `--output json` to get JSON results and a structured JSON error line instead. Query commands can return a typed busy or retry refusal while workers start; repeat the same call after the reported delay.
 - Source files are never modified. Commands that change AIRK state (registering, configuring, pausing, purging) say so in their help.
-- Agents can read the same help through MCP: `airkctl tools call airk_help --args '{"command":"search"}'`.
+- Agents can read the same help through MCP: `rk tools call airk_help --args '{"command":"search"}'`.
 
 ## Services, projects and scope
 
@@ -91,7 +158,7 @@ not interchangeable.
 
 There are two ways to reach a service:
 
-- **Installed service.** `airkctl` finds the installation from its install record. Start the service with `airk` (no arguments) or `airkctl service start`; `airkctl service status` and `airkctl service stop` report and stop it. Select a project with `--root <folder>`, plus `--data-dir` and `--collection` when they are not the defaults.
+- **Installed service.** `airkctl` finds the installation from its install record. Start the service with `airk` (no arguments) or `rk service start`; `rk service status` and `rk service stop` report and stop it. Select a project with `--root <folder>`, plus `--data-dir` and `--collection` when they are not the defaults.
 - **A service you start yourself** (development, tests, external supervisors). The private role `airk __airk_role service-foreground --runtime-dir <control>` runs the service in the foreground; it replaces `airk serve --runtime-dir` and is not a user interface. Then add `--service-runtime-dir <control> --service-project <binding> --root … --data-dir … --collection …` to project commands.
 
 ## Reviewed index and Project setup in 1.8.8
@@ -106,7 +173,7 @@ Headless administration uses the same native methods as the editor. Save one
 method JSON value in a file and run:
 
 ```console
-airkctl service rpc --runtime-dir <control> --request-file <method.json>
+rk service rpc --runtime-dir <control> --request-file <method.json>
 ```
 
 For example, this read-only method lists a bounded first page of indexes:
@@ -169,23 +236,23 @@ and settings live in the data directory; the source folder is only read.
 
 ```text
 # A service you started:
-airkctl --root /path/to/folder --data-dir /path/to/index --collection mydocs service prepare-registration   # read-only: prints the binding
-airkctl --root /path/to/folder --data-dir /path/to/index --collection mydocs service register --runtime-dir <control>
-airkctl projects --runtime-dir <control>
+rk --root /path/to/folder --data-dir /path/to/index --collection mydocs service prepare-registration   # read-only: prints the binding
+rk --root /path/to/folder --data-dir /path/to/index --collection mydocs service register --runtime-dir <control>
+rk projects --runtime-dir <control>
 
 # The installed service (the default data directory is used when --data-dir is omitted):
-airkctl --root /path/to/folder init
-airkctl projects
+rk --root /path/to/folder init
+rk projects
 ```
 
-Then queue indexing with `airkctl <scope> index`. Run `airkctl <scope> watch on` to keep the index current, and check progress with `airkctl <scope> tools call airk_status --args '{}'`.
+Then queue indexing with `rk <scope> index`. Run `rk <scope> watch on` to keep the index current, and check progress with `rk <scope> tools call airk_status --args '{}'`.
 
-On macOS and Linux, keep the data directory private to your account (for example `mkdir -m 700`). AIRK creates new storage directories with mode 0700 and never changes the permissions of an existing one. If other accounts may be able to read a project's storage, the pre-split `runtime inventory` reports a `storage_not_private` warning for it (reachable only through the interim setup role until its `airkctl` replacement); registration is not refused. The source folder and the data directory must not contain each other. To remove a project's index and settings, leaving the sources untouched, run `airkctl <scope> configure --stdin` with `{"operation":"unregister"}`.
+On macOS and Linux, keep the data directory private to your account (for example `mkdir -m 700`). AIRK creates new storage directories with mode 0700 and never changes the permissions of an existing one. If other accounts may be able to read a project's storage, the pre-split `runtime inventory` reports a `storage_not_private` warning for it (reachable only through the interim setup role until its `airkctl` replacement); registration is not refused. The source folder and the data directory must not contain each other. To remove a project's index and settings, leaving the sources untouched, run `rk <scope> configure --stdin` with `{"operation":"unregister"}`.
 
 ## Command families
 
 Current MCP clients use the service's authenticated HTTPS endpoint.
-`airkctl agents connect` enrolls a reviewed selection and writes AIRK's entry for
+`rk agents connect` enrolls a reviewed selection and writes AIRK's entry for
 Codex, Claude Code or VS Code; `agents list`, `repair`, `remove` and `verify`
 classify, fix, remove and probe those entries. Writing an entry does not prove
 that a client connected. See [native agent setup](agent-integration.md#native-setup-output).

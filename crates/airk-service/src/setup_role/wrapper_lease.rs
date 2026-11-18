@@ -149,6 +149,7 @@ pub(super) fn exec_script(request: &SetupRequest, clock: Clock) -> Result<()> {
             LOCK,
             "installation_in_progress: another outer installer owns placement/finalization",
         )?;
+        setup.bind_alias_intent(request)?;
         let fd = lock.as_file().as_raw_fd();
         let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
         ensure!(

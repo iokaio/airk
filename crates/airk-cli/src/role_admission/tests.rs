@@ -397,6 +397,8 @@ fn setup_takes_an_absolute_operation_and_one_mode() {
                 mode,
                 wrapper_script: None,
                 wrapper_silent: false,
+                cli_alias: None,
+                cli_alias_search_path: None,
             })
         );
     }
@@ -441,7 +443,7 @@ fn setup_takes_an_absolute_operation_and_one_mode() {
 #[test]
 fn removal_admission_and_inno_sealing_are_exclusive_private_setup_modes() {
     let operation = std::env::temp_dir()
-        .join("fixture-é-日本語-🙂")
+        .join("fixture-Ã©-æ—¥æœ¬èªž-ðŸ™‚")
         .join("original-operation-request.json");
     let path = operation.to_str().unwrap();
     for (flag, expected) in [
@@ -459,6 +461,8 @@ fn removal_admission_and_inno_sealing_are_exclusive_private_setup_modes() {
                 mode: expected,
                 wrapper_script: None,
                 wrapper_silent: false,
+                cli_alias: None,
+                cli_alias_search_path: None,
             })
         );
         for second in ["--plan", "--prepare", "--seal-inno", "--admit-removal"] {
@@ -592,6 +596,8 @@ fn recovery_fields_and_wrapper_lease_are_closed_exclusive_private_modes() {
                 mode: crate::setup_role::SetupMode::RecoveryField(field),
                 wrapper_script: None,
                 wrapper_silent: false,
+                cli_alias: None,
+                cli_alias_search_path: None,
             })
         );
     }
@@ -604,5 +610,219 @@ fn recovery_fields_and_wrapper_lease_are_closed_exclusive_private_modes() {
         let mut line = vec!["airk", SELECTOR, "setup", "--operation", path];
         line.extend(extra);
         assert!(parse(&args(&line)).unwrap().is_err());
+    }
+}
+
+#[test]
+fn setup_alias_selection_and_probe_preserve_explicit_inputs() {
+    use crate::setup_role::{CliAliasSelection, SetupMode};
+    let operation = std::env::temp_dir().join("alias-operation.json");
+    let path = operation.to_str().unwrap();
+    for (extra, mode, selection, search) in [
+        (
+            vec![
+                "--prepare",
+                "--cli-alias",
+                "My_rk-2",
+                "--cli-alias-search-path",
+                "A;B",
+            ],
+            SetupMode::Prepare,
+            CliAliasSelection::Named("My_rk-2".into()),
+            Some("A;B"),
+        ),
+        (
+            vec![
+                "--prepare",
+                "--auto-cli-alias",
+                "--cli-alias-search-path",
+                "",
+            ],
+            SetupMode::Prepare,
+            CliAliasSelection::Auto,
+            Some(""),
+        ),
+        (
+            vec!["--prepare", "--no-cli-alias"],
+            SetupMode::Prepare,
+            CliAliasSelection::None,
+            None,
+        ),
+        (
+            vec![
+                "--probe-cli-alias",
+                "--cli-alias",
+                "rk",
+                "--cli-alias-search-path",
+                "A:B",
+            ],
+            SetupMode::AliasProbe,
+            CliAliasSelection::Named("rk".into()),
+            Some("A:B"),
+        ),
+        (
+            vec![
+                "--auto-cli-alias",
+                "--cli-alias-search-path",
+                "A:B",
+                "--probe-cli-alias",
+            ],
+            SetupMode::AliasProbe,
+            CliAliasSelection::Auto,
+            Some("A:B"),
+        ),
+    ] {
+        let mut line = vec!["airk", SELECTOR, "setup", "--operation", path];
+        line.extend(extra);
+        assert_eq!(
+            parse(&args(&line)).unwrap().unwrap(),
+            RoleRequest::Setup(crate::setup_role::SetupRequest {
+                operation: operation.clone(),
+                mode,
+                wrapper_script: None,
+                wrapper_silent: false,
+                cli_alias: Some(selection),
+                cli_alias_search_path: search.map(str::to_owned),
+            })
+        );
+    }
+}
+
+#[test]
+fn setup_alias_flags_refuse_ambiguous_missing_and_recovery_overrides() {
+    let operation = std::env::temp_dir().join("alias-operation.json");
+    let path = operation.to_str().unwrap();
+    let long_path = "x".repeat(32769);
+    let long_name = "a".repeat(33);
+    for extra in [
+        vec!["--prepare", "--cli-alias"],
+        vec!["--prepare", "--cli-alias", "rk"],
+        vec!["--prepare", "--auto-cli-alias"],
+        vec!["--prepare", "--cli-alias-search-path", "A"],
+        vec![
+            "--prepare",
+            "--no-cli-alias",
+            "--cli-alias-search-path",
+            "A",
+        ],
+        vec!["--prepare", "--no-cli-alias", "--auto-cli-alias"],
+        vec!["--prepare", "--no-cli-alias", "--no-cli-alias"],
+        vec!["--prepare", "--auto-cli-alias", "--auto-cli-alias"],
+        vec!["--prepare", "--cli-alias", "rk", "--cli-alias", "other"],
+        vec![
+            "--prepare",
+            "--auto-cli-alias",
+            "--cli-alias-search-path",
+            "A",
+            "--cli-alias-search-path",
+            "B",
+        ],
+        vec!["--prepare", "--auto-cli-alias", "--cli-alias-search-path"],
+        vec![
+            "--prepare",
+            "--auto-cli-alias",
+            "--cli-alias-search-path",
+            &long_path,
+        ],
+        vec![
+            "--prepare",
+            "--auto-cli-alias",
+            "--cli-alias-search-path",
+            "A\0B",
+        ],
+        vec!["--probe-cli-alias"],
+        vec!["--probe-cli-alias", "--no-cli-alias"],
+        vec!["--probe-cli-alias", "--prepare"],
+        vec!["--probe-cli-alias", "--probe-cli-alias"],
+        vec!["--no-cli-alias"],
+        vec!["--plan", "--no-cli-alias"],
+        vec!["--seal-inno", "--no-cli-alias"],
+        vec!["--admit-removal", "--no-cli-alias"],
+        vec!["--recovery-field", "requested-by", "--no-cli-alias"],
+        vec![
+            "--prepare",
+            "--cli-alias",
+            "",
+            "--cli-alias-search-path",
+            "",
+        ],
+        vec![
+            "--prepare",
+            "--cli-alias",
+            "2rk",
+            "--cli-alias-search-path",
+            "",
+        ],
+        vec![
+            "--prepare",
+            "--cli-alias",
+            "rk/name",
+            "--cli-alias-search-path",
+            "",
+        ],
+        vec![
+            "--prepare",
+            "--cli-alias",
+            "Ã©",
+            "--cli-alias-search-path",
+            "",
+        ],
+        vec![
+            "--prepare",
+            "--cli-alias",
+            &long_name,
+            "--cli-alias-search-path",
+            "",
+        ],
+    ] {
+        let mut line = vec!["airk", SELECTOR, "setup", "--operation", path];
+        line.extend(extra);
+        assert!(
+            refusal(parse(&args(&line)).unwrap()).starts_with("role_admission_refused"),
+            "{line:?}"
+        );
+    }
+}
+
+#[test]
+fn setup_wrapper_lease_carries_first_admission_alias_selection() {
+    use crate::setup_role::{CliAliasSelection, SetupMode};
+    let operation = std::env::temp_dir().join("alias-operation.json");
+    let wrapper = std::env::temp_dir().join("install-wrapper.sh");
+    for (extra, selection, search) in [
+        (
+            vec!["--cli-alias", "rk", "--cli-alias-search-path", "A:B"],
+            CliAliasSelection::Named("rk".into()),
+            Some("A:B"),
+        ),
+        (
+            vec!["--auto-cli-alias", "--cli-alias-search-path", ""],
+            CliAliasSelection::Auto,
+            Some(""),
+        ),
+        (vec!["--no-cli-alias"], CliAliasSelection::None, None),
+    ] {
+        let mut line = vec![
+            "airk",
+            SELECTOR,
+            "setup",
+            "--operation",
+            operation.to_str().unwrap(),
+            "--wrapper-lease-script",
+            wrapper.to_str().unwrap(),
+            "--wrapper-silent",
+        ];
+        line.extend(extra);
+        assert_eq!(
+            parse(&args(&line)).unwrap().unwrap(),
+            RoleRequest::Setup(crate::setup_role::SetupRequest {
+                operation: operation.clone(),
+                mode: SetupMode::WrapperLease,
+                wrapper_script: Some(wrapper.clone()),
+                wrapper_silent: true,
+                cli_alias: Some(selection),
+                cli_alias_search_path: search.map(str::to_owned),
+            })
+        );
     }
 }

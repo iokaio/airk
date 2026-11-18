@@ -717,3 +717,260 @@ fn only_recognizable_unowned_airk_folders_are_set_aside_and_nothing_is_deleted()
     );
     Ok(())
 }
+
+#[test]
+fn rk_launcher_quotes_shell_data_and_keeps_canonical_argv() {
+    let target = PathBuf::from(format!("{}/A'B\n$HOME `x`/airkctl", base()));
+    let bytes = super::shortcuts::posix_launcher(&target).unwrap();
+    let expected = format!(
+        "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\nexec '{}/A'\\''B\n$HOME `x`/airkctl' \"$@\"\n",
+        base()
+    );
+    assert_eq!(bytes, expected.as_bytes());
+    assert!(super::shortcuts::posix_launcher(std::path::Path::new("relative/airkctl")).is_err());
+    assert!(
+        super::shortcuts::posix_launcher(&PathBuf::from(format!("{}/bad\0/airkctl", base())))
+            .is_err()
+    );
+}
+
+#[test]
+fn rk_receipt_requires_exact_installation_path_target_and_bytes() {
+    use super::shortcuts;
+    let home = PathBuf::from(base());
+    let target = home.join(if cfg!(windows) {
+        "program/bin/airkctl.exe"
+    } else {
+        "program/bin/airkctl"
+    });
+    let expected =
+        shortcuts::expected(&home, &target, Incarnation::from_bytes([7; 16]), "rk").unwrap();
+    let good = serde_json::to_vec(&expected).unwrap();
+    assert!(shortcuts::validate(&good, &expected).is_ok());
+    assert_eq!(shortcuts::RECEIPT, "cli-alias-owner.json");
+    let original: Value = serde_json::from_slice(&good).unwrap();
+    for (key, value) in [
+        ("schema", Value::from("airk-airkctl-link/1")),
+        ("install_id", Value::from("08".repeat(16))),
+        (
+            "launcher_path",
+            Value::from(format!("{}/.local/bin/other", base())),
+        ),
+        ("target", Value::from(format!("{}/other/airkctl", base()))),
+        ("launcher_sha256", Value::from("00".repeat(32))),
+        ("unexpected", Value::from(true)),
+    ] {
+        let mut changed = original.clone();
+        changed[key] = value;
+        assert!(
+            shortcuts::validate(&serde_json::to_vec(&changed).unwrap(), &expected).is_err(),
+            "{key}"
+        );
+    }
+    assert!(shortcuts::validate(b"{}", &expected).is_err());
+}
+
+#[cfg(unix)]
+mod rk_filesystem {
+    use super::*;
+    use airk_process::directory::OpenedDirectory;
+    use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+
+    fn executable(path: &Path, bytes: &[u8]) {
+        fs::write(path, bytes).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    #[test]
+    fn rk_recovers_receipt_staged_and_published_failures_without_replacing_foreign_files() {
+        for fail_at in ["receipt", "staged", "published"] {
+            let temporary = tempfile::tempdir().unwrap();
+            let home = temporary.path();
+            let program_path = home.join("program");
+            fs::create_dir(&program_path).unwrap();
+            let program = OpenedDirectory::open(&program_path).unwrap();
+            let id = Incarnation::from_bytes([4; 16]);
+            let target = program_path.join("airkctl");
+            let stopped =
+                super::super::shortcuts::install(&program, home, &target, id, "rk", |stage| {
+                    anyhow::ensure!(stage != fail_at, "injected failure");
+                    Ok(())
+                });
+            assert!(stopped.is_err());
+            assert!(program_path.join(super::super::shortcuts::RECEIPT).exists());
+            super::super::shortcuts::install(&program, home, &target, id, "rk", |_| Ok(()))
+                .unwrap();
+            assert_eq!(
+                fs::read(home.join(".local/bin/rk")).unwrap(),
+                super::super::shortcuts::launcher(&target).unwrap()
+            );
+            super::super::shortcuts::remove(&program, home, &target, id).unwrap();
+            assert!(!home.join(".local/bin/rk").exists());
+            assert!(!program_path.join(super::super::shortcuts::RECEIPT).exists());
+            assert!(home.join(".local/bin").is_dir());
+        }
+    }
+
+    #[test]
+    fn rk_preserves_unowned_identical_launcher_and_staging_collisions() {
+        for leaf in [
+            "rk".to_owned(),
+            format!(
+                ".airk-cli-alias-{}-rk.part",
+                Incarnation::from_bytes([5; 16])
+            ),
+        ] {
+            let temporary = tempfile::tempdir().unwrap();
+            let home = temporary.path();
+            let program_path = home.join("program");
+            fs::create_dir(&program_path).unwrap();
+            fs::create_dir_all(home.join(".local/bin")).unwrap();
+            let target = program_path.join("airkctl");
+            let body = super::super::shortcuts::launcher(&target).unwrap();
+            let occupied = home.join(".local/bin").join(&leaf);
+            executable(&occupied, &body);
+            let program = OpenedDirectory::open(&program_path).unwrap();
+            assert!(
+                super::super::shortcuts::install(
+                    &program,
+                    home,
+                    &target,
+                    Incarnation::from_bytes([5; 16]),
+                    "rk",
+                    |_| Ok(())
+                )
+                .is_err()
+            );
+            assert_eq!(fs::read(occupied).unwrap(), body);
+            assert!(!program_path.join(super::super::shortcuts::RECEIPT).exists());
+        }
+    }
+
+    #[test]
+    fn rk_preserves_modified_wrapper_receipt_and_symlink_parent() {
+        let temporary = tempfile::tempdir().unwrap();
+        let home = temporary.path();
+        let program_path = home.join("program");
+        fs::create_dir(&program_path).unwrap();
+        let target = program_path.join("airkctl");
+        let id = Incarnation::from_bytes([6; 16]);
+        let program = OpenedDirectory::open(&program_path).unwrap();
+        super::super::shortcuts::install(&program, home, &target, id, "rk", |_| Ok(())).unwrap();
+        let shortcut = home.join(".local/bin/rk");
+        executable(&shortcut, b"changed");
+        assert!(super::super::shortcuts::remove(&program, home, &target, id).is_err());
+        assert_eq!(fs::read(&shortcut).unwrap(), b"changed");
+        executable(
+            &shortcut,
+            &super::super::shortcuts::launcher(&target).unwrap(),
+        );
+        fs::write(program_path.join(super::super::shortcuts::RECEIPT), b"{}").unwrap();
+        assert!(super::super::shortcuts::remove(&program, home, &target, id).is_err());
+        assert!(shortcut.exists());
+        let other = tempfile::tempdir().unwrap();
+        fs::create_dir(other.path().join("elsewhere")).unwrap();
+        std::os::unix::fs::symlink(other.path().join("elsewhere"), other.path().join(".local"))
+            .unwrap();
+        assert!(
+            super::super::shortcuts::install(&program, other.path(), &target, id, "rk", |_| Ok(()))
+                .is_err()
+        );
+        assert!(!other.path().join("elsewhere/bin").exists());
+    }
+
+    #[test]
+    fn rk_exec_forwards_empty_unicode_arguments_stdin_exit_and_pid() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let temporary = tempfile::tempdir().unwrap();
+        let home = temporary.path();
+        let program_path = home.join("program's space");
+        fs::create_dir(&program_path).unwrap();
+        let target = program_path.join("airkctl");
+        executable(&target, b"#!/bin/sh\nprintf '%s\\n' \"$$\" \"$0\"\nfor arg do printf '<%s>\\n' \"$arg\"; done\n/bin/cat\nexit 7\n");
+        let program = OpenedDirectory::open(&program_path).unwrap();
+        super::super::shortcuts::install(
+            &program,
+            home,
+            &target,
+            Incarnation::from_bytes([8; 16]),
+            "rk",
+            |_| Ok(()),
+        )
+        .unwrap();
+        let mut child = Command::new(home.join(".local/bin/rk"))
+            .args(["", "two words", "雪", "*;$HOME"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"input body\n")
+            .unwrap();
+        let result = child.wait_with_output().unwrap();
+        assert_eq!(result.status.code(), Some(7));
+        assert_eq!(
+            String::from_utf8(result.stdout).unwrap(),
+            format!(
+                "{pid}\n{}\n<>\n<two words>\n<雪>\n<*;$HOME>\ninput body\n",
+                target.display()
+            )
+        );
+    }
+}
+
+#[test]
+fn windows_inno_native_shortcut_cleanup_is_independent_of_static_payload_removal() {
+    use airk_core::install_record::Installer;
+    assert!(!plan::removes_owned_program(
+        plan::Host::Windows,
+        Installer::Inno
+    ));
+    assert!(plan::removes_owned_shortcuts(Installer::Inno));
+    assert!(plan::removes_owned_shortcuts(Installer::Dmg));
+    assert!(plan::removes_owned_shortcuts(Installer::InstallSh));
+    assert!(!plan::removes_owned_shortcuts(Installer::Portable));
+}
+
+#[cfg(unix)]
+#[test]
+fn owned_alias_repairs_modified_bytes_but_refuses_changed_stage() {
+    use airk_process::directory::OpenedDirectory;
+    use std::{fs, os::unix::fs::PermissionsExt};
+    let temp = tempfile::tempdir().unwrap();
+    let program_path = temp.path().join("program");
+    fs::create_dir(&program_path).unwrap();
+    let program = OpenedDirectory::open(&program_path).unwrap();
+    let target = program_path.join("airkctl");
+    let id = Incarnation::from_bytes([3; 16]);
+    super::shortcuts::install(&program, temp.path(), &target, id, "rk", |_| Ok(())).unwrap();
+    let alias = temp.path().join(".local/bin/rk");
+    fs::write(&alias, b"modified owned passthrough").unwrap();
+    super::shortcuts::install(&program, temp.path(), &target, id, "rk", |_| Ok(())).unwrap();
+    assert_eq!(
+        fs::read(&alias).unwrap(),
+        super::shortcuts::launcher(&target).unwrap()
+    );
+    fs::write(&alias, b"original destination").unwrap();
+    let stage = temp
+        .path()
+        .join(".local/bin")
+        .join(format!(".airk-cli-alias-{id}-rk.part"));
+    let result = super::shortcuts::install(&program, temp.path(), &target, id, "rk", |at| {
+        if at == "staged" {
+            fs::write(&stage, b"changed stage")?;
+        }
+        Ok(())
+    });
+    assert!(result.is_err());
+    assert_eq!(fs::read(&alias).unwrap(), b"original destination");
+    assert_eq!(fs::read(&stage).unwrap(), b"changed stage");
+    assert_eq!(
+        fs::metadata(&alias).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+}

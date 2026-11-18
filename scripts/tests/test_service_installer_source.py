@@ -36,6 +36,20 @@ def code_comment_problems(text):
 
 
 class ServiceInstallerSource(unittest.TestCase):
+    def test_alias_selection_is_native_owned_and_recovery_does_not_reselect(self):
+        text = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("--probe-cli-alias ", text)
+        self.assertIn("\\cli-alias-probe.txt", text)
+        self.assertIn("--prepare ' + AliasFlags", text)
+        recovery=text[text.index("if RecoveryOperation <> '' then begin",text.index("function PrepareToInstall")):]
+        recovery=recovery[:recovery.index("Exit;")]
+        self.assertIn("'--prepare'",recovery)
+        self.assertNotIn("AliasFlags",recovery)
+        for flag in ("/CLIALIAS", "/NOCLIALIAS", "/AUTOCLIALIAS"):
+            self.assertIn("Pos('"+flag,text[text.index("procedure LoadRecovery"):text.index("function ShouldSkipPage")])
+        self.assertIn("AliasOriginalPath := GetEnv('PATH')",text)
+        self.assertNotIn("DestDir: \"{app}\\bin\"; DestName: \"rk.cmd",text)
+
     def test_no_line_starts_with_a_preprocessor_hash_except_directives(self):
         # ISPP reads any line whose first non-blank character is `#` as a
         # directive, so a Pascal character code (#13#10) cannot start a line.

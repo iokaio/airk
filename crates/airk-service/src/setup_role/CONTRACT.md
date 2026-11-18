@@ -541,3 +541,83 @@ original operation and receipt validation is unchanged. Shared admission_time,
 startup_allowed, Active observation, interrupted owner recovery and scalar
 completion reconciliation remain compiled for all supported hosts. These cfg
 placements do not remove live macOS or Linux recovery duties.
+
+## CLI aliases (1.9.0)
+
+The native setup owner manages a convenience alias while the native executable
+remains airkctl. Unix wrappers exec the absolute installed client with exact
+"$@" forwarding; Windows .cmd wrappers invoke canonical sibling airkctl.exe,
+disable delayed expansion and preserve exit status, without CALL or another
+native executable. The existing airk-airkctl-link/1 receipt, parser and cleanup
+semantics remain unchanged. Portable packaging owns separate root convenience
+wrappers and never participates in installed alias selection or PATH changes.
+
+Interactive installers probe the original caller PATH and the installation
+slot. If rk conflicts, the user can choose another name or no alias. Unattended
+default selection uses the first available rk, rk1, ... rk9999 and refuses
+exhaustion. An explicitly selected conflicting name refuses without automatic
+renaming. Names contain 1..32 ASCII letters/digits/_/-, starting with a letter;
+airk, airkctl and Windows device names are reserved case-insensitively.
+Selection checks all PATH entries and the future alias directory; Windows also
+checks the captured PATHEXT variants plus .exe/.com/.bat/.cmd. Current owned
+slots are exempt only through the original admitted installation/receipt.
+
+Native private setup argv accepts --cli-alias NAME, --no-cli-alias or
+--auto-cli-alias, mutually exclusively. Named/Auto also require
+--cli-alias-search-path with the original caller PATH (bounded to 32768 bytes,
+256 entries). Selection flags are accepted only on first Prepare, the Unix
+WrapperLease handoff, or AliasProbe. --probe-cli-alias with Named emits
+available/owned/collision; with Auto it emits the proposed name. Native writes
+the same scalar to cli-alias-probe.txt beside the private operation. This probe
+does not admit an operation, reserve a name, create an intent or change the
+installation. No-alias needs no probe.
+
+Native Rust owns strict serde JSON serialization of these additive private
+formats; Core I4 operation bytes are unchanged:
+- cli-alias-intent.json beside the original request: airk-cli-alias-intent/1,
+  original operation SHA256, selected alias or null, original PATH, its absolute
+  lookup directory and Windows extension snapshot. Unix seals this create-only
+  intent under the authenticated wrapper producer lease before re-exec into
+  --resume; Windows seals it during first Prepare. Later prepare/complete and
+  recovery reopen it and refuse selection overrides. Relative/empty PATH entries
+  retain the original lookup directory. Legacy requests without an intent select
+  no new alias. Final publication rechecks the saved choice and refuses a changed
+  collision set rather than choosing another name.
+- cli-alias-owner.json in the program directory: airk-cli-alias-owner/1,
+  install_id, alias, exact launcher_path, canonical target and launcher SHA256.
+- cli-alias-note-owner.json in the program directory: airk-cli-alias-note/1,
+  install_id, canonical target, selected alias or null and exact note SHA256.
+
+Unix destinations are beneath native account-home/.local/bin. Missing .local
+and bin are created through held same-user protected parents; existing safe
+0755 directories remain unchanged. The regular launcher is chmod 0700 before
+publication. Windows destinations are <verified client parent>/<alias>.cmd,
+outside the static payload inventory. Held-file policy requires a same-user
+regular single-linked file with no redirection or alternate streams. Both
+backends publish staged, synced files through held-directory primitives.
+
+Fresh creation requires an absent destination and stage; identical unowned
+bytes are not adopted. The private receipt precedes publication so an admitted
+repair/recovery can recognize exact receipt-bound staging bytes after a crash.
+Partial/changed staging files are preserved and refused. A valid private
+installation receipt authorizes same-alias repair/upgrade of a safe owned
+passthrough even when its contents changed, using staged atomic replacement
+under the setup lock. Stage and destination are rechecked before publication.
+This upgrade authority does not apply to unowned files or unsafe metadata.
+
+Changing the choice retires the prior exact owned alias first; no-alias never
+disables the canonical client. Relocation and uninstall run dynamic alias/note
+cleanup under original installation custody before install-record removal on
+all platforms, independently of static-payload removal (including Windows
+Inno). Removal requires exact original bytes; changed wrappers, notes, receipts
+or unsafe objects remain explicit leftovers. Unix compare/unlink retains the
+existing same-user serialization limitation; Windows uses exact pending-handle
+disposition. Neither .local nor bin is removed.
+
+airkctl-aliases.txt records the actual alias or none, full shortcut path and
+canonical client path, without PATH contents. The note is owned by its separate
+private receipt and updated/removed only from exact original bytes; unowned or
+modified notes are preserved. Installers display it and conditional manual PATH
+guidance. They do not infer original PATH from the resumed wrapper's restricted
+tool PATH, claim bare commands work when the directory is absent from PATH,
+or edit shell profiles. Shell aliases/functions may still shadow executables.
