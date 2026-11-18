@@ -1504,3 +1504,37 @@ Compact and12–16GB for Large, not measured hardware minima. Without genuinely
 efficient attention, half precision might still require12–16GB for Compact and
 24GB for Large at8192 tokens. These guesses never grant native admission.
 The actual available-memory and qualified per-variant policy decides Auto.
+
+## Addendum — Datagram macOS FP32 and FP16 weekend
+
+Start this separate macOS test only after the Windows candidate has completed
+the qualification required by this plan. The user will manually book and
+kick off a 72-hour Datagram weekend pass on a dedicated Apple Silicon
+Mac Studio with M4 Max, a 40-core GPU and 128 GB of unified memory.
+[Datagram weekend pass](https://datagram.net/day-pass)
+
+Datagram confirmed full access to the dedicated Mac. We can install Xcode
+or ask Datagram to do so during setup. At kickoff, verify SSH access in
+the same authorized human account, record the macOS, Xcode and SDK builds,
+and confirm Core ML and Metal profiling in that session. Freeze the
+reviewed source revision, runtime build, graph and weight identities, and
+use only the inputs authorized for the rented host.
+
+Build the native macOS arm64 Core ML path. Test the existing Compact and
+Large FP32 graphs first, then test their separately pinned FP16 variants
+with efficient attention. For each precision and model, start at 17 and
+128 tokens and advance to the 8,192-token boundary after the initial probes
+pass. Check that the FP16 path uses an efficient attention implementation
+on the Mac and preserves the required masks and FP32 output ABI.
+
+Record actual GPU and CPU placement, numerical parity, peak unified
+memory, and cold and warm latency for each variant using the existing G4
+checks and 120-second p95 target. Apply the G5 FP16 precision-loss and
+memory checks. Exercise Auto, explicit FP32 and FP16 selection, and the
+admitted CPU fallback where applicable. Preserve and report each graph
+coverage, fit, numerical or latency failure with its exact variant identity.
+
+Before the pass ends, copy the permitted receipts, traces and results to
+the local campaign evidence root. Record the qualification scope and any
+remaining blockers in the ledger. Datagram wipes the machine after the
+pass. [Datagram weekend pass](https://datagram.net/day-pass)
