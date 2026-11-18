@@ -27,3 +27,18 @@ Retained private receipts identify evidence; implementation belongs in maintaine
 source, not executable artifact snapshots.
 
 The separate graph-only preparation and retained-input route is documented in [PROVENANCE-PREPARATION.md](PROVENANCE-PREPARATION.md), including the three explicit preparation/review/execution commands. Pure controls are in `scripts/tests/test_cuda_graph_preparation.py`. Fresh source, producer, image and metadata seals plus review remain prerequisites; implementation alone is not execution evidence.
+
+For placement triage, run this read-only report from the verified human shell.
+
+    python -B -S scripts/cuda-component-execution/placement_report.py --graph-receipt <absolute-execution.json> --graph-receipt-sha256 <reviewed-sha256>
+
+It verifies the complete owned receipt and its pinned sibling
+native-result.json, validates the full graph, and writes JSON to stdout. It
+counts CPU incident values and producer-to-consumer crossings by graph-local
+value ID. Each value counts once per graph and once per reported provider
+direction if it crosses multiple directions. It preserves unknown types and
+subgraph bindings and lists shared values without a local producer separately.
+Crossings describe observed placement edges. For fixed-shape INT64 and BOOL
+values, the report also counts ranks and static payload bytes. Dynamic and
+other shapes remain separate. Allocator overhead and actual transfers require
+runtime profiling.
