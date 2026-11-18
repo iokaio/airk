@@ -36,6 +36,39 @@ def timestamp(minute, second):
 
 
 class FreshVerify(unittest.TestCase):
+    def test_compile_replay_audits_every_path_under_one_deadline(self):
+        paths = [Path(f"output-{index}") for index in range(769)]
+        audit = Mock()
+        output_guard = Mock(return_value=audit)
+        owner = SimpleNamespace(output_guard=output_guard)
+        compile_pin = {"path": "compile.json"}
+
+        def verify(pin, deadline):
+            self.assertEqual((pin, deadline), (compile_pin, 600))
+            owner.output_guard("component", "recipe")(paths, True, deadline)
+            return "verified"
+
+        owner.verify_receipt = verify
+        self.assertEqual(verifier.verify_compilation(owner, compile_pin, 600), "verified")
+        output_guard.assert_called_once_with("component", "recipe")
+        self.assertEqual(audit.call_count, 2)
+        seen = []
+        for call in audit.call_args_list:
+            group, created, deadline = call.args
+            seen.extend(group)
+            self.assertEqual((created, deadline), (True, 600))
+        self.assertCountEqual(seen, paths)
+        self.assertIs(owner.output_guard, output_guard)
+
+        def deny_second_group(group, created, deadline):
+            if paths[1] in group:
+                raise ValueError("output denied")
+
+        audit.side_effect = deny_second_group
+        with self.assertRaisesRegex(ValueError, "output denied"):
+            verifier.verify_compilation(owner, compile_pin, 600)
+        self.assertIs(owner.output_guard, output_guard)
+
     def setUp(self):
         anchor = Path(__file__).resolve().parent / "inert-anchor"
         self.root = anchor / "inert-fresh-build"

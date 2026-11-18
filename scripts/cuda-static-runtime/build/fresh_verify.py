@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Reopen the private fresh Windows CUDA aggregate evidence under a caller deadline."""
 
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import importlib.util
 import math
@@ -102,6 +103,33 @@ def verify_clocks(receipt, compiled, configured, configure_recipe, recipe, compi
             "fresh aggregate retained UTC chronology differs")
 
 
+def verify_compilation(owner, compile_pin, deadline):
+    output_guard = owner.output_guard
+
+    def partitioned_output_guard(component, recipe):
+        audit = output_guard(component, recipe)
+
+        def audit_paths(paths, created, cutoff):
+            # Two complete sets of the producer's eight 48-path batches.
+            if len(paths) < 768:
+                audit(paths, created, cutoff)
+                return
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                checks = [executor.submit(audit, paths[offset::2], created, cutoff)
+                          for offset in range(2)]
+                for check in checks:
+                    check.result()
+
+        return audit_paths
+
+    # The authenticated compile owner is a private module for this verification.
+    owner.output_guard = partitioned_output_guard
+    try:
+        return owner.verify_receipt(compile_pin, deadline)
+    finally:
+        owner.output_guard = output_guard
+
+
 def verify_receipt(aggregate_pin, deadline):
     """Return observed current facts without reopening an execution window or issuing a proof."""
     require(type(deadline) in (int, float) and math.isfinite(deadline) and time.monotonic() < deadline,
@@ -140,7 +168,7 @@ def verify_receipt(aggregate_pin, deadline):
     require(compile_owner.ANCHOR == ANCHOR and aggregate_owner.RECEIPT_SCHEMA == RECEIPT_SCHEMA
             and aggregate_owner.RECIPE_SCHEMA == RECIPE_SCHEMA, "fresh aggregate owner boundary differs")
     compile_pin = recipe["compile_receipt"]
-    compiled, configured, configure_recipe = compile_owner.verify_receipt(compile_pin, deadline)
+    compiled, configured, configure_recipe = verify_compilation(compile_owner, compile_pin, deadline)
     root = Path(configure_recipe["fresh_output"])
     build_root = Path(compiled["build_root"])
     require(receipt_path == root / "fresh-aggregate.json" and build_root == root / "b/Release"
