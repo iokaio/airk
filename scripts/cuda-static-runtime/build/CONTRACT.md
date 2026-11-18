@@ -46,3 +46,22 @@ fresh-aggregate.json SHA and the canonical retained plan SHA.
 Both proofs record an unqualified build. The public provenance schema,
 C7 identity fields and historical build proof owners keep their original
 contracts. The private proof pair grants no native activation.
+
+
+## Recovery after a configure custody timeout
+
+Recovery requires the independently reviewed exact input pins for a
+naturally settled configure command with exit 0 and an enclosing run that
+stopped at the post-command output audit. The retained seven patch commands,
+original locked inventories, authenticated frontend ZIP and transformed trees
+are reopened. Recovery performs full live output custody and the original
+CMake/Ninja graph checks. Its cutoff is bounded by the recorded configure
+monotonic deadline and the earlier enclosing launch UTC plus its original
+wall limit and campaign cutoff.
+
+A configure receipt retains the pinned configure stage and current-toolchain
+inputs. A separate recovery receipt binds that result, the original failed
+outer evidence and the recovered stages. Retention is create-only. The
+scheduler may split a timed-out guard batch under the original deadline.
+Every guard observes every assigned path, and permission refusals stop the
+operation.

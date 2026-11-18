@@ -109,6 +109,16 @@ def read_pinned(pins, row, deadline):
     return pins.parse_json(raw)
 
 
+def verify_frozen_inputs(pins, recipe, deadline):
+    seen = {}
+    for row in pins.all_pins(recipe):
+        key = os.path.normcase(row["path"])
+        require(key not in seen or seen[key] == row, "conflicting fresh configure input pins")
+        if key not in seen:
+            pins.check_pin(row, deadline)
+            seen[key] = row
+
+
 def load_chain(pins, configured_pin, deadline):
     configured = read_pinned(pins, configured_pin, deadline)
     recipe = read_pinned(pins, configured["recipe"], deadline)
@@ -127,29 +137,42 @@ def load_chain(pins, configured_pin, deadline):
     require(set(recipe["owners"]) == set(OWNERS), "fresh owner roster differs")
     for name, path in OWNERS.items():
         require(Path(recipe["owners"][name]["path"]) == path, "fresh owner path differs: " + name)
-    pins.frozen_inputs(recipe, deadline)
+    verify_frozen_inputs(pins, recipe, deadline)
     modules = {name: load(OWNERS[name], "cuda_compile_" + name)
                for name in ("driver", "guards", "source_stage", "process_stage", "cpu", "r8")}
     return configured, recipe, root, modules
 
 
-def output_guard(component, recipe):
+def output_guard(component, recipe, *, batch_size=48, workers=8):
+    """Audit every path with fresh guard calls under the caller's original deadline."""
+    require(type(batch_size) is int and 1 <= batch_size <= 128
+            and type(workers) is int and 1 <= workers <= 8, "invalid output audit scheduling")
+
+    def check_batch(paths, created, deadline):
+        try:
+            component.guard_many(recipe, paths, created, deadline=deadline)
+        except subprocess.TimeoutExpired:
+            if len(paths) == 1 or time.monotonic() >= deadline:
+                raise
+            middle = len(paths) // 2
+            print(f"Output audit cutoff on {len(paths)} paths; checking smaller batches "
+                  f"of {middle} and {len(paths) - middle} under the original deadline.",
+                  file=sys.stderr, flush=True)
+            check_batch(paths[:middle], created, deadline)
+            check_batch(paths[middle:], created, deadline)
+
     def guard_paths(paths, created, deadline):
-        batch_size = 48
         if len(paths) <= batch_size:
             if paths:
-                component.guard_many(recipe, paths, created, deadline=deadline)
+                check_batch(paths, created, deadline)
             return
 
-        workers = 8
         wave_size = workers * batch_size
         with ThreadPoolExecutor(max_workers=workers) as executor:
             for start in range(0, len(paths), wave_size):
-                # Each guard independently observes every path in its own batch.
                 end = min(start + wave_size, len(paths))
                 checks = [
-                    executor.submit(component.guard_many, recipe, paths[offset:min(offset + batch_size, end)],
-                                    created, deadline=deadline)
+                    executor.submit(check_batch, paths[offset:min(offset + batch_size, end)], created, deadline)
                     for offset in range(start, end, batch_size)
                 ]
                 for check in checks:
@@ -175,12 +198,12 @@ def _raise_walk_error(error):
     raise error
 
 
-def verify_stage(pins, cpu, root, proof, stage, argv, stage_deadline, deadline):
+def verify_stage(pins, cpu, root, proof, stage, argv, stage_deadline, deadline, *, cwd=None):
     prefix = root / "logs" / stage
     retained = pins.pin(prefix.with_suffix(".receipt.json"), deadline)
     require(read_pinned(pins, retained, deadline) == proof, "retained fresh stage proof differs: " + stage)
     paths = {name: str(prefix.with_suffix(suffix)) for name, suffix in STAGE_SUFFIXES.items()}
-    require(proof["stage"] == stage and proof["argv"] == argv and proof["cwd"] == str(root)
+    require(proof["stage"] == stage and proof["argv"] == argv and proof["cwd"] == str(root if cwd is None else cwd)
             and proof["original_deadline_monotonic"] == stage_deadline
             and cpu.successful(proof["owned"]), "fresh stage command, cutoff or settlement differs: " + stage)
     raw = {row["path"]: row for row in proof["files"]}
@@ -191,7 +214,7 @@ def verify_stage(pins, cpu, root, proof, stage, argv, stage_deadline, deadline):
     request = read_pinned(pins, raw[paths["request"]], deadline)
     require(request == {
         "schema": "airk.private.process-tree-command/1",
-        "executable": argv[0], "arguments": subprocess.list2cmdline(argv[1:]), "cwd": str(root),
+        "executable": argv[0], "arguments": subprocess.list2cmdline(argv[1:]), "cwd": str(root if cwd is None else cwd),
         **{key: paths[key] for key in ("stdout", "stderr", "result", "started")},
         "started_event": None, "done_event": None,
     }, "retained fresh stage request differs: " + stage)
@@ -429,7 +452,7 @@ def execute(configured_path, configured_sha, script_sha):
         stages.append(proof)
         files = build_files(root, guard_paths, deadline, include_caches=True)
     require(verify_inputs(pins, chain, deadline) == ninja, "fresh compile graph changed during build")
-    pins.frozen_inputs(recipe, deadline)
+    verify_frozen_inputs(pins, recipe, deadline)
     for row in (self_pin, configured_pin, configured["recipe"]):
         pins.check_pin(row, deadline)
     libraries, providers = pin_outputs(pins, root, files, deadline)

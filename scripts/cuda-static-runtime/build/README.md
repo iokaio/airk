@@ -43,6 +43,22 @@ Verify the successful aggregate and print the private static handoff with
 Pass `--write-environment BUILD_ROOT/environment.json` to retain it as
 a new, checked file under the verified build root.
 
+## Recover a timed-out configure output audit
+
+Use `fresh_finalize.py --recipe PATH --recipe-sha256 SHA` after the
+original configure command and its process tree have settled with exit 0
+and the following file audit hit its per-call limit. The reviewed recovery
+recipe pins the original configure recipe, successful stage receipt, failed
+outer receipt and log, and maintained recovery owners. It retains the
+failed evidence and checks the complete existing build tree and reconstructed
+source inputs under the original deadline. The separate recovery receipt binds
+the resulting configure receipt.
+
+The compile and recovery audit scheduler starts with batches of 48 paths and
+up to eight workers. A timed-out batch can be split into smaller batches under
+the same original deadline. Each new call uses the existing ten-second guard
+limit and rechecks every path. Other guard refusals propagate immediately.
+
 ## Historical parent source capture
 
 The versioned r8, r12 and checkpoint-v1 packages capture the actual producer,

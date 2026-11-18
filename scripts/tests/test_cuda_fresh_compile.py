@@ -155,5 +155,37 @@ class FreshCompileTests(unittest.TestCase):
         self.assertTrue(all(paths[-1] not in call.args[1] for call in component.guard_many.call_args_list))
 
 
+
+    def test_timed_out_metadata_batch_splits_without_extending_original_limit(self):
+        paths = [self.root / str(index) for index in range(4)]
+        component = Mock()
+        timeout = OWNER.subprocess.TimeoutExpired(["pwsh"], 10)
+        component.guard_many.side_effect = [timeout, None, None]
+        with patch.object(OWNER.time, "monotonic", return_value=59), patch.object(OWNER.sys, "stderr"):
+            OWNER.output_guard(component, {}, batch_size=4, workers=1)(paths, True, 60)
+        calls = component.guard_many.call_args_list
+        self.assertEqual([call.args[1] for call in calls], [paths, paths[:2], paths[2:]])
+        self.assertTrue(all(call.kwargs == {"deadline": 60} for call in calls))
+
+        component.guard_many.reset_mock(side_effect=True)
+        component.guard_many.side_effect = timeout
+        with patch.object(OWNER.time, "monotonic", return_value=60), self.assertRaises(type(timeout)):
+            OWNER.output_guard(component, {}, batch_size=4, workers=1)(paths, True, 60)
+        component.guard_many.assert_called_once_with({}, paths, True, deadline=60)
+
+
+    def test_fresh_recipe_pins_do_not_require_incremental_response_files(self):
+        first = {"path": str(self.root / "input"), "bytes": 7, "sha256": "a" * 64}
+        third = {"path": str(self.root / "second"), "bytes": 9, "sha256": "b" * 64}
+        inputs = {"native_inputs": [first, first, third]}
+        pins = Mock()
+        pins.all_pins.side_effect = lambda recipe: iter(recipe["native_inputs"])
+        OWNER.verify_frozen_inputs(pins, inputs, 60)
+        self.assertEqual([call.args for call in pins.check_pin.call_args_list], [(first, 60), (third, 60)])
+        conflict = {"native_inputs": [first, {**first, "sha256": "c" * 64}]}
+        with self.assertRaisesRegex(ValueError, "conflicting fresh configure input pins"):
+            OWNER.verify_frozen_inputs(pins, conflict, 60)
+
+
 if __name__ == "__main__":
     unittest.main()
