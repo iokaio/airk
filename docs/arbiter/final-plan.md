@@ -43,7 +43,7 @@ contract encodings must be recorded before implementation; see section 11.
 | D05 | Context terminal-class contract extension | APPROVED: include the extension; leave Sufficient, Clarify and NoJustifiedRead unavailable unless each class's evidence passes. | Steps 2, 11, 13 |
 | D06 | Shipping read budget | APPROVED: qualify 8192 tokens / 120 seconds as the new default, including all client timeouts. The 2048/30 configuration remains a historical/control population. Focus stays a static 512-token pair unless separately re-exported. | Steps 2, 4, 7, 12–15 |
 | D07 | p95 latency limit for the new profile | APPROVED: set the new profile's measured p95 qualification limit to 120 seconds and report actual component and end-to-end latency. Historical 30-second measurements remain historical. | New resource-policy freeze and qualification |
-| D08 | Automatic local GPU execution and CPU fallback | APPROVED during execution: detect whether each user's GPU can safely run the selected model, use a qualified GPU variant when it can, otherwise automatically select a qualified fitting CPU variant for that same model. Report the device/reason; preserve consent, budgets and qualification gates. LATEST APPROVED: get FP32 working first, then implement FP16 with genuinely efficient attention; both options are part of the version 1.9.0 goal. Preserve selectable FP32, FP16 and Auto GPU precision with admitted CPU fallback. CUDA first on available NVIDIA hardware; DirectML/CoreML capability and applicable platform evidence follow section 11. | Additional Step 2 contracts; Steps 6–7, 12–18; G1–G4 |
+| D08 | Automatic local GPU execution and CPU fallback | APPROVED during execution: detect whether each user's GPU can safely run the selected model, use a qualified GPU variant when it can, otherwise automatically select a qualified fitting CPU variant for that same model. Report the device/reason; preserve consent, budgets and qualification gates. LATEST APPROVED: get FP32 working first, then implement FP16 with genuinely efficient attention; both options are part of the version 1.9.0 goal. Preserve selectable FP32, FP16 and Auto GPU precision with admitted CPU fallback. CUDA first on available NVIDIA hardware. DirectML/CoreML capability and applicable platform evidence follow section 11. Radeon-only systems use the qualified CPU path when it fits. | Additional Step 2 contracts; Steps 6–7, 12–18; G1–G4 |
 
 ### Settled rules; do not ask again
 
@@ -1204,6 +1204,10 @@ variant. If neither device can run the selected model safely, return a typed
 unavailable reason and preserve ordinary MiniLM operation. Large's existing CPU
 numerical/deadline failures are not qualified fallbacks.
 
+Radeon-only configurations use the qualified CPU variant for the selected
+model when it fits. The service reports the actual CPU selection or typed
+unavailability.
+
 ### Verified starting point and backend order
 
 Read-only Windows inventory at 2026-11-17T01:57–02:00Z found an NVIDIA RTX A6000,
@@ -1228,7 +1232,7 @@ and actual native execution remain unverified. Mac Neo has an Apple A18 Pro and
 | --- | --- | --- |
 | 1 | Windows NVIDIA / CUDA | First bounded compatibility and native qualification target on the actual A6000. Pin compatible runtime, driver requirements and dependent libraries. |
 | 2 | macOS / CoreML | Inspect exact graph coverage and available unified memory on Neo; run only fitting bounded probes. Distinguish GPU, Neural Engine and CPU placement; report a genuine fit/coverage blocker. |
-| 2 | Windows DX12 / DirectML | Implement a provider capability path after a bounded graph-coverage probe. For Radeon, follow the deferred AMD addendum and use Linux AMD qualification as the build basis. Scope any hardware results to the tested adapter and driver. |
+| 2 | Windows DX12 / DirectML | Evaluate DirectML on available Intel hardware after a bounded graph-coverage probe. Scope results to the tested adapter and driver. |
 | 3 | Linux x86_64 / CUDA on WSL2 | Qualify FP32 and efficient FP16 on the existing same-user WSL2 instance after Windows qualification. Verify device access and the compatible Linux stack. CPU Linux gates continue independently. |
 
 DirectML remains supported but is in sustained engineering, with new development
@@ -1239,7 +1243,7 @@ assumed to support the selected transformer graphs.
 Sources: [DirectML](https://onnxruntime.ai/docs/execution-providers/DirectML-ExecutionProvider.html),
 [CoreML](https://onnxruntime.ai/docs/execution-providers/CoreML-ExecutionProvider.html).
 
-TensorRT, WebGPU, ROCm/MIGraphX, OpenVINO and QNN are deferred beyond this
+TensorRT, WebGPU, OpenVINO and QNN are deferred beyond this
 extension. Do not introduce a new process, cloud compute, driver installation,
 global environment changes or a runtime selected through an ambient DLL path.
 
@@ -1573,36 +1577,3 @@ Before the pass ends, copy the permitted receipts, traces and results to
 the local campaign evidence root. Record the qualification scope and any
 remaining blockers in the ledger. Datagram wipes the machine after the
 pass. [Datagram weekend pass](https://datagram.net/day-pass)
-
-
-## Addendum — Deferred AMD GPU testing
-
-Schedule this after the Datagram macOS testing. Confirm the host, budget,
-permitted inputs and manual kickoff before renting hardware. Keep the
-current Windows and WSL2 CUDA campaign under D02.
-
-For Linux AMD testing, build the native ONNX Runtime MIGraphX provider with
-a pinned ROCm and driver combination. A single DigitalOcean AMD Instinct
-MI350X or MI355X Spot GPU Droplet is a candidate for short compatibility and
-profiling runs. Check regional availability and compare the live rate with
-an on-demand MI300X. Export permitted receipts after each completed phase
-and record spot interruptions as incomplete runs. Verify the GPU, runtime,
-driver and model asset identities on the rented host.
-[Spot pricing](https://www.digitalocean.com/pricing/gpu-droplets#spot-plans) ·
-[GPU availability](https://docs.digitalocean.com/products/droplets/details/gpu-availability/) ·
-[AMD ONNX Runtime setup](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/inference/onnxruntime.html)
-
-Qualify AMD on Linux Instinct using G4 and G5 as applicable. Start with
-Compact FP32 at 32, 128, 1024 and 8192 tokens. Record actual placement, score
-parity, peak device and host memory, and cold and warm latency. Advance to
-Large and separately pinned FP16 variants. Scope qualification to the tested
-Linux GPU, driver, runtime and model variants.
-
-A Windows Radeon qualification host is unavailable for this work. Use Linux
-AMD qualification as the basis for building and packaging Windows Radeon
-support on the development machine. Proceed on the assumption that the
-Windows DX12/DirectML provider will work on compatible Radeon hardware.
-Apply Windows provider availability, device fit, precision selection and
-qualified CPU fallback checks at runtime. Record Windows Radeon hardware
-behavior as unverified in release and qualification notes.
-[DirectML provider](https://onnxruntime.ai/docs/execution-providers/DirectML-ExecutionProvider.html)
