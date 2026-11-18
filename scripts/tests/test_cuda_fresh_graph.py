@@ -26,6 +26,7 @@ def load(name, path):
 
 fresh = load("inert_fresh_graph_owner", OWNER / "fresh_graph.py")
 legacy = load("inert_legacy_graph_owner", OWNER / "graph_provenance.py")
+host_policy = load("inert_compact_graph_host_policy", OWNER / "compact_graph_host.py")
 
 
 def pin(label):
@@ -41,6 +42,7 @@ def fixture():
               "fresh_bootstrap", "fresh_lease_owner")
     plan = {field: pin("fixture/" + field) for field in fields}
     plan["output_guard"] = plan["graph_output_guard"]
+    plan["limits"] = {"wall_seconds": 120, "process_bytes": 17179869184, "job_bytes": 25769803776}
     binding = {field: pin("fixture/binding-" + field) for field in (
         "environment", "source_roster", "archive", "producer", "manifest", "runtime_producer",
         "cargo_json", "preserver_source", "aggregate_receipt", "aggregate_recipe",
@@ -98,11 +100,56 @@ def adapter(plan):
                 "lease": plan["fresh_lease_owner"]}
     clock = (10.0, dt.datetime(2026, 11, 18, tzinfo=dt.timezone.utc),
              dt.datetime(2026, 11, 18, 0, 2, tzinfo=dt.timezone.utc), 130.0)
+    component.LIMITS = plan["limits"]
     return fresh.FreshGraph(component, legacy, Mock(), approved,
                             plan["graph_provenance_owner"], plan["graph_provenance_contract"], clock)
 
 
 class FreshGraphTests(unittest.TestCase):
+    def test_reviewed_32g_runner_requires_explicit_policy_and_actual_job(self):
+        path = ROOT / "scripts/cuda-component-execution.py"
+        raw = path.read_bytes()
+        runner = host_policy.load_graph_runner(path, raw)
+        self.assertEqual(runner.LIMITS, {"wall_seconds": 120, "process_bytes": 34359738368,
+                                        "job_bytes": 34359738368, "log_bytes": 67108864,
+                                        "cleanup_seconds": 5})
+        self.assertEqual(runner.BOUNDS["host_limit_bytes"], 34359738368)
+        self.assertEqual(runner.BOUNDS["device_limit_bytes"], 25769803776)
+
+        limits = [34359738368, 34359738368]
+
+        def query(_job, _kind, pointer, _size, _ret):
+            current = pointer._obj
+            current.process, current.job = limits
+            current.basic.flags = 8968
+            current.basic.active = 2
+            return 1
+
+        api = SimpleNamespace(QueryInformationJobObject=query,
+                              SetInformationJobObject=Mock(return_value=1))
+        self.assertEqual(runner.configure_job(api, 42), {"process_bytes": 34359738368,
+                         "job_bytes": 34359738368, "flags": 8968, "active_limit": 2})
+        limits[1] = 25769803776
+        with self.assertRaisesRegex(ValueError, "suspended Job"):
+            runner.configure_job(api, 42)
+        with self.assertRaisesRegex(ValueError, "sealed producer"):
+            host_policy.load_graph_runner(path, raw + b"\n")
+
+        plan, binding, base, read = fixture()
+        owner = adapter(plan)
+        policy = pin("fixture/compact-host-policy.py")
+        owner.approved["memory_policy"] = policy
+        owner.component.LIMITS = runner.LIMITS
+        with self.assertRaisesRegex(ValueError, "host policy"):
+            owner.identify(plan)
+        plan["compact_host_policy"] = policy
+        plan["input_seals"][policy["path"]] = policy["sha256"]
+        with self.assertRaisesRegex(ValueError, "host policy"):
+            owner.identify(plan)
+        plan["limits"] = runner.LIMITS
+        owner.identify(plan)
+        self.assertIn(policy, fresh.derive_boundary(legacy, plan, binding, base, read))
+
     def test_held_boundary_uses_current_sources_and_process_evidence(self):
         plan, binding, base, read = fixture()
         rows = fresh.derive_boundary(legacy, plan, binding, base, read)

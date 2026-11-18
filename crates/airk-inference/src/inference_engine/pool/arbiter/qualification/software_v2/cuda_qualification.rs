@@ -123,6 +123,97 @@ fn bounds_validate(
     );
     DeviceCapacityPlan::probe(cold, warm, headroom)
 }
+fn compact_probe_limits(
+    bounds: &GpuProbeReservation,
+    cold: u64,
+    warm: u64,
+    headroom: u64,
+    job: u64,
+) -> bool {
+    let host_and_job = (bounds.host_limit_bytes, job);
+    host_and_job == (16 << 30, 24 << 30)
+        || (cfg!(all(windows, target_arch = "x86_64"))
+            && host_and_job == (32 << 30, 32 << 30)
+            && bounds.device_limit_bytes == 24 << 30
+            && bounds.deadline_ms == 120_000
+            && (cold, warm, headroom) == (16 << 30, 8 << 30, 2 << 30))
+}
+fn profile_probe_bounds(
+    bounds: &GpuProbeReservation,
+    cold: u64,
+    warm: u64,
+    headroom: u64,
+    job: u64,
+    profile: &Profile,
+) -> Result<DeviceCapacityPlan> {
+    if profile.model == ModelChoice::ContextQwenCompact {
+        ensure!(
+            compact_probe_limits(bounds, cold, warm, headroom, job),
+            "Compact probe host/Job and device bounds differ"
+        );
+    }
+    bounds_validate(
+        bounds,
+        cold,
+        warm,
+        headroom,
+        job,
+        profile.memory_reservation_bytes,
+    )
+}
+#[test]
+fn compact_probe_host_limits_preserve_legacy_and_bind_windows_expansion() {
+    let mut bounds = GpuProbeReservation {
+        schema: "airk.arbiter.gpu-probe-reservation/1".into(),
+        host_limit_bytes: 16 << 30,
+        device_limit_bytes: 24 << 30,
+        deadline_ms: 120_000,
+    };
+    assert!(compact_probe_limits(
+        &bounds,
+        16 << 30,
+        8 << 30,
+        2 << 30,
+        24 << 30
+    ));
+    assert!(!compact_probe_limits(
+        &bounds,
+        16 << 30,
+        8 << 30,
+        2 << 30,
+        32 << 30
+    ));
+    bounds.host_limit_bytes = 32 << 30;
+    assert_eq!(
+        compact_probe_limits(&bounds, 16 << 30, 8 << 30, 2 << 30, 32 << 30),
+        cfg!(all(windows, target_arch = "x86_64"))
+    );
+    for (cold, warm, headroom, job) in [
+        (16 << 30, 8 << 30, 2 << 30, 24 << 30),
+        (15 << 30, 8 << 30, 2 << 30, 32 << 30),
+        (16 << 30, 7 << 30, 2 << 30, 32 << 30),
+        (16 << 30, 8 << 30, 1 << 30, 32 << 30),
+    ] {
+        assert!(!compact_probe_limits(&bounds, cold, warm, headroom, job));
+    }
+    bounds.device_limit_bytes = 32 << 30;
+    assert!(!compact_probe_limits(
+        &bounds,
+        16 << 30,
+        8 << 30,
+        2 << 30,
+        32 << 30
+    ));
+    bounds.device_limit_bytes = 24 << 30;
+    bounds.deadline_ms = 119_999;
+    assert!(!compact_probe_limits(
+        &bounds,
+        16 << 30,
+        8 << 30,
+        2 << 30,
+        32 << 30
+    ));
+}
 fn final_host_peak(peak: Option<u64>, limit: u64) -> Result<u64> {
     let value = peak.context("actual final persistent host RSS peak unavailable")?;
     ensure!(
@@ -353,13 +444,13 @@ fn emit_cuda_component_probe_request() -> Result<()> {
             number("AIRK_CUDA_HEADROOM_BYTES")?,
             number("AIRK_CUDA_JOB_LIMIT_BYTES")?,
         );
-        bounds_validate(
+        profile_probe_bounds(
             &bounds,
             cold_bytes,
             warm_bytes,
             headroom_bytes,
             job_limit_bytes,
-            profile.memory_reservation_bytes,
+            &profile,
         )?;
         Request::Prepare {
             schema: SCHEMA.into(),
@@ -439,13 +530,13 @@ fn emit_cuda_fp32_probe_metadata() -> Result<()> {
     };
     ensure!(schema == SCHEMA, "unknown metadata schema");
     let (mut input, profile, files, _) = inputs_from(&cpu_input)?;
-    let plan = bounds_validate(
+    let plan = profile_probe_bounds(
         &bounds,
         cold_bytes,
         warm_bytes,
         headroom_bytes,
         job_limit_bytes,
-        profile.memory_reservation_bytes,
+        &profile,
     )?;
     let deadline = started + Duration::from_millis(bounds.deadline_ms);
     let raw = pinned(&runtime_manifest, 128 << 10)?;
@@ -527,13 +618,13 @@ fn probe(kind: CaseKind) -> Result<()> {
         .checked_add(bounds.deadline_ms * 1_000_000)
         .context("absolute probe expiry overflow")?;
     let (input, profile, files, _) = inputs_from(&gpu_input)?;
-    let plan = bounds_validate(
+    let plan = profile_probe_bounds(
         &bounds,
         cold_bytes,
         warm_bytes,
         headroom_bytes,
         job_limit_bytes,
-        profile.memory_reservation_bytes,
+        &profile,
     )?;
     let manifest_bytes = pinned(&runtime_manifest, 128 << 10)?;
     let _ = manifest_bytes;
@@ -1684,7 +1775,7 @@ fn graph_diagnostic_evidence(
 }
 
 #[test]
-#[ignore = "disposable final graph metadata only: original120s/16GiB/24GiB, actual CUDA lease/device; no scorer or forward"]
+#[ignore = "disposable final graph metadata only: original120s, explicit Compact host/Job, actual CUDA lease/device; no scorer or forward"]
 fn cuda_load_only_graph_metadata_diagnostic() -> Result<()> {
     let started_ns = airk_process::monotonic::now_ns()?;
     let started = Instant::now();
@@ -1711,11 +1802,8 @@ fn cuda_load_only_graph_metadata_diagnostic() -> Result<()> {
     ensure!(schema == SCHEMA, "unknown diagnostic request schema");
     bounds.validate()?;
     ensure!(
-        bounds.deadline_ms == 120000
-            && bounds.host_limit_bytes == 16 << 30
-            && bounds.device_limit_bytes == 24 << 30
-            && job_limit_bytes == 24 << 30,
-        "graph metadata diagnostic original bounds differ"
+        bounds.deadline_ms == 120000 && bounds.device_limit_bytes == 24 << 30,
+        "graph metadata diagnostic original deadline/device bounds differ"
     );
     let deadline = started + Duration::from_millis(bounds.deadline_ms);
     let expires_ns = started_ns
@@ -1723,20 +1811,20 @@ fn cuda_load_only_graph_metadata_diagnostic() -> Result<()> {
         .context("diagnostic expiry overflow")?;
     // Actual source assets are authenticated below before disposable session creation.
     let (input, profile, files, _) = inputs_from(&gpu_input)?;
-    let capacity_plan = bounds_validate(
-        &bounds,
-        cold_bytes,
-        warm_bytes,
-        headroom_bytes,
-        job_limit_bytes,
-        profile.memory_reservation_bytes,
-    )?;
     ensure!(
         profile.model == ModelChoice::ContextQwenCompact
             && profile.device_execution.is_some()
             && profile.cpu_fit.is_none(),
         "graph metadata diagnostic requires frozen Compact GPU metadata"
     );
+    let capacity_plan = profile_probe_bounds(
+        &bounds,
+        cold_bytes,
+        warm_bytes,
+        headroom_bytes,
+        job_limit_bytes,
+        &profile,
+    )?;
     pinned(&runtime_manifest, 128 << 10)?;
     let (root, manifest) = airk_host::gpu_runtime::installed_paths()?;
     ensure!(

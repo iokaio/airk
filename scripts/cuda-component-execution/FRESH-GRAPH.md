@@ -44,8 +44,15 @@ original start, clipped to the campaign end. The second checks the independently
 reviewed preparation and prepares the exact graph plan within 120 seconds.
 The third verifies the reviewed plan and reopens the held current boundary
 within the same 120 seconds used by the native selector and final observations.
-Its owned process and Job limits remain 16 and 24 GiB. The existing five-second
-cleanup, 16 MiB native output and 64 MiB log limits apply. The output guards are
+Historical plans use 16 GiB per process and 24 GiB per Job. The approved
+Windows Compact host limit is 32 GiB per process and 32 GiB per Job. Supply
+`--compact-host-policy-sha256 SHA` in all three commands for that variant and
+use newly emitted Compact Probe metadata with the exact 32 GiB host and
+Job values. The [memory policy adapter](compact_graph_host.py) authenticates
+the sealed cu15 producer runner and changes only the host limit checks and Job
+setup in a private copy. Each preparation and execution holds a separate pin
+of the adapter. The existing five-second cleanup, 16 MiB native output and
+64 MiB log limits apply. The output guards are
 the same checked Windows guards used by the existing component owner.
 A successful fresh execution retains execution.json in the reviewed output root.
 

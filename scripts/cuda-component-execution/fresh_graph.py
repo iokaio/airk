@@ -17,6 +17,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 SELF = Path(__file__).resolve()
 CONTRACT = HERE / "FRESH-GRAPH.md"
+MEMORY_POLICY = HERE / "compact_graph_host.py"
 SOURCES = {
     "component": ROOT / "scripts/cuda-component-execution.py",
     "lease": HERE / "graph_provenance.py",
@@ -121,6 +122,8 @@ def derive_boundary(legacy, plan, binding, base, read, *, known=None):
 
     for field in (*legacy.PLAN_PINS, "fresh_bootstrap", "fresh_lease_owner"):
         add(plan[field])
+    if "compact_host_policy" in plan:
+        add(plan["compact_host_policy"])
     for field in BINDING_PINS:
         add(binding[field])
     for row in (*binding["source_pins"], *plan["runtime_files"]):
@@ -206,6 +209,9 @@ class FreshGraph:
                 and plan["fresh_lease_owner"] == self.approved["lease"]
                 and plan["fresh_bootstrap"] == self.approved["roster"],
                 "reviewed fresh graph launcher or shared source differs")
+        require(plan.get("compact_host_policy") == self.approved.get("memory_policy")
+                and plan["limits"] == self.component.LIMITS,
+                "reviewed Compact graph host policy differs")
         require(self.component.execution_mode(plan) == "graph", "explicit graph diagnostic mode required")
 
     def held_preserver(self, lease, plan):
@@ -253,6 +259,9 @@ class FreshGraph:
         plan["graph_provenance_contract"] = self.policy_pin
         plan["fresh_bootstrap"] = self.approved["roster"]
         plan["fresh_lease_owner"] = self.approved["lease"]
+        if memory_policy := self.approved.get("memory_policy"):
+            plan["compact_host_policy"] = memory_policy
+            plan["input_seals"][memory_policy["path"]] = memory_policy["sha256"]
         self.identify(plan)
         for row in (self.self_pin, self.policy_pin, self.approved["roster"], self.approved["lease"]):
             plan["input_seals"][row["path"]] = row["sha256"]
@@ -361,6 +370,7 @@ def parse(argv):
     parser.add_argument("--approved-sources", type=Path, required=True)
     parser.add_argument("--approved-sources-sha256", required=True)
     parser.add_argument("--fresh-contract-sha256", required=True)
+    parser.add_argument("--compact-host-policy-sha256", help="Use the reviewed 32 GiB Compact graph host policy")
     parser.add_argument("--metadata-receipt", type=Path)
     parser.add_argument("--metadata-receipt-sha256")
     parser.add_argument("--image-packet", type=Path)
@@ -401,7 +411,13 @@ def main(argv=None):
     approved, bodies = {"roster": roster_pin}, {}
     for role, path in SOURCES.items():
         approved[role], bodies[role] = captured(path, roster[role], MAX_SOURCE, deadline)
-    component = installed_owner(SOURCES["component"], bodies["component"], "fresh_graph_component")
+    if args.compact_host_policy_sha256:
+        approved["memory_policy"], raw = captured(
+            MEMORY_POLICY, args.compact_host_policy_sha256, MAX_SOURCE, deadline)
+        memory_policy = installed_owner(MEMORY_POLICY, raw, "fresh_graph_compact_host_policy")
+        component = memory_policy.load_graph_runner(SOURCES["component"], bodies["component"])
+    else:
+        component = installed_owner(SOURCES["component"], bodies["component"], "fresh_graph_component")
     legacy = installed_owner(SOURCES["lease"], bodies["lease"], "fresh_graph_lease")
     base = installed_owner(SOURCES["native"], bodies["native"], "fresh_graph_native")
     require(base.CAMPAIGN == campaign and base.SID == legacy.SID == component.SID,

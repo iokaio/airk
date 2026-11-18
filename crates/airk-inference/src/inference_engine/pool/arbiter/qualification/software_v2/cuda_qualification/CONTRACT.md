@@ -36,9 +36,14 @@ fixed native-monotonic expiry; historical relative operations are unchanged.
 The external owned-process watchdog remains required for unreturned FFI.
 
 Before GPU activation, actual Windows Job process/job limits and kill-on-close
-must equal the explicit request. A real Kernel Resources optional reservation
-charges the full declared host bound with actual fresh OS headroom and retained
-release observer. This is an isolated component resource owner, not product
+must equal the explicit request. Compact retains the historical 16 GiB process
+and 24 GiB Job pair. On x64 Windows, fresh Compact graph and score requests may
+instead use an exact 32 GiB process and 32 GiB aggregate Job pair with the
+original 120000 ms deadline, 24 GiB device bound, and 16/8/2 GiB device
+cold/warm/headroom values. Focus and Large keep their existing bounds. A real
+Kernel Resources optional reservation charges the full declared host bound with
+actual fresh OS headroom and a retained release observer. This is an isolated
+component resource owner, not product
 lane admission. Host CPU fit and source/weight limits remain unchanged. Actual
 CUDA device cold/warm claims observe free memory under the native broker; no
 measured device peak is invented (null until the separate real peak observer).
@@ -202,7 +207,7 @@ never relabels that unknown native teardown as an observed native release.
 
 The existing placement selector, byte writer and strict selected-log completeness rules remain unchanged. A distinct ignored cuda_load_only_graph_metadata_diagnostic selector emits airk.private.cuda-graph-metadata-diagnostic/1 and can report graph_metadata_observed only after the actual native diagnostic call, complete final placement, complete final graph metadata cross-comparison and real session/outer custody settlement all pass.
 
-The new selector consumes fresh authenticated FP32 Compact Probe metadata with the current native runtime manifest/static-core identity. It retains the same original120s, process16GiB and Job24GiB limits, actual lease/device/evaluation authority, file authentication, host reservation, final RSS and post-input checks. It returns no Scorer, dispatches no forward, creates no operation journal and grants no hybrid policy, activation or qualification. Existing poison/unknown-release custody remains unchanged.
+The new selector consumes fresh authenticated FP32 Compact Probe metadata with the current native runtime manifest/static-core identity. It retains the original 120-second deadline, the Compact host and Job pairs described above, actual lease/device/evaluation authority, file authentication, host reservation, final RSS and post-input checks. It returns no Scorer, dispatches no forward, creates no operation journal and grants no hybrid policy, activation or qualification. Existing poison/unknown-release custody remains unchanged.
 
 The graph_metadata object is the Retrieval-owned airk.private.ort-final-graph-metadata/1 observation. The full capped log snapshot is retained. selected_logs_complete is true exactly when logs.truncated is false and logs.omitted is zero; false is explicit and does not claim that the old placement diagnostic passed. New-mode success requires LoadSnapshot::validate_graph_metadata rather than the older log-complete LoadSnapshot::validate. Missing graph metadata, partial placement/graph records, mismatched node identities, failed actual session load or unproved teardown refuse success.
 

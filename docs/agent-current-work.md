@@ -37,6 +37,11 @@ Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:
 - D08 now includes FP32 GPU execution first, then FP16 with efficient attention,
   both available for 1.9.0 with automatic admitted CPU fallback. Keep each variant's
   identity and qualification separate; no relaxed gates or silent model switch.
+- On 18 November the user approved an exact 32 GiB Windows Compact host
+  process cap. Use a 32 GiB aggregate Job cap so the process can use that
+  allowance. The 24 GiB device budget, original 120-second deadline and all
+  numerical/placement criteria still apply. Keep the earlier 16/24 GiB
+  attempt evidence under its own identity.
 - Preserve the selected bundled MiniLM plus independent optional Focus
   (Qwen3-Reranker-0.6B) and Context Compact/Large (Qwen3-1.7B/4B). Terminal
   classes stay unavailable until their own evidence passes. Use suitable
