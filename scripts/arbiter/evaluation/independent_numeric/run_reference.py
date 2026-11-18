@@ -19,8 +19,8 @@ def checked_output_guard(plan, powershell):
         expected = plan["input_seals"].get(str(path))
         if not expected:
             raise ValueError("checked output audit input is absent from the plan seal: " + str(path))
-        worker.pinned({"path": str(path), "sha256": expected})
-        pins[key] = {"path": str(path), "sha256": expected}
+        checked = worker.pinned({"path": str(path), "sha256": expected})
+        pins[key] = {"path": str(checked), "bytes": checked.stat().st_size, "sha256": expected}
     spec = importlib.util.spec_from_file_location("independent_reference_output_guard", component)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
