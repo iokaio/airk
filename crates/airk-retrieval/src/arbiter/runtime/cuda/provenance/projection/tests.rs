@@ -265,6 +265,12 @@ fn private_json_duplicates_floats_and_unlisted_path_options_refuse() -> Result<(
     .into_iter()
     .map(|name| json!(format!("-D{name}=C:/synthetic")))
     .collect();
+    valid_paths.push(json!("-DCMAKE_CUDA_ARCHITECTURES=86;89;120"));
+    let projected = options(&Value::Array(valid_paths.clone()))?;
+    assert_eq!(projected.len(), 1);
+    assert_eq!(projected[0].name, "CMAKE_CUDA_ARCHITECTURES");
+    assert_eq!(projected[0].value, "86;89;120");
+
     valid_paths.push(json!("-DUNKNOWN=C:/Users/private"));
     let error = options(&Value::Array(valid_paths))
         .err()

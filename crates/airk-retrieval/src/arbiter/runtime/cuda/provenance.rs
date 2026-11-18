@@ -11,6 +11,24 @@ mod tests;
 
 pub(super) const NAME: &str = "airk-cuda-build-provenance.json";
 const MAX_JSON: usize = 262_144;
+const CUDA_ARCHITECTURES_OPTION: &str = "CMAKE_CUDA_ARCHITECTURES";
+
+fn configured_architectures(value: &str) -> Option<&'static [[u32; 2]]> {
+    match value {
+        "86" => Some(&[[8, 6]]),
+        "86;89;120" => Some(&[[8, 6], [8, 9], [12, 0]]),
+        _ => None,
+    }
+}
+
+fn safe_build_option(name: &str, value: &str) -> bool {
+    token(name, 128)
+        && if name == CUDA_ARCHITECTURES_OPTION {
+            configured_architectures(value).is_some()
+        } else {
+            value.is_empty() || token(value, 256)
+        }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -391,9 +409,7 @@ fn validate_description(
     let mut options = BTreeSet::new();
     for row in &value.options {
         ensure!(
-            token(&row.name, 128)
-                && (row.value.is_empty() || token(&row.value, 256))
-                && options.insert(row.name.clone()),
+            safe_build_option(&row.name, &row.value) && options.insert(row.name.as_str()),
             "unsafe/duplicate semantic build option"
         );
     }
@@ -401,7 +417,6 @@ fn validate_description(
         ("onnxruntime_USE_CUDA", "ON"),
         ("onnxruntime_BUILD_SHARED_LIB", "OFF"),
         ("onnxruntime_BUILD_CUDA_EP_AS_PLUGIN", "OFF"),
-        ("CMAKE_CUDA_ARCHITECTURES", "86"),
     ] {
         ensure!(
             value
@@ -411,6 +426,7 @@ fn validate_description(
             "same static-core build option missing"
         );
     }
+    value.architectures()?;
     let mut payload = BTreeMap::new();
     let mut total = 0u64;
     for row in &value.files {
@@ -508,7 +524,30 @@ pub(super) fn validate(
     Ok(value)
 }
 
+/// Load and packaging use the same held provenance/requirement architecture binding.
+pub(super) fn validate_product(
+    raw: &[u8],
+    product: &manifest::ProductRuntimeManifest,
+) -> Result<PublicRuntimeProvenance> {
+    let value = validate(
+        raw,
+        &product.provenance,
+        product.static_core_build,
+        &product.files,
+    )?;
+    product.validate_architectures(value.architectures()?)?;
+    Ok(value)
+}
+
 impl PublicRuntimeProvenance {
+    fn architectures(&self) -> Result<&'static [[u32; 2]]> {
+        self.options
+            .iter()
+            .find(|row| row.name == CUDA_ARCHITECTURES_OPTION)
+            .and_then(|row| configured_architectures(&row.value))
+            .context("authenticated CUDA build architectures missing")
+    }
+
     /// Exact direct-child assets for the loader's original held-file custody.
     pub(super) fn legal_assets(&self) -> Vec<Asset> {
         self.legal

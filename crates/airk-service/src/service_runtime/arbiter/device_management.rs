@@ -1769,6 +1769,7 @@ impl Launch {
                         let receive = handle.probe_devices(
                             self.lease.clone(),
                             model,
+                            eligible.iter().map(|profile| profile.manifest).collect(),
                             host.clone(),
                             self.deadline,
                             probe_live.clone(),
@@ -2114,11 +2115,11 @@ impl Launch {
                         serial,
                         Availability::Ready,
                         if profile.device_execution.is_some() {
-                            "Authenticated GPU execution is active for the selected model on the single metadata-selected compatible dedicated SM86 adapter; other adapters were not initialized."
+                            "Authenticated GPU execution is active for the selected model on the single metadata-selected compatible dedicated CUDA adapter; other adapters were not initialized."
                         } else if requested.device_policy == DevicePolicy::Cpu {
                             "FP32 CPU execution is active by request."
                         } else {
-                            "FP32 CPU fallback is active for the selected model. GPU policy considers one compatible dedicated SM86 adapter by physical capacity; other adapters are not initialized or claimed unable to fit."
+                            "FP32 CPU fallback is active for the selected model. GPU policy considers one compatible dedicated CUDA adapter by physical capacity; other adapters are not initialized or claimed unable to fit."
                         },
                     );
                 }

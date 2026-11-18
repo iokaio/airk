@@ -361,7 +361,7 @@ fn native_probe_builder_returns_new_bound_unavailable_cal_without_old_rules() ->
     Ok(())
 }
 
-fn product_manifest() -> manifest::ProductRuntimeManifest {
+pub(super) fn product_manifest() -> manifest::ProductRuntimeManifest {
     let old = manifest();
     let identity = "literal-native-product-identity".to_owned();
     manifest::ProductRuntimeManifest {
@@ -417,9 +417,18 @@ fn product_manifest_is_distinct_strict_and_has_no_scientific_fit_transfer() -> R
     let mut legacy = serde_json::to_value(manifest())?;
     legacy["schema"] = serde_json::json!("airk.native.cuda-runtime-manifest/2");
     assert!(manifest::RuntimeDescriptor::parse(&serde_json::to_vec(&legacy)?).is_err());
-    let mut altered = product.clone();
-    altered.requirements[0].compute_capabilities = vec![[8, 9]];
-    assert!(altered.validate().is_err());
+    for invalid in [
+        vec![],
+        vec![[8, 6], [8, 9]],
+        vec![[8, 9], [8, 9]],
+        vec![[8, 7]],
+        vec![[9, 0]],
+        vec![[12, 1]],
+    ] {
+        let mut altered = product.clone();
+        altered.requirements[0].compute_capabilities = invalid;
+        assert!(altered.validate().is_err());
+    }
     let mut altered = product.clone();
     altered.requirements[0].artifact_evidence.resources =
         altered.requirements[0].artifact_evidence.numerical;
@@ -429,6 +438,67 @@ fn product_manifest_is_distinct_strict_and_has_no_scientific_fit_transfer() -> R
     assert!(altered.validate().is_err());
     Ok(())
 }
+#[test]
+fn product_compute_classes_bind_distinct_literal_policy_and_adapter_metadata() -> Result<()> {
+    let classes = [
+        (
+            [8, 6],
+            "12918e36599fa7c8787d4e7d9e12d83cf161c5635b7ab6c768976d7b45d0edf9",
+        ),
+        (
+            [8, 9],
+            "52627e5743f2235061ae582f2133a38e822d753c017659a05aef81d6e7f93cd3",
+        ),
+        (
+            [12, 0],
+            "70156ba3f8b9f41805aef4ecdba3768ce487743f6a052249901265421a963a39",
+        ),
+    ];
+    assert_eq!(
+        product_compatibility_policy_digest().to_string(),
+        "12918e36599fa7c8787d4e7d9e12d83cf161c5635b7ab6c768976d7b45d0edf9"
+    );
+    for (class, expected) in classes {
+        let mut product = product_manifest();
+        product.requirements[0].compute_capabilities = vec![class];
+        product.requirements[0].minimum_driver_api = 12090;
+        product.validate()?;
+        let row = &product.requirements[0];
+        assert_eq!(row.compatibility_policy_digest()?.to_string(), expected);
+        let mut id = AdapterIdentity {
+            uuid: [11; 16],
+            ordinal: 3,
+            compute_major: class[0] as i32,
+            compute_minor: class[1] as i32,
+            driver_api_version: 12090,
+            driver_image_sha256: Sha256Digest::from_bytes([12; 32]),
+            physical_total_bytes: 110,
+            dedicated_memory: true,
+        };
+        row.supports(&id)?;
+        assert!(
+            manifest::RuntimeDescriptor::Product(product.clone()).product_has_adapter_class(&id)
+        );
+        assert!(
+            !manifest::RuntimeDescriptor::Scientific(manifest()).product_has_adapter_class(&id)
+        );
+        id.driver_api_version = 12089;
+        assert!(!row.matches_adapter_class(&id));
+        id.driver_api_version = 12090;
+        id.driver_image_sha256 = Sha256Digest::from_bytes([0; 32]);
+        assert!(!row.matches_adapter_class(&id));
+        id.driver_image_sha256 = Sha256Digest::from_bytes([12; 32]);
+        for (other, _) in classes {
+            id.compute_major = other[0] as i32;
+            id.compute_minor = other[1] as i32;
+            assert_eq!(row.matches_adapter_class(&id), class == other);
+        }
+        product.requirements.clear();
+        assert!(!manifest::RuntimeDescriptor::Product(product).product_has_adapter_class(&id));
+    }
+    Ok(())
+}
+
 #[test]
 fn product_compatibility_is_not_reference_uuid_or_driver_image_equality() -> Result<()> {
     let product = product_manifest();

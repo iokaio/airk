@@ -213,18 +213,17 @@ fn actual_charge_identity_changes_joint_generation_but_metadata_never_holds_its_
     Ok(())
 }
 #[test]
-fn product_adapter_policy_skips_unsupported_metadata_and_selects_only_maximum_dedicated_sm86() {
+fn product_adapter_policy_prefers_physical_fit_then_maximum_capacity() {
     let rank = super::super::device::product_adapter_rank;
     assert_eq!(
-        rank(8, 6, true, 16 << 30, 2),
-        Some((std::cmp::Reverse(16 << 30), 2))
+        rank(true, 16 << 30, 2),
+        Some((false, std::cmp::Reverse(16 << 30), 2))
     );
-    assert!(rank(8, 9, true, 24 << 30, 0).is_none());
-    assert!(rank(8, 6, false, 24 << 30, 0).is_none());
-    assert!(rank(8, 6, true, 0, 0).is_none());
-    assert!(rank(8, 6, true, 16 << 30, -1).is_none());
-    assert!(rank(8, 6, true, 24 << 30, 3) < rank(8, 6, true, 16 << 30, 0));
-    assert!(rank(8, 6, true, 16 << 30, 0) < rank(8, 6, true, 16 << 30, 2));
+    assert!(rank(true, 16 << 30, 2) < rank(false, 24 << 30, 0));
+    assert!(rank(true, 0, 0).is_none());
+    assert!(rank(true, 16 << 30, -1).is_none());
+    assert!(rank(true, 24 << 30, 3) < rank(true, 16 << 30, 0));
+    assert!(rank(true, 16 << 30, 0) < rank(true, 16 << 30, 2));
 }
 
 #[test]

@@ -716,12 +716,8 @@ pub(super) fn admit(
         manifest::RuntimeDescriptor::Product(value) => {
             let artifact = &value.provenance;
             let proof = HeldFile::open(&directory, &root.join(&artifact.name), true, deadline)?;
-            let projected = super::provenance::validate(
-                &read(&proof.file, 1 << 20)?,
-                artifact,
-                value.static_core_build,
-                &value.files,
-            )?;
+            let projected =
+                super::provenance::validate_product(&read(&proof.file, 1 << 20)?, value)?;
             sidecars.push(proof);
             let mut names = BTreeSet::new();
             for legal in projected.legal_assets() {
@@ -1490,12 +1486,7 @@ pub(super) fn observe_package_projection(
         true,
         deadline,
     )?;
-    let public = super::provenance::validate(
-        &read(&proof.file, 1 << 20)?,
-        &value.provenance,
-        value.static_core_build,
-        &value.files,
-    )?;
+    let public = super::provenance::validate_product(&read(&proof.file, 1 << 20)?, &value)?;
     let descriptor_row = super::provenance::PublicFile {
         name: path
             .file_name()

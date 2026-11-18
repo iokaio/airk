@@ -255,10 +255,7 @@ fn options(value: &Value) -> Result<Vec<BuildOption>> {
                 private.insert(name);
                 continue;
             }
-            ensure!(
-                token(name, 128) && (v.is_empty() || token(v, 256)),
-                "unsafe semantic build option"
-            );
+            ensure!(safe_build_option(name, v), "unsafe semantic build option");
             output.push(BuildOption {
                 name: name.into(),
                 value: v.into(),

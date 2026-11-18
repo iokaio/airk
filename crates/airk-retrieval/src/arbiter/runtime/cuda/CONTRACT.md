@@ -187,16 +187,24 @@ retain their original scope/bytes. Product RuntimeManifest/2 has the explicit au
 fields from the G3 decision and a Core Notice Asset pin to the separately
 Rust-owned public provenance projection; it does not ship the private raw
 producer sidecar. It accepts no `fits`, adapter UUID or driver-image equality rule.
-A new approved manifest/policy digest and GPU Profile identity are mandatory.
-Unknown schema/target/SM/build/provider/math/placement/resource/source rows
-refuse; initial actual supported class is Windows x64/SM86 only. Signed held
-System32 driver identity remains mandatory actual observation, not a reference
-card's universal allowlist. CPU encoding/execution and forced CPU remain intact.
+Each Windows x64 GPU Profile and requirement row binds exactly one compute class
+from SM86, SM89 and SM120. The SM86 product compatibility digest retains its
+original bytes. SM89 and SM120 have separate compatibility digests and require
+their own evidence-backed Profile and requirement row. The held public
+provenance and package projection both require the exact configured architecture
+option `86` or `86;89;120` and reject a manifest row outside that build's set.
+This binds the declared class to authenticated configure metadata. The separate
+new-build review inspects actual provider kernel targets before qualification.
+The historical /6 proof remains scoped to its original producer identities.
+Unknown schema, target, SM, build, provider, math, placement, resource and
+source rows refuse. Signed held System32 driver identity remains an actual
+observation. CPU encoding, execution and forced CPU continue through their
+existing paths.
 
 A non-Deserialize DeviceEligibility is created only by actual native owner
 completion of bounded per-host admission under the existing management
-warm/probe original<=120000ms deadline: authenticate exact artifacts/actual
-SM86+signed driver/modules; check real free capacity against qualified
+warm/probe original<=120000ms deadline: authenticate exact artifacts, actual
+qualified compute class and signed driver/modules. Check real free capacity against qualified
 conservative requirements and actual charges; native load; complete final
 all-subgraph placement; one pass of independently referenced Context17/128/8192
 or all twelve Focus512 cases; real synchronization and final deadline/authority/

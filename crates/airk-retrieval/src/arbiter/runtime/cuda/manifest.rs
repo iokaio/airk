@@ -208,16 +208,34 @@ pub(super) struct VariantRequirement {
     pub acceptance_fixture: airk_core::arbiter::Asset,
 }
 impl VariantRequirement {
+    fn compute_class(&self) -> Option<[u32; 2]> {
+        let [class] = self.compute_capabilities.as_slice() else {
+            return None;
+        };
+        product_compatibility_policy(*class).map(|_| *class)
+    }
+
+    pub fn compatibility_policy_digest(&self) -> Result<Sha256Digest> {
+        let [major, minor] = self
+            .compute_class()
+            .context("invalid product compute class")?;
+        product_compatibility_policy_digest_for(i32::try_from(major)?, i32::try_from(minor)?)
+    }
+
+    pub fn matches_adapter_class(&self, id: &AdapterIdentity) -> bool {
+        id.uuid != [0; 16]
+            && id.driver_image_sha256 != Sha256Digest::from_bytes([0; 32])
+            && id.dedicated_memory
+            && self.compute_class().is_some_and(|[major, minor]| {
+                u32::try_from(id.compute_major) == Ok(major)
+                    && u32::try_from(id.compute_minor) == Ok(minor)
+            })
+            && id.driver_api_version >= self.minimum_driver_api
+    }
+
     pub fn supports(&self, id: &AdapterIdentity) -> Result<()> {
         ensure!(
-            id.uuid != [0; 16]
-                && id.driver_image_sha256 != Sha256Digest::from_bytes([0; 32])
-                && id.dedicated_memory
-                && self.compute_capabilities.contains(&[
-                    u32::try_from(id.compute_major)?,
-                    u32::try_from(id.compute_minor)?
-                ])
-                && id.driver_api_version >= self.minimum_driver_api,
+            self.matches_adapter_class(id),
             "actual native product architecture/driver/memory-pool unsupported"
         );
         let required = self
@@ -277,7 +295,7 @@ impl ProductRuntimeManifest {
             );
             ensure!(
                 row.target == "x86_64-pc-windows-msvc"
-                    && row.compute_capabilities == [[8, 6]]
+                    && row.compute_class().is_some()
                     && row.minimum_driver_api >= 12080,
                 "unqualified native target/SM/driver requirements"
             );
@@ -308,6 +326,16 @@ impl ProductRuntimeManifest {
                 "complete independent eligibility fixture required"
             );
         }
+        Ok(())
+    }
+
+    pub(super) fn validate_architectures(&self, architectures: &[[u32; 2]]) -> Result<()> {
+        ensure!(
+            self.requirements.iter().all(|row| row
+                .compute_class()
+                .is_some_and(|class| architectures.contains(&class))),
+            "product compute class is absent from authenticated build architectures"
+        );
         Ok(())
     }
 }
@@ -383,6 +411,17 @@ impl RuntimeDescriptor {
             matches!(self, Self::Product(_))
         }
     }
+    #[cfg(any(test, all(windows, target_arch = "x86_64")))]
+    pub fn product_has_adapter_class(&self, id: &AdapterIdentity) -> bool {
+        match self {
+            Self::Scientific(_) => false,
+            Self::Product(value) => value
+                .requirements
+                .iter()
+                .any(|row| row.matches_adapter_class(id)),
+        }
+    }
+
     pub fn fits(&self) -> Result<&[VariantFit]> {
         #[cfg(not(any(test, all(windows, target_arch = "x86_64"))))]
         {
@@ -450,6 +489,29 @@ impl RuntimeDescriptor {
         Ok((value, digest))
     }
 }
+const PRODUCT_SM86_POLICY: &[u8] = b"windows-x64;sm=86;dedicated;driver-api>=12080;signed-held-driver-and-module-closure;qualified-conservative-bounds;actual-load-final-map-independent-one-pass-numeric-sync;original-management-deadline;no-user-g4-or-permit";
+
+fn product_compatibility_policy(class: [u32; 2]) -> Option<&'static [u8]> {
+    match class {
+        [8, 6] => Some(PRODUCT_SM86_POLICY),
+        [8, 9] => Some(b"windows-x64;sm=89;dedicated;driver-api>=12080;signed-held-driver-and-module-closure;qualified-conservative-bounds;actual-load-final-map-independent-one-pass-numeric-sync;original-management-deadline;no-user-g4-or-permit"),
+        [12, 0] => Some(b"windows-x64;sm=120;dedicated;driver-api>=12080;signed-held-driver-and-module-closure;qualified-conservative-bounds;actual-load-final-map-independent-one-pass-numeric-sync;original-management-deadline;no-user-g4-or-permit"),
+        _ => None,
+    }
+}
+
+pub(super) fn product_compatibility_policy_digest_for(
+    major: i32,
+    minor: i32,
+) -> Result<Sha256Digest> {
+    let class = [u32::try_from(major)?, u32::try_from(minor)?];
+    let policy = product_compatibility_policy(class).context("unsupported native product class")?;
+    Ok(airk_core::identity::framed_digest(
+        b"airk.native.cuda.compatibility/2",
+        &[policy],
+    ))
+}
+
 pub fn product_compatibility_policy_digest() -> Sha256Digest {
-    airk_core::identity::framed_digest(b"airk.native.cuda.compatibility/2",&[b"windows-x64;sm=86;dedicated;driver-api>=12080;signed-held-driver-and-module-closure;qualified-conservative-bounds;actual-load-final-map-independent-one-pass-numeric-sync;original-management-deadline;no-user-g4-or-permit"])
+    airk_core::identity::framed_digest(b"airk.native.cuda.compatibility/2", &[PRODUCT_SM86_POLICY])
 }

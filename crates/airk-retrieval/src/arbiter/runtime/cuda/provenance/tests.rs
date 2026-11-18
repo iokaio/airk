@@ -201,6 +201,57 @@ fn public_provenance_roundtrip_and_exact_legal_assets() -> Result<()> {
     Ok(())
 }
 #[test]
+fn product_requirement_rows_must_match_authenticated_configured_architectures() -> Result<()> {
+    let (mut value, native) = fixture();
+    let mut product = super::super::tests::product_manifest();
+    product.static_core_build = value.static_core_build;
+    product.files = native;
+    let (raw, asset) = raw_asset(&value)?;
+    product.provenance = asset;
+    validate_product(&raw, &product)?;
+    for class in [[8, 9], [12, 0]] {
+        product.requirements[0].compute_capabilities = vec![class];
+        assert!(validate_product(&raw, &product).is_err());
+    }
+
+    let architectures = value
+        .options
+        .iter_mut()
+        .find(|row| row.name == "CMAKE_CUDA_ARCHITECTURES")
+        .context("test architecture option")?;
+    architectures.value = "86;89;120".into();
+    let (raw, asset) = raw_asset(&value)?;
+    product.provenance = asset;
+    for class in [[8, 6], [8, 9], [12, 0]] {
+        product.requirements[0].compute_capabilities = vec![class];
+        validate_product(&raw, &product)?;
+    }
+    for invalid in [
+        "",
+        "89",
+        "120",
+        "86;89",
+        "89;86;120",
+        "86;89;120;90",
+        "86;86;89;120",
+    ] {
+        let mut invalid_value = value.clone();
+        invalid_value
+            .options
+            .iter_mut()
+            .find(|row| row.name == "CMAKE_CUDA_ARCHITECTURES")
+            .unwrap()
+            .value = invalid.into();
+        assert!(!accepts(&invalid_value, &product.files), "{invalid:?}");
+    }
+    value
+        .options
+        .retain(|row| row.name != "CMAKE_CUDA_ARCHITECTURES");
+    assert!(!accepts(&value, &product.files));
+    Ok(())
+}
+
+#[test]
 fn public_provenance_refuses_tampered_bytes_and_wrong_static_build() -> Result<()> {
     let (value, native) = fixture();
     let (mut raw, asset) = raw_asset(&value)?;

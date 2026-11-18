@@ -358,6 +358,7 @@ impl Handle {
         &self,
         lease: Arc<airk_store::service::ServiceLease>,
         model: airk_core::arbiter::device::SelectedModel,
+        allowed_profiles: Vec<Sha256Digest>,
         host: Arc<Reservation>,
         deadline: Instant,
         authority: Arc<dyn Fn() -> bool + Send + Sync>,
@@ -380,6 +381,7 @@ impl Handle {
             #[cfg(all(feature = "test-support", feature = "gpu-cuda"))]
             evaluation: None,
             retained: None,
+            allowed_profiles,
             model,
             deadline,
             authority,
@@ -426,6 +428,7 @@ impl Handle {
             lease,
             host: resident.reservation,
             retained: Some(resident.profile),
+            allowed_profiles: Vec::new(),
             #[cfg(all(feature = "test-support", feature = "gpu-cuda"))]
             evaluation: None,
             model,
@@ -525,6 +528,7 @@ impl Handle {
             lease,
             host,
             retained: None,
+            allowed_profiles: Vec::new(),
             model,
             deadline,
             authority,

@@ -25,6 +25,7 @@ pub(super) struct Probe {
     #[cfg(all(feature = "test-support", feature = "gpu-cuda"))]
     pub evaluation: Option<EvaluationProbe>,
     pub retained: Option<Sha256Digest>,
+    pub allowed_profiles: Vec<Sha256Digest>,
     pub model: SelectedModel,
     pub deadline: Instant,
     pub authority: Arc<dyn Fn() -> bool + Send + Sync>,
@@ -61,13 +62,15 @@ pub(super) fn probe(
         candidates: Vec::new(),
         rejections: Vec::new(),
     };
+    let permitted = |profile: &Profile| {
+        profile.model == probe.model.model()
+            && profile.device_execution.is_some()
+            && probe.allowed_profiles.contains(&profile.manifest)
+    };
     #[cfg(not(feature = "gpu-cuda"))]
     {
         let _ = shared;
-        for profile in runtime::catalog_profiles()?
-            .into_iter()
-            .filter(|p| p.model == probe.model.model() && p.device_execution.is_some())
-        {
+        for profile in runtime::catalog_profiles()?.into_iter().filter(permitted) {
             result.rejections.push(CandidateRejection {
                 manifest: Some(profile.manifest),
                 adapter_key: None,
@@ -81,9 +84,7 @@ pub(super) fn probe(
         let catalog = runtime::catalog_profiles()?;
         let variants: Vec<_> = catalog
             .iter()
-            .filter(|profile| {
-                profile.model == probe.model.model() && profile.device_execution.is_some()
-            })
+            .filter(|profile| permitted(profile))
             .collect();
         if variants.is_empty() {
             return Ok(result);
@@ -116,10 +117,14 @@ pub(super) fn probe(
                 values
                     .into_iter()
                     .filter_map(|metadata| {
+                        let physical_fit = variants
+                            .iter()
+                            .filter_map(|profile| {
+                                runtime.product_adapter_physical_fit(profile, &metadata)
+                            })
+                            .max()?;
                         product_adapter_rank(
-                            metadata.compute_major,
-                            metadata.compute_minor,
-                            metadata.dedicated_memory,
+                            physical_fit,
                             metadata.physical_total_bytes,
                             metadata.ordinal,
                         )
@@ -631,14 +636,11 @@ fn stable_circuit_key(key: DeviceFaultKey, dispatch_epoch: u64) -> Result<Device
 
 #[cfg(any(feature = "gpu-cuda", test))]
 pub(super) fn product_adapter_rank(
-    major: i32,
-    minor: i32,
-    dedicated: bool,
+    physical_fit: bool,
     physical: u64,
     ordinal: i32,
-) -> Option<(std::cmp::Reverse<u64>, i32)> {
-    (major == 8 && minor == 6 && dedicated && physical > 0 && ordinal >= 0)
-        .then_some((std::cmp::Reverse(physical), ordinal))
+) -> Option<(bool, std::cmp::Reverse<u64>, i32)> {
+    (physical > 0 && ordinal >= 0).then_some((!physical_fit, std::cmp::Reverse(physical), ordinal))
 }
 
 #[cfg(any(feature = "gpu-cuda", test))]

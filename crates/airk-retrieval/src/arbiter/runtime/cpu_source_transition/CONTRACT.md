@@ -240,3 +240,14 @@ retained configure receipt reader reproduces the exact prior file. The
 runtime loader, graph collector and CPU source row retain their checked
 identities. The owned 32 GiB Compact graph observation binds this exact
 Windows source under its original receipt, independently of the CPU proof.
+
+### Windows CUDA product architecture matching
+
+The product architecture change advances cuda.rs from 840cb13ad29d34a6c9e5def447c9b3c7ab9e5b6b3308787843ca908b2ee5b526
+to 31fdb63b4b388f71900703fc627be9e75598e716d6db50020a7ee1286c9d0dc4 and cuda/windows.rs from
+9d2bb4ce4d9063e2f9c940b1bb007648c65b07561c5ee0e2c8a2737ffab221c2 to
+1f577d70657997313743f1c973a3433a575a485d218497abf9080a9079e4ff51. The bridge adds authenticated per-profile class selection and rechecks
+only the product adapter. The loader changes the two product provenance
+validation call sites to bind the declared compilation targets. The original
+SM86 scientific context checks, CPU runtime source and CPU profile bytes retain
+their independent source identities.

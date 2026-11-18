@@ -572,8 +572,12 @@ retain original authority/deadline and current proof. Unknown settlement retains
 actual session/source/device/host charge/lease and an incomplete barrier.
 
 Product /2 observes adapter metadata without retaining every primary context.
-It selects only one compatible dedicated SM86 adapter: greatest physical total,
-native ordinal tie. Only that context is retained and its actual free capacity,
+It selects one compatible dedicated CUDA adapter from authenticated requirements
+for the permitted model and precision profiles. It ranks devices that fit a
+permitted variant ahead of those with insufficient physical capacity. Within
+each group it ranks greatest physical capacity first with a native ordinal
+tie-break. Only that
+context is retained and its actual free capacity,
 cold requirement/headroom and full eligibility are checked. Failure describes
 that selected device, not every GPU. Other adapters are not initialized. Native
 same-model precision/CPU choices keep the original budget; no selector expands.

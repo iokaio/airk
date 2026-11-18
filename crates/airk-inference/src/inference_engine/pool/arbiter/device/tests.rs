@@ -245,6 +245,7 @@ fn queued_runtime_probe_holds_actual_lease_and_host_charge_after_delivery_cancel
     let receive = handle.probe_devices(
         lease.clone(),
         airk_core::arbiter::device::SelectedModel::Focus,
+        Vec::new(),
         host.clone(),
         Instant::now() + Duration::from_secs(5),
         Arc::new(|| true),

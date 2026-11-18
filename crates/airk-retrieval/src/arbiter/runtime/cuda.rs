@@ -110,6 +110,21 @@ pub struct AdapterObservation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dedicated_memory: Option<bool>,
 }
+impl AdapterObservation {
+    fn identity(&self) -> AdapterIdentity {
+        AdapterIdentity {
+            uuid: self.uuid,
+            ordinal: self.ordinal,
+            compute_major: self.compute_major,
+            compute_minor: self.compute_minor,
+            driver_api_version: self.driver_api_version,
+            driver_image_sha256: self.driver_image_sha256,
+            physical_total_bytes: self.physical_total_bytes,
+            dedicated_memory: self.dedicated_memory == Some(true),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct DeviceCapacityPlan {
     cold_peak_bytes: u64,
@@ -270,6 +285,20 @@ impl CudaRuntime {
             anyhow::bail!("CUDA product discovery unavailable")
         }
     }
+    /// Reports physical fit for an adapter that matches the exact product profile.
+    /// Incompatible or unauthenticated pairs return None. This performs no load.
+    pub fn product_adapter_physical_fit(
+        &self,
+        profile: &Profile,
+        adapter: &AdapterIdentity,
+    ) -> Option<bool> {
+        let row = self.manifest.requirement(profile).ok()?;
+        let policy = profile.device_execution.as_ref()?;
+        (row.matches_adapter_class(adapter)
+            && policy.runtime_build == self.runtime_build()
+            && row.compatibility_policy_digest().ok()? == policy.compatibility_policy)
+            .then(|| row.supports(adapter).is_ok())
+    }
     pub fn adapters(&self, deadline: Instant) -> Result<Vec<AdapterObservation>> {
         crate::native_inference::require_service_compute()?;
         in_time(deadline)?;
@@ -303,15 +332,20 @@ impl CudaRuntime {
                 .find(|v| v.uuid == uuid)
                 .context("native product adapter UUID unavailable")?;
             ensure!(
-                id.compute_major == 8 && id.compute_minor == 6 && id.dedicated_memory,
-                "actual adapter is outside compiled SM86 dedicated compatibility"
+                self.manifest.product_has_adapter_class(&id),
+                "actual adapter has no authenticated product architecture requirement"
             );
             let context = self
                 .loaded
                 .retain_primary(id.ordinal, self._native_lease.clone())?;
             let observed = self.loaded.observe(id.ordinal, &context, deadline)?;
             ensure!(
-                observed.uuid == uuid,
+                observed.uuid == uuid
+                    && observed.compute_major == id.compute_major
+                    && observed.compute_minor == id.compute_minor
+                    && self
+                        .manifest
+                        .product_has_adapter_class(&observed.identity()),
                 "actual selected adapter changed during context creation"
             );
             (observed, context)
@@ -336,10 +370,12 @@ impl CudaRuntime {
             .into_iter()
             .find(|v| v.uuid == uuid)
             .context("native adapter UUID unavailable")?;
-        ensure!(
-            observed.compute_major == 8 && observed.compute_minor == 6,
-            "CUDA compute capability differs from compiled SM86 native policy"
-        );
+        if !self.is_product() {
+            ensure!(
+                observed.compute_major == 8 && observed.compute_minor == 6,
+                "CUDA compute capability differs from compiled SM86 native policy"
+            );
+        }
         let epoch = NEXT_EPOCH
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| v.checked_add(1))
             .map_err(|_| anyhow::anyhow!("GPU capability epoch exhausted"))?;
@@ -496,7 +532,10 @@ impl CudaDevice {
                 && policy.runtime_build == self.runtime.runtime_build()
                 && policy.compatibility_policy
                     == if self.runtime.manifest.is_product() {
-                        product_compatibility_policy_digest()
+                        self.runtime
+                            .manifest
+                            .requirement(profile)?
+                            .compatibility_policy_digest()?
                     } else {
                         compatibility_policy_digest()
                     }
@@ -510,16 +549,7 @@ impl CudaDevice {
         self.validate_profile(profile)?;
         if self.runtime.manifest.is_product() {
             let row = self.runtime.manifest.requirement(profile)?;
-            row.supports(&AdapterIdentity {
-                uuid: self.observed.uuid,
-                ordinal: self.observed.ordinal,
-                compute_major: self.observed.compute_major,
-                compute_minor: self.observed.compute_minor,
-                driver_api_version: self.observed.driver_api_version,
-                driver_image_sha256: self.observed.driver_image_sha256,
-                physical_total_bytes: self.observed.physical_total_bytes,
-                dedicated_memory: self.observed.dedicated_memory == Some(true),
-            })?;
+            row.supports(&self.observed.identity())?;
             return DeviceCapacityPlan::new(
                 row.cold_peak_limit_bytes,
                 row.warm_extra_limit_bytes,

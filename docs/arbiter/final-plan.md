@@ -1372,9 +1372,21 @@ and removed provider dependencies while preserving a working CPU service.
 
 Recorded native contract decisions (17 November): product CUDA requirements use
 RuntimeManifest/2, distinct from the immutable /1 scientific UUID/driver fit.
-The initial compatibility class remains Windows x64/SM86. Other architectures
-use an admitted fitting same-model CPU path or report unavailable. A native,
-non-deserializable eligibility witness requires one actual management load,
+On 18 November the user expanded Windows x64 CUDA coverage to GeForce RTX 40
+(Ada SM89) and RTX 50 (Blackwell SM120) alongside the original SM86 class.
+Build a separate Windows CUDA candidate with real kernel code for SM86, SM89
+and SM120. Retain the original A6000 manifest, build and evidence identities.
+Use the [checked Windows CUDA candidate build](../../scripts/cuda-static-runtime/build/ARCHITECTURES.md).
+Inspect the actual provider binary for the three targets before qualifying it.
+Each model and precision must have native numerical, graph placement, fit and
+resource evidence on the architecture admitted by its signed requirements.
+Select the local adapter by its observed architecture, driver and available
+memory. Use an admitted fitting same-model CPU path or report unavailable
+when the user's GPU cannot run the selected variant. The current workstation
+has only the SM86 A6000. Compile checks for SM89 and SM120 can run here.
+Runtime qualification needs access to representative RTX 40 and 50 cards.
+
+A native, non-deserializable eligibility witness requires one actual management load,
 complete placement observation, independent synthetic numeric roster and
 synchronization/capacity/authority recheck under the existing original120-second
 management cutoff. Reaccept affected retained GPU sessions within that same
