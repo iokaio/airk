@@ -375,4 +375,206 @@ class OriginalProvenanceDeadline(unittest.TestCase):
         self.assertEqual(reads,[(4<<20,)])
 
 
+class FreshPreservation(unittest.TestCase):
+    def setUp(self):
+        self.root = m.USER_ROOT / 'inert-fresh'
+        self.runtime = m.USER_ROOT / 'inert-runtime'
+        self.env_path = self.root / 'environment.json'
+        self.deadline = 500
+        self.files = {}
+        self.producer = self.row(self.root / 'fresh-compile.json', '1')
+        self.configured = self.row(self.root / 'fresh-configure.json', '2')
+        self.configure = self.row(self.root / 'configure-recipe.json', '3')
+        self.aggregate = self.row(self.root / 'fresh-aggregate.json', '4')
+        self.aggregate_recipe = self.row(self.root / 'archive-recipe.json', '5')
+        self.driver = self.row(m.ROOT / 'scripts/cuda-static-runtime/build/fresh_compile.py', '6')
+        self.env_pin = self.row(self.env_path, '7')
+        self.roster = self.row(self.root / 'sources.json', '8')
+        self.archive = self.row(self.root / 'gpu-aggregate/onnxruntime.lib', '9')
+        self.providers = [
+            self.row(self.root / 'b/Release/onnxruntime_providers_shared.dll', 'a'),
+            self.row(self.root / 'b/Release/onnxruntime_providers_cuda.dll', 'b'),
+        ]
+        self.proof = {
+            'schema': 'airk.private.cuda-fresh-static-build-proof/1',
+            'build_receipt': self.producer, 'configure_receipt': self.configured,
+            'configure_recipe': self.configure, 'producer_source': self.driver,
+            'provider_dlls': self.providers, 'qualification': False, 'activation_pins_available': False,
+        }
+        self.files[self.producer['path']] = {
+            'schema': 'airk.private.cuda-fresh-compiled/1', 'status': 'COMPILED_UNQUALIFIED', 'qualification': False,
+            'configured': self.configured, 'recipe': self.configure, 'driver': self.driver, 'providers': self.providers,
+        }
+        self.files[self.configured['path']] = {
+            'schema': 'airk.private.cuda-fresh-configured/1', 'status': 'CONFIGURED_UNQUALIFIED',
+            'qualification': False, 'recipe': self.configure,
+        }
+        self.files[self.configure['path']] = {
+            'schema': 'airk.private.cuda-fresh-configure-recipe/1', 'msvc_ciso646_compat': True,
+            'output_audit_owner': self.driver, 'fresh_output': str(self.root),
+            'execution_authorized': True, 'qualification': False,
+        }
+        self.files[self.aggregate_recipe['path']] = {
+            'schema': 'airk.private.cuda-fresh-aggregate-recipe/1', 'compile_receipt': self.producer,
+            'execution_authorized': True, 'qualification': False,
+        }
+        plan = {'compile_receipt': self.producer, 'producer_proof_sha256': m.census_digest(self.proof)}
+        output = {**self.archive, 'path': 'gpu-aggregate/onnxruntime.lib'}
+        self.raw = {
+            'schema': 'airk.private.cuda-fresh-aggregate/1', 'status': 'AGGREGATED_UNQUALIFIED',
+            'recipe': self.aggregate_recipe, 'compile_receipt': self.producer, 'configure_receipt': self.configured,
+            'plan': plan, 'plan_sha256': m.census_digest(plan), 'output': output,
+            'coff': {'kind': 'static'}, 'qualification': False, 'error': None,
+        }
+        self.files[self.aggregate['path']] = self.raw
+        self.aggregate_proof = {
+            'schema': 'airk.cuda-static-aggregate-proof/1', 'qualification': False,
+            'receipt_sha256': self.aggregate['sha256'], 'producer_proof_sha256': plan['producer_proof_sha256'],
+            'plan_sha256': self.raw['plan_sha256'], 'coff': self.raw['coff'], 'output': output,
+        }
+        self.env = {
+            'schema': 'airk.cuda-static-environment/6', 'activation_pins_available': False,
+            'request': {'destination': str(self.root), 'aggregate_receipt': self.aggregate},
+            'build': self.proof, 'aggregate': self.aggregate_proof,
+            'environment': {'LIBONNXRUNTIME_NO_PKG_CONFIG': '1', 'ORT_SKIP_DOWNLOAD': '1',
+                            'ORT_PREFER_DYNAMIC_LINK': '0', 'ORT_LIB_LOCATION': str(self.root / 'gpu-aggregate'),
+                            'ORT_LIB_PROFILE': 'Release'},
+        }
+        self.files[self.env_pin['path']] = self.env
+        self.sources = [self.driver]
+        self.manifest_pin = self.row(self.runtime / 'airk-cuda-runtime.json', 'c')
+        self.runtime_producer = {**self.producer, 'path': str(self.runtime / 'fresh-compile.json')}
+        self.staged = {self.runtime_producer['path']: self.runtime_producer}
+        self.manifest = {
+            'schema': 'airk.native.cuda-runtime-manifest/1', 'ort_version': '1.30.0', 'fits': [],
+            'producer_name': 'fresh-compile.json', 'producer_bytes': self.producer['bytes'],
+            'producer_sha256': self.producer['sha256'], 'static_core_build': self.producer['sha256'],
+            'files': [],
+        }
+        for row in self.providers:
+            name = Path(row['path']).name
+            staged = {**row, 'path': str(self.runtime / name)}
+            self.staged[staged['path']] = staged
+            self.manifest['files'].append({'name': name, 'bytes': row['bytes'], 'sha256': row['sha256']})
+
+    @staticmethod
+    def row(path, char):
+        return {'path': str(path), 'bytes': 42, 'sha256': char * 64}
+
+    def doc(self, row, maximum, deadline):
+        self.assertEqual(deadline, self.deadline)
+        return self.files[row['path']]
+
+    def fixture_pin(self, path, *, deadline):
+        self.assertEqual(deadline, self.deadline)
+        return {self.archive['path']: self.archive, **self.staged}[str(path)]
+
+    def test_explicit_mode_deadline_and_no_mixed_lineage(self):
+        args = SimpleNamespace(fresh_finalgraph=True, fresh_environment=self.env_path,
+                               fresh_environment_sha256=self.env_pin['sha256'], provenance_source_roster='sources',
+                               provenance_source_roster_sha256='reviewed', manifest_sha256='reviewed',
+                               verification_seconds=600)
+        with patch.object(m.time, 'monotonic', return_value=100):
+            self.assertEqual(m.preservation_mode(args), (False, 700))
+            for fields in ({'incremental_finalgraph': True}, {'incremental_environment': 'old'},
+                           {'verification_seconds': 601}, {'verification_seconds': True},
+                           {'verification_seconds': float('inf')}, {'fresh_finalgraph': False}):
+                mixed = SimpleNamespace(**{**vars(args), **fields})
+                with self.subTest(fields=fields), self.assertRaises(ValueError):
+                    m.preservation_mode(mixed)
+
+    def test_environment_uses_exact_full_owner_once_and_reopens_distinct_documents(self):
+        expected = {'gpu_build': self.proof, 'gpu_aggregate': self.aggregate_proof,
+                    'environment': self.env['environment'], 'activation_pins_available': False}
+        with patch.object(m.time, 'monotonic', return_value=100), \
+                patch.object(m, 'fresh_source_roster', return_value=(self.roster, self.sources)) as roster, \
+                patch.object(m, 'fresh_reviewed_pin', return_value=self.env_pin), \
+                patch.object(m, 'fresh_source_loader') as loader, \
+                patch.object(m, 'fresh_json', side_effect=self.doc) as docs, \
+                patch.object(m, 'pin', side_effect=self.fixture_pin):
+            owner = loader.return_value.return_value
+            owner.verify_handoff.return_value = expected
+            observed = m.verify_fresh_environment(self.env_path, self.env_pin['sha256'], self.roster['path'],
+                                                  self.roster['sha256'], deadline=500)
+        owner.verify_handoff.assert_called_once_with(self.env_path, self.env_pin['sha256'], m.ROOT, deadline=500)
+        self.assertEqual(roster.call_count, 2)
+        self.assertEqual(observed['aggregate_receipt'], self.aggregate)
+        self.assertEqual(observed['aggregate_recipe'], self.aggregate_recipe)
+        self.assertEqual(observed['configure_receipt'], self.configured)
+        self.assertEqual(observed['configure_recipe'], self.configure)
+        self.assertEqual(observed['archive'], self.archive)
+        self.assertEqual({call.args[0]['path'] for call in docs.call_args_list}, set(self.files))
+
+    def test_cross_generation_resealing_and_raw_receipt_alias_refuse(self):
+        with patch.object(m.time, 'monotonic', return_value=100), patch.object(m, 'fresh_json', side_effect=self.doc), \
+                patch.object(m, 'pin', side_effect=self.fixture_pin):
+            bad = copy.deepcopy(self.env)
+            bad['request']['aggregate_receipt']['sha256'] = self.producer['sha256']
+            with self.assertRaisesRegex(ValueError, 'distinct same-build'):
+                m.fresh_chain(bad, deadline=500)
+            self.raw['plan']['producer_proof_sha256'] = 'f' * 64
+            self.raw['plan_sha256'] = m.census_digest(self.raw['plan'])
+            self.aggregate_proof['plan_sha256'] = self.raw['plan_sha256']
+            self.aggregate_proof['producer_proof_sha256'] = 'f' * 64
+            with self.assertRaisesRegex(ValueError, 'aggregate receipt or plan'):
+                m.fresh_chain(self.env, deadline=500)
+
+    def test_loader_uses_exact_source_bytes_and_refuses_outside_roster(self):
+        owner_pin = self.row(m.ROOT / 'scripts/cuda-runtime-environment.py', 'a')
+        stub = b"def verify_handoff(*args): return 'from authenticated bytes'"
+        with patch.object(m.time, 'monotonic', return_value=100), patch.object(m, 'fresh_bytes', return_value=stub) as read:
+            load = m.fresh_source_loader([owner_pin], 500)
+            owner = load(owner_pin['path'], 'inert_fresh_environment')
+            self.assertEqual(owner.verify_handoff(), 'from authenticated bytes')
+            with self.assertRaisesRegex(ValueError, 'unreviewed fresh executable'):
+                load(m.ROOT / 'scripts/unreviewed.py', 'inert_unreviewed')
+            read.assert_called_once_with(owner_pin, 2 << 20, 500)
+
+    def test_bounded_read_rejects_changed_source_before_execution(self):
+        path = m.ROOT / 'scripts/cuda-runtime-environment.py'
+        raw = b"raise RuntimeError('should never execute')"
+        pin = {**self.row(path, 'a'), 'bytes': len(raw)}
+        with patch.object(m.time, 'monotonic', return_value=100), patch.object(m, 'regular', return_value=path), \
+                patch.object(Path, 'stat', return_value=SimpleNamespace(st_size=len(raw))), \
+                patch.object(Path, 'open', return_value=io.BytesIO(raw)):
+            with self.assertRaisesRegex(ValueError, 'consumed fresh provenance bytes'):
+                m.fresh_source_loader([pin], 500)(path, 'inert_changed')
+
+    def test_manifest_and_staged_provider_match_actual_original_pair(self):
+        provenance = {'producer': self.producer, 'proof': self.proof}
+        with patch.object(m.time, 'monotonic', return_value=100), patch.object(m, 'pin', side_effect=self.fixture_pin):
+            actual = m.validate_fresh_graph_manifest(self.manifest, self.manifest_pin, self.runtime, provenance, deadline=500)
+            self.assertEqual(actual, self.runtime_producer)
+            self.manifest['files'][0]['sha256'] = 'f' * 64
+            with self.assertRaisesRegex(ValueError, 'staged graph provider bytes'):
+                m.validate_fresh_graph_manifest(self.manifest, self.manifest_pin, self.runtime, provenance, deadline=500)
+            self.manifest['files'][0]['sha256'] = self.providers[0]['sha256']
+            self.staged[str(self.runtime / self.manifest['files'][1]['name'])]['bytes'] += 1
+            with self.assertRaisesRegex(ValueError, 'staged graph provider bytes'):
+                m.validate_fresh_graph_manifest(self.manifest, self.manifest_pin, self.runtime, provenance, deadline=500)
+
+    def test_public_graph_preparation_dispatches_only_the_exact_fresh_owner(self):
+        binding = {'schema': 'airk.private.cuda-fresh-finalgraph-image-binding/1',
+                   'environment': self.env_pin, 'source_roster': self.roster}
+        with patch.object(m.time, 'monotonic', return_value=100), \
+                patch.object(m, 'verify_fresh_environment', return_value={'lineage': 'fresh'}) as fresh, \
+                patch.object(m, 'verify_environment') as older, patch.object(m, 'verify_graph_inputs') as current:
+            m.verify_graph_binding(binding, 'manifest', 'image', 'build', deadline=500)
+        older.assert_not_called()
+        fresh.assert_called_once_with(self.env_pin['path'], self.env_pin['sha256'], self.roster['path'],
+                                      self.roster['sha256'], deadline=500)
+        current.assert_called_once_with(binding, 'manifest', 'image', 'build', {'lineage': 'fresh'}, deadline=500)
+
+    def test_current_preservation_rechecks_without_a_second_full_ancestry(self):
+        binding = {'environment': self.env_pin, 'source_roster': self.roster}
+        with patch.object(m, 'fresh_source_roster', return_value=(self.roster, self.sources)), \
+                patch.object(m, 'fresh_json', side_effect=self.doc), patch.object(m, 'fresh_chain', return_value={}), \
+                patch.object(m, 'verify_graph_inputs') as current, patch.object(m, 'verify_fresh_environment') as whole:
+            m.verify_fresh_current(binding, 'manifest', 'image', 'build', deadline=500)
+        whole.assert_not_called()
+        current.assert_called_once_with(binding, 'manifest', 'image', 'build',
+                                        {'environment': self.env_pin, 'source_roster': self.roster,
+                                         'source_pins': self.sources}, deadline=500)
+
+
 if __name__ == '__main__': unittest.main()

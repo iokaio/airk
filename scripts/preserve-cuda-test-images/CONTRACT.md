@@ -111,3 +111,37 @@ and exactly one element for readable scalar attribute types1,2,3. The exact
 maintained provenance roster also includes verification/checkpoint_sections.py
 and verification/materialized.py. Historical raw producer/metadata identities
 remain unchanged; source introductions and current verifier pins are explicit.
+
+## Explicit fresh current-toolchain preservation
+
+Fresh preservation selects --fresh-finalgraph with --fresh-environment PATH,
+--fresh-environment-sha256 SHA, --provenance-source-roster PATH,
+--provenance-source-roster-sha256 SHA, --manifest-sha256 SHA and an explicit
+finite positive --verification-seconds of at most 600. The fresh selector is
+exclusive with incremental inputs. The existing receipt, log, source,
+destination, guard and runtime-census arguments also apply.
+
+A single monotonic deadline governs fresh provenance verification. The reviewed
+source roster has exactly the fixed FRESH_PROVENANCE_OWNERS paths. The preserver
+loads the fresh verifier's maintained Python sources from the authenticated
+bytes. It runs the dedicated environment/6 verifier once before copy admission.
+Pre-copy and post-copy checks reopen current source, environment, configure,
+compile and aggregate document identities, the actual archive and native image
+relationships under the same deadline. The existing complete source and runtime
+copy custody checks still apply. Separate graph preparation may independently
+use verify_graph_binding with its own supplied original preparation deadline.
+
+The packet's private airk.private.cuda-fresh-finalgraph-image-binding/1 retains
+the distinct original compile, configure and aggregate FilePins, both recipe
+pins, the actual archive, its exact Cargo static link row, and both executable
+collector exports. The native manifest must have fits empty, the original
+fresh-compile.json producer leaf and exact provider DLL identities. The
+manifest, staged producer and staged provider bytes remain under the existing
+complete runtime custody. Existing environment/4 and /5 modes keep their
+original paths and interpretation.
+
+The maintained Cargo readiness receipt binds argv and its file inputs. It
+does not attest the two compiled AIRK CUDA manifest and static-build environment
+values. The optional caller compile-context remains a bounded opaque FilePin.
+Actual native admission must establish the compiled values. This preservation
+mode emits no graph run, activation or qualification claim.
