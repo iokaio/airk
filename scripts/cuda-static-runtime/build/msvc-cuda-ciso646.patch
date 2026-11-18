@@ -1,0 +1,10 @@
+--- a/cmake/onnxruntime_providers_cuda.cmake
++++ b/cmake/onnxruntime_providers_cuda.cmake
+@@ -346,4 +346,7 @@
+     if(MSVC)
++      # ORT and CUTLASS use <ciso646> for alternative tokens under /permissive.
++      # Retain that compatibility header and /WX in the MSVC C++20 build.
++      target_compile_definitions(${target} PRIVATE "$<$<COMPILE_LANGUAGE:CXX,CUDA>:_SILENCE_CXX20_CISO646_REMOVED_WARNING>")
+       target_compile_options(${target} PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:/Zc:preprocessor>")
+       target_compile_options(${target} PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler /Zc:__cplusplus>")
+       target_compile_options(${target} PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcompiler /Zc:preprocessor>")

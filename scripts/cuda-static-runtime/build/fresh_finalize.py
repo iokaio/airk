@@ -75,11 +75,12 @@ def replay_stages(pins, cpu, compiler, sources, configure_driver, r8, recipe, lo
     original_deadline = raw["original_deadline_monotonic"]
     patch_tool = recipe["tools"]["patch"]["path"]
     source, frontend = root / "source", root / "frontend"
+    compatibility = {"msvc_ciso646_compat": True} if recipe.get("msvc_ciso646_compat") is True else {}
     stages = [
         (name, cwd, [patch_tool, "--batch", "--forward", "--fuzz=0", "--binary", "--ignore-whitespace",
                      "--no-backup-if-mismatch", "--reject-file=-", "-p1",
                      "--input=" + str(root / "patch-inputs" / (name + ".patch"))])
-        for name, cwd, _, _, _ in sources.patch_roster(source, frontend, lock)
+        for name, cwd, _, _, _ in sources.patch_roster(source, frontend, lock, **compatibility)
     ]
     command = configure_driver.configure_command(cpu, r8, root, recipe["tools"], frontend)
     stages.append(("configure", root, command))
@@ -192,12 +193,14 @@ def execute(recipe_path, expected_sha):
     files = compiler.build_files(root, guard, deadline, include_caches=True)
     compiler.require_clean_build(root, files)
     source_replay = load(owners["source_replay"], "fresh_finalize_retained_source")
+    compatibility = {"msvc_ciso646_compat": True} if original.get("msvc_ciso646_compat") is True else {}
     source = source_replay.reconstruct(
         destination=root, source_archive=Path(original["source_archive"]["path"]),
         dependency_archives={name: Path(row["path"]) for name, row in original["dependency_archives"].items()},
         lock=lock, cpu=cpu, r8=r8, sources=sources, pins=pins, guard_paths=guard, deadline=deadline,
+        **compatibility,
     )
-    facts = configure_driver.configured_inputs(cpu, r8, root, argv, lock, source["collector_source"])
+    facts = configure_driver.configured_inputs(cpu, r8, root, argv, lock, source["collector_source"], **compatibility)
     require(cpu.source_inventory(source["source"], exclude_mirror=True) == source["source_inventory"]
             and cpu.source_inventory(source["frontend"]) == source["frontend_inventory"]
             and cpu.source_inventory(source["mirror"]) == source["mirror_inventory"],

@@ -49,6 +49,22 @@ class FreshCudaSourceTests(unittest.TestCase):
         })
         self.assertEqual(stages[5][2], source / "cmake/patches/cudnn_frontend/cudnn_frontend_win_arm64_compat.patch")
 
+    def test_msvc_cxx20_patch_is_separate_and_pinned_to_the_provider_target(self):
+        source, frontend = ROOT / "literal/source", ROOT / "literal/frontend"
+        original = MODULE.patch_roster(source, frontend, LOCK)
+        corrected = MODULE.patch_roster(source, frontend, LOCK, msvc_ciso646_compat=True)
+        self.assertEqual(original, corrected[:-1])
+        stage, tree, path, expected, targets = corrected[-1]
+        self.assertEqual((stage, tree), ("msvc-cuda-ciso646", source))
+        body = path.read_bytes()
+        self.assertEqual(hashlib.sha256(body).hexdigest(), expected)
+        self.assertEqual([target["path"] for target in targets], ["cmake/onnxruntime_providers_cuda.cmake"])
+        added = [line for line in body.splitlines()[3:] if line.startswith(b"+") and b"target_" in line]
+        self.assertEqual(added, [
+            b'+      target_compile_definitions(${target} PRIVATE '
+            b'"$<$<COMPILE_LANGUAGE:CXX,CUDA>:_SILENCE_CXX20_CISO646_REMOVED_WARNING>")',
+        ])
+
     def test_collector_uses_exact_reviewed_transport_only(self):
         raw = (BUILD.parent / "final-graph-metadata/collector.patch").read_bytes()
         self.assertEqual(hashlib.sha256(raw).hexdigest(),

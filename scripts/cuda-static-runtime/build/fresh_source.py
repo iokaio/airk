@@ -16,8 +16,10 @@ PUBLIC_API_SOURCE = "7acabdbefcd7ee3936305ff150fc2369c3d341b6838e10113435ebab033
 COLLECTOR_PATCH = "a1a95c9b4401e302d7046159f882fdafa735bf7b32542314f75b333b902870c9"
 COLLECTOR_LF_PATCH = "5222d2634878ac5e1c68264b6d521f0ca95df3a47397e3cf167b3ff7de844d58"
 COLLECTOR_SOURCE = "db00479a06d0a1e8fadf4cc834ffe5a6da0b745ee2820b06a0821fb1dbeca97b"
+MSVC_CUDA_CISO646 = "cmake/onnxruntime_providers_cuda.cmake"
+MSVC_CUDA_CISO646_PATCH = "bd511d6bdf8ce72d0983ec995f17ffb40194a1846c130ce9ee4c67c354566c60"
 MAX_PATCH_BYTES = 1 << 20
-AUDIT_BATCH = 128
+AUDIT_BATCH = 384
 
 
 def check_deadline(deadline):
@@ -96,12 +98,12 @@ def mirror_inputs(cpu, mirror, dependencies, archives, guard_paths, deadline):
         cpu.verify_file(source, row)
 
 
-def patch_roster(source, frontend, lock):
+def patch_roster(source, frontend, lock, *, msvc_ciso646_compat=False):
     placement = lock["final_placement"]
     public_api = {"path": CAPI, "before_sha256": placement["after_sha256"], "after_sha256": PUBLIC_API_SOURCE}
     collector = {"path": CAPI, "before_sha256": PUBLIC_API_SOURCE, "after_sha256": COLLECTOR_SOURCE}
     frontend_upstream = source / "cmake/patches/cudnn_frontend/cudnn_frontend_win_arm64_compat.patch"
-    return (
+    stages = (
         ("loader", source, BUILD / "ort-windows-loader-proposal-r2.patch",
          lock["loader_patch_sha256"], lock["loader_files"]),
         ("offline", source, BUILD / "r8/offline-helper.patch",
@@ -116,6 +118,17 @@ def patch_roster(source, frontend, lock):
         ("frontend-authenticated-imports", frontend, BUILD / "r8/frontend-authenticated-imports.patch",
          lock["frontend_final"]["patch_sha256"], [lock["frontend_final"]]),
     )
+
+    if msvc_ciso646_compat:
+        stages += ((
+            "msvc-cuda-ciso646", source, BUILD / "msvc-cuda-ciso646.patch",
+            MSVC_CUDA_CISO646_PATCH, [{
+                "path": MSVC_CUDA_CISO646,
+                "before_sha256": "07d402041911df5bbab40940f5cc47acf3780aeb147b7f06a95793c8acdfb48b",
+                "after_sha256": "82733200570c4dfe848cbcda34d05407417cbbb236ba0bb9dffe9fba35149271",
+            }],
+        ),)
+    return stages
 
 
 def patch_transport(stage, original):
@@ -183,7 +196,7 @@ def verify_transformed_inventory(before, after, changed):
 
 
 def materialize(*, destination, source_archive, dependency_archives, lock, cpu, r8,
-                patch_tool, run_patch, guard_paths, deadline):
+                patch_tool, run_patch, guard_paths, deadline, msvc_ciso646_compat=False):
     """Extract sealed inputs into an empty source namespace and apply exact overlays.
 
     The caller owns the fresh destination, authenticated patch-tool pin, and
@@ -230,7 +243,7 @@ def materialize(*, destination, source_archive, dependency_archives, lock, cpu, 
     frontend_input = dependency_archives["cudnn_frontend"]
     before_frontend = r8.safe_frontend(checked_cpu, frontend_input, frontend, lock)["files_before_patches"]
     ensure_directory(snapshots, destination, guard_paths, deadline)
-    patches = patch_roster(source, frontend, lock)
+    patches = patch_roster(source, frontend, lock, msvc_ciso646_compat=msvc_ciso646_compat)
     patch_inputs = [
         apply_patch(cpu, r8, patch_tool, snapshots, item, run_patch, guard_paths, deadline)
         for item in patches

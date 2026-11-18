@@ -169,7 +169,7 @@ def verify_collector_prefix(cpu, file, row, patch, sources, check):
 
 
 def reconstruct(*, destination, source_archive, dependency_archives, lock, cpu, r8, sources, pins,
-                guard_paths, deadline):
+                guard_paths, deadline, msvc_ciso646_compat=False):
     """Reopen the exact materialized files under the original configure deadline."""
     require(type(deadline) in (int, float) and math.isfinite(deadline), "original retained source deadline required")
 
@@ -230,8 +230,9 @@ def reconstruct(*, destination, source_archive, dependency_archives, lock, cpu, 
     require(all(upstream.get(row["name"]) == (row["url"], row["upstream_sha1"]) for row in cpu_dependencies),
             "retained ORT dependency differs from the pinned deps.txt")
     frontend_rows = observed_tree(cpu, pins, frontend, guard_paths, deadline, check)
+    compatibility = {"msvc_ciso646_compat": True} if msvc_ciso646_compat else {}
     patch_inputs, collector_patch = patch_facts(
-        cpu, sources, snapshots, sources.patch_roster(source, frontend, lock),
+        cpu, sources, snapshots, sources.patch_roster(source, frontend, lock, **compatibility),
         {source: before_source, frontend: before_frontend}, {source: source_rows, frontend: frontend_rows},
         guard_paths, deadline, check,
     )

@@ -246,7 +246,8 @@ def verify_inputs(pins, chain, deadline):
             and [row for row in recipe["compiler_tools"] if row["path"] == tools["compiler"]["path"]]
             == [tools["compiler"]], "fresh toolchain census differs")
     source, frontend = root / "source", root / "frontend"
-    roster = modules["source_stage"].patch_roster(source, frontend, lock)
+    compatibility = {"msvc_ciso646_compat": True} if recipe.get("msvc_ciso646_compat") is True else {}
+    roster = modules["source_stage"].patch_roster(source, frontend, lock, **compatibility)
     patches = configured["patch_inputs"]
     require(len(patches) == len(roster), "fresh patch inventory length differs")
     for row, (stage, _, path, expected, _) in zip(patches, roster):
@@ -277,7 +278,7 @@ def verify_inputs(pins, chain, deadline):
             "fresh collector source identity differs")
     driver = modules["driver"]
     command = driver.configure_command(cpu, r8, root, tools, frontend)
-    graph = driver.configured_inputs(cpu, r8, root, command, lock, collector)
+    graph = driver.configured_inputs(cpu, r8, root, command, lock, collector, **compatibility)
     require(graph == configured["configured_graph"], "fresh configure CMake/Ninja graph changed")
     ninja = [pins.pin(root / "b/Release" / name, deadline) for name in GRAPH_FILES]
     require([row["sha256"] for row in ninja] == [graph[name] for name in GRAPH_KEYS],

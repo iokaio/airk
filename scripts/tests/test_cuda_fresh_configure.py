@@ -47,6 +47,23 @@ class FreshConfigure(unittest.TestCase):
         self.assertEqual(placement["after_sha256"], "old")
         self.assertEqual(r8.configured_build_preflight.call_args.args[-1]["final_placement"]["after_sha256"], "new")
 
+    def test_requires_msvc_provider_definition_on_both_languages_and_keeps_wx(self):
+        define = "-D_SILENCE_CXX20_CISO646_REMOVED_WARNING"
+        edges = (
+            "\nbuild dir/activations.cc.obj: CXX_COMPILER__onnxruntime_providers_cuda_unscanned_Release a.cc\n"
+            f"  DEFINES = {define}\n"
+            "  FLAGS = -std:c++20 -WX\n"
+            "\nbuild dir/kernel.cu.obj: CUDA_COMPILER__onnxruntime_providers_cuda_llm_unscanned_Release kernel.cu\n"
+            f"  DEFINES = -DOTHER {define}\n"
+        )
+        configure.verify_msvc_cuda_compat(edges)
+        with self.assertRaisesRegex(ValueError, "compatibility definition"):
+            configure.verify_msvc_cuda_compat(edges.replace(f"-DOTHER {define}", "-DOTHER"))
+        with self.assertRaisesRegex(ValueError, "warnings-as-errors"):
+            configure.verify_msvc_cuda_compat(edges.replace(" -WX", ""))
+        with self.assertRaisesRegex(ValueError, r"C\+\+ or CUDA"):
+            configure.verify_msvc_cuda_compat(edges.split("\nbuild dir/kernel", 1)[0])
+
 
 class FreshProcess(unittest.TestCase):
     def test_guard_refuses_before_any_command_write_or_dispatch(self):

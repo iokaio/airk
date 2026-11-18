@@ -24,7 +24,11 @@ helper lookup by nvcc after Visual Studio environment setup.
 
 Fresh configuration extracts the authenticated original source, creates the
 offline mirror and applies the exact loader, public API, frontend and final
-graph collector source transformations. It verifies the actual CUDA/C++20
+graph collector source transformations. The reviewed current recipe also pins
+an MSVC CUDA provider patch. It preserves the alternative-token compatibility
+header under /permissive and keeps /WX enabled. Only CUDA provider C++ and
+CUDA compilation receive the MS STL definition for that one deprecated header.
+It verifies the actual CUDA/C++20
 configuration and Ninja graph under a checked same-human output root.
 The command stage retains the actual wrapped command result plus the original
 Job settlement proof and accepts only natural exit. A configure receipt
@@ -52,7 +56,7 @@ contracts. The private proof pair grants no native activation.
 
 Recovery requires the independently reviewed exact input pins for a
 naturally settled configure command with exit 0 and an enclosing run that
-stopped at the post-command output audit. The retained seven patch commands,
+stopped at the post-command output audit. The retained recipe's patch commands,
 original locked inventories, authenticated frontend ZIP and transformed trees
 are reopened. Recovery performs full live output custody and the original
 CMake/Ninja graph checks. Its cutoff is bounded by the recorded configure

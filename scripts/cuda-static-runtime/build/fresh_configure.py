@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import time
 
@@ -39,7 +40,28 @@ def configure_command(cpu, r8, destination, tools, frontend):
     ]
 
 
-def configured_inputs(cpu, r8, destination, command, lock, collector):
+def verify_msvc_cuda_compat(ninja):
+    definition = "-D_SILENCE_CXX20_CISO646_REMOVED_WARNING"
+    provider_rule = re.compile(r": (CXX|CUDA)_COMPILER__onnxruntime_providers_cuda(?:[_A-Za-z0-9]*) ")
+    languages = set()
+    for edge in ninja.split("\nbuild "):
+        heading, _, variables = edge.partition("\n")
+        match = provider_rule.search(heading)
+        if match is None:
+            continue
+        languages.add(match[1])
+        defines = re.search(r"^  DEFINES = (.+)$", variables, re.MULTILINE)
+        if defines is None or definition not in defines[1].split():
+            raise ValueError("CUDA provider compile edge lacks MSVC compatibility definition")
+        if "activations.cc.obj:" in heading:
+            flags = re.search(r"^  FLAGS = (.+)$", variables, re.MULTILINE)
+            if flags is None or not {"-WX", "/WX"}.intersection(flags[1].split()):
+                raise ValueError("CUDA provider C++ compile edge lacks warnings-as-errors")
+    if languages != {"CXX", "CUDA"}:
+        raise ValueError("generated Ninja graph lacks C++ or CUDA provider compile edges")
+
+
+def configured_inputs(cpu, r8, destination, command, lock, collector, *, msvc_ciso646_compat=False):
     configure_lock = dict(lock, final_placement={
         **lock["final_placement"], "after_sha256": collector["sha256"],
     })
@@ -48,6 +70,8 @@ def configured_inputs(cpu, r8, destination, command, lock, collector):
     ninja = (build / "build.ninja").read_text(encoding="utf-8")
     if "-std:c++20" not in ninja and "/std:c++20" not in ninja:
         raise ValueError("generated Ninja graph lacks the selected C++20 build mode")
+    if msvc_ciso646_compat:
+        verify_msvc_cuda_compat(ninja)
     return observed
 
 
@@ -64,6 +88,7 @@ def execute(recipe_path, expected_sha):
             and recipe["repository_root"] == str(REPO)
             and recipe["execution_authorized"] is True
             and recipe["qualification"] is False, "fresh configure recipe scope differs")
+    require(recipe.get("msvc_ciso646_compat") is True, "reviewed CUDA provider MSVC compatibility patch required")
     require(type(recipe["wall_seconds"]) is int and 0 < recipe["wall_seconds"] <= 10800,
             "fresh configure exceeds parent build wall bound")
     deadline = started + min(recipe["wall_seconds"], (CAMPAIGN_END-started_utc).total_seconds())
@@ -89,6 +114,9 @@ def execute(recipe_path, expected_sha):
                 "fresh build owner path differs: " + name)
     for row in pins.all_pins(recipe):
         pins.check_pin(row, deadline)
+    audit_owner = pins.check_pin(recipe["output_audit_owner"], deadline)
+    require(audit_owner == HERE / "fresh_compile.py", "fresh output audit owner path differs")
+    audit = load(audit_owner, "fresh_configure_output_audit")
     sources = load(owners["source_stage"], "fresh_cuda_source")
     processes = load(owners["process_stage"], "fresh_cuda_process")
     lock = pins.read(owners["lock"])
@@ -112,9 +140,7 @@ def execute(recipe_path, expected_sha):
             and env.get("CL", "") == env.get("_CL_", "") == "",
             "fresh compiler environment differs from pinned toolchain")
 
-    def guard_paths(paths, created, cutoff):
-        for start in range(0, len(paths), 128):
-            component.guard_many(recipe, paths[start:start+128], created, deadline=cutoff)
+    guard_paths = audit.output_guard(component, recipe)
 
     component.guard(recipe, deadline=deadline)
     component.mkdir(recipe, root, deadline=deadline)
@@ -135,11 +161,11 @@ def execute(recipe_path, expected_sha):
         dependency_archives={name: Path(row["path"]) for name, row in
                              recipe["dependency_archives"].items()},
         lock=lock, cpu=cpu, r8=r8, patch_tool=Path(tools["patch"]["path"]),
-        run_patch=run, guard_paths=guard_paths, deadline=deadline)
+        run_patch=run, guard_paths=guard_paths, deadline=deadline, msvc_ciso646_compat=True)
     command = configure_command(cpu, r8, root, tools, source["frontend"])
     configured = run(command, root, "configure")
     guard_paths(sorted((root / "b").rglob("*")), True, deadline)
-    facts = configured_inputs(cpu, r8, root, command, lock, source["collector_source"])
+    facts = configured_inputs(cpu, r8, root, command, lock, source["collector_source"], msvc_ciso646_compat=True)
     require(cpu.source_inventory(source["source"], exclude_mirror=True) == source["source_inventory"]
             and cpu.source_inventory(source["frontend"]) == source["frontend_inventory"],
             "fresh source or cuDNN frontend changed during configure")

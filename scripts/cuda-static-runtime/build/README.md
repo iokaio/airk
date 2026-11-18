@@ -9,7 +9,10 @@ The CUDA configuration selects CUDA Toolkit 12.8.1 (nvcc 12.8.93),
 cuDNN 9.10.2.21, Ninja 1.12.1, Python 3.13.7 and GNU patch 2.7.6.
 The CUDA build targets SM86 and uses C++20. The configure driver
 spells the exact MSVC path with forward slashes so CMake preserves it
-when passing the host compiler argument to nvcc.
+when passing the host compiler argument to nvcc. The MSVC CUDA provider patch
+keeps the legacy alternative-token header available to ORT and CUTLASS and
+keeps warnings as errors enabled. Its private compile definition applies only
+to the header's C++20 deprecation for this provider's C++ and CUDA targets.
 
 The configure recipe binds the exact tools, compiler environment, source
 and dependency bytes, fresh output root and original time limit. Keep
@@ -54,7 +57,7 @@ failed evidence and checks the complete existing build tree and reconstructed
 source inputs under the original deadline. The separate recovery receipt binds
 the resulting configure receipt.
 
-The compile and recovery audit scheduler starts with batches of 48 paths and
+The configure, compile and recovery audit scheduler starts with batches of 48 paths and
 up to eight workers. A timed-out batch can be split into smaller batches under
 the same original deadline. Each new call uses the existing ten-second guard
 limit and rechecks every path. Other guard refusals propagate immediately.
