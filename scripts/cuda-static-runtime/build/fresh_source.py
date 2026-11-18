@@ -17,7 +17,7 @@ COLLECTOR_PATCH = "a1a95c9b4401e302d7046159f882fdafa735bf7b32542314f75b333b90287
 COLLECTOR_LF_PATCH = "5222d2634878ac5e1c68264b6d521f0ca95df3a47397e3cf167b3ff7de844d58"
 COLLECTOR_SOURCE = "db00479a06d0a1e8fadf4cc834ffe5a6da0b745ee2820b06a0821fb1dbeca97b"
 MAX_PATCH_BYTES = 1 << 20
-AUDIT_BATCH = 128
+
 
 
 def check_deadline(deadline):
@@ -33,9 +33,8 @@ def audit_tree(root, guard_paths, deadline):
     # The canonical extractor rejects links and path escapes. Enumerate its
     # actual output in bounded audit batches before hashing the new tree.
     paths = [root, *root.rglob("*")]
-    for offset in range(0, len(paths), AUDIT_BATCH):
-        check_deadline(deadline)
-        guard_paths(paths[offset:offset + AUDIT_BATCH], True, deadline)
+    check_deadline(deadline)
+    guard_paths(paths, True, deadline)
 
 
 def audited_cpu(cpu, guard_paths, deadline):

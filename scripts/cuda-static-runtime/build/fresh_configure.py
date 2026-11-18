@@ -28,7 +28,8 @@ def load(path, name):
 
 def configure_command(cpu, r8, destination, tools, frontend):
     command = r8.gpu_command(cpu, destination, tools, frontend)
-    compiler = tools["compiler"]["path"]
+    # CMake's CUDA compiler-ID flags use UNIX_COMMAND argument splitting.
+    compiler = Path(tools["compiler"]["path"]).as_posix()
     return [
         *command,
         "-DCMAKE_C_COMPILER=" + compiler,
@@ -76,6 +77,7 @@ def execute(recipe_path, expected_sha):
         "pin_reader": REPO / "scripts/cuda-static-incremental.py",
         "source_stage": HERE / "fresh_source.py",
         "process_stage": HERE / "fresh_process.py",
+        "metadata": HERE / "fresh_guard.py",
         "cpu": REPO / "scripts/provision-static-onnx-runtime.py",
         "cpu_lock": REPO / "scripts/static-onnx-runtime-lock.json",
         "r8": HERE / "r8/provision_cuda_runtime.py",
@@ -90,6 +92,7 @@ def execute(recipe_path, expected_sha):
         pins.check_pin(row, deadline)
     sources = load(owners["source_stage"], "fresh_cuda_source")
     processes = load(owners["process_stage"], "fresh_cuda_process")
+    metadata = load(owners["metadata"], "fresh_cuda_metadata")
     lock = pins.read(owners["lock"])
     cpu = load(owners["cpu"], "fresh_cuda_cpu")
     r8 = load(owners["r8"], "fresh_cuda_r8")
@@ -109,9 +112,11 @@ def execute(recipe_path, expected_sha):
             and env.get("CL", "") == env.get("_CL_", "") == "",
             "fresh compiler environment differs from pinned toolchain")
 
+    def checked_batch(paths, created, cutoff):
+        return component.guard_many(recipe, paths, created, deadline=cutoff)
+
     def guard_paths(paths, created, cutoff):
-        for start in range(0, len(paths), 128):
-            component.guard_many(recipe, paths[start:start+128], created, deadline=cutoff)
+        metadata.audit_batches(paths, created, cutoff, checked_batch)
 
     component.guard(recipe, deadline=deadline)
     component.mkdir(recipe, root, deadline=deadline)
