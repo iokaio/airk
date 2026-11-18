@@ -231,6 +231,59 @@ impl Journal {
         input: Option<Sha256Digest>,
         call: impl FnOnce() -> Result<T>,
     ) -> Result<Returned<T>> {
+        self.observe_at(
+            kind,
+            ordinal,
+            input,
+            self.absolute_expires_ns,
+            &mut airk_process::monotonic::now_ns,
+            call,
+        )
+    }
+    /// Project the same durable-start expiry to an Instant for native GPU work.
+    #[cfg(all(feature = "gpu-cuda", windows, target_arch = "x86_64"))]
+    pub fn observe_resource<T>(
+        &mut self,
+        kind: Kind,
+        ordinal: usize,
+        input: Option<Sha256Digest>,
+        overall_expires_ns: u64,
+        call: impl FnOnce(std::time::Instant) -> Result<T>,
+    ) -> Result<Returned<T>> {
+        ensure!(
+            self.absolute_expires_ns.is_none(),
+            "resource journal requires per-operation expiry"
+        );
+        let local_start = std::time::Instant::now();
+        let start_ns = airk_process::monotonic::now_ns()?;
+        let expires_ns = resource_expiry(start_ns, self.deadline_ms, overall_expires_ns)?;
+        // Instant was sampled before the shared monotonic clock, so this
+        // projection is conservative even across scheduler descheduling.
+        let deadline = local_start
+            .checked_add(std::time::Duration::from_nanos(expires_ns - start_ns))
+            .context("projected native operation expiry overflow")?;
+        let mut first = Some(start_ns);
+        self.observe_at(
+            kind,
+            ordinal,
+            input,
+            Some(expires_ns),
+            &mut || match first.take() {
+                Some(start) => Ok(start),
+                None => airk_process::monotonic::now_ns(),
+            },
+            || call(deadline),
+        )
+    }
+    fn observe_at<T>(
+        &mut self,
+        kind: Kind,
+        ordinal: usize,
+        input: Option<Sha256Digest>,
+        absolute_expires_ns: Option<u64>,
+        clock: &mut impl FnMut() -> Result<u64>,
+        call: impl FnOnce() -> Result<T>,
+    ) -> Result<Returned<T>> {
         let file = &mut self.file;
         observe(
             Attempt {
@@ -239,10 +292,10 @@ impl Journal {
                 ordinal,
                 input,
                 deadline_ms: self.deadline_ms,
-                absolute_expires_ns: self.absolute_expires_ns,
+                absolute_expires_ns,
             },
             &mut self.sequence,
-            &mut airk_process::monotonic::now_ns,
+            clock,
             &mut |event| {
                 let bytes = serde_json::to_vec(event)?;
                 file.write_all(&bytes)?;
@@ -255,5 +308,40 @@ impl Journal {
         )
     }
 }
+
+#[cfg(all(feature = "gpu-cuda", windows, target_arch = "x86_64"))]
+fn resource_expiry(start_ns: u64, allowance_ms: u64, whole_expires_ns: u64) -> Result<u64> {
+    ensure!(
+        whole_expires_ns > start_ns,
+        "original native resource process expiry exceeded"
+    );
+    ensure!(
+        (1..=120_000).contains(&allowance_ms),
+        "native resource operation allowance differs"
+    );
+    Ok(start_ns
+        .checked_add(allowance_ms * 1_000_000)
+        .context("native resource operation expiry overflow")?
+        .min(whole_expires_ns))
+}
+
+#[cfg(all(feature = "gpu-cuda", windows, target_arch = "x86_64"))]
+#[test]
+fn gpu_resource_operation_expiry_clips_the_original_monotonic_start() -> Result<()> {
+    let start = 100_000_000_000;
+    assert_eq!(
+        resource_expiry(start, 120_000, start + 500_000_000_000)?,
+        220_000_000_000
+    );
+    assert_eq!(
+        resource_expiry(start, 120_000, start + 6_000_000_000)?,
+        106_000_000_000
+    );
+    assert!(resource_expiry(start, 120_000, start).is_err());
+    assert!(resource_expiry(start, 120_001, start + 500_000_000_000).is_err());
+    assert!(resource_expiry(u64::MAX - 5, 120_000, u64::MAX).is_err());
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests;

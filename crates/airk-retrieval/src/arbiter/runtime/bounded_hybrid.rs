@@ -7,7 +7,7 @@ use cuda::{GraphMetadataObservation, GraphMetadataRow};
 use serde_json::Value;
 use std::{
     path::{Path, PathBuf},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 const CPU: &str = "CPUExecutionProvider";
@@ -34,7 +34,7 @@ pub struct BoundedHybridScorer {
     scorer: Scorer,
     evidence: GraphEvidence,
     deadline: Instant,
-    profiling_finished: bool,
+    profiling: Profiling,
 }
 
 impl GraphGate {
@@ -239,6 +239,41 @@ fn validate_cpu_values(rows: &[GraphMetadataRow]) -> Result<()> {
     Ok(())
 }
 
+enum OpenExperiment<'a> {
+    Profiled(&'a Path),
+    Resource(Instant),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Profiling {
+    Active,
+    Finished,
+    Disabled,
+}
+
+fn require_resource_operation(
+    input: &CompiledInput,
+    now: Instant,
+    deadline: Instant,
+    overall_deadline: Instant,
+) -> Result<()> {
+    ensure!(
+        now < deadline
+            && deadline <= overall_deadline
+            && deadline.duration_since(now) <= Duration::from_secs(120),
+        "Compact resource operation exceeded its original deadline"
+    );
+    ensure!(
+        input.input_ids.len() == 8192
+            && input.attention_mask.len() == 8192
+            && input.attention_mask.iter().all(|&bit| bit == 1)
+            && input.candidate_positions.len() == 8
+            && input.option_mask == [true; 8],
+        "Compact resource scoring requires the exact T8192/N8 all-live shape"
+    );
+    Ok(())
+}
+
 impl Scorer {
     pub fn open_compact_bounded_hybrid_profiled(
         profile: ExecutionProfile,
@@ -247,30 +282,95 @@ impl Scorer {
         reviewed_graph_result: &[u8],
         reviewed_graph_sha: Sha256Digest,
     ) -> Result<BoundedHybridScorer> {
+        Self::open_compact_bounded_hybrid(
+            profile,
+            source,
+            reviewed_graph_result,
+            reviewed_graph_sha,
+            OpenExperiment::Profiled(profiling_prefix),
+        )
+    }
+
+    pub fn open_compact_bounded_hybrid_resource(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        reviewed_graph_result: &[u8],
+        reviewed_graph_sha: Sha256Digest,
+        overall_deadline: Instant,
+    ) -> Result<BoundedHybridScorer> {
+        Self::open_compact_bounded_hybrid(
+            profile,
+            source,
+            reviewed_graph_result,
+            reviewed_graph_sha,
+            OpenExperiment::Resource(overall_deadline),
+        )
+    }
+
+    fn open_compact_bounded_hybrid(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        reviewed_graph_result: &[u8],
+        reviewed_graph_sha: Sha256Digest,
+        experiment: OpenExperiment<'_>,
+    ) -> Result<BoundedHybridScorer> {
         cuda::diagnostic::require_diagnostic_profile(&profile)?;
         let binding = profile
             .gpu
             .as_ref()
             .context("bounded hybrid CUDA binding missing")?;
-        let deadline = binding.load_deadline;
+        let load_deadline = binding.load_deadline;
+        let (deadline, profiling_prefix) = match experiment {
+            OpenExperiment::Profiled(prefix) => (load_deadline, Some(prefix)),
+            OpenExperiment::Resource(overall_deadline) => {
+                ensure!(
+                    load_deadline <= overall_deadline,
+                    "Compact resource load deadline exceeds the original experiment expiry"
+                );
+                ensure!(
+                    (
+                        binding.plan.cold_peak_bytes(),
+                        binding.plan.warm_extra_bytes(),
+                        binding.plan.headroom_bytes()
+                    ) == (22 << 30, 16 << 30, 2 << 30),
+                    "Compact resource capacity differs from the reviewed experiment"
+                );
+                (overall_deadline, None)
+            }
+        };
         let gate = GraphGate::new(reviewed_graph_result, reviewed_graph_sha)?;
-        gate.verify_profile(profile.description(), binding.device.observation(deadline)?)?;
+        gate.verify_profile(
+            profile.description(),
+            binding.device.observation(load_deadline)?,
+        )?;
         let mut scorer = Self::open_internal(
             profile,
             source,
-            |builder| Ok(builder.with_profiling(profiling_prefix)?),
+            |builder| match profiling_prefix {
+                Some(prefix) => Ok(builder.with_profiling(prefix)?),
+                None => Ok(builder),
+            },
             OpenMode::BoundedHybrid(Box::new(gate)),
         )?
         .context("bounded hybrid scorer missing")?;
-        let evidence = scorer
+        let mut evidence = scorer
             .bounded_hybrid
             .take()
             .context("same-session graph evidence missing")?;
+        let profiling = if profiling_prefix.is_some() {
+            Profiling::Active
+        } else {
+            evidence.policy_identity = framed_digest(
+                b"airk.private.compact-cuda-bounded-hybrid-resource/1",
+                &[evidence.policy_identity.as_bytes()],
+            );
+            Profiling::Disabled
+        };
         Ok(BoundedHybridScorer {
             scorer,
             evidence,
             deadline,
-            profiling_finished: false,
+            profiling,
         })
     }
 }
@@ -289,24 +389,28 @@ impl BoundedHybridScorer {
         input: &CompiledInput,
         deadline: Instant,
     ) -> Result<Vec<f32>> {
-        ensure!(
-            !self.profiling_finished,
-            "bounded hybrid profiling has ended"
-        );
-        ensure!(
-            deadline <= self.deadline && APPROVED_WIDTHS.contains(&input.input_ids.len()),
-            "bounded hybrid input width or original deadline differs"
-        );
+        match self.profiling {
+            Profiling::Active => {
+                ensure!(
+                    deadline <= self.deadline && APPROVED_WIDTHS.contains(&input.input_ids.len()),
+                    "bounded hybrid input width or original deadline differs"
+                );
+            }
+            Profiling::Finished => anyhow::bail!("bounded hybrid profiling has ended"),
+            Profiling::Disabled => {
+                require_resource_operation(input, Instant::now(), deadline, self.deadline)?;
+            }
+        }
         self.scorer.score_with_deadline(input, deadline)
     }
 
     pub fn finish_profiling(&mut self) -> Result<PathBuf> {
         // A failed finish can leave the profiler state unknown. Scoring stays closed.
         ensure!(
-            !self.profiling_finished,
-            "bounded hybrid profiling has ended"
+            self.profiling == Profiling::Active,
+            "bounded hybrid profiler is inactive"
         );
-        self.profiling_finished = true;
+        self.profiling = Profiling::Finished;
         cuda::in_time(self.deadline)?;
         let path = self.scorer.finish_profiling()?;
         cuda::in_time(self.deadline)?;

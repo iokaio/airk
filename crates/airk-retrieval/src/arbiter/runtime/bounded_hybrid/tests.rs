@@ -125,3 +125,50 @@ fn bounded_hybrid_cpu_value_gate_refuses_unprofiled_or_non_control_tensors() -> 
     assert!(validate_cpu_values(&rows).is_err());
     Ok(())
 }
+
+#[test]
+fn compact_resource_operations_keep_independent_deadlines_and_exact_width() -> Result<()> {
+    let load_expiry = Instant::now() + Duration::from_secs(120);
+    let now = load_expiry + Duration::from_secs(1);
+    let operation_expiry = now + Duration::from_secs(120);
+    let overall_expiry = now + Duration::from_secs(3600);
+    let mut input = CompiledInput {
+        prompt: String::new(),
+        input_ids: vec![1; 8192],
+        attention_mask: vec![1; 8192],
+        position_ids: (0..8192).collect(),
+        decision_position: 8191,
+        candidate_positions: (0..8).collect(),
+        option_mask: vec![true; 8],
+        input_digest: Sha256Digest::from_bytes([1; 32]),
+    };
+    require_resource_operation(&input, now, operation_expiry, overall_expiry)?;
+    assert!(require_resource_operation(&input, now, now, overall_expiry).is_err());
+    assert!(
+        require_resource_operation(
+            &input,
+            now,
+            operation_expiry + Duration::from_nanos(1),
+            overall_expiry,
+        )
+        .is_err()
+    );
+    assert!(
+        require_resource_operation(
+            &input,
+            now,
+            operation_expiry,
+            operation_expiry - Duration::from_nanos(1),
+        )
+        .is_err()
+    );
+    input.attention_mask[0] = 0;
+    assert!(require_resource_operation(&input, now, operation_expiry, overall_expiry).is_err());
+    input.attention_mask[0] = 1;
+    input.option_mask[0] = false;
+    assert!(require_resource_operation(&input, now, operation_expiry, overall_expiry).is_err());
+    input.option_mask[0] = true;
+    input.input_ids.truncate(1024);
+    assert!(require_resource_operation(&input, now, operation_expiry, overall_expiry).is_err());
+    Ok(())
+}

@@ -504,3 +504,11 @@ fn compact_capacity_revision_stays_within_approved_device_envelope() -> Result<(
     }
     Ok(())
 }
+
+mod resource20;
+
+#[test]
+#[ignore = "owned exclusive Windows CUDA Job and original monotonic resource envelope required"]
+fn cuda_compact_fp32_bounded_hybrid_resource20() -> Result<()> {
+    resource20::run()
+}

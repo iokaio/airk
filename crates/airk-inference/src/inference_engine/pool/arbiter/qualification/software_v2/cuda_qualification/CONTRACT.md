@@ -247,3 +247,25 @@ Probe identity and exact original provenance remain inputs, with the applied
 capacity and its independent pin recorded in the R2 receipt and policy
 identity. These values are allocation and planning settings. Runtime
 memory observations remain separately reported.
+
+
+## Unprofiled Compact Resource20
+
+This separate private selector measures one cold CUDA model load, one
+all-live T8192/N8 warmup, and exactly 20 unprofiled forwards in one
+same-session graph-gated scorer. The exact R2 graph, model, references,
+capacity policy, device envelope and host Job limits are required.
+The parent supplies the original 3600-second process expiry in the
+shared monotonic clock. Each operation uses its own original 120-second
+expiry clipped to that parent expiry. The actual native call receives a
+conservative Instant projection of the durable original start marker.
+Each start and return uses the existing native operation journal and
+retains both durable elapsed and native-call elapsed observations.
+
+The first error, expiry, score mismatch or resource failure stops the
+series and preserves its observed partial rows. Completion requires
+exactly 20 actual warm samples, native and parent custody settlement
+and post-input pins. The series uses shared ResourceSeries nearest-rank
+p95. It omits ORT profiling overhead, retains the separate profiled
+diagnostic evidence, and reports the component only. Composed Answer,
+physical device memory peak and product admission remain separate.

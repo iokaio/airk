@@ -682,3 +682,15 @@ does not describe them. Each forward uses the native validation and device
 lifetime path at 32, 128, 1024 or 8192 tokens under the original deadline.
 The raw ORT profile is separate evidence for the caller to validate. Value
 payload bounds do not measure allocation peaks or physical transfers.
+
+### Compact FP32 resource measurement
+
+The private resource open function reuses the same graph gate and the reviewed
+22 GiB arena, 16 GiB warm-growth reservation and 2 GiB headroom. It leaves ORT
+profiling disabled and emits a resource-specific policy identity. Resource rows
+use T8192/N8 with all tokens and candidates live. Cold load uses the binding's
+original expiry. The caller supplies the original expiry of each warm operation
+and a separate fixed expiry for the whole experiment. A warm operation may
+outlive the completed load's deadline and remains limited to 120 seconds and
+the original experiment expiry. The normal native scorer owns synchronization,
+claim release and teardown for both experiments.
