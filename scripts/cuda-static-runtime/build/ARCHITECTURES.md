@@ -52,9 +52,10 @@ still apply.
 Compilation retains the existing stage evidence and a separate
 `fresh-cuda-code.json` receipt with exact linked provider, pinned
 inspector, both settled cuobjdump commands and observed code counts.
-This is a compile candidate. A separately reviewed multi-architecture
-aggregate/runtime/preservation consumer and actual RTX 40 and RTX 50
-hardware runs are required for qualification.
+Continue with the [private candidate archive](ARCHITECTURE-ARCHIVE.md)
+after the compile and both code inventory commands pass. Public runtime
+provenance and actual RTX 40 and RTX 50 hardware runs are required for
+qualification.
 
 Run focused controls with
 `python -B -S scripts/cuda-static-runtime/build/test_fresh_architectures.py`.
