@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Shared service vocabulary: project registration, request keys, worker
-//! identity, job records and maintenance observations. Leaf: it depends only on
-//! `identity`. `service` re-exports every item, so `airk_core::service` paths and
-//! the wire are unchanged. See `CONTRACT.md` beside this file.
+//! identity, connection endpoints and maintenance observations. It depends
+//! only on `identity`. The service modules re-export the public types.
+//! See `CONTRACT.md` beside this file.
 use crate::identity::{Incarnation, Sha256Digest};
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
+use std::{fmt, str::FromStr};
 
 /// Digest of a canonical root/storage/collection registration, never a client path.
 pub type ProjectBinding = Sha256Digest;
@@ -193,5 +194,71 @@ impl MaintenanceObservation {
             "successful maintenance observation lacks pending count"
         );
         Ok(())
+    }
+}
+
+/// The largest M3 request frame (contracts §2.8): arguments, selection and
+/// envelope with room for re-encoding.
+pub const MAX_TOOLS_CALL_REQUEST_BYTES: usize = 128 * 1024;
+
+/// Exactly one canonical IPv4 loopback MCP URL. No DNS, redirects or userinfo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct LoopbackMcpUrl(u16);
+
+impl LoopbackMcpUrl {
+    pub fn new(port: u16) -> Result<Self> {
+        ensure!(
+            port != 0,
+            "an endpoint needs an actually bound nonzero port"
+        );
+        Ok(Self(port))
+    }
+
+    pub fn port(self) -> u16 {
+        self.0
+    }
+
+    pub fn origin(self) -> String {
+        format!("https://127.0.0.1:{}", self.0)
+    }
+}
+
+impl fmt::Display for LoopbackMcpUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "https://127.0.0.1:{}/mcp", self.0)
+    }
+}
+
+impl FromStr for LoopbackMcpUrl {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        ensure!(value.len() <= 32, "loopback URL exceeds its bound");
+        let port = value
+            .strip_prefix("https://127.0.0.1:")
+            .and_then(|value| value.strip_suffix("/mcp"))
+            .ok_or_else(|| anyhow::anyhow!("expected a canonical loopback HTTPS MCP URL"))?;
+        ensure!(
+            !port.is_empty()
+                && !port.starts_with('0')
+                && port.bytes().all(|byte| byte.is_ascii_digit()),
+            "noncanonical loopback port"
+        );
+        Self::new(port.parse()?)
+    }
+}
+
+impl TryFrom<String> for LoopbackMcpUrl {
+    type Error = anyhow::Error;
+
+    fn try_from(value: String) -> Result<Self> {
+        value.parse()
+    }
+}
+
+impl From<LoopbackMcpUrl> for String {
+    fn from(value: LoopbackMcpUrl) -> Self {
+        value.to_string()
     }
 }

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Inert loopback connection descriptions, never proof of native authority.
+pub use crate::service_records::LoopbackMcpUrl;
 use crate::{
     identity::{Incarnation, Sha256Digest},
     service::{CombinedConnectRequest, ScopedConnectRequest},
 };
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
-use std::{fmt, str::FromStr};
 
 pub const HTTP_CONTRACT_VERSION: u32 = 1;
 pub const PREFERRED_HTTP_PORT: u16 = 57421;
@@ -14,68 +14,6 @@ pub const MAX_ENDPOINT_BYTES: usize = 4096;
 pub const MAX_HTTP_SELECTION_BYTES: usize = 48 * 1024;
 pub const MAX_CONNECTION_BYTES: usize = 60 * 1024;
 pub const MAX_IMPORTED_HTTP_MEMBER_BYTES: usize = 16 * 1024;
-
-/// Exactly one canonical IPv4 loopback MCP URL. No DNS, redirects or userinfo.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
-pub struct LoopbackMcpUrl(u16);
-
-impl LoopbackMcpUrl {
-    pub fn new(port: u16) -> Result<Self> {
-        ensure!(
-            port != 0,
-            "an endpoint needs an actually bound nonzero port"
-        );
-        Ok(Self(port))
-    }
-
-    pub fn port(self) -> u16 {
-        self.0
-    }
-
-    pub fn origin(self) -> String {
-        format!("https://127.0.0.1:{}", self.0)
-    }
-}
-
-impl fmt::Display for LoopbackMcpUrl {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "https://127.0.0.1:{}/mcp", self.0)
-    }
-}
-
-impl FromStr for LoopbackMcpUrl {
-    type Err = anyhow::Error;
-
-    fn from_str(value: &str) -> Result<Self> {
-        ensure!(value.len() <= 32, "loopback URL exceeds its bound");
-        let port = value
-            .strip_prefix("https://127.0.0.1:")
-            .and_then(|value| value.strip_suffix("/mcp"))
-            .ok_or_else(|| anyhow::anyhow!("expected a canonical loopback HTTPS MCP URL"))?;
-        ensure!(
-            !port.is_empty()
-                && !port.starts_with('0')
-                && port.bytes().all(|byte| byte.is_ascii_digit()),
-            "noncanonical loopback port"
-        );
-        Self::new(port.parse()?)
-    }
-}
-
-impl TryFrom<String> for LoopbackMcpUrl {
-    type Error = anyhow::Error;
-
-    fn try_from(value: String) -> Result<Self> {
-        value.parse()
-    }
-}
-
-impl From<LoopbackMcpUrl> for String {
-    fn from(value: LoopbackMcpUrl) -> Self {
-        value.to_string()
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

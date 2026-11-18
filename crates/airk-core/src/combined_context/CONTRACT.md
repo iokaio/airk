@@ -4,6 +4,12 @@ Owner: `airk_core::combined_context`. Execution and authority remain with the
 native frontend, worker and local Kernel. This is the reviewed option B;
 no persisted state, existing digest domain or public Answer argument changes.
 
+The shared `context_records` module owns the literal `Resources`,
+`PartitionAllowance`, and `ContextDeliveryBinding` records and validators.
+This module re-exports those types and continues to own selection accounting
+and combined result materialization. Existing service and public encodings
+use those same Rust fields and representations.
+
 One original attempt, selected-scope digest and full canonical immutable-index
 roster own every partition. A `PartitionAllowance` binds those facts without
 granting authority. Consumers must still check the actual installed worker,

@@ -160,7 +160,8 @@ ANSWER_VALIDATOR_TEST = "retained_current_answer_pair_validates_full_transport_r
 ANSWER_VALIDATOR_SOURCES = (
     "crates/airk-cli/tests/combined_reads.rs", "crates/airk-cli/tests/common/parity/context.rs",
     "crates/airk-cli/tests/common/parity/strict.rs", "crates/airk-core/src/arbiter/context_action.rs",
-    "crates/airk-core/src/combined_context.rs", "crates/airk-kernel/src/arbiter.rs",
+    "crates/airk-core/src/combined_context.rs", "crates/airk-core/src/context_records.rs",
+    "crates/airk-kernel/src/arbiter.rs",
     "crates/airk-mcp/src/lib.rs", "fixtures/split/arbiter/public_answer_cases.json",
 )
 

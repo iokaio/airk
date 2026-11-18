@@ -24,10 +24,17 @@ large Core module cycle. Those modules now depend on this leaf.
 
 ## Interface
 
-The module itself is private. Every item is `pub` and re-exported unchanged
+The module itself is private. Its original items are `pub` and re-exported unchanged
 from `airk_core::service`, which stays the public path for other crates,
 tests and documentation. Inside Core, production code names
 `crate::service_records::<item>`.
+
+`LoopbackMcpUrl` has its original public path under `service_http`. The
+existing tool-call request byte limit is re-exported from `service`.
+`scope_records` owns the scoped read reference and selection identity
+records. The original `service` and `scoped_reads` paths re-export them.
+The private lease fields, redaction and serde representation retain the
+existing contract.
 
 | Item | Contract |
 |---|---|

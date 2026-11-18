@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Canonical token-free agent setup text. These inert values grant no write authority.
-use crate::service_http::LoopbackMcpUrl;
+use crate::service_records::LoopbackMcpUrl;
 use anyhow::{Result, ensure};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

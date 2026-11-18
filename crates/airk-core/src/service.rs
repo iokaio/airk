@@ -5,11 +5,12 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 
 pub use crate::native_admin::AdminLaunchSecret;
+pub use crate::scope_records::ScopedReadRef;
 
 pub use crate::service_records::{
     JobKind, JobOutcome, JobRecord, JobState, MAX_PROJECT_REGISTRATION_BYTES,
-    MaintenanceObservation, ProjectBinding, ProjectRegistration, RegisteredProject, RequestKey,
-    WorkerIdentity,
+    MAX_TOOLS_CALL_REQUEST_BYTES, MaintenanceObservation, ProjectBinding, ProjectRegistration,
+    RegisteredProject, RequestKey, WorkerIdentity,
 };
 
 /// I1 native adapter input. Scope metadata is inert until the service validates
@@ -235,7 +236,7 @@ pub enum ControlMethod {
         scope_identity: Sha256Digest,
         result_digest: Sha256Digest,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        context_bindings: Vec<crate::combined_context::ContextDeliveryBinding>,
+        context_bindings: Vec<crate::context_records::ContextDeliveryBinding>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         read_attempt: Option<crate::read_attempt::ReadAttemptBudget>,
     },
@@ -1270,9 +1271,6 @@ pub const MAX_EXPLORER_OFFLINE_RESPONSE_BYTES: usize = 1024 * 1024;
 pub const MAX_USAGE_DOCUMENT_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 /// The largest tool argument object, as the pre-split CLI bounded it.
 pub const MAX_TOOL_ARGUMENT_BYTES: usize = 64 * 1024;
-/// The largest M3 request frame (contracts §2.8): arguments, selection and
-/// envelope with room for re-encoding.
-pub const MAX_TOOLS_CALL_REQUEST_BYTES: usize = 128 * 1024;
 /// The largest M3 response frame (contracts §2.8): the largest canonical tool
 /// response the service's HTTPS route can be configured to return.
 pub const MAX_TOOLS_CALL_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
@@ -2036,55 +2034,6 @@ impl std::fmt::Display for JobError {
     }
 }
 impl std::error::Error for JobError {}
-
-/// Frozen native scope identity. This metadata is never a bearer credential.
-/// Exactly one source: a catalog grant (`grant_id` and `grant_revision`) or an
-/// in-memory selection (`selection`). A present field serializes exactly as the
-/// former required field, so catalog-grant bytes are unchanged. A selection ref
-/// is never a durable fence target and never leaves the private host/worker path.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ScopedReadRef {
-    pub schema: u32,
-    /// Native-reserved, worker-monotonic installation lease; never a bearer.
-    pub lease_generation: u64,
-    pub index_id: crate::index_catalog::IndexId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub grant_id: Option<crate::index_catalog::GrantId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub grant_revision: Option<crate::index_catalog::CatalogRevision>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub selection: Option<crate::scoped_reads::SelectionScopeRef>,
-    pub fingerprint: Sha256Digest,
-}
-impl ScopedReadRef {
-    pub fn validate(&self) -> Result<()> {
-        ensure!(
-            self.schema == 1 && self.lease_generation > 0,
-            "unsupported scoped read contract"
-        );
-        ensure!(
-            matches!(
-                (self.grant_id, self.grant_revision, self.selection),
-                (Some(_), Some(_), None) | (None, None, Some(_))
-            ),
-            "scoped read ref must name exactly one authority source"
-        );
-        Ok(())
-    }
-    /// The catalog grant pair, present only when this ref names a catalog grant.
-    pub fn catalog_grant(
-        &self,
-    ) -> Option<(
-        crate::index_catalog::GrantId,
-        crate::index_catalog::CatalogRevision,
-    )> {
-        match (self.grant_id, self.grant_revision, self.selection) {
-            (Some(id), Some(revision), None) => Some((id, revision)),
-            _ => None,
-        }
-    }
-}
 
 /// Bearer credential: serializable only for protected IPC, intentionally redacted in Debug.
 #[derive(Clone, Serialize, Deserialize)]

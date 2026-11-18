@@ -2,9 +2,10 @@
 //! Private native joint-task inputs. Values cannot construct service authority.
 use crate::{
     arbiter::{EvidenceRecord, ReadChoice, ScopeBinding, context_action::ContextActionRoster},
-    combined_context::PartitionAllowance,
+    context_records::PartitionAllowance,
     read_attempt::{ReadAttemptBudget, ReadClock},
-    service::{ScopedReadRef, WorkerIdentity},
+    scope_records::ScopedReadRef,
+    service_records::WorkerIdentity,
 };
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};

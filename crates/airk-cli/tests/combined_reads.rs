@@ -6189,7 +6189,7 @@ fn retained_current_answer_pair_validates_full_transport_results() -> Result<()>
         &capture["arguments"],
         protocol,
     )?;
-    let owners: [(&str, &[u8]); 8] = [
+    let owners: [(&str, &[u8]); 9] = [
         (
             "crates/airk-cli/tests/combined_reads.rs",
             include_bytes!("combined_reads.rs").as_slice(),
@@ -6209,6 +6209,10 @@ fn retained_current_answer_pair_validates_full_transport_results() -> Result<()>
         (
             "crates/airk-core/src/combined_context.rs",
             include_bytes!("../../airk-core/src/combined_context.rs").as_slice(),
+        ),
+        (
+            "crates/airk-core/src/context_records.rs",
+            include_bytes!("../../airk-core/src/context_records.rs").as_slice(),
         ),
         (
             "crates/airk-kernel/src/arbiter.rs",

@@ -3,10 +3,11 @@
 use crate::{
     Hit,
     arbiter::{Budget, FocusApplicationReceipt, ScopeBinding, focus::MAX_RETURNED_CANDIDATES},
-    combined_context::PartitionAllowance,
+    context_records::PartitionAllowance,
     identity::Sha256Digest,
     read_attempt::{ReadAttemptBudget, ReadClock},
-    service::{ScopedReadRef, WorkerIdentity},
+    scope_records::ScopedReadRef,
+    service_records::{MAX_TOOLS_CALL_REQUEST_BYTES, WorkerIdentity},
 };
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -167,7 +168,7 @@ impl NativeFocusRequest {
                 && self.remaining_ms <= self.parent_budget.deadline_ms
                 && (1..=8192).contains(&self.remaining_input_tokens)
                 && self.remaining_input_tokens <= self.parent_budget.input_tokens
-                && serde_json::to_vec(self)?.len() <= crate::service::MAX_TOOLS_CALL_REQUEST_BYTES,
+                && serde_json::to_vec(self)?.len() <= MAX_TOOLS_CALL_REQUEST_BYTES,
             "native Focus original bounds exceeded"
         );
         for (ordinal, candidate) in self.candidates.iter().enumerate() {

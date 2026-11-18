@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
+use crate::read_attempt::ReadAttemptBudget;
 use serde_json::{Value, json};
 
 fn fixture() -> Value {
