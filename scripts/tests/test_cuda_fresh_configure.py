@@ -19,28 +19,6 @@ def load(name):
 
 configure = load("fresh_configure")
 process = load("fresh_process")
-guards = load("fresh_guard")
-
-
-class FreshGuard(unittest.TestCase):
-    def test_partitions_every_path_with_the_original_cutoff(self):
-        paths = list(range(515))
-        calls = Mock()
-        with patch.object(guards.time, "monotonic", return_value=1):
-            guards.audit_batches(paths, True, 9, calls)
-        self.assertEqual(sorted(value for call in calls.call_args_list for value in call.args[0]), paths)
-        self.assertEqual(sorted(len(call.args[0]) for call in calls.call_args_list), [3, 128, 128, 128, 128])
-        self.assertTrue(all(call.args[1:] == (True, 9) for call in calls.call_args_list))
-
-    def test_failure_does_not_dispatch_the_next_group(self):
-        def fail_first(paths, created, deadline):
-            if paths[0] == 0:
-                raise ValueError("metadata refusal")
-        calls = Mock(side_effect=fail_first)
-        with patch.object(guards.time, "monotonic", return_value=1):
-            with self.assertRaisesRegex(ValueError, "metadata refusal"):
-                guards.audit_batches(list(range(515)), False, 9, calls)
-        self.assertEqual(calls.call_count, 4)
 
 
 class FreshConfigure(unittest.TestCase):

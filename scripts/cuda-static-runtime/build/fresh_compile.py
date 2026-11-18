@@ -36,7 +36,6 @@ OWNERS = {
     "pin_reader": REPO / "scripts/cuda-static-incremental.py",
     "source_stage": HERE / "fresh_source.py",
     "process_stage": HERE / "fresh_process.py",
-    "metadata": HERE / "fresh_guard.py",
     "cpu": REPO / "scripts/provision-static-onnx-runtime.py",
     "cpu_lock": REPO / "scripts/static-onnx-runtime-lock.json",
     "r8": HERE / "r8/provision_cuda_runtime.py",
@@ -134,14 +133,9 @@ def load_chain(pins, configured_pin, deadline):
 
 
 def output_guard(component, recipe):
-    metadata = load(OWNERS["metadata"], "fresh_cuda_compile_metadata")
-
-    def checked_batch(paths, created, deadline):
-        return component.guard_many(recipe, paths, created, deadline=deadline)
-
     def guard_paths(paths, created, deadline):
-        metadata.audit_batches(paths, created, deadline, checked_batch)
-
+        for offset in range(0, len(paths), 128):
+            component.guard_many(recipe, paths[offset:offset+128], created, deadline=deadline)
     return guard_paths
 
 
