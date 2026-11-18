@@ -71,8 +71,31 @@ class ConsumerControls(unittest.TestCase):
    argv=['provision','--destination','C:/destination','--receipt-sha256','c'*64]+extra
    with patch.object(sys,'argv',argv),patch.object(cli,'load',return_value=rt):
     with self.assertRaisesRegex(ValueError,'complete incremental mode'):cli.main()
+ def test_cli_projects_incremental_handoff_from_one_bundle_without_relink(self):
+  b=proof()
+  a=aggregate(b)
+  destination=Path('C:/destination')
+  owner=SimpleNamespace(verify_incremental_bundle=Mock(return_value={'build':b,'aggregate':a}))
+  legacy=SimpleNamespace(verify_aggregate=Mock(),aggregate=Mock())
+  core=SimpleNamespace(plain=lambda path:path)
+  runtime_loader=SimpleNamespace(load=lambda *args:core)
+  modules={'cuda-static-runtime':runtime_loader,'cuda-static-aggregate':legacy,
+           'cuda-runtime-environment':env,'cuda-static-incremental':owner}
+  argv=['provision','--repo-root','C:/repo','--destination',str(destination),
+        '--incremental-root','C:/child','--incremental-proposal','C:/proposal',
+        '--receipt-sha256','c'*64]
+  with patch.object(sys,'argv',argv),patch.object(cli,'load',side_effect=modules.__getitem__),patch('builtins.print') as printed:
+   cli.main()
+   self.assertEqual(json.loads(printed.call_args.args[0]),self.handoff())
+   with patch.object(sys,'argv',[*argv,'--aggregate']),self.assertRaisesRegex(ValueError,'consumer relink refused'):
+    cli.main()
+  owner.verify_incremental_bundle.assert_called_once_with(
+   destination,Path('C:/child'),Path('C:/proposal'),'c'*64,Path('C:/repo'))
+  legacy.verify_aggregate.assert_not_called()
+  legacy.aggregate.assert_not_called()
+
  def test_staging_verifier_refusal_precedes_mutation(self):
-  rt=SimpleNamespace(load=lambda *a:object());owner=SimpleNamespace(verify_incremental=Mock(side_effect=ValueError('producer refused')))
+  rt=SimpleNamespace(load=lambda *a:object());owner=SimpleNamespace(verify_incremental_bundle=Mock(side_effect=ValueError('producer refused')))
   with patch.object(stage,'load',side_effect=lambda name:rt if name=='cuda-static-runtime' else owner),patch.object(Path,'mkdir') as mkdir:
    with self.assertRaisesRegex(ValueError,'producer refused'):stage.stage_incremental_providers('d',{}, {},'o','i','p','sha','repo')
   mkdir.assert_not_called()
@@ -85,7 +108,7 @@ class ConsumerControls(unittest.TestCase):
   policy={'path':'C:/approved/fresh','root':'C:/approved','expected_sid':'human','guard':{'path':'C:/guard.ps1','sha256':'g'*64,'bytes':3},'powershell':{'path':'C:/pwsh.exe','sha256':'p'*64,'bytes':3}}
   core=SimpleNamespace(plain=lambda p,**kw:Path(p),verify_file=lambda p,r:events.append(('verify',str(p))),read_json=lambda p:{'provider_stage':policy,'parent_context':{'destination':'C:/original-cu8'}},child=lambda d,p:Path(d)/p,digest=lambda p:'a'*64)
   rt=SimpleNamespace(load=lambda *a:core,canonical=runtime.canonical)
-  owner=SimpleNamespace(verify_incremental=Mock(return_value=b),verify_aggregate=Mock(return_value=a))
+  owner=SimpleNamespace(verify_incremental_bundle=Mock(return_value={'build':b,'aggregate':a}))
   aggregate_owner=SimpleNamespace(verify_aggregate=Mock(return_value=a))
   def module(name):return {'cuda-static-runtime':rt,'cuda-static-incremental':owner,'cuda-static-aggregate':aggregate_owner,'cuda-runtime-environment':env}[name]
   def opened(path,mode,*args,**kwargs):events.append(('open',str(path),mode));return io.BytesIO(b'abc' if mode=='rb' else b'')
@@ -93,11 +116,13 @@ class ConsumerControls(unittest.TestCase):
   with patch.object(stage,'load',side_effect=module),patch.object(Path,'exists',return_value=False),patch.object(Path,'mkdir',side_effect=lambda:events.append(('mkdir',))),patch.object(Path,'open',opened),patch.object(Path,'stat',return_value=SimpleNamespace(st_size=3)),patch.object(subprocess,'run',side_effect=lambda argv,**kw:events.append(('audit',argv[-1]))):
    result=stage.stage_incremental_providers(Path('C:/destination'),b,a,Path('C:/approved/fresh'),'i','p','sha','repo')
   self.assertFalse(result['qualification']);self.assertFalse(result['complete_cuda_runtime'])
-  self.assertEqual(owner.verify_incremental.call_count,2)
-  original_deadline=owner.verify_incremental.call_args_list[0].kwargs["deadline"]
-  self.assertEqual(owner.verify_incremental.call_args_list[1].kwargs["deadline"],original_deadline)
-  self.assertEqual(owner.verify_aggregate.call_args.kwargs["deadline"],original_deadline)
-  self.assertEqual(aggregate_owner.verify_aggregate.call_args.kwargs["deadline"],original_deadline)
+  calls=owner.verify_incremental_bundle.call_args_list
+  self.assertEqual(len(calls),2)
+  expected=(Path('C:/destination'),'i','p','sha','repo')
+  self.assertEqual([call.args for call in calls],[expected,expected])
+  self.assertEqual(calls[0].kwargs,calls[1].kwargs)
+  self.assertIn('deadline',calls[0].kwargs)
+  aggregate_owner.verify_aggregate.assert_not_called()
   self.assertTrue(any(x[0]=='open' and x[1]==str(Path('C:/original-cu8/b/onnxruntime_providers_cuda.dll')) for x in events))
   self.assertEqual(sum(x[0]=='audit' for x in events),10)
   self.assertEqual([x[2] for x in events if x[0]=='open' and x[2]=='xb'],['xb']*4)
@@ -144,7 +169,7 @@ class ConsumerControls(unittest.TestCase):
    if str(path).endswith('onnxruntime_providers_cuda.dll'):raise ValueError('primary source drift')
   core=SimpleNamespace(plain=lambda p,**kw:Path(p),child=lambda d,p:Path(d)/p,verify_file=verify,read_json=lambda p:{'parent_context':{'destination':'C:/original-cu8'}})
   rt=SimpleNamespace(load=lambda *a:core,canonical=runtime.canonical)
-  owner=SimpleNamespace(verify_incremental=lambda *a,**kw:b)
+  owner=SimpleNamespace(verify_incremental_bundle=lambda *a,**kw:{'build':b,'aggregate':aggregate(b)})
   def audit(policy,path,*args):
    if str(path).endswith('staging-receipt.json'):raise OSError('secondary audit failed')
   guards=SimpleNamespace(incremental_output_policy=lambda *a:{},audit_incremental_output=audit)
@@ -166,7 +191,7 @@ class ConsumerControls(unittest.TestCase):
   b['provider_dlls']=[{'path':'b/onnxruntime_providers_cuda.dll'},{'path':'b/onnxruntime_providers_shared.dll'}]
   core=SimpleNamespace(plain=lambda p,**kw:Path(p),child=lambda d,p:Path(d)/p,verify_file=lambda *a:None,read_json=lambda p:{'parent_context':{'destination':'C:/original-cu8'}})
   rt=SimpleNamespace(load=lambda *a:core,canonical=runtime.canonical)
-  owner=SimpleNamespace(verify_incremental=lambda *a,**kw:b)
+  owner=SimpleNamespace(verify_incremental_bundle=lambda *a,**kw:{'build':b,'aggregate':aggregate(b)})
   guards=SimpleNamespace(incremental_output_policy=lambda *a:{},audit_incremental_output=lambda *a:None)
   modules={'cuda-static-runtime':rt,'cuda-static-incremental':owner,'cuda-runtime-environment':guards,'cuda-static-aggregate':SimpleNamespace(verify_aggregate=lambda *a,**kw:aggregate(b))}
   for times,created in [([0,299,300],False),([0,1,2,3,4,299,300],True)]:

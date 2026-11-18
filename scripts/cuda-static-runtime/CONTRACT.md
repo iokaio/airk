@@ -63,7 +63,11 @@ The authenticated build recipe contains provider_stage with exactly path, root,
 expected_sid, guard and powershell (FilePins). This is the approved fresh copy destination,
 not authority to run old R12 commands. The consumer reopens the recipe and guard,
 checks every output parent, creates with exclusive mode, audits before reading
-new bytes and reopens producer/aggregate provenance after copying. The private
+new bytes and reopens producer/aggregate provenance after copying. Each
+observation obtains both canonical proofs through one full verification with
+verify_incremental_bundle. Pre-copy and post-copy verification share the
+original 300-second deadline and are performed independently. The standalone
+CLI uses the same bundle when creating the environment handoff. The private
 raw receipt leaf is gpu-incremental-build-receipt.json. Staging remains explicitly
 incomplete and unapproved; native runtime assembly and package custody remain
 separate owners.
