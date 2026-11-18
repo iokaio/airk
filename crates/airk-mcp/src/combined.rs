@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Selected-session catalog. The native owner resolves and checks authority.
+use crate::tool_catalog::combined_tool;
+pub use crate::tool_catalog::limit_per_index_schema;
 pub use airk_core::combined_reads::query_scope::{QueryScopeArgs, QueryScopeView};
 use rmcp::model::Tool;
 use serde::{Deserialize, Serialize};
@@ -28,46 +30,6 @@ pub fn query_scope_tool(name: &str) -> Tool {
     })).expect("static query_scope catalog")
 }
 
-/// U107: the per-index count selector of a multi-index read tool (one
-/// that takes `limit`).
-pub fn limit_per_index_schema() -> Value {
-    json!({"type":"integer","minimum":1,"maximum":100,"description":"Results each selected index returns, exactly; results stay grouped by index in members. limit becomes the overall cap and defaults to the number of indexes x limit_per_index; refused (combined_limit_per_index_too_large) when that exceeds limit or 100. Byte, deadline and verification budgets stay shared evenly across indexes. Omit to split limit evenly."})
-}
-
-fn controls(mut tool: Tool) -> Tool {
-    let schema = Arc::make_mut(&mut tool.input_schema);
-    let properties = schema.entry("properties").or_insert_with(|| json!({}));
-    // A selected combined session cannot switch into a legacy binding.
-    properties
-        .as_object_mut()
-        .expect("tool properties")
-        .remove("project");
-    properties["project_ids"] = json!({"type":"array","items":{"type":"string","pattern":"^prj_[0-9a-f]{32}$"},"minItems":1,"maxItems":32,"uniqueItems":true,"description":"Explicit Projects within the frozen reviewed connection grant. Omission keeps the connection's captured selection; no workspace or saved-default expansion."});
-    properties["index_ids"] = json!({"type":"array","items":{"type":"string","pattern":"^idx_[0-9a-f]{32}$"},"minItems":1,"maxItems":32,"uniqueItems":true,"description":"Optional explicit index subset of the selected Projects. Qualified follow-up reads require one originating index."});
-    if properties.get("limit").is_some() {
-        properties["limit_per_index"] = limit_per_index_schema();
-    }
-    properties["member_availability"] = json!({"type":"string","enum":["report","require"],"default":"report","description":"Report retains usable data and complete member failures. Require returns non-success if any selected member cannot answer; independent of saved-source verification."});
-    if !matches!(
-        tool.name.as_ref(),
-        "help" | "airk_help" | "parse" | "airk_parse"
-    ) {
-        properties["origin_publication"] = json!({"type":"string","minLength":1,"maxLength":256,"description":"Exact originating member publication token. Requires one selected index; a different member publication expires the follow-up rather than substituting newer evidence."});
-    }
-    if properties.get("cursor").is_some() {
-        properties["cursor"] = json!({"type":"string","minLength":1,"maxLength":32768,"description":"Combined continuation bound to all selected member publications, grant/scope identity, filters, representation and shared budgets. Repeat the same request inputs; any changed member expires this cursor."});
-    }
-    // Keep composition keywords out of tools' root schema for clients that
-    // require an object-shaped catalog; the dependent selectors remain explicit.
-    schema.insert(
-        "dependentRequired".into(),
-        json!({
-            "index_ids":["project_ids"], "member_availability":["project_ids"]
-        }),
-    );
-    tool
-}
-
 /// Same native handler catalog with selectors resolved by the combined owner.
 pub fn catalog() -> Vec<Tool> {
     let mut tools: Vec<_> = crate::local::tools()
@@ -76,7 +38,7 @@ pub fn catalog() -> Vec<Tool> {
             if tool.name == "airk_query_scope" {
                 tool
             } else {
-                controls(tool)
+                combined_tool(tool)
             }
         })
         .collect();
@@ -102,7 +64,7 @@ pub fn public_catalog() -> Vec<Tool> {
                     .iter()
                     .any(|entry| entry.name.strip_prefix("airk_") == Some(tool.name.as_ref()))
             {
-                controls(tool)
+                combined_tool(tool)
             } else {
                 tool
             }
@@ -127,40 +89,6 @@ pub fn legacy_discovery(arguments: Value) -> Value {
             "Invalid query_scope selectors, cursor or pagination budget.",
         ),
     }
-}
-
-/// Project only the canonical native payload for budget admission. Routing
-/// controls come from the actual public catalogs; this neither validates nor
-/// changes the original call's selectors or its canonical error projection.
-pub(crate) fn native_admission_arguments(
-    tool: &str,
-    arguments: &serde_json::Map<String, Value>,
-) -> Option<serde_json::Map<String, Value>> {
-    let name = tool.strip_prefix("airk_").unwrap_or(tool);
-    let native = crate::local::tools()
-        .into_iter()
-        .find(|entry| entry.name.strip_prefix("airk_") == Some(name))?;
-    let native_properties = native.input_schema.get("properties")?.as_object()?;
-    let public = crate::unified::tools()
-        .into_iter()
-        .find(|entry| entry.name == name)?;
-    let combined = controls(native.clone());
-    let public_properties = public.input_schema.get("properties")?.as_object()?;
-    let combined_properties = combined.input_schema.get("properties")?.as_object()?;
-    if arguments.keys().any(|key| {
-        !native_properties.contains_key(key)
-            && !public_properties.contains_key(key)
-            && !combined_properties.contains_key(key)
-    }) {
-        return None;
-    }
-    Some(
-        arguments
-            .iter()
-            .filter(|(key, _)| native_properties.contains_key(*key))
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect(),
-    )
 }
 
 /// Parse the same closed native handler inputs before admitting any member.

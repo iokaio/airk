@@ -549,7 +549,7 @@ fn admit_tool_context_at(
     if !matches!(tool, "airk_answer" | "answer") {
         return context;
     }
-    let Some(payload) = crate::combined::native_admission_arguments(tool, arguments) else {
+    let Some(payload) = crate::tool_catalog::native_answer_arguments(arguments) else {
         return context;
     };
     let Ok(args) = serde_json::from_value::<crate::AnswerArgs>(serde_json::Value::Object(payload))

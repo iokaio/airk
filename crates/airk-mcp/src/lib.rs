@@ -16,6 +16,7 @@ mod execution;
 mod lifecycle;
 pub mod read_attempt;
 pub mod response;
+mod tool_catalog;
 mod workbench;
 use response::ResponseArgs;
 #[derive(Deserialize, Serialize, schemars::JsonSchema)]

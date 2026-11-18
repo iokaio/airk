@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! One agent-facing catalog. Native evidence and editor drafts keep separate owners.
 use crate::remote::{RemoteFuture, RemoteTools};
+use crate::tool_catalog::scoped_tool;
 use anyhow::{Result, ensure};
 use rmcp::model::Tool;
 use serde_json::{Map, Value, json};
@@ -137,14 +138,6 @@ fn public_ui_response(tool: &str, mut result: Value) -> Value {
     result
 }
 
-fn project_schema() -> Value {
-    json!({"type":"string","pattern":"^[0-9a-f]{64}$","description":"Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown."})
-}
-fn scoped(mut tool: Tool) -> Tool {
-    let schema = Arc::make_mut(&mut tool.input_schema);
-    schema.entry("properties").or_insert_with(|| json!({}))["project"] = project_schema();
-    tool
-}
 fn definition(name: &str, description: &str, schema: Value, read_only: bool) -> Tool {
     serde_json::from_value(json!({"name":name,"description":description,"inputSchema":schema,
         "annotations":{"readOnlyHint":read_only,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}})).expect("static tool definition")
@@ -162,7 +155,7 @@ fn build_tools() -> Vec<Tool> {
             let mut value = serde_json::to_value(tool).expect("tool serialization");
             public_text(&mut value);
             let tool: Tool = serde_json::from_value(value).expect("public native tool");
-            scoped(tool)
+            scoped_tool(tool)
         })
         .collect();
     let legacy: Vec<Tool> = serde_json::from_str(include_str!("unified_explorer.json"))
@@ -181,7 +174,7 @@ fn build_tools() -> Vec<Tool> {
         result.push(if matches!(*name, "list_templates" | "get_template") {
             tool
         } else {
-            scoped(tool)
+            scoped_tool(tool)
         });
     }
     let variants: Vec<Value> = ["navigation", "review", "management"]
@@ -195,7 +188,7 @@ fn build_tools() -> Vec<Tool> {
             schema
         })
         .collect();
-    result.push(scoped(definition("suggest_view", "Propose an Explorer screen for the user to open or prefill, including Review and Management guidance. Returns a proposal receipt, never source evidence. Routes such as code/outline name UI pages, not the evidence tools. The user applies the suggestion; it never runs a query, test or management action.",
+    result.push(scoped_tool(definition("suggest_view", "Propose an Explorer screen for the user to open or prefill, including Review and Management guidance. Returns a proposal receipt, never source evidence. Routes such as code/outline name UI pages, not the evidence tools. The user applies the suggestion; it never runs a query, test or management action.",
         // Some assistants reject or silently omit tools with root composition.
         // Keep alternatives nested; the adapter validates the chosen kind again.
         json!({"type":"object","additionalProperties":false,"required":["kind","draft"],"properties":{"kind":{"type":"string","enum":["navigation","review","management"]},"draft":{"type":"object","description":"Use the draft schema matching kind. The editor validates that exact kind before admitting a suggestion.","anyOf":variants}}}), false)));

@@ -27,15 +27,7 @@ fn scoped_metadata_view(
 
 /// Listing/help require neither a collection nor a source scan.
 pub fn tools() -> Vec<Tool> {
-    static TOOLS: std::sync::OnceLock<Vec<Tool>> = std::sync::OnceLock::new();
-    TOOLS.get_or_init(build_tools).clone()
-}
-
-// Exact bundled definitions only; per-session projects/admission/runtime state stays outside.
-fn build_tools() -> Vec<Tool> {
-    let mut tools = AirkServer::shared_tool_router().list_all();
-    tools.sort_by(|a, b| a.name.cmp(&b.name));
-    tools
+    crate::tool_catalog::native_tools()
 }
 
 pub struct LocalTools {
@@ -739,7 +731,7 @@ mod tests {
 
     #[test]
     fn immutable_catalog_preserves_exact_definitions_and_isolates_caller_mutation() {
-        let expected = serde_json::to_vec(&build_tools()).unwrap();
+        let expected = serde_json::to_vec(&crate::tool_catalog::build_tools()).unwrap();
         assert_eq!(serde_json::to_vec(&tools()).unwrap(), expected);
         let mut changed = tools();
         changed[0].description = Some("caller-local description".into());
