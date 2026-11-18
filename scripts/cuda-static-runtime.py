@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 TARGET='x86_64-pc-windows-msvc'
 VERSION='1.30.0'
+FRESH_BUILD_SCHEMA='airk.private.cuda-fresh-static-build-proof/1'
 SCRIPT_SHA='c2f9c3e305106469d6a58699eaa36ec2afed7a6cd4be63275498fd78af2d3f4a'
 LOCK_SHA='549be258fd21be030f994f6da7f74146a9e9edd3bb611bee83305d9a4deade6d'
 FIELDS=('build_receipt_sha256','target','static_link_closure_sha256','static_link_supplement_sha256','static_link_recovery_sha256','verified_inputs_sha256')
@@ -114,6 +115,30 @@ def verify_build(destination,producer_file,lock_file,expected_receipt_sha256,rep
  ninja=_pin(o,destination/'b/Release/build.ninja')
  return {'schema':'airk.cuda-static-build-proof/1','target':TARGET,'ort_version':VERSION,'producer_script_sha256':SCRIPT_SHA,'producer_lock_sha256':LOCK_SHA,'build_receipt':_pin(o,receipt_path),'source_inventory_sha256':receipt['source_inventory_sha256'],'frontend_inventory_sha256':receipt['frontend_inventory_sha256'],'cuda_inventory_sha256':receipt['cuda_inventory_sha256'],'frozen_input_closure_sha256':receipt['frozen_input_closure_sha256'],'ninja':ninja,'libraries':actual_libraries,'provider_dlls':pair,'recorded_compiler':tools['compiler'],'toolchain':tools,'qualification':False,'activation_pins_available':False}
 
+def _require_fresh_projection(build, aggregate):
+    output = aggregate.get("output")
+    producer = build.get("build_receipt")
+    if (build.get("target") != TARGET or build.get("ort_version") != VERSION
+            or build.get("qualification") is not False or build.get("activation_pins_available") is not False
+            or aggregate.get("target") != TARGET or aggregate.get("qualification") is not False
+            or not isinstance(producer, dict) or set(producer) != {"path", "bytes", "sha256"}
+            or not isinstance(producer["path"], str) or not Path(producer["path"]).is_absolute()
+            or type(producer["bytes"]) is not int or not 0 < producer["bytes"] <= 32 << 20
+            or Path(producer["path"]).name != "fresh-compile.json"
+            or not isinstance(output, dict) or set(output) != {"path", "bytes", "sha256"}
+            or output["path"] != "gpu-aggregate/onnxruntime.lib"
+            or type(output["bytes"]) is not int or not 65536 < output["bytes"] <= 2 << 30
+            or not _sha256(aggregate.get("receipt_sha256")) or not _sha256(aggregate.get("plan_sha256"))
+            or not _sha256(producer["sha256"]) or not _sha256(output["sha256"])
+            or aggregate["receipt_sha256"] == producer["sha256"]):
+        raise GpuProofUnavailable("matching distinct fresh GPU build and archive identities required")
+
+
+def _sha256(value):
+    return isinstance(value, str) and len(value) == 64 and all(ch in "0123456789abcdef" for ch in value)
+
+
 def static_projection(build,aggregate):
- if build.get('schema') not in ('airk.cuda-static-build-proof/1','airk.cuda-static-build-proof/2','airk.cuda-static-build-proof/3') or aggregate.get('schema')!='airk.cuda-static-aggregate-proof/1' or aggregate.get('producer_proof_sha256')!=canonical(build):raise GpuProofUnavailable('matching genuine GPU build/aggregate proof required')
+ if build.get('schema') not in ('airk.cuda-static-build-proof/1','airk.cuda-static-build-proof/2','airk.cuda-static-build-proof/3',FRESH_BUILD_SCHEMA) or aggregate.get('schema')!='airk.cuda-static-aggregate-proof/1' or aggregate.get('producer_proof_sha256')!=canonical(build):raise GpuProofUnavailable('matching genuine GPU build/aggregate proof required')
+ if build['schema']==FRESH_BUILD_SCHEMA:_require_fresh_projection(build,aggregate)
  return {'build_receipt_sha256':build['build_receipt']['sha256'],'target':TARGET,'static_link_closure_sha256':canonical(aggregate),'static_link_supplement_sha256':None,'static_link_recovery_sha256':None,'verified_inputs_sha256':canonical({'gpu_build':build,'gpu_aggregate':aggregate})}

@@ -96,3 +96,19 @@ authenticated build and aggregate from one full verification. The caller's
 original optional deadline is forwarded without refresh. The environment does
 not invoke a second aggregate/parent verification for this route; older /1–/4
 dispatch is unchanged. Malformed bundles and late returns fail before use.
+
+
+## Fresh current-toolchain handoff
+
+The private airk.cuda-static-environment/6 request carries exactly an absolute
+destination and the reviewed aggregate_receipt FilePin for that build's
+fresh-aggregate.json. It reopens the exact compile and archive evidence
+under the caller's explicit unexpired verification deadline. The canonical
+fresh command plan binds the verified build proof before archive launch.
+The handoff reconstructs the independent original compile and aggregate
+identities and the same five static environment values and six C7 fields.
+
+The fresh verification call returns unqualified observations, with
+activation_pins_available false. Actual platform, provider, manifest, product
+and model acceptance remain with their owning gates. Environment/1 through /5
+retain their original request and proof semantics.
