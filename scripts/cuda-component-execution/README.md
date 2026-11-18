@@ -26,4 +26,4 @@ The helper does not switch accounts, alter ACLs, extend budgets or grant admissi
 Retained private receipts identify evidence; implementation belongs in maintained
 source, not executable artifact snapshots.
 
-The proposed graph-only preparation boundary is documented in [PROVENANCE-PREPARATION.md](PROVENANCE-PREPARATION.md). It is not implemented or authorized by that document alone.
+The separate graph-only preparation and retained-input route is documented in [PROVENANCE-PREPARATION.md](PROVENANCE-PREPARATION.md), including the three explicit preparation/review/execution commands. Pure controls are in `scripts/tests/test_cuda_graph_preparation.py`. Fresh source, producer, image and metadata seals plus review remain prerequisites; implementation alone is not execution evidence.

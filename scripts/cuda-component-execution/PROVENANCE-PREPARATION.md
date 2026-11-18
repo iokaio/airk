@@ -1,39 +1,130 @@
-# Proposed graph provenance preparation boundary
+# Graph-only provenance preparation and retained input custody
 
-Status: contract proposal for primary review; not implemented or an execution authorization. Existing component, runtime-admission and placement modes remain unchanged. The current graph implementation still performs full verification and must fail when its original120s deadline expires.
+This owner implements a separate preparation operation and a graph-only execution
+route. Implementation and synthetic controls are not a native GPU result. A fresh
+reviewed collector build, linked image, manifest, metadata and preparation receipt
+are prerequisites. Component, runtime-admission and placement modes retain their
+existing verification paths.
 
-## Why a distinct preparation operation
+The historical full parent/aggregate verification took 124.155 seconds. It is
+performed once in preparation under a separate maximum 600-second monotonic
+deadline, bounded by the campaign deadline. That time is not model latency.
+Graph execution retains its original 120-second whole-phase deadline and
+five-second process-cleanup limit. Neither operation retries automatically.
 
-Observed maintained historical parent plus aggregate verification took124.155s. Repeating that full tool/source/build-tree census before and after native graph capture cannot fit one120s diagnostic. No limit or qualification gate changes. Build provenance can be verified in a separate preparation operation and preserved under its own source/input identity, while execution reopens the exact immutable artifacts it consumes.
+## Preparation and approval
 
-Preparation has one separate600s monotonic deadline, never borrowed from or reported as model latency. It verifies the complete environment/5 -> incremental proof/3 -> historical proof/2 chain with the maintained owner, including all original source/tool/object/archive relationships. It then records a fresh preparation receipt under a reviewed create-only path. Actual timestamps, elapsed time, human/default-owner identity and output custody are recorded. Timeout, source drift, incomplete ancestry, missing output or retention failure refuses preparation.
+Run the maintained wrapper in the verified human shell. All paths below are
+absolute, hashes are actual reviewed SHA256 values, and destinations are fresh
+guarded paths. The execution output root is frozen during preparation.
 
-## Proposed retained preparation receipt
+```text
+python -B -S scripts/cuda-component-execution.py --prepare-graph-provenance
+  --approved-script-sha256 SHA
+  --metadata-receipt PATH --metadata-receipt-sha256 SHA
+  --image-packet PATH --image-packet-sha256 SHA
+  --powershell PATH --output-root FRESH_EXECUTION_ROOT
+  --graph-preparation FRESH_PREPARATION_RECEIPT
 
-Private schema `airk.private.cuda-graph-provenance-preparation/1` binds:
+python -B -S scripts/cuda-component-execution.py --prepare-graph-diagnostic
+  --approved-script-sha256 SHA
+  --graph-preparation REVIEWED_RECEIPT --graph-preparation-sha256 SHA
+  --plan FRESH_GRAPH_PLAN
 
-- The preparation owner and exact maintained verifier-source roster, including the checkpoint extraction helpers, maintained output policy and execution guard.
-- Environment/5, canonical build-proof/3 and aggregate-proof/1 content hashes; raw fresh producer, recipe and all historical receipt identities needed to replay those relationships as data.
-- The actual new source, object, session archive and aggregate, the preserved native image, native build receipt, actual CargoJSON, fresh native runtime manifest and the runtime producer copy named by that manifest.
-- The preserved image packet and its static graph binding, exact collector exports, and the newly emitted metadata receipt/plan/request/profile that bind this fresh manifest. The old3179 metadata receipt and f9fac producer remain historical; neither is updated or accepted as the new identity.
-- An exhaustive deduplicated boundary table of absolute FilePins plus actual volume/file identity, link count, size and owner/ACL policy, and the observed verification result. Aliases are recorded as distinct objects; equal bytes do not imply equal file IDs.
+python -B -S scripts/cuda-component-execution.py --execute-reviewed-graph-diagnostic
+  --approved-script-sha256 SHA --plan REVIEWED_GRAPH_PLAN --plan-sha256 SHA
+```
 
-The primary reviewer approves the complete receipt SHA before it can be supplied to graph-plan preparation. A caller-provided `verified:true` flag or a receipt whose source/data relationship cannot be replayed is insufficient. The receipt itself is source/input evidence, not qualification, runtime admission, or a reusable session.
+The first command checks the complete maintained environment/5, incremental
+build-proof/3 and historical proof/2 ancestry through the existing verifier,
+including actual historical tools, headers, objects, archives and original
+metadata input seals. Current input files and verifier sources are held immutable
+while those checks run. The second command requires the explicitly reviewed
+preparation receipt SHA and reopens its exact current boundary; it does not run
+the full historical verifier again or launch a model. Its own preparation work
+has a maximum 120-second deadline. The third command requires a separately
+reviewed graph plan SHA.
 
-## Per-run reopening under the original120s
+The private preparation schema is
+`airk.private.cuda-graph-provenance-preparation/1`. It records the complete seed
+plan, exact binding and source identities, human/default-owner/session identity,
+actual UTC and monotonic observations, opened/closed handle counts, close errors,
+and each current object's FilePin, volume/file identity and owner/ACL policy.
+Preparation is unqualified and does not admit a runtime or product profile.
+The measured preparation interval ends after full verification, final input
+reobservation and handle release. Receipt retention follows the existing
+separately bounded checked-guard write/audit policy and is explicitly disclosed
+outside that interval. A failed write or audit returns no successful receipt pin.
 
-Graph plans pin that exact preparation receipt and the same metadata/image/binding/source boundary. At execution, the parent starts the original120s clock before preflight. It rechecks schema and all data relationships without importing or executing historical artifact code: fresh raw producer -> canonical proof/3 -> aggregate -> environment/5; actual Cargo link -> preserved image; native manifest/static_core_build -> raw fresh producer; metadata request/profile -> that exact manifest; and both actual nonforwarded executable collector exports.
+## Current boundary versus historical derivation
 
-For every boundary object, acquire a retained read-only Windows handle with read sharing only, no write/delete sharing and open-reparse-point semantics. Reject aliases/reparse points, unexpected links, owner/policy drift or a different file identity. Hash the opened object in bounded chunks under the original cutoff and compare its exact FilePin. Retain those handles throughout dispatch, native Job settlement and final proof. Reobserve identities, hashes and policy before release; no path-only stat or cached boolean substitutes for the opened object. Source/manifest/receipt handles also prevent replacement while their code/data is being consumed. Native protected runtime handles, actual process image authentication, native manifest checks and existing resource/cleanup proofs remain independently required.
+The boundary is derived from relationships, not a caller-supplied allowlist:
+current source owners, verifier roster and recipe helpers; raw producer, recipe
+and historical proof documents; source patch/new source/object/session/aggregate;
+actual CargoJSON, image and manifest/runtime producer; metadata receipt/plan/build
+and all six metadata outputs; complete runtime files; required native source
+roster; current model files, source manifest, numeric fixture and reference
+producer; maintained ownership helpers and output-policy sources.
 
-The execution boundary includes only current artifact/source evidence needed for this image and invocation. It excludes old CUDA/SDK headers, unused compiler objects, the95 unchanged input archives and other historical build-tree files after their exact identities have been authenticated by full preparation. Their hashes remain in proof/3 and its ancestors as historical derivation evidence; execution does not claim a new build-tree audit. A changed current archive, image, manifest, raw producer, recipe, source, CargoJSON, metadata or preparation receipt invalidates the graph plan.
+Historical headers, unused objects and the 95 unchanged parent aggregate inputs
+remain authenticated derivation evidence in the preparation result. They are not
+copied from the seed plan's original input seals into each execution boundary.
+Preparation verifies those old seals; execution does not claim a new historical
+build-tree census. The boundary limit is 512 objects including the preparation
+receipt and final graph plan. Unexpected omissions, additions, conflicting pins
+and missing original model/source seals refuse.
 
-Preparation of the exact boundary and later acquisition must distinguish current identity equality from continuous custody: no claim that a file was never touched between operations. The runtime claim is exact current bytes/identity at acquisition, protected through this invocation, followed by actual final reobservation. No clock-age heuristic replaces those facts.
+The output-policy implementation is the maintained
+`scripts/cuda-static-runtime/build/r8/provision_cuda_runtime.py`. Its body must
+equal the retained historical policy source with only the documented SPDX
+prefix. The historical source remains evidence and is never imported by this
+graph route. The maintained policy's CPU-owner import is pinned; PowerShell uses
+the plan's absolute interpreter and remaining original deadline. No output
+policy, identity, owner or ACL is weakened.
 
-All closure acquisition, chunk hashing, owner/policy checks, relationship replay, PE reads, native execution and final proof use the same original120s deadline. The existing5s process cleanup is not extended. A failed or expired final recheck cannot complete a diagnostic. Receipt-only retention remains separately disclosed as in the existing parent contract. Unknown native cleanup remains unknown even if file-handle cleanup succeeds. The closure reports actual opened/retained/closed handles and errors; release is not a fabricated native cleanup proof.
+## Per-run custody and settlement
 
-## Required controls before use
+Execution starts its original clock before plan/preparation authentication.
+Windows opens each current file read-only, with read sharing only and
+open-reparse-point semantics. It rejects reparse paths, multiple links, pending
+deletion, directories, identity changes and policy drift. Hashing uses bounded
+chunks and checks the same deadline. Reopening establishes actual current
+identity, not a claim of continuous custody between preparation and execution.
 
-Reject omitted/extra boundary paths, repeated/conflicting pins, false preparation SHA, old producer/manifest/metadata substitutions, wrong Cargo/image export linkage, changed verifier/policy source, reopened wrong file ID, content or ACL drift, write/replacement races, and every expired acquisition/hash/deep-validation/final-release boundary. Test that a valid prepared boundary avoids full historical verifier invocation during execution while retaining exact relationship checks, and that only this graph mode uses the new route. Test retained-handle cleanup on preparation refusal, pre-dispatch refusal, native failure and final-proof failure.
+The reviewed plan must exactly equal the prepared seed plan with only the
+deterministically derived current input seals and preparation pin added.
+Execution rereads binding documents through retained handles and replays current
+producer/recipe/ancestor relationships, native manifest and runtime producer,
+actual Cargo link, verifier roster and actual nonforwarded executable collector
+exports. The PE readers use the retained image handle. Current execution imports
+use maintained pinned sources; source handles remain held while dependent
+maintained modules import. Historical programs are not executed.
 
-Measure this exact boundary's acquisition/hash/audit cost read-only before the first native graph run. The observed124.155s full-verifier path is not retried unchanged. If the current artifact boundary still cannot fit alongside native work, report the blocker; no larger120s budget, truncation waiver, unchecked cache or diagnostic qualification follows.
+Handles remain held across preflight, native Job execution and settlement,
+result validation, final relationship checks, output owner audits and final
+output hashes. Final input identity/content/policy checks and all handle-close
+attempts run before the final monotonic completion observation. A failed
+recheck, close error or expired clock makes the diagnostic incomplete.
+Pre-dispatch and native failures also release the acquired boundary. File-handle
+settlement never substitutes for the independently required native process/Job
+cleanup proof.
+
+The native graph result remains a disposable diagnostic, with no Scorer,
+forward, hybrid CPU policy, FP16 readiness or qualification. Selected log
+truncation is disclosed only as already permitted by this graph mode; the older
+placement mode retains its strict log-completeness rule.
+
+## Validation and readiness
+
+Run `python -B -S scripts/tests/test_cuda_graph_preparation.py` and the existing
+`scripts/tests/test_cuda_component_execution.py` controls. The controls use
+literal data and injected handles/policies/clocks, including a real bounded PE
+parser over a synthetic retained stream. They do not establish actual Windows
+share-mode enforcement, real acquisition cost, native compilation or GPU success.
+
+Before the first native run, review the combined source/contract, freeze every
+current owner, rebuild producer/helper seals, and measure this exact boundary's
+read-only acquisition/replay/recheck cost. If it cannot fit with native work
+within 120 seconds, report the blocker. Do not widen the deadline, accept a
+cached success flag, omit inputs, retry unchanged failed inputs or admit an
+operator-name CPU exception.

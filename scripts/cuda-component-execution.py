@@ -12,6 +12,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+import types
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
@@ -216,7 +217,7 @@ def verify_historical_inputs(seals, verified_transitions, digest):
         require(digest(path) == updated.get(path, sha), 'historical/current metadata input changed: ' + path)
 
 
-def metadata(plan, b, parent):
+def metadata(plan, b, parent, *, prepared_history=False):
     """Authenticate actual metadata custody; neither old image nor receipt is relabeled."""
     receipt = b.read(b.pinned(plan['metadata_receipt']))
     old = b.read(b.pinned(receipt['plan']))
@@ -228,7 +229,7 @@ def metadata(plan, b, parent):
     require(receipt.get('kind') == 'metadata' and receipt.get('activation') is False
             and receipt.get('qualification') is False and receipt.get('execution_user_sid') == SID,
             'metadata parent scope differs')
-    b.source_image(old)
+    if not prepared_history: b.source_image(old)
     old_build = b.read(b.pinned(old['native_build_receipt']), 32 << 20)
     new_build = b.read(b.pinned(plan['native_build_receipt']), 32 << 20)
     old_files, new_files = old_build['groups']['native']['files'], new_build['groups']['native']['files']
@@ -237,7 +238,8 @@ def metadata(plan, b, parent):
     require(receipt['input_seals'] == seals, 'metadata input closure differs')
     # Old source hashes remain authenticated by the old build/receipt, while
     # only explicit roster transitions use separately authenticated new bytes.
-    verify_historical_inputs(seals, transitions, lambda path: b.digest(b.regular(path)))
+    if not prepared_history:
+        verify_historical_inputs(seals, transitions, lambda path: b.digest(b.regular(path)))
     outputs = receipt['outputs']
     require(len(outputs) == 6 and len({x['path'] for x in outputs}) == 6, 'native six-file metadata required')
     for row in outputs:
@@ -338,7 +340,7 @@ def verify_graph_provenance(plan, b, *, deadline=None):
     return rows
 
 
-def preflight(plan, b, *, before, deadline=None):
+def preflight(plan, b, *, before, deadline=None, graph_lease=None):
     execution_mode(plan)
     require(plan.get('human_sid') == SID and plan.get('limits') == LIMITS,
             'exact human identity and original bounds required')
@@ -350,12 +352,23 @@ def preflight(plan, b, *, before, deadline=None):
     if before:
         require(not Path(plan['output_root']).exists(), 'fresh output already exists')
     b.source_image(plan)
-    graph_pins = verify_graph_provenance(plan,b,deadline=deadline) if execution_mode(plan) == 'graph' else []
+    require(graph_lease is None or execution_mode(plan)=='graph','prepared custody is graph-only')
+    require(graph_lease is None or (graph_lease.plan==plan and not graph_lease.closed),
+            'prepared custody belongs to another plan or is closed')
+    if graph_lease is not None:
+        # A plan cannot seal its own digest. The lease authenticates that file
+        # against the externally reviewed plan pin when opening custody.
+        graph_pins = [row['pin'] for row in graph_lease.records()
+                      if row['pin'] != graph_lease.plan_pin]
+    elif execution_mode(plan) == 'graph':
+        graph_pins = verify_graph_provenance(plan, b, deadline=deadline)
+    else:
+        graph_pins = []
     require(set(SOURCE_KEYS) <= set(plan['required_native_sources']), 'component native source roster omitted')
     for path, sha in plan['required_native_sources'].items():
         require(b.digest(b.regular(ROOT / path)) == sha, 'frozen native source differs: ' + path)
     parent, owner = b.helpers(plan)
-    old, outputs = metadata(plan, b, parent)
+    old, outputs = metadata(plan, b, parent, prepared_history=graph_lease is not None)
     require(plan['output_guard'] == old['output_guard'] and plan['output_guard_lock'] == old['output_guard_lock'],
             'retained protected-output policy differs')
     require(b.census(plan['runtime_root']) == plan['runtime_files']
@@ -379,9 +392,49 @@ def preflight(plan, b, *, before, deadline=None):
     return parent, owner, native, profile, fixture
 
 
-def prepare(args, *, diagnostic=False, placement=False, graph=False):
+def graph_owner(b,plan=None):
+    path=ROOT/'scripts/cuda-component-execution/graph_provenance.py'
+    expected=b.pin(path) if plan is None else plan['graph_provenance_owner']
+    require(Path(expected['path'])==path and b.pin(path)==expected,'reviewed graph owner differs')
+    require(expected['bytes']<=2<<20,'graph source cap')
+    raw=path.read_bytes()
+    require(len(raw)==expected['bytes'] and hashlib.sha256(raw).hexdigest()==expected['sha256'],
+            'loaded graph owner source drift')
+    owner=types.ModuleType('component_graph_provenance');owner.__file__=str(path)
+    exec(compile(raw,str(path),'exec',dont_inherit=True),owner.__dict__)
+    return owner
+
+
+def prepare_graph_plan(args):
+    started=time.monotonic();b=base()
+    deadline=min(started+120,started+(b.CAMPAIGN-datetime.datetime.now(datetime.timezone.utc)).total_seconds())
+    bind_graph_hash_deadline(b,deadline)
+    require(args.graph_preparation is not None and args.graph_preparation_sha256,
+            'reviewed graph preparation receipt and SHA required')
+    gp=graph_owner(b)
+    preparation=b.pin(args.graph_preparation)
+    require(preparation['sha256']==args.graph_preparation_sha256,'reviewed graph preparation SHA differs')
+    prepared=gp.read_pinned(preparation,b)
+    plan=gp.execution_plan(prepared,preparation)
+    require(execution_mode(plan)=='graph','preparation is not a graph plan')
+    graph_owner(b,plan)
+    with gp.open_prepared(plan,None,b,deadline) as lease:
+        preflight(plan,lease.base,before=True,deadline=deadline,graph_lease=lease)
+        lease.refresh()
+    graph_deadline(deadline)
+    write_new(plan,Path(args.plan),plan)
+    return b.pin(args.plan)
+
+
+def prepare(args, *, diagnostic=False, placement=False, graph=False, provenance=False):
+    if graph and not provenance:return prepare_graph_plan(args)
+    require(not provenance or graph,'provenance preparation is graph-only')
+    started=time.monotonic();started_utc=datetime.datetime.now(datetime.timezone.utc)
+
     require(sum([diagnostic, placement, graph]) <= 1, 'one execution mode required')
     b = base()
+    deadline=min(started+600,started+(b.CAMPAIGN-started_utc).total_seconds()) if provenance else None
+    if provenance:bind_graph_hash_deadline(b,deadline)
     metadata_pin = b.pin(args.metadata_receipt)
     require(metadata_pin['sha256'] == args.metadata_receipt_sha256, 'reviewed metadata receipt differs')
     receipt = b.read(metadata_pin['path'])
@@ -412,7 +465,11 @@ def prepare(args, *, diagnostic=False, placement=False, graph=False):
                 parent_python=b.pin(sys.executable), powershell=b.pin(args.powershell),
                 checked_guard=b.pin(ROOT / 'scripts/dev/assert-human-execution.ps1'))
     plan['ownership_helper_root'] = str(b.MAINTAINED_HELPER_ROOT)
-    if graph: plan['graph_preserver'] = b.pin(ROOT / 'scripts/preserve-cuda-test-images.py')
+    if graph:
+        plan['graph_preserver']=b.pin(ROOT/'scripts/preserve-cuda-test-images.py')
+        plan['graph_provenance_owner']=b.pin(ROOT/'scripts/cuda-component-execution/graph_provenance.py')
+        plan['graph_provenance_contract']=b.pin(ROOT/'scripts/cuda-component-execution/PROVENANCE-PREPARATION.md')
+        plan['graph_output_guard']=b.pin(ROOT/'scripts/cuda-static-runtime/build/r8/provision_cuda_runtime.py')
     plan['runtime_files'] = b.census(plan['runtime_root'])
     old_build = b.read(b.pinned(old['native_build_receipt']), 32 << 20)
     plan['required_native_sources'] = rebind_native_sources(
@@ -425,7 +482,9 @@ def prepare(args, *, diagnostic=False, placement=False, graph=False):
     seals[receipt['plan']['path']] = receipt['plan']['sha256']
     rows = [v for v in plan.values() if isinstance(v, dict) and set(v) == {'path', 'bytes', 'sha256'}]
     rows += receipt['outputs'] + plan['runtime_files']
-    if graph: rows += verify_graph_provenance(plan,b)
+    if graph:
+        gp=graph_owner(b,plan);binding=packet['static_graph_binding']
+        rows += [binding[k] for k in gp.BINDING_PINS]+binding['source_pins']
     native, _, fixture = input_facts(plan, b)
     rows += [b.pin(p) for p in native['files'].values()]
     rows += [b.pin(native['source_manifest']['path']), b.pin(native['numeric_fixture']['path']), b.pin(fixture['reference_producer']['path'])]
@@ -437,6 +496,11 @@ def prepare(args, *, diagnostic=False, placement=False, graph=False):
     for path, sha in plan['required_native_sources'].items():
         seals[str(ROOT / path)] = sha
     plan['input_seals'] = seals
+    if provenance:
+        require(args.graph_preparation is not None,'fresh graph preparation output required')
+        return gp.prepare(plan,b,args.graph_preparation,
+                          types.SimpleNamespace(preflight=preflight,guard=guard,write_new=write_new),
+                          started,started_utc,deadline)
     preflight(plan, b, before=True)
     guard(plan)
     write_new(plan, Path(args.plan), plan)
@@ -931,7 +995,7 @@ def final_output_hasher(plan, paths, deadline, hash_file):
 
 
 def finish(receipt, paths, started, deadline, hash_file, clock=time.monotonic,
-           utc_now=lambda: datetime.datetime.now(datetime.timezone.utc), proofs=PROOFS):
+           utc_now=lambda: datetime.datetime.now(datetime.timezone.utc), proofs=PROOFS, finalizer=None):
     receipt['final_proof_success'] = []
     receipt['final_proof_errors'] = []
     receipt['complete'] = receipt.get('complete') is True and receipt.get('failure') is None
@@ -950,6 +1014,11 @@ def finish(receipt, paths, started, deadline, hash_file, clock=time.monotonic,
             receipt['final_proof_errors'].append(fact)
             receipt['failure'] = receipt.get('failure') or fact
             receipt['complete'] = False
+    if finalizer is not None:
+        try:finalizer()
+        except BaseException as error:
+            receipt['complete']=False
+            receipt['failure']=receipt.get('failure') or {'type':type(error).__name__,'message':str(error)}
     # Capture UTC before the final original monotonic observation; no work or
     # wall-clock conversion may move that monotonic observation earlier.
     receipt['finished_utc'] = utc_now().isoformat()
@@ -962,13 +1031,34 @@ def finish(receipt, paths, started, deadline, hash_file, clock=time.monotonic,
 
 
 def run(args, *, diagnostic=False, placement=False, graph=False):
+    if not graph:return run_loaded(args,diagnostic=diagnostic,placement=placement)
+    require(not diagnostic and not placement,'one execution mode required')
+    started=time.monotonic();started_utc=datetime.datetime.now(datetime.timezone.utc)
+    b=base()
+    original_deadline=min(started_utc+datetime.timedelta(seconds=120),b.CAMPAIGN)
+    deadline=started+(original_deadline-started_utc).total_seconds()
+    bind_graph_hash_deadline(b,deadline)
+    plan_pin=b.pin(args.plan)
+    require(plan_pin['sha256']==args.plan_sha256,'reviewed graph plan differs')
+    plan=b.read(plan_pin['path']);require(execution_mode(plan)=='graph','explicit graph plan required')
+    gp=graph_owner(b,plan)
+    with gp.open_prepared(plan,plan_pin,b,deadline) as lease:
+        context=(started,started_utc,original_deadline,deadline,lease,gp,b)
+        return run_loaded(args,graph=True,graph_context=context)
+
+
+def run_loaded(args, *, diagnostic=False, placement=False, graph=False, graph_context=None):
     require(sum([diagnostic, placement, graph]) <= 1, 'one execution mode required')
     started = time.monotonic()
     started_utc = datetime.datetime.now(datetime.timezone.utc)
     b = base()
     original_deadline = min(started_utc + datetime.timedelta(seconds=120), b.CAMPAIGN)
     deadline = started + (original_deadline - started_utc).total_seconds()
-    if graph: bind_graph_hash_deadline(b,deadline)
+    lease=gp=None;output_pin=b.pin
+    if graph:
+        require(graph_context is not None,'graph execution requires retained prepared custody')
+        started,started_utc,original_deadline,deadline,lease,gp,output_base=graph_context
+        b=lease.base;output_pin=output_base.pin
     plan_pin = b.pin(args.plan)
     require(plan_pin['sha256'] == args.plan_sha256, 'reviewed component plan differs')
     plan = b.read(plan_pin['path'])
@@ -977,9 +1067,9 @@ def run(args, *, diagnostic=False, placement=False, graph=False):
     require(plan['parent_python'] == b.pin(sys.executable), 'actual parent interpreter differs')
     guard(plan, deadline=deadline)
     require(token_owner(ctypes.c_void_p(-1)) == SID, 'parent token default owner differs')
-    parent, owner, native, profile, fixture = preflight(plan, b, before=True,deadline=deadline if graph else None)
+    parent, owner, native, profile, fixture = preflight(plan, b, before=True,deadline=deadline if graph else None,graph_lease=lease)
     require(parent.worker.windows_sid() == SID and time.monotonic() < deadline, 'parent identity/original deadline refused')
-    output_guard = b.load(plan['output_guard']['path'], 'component_protected_output_guard')
+    output_guard = gp.output_policy_owner(lease,plan) if graph else b.load(plan['output_guard']['path'], 'component_protected_output_guard')
     lock = b.read(plan['output_guard_lock']['path'])
     cpu = output_guard.cpu_owner(lock)
     out = Path(plan['output_root'])
@@ -1034,9 +1124,9 @@ def run(args, *, diagnostic=False, placement=False, graph=False):
                 'original child did not settle naturally within bounds')
         guard_many(plan, paths.values(), True, deadline=deadline)
         for label, path in paths.items():
-            receipt[label] = b.pin(path)
+            receipt[label] = output_pin(path)
             require(receipt[label]['bytes'] <= proofs[label], 'native output cap exceeded')
-        value = b.read(paths['native_result'])
+        value = output_base.read(paths['native_result']) if graph else b.read(paths['native_result'])
         if graph:
             validate_graph_diagnostic(value, plan, receipt['owned']['owned_leader_pid'], native, profile)
             receipt['graph_metadata_observed'] = True
@@ -1070,15 +1160,16 @@ def run(args, *, diagnostic=False, placement=False, graph=False):
                 receipt['final_input_errors'].append({'path': path, 'type': type(error).__name__, 'message': str(error)})
         try:
             require(b.census(plan['runtime_root']) == plan['runtime_files'], 'final runtime roster drift')
-            if graph: verify_graph_provenance(plan,b,deadline=deadline)
+            if graph: gp.replay(plan,lease.binding,lease,gp.held_preserver(lease,plan))
             guard_many(plan, [out, *out.rglob('*')], True, deadline=deadline)
         except BaseException as error:
             receipt['final_input_errors'].append({'type': type(error).__name__, 'message': str(error)})
         if receipt['final_input_errors']:
             receipt['complete'] = False
             receipt['failure'] = receipt.get('failure') or receipt['final_input_errors'][0]
-        receipt['final_guard_errors'], final_hash = final_output_hasher(plan, paths, deadline, b.pin)
-        finish(receipt, paths, started, deadline, final_hash, proofs=proofs)
+        receipt['final_guard_errors'], final_hash = final_output_hasher(plan, paths, deadline, output_pin)
+        finish(receipt, paths, started, deadline, final_hash, proofs=proofs,
+               finalizer=(lambda:gp.finish_lease(lease,receipt)) if graph else None)
         write_new(plan, out / 'execution.json', receipt)
         if original is None and not receipt['complete']:
             raise ValueError(receipt['failure'])
@@ -1090,14 +1181,17 @@ def main():
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument('--prepare', action='store_true')
     modes.add_argument('--execute-reviewed-component', action='store_true')
+    modes.add_argument('--prepare-graph-provenance', action='store_true')
     modes.add_argument('--prepare-graph-diagnostic', action='store_true')
     modes.add_argument('--execute-reviewed-graph-diagnostic', action='store_true')
     modes.add_argument('--prepare-placement-diagnostic', action='store_true')
     modes.add_argument('--execute-reviewed-placement-diagnostic', action='store_true')
     modes.add_argument('--prepare-runtime-diagnostic', action='store_true')
     modes.add_argument('--execute-reviewed-runtime-diagnostic', action='store_true')
-    parser.add_argument('--plan', type=Path, required=True)
+    parser.add_argument('--plan', type=Path)
     parser.add_argument('--plan-sha256')
+    parser.add_argument('--graph-preparation',type=Path)
+    parser.add_argument('--graph-preparation-sha256')
     parser.add_argument('--approved-script-sha256', required=True)
     parser.add_argument('--metadata-receipt', type=Path)
     parser.add_argument('--metadata-receipt-sha256')
@@ -1109,9 +1203,10 @@ def main():
     require(base().digest(__file__) == args.approved_script_sha256, 'reviewed maintained script SHA required')
     diagnostic = args.prepare_runtime_diagnostic or args.execute_reviewed_runtime_diagnostic
     placement = args.prepare_placement_diagnostic or args.execute_reviewed_placement_diagnostic
-    graph = args.prepare_graph_diagnostic or args.execute_reviewed_graph_diagnostic
-    preparing = args.prepare or args.prepare_runtime_diagnostic or args.prepare_placement_diagnostic or args.prepare_graph_diagnostic
-    result = prepare(args, diagnostic=diagnostic, placement=placement, graph=graph) if preparing else run(args, diagnostic=diagnostic, placement=placement, graph=graph)
+    graph = args.prepare_graph_provenance or args.prepare_graph_diagnostic or args.execute_reviewed_graph_diagnostic
+    preparing = args.prepare or args.prepare_runtime_diagnostic or args.prepare_placement_diagnostic or args.prepare_graph_diagnostic or args.prepare_graph_provenance
+    require(args.prepare_graph_provenance or args.plan is not None,'plan path required')
+    result = prepare(args, diagnostic=diagnostic, placement=placement, graph=graph,provenance=args.prepare_graph_provenance) if preparing else run(args, diagnostic=diagnostic, placement=placement, graph=graph)
     summary = result if preparing else {'complete': result['complete'], 'elapsed_seconds': result['elapsed_seconds']}
     if diagnostic and not preparing:
         summary.update(diagnostic_only=True, runtime_admitted=result['runtime_admitted'], component_pass=False, model_pass=False)

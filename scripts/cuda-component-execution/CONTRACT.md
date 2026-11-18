@@ -274,32 +274,56 @@ The parent validates graph nesting, identities, references, dimensions, slots,
 producer links, attribute and immutable-constant payloads, counters, and the full
 placement cross-map. Partial graphs, inconsistent logs or failed teardown refuse.
 
-Graph preparation and execution require a freshly authenticated static_graph_binding
-in the preserved image packet. The maintained preserver revalidates the dedicated
-/5 environment -> /3 producer chain, actual aggregate/Cargo link, native manifest
-producer identity and both collector exports in the actual image. Missing or
-old static provenance refuses before dispatch. The verifier source roster, all
-binding FilePins and complete runtime census are sealed and reopened afterward;
-producer proof is revalidated in final observation under the original deadline.
-No graph plan may reuse old metadata that pins the historical static producer.
+Graph preparation requires a freshly authenticated static_graph_binding in the
+preserved image packet. The full maintained /5 environment -> /3 producer -> /2
+historical ancestry verifier runs only in the separate, at-most600s preparation
+operation. It checks complete original metadata/build-tree inputs while current
+consumed artifacts and source owners are held immutable. Its private
+airk.private.cuda-graph-provenance-preparation/1 receipt remains unqualified and
+requires an explicit reviewed SHA before graph-plan preparation.
 
-Fresh plans select the maintained tracked ownership-helper root. Historical
-metadata retains its original plan and source pins; the loader authenticates
-those old bytes separately and executes byte-identical tracked helper copies.
-Both the consumed historical evidence and new tracked helper inputs remain sealed.
-New graph_metadata.rs and graph_metadata/tests.rs have explicit authenticated
-source-introduction rows; old owner rows never receive fictional historical hashes.
+The execution plan is an exact projection of that prepared plan with current
+boundary seals and the reviewed preparation pin. Current custody includes
+runtime/model/profile/fixture/source inputs, producer/recipe/ancestry documents,
+actual archives and native image/Cargo/manifest linkage, metadata outputs and
+maintained helper sources. It does not include unused historical headers, objects
+or unchanged parent archives merely because they were old input seals.
+Those files remain verified historical derivation evidence. The current roster
+is deterministically derived and capped at512 including preparation and plan.
 
-Graph execution passes its one original monotonic120s cutoff through preflight,
-final provenance observation, the preserver, environment/5 and incremental/3
-verifier. No graph call may substitute a new300s/600s verifier operation. Input
-hashing and PE export-table reads check the same cutoff during streaming reads;
-expired deep verification refuses before dispatch or final diagnostic completion.
-A full parent recensus that cannot fit this bound is a readiness blocker, not
-permission to widen it or claim that the graph operation passed.
+Graph execution retains read-only, no-write/no-delete-sharing Windows handles
+for every current boundary object throughout dispatch, native Job settlement
+and final proof. It replays exact current relationships using held bytes,
+including actual executable collector exports read through the held image.
+It reobserves identities, content and ACL policies and closes all handles before
+the final original120s clock observation. Missing or extra paths, conflicting
+pins, source/file identity drift, failed cleanup or any expired boundary refuse.
+Native process settlement and resource checks remain independently required.
+The existing5s native cleanup bound is not extended.
 
-The parent mirrors the native metadata bounds: fewer than64 attributes per node,
-and exactly one element for readable scalar attribute types1,2,3. The exact
-maintained provenance roster also includes verification/checkpoint_sections.py
-and verification/materialized.py. Historical raw producer/metadata identities
-remain unchanged; source introductions and current verifier pins are explicit.
+Fresh graph plans select maintained ownership helpers and the maintained r8
+output-policy implementation. The latter must be an exact SPDX-prefix-only copy
+of the retained historical policy source, which is evidence and never imported.
+The policy's canonical CPU owner and lock remain pinned; its PowerShell uses the
+plan's exact absolute interpreter and remaining original deadline. Existing
+component/runtime/placement routes are unchanged.
+
+Preparation elapsed time includes full verification and final input/handle
+settlement; checked receipt retention is separately bounded and disclosed, as in
+the existing parent. The graph operation keeps the original120s whole-phase
+clock for input authentication, relationship replay, native work, final output
+proofs and input-handle settlement. No execution call repeats the full600s
+historical verifier or borrows preparation time for inference.
+
+The exact CLI, boundary derivation, receipt fields and readiness requirements
+are specified in [PROVENANCE-PREPARATION.md](PROVENANCE-PREPARATION.md).
+The new pure graph-preparation controls cover bounded custody, closure derivation,
+relationship substitutions, refusal/cleanup and mode isolation; existing
+component controls remain required. Actual Windows custody timing and native
+collector execution require separately reviewed fresh inputs and receipts.
+
+The parent retains native metadata bounds: fewer than64 attributes per node,
+and exactly one element for readable scalar attribute types1,2,3. The maintained
+verifier roster includes verification/checkpoint_sections.py and materialized.py.
+Historical raw producer/metadata identities remain unchanged; current verifier
+pins and native source introductions are explicit.
