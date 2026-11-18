@@ -19,6 +19,8 @@ updated compiler closure, maintained stage owners, original acquisition inputs,
 toolkit and SDK inputs, checked PowerShell guard and the fresh output root. It
 uses the existing campaign cutoff and original parent-build wall ceiling.
 The historical rebuild manifest stays read-only and keeps its prior meaning.
+The pinned Windows environment includes PATHEXT with .EXE for Toolkit
+helper lookup by nvcc after Visual Studio environment setup.
 
 Fresh configuration extracts the authenticated original source, creates the
 offline mirror and applies the exact loader, public API, frontend and final

@@ -105,6 +105,8 @@ def execute(recipe_path, expected_sha):
     require([row for row in recipe["compiler_tools"] if row["path"] == tools["compiler"]["path"]]
             == [tools["compiler"]], "compiler absent from exact installed tool census")
     env = dict(recipe["environment"])
+    require(".EXE" in env.get("PATHEXT", "").upper().split(";"),
+            "fresh Windows compiler environment must resolve extensionless executables")
     require(env["VCTOOLSVERSION"] == tools["msvc_toolset"]
             and env["WINDOWSSDKVERSION"].rstrip("\\/") == tools["windows_sdk"]
             and env.get("CL", "") == env.get("_CL_", "") == "",
