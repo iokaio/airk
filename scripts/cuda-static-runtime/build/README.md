@@ -38,6 +38,11 @@ returns observed facts in memory and preserves the recorded execution window.
 `fresh_projection.py` derives the private build proof before archive launch
 and checks the recorded command-plan binding when projecting aggregate evidence.
 
+Verify the successful aggregate and print the private static handoff with
+`python -B -S scripts/provision-cuda-static.py --destination BUILD_ROOT --fresh-aggregate-receipt RECEIPT --receipt-sha256 SHA --verification-seconds SECONDS`.
+Pass `--write-environment BUILD_ROOT/environment.json` to retain it as
+a new, checked file under the verified build root.
+
 ## Historical parent source capture
 
 The versioned r8, r12 and checkpoint-v1 packages capture the actual producer,
