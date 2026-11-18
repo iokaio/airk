@@ -25,3 +25,11 @@ sources](build/README.md) preserve the complete retained producer recipes,
 patches and continuations. Their fresh-run manifest validator is read-only;
 new root/tool/guard bindings and an end-to-end fresh build launcher remain
 required before claiming standalone reproduction from a clean checkout.
+
+
+The read-only [audit timing probe](build/audit_budget_probe.py) compares
+scheduler settings on a deterministic sample of a reviewed Windows build
+tree. Supply the configure recipe and its SHA, the verified human SID, the
+compile and verifier source SHAs, and `--rolling-schedule 24 32` to measure
+the current replay schedule. The [build contract](build/CONTRACT.md) defines
+the checks and time limits used for full replay.

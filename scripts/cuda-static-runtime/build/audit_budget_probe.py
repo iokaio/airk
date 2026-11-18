@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Compare two Windows guard timeouts on the same read-only CUDA output sample."""
+"""Measure Windows guard timing on read-only CUDA output samples."""
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 from pathlib import Path
+import types
 import subprocess
 import time
 
@@ -62,11 +64,79 @@ def measure(powershell, guard, guard_sha, sid, entries, seconds):
             "guard_elapsed_seconds": outcome["elapsed_seconds"], "status": status}
 
 
+def reviewed_module(path, sha, name):
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != sha:
+        raise ValueError("reviewed scheduler source differs")
+    owner = types.ModuleType(name)
+    owner.__file__ = str(path)
+    exec(compile(raw, str(path), "exec"), owner.__dict__)
+    return owner
+
+
+def scheduler_observations(recipe, args):
+    """Compare scheduling while retaining the producer's current ownership checks."""
+    if not args.compile_owner_sha256:
+        raise ValueError("a reviewed compile owner SHA is required for scheduling")
+    for groups, workers, batch in args.schedule or ():
+        if not (1 <= groups <= 2 and 1 <= workers <= 8 and 1 <= batch <= 128):
+            raise ValueError("invalid group, worker or batch size")
+    plan = recipe
+    if plan.get("human_sid", args.human_sid) != args.human_sid:
+        raise ValueError("scheduler human identity differs")
+    compiler = reviewed_module(Path(__file__).with_name("fresh_compile.py"),
+                               args.compile_owner_sha256, "audit_compile")
+    guard_pin = plan["owners"]["guards"]
+    guard_path = check_file(guard_pin)
+    guard = reviewed_module(guard_path, guard_pin["sha256"], "audit_guard")
+    if guard.SID != args.human_sid:
+        raise ValueError("scheduler guard identity differs")
+    deadline = time.monotonic() + 240
+    paths = sorted(compiler.tree_paths(Path(plan["fresh_output"]) / "b", deadline))
+    count = 1536
+    if len(paths) < count:
+        raise ValueError("1536 generated paths required for scheduling comparison")
+    sample = [paths[index * len(paths) // count] for index in range(count)]
+    records = []
+    for groups, workers, batch in args.schedule or ():
+        audit = compiler.output_guard(guard, plan, batch_size=batch, workers=workers)
+        started = time.monotonic()
+        with ThreadPoolExecutor(max_workers=groups) as executor:
+            futures = [executor.submit(audit, sample[offset::groups], True, deadline)
+                       for offset in range(groups)]
+            for check in futures:
+                check.result()
+        records.append({"groups": groups, "workers_per_group": workers, "batch_size": batch,
+                        "elapsed_seconds": time.monotonic() - started, "status": "PASS"})
+    if args.rolling_schedule:
+        if not args.verify_owner_sha256:
+            raise ValueError("a reviewed verifier owner SHA is required for rolling scheduling")
+        verifier = reviewed_module(Path(__file__).with_name("fresh_verify.py"),
+                                   args.verify_owner_sha256, "audit_verify")
+        for workers, batch in args.rolling_schedule:
+            started = time.monotonic()
+            verifier.audit_compiler_outputs(compiler.output_guard, guard, plan, sample, True,
+                                            deadline, batch_size=batch, workers=workers)
+            records.append({"rolling_workers": workers, "batch_size": batch,
+                            "elapsed_seconds": time.monotonic() - started, "status": "PASS"})
+    return {
+        "path_count": len(paths), "paths": count,
+        "sample_sha256": hashlib.sha256(json.dumps([str(path) for path in sample]).encode()).hexdigest(),
+        "qualification": False, "observations": records,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--recipe", required=True, type=Path)
     parser.add_argument("--recipe-sha256", required=True)
     parser.add_argument("--human-sid", required=True)
+    parser.add_argument("--compile-owner-sha256")
+    parser.add_argument("--verify-owner-sha256")
+    parser.add_argument("--schedule", nargs=3, type=int, action="append",
+                        metavar=("GROUPS", "WORKERS", "BATCH_PATHS"))
+    parser.add_argument("--rolling-schedule", nargs=2, type=int, action="append",
+                        metavar=("WORKERS", "BATCH_PATHS"))
     args = parser.parse_args()
     raw = args.recipe.read_bytes()
     if hashlib.sha256(raw).hexdigest() != args.recipe_sha256:
@@ -77,6 +147,11 @@ def main():
     guard_pin = recipe["checked_guard"]
     guard = check_file(guard_pin)
     powershell = check_file(recipe["powershell"])
+    if args.schedule or args.rolling_schedule:
+        print(json.dumps(scheduler_observations(recipe, args)))
+        return
+    if args.compile_owner_sha256 or args.verify_owner_sha256:
+        parser.error("scheduler source pins require an explicit scheduling mode")
     work = Path(recipe["fresh_output"])
     sample = sorted((work / "b").rglob("*"), key=lambda path: (len(str(path)), str(path)), reverse=True)[:128]
     if len(sample) != 128:

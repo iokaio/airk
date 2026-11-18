@@ -50,21 +50,22 @@ class FreshVerify(unittest.TestCase):
 
         owner.verify_receipt = verify
         self.assertEqual(verifier.verify_compilation(owner, compile_pin, 600), "verified")
-        output_guard.assert_called_once_with("component", "recipe")
-        self.assertEqual(audit.call_count, 2)
+        output_guard.assert_any_call("component", "recipe", batch_size=32, workers=1)
+        self.assertEqual(audit.call_count, 25)
         seen = []
         for call in audit.call_args_list:
             group, created, deadline = call.args
+            self.assertTrue(0 < len(group) <= 32)
             seen.extend(group)
             self.assertEqual((created, deadline), (True, 600))
         self.assertCountEqual(seen, paths)
         self.assertIs(owner.output_guard, output_guard)
 
-        def deny_second_group(group, created, deadline):
-            if paths[1] in group:
+        def deny_later_batch(group, created, deadline):
+            if paths[-1] in group:
                 raise ValueError("output denied")
 
-        audit.side_effect = deny_second_group
+        audit.side_effect = deny_later_batch
         with self.assertRaisesRegex(ValueError, "output denied"):
             verifier.verify_compilation(owner, compile_pin, 600)
         self.assertIs(owner.output_guard, output_guard)

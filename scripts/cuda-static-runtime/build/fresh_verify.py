@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Reopen the private fresh Windows CUDA aggregate evidence under a caller deadline."""
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import hashlib
 import importlib.util
+from itertools import islice
 import math
 from pathlib import Path
 import stat
@@ -103,27 +104,38 @@ def verify_clocks(receipt, compiled, configured, configure_recipe, recipe, compi
             "fresh aggregate retained UTC chronology differs")
 
 
+def audit_compiler_outputs(output_guard, component, recipe, paths, created, cutoff,
+                           *, batch_size=32, workers=24):
+    """Keep bounded checked batches in flight without waiting for a full wave."""
+    require(type(workers) is int and 1 <= workers <= 32, "invalid replay audit workers")
+    audit = output_guard(component, recipe, batch_size=batch_size, workers=1)
+    batches = (paths[start:start + batch_size] for start in range(0, len(paths), batch_size))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        pending = {executor.submit(audit, batch, created, cutoff) for batch in islice(batches, workers)}
+        while pending:
+            finished, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for check in finished:
+                check.result()
+            pending.update(executor.submit(audit, batch, created, cutoff)
+                           for batch in islice(batches, len(finished)))
+
+
 def verify_compilation(owner, compile_pin, deadline):
     output_guard = owner.output_guard
 
-    def partitioned_output_guard(component, recipe):
+    def replay_output_guard(component, recipe):
         audit = output_guard(component, recipe)
 
         def audit_paths(paths, created, cutoff):
-            # Two complete sets of the producer's eight 48-path batches.
             if len(paths) < 768:
                 audit(paths, created, cutoff)
                 return
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                checks = [executor.submit(audit, paths[offset::2], created, cutoff)
-                          for offset in range(2)]
-                for check in checks:
-                    check.result()
+            audit_compiler_outputs(output_guard, component, recipe, paths, created, cutoff)
 
         return audit_paths
 
     # The authenticated compile owner is a private module for this verification.
-    owner.output_guard = partitioned_output_guard
+    owner.output_guard = replay_output_guard
     try:
         return owner.verify_receipt(compile_pin, deadline)
     finally:

@@ -51,11 +51,11 @@ build proof SHA alongside the original compile pin and its archive
 closure. The read-only verifier recomputes the build hash and plan from
 the pinned receipts. The aggregate proof uses the separate actual
 fresh-aggregate.json SHA and the canonical retained plan SHA. For large
-output inventories the read-only compile replay splits the paths into two
-disjoint groups and runs the existing checked scheduler for each in parallel.
-Both groups share the original verifier deadline, and each audit retains
-the producer's per-call budget and per-path token, ancestry and owner checks.
-A failed group fails the verification.
+output inventories the read-only compile replay keeps at most 24 batches of
+up to 32 paths active, replacing a batch as soon as its checked audit finishes.
+Every batch uses the producer's checked guard and per-call budget. All batches
+share the original verifier deadline and retain each path's fresh token,
+ancestry and owner checks. A refusal stops further dispatch and fails replay.
 
 Both proofs record an unqualified build. The public provenance schema,
 C7 identity fields and historical build proof owners keep their original
