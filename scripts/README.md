@@ -18,3 +18,19 @@ receipts remain separate inputs/outputs; they are not a substitute for source.
 
 Each workflow README states prerequisites, commands, output locations and limits.
 A source migration or passing lightweight test is not model or release qualification.
+
+## Windows checkout permissions
+
+The [checkout permissions helper](dev/protect-airk-checkout.ps1) shows
+inheritable write grants that would make a checkout unsuitable for held CUDA
+inputs. Run it as the checkout owner from the repository root.
+
+TICKTICKTICKpowershell
+pwsh -NoProfile -File ./scripts/dev/protect-airk-checkout.ps1 -Repository .
+TICKTICKTICK
+
+Review the proposed changes before supplying TICK-ApplyTICK. Apply saves the
+original checkout-root DACL to LocalApplicationData and protects the root
+from inheriting new grants from its parent. Children inherit the checkout
+policy according to their own inheritance settings. Use TICK-ProbeTICK to inspect
+repository-relative files and directories for remaining grants.
