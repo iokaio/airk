@@ -125,7 +125,10 @@ def verify_receipt(aggregate_pin, deadline):
             and recipe["qualification"] is False and recipe["compile_receipt"] == receipt["compile_receipt"]
             and type(recipe["wall_seconds"]) is int and 0 < recipe["wall_seconds"] <= 300,
             "fresh aggregate recipe scope differs")
-    owners = {"driver": AGGREGATE_OWNER, "archive": ARCHIVE_OWNER, "compile": COMPILE_OWNER, "pin_reader": PIN_READER}
+    owners = {
+        "driver": AGGREGATE_OWNER, "archive": ARCHIVE_OWNER, "compile": COMPILE_OWNER,
+        "pin_reader": PIN_READER, "projection": HERE / "fresh_projection.py",
+    }
     require(isinstance(recipe["owners"], dict) and set(recipe["owners"]) == set(owners),
             "fresh aggregate owner roster differs")
     for name, owner in owners.items():
@@ -162,7 +165,10 @@ def verify_receipt(aggregate_pin, deadline):
             and receipt["tool"] == archiver_pin, "fresh aggregate recorded archiver differs")
     cpu.plain(archiver, regular=True)
     archive_owner = pins.bound_module(load(ARCHIVE_OWNER, "fresh_verify_coff"), deadline)
-    plan = aggregate_owner.select_plan(build_root, compiled, compile_pin, cpu, archive_owner, pins, deadline)
+    projection = load(owners["projection"], "fresh_verify_projection")
+    build = projection.project_build(compile_pin, compiled, configured, configure_recipe, canonical=pins.canonical)
+    plan = aggregate_owner.select_plan(build_root, compiled, compile_pin, cpu, archive_owner, pins, deadline,
+                                       producer_proof_sha256=pins.canonical(build))
     require(plan == receipt["plan"] and pins.canonical(plan) == receipt["plan_sha256"],
             "fresh aggregate observed graph plan differs")
 

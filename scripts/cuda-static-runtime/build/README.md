@@ -35,6 +35,8 @@ session target and archive assembly each require their corresponding receipts.
 checks the recorded compile lineage, archive membership, exports and
 process settlement. Its caller supplies a read-only deadline. The check
 returns observed facts in memory and preserves the recorded execution window.
+`fresh_projection.py` derives the private build proof before archive launch
+and checks the recorded command-plan binding when projecting aggregate evidence.
 
 ## Historical parent source capture
 

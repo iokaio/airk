@@ -29,3 +29,20 @@ configuration and Ninja graph under a checked same-human output root.
 The command stage retains the actual wrapped command result plus the original
 Job settlement proof and accepts only natural exit. A configure receipt
 grants no compile, archive, native link, model or release evidence.
+
+
+## Fresh archive command and private proofs
+
+The approved current-toolchain lineage derives
+airk.private.cuda-fresh-static-build-proof/1 from the verified configure
+and compile evidence before launching the archiver. Its producer is the
+original fresh-compile.json pin. The aggregate recipe also pins the
+projection source. The actual fresh command plan records the canonical
+build proof SHA alongside the original compile pin and its archive
+closure. The read-only verifier recomputes the build hash and plan from
+the pinned receipts. The aggregate proof uses the separate actual
+fresh-aggregate.json SHA and the canonical retained plan SHA.
+
+Both proofs record an unqualified build. The public provenance schema,
+C7 identity fields and historical build proof owners keep their original
+contracts. The private proof pair grants no native activation.

@@ -32,7 +32,10 @@ def load(path, name):
     return owner
 
 
-def select_plan(build_root, compiled, compile_pin, cpu, archive, pins, deadline):
+def select_plan(build_root, compiled, compile_pin, cpu, archive, pins, deadline, *, producer_proof_sha256):
+    require(isinstance(producer_proof_sha256, str) and len(producer_proof_sha256) == 64
+            and all(ch in "0123456789abcdef" for ch in producer_proof_sha256),
+            "reviewed fresh build proof SHA-256 required")
     ninja = build_root / "build.ninja"
     matches = [row for row in compiled["ninja"] if Path(row["path"]) == ninja]
     require(len(matches) == 1 and matches[0]["sha256"] == compiled["configured_graph"]["ninja_sha256"]
@@ -66,6 +69,7 @@ def select_plan(build_root, compiled, compile_pin, cpu, archive, pins, deadline)
         "schema": "airk.private.cuda-fresh-aggregate-plan/1",
         "target": TARGET,
         "compile_receipt": compile_pin,
+        "producer_proof_sha256": producer_proof_sha256,
         "ninja": matches[0],
         "graph": graph,
         "inputs": inputs,
@@ -158,6 +162,7 @@ def execute(recipe_path, expected_sha):
         "archive": REPO / "scripts/cuda-static-archive.py",
         "compile": HERE / "fresh_compile.py",
         "pin_reader": pin_reader,
+        "projection": HERE / "fresh_projection.py",
     }
     require(set(recipe["owners"]) == set(owners), "fresh aggregate owner roster differs")
     for name, path in owners.items():
@@ -217,7 +222,10 @@ def execute(recipe_path, expected_sha):
     require(not work.exists() and not receipt_path.exists(), "existing fresh aggregate evidence preserved")
     guard_paths([work, receipt_path], False, deadline)
 
-    plan = select_plan(build_root, compiled, compile_pin, cpu, archive, pins, deadline)
+    projection = load(owners["projection"], "fresh_aggregate_projection")
+    build = projection.project_build(compile_pin, compiled, configured, configure_recipe, canonical=pins.canonical)
+    plan = select_plan(build_root, compiled, compile_pin, cpu, archive, pins, deadline,
+                       producer_proof_sha256=pins.canonical(build))
     selected = plan["inputs"] + [entry["pin"] for entry in plan["excluded_provider_imports"]]
     guard_paths([Path(row["path"]) for row in selected], True, deadline)
     response = work / "inputs.rsp"

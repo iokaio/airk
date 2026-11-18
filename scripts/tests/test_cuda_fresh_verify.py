@@ -52,6 +52,7 @@ class FreshVerify(unittest.TestCase):
         self.stage_pin = pin(stage.with_suffix(".receipt.json"))
         self.archive_pin = {**pin(output), "bytes": 100000}
         self.plan = {
+            "producer_proof_sha256": "d" * 64,
             "inputs": [pin(build / f"input-{index:03d}.lib") for index in range(96)],
             "excluded_provider_imports": [{"module": "onnxruntime_providers_shared.dll",
                                            "pin": pin(build / "onnxruntime_providers_shared.lib")}],
@@ -76,6 +77,7 @@ class FreshVerify(unittest.TestCase):
         owners = {
             "driver": BUILD / "fresh_aggregate.py", "archive": SCRIPTS / "cuda-static-archive.py",
             "compile": BUILD / "fresh_compile.py", "pin_reader": SCRIPTS / "cuda-static-incremental.py",
+            "projection": BUILD / "fresh_projection.py",
         }
         self.recipe = {
             "schema": "airk.private.cuda-fresh-aggregate-recipe/1", "repository_root": str(SCRIPTS.parent),
@@ -140,6 +142,7 @@ class FreshVerify(unittest.TestCase):
             SCRIPTS / "cuda-static-incremental.py": self.pins,
             BUILD / "fresh_compile.py": self.compile_owner,
             BUILD / "fresh_aggregate.py": self.aggregate_owner,
+            BUILD / "fresh_projection.py": SimpleNamespace(project_build=Mock(return_value={"kind": "build"})),
             SCRIPTS / "cuda-static-archive.py": SimpleNamespace(MAX_ARCHIVE=2 << 30),
             cpu_path: self.cpu, guard_path: SimpleNamespace(guard=Mock()),
         }
@@ -181,6 +184,7 @@ class FreshVerify(unittest.TestCase):
         self.assertEqual(result["configure_recipe"], self.configure_recipe)
         self.compile_owner.build_deadline.assert_not_called()
         self.compile_owner.verify_receipt.assert_called_once_with(self.compile_pin, 600)
+        self.assertEqual(self.aggregate_owner.select_plan.call_args.kwargs, {"producer_proof_sha256": "d" * 64})
         self.compile_owner.verify_stage.assert_called_once_with(
             self.pins, self.cpu, self.root, self.command, "fresh-aggregate", self.argv, 270, 600,
         )

@@ -61,11 +61,13 @@ class FreshAggregate(unittest.TestCase):
     def plan(self):
         with patch.object(Path, "read_bytes", return_value=self.ninja):
             return aggregate.select_plan(self.build, self.compiled, self.compile_pin,
-                                         self.cpu, archive, self.pins, 120)
+                                         self.cpu, archive, self.pins, 120,
+                                         producer_proof_sha256="5" * 64)
 
     def test_uses_actual_sorted_graph_inputs_and_excludes_provider_interface(self):
         plan = self.plan()
         self.assertEqual(plan["compile_receipt"], self.compile_pin)
+        self.assertEqual(plan["producer_proof_sha256"], "5" * 64)
         self.assertEqual(plan["graph"]["static_inputs"], self.selected)
         self.assertEqual(len(plan["inputs"]), 96)
         self.assertEqual(plan["excluded_provider_imports"], [{
@@ -82,7 +84,8 @@ class FreshAggregate(unittest.TestCase):
             self.plan()
         self.compiled["configured_graph"]["ninja_sha256"] = "0" * 64
         with patch.object(Path, "read_bytes") as reader, self.assertRaisesRegex(ValueError, "graph identity"):
-            aggregate.select_plan(self.build, self.compiled, self.compile_pin, self.cpu, archive, self.pins, 120)
+            aggregate.select_plan(self.build, self.compiled, self.compile_pin, self.cpu, archive, self.pins, 120,
+                                  producer_proof_sha256="5" * 64)
         reader.assert_not_called()
 
     def test_refuses_different_graph_bytes_and_unsafe_response_paths(self):
@@ -139,6 +142,7 @@ class FreshAggregate(unittest.TestCase):
             "archive": SCRIPTS / "cuda-static-archive.py",
             "compile": SCRIPTS / "cuda-static-runtime/build/fresh_compile.py",
             "pin_reader": SCRIPTS / "cuda-static-incremental.py",
+            "projection": SCRIPTS / "cuda-static-runtime/build/fresh_projection.py",
         }
         archive_recipe = {
             "schema": "airk.private.cuda-fresh-aggregate-recipe/1", "repository_root": str(SCRIPTS.parent),
