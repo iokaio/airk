@@ -1,0 +1,116 @@
+{
+  "schema": "airk.selected-goal-source-selection/1",
+  "scope": "Exact Section7 historical semantics selected for adaptation, not runtime compatibility",
+  "selections": {
+    "cal_prepare": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/chunked-cal-r1/collector/prepare_packets.py",
+      "original_sha256": "e06392f45e0478fb619ccf61b5b422e772ad1f69733ddc70e3c383ad3734e64f"
+    },
+    "cal_controller": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/chunked-cal-r1/collector/run_controller.py",
+      "original_sha256": "e2ea7b1af45e5135abac82837b2e4f314b9f83a87bd94f247aa90deced668b27"
+    },
+    "cal_capture": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/chunked-cal-r1/collector/capture_chunk.py",
+      "original_sha256": "33787f2facfa8c70c5ded246baa48185d04f507ac06ce0aefd6b99cf4fa5d254"
+    },
+    "cal_support": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/chunked-cal-r1/collector/chunk_support.py",
+      "original_sha256": "1747cf39548c004c9e68b11b72eddbb665d6eaa3ac0c1e591b242e3325376fb8"
+    },
+    "cal_aggregate": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/chunked-cal-r1/proof/aggregate_chunks.py",
+      "original_sha256": "2253e47d9143321e3dfb8e0b1433bebd7aff976ddb8947446cdbb44c5e5c3a68"
+    },
+    "cal_contract": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/chunked-cal-r1/proof/chunk_contract.py",
+      "original_sha256": "0ae8754488361e4ef56a22cd67e5f4aad6eebe6c2684103a563bc3a19957062e"
+    },
+    "cal_native_client": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/chunked-cal-r1/collector/native_goal_client.py",
+      "original_sha256": "174c728b48c7f803dbe721c57cf8577045ce605035698853a654b8c82db68dab"
+    },
+    "cal_native_session": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/chunked-cal-r1/collector/native_eval_session.cjs",
+      "original_sha256": "cd6e8937ff58cb20633bbe8b98a8dfd026f2275bd3058060c90c27f95752eceb"
+    },
+    "certificate_prepare": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/cal-completion-owned-r1/prepare_phase.py",
+      "original_sha256": "268797ca6c5c7d1b9b0a6f4d7f6553062ce13bca653cf6abb166d29d3f7558fb"
+    },
+    "certificate_run": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/cal-completion-owned-r1/run_phase_reviewed.py",
+      "original_sha256": "c51b6bdcebd9c0bd7e9117a18f9ff11e0b05a6e94e9117481267888f38e48f72"
+    },
+    "certificate_producer": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/source/prepare_selected_cal_reference_certificates.py",
+      "original_sha256": "463c3a11d2f80d6c57209157c3c72369e16c92a6172e49cf89338a5cde40750d"
+    },
+    "raw_prepare": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/native-cal-owned-r1/prepare_raw_packet.py",
+      "original_sha256": "7eac62ed1eccbb9b5fc6c51f7a175d3b4519e282d23b5937f251aee27e87ab59"
+    },
+    "raw_run": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/native-cal-owned-r1/run_raw_reviewed.py",
+      "original_sha256": "ba3309192ec5268bd869cc01225decc856f4689690df58c8e831e066170bad96"
+    },
+    "a6_run": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/source/run_goal_condition.py",
+      "original_sha256": "92b117e9f99be3c5c69703a45fa20d06fef8e29866f26b0fb6ef04d08c1e5eec"
+    },
+    "a6_native_client": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/source/native_goal_client.py",
+      "original_sha256": "ce34fcd44abc1c660115212800ffed9e896bdc42147227e1c49289ec76083e3e"
+    },
+    "a6_native_session": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/source/native_eval_session.cjs",
+      "original_sha256": "3c29528b3116d1126983770ea91cf38b6613f01d6cd71569ae477dbc42638674"
+    },
+    "audit_sources": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/source/audit_sources.py",
+      "original_sha256": "1ce43fbc428ab8903de6b4ae943f7498281e99e64b108258dfc03da41f706c0f"
+    },
+    "aggregate_native_retrieval": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/source/aggregate_native_retrieval.py",
+      "original_sha256": "fb4212d6ac9fda7740898f21332811a7b0e1e79105ea90cdb68d61ce2fa97ba3"
+    },
+    "goal_sources": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/source/goal_sources.py",
+      "original_sha256": "603f4c64357dd4dfa1d51d1556c19ac17977d4b5ed0fcaa1d2aa44bca43274c7"
+    },
+    "goal_trial": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/source/goal_trial.py",
+      "original_sha256": "0f177244659caf20b057d1c400b5a392be585c3464cb23753a9232c2795a5907"
+    },
+    "goal_rubric": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/source/goal_rubric.py",
+      "original_sha256": "ba9e791f79d33f0631ffd4c5543ec52891b4fe922c2f108ef2828bf5a27e64dc"
+    },
+    "grade_native_retrieval": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/source/grade_native_retrieval.py",
+      "original_sha256": "41c418c223c136f95a09aeed1815fade89dab3e87e0b460ebf0dfed6213e029f"
+    },
+    "selected_stage_observations": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/source/selected_stage_observations.py",
+      "original_sha256": "33e7cd3dd4302438a599c96bf087c7f1c08436aa8e93ee231ad1d6f2de6401a9"
+    },
+    "selected_cal_refusals": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/source/selected_cal_refusals.py",
+      "original_sha256": "e8909031ce7e09316bb87f72defce997d0f41c7a7f29c150ceee08f357be875a"
+    },
+    "eval_agent_smoke": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/source/eval_agent_smoke.py",
+      "original_sha256": "72abe5af19590b13245213e08b6576274bb5fb5a9b74603a2de56583a5f727a8"
+    },
+    "qwen_export": {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/source/qwen_export.py",
+      "original_sha256": "b45a2a3d8c3cb6aa44f8093d563d0220209c1cb5201f313265f9d8cd75f25d8d"
+    }
+  },
+  "source_maps": [
+    "scripts/arbiter/evaluation/research_history/source-provenance.json",
+    "scripts/arbiter/export/history/source-map.json",
+    "scripts/arbiter/research/proposals/native-client-r1/source-provenance.json",
+    "scripts/arbiter/evaluation/selected_goal/current-owner-map.json"
+  ]
+}

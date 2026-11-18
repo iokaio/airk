@@ -1,0 +1,26 @@
+{
+  "schema": "airk.source-relocation/1",
+  "scope": "Selected-goal exact existing helper bytes; no copied source or execution claim",
+  "files": [
+    {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/source/goal_sources.py",
+      "destination": "tools/retrieval-train/goal_sources.py",
+      "original_sha256": "603f4c64357dd4dfa1d51d1556c19ac17977d4b5ed0fcaa1d2aa44bca43274c7",
+      "maintained_sha256": "603f4c64357dd4dfa1d51d1556c19ac17977d4b5ed0fcaa1d2aa44bca43274c7",
+      "original_bytes": 11600,
+      "maintained_bytes": 11600,
+      "changes": [],
+      "disposition": "exact-existing-maintained-owner"
+    },
+    {
+      "source": "artifacts/advanced-split/models/selected-native-goal-driver-r1/source/eval_agent_smoke.py",
+      "destination": "tools/retrieval-train/eval_agent_smoke.py",
+      "original_sha256": "72abe5af19590b13245213e08b6576274bb5fb5a9b74603a2de56583a5f727a8",
+      "maintained_sha256": "72abe5af19590b13245213e08b6576274bb5fb5a9b74603a2de56583a5f727a8",
+      "original_bytes": 8627,
+      "maintained_bytes": 8627,
+      "changes": [],
+      "disposition": "exact-existing-maintained-owner"
+    }
+  ]
+}
