@@ -30,6 +30,11 @@ python -B -S scripts/cuda-static-runtime/build/fresh_compile.py --configured PAT
 python -B -S scripts/cuda-static-runtime/build/fresh_aggregate.py --recipe PATH --recipe-sha256 SHA
 ```
 
+The Windows parent build has up to 10,800 seconds from configure launch
+through compilation and archive assembly. The campaign cutoff can shorten
+this window. Stage receipts include natural settlement of the owned command
+and its descendants.
+
 Compile consumes the settled configure receipt. Aggregate consumes a
 reviewed archive recipe and the compile receipt. CUDA compiler detection, the
 session target and archive assembly each require their corresponding receipts.
