@@ -1,0 +1,8 @@
+{
+  "schema": "airk.private.compact-cuda-arena-policy/1",
+  "failed_native_result_sha256": "e3fd8d525bd0f7abc7eae08b154dd9410c02a6ee6d27d475bce7af3b4814ef4f",
+  "device_limit_bytes": 25769803776,
+  "arena_limit_bytes": 23622320128,
+  "warm_extra_bytes": 17179869184,
+  "headroom_bytes": 2147483648
+}

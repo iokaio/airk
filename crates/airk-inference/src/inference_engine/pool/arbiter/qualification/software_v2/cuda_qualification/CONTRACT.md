@@ -235,3 +235,15 @@ device allocator peaks remain unavailable in this pinned ORT profile.
 Release requires actual clean session and device settlement, empty outer
 native device/host custody, post-pin verification and the original expiry.
 Production admission, unprofiled latency and task qualification are separate.
+
+
+The first Compact diagnostic returned valid 32, 128 and 1024 token scores.
+At 8192 tokens CUDA's dense attention requested a 4 GiB output after the
+16 GiB arena had consumed 12 GiB plus 16 MiB. The distinct R2 capacity
+policy keeps the approved 24 GiB device envelope and 2 GiB headroom.
+It sets the internal CUDA arena to 22 GiB and declares a 16 GiB warm
+growth reservation based on the observed initial 8 GiB arena. The retained
+Probe identity and exact original provenance remain inputs, with the applied
+capacity and its independent pin recorded in the R2 receipt and policy
+identity. These values are allocation and planning settings. Runtime
+memory observations remain separately reported.

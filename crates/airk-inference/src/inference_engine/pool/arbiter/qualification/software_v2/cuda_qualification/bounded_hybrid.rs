@@ -9,6 +9,42 @@ const WIDTHS: [usize; 4] = [32, 128, 1024, 8192];
 const GRAPH_SHA: &str = "2f4d3211e0bbf097c702acf90dcce046552a3e2d75dc49b2f5945d7988c76fee";
 const RETAINED_SHA: &str = "3962186640b42648b345fa200516ed44a3de4ccab0d783e671c9c22c3b8b1bbd";
 const SUPPLEMENTAL_SHA: &str = "c4360d8a759c68c305fba0df7bd04001a6b043d8a2a57b36f0d8ef0f898519b9";
+const CAPACITY_SHA: &str = "071891ef57f12067bd386ccb0230f5018eb2a1143109d6aeeb0db731eab50586";
+const FAILED_CAPACITY_SHA: &str =
+    "e3fd8d525bd0f7abc7eae08b154dd9410c02a6ee6d27d475bce7af3b4814ef4f";
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Capacity {
+    schema: String,
+    failed_native_result_sha256: Sha256Digest,
+    device_limit_bytes: u64,
+    arena_limit_bytes: u64,
+    warm_extra_bytes: u64,
+    headroom_bytes: u64,
+}
+
+fn capacity(raw: &[u8], approved_device_bytes: u64) -> Result<(Capacity, DeviceCapacityPlan)> {
+    let value: Capacity = serde_json::from_slice(raw)?;
+    ensure!(
+        value.schema == "airk.private.compact-cuda-arena-policy/1"
+            && value.failed_native_result_sha256 == FAILED_CAPACITY_SHA.parse()?
+            && value.device_limit_bytes == approved_device_bytes
+            && value.device_limit_bytes == 24 << 30
+            && value.arena_limit_bytes == 22 << 30
+            && value.warm_extra_bytes == 16 << 30
+            && value.headroom_bytes == 2 << 30
+            && value.arena_limit_bytes.checked_add(value.headroom_bytes)
+                == Some(approved_device_bytes),
+        "private Compact arena policy differs from the reviewed 24 GiB envelope"
+    );
+    let plan = DeviceCapacityPlan::probe(
+        value.arena_limit_bytes,
+        value.warm_extra_bytes,
+        value.headroom_bytes,
+    )?;
+    Ok((value, plan))
+}
 
 fn exact_pin(key: &str, expected: &str) -> Result<ResourceFilePin> {
     let pin = env_pin(key, &format!("{key}_SHA256"))?;
@@ -154,7 +190,7 @@ fn cuda_compact_fp32_bounded_hybrid_profile() -> Result<()> {
             && profile.device_execution.is_some(),
         "frozen Compact GPU profile required"
     );
-    let capacity_plan = profile_probe_bounds(
+    profile_probe_bounds(
         &bounds,
         cold_bytes,
         warm_bytes,
@@ -162,6 +198,9 @@ fn cuda_compact_fp32_bounded_hybrid_profile() -> Result<()> {
         job_limit_bytes,
         &profile,
     )?;
+    let capacity_pin = exact_pin("AIRK_CUDA_HYBRID_CAPACITY", CAPACITY_SHA)?;
+    let (arena, capacity_plan) =
+        capacity(&pinned(&capacity_pin, 4096)?, bounds.device_limit_bytes)?;
     let graph_pin = exact_pin("AIRK_CUDA_HYBRID_GRAPH", GRAPH_SHA)?;
     let graph_bytes = pinned(&graph_pin, PROOF_BYTES)?;
     let graph: Value = serde_json::from_slice(&graph_bytes)?;
@@ -242,6 +281,11 @@ fn cuda_compact_fp32_bounded_hybrid_profile() -> Result<()> {
         "profile": profile.manifest, "source_manifest": input.source_manifest, "runtime_manifest": runtime_manifest,
         "reviewed_graph": graph_pin, "retained_fixture": retained_pin, "supplemental_fixture": supplementary_pin,
         "retained_producer": retained_producer, "supplemental_producer": supplementary_producer,
+        "capacity_policy": capacity_pin,
+        "applied_capacity": {
+            "arena_limit_bytes": arena.arena_limit_bytes, "warm_extra_bytes": arena.warm_extra_bytes,
+            "headroom_bytes": arena.headroom_bytes,
+        },
         "pid": std::process::id(), "native_binary_sha256": binary, "execution_user": execution_user,
         "default_owner": default_owner, "bounds": bounds, "actual_job": actual_job,
         "native_host_reservation_bytes": charge.bytes(), "resource_snapshot": resources.snapshot(),
@@ -309,7 +353,14 @@ fn cuda_compact_fp32_bounded_hybrid_profile() -> Result<()> {
                 loaded.within_deadline,
                 "original Compact session load expiry exceeded"
             );
-            receipt["policy_identity"] = json!(scorer.policy_identity());
+            receipt["policy_identity"] = json!(airk_core::identity::framed_digest(
+                b"airk.private.compact-cuda-bounded-hybrid-capacity/2",
+                &[
+                    scorer.policy_identity().as_bytes(),
+                    capacity_pin.sha256.as_bytes()
+                ],
+            ));
+            receipt["adapter_loaded"] = json!(device.observation(deadline)?);
             flush_graph_diagnostic(&mut file, &receipt)?;
             score_rows(
                 &mut scorer,
@@ -366,6 +417,7 @@ fn cuda_compact_fp32_bounded_hybrid_profile() -> Result<()> {
                 (&supplementary_pin, PROOF_BYTES),
                 (&retained_producer, PROOF_BYTES),
                 (&supplementary_producer, PROOF_BYTES),
+                (&capacity_pin, 4096),
             ] {
                 pinned(pin, max)?;
             }
@@ -422,4 +474,33 @@ fn cuda_compact_fp32_bounded_hybrid_profile() -> Result<()> {
         anyhow::bail!("original Compact profiling expiry during result retention");
     }
     result
+}
+
+#[test]
+fn compact_capacity_revision_stays_within_approved_device_envelope() -> Result<()> {
+    let input = json!({
+        "schema": "airk.private.compact-cuda-arena-policy/1",
+        "failed_native_result_sha256": "e3fd8d525bd0f7abc7eae08b154dd9410c02a6ee6d27d475bce7af3b4814ef4f",
+        "device_limit_bytes": 25769803776_u64,
+        "arena_limit_bytes": 23622320128_u64,
+        "warm_extra_bytes": 17179869184_u64,
+        "headroom_bytes": 2147483648_u64,
+    });
+    let bytes = serde_json::to_vec(&input)?;
+    let (_, plan) = capacity(&bytes, 24 << 30)?;
+    assert_eq!(plan.cold_peak_bytes(), 22 << 30);
+    assert_eq!(plan.warm_extra_bytes(), 16 << 30);
+    assert_eq!(plan.headroom_bytes(), 2 << 30);
+    assert!(capacity(&bytes, 32 << 30).is_err());
+    for (key, drift) in [
+        ("arena_limit_bytes", json!(25_u64 << 30)),
+        ("warm_extra_bytes", json!(8_u64 << 30)),
+        ("headroom_bytes", json!(1_u64 << 30)),
+        ("failed_native_result_sha256", json!("00".repeat(32))),
+    ] {
+        let mut changed = input.clone();
+        changed[key] = drift;
+        assert!(capacity(&serde_json::to_vec(&changed)?, 24 << 30).is_err());
+    }
+    Ok(())
 }
