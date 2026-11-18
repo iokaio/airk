@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Literal/in-memory CUDA image custody refusals; no file, native or GPU work."""
 import copy
+from contextlib import ExitStack
 import importlib.util
 import io
 import json
@@ -576,5 +577,141 @@ class FreshPreservation(unittest.TestCase):
                                         {'environment': self.env_pin, 'source_roster': self.roster,
                                          'source_pins': self.sources}, deadline=500)
 
+
+
+    def test_explicit_fresh_assembly_mode_refuses_mixed_or_manifest_inputs(self):
+        fields = dict(fresh_assembly=True, fresh_environment=self.env_path,
+                      fresh_environment_sha256=self.env_pin['sha256'], provenance_source_roster=self.roster['path'],
+                      provenance_source_roster_sha256=self.roster['sha256'], verification_seconds=80)
+        with patch.object(m.time, 'monotonic', return_value=100):
+            self.assertEqual(m.preservation_mode(SimpleNamespace(**fields)), (False, 180))
+            for change in ({'fresh_finalgraph': True}, {'incremental_finalgraph': True},
+                           {'incremental_environment_sha256': 'old'}, {'manifest_sha256': self.manifest_pin['sha256']},
+                           {'fresh_assembly': False}, {'fresh_environment_sha256': None}):
+                with self.subTest(change=change), self.assertRaises(ValueError):
+                    m.preservation_mode(SimpleNamespace(**{**fields, **change}))
+
+    def assembly_rows(self):
+        return [{'name': Path(row['path']).name, 'pin': row} for row in self.staged.values()]
+
+    def test_assembly_census_refuses_manifest_leaves_and_mixed_same_build_files(self):
+        provenance = {'producer': self.producer, 'proof': self.proof}
+        rows = self.assembly_rows()
+        producer, providers = m.fresh_assembly_runtime(rows, self.runtime, provenance)
+        self.assertEqual(producer, self.runtime_producer)
+        self.assertEqual([row['sha256'] for row in providers], ['a' * 64, 'b' * 64])
+        for leaf in ('AIRK-CUDA-RUNTIME.JSON', 'airk-cuda-runtime.receipt.json',
+                     'onnxruntime_providers_tensorrt.dll'):
+            wrong = rows + [{'name': leaf, 'pin': self.row(self.runtime / leaf, 'a')}]
+            with self.subTest(leaf=leaf), self.assertRaises(ValueError):
+                m.fresh_assembly_runtime(wrong, self.runtime, provenance)
+        for index in range(len(rows)):
+            wrong = copy.deepcopy(rows)
+            wrong[index]['pin']['sha256'] = '0' * 64
+            with self.subTest(index=index), self.assertRaisesRegex(ValueError, 'staged assembly input differs'):
+                m.fresh_assembly_runtime(wrong, self.runtime, provenance)
+        with self.assertRaisesRegex(ValueError, 'provider pair required'):
+            m.fresh_assembly_runtime(rows[:-1], self.runtime, provenance)
+
+    def test_fresh_assembly_run_emits_real_metadata_input_packet_only(self):
+        provenance = dict(environment=self.env_pin, source_roster=self.roster, source_pins=self.sources,
+                          producer=self.producer, proof=self.proof, archive=self.archive)
+        args = SimpleNamespace(
+            fresh_assembly=True, fresh_environment=self.env_path, fresh_environment_sha256=self.env_pin['sha256'],
+            provenance_source_roster=self.roster['path'], provenance_source_roster_sha256=self.roster['sha256'],
+            verification_seconds=400, approved_script_sha256='1' * 64, guard_sha256='2' * 64,
+            source_commit='synthetic', native_group='a' * 64, runtime=self.runtime, inference_name='inert.exe',
+            output=m.ARTIFACT_ROOT / 'inert-output', receipt=self.root / 'build.json', receipt_sha256='3' * 64,
+            log=self.root / 'actual.log', log_sha256='4' * 64, compile_input_context=None,
+            compile_input_context_sha256=None, runtime_census_sha256=m.census_digest(self.assembly_rows()))
+        native_sources = {name: 'a' * 64 for name in [
+            'crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification.rs',
+            'crates/airk-retrieval/src/arbiter/runtime/cuda/windows.rs']}
+        target = m.ROOT / 'scripts'
+        build = receipt()
+        build['target_directory'] = str(target)
+        build['groups']['native']['files'] = native_sources
+        cargo_log = cargo()
+        cargo_log[1]['linked_paths'] = ['native=' + str(Path(self.archive['path']).parent)]
+        source_paths = [target / 'preserve-cuda-test-images.py', Path(__file__).resolve()]
+        originals = {}
+        for row, path, char in zip(cargo_log[2:], source_paths, 'de'):
+            row['executable'] = str(path)
+            originals[str(path)] = {'pin': self.row(path, char)}
+        census = self.assembly_rows()
+        outputs = {}
+        addition = []
+
+        def copied(original, destination, *_args, **_kwargs):
+            actual = {'pin': {**original['pin'], 'path': str(destination)}}
+            if destination == self.runtime / args.inference_name:
+                addition.append({'name': destination.name, **actual})
+            return actual
+
+        def json_input(row, maximum, deadline):
+            self.assertEqual(deadline, self.deadline)
+            self.assertEqual(row['path'], str(args.receipt))
+            return build
+
+        pins = {self.row(path, sha[0])['path']: self.row(path, sha[0]) for path, sha in (
+            (m.__file__, args.approved_script_sha256), (m.GUARD, args.guard_sha256),
+            (args.receipt, args.receipt_sha256), (args.log, args.log_sha256))}
+        pins.update({r['path']: r for r in [self.env_pin, self.archive, self.roster, self.producer,
+                                          *self.sources, *self.staged.values()]})
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(m.time, 'monotonic', return_value=100))
+            stack.enter_context(patch.object(m.subprocess, 'check_output', return_value=args.source_commit))
+            stack.enter_context(patch('builtins.print'))
+            observed = {}
+            stubs = {
+                'exact_pin': lambda path, sha, **_: self.row(path, sha[0]),
+                'shell': lambda *_: None, 'validate_destinations': lambda *_: None,
+                'guard': lambda *_: None, 'policy': lambda *_: {}, 'owner_policy': lambda *_, **__: None,
+                'fresh_json': json_input, 'verify_fresh_environment': lambda *_, **__: provenance,
+                'reopen_fresh_provenance': lambda *_, **__: provenance,
+                'fresh_bytes': lambda *_, **__: encoded(cargo_log).encode(),
+                'regular': Path, 'pe': lambda _: {}, 'snapshot': lambda path: originals[str(path)],
+                'exported_collectors': lambda *_, **__: {'collector': 42},
+                'runtime_census': lambda *_: [*census, *addition],
+                'make_directory': lambda *_: None, 'copy_one': copied,
+                'pin': lambda path, **_: pins.get(str(path), self.row(path, 'f')),
+                'write_json': lambda path, value, *_: outputs.update({path.name: value}),
+            }
+            for name, stub in stubs.items():
+                observed[name] = stack.enter_context(patch.object(m, name, side_effect=stub))
+            m.run(args)
+        observed['verify_fresh_environment'].assert_called_once()
+        self.assertEqual(observed['reopen_fresh_provenance'].call_count, 2)
+        self.assertEqual(observed['runtime_census'].call_count, 3)
+        packet = outputs['native-test-images.json']
+        self.assertNotIn('static_graph_binding', packet)
+        binding = packet['static_assembly_binding']
+        self.assertEqual(binding['schema'], 'airk.private.cuda-fresh-assembly-image-binding/1')
+        self.assertIs(binding['qualification'], False)
+        self.assertNotIn('manifest', binding)
+        self.assertEqual(binding['runtime_producer'], self.runtime_producer)
+        self.assertEqual(binding['staged_providers'], [self.staged[str(self.runtime / Path(row['path']).name)]
+                                                       for row in self.providers])
+        self.assertEqual(len(binding['image_exports']), 2)
+        self.assertEqual(outputs['preservation-result.json']['status'], 'PASS_IMAGE_PRESERVATION_ONLY_UNQUALIFIED')
+        with self.assertRaisesRegex(ValueError, 'exact finalgraph image provenance'):
+            m.verify_graph_binding(binding, None, None, packet['actual_build_receipt'])
+
+        owner_spec = importlib.util.spec_from_file_location('metadata_consumer', target / 'cuda-native-execution.py')
+        owner = importlib.util.module_from_spec(owner_spec)
+        owner_spec.loader.exec_module(owner)
+        image = next(row for row in packet['images'] if row['binary_id'] == 'airk-inference')
+        image_pin = {key: image[key] for key in ('path', 'bytes', 'sha256')}
+        inventory = outputs['preservation-result.json']['inventory']
+        metadata = {'image_packet': inventory, 'native_build_receipt': packet['actual_build_receipt'],
+                    'native_group': args.native_group, 'native_image': image_pin,
+                    'required_native_sources': native_sources}
+        values = {inventory['path']: packet, str(args.receipt): build}
+        with patch.object(owner, 'pinned', side_effect=lambda row: row['path']) as opened, \
+                patch.object(owner, 'read', side_effect=lambda path, *_: values[path]):
+            self.assertEqual(owner.source_image(metadata), image)
+        self.assertEqual([call.args[0] for call in opened.call_args_list],
+                         [inventory, packet['actual_build_receipt'], image_pin])
 
 if __name__ == '__main__': unittest.main()

@@ -145,3 +145,26 @@ does not attest the two compiled AIRK CUDA manifest and static-build environment
 values. The optional caller compile-context remains a bounded opaque FilePin.
 Actual native admission must establish the compiled values. This preservation
 mode emits no graph run, activation or qualification claim.
+
+## Fresh assembly image before the native manifest
+
+Use --fresh-assembly with --fresh-environment PATH, --fresh-environment-sha256
+SHA, --provenance-source-roster PATH, --provenance-source-roster-sha256 SHA and
+the same --verification-seconds bound. This mode excludes both final-graph modes,
+their incremental inputs, and --manifest-sha256. The original runtime census
+must have neither airk-cuda-runtime.json nor airk-cuda-runtime.receipt.json. It
+must include byte-identical copies of the fresh compiled producer at
+fresh-compile.json and both exact same-build provider DLLs. The rest of the
+approved runtime census stays intact.
+
+The mode uses the same environment/6 verifier, current configure/compile/aggregate
+pins, actual Cargo static link, PE and collector checks, and create-only copy
+custody. It adds one Inference image to the staged runtime so the owned native
+assembly selector can emit the manifest there later. The standard
+airk.preserved-native-test-images/1 packet supplies the metadata dispatcher's
+image, original build and source group. Its private static_assembly_binding
+authenticates the pre-manifest inputs under
+airk.private.cuda-fresh-assembly-image-binding/1. Graph preparation still
+requires a later --fresh-finalgraph packet with the actual native manifest and
+static_graph_binding. Assembly image preservation alone grants no native
+execution, runtime admission or qualification.

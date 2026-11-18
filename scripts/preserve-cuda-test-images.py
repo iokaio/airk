@@ -347,6 +347,7 @@ def validate_graph_manifest(manifest, manifest_pin, runtime, provenance, *, dead
 
 
 FRESH_BINDING_SCHEMA = 'airk.private.cuda-fresh-finalgraph-image-binding/1'
+FRESH_ASSEMBLY_SCHEMA = 'airk.private.cuda-fresh-assembly-image-binding/1'
 FRESH_ENV_SCHEMA = 'airk.cuda-static-environment/6'
 FRESH_BUILD_SCHEMA = 'airk.private.cuda-fresh-static-build-proof/1'
 FRESH_PROVENANCE_OWNERS = (
@@ -571,6 +572,26 @@ def validate_fresh_graph_manifest(manifest, manifest_pin, runtime, provenance, *
     return actual
 
 
+def fresh_assembly_runtime(rows, runtime, provenance):
+    """Authenticate the staged producer and provider pair in the reviewed census."""
+    by_name = {row['name']: row['pin'] for row in rows}
+    names = {name.casefold() for name in by_name}
+    require(not names & {'airk-cuda-runtime.json', 'airk-cuda-runtime.receipt.json'},
+            'fresh assembly preservation requires both native manifest leaves absent')
+    providers = provenance['proof']['provider_dlls']
+    require(tuple(Path(row['path']).name for row in providers) == FRESH_PROVIDERS
+            and {name for name in names if name.startswith('onnxruntime_providers_') and name.endswith('.dll')}
+                == set(FRESH_PROVIDERS), 'exact staged same-build provider pair required')
+    expected = [('fresh-compile.json', provenance['producer']), *zip(FRESH_PROVIDERS, providers)]
+    staged = []
+    for name, original in expected:
+        observed = by_name.get(name)
+        require(observed == {**original, 'path': str(Path(runtime) / name)},
+                'same-build staged assembly input differs: ' + name)
+        staged.append(observed)
+    return staged[0], staged[1:]
+
+
 def exported_collectors(path, *, deadline=None):
     """Read bounded actual PE exports without executing the image or tools."""
     check_deadline(deadline)
@@ -621,14 +642,27 @@ def exported_collectors(path, *, deadline=None):
         return sorted(found)
 
 
-def verify_fresh_current(binding, manifest_pin, image_pin, build_pin, *, deadline):
-    """Reopen current proof/document/link relationships after full fresh admission."""
+def reopen_fresh_provenance(binding, *, deadline):
+    """Reopen source and document pins after the full environment admission."""
     env_pin, roster_pin = binding['environment'], binding['source_roster']
     roster, sources = fresh_source_roster(roster_pin['path'], roster_pin['sha256'], deadline=deadline)
     env = fresh_json(env_pin, 16 << 20, deadline)
-    expected = dict(environment=env_pin, source_roster=roster, source_pins=sources,
-                    **fresh_chain(env, deadline=deadline))
+    return dict(environment=env_pin, source_roster=roster, source_pins=sources,
+                **fresh_chain(env, deadline=deadline))
+
+
+def verify_fresh_current(binding, manifest_pin, image_pin, build_pin, *, deadline):
+    expected = reopen_fresh_provenance(binding, deadline=deadline)
     return verify_graph_inputs(binding, manifest_pin, image_pin, build_pin, expected, deadline=deadline)
+
+
+def verify_fresh_assembly_current(binding, image_pin, build_pin, *, deadline):
+    expected = reopen_fresh_provenance(binding, deadline=deadline)
+    require(binding.get('schema') == FRESH_ASSEMBLY_SCHEMA and binding.get('qualification') is False
+            and binding.get('build_receipt') == build_pin
+            and all(binding.get(key) == value for key, value in expected.items()),
+            'exact fresh assembly image binding differs')
+    verify_fresh_image_link(binding, image_pin, expected['archive'], deadline=deadline)
 
 
 def verify_graph_binding(binding, manifest_pin, image_pin, build_pin, *, deadline=None):
@@ -672,29 +706,38 @@ def verify_graph_inputs(binding, manifest_pin, image_pin, build_pin, expected, *
     manifest = fresh_json(manifest_pin, 128 << 10, deadline)
     actual = validate_fresh_graph_manifest(manifest, manifest_pin, runtime, expected, deadline=deadline)
     require(actual == binding['runtime_producer'], 'fresh runtime producer binding drift')
-    ort, _ = cargo_rows(fresh_bytes(binding['cargo_json'], 64 << 20, deadline).decode('utf-8'),
-                        Path(expected['archive']['path']))
-    require(ort == binding['actual_static_ORT_rows'], 'actual fresh finalgraph Cargo link differs')
+    verify_fresh_image_link(binding, image_pin, expected['archive'], deadline=deadline)
+    return expected
+
+
+def verify_fresh_image_link(binding, image_pin, archive, *, deadline):
+    ort, _ = cargo_rows(fresh_bytes(binding['cargo_json'], 64 << 20, deadline).decode('utf-8'), Path(archive['path']))
+    require(ort == binding['actual_static_ORT_rows'], 'actual fresh Cargo link differs')
     exports = exported_collectors(image_pin['path'], deadline=deadline)
     require(binding['image_exports'].get(image_pin['sha256']) == exports, 'actual fresh image collector exports differ')
     check_deadline(deadline)
-    return expected
 
 
 def preservation_mode(args):
     incremental = getattr(args, 'incremental_finalgraph', False)
-    fresh = getattr(args, 'fresh_finalgraph', False)
+    assembly = getattr(args, 'fresh_assembly', False)
+    fresh_graph = getattr(args, 'fresh_finalgraph', False)
     seconds = getattr(args, 'verification_seconds', None)
     fresh_inputs = (getattr(args, 'fresh_environment', None), getattr(args, 'fresh_environment_sha256', None))
-    if not fresh:
+    if not (assembly or fresh_graph):
         require(not any(x is not None for x in (*fresh_inputs, seconds)),
-                'fresh proof inputs require explicit --fresh-finalgraph')
+                'fresh proof inputs require explicit --fresh-assembly or --fresh-finalgraph')
         return incremental, None
-    require(not incremental and not any(getattr(args, name, None) is not None
-                for name in ('incremental_environment', 'incremental_environment_sha256')),
-            'fresh and incremental finalgraph preservation are mutually exclusive')
-    require(all((*fresh_inputs, args.provenance_source_roster, args.provenance_source_roster_sha256, args.manifest_sha256)),
-            'complete reviewed fresh graph preservation inputs required')
+    require(not (assembly and fresh_graph) and not incremental
+            and not any(getattr(args, name, None) is not None
+                        for name in ('incremental_environment', 'incremental_environment_sha256')),
+            'preservation modes and their provenance inputs are mutually exclusive')
+    require(all((*fresh_inputs, args.provenance_source_roster, args.provenance_source_roster_sha256)),
+            'complete reviewed fresh preservation inputs required')
+    if assembly:
+        require(getattr(args, 'manifest_sha256', None) is None, 'assembly preservation refuses a manifest pin')
+    else:
+        require(args.manifest_sha256, 'fresh finalgraph preservation requires a manifest pin')
     require(type(seconds) in (int, float) and math.isfinite(seconds) and 0 < seconds <= 600,
             'finite positive --verification-seconds up to 600 required')
     deadline = time.monotonic() + seconds
@@ -705,7 +748,9 @@ def preservation_mode(args):
 def run(args):
     incremental, deadline = preservation_mode(args)
     fresh = deadline is not None
-    graph = incremental or fresh
+    assembly = getattr(args, 'fresh_assembly', False)
+    graph = incremental or (fresh and not assembly)
+    current_static = graph or assembly
     fresh_kw = {'deadline': deadline} if fresh else {}
     helper_pin = exact_pin(Path(__file__).resolve(), args.approved_script_sha256, **fresh_kw)
     guard_pin = exact_pin(GUARD, args.guard_sha256, **fresh_kw)
@@ -720,18 +765,19 @@ def run(args):
     owner_policy(parents[str(USER_ROOT)], payload=True)
     receipt_pin = exact_pin(args.receipt, args.receipt_sha256, **fresh_kw)
     log_pin = exact_pin(args.log, args.log_sha256, **fresh_kw)
-    graph_binding = None
+    static_binding = None
     receipt = fresh_json(receipt_pin, 32 << 20, deadline) if fresh else json.loads(args.receipt.read_bytes())
     validate_receipt(receipt, args.native_group, args.log.name)
-    if graph:
+    if current_static:
         if fresh:
             provenance = verify_fresh_environment(args.fresh_environment, args.fresh_environment_sha256,
                                                   args.provenance_source_roster, args.provenance_source_roster_sha256,
                                                   deadline=deadline)
-            manifest_pin = fresh_reviewed_pin(args.runtime / 'airk-cuda-runtime.json', args.manifest_sha256, deadline)
-            manifest = fresh_json(manifest_pin, 128 << 10, deadline)
-            runtime_producer = validate_fresh_graph_manifest(manifest, manifest_pin, args.runtime, provenance,
-                                                             deadline=deadline)
+            if graph:
+                manifest_pin = fresh_reviewed_pin(args.runtime / 'airk-cuda-runtime.json', args.manifest_sha256, deadline)
+                manifest = fresh_json(manifest_pin, 128 << 10, deadline)
+                runtime_producer = validate_fresh_graph_manifest(manifest, manifest_pin, args.runtime, provenance,
+                                                                 deadline=deadline)
             cargo_log = fresh_bytes(log_pin, 64 << 20, deadline).decode('utf-8')
         else:
             require(all(getattr(args,k,None) for k in ['incremental_environment','incremental_environment_sha256','provenance_source_roster','provenance_source_roster_sha256','manifest_sha256']), 'complete reviewed incremental inputs required')
@@ -741,9 +787,14 @@ def run(args):
             cargo_log=args.log.read_text(encoding='utf-8')
         env_pin,archive_pin=provenance['environment'],provenance['archive']
         ort,selected=cargo_rows(cargo_log,Path(archive_pin['path']))
-        graph_binding={'schema':FRESH_BINDING_SCHEMA if fresh else 'airk.private.cuda-finalgraph-image-binding/1',**provenance,
-            'manifest':manifest_pin,'runtime_producer':runtime_producer,'build_receipt':receipt_pin,
-            'cargo_json':log_pin,'actual_static_ORT_rows':ort,'image_exports':{},'preserver_source':helper_pin}
+        schema = FRESH_BINDING_SCHEMA if fresh else 'airk.private.cuda-finalgraph-image-binding/1'
+        static_binding = {'schema': FRESH_ASSEMBLY_SCHEMA if assembly else schema, **provenance,
+                          'build_receipt': receipt_pin, 'cargo_json': log_pin,
+                          'actual_static_ORT_rows': ort, 'image_exports': {}, 'preserver_source': helper_pin}
+        if graph:
+            static_binding.update(manifest=manifest_pin, runtime_producer=runtime_producer)
+        else:
+            static_binding['qualification'] = False
     else:
         env_pin = exact_pin(ENVIRONMENT, ENVIRONMENT_SHA)
         archive_pin = exact_pin(ARCHIVE, ARCHIVE_SHA)
@@ -760,15 +811,20 @@ def run(args):
         require(source.is_relative_to(Path(receipt['target_directory']).resolve()) and 0 < source.stat().st_size <= 4 << 30, 'image outside actual target/size bounds')
         pe(source)
         originals[package] = snapshot(source)
-        if graph:
+        if current_static:
             kw = {'deadline': deadline} if fresh else {}
-            graph_binding['image_exports'][originals[package]['pin']['sha256']] = exported_collectors(source, **kw)
+            static_binding['image_exports'][originals[package]['pin']['sha256']] = exported_collectors(source, **kw)
     runtime = runtime_census(args.runtime, args.guard_sha256)
     require(census_digest(runtime) == args.runtime_census_sha256, 'reviewed full runtime census differs')
     runtime_policy = policy(args.runtime)
     owner_policy(runtime_policy, payload=True)
     if graph:
-        require(any(row['pin']==graph_binding['manifest'] for row in runtime) and any(row['pin']==graph_binding['runtime_producer'] for row in runtime), 'fresh manifest/producer absent from runtime census')
+        require(any(row['pin'] == static_binding['manifest'] for row in runtime)
+                and any(row['pin'] == static_binding['runtime_producer'] for row in runtime),
+                'fresh manifest/producer absent from runtime census')
+    elif assembly:
+        runtime_producer, staged_providers = fresh_assembly_runtime(runtime, args.runtime, provenance)
+        static_binding.update(runtime_producer=runtime_producer, staged_providers=staged_providers)
     else:
         validate_runtime(runtime)
     context = None
@@ -777,8 +833,10 @@ def run(args):
         context = exact_pin(args.compile_input_context, args.compile_input_context_sha256)
         require(context['bytes'] <= 16 << 20, 'bounded compile context required')
     pins = [helper_pin, guard_pin, receipt_pin, log_pin, env_pin, archive_pin] + ([context] if context else [])
-    if graph:
-        pins += [graph_binding[k] for k in ['source_roster','producer','manifest','runtime_producer']] + graph_binding['source_pins']
+    if current_static:
+        pins += [static_binding[key] for key in ('source_roster', 'producer', 'runtime_producer')]
+        pins += static_binding['source_pins']
+        pins += [static_binding['manifest']] if graph else static_binding['staged_providers']
     def reopen(addition=None):
         check_deadline(deadline)
         kw = {'deadline': deadline} if fresh else {}
@@ -792,11 +850,14 @@ def run(args):
         for package, value in originals.items():
             require(snapshot(value['pin']['path']) == value, 'original native image drift: ' + package)
         require(all(policy(p) == value for p, value in parents.items()), 'output parent policy drift')
-        if fresh:
-            verify_fresh_current(graph_binding, graph_binding['manifest'], originals['airk-inference']['pin'],
+        if assembly:
+            verify_fresh_assembly_current(static_binding, originals['airk-inference']['pin'], receipt_pin,
+                                          deadline=deadline)
+        elif fresh:
+            verify_fresh_current(static_binding, static_binding['manifest'], originals['airk-inference']['pin'],
                                  receipt_pin, deadline=deadline)
         elif incremental:
-            verify_graph_binding(graph_binding,graph_binding['manifest'],originals['airk-inference']['pin'],receipt_pin)
+            verify_graph_binding(static_binding, static_binding['manifest'], originals['airk-inference']['pin'], receipt_pin)
     reopen()
     check_deadline(deadline)
     make_directory(args.output, ARTIFACT_ROOT, args.guard_sha256)
@@ -820,7 +881,10 @@ def run(args):
             bindings.append({'materialized_image':image,'actual_cargo_artifact':row,'pe':machine,'original':original,'preserved':after})
         reopen(addition)
         inventory = {'schema':'airk.preserved-native-test-images/1','utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'source_commit':head,'native_group':args.native_group,'actual_build_receipt':receipt_pin,'images':result,'source_dirty':bool(subprocess.check_output(['git','status','--porcelain','--untracked-files=no'],cwd=ROOT,text=True)),'scope':'Independent CUDA lib-test copies, one additive Inference filename; all preexisting runtime objects unchanged. No execution or qualification.'}
-        if graph: inventory['static_graph_binding']=graph_binding
+        if graph:
+            inventory['static_graph_binding'] = static_binding
+        elif assembly:
+            inventory['static_assembly_binding'] = static_binding
         inventory_path = args.output/'native-test-images.json'
         write_json(inventory_path, inventory, ARTIFACT_ROOT, args.guard_sha256)
         write_json(args.output/'cargo-image-bindings.json', {'schema':'airk.private-current-image-preservation-binding/1','inventory':pin(inventory_path),'build_receipt':receipt_pin,'cargo_json':log_pin,'actual_static_ORT_rows':ort,'cuda_static_environment':env_pin,'actual_static_archive':archive_pin,'caller_compile_input_context':context,'incremental':receipt['incremental'],'runtime_source_census':runtime,'runtime_source_census_sha256':args.runtime_census_sha256,'runtime_directory':str(args.runtime),'runtime_addition':addition,'preexisting_runtime_objects_unchanged':True,'images':bindings,'preserver_source':pin(Path(__file__).resolve()),'guard_source':pin(GUARD),'native_model_request_dispatched':False,'qualification':False}, ARTIFACT_ROOT, args.guard_sha256)
@@ -842,6 +906,7 @@ def main():
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument('--incremental-finalgraph', action='store_true')
     modes.add_argument('--fresh-finalgraph', action='store_true')
+    modes.add_argument('--fresh-assembly', action='store_true')
     parser.add_argument('--fresh-environment', type=Path)
     parser.add_argument('--fresh-environment-sha256')
     parser.add_argument('--verification-seconds', type=float)
