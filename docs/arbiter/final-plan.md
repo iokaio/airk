@@ -1742,16 +1742,16 @@ Use zero non-finite valid results, zero argmax changes on the frozen parity
 population, the existing task risk and coverage gates, and the 120-second
 request and warm p95 limits. Report complete Answer improvement as both
 seconds saved and percentage reduction against a matched CPU control where
-one can be measured. Freeze the model-specific product targets and
-representative workloads before release confirmation. For review, start
-with a proposed complete Answer warm p95 improvement of **at least 25% and
-1 second** where there is a comparable CPU path, and **2 GiB of measured
-dedicated memory remaining** under the agreed competing workload for
-discrete GPU fit. These are proposed release targets. A model without a
-comparable CPU path needs a separately frozen absolute latency target, and
-a unified-memory target needs a system-specific reserve. Technical gates
-and preparation can proceed under their existing criteria. Approve the
-product targets before the affected release-confirmation runs.
+one can be measured. The user approved two release targets on
+18 November. Where there is a comparable CPU path, complete Answer warm
+p95 must improve by **at least 25% and 1 second**. A discrete GPU must
+retain **at least 2 GiB of measured dedicated memory** under the agreed
+competing workload. Freeze the representative workloads before release
+confirmation. A model without a comparable CPU path needs a separately
+frozen absolute latency target, and a unified-memory target needs a
+system-specific reserve. Technical qualification and preparation proceed
+under their existing criteria. Resolve the remaining applicable numerical
+targets before the affected release-confirmation runs.
 
 Report the time spent in Focus on matched Answer runs. Choose whether to
 package Focus GPU based on its measured contribution to end-to-end benefit

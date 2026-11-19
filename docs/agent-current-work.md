@@ -84,6 +84,43 @@ Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:
   contract-first ordering, explicit parallel file ownership, one Cargo
   owner per host/target and primary review before expensive integrated runs. A failing model
   or unavailable host does not stop independent product checks.
+## 18 November extension restart checkpoint
+
+- Resume on `feat/arbiter-final` with verified Windows user and default
+  owner, using the checked execution procedure. The existing desktop
+  AIRK service and CLI may be present. The qualification process and
+  Cargo target were idle at handoff. Recheck the GPU and host headroom
+  before an expensive run. The WSL LLM keep-alive task was disabled and
+  Ubuntu and Docker were idle. Preserve that condition during the
+  Windows Large FP32 run.
+- The corrected Large FP32 scored 32, 128, 1024 and 8192 tokens and
+  passed both independent comparisons and placement. Reuse the exact
+  artifact, the equivalent-predecessor reference lineage and the
+  existing passing receipts. Under the private campaign root
+  `artifacts/v190/final-plan/exec-20261116T052942Z`, use
+  `large-fp32-batch-view-scoring-r1/execution.json` with SHA-256
+  `ea9aefbf7e9cefb91bca8384924237f95655131cb49ac571e6900e55f3d6d820`.
+  [Windows Large scoring ledger](simplify/one-process-ledger.md#2026-11-18--corrected-large-fp32-passed-all-four-cuda-scoring-widths)
+- Next action after restart is the corrected Windows Large unprofiled
+  cold-load and warm measurement. Start from
+  `scripts/cuda-component-execution/compact_resource20.py`, its journal
+  watcher, and the corrected Large graph/scoring path in
+  `scripts/cuda-component-execution/large_graph.py`. The live unprofiled
+  selector is Compact-specific. Extend the owned path and run cheap
+  validation first. Then run one exclusive Large process with the existing
+  48 GiB process and Job limits, 44 GiB device reservation, and original
+  120-second per-operation deadline. Measure cold load, one warmup and
+  twenty unprofiled 8192-token samples, with both reference checks and
+  actual process, Job and reservation settlement. Retain the measured
+  cold/warm, host and device evidence. [Resource20 owner](../scripts/cuda-component-execution/COMPACT-RESOURCE20.md)
+- Once the Windows Large run passes, close FP32 and start Windows CUDA FP16.
+  First reconcile the conversion validator with the pinned Compact and
+  Large FP32 receipts and validate native G5 readiness. Then run Compact-first
+  FP16 probes. Proceed through the approved FP16 platform order and leave
+  Focus GPU off the critical path. The 25% plus one-second warm Answer p95
+  improvement target and the 2 GiB discrete-VRAM reserve are approved for
+  release confirmation where applicable. [FP16 plan](arbiter/final-plan.md#fp16-conversion-prerequisites)
+
 ## Scoped ownership exceptions
 
 - User exception approved during implementation: reviewed in-scope tracked-file
