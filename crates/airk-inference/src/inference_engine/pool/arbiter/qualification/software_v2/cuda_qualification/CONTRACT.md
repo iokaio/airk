@@ -312,3 +312,16 @@ and publisher arrays are compared independently against the corrected native
 scores at all four widths. The receipt labels the first lane as an equivalent
 predecessor reference. Both numerical criteria, the CPU payload and placement
 checks, the original deadline, and the actual process/Job limits stay binding.
+
+## Unprofiled corrected Large Resource20
+
+The separate Large selector shares the existing Resource20 operation journal,
+series and native ownership flow. It admits the corrected batch-view profile,
+its reviewed same-session graph and CPU bounds, and the original Large device
+configuration of 40 GiB arena, 8 GiB warm increment and 4 GiB headroom. The
+process and aggregate Job are each limited to 48 GiB. Every T8192/N8 warmup and
+sample checks both pinned numerical references, using the equivalent-predecessor
+lineage for the first reference. The 120-second operation deadline and fixed
+3600-second process expiry follow the Compact Resource20 rules. The native
+receipt has its own schema and policy identity and records the lineage and
+actual native teardown and host charge release.

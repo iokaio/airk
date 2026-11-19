@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Run the owned Windows Large FP32 graph or four-width profiling experiment."""
+"""Run the owned Windows Large FP32 placement, scoring or Resource20 experiment."""
 
 import argparse
+import ctypes
 import datetime
 import json
 import math
@@ -20,6 +21,10 @@ BATCH_VIEW_PREPARATION_SHA = "ea6ebdadacf0b776e00281172edc4c756ee396ae03eb8db059
 BATCH_VIEW_OBSERVATION_SHA = "d4ccefff117a11c68b92c3f9c08b145a4fbb5a470114af5a23107c73a26bc431"
 REFERENCE_EQUIVALENCE_SHA = "404a486500b1c3955cc5616554ccf2f7c55cd4855981d4477265688db41278d1"
 REFERENCE_BASIS = "equivalent_predecessor"
+SCORING_EXECUTION_SHA = "ea9aefbf7e9cefb91bca8384924237f95655131cb49ac571e6900e55f3d6d820"
+DEVICE_BUDGET = 44 << 30
+RESOURCE_WALL_SECONDS = 3600
+RESOURCE_PROOFS = {"native_result": 16 << 20, "operations": 128 << 10, "stdout": 64 << 20}
 CPU = "CPUExecutionProvider"
 CUDA = "CUDAExecutionProvider"
 PARENT_CPU_STATIC_BYTES = 43819
@@ -34,6 +39,10 @@ SCORING_SELECTOR = (
 BATCH_VIEW_SCORING_SELECTOR = (
     "inference_engine::pool::arbiter::qualification::software_v2::"
     "cuda_qualification::bounded_hybrid::cuda_large_fp32_batch_view_bounded_hybrid_profile"
+)
+RESOURCE_SELECTOR = (
+    "inference_engine::pool::arbiter::qualification::software_v2::"
+    "cuda_qualification::bounded_hybrid::cuda_large_fp32_batch_view_bounded_hybrid_resource20"
 )
 SCORING_INPUTS = {
     "reviewed_graph": ("GRAPH", "1892e5b040d8c51969f1d3361d0929950fa98f0ef4079060e48d00458635488a"),
@@ -233,6 +242,176 @@ def validate_scoring(native, owned, pins, rows, journal, out, base, guard, requi
     return trace_pin, operation_pin
 
 
+def pinned_core(pin):
+    return {key: pin[key] for key in ("path", "sha256")}
+
+
+def resource_inputs(path, request, candidate, scoring, base, guard, require):
+    guard([path], True)
+    execution = base.pin(path)
+    require(execution["sha256"] == SCORING_EXECUTION_SHA, "retained Large scoring receipt differs")
+    observed = base.read(path)
+    require(observed["complete"] is True and observed["failure"] is None
+            and observed["schema"] == "airk.private.owned-large-cuda-batch-view-scoring/1"
+            and observed["request"] == request and observed["candidate_inputs"] == candidate
+            and observed["scoring_inputs"] == scoring and observed["reference_basis"] == REFERENCE_BASIS,
+            "retained Large scoring does not bind the selected corrected inputs")
+    result = observed["native_result"]
+    guard([Path(result["path"])], True)
+    base.pinned(result)
+    native = base.read(result["path"])
+    return execution, result, bytes(native["adapter_before"]["uuid"])
+
+
+class DeviceMemory:
+    """Independently sample adapter-wide dedicated framebuffer memory with NVML."""
+
+    INTERVAL_NS = 250_000_000
+
+    class Reading(ctypes.Structure):
+        _fields_ = [(key, ctypes.c_ulonglong) for key in ("total", "free", "used")]
+
+    def __init__(self, uuid, require):
+        from uuid import UUID
+
+        self.uuid = "GPU-" + str(UUID(bytes=uuid))
+        self.require = require
+        self.module = Path(os.environ["SystemRoot"]) / "System32/nvml.dll"
+        self.api = ctypes.WinDLL(str(self.module))
+        prototypes = {
+            "nvmlInit_v2": [],
+            "nvmlShutdown": [],
+            "nvmlDeviceGetHandleByUUID": [ctypes.c_char_p, ctypes.POINTER(ctypes.c_void_p)],
+            "nvmlDeviceGetMemoryInfo": [ctypes.c_void_p, ctypes.POINTER(self.Reading)],
+        }
+        for name, arguments in prototypes.items():
+            function = getattr(self.api, name)
+            function.argtypes, function.restype = arguments, ctypes.c_int
+        self.call("nvmlInit_v2")
+        try:
+            self.handle = ctypes.c_void_p()
+            self.call("nvmlDeviceGetHandleByUUID", self.uuid.encode("ascii"), ctypes.byref(self.handle))
+            self.baseline = self.read()
+        except BaseException:
+            self.call("nvmlShutdown")
+            raise
+        self.minimum_free = self.baseline
+        self.maximum_used = self.baseline
+        self.next_sample_ns = self.baseline["monotonic_ns"]
+        self.previous_sample_ns = self.baseline["monotonic_ns"]
+        self.sample_count = self.maximum_gap_ns = 0
+
+    def call(self, name, *args):
+        status = getattr(self.api, name)(*args)
+        self.require(status == 0, f"{name} failed with NVML status {status}")
+
+    def read(self):
+        value = self.Reading()
+        self.call("nvmlDeviceGetMemoryInfo", self.handle, ctypes.byref(value))
+        self.require(0 < value.total and 0 <= value.free <= value.total and 0 <= value.used <= value.total,
+                     "invalid NVML dedicated memory observation")
+        return {"monotonic_ns": time.monotonic_ns(), "total_bytes": value.total,
+                "free_bytes": value.free, "used_bytes": value.used}
+
+    def observe_if_due(self, now):
+        if now < self.next_sample_ns:
+            return
+        row = self.read()
+        self.sample_count += 1
+        self.maximum_gap_ns = max(self.maximum_gap_ns, row["monotonic_ns"] - self.previous_sample_ns)
+        self.previous_sample_ns = row["monotonic_ns"]
+        self.next_sample_ns = row["monotonic_ns"] + self.INTERVAL_NS
+        if row["free_bytes"] < self.minimum_free["free_bytes"]:
+            self.minimum_free = row
+        if row["used_bytes"] > self.maximum_used["used_bytes"]:
+            self.maximum_used = row
+
+    def close(self):
+        try:
+            return {"adapter_uuid": self.uuid, "provider": "NVML", "scope": "adapter_dedicated_memory",
+                    "interval_ns": self.INTERVAL_NS, "maximum_observed_gap_ns": self.maximum_gap_ns,
+                    "in_job_observations": self.sample_count, "before_job": self.baseline,
+                    "minimum_sampled_free": self.minimum_free, "maximum_sampled_used": self.maximum_used,
+                    "after_job": self.read()}
+        finally:
+            self.call("nvmlShutdown")
+
+
+def host_preflight(require):
+    class MemoryStatus(ctypes.Structure):
+        _fields_ = [("length", ctypes.c_uint32), ("load", ctypes.c_uint32)] + [
+            (key, ctypes.c_ulonglong) for key in
+            ("total_physical", "available_physical", "total_pagefile", "available_pagefile",
+             "total_virtual", "available_virtual", "available_extended_virtual")
+        ]
+
+    value = MemoryStatus()
+    value.length = ctypes.sizeof(value)
+    query = ctypes.WinDLL("kernel32", use_last_error=True).GlobalMemoryStatusEx
+    query.argtypes = [ctypes.POINTER(MemoryStatus)]
+    query.restype = ctypes.c_int
+    if not query(ctypes.byref(value)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    require(min(value.available_physical, value.available_pagefile) >= HOST_BYTES,
+            "actual host physical or commit headroom is below the original Large reservation")
+    return {"available_physical_bytes": value.available_physical,
+            "available_commit_bytes": value.available_pagefile}
+
+
+def validate_resource(native, owned, row, expected, journal_path, require):
+    require(native["schema"] == "airk.private.cuda-large-batch-view-bounded-hybrid-resource/1"
+            and native["complete"] is True and native["error"] is None
+            and native["qualified"] is native["product_admission"] is native["profiling_enabled"] is False
+            and native["process_cuda_poisoned"] is native["native_control_retained_for_unknown_cuda"] is False
+            and native["native_control_cleanup_error"] is None
+            and all(native[key] is True for key in ("session_teardown_observed",
+                    "native_control_cleanup_observed", "native_host_charge_release_observed"))
+            and native["tokens"] == 8192 and native["input_digest"] == row["input"]["input_digest"]
+            and native["native_host_reservation_bytes"] == HOST_BYTES
+            and native["capacity_policy"] is None
+            and native["applied_capacity"] == {"arena_limit_bytes": 40 << 30,
+                                              "warm_extra_bytes": 8 << 30, "headroom_bytes": 4 << 30}
+            and native["reference_basis"] == REFERENCE_BASIS
+            and native["original_whole_expires_monotonic_ns"] == expected["whole_ns"]
+            and native["operation_deadline_ms"] == 120_000
+            and Path(native["operation_journal"]) == journal_path
+            and native["resource_policy"] == expected["native_input"]["policy"]
+            and native["resource_policy_digest"] == expected["native_input"]["policy_digest"]
+            and native["source_manifest"] == expected["native_input"]["source_manifest"]
+            and isinstance(native["policy_identity"], str)
+            and len(native["policy_identity"]) == 64 and native["policy_identity"] != "0" * 64
+            and all(char in "0123456789abcdef" for char in native["policy_identity"])
+            and all(native[key] == pinned_core(pin) for key, pin in expected["pins"].items()),
+            "native corrected Large Resource20 custody, input, capacity or teardown differs")
+    series, warm = native["resource"], native["warmup"]
+    samples = series["samples"]
+    elapsed = [sample["elapsed_us"] for sample in samples]
+    times = [native["load_us"], warm["elapsed_us"], *elapsed]
+    rss = [native["peak_process_rss_bytes"], warm["peak_process_rss_bytes"],
+           *(sample["peak_process_rss_bytes"] for sample in samples)]
+    require(series["complete"] is True and series["failure"] is None and series["attempted_samples"] == len(samples) == 20
+            and series["reservation_bytes"] == HOST_BYTES and warm["returned"] is warm["success"] is True
+            and all(type(value) is int and 0 < value <= 120_000_000 for value in times)
+            and all(type(value) is int and 0 < value <= HOST_BYTES for value in rss)
+            and series["nearest_rank_p95_us"] == sorted(elapsed)[18] and series["maximum_us"] == max(elapsed),
+            "invalid complete Large Resource20 series")
+    observation = owned["before_GO"]["operation_watch"]
+    events = observation["observed_events"]
+    calls = [native["load_native_call_us"], warm["native_call_elapsed_us"], *native["native_call_samples_us"]]
+    require(observation["actual_process_exit_observed"] is True and observation["exit_code"] == 0
+            and observation["completed_return_markers"] == len(calls) == 22 and len(events) == 44
+            and calls == [event["native_call_elapsed_us"] for event in events[1::2]]
+            and all(type(call) is int and 0 < call <= elapsed for call, elapsed in zip(calls, times)),
+            "Large Resource20 timing differs from the independent journal")
+    with journal_path.open("rb") as stream:
+        raw = stream.read(RESOURCE_PROOFS["operations"] + 1)
+    require(0 < len(raw) <= RESOURCE_PROOFS["operations"] and raw.endswith(b"\n")
+            and [json.loads(line) for line in raw.splitlines()] == events, "final Large journal differs")
+    return {"load_us": times[0], "warmup_us": times[1], "samples": len(samples),
+            "p95_us": series["nearest_rank_p95_us"], "maximum_us": series["maximum_us"],
+            "peak_process_rss_bytes": max(rss)}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--request", required=True, type=Path)
@@ -249,7 +428,11 @@ def main():
     parser.add_argument("--candidate-metadata-sha256")
     parser.add_argument("--reference-equivalence", type=Path)
     parser.add_argument("--reference-equivalence-sha256")
+    parser.add_argument("--resource20", action="store_true")
+    parser.add_argument("--scoring-execution", type=Path)
+    parser.add_argument("--watchdog-sha256")
     args = parser.parse_args()
+    resource = args.resource20
     score_paths = (args.graph, args.retained, args.supplemental)
     if any(score_paths) and not all(score_paths):
         parser.error("scoring requires --graph, --retained and --supplemental together")
@@ -263,6 +446,10 @@ def main():
         parser.error("reference equivalence requires its path and SHA256 together")
     if candidate_scoring != has_equivalence:
         parser.error("reference equivalence is required for batch-view scoring and is exclusive to that mode")
+    if resource and not (candidate_scoring and args.scoring_execution and args.watchdog_sha256):
+        parser.error("Resource20 requires corrected scoring inputs, --scoring-execution and --watchdog-sha256")
+    if not resource and (args.scoring_execution or args.watchdog_sha256):
+        parser.error("scoring execution and watchdog pins require --resource20")
 
     component = runpy.run_path(str(ROOT / "scripts/cuda-component-execution.py"))
     base = component["base"]()
@@ -329,9 +516,33 @@ def main():
             metadata, candidate_pins, scoring_pins, base, guard_inputs, require,
         ))
 
-    start = time.monotonic()
+    resource_pins = {}
+    if resource:
+        native_root = ("crates/airk-inference/src/inference_engine/pool/arbiter/qualification/"
+                       "software_v2/cuda_qualification")
+        build_files = observed_build["groups"]["native"]["files"]
+        for relative in (f"{native_root}/bounded_hybrid.rs", f"{native_root}/bounded_hybrid/resource20.rs",
+                         "crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid.rs"):
+            pin = base.pin(ROOT / relative)
+            require(build_files.get(relative) == pin["sha256"], "Resource20 native source drifted after link")
+            resource_pins[relative] = pin
+        execution, result, adapter_uuid = resource_inputs(
+            args.scoring_execution, request, candidate_pins, scoring_pins, base, guard_inputs, require,
+        )
+        watch_path = Path(__file__).with_name("resource20_watch.py")
+        watch_pin = base.pin(watch_path)
+        require(watch_pin["sha256"] == args.watchdog_sha256, "reviewed Resource20 journal watchdog differs")
+        watch_owner = runpy.run_path(str(watch_path))
+        base.pinned(watch_pin)
+        resource_pins.update(scoring_execution=execution, scoring_result=result, watchdog=watch_pin,
+                             launcher=base.pin(Path(__file__)))
+
+    start_ns = time.monotonic_ns()
+    start = start_ns / 1e9
     started_utc = datetime.datetime.now(datetime.timezone.utc)
-    deadline = start + 120.0
+    wall_seconds = RESOURCE_WALL_SECONDS if resource else 120
+    whole_ns = start_ns + wall_seconds * 1_000_000_000
+    deadline = whole_ns / 1e9
     mkdir(base_guard, args.output, deadline=deadline)
     temp = args.output / "temp"
     mkdir(base_guard, temp, deadline=deadline)
@@ -340,9 +551,13 @@ def main():
     native_path = args.output / "native-result.json"
     receipt_path = args.output / "execution.json"
     planned_outputs = [stdin_path, stdout_path, native_path, receipt_path]
+    journal_path = args.output / "native-result.operations.jsonl"
     if scoring:
-        planned_outputs.extend((args.output / "native-result.operations.jsonl", args.output / "ort-profile"))
+        planned_outputs.append(journal_path)
+    if scoring and not resource:
+        planned_outputs.append(args.output / "ort-profile")
     guard(base_guard, planned_outputs, deadline=deadline)
+    proof_paths = {"native_result": native_path, "operations": journal_path, "stdout": stdout_path}
 
     selector = SCORING_SELECTOR if scoring else SELECTOR
     schema = ("airk.private.owned-large-cuda-scoring/1" if scoring
@@ -350,12 +565,17 @@ def main():
     if candidate_scoring:
         selector = BATCH_VIEW_SCORING_SELECTOR
         schema = "airk.private.owned-large-cuda-batch-view-scoring/1"
+    if resource:
+        selector = RESOURCE_SELECTOR
+        schema = "airk.private.owned-large-cuda-batch-view-resource20/1"
     command = [str(args.image), "--ignored", "--exact", selector, "--test-threads=1"]
+    if resource:
+        command.append("--nocapture")
     receipt = {
         "schema": schema,
         "complete": False, "qualification": False,
         "model_requests_dispatched": None if scoring else False,
-        "started_utc": started_utc.isoformat(), "wall_seconds": 120, "host_bytes": HOST_BYTES,
+        "started_utc": started_utc.isoformat(), "wall_seconds": wall_seconds, "host_bytes": HOST_BYTES,
         "command": command, "request": request, "image": image, "build": build, "build_log": log_pin,
         "execution_user_sid": base.SID, "failure": None,
     }
@@ -367,8 +587,13 @@ def main():
         receipt["scoring_inputs"] = scoring_pins
     if candidate_scoring:
         receipt["reference_basis"] = REFERENCE_BASIS
+    if resource:
+        receipt.update(resource_inputs=resource_pins, original_deadline_monotonic_ns=whole_ns,
+                       original_deadline=(started_utc + datetime.timedelta(seconds=wall_seconds)).isoformat())
+    watch = device = None
 
     def authenticate(api, job, info, child_deadline):
+        nonlocal watch
         proof = parent.suspended_authentication(api, info, deadline, child_deadline, base.SID,
                                                 image, owner.image_proof)
         require(component["token_owner"](info.process) == base.SID,
@@ -376,7 +601,19 @@ def main():
         require(owner.job_snapshot(api, job) == ([int(info.pid)], 1, 1),
                 "the suspended native image must be the only Job member")
         proof["default_owner_sid"] = base.SID
+        if resource:
+            identity = {"input_sha256": request["sha256"], "profile": metadata["profile"],
+                        "process_id": int(info.pid), "native_binary_sha256": image["sha256"]}
+            state = watch_owner["Operations"](identity, rows[-1]["input"]["input_digest"], whole_ns)
+            watch = watch_owner["WindowsWatch"](
+                journal_path, stdout_path, native_path, state,
+                lambda path: component["guard"](base_guard, path, True, deadline=deadline),
+                device=device,
+            )
         return proof
+
+    def observe(api, job, info, child_deadline):
+        return watch.run(api, job, info, child_deadline)
 
     try:
         env = {key: value for key, value in os.environ.items()
@@ -393,31 +630,42 @@ def main():
             for label, (variable, _) in SCORING_INPUTS.items():
                 env[f"AIRK_CUDA_HYBRID_{variable}"] = scoring_pins[label]["path"]
                 env[f"AIRK_CUDA_HYBRID_{variable}_SHA256"] = scoring_pins[label]["sha256"]
-            env["AIRK_CUDA_HYBRID_ORT_PROFILE_PREFIX"] = str(args.output / "ort-profile")
+            if not resource:
+                env["AIRK_CUDA_HYBRID_ORT_PROFILE_PREFIX"] = str(args.output / "ort-profile")
         if candidate_scoring:
             for label in ("reference_request", "reference_equivalence"):
                 variable = f"AIRK_CUDA_HYBRID_{label.upper()}"
                 env[variable] = scoring_pins[label]["path"]
                 env[f"{variable}_SHA256"] = scoring_pins[label]["sha256"]
+        if resource:
+            env["AIRK_CUDA_HYBRID_WHOLE_EXPIRES_NS"] = str(whole_ns)
+            receipt["host_before_job"] = host_preflight(require)
+            device = DeviceMemory(adapter_uuid, require)
+            require(device.baseline["free_bytes"] >= DEVICE_BUDGET,
+                    "actual adapter free memory is below the approved Large device reservation")
         with stdin_path.open("xb"):
             pass
         with stdin_path.open("rb") as stdin, stdout_path.open("xb") as stdout:
             guard(base_guard, [stdin_path, stdout_path], True, deadline=deadline)
             owned = owner.run_windows_owned_training(
                 command, ROOT, stdout, deadline - time.monotonic(), env, stdin, HOST_BYTES,
-                before_resume=authenticate, absolute_deadline=deadline,
+                before_resume=authenticate, after_resume=observe if resource else None,
+                absolute_deadline=deadline,
             )
         receipt["owned"] = owned
+        if device is not None:
+            device, finished_device = None, device
+            receipt["device_memory"] = finished_device.close()
         outputs = list(args.output.rglob("*"))
         guard(base_guard, outputs, True, deadline=deadline)
         receipt["stdout"] = base.pin(stdout_path)
         if native_path.exists():
             receipt["native_result"] = base.pin(native_path)
         if scoring:
-            journal_path = args.output / "native-result.operations.jsonl"
             if journal_path.exists():
                 receipt["operations"] = base.pin(journal_path)
-            receipt["trace_candidates"] = [base.pin(path) for path in args.output.glob("ort-profile*.json")]
+            if not resource:
+                receipt["trace_candidates"] = [base.pin(path) for path in args.output.glob("ort-profile*.json")]
         native = base.read(native_path) if native_path.exists() else None
         if owned["exit_code"] != 0 and native and native.get("error"):
             raise RuntimeError(native["error"])
@@ -442,12 +690,29 @@ def main():
             if candidate_scoring:
                 require(native["source_manifest"] == metadata["source_manifest"],
                         "native Large scoring source does not match candidate metadata")
-            trace, operations = validate_scoring(
-                native, owned, scoring_pins, rows, journal, args.output, base,
-                lambda paths, created: guard(base_guard, paths, created, deadline=deadline), require,
-                candidate=candidate_scoring,
-            )
-            receipt.update(runtime_profile=trace, operations=operations, model_requests_dispatched=True)
+            if resource:
+                require({p.name for p in args.output.iterdir()} == {
+                    "stdin.txt", "temp", *(p.name for p in proof_paths.values())
+                }, "unprofiled Resource20 output roster differs")
+                require(receipt["device_memory"]["in_job_observations"] > 0
+                        and bytes(native["adapter_before"]["uuid"]) == adapter_uuid
+                        and bytes(native["adapter_after"]["uuid"]) == adapter_uuid,
+                        "independent dedicated-memory or native adapter evidence differs")
+                expected = {
+                    "whole_ns": whole_ns, "native_input": base.read(candidate_pins["native_input"]["path"]),
+                    "pins": {key: scoring_pins[key] for key in ("reviewed_graph", "retained_fixture",
+                                "retained_producer", "reference_request", "reference_equivalence")},
+                }
+                receipt["resource"] = validate_resource(native, owned, rows[-1], expected,
+                                                        journal_path, require)
+                receipt["model_requests_dispatched"] = True
+            else:
+                trace, operations = validate_scoring(
+                    native, owned, scoring_pins, rows, journal, args.output, base,
+                    lambda paths, created: guard(base_guard, paths, created, deadline=deadline), require,
+                    candidate=candidate_scoring,
+                )
+                receipt.update(runtime_profile=trace, operations=operations, model_requests_dispatched=True)
         else:
             require(native["schema"] == "airk.private.cuda-graph-metadata-diagnostic/1"
                     and native["outcome"] == "graph_metadata_observed" and native["diagnostic_complete"] is True
@@ -473,23 +738,50 @@ def main():
                 validate_candidate_graph(observed, require)
         outputs = (receipt.get("runtime_profile"), receipt.get("operations"))
         for pin in (request, image, build, log_pin, manifest_pin, receipt["native_result"], receipt["stdout"],
-                    *candidate_pins.values(), *scoring_pins.values(), *(pin for pin in outputs if pin)):
+                    *candidate_pins.values(), *scoring_pins.values(), *resource_pins.values(),
+                    *(pin for pin in outputs if pin)):
             base.pinned(pin)
         require(time.monotonic() < deadline, "original Large deadline expired")
         receipt["complete"] = True
     except BaseException as error:
         receipt["failure"] = f"{type(error).__name__}: {error}"
-        for key in ("emergency_cleanup", "owned_cleanup"):
+        for key in ("emergency_cleanup", "owned_cleanup", "operation_watch"):
             cleanup = getattr(error, key, None)
             if cleanup is not None:
                 receipt[key] = cleanup
         raise
     finally:
-        receipt["elapsed_seconds"] = time.monotonic() - start
-        with receipt_path.open("x", encoding="utf-8") as stream:
-            json.dump(receipt, stream, ensure_ascii=False, indent=2)
-            stream.write("\n")
-        guard(base_guard, [receipt_path], True)
+        if resource:
+            prior = sys.exc_info()[1]
+            close_errors = []
+            for key, observer in (("watchdog", watch), ("device_memory", device)):
+                if observer is not None:
+                    try:
+                        final = observer.close()
+                        if final is not None:
+                            receipt[key] = final
+                    except BaseException as error:
+                        close_errors.append(f"{key}: {error}")
+            if close_errors:
+                receipt["observer_cleanup_errors"] = close_errors
+                receipt["failure"] = receipt["failure"] or close_errors[0]
+            surviving = [entry for entry in args.output.rglob("*") if entry not in proof_paths.values()]
+            try:
+                guard(base_guard, [args.output, *surviving], True, deadline=deadline)
+            except BaseException as error:
+                receipt["failure"] = receipt["failure"] or f"final output custody: {error}"
+            receipt["final_guard_errors"], hasher = component["final_output_hasher"](
+                base_guard, proof_paths, deadline, base.pin)
+            component["finish"](receipt, proof_paths, start, deadline, hasher, proofs=RESOURCE_PROOFS)
+            component["write_new"](base_guard, receipt_path, receipt)
+            if prior is None and not receipt["complete"]:
+                raise ValueError(receipt["failure"])
+        else:
+            receipt["elapsed_seconds"] = time.monotonic() - start
+            with receipt_path.open("x", encoding="utf-8") as stream:
+                json.dump(receipt, stream, ensure_ascii=False, indent=2)
+                stream.write("\n")
+            guard(base_guard, [receipt_path], True)
 
 
 if __name__ == "__main__":

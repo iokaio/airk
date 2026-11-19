@@ -8153,3 +8153,62 @@ operational adapters, and preserves D01-D08, numerical gates and the deadline.
 Aggregate verification and cleanup still remain separate unfinished duties.
 Native alias R3 scoped Clippy passes in 22.1104603s, with source pins retained
 under E/rk-native-windows-r3; no native test or installed-platform pass follows yet.
+
+### 2026-11-18 — Windows Large FP32 Resource20 passed
+
+The TYAI\tdotn execution token, default owner and interactive Windows SID
+matched the approved SID ending 1002. All new outputs were owner-audited.
+Two launch prechecks stopped before any model work. Windows WDDM listed
+desktop graphics clients as compute applications and Ollama had a console
+child. The corrected preflight observed no active tagged compute engine,
+no Ollama model worker, and idle WSL and Cargo. At launch the verified A6000
+had 49,792,217,088 B free, and the host had 106,687,549,440 B physical and
+110,612,496,384 B commit headroom.
+
+The corrected Large batch-view graph loaded in 35.224066 s. The all-live
+T8192/N8 warmup took 8.827718 s. All twenty unprofiled samples in that same
+session passed the two independent numerical comparisons using the equivalent
+predecessor lineage. Warm nearest-rank p95 was 8.464650 s and the maximum
+was 8.469430 s. All 44 observed QPC events matched the journal and the
+original 120 s per-operation bounds. The full owned run took 246.226 s and
+exited 0 with the natural empty Job, settled process handles, completed native
+teardown and host reservation release. Peak host Job commit was 37,906,771,968 B
+and native peak RSS was 34,221,805,568 B under the original 48/48 GiB caps.
+
+The 44 GiB device reservation retained its original 40/8/4 GiB configuration.
+NVML observed 909 adapter-wide dedicated-memory readings with a target period
+of 250 ms and a largest observed gap of 1.166 s. The greatest sampled use was
+37,543,616,512 B (34.965 GiB), with 13,983,408,128 B (13.023 GiB) free at that
+reading. Baseline and post-Job use were 1,734,807,552 and 1,738,575,872 B.
+These are sampled adapter measurements. A continuous physical peak,
+composed Answer p95, and product admission remain separate outcomes.
+
+Retained under `large-fp32-batch-view-resource20-r1`:
+execution `8ff0d3ed5152ea533a46ab1dc258b96b536aa7df2948b49400f275aabda8fc7b`,
+native result `95bf6019c91fd13f95afe9994d454400c6b360ce9bf77fd07167214bd6dea534`,
+journal `a536946a0f056c63797f10b61ad0f38473fc93a2cbaba0dcc3572efa53020858`,
+stdout `550c3de5883cf88ac9a300beeb6c506a80dfcadb3cbb82166a09b3421e199f7c`,
+image `659a6a18ebd9f883e67fb0ac6c8b8f70c49ab8eb9f9f0a207e020adcca900e62`,
+launcher `cf1c597a5173f788c26a7b4796b016178395d5313b4801d1a55ee54334ae6340`,
+watchdog `451130ad5bfe37e543721022ba5a84b7b8324d453c0882ac50b94255f41b2c61`.
+Exact parent invocation and source inputs are in
+`large-fp32-resource20-checks-r1/large-resource20-invocation.json`
+(`c6a87bf6d7a9b95b3fa1f0421808aa7c986ac550db195435c5eea12acd11b57c`).
+
+Self-review covered the same-session graph gate, reference lineage and
+device reservation, historical Compact behavior, the original per-operation
+expiry, and required output/settlement proofs. Under pinned Rust 1.98.0,
+warm Windows `target/`, incremental=1, native group
+`6b786ca259f0c50012b89426300230b18344de038d3e5e1226bcf29f73c86e38`,
+Clippy passed in 13.641 s (`6d82853c79f8fef577d1ea09265475ff6e18aa50de2f726de32b4711b5dc6829`),
+Nextest CI passed 18 with 477 filtered across two binaries in 20.800 s
+(`79c0f834e423507b6c923b70df092b8e58b9a57fd83a3923998b833f358f67ff`),
+and the exact manifest-bound image linked in 1.117 s
+(`ec4cfeb6e3e0fde818189f29d3a8332e07a7161a42adfc49c6190b663263f553`).
+Commands and Cargo timings are retained with those receipts. Nine Python
+controls passed with one historical control skipped. Two CLI refusal checks,
+the exact native selector census and formatting passed. Repository checks
+passed for 9,819 public files, and whitespace checks passed.
+The Windows Large FP32 stopping point is closed. Next action is the
+model-specific FP16 conversion prerequisite validator and live G5 integration
+for Compact first. The original FP16 campaign deadline remains in force.

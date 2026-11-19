@@ -125,3 +125,12 @@ The native and owned scoring receipts identify the reference basis as
 graph identity. Each candidate forward must produce a complete trace of
 3,643 nodes, including 1,663 CPU nodes, under the same limits and score
 thresholds.
+
+## Windows Large FP32 unprofiled Resource20
+
+The same launcher measures one cold load, one warmup and twenty warm
+T8192/N8 forwards on the corrected batch-view graph. Supply the separate
+passing four-width receipt and exact journal watchdog pin as described in
+[Resource20 execution](COMPACT-RESOURCE20.md#corrected-large-resource20).
+The parent retains the owned Job, per-operation journal and sampled adapter
+memory alongside the native resource result.

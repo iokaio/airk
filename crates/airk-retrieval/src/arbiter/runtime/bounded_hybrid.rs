@@ -307,7 +307,7 @@ fn require_resource_operation(
         now < deadline
             && deadline <= overall_deadline
             && deadline.duration_since(now) <= Duration::from_secs(120),
-        "Compact resource operation exceeded its original deadline"
+        "Context resource operation exceeded its original deadline"
     );
     ensure!(
         input.input_ids.len() == 8192
@@ -315,7 +315,7 @@ fn require_resource_operation(
             && input.attention_mask.iter().all(|&bit| bit == 1)
             && input.candidate_positions.len() == 8
             && input.option_mask == [true; 8],
-        "Compact resource scoring requires the exact T8192/N8 all-live shape"
+        "Context resource scoring requires the exact T8192/N8 all-live shape"
     );
     Ok(())
 }
@@ -367,6 +367,38 @@ impl Scorer {
         reviewed_graph_result: &[u8],
         reviewed_graph_sha: Sha256Digest,
     ) -> Result<BoundedHybridScorer> {
+        Self::open_large_bounded_hybrid(
+            profile,
+            source,
+            reviewed_graph_result,
+            reviewed_graph_sha,
+            OpenExperiment::Profiled(profiling_prefix),
+        )
+    }
+
+    pub fn open_large_bounded_hybrid_resource(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        reviewed_graph_result: &[u8],
+        reviewed_graph_sha: Sha256Digest,
+        overall_deadline: Instant,
+    ) -> Result<BoundedHybridScorer> {
+        Self::open_large_bounded_hybrid(
+            profile,
+            source,
+            reviewed_graph_result,
+            reviewed_graph_sha,
+            OpenExperiment::Resource(overall_deadline),
+        )
+    }
+
+    fn open_large_bounded_hybrid(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        reviewed_graph_result: &[u8],
+        reviewed_graph_sha: Sha256Digest,
+        experiment: OpenExperiment<'_>,
+    ) -> Result<BoundedHybridScorer> {
         cuda::diagnostic::require_graph_diagnostic_profile(&profile)?;
         let binding = profile
             .gpu
@@ -392,19 +424,36 @@ impl Scorer {
                 ) == (40 << 30, 8 << 30, 4 << 30),
             "Large bounded hybrid requires the exact graph and device reservation"
         );
-        let deadline = binding.load_deadline;
-        let (scorer, evidence) = Self::open_reviewed_graph(
+        let (deadline, prefix, profiling) = match experiment {
+            OpenExperiment::Profiled(prefix) => {
+                (binding.load_deadline, Some(prefix), Profiling::Active)
+            }
+            OpenExperiment::Resource(overall_deadline) => {
+                ensure!(
+                    placement == BATCH_VIEW_PLACEMENT && binding.load_deadline <= overall_deadline,
+                    "Large resource measurement requires the corrected graph and original expiry"
+                );
+                (overall_deadline, None, Profiling::Disabled)
+            }
+        };
+        let (scorer, mut evidence) = Self::open_reviewed_graph(
             profile,
             source,
             reviewed_graph_result,
             reviewed_graph_sha,
-            Some(profiling_prefix),
+            prefix,
         )?;
+        if profiling == Profiling::Disabled {
+            evidence.policy_identity = framed_digest(
+                b"airk.private.large-cuda-batch-view-bounded-hybrid-resource/1",
+                &[evidence.policy_identity.as_bytes()],
+            );
+        }
         Ok(BoundedHybridScorer {
             scorer,
             evidence,
             deadline,
-            profiling: Profiling::Active,
+            profiling,
         })
     }
 

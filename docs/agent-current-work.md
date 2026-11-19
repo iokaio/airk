@@ -29,8 +29,8 @@ Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:
   [FP16 schedule](arbiter/final-plan.md#5-time-budget-and-unattended-scheduling)
 - The final plan supersedes the old advanced-split execution deadline and
   campaign ordering. Preserve prior ledger entries as historical evidence.
-- Finish the current Windows Large FP32 CUDA run, then qualify efficient
-  FP16 on Windows CUDA first. After Windows FP16 passes, start FP16-only
+- The Windows Large FP32 CUDA prerequisite passed on 18 November. Qualify
+  efficient FP16 on Windows CUDA first. After Windows FP16 passes, start FP16-only
   Linux CUDA qualification directly on the existing WSL2 instance and
   report genuine blockers. Linux CPU checks continue independently.
 - After both CUDA FP16 gates pass, qualify FP16 only on macOS using native
@@ -107,23 +107,17 @@ Use the existing deadline when resuming in a new context.
   `large-fp32-batch-view-scoring-r1/execution.json` with SHA-256
   `ea9aefbf7e9cefb91bca8384924237f95655131cb49ac571e6900e55f3d6d820`.
   [Windows Large scoring ledger](simplify/one-process-ledger.md#2026-11-18--corrected-large-fp32-passed-all-four-cuda-scoring-widths)
-- Next action after restart is the corrected Windows Large unprofiled
-  cold-load and warm measurement. Start from
-  `scripts/cuda-component-execution/compact_resource20.py`, its journal
-  watcher, and the corrected Large graph/scoring path in
-  `scripts/cuda-component-execution/large_graph.py`. The live unprofiled
-  selector is Compact-specific. Extend the owned path and run cheap
-  validation first. Then run one exclusive Large process with the existing
-  48 GiB process and Job limits, 44 GiB device reservation, and original
-  120-second per-operation deadline. Measure cold load, one warmup and
-  twenty unprofiled 8192-token samples, with both reference checks and
-  actual process, Job and reservation settlement. Retain the measured
-  cold/warm, host and device evidence. [Resource20 owner](../scripts/cuda-component-execution/COMPACT-RESOURCE20.md)
-- Once the Windows Large run passes, close FP32 and start Windows CUDA FP16.
-  First reconcile the conversion validator with the pinned Compact and
-  Large FP32 receipts and validate native G5 readiness. Then run Compact-first
-  FP16 probes. Proceed through the approved FP16 platform order and leave
-  Focus GPU off the critical path. The 25% plus one-second warm Answer p95
+- The corrected Large Windows Resource20 completed with one cold load, one
+  warmup and twenty unprofiled 8192-token samples. Both comparisons, the
+  120-second operation deadlines, original 48 GiB process and Job caps,
+  44 GiB device reservation and settlement passed. Retain the evidence under
+  `large-fp32-batch-view-resource20-r1/execution.json` at SHA-256
+  `8ff0d3ed5152ea533a46ab1dc258b96b536aa7df2948b49400f275aabda8fc7b`.
+  [Windows Large Resource20 ledger](simplify/one-process-ledger.md#2026-11-18--windows-large-fp32-resource20-passed)
+- Reconcile the conversion validator against the pinned Compact and Large
+  FP32 receipts and validate native G5 readiness. Then run Compact-first
+  Windows FP16 probes. Proceed through the approved FP16 platform order and
+  leave Focus GPU off the critical path. The 25% plus one-second warm Answer p95
   improvement target and the 2 GiB discrete-VRAM reserve are approved for
   release confirmation where applicable. [FP16 plan](arbiter/final-plan.md#fp16-conversion-prerequisites)
 

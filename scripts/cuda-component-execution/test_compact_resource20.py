@@ -17,6 +17,7 @@ def load(leaf):
 
 watch = load("resource20_watch")
 launcher = load("compact_resource20")
+large = load("large_graph")
 
 
 class Controls(unittest.TestCase):
@@ -64,6 +65,25 @@ class Controls(unittest.TestCase):
         self.assertEqual(state.expiry(), 120_000_000_005)
         with self.assertRaisesRegex(ValueError, "omitted"):
             state.prove_exit(0)
+
+    def test_large_adapter_sampling_records_observed_extrema_and_cadence(self):
+        memory = large.DeviceMemory.__new__(large.DeviceMemory)
+        baseline = {"monotonic_ns": 100, "total_bytes": 100, "free_bytes": 95, "used_bytes": 5}
+        middle = {"monotonic_ns": 200, "total_bytes": 100, "free_bytes": 10, "used_bytes": 90}
+        last = {"monotonic_ns": 250_000_210, "total_bytes": 100, "free_bytes": 25, "used_bytes": 75}
+        memory.minimum_free = memory.maximum_used = baseline
+        memory.previous_sample_ns = memory.next_sample_ns = 100
+        memory.sample_count = memory.maximum_gap_ns = 0
+        readings = iter((middle, last))
+        memory.read = lambda: next(readings)
+        memory.observe_if_due(99)
+        memory.observe_if_due(200)
+        memory.observe_if_due(250_000_199)
+        memory.observe_if_due(250_000_210)
+        self.assertEqual(memory.sample_count, 2)
+        self.assertEqual(memory.maximum_gap_ns, 250_000_010)
+        self.assertEqual(memory.minimum_free, middle)
+        self.assertEqual(memory.maximum_used, middle)
 
     def test_frozen_refresh_adapts_exact_anchors(self):
         owner = launcher.refresh_owner()

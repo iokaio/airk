@@ -694,5 +694,11 @@ mod resource20;
 #[test]
 #[ignore = "owned exclusive Windows CUDA Job and original monotonic resource envelope required"]
 fn cuda_compact_fp32_bounded_hybrid_resource20() -> Result<()> {
-    resource20::run()
+    resource20::run(COMPACT)
+}
+
+#[test]
+#[ignore = "requires the owned Windows CUDA Large Resource20 launcher"]
+fn cuda_large_fp32_batch_view_bounded_hybrid_resource20() -> Result<()> {
+    resource20::run(BATCH_VIEW)
 }

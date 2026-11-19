@@ -742,3 +742,9 @@ The corrected Large FP32 batch-view graph has its own exact final placement
 digest. The profiling entry binds each Large graph to its corresponding
 placement proof. Both Large candidates use the same reviewed CPU-incident
 tensor types, byte limits and 40/8/4 GiB device configuration.
+
+The corrected Large Resource20 open shares the same gate with Large profiling
+and requires the corrected graph and exact 40/8/4 GiB reservation. It disables
+ORT profiling and uses a separate policy identity. Cold load and unprofiled
+T8192/N8 warm operations retain their original operation and experiment
+expiries through the existing resource-scoring guard.

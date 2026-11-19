@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Observe Compact Resource20's native journal while the real Windows Job is held."""
+"""Observe Resource20's native journal while the real Windows Job is held."""
 
 import ctypes
 from ctypes import wintypes as w
@@ -102,9 +102,10 @@ class Operations:
 
 
 class WindowsWatch:
-    def __init__(self, journal, log, result, state, audit_created):
+    def __init__(self, journal, log, result, state, audit_created, device=None):
         self.journal, self.log, self.result, self.state = journal, log, result, state
         self.audit_created = audit_created
+        self.device = device
         self.journal_identity = None
         self.api = ctypes.WinDLL("kernel32", use_last_error=True)
         signatures = {
@@ -145,7 +146,12 @@ class WindowsWatch:
                 self.inspect()
                 now = time.monotonic_ns()
                 self.state.check_expiry(now)
-                wait_ms = max(1, (self.state.expiry() - now + 999_999) // 1_000_000)
+                expiry = self.state.expiry()
+                if self.device is not None:
+                    self.device.observe_if_due(now)
+                    expiry = min(expiry, self.device.next_sample_ns)
+                now = time.monotonic_ns()
+                wait_ms = max(0, (expiry - now + 999_999) // 1_000_000)
                 waited = self.api.WaitForMultipleObjects(2, handles, False, wait_ms)
                 if waited == 0:
                     if not self.api.FindNextChangeNotification(self.change):

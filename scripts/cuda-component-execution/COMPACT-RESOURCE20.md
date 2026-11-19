@@ -46,3 +46,22 @@ Load0, Warmup0 and Sample1–20 starts and returns. The parent verifies the
 reported 20-sample and independent timing observations, complete final
 output hashes, retained input rechecks, natural empty Job, and aggregate
 host memory. It produces no ORT trace and grants no product admission.
+
+## Corrected Large Resource20
+
+Run `large_graph.py` with its corrected Large scoring arguments plus
+`--resource20 --scoring-execution PATH --watchdog-sha256 SHA`. The scoring
+receipt must be the retained passing four-width run. Supply the fresh Resource20 native image
+and reviewed build receipt with their SHA-256 pins. The launcher shares the
+same unprofiled journal watcher and requires all 44 observed events, both
+numerical lanes on every warm operation, settled process/Job and native host
+charge, complete bounded output proofs and reviewed input rechecks.
+
+Large uses the 48 GiB process and aggregate Job caps and the original
+44 GiB device envelope. Cold load, one warmup, and twenty T8192/N8 samples
+each have the existing 120-second operation limit with a fixed outer
+3600-second cutoff. Adapter memory readings include an independently sampled
+dedicated-memory maximum, with its actual observation cadence and scope;
+the native allocator reservation and the sampled device-wide reading describe
+different quantities. The native selector leaves ORT profiling disabled.
+The resulting component receipt grants no product admission.

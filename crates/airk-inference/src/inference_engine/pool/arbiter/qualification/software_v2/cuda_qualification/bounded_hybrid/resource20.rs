@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Owned cold load and unprofiled Compact T8192 warm measurements.
+//! Owned cold load and unprofiled Context T8192 warm measurements.
 use super::*;
 
 const TOKEN_LIMIT: usize = 8192;
@@ -10,19 +10,20 @@ fn verify_numeric(row: &NumericCase, scores: &[f32]) -> Result<()> {
         let (raw, mass, argmax) = comparison(scores, expected)?;
         ensure!(
             raw <= 0.001 && mass <= 0.05 && argmax,
-            "Compact resource score differs from its independent FP32 reference"
+            "Context resource score differs from its independent FP32 reference"
         );
     }
     Ok(())
 }
 
-pub(super) fn run() -> Result<()> {
+pub(super) fn run(experiment: Experiment) -> Result<()> {
+    let large = experiment.equivalent_predecessor;
     let started = Instant::now();
     let now_ns = airk_process::monotonic::now_ns()?;
     let expires_ns = number("AIRK_CUDA_HYBRID_WHOLE_EXPIRES_NS")?;
     ensure!(
         expires_ns > now_ns && expires_ns - now_ns <= WHOLE_PHASE_NS,
-        "invalid original Compact resource whole-process expiry"
+        "invalid original Context resource whole-process expiry"
     );
     let whole_deadline = started
         .checked_add(Duration::from_nanos(expires_ns - now_ns))
@@ -45,26 +46,26 @@ pub(super) fn run() -> Result<()> {
         job_limit_bytes,
     } = request
     else {
-        anyhow::bail!("reviewed Compact graph Probe request required");
+        anyhow::bail!("reviewed Context graph Probe request required");
     };
     ensure!(
         schema == SCHEMA
-            && bounds.host_limit_bytes == 32 << 30
-            && job_limit_bytes == 32 << 30
+            && bounds.host_limit_bytes == experiment.host_gib << 30
+            && job_limit_bytes == experiment.host_gib << 30
             && bounds.deadline_ms == 120_000
-            && bounds.device_limit_bytes == 24 << 30,
-        "approved original Compact host, device or operation limit differs"
+            && bounds.device_limit_bytes == experiment.device_gib << 30,
+        "approved original Context host, device or operation limit differs"
     );
     let (input, profile, files, _) = inputs_from(&gpu_input)?;
     ensure!(
-        profile.model == ModelChoice::ContextQwenCompact
+        profile.model == experiment.model
             && profile.cpu_fit.is_none()
             && profile.device_execution.is_some()
             && input.policy.deadline_ms == bounds.deadline_ms
             && input.policy.required_warm_samples == 20,
-        "frozen Compact GPU and resource profiles required"
+        "frozen Context GPU and resource profiles required"
     );
-    profile_probe_bounds(
+    let request_capacity = profile_probe_bounds(
         &bounds,
         cold_bytes,
         warm_bytes,
@@ -72,10 +73,18 @@ pub(super) fn run() -> Result<()> {
         job_limit_bytes,
         &profile,
     )?;
-    let capacity_pin = exact_pin("AIRK_CUDA_HYBRID_CAPACITY", CAPACITY_SHA)?;
-    let (arena, capacity_plan) =
-        capacity(&pinned(&capacity_pin, 4096)?, bounds.device_limit_bytes)?;
-    let graph_pin = exact_pin("AIRK_CUDA_HYBRID_GRAPH", GRAPH_SHA)?;
+    let (capacity_pin, capacity_plan) = if large {
+        ensure!(
+            (cold_bytes, warm_bytes, headroom_bytes) == (40 << 30, 8 << 30, 4 << 30),
+            "Large resource measurement requires the reviewed device reservation"
+        );
+        (None, request_capacity)
+    } else {
+        let pin = exact_pin("AIRK_CUDA_HYBRID_CAPACITY", CAPACITY_SHA)?;
+        let (_, plan) = capacity(&pinned(&pin, 4096)?, bounds.device_limit_bytes)?;
+        (Some(pin), plan)
+    };
+    let graph_pin = exact_pin("AIRK_CUDA_HYBRID_GRAPH", experiment.graph)?;
     let graph_bytes = pinned(&graph_pin, PROOF_BYTES)?;
     let graph: Value = serde_json::from_slice(&graph_bytes)?;
     ensure!(
@@ -84,10 +93,16 @@ pub(super) fn run() -> Result<()> {
             && graph["runtime_manifest"] == json!(runtime_manifest),
         "reviewed graph request, input or runtime differs"
     );
-    let fixture_pin = exact_pin("AIRK_CUDA_HYBRID_RETAINED", RETAINED_SHA)?;
+    let fixture_pin = exact_pin("AIRK_CUDA_HYBRID_RETAINED", experiment.retained)?;
     let fixture: NumericFixture = serde_json::from_slice(&pinned(&fixture_pin, PROOF_BYTES)?)?;
     numeric_shape(&fixture, &profile, &input.policy)?;
-    let producer = validate_reference_producer(&fixture, &profile)?;
+    let lineage = if large {
+        Some(equivalent_predecessor(&profile, &input)?)
+    } else {
+        None
+    };
+    let reference_profile = lineage.as_ref().map_or(&profile, |proof| &proof.profile);
+    let producer = validate_reference_producer(&fixture, reference_profile)?;
     let row = &fixture.rows[2];
     ensure!(
         row.input.input_ids.len() == TOKEN_LIMIT,
@@ -131,15 +146,16 @@ pub(super) fn run() -> Result<()> {
     let binary = file_hash(&std::env::current_exe()?)?;
     let mut file = OpenOptions::new().write(true).create_new(true).open(&out)?;
     let mut receipt = json!({
-        "schema":"airk.private.cuda-compact-bounded-hybrid-resource/1",
+        "schema":if large { "airk.private.cuda-large-batch-view-bounded-hybrid-resource/1" }
+            else { "airk.private.cuda-compact-bounded-hybrid-resource/1" },
         "complete":false, "qualified":false, "product_admission":false,
         "pid":std::process::id(), "execution_user":execution_user, "default_owner":default_owner,
         "native_binary_sha256":binary, "request":request_pin, "native_input":gpu_input,
         "profile":profile.manifest, "source_manifest":input.source_manifest, "runtime_manifest":runtime_manifest,
         "reviewed_graph":graph_pin, "retained_fixture":fixture_pin, "retained_producer":producer,
         "capacity_policy":capacity_pin, "applied_capacity":{
-            "arena_limit_bytes":arena.arena_limit_bytes, "warm_extra_bytes":arena.warm_extra_bytes,
-            "headroom_bytes":arena.headroom_bytes,
+            "arena_limit_bytes":capacity_plan.cold_peak_bytes(), "warm_extra_bytes":capacity_plan.warm_extra_bytes(),
+            "headroom_bytes":capacity_plan.headroom_bytes(),
         },
         "bounds":bounds, "actual_job":actual_job, "native_host_reservation_bytes":charge.bytes(),
         "resource_policy":input.policy, "resource_policy_digest":input.policy_digest,
@@ -149,6 +165,11 @@ pub(super) fn run() -> Result<()> {
         "original_whole_expires_monotonic_ns":expires_ns, "operation_deadline_ms":120000,
         "session_teardown_observed":false, "measured_peak_device_bytes":null, "measured_transfer_bytes":null,
     });
+    if let Some(proof) = &lineage {
+        receipt["reference_basis"] = json!("equivalent_predecessor");
+        receipt["reference_request"] = json!(proof.request);
+        receipt["reference_equivalence"] = json!(proof.equivalence);
+    }
     flush_graph_diagnostic(&mut file, &receipt)?;
     let mut journal = operation::Journal::create(
         &out,
@@ -171,7 +192,7 @@ pub(super) fn run() -> Result<()> {
         let runtime = airk_host::gpu_runtime::admit(lease.clone(), &root, &manifest, whole_deadline)?;
         ensure!(runtime.manifest_identity() == runtime_manifest.sha256, "admitted runtime differs");
         let adapters = runtime.adapters(whole_deadline)?;
-        ensure!(adapters.len() == 1, "Compact resource probe requires exactly one observed CUDA adapter");
+        ensure!(adapters.len() == 1, "Context resource probe requires exactly one observed CUDA adapter");
         let device = runtime.device(adapters[0].uuid, whole_deadline)?;
         custody.device = Some(device.clone());
         receipt["adapter_before"] = json!(device.observation(whole_deadline)?);
@@ -179,18 +200,28 @@ pub(super) fn run() -> Result<()> {
         let loaded = journal.observe_resource(operation::Kind::Load, 0, None, expires_ns, |deadline| {
             let execution = catalog.execution_profile(profile.manifest)?
                 .bind_cuda_probe(device.clone(), capacity_plan, deadline)?;
-            Scorer::open_compact_bounded_hybrid_resource(
-                execution, files, &graph_bytes, graph_pin.sha256, whole_deadline,
-            )
+            let open = if large {
+                Scorer::open_large_bounded_hybrid_resource
+            } else {
+                Scorer::open_compact_bounded_hybrid_resource
+            };
+            open(execution, files, &graph_bytes, graph_pin.sha256, whole_deadline)
         })?;
         receipt["load_us"] = json!(loaded.elapsed_us);
         receipt["load_native_call_us"] = json!(loaded.native_call_elapsed_us);
         let mut scorer = loaded.value?;
         ensure!(loaded.within_deadline, "original unprofiled CUDA load expiry exceeded");
-        receipt["policy_identity"] = json!(airk_core::identity::framed_digest(
-            b"airk.private.compact-cuda-bounded-hybrid-resource-capacity/1",
-            &[scorer.policy_identity().as_bytes(), capacity_pin.sha256.as_bytes()],
-        ));
+        let policy_identity = match &capacity_pin {
+            Some(pin) => airk_core::identity::framed_digest(
+                b"airk.private.compact-cuda-bounded-hybrid-resource-capacity/1",
+                &[scorer.policy_identity().as_bytes(), pin.sha256.as_bytes()],
+            ),
+            None => airk_core::identity::framed_digest(
+                b"airk.private.large-cuda-batch-view-bounded-hybrid-resource-capacity/1",
+                &[scorer.policy_identity().as_bytes(), request_pin.sha256.as_bytes()],
+            ),
+        };
+        receipt["policy_identity"] = json!(policy_identity);
         let warmed = journal.observe_resource(
             operation::Kind::Warmup, 0, Some(row.input.input_digest), expires_ns,
             |deadline| scorer.score_with_deadline(&row.input, deadline),
@@ -233,7 +264,7 @@ pub(super) fn run() -> Result<()> {
         receipt["native_call_samples_us"] = json!(native_times);
         series_result?;
         scorer.synchronize(whole_deadline)?;
-        ensure!(scorer.device_settled(), "Compact CUDA resource work remains unsettled");
+        ensure!(scorer.device_settled(), "Context CUDA resource work remains unsettled");
         receipt["adapter_after"] = json!(device.observation(whole_deadline)?);
         drop(scorer);
         device.synchronize(whole_deadline)?;
@@ -244,11 +275,18 @@ pub(super) fn run() -> Result<()> {
             (&request_pin,1<<20), (&gpu_input,1<<20), (&input.profile,1<<20),
             (&runtime_manifest,128<<10), (&input.source_manifest,PROOF_BYTES),
             (&graph_pin,PROOF_BYTES), (&fixture_pin,PROOF_BYTES), (&producer,PROOF_BYTES),
-            (&capacity_pin,4096),
         ] {
             pinned(pin,max)?;
         }
-        ensure!(Instant::now() < whole_deadline, "original Compact resource expiry exceeded during postpins");
+        if let Some(pin) = &capacity_pin {
+            pinned(pin, 4096)?;
+        }
+        if let Some(proof) = &lineage {
+            for pin in [&proof.request, &proof.equivalence, &proof.native_input, &proof.profile_pin] {
+                pinned(pin, 1 << 20)?;
+            }
+        }
+        ensure!(Instant::now() < whole_deadline, "original Context resource expiry exceeded during postpins");
         Ok(())
     }).and_then(std::convert::identity);
     drop(owner);
@@ -280,7 +318,7 @@ pub(super) fn run() -> Result<()> {
                 && matches!(&cleanup, Ok(Some(())))
                 && released
                 && !poisoned,
-            "Compact resource teardown or host custody unproven"
+            "Context resource teardown or host custody unproven"
         );
         final_host_peak(peak, bounds.host_limit_bytes)?;
         Ok(())
@@ -304,7 +342,7 @@ pub(super) fn run() -> Result<()> {
         receipt["complete"] = json!(false);
         receipt["final_report_retention_exceeded_original_deadline"] = json!(true);
         flush_graph_diagnostic(&mut file, &receipt)?;
-        anyhow::bail!("original Compact resource expiry during result retention");
+        anyhow::bail!("original Context resource expiry during result retention");
     }
     result
 }

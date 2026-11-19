@@ -2,8 +2,8 @@
 
 Planning date: 15 November 2026 (America/Denver).
 Status: execution underway on feat/arbiter-final; D01–D08 recorded.
-Finish the Windows Large FP32 CUDA run and retain the Windows
-FP32 results as engineering evidence. Then qualify FP16 with efficient
+The Windows Large FP32 CUDA run passed on 18 November. Retain the Windows
+FP32 results as engineering evidence. Next qualify FP16 with efficient
 attention and automatic CPU fallback. Begin with Windows CUDA, then Linux CUDA
 on WSL2, macOS Core ML, Azure Windows Radeon DirectML, and Azure Linux
 Radeon ROCm. Linux GPU qualification is FP16-only. The release goal is FP16
@@ -1579,11 +1579,12 @@ over-budget evidence before a conversion launch.
 | Model | FP32 evidence to bind | Effect on FP16 |
 | --- | --- | --- |
 | Context Compact | Windows A6000 bounded-hybrid R2 four-width scoring receipt `1abbd515e534f4056e3c48380fffd290654e0b92dea67088ae291512f02cf2a2` under its original 32 GiB Job and 24 GiB device budget. Use its separate unprofiled Resource20 receipt for the timing baseline. | First conversion and native G5 target after the Windows FP32 stopping point. |
-| Context Large | Corrected batch-view scoring receipt `ea9aefbf7e9cefb91bca8384924237f95655131cb49ac571e6900e55f3d6d820` at all four widths under its original 48 GiB Job and 44 GiB device reservation. Bind the separately retained unprofiled Large result when it passes the remaining Windows FP32 gate. | Extend the validator for this model before its conversion. Derive candidate weights from the authenticated original export and retain the proved correction lineage for the Windows CUDA comparison. |
+| Context Large | Corrected batch-view scoring receipt `ea9aefbf7e9cefb91bca8384924237f95655131cb49ac571e6900e55f3d6d820` at all four widths under its original 48 GiB Job and 44 GiB device reservation. Bind the separate passing Large Resource20 receipt `8ff0d3ed5152ea533a46ab1dc258b96b536aa7df2948b49400f275aabda8fc7b` for cold and warm timing and sampled device memory. | Extend the validator for this model before its conversion. Derive candidate weights from the authenticated original export and retain the proved correction lineage for the Windows CUDA comparison. |
 | Focus | Use the current CPU execution to measure Focus's contribution to complete Answer latency. If Focus GPU is selected, review a model-specific conversion prerequisite using its authenticated original FP32 export, independent references and exact native evidence required by the amended validator. | Keep Focus on CPU until its separate prerequisite and GPU gates pass. Keep any new Focus GPU evidence off the Context critical path. |
 
 [Compact FP32 evidence](../simplify/one-process-ledger.md#18-november-americadenver--compact-fp32-cuda-resource20-passed) ·
-[Large FP32 scoring evidence](../simplify/one-process-ledger.md#2026-11-18--corrected-large-fp32-passed-all-four-cuda-scoring-widths)
+[Large FP32 scoring evidence](../simplify/one-process-ledger.md#2026-11-18--corrected-large-fp32-passed-all-four-cuda-scoring-widths) ·
+[Large FP32 Resource20 evidence](../simplify/one-process-ledger.md#2026-11-18--windows-large-fp32-resource20-passed)
 
 ### FP16 implementation and validation sequence
 
