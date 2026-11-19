@@ -12022,3 +12022,41 @@ peak Job commit, child exit 0 and natural empty settlement under the
 1002. The 82 orchestration checks and all four source-order arithmetic
 controls passed. The post-run comparison also reproduced the retained
 raw and winner results and agreed on mass within floating exp precision.
+
+### 2026-11-19 — Locate the two FP32 downloads and audit prospective Context FP16 sources
+
+The user confirmed the original ContextBench and TechQA downloads are
+the available judged datasets and authorized reuse of eligible cases.
+Retain the exact source archives. Audit blind metadata first and request
+new human evidence only after existing suitable judgments and exact
+native visibility are exhausted.
+
+ContextBench full release SHA
+2f56535bdc73eb8a68bf4ebb49789d8e9cd4f219ea60df6290b85278aee61ca8
+and original TRAIN selection record
+2c271a67417e6ce16efb109df2b2a4903f8554b448e1d448d222008e79a0bb7a
+yield 1,136 total rows, 450 original TRAIN and 686 complement. The literal
+metadata fence found 613 complement cases on 49 TRAIN repositories,
+59 unresolved repo label/URL conflicts and 14 provisional candidates
+across eight repositories. Aliases, fork and clone exposure, source
+rights, native gold visibility and power remain open. The metadata-only
+audit took 0.257 s with exact projection and no text or gold columns.
+Source a2106ef61e28edb61dbf77e6d26a1a074dc851e8c40a893a3efa46e8f9203d55,
+aggregate contextbench-blind-metadata-eligibility-r1.json
+1b4b0dd4c402bf41a30002ea02ff0fb18a4ea771dc7df81f928338eb5370c4fe.
+
+TechQA publisher archive SHA
+6b094ef9a69718f727ce8d7e15c4d961e51032cefaa952e0d6af9d176d7ba118
+contains the original submission-validation input, reference and
+technotes. The 27.785075 s metadata-only stream found 20 exact ordered
+menus, all documents present, 11 answerable rows with offsets, and nine
+unanswerable. All 994 menu documents overlap original DEV and eight
+overlap original TRAIN gold. Validation is a smoke test. Continue with
+metadata-only audit of the original DEV partition and retain the
+historical R4 mirror scope caveat. Source
+05693a3a74037ae16df5262ac7a42b668d2e4a81f5c6afe079585e1ec1a42b88,
+aggregate techqa-validation-metadata-r1.json
+4b9dc72722ee4a33c1b882871d8963001abd2e073a2370454fdbba86cfd641aa.
+Both aggregate outputs were checked with the logged-in human default
+owner SID ending 1002. No model execution, scoring or new labels for
+this inventory.

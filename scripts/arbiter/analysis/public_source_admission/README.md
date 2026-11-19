@@ -13,3 +13,19 @@ The root contextbench-owning-gold.py and contextbench_source_join variants bind 
 These are historical source recipes, preserved byte-for-byte except declared SPDX prefixes. Many execute filesystem/network work at import and bind old private paths; do not import or run them as relocated commands. A fresh adapter must supply guarded private input/output roots, reviewed source/runtime seals and the original admission checks. No network, model or historical native job ran during this capture.
 
 The family-root source-provenance.json maps original and maintained SHA-256 values. Original evidence remains in artifacts. No corpus payloads, weights, credentials, labeled examples or source-evidence copies were included. Source preservation grants no rights, training, publication or product qualification.
+
+## Context FP16 confirmation-source censuses
+
+- [ContextBench blind metadata census](contextbench_blind_metadata_census.py)
+  checks the retained full archive and original TRAIN ID recipe. It projects
+  identifier and repository metadata and reports aggregate overlap and alias
+  indicators without reading question or evidence columns.
+- [TechQA validation metadata audit](audit_techqa_validation_metadata.py)
+  verifies the original archive and streams only selected metadata from its
+  validation members. It reports question/menu/corpus agreement and exposure
+  against previous DEV and TRAIN gold source IDs without decoding answer text.
+
+Run the pinned interpreter locally under the verified human identity. Redirect
+the one-line aggregate only to a new audited private campaign path. These
+checks establish metadata scope. Native visibility, rights, independent
+judgments, paired comparison and product qualification have their own checks.

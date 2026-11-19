@@ -241,3 +241,41 @@ and source fixture
 `3e9506f1e6c3b5223d1d77f9289c941402b5a41ab385cbc0cefdc9a02f770642`.
 Raw examples and indexed source copies remain private and excluded from
 packages. Independent runtime, model resource and product work continues.
+
+### Initial Context FP16 confirmation-source inventory
+
+On 19 November the user confirmed that the two original downloads are
+the available judged sources and accepted auditing those first. The
+current retained ContextBench archive includes all 1,136 rows, and the
+original TechQA tar includes the publisher validation members alongside
+TRAIN and DEV. The census projected identifying and structural fields
+without exposing questions or expected answers for tuning.
+
+ContextBench's blind 686-row complement contains 613 rows on 49 literal
+TRAIN repository clusters and 59 unresolved repository label or URL
+conflicts. Of those 59, 56 touch a plausible TRAIN identity. Fourteen
+cases across eight literal repository clusters survive a provisional
+metadata fence covering observed alias, same-commit and instance
+signals. There are six singleton clusters, one cluster with two cases and
+one with six. This census does not settle fork, textual clone, chronological
+or prior third-source exposure, native-visible gold spans, rights or sample
+power. The local archive has expert evidence spans and no candidate-menu
+column. Any paired evaluation must freeze complete corpus-derived menus.
+
+The pinned TechQA publisher validation includes 20 questions, each
+matched to its exact ordered reference menu. All candidate documents
+resolve in its retained corpus. Eleven rows are answerable with a
+complete menu, gold document and numeric offsets. Nine are unanswerable.
+All 994 distinct candidate documents appear in original DEV menus. Eight
+also overlap original TRAIN gold documents. The publisher describes
+this validation subset as a submission smoke test. Keep it for evaluation
+plumbing and audit the original larger DEV partition for confirmation
+eligibility. Retain the historical DEV mirror exposure caveat.
+
+Exact aggregate receipts remain private and no case IDs, rows,
+question text, evidence texts or candidate documents were exported.
+The ContextBench inventory is
+1b4b0dd4c402bf41a30002ea02ff0fb18a4ea771dc7df81f928338eb5370c4fe.
+The TechQA validation inventory is
+4b9dc72722ee4a33c1b882871d8963001abd2e073a2370454fdbba86cfd641aa.
+Neither inventory admits a judged cohort or reports FP16 task quality.

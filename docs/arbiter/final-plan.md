@@ -1829,6 +1829,45 @@ score comparison.
    latency, memory headroom, Auto selection and same-model CPU fallback
    requirements before release confirmation.
 
+### Reuse the retained human judgments
+
+Start with the downloaded ContextBench and TechQA artifacts. Use the
+retained training examples for development and regression checks. For
+ContextBench confirmation, start with the pre-materialization complement
+of the 450 known TRAIN IDs. Audit repository and fork overlap, duplicate
+issues, source revisions and source rights. Validate existing human gold
+spans against native-visible files and freeze complete corpus-derived
+candidate menus before scoring either precision.
+
+TechQA's publisher validation files are documented as a submission
+smoke test. Audit their retained member and menu coverage, and assess
+the original development questions as a candidate technical-support
+cohort. The prior development audit read document IDs. Record the prior
+in-memory mirror decoding and check model and evaluation exposure before
+reservation. Preserve the original complete menu and exact document
+offset judgments for each eligible technical-support request. The 15
+whole menus previously found refer to source-disjoint TRAIN cases.
+
+The first private metadata censuses found 14 ContextBench cases on
+eight provisionally disjoint repository clusters. The other 672
+complement rows share a known TRAIN repository or have an unresolved
+repository identity. TechQA validation has 20 complete menus and 11
+answerable rows with offsets. Its 994 candidate documents all also
+appear in original DEV menus. Use both small groups to check the
+evaluation mechanics. Audit original TechQA DEV and determine how
+many suitable code and long-context judgments still need review.
+[Local confirmation-source inventory](software-v2-data-audit.md#initial-context-fp16-confirmation-source-inventory)
+
+For confirmation, use the same revision-pinned corpus, complete candidate
+inputs, output budget and frozen human evidence for both precisions.
+Reserve repository and source families independently from development,
+calibration and historical FINAL evidence. Freeze the paired sample size
+from cluster variance and report the long-context stratum separately.
+Prepare a blinded review packet only for gaps that survive the existing
+judgment and visibility audit. Hold the candidate's task-quality claim
+until the original confidence bound can be evaluated.
+[Retained source audit](software-v2-data-audit.md#public-train-source-audit-and-stronger-techqa-fence-16-november-2026)
+
 ### Developer memory fit and shipping Auto
 
 Use an owned A6000 memory-pressure sweep at **6, 8, 12, 16 and 24 GiB of
