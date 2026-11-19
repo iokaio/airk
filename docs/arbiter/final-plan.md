@@ -1856,10 +1856,12 @@ answerable rows with offsets. Its 994 candidate documents all also
 appear in original DEV menus. Use both small groups to check the
 evaluation mechanics. Original TechQA DEV has 158 answerable rows
 with a complete ordered menu and publisher offsets. Of those, 77
-have no menu document-ID overlap with original TRAIN gold. Verify
-archived document coverage, source exposure and native-visible spans
-for that provisional technical-support pool. Determine how many code
-and long-context judgments still need review.
+have no menu document-ID overlap with original TRAIN gold. The exact
+shared archive resolves all 12,355 DEV menu document IDs, including
+every document in the 77 provisional cases. Verify source-family
+exposure and native-visible spans next. Estimate the required sample
+size from the development results before assigning any remaining code
+and long-context judgments for blinded human review.
 [Local confirmation-source inventory](software-v2-data-audit.md#initial-context-fp16-confirmation-source-inventory)
 
 For confirmation, use the same revision-pinned corpus, complete candidate

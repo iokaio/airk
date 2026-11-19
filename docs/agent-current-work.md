@@ -167,6 +167,14 @@ Use the existing deadline when resuming in a new context.
   [Scored Q/K/V result and blocker](simplify/one-process-ledger.md#2026-11-19--compact-qkv-t32-raw-error-improves-and-still-exceeds-the-gate)
   [Corrected CUDA observation and matching CPU reference](simplify/one-process-ledger.md#2026-11-19--corrected-compact-qkv-cuda-load-and-matching-cpu-reference-pass)
   Matching raw parity still gates wider Windows scoring.
+  For judged task quality, the original local TechQA DEV archive
+  provides 77 provisional answerable cases with complete archived
+  menus, publisher offsets and no menu overlap with original TRAIN
+  gold IDs. The blind ContextBench complement supplies 14 provisional
+  cases across eight literal repository clusters. Check wider source
+  exposure, native-visible spans and sample power before freezing a
+  confirmation cohort or requesting additional human judgments.
+  [Local confirmation-source inventory](arbiter/software-v2-data-audit.md#initial-context-fp16-confirmation-source-inventory)
   [Stock FP32 projection comparison](simplify/one-process-ledger.md#2026-11-19--stock-cuda-fp32-projection-is-a-compact-candidate)
   [FP32 projection output comparison](simplify/one-process-ledger.md#2026-11-19--fp32-projection-output-improves-half-rounding)
   [Full projection rounding audit](simplify/one-process-ledger.md#2026-11-19--exact-projection-rounding-rules-out-cublas-pedantic)

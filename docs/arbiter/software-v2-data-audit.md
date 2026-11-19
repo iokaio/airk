@@ -302,3 +302,19 @@ df62a05619b07b386159bcbaaf3e0e50be93eaf983aea8a5f8ed1513a3c2ec6f.
 The exact aggregate under techqa-original-dev-metadata-r1.json is
 8d595e5c963bd838991282b66332b930fe169184de5cf9b6150c9e221ec98a75.
 No question, answer or document text was decoded.
+
+The subsequent exact-member corpus scan verified 28,482 archive
+document-map entries. All 12,355 distinct DEV menu keys resolved
+and matched their entry IDs, with zero missing or mismatched. This
+covers all 308 structurally valid ordered menus, including all 158
+answerable rows with publisher offsets and all 77 whose menus avoid
+original TRAIN gold IDs. The scan kept the original archive and
+300-second deadline and read the document body only as opaque bytes.
+
+The exact shared corpus member SHA is
+69261b5f4436d70379fd7172a8d97062c93f5d433c386d196937d198c66bf75a.
+The aggregate techqa-original-dev-corpus-metadata-r1.json is
+443510ac51f41f2f4b12c0a2b4efde505144443d11a79550811bd7521f42f35f.
+This proves archived menu membership. The 77 cases require
+source-family exposure and native-span checks and a prospective
+paired sample-size assessment before admission.

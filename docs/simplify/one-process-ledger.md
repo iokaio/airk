@@ -12083,3 +12083,31 @@ private techqa-original-dev-metadata-r1.json receipt
 Five literal tests passed. The original 291,957,707 B shared corpus
 had header-only coverage in this run. Next check membership by parsing
 the exact pinned corpus map keys under a bounded metadata-only scan.
+
+### 2026-11-19 — Exact archive coverage for the provisional TechQA DEV menus
+
+The separately bounded metadata-only run read the exact
+291,957,707 B training/DEV member through its tar stream. The parser
+verified 28,482 document-map entries and matched each of the 12,355
+DEV keys to its retained inner document ID, with zero missing or
+mismatched. All 308 structurally valid original ordered menus have
+archived documents. This includes the 158 answerable rows with
+publisher offset metadata and all 77 answerable rows whose menus
+avoid the original TRAIN gold document IDs. The scan did not decode
+question, answer or document texts or perform model scoring.
+
+The exact corpus member SHA is
+69261b5f4436d70379fd7172a8d97062c93f5d433c386d196937d198c66bf75a.
+The owned aggregate techqa-original-dev-corpus-metadata-r1.json under
+the Windows campaign is
+443510ac51f41f2f4b12c0a2b4efde505144443d11a79550811bd7521f42f35f.
+Source 0a804a73b59eefa135232d3eafe9bd5600e3b25b79c0e8c5f53abfffd3aab552.
+The scan returned in 36.729 s against its 300-second cap under the
+verified logged-in human with default owner SID ending 1002. Seven
+literal controls passed. Preserve archived coverage as evidence for
+the source and native-span audit. Start that audit with the 77 TechQA
+candidates and the 14 provisional ContextBench cases. Additional
+human work should fill remaining coverage or power gaps after that
+audit. The 98% judged gate and Windows matching-recipe raw gate remain
+open. Next engineering discriminator is the isolated layer-0 O
+projection using the retained raw half attention operand.

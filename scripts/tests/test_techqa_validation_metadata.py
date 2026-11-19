@@ -48,6 +48,30 @@ class TechqaValidationMetadataControls(unittest.TestCase):
                           result["menu_documents_missing_in_corpus"], result["menu_documents_overlapping_dev_menu_ids"],
                           result["menu_documents_overlapping_train_gold_ids"]), (1, 1, 1, 2, 1))
 
+    def test_exact_corpus_checks_selected_ids_and_skips_opaque_chunks(self):
+        class ShortChunks(io.BytesIO):
+            def read(self, length):
+                return super().read(min(length, 5))
+
+        raw = (b'{"A":{"body":"\xff\\" ]} { [","id":"A","nested":[{"text":"\xfe\\\\tail"}]},'
+               b'"B":{"id":"wrong","text":"\xfd"},"C":{"id":"C","id":1},'
+               b'"outside":{"text":"\xfc","large":[{}]}}')
+        reader = AUDIT["MetadataReader"](ShortChunks(raw), lambda: None, maximum_bytes=len(raw))
+        visible, counts = AUDIT["parse_exact_dev_corpus"](reader, {"A", "B", "C", "absent"})
+        self.assertEqual(visible, {"A"})
+        self.assertEqual(counts, {"map_entries_observed": 4, "selected_keys_present": 3,
+                                  "selected_inner_ids_matching": 1, "selected_inner_ids_missing_or_mismatched": 2})
+        self.assertEqual(reader.finish(len(raw))["bytes"], len(raw))
+
+    def test_exact_corpus_refuses_duplicate_selected_key_or_bound_overflow(self):
+        parse = AUDIT["parse_exact_dev_corpus"]
+        raw = b'{"A":{"id":"A"},"A":{"id":"A"}}'
+        with self.assertRaisesRegex(ValueError, "duplicate selected DEV corpus key"):
+            self.read(raw, lambda reader: parse(reader, {"A"}))
+        reader = AUDIT["MetadataReader"](io.BytesIO(raw), lambda: None, maximum_bytes=len(raw) - 1)
+        with self.assertRaisesRegex(ValueError, "parsed byte bound"):
+            parse(reader, {"A"})
+
     def test_original_dev_structural_denominator_and_uncensused_corpus(self):
         rows = {"a": {"DOC_IDS": ("A", "B"), "ANSWERABLE": "Y", "DOCUMENT": "B",
                       "START_OFFSET": 0, "END_OFFSET": "1"},
@@ -67,6 +91,8 @@ class TechqaValidationMetadataControls(unittest.TestCase):
         checked = count(rows, {"A", "B", "D"}, {"A", "B", "C", "E"}, {"B", "X"})
         self.assertEqual(checked["ordered_menus_with_complete_corpus"], 1)
         self.assertEqual(checked["answerable_structural_rows_with_complete_corpus"], 1)
+        self.assertEqual(
+            checked["answerable_structural_rows_with_complete_corpus_without_train_gold_menu_overlap"], 0)
         self.assertEqual(checked["menu_document_ids_missing_in_corpus"], 1)
 
     def test_selected_unknown_types_duplicate_ids_and_corrupt_skips_refuse(self):

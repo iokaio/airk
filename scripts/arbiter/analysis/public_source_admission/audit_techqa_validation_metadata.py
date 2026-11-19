@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import sys
 import tarfile
 import time
@@ -35,8 +36,11 @@ ORIGINAL_DEV_MEMBERS = {
     "TechQA/training_and_dev/training_dev_technotes.json": "corpus",
 }
 MAX_MEMBER_BYTES = 64 << 20
+EXACT_DEV_CORPUS_BYTES = 291_957_707
 MAX_ROWS = 20_000
 WS = frozenset(b" \t\r\n")
+STRUCTURAL_BYTES = re.compile(rb'["{}\[\]]')
+STRING_BYTES = re.compile(rb'["\\\x00-\x1f]')
 
 
 def require(condition, message):
@@ -57,9 +61,10 @@ class DeadlineStream:
 class MetadataReader:
     """Byte-token reader that decodes only selected identifier and label metadata."""
 
-    def __init__(self, source, check):
+    def __init__(self, source, check, *, maximum_bytes=MAX_MEMBER_BYTES):
         self.source = source
         self.check = check
+        self.maximum_bytes = maximum_bytes
         self.buffer = b""
         self.index = 0
         self.bytes = 0
@@ -71,7 +76,7 @@ class MetadataReader:
             self.buffer = self.source.read(64 << 10)
             self.index = 0
             self.bytes += len(self.buffer)
-            require(self.bytes <= MAX_MEMBER_BYTES, "validation metadata member exceeds its bound")
+            require(self.bytes <= self.maximum_bytes, "metadata member exceeds its parsed byte bound")
             self.digest.update(self.buffer)
         return self.buffer[self.index] if self.buffer else -1
 
@@ -129,6 +134,47 @@ class MetadataReader:
                     require(len(end) <= 64, "unselected validation nesting exceeds its bound")
                 elif char in (93, 125):
                     require(char == end.pop(), "invalid unselected validation nesting")
+        else:
+            self.atom(capture=False)
+
+    def seek_marker(self, pattern):
+        # Search raw chunks in C, with no string decoding or accumulation.
+        while self.peek() != -1:
+            marker = pattern.search(self.buffer, self.index)
+            self.index = marker.start() if marker else len(self.buffer)
+            if marker is not None:
+                return self.peek()
+        return -1
+
+    def skip_opaque_string(self):
+        self.expect(34)
+        while True:
+            char = self.seek_marker(STRING_BYTES)
+            require(char in (34, 92), "invalid opaque corpus JSON string")
+            self.take()
+            if char == 34:
+                return
+            require(self.take() >= 32, "incomplete opaque corpus JSON escape")
+
+    def skip_opaque_value(self):
+        first = self.nonspace()
+        if first == 34:
+            self.skip_opaque_string()
+        elif first in (91, 123):
+            self.take()
+            ends = [93 if first == 91 else 125]
+            while ends:
+                char = self.seek_marker(STRUCTURAL_BYTES)
+                require(char != -1, "unterminated opaque corpus value")
+                if char == 34:
+                    self.skip_opaque_string()
+                    continue
+                self.take()
+                if char in (91, 123):
+                    ends.append(93 if char == 91 else 125)
+                    require(len(ends) <= 64, "opaque corpus nesting exceeds its bound")
+                else:
+                    require(char == ends.pop(), "invalid opaque corpus nesting")
         else:
             self.atom(capture=False)
 
@@ -220,6 +266,40 @@ def parse_corpus(reader):
     return docs
 
 
+def parse_exact_dev_corpus(reader, selected):
+    seen = set()
+    verified = set()
+    entries = 0
+    invalid_id = object()
+
+    def field():
+        name = reader.string()
+        reader.expect(58)
+        if name == "id" and reader.nonspace() == 34:
+            return reader.string()
+        reader.skip_opaque_value()
+        return invalid_id if name == "id" else None
+
+    def document():
+        identifier = reader.string()
+        reader.expect(58)
+        require(reader.nonspace() == 123, "expected a DEV corpus document object")
+        if identifier in selected:
+            require(identifier not in seen, "duplicate selected DEV corpus key")
+            seen.add(identifier)
+            inner_ids = [value for value in reader.collection(123, 125, field) if value is not None]
+            if inner_ids == [identifier]:
+                verified.add(identifier)
+        else:
+            reader.skip_opaque_value()
+
+    for _ in reader.collection(123, 125, document):
+        entries += 1
+    return verified, {"map_entries_observed": entries, "selected_keys_present": len(seen),
+                      "selected_inner_ids_matching": len(verified),
+                      "selected_inner_ids_missing_or_mismatched": len(seen - verified)}
+
+
 def numeric_offset(value):
     if type(value) is int:
         return value if 0 <= value < 1 << 31 else None
@@ -279,6 +359,8 @@ def original_dev_counts(references, corpus, frozen_dev, train_gold):
         "ordered_menus_with_complete_corpus": None if corpus is None else 0,
         "answerable_structural_rows_with_complete_corpus": None if corpus is None else 0,
     }
+    if corpus is not None:
+        result["answerable_structural_rows_with_complete_corpus_without_train_gold_menu_overlap"] = 0
     for row in references.values():
         menu = row["DOC_IDS"]
         roster = set(menu)
@@ -296,6 +378,8 @@ def original_dev_counts(references, corpus, frozen_dev, train_gold):
             available = valid and roster <= corpus
             result["ordered_menus_with_complete_corpus"] += available
             result["answerable_structural_rows_with_complete_corpus"] += gold and available
+            result["answerable_structural_rows_with_complete_corpus_without_train_gold_menu_overlap"] += (
+                gold and available and roster.isdisjoint(train_gold))
     result.update(
         distinct_menu_document_ids=len(source_ids),
         prior_original_train_gold_document_ids=len(train_gold),
@@ -320,8 +404,9 @@ def archive_state(source):
     return (observed.st_dev, observed.st_ino, observed.st_size, observed.st_mtime_ns)
 
 
-def audit(*, original_dev=False):
+def audit(*, original_dev=False, exact_dev_corpus=False):
     started = time.monotonic()
+    require(not exact_dev_corpus or original_dev, "exact shared corpus role requires original DEV")
     requested_members = ORIGINAL_DEV_MEMBERS if original_dev else MEMBERS
 
     def check():
@@ -333,7 +418,14 @@ def audit(*, original_dev=False):
     require(ARCHIVE.resolve(strict=True) == ARCHIVE
             and not any(path.is_symlink() or path.is_junction() for path in (ARCHIVE, *ARCHIVE.parents)),
             "canonical local TechQA publisher archive required")
-    results, members = {}, {}
+    fence, fence_pin = read_checked_json(ARCHIVE_ROOT / "full-original-DEV-source-fence-r5.json", DEV_FENCE_SHA)
+    caveat, caveat_pin = read_checked_json(ARCHIVE_ROOT / "r4-scope-caveat.json", DEV_CAVEAT_SHA)
+    require(fence["original_archive_sha256"] == ARCHIVE_SHA and fence["original_DEV_rows_DOC_IDS_only"] == 310
+            and fence["counts"]["whole_candidate_pool_disjoint_positive"] == 15
+            and caveat["r4_not_clean_exposure_proof"] is True, "retained DEV/TRAIN scope proof differs")
+    dev = set(fence["entire_DEV_source_id_closure"])
+    train = {row["original_gold_document_id"] for row in fence["records"] if row["answerable"] is True}
+    results, members, corpus_scope = {}, {}, {}
     with ARCHIVE.open("rb") as source:
         before = archive_state(source)
         require(before[2] == ARCHIVE_BYTES, "TechQA archive size differs")
@@ -351,31 +443,31 @@ def audit(*, original_dev=False):
                 if member.name not in requested_members:
                     continue
                 kind = requested_members[member.name]
+                reviewed_corpus = exact_dev_corpus and kind == "corpus"
+                if reviewed_corpus:
+                    require(member.size == EXACT_DEV_CORPUS_BYTES, "exact original DEV corpus extent differs")
                 oversized_corpus = original_dev and kind == "corpus" and member.size > MAX_MEMBER_BYTES
                 require(kind not in members and member.isfile() and 0 < member.size
                         and (member.size <= MAX_MEMBER_BYTES or oversized_corpus),
                         "duplicate, nonregular, empty or oversized audit member")
-                content_read = kind != "example" and not oversized_corpus
+                content_read = kind != "example" and (not oversized_corpus or reviewed_corpus)
                 identity = {"member": member.name, "bytes": member.size, "content_read": content_read}
+                limit = EXACT_DEV_CORPUS_BYTES if reviewed_corpus else MAX_MEMBER_BYTES
                 if oversized_corpus:
-                    identity["parsed_member_limit_bytes"] = MAX_MEMBER_BYTES
+                    identity["parsed_member_limit_bytes"] = limit
                 if content_read:
                     with archive.extractfile(member) as entry:
-                        reader = MetadataReader(entry, check)
-                        results[kind] = (parse_corpus(reader) if kind == "corpus"
-                                         else parse_roster(reader, reference=kind == "references"))
+                        reader = MetadataReader(entry, check, maximum_bytes=limit)
+                        if reviewed_corpus:
+                            results[kind], corpus_scope = parse_exact_dev_corpus(reader, dev)
+                        else:
+                            results[kind] = (parse_corpus(reader) if kind == "corpus"
+                                             else parse_roster(reader, reference=kind == "references"))
                         identity.update(reader.finish(member.size))
                 members[kind] = identity
         require(set(members) == set(requested_members.values()) and archive_state(source) == before,
                 "incomplete audit archive roster or publisher input changed")
 
-    fence, fence_pin = read_checked_json(ARCHIVE_ROOT / "full-original-DEV-source-fence-r5.json", DEV_FENCE_SHA)
-    caveat, caveat_pin = read_checked_json(ARCHIVE_ROOT / "r4-scope-caveat.json", DEV_CAVEAT_SHA)
-    require(fence["original_archive_sha256"] == ARCHIVE_SHA and fence["original_DEV_rows_DOC_IDS_only"] == 310
-            and fence["counts"]["whole_candidate_pool_disjoint_positive"] == 15
-            and caveat["r4_not_clean_exposure_proof"] is True, "retained DEV/TRAIN scope proof differs")
-    dev = set(fence["entire_DEV_source_id_closure"])
-    train = {row["original_gold_document_id"] for row in fence["records"] if row["answerable"] is True}
     if original_dev:
         counts = original_dev_counts(results["references"], results.get("corpus"), dev, train)
         require(counts["rows"] == fence["original_DEV_rows_DOC_IDS_only"]
@@ -383,7 +475,8 @@ def audit(*, original_dev=False):
                 and counts["missing_frozen_dev_menu_document_ids"] == counts["added_dev_menu_document_ids"] == 0
                 and counts["menu_document_ids_overlapping_prior_original_train_gold"]
                     == fence["full_heldout_overlap_ids_count"], "actual DEV metadata differs from the prior source fence")
-        schema = "airk.private.techqa-publisher-original-dev-metadata/1"
+        schema = ("airk.private.techqa-publisher-original-dev-corpus-metadata/1" if exact_dev_corpus
+                  else "airk.private.techqa-publisher-original-dev-metadata/1")
     else:
         counts = paired_counts(results["questions"], results["references"], results["corpus"], dev, train)
         schema = "airk.private.techqa-publisher-validation-metadata/1"
@@ -392,6 +485,7 @@ def audit(*, original_dev=False):
         "schema": schema, "complete": True,
         "archive": {"path": str(ARCHIVE), "bytes": ARCHIVE_BYTES, "sha256": ARCHIVE_SHA},
         "source": source_pin, "members": members, "counts": counts,
+        **({"corpus_membership": corpus_scope} if exact_dev_corpus else {}),
         "metadata_only": True, "question_or_answer_text_decoded": False,
         "document_text_decoded": False, "qualification": False,
         "dev": {"metadata_rows": 310, "menu_source_ids": len(dev), "fence": fence_pin, "prior_exposure_caveat": caveat_pin},
@@ -405,8 +499,12 @@ def main():
     require(sys.platform == "win32" and sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode,
             "use checked Windows Python -I -B -S")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--original-dev", action="store_true")
-    print(json.dumps(audit(original_dev=parser.parse_args().original_dev), allow_nan=False, separators=(",", ":")))
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--original-dev", action="store_true")
+    modes.add_argument("--original-dev-corpus", action="store_true")
+    args = parser.parse_args()
+    result = audit(original_dev=args.original_dev or args.original_dev_corpus, exact_dev_corpus=args.original_dev_corpus)
+    print(json.dumps(result, allow_nan=False, separators=(",", ":")))
 
 
 if __name__ == "__main__":
