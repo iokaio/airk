@@ -11195,3 +11195,31 @@ Cargo exited 0 and removed 208,679 files totaling 266.1 GiB. The drive
 reported 425.521 GiB free after cleanup, up from 170.181 GiB. The target
 directory is gone. The diagnostic receipt and its exact preserved test
 image independently retained their hashes outside target/.
+
+### 2026-11-19 — FP32 placement evidence for the Compact FP16 correction
+
+The exact-name comparison used the accepted Compact FP32 typed placement
+report e7dee7951f2b4f80044285fe63e7745c41a0ad7ce1065eb1f98aeea4ba8b40cc,
+its authenticated original final SessionState, and the retained strict FP16
+startup result ac6b62351a5327aaff84f2f4b40940008436d108340c339aec620700671d0975.
+All 227 retained FP16 CPU-preference messages name distinct nodes. Of these
+names, 163 match CPU-assigned nodes in the FP32 final placement and 64 are
+absent by exact name. The absent names include the four FP16 length helpers
+T, Tminus1, seqlens32 and T32. The FP16 log omitted 148 selected messages.
+The name match is evidence for reusing the FP32 graph inspection and typed
+CPU tensor bounds. A fresh complete FP16 placement and dataflow map must
+establish the types, sizes and assignments for the new graph. The old FP32
+allowlist remains tied to its source, graph and runtime.
+
+Continue to prefer a qualified GPU in Auto when GPU use is enabled. A
+qualified fitting CPU variant of the same model remains the fallback,
+within the original budget and after settlement when GPU work was dispatched.
+The retained FP32 bounded placement and CPU/GPU component evidence provide
+engineering controls for both paths.
+
+The existing Compact Resource20 measured an 8,192-token scoring p95 of
+3.245899 s on A6000 and 86.049136 s on CPU4, yielding 26.510x on the matching
+input. Matching FP32 GPU speed sets the engineering comparison at 3.245899 s
+on that exact workload. The 25x CPU-relative comparison corresponds to
+3.441965 s. These are comparison points for future measurements under the
+existing qualification criteria. Measure complete Answer latency separately.
