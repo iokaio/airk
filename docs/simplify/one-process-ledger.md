@@ -8153,6 +8153,2731 @@ operational adapters, and preserves D01-D08, numerical gates and the deadline.
 Aggregate verification and cleanup still remain separate unfinished duties.
 Native alias R3 scoped Clippy passes in 22.1104603s, with source pins retained
 under E/rk-native-windows-r3; no native test or installed-platform pass follows yet.
+### 18 November 2026 UTC: execution-discipline correction
+
+User requested concrete adjustments after integration stalled and timed updates
+were missed. Added identical Execution discipline rules to AGENTS.md/CLAUDE.md:
+one primary deliverable, at most two completed handoffs awaiting primary review,
+primary-owned integration without invented user approval, coherent validated
+commits, evidence-based progress, continuation after status questions, no timed
+notification promise without a configured scheduler, and honest deadline review.
+Existing identity, authority, review and qualification requirements are retained.
+
+Observed starting state: HEAD 868e07f2; eight specialists completed their tasks,
+with integration pending. No aggregate R3 pass, artifact deletion, new collector
+build or GPU qualification is claimed. Existing alias run remains 80/89 passing;
+fixture corrections and a reproduced Windows exit-code defect await validation.
+
+Next primary deliverable: finish rescue verification and eligible cleanup. Review
+frozen R3 utility/request and execute the bounded reconciliation; close inventory
+removal-proof support and review/commit the custody transition before applying
+any exact-file cleanup manifest. Then finish rk validation/commit, followed by
+collector/graph integration and Windows qualification. Independent reviews may
+unblock that path; no new implementation streams until this backlog is drained.
+This entry records an execution correction, not completed campaign validation.
+
+### Restart checkpoint: release readiness, 18 November 2026 UTC
+
+User is restarting and switching to Sol 6.1. Stop campaign execution for this
+handoff; do not start another build, model run or audit batch before restart.
+User explicitly prioritizes good enough for release over perfection. The new
+AGENTS/CLAUDE stopping rule preserves agreed gates but defers optional cleanup,
+speculative hardening and broader historical audits outside candidate needs.
+This qualifies the prior cleanup-first sequence: do not block a qualified release
+on historical aggregate closure or deletion. Keep that authorized work tracked.
+
+HEAD remains 868e07f2 (plan), following 5c238473 (broad rescue). Instruction and
+ledger edits are saved but not committed. Other uncommitted feature/review work
+must be preserved. All eight delegated agents completed their tasks; no ongoing
+agent work should be inferred. Local commits only; no push/PR/release authorized.
+
+Resume with one primary deliverable: fix and validate rk, then commit its scoped
+change and move to collector/graph integration and Windows qualification. Read
+live source and contracts, use verified human execution and target/ warm cache.
+1. Windows launcher production shortcuts.rs needs the reproduced exit-status
+   correction: exit /b currently returned 0 for child exit 7; explicit
+   exit /b %errorlevel% passed the cheap actual wrapper reproduction. Review
+   before applying. Shared tests.rs now creates a native private child;
+   windows/tests.rs explicitly invokes .\rk.cmd. Assertions were preserved.
+2. E/rk-native-windows-r3 contains passing scoped Clippy and the original
+   89 selected native tests: 80 passed, 9 failed, 593 skipped. Eight failures
+   were fixture privacy; one was CMD invocation/exit propagation. Rerun after
+   the reviewed fixes, retain selected count and actual process evidence.
+   E = artifacts/v190/final-plan/exec-20261116T052942Z. No cross-platform
+   native/installed alias qualification is claimed. Package checks and Inno
+   compile-only checks passed earlier; they do not replace installed journeys.
+3. Graph candidate scripts/cuda-component-execution.py plus graph_provenance.py
+   has 281 reported pure controls; review/reseal with the fresh collector recipe
+   at E/gpu-finalgraph-incremental-producer-preparation-r2. Recipe is preparation
+   only, execution_authorized=false; 64 producer controls and parent proof
+   passed. Collector C++ source is committed but still uncompiled. No GPU run.
+4. New evaluation/selected_goal and evaluation/composed_service adapters have
+   7 and 10 focused test groups respectively. Selected-goal execution closure
+   and composed multiprocess ownership integration remain incomplete. Review
+   the existing composed outer_job--411894401e3b.py owner; do not widen the
+   unrelated two-process owner. Neither adapter establishes qualification.
+5. Rescue follow-ups: R3 union request is prepared, independently reviewed,
+   not executed (66 controls plus actual 16-row sample). Cleanup transition has
+   25 preservation plus 27 custody controls and 5280 original checks. The 1263
+   proposed cleanup files (34.6 MB) are not approved for deletion: inventory
+   removal-proof support, scoped commit and final manifest review remain.
+   No original artifact code has been deleted. Preserve research outputs.
+
+Deadline remains 2026-11-19 05:29:42 UTC; no feasibility promise is established.
+User will check in for status. No automatic hourly notification is configured.
+Instruction equality, scoped whitespace and repository checks are the required
+validation for this documentation-only handoff; no native rebuild is warranted.
+
+### 18 November 2026 UTC: rk Windows source milestone
+
+Resumed in active Windows RDP session 1 as TYAI\tdotn; effective and token-owner
+SID S-1-5-21-3678370870-3858642417-826968105-1002 matched the interactive
+account and Explorer. No ownership or ACL changes. AIRK MCP bound the workspace
+to idx_454850af9b8efb7db8a847dad143feeb at publication 587; live paths were
+read separately. Self-review and verified human DCO completed. The 30 alias
+paths alone are in bb9cd1a96727152308a9f4ed174b7163d3cd45e4; 71 changed Git
+outputs audited. Repository checks passed for 9741 public files, and staged Git
+object identities and scoped whitespace passed.
+
+Native and portable CMD launchers now explicitly propagate the process status
+with command extensions enabled and a locally cleared ERRORLEVEL environment
+override. The process tests retain quoting, Unicode, stdio and exit assertions.
+R4 scoped Clippy passed but Nextest had 80/89 passing and 593 skipped. R5
+corrected shared fixture creation through prepare_root; 9/10 passed including
+the recovered privacy cases. Its remaining CMD error exposed the /c inside the
+forward-slash executable spelling. R6 uses native path components and the
+complete quoted command. The isolated actual CMD case passed 1/1 (681 skipped,
+8.412 s command); final Nextest passed 89/89 (593 skipped, 2.283 s command).
+R6 formatting and strict scoped Clippy passed (13.541 s command) with offline
+pinned toolchain 1.98.0, Nextest 0.9.148, warm target/ and incremental=1.
+R6 source pins SHA 46702553a25be6fdb996afa425a079dcaae279cf48dc36bf29b0ac74c7fcf026.
+Checked receipts under E/rk-native-windows-r6: clippy.json 5db577ef77b8fe1777a2b46faad9a4062eff3cc67d7130723fd602bde15a0314;
+nextest-cmd.json e918d893eebefd14054f5f6c3cc1ed8264c98303149b8c36c900007d68511512;
+nextest.json 01452d4933749aa92685fb174db30d5c1795d38912bf1c344852aa19d5f2f5d5.
+The 13 Windows packaging/Inno source controls (including actual portable CMD)
+passed in 1.552 s test time. E/rk-native-windows-r4/python-final.json c2c90e643b0e6b4b47a77c13c2cf0fc9440183970222d889cdb29134ae79a6da.
+
+Earlier Unix shell controls and Inno compile-only evidence remain bounded
+to their original inputs. Installed Windows and native macOS/Linux alias
+journeys remain open under release gates. This commit is local. No release
+version bump, model promotion, push, PR, installation or publication.
+Next primary deliverable: review and validate the maintained graph preparation
+and replay path, then reseal the collector recipe against the reviewed sources.
+The R2 recipe remains preparation-only. The bounded source rescue aggregate and
+eligible cleanup remain tracked without blocking this release path.
+
+### 18 November 2026 UTC: collector and provider handoff checkpoint
+
+Graph provenance source landed in local DCO commit
+5850b9c3321961b27b0100e738e08d7a57bb97f3 (six files, 24 Git outputs
+owner-audited). The graph preflight exempts just the externally pinned plan
+itself from the self-seal requirement. Graph preparation samples UTC before
+its final monotonic completion. Self-review, 241 controls (2.189 s), exact
+Git bytes, repository and staged whitespace checks passed. Receipt
+E/gpu-finalgraph-source-review-r2/controls.json SHA
+2008169762ac04b61f4a9f1440c8730cf4aee6a863659bc1f283a9c305664dfe.
+A one-file actual Windows handle probe denied a conflicting writable open
+(error 32), rechecked bytes and policy, and closed its one handle. Receipt
+SHA ebfaab2481b4b57c5acb8cf39c66a27395e1601b86ac80a44f4492af41dd28c8.
+
+The separately reviewed collector recipe SHA
+6624e4052a03908624682672c5ad4550eb6311ff7a8d31b2811b01d49dcad4b3
+preserves the proposal and changes its authority and one live wrapper pin.
+Checked observation reverified 725 metadata rows, including 641 human-owned
+inputs, and the maintained producer verified all pinned bytes. The first
+collector attempt ended with exit 1 after 86.896 s (producer interval 84.509 s).
+C++ compilation exited zero. All 482 frozen Ninja dependencies were observed
+along with 324 additional headers under the exact MSVC and Windows SDK roots.
+Archive dispatch was refused. The actual Job also required terminating a
+second member (exit 77). Its executable was not identified by the retained
+receipt. The later close-proof field refers to its own cleanup path and
+does not erase the earlier forced termination. All compiler processes had
+exited at settlement. The outer summary's per-stage seconds are invalid
+because the failure precedes the finish stamp; use original receipt clocks.
+
+Raw SHA 806214064c6dd9e17109905dd6aecafc3dcd8129c3465af3cfc42b6febb8a788;
+outer SHA 6f0c5d31e706b0fc953b37d8d73d15e12f0d7afb0066f3584c25eba7e73a837b;
+header/Job diagnosis SHA f45849aa3c4ba96be7f8b72e9c05a569c6e95c4f3d54e93dd67c0e4c75609853.
+The failed root, logs and original proposal remain retained. No aggregate,
+new native link, graph run or GPU qualification. Establish separately
+authenticated system-header provenance and identify the extra Job member
+before considering a new bounded recipe. Preserve limits and original failure.
+
+Independent downstream review identified four full proofs in one 300-second
+copy gate, a native recipe pin placeholder, original/copy raw pin path mismatch,
+and fresh metadata/manifest requirements. The provider change independently
+uses one complete bundle per pre-copy and post-copy observation at the same
+original cutoff. The CLI gets both proofs from one complete bundle and refuses
+incremental relink. The 97 focused mocked controls passed (1.393 s), receipt
+E/gpu-finalgraph-handoff-review-r1/controls.json SHA
+39038282e11a1bc4a8967cf9befe0e2fd1f56dd403b5ec2af45a0a91a4dfe319.
+A real provider copy and /5 handoff depend on a successful collector.
+
+Independent selected-goal review found CAL/A6 client/session 30-second caps
+and a missing release producer in the current preparation closure. These
+remain open on the approved 8192/120 profile, alongside owned CAL/fit and A6.
+The source-rescue/cleanup work remains tracked outside the release critical
+path. No originals have been removed. Local commit scope only.
+
+### 18 November 2026 UTC: approved full-header contract and compiler lifetime
+
+Provider handoff landed in 98d5bf1634041ea299d825243fd58f33890551d3.
+User approved pinning all compiler-observed headers after an independent
+preprocessing observation of the unchanged source. Ninja 1.12.1 filters
+program-files/toolchain paths from its dependency census. Parent proof/2
+pins six tools and no historical full-header roster. Rehashed parent
+inventories and five empty retained logs establish no historical supplement.
+
+The unchanged original TU and failed collector produced identical sets:
+806 unique headers, including 482 Ninja pins plus 160 MSVC and 164 Windows
+SDK headers. R1 stdout mixed preprocess text and include lines; R2 used a
+separate guarded base.i and retained 1,077 include lines. Raw reproducibility
+observations are not a passing Job. The R3 retained handle directly identified
+MSVC VCTIP.exe as the non-exiting member (PID 67632, exit 77), Job receipt
+E/gpu-finalgraph-original-header-probe-r3/job.json SHA
+a671ec12582d5dc7e7a75594dab508b40d50ffab249e91fe78fd86eafc8fe3ae.
+The R4 invocation-local VSCMD_SKIP_SENDTELEMETRY=1 probe still produced VCTIP
+and forced cleanup after parent exit 0. R4 Job SHA
+f9d914b3fdccab2981a600ff45f2f22be944ed32c4d23e35adf6823b9b2c21b5.
+No tool, ACL, account, registry or IDE policy was changed by agents.
+
+Full-header source contract landed locally in 8f7b7c62876da67706790dfe3b911e3d8b055d01.
+Independent review, 127 controls in 1.578 s, repository and whitespace checks
+passed. E/gpu-finalgraph-header-controls-r3/controls.json SHA
+86aad5c00091e772a2d6d1d3d9639cb98e059b34a788cabff01cdd735650325f.
+Reopens exact baseline recipe, compiler, probe source and command, same
+environment except temporary output relocation, natural Job proof, log and
+complete header set. The producer retains a checked log and phase finish
+after stage-validation failures. No prior failed receipt was modified.
+The user is updating Visual Studio and intends to change its privacy setting.
+Hold toolchain execution during the update. Next: reobserve exact pinned
+compiler, SDK and relevant helper hashes; do not adopt new bytes as old.
+If current pins remain valid, run the naturally settled probe in a fresh
+root, review the observation, and reseal the complete recipe. A confirmed
+toolchain change needs separately recorded input/ancestry handling.
+
+### 18 November 2026 UTC: selected-goal preparation milestone
+
+While Visual Studio setup was active, reviewed and committed seven
+selected-goal preparation files in b7e44829a75aca13323cf434ddbe6a3078fcac17.
+The source maps are fixed in catalogue order and the census is consumed once.
+The complete positive test checks 26 maintained source anchors and all 100
+ordered IDs in 13 phases, plus the review-only flags and map refusals.
+Eight focused controls passed independently (1.188 s); repository checks
+passed for 9742 public files and scoped staged whitespace passed. Integration
+receipt E/selected-goal-preparation-integration-r1/controls.json SHA
+688919345a5a6d325acf3d478870ebdb72bdfdef9b596feee9c555f6338767df.
+Verified human DCO and audited 28 Git outputs. Git checkout policy normalized
+the two JSON catalogues to LF in Git; these are parsed inputs and live SHA
+identities remain recorded. No native capture, execution, or qualification.
+
+Composed Service remains pending owned process adaptation. The preserved
+outer owner has suspended authentication and a multiprocess Job but does
+not retain descendant exit/close proofs and calls termination on settled
+Jobs. The current worker output lifecycle also needs full guarded custody.
+Do not substitute this historical owner unchanged or infer a composed pass.
+
+### 18 November 2026 UTC: updated MSVC and fresh CUDA configure
+
+User completed the Visual Studio 2022 update and privacy setting change.
+Of 567 input pins reobserved, 57 compiler tool files changed, 24 compiler
+tool files matched, and all 482 Ninja headers plus four fixed pins matched.
+Only MSVC 19.44.35230.0 was installed at the observed toolset root. cl.exe
+SHA e87e78b3ef6580b75aebda843f8a22e874612d9f766344046551399f898eb226
+differs from the retained original edfde238…eabb. Checked observation SHA
+ee8ac0c9115e63997e7d757706c5f6830e29124c31368e7471da27f00018499a.
+User explicitly approved a fresh current-toolchain chain. Old parent and
+incremental proofs remain historical. A standalone current-toolchain /P
+diagnostic exited 0 but still had forced VCTIP shutdown (PID 46076).
+Checked Job SHA 688fc64c095b8ca099e29903adffdf3b86901e9ca7554ae8849c28e3e467e129.
+Neither installation of Visual Studio 2026 nor additional policy changes are
+required to attempt the approved fresh, independently owned configure path.
+
+The fresh configure candidate passed 9 inert tests and repository checks
+(9747 public files). The new cu9 recipe SHA
+5973ef4fa797017b5761171e703c9b78949028068e292544478094c6ff9a0f1d
+pins the current compiler closure, 1902 native inputs, 16 offline dependency
+archives and the 324 known toolchain headers. The actual checked source and
+CMake configuration is active, with source extraction observed in the fresh
+cu9 root. No configure, compile or graph result yet. A separate compile owner
+is being integrated against the actual future configure receipt, not old state.
+
+Independent fresh TypeScript SDK output compiled in 8.078 s under
+E/composed-sdk-compile-r1/out. All 226 output paths audited. Current session.js
+imports generated/arbiterBudget.js; the previous installed extension output
+was preserved. Receipt tsc.json SHA
+ae5499ee14cab41423a5ad38762baaedba676536927ce8157d423cfdd0bad27b.
+Composed native execution, packaging and 8192/120 admission tests remain open.
+
+### 18 November 2026 UTC: fresh configure reaches actual CUDA detection
+
+Reviewed stage owners landed in local DCO commit
+57c5806af59c00b726d6f68d0e29515253680d65, 38 Git outputs audited.
+All 23 focused controls passed and repository checks covered 9751 public
+files. Exact control receipt SHA
+23300a0f4d8f9e7e9d8f2d49a13d550cb4762576dcb08aea8c8a416ad318e954.
+Actual cu9 source extraction, guarded inventory and all seven source
+transform stages reached real receipts. CMake entered CUDA compiler
+identification and reported incomplete configuration. It used the exact
+updated MSVC install but its compiler-ID flag parsed the backslash
+CMAKE_CUDA_HOST_COMPILER spelling as UNIX_COMMAND and stripped separators.
+No compatibility failure of the updated C++ compiler is established.
+
+The pinned CMake 3.31.6 parser reproduced this using the maintained
+scripts/tests/check_cuda_host_compiler_argument.cmake diagnostic: exact
+backslash path exited 1, forward slash spelling preserved one argv item
+and exited 0. No compiler was launched by that parser control.
+The cu9 configure command wrapper is retaining the failed run and waits
+for its original descendant tree. VCTIP PID 24224 was observed after
+CMake exited; no native success is claimed. Do not modify consumed driver
+files while that original run is active. After settlement, preserve cu9,
+correct the CMake path projection, review and execute a changed freshly
+pinned configure run in a separate root. Keep all deadlines and gates.
+The user asked to document the tooling in the relevant README after
+actual success; that update is still conditional.
+
+
+The failed cu9 CMake command exited 1 and its recorded process tree
+settled through Start-Process -Wait. The outer run took 2937.169 seconds.
+The raw process receipt SHA is
+7a6ff98d034d702a5c7cf21687d0313b5baf6093a1fcaca7971aa9e3c36cd60d.
+The outer run receipt SHA is
+003c47a28ca40c03ee6972668d9c1a7a0679cf78aa7bd6407fe2a3003eb1eb26.
+The compiler path fix and bounded four-worker custody audit are in local
+DCO commit c391173ab357f62d13bf043f831f0b3eef3e74b0. The pinned CMake
+parser check, 25 focused Python controls and repository checks over
+9753 public files passed. For 512 identical paths, the measured custody
+audit was 29.197 seconds with one worker and 8.529 with four.
+The corrected cu10 configure started as TYAI\tdotn in the approved
+human-owned CUDA root, using recipe SHA
+9607a8c9336bb1c850227ed8baa017b4e79e68c1d2a9acdae2ddc543cf312eaf.
+The next gate is CUDA compiler identification and the full configure
+receipt, followed by the current-toolchain session target. No native
+success or qualification is established at launch.
+
+
+The cu10 source extraction reached its custody inventory and a parallel
+PowerShell batch hit its unchanged 10-second limit. The wrapper exited
+1 after 175.227 seconds without starting CMake. Outer receipt SHA
+cdf1cb0d643501b69190c21be3b27f7697a448a4659be6435b20915ee8f7e570.
+The 512-path throughput probe did not establish that every batch of
+the full source roster would finish within the fixed limit under load.
+Local DCO commit e10a69308135c56892cb0bb29965aca5a25a6458 restores the
+serial 128-path custody batches while retaining the CMake host compiler
+path fix and parser reproduction. The 23 focused controls, pinned CMake
+parser diagnostic, repository checks and whitespace checks passed.
+The previously completed serial custody path and the separately verified
+parser change support the cu11 attempt. It started from exact recipe SHA
+2e8f46953ecb1bd86a593325e1ac2edae45ccbd79b76a5fa747f6af3dc25fb95
+with the same toolchain, inputs and 10800-second ceiling in a distinct
+human-owned root. Independent review verified ten maintained owner pins,
+the compiler environment, and the expected compile driver and archiver.
+On a settled configure pass, invoke fresh_compile.py with the actual
+fresh-configure.json SHA and exact compile driver SHA
+7920552d5b17e09a51f536071f728b7e4bee7ef211d8c015c8e6a93c01b34f9d.
+
+
+The cu11 actual CMake command passed C and C++ identification and ABI
+checks for MSVC 19.44.35230.0 with Windows SDK 10.0.26100.0. CUDA nvcc
+12.8.93 reached cl.exe with the corrected host path, then failed to
+resolve cudafe++. Its own log recorded PATHEXT=.CPL after secondary
+Visual Studio environment setup. The sealed cu11 environment omitted
+PATHEXT. The installed exact cudafe++.exe pin was
+ceadbcfd172eb66f0dd52bd643a296f1648b409a2061531d432a959c962fa702.
+CMD with .CPL alone reproduced exit 1; .COM;.EXE;.BAT;.CMD;.CPL
+restored exit 0. Independent controls observed the same distinction.
+The raw cu11 configure receipt SHA is
+1a2dd7d65156e89204b22875f02ce2fa9902635ee8d9e204632144c761cc1419
+with command exit 1, Job final active count 0 and no forced termination.
+The outer receipt SHA is
+ac9e326dbbcdb3ee40dfe7f362a816633f86ae8f2eec3321535f3cf38e0fbb9b
+at 2889.818 seconds. No configured CUDA graph was admitted from cu11.
+
+The exact cu11 CMake CUDA compiler-ID source was replayed with the
+same pinned nvcc, MSVC and captured environment plus live PATHEXT in
+the isolated cuda-pathext-probe-r1 directory. Its log shows actual
+cudafe++, cicc, ptxas, fatbinary and MSVC compile/link steps. The
+human-owned 189440-byte probe.exe SHA is
+f8f82f3d2d17442ac3d22aa2777361ca25ae518e45ce5d9dc803c7c22f3132fa.
+The probe executable was not run. Final process settlement was pending
+at the first artifact observation. The cu12 authority is sealed at
+6d7f3eab33ba82cceab27b4bd4d4e26f7dff54526aae854bb8b0f6eb6d75f09d.
+It preserves 1902 native pins, 16 dependency archives, 324 known
+toolchain headers and the same time ceiling with the tested PATHEXT.
+After the probe settles, start exact cu12 as a distinct root.
+
+The user-requested tooling README update is local in ae3c2099; the
+environment preflight and documentation are local in bf55dd08. The
+23 focused controls, repository checks covering 9752 public files,
+README links and scoped whitespace checks passed. Native host and
+isolated CUDA compiler-ID results are separate from the AIRK session
+target, aggregation and candidate qualification.
+
+
+The isolated cu11 CUDA compiler-ID replay exited 0 with a naturally
+settled process tree and the audited 189440-byte executable. Elapsed
+904.035 seconds includes telemetry settlement. Probe summary SHA
+dbb7004f02d4831ebcc6d08c2fecabfa001710f41f000b3d85c4d242e8e8d91a.
+Neither the probe binary nor a model was executed.
+
+The first cu12 dispatch exited in preflight after 9.484 seconds:
+PowerShell reflected OrderedHashtable members while cloning the
+environment instead of enumerating its keys. The input SHA was as
+recorded, no build root was created, and no compiler launched. Outer
+receipt SHA 3f5bbfa104979794a2c3c0bd0f48e750232b90b05b2200ec6111e5637cf983b6.
+The corrected cu13 authority uses the enumerated data dictionary.
+Its independently compared environment has the exact original 24
+values plus the observed PATHEXT that passed the compiler-ID replay.
+Authority SHA 286e6226f4f7f85ab5f79f717138e49604a555ca6f9fd8a27bbf50fd6532695e.
+The verified pinned Python invoked the full configure in the new
+cu13 root and source extraction is observed. Next observe settled
+CUDA configure and run the two exact build targets within the original
+parent ceiling, then aggregate and verify the actual outputs.
+
+
+Local DCO commit 5d1df61f5b91df3b807b9ac0b77b82412fe6e2fd adds the
+read-only fresh aggregate verifier and current custody replay for the
+settled configure, session and full-build process evidence. Independent
+review found and corrected imports before verified owner pins and
+missing live custody audits for retained compile stage evidence. The
+verifier replays exact pins, original execution chronology, the
+96-archive graph closure, response bytes, process settlement, both
+collector exports and COFF membership under its own read-only deadline.
+It returns facts only. It neither launches tools from the source
+receipts nor extends a launch window. The 32 focused controls passed in
+0.086 seconds and repository checks passed for 9754 public paths.
+Exact reviewed fresh compile driver SHA is now
+935f2ec9acfb633d4c4090afc27387c6405f7bfd14efc4ce33a487afd391d912.
+Actual fresh compile, aggregate, and projection remain pending cu13.
+
+The user affirmed the current Windows-first build and test plan and
+deferred a focused rented-machine macOS test until after this plan.
+The local-only execution authority remains active. No host was rented
+and no campaign inputs were transferred.
+
+
+Local DCO commits 9a1e4580 and 2b29dfb5 prepare the fresh static link
+handoff while cu13 audits source. The launch owner records the canonical
+current build proof SHA in the actual aggregate command plan before
+dispatch. That private proof depends on the original compile lineage
+and contains no future aggregate identity, so there is no hash cycle.
+The distinct exact archive receipt SHA remains the aggregate identity.
+Fresh environment/6 verifies the actual evidence under one existing caller
+deadline and preserves the five static environment values and six C7
+fields without granting activation. Old modes retain their contracts.
+The 38 build/proof controls and a separate 73 handoff/historical consumer
+controls passed. Agent broader inert selection passed 95. Repository
+checks reached 9757 public paths. The full cu13 source extraction,
+dependency staging and seven guarded patch commands are observed.
+Next finish the preconfigure audit and inspect actual CMake outputs.
+Native provider stage/assembly, live handoff consumption, loaded graph,
+FP32/FP16 and package qualification remain pending.
+
+
+The exact cu13 CMake command identified C and C++ as MSVC 19.44.35230.0,
+CUDA as NVIDIA 12.8.93 with that host compiler, and passed all three ABI
+probes. CMake configured in 47.4 seconds and generated in 2.3 seconds.
+Observed C++20 build.ninja SHA
+2bdc0cb76ee8ec684de0f6da9bf6850e0b788a60f9f155ce0ad8398cee6c4549.
+Actual configure command receipt SHA
+aadef7c9752c09237de51ab7c143c333477a9d17c09690d7728b28041ffbfa9e
+records exit 0, naturally settled descendants and no forced termination.
+The enclosing source/graph and output-custody validation continues
+before fresh-configure.json. All 35458 b/ observations are required.
+
+On 2028 live generated paths (including the deepest subset), exact
+unchanged-discipline Windows guards passed with eight workers and caps
+of 32, 48, and 64 paths per process in 38.598, 36.107, and 32.495 seconds.
+The longest batches took 5.739, 7.297, and 9.042 seconds respectively.
+Local DCO commit f322a42d chooses 48 paths per batch with eight workers
+for compile and replay. It stays under the existing ten-second limit
+per original guard and uses the unchanged overall deadline. Every path
+still gets an independent current token and ancestry/ACL check. There
+are no caches, timeout retries, reduced rosters or changes to the
+already-running configure. 31 focused compilation/archive controls
+passed. Exact compile driver SHA
+d10afe217b2d4e76f808af2883ffb67f654ba1ab10cf54010566716b7891cbdc.
+
+Local DCO da3ba3ac adds the explicit fresh provision CLI (44 primary
+selected controls); ca7b09ee adds checked fresh provider and original
+compile receipt staging (42 primary selected controls). Their actual
+paths require genuine compile/aggregate evidence. Native assembly
+proof review and Windows Clippy/Nextest are pending. No runtime or
+model result has been produced by this current-toolchain build.
+
+Local DCO da9b0bc3 records the user's manual post-Windows Datagram
+72-hour FP32 and FP16 test. Local DCO 77049c69 records the user-approved
+direct post-Windows FP32 and FP16 Linux handoff to the existing WSL2
+instance on this machine. Full Windows qualification precedes both
+follow-ons. The rented Mac remains a separate human kickoff. No rental,
+remote transfer or WSL2 qualification has begun.
+
+
+The cu13 enclosing configure exited 1 after 2987.776 seconds because a
+serial 128-path metadata batch timed out after the existing ten-second
+guard cap. The unchanged actual CMake command and Job passed as above.
+The outer failure SHA is
+3eca28f7ce2d56752c0c28aa6becb9ab645b839b3fc87ca4d74232cd9f17a7a9
+and log SHA
+105b54a402f03a06c48e3c8e46421b0ff657c9611522b7ea95e89363181746c4.
+No fresh-configure.json was issued by that attempt. A separate checked
+read of actual build.ninja counted 1681 CXX/CUDA objects with maximum
+path 238 characters under the 240 bound and found zero preexisting
+compile outputs outside the allowed CMake probe leaves.
+
+The user approved flexible metadata scheduling. Local DCO 401745a8
+implements measured 48-path, eight-worker default waves, subdivision
+after a subprocess timeout and full path coverage under one deadline.
+The original 10-second guard cap, identity/ACL checks, natural exits
+and operation deadline remain in force. A separate finalize owner
+reopens the failed wrapper and actual successful CMake/patch stages,
+audits all output paths and rederives source, frontend and mirror
+facts before retaining a configure receipt. No CMake or compiler
+relaunch is involved.
+
+First recovery preflight stopped in 9.668 seconds because the
+incremental pin helper also expected response_files, which the fresh
+recipe does not have. The retained recovery failure SHA is
+bb71a832da9927fc9e374a198d71b00f98c82f2de7354d9d0397722d8ad79b66.
+The fixed fresh pin replay checks every approved FilePin, deduplicates
+exact matches and refuses conflicts. Changed recovery recipe SHA
+39e2e67ea4245bfb8c4c0ee5ff861b3f55ee9773c7dafdd96ebbff19636d1c35
+is active as TYAI\tdotn, observed PID71840 with eight audit children.
+The compile/audit driver is frozen for this recovery at exact SHA
+41c9d66d724deb7a9bda12c6c616e97daa58f94a1887b8c6c9d89b062a4e64e1.
+The existing 10800-second roof is clipped to original outer UTC
+04:52:33.7694146Z plus the wall bound and raw QPC/campaign limits.
+Current repo checks passed for 9765 public paths. Next take the output
+receipt from this recovery if it passes, then launch the original
+session and full Ninja targets using the verified compile driver.
+
+
+At the user's request the read-only watchdog comparison took the same
+128 deep cu13 output paths (maximum 259 characters and sample SHA
+115d1ca063f3d2db0629008181a636e1f1dab9981f8b9c6246451bf14e265b67).
+The 10-second variant passed in 7.292544 seconds and the 16-second
+variant passed in 9.302771 seconds. The original failed batch duration
+was not measured. Exact trial SHA
+06faf9e36c018982d218f950b0847e0ee1b35fcd4602a4a83a4696404ae9b7ad.
+Local DCO 7dbd360c retains the diagnostic. It used the same per-path
+guard checks and compared separate child processes; the pinned live
+recovery kept the exact original guard file.
+
+The corrected adaptive cu13 recovery completed in 877.220 seconds
+with observed wrapper exit 0. It consumed the original CMake and seven
+patch receipts, reconstructed the full transformed source/mirror/frontend
+inventories, audited the generated output tree, and passed original
+CMake/Ninja verification. The unchanged original failed wrapper is
+retained. Recovered configure receipt, 2362706 bytes, SHA
+5e565947b5f5e50344e3f4c6775182436a599665867ce0c06ed74a03d792a5cf.
+Separate recovery evidence SHA
+7e0ee2db677e15b29e32931848f7bb2911f7f51aa4f050d600da4bcb205112f9.
+Recovery wrapper SHA
+65a74fdc9b7c9f76a2000cf9027950cb3bf3361042f57485427ba7201cad8252.
+The exact same-user cu13 compile was launched through pinned Python
+using the observed configure SHA and driver SHA
+41c9d66d724deb7a9bda12c6c616e97daa58f94a1887b8c6c9d89b062a4e64e1.
+The allowed execution clock still derives from original cu13 configure.
+Neither compile target nor any model result is established at dispatch.
+
+
+Actual cu13 Ninja entered core-session-build with pinned current MSVC.
+The patched onnxruntime_c_api.cc object compiled at action 580 of 602.
+Ninja linked onnxruntime_session.lib and the compiler processes exited.
+The checked human-owned archive has 92211900 bytes, SHA
+2ddd833d0001404a217b8d1a05b13b19fcbd65e68a3e6aea4c80a3d508b2a9c2.
+Read-only scripts/cuda-static-archive.py inspect_archive observed exactly
+40 static COFF members and both final graph/placement export directives.
+That establishes the compiled session archive contents. The original
+complete-process-tree wrapper is still waiting for VCTIP 59308 (observed
+start 06:36:12.1245270Z). Preserve the untouched session result until
+the actual stage receipt and full output audit. No full CUDA build or
+variant execution has completed.
+
+
+The actual cu13 core-session-build command started 06:36:11.2624138Z
+and naturally settled at 07:02:13.5635131Z. Exit 0, settled true,
+forced termination false. Raw receipt SHA
+3254de749ee4f3161f8d14d26770dbfe37670cf8f76b925efc959158e955ed75.
+The session archive and both compiler-emitted exports are unchanged
+as recorded above. Full output audit now precedes all/re2 dispatch.
+The original overall deadline remains 07:52:33Z by the conservative
+outer UTC clock, also clipped to the retained monotonic cutoff.
+Full CUDA compile, aggregate, loaded graph, Windows FP32 and FP16
+and all following platform qualification remain pending.
+
+
+After the complete post-session output audit, actual all/re2 began at
+07:12:34.0298605Z, CMake PID68948 under wrapper64504 and pinned Ninja.
+At 07:24:09Z it was building action477 of1259 with two active MSVC
+children and a retained telemetry descendant. Read-only
+cuda-static-archive.runtime_closure on the pinned current Ninja graph
+selected exactly96 static archive paths and the CUDA/shared provider
+targets. These are graph and in-progress observations. No compilation,
+downstream receipt or model outcome is inferred from them.
+
+At 07:29Z the actual cu13 full build reported action 610 of 1259
+(Windows CUDA provider activations.cc) as the first failed compile.
+Ninja had linked onnxruntime_providers_shared.dll at action 608.
+The exact failure was the MSVC 14.44.35207 STL4036 diagnostic for
+<ciso646> under C++20 and /WX. The original CMake/MSVC job completed
+naturally at 07:49:28.3203496Z with exit 1, no timeout, no forced
+termination and owned descendants settled. The raw build stage SHA is
+08331f6aaae95aae4af17168350323a32c3cd853d14b60147f760b4dfb0bc6f7
+and the outer compile result SHA is
+64a3287eba1687b04a0ea4504235a33f713e634813440e9c8365d8aab8f38352.
+The original run did not produce fresh-compile.json.
+
+A separate same-human MSVC syntax check of the actual activations.cc used
+the original C++20, /permissive and /WX command and omitted PCH/object
+output options. Its baseline reproduced C4996 and exited 2 in 4.30 s
+(receipt bd27ce07cea2ee1fdf430eef10f969a05f33d9b21a8df339ed1ead341a990dbe).
+The CUDA-target definition _SILENCE_CXX20_CISO646_REMOVED_WARNING
+made the same check exit 0 in 4.22 s
+(receipt 2d658f55006c2a53c1e07423b273b7145362ca9ef752d67361f8e6d5b8c7586f).
+ORT and three CUTLASS headers use the compatibility wrapper. Its
+alternative-token macros remain necessary under the target's MSVC
+/permissive setting. The reviewed CMake patch supplies the single
+definition to C++ and CUDA provider targets and preserves /WX.
+Pinned GNU patch accepted it at fuzz 0. The current Python suite ran
+76 tests successfully, including independent target-scope and patch
+transport coverage. Full original build evidence remains preserved.
+The next action is a distinct fresh root with the corrected eight-patch
+source roster and adaptive output custody under the original per-build
+and campaign limits. Windows model qualification remains pending.
+
+The same pinned NVCC 12.8.93 command generated for activations_impl.cu
+compiled the SM86 kernel in an independent checked scratch directory
+with that one added definition. Retained diagnostic receipt
+274cf9bb8104ac267ba7de5bec29cc89f07a03505da4a123a59d167b93df0770
+reports exit 0 in 17.849 s and the checked 804641-byte object SHA is
+4a6badd14dc6a48fbeb4e41bdad9cb48aa01feeedabe14be884b1421b49cbc7a.
+The first diagnostic needed its Ninja dependency-output destination
+redirected into that scratch root. These probes are implementation
+evidence, outside the full CUDA provider build lineage.
+
+The corrected source owners are committed at local DCO 1b51083f.
+Review added a generated-Ninja acceptance check for both provider
+compiler languages, with warnings-as-errors still enabled on the
+activations.cc C++ edge, and kept the original seven-stage replay
+call signature. All 77 selected fresh-build Python tests, repository
+checks (9767 public files), and whitespace passed. The current source
+audit now uses the existing adaptive scheduler from the exact pinned
+compile source. The 16-second timing trial remains separate.
+
+At 08:06:12.5874543Z the verified human shell started the new cu14
+configure process on empty checked output. Configuration recipe
+fresh-cuda-configure-cu14-r1.json SHA
+c90ac0eb4f386967a8c2a0f62891faa140204ae644c5390a8d511f828d1e91ff
+pins compile/audit source SHA
+fecdfa4ad729385b980341f0b8bb97ee94ae56ade671282e9b95864e534f01ac.
+The compiler/toolchain and upstream dependency bytes remain unchanged
+from cu13. The new build has its own original 10800-second ceiling,
+clipped to the campaign end, and two-way Ninja parallelism. After an
+owned successful configure receipt, reopen the generated graph and
+launch the reviewed fresh_compile.py with that exact receipt and
+compile driver hashes. No compiler/qualification outcome at launch.
+
+At 08:17:09Z the cu14 checked MSVC CUDA compatibility patch stage
+finished. Actual CMake then reported Configuring done (48.1 s) and
+Generating done (2.3 s). Fresh Build.ninja SHA
+674cdfbbc519d0b33089372d3dfceb3167c0c8256c3ed58cc4c9e4837972eb43.
+The read-only actual graph check found the exact definition on both provider
+language groups and /WX semantics on activations.cc. At 09:01:10Z
+the owned configure launcher PID30304 and descendant VCTIP30372
+(created 08:20:51.8467450Z) were still active. The configure receipt and
+final custody audit remain pending. No full compile process was started.
+The original cu14 overall cutoff is approximately 11:06Z (04:06 MST).
+
+Local DCO e0a13a67 adds explicit environment/6 native image preservation.
+The primary independently repeated 54 selected controls (0.177 s), loaded
+15 byte-authenticated maintained verifier modules and checked whitespace and
+repository paths. It preserves exact distinct producer/configure/aggregate
+receipts, actual Cargo static-link rows, manifest, provider bytes and collector
+exports. Opaque compile context is not executable option_env evidence.
+No actual fresh image or model ran.
+
+Local DCO 64b91a86 adds native verification of the fresh producer and all
+eight corrected source patch stages. Reviewed dispatch is still closed
+until the exact successful production authority is frozen. Same-human
+Windows warm target/, Rust 1.98.0 and Nextest 0.9.148 ran strict offline
+all-features airk-retrieval Clippy with timings and incremental=1, then
+nextest run --profile ci -p airk-retrieval --lib --all-features --locked
+--offline --timings -E test(cuda_fresh_windows_). Eight passed, 295 skipped.
+Receipts fresh-native-closure-windows-r3/clippy.json
+eddcaf8e176fe1c90661cf107b79bcd92a32bbd71a0407f1e4c672eacaaa9380
+and fresh-native-closure-windows-r4/nextest.json
+62e70fb9f18239000de6b6f67223a992a246bcdb8b9299b25b26d920d034d4ee.
+Only inert controls were linked against the independently rechecked
+historical archive. Earlier formatting/Clippy issues and the PowerShell
+array version-check mismatch were corrected before this passing selection.
+
+Local DCO 5a81778e wires the original bounded verification into the
+shipping builder for environment/6 and checks the actual owned package
+projection against the exact fresh provider pair. Four Python test groups
+ran 78 tests (75 passed, three existing platform skips), and repository
+checks and whitespace passed. No package, install or publish outcome.
+Fresh model launch and graph adapters remain on the active path. Metadata
+and graph use separate maintained entrypoints so the current build's
+absolute frozen component and native owner pins stay valid.
+
+DCO 96cb69d6 adds the standalone fresh held graph diagnostic launcher.
+It leaves the frozen build's absolute component source pin alone. The
+owned runner reuses the existing immutable file-handle and Job machinery,
+retains the raw configure stage receipt and compares it to the embedded
+configure proof. The combined graph/component control groups passed
+178 checks. There is no fresh native graph or timing result yet.
+
+DCO 51158ce3 adds the all-live 8192-token FP32 Context component selector
+for both Compact and Large, preserving the original three-row fixture and
+requiring eight candidate positions and an entirely live mask. A component
+row is narrower than the overall resource, coexistence and product gates.
+The first Windows Inference Clippy run found the default bundled MiniLM
+path absent. Retried with the guarded exact retained bundled-model-v3
+directory and the old, reauthenticated static ORT archive for inert checks.
+Scoped offline strict all-features Clippy passed, and three Nextest tests
+passed (169 skipped) under warm target/, incremental=1 and timing enabled.
+Primary receipts context-cuda8192-controls-r2/clippy.json
+93afa1d408161358e5cbcc91ef4add335af7cccc52862c82d66832b9055c35a0
+and context-cuda8192-controls-r2/nextest.json
+47781ea9012a364d8ab76f59d6c7923251af4f4c5b0f69804c7f34e81366faad.
+No native CUDA model execution took place. NVIDIA driver inventory
+at this checkpoint observed an RTX A6000 with 49140 MiB total and
+38401 MiB free, driver 597.06. A management snapshot is not model fit.
+
+DCO 143ad30d adds the original-limit owned metadata stages using the
+maintained process/guard owners. The primary ran 163 selected script
+controls with an independently checked synthetic file fixture. A real
+manifest drops only two new files into the existing staged runtime.
+Owned manifests, image linking and native selectors have not run with
+the cu14 artifacts. DCO 25971254 adds explicit pre-manifest native image
+preservation, with the exact same-build CUDA link/provider pins and a
+distinct metadata-consumer packet. The primary repeated 64 focused
+tests, plus repository and whitespace checks. The fresh graph mode
+still consumes its own preserved post-manifest image packet.
+
+The remaining scoring dispatcher work is distinct from the ready
+source-level T8192 selector. Compact17 uses the existing bounded runner.
+Any later Compact128/8192 dispatch must bind original rows all-live-1
+and native-all-live-8192 and actual Numeric ordinals 2/3, both reference
+arrays and exact tensor digests. Context Large reserves 40 GiB of host
+memory in its raw native input. The frozen Compact owner applies 16 GiB
+process and 24 GiB Job; selectors alone do not constitute Large launch
+readiness. The next actual GPU gate remains Compact load-only final
+graph placement and dataflow under the current CUDA provider. Defer
+placement policy changes until the observed graph warrants them.
+
+At 09:21:45.9697049Z VCTIP 30372 was still the observed live compiler
+descendant. It had been alive over one hour. The generated graph passed
+the compatibility and /WX checks earlier. The original wrapped stage
+has not yet returned its complete natural-settlement receipt. No
+compilation has been dispatched on cu14. The next executable action is
+to reopen a completed fresh-configure.json and dispatch the pinned
+compile driver, or retain an exact failure if the original bound ends.
+
+The cu14 configure tree settled at 09:22:33.9795979Z. CMake PID
+55752, wrapper 65160, start 08:20:51.6798276Z. Raw configure
+stage receipt SHA
+296f6fb4319ab3c038df1a4dc39772c99774ce32b5f18046eddce264744af4ce
+records exit 0, 3702.621 s, timeout false, zero final active Job
+processes, natural settlement and no forced termination. The outer
+stage started the complete post-configure custody audit. Live stderr
+observed 48-path subprocess timeouts splitting into separately checked
+24-path batches under the original deadline. This is real audit
+recovery in progress. The configure receipt, compile and archive
+remain pending.
+
+The full cu14 configure wrapper completed exit 0 in 5227.295 s after
+the adaptive post-configure path audit. All observed per-call timeouts
+were recovered with smaller groups. The exact 2363269-byte configure
+receipt SHA is 9b0943d9b8ab1bbb129d986ffcde798be3193f9a8cac73ee7d91af6db2439283
+and the checked outer run receipt is
+2df821b387999e7a7f492384264d670c8fcde4223a29f1d759bd547b873cd676.
+The raw compile owner is still
+fecdfa4ad729385b980341f0b8bb97ee94ae56ade671282e9b95864e534f01ac.
+The verified human shell launched fresh_compile.py -B -S with the
+exact configured SHA and reviewed script SHA. Its original cutoff still
+comes from the cu14 configure launch. Wait for checked session and all/re2
+stage settlement and a complete fresh-compile.json before deriving the
+96-library archive plan or authorizing native metadata.
+
+cu14 actual two-worker MSVC session compilation entered at
+09:44:23.0806162Z, CMake PID58480 under wrapper49652. It compiled
+the session and linked onnxruntime_session.lib. The checked file has
+92211890 bytes and SHA
+03d0e6ad55faa8b3ba0a401f1acb67fa5fc1c27625f84d375e7b2d65c8b0f068.
+Read-only cuda-static-archive inspection observed 40 static members
+and both collector export directives
+airk_ort_collect_final_graph_metadata_v1 and
+airk_ort_collect_final_placement_v1. At 10:03:36Z the maintained
+compile driver still awaited original Job/process-tree settlement
+with VCTIP 20708 live. The raw session completion receipt, post-session
+audit, all/re2 and aggregate remain pending. The build README now
+documents the shared 10800-second window (local DCO 03fad2c0).
+
+cu14 core-session-build naturally finished at 10:10:28.3974032Z.
+Actual elapsed 1565.645 s, exit 0, timeout false, zero final active
+Job processes and no forced termination. Checked stage receipt SHA
+87aeb65eb02c82f3fda13e4b8d9438a0dfc352741b071fb4566c7453be9947be.
+The verified session library and both exports remain under cu14.
+The compile owner now audits the post-session tree. Proceed to
+all/re2 only within the original window; all/re2 and aggregate receipts
+remain absent. The remaining native completion time is unmeasured.
+
+cu14 all/re2 started at 10:21:00.5196679Z, CMake PID20692 and wrapper
+52976. The CUDA provider activations.cc action at 610 compiled under
+C++20 and /WX with the target-local compatibility definition. The
+run continued through actual NVCC math, tensor, attention and other
+CUDA kernels. At the original roughly 11:06:12Z cutoff the final
+retained log ended at action 934 of 1259 (relative_attn_bias_impl.cu).
+The remaining-time path check timed out on the last 0.3845 s of the
+original clock. Outer checked receipt
+e91a4234fd335367058d168268c7bd55563761384bb9e02e2b95edbe57a6a248
+records exit 1 and no full compile receipt. The 10752-byte shared
+provider DLL exists. The CUDA provider DLL, build.tree.json and full
+stage settlement receipt are absent. At 11:06:27.98Z the listed
+compiler/driver/wrapper process IDs and compiler image roster were no
+longer observed. This is a cutoff failure with incomplete settlement
+evidence and carries no aggregate, model or platform qualification.
+
+Two workers are exact for cu14. Its bytes, absolute recipe pins and
+original successful configure/session receipts are retained as history.
+The host snapshot while CUDA jobs ran at 10:51:57Z observed 64 logical
+processors, 127.9 GiB physical (65.7 GiB free), 96.0 GiB commit against
+135.9 GiB limit. One sampled cicc reached 916.4 MiB working set; that
+sample is not a bound for all kernels. The next in-scope correction is
+an explicitly pinned eight-worker sibling build after focused command
+and independent native verification. It keeps two internal NVCC
+threads, one Flash NVCC thread, exact target order, output policies
+and the 10800-second original per-attempt ceiling.
+
+Local DCO 521bcae5 binds optional parallel_workers as exact integer
+2 or 8, with legacy absent=2. Python dispatch and replay and the native
+verifier reconstruct both full commands from the reviewed recipe.
+Focused Python controls: 85/85. Offline strict all-features Retrieval
+Clippy and Nextest passed on warm target/, incremental=1 with timings
+and the independently pinned historical static archive. Nine selected
+native controls passed (295 skipped), including both selected worker
+count mismatches under resealed stage receipts. Windows checked proof
+receipts fresh-cuda-parallel-native-controls-r1/clippy.json SHA
+9ed2670fbaa6fa1f1f8610d93e0fe16cb8ce671eee028cf1b25d94e620696da3
+and nextest.json SHA
+6b079ed5a8ab8d1f995f01209548104cf1e963cf5216e09b90994a721f0bf619.
+Repository checks covered 9773 public files and committed whitespace
+passed. No native activation or source gate was weakened.
+
+At 11:14:16.7997809Z verified same-human shell launched fresh CUDA cu15
+configure, whole 10800-second build window clipped to the same campaign
+deadline. Explicit Ninja workers 8 instead of 2, unchanged compiler
+environment and exact device/internal NVCC settings. Empty direct
+approved root cu15. The checked configuration recipe SHA is
+d10eb3ced57d17901e3749f05864e1f230b0d8988558a3ddaa98d72f61c1a863
+and compile/audit owner SHA
+9baab4661425582367f636c46d2a02871d43f8567d1b6c0e68445197e99813da.
+The previous cu14 evidence and root were retained as an incomplete
+attempt. cu15 must independently produce configure, compile, provider
+and aggregate receipts. The cu15 approximate cutoff is 14:14:16Z
+(07:14 MST); the campaign cutoff remains 05:29:42Z on 19 November.
+
+During cu15 materialization, independently reopened the checked retained
+reference campaign summary from
+artifacts/advanced-split/models/weights-v2/software-v2-independent-numeric-r1/
+runs-native-r1/revision-r2/reference-campaign-summary.json.
+SHA 2aab78bc14070e79405c6ecea13c0ad0c3c8fb799ef2a538bc56ef55a24e72a1;
+six successful independent executions, 36 forwards, unqualified.
+Verified original Compact and Large producer, fixture and opaque numeric
+input hashes from that summary. Compact fixture SHA
+3962186640b42648b345fa200516ed44a3de4ccab0d783e671c9c22c3b8b1bbd;
+Large SHA c87c4edcdec2ab5e98b41bfc186c3bb7d60791e7b9efd0aea186b731eecc3dd2.
+Both retained the complete live 17/128/8192 tensors, 3/8/8 candidate
+positions and two exact independently pinned arrays per case. Compact
+128 digest 791067affc1eeba53660a0044369f22f1f463535656419c5da9a486517222c7a;
+both Context wide 8192 tensors share input digest
+ca9d34d962e308e6e53af8e14101058e8f02fbb4151bcc65eda2ad88be3de1f0
+and keep each model's separate reference producer. This establishes input
+availability only; require the actual current model and native metadata
+seal before use.
+
+Local DCO 4b27a37e adds the standalone owned Compact128/8192 score
+runner using the frozen component and owned Job machinery. It binds
+the actual original references, exact selected row/journal ordinal and
+matching successful fresh graph observation before dispatch. The primary
+ran 151 focused combined inert controls and repository/whitespace checks
+(9776 public files). Native GPU execution remains pending; separate
+Large host/Job and broader product tests remain open.
+
+cu15 completed all eight physical source patch stages by
+11:24:56.2596861Z under the original clock. The checked CMake configure
+then entered the CUDA compiler and SM86 graph generation sequence.
+At 11:29:05Z observed CMake PID37364, NVCC PID5324, owned VCTIP
+PID33388 and the configure driver PID45556. The next action is to wait
+for exact natural configure settlement and final custody, then dispatch
+the pinned eight-worker compile from the actual configure receipt.
+
+cu15 actual CMake configure started 11:28:32.9804311Z and naturally
+finished 11:44:14.5362497Z. Checked raw stage SHA
+fe5ad8afec5287554b69b0fe0de471b9cc719028300ac260dc9976cb1de8dc48,
+941.873 s, exit 0, no timeout or forced termination, zero final active
+Job processes. Actual Ninja graph SHA
+015accf856515d8166582a4d0eb0ee29bc85dd27dfaccc506241653195eb4a60
+independently passes the C++/CUDA provider definition and warnings-as-errors
+checks. Full configure custody completed exit 0 in 2435.2625433 s.
+Configure receipt 2363267 bytes,
+e66d54941f57a37882d099c32f2087b5f6b391f592655fca192b493c347c8b9c;
+checked outer receipt
+38570486e6f62ad9b159f849514c0cf7327991b58612911023a86c18ddb6c599.
+The same human launched the pinned eight-worker compile. Preparation
+must finish before the native session stage starts. Watch its original
+cutoff around 14:14:16Z and require full compile/provider/aggregate
+receipts before any native application authority or model activity.
+
+The exact cu15 core session command passed with --parallel 8. CMake
+PID11984/wrapper51764 started 12:05:58.4289855Z and naturally
+settled 12:23:55.9128405Z, 1077.800 s. Raw stage SHA
+c3d6a8cf5beb9ebd787e256fe7fd51ec6fddeab2f1d0e31459719cb8ebc94de9
+records exit 0, no timeout/force and zero final active Job processes.
+The checked 92211902-byte session archive SHA is
+599afa1bdadb77f0ac11e95f70e16850285ffac7123fb6d5ce906ae292ce29e8.
+Exact COFF inspection observed 40 static members and both collector
+exports. The post-session tree audit precedes all/re2 with eight workers.
+
+Reopened the historical scientific manifest under exact scoped R2
+plan 067f519ec717ab16477362247eef7a7e7efdebcc3b7c1ee26bdbd1475ed3fb5d.
+All 11 non-ORT CUDA/cuDNN sibling DLLs were same-human owner-audited
+and rehashed against the original manifest's exact size and SHA.
+These unchanged SDK candidates are available for privately assembling
+a new closure. Await cu15's two exact providers, compare their actual
+PE imports and generate a new native manifest. Do not reuse the old
+manifest or transfer runtime-admission or placement results.
+The cu15 all/re2 stage entered CMake at 12:34:23.9290119Z, PID62032,
+with Ninja PID43740 and eight actual NVCC pipelines. At 13:04:40Z the
+log reached 1106/1259 actions with CUDA Flash Attention variants in
+flight and no compiler failure in the checked log. Native compile,
+post-build custody and aggregate remain under the original deadline.
+
+Audited the private cu15 source rosters from their live maintained
+owners. The 19 provenance sources pin to
+e1cfa8245f7d7988171e52f1fef1d05e4dccded01672053aec9f7ed9f3056e76.
+The four graph-runner sources pin to
+c6d480de1ba7999fed3faf73c7d26483a4bc762e2c272e9887110e2ee0540fde.
+Read-only inspection of the already verified Ninja graph found the
+96 expected static archive paths and both provider module targets.
+These observations establish intended build inputs and outputs. The
+next executable action after full native settlement and custody is to
+bind the aggregate to the actual compile receipt and original cutoff.
+
+At 13:10:57Z the build log showed the CUDA provider link at action
+1258/1259, with concurrent compiler processes no longer observed.
+The build wrapper and VCTIP PID62200 were still present, so natural
+Job settlement and post-build custody remained pending. The candidate
+provider bytes independently inspected by the pinned dumpbin
+e2c0ec987bb904acfe88c0685cbc836e695cf22007cb17f3ce9f39e785dec980
+were shared 10752 bytes,
+5d3774b82f611c8d7cc1ecd40f4d3db6466d270c7ea368e520484e4a6a728533,
+and CUDA 100160000 bytes,
+e2db5aa29a3feb27b3320ff09c5f6acdbdafdcb824443167e73a4a2e03f74743.
+Both observed PE import sets matched their respective historical
+exact R2 sets. These are diagnostic observations while the producer is
+still running. Reopen both against actual finished build receipts before
+staging, and independently assemble a new manifest from held bytes.
+
+Parallel read-only review confirmed the fresh environment and provider
+stage have disjoint owned outputs. Both require the exact settled
+aggregate and independently verify it. Bootstrap Cargo uses the five
+verified fresh static scalars, an absent activation-pin pair and the
+receipt runner's --release (incremental environment unset) and
+--allow-no-tests switches. Preserve the exact Cargo native roster and
+log before assembly image preservation.
+
+At 13:24:39Z verified raw cu15 all/re2 stage receipt
+4d96d58e020767253fd47f6b5747f089c14309c7e4b94eae4748149a7226de71.
+The exact eight-worker CMake command exited 0 after 2994.479 s in
+its owned wrapper, without timeout, oversized log, forced termination
+or active Job descendants at finish. Both providers completed linking.
+The compile driver is auditing the final tree and input closure.
+The retained full compile receipt is the next required input for archive
+assembly under the original attempt cutoff.
+
+The cu15 compile driver completed exit 0 after 6021.3436876 s and
+published the exact 40938-byte COMPILED_UNQUALIFIED receipt
+fd10bcc2115e681c827162362b90f3133abf5714bd58984921f0b7e38df6b890.
+Checked outer receipt
+f7e56cdd05bb1bcf6c044cb4da3f4157888f99a480394d47a9e95230aaa43369.
+The raw receipt pins 103 library candidates and both providers with the
+same bytes as the independent PE inspection. At 13:36:09Z observed
+running aggregate driver PID64520 with exact recipe
+c15530192116ce2886c3c1b8deec5f2fedafec78997e6e301b38136d745dc9d6.
+The original build cutoff still governs it. Require settled aggregate
+receipt, actual selected archive closure and both collector exports.
+
+The cu15 aggregate completed at 13:47:17Z within the original 10800 s
+deadline. The outer run passed in 691.6003272 s, SHA
+2416a7d8875fd3be9f642ad9b873c6b15f287d3cbe9dc5b4cd9196f79f946209.
+Retained AGGREGATED_UNQUALIFIED receipt 177278 bytes, SHA
+0ace440fe75aa3fa9187f0147c4977933168d065d715845f7c38bccda13a6382.
+It selects 96 static inputs and excludes the shared-provider import
+library. The same-toolchain lib.exe stage exited 0 naturally with zero
+final active, no timeout/force, in 2.567 s, raw stage SHA
+9153bc097f943268e49abcbcd68120d24a7a617b38b6c29efed02a8dace2353a.
+Output onnxruntime.lib is 900446232 bytes, SHA
+b045c58a916a5aa933d5a407a9046aa3d4c0e4c493ed46bcd44c95adc6d3a00c.
+COFF inspection found 920 static members, zero import members and both
+final graph/placement collector exports. The archive phase was 33.742 s;
+its full compile replay alone took 655.350 s. That measured baseline is
+above the separate 600 s preservation ceiling. Benchmark the existing
+checked guard's scheduling on representative real output paths before
+asking the full image preserver to consume the fresh lineage. Keep the
+original path and owner checks, per-call cap, and consumer deadline.
+
+Launched fresh environment/6 handoff and exact provider copy in
+parallel after the settled aggregate. Both independently replay full
+provenance under separate bounded consumer clocks. Changed native
+authority to the exact current configure recipe and compile owner after
+the aggregate was genuinely available, with separate component refusal
+regressions and current-toolchain documentation. Scoped native checks
+are in progress. The broader workspace boundary checker reports module
+cycles in airk-core, airk-ingest and airk-mcp. These paths and the
+baseline are clean against HEAD; carry the inherited failures into
+later workspace integration. No CUDA model, process, or release
+qualification is inferred from the compile and archive passes.
+
+Local DCO aa799b90 pins native Assembly to the reviewed cu15 recipe
+and compile owner, with separate recipe and driver refusal controls.
+The tooling README now records that the updated VS 2022 environment
+completed the native build and static archive. Windows Retrieval
+all-target/all-feature strict Clippy passed with retained timing,
+receipt d77f8355b7ccb882bd4189ab51650377e0134df61cb723b349396b349943efbd.
+The first Nextest launcher stopped before tests at the version parser
+because it joined lines with a literal backslash-n. The corrected
+launcher retains the same source and exact Clippy receipt. Nextest
+0.9.148 ci selected 9 and skipped 295, all 9 passed, receipt
+689020f79688d00f20628f763f0694e889ad7bb33ed420df329db3cfe025bc1d.
+The test images deliberately used the historical archive for inert
+projection controls. The bootstrap still requires the actual cu15
+archive. Workspace repository check passed 9776 public files,
+whitespace and AGENTS/CLAUDE equality passed, and native/extension
+manifests and lockfiles agree at 1.8.207.
+
+Both independent cu15 handoff consumers passed with the actual
+aggregate. Environment/6 completed in 981.313 s under its 1500 s
+budget, outer SHA edf2b8dda5e1ac8632f1b199ef56d5a492ea26bce19b9d6adc648275fb050f55.
+The 182533-byte environment SHA is
+05c074577ed80c5f2ac733a5775f71732ff631c890a78932083fddde9a7b4d5c.
+Provider stage completed in 993.277 s under its separate 1500 s
+budget, outer SHA e48c7210575cce331a2dc4cbbf5cfaa106e43b4dc7329809d52449c5131d7d38.
+The unapproved provider-only stage contains the byte-identical producer,
+both linked DLLs and receipt SHA
+910e3d23524d3ca7938b06b3d32780114e2975cf7c3410774735fbd766eea008.
+The simultaneous verifications contended for host resources; they do
+not establish the standalone 600 s consumer timing.
+
+Reopened the checked environment and emitted the exact private native
+build-proof value as its own 35693-byte file, SHA
+5618cca298c6472e5e5bab539ca27c23bce9282eb5e17b5866858f5a34bfbd4d.
+Launched the genuine bootstrapping Retrieval/Inference Cargo compile-only
+and checked private CUDA/cuDNN companion copy in parallel. Both must
+settle before image preservation. The existing 600 s limit remains.
+
+Bootstrap Cargo passed at 14:06:59Z with the actual cu15 static link,
+--release (incremental environment unset), target D:\code\Github\airk\target,
+four jobs and recorded --timings. Its command was cargo test
+-p airk-retrieval -p airk-inference --lib --all-features --locked --offline
+--no-run --message-format=json --timings. Runner 64.532 s, outer 65.780 s,
+Cargo receipt 6869d40f9af529fc2e896d5e06367117a973a7840a9275d026b7eed8f1e12d03,
+log e5bfc6b266c8f671f5fc2ad0ab7b4b1d6b3af4351933c8902245fed1069ff25e,
+outer b8104ae52c91b296ef12021f1935a14526f58a2893236076f6df125749d99c4b.
+Native source group ce5ea0a08c9a220228c743f4364e3899ab4a6c6ef43dd6a47c0d1c14f0b8b877.
+Independent Cargo JSON checks observed one exact ort-sys static link
+under cu15/gpu-aggregate and both expected collector exports in each
+of the actual Retrieval and Inference PE test images. No test executed.
+
+Private companion copy audited all 11 DLLs, report SHA
+f61958388a8c1695102a48b63252278fade312ee302cfaedfca2307c289bb6e7.
+The 15-leaf runtime census is
+8ed5f2899ccf29a1d3b3d56755b2d1ab616692f1bb294d186ffb4861c7c75700,
+custody file SHA 8280f9a102fd1f3cce8dce55ffdd81183f347fba40f73302a856bf496ff0fa52.
+The first census preflight stopped before mutation because the graph
+owner map uses the role key preserver. It passed with the correct key
+and unchanged input pins. No manifest leaves exist before preservation.
+
+On 2304 deterministic evenly sampled paths from the actual 37343
+build output paths, the exact, unmodified producer output_guard audited
+every path. Eight workers at batch sizes 48, 64 and 96 took 40.663,
+40.692 and 66.681 s respectively. The 96-path batch used its existing
+timeout split. Running two disjoint interleaved path groups each with
+eight guarded workers took 31.546 s at batch 32 and 27.264 s at batch 48.
+All same-human, path, ancestor, access policy and token checks still ran
+under the original 10 s per batch. No producer byte was changed.
+
+Implemented the two-group replay only in read-only fresh_verify.py.
+Reviewed the authenticated private module, restoration on refusal,
+whole-roster coverage, shared deadline and the unchanged build and
+held graph paths. The 93 fresh and 48 image Python checks passed,
+receipt 8fb14c348da47489160666a8d3ef04f131c3e5dbdd4d4cfaaded471030468569.
+New verifier SHA
+59864b9f5e8c7153b4155500f0f2e8649458485b12bd349f9b9f4fb42f9189be,
+revised exact 19-source roster SHA
+e16b0e2ef30cace3434b56d92da22a2f757ff23df41659a65e296ca845c44bf9.
+Dispatched actual --fresh-assembly preservation against the genuine
+bootstrap images, reviewed R2 source roster and original 600 s limit.
+Require its complete output before issuing native Assembly request.
+
+Independent read-only review reproduced the workspace boundary failure
+on clean Core, Ingest, MCP, checker and baseline inputs. It is required
+by CONTRIBUTING and CI quick, so it blocks final Windows qualification.
+The focused CUDA diagnostic can proceed. Exact closing edges include
+Core service to agent_manual/service_http and combined_context/combined_reads,
+plus bidirectional service edges with native_context_action and native_focus;
+Ingest control_snapshot and control_capture call across the same pair;
+MCP read_attempt returns into combined with local/execution and help paths,
+and unified/remote paths. Keep the reviewed baseline and correct these
+edges separately before final integration.
+
+Actual Compact availability preflight rehashed the original resource-run
+input, CPU profile, source manifest, exact numeric fixture and seven
+profile assets under the verified human. The external weights are
+6882271232 bytes, SHA
+7300a9202a4696f023799985131f6c4599ef9caaaa9b0d5b336f1c229574fbb4.
+The unqualified source sets remain exact and separate from actual
+CUDA profile generation. A focused refusal confined to the second
+audit group now exercises fail-closed joining. All 9 verifier controls
+passed again after that test-only refinement.
+
+Actual bootstrap image preservation completed in 574.968 s under 600 s,
+outer SHA 14b427b7da21c8a5fb1b2dd2ff1efc9b32d71f4f659c9262aa7b72e2da944830.
+Image packet SHA 93cbbe085923189f6a4a7e647e543b96c2c1e4c1d612844cbafe75f80ef8ee8b,
+Inference image SHA 3f3e5dbc0c979f19890af02a5406a1ac9e9777f557d97ed0788089b06462a4a8.
+Local DCO af3db748 records the verified replay scheduling change.
+
+The first actual owned assembly-request preflight refused before native
+launch. Outer SHA 8942cafd5a79aa85e03e71827be001b391fed842a10c3d2dc66d32f246282e3d.
+Windows Python 3.13.7 gave different ctime fields for the same file via
+path stat and handle fstat on D and C. Device, inode, size, mtime and the
+handle-to-handle tuples were stable. Corrected the check to hold the first
+handle while verifying and reopening the path, compare comparable tuples
+and retain the original deadline. Both new controls and the three actual
+file observations passed. Ten focused controls ran, nine passed and one
+host-shape case skipped. Repository check still passed 9776 files.
+Local DCO 2bfc1f8f records the corrected metadata owner.
+Actual assembly-request-r2 exited 0 in 21.282 s, outer SHA
+9519963254e2891faf29d038d9fabb69bc2c9b50698369f4d6a28d80cba7f3eb.
+
+Actual assembly-r2 refused: native selector exit 101, 13.695 s retained
+phase, same suspended user/default owner, one process, natural empty
+Job, no timeout/force. Outer SHA
+c414b91445949cb03d0f77ebab3b9ac86028e8970bf4c0dd8d3894ead5ad9480,
+execution SHA d16e943e9b7ca85cf22b5f5c476a9b7d179b2c17846b736cd55f9163f967d488,
+native log SHA 2e4597cba2ee6b956aa55a2903b28db2ec2cfadc6171de0a6d6ff365c1102fe4.
+The error GPU payload/system owner mismatch is consistent with
+ProjectionSource::hold falling back to the OS branch after its
+private ACL check refuses the original D recipe parent. ACL observations
+show that parent, the source owner files and CMake/Ninja grants include
+foreign 0x1301bf Modify on the original D paths. Staged runtime and C
+receipts remain same-human protected. No ACL changes were made.
+
+The maintained current route does not permit protected aliases for
+fresh required Source.authenticate inputs, and the metadata dispatcher
+refuses compatibility mappings. Revising an existing original logical
+pathname would change the recipe and invalidate the current linked
+lineage. Reuse requires the user-managed Windows UI access repair and a
+fresh read-only reobservation of unchanged bytes and narrowed policy.
+A fresh build from protected original paths is the alternative. User
+choice is pending. While blocked, address independent required workspace
+boundary corrections and review protected rebuild feasibility. No CUDA
+manifest or model pass follows from current receipts.
+
+Independent boundary correction 86c82ef2 moves the unchanged strict
+control qualification into its Ingest capture owner. Scoped Windows
+all-target/all-feature strict Clippy passed, receipt
+1e6e08923f9105c889d4cbb652ddba6793db37a05eafb7c55c2c537dad0c9a58.
+Corrected the launcher line delimiter before Nextest. The unchanged
+source selected 14 tests and skipped 298; all 14 passed. Receipt
+27aa7db2c11087b0b827c6c2567d77afdf87fd36020ffdffb261caf7e379db12.
+Repository checks passed 9776 files. The unchanged baseline now reports
+only Core and MCP cycles before the following MCP work.
+
+After giving the user a choice of UI access repair or a protected build
+and continuing independent work, proceeded with the separate protected
+route to avoid waiting on repository ACL edits. Local Git clone to the
+same-human C anchor cr16 pins exact 86c82ef2 and audited 10614 entries,
+SHA 6a1db6774877ac70958034c606379f393167ea70376d5e10a28d58c1b6051bf9.
+The 18 exact additively copied archives, Ninja and acquisition note
+are retained in ci16, receipt
+129405b3caa0778e9af766b976975400685d20bd6320311e8ed29f834a0edda8.
+The maintained CMake tool owner independently re-extracted and verified
+all 8146 distribution entries from the exact publisher ZIP and rehashed
+the pinned unchanged cmake.exe. Tool custody receipt
+1a658894e23203da79c930bddfbd6d11284568693286e617e0336397fc706e43.
+
+The new sealed recipe is a protected ci16 direct child, SHA
+532db27f7ef4b7f211e52c02f84abe46f8db6890aa8ac469bb285b81a8e2cfbc.
+The checkout and tool paths point to protected originals with the same hashes.
+No direct D file pins remain (2346 exact rows, 1904 native inputs).
+Checked actual native consumed tools and source parents for owner and
+foreign write grants. The cloned maintained owners keep their exact
+source bytes. All 324 original observed system headers and the 8-worker
+configuration are retained. Actual protected configure driver PID61336
+started 14:56:46.5245780Z. Its separate original 10800 s cutoff is
+approximately 17:56:46Z, bounded by the same campaign cutoff. Continue
+to require actual configure, compile, and archive settlement. The
+original cu15 passed artifacts, failed native custody receipts and the
+user-owned ACL path remain available without adoption/ACL changes.
+
+Independent MCP correction ce726343 shares the actual native catalog and
+existing public/combined schema decorators with Answer admission. Removed
+read_attempt's return edge to combined. The delegated agent supplied a
+read-only implementation review after its mutation was refused by automatic
+approval review; the verified primary integrated the scoped tracked change.
+The initial strict Clippy caught the local cache invariant test using the
+factory's old module path. Changed the test to keep using the live uncached
+factory, then passed Clippy receipt
+6613a6465de1f9a74445b182d3f4886a043f3bbeeb994002e9612fde4ebfb56a.
+Windows CI Nextest selected 9 and skipped 206; all 9 passed, including exact
+catalog/cache invariants, real selected routing and saved-source verification
+through the actual SDK. Receipt
+19db0b9310215bbe43d9efc1b2a6f3d7f5f699239883199223ca0d99959397ac.
+Repository checks passed 9777 public files. The unchanged baseline now flags
+only the Core cluster. The clone remains at the source commit sealed in the
+protected build recipe while the build runs.
+
+Protected cu16 extracted the original source under its new protected root
+and wrote source-files.json at 15:01:54.5101580Z. At 15:03:04Z, audit child
+PID9872 is working for the configure driver. Final source/patch/configure
+and compilation evidence is still pending.
+
+Protected cu16 completed all eight source patches. Actual CMake
+configuration started 15:11:17.2967201Z and settled 15:12:18.0187001Z.
+Raw receipt e51fc2a7c0d5832a602fd813ad7767979b9c1318f0bdbe0ae6ee95041e6ce06d
+records exit 0, 61.041 s, naturally empty Job and no forced termination.
+Full post-configure custody is in progress under its original clock.
+
+The user asked for a script and recurrence explanation. Direct ACL
+observations found an explicit Authenticated Users Modify ACE on D:,
+inherited through D:\code, D:\code\Github, the repository and CUDA
+inputs. The repo root has three other explicit Modify ACEs that also
+flow to descendants. The user's owner SID was already correct.
+Delivered scripts/dev/protect-airk-checkout.ps1, DCO 6237a499.
+Direct preview and -Apply -WhatIf projected exactly four grants from
+0x001301bf to 0x001200a9. The root DACL was unchanged afterward.
+Script SHA 357c97fabf7c89fcc54c75d531ca624f6a6e199df53beade0cefa6fa2cd127fb.
+Actual permission changes remain user-run. Recheck the exact original
+cu15 paths if the user applies the repair. A pass at root alone does
+not cover descendants with independent ACLs.
+
+The live Core source split is under native validation. Whole boundary
+checking now passes against the unchanged baseline. The authoritative
+Answer parity source rosters both include the moved context records
+without altering prior captures. The Focus source hash advances under
+the existing recipe with fresh metadata required for the new source.
+
+### 18 November 2026 UTC — resume, Core boundary close and cu15 custody
+
+Verified same-human Windows execution as TYAI\tdotn. Effective user,
+default owner and interactive Explorer all reported SID
+S-1-5-21-3678370870-3858642417-826968105-1002. AIRK scoped status
+returned scoped_status_timeout and did not confirm the workspace binding.
+Continued with verified local source and receipts without replay.
+
+Local DCO b58a100d4d367448f3821a619d4eed7236a15263 closes the
+Core module cycles. Self-reviewed the record moves, original re-exports,
+wire declarations and both Answer transport source rosters. The unchanged
+boundary baseline passes. Rehashed live source and retained logs against
+core-boundary-controls-r1. Strict offline all-feature Core and CLI Clippy
+passed in 128.965 s, receipt
+045944c77f42932009c89d1fa8ced934f8521937cd80c74af94d459d6a7e3474.
+Windows CI Nextest passed 54 Core controls (360 skipped) in 70.495 s,
+receipt 605da14181a8fbdbf5270f9bdb00078332c779a46dc3a1aaf5546c8fbe9d3c6c.
+Both real Answer tests passed against single, combined and open selectors
+through CLI, local pipe and HTTPS MCP (65 skipped, 152.138 s), receipt
+d7f37bef2b1659206ca2ae5e705c8af640aceb51268b0fa613b44fa24d45e113.
+These were scoped historical-static-archive checks on D:\code\Github\airk\target,
+incremental=1, with retained Cargo timings. Repository checks covered 9781
+public files. Whitespace and AGENTS/CLAUDE equality passed, and native,
+extension and lockfiles agree at 1.8.207.
+
+Protected cu16 configure completed exit 0 in 1592.854 s, raw SHA
+6ef033fd673a321157b3034f13d1d3f4acfdef80ac273ebeeb9251ae01bfd9def
+(case-insensitive SHA). No cu16 compilation started. The retained cu15
+assembly R3 then passed one actual ignored metadata selector in a
+same-human owned Job, 22.189 s parent/24.517 s checked outer, native exit
+0. Execution SHA ac73c02b0f8600f9430a79d2af162759d54e2886d938e2c57751f0d814f68f8d.
+Fresh fits-empty manifest
+9433753580c8a370bbea42119aa67ac81306229bcf6876514213f3e2979083b5
+and Rust emission receipt
+797dae568f066b60da80efbe678e0371f7026cb9a2b6d8e68d2711942045299d
+bind the cu15 original producer and same bytes. Repository root
+protected inheritance was observed. No agent ACL or ownership change
+or model/runtime admission was performed. Continue using settled cu15
+and preserve the independent cu16 configure.
+
+Rechecked all 15 files of the frozen bootstrap census and the three
+additive files (bootstrap Inference PE plus two emitted manifest leaves).
+All 18 match exact expected bytes and protected runtime policy. Private
+census SHA 39990a693e6772cc7b9adaf008ad021b590e54493eb27d7535b22a948cc4dde7,
+receipt 3a61c537fadc77600957eeb083dc5c607ef046b1cf8851ab24d047c9ad2e6c25.
+
+Current Core changes advance the exact Focus policy source digest and
+therefore affect Context task metadata. Independent review found the
+NN0 validator expected two Context commands even though Rust emits
+17/128/8192. The maintained Python handoff now checks all three in order
+and the unchanged singleton Focus selector. The existing regeneration
+request helper adds an explicit /3 option for Rust's source-only Focus
+metadata transition and preserves its /1 default. Focused controls ran
+17 cases, 16 passed and one Windows fixture-dependent case skipped,
+receipt 7b9e7f041b8bd5ed258990b83db9bcf4b147c914c05ec013e6270aba804e60e9.
+
+The first manifest-bound relink used pinned Cargo but inherited Rust
+1.98.1 and reported mismatched existing 1.98.0 metadata. Outer SHA
+d6a7bcd500983c1fc91496aa8db99755170ba4edaf843b896ce69d49851cc47e.
+The second explicitly pinned rustc 1.98.0 and independently reported an
+incompatible libsqlite3-sys artifact produced by R1. Outer SHA
+ce3ea3a0be015ed55c15e524551f06223e197675cefd1a4b30b30b136cd78209.
+Cargo JSON fresh=false plus file timestamps identify just four remaining
+wrong-compiler outputs from R1 in target/debug/deps. Preserve their
+bytes in a fresh private quarantine, use the pinned compiler and the
+existing warm target. Capture the successful exact compile and Cargo
+JSON before --fresh-finalgraph preservation, current native CPU profile
+regeneration and Compact NN0 metadata. No archive, model or source
+cleanup is authorized by this diagnosis.
+
+Local DCO bc34096f0a4b4b7befec7d3c0be92317af9b55ca records
+the exact metadata command roster and the /3 helper. Repository and
+whitespace pass for those inputs. Protected quarantine retained all four
+wrong-compiler files and original byte identities, receipt SHA
+68cd12ab4456ab457fbb7ce4a9a95730680996469adb64be9fe15e4383dca343.
+Reused D:\code\Github\airk\target without a clean. The corrected R3
+compile passed with explicit rustc 1.98.0 (88d9e12ae), 4 jobs and profile
+default incremental (environment unset). Exact command: cargo test
+-p airk-retrieval -p airk-inference --lib --all-features --locked --offline
+--no-run --message-format=json --timings. Runner 108.924 s, outer 109.386 s,
+Cargo JSON log SHA
+55339f6c2f8f5a2702a3d2687b79a3671c1861796a28511ec100418e51c9cd23,
+build receipt ba28e9deb160cb3e837ff58fb644f346257df720db83ca2cbee8981f89875b76,
+native source group f00f7640250124adc0ce390ec6fce6ba6a4740fe22173e554cc1b0a15b9cd3e8,
+checked outer 628fb9e5ee150b8557b530448fcdf51188c6252659a6360369a3c986ff9e6f23.
+Only compile/link passed. All 1053 observed created/changed target
+outputs, one Cargo-home output and five receipt files passed owner checks.
+
+Launched actual --fresh-finalgraph image preservation using the retained
+18-leaf census, the reviewed 19-source roster, same exact cu15 static
+archive and native manifest, and 600-second bound. Current /3 CPU metadata
+request is frozen at e6614488212eb019930eed1a27ae7437997e4d22a8130d79c8da61b05348ffe3
+with 22 live source pins matching the actual build. The expected size and
+human ownership checks passed for all 17 original non-compiler/non-CAL
+asset files. Regenerate on the preserved Retrieval test image after
+the custody receipt settles. No runtime admission or model execution
+has been established for cu15.
+
+Fresh final-graph image preservation R1 refused at the original
+600-second cutoff (600.332 s outer), during the checked full
+build-output path replay. The checked outer receipt SHA is
+05414c5d99253fb4b4b40f68d25857ba4686498aa3471b75e79e8e3c03fc368f,
+log a43308813cb1d51c7a69e143fc9e2590201ed5bdce2f43876e2a69db17ff420c.
+Many 48-path PowerShell batches used the existing timeout split.
+No output image or packet was created. Do not replay unchanged.
+
+Independent native CPU regeneration from the owner-audited actual
+Cargo Retrieval image selected and passed one bounded metadata selector
+(303 filtered), 23.98 s test, 24.928 s receipt runner. Retrieval PE SHA
+95acdc11ab54ab93eb2dea6d0555fec90d4959da3ecaf0f0a75341da94e954fd.
+Outer execution receipt f019a5f7f1842ba084f95339f83790799ff0470e9bc97f513f6e54fe96d99930
+and report 4e6cd07f61095eb4b509634bbcb3d04948cec798724ed24d5bc7193f54cda121.
+The report binds the /3 request, exact native input group and separate
+Focus512, Compact8192 and Large8192 Profiles/CAL with NN_invocations=0.
+No original acquisition resource was rewritten. Compact's current
+compiler matches the original independent exact 17/128/8192 fixture
+and reference producer. Its fresh host input with that original fixture
+attached SHA 18722ef1b3a38777afff5a3ff4ddcb2a396f2730e4e5097a462092e584ce8c27.
+Inference CUDA metadata requires a successful fresh image packet.
+
+The same 1536 deterministically sampled cu15 built paths passed each
+read-only scheduler comparison with the exact producer-owned guard.
+Two groups of eight workers at 24 paths took 24.068 s, two groups of
+four at 32 took 32.879 s, one group of eight at 48 took 31.131 s, and
+the two-by-eight 48-path baseline took 29.410 s on this sample.
+Sample SHA 0f84f0179a8550721abde6480f7214f3f6edcf2c40eeefcc6713ae64b1516a54,
+receipt 60532d9e00b2242f3ada42fafb333201e7d4d4433e3026659112c2eb556c42e7.
+The shorter batches avoid observed full-wave stragglers, while
+the scaled sample alone leaves little room for other replay phases.
+Measure bounded rolling dispatch on the same sample, retaining the
+producer implementation, fresh per-path checks and original clock.
+
+Rolling comparison on the same 1536-path sample passed all settings.
+16 workers at 24 and 32 took 22.365 s and 21.732 s, and 12 at 32
+took 24.963 s. With 64 logical CPUs, 24 at 24 took 19.974 s,
+32 at 16 took 20.097 s, 24 at 32 took 18.411 s, and 16 at 40 took
+22.343 s. Exact timing receipts
+e8f84aac7fbfdd44a961349a32eebaf8f18d51ba6ccd1d68c3728831ab67e736
+and ae25d31d8da4ae0bf230f90a02e99c9bd0995b0979bb750e7afb840f42a2912f.
+The selected 24-flight, 32-path schedule uses the unchanged checked
+producer guard and same original deadline. The independent review and
+77 passing focused controls include complete path coverage, failure after
+refill and restoration of the authenticated private compiler module.
+Focused receipt e7d99fe25a2454ca88feae6c88e4feeb647e02efb8c7954ca727c6f5319c7c04.
+Repository checks passed 9781 public files and committed whitespace passed.
+Local DCO 1bb98ef2 records the replay change and its maintained timing probe.
+The reviewed 19-source roster changed only fresh_verify.py to
+4dd46151df7ff631ae93bb5c807a9c7c4de7c87579dd845ba64b22ea5e3c706f,
+new roster SHA dd28dc6a37ad6a43b07997d693b75fc413a30c80832ab192c4f0928700978592.
+The verified preserver launched R2 at approximately 16:34:36Z, using the
+original 600-second ceiling and the same held compile and runtime inputs.
+Await exact settled packet and then prepare Compact NN0 from the current CPU
+host input. Sample timings establish the scheduler decision only.
+
+Corrected final-graph image preservation R2 completed exit 0 in
+523.793 s under the original 600 s limit. Outer checked receipt
+4a1fe00dbba5e97867f39efe1f0a432cbd2e3b42d0859e69412f22844deebc17,
+image packet 70add89a1acde1fca5e2dde56a14c4dd258d01a9e943238709e6ec9287962036.
+Preserved Retrieval SHA matches the earlier native CPU metadata
+execution image byte-for-byte. The preserved Inference PE is
+4f47a71446ba0ebd42f64bd055186d80b75ed30add6592971c5e0a5757aba10c.
+The packet binds the cu15 manifest, environment and both collector
+exports under the exact native Cargo link. Image preservation carries
+no model or runtime execution result.
+
+Compact Prepare request R1 copied four historical temporary environment
+keys and failed the closed current schema before native launch. Outer
+SHA 1206f1397c6c787f249aa28b6a18c8034657ceac5c15c9a0be32a80f684f24a9.
+Removed those four legacy keys from the fresh R2 plan and ran the
+maintained stage_paths check and canonical path checks first. Request R2
+passed in 25.287 s, one naturally settled native Job member, exit 0,
+zero final active. Request SHA e339b08853493a8de0bc93a3cde30f66747e8a1cc1a5c59cf9e70b792884bf8e,
+authoritative owned receipt 47814ff631e29a136625c89a5b497816e964591ef2b2fbbc2193550eaabbcaae.
+The optional enclosing wrapper stopped after native settlement on
+its absent empty combined log. The independently verified inner receipt
+and all native output bytes are retained. Later enclosing launchers
+create the checked empty log before dispatch.
+
+Compact FP32 metadata R1 passed exit 0 in 30.539 s outer; checked
+receipt d655c53669964dc1cedf57424d047ab0643133057feaa76810db52c402741ed4.
+Owned execution SHA f6fa447dc1cde18190c2f1c2b8200fcf2822c6c4a7359ea1c12ae0b2af369c7c.
+All six exact owned metadata files passed including the 17/128/8192
+command roster. Compact GPU Profile SHA
+be0619b5db8e5e4c5414c9870e5a1da7533bdecfeac67d20ff4b6f4f7d90dcb8,
+opaque Probe request 279c4687b8ac3ba961847be1e7a0d5273f8f34de717c9f88a8a70dd11be54501.
+Current held graph preparation uses this actual metadata and the
+preserved final-graph image packet under its original 600 s bound.
+Await its audited receipt and prepare the separately reviewed graph
+plan. Actual CUDA registration, optimized graph and model forwards
+remain separate evidence gates.
+
+### 18 November 2026 UTC — Compact graph failure and user-approved 32 GiB host bounds
+
+The original cu15 graph provenance preparation passed full revalidation
+in 537.213 s, opening and closing all 171 held inputs. Preparation SHA
+fee0f582be4c6ce09acff4b079cd4483571028beaf13eb57e5553867d9a97dbf,
+outer 774e777c81f3cc3a36a010db0c6f38ec2e113911951aedc9a53e72e0caabe8cf.
+The exact graph plan SHA is
+5ca8e1b9196b57429e1ac2fbc168cff0fb05273c88d5fe401838e3a7a3a7802f.
+Native Compact graph R1 reached actual ORT initialization and exited 101
+with bad allocation. Parent 62.933 s, native selector 31.39 s, no timeout
+or forced termination, one retained exit 101 and an empty Job. Its
+generic enclosing failure classified the nonzero child exit as a failed
+success predicate. Native control cleanup and host charge release were
+observed with no poison. The observed OS process cap was 17179869184 B,
+whole Job cap 25769803776 B, peak Job committed 17138774016 B and
+process RSS 15412097024 B. The single child came within 41095168 B of
+its process cap. Adapter-reported free memory before load was 49886003200 B.
+The available evidence is consistent with a host allocation constraint.
+No session, complete graph or forward was observed. Checked outer
+dfd2e8be70b6e3b11f33e56d09d93ca586d967af2abb913684c45e085a7e6b21,
+inner 5e08f4a8a6ef047f489c27646c41d3d50734411ee9ac94bd9db9e950fab2cc8a,
+native result f183af9147e682cd3fa83281a655c95a975360919783705e088710be1d7d3696.
+
+The user explicitly raised the Windows Compact process host commitment
+cap to 32 GiB on this 128 GiB machine. Adopt the minimum matching 32 GiB
+aggregate Job envelope so the full process allowance is effective.
+Fresh Windows Compact metadata and native checks bind that exact pair,
+the original 24 GiB device planning cap, 120-second window and unchanged
+cold/warm/headroom. Keep prior receipts at 16/24 GiB. Native Retrieval
+reservation still requires actual OS headroom. The graph wrapper selects
+the explicitly pinned policy adapter and holds its file in preparation
+and execution, preserving the cu15 producer's original authenticated
+Python guard bytes. The user decision is in docs/agent-current-work.md.
+The 32 GiB graph attempt requires its own image, metadata, held plan and
+actual suspended Job readback. The existing wider-row scoring adapter
+retains its original policy unless a separately reviewed scoring run
+needs the new pair.
+
+Native changes and adapter were independently reviewed. The combined
+Python graph, original component and owned metadata controls ran 155
+cases: 154 passed and one fixture-dependent case skipped. Receipt
+c000713c813e60ffc29942bb0f10f8006a9766be0abde97bea71a7d97e470d8a.
+Boundary and repository checks passed for 9782 public files.
+Strict scoped Inference Clippy passed with warm target/, four jobs,
+incremental=1 and Cargo timings, checked outer
+dfe673022036052026e181f1cd66ae57984864f1b355276c0f7e17b533c7e299.
+Focused Nextest and exact relink are sequenced on the same target.
+
+Local DCO b30d123f applies the reviewed 32 GiB Windows Compact graph
+host ceiling and records the user's decision. Scoped Inference Nextest
+selected 2, both passed, 171 skipped, 57.846 s with warm target/ and
+incremental=1. Outer e6082b03f481a745a6c3486729eb01918425d8e4af2a302bd75f21bca534af47.
+Manifest-bound compile-only exact Cargo JSON ran with pinned rustc 1.98.0,
+four jobs, target/, --timings and profile default incremental in 12.586 s.
+Checked outer 664e8f55e88d443f645998751ef29c10fadf3abb63c7aa7e39e3d875fd86df22,
+native source group 2e472ed73d540002ff1719f222991f1373428e24182ba419d46e400efed62986.
+No static CUDA rebuild was required. The protected 19-leaf runtime census
+SHA eb79b31e09f9d6f0e754871d4560b1e976b183885f2c07921ee1a27e0c3f1930.
+New exact image preservation exited 0 in 474.622 s at the same 600 s cap.
+Checked outer 4e6da90c5e31b7e5c54f5397b0f6e881eddd07fe96bf449408cf67074e9e8e0f,
+packet fb486a0351cb11047e7567d28e22661d706e9b6469878e99977cb74161d200d2.
+
+User directed the campaign toward fewer serial handoffs and unnecessary
+long runs. The primary and independent audit identified the minimum
+current sequence. Reuse the identical Retrieval PE's passing CPU assets
+and fixture, the exact static build, manifest, and passed tests. Review all
+output parents and source pins up front. The single checked chain runs
+native request and six-file metadata, one full /6 replay under the actual
+held boundary, then current graph plan and execution. Plan and execution
+both consume that receipt without repeating the build-tree walk. No
+second broad suite or strict scoring attempt is scheduled as a debugging
+substitute. A graph result with any CPU assignment requires a new path
+before the unchanged strict scorer can pass.
+
+The chain passed the native request in 27.535 s, outer
+1280dc1c5186bb050c207c5d2f123374172c6d5b8f13978c3e81a946c7af026e,
+and CUDA metadata in 29.415 s, outer
+6d0be2f2a7e67bb36739a8560bced62d56fd7df3e5b429c5d597ceec80fa54e8.
+The emitted opaque requests bind 34359738368 B host and Job, original
+25769803776 B device and 120000 ms. Held graph preparation is active
+with the exact new adapter pin. Capture actual OS cap readback and final
+graph next. The earlier historical native placement map had 1295 CPU
+and 1491 CUDA nodes across 2786. It establishes the need to inspect typed
+edges and boundedness in the current graph, separate from its historical
+incomplete selected-log gate.
+
+The consolidated 32 GiB chain passed held preparation in 485.126 s,
+plan creation in 21.733 s and graph execution in 67.668 s outer.
+Preparation c919d0c9ede15d299d5b1562e2c27685e05e2748875d407e0df91e04c16d00e5,
+plan 1a076a9e98b91dece0a2c8e360f4d3d8b8347276e53e57954621478f9f2cebff,
+checked execution 2a32690cf79fc43cbce23b6e674d3a944a8db2daee5135abd5606740626e025b.
+Owned execution SHA 28dabc469854c848ec55b8007c55ce401470c92a922e14b23e5f58dae9e3f455,
+native graph result 2f4d3211e0bbf097c702acf90dcce046552a3e2d75dc49b2f5945d7988c76fee.
+The Windows Job readback showed 34359738368 B per process and for the
+aggregate Job. Peak host commitment was 17121054720 B, process RSS
+15411896320 B. The native report began at 33.019 s, checked owner
+elapsed 65.217 s. Actual session creation, full optimized graph observation
+and natural teardown passed. No forward was dispatched. Selected logs
+were incomplete, explicitly disclosed by the distinct graph diagnostic.
+
+The live graph has 1491 CUDA nodes and 1295 CPU nodes. Reopened the
+same native receipt with the maintained dataflow report, without a
+second model dispatch. All 1868 distinct CPU-connected values are fixed
+INT64 or BOOL. There are 454 scalars and 1414 vectors with maximum
+axis length five, no unknown or dynamic CPU value shapes, maximum
+payload 40 B and one-per-value payload sum 34131 B. The 368 distinct
+cross-provider values are also fixed INT64 or BOOL, maximum 40 B,
+payload sum 10368 B; directional counts 226 CPU-to-CUDA and 142
+CUDA-to-CPU. The counts describe graph dataflow, not actual transfer
+traffic, live allocation peaks or inferred CPU fallback performance.
+Typed report SHA e7dee7951f2b4f80044285fe63e7745c41a0ad7ce1065eb1f98aeea4ba8b40cc,
+checked outer 42c26607603c3f43ab30868083794001423622826c6f2b06c3d3cdc30adcb06f.
+The report refuses the earlier failed graph, and fixed/dynamic/unknown
+scalar-vector controls pass. Actual replay took 0.405 s.
+
+Strict CUDA scoring remains blocked by the observed CPU assignments.
+Use the exact graph to scope G2's bounded-hybrid candidate to its
+fixed-size integer/Boolean control path. Validate full final graph
+identity and CPU tensor bounds before an experimental forward, then
+obtain real host allocation/transfer profiling and the original
+17/128/8192 score evidence. The graph inventory alone supplies no
+placement authorization, profiling claim, model qualification or
+1.9 release completion.
+
+Local signed-off placement report milestone 6a62b7d16e89428ba5f9057346bc2c5d4dc773fc.
+
+### 18 November 2026 UTC — FP32 matrix and checked RDP resume
+
+The user confirmed an active Windows login. Win32_ComputerSystem.UserName
+returned blank, while quser showed tdotn active in RDP session 1. The qualified
+TYAI account resolution, shell SID, default owner and checked Explorer owner
+matched SID S-1-5-21-3678370870-3858642417-826968105-1002 in session 1.
+Earlier operations halted on the unverified ComputerSystem observation.
+Workspace access resumed after the explicit session and identity checks.
+
+User approved FP32 Context 32/128/1024/8192, retained 17-token evidence,
+and approved the bounded-hybrid experiment. Use retained independent
+128/8192 rows at exact matching inputs and obtain new independent
+32/1024 rows. Preserve graph, model, FP32 math and score acceptance.
+Profile the four rows serially in one loaded session under the original
+deadline and preserve separately the required cold and warm gates.
+If Large has a measured host cap constraint, a separate 48 GiB process
+and Job attempt is authorized. Run one Large process at a time with
+exclusive GPU use and observed Job and reservation settlement.
+The inherited qualification contract otherwise applies, with separate
+FP32 and FP16 evidence. The next work is reference-input preparation and
+the experimental profiler gated on full validated final-graph evidence.
+
+Independent reference input preparation ran with the verified human account.
+Publisher source inventory c75cab156764b9b546bd4018425c6f80261e64feedb431e5cec093283ba59fd3,
+Torch/Python inventory 23f9fbfa770d18ee2549dbd6c1b553e204ab8e387ba51b92b620dd24c10189cb,
+12,994 runtime files. Current retained Compact/Large producer and fixture pins
+were reopened against exact 128 and 8192 input objects and both unchanged
+8-score arrays. Large all-live 128 digest is
+896894042a04d02773bf5a48c8b557d60156b58d503cb47728539c32c4bd2994.
+
+On warm D:/code/Github/airk/target, Cargo/Rust 1.98.0 and incremental=1,
+scoped all-feature Inference/Retrieval Clippy passed 27.892 s, receipt
+c7ee9e6c1d2014828ba3c2465ecfb7bd3c8230ce1701225861a6a35e301c17df.
+Nextest CI selected 4 passing tests and skipped 476 in 47.827 s, receipt
+225996a4837625901d7840c9f47e333a2eb7a220715a84afb36367f5cf54b856.
+Receipts retain complete argv, exact inputs and Cargo timings.
+Repository checks passed for 9,786 eligible files including AGENTS/CLAUDE
+equality, and four focused Python custody tests passed without model work.
+The initial Cargo preflight had used the SYSTEM-owned profile directory as
+its boundary and refused before Cargo started. Direct human-owned .cargo
+subtree checks and post-run audits then passed with the same identity.
+
+Native test image 442e1d8d65bff9d1f3abeb7c0f6d28defb08eb8c1117c3007fade443e208bbf3
+executed the new emit_software_v2_additional_context_numeric_template selector
+once for each model, 2.170/2.141 s outer. Checked receipt
+207c80bc1e4b17b0b53cf7e880080e480fd93ba9dc865d72fec684670990dde2.
+Compact blank 32/1024 template e233625bc040c57b1ea191751eeacf64f2018e33c60b699fd7a55a03777ef7db;
+Large template 5843b00ef571d28d112fced2633eefde5dd61785885a86c4b7ca2c29034360b9.
+These native calls had zero neural forwards. Independent Torch generation
+and CUDA arithmetic/profiling remain distinct gates. Current preflight host
+commit headroom is about 42 GiB; historical Large reference peaks were
+50.17 GiB original and 43.68 GiB same artifact. Recheck before a Large
+run and keep experiments exclusive. The 48 GiB native fallback limit is
+separate from the retained 64 GiB Torch reference phase envelope.
+
+The standard native metadata regeneration refused Focus's changed task
+identity at its historical public-source guard. The existing source-only
+metadata mode then passed in 23.83 s on the same audited Retrieval image,
+with 3 profiles and NN0. Exact metadata request
+83d95cc5dac201b8f4f078faa6edf82248d40f92d46f9eeef062acff9fe12ade.
+Context profile manifests and task/calibration identities changed;
+non-calibration asset rosters, ONNX, weights, compiler, ABI, and resource
+policy were exact. Current native inputs a2b126d1452a356f78d7cb0cb4d10b1c324cfaaa27ce8b822a2eb7e8d77b1ef9
+(Compact) and af9a46022b51994f9b5dbe620433a8868d1ad7b40fd223019167ae2ef90cac8b
+(Large). Re-emission proved identical supplemental templates and exact
+complete 128/8192 input objects for both retained reference producers.
+Current native original rosters cdcaa58a7e26cac4d389a3e790502d1236e1ca31241809c3337700e574e4e7cd
+and 7663ae256035f3ac63fe6e1499cfa10b92a827f4e8d0941365724395b67d98b5.
+Raw numeric evidence neither qualifies nor transfers the changed calibration.
+
+DCO local source milestone c8e68835ff57a18d30c94db4a1fe8153df46cc0f.
+The first Compact owned reference launch stopped before creating its
+output directory or starting a child: the new adapter supplied a SHA pin
+without the length required by the existing exact Windows custody helper.
+After the correction, the real adapter passed both planned-output and
+created-file observations in a no-write check. Any previously sealed plan
+with the old launcher (including the concurrently attempted Large plan)
+must be re-prepared with the corrected input hash. First corrected Compact
+original plan c160e6bcb91a234bd66f4345b584b120434f2535bb3b471132faaebd20387855.
+
+
+The corrected Compact reference pair completed with the same verified human
+account, one model process per phase, 32 GiB host Job limit, exact 32/1024
+tensors, and two forwards per child. Both Jobs naturally emptied and
+released custody. Original-publisher receipt
+2f89fca0235777905b7548054f5c51dde7bd3c5f132ff211e679dc4185948feb,
+105.835 s, peak host commit 15051579392 B. Same-artifact receipt
+d61eac27ac2113d135475522518e6b6b68f1111bbad4261e5a5a98ae84578d4e,
+146.135 s, peak host commit 17834450944 B. Supplemental producer
+b3849443d0d4d737d5c3f88b323b9eaffbd1045500d97f1487c56be639884bbe,
+fixture c4360d8a759c68c305fba0df7bd04001a6b043d8a2a57b36f0d8ef0f898519b9.
+The owned commands and sealed inputs remain in their execution receipts.
+Compact has exact independent coverage for all four widths. Native CUDA
+score and placement-profile evidence is still open. The next native action
+is to connect the private graph-gated Retrieval scorer to a single owned
+Compact four-width profiling selector using the current 32 GiB graph/Job
+proof and the retained and supplemental reference fixtures. Before that
+build, review the adjacent legacy Focus source-only compatibility pins
+separately and preserve the production strict CUDA gate.
+
+After Compact settlement, host commit headroom was 43.8 GiB and GPU free
+37,992 MiB. The historical Large source phases peaked at 50.17/43.68 GiB,
+so Large neural work remains blocked on measured system headroom. The
+Windows native Large 48 GiB limit remains conditional on observed need and
+headroom, with one Large process at a time.
+
+Local signed milestones 540f15764402d4c00330399ec8bb779211157b3b (real
+Windows audit file-size correction) and
+10364b56dc499dbd61b5c4dcf62ce223f8a7c877 (deferred AMD testing ordered after
+the Datagram Mac weekend). DigitalOcean Linux Instinct is documented for a
+future MIGraphX check. A separate Windows Radeon machine is required for
+Windows provider qualification. No AMD rental or model execution occurred.
+
+Corrected Large plans prepared and ownership-audited without model work.
+Original 258bb41a8e4d2c51092015a68b8ec67562c96fc63b8b9fa918fdce89b1bd8ac1;
+same artifact a9a25470b21616dc4aecdc9628490cf3e0c61f744df19aedc7dc34830fe700e7.
+The plans are in artifacts/v190/final-plan/exec-20261116T052942Z/
+fp32-expanded-reference-preflight-r1. Recheck actual host/GPU headroom and
+run the original and same-artifact phases serially once they safely fit.
+The scoped Nextest target and cache audit settled. Both Compact model
+Jobs and both Large plan-preparation processes have exited.
+
+The user authorized Linux AMD qualification as the build basis for deferred
+Windows Radeon support because a Windows Radeon qualification host is
+unavailable for this work. The final plan records the compatible Windows
+Radeon provider assumption and preserves provider availability, fit,
+precision and qualified CPU fallback checks. Windows Radeon hardware
+behavior will be reported as unverified. Same-human TYAI\tdotn session
+and output ownership checks passed. Repository and whitespace checks
+passed for documentation milestone 839b0bbb325b65b2bc05052cae15c75e96d96950.
+
+On 18 November America/Denver the user explicitly directed continuation
+past the 10:29:42 p.m. 72-hour campaign checkpoint. Original T0, local-only
+scope, per-run limits and qualification gates apply. The active integration
+milestone is the Windows Context Compact FP32 four-width comparison.
+
+
+The private four-width native selector is integrated with its separate
+full-node ORT trace checks, two exact independent reference fixtures and
+original operation journal. Independent review confirmed exact retained
+request/graph/profile bindings and matching neural assets and rows in
+both producers. The Focus CPU source-only epoch preserves original
+descriptor and scope. Exact inverse review covers the Core type move, six
+test-only runtime hook edits and Windows assembly-only producer addition.
+
+On the warm Windows target with pinned Cargo/rustc 1.98.0 and incremental=1,
+the first Clippy found a clone-in-test warning (36.610 s, receipt
+e7d172d4e6dccfda5910ea8b199608ed2566129f1b75fefa6b8c6a54a83156c6).
+The corrected scoped Clippy passed in 6.002 s, receipt
+7fdfcdc12c06ad11a3841cc1c27272e7fc497eb339b3bd7880792840caaae556.
+The focused Nextest batch was 14/15 in 33.852 s, with one independently
+reproduced stale Windows assembly compatibility literal. Receipt
+12ed4ae18a774f6d0f0e1f50a389c85f3704189466eea72735a21d18abf92dd4.
+The exact changed regression passed 1/1 in 12.936 s, receipt
+d7e393209426f1c2c3b8e9d5343ebcf99fe4aaf8bbd123532ff0f5ede54446ba.
+Current manifest-bound Cargo JSON passed in 39.281 s with incremental
+environment unset, receipt
+e61f0206ef8358d174958f71f22c4157e5735cda64a5d6c811f3576052adcbf9,
+source group 1d9a56e7a2dfcbc28ffabf72f16d052c93ba3b50fdd9c08a69323890a854d5f1.
+Complete argv, target, timings and checked output ownership remain in
+the receipts. No Cargo/compiler descendant remained before PE preservation.
+The separately reviewed outer launcher passes 4 focused controls.
+
+Reopened exact CPU component receipts for Windows Compact, CPU4/intra4
+and inter1, matched input digests T128 791067af… and T8192 ca9d34d9….
+Single-run native elapsed measurements are 1.028975 s and 85.361677 s.
+For the separate T8192 twenty-sample resource window, nearest-rank p50
+85.579186 s and p95 86.049136 s, observed load 14.684238 s.
+The CUDA test image still requires actual preservation and the checked
+profiling run before comparison; the eventual warm series is separate.
+
+
+First actual Windows Compact FP32 CUDA attempt completed model scoring at
+32/128/1024 with exact winner parity and maximum raw error 0.000167847.
+Native call durations 0.267975 s, 0.163132 s and 0.204882 s. Session load
+18.570533 s. Exact T128 prior CPU native call 1.028975 s, about 6.31x
+in this one profiled GPU observation. At T8192 the QK MatMul materialized
+FP32 [1,16,8192,8192] (4,294,967,296 B). The Add consumed that tensor
+plus 268,435,456 B mask and failed to allocate its output. Available
+arena bytes 4,278,190,080, 16 MiB short. Arena held 12 GiB plus 16 MiB
+against its 16 GiB internal cap. This was a device arena failure with
+healthy host Job cap readback 32/32 GiB and peak commit 18,006,069,248 B.
+Exit code 101, final active zero and no force. The full run is failed.
+
+R1 preserved inventory d00ffee78bf9063058b70bdc389c45f274b8973f7b38b8957c625c066eb1e911,
+image 9b6016d6bf2284e1600420715cdda4e6d0e6716688213e143b691f0a0c1be378,
+plan 28d58f13470f3c200bc0882b43276be0282e6981077b7a25202b92f913009c77,
+outer ac193b23e826624c8e3943bf7530efd18b061c3651485e68de4efe762d402ba5,
+native e3fd8d525bd0f7abc7eae08b154dd9410c02a6ee6d27d475bce7af3b4814ef4f,
+partial trace b53d7203c1ea105876973e802672b5ca184a5e3f3b86e0a0af9e1f063c309697.
+Outer elapsed 62.299 s. Trace review independently matched all 2,786
+sealed nodes in each completed forward, with 1,491 CUDA and 1,295 CPU.
+Each covered forward had 43,283 CPU input and 20,763 CPU output bytes
+counted per kernel, maximum 40 B, only fixed INT64/BOOL. The T8192 trace
+is partial and neither it nor the earlier rows supplies a four-row pass,
+unprofiled warm p95, physical device peaks, or transfer qualification.
+
+Signed source milestone 25aba9e40fc68c95f4d41f3a80a4790bd2d6913d.
+R2 uses the distinct capacity policy 071891ef57f12067bd386ccb0230f5018eb2a1143109d6aeeb0db731eab50586:
+22 GiB CUDA arena, conservative 16 GiB declared warm increment, 2 GiB
+headroom, existing growth strategy and unchanged 24 GiB envelope.
+The observed resident ~8 GiB arena makes 16 GiB conservative for its
+potential growth from the early forwards. The strict production contract
+and previous measurements retain their own identities.
+
+On 18 November America/Denver the user removed Radeon GPU support and
+qualification from the Arbiter plan. Radeon-only systems use the qualified
+CPU variant for the selected model when it fits. Removed the scheduled AMD
+Linux rental and Windows Radeon assumptions. Current native runtime has
+CUDA and CPU execution paths. NVIDIA CUDA and macOS scope continue.
+Same-human Windows workspace and output checks passed.
+
+Radeon plan removal was signed locally as
+712845082595e2a5109108be9129043683ee6fc7. Repository checks passed
+for 9,795 eligible files.
+
+Corrected R2 22/16/2 GiB private arena policy passed all four exact
+Context Compact FP32 widths. Scope is one profiled model component
+forward per width, on Windows RTX A6000. Original Job 32/32 GiB,
+24 GiB total device plan, 120 s whole-phase. Native-call times in
+seconds: 0.261361 at 32, 0.173289 at 128, 0.206610 at 1024 and
+3.366335 at 8192. Native cold load interval 17.235542 s. Compared
+to retained identical-input CPU native calls, T128 1.028975 s gives
+5.938x and T8192 85.361677 s gives 25.357x. Full independent scores
+and argmax pass, maximum raw error 0.000167847. Each trace window
+contains all 2,786 exact node assignments (1,491 CUDA and 1,295 CPU).
+CPU inputs 43,283 B and outputs 20,763 B counted per kernel per
+forward, maximum individual tensor 40 B. Observed CUDA arena held
+peak 17,180,917,760 B and kernel sampled in-use peak 16,075,364,096 B.
+Physical device total peak and transfer bytes remain unavailable.
+Host Job peak commit 19,103,977,472 B and native peak RSS 15,465,467,904 B.
+Actual natural exit 0, empty Job, native session and host charge released.
+
+Pinned Rust 1.98.0 on warm Windows target: scoped R2 Clippy passed 21.066 s,
+Nextest 2/2 passed, 176 filtered, 28.913 s, incremental=1. Exact Cargo JSON
+image build passed 14.178 s with incremental environment unset. Group
+048fcfcabdf7bf5a248f672b3a75a49ae1ace31bf6102784e6db6a3e883b9cdd.
+All checked receipt argv, timings and output ownership retained. R2
+held /6 image refresh took 46.026 s, without rewalking the historical
+build tree. Inventory 9bc6fb35a912568be7027c25ccdf7a1b21f23c596779469db8b2494fa3c11545,
+refresh proof e8311dcf3fa34024f8879c9afdc48f7eb3dd0228a91c5c95f6b710079a9fbd0c.
+Plan 53bb3b526a7eaca50450474b310d9d371665f0ed09f71a9df58e4cd5c88fefaa,
+outer 1abbd515e534f4056e3c48380fffd290654e0b92dea67088ae291512f02cf2a2,
+native f4a80598876dfdfe8daef8eac941bc0baebae267d29a824245a36a2ec9307db7,
+trace 5cd475aa8a1e87858a85d38c1498afc8a64c614ccf08ba2e69b8f30af1b158d5.
+Whole outer profiling 69.378 s. Signed local capacity checkpoint
+e32fc89e6084d15e0e7e6efdcef65d715eae8c44. Next integration is same-session exact graph-gated unprofiled
+cold load, warmup and 20 real 8192 samples with an independent workload
+receipt and the original 120 s per-operation deadline. Composed Answer
+and production device admission remain open.
+
+On 18 November America/Denver the user approved Windows Radeon as a separate
+optional DirectML experiment and a service-wide GPU-use switch across all
+backends. The switch takes precedence over device and precision preferences.
+GPU-off and eligible Radeon failures select the qualified fitting CPU variant
+of the same model. The original request deadline, no replay of unsettled GPU
+work, and owned release conditions apply. A6000 results motivate this decision.
+Radeon qualification and performance remain unverified. No rental added.
+
+The GPU opt-out and experimental Radeon plan is signed local commit
+1ab44b79a0b9f0b89c2f08fdb42e4c0dd12b64f7. The repository check passed 9,800
+public files and scoped whitespace passed. This checkpoint is documentation.
+
+### 18 November America/Denver — Compact FP32 CUDA Resource20 passed
+
+Exact unprofiled same-session Windows A6000 Resource20 passed with one
+18.094818 s cold Load, one 3.648832 s warmup and all 20 measured 8192/N8
+forwards inside their original 120 s operation limits. Each result passed
+both independent numerical references with the R2 graph gate and 24 GiB
+device budget. Identical input digest
+ca9d34d962e308e6e53af8e14101058e8f02fbb4151bcc65eda2ad88be3de1f0:
+CUDA nearest-rank p50 3.199406 s, p95 3.245899 s, max 3.252337 s;
+Windows CPU4 nearest-rank p50 85.579186 s, p95 86.049136 s, max
+86.297421 s from the unchanged CPU receipt. The measured native component
+p95 ratio is 26.510x. No complete Answer, other adapter, physical VRAM
+peak, or product activation follows from this result.
+
+Whole owned run 134.281 s. The 44 QPC events authenticated all 22
+operations, empty Job and natural exit 0 without forced cleanup. Native
+session, control and host reservation released; peak host Job commit
+18,909,720,576 B and process RSS 15,466,065,920 B under 32/32 GiB caps.
+Plan fa42ae8ba4a3acd240e1cd8489cf348b130846e55e2407bfa7ed63888d07bb1f,
+native test image ed60a1b5e15e63b56d10f0d05a7053dcf5eef82092e4daec6cf19a3c79a43c16,
+execution receipt 941f1fc208d0379320801eecf0b6f55427c9d5b5cab37d0734e7de5852258b81,
+native result 2e15ef058badb0a75632fb172423c6426815730e0e5701fa2981f12c56928f52,
+journal 9a1ed6e475e424ed8e37192c79a203868beef3e1e57b5c8ea197fa59def49c7a.
+Exact command in that execution receipt under the checked human local
+fresh-cu15-compact-resource20-owned-r1 directory. Before launch the
+Resource20 prepare rejected a stale launcher hash. Corrected the source
+pin and the expected distinct unprofiled policy, reused held image
+inventory cd2985b5212a353dff66a64f8489f1f11f333b35b22763d4a941a3412b04f155,
+and prepared the joined plan without repeating the image refresh.
+
+Pinned Rust 1.98.0 warm Windows target, group
+75fb6f967824f51cc3fc0c974c74b400f6bc9cac196364d2db676a9a86b6ab47.
+Scoped Clippy 21.616 s, Nextest 12/12 (474 filtered) 37.128 s and
+manifest-bound build 36.525 s. Exact commands, target, incremental mode
+and timing are in the fp32-compact-resource20-{clippy,nextest,build}-r1
+receipts. Three focused Python controls, both CLI smoke checks, repository,
+format and scoped whitespace checks passed. Verification and writes used
+the same TYAI\tdotn account and default owner. Signed local source commit
+3087a9058d27bfdd7814b3b849ba3955e5eabff2.
+
+The user then authorized expanding CUDA coverage to GeForce RTX 40 and
+50 families. Current A6000 receipts retain their exact SM86 scientific
+identity. The workstation exposes only the RTX A6000 (SM86, 597.06,
+49,140 MiB). WSL2 uses this same physical GPU. The new build and native
+compatibility policy need separate SM89 and SM120 evidence before those
+architectures can be claimed as qualified. The paired real-pipe Answer
+comparison remains open independently.
+
+
+
+### 18 November America/Denver — Windows CUDA expansion and Admin compatibility
+
+Added signed local source commit d0e817dbf6ba6504093d4d8675835bce55af58eb.
+Windows CUDA candidate targets SM86, SM89 and SM120. Keep one exact class
+per qualified product profile, preserve the original scientific SM86 policy,
+and require signed manifest requirements that match the authenticated build
+architecture list. Rank only adapters matching the selected model and
+precision profiles. Prefer physical fit, then capacity and ordinal. Actual
+available memory, load, placement, numerical comparison, synchronization
+and settlement retain their original checks. No RTX 40/50 release evidence
+was inferred from the A6000. The separate original provider code inventory
+showed 289 SM86 code objects and no PTX.
+
+The user named the RTX PRO 6000 Blackwell and requested compatible hardware
+visible where Admin enables Arbiter. Signed plan commit
+d897f10ea0c9c87b23af321cb8cbfb71d847143e names the RTX PRO 6000 Blackwell
+editions in SM120 and calls out RTX 4090, RTX 5090 and the Workstation
+Edition for representative testing as available. Admin lists the installed
+build's CUDA families and its experimental Radeon families beside the same
+Arbiter and GPU controls. The view shows actual adapter, model/precision
+fit, Radeon opt-in status and fallback reasons from canonical metadata.
+Repository check passed 9,806 public files and scoped whitespace passed.
+This commit is plan content.
+
+Rust 1.98.0, Windows warm target, incremental=1, source group
+c0d9b931be6620ec71e33a129408553ea88503f738d4562b5d6074552ac95ab8.
+All-feature Retrieval/Inference/Service library and test Clippy passed
+62.256 s (receipt rtx-cuda-product-clippy-r2,
+57f47e9564ac96f9e73b52d7bca3d38e0fcd7abc611e2a220459a8c42fb760f7).
+The first Clippy batch had the wrong bundled-model directory. The first
+Nextest batch selected rustc 1.98.1 for some children despite the Cargo
+path. Pinned Rust child tools to 1.98.0, isolated exactly the two SQLite
+outputs and matching fingerprints from that failed run, and reused the
+warm target. Nextest r3 passed 17/17 with 788 filtered in 100.499 s
+(receipt bfbf0d7d7432f17e284a56017475f460cd3fb807c7397a2e429a366950faab03).
+The wrapper's empty output category was recounted with the checked batch
+audit, which verified the receipt and 3,882 generated target entries.
+Formatting, repository checks, five candidate driver controls and two
+archive adapter controls passed. No candidate native runtime result follows.
+
+The live independent cu17 configure started 13:26:20 local under the
+verified TYAI\tdotn account and default owner. Exact source
+865f88d629127f8931b3763e68096c0908c01f1eaaac3acfdc6abc2dbc4288bb and
+recipe a0638c1bde27b324d96ddebafe3171adc5936999b9b0bd626018c3eec558d497.
+Build root is the checked local-campaign child cu17. Original 10,800 s
+build wall allowance and eight reviewed slots. Actual CMake ran 13:41:24
+through 13:42:15, exit 0, command stage receipt
+da9ef8662d96310e4b33b76f99085b186e7fe526401006301a2b247873161b87.
+Independent checked read of actual cache/Ninja verifies 198 general SASS
+edges for SM86, SM89 and SM120a, 41 Windows LLM edges with SM120 PTX,
+and explicit specialized Flash and TMA targets. Configure output audit
+is pending at this checkpoint. Next executable action after its accepted
+fresh-configure.json is the original-window architecture compile, then the
+same-build code inventory and private archive using the documented commands.
+Actual RTX 40/50 cards and public runtime provenance remain required for
+their release qualification. The A6000 paired Answer measurement is open.
+
+
+Private architecture archive handoff signed locally in
+8e06988f8c1608b3aa4e5e0790743dc4faa8c914; owner SHA
+f86ef0ccf8df201f5e63da1de7bce0c2406b7bc9c9ea9323446d8c6c67d8d27b.
+Independent two-control run, CLI smoke and repository checks passed.
+It uses the same original tool, code-inventory, COFF, Job and clock
+evidence checks. No archive execution has occurred. After the user said
+to proceed, queued the candidate compiler to wait for the exact cu17
+owner, verify fresh-configure.json and its recorded three-architecture
+graph, and then start the compile. Missing or failed custody aborts this
+handoff. The original build clock still applies.
+
+cu17 configure settled exit 0 with authenticated fresh-configure.json
+ff74214cb702747e124b8950ea179de5f0ec701f41e1d830d3fcf9c6f4fecbe1
+after 1,609.837 s. The checked architecture owner launched the compile
+at 13:53:14 local, PID 31996, with 71.0 GiB free physical and 42.2 GiB
+free virtual memory. The code census runs in that same original window
+after the compiler. The private archive command is queued behind exact
+compile process settlement and the required real and virtual code pins.
+No new model qualification has run.
+
+cu17 original compile did not pass. The core session archive appeared
+at 14:07:17 (92,211,892 B), but the nested PowerShell Start-Process
+tree waiter remained alive after actual Ninja leader 32780 disappeared
+and produced no tree-result receipt. Same-user parent/PID/command/clock
+checks identified Python 31996 and wrapper 63520. Stopped only that exact
+stalled wrapper. The actual outer owner then observed exit 4294967295,
+scoped forced Job cleanup, 0 final active members and complete settlement,
+without a timeout, after 935.114 s. Original nonpass receipt
+fd3e8159527f8f0dcefd1531a4f10dc42465b68d7c112beece43aeac62055974
+is preserved. No original archive stage launched. A distinct direct-Job
+warm continuation is being prepared. It will retain original evidence,
+reverify the existing build, observe new actual Ninja/Job exits, and keep
+the original configure cutoff of 16:26:20 local.
+
+The independent private paired Answer source checkpoint is signed local
+b0d9312ab89096efb9e686ee25e37c20392082a0. It binds the same lease, source,
+graph and original deadlines in the ordinary service and scoring path,
+with a separate Windows CUDA ignored fixture. Resource20 and the
+historical A6000 images and receipts retain their original bytes. Scoped
+all-feature Retrieval/Inference/Service Clippy passed 42.881 s and Nextest
+9/9 with 798 filtered in 74.235 s, pinned Rust 1.98.0, target/ incremental 1,
+group e83f539f66c4bd14e04e360be7ffe3b3ad676deef264f65dd294a522014e3fca.
+Exact commands and output custody in fp32-paired-answer-{clippy,nextest}-r1,
+receipts c3b9f87e5fbade67656da1b18598585140c8879c09a62f2c39f0082683195e6e
+and 571b7b17b46052f6375d26545b355d617a62233e95b82e7df6036a621bc5d6e4.
+Repository 9,808 files, scoped whitespace and formatting passed. No paired
+timing launched. Remaining requirements include paired immutable fixtures
+and manifest-bound service images, original process custody and the real
+Answer pipe comparison with observed matching compiled inputs.
+
+The direct CUDA warm continuation was launched at 14:25:20 local, same
+user and original 16:26:20 cutoff. Signed implementation checkpoint
+313e2773fa06a3e3cca0d4e9254cfa618a210163, source
+e0c30c6b0b3371c9aa03a9e6f32a0cc751d7a31de0b9a69313b59ed07843bd0c.
+Agent controls 4/4 include exact original failure replay and a real
+suspended direct child with natural exit and empty Job. Independent pure
+controls 2/2, 2 opt-in controls skipped during the live build. Repository
+9,811 files and scoped whitespace passed. The checked cu17 warm output
+parent is warm-continuation-r1. Continue with actual Ninja exit and code
+inventory; packaging needs the distinct direct-warm archive reader.
+
+The A6000-manifest-bound Windows service test image link completed
+97.764 s, pinned Rust 1.98.0, target/, incremental=1, source group
+e83f539f66c4bd14e04e360be7ffe3b3ad676deef264f65dd294a522014e3fca.
+Build receipt bebbe1f94c19096cf1dcf08bc5141e4af00d297f07d9d5694350b2841ab45fc2.
+Placed fresh-cu15-paired-answer-service.exe in the verified cu15 provider
+stage, 352457216 bytes and image SHA
+9bf0e3a76407de93692acd32f8e17a921a8b43f22ab6f9ee1abbea784a26bd71.
+Actual test image --list confirmed both exact ignored CPU and CUDA selectors.
+No service/model timing dispatched. The held CPU and GPU profiles share
+exact compiler, ONNX graph/external weights, tokenizer and reference
+fixture. CPU calibration/2 has one READ rule and GPU calibration/2 has
+all four classes unavailable. A credible end-to-end comparison first
+needs a same-rule private timing pair and matching observed compiler
+input/dispatch sequences. The existing component comparison remains valid.
+
+Direct warm Ninja session check ran at 14:36:32 local and reported no
+work to do. The owner accepted direct natural settlement before launching
+warm-provider at 14:36:34. Actual Ninja work observed 252/1276 at 14:37:48.
+The archive reader is signed local
+04ee94320cf8cebcd8427067dc97e2d763d4f48c, exact source
+e65305bed47697df024797e6980bbdcc812b2c8d8710cedb810138b50b228d4d.
+Two focused controls, CLI smoke, repository 9,814 files and scoped
+whitespace passed. Its checked queue authenticates the same live warm
+owner and only dispatches on a successful four-stage warm receipt and
+actual three-architecture GPU code census within the original deadline.
+No archive, new device runtime, or production package has been observed.
+
+### 2026-11-18 22:23Z — Matched Answer inputs and native startup diagnosis
+
+Local DCO b79e66cc9a2b36c37ec435e2b7c3e8cc4770fdac retains the private
+Compact CPU comparator. Windows Clippy passed 52.258 s. The pinned
+airk-service all-feature no-run link passed 72.745 s with Rust 1.98.0,
+target/, incremental 1, two jobs and timings. Native group
+a6606867cbc24a5da42faa61ce8cb2484692fbfcb5582d2265a3f24aba25043b.
+Exact Rust selectors passed 1/1 each with 319 filtered. The first refuses
+tampered CAL bytes. The second emitted original GPU raw CAL
+1bea81bb43fd84db6d920ca8d6b45516540421b2ec3e8cdc710a4ed30342e3da
+and private CPU profile
+13085b0cbb6ed15bb4d6fb0318aad59b60e9c0d9c9ddb3e19f5b9f14be52f620.
+The shared software-v2 corpus uses the exact Answer input
+76400d7ffa5fcaa52e5007af8c732af7a00fd8a59c8ae96637666b496684d23f
+and an independent immutable corpus census
+7c0a69a80cbc450bb48b8b573e84afeb6f1fe10c93cf687b08994fe75ed42736.
+
+CPU setup-only R1 and diagnostic R2 both stopped before Ready at native
+evaluation catalog admission. The corrected diagnostic fixture preserves
+the actual owned service error, selected model compiler/task source
+policy is stale or inconsistent. Earlier held Focus/Large input was
+stale. Owned R1/R2 receipts
+a6d468293aaf7ceb91b690449dd59e46acaaca8691e60b3315c7c3c9cd5f0fa
+and 25ae916ca61135539e2abc11dbf428843c0da24fc42387572a4ead3e908f0a3b.
+Both Jobs had the verified 32 GiB process and aggregate limits and
+settled naturally. No index, Compact scoring or request timing ran.
+Diagnostic Clippy and test link passed 11.961 and 16.839 s on native
+group 72f81833756fa20d7da1eea580d70e4a3f0379b3dda3c00ec166dc50dafa0492,
+pinned Rust 1.98.0, target/, incremental 1, two jobs and timings.
+Staged same retained A6000 provider family, service PE
+f3a317c196196340d45dea90cfd9b743b32e299028651f1b75fc38a5174168fd.
+
+Staged 16 exact assets, 17,234,810,430 B, for current native-emitted
+Focus and Large observation slots. Checked copy receipt
+a597dfc7141ddf3f932e65622fdeeeef228b6c76b8eed1a2eb2c3bda3ff0d77d.
+Both remain inactive in this scenario. Current CPU and CUDA launch plans
+e85a33d6322a2a38814bbb282afd339f23ae3461b43be8a9461bcc2f7b68a608
+and c9243f9256d39b3a17ddcac93c6bfc4165ddb891b0bc910c094acef3455f8698.
+A verified copy of the retained CLI retains its original SHA
+8aef48b0574e0876de80f43ff11b802809ba91c7e89bec3da39ccd0cb4810922.
+R3 is an owned setup-only attempt with this roster and offline pinned
+MiniLM. The standard source-sealed outer Job launcher remains exact.
+The private worker applies equal 32 GiB process and aggregate limits in
+a nested Job before creating the fixture process. Await actual setup,
+index/search and shutdown or collect the exact refusal. The measured
+pair remains pending an idle host and matching real dispatches.
+
+At 15:23 local the direct cu17 build was at 1063/1276, compiling Flash
+Attention CUDA split kernels. The original 16:26:20 build cutoff and
+successful-evidence-only archive handoff remain in force.
+
+The refreshed roster reached real native Ready in CPU setup R3, followed
+by authentic fenced shutdown and ServiceLease reacquisition. The runner
+compared the extended Windows canonical directory and ordinary same-path
+spelling textually. Native same-file identity confirmed the two names
+target the exact same directory. Replaced textual equality with that
+identity observation. Outer R3 nonpass receipt 0cb2625a0bae083bface2e13e2cfa500fbe13310f897e5807f92b43f33972771,
+65.153 s, nested 32/32 GiB, no forced cleanup and empty outer Job.
+
+R4 applied native library setup and local MiniLM InstallModel, and the
+explicit Index job succeeded with eight published files. Search observed
+the expected default hybrid mode and exact MiniLM pipeline
+cb2166f2f648aa44cb4ee87f6b58b1e5c8007720d24fa4426234b65058e2b638.
+Vectors were still pending when the one search sampled the first
+revision. A true text Index success deliberately queues semantic work
+after the job. The runner now observes semantic Ready under the original
+lifetime before matching default search and the native enrollment draft.
+R4 outer nonpass 0d609f26a8bf570a82551c820d37ffc600c64f0cddc57d18324987de4496f5fb,
+81.936 s, cap 32/32 GiB, peak host commit 148,234,240 B, natural service
+exit and empty outer Job. R5 checks background semantic completion and
+native enrollment without a Compact scoring request. Rust startup
+diagnostic, native cap observations, Windows path reproduction and
+repository check through 9,815 files were reviewed before this action.
+
+Local DCO 60d40ff7118d4c1ae4d4e8efdcd1abf7a8b0a332 preserves actual
+private startup errors from the joined service task. Actual scoped
+Clippy/link, Rust formatting and same-human outputs were checked.
+
+CPU setup-only R5 passed native fixture 1/1, 319 filtered, 81.39 s
+test and 82.061 s outer. Actual offline MiniLM and index published
+eight sources. Default served hybrid returned eight hits from semantic
+Ready generation 5. The native exact Compact enrollment draft was made
+without loading or scoring Compact. Setup receipt
+243d2dd8f50614bc553cf24f36e13824086a14be3961d73184f9e89e5ba94a3d,
+outer Job bdd2f19bf85d0d245f3a6f7b358fd52c94afb363cd8024a90033a64be5774081.
+Verified nested 32/32 GiB caps, 142950400 B peak Job commit, natural
+service shutdown, empty outer Job and no forced cleanup. Exact
+benchmark launch plans both passed read-only input preparation. Next
+actual action is sequential CPU and A6000 Answer measurement when CUDA
+compiler and archive load finish. Match actual ordered input digests,
+tokens, native outcomes and settled charges before comparing runtimes.
+
+### 2026-11-18 22:47Z — Exact private CUDA source setup passed
+
+Runner DCO 355a5e188cdf32845efed47cf3dbb8b179dea40e, SHA
+9625bb14ca85eaf5057b3b272d92eb99589fa13e47ea1eeef56d35b0fcb09496.
+CUDA setup-only R1 confirmed the protected legacy assets/3 store
+correctly refused a device profile. Natural Job settlement at 49.083 s,
+nonpass ce7fef682a02c55626ae0b8c9aab90bbaa9d654d88629099183814f9a21d61f0.
+Private R2 instead verifies all declared assets from protected held
+read-only descriptors and makes those descriptors available to the exact
+graph-bound Context activation. Normal config/scope, scorer, lease, cap
+and graph checks remain. Verified that this CUDA manifest has no assets/3
+or assets/4 directory. CPU source custody remains ordinary assets/3.
+
+All-feature service Clippy 16.956 s and native libtest image link
+29.861 s passed, Rust 1.98.0, target/ incremental 1, two jobs with
+timings. Native group c8cf44d4f4bd85354904984322455fd72a330e90bf54a5f950adc7266203df43.
+Focused native lifecycle tests 12/12, 308 filtered, 0.07 s. Repository
+9,815 and scoped whitespace and Rust formatting checks passed. Exact
+staged same A6000 provider image service PE
+c5bc26a93ec622b999082ba05a2637e2bc33d05b9686b0e93af585b92fdb35ab.
+CPU and CUDA exact-source plan SHA
+057f18a360f848db7edb9d7edd3b6321562d824ea895c48acbe6b6b102680442
+and 0c775adce3d6200d38bc8ffca5d1c0dfe2fc1ed64975a73f17554df7950a5cc3.
+
+Actual CUDA setup-only R2 passed native 1/1, 319 filtered, 74.96 s
+test and 75.592 s outer. Same offline MiniLM index pipeline and eight
+default-search hits as CPU R5, actual enrollment draft, closure and
+natural Job settlement. Setup SHA
+cae47c8df91b60e00fe7c62f67535e3a8e63740a6ee4ef554052bffbd9b3e7b7,
+ownership a77f79f170603b8f29ab1152966f2e8b107af58f4f966ddfc01487e35d01991f.
+Verified nested 32/32 GiB with 160927744 B peak during setup. The
+setup checks did not activate Compact and establish no runtime timing.
+The independent cu17 provider DLL has been linked and the direct owner
+is checking the output tree before code census. It has yet to produce a
+terminal accepted receipt. Measured CPU and GPU Answer pair is next
+after cu17 and archive processing settle.
+
+The private exact-source milestone is signed local
+e72bf1fd66eb378602532db0f2d91c60da89acaf.
+
+### 2026-11-18 22:54Z — Accepted direct three-class CUDA build
+
+Warm compile owner exited 0 after actual provider Ninja 3825.083 s
+and eight checked post-build audit workers. Accepted result
+42fd21dc95880f59403cb9ed7bc925578410e955b619452082fee9c5a4ea9cca,
+finished 15:53:02 local, within 16:26:20 original cutoff. The
+warm-session 0.217 s, provider, cubin census 0.865 s and PTX
+census 0.480 s all report natural exit 0 and empty Jobs. Actual
+linked CUDA provider is 263110144 B, SHA
+8164349f0751426b06d5312cbef78200dcf57f4fb2f835f5f62434ea3faf35d3.
+Its own code lists 287 SM86, 287 SM89, 247 SM120a and 18 SM90a
+cubin objects plus 41 SM120 PTX objects. Raw cubin and PTX Censuses
+d6b51e69e5ce08a70c52e684aef2c19aafccb61d21d275b5fa9f573dd5c6f5d5
+and 8c8eaa2b6d06d4e3a44d53c3ae227ce21469f44629d9bff163947dbe8e6cd3d4.
+This is actual compiled code inventory. Physical RTX 40/50/PRO 6000
+qualification and public package identity are separate.
+
+The conditional exact warm archive accepted the compile input and
+created recipe
+542b365522588b93440c7778c7fd8569596a1544d1a83c26f611564aea5de1a0.
+Archive replay is active under the original cutoff. The benchmark
+started actual CPU fixture at 15:53:15 after the original C++/CUDA
+compiler and CUDA code census had exited. The two same-image
+measurements are sequential. During their setup the archive path only
+replays provenance. Compare actual command timestamps with any live
+archive work before reporting the latency. Current Large preflight
+observed 73.83 GiB free physical and 45.22 GiB free virtual memory;
+Large reference peaks 50.17/43.68 GiB and 48 GiB native envelope still
+need measured headroom. No Large process was launched.
+
+CPU timed R1 completed actual real Answer at 15:55:36 local, 26.9834253 s
+CLI round trip and 25.667887 s actual inference across ordered 1014,
+1008 and 1003 token inputs. Each finite score actually returned and the
+same raw CAL produced three abstentions before a budget stop. Native
+owning Job passed 141.468 s outer, 15,199,531,008 B peak commit within
+32/32 GiB, clean natural close. Exact measurement and owned hashes
+9c78f32544f1e5b7aa14d56a6b9f2b0af5f0974eca5109bd8c85484e294ddc32
+and 320724f26ca04e978f1780ae27fa5e20934bf65231acb5854317a7680f4dc1e5.
+
+CUDA timed R1 verified the same source/setup then stopped at native
+warm before inference. The rebuilt test image lacked compiled
+AIRK_APPROVED_CUDA_MANIFEST_SHA256 and AIRK_STATIC_CUDA_BUILD_SHA256.
+The runtime gate correctly refused the unapproved binary. Exact
+retained owned nonpass
+602402d866f3e3b83d5676669d834a3df7e812029c16eb713d851b3596c5b921,
+74.573 s, 166,813,696 B peak commit, natural clean shutdown and empty
+Job. CPU R1 cannot supply the same-image pair. Rebuild the exact
+unchanged reviewed source with the previous A6000 manifest
+9433753580c8a370bbea42119aa67ac81306229bcf6876514213f3e2979083b5
+and linked static build
+fd10bcc2115e681c827162362b90f3133abf5714bd58984921f0b7e38df6b890.
+Verify both pins are present in the fresh stage executable before
+starting new timed output. Run CUDA first so a refusal cannot trigger
+a redundant CPU measurement. Both benchmark runs must use that exact
+same bound fixture image.
+
+### 2026-11-18 23:05Z — CUDA archive accepted and A6000 Answer measured
+
+Checked private aggregate accepted as WARM_AGGREGATED_UNQUALIFIED.
+Receipt ac1a2899495fd148afa1e2dbc22c2fc82720b4bd695d52e11706bac86839c8ce,
+900446188 B static onnxruntime.lib
+97d7b5bc71b409c9911322354989ad8956b3345d6bf82c2e91dac5ee482ded64.
+Exact MSVC lib.exe stage lasted 2.138 s, natural exit 0 and empty Job,
+no forced cleanup. Stock COFF object/export/closure checks completed.
+Archive phase 21.358 s, finished 16:04:48 local under the original
+16:26:20 cutoff and its distinct 300 s cap. The physical target cards
+and public distribution identity remain pending for the cu17 candidate.
+
+Manifest-bound unchanged-source Service Clippy and native test link
+passed 39.652 and 51.341 s respectively, Rust 1.98.0, target/,
+incremental 1, two jobs and timings, group
+c8cf44d4f4bd85354904984322455fd72a330e90bf54a5f950adc7266203df43.
+Focused lifecycle 12/12 with 308 filtered (0.09 s). Both exact prior
+A6000 approval pins observed in the newly staged PE
+6db5c84ce78b4ee050ac5053aa0404864f821efbc5e2f8b6b13fffdb9dd7778d.
+Fresh exact CPU and CUDA timed plan hashes
+898f2134862baa90671be369b37cede7093cda54cb0f8766c617ebf62a8aaa53
+and a0bf590acfcb17e32988ba44c75cf76abcad0cdb045d957a886f12e8344e8b3c.
+
+R2 CUDA used the verified A6000 cu15 manifest from 16:02:14 local.
+Actual warm admitted the Context model. The real named-pipe Answer took
+2.3674734 s, including 1.056721 s actual guarded native inference in
+three successful 1014, 1008 and 1003 token dispatches. Original 120 s
+deadline, same raw calibration, three abstentions and budget stop.
+Measurement 9875e3b10728526a9db5348e581ae65feb88521dba09ad1bf4915a6de247cd30,
+owned 3f818d3eb058d05f58a40e81c1af4efdecef4ebeaaea4861ca2c5be7208ed54d.
+Whole run 100.589 s, 18,086,395,904 B peak aggregate commit, verified
+32 GiB limits, native release and clean outer Job exit. Actual Answer
+CLI receipt finished 16:03:54.627 local. The later cu17 archiver ran
+16:04:38 through 16:04:41, outside this timing. R2 CPU launched at
+16:04:13 after A6000 settlement and will time only after its own setup
+and warm. Retain actual CPU result and compare full dispatch signatures.
+
+### 2026-11-18 23:07Z — Matched CPU and A6000 Answer comparison
+
+R2 pair accepted with the same manifest-bound service and CLI images,
+exact shared request and corpus, exact raw all-unavailable calibration,
+same MiniLM pipeline, three successful scores with matching ordered
+input digests and observed token counts 1014, 1008 and 1003. Both
+complete CLI envelopes report three abstentions and a budget stop.
+Measured end-to-end Windows CLI IPC 25.405416 s CPU and 2.3674734 s
+A6000, 10.731x. Total guarded native inference 24.165171 s CPU and
+1.056721 s A6000, 22.868x. Startup, indexing, warmup and shutdown
+are outside the timed call. This was a single matched warm request
+on the exact held private A6000 execution path, with a verified
+120-second budget and the original 32/32 GiB Windows Job limits.
+The accepted cu17 archive is independent. Its lib.exe stage ran
+between the two timed calls, outside both intervals.
+
+Exact merged private receipt
+adfc16d7c410ab5f87a507c29545966c76ad08be00686274227fdbf615c51ae6.
+CPU and CUDA measurement receipts
+d8bd0de007519be5e1216867e4d8ced60694d24a8ec4894f513584b6b75a0f2b
+and 9875e3b10728526a9db5348e581ae65feb88521dba09ad1bf4915a6de247cd30.
+CPU and CUDA outer ownership
+da1ea668be88841563e3719d1018ade5cbd53678e1adf60238c018fad4fbaca4
+and 3f818d3eb058d05f58a40e81c1af4efdecef4ebeaaea4861ca2c5be7208ed54d.
+CPU outer 145.806 s, nested 32/32 GiB and peak 15,199,117,312 B.
+CUDA outer 100.589 s. Both service closures retained lease reacquisition,
+complete native release, natural exit and empty outer Jobs. All final
+fixture and cache outputs passed Windows human ownership review.
+
+After both runs and the archive settled, measured headroom was 74.47
+GiB physical and 45.98 GiB virtual. The 48 GiB native Large envelope
+and the separate Large Torch reference pair remain blocked on safe
+commit headroom. The prepared reference plans are in
+fp32-expanded-reference-preflight-r1. The next executable Large action
+after observed headroom suffices is the serial original-publisher then
+same-artifact phases using those exact reviewed R2 plans. The inventory
+shows RTX A6000 as the only NVIDIA device and no Radeon device. The
+three-class Windows CUDA candidate needs current public provenance
+and RTX 40/50 hardware qualification. The Radeon compatibility
+list, global GPU switch and experimental fallback are recorded in
+the plan. No campaign build or experiment is still running.
+
+### 2026-11-18 — Large reference preflight after WSL shutdown
+
+The user's WSL shutdown briefly left 95.66 GiB host commit headroom and
+47,010 MiB free on the A6000. Ubuntu-24.04 and docker-desktop restarted
+before dispatch. Host commit headroom was still 90.66 GiB. Both sealed
+reference plans, runner and Windows guard passed read-only verification.
+The A6000 subsequently fell to 14,009 MiB free at 99% utilization.
+Windows dedicated-memory counters attributed 32.24 GiB to a VM worker.
+The original-publisher and same-artifact phases require at least 37 GiB
+free VRAM, exclusive GPU use and their separate 64 GiB host commit
+envelopes. No phase was launched. Resume by rechecking both headroom
+and GPU exclusivity, then run the exact two plans serially.
+
+Further inventory showed vmmemWSL rising to 82.37 GiB private memory,
+with available host commit down to 20.69 GiB. The GPU had 3,966 MiB free
+and the VM worker was attributed 42.11 GiB of dedicated memory. The
+specific guest workload was unverified. Both reference gates were
+blocked. No application or service was stopped by the agent.
+
+### 2026-11-18 — Docker stopped, Ubuntu keep-alive and Large reference
+
+On user direction, Docker Desktop stopped normally and Ubuntu-24.04
+terminated. All distributions were stopped, host commit headroom reached
+102.01 GiB, and A6000 free memory was 47,254 MiB at the first Large
+reference launch. Docker Desktop stayed stopped. Task Scheduler relaunched
+Ubuntu repeatedly from the exact WSL LLM Server (keep Ubuntu running)
+task. The user authorized temporarily pausing that task only for the
+Large phases, then restoring it. The verified Windows shell has a
+filtered administrator token. Its state change was refused with Access
+is denied. Same-user Windows elevation is pending.
+
+Original-publisher plan 258bb41a8e4d2c51092015a68b8ec67562c96fc63b8b9fa918fdce89b1bd8ac1
+completed two forwards and two rows in 292.920 s under the existing 64 GiB
+host limit. Native worker recorded 49,343,856,640 B free GPU memory
+before loading, peak CUDA reserved 16,754,147,328 B, peak aggregate host
+commit 35,933,614,080 B, one child, natural settlement and empty Job.
+Exact complete execution e1033d6dd993883df7475dcab5821d9b98de7119f311f0083377f27417275ff3.
+The separate Ubuntu service had relaunched during the broader phase.
+Retain the numerical receipt and its exact scope. Same-artifact phase
+failed the renewed headroom preflight before dispatch and has no output.
+Once the task is temporarily paused, recheck headroom and run the same-artifact
+plan under its unchanged limits. Assemble the two complete numeric receipts.
+
+Windows then reported the UAC elevation request canceled. The keep-alive task remains enabled, Ubuntu restarted, and Docker Desktop remained stopped. The second reference requires that exact task paused in an approved elevated same-user session.
+
+### 2026-11-18 — Large FP32 Windows reference pair accepted
+
+The keep-alive task was verified disabled and Ubuntu/Docker stopped.
+The same-artifact plan a9a25470b21616dc4aecdc9628490cf3e0c61f744df19aedc7dc34830fe700e7
+launched at 16:41:40 America/Denver with 99.08 GiB host commit headroom
+and 47,518 MiB free VRAM. Actual same-artifact receipt
+3b02c6304bbb187e0e2f7e7401accdb47516f4b714b088ace5e63448868d1d07
+passed both 32/1,024 supplemental cases, two forward invocations,
+252.445 s outer, natural one-child settlement and an empty Job,
+39,675,457,536 B peak host commit under the sealed 64 GiB cap.
+Joined with original-publisher execution e1033d6dd993883df7475dcab5821d9b98de7119f311f0083377f27417275ff3.
+Accepted supplemental fixture 020669f0c44a959a0d95798eb3cc52925513e7e549496368017e0827a398aaef,
+producer a5229bafbaf43c4b7775eb72eb795864c579f8bc544faa8fc8dbf43c017a7487,
+assembly ba52ce7cfd834edf858b9230cd9921930d605698630647e1f18f7bd4b4e3032f.
+Both raw reference columns are available for the two new widths, with
+existing exact 128/8,192 evidence retained separately. Native Large
+CUDA graph/placement and score qualification remain open.
+
+After both GPU phases settled, the exact WSL LLM scheduled task was
+reobserved enabled. The automated elevated restore had returned exit 1
+before the subsequent verified enabled observation. Docker Desktop
+remained stopped at the restoration check. These Windows reference
+runs do not establish WSL Linux memory fit. WSL2 validation requires
+an isolated Ubuntu run without the competing LLM server or Docker,
+plus independently observed guest, host and GPU headroom.
+
+### 2026-11-18 — LLM keep-alive disable request
+
+User asked to keep the WSL LLM server from restarting. The exact Windows
+task was still enabled and running. The same-user administrator launch
+authenticated the human account, then stopped before any task mutation
+because the elevated token's default owner differed from the human SID.
+The ordinary same-user shell previously received Access is denied for
+this task. An interactive administrator operation by the user remains
+required. Ubuntu and the keep-alive task were still running at verification.
+
+User completed the interactive administrator disable. Verified the exact keep-alive task Disabled and Ubuntu-24.04 absent from running WSL distributions. Leave the task disabled per the user. Check guest LLM autostart separately when intentionally opening Ubuntu for Linux qualification.
+
+### 2026-11-18 — Native Windows Large FP32 launch feasibility
+
+Live preflight observed 104.84 GiB available Windows commit and
+47,480 MiB free A6000 VRAM. The WSL LLM task was disabled, all WSL
+distributions were stopped and the Windows build tools were idle.
+Reopened the retained Large input and supplemental references. Native
+source graph identity f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94.
+Read-only ONNX census observed six named input tensors, scores as the only
+output, 9,178 standard-domain nodes and 326 external initializers. The
+retained weights file length was 16,089,835,520 B. No CUDA inference ran.
+
+The maintained bounded-hybrid one-session test and final graph preparation
+are sealed to the Compact profile, 32 GiB host/Job and its own 24 GiB
+device policy. The generic Context probe can consume Large selected
+legacy widths, but uses strict GPU placement with a different evidence
+contract. The next executable preparation is a distinct Large graph and
+profile/placement run using the approved 48 GiB Windows host/Job limit
+and an explicitly reviewed device budget, with the exact current
+32/128/1,024/8,192 arrays and original 120-second operation deadline.
+No repeat of the reference experiment or Compact relabeling is required.
+
+
+### 2026-11-18 — Large CUDA metadata preparation
+
+Under TYAI\tdotn (SID ending 1002, effective user and default owner),
+the retained Windows Inference test image bff8c551823676dba074c213b447b7dd62e8356753b8cc435835348841aaf549
+ran emit_cuda_component_probe_request and emit_cuda_fp32_probe_metadata
+with --ignored --exact and --test-threads 1 for each selector. The
+Large source-only input was af9a46022b51994f9b5dbe620433a8868d1ad7b40fd223019167ae2ef90cac8b.
+All seven outputs were verified for human ownership and hashed under
+artifacts/v190/final-plan/exec-20261116T052942Z/large-fp32-native-metadata-only-r1.
+The preparation request is 8e69df4aedb85c556330262051d46c610ab48cec3c2a71aba60039458b6db348.
+The Rust metadata receipt (75cb84e51037a4ffd4a2be4a96616161c9628319790800724dd2e6430c7e5ced)
+records 9,175 us, candidate profile identity
+eb467966e528b3b34f0c95d26bdcb0e3f404267b5dcaa673cc6c56755b85905b,
+model_requests_dispatched=false and qualified=false. The generated request
+has 48 GiB process and aggregate Job caps and the original 120 s deadline.
+Its 44 GiB device envelope (40 GiB cold, 8 GiB warm increment, 4 GiB
+headroom) was selected only for metadata preparation. Actual Large graph
+placement and VRAM fit remain unmeasured. The generated commands are for
+the strict-GPU legacy selector set. The required next gate is full Large
+final-graph and bounded CPU placement evidence for the four live shapes,
+before the one-session native scoring pass.
+
+
+The historical Large fixture c87c4edcdec2ab5e98b41bfc186c3bb7d60791e7b9efd0aea186b731eecc3dd2
+and producer bfe684ec0eb492fd093cac2bfacca0a6f45ad6c42583cba7e3a2bfdfb24e7da3
+each contain matching complete 128 and 8192 rows. Both exact row input
+objects match the current native template. Both independent arrays
+contain eight finite scores each for each width. No reference rerun needed.
+
+Added the separate Large Windows x64 graph-only selector and verified
+the source inverse against the two retained CPU Focus source pins.
+Independent review identified the CPU source admission dependency.
+Focused formatting passed. Warm scoped Clippy stopped on a missing bundled
+MiniLM provision path in 45.605 s (receipt f12172b409a76d5ba59692ad7388885bcfbc19c1263b068e0a846f4ea78417d9, exit 101).
+Recovered the exact previously used provision at
+artifacts/advanced-split/bundled-model-v3. Next run the same focused
+Clippy and selected graph/CPU source regressions with that provision,
+then bind the resulting native image to an owned 48/48 GiB graph run.
+No CUDA session load or forward has run for Large.
+
+
+The warm Rust 1.98.0 Windows target with incremental=1 passed scoped
+Clippy in 21.724 s and Nextest CI in 56.532 s (47 passed, 443 skipped).
+Native group 115f2db19f4dd9b171765148767a2c0f0290b8bcc98c832c9289cd4e4b63a824.
+Exact argument and timing receipts
+3f24b5bd34e2766167ce7b8050ef2d1a479e96bbca9e7833db1b90098a97b328 and
+f28626413f6e434e8f3d795bce2393cb7e6374f5c1a1139b5e185d41e59aaf12.
+The first actual owned run verified 48/48 GiB and the human SID but the
+test binary lacked the compiled CUDA manifest approval, so runtime
+admission refused before model load. It exited 101 naturally, the Job
+emptied, and the native host reservation released. Execution receipt
+d83c7d72bb70b4deea7b3e38cc8857e6af89d03fe8fd76c9ec2863e494e4b8be.
+The corrected build used runtime approval 9433753580c8a370bbea42119aa67ac81306229bcf6876514213f3e2979083b5
+and static core fd10bcc2115e681c827162362b90f3133abf5714bd58984921f0b7e38df6b890.
+Its Cargo receipt is e1ce75149c7ee8eac06a20a791c3f4d12db1459e61756ba3cacad7b0607e7cf5.
+
+The runtime-approved A6000 Large graph-only run passed in 68.761 s
+whole-phase and 60.940 s to the native final report. Owned PID 69716
+settled naturally with exit 0, empty Job and released native host
+reservation. Job peak commit was 36,645,171,200 B and native process
+peak RSS was 34,152,431,616 B. Free VRAM before session creation was
+49,886,003,200 B. Forward count was unobserved because the test dispatched
+zero model requests. Scoped selected-log truncation is disclosed.
+The capture reports exactly 3,570 final root nodes, 1,907 CUDA and 1,663
+CPU, and 2,397 distinct CPU-incident fixed-shape INT64/BOOL tensors
+with maximum 40 B per tensor and 43,819 B total static payload.
+The 472 cross-provider values have 13,312 B total static payload.
+These are shape totals rather than allocator or transfer measurements.
+Use this exact graph to authorize a Large-specific CPU shape bound
+before the single-session four-width scoring pass. Device peak during
+forward and cold/warm qualification remain outstanding.
+
+Exact graph evidence is retained under large-fp32-native-graph-r2.
+Execution receipt 0daf69bf6b3293cbb3d169120022fdd07eeeea13f758975d4ab0f42cbf1c9037,
+native result 1892e5b040d8c51969f1d3361d0929950fa98f0ef4079060e48d00458635488a,
+stdout e75f2d5ea2ce563094c445499fe1b62f18d2ebb1051856b4ef2d5a3229a0939b,
+image e1213f35c2dd9eb2a0d3243c4bee87d73ffaaaf6a127362ac5c40d24ecdb280e.
+The repository check passed for 9,816 public files and the source
+difference was reviewed independently. On user direction the final
+plan now records a Linux actual-Radeon rental as evidence for the
+experimental Windows DirectML route, with Instinct as secondary AMD
+Linux smoke evidence. No instance or cloud job was started.
+
+
+The final graph has one root and zero CPU implicit inputs. The exact
+Compact graph gate permits 34,131 distinct CPU payload bytes. Large's
+observed 43,819 requires a separate model-specific gate while retaining
+the existing 40 B per-value, fixed-shape and same-session identity
+checks. Next executable action is to bind this Large graph, retained
+fixtures and device policy to the four-width profiled scorer. Both
+native graph and Radeon plan changes have local verified DCO commits:
+606772785b2b0ba79a426b4851f17b960f0fcf9f and
+286b88c0bed63362bdf21f150a41f618b24a5c66.
+
+
+### 2026-11-18 — Native Windows Large FP32 four-width CUDA attempt
+
+The verified human Windows process ran one exact Large profiling selector
+with the existing 48 GiB process/Job caps and original 120-second deadline.
+The same live graph and every CPU tensor matched the retained Large graph.
+Both independent references and argmax passed at T32, T128 and T1024.
+Observed native calls were 0.423946 s, 0.125351 s and 0.488675 s, respectively.
+The largest successful raw error was 0.000225067 (at T1024), within 0.001.
+Profiled individual timings include profiler overhead and the earlier small-case
+warmup effect. The Load native call was 36.060830 s. The 8192 forward
+returned a failure in 0.259306 s and had no score array. The accelerator
+provider stopped at the first layer's CUDA attention mask Add, where
+DivMod<int> rejected the stride. The 61.084 s whole attempt had no timeout
+or forced exit. The retained HANDLE observed exit 101 and empty Job.
+Native host charge and control released. Peak host Job commit was
+37,861,646,336 B and native RSS was 34,220,232,704 B. Free VRAM before
+model load was 49,886,003,200 B and 32,693,551,104 B after load.
+Physical peak VRAM has not been measured.
+
+The retained partial ORT trace confirms QK produced [1,32,8192,8192]
+and the attempted Add broadcast against [1,1,8192,8192]. Each FP32 output
+was 8,589,934,592 bytes. Held cu15 binary_elementwise_ops.h narrows all
+output strides to int, including the singleton-batch stride 2^31.
+The device count path already selects size_t above INT_MAX. The source
+has a mathematical rank-three candidate using batch-axis views at the
+36 broadcast Adds and restoring the original shape before Softmax.
+This removes the offending stride while preserving mask, scores and both
+matrix multiplies. Check the optimized graph preserves those views,
+obtain new graph and same-artifact reference evidence, and run the same
+four widths. Keep the G2 authorization for a reviewed alternate FP32
+decomposition. No RAM, time, numerical or placement bound is relaxed.
+If actual runtime shape optimization or allocator pressure blocks the
+narrow variant, evaluate splitting attention heads before the dense block.
+
+Held artifacts under large-fp32-native-scoring-r1:
+execution 42088b002170793e9ee996a9b952990096dd0bc7df93f74864a592c5bb2e8822,
+native result 6380938fd324e9b811c6197676745eb9d1fba49a7c1a6db8a6995abea234eb95,
+journal 7e372019fdbefbfc67d26adb8ce6b636b2091502d988b83637154434d895525f,
+partial trace 7cf7914c4ec88a5a95d5e04ac39fb1867bd0a0a674feba0b342b9d74571e9e07,
+image d7e54d1e294cd389c77c2cc10824283d3b93030d0c1a33ea7585572ae89067ad.
+Launcher a169fb51445a836f8c136ebe26d5602b03b4bd02c75a6d9911b6388ceb292471.
+Warm Windows Rust 1.98.0 target, incremental=1, exact CUDA approval and
+static core as above, native group cae9e0c5fc5bb213f92f950ad03f14822358e8e0ddcaae8c9955a42656ee5e8c.
+Clippy 13.403 s 6bc478ae2a8f58663dbe53744b8cfa70ef084643be3d754648e227f4c4ac587a, Nextest CI 18 passed and 474 skipped in
+24.049 s 0af58054ba9db4fd116b199240020d400be4b6a25bd8d4ddbacc283c8543517d, warm exact image 1.096 s 61dd966ca179013310ad0fdc4d97f44a39d68b0e7d4c72f57bc091e5c409421b.
+All exact commands and timings are retained with their respective receipts.
+The model-neutral refactor changes the source-derived identities of new
+Compact receipts. Earlier Compact evidence keeps its original identity.
+
+
+The four-width scoring harness is in scoped local DCO commit 72727be229acaad6874cb03043d9102cd15bd845.
+The post-attempt launcher change reports the native error directly while
+retaining the actual natural exit and Job evidence. The protected R1
+receipt and trace retain their original identity and failure.
+
+### 2026-11-18 — Large FP32 batch-view candidate prepared
+
+The maintained exporter rewrites all 36 shared-mask Adds in the pinned
+batch-one Large FP32 graph. The three-dimensional Add has a maximum
+stride of 67,108,864 at T8192. It restores rank four at the original
+output before Softmax. The source graph and 326 external weight records
+remain byte-stable. Checked ONNX reference evaluation of the first and
+last emitted Add paths matched independent FP32 broadcasting bit for
+bit at T17, T32 and T128. Independent inverse replay of the 73 added
+nodes, one axis initializer and 36 altered Adds reconstructed the full
+source protobuf, including all 9,178 original nodes and the score ABI.
+
+Candidate model SHA 5c9a26693eec8522bbfb4d5c4445fa0b60684449a5ea2e1098ec71cca96405b1,
+1,792,563 bytes under large-fp32-batch-view-r1, preparation receipt
+ea6ebdadacf0b776e00281172edc4c756ee396ae03eb8db0596c420218315039.
+Only the graph was materialized. No full-model forward on the new bytes
+has run. The existing prepare_fp32_probe_profile binds the original Large
+graph explicitly. Next use a separate private native candidate input and
+profile identity that retain all original weights and ABI, verify the
+new optimized graph preserves rank-three Adds and bounded CPU placement,
+and acquire independent same-artifact comparator evidence before the
+unchanged 48 GiB / 120 s four-width run.
+
+Candidate recipe local DCO 56d3ecb0f275e87f6ca6d2cb5874813ad00f1a55.
+The graph-only preparation took 0.809 s. Repository checks passed for
+9,817 public files. All native model and compiler processes are idle.
+
+
+### 2026-11-18 — Corrected Large FP32 native graph placement passed
+
+The data-only Inference selector emitted the batch-view native profile
+7e4481caaf7034a70779702edad73a0eb08321418d1b785a4b7f4f891522bdac
+and request d6bd604cbead6f8e69ebeff2df8541128637699d60eaad0a600dcd0f90de22e3.
+Its selection ran one ignored native test, with 182 filtered and no
+forward, in 0.197 s outer. Metadata receipt
+beceeafcac5c7accc558f12efd8174dd41c9c00d5a027f573ff6679c12d566b3.
+Independent comparison found exactly two changed asset paths, the
+candidate ONNX and its raw-only calibration. Five original non-model
+assets, including external weights, the runtime seal and all bounds are
+unchanged. No weights were copied.
+
+Actual corrected A6000 graph-only placement passed in 72.058 s whole
+and 64.522 s native to final report. Owned PID 17216 exited 0 with an
+empty Job and native host charge release. Peak Job commit was
+36,878,585,856 B and process RSS was 34,152,521,728 B, under 48/48 GiB.
+The graph had one root, 1,980 CUDA and 1,663 CPU nodes, zero implicit CPU
+edges, and 2,397 distinct fixed-size INT64/BOOL CPU-incident values.
+The CPU static total remained 43,819 B, max 40 B and vector length at
+most five. Each of the 36 named attention mask Adds was CUDA with both
+explicit inputs and its output provably FP32 and rank three. This is
+actual optimized graph evidence with no model forward. Same-artifact
+reference binding and the unchanged four-width scoring deadline remain
+the next dependent gate, including the previously failing 8192 forward.
+
+Retained under large-fp32-batch-view-placement-r1:
+execution 7e3486d17a86a5497e4823ff5d78449ee7f92fc296a9572bd4c30c995495bed3,
+native result d4ccefff117a11c68b92c3f9c08b145a4fbb5a470114af5a23107c73a26bc431,
+stdout b26092fa2e00bd795edfb2480d373c08b2f5edb529ca42298a927b98ab94f884,
+image 0bd531d20d7d715034b799844672279e5b21b78bf030005ca0c726e258b82aa9,
+launcher 4047d3f8d789eef0bf779174e61348c287213244dc8f354b3892a016d8a2e46b.
+Warm Windows Rust 1.98.0 native group baf6f1d625e3d395468c82e9860b8e842c0cd97725d8dd7141ac0015ff2e5cf9, incremental=1,
+Clippy 42.697 s 862432b40547db32eb8dfaceef1452378f47eb09576c12d7d4a4e8f46ac4e96d, image build 16.594 s bb54f260b85f4714a3e39e3c856a7fe4e3f175a045446861cdf3f2286d2fcd78.
+Both receipts preserve the exact command, CUDA approvals and timings.
+The metadata and launcher had independent source review. Launcher CLI
+refusals and pure placement controls passed, and repository checks
+passed for all 9,818 eligible public files.
+
+User directed Windows CUDA FP32 to finish and inform CUDA FP16, then
+Linux CUDA on WSL2. If FP16 qualifies on both on this workstation,
+qualify FP16 only on macOS through the native Core ML path. Future
+Radeon FP16 uses only Azure after Windows and Linux CUDA and macOS
+qualification, using the same documented full Radeon PRO V620 SKU for
+Linux ROCm and Windows DirectML. The future deployment may select FP16
+as its sole GPU precision after measured value, and preserves CUDA
+FP32 engineering evidence and admitted CPU fallback.
+
+Verified local DCO plan commit 7bb3468f8af6ee0875d6b8d20e5e246a6bcadcd8
+and corrected native placement commit 906787af6f30eb1b2aa1f03414ecdcd58bf39c40.
+
+
+### 2026-11-18 — Corrected Large FP32 passed all four CUDA scoring widths
+
+The independent inverse owner checked every original node, the one new
+axis initializer and all 36 new view/Add/restore sequences. Restoring the
+edited regions reconstructed the complete original protobuf. Verified
+reference lineage 404a486500b1c3955cc5616554ccf2f7c55cd4855981d4477265688db41278d1.
+The new scoring selector bound both retained independent producer arrays
+to the original authenticated profile and the exact equivalent correction.
+The first lane is labeled equivalent predecessor. No fresh independent
+corrected-artifact computation or publisher result is claimed.
+
+The owned Windows A6000 run began at 20:39:10 America/Denver. The original
+48/48 GiB Job, 44 GiB device reservation and 120-second deadline applied.
+One actual model Load and all four exact T32, T128, T1024 and T8192 rows
+passed both raw/mass comparisons and argmax. Individual native forwards
+took 0.383084, 0.153615, 0.466230 and 8.537145 s respectively. One profiled
+load took 37.237630 s. At T8192 the maximum absolute raw error was
+0.000328064 to both references. The full owned phase passed in 84.428 s
+with exit 0, natural empty Job and host charge release. Peak host Job
+commit was 38,203,551,744 B and native RSS was 34,222,198,784 B. Native
+T8192 trace showed all 36 CUDA Adds consume [32,8192,8192] plus
+[1,8192,8192] and produce [32,8192,8192]. All widths have exactly 3,643
+profiled nodes, 1,663 CPU nodes, max CPU tensor 40 B, and exactly ten
+journal records across load and scoring. VRAM peak and unprofiled
+cold/warm p95 remain separate resource gates.
+
+Retained under large-fp32-batch-view-scoring-r1:
+execution ea9aefbf7e9cefb91bca8384924237f95655131cb49ac571e6900e55f3d6d820,
+native result e701eb478bd0573812a662d4aa96b52b67fa0c577228d53d6687b000c9a772ba,
+journal 7dde5eaa982be48c0f9d077da06280ad6cbe37b5ff9aaa2524d311e08757e1fe,
+ORT trace (20,711,752 B) c833b589da5d0ebdba14853a7a84d424fbebf48dbbab4c5b21e8540a4e818959,
+image 61dfa38422ba71017be35a5f703878e28cbcf7e53a5c436b968f3cfc28414daa,
+launcher 2041f45cc127a1eb09afa1ae9b76305fd6675467267e69c51d627f94a75a6bad.
+Warm Windows Rust 1.98.0, incremental=1, native group 85ba2a57bafa0eabbf038ad857fc2ce1fcb378b01c355c28f5e40096f96b67a3.
+Clippy 14.287 s 00c3a6819e50df0227bdbc14787cdac31442bb89ef534b467bc7b955f42d9842, Nextest CI 18 passed and 476 skipped in
+22.340 s 0f50907118d88cb6bf48c31645a75ca38e7527d5359fb9c7c3cf66c2692cbfb5, exact image 1.107 s fd862366556f4cb6a3bc253d93ef80c9573cfd33f7d603b4eb52c9fcaf7745d4. Commands and
+Cargo timing reports are in the respective receipts. The launcher also
+passed eight CLI refusals and two live data-only refusal/preflight checks.
+Next Large resource and composed qualification use this exact corrected
+graph and verified reference inputs under their respective measurement scope.
+
+Signed local DCO commit 942e76c22db691be031eb68faa9d227d244a33a6. Repository checks passed for 9,819 public files.
+
+### 2026-11-18 — Windows FP32 stopping point and FP16 platform order
+
+The user ended Linux GPU FP32 qualification scope. Finish the unprofiled
+Windows Large FP32 CUDA run and preserve its placement, parity and timing
+evidence for engineering comparison. The next qualification is efficient
+FP16 on Windows CUDA, then Linux CUDA on the existing WSL2 instance, then
+native macOS Core ML. After those pass, the future Azure Radeon FP16 gates
+run Windows DirectML first and Linux ROCm second on the same full V620 SKU.
+The release goal is FP16 as the sole GPU precision if it passes the measured
+quality, performance and memory gates on target developer machines. Retain
+automatic same-model CPU fallback and the service-wide GPU opt-out.
+
+Plan and current assignment synchronized in local DCO commit e57f34a7468cb39f24db39a2210aeb2780d00b5d.
+Documentation self-review, repository checks for 9819 eligible public files,
+and whitespace checks passed. This was a plan update. The next executable
+campaign action is to verify and run the corrected Windows Large unprofiled
+cold-load and warm timing path.
+
+### 2026-11-18 — FP16 implementation and release validation plan
+
+The final plan now records Compact-first fused-attention probes, independent
+FP16 parity and FP32 precision-loss checks, matched CPU/GPU service timing,
+per-model developer GPU memory fit, and reusable provider qualification cases.
+Signed local documentation commit b8fb333c25f96d83ab9624a46a7cdf6ef1fae63f. Content and link self-review,
+repository checks for 9819 eligible public files, and whitespace checks passed.
+The campaign resumes with the Windows Large unprofiled FP32 timing path.
+
+### 2026-11-18 — FP16 review reconciled with captured evidence
+
+The final plan names the exact Compact and corrected Large FP32 scoring
+receipts for the G5 conversion prerequisite revision. Their original caps,
+identity, evidence scope and teardown stay distinct. Preserve the
+contracted Context 0.001 precision-loss limit and independent per-identity
+CAL and task evidence. Focus GPU remains conditional on measured value and
+its own gates. The revised plan adds development range diagnostics,
+portable original FP32 references, discrete memory emulation and mixed
+widths, FP16-only installed Auto, and provider and rental preflights.
+Product speed and headroom targets remain proposals for release-owner
+review before confirmation.
+
+Signed local documentation commit 407575a9cba3895b9e77d233f54acce6a86d9ca5. Content and link self-review,
+repository checks for 9819 eligible public files, and whitespace checks
+passed. This change updates the plan. The next campaign gate remains the
+corrected Windows Large unprofiled timing. The first G5 implementation step
+is the model-specific conversion prerequisite reconciliation.
+
+### 2026-11-18 — Approved FP16 plan and extension restart checkpoint
+
+The user approved the FP16 plan and instructed a clean stop for the
+extension restart. The complete Answer warm p95 target is both at least
+25 percent and one second faster against a matched CPU path where available.
+The discrete GPU target is at least 2 GiB of measured dedicated-memory
+reserve under the agreed competing workload. Separate absolute latencies
+and unified-memory reserves are frozen where applicable before confirmation.
+
+Verified TYAI\tdotn with effective, default-owner and interactive SID ending
+1002. No active qualification process or Cargo worker was observed. The
+resident normal AIRK service and CLI remained. Ubuntu and Docker were idle.
+The WSL LLM keep-alive task was Disabled. At handoff observation the A6000
+had 47,476 MiB free, host physical headroom 99.85 GiB and free virtual
+memory 102.48 GiB. Recheck actual headroom after restart.
+
+The retained Large four-width receipt still hashes to
+ea9aefbf7e9cefb91bca8384924237f95655131cb49ac571e6900e55f3d6d820.
+Do not repeat that scored run. Resume with the Large-specific unprofiled
+Resource20 owner, using the existing Compact owner and corrected Large
+scoring path as the implementation basis. Review cheap checks, then run
+one Large process under the existing 48 GiB Job and 44 GiB device
+reservation. After its passing cold-load and warm evidence, proceed to
+Windows FP16, beginning with the G5 conversion prerequisite reconciliation.
+
+Signed local checkpoint commit 7ae2241a0448f74217b937ed6d2a7accdfd63acc. Documentation self-review, repository
+checks for 9819 eligible public files and whitespace passed.
+
+### 2026-11-18 — 48-hour FP16 completion deadline
+
+The user set a new FP16 deadline at 2026-11-19T04:27:11Z. The deadline
+is 2026-11-21T04:27:11Z, Friday 20 November 2026 at 9:27:11 p.m.
+America/Denver. This is elapsed time across the extension restart and the
+remaining Windows Large FP32 prerequisite. Original campaign T0 and
+per-run proof limits retain their recorded identities. The approved FP16
+platform order and the macOS and Azure booking dependencies still apply.
+The previous restart checkpoint remains the next runnable handoff.
+
+Signed local deadline commit 92af2a1758d8f6e4ae1ff3fe6454aed4ed597253. The 48-hour interval and local
+conversion, documentation links, repository checks for 9819 eligible
+public files and whitespace were verified.
 
 ### 2026-11-18 — Windows Large FP32 Resource20 passed
 
@@ -8252,3 +10977,21 @@ Next action is to prepare and run the pinned private Compact FP16 conversion,
 then independently check the graph and half values before actual native CUDA
 qualification. Windows Large FP32 remains closed at local DCO commit 05ef32bd.
 The 20 November campaign cutoff remains in force.
+
+### 2026-11-18 — Earlier checkout work reviewed for local commits
+
+At the user's request, reviewed the earlier unstaged work in separate scopes.
+Independent source checks passed 27 cleanup custody and 25 permanent inverse
+controls, 57 source inventory controls, and 10 composed adapter controls.
+All nine composed source-transition rows matched their declared SHA-256 and
+byte length. These scopes establish the maintained source behavior exercised
+by those checks. The composed multiprocess owner and full R3 inventory
+reconciliation remain pending. Source retirement still requires the explicit
+pinned-removal consumer and the authorized per-file evidence. No removal ran.
+
+The checkout permission helper retains the verified default-owner check
+for its mutation branch. Its source parsed successfully. The checkout
+protection command was not executed. The prospective bug-report design
+remains a draft with a mismatched overlength input expectation. Earlier
+execution notes are preserved as historical records with their original
+scope and outcomes. Compact FP16 conversion preparation continues separately.
