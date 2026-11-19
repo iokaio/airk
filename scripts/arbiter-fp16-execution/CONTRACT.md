@@ -321,6 +321,9 @@ witnesses. Each mode also runs with a separate FP32 output type. The worker
 compares the FP32 values and their host half conversions with integer dot
 references rounded directly to each precision. It counts double rounding
 separately. Changing the output type can change cuBLAS kernel selection.
+The separate ORT FP32 projection case expands the verified half operands
+exactly to FP32, disables TF32 via the same cuBLAS default math mode, and
+uses the stock float MatMul call to cublasSgemm with the same shape.
 An exact GEMM2 reproduction is required before extrapolating to the
 saved ONNX Runtime projection result. This experiment does not run the full
 model or grant admission.

@@ -146,10 +146,13 @@ Use the existing deadline when resuming in a new context.
   131,072 CUDA projection values. Exact integer dot products found
   1,633 half-rounding mismatches for GEMM2 and 53,141 for FP32 pedantic.
   Keeping FP32 projection outputs until a host half cast reduced
-  misses to 1,182 with GEMM2 and 92 with pedantic. The pinned ONNX
-  Runtime half MatMul writes half outputs. Check whether its stock FP32
-  MatMul can reproduce the improvement from upcast half operands.
+  misses to 1,182 with GEMM2 and 92 with pedantic. The stock CUDA float
+  MatMul call with TF32 disabled missed 176 exact half results using
+  upcast half operands. Build a distinct Compact projection candidate
+  with FP16 storage and stock FP32 MatMul. Independently verify its
+  graph and observe actual optimized CUDA types before T32 scoring.
   Matching raw parity still gates wider Windows scoring.
+  [Stock FP32 projection comparison](simplify/one-process-ledger.md#2026-11-19--stock-cuda-fp32-projection-is-a-compact-candidate)
   [FP32 projection output comparison](simplify/one-process-ledger.md#2026-11-19--fp32-projection-output-improves-half-rounding)
   [Full projection rounding audit](simplify/one-process-ledger.md#2026-11-19--exact-projection-rounding-rules-out-cublas-pedantic)
   [Identical-input projection comparison](simplify/one-process-ledger.md#2026-11-19--identical-half-inputs-isolate-compact-projection-rounding)

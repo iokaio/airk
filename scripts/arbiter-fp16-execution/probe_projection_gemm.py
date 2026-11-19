@@ -28,7 +28,7 @@ VERIFIER_SHA = "50d5c7237cd057a1d08ea79794bbdda0f1e141438a2d22580a760e418f9e3d75
 LIBRARIES = ("cublaslt64_12.dll", "cudart64_12.dll", "cublas64_12.dll")
 HELPERS = ("projection_gemm_cuda.py", "projection_gemm_inputs.py")
 MODES = ("GEMM2", "FP32_PEDANTIC")
-FLOAT_MODES = ("GEMM2_FP32_OUTPUT", "FP32_PEDANTIC_FP32_OUTPUT")
+FLOAT_MODES = ("GEMM2_FP32_OUTPUT", "FP32_PEDANTIC_FP32_OUTPUT", "ORT_FP32_PROJECTION")
 ALL_MODES = MODES + FLOAT_MODES
 PROJECTIONS = ("k", "v", "q")
 MARKER = b"AIRK_COMPACT_PROJECTION_GEMM "
@@ -268,9 +268,16 @@ def worker(deadline, expected_source):
     activation, weights, observed = loader.load_operands(
         onnx, CAPTURE, CAPTURE_SHA, CANDIDATE / "model.onnx", GRAPH_SHA, CANDIDATE / "weights.bin", WEIGHTS_SHA)
     check()
+    float_activation = np.frombuffer(activation, dtype="<f2").astype("<f4").tobytes()
+    float_weights = {
+        name: np.frombuffer(data, dtype="<f2").astype("<f4").tobytes()
+        for name, (_width, data) in weights.items()
+    }
+    check()
     started = time.monotonic()
     with os.add_dll_directory(str(root)):
-        outputs = gpu.run_modes(root / "cudart64_12.dll", root / "cublas64_12.dll", activation, weights)
+        outputs = gpu.run_modes(root / "cudart64_12.dll", root / "cublas64_12.dll", activation, weights,
+                                (float_activation, float_weights))
     native_seconds = time.monotonic() - started
     half_outputs = half_outputs_for_comparison(np, outputs, weights)
     result = compare(verifier, activation, weights, observed, {mode: half_outputs[mode] for mode in MODES}, cpu_proof)

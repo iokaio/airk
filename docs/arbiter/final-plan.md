@@ -1646,9 +1646,13 @@ reproduced all 131,072 captured ONNX Runtime values. The full exact dot
 comparison counted 1,633 half-rounding mismatches in GEMM2 and 53,141 in
 FP32 pedantic. Retaining FP32 outputs through a host half cast reduced
 the mismatch counts to 1,182 for GEMM2 and 92 for pedantic. The pinned
-ONNX Runtime half MatMul emits half outputs. Test a separate projection
-recipe using stock FP32 MatMul on upcast half operands before another full
-scoring attempt. The original numerical and performance gates still apply.
+ONNX Runtime half MatMul emits half outputs. The stock CUDA FP32 call
+with TF32 disabled missed 176 exact half results on upcast half operands.
+Carry that option into a separate Compact graph and matching reference,
+with FP16 storage and the same half output boundary. Observe actual
+optimized CUDA types before another full scoring attempt. The original
+numerical and performance gates still apply.
+[Stock FP32 projection comparison](../simplify/one-process-ledger.md#2026-11-19--stock-cuda-fp32-projection-is-a-compact-candidate)
 [FP32 projection output comparison](../simplify/one-process-ledger.md#2026-11-19--fp32-projection-output-improves-half-rounding)
 [Full projection rounding audit](../simplify/one-process-ledger.md#2026-11-19--exact-projection-rounding-rules-out-cublas-pedantic)
 [Identical-input projection comparison](../simplify/one-process-ledger.md#2026-11-19--identical-half-inputs-isolate-compact-projection-rounding)
@@ -1767,8 +1771,10 @@ The user approved this rule on 19 November 2026 for prospective Context FP16
 qualification across providers. The Windows Compact probe found a raw difference
 of 0.012271881 between the independent FP16 and original FP32 scores on T32/N8,
 with the same winner. The evidence supports investigating how score drift
-affects decisions across the workload. The strict CUDA placement refusal
-still blocks native scoring.
+affects decisions across the workload. At approval, the initial strict
+CUDA placement refusal still blocked native scoring. The later bounded
+placement proved native execution and reached the matching-reference
+score comparison.
 [Compact FP16 first probe](#windows-compact-fp16-first-probe)
 
 1. **Preserve the matching-recipe implementation check.** Require native

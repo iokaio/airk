@@ -11795,3 +11795,37 @@ peak commit against the existing 32 GiB and 120 s limits. Isolated CUDA
 calls took 0.312465 s. The focused Python suite passed 82 controls and
 the delegated CUDA ABI and cleanup mock passed ten. The experiment
 did not execute full-model scoring, held-out task checks or Resource20.
+
+### 2026-11-19 — Stock CUDA FP32 projection is a Compact candidate
+
+R11 reproduced the stock CUDA MatMul float call on the same authenticated
+T32 K/V/Q operands. The pinned ORT CUDA float implementation calls
+cublasSgemm with CUBLAS_DEFAULT_MATH when TF32 is disabled. AIRK's pinned
+CUDA binding disables TF32. R11 expanded the exact half activation and
+weights to FP32, ran that call on the A6000 and rounded its output to half
+on the host. It differed from exact direct half rounding at 32 K, 64 V
+and 80 Q words out of 131,072, a total of 176. The current GEMM2 route
+differed at 1,633. All four previous modes reproduced their R10 counts.
+The raw stock FP32 case differed from direct exact FP32 rounding at
+109,050 words. After half rounding it differed from exact FP32-then-half
+at 175 words.
+
+The next candidate keeps the stored learned weights in half. It expands
+the selected inputs and half weights to FP32 before stock MatMul and
+retains the original half output boundary. Use an independent matching
+reference and actual optimized CUDA type evidence to establish the
+candidate's behavior before T32 scoring. Measure FP32 expansion and
+compute against the existing resource and latency limits if it advances.
+No product execution policy or numerical gate changed.
+
+Receipt root compact-fp16-layer0-cublas-compare-r11:
+execution 789277ec76b57fe1ae7a30a47ea90da1a9e9ae2d8f68eddff8d164f6246e494e,
+log 6a84d243a0a649dfb0f0019a6df949943f94f020822d2f58156f42f0711df734,
+worker aa47ae8ba52c27ff38e9ac13a1ffdd0737bfa21a264bc04074d885e8525158ec,
+CUDA helper 576d261c3df6371704f1660a2f588175100c1e8f25dff6a906776117ed8644dc.
+The verified account and default owner SID ended in 1002. The original
+owned Job exited 0, settled naturally with zero active processes and peaked
+at 2,165,411,840 B. Whole elapsed time was 15.250811 s under the original
+120-second and 32 GiB bounds. Isolated CUDA calls took 0.339085 s. These
+calls did not run within an ONNX graph and carry no latency, resource
+qualification or matching raw score claim.

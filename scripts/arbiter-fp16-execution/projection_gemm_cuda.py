@@ -12,6 +12,7 @@ _HOST_TO_DEVICE = 1
 _DEVICE_TO_HOST = 2
 _CUBLAS_OP_N = 0
 _CUBLAS_POINTER_MODE_HOST = 0
+_CUBLAS_DEFAULT_MATH = 0
 _CUBLAS_GEMM_DEFAULT = -1
 _MODES = {
     # DISALLOW_REDUCED_PRECISION_REDUCTION, COMPUTE_32F
@@ -20,6 +21,7 @@ _MODES = {
     "FP32_PEDANTIC": (2, 69, _CUDA_R_16F),
     "GEMM2_FP32_OUTPUT": (16, 68, _CUDA_R_32F),
     "FP32_PEDANTIC_FP32_OUTPUT": (2, 69, _CUDA_R_32F),
+    "ORT_FP32_PROJECTION": (_CUBLAS_DEFAULT_MATH, None, _CUDA_R_32F),
 }
 _TOKENS = 32
 _HIDDEN = 2048
@@ -77,6 +79,7 @@ def run_modes(
     cublas_path: str | os.PathLike,
     input_half: bytes,
     weights_by_name: dict[str, tuple[int, bytes]],
+    float_operands: tuple[bytes, dict[str, bytes]],
 ) -> dict[str, dict[str, bytes]]:
     """Return row-major K/V/Q bytes in each mode's little-endian storage type."""
     input_length = _TOKENS * _HIDDEN * _HALF_BYTES
@@ -89,6 +92,16 @@ def run_modes(
         if (type(width) is not int or width != expected_width or not isinstance(raw, bytes)
                 or len(raw) != _HIDDEN * width * _HALF_BYTES):
             raise ValueError(f"Compact {name} projection width or binary16 weights differ")
+
+    input_float, float_weights = float_operands
+    float_input_length = _TOKENS * _HIDDEN * _FLOAT32_BYTES
+    if (not isinstance(input_float, bytes) or len(input_float) != float_input_length
+            or set(float_weights) != _WIDTHS.keys()):
+        raise ValueError("exact upcast Compact projection operands required")
+    for name, width in _WIDTHS.items():
+        data = float_weights[name]
+        if not isinstance(data, bytes) or len(data) != _HIDDEN * width * _FLOAT32_BYTES:
+            raise ValueError(f"Compact {name} upcast projection weight size differs")
 
     if os.name != "nt" or ctypes.sizeof(ctypes.c_void_p) != 8:
         raise OSError("the pinned CUDA diagnostic requires 64-bit Windows")
@@ -113,6 +126,10 @@ def run_modes(
         "cublasSetPointerMode_v2": [pointer, integer],
         "cublasSetMathMode": [pointer, integer],
         "cublasGetMathMode": [pointer, ctypes.POINTER(integer)],
+        "cublasSgemm_v2": [
+            pointer, integer, integer, integer, integer, integer, pointer,
+            pointer, integer, pointer, integer, pointer, pointer, integer,
+        ],
         "cublasGemmEx": [
             pointer, integer, integer, integer, integer, integer,
             pointer, pointer, integer, integer, pointer, integer,
@@ -129,9 +146,9 @@ def run_modes(
         if not handle.value:
             raise RuntimeError("cublasCreate_v2 returned a null handle")
         _checked(blas.cublasSetPointerMode_v2, handle, _CUBLAS_POINTER_MODE_HOST)
-        device_input = _allocate(runtime, buffers, input_length)
+        device_input = _allocate(runtime, buffers, float_input_length)
         max_width = max(_WIDTHS.values())
-        device_weight = _allocate(runtime, buffers, _HIDDEN * max_width * _HALF_BYTES)
+        device_weight = _allocate(runtime, buffers, _HIDDEN * max_width * _FLOAT32_BYTES)
         device_output = _allocate(runtime, buffers, _TOKENS * max_width * _FLOAT32_BYTES)
         _checked(runtime.cudaMemcpy, device_input, ctypes.c_char_p(input_half),
                  input_length, _HOST_TO_DEVICE)
@@ -145,19 +162,34 @@ def run_modes(
             _checked(blas.cublasGetMathMode, handle, ctypes.byref(observed))
             if observed.value != math_mode:
                 raise RuntimeError(f"cuBLAS math mode differs for {mode}: {observed.value}")
+            # The stock ORT float path disables TF32 and calls cublasSgemm.
+            # This last mode uploads the exact half values expanded to float.
+            if compute_type is None:
+                _checked(runtime.cudaMemcpy, device_input, ctypes.c_char_p(input_float),
+                         float_input_length, _HOST_TO_DEVICE)
             results[mode] = result = {}
             for name in _WIDTHS:
                 width, weights = weights_by_name[name]
+                if compute_type is None:
+                    weights = float_weights[name]
                 _checked(runtime.cudaMemcpy, device_weight, ctypes.c_char_p(weights),
                          len(weights), _HOST_TO_DEVICE)
                 # cuBLAS is column-major. Swap operands and compute (XW)^T.
-                _checked(
-                    blas.cublasGemmEx, handle, _CUBLAS_OP_N, _CUBLAS_OP_N,
-                    width, _TOKENS, _HIDDEN, ctypes.byref(alpha),
-                    device_weight, _CUDA_R_16F, width,
-                    device_input, _CUDA_R_16F, _HIDDEN, ctypes.byref(beta),
-                    device_output, output_type, width, compute_type, _CUBLAS_GEMM_DEFAULT,
-                )
+                if compute_type is None:
+                    _checked(
+                        blas.cublasSgemm_v2, handle, _CUBLAS_OP_N, _CUBLAS_OP_N,
+                        width, _TOKENS, _HIDDEN, ctypes.byref(alpha),
+                        device_weight, width, device_input, _HIDDEN, ctypes.byref(beta),
+                        device_output, width,
+                    )
+                else:
+                    _checked(
+                        blas.cublasGemmEx, handle, _CUBLAS_OP_N, _CUBLAS_OP_N,
+                        width, _TOKENS, _HIDDEN, ctypes.byref(alpha),
+                        device_weight, _CUDA_R_16F, width,
+                        device_input, _CUDA_R_16F, _HIDDEN, ctypes.byref(beta),
+                        device_output, output_type, width, compute_type, _CUBLAS_GEMM_DEFAULT,
+                    )
                 _checked(runtime.cudaDeviceSynchronize)
                 length = _TOKENS * width * output_bytes
                 host_output = (ctypes.c_ubyte * length)()
