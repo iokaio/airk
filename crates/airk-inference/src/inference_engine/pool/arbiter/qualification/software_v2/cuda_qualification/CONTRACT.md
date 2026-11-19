@@ -292,3 +292,12 @@ All four all-live inputs must pass both independent comparisons and the complete
 runtime trace. A failure stops the sequence and retains observed results.
 The cell supplies private profiling evidence. Cold and warm resource and product
 qualification require their separate observations.
+
+## Large FP32 batch-view metadata
+
+The Windows x64 data-only selector binds the exact original Large Probe and
+reviewed FP32 batch-view graph and preparation receipt. It emits a fresh
+private profile and source manifest. The raw all-unsupported calibration
+rebinds its model entry to the new ONNX bytes. The original weights and
+other assets keep their held logical paths. The existing Probe, resource
+limits, action availability and execution authority apply.

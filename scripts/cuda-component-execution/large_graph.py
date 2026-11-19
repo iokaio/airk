@@ -15,6 +15,11 @@ ROOT = Path(__file__).resolve().parents[2]
 HOST_BYTES = 48 << 30
 PROFILE = "eb467966e528b3b34f0c95d26bdcb0e3f404267b5dcaa673cc6c56755b85905b"
 REQUEST_SHA = "9a7daee2c118030c979852efc6780f011356af320e0c3fe0a6d1d9a2a0ab33b0"
+BATCH_VIEW_GRAPH_SHA = "5c9a26693eec8522bbfb4d5c4445fa0b60684449a5ea2e1098ec71cca96405b1"
+BATCH_VIEW_PREPARATION_SHA = "ea6ebdadacf0b776e00281172edc4c756ee396ae03eb8db0596c420218315039"
+CPU = "CPUExecutionProvider"
+CUDA = "CUDAExecutionProvider"
+PARENT_CPU_STATIC_BYTES = 43819
 SELECTOR = (
     "inference_engine::pool::arbiter::qualification::software_v2::"
     "cuda_qualification::cuda_large_fp32_load_only_graph_metadata_diagnostic"
@@ -28,6 +33,106 @@ SCORING_INPUTS = {
     "retained_fixture": ("RETAINED", "c87c4edcdec2ab5e98b41bfc186c3bb7d60791e7b9efd0aea186b731eecc3dd2"),
     "supplemental_fixture": ("SUPPLEMENTAL", "020669f0c44a959a0d95798eb3cc52925513e7e549496368017e0827a398aaef"),
 }
+
+
+def candidate_inputs(path, expected_sha, request, probe, base, guard, require):
+    guard([path], True)
+    pins = {"metadata": base.pin(path)}
+    require(pins["metadata"]["sha256"] == expected_sha, "owned Large batch-view metadata digest differs")
+    metadata = base.read(path)
+    require(metadata["schema"] == "airk.private.large-fp32-batch-view-metadata/1"
+            and metadata["execution_user"] == base.SID
+            and metadata["qualified"] is metadata["model_requests_dispatched"] is False
+            and metadata["parent_request"]["sha256"] == REQUEST_SHA
+            and metadata["graph"]["sha256"] == BATCH_VIEW_GRAPH_SHA
+            and metadata["preparation"]["sha256"] == BATCH_VIEW_PREPARATION_SHA
+            and metadata["probe_request"] == {key: request[key] for key in ("path", "sha256")},
+            "owned Large batch-view metadata does not bind the reviewed graph and selected request")
+    receipts = {key: metadata[key] for key in
+                ("parent_request", "graph", "preparation", "profile_pin", "source_manifest")}
+    receipts["native_input"] = probe["gpu_input"]
+    guard([Path(pin["path"]) for pin in receipts.values()], True)
+    for label, pin in receipts.items():
+        observed = base.pin(Path(pin["path"]))
+        require(pin == {key: observed[key] for key in ("path", "sha256")},
+                "owned Large batch-view evidence differs: " + label)
+        pins[label] = observed
+    parent_probe = base.read(pins["parent_request"]["path"])
+    require(all(probe[key] == parent_probe[key] for key in
+                ("schema", "runtime_manifest", "bounds", "cold_bytes", "warm_bytes",
+                 "headroom_bytes", "job_limit_bytes")),
+            "Large batch-view request changed the original runtime or probe bounds")
+    native_input = base.read(pins["native_input"]["path"])
+    profile = base.read(pins["profile_pin"]["path"])
+    models = [asset for asset in profile["assets"] if asset["role"] == "model"]
+    require(native_input["profile"] == metadata["profile_pin"]
+            and native_input["source_manifest"] == metadata["source_manifest"]
+            and profile["manifest"] == metadata["profile"]
+            and profile["device_execution"]["graph"] == BATCH_VIEW_GRAPH_SHA
+            and len(models) == 1 and models[0]["sha256"] == BATCH_VIEW_GRAPH_SHA
+            and native_input["files"][models[0]["name"]] == metadata["graph"]["path"],
+            "Large batch-view profile does not bind the reviewed graph")
+    return metadata, pins
+
+
+def observe_candidate_graph(metadata, summarize):
+    rows = metadata["rows"]
+    summary = summarize(metadata)
+    expected = {f"/scorer/layers.{index}/self_attn/Add_2" for index in range(36)}
+    nodes = {(row["graph"], row["node"]): row for row in rows if row["kind"] == "node"}
+    values = {(row["graph"], row["value"]): row for row in rows if row["kind"] == "value"}
+    mask_adds = {key: {**row, "edges": []} for key, row in nodes.items() if row["name"] in expected}
+    cpu_implicit = 0
+    for edge in rows:
+        if edge["kind"] != "edge" or edge["node"] is None:
+            continue
+        graph, node, value = edge["graph"], edge["node"], edge["value"]
+        key = (graph, node)
+        if key in mask_adds:
+            mask_adds[key]["edges"].append({
+                "role": edge["role"], "slot": edge["slot"], "value": values.get((graph, value)),
+            })
+        if edge["role"] == 1 and nodes[key]["ep"] == CPU:
+            cpu_implicit += 1
+    graphs = summary["graphs"]
+    cpu_bytes = sum(graph["cpu_incident_static_shapes"]["sum_fixed_payload_bytes"] for graph in graphs)
+    return {
+        "node_count": summary["node_count"],
+        "provider_node_counts": summary["provider_node_counts"],
+        "graph_count": len(graphs),
+        "root_graph_count": sum(graph["parent_graph"] is None for graph in graphs),
+        "cpu_implicit_edges": cpu_implicit,
+        "cpu_incident_static_shapes": [graph["cpu_incident_static_shapes"] for graph in graphs],
+        "cpu_static_bytes": cpu_bytes,
+        "predecessor_cpu_static_bytes": PARENT_CPU_STATIC_BYTES,
+        "within_predecessor_cpu_static_bytes": cpu_bytes <= PARENT_CPU_STATIC_BYTES,
+        "mask_adds": sorted(mask_adds.values(), key=lambda row: row["name"]),
+        "missing_mask_adds": sorted(expected - {row["name"] for row in mask_adds.values()}),
+    }
+
+
+def validate_candidate_graph(observed, require):
+    require(observed["graph_count"] == observed["root_graph_count"] == 1
+            and set(observed["provider_node_counts"]) <= {CPU, CUDA}
+            and observed["cpu_implicit_edges"] == 0,
+            "Large batch-view final graph scopes, providers or CPU implicit edges differ")
+    shapes = observed["cpu_incident_static_shapes"][0]
+    require(shapes["other_or_dynamic_values"] == 0 and set(shapes["rank_counts"]) <= {0, 1}
+            and shapes["max_fixed_dim"] <= 5 and shapes["max_fixed_payload_bytes"] <= 40,
+            "Large batch-view CPU incident values must be fixed INT64/BOOL within 40 B")
+    adds = observed["mask_adds"]
+    require(len(adds) == 36 and not observed["missing_mask_adds"],
+            "exactly 36 Large batch-view mask Add nodes required")
+    for row in adds:
+        edges = row["edges"]
+        require(row["ep"] == CUDA and row["domain"] in ("", "ai.onnx") and row["op"] == "Add"
+                and len(edges) == 3
+                and {(edge["role"], edge["slot"]) for edge in edges} == {(0, 0), (0, 1), (2, 0)}
+                and all(edge["value"] is not None and edge["value"]["type_state"] == "tensor"
+                        and edge["value"]["rank"] == 3 and edge["value"]["element_type"] == 1
+                        for edge in edges),
+                "Large batch-view mask Add is missing CUDA FP32 rank-three operands or result: "
+                + row["name"])
 
 
 def scoring_inputs(paths, base, guard, require):
@@ -104,11 +209,18 @@ def main():
     parser.add_argument("--graph", type=Path)
     parser.add_argument("--retained", type=Path)
     parser.add_argument("--supplemental", type=Path)
+    parser.add_argument("--candidate-metadata", type=Path)
+    parser.add_argument("--candidate-metadata-sha256")
     args = parser.parse_args()
     score_paths = (args.graph, args.retained, args.supplemental)
     if any(score_paths) and not all(score_paths):
         parser.error("scoring requires --graph, --retained and --supplemental together")
     scoring = all(score_paths)
+    candidate = args.candidate_metadata is not None
+    if candidate != (args.candidate_metadata_sha256 is not None):
+        parser.error("batch-view mode requires --candidate-metadata and --candidate-metadata-sha256 together")
+    if candidate and scoring:
+        parser.error("batch-view graph observation and scoring cannot be combined")
 
     component = runpy.run_path(str(ROOT / "scripts/cuda-component-execution.py"))
     base = component["base"]()
@@ -123,7 +235,7 @@ def main():
     request = base.pin(args.request)
     image = base.pin(args.image)
     build = base.pin(args.build_receipt)
-    require(request["sha256"] == REQUEST_SHA and image["sha256"] == args.image_sha256
+    require((candidate or request["sha256"] == REQUEST_SHA) and image["sha256"] == args.image_sha256
             and build["sha256"] == args.build_receipt_sha256,
             "reviewed Large request, staged native image or build receipt differs")
     probe = base.read(args.request)
@@ -158,7 +270,12 @@ def main():
             "a fresh private campaign output is required")
     guard(base_guard, [args.request, args.image, args.build_receipt, manifest], True)
     require(parent.worker.windows_sid() == base.SID, "parent SID differs")
-    if scoring:
+    if candidate:
+        metadata, input_pins = candidate_inputs(
+            args.candidate_metadata, args.candidate_metadata_sha256, request, probe, base,
+            lambda paths, created: guard(base_guard, paths, created), require,
+        )
+    elif scoring:
         input_pins, rows, journal = scoring_inputs(
             score_paths, base, lambda paths, created: guard(base_guard, paths, created), require,
         )
@@ -191,7 +308,10 @@ def main():
         "command": command, "request": request, "image": image, "build": build, "build_log": log_pin,
         "execution_user_sid": base.SID, "failure": None,
     }
-    if scoring:
+    if candidate:
+        receipt["candidate_inputs"] = input_pins
+        receipt["runtime_manifest"] = manifest_pin
+    elif scoring:
         receipt["scoring_inputs"] = input_pins
         receipt["runtime_manifest"] = manifest_pin
 
@@ -213,7 +333,7 @@ def main():
             TEMP=str(temp), TMP=str(temp), TMPDIR=str(temp),
             AIRK_PRIVATE_CENSUS_BASE=str(temp),
             AIRK_CUDA_QUALIFICATION_INPUT=str(args.request),
-            AIRK_CUDA_QUALIFICATION_INPUT_SHA256=REQUEST_SHA,
+            AIRK_CUDA_QUALIFICATION_INPUT_SHA256=request["sha256"],
             AIRK_CUDA_QUALIFICATION_OUTPUT=str(native_path),
         )
         if scoring:
@@ -246,7 +366,8 @@ def main():
         require(parent.settled(owned) and 0 < owned["peak_host_committed_bytes"] <= HOST_BYTES,
                 "native Large exit, Job settlement or host commit proof differs")
         require(native is not None, "native Large result is missing")
-        require(native["profile"] == PROFILE and native["native_binary_sha256"] == image["sha256"]
+        expected_profile = metadata["profile"] if candidate else PROFILE
+        require(native["profile"] == expected_profile and native["native_binary_sha256"] == image["sha256"]
                 and native["pid"] == owned["owned_leader_pid"]
                 and native["execution_user"] == native["default_owner"] == base.SID
                 and native["native_host_charge_release_observed"] is True
@@ -271,6 +392,23 @@ def main():
                     and native["model_requests_dispatched"] is False and native["qualification"] is False,
                     "native Large graph scope differs")
             component["validate_graph_metadata"](native["graph_metadata"], native["placement"])
+            if candidate:
+                placement = native["placement"]
+                require(native["request"] == metadata["probe_request"]
+                        and native["native_input"] == probe["gpu_input"]
+                        and native["source_manifest"] == metadata["source_manifest"]
+                        and native["runtime_manifest"] == probe["runtime_manifest"]
+                        and native["bounds"] == probe["bounds"]
+                        and native["product_admission"] is native["forward_dispatched"] is False
+                        and placement["scope"] == "onnxruntime-final-session-state-ep-placement"
+                        and placement["complete"] is True and placement["shim_status"] == 0
+                        and placement["ort_error_code"] == 0
+                        and placement["reported_nodes"] == len(placement["nodes"]),
+                        "native batch-view result does not bind the selected request and complete placement")
+                summarize = runpy.run_path(str(Path(__file__).with_name("placement_report.py")))["summarize"]
+                observed = observe_candidate_graph(native["graph_metadata"], summarize)
+                receipt["candidate_graph_observation"] = observed
+                validate_candidate_graph(observed, require)
         outputs = (receipt.get("runtime_profile"), receipt.get("operations"))
         for pin in (request, image, build, log_pin, manifest_pin, receipt["native_result"], receipt["stdout"],
                     *input_pins.values(), *(pin for pin in outputs if pin)):

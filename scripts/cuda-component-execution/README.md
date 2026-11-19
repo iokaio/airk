@@ -70,6 +70,25 @@ settlement receipt, native result and stdout. This operation creates and
 settles a disposable session and dispatches zero forwards.
 
 
+The reviewed Large FP32 batch-view candidate uses this graph-only selector.
+Pass its freshly emitted native Probe request as `--request` and add these
+two arguments together.
+
+```text
+  --candidate-metadata OWNED_BATCH_VIEW_METADATA_RECEIPT
+  --candidate-metadata-sha256 SHA
+```
+
+The admitted receipt identifies the exact predecessor request, batch-view
+graph, preparation and generated profile. The launcher checks all 36 CUDA
+mask Add nodes and records the two FP32 rank-three input values and output
+value for each. Only CPU and CUDA placement in a single root graph is
+accepted. CPU incident values must be fixed INT64 or BOOL, within 40 bytes
+each, with no implicit CPU inputs. The receipt reports their distinct static
+payload size and whether it fits the predecessor's 43,819-byte envelope.
+The graph-only result carries no scoring or product authority, and the
+candidate arguments are exclusive with the scoring arguments below.
+
 ## Windows Large FP32 four-width profiling
 
 Use the same launcher and arguments with a native image containing the
