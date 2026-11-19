@@ -23,8 +23,10 @@ SELECTORS = {
     "graph": PREFIX + "cuda_compact_fp16_load_only_graph_diagnostic",
     "t32": PREFIX + "cuda_compact_fp16_t32_component",
     "bounded-t32": PREFIX + "cuda_compact_fp16_bounded_t32_component",
+    "layer0-t32": PREFIX + "cuda_compact_fp16_layer0_taps",
 }
-SCORING_MODES = ("t32", "bounded-t32")
+REVIEWED_MODES = ("bounded-t32", "layer0-t32")
+SCORING_MODES = ("t32", *REVIEWED_MODES)
 MODEL = "arbiter-context-qwen3-17b"
 PREPARE_SHA = "850cf966a73bc5ecb0aa79cc3d22559cdd3ad855fbc38f73e361f136ea88c953"
 T32_DIGEST = "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102fe56fc335"
@@ -32,8 +34,17 @@ METADATA_SCHEMA = "airk.private.compact-fp16-probe-metadata/1"
 GRAPH_SCHEMA = "airk.private.compact-fp16-graph-diagnostic/1"
 T32_SCHEMA = "airk.private.compact-fp16-t32-component/2"
 BOUNDED_SCHEMA = "airk.private.compact-fp16-bounded-t32-component/1"
-REVIEWED_RECEIPT_SHA = "c523eee7990cae7684493b85f22670fb251e6a218c10733a58c26ae58042ccb3"
-REVIEWED_GRAPH_SHA = "932ed619f96b23d3e669f76d18731db1176e4f0944152ed40a866d9922182a3f"
+LAYER0_SCHEMA = "airk.private.compact-fp16-layer0-taps/1"
+BOUNDED_POLICY = b"airk.private.compact-fp16-cuda-bounded-hybrid/1"
+LAYER0_POLICY = b"airk.private.compact-fp16-cuda-layer0-taps/1"
+LAYER0_TAPS = (
+    ("/airk_g5/attention/0/q16", 2048),
+    ("/airk_g5/attention/0/k16", 1024),
+    ("/airk_g5/weight//scorer/layers.0/self_attn/v_proj/MatMul/output16", 1024),
+    ("/airk_g5/attention/0/raw16", 2048),
+)
+REVIEWED_RECEIPT_SHA = "af3f5ee2b303a70bbfa09a1545c4a84422d28ce5eed6c5d8ba42047ef4280ef7"
+REVIEWED_GRAPH_SHA = "89f9c21b2fa40f3ce8af0f043453fd4eeeb42c3799e0ff22fab9e28c8d2f86e1"
 BOUNDED_SOURCE = "crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid.rs"
 CPU = "CPUExecutionProvider"
 BOUNDED_CPU_NODES = 374
@@ -184,8 +195,11 @@ def linked_image(build, image, base, audit, mode):
         "crates/airk-retrieval/src/arbiter/runtime/cuda/fp16.rs",
         "crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic.rs",
     )
-    if mode == "bounded-t32":
+    if mode in REVIEWED_MODES:
         relevant += (BOUNDED_SOURCE, inference + "/cuda_qualification/hybrid_profile_trace.rs")
+    if mode == "layer0-t32":
+        relevant += ("crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid/layer0.rs",
+                     "crates/airk-retrieval/src/arbiter/runtime/cuda/run.rs")
     sources = {relative: exact_pin(ROOT / relative, native[relative], base) for relative in relevant}
     return log_pin, artifact, sources
 
@@ -374,8 +388,8 @@ def placement_roster(placement):
                   for node in nodes)
 
 
-def bounded_policy_identity(graph_sha, profile_sha, source_sha):
-    fields = (b"airk.private.compact-fp16-cuda-bounded-hybrid/1",
+def bounded_policy_identity(graph_sha, profile_sha, source_sha, *, domain=BOUNDED_POLICY):
+    fields = (domain,
               bytes.fromhex(graph_sha), bytes.fromhex(profile_sha), bytes.fromhex(source_sha))
     digest = hashlib.sha256(b"AIRK-DIGEST-1\0")
     for field in fields:
@@ -384,10 +398,10 @@ def bounded_policy_identity(graph_sha, profile_sha, source_sha):
     return digest.hexdigest()
 
 
-def validate_bounded_t32(value, reviewed, placement, source):
+def validate_bounded_t32(value, reviewed, placement, source, *, policy=BOUNDED_POLICY):
     require(value["reviewed_graph"] == core(reviewed)
-            and value["bounded_policy_identity"] == bounded_policy_identity(reviewed["sha256"], value["profile"],
-                                                                            source["sha256"]),
+            and value["bounded_policy_identity"] == bounded_policy_identity(
+                reviewed["sha256"], value["profile"], source["sha256"], domain=policy),
             "reviewed graph or bounded FP16 policy identity differs")
     require(placement_roster(value["final_placement"]) == placement_roster(placement),
             "bounded FP16 final placement differs from the complete reviewed graph")
@@ -403,13 +417,39 @@ def validate_bounded_t32(value, reviewed, placement, source):
             "bounded FP16 profile timing, complete node coverage or CPU tensor bounds differ")
 
 
-def validate_t32(value, paths, owned, request, evidence, metadata, manifest, image, component, base, *,
-                 mode="t32", reviewed=None, reviewed_placement=None, policy_source=None):
-    schema = BOUNDED_SCHEMA if mode == "bounded-t32" else T32_SCHEMA
-    validate_native_identity(value, schema, owned, request, evidence, metadata, manifest, image, base)
-    require(value["native_forward_returned"] is value["forward_synchronized"] is True
-            and value["numeric_forward_attempts"] == 1, "native T32 return and synchronization required")
-    rows = value["rows"]
+def validate_layer0_evidence(value, component):
+    taps = value["layer0_taps"]
+    require(isinstance(taps, list) and len(taps) == len(LAYER0_TAPS), "exact four layer-0 taps required")
+    for tap, (name, width) in zip(taps, LAYER0_TAPS):
+        require(isinstance(tap, dict) and set(tap) == {"name", "width", "bits"}
+                and tap["name"] == name and type(tap["width"]) is int and tap["width"] == width,
+                "layer-0 tap name, order or width differs")
+        bits = tap["bits"]
+        require(isinstance(bits, list) and len(bits) == 32 * width
+                and all(type(word) is int and 0 <= word <= 0xFFFF and word & 0x7C00 != 0x7C00 for word in bits),
+                "complete finite raw binary16 layer-0 tap required")
+
+    graph = value["layer0_final_graph"]
+    component["validate_graph_metadata"](graph, value["final_placement"])
+    rows = graph["rows"]
+    values = {row["value"]: row for row in rows if row["kind"] == "value" and row["graph"] == 0}
+    outputs = [values[row["value"]] for row in rows
+               if row["kind"] == "edge" and row["graph"] == 0 and row["role"] == 4]
+    by_name = {row["name"]: row for row in outputs}
+    require(len(outputs) == 5 and set(by_name) == {"scores", *(name for name, _ in LAYER0_TAPS)},
+            "exact score and layer-0 graph output boundary required")
+    cuda_nodes = {row["node"] for row in rows if row["kind"] == "node" and row["graph"] == 0 and row["ep"] == CUDA}
+    widths = {row["value"]: row["number"] for row in rows
+              if row["kind"] == "dimension" and row["graph"] == 0 and row["index"] == 2}
+    for name, width in LAYER0_TAPS:
+        tap = by_name[name]
+        require(tap["type_state"] == "tensor" and tap["element_type"] == 10 and tap["rank"] == 3
+                and tap["provenance"] == "node_output" and tap["producer"] in cuda_nodes
+                and widths.get(tap["value"]) == width,
+                "layer-0 graph output type, width or CUDA origin differs")
+
+
+def validate_t32_row(rows, mode):
     require(len(rows) == 1 and rows[0]["name"] == "diagnostic-all-live-32"
             and rows[0]["tokens"] == 32 and rows[0]["input_digest"] == T32_DIGEST,
             "exact native T32 row required")
@@ -418,7 +458,18 @@ def validate_t32(value, paths, owned, request, evidence, metadata, manifest, ima
             and finite(row["elapsed_us"], 0, 120_000_000)
             and finite(row["native_call_elapsed_us"], 0, row["elapsed_us"]),
             "complete finite T32 scores and timing required")
-    validate_t32_comparisons(row)
+    if mode != "layer0-t32":
+        validate_t32_comparisons(row)
+    return row
+
+
+def validate_t32(value, paths, owned, request, evidence, metadata, manifest, image, component, base, *,
+                 mode="t32", reviewed=None, reviewed_placement=None, policy_source=None):
+    schema = {"t32": T32_SCHEMA, "bounded-t32": BOUNDED_SCHEMA, "layer0-t32": LAYER0_SCHEMA}[mode]
+    validate_native_identity(value, schema, owned, request, evidence, metadata, manifest, image, base)
+    require(value["native_forward_returned"] is value["forward_synchronized"] is True
+            and value["numeric_forward_attempts"] == 1, "native T32 return and synchronization required")
+    row = validate_t32_row(value["rows"], mode)
     refusal = value["input_refusals"]
     require([item["case"] for item in refusal] == ["wrong_native_positions", "mask_hole", "mask_all_zero"]
             and all(item["refused"] is True and item["native_forward_dispatched"] is False for item in refusal),
@@ -438,8 +489,11 @@ def validate_t32(value, paths, owned, request, evidence, metadata, manifest, ima
             and 0 < len(placed) <= 65536 and placement["reported_nodes"] == len(placed)
             and sum(len(node[key].encode("utf-8")) for node in placed for key in ("name", "domain", "op", "ep"))
                 == placement["reported_string_bytes"], "complete final placement required")
-    if mode == "bounded-t32":
-        validate_bounded_t32(value, reviewed, reviewed_placement, policy_source)
+    if mode in REVIEWED_MODES:
+        policy = LAYER0_POLICY if mode == "layer0-t32" else BOUNDED_POLICY
+        validate_bounded_t32(value, reviewed, reviewed_placement, policy_source, policy=policy)
+        if mode == "layer0-t32":
+            validate_layer0_evidence(value, component)
     else:
         require(all(node["ep"] == CUDA for node in placed), "complete strict CUDA placement required")
     attention = [node for node in placed if node["op"] == "GroupQueryAttention"]
@@ -507,7 +561,7 @@ def run(args):
             dependencies[name] = retained_core(pin, base)
     inputs = [request, evidence, image, build, manifest, log, artifact, *sources.values(), *dependencies.values()]
     graph_receipt = graph = graph_operations = reviewed_placement = None
-    if args.mode == "bounded-t32":
+    if args.mode in REVIEWED_MODES:
         audit([args.graph_receipt])
         graph_receipt = exact_pin(args.graph_receipt, REVIEWED_RECEIPT_SHA, base)
         graph, graph_operations, reviewed_placement = reviewed_graph(
@@ -642,7 +696,7 @@ def run(args):
                 for path in retained:
                     if path.is_file():
                         limit = (component["DIAGNOSTIC_PROOFS"]["native_result"]
-                                 if args.mode == "graph" and path == paths["native"] else LOG_CAP)
+                                 if args.mode in ("graph", "layer0-t32") and path == paths["native"] else LOG_CAP)
                         size = path.stat().st_size
                         pin = (base.pin(path) if size <= limit else
                                {"path": str(path), "bytes": size, "digest_refused_beyond_bound": True})
@@ -663,11 +717,11 @@ def main():
     parser.add_argument("--graph-receipt", type=Path)
     parser.add_argument("--graph-receipt-sha256")
     args = parser.parse_args()
-    if args.mode == "bounded-t32":
+    if args.mode in REVIEWED_MODES:
         if args.graph_receipt is None or args.graph_receipt_sha256 != REVIEWED_RECEIPT_SHA:
-            parser.error("bounded-t32 requires --graph-receipt and the exact reviewed --graph-receipt-sha256")
+            parser.error(f"{args.mode} requires --graph-receipt and the exact reviewed --graph-receipt-sha256")
     elif args.graph_receipt is not None or args.graph_receipt_sha256 is not None:
-        parser.error("--graph-receipt and --graph-receipt-sha256 are only valid for bounded-t32")
+        parser.error("--graph-receipt and --graph-receipt-sha256 require bounded-t32 or layer0-t32")
     raise SystemExit(0 if run(args) else 1)
 
 

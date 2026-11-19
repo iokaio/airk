@@ -136,8 +136,12 @@ Use the existing deadline when resuming in a new context.
   0.0248556137 against 0.001. Both mass bounds and the winner checks passed.
   Modeling the pinned CUDA probability rounding in a separate CPU
   reference yielded raw error 0.0303249359 against the same sealed scores.
-  Capture and replay the exact layer-0 half Q, K, V and GQA output on a
-  separately audited diagnostic before repeating T32 or running wider.
+  The disposable layer-0 capture kept the complete optimized graph and
+  reproduced all eight CUDA scores exactly. The source-derived Flash CPU
+  replay matched 65,288 of 65,536 captured output values bit for bit on
+  identical Q/K/V inputs. Compare independently generated layer-0 Q/K/V
+  operands next. Matching raw parity still gates wider Windows scoring.
+  [Layer-0 capture and replay](simplify/one-process-ledger.md#2026-11-19--compact-cuda-layer-0-capture-and-identical-operand-replay)
   [Single-tile comparison](simplify/one-process-ledger.md#2026-11-19--single-tile-flash-reference-still-misses-compact-t32-raw-parity)
   [Corrected T32 execution and numerical blocker](simplify/one-process-ledger.md#2026-11-19--corrected-compact-fp16-cuda-forward-settles-and-matching-raw-parity-fails)
   Leave Focus GPU off the critical path. The 25% plus one-second warm Answer p95

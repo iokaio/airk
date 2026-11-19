@@ -10,7 +10,7 @@ const T32_INPUT: &str = "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102
 const GRAPH_BYTES: u64 = 64 << 20;
 const PROOF_BYTES: u64 = 16 << 20;
 const REVIEWED_FP16_GRAPH_SHA256: &str =
-    "932ed619f96b23d3e669f76d18731db1176e4f0944152ed40a866d9922182a3f";
+    "89f9c21b2fa40f3ce8af0f043453fd4eeeb42c3799e0ff22fab9e28c8d2f86e1";
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -550,6 +550,7 @@ enum CompactFp16Probe {
     StrictT32,
     GraphOnly,
     BoundedT32,
+    Layer0Taps,
 }
 
 #[test]
@@ -570,8 +571,15 @@ fn cuda_compact_fp16_bounded_t32_component() -> Result<()> {
     observe_compact_fp16_t32(CompactFp16Probe::BoundedT32)
 }
 
+#[test]
+#[ignore = "disposable Compact FP16 T32 CUDA diagnostic of the first layer half attention tensors"]
+fn cuda_compact_fp16_layer0_taps() -> Result<()> {
+    observe_compact_fp16_t32(CompactFp16Probe::Layer0Taps)
+}
+
 fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
     let graph_only = mode == CompactFp16Probe::GraphOnly;
+    let layer0_taps = mode == CompactFp16Probe::Layer0Taps;
     let started_ns = airk_process::monotonic::now_ns()?;
     let started = Instant::now();
     let execution_user = airk_ipc::endpoint::current_user()?;
@@ -636,7 +644,7 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
     validate_independent_proof(&proof)?;
     validate_reference(&proof.reference, &profile, &input.policy)?;
     bind_t32_candidate(&input, &profile, &metadata, &proof)?;
-    let reviewed_graph = if mode == CompactFp16Probe::BoundedT32 {
+    let reviewed_graph = if mode == CompactFp16Probe::BoundedT32 || layer0_taps {
         let pin = env_pin(
             "AIRK_CUDA_FP16_REVIEWED_GRAPH",
             "AIRK_CUDA_FP16_REVIEWED_GRAPH_SHA256",
@@ -708,6 +716,7 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             CompactFp16Probe::StrictT32 => "airk.private.compact-fp16-t32-component/2",
             CompactFp16Probe::GraphOnly => "airk.private.compact-fp16-graph-diagnostic/1",
             CompactFp16Probe::BoundedT32 => "airk.private.compact-fp16-bounded-t32-component/1",
+            CompactFp16Probe::Layer0Taps => "airk.private.compact-fp16-layer0-taps/1",
         },
         "complete": false, "qualified": false, "product_admission": false,
         "request": request_pin, "native_input": gpu_input, "profile": profile.manifest,
@@ -730,6 +739,10 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
     });
     if graph_only {
         receipt["graph_observation"] = Value::Null;
+    }
+    if layer0_taps {
+        receipt["layer0_final_graph"] = Value::Null;
+        receipt["layer0_taps"] = json!([]);
     }
     if let Some((pin, _)) = &reviewed_graph {
         receipt["reviewed_graph"] = json!(pin);
@@ -787,9 +800,15 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             let observer = execution.cuda_compact_fp16_load_observer()?;
             let loaded = journal.observe(operation::Kind::Load, 0, None, || {
                 if let Some((pin, graph_bytes)) = &reviewed_graph {
-                    Scorer::open_compact_fp16_bounded_hybrid_profiled(
-                        execution, files, profile_prefix, graph_bytes, pin.sha256,
-                    )
+                    if layer0_taps {
+                        Scorer::open_compact_fp16_layer0_taps(
+                            execution, files, profile_prefix, graph_bytes, pin.sha256,
+                        )
+                    } else {
+                        Scorer::open_compact_fp16_bounded_hybrid_profiled(
+                            execution, files, profile_prefix, graph_bytes, pin.sha256,
+                        )
+                    }
                 } else {
                     Scorer::open_profiled(execution, files, profile_prefix)
                 }
@@ -807,7 +826,10 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             receipt["execution_identity"] = json!(scorer.execution_identity()?);
             receipt["final_placement"] = json!(scorer.device_placement()?.context("actual Compact FP16 final placement missing")?);
             receipt["attention_plan"] = if reviewed_graph.is_some() {
-                let (_, policy) = scorer.compact_fp16_bounded_hybrid_evidence()?;
+                let (graph, policy) = scorer.compact_fp16_bounded_hybrid_evidence()?;
+                if layer0_taps {
+                    receipt["layer0_final_graph"] = serde_json::to_value(graph)?;
+                }
                 receipt["bounded_policy_identity"] = json!(policy);
                 scorer.compact_fp16_bounded_hybrid_attention_plan()?
             } else {
@@ -819,10 +841,27 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             receipt["numeric_forward_attempts"] = json!(1);
             flush_graph_diagnostic(&mut file, &receipt)?;
             let scored = journal.observe(operation::Kind::Numeric, 1, Some(reference.input.input_digest), || {
-                scorer.score_with_deadline(&reference.input, deadline)
+                if layer0_taps {
+                    scorer
+                        .score_layer0_taps(&reference.input, deadline)
+                        .map(|(scores, taps)| (scores, Some(taps)))
+                } else {
+                    scorer
+                        .score_with_deadline(&reference.input, deadline)
+                        .map(|scores| (scores, None))
+                }
             })?;
-            let actual = scored.value?;
+            let (actual, taps) = scored.value?;
             receipt["native_forward_returned"] = json!(true);
+            if let Some(taps) = taps {
+                let roster = airk_retrieval::arbiter::runtime::COMPACT_FP16_LAYER0_TAPS;
+                ensure!(taps.len() == roster.len(), "Compact FP16 layer-0 tap roster differs");
+                receipt["layer0_taps"] = json!(roster
+                    .iter()
+                    .zip(taps)
+                    .map(|(&(name, width), bits)| json!({"name": name, "width": width, "bits": bits}))
+                    .collect::<Vec<_>>());
+            }
             let (half_raw, half_mass, half_winner) = comparison(&actual, &reference.matching_fp16)?;
             let (original_raw, original_mass, original_winner) = comparison(&actual, &reference.original_fp32)?;
             receipt["rows"].as_array_mut().unwrap().push(json!({
@@ -833,11 +872,15 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
                 "elapsed_us": scored.elapsed_us, "native_call_elapsed_us": scored.native_call_elapsed_us,
             }));
             flush_graph_diagnostic(&mut file, &receipt)?;
-            ensure!(
-                scored.within_deadline
-                    && t32_reference_bounds((half_raw, half_mass, half_winner), original_mass),
-                "Compact FP16 T32 matching parity, original mass or time bound refused"
-            );
+            if layer0_taps {
+                ensure!(scored.within_deadline, "original Compact FP16 numeric expiry exceeded");
+            } else {
+                ensure!(
+                    scored.within_deadline
+                        && t32_reference_bounds((half_raw, half_mass, half_winner), original_mass),
+                    "Compact FP16 T32 matching parity, original mass or time bound refused"
+                );
+            }
             Ok(())
         })();
 
@@ -950,6 +993,11 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
         receipt["error"] = json!(format!("{error:#}"));
         if let Some(refusal) = error.downcast_ref::<cuda::PlacementRefusal>() {
             receipt["placement_refusal"] = json!(&refusal.observation);
+        }
+        if let Some(refusal) =
+            error.downcast_ref::<airk_retrieval::arbiter::runtime::CompactFp16Layer0GraphRefusal>()
+        {
+            receipt["layer0_final_graph"] = serde_json::to_value(&refusal.observation)?;
         }
     }
     flush_graph_diagnostic(&mut file, &receipt)?;

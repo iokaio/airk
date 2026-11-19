@@ -785,3 +785,17 @@ The scorer retains its own admitted graph and a policy identity in
 airk.private.compact-fp16-cuda-bounded-hybrid/1. The identity binds the
 reviewed receipt, exact profile and this source. This private mode leaves
 ordinary strict Scorer admission and the FP32 graph gates intact.
+
+### Disposable Compact FP16 layer-0 capture
+
+The Windows x64 test-support selector requires the original reviewed Compact
+profile, adapter and T32 input. It adds only four exact FP16 outputs to a
+verified in-memory copy of the model. The complete live operator placement
+must agree with the reviewed base graph. The actual GQA inputs and output,
+output shapes and CPU control bounds are verified before dispatch.
+
+The transfer owner holds the input and five host outputs through the same
+warm reservation, synchronous call, actual GPU settlement and final score
+authorization. The result retains four ordered finite binary16 bit arrays
+and the full typed diagnostic graph. The separate diagnostic cannot dispatch
+ordinary scoring and conveys no product admission or parity pass.

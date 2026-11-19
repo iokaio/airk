@@ -434,3 +434,20 @@ from the expected attention plan and validated by the owner with the
 captured ORT attention debug output and actual return/synchronization
 evidence. The native receipt makes no fused-backend attestation or
 qualification claim.
+
+## Private Compact FP16 layer-0 capture
+
+The disposable T32 selector admits the frozen Compact graph and its reviewed
+typed placement before adding four private outputs to a memory copy. It captures
+the actual half-bit values of layer-0 Q, K, V and raw attention under the original
+native budget and the usual pre-dispatch input refusals, journal, profiler and
+synchronization. The complete derived typed graph is retained for comparing
+optimizer and execution-provider effects. The report keeps ordinary scores and
+comparison metrics as diagnostic evidence. The normal scoring selector enforces
+the original matching and original-FP32 cutoffs separately.
+
+Compare the disposable session's scores with the sealed original execution
+before attributing a difference to the uninstrumented graph. Replay the retained
+Q/K/V bits through the independent causal reference against the captured
+attention output. The result has a separate private receipt identity and never
+supplies qualification or product model admission.

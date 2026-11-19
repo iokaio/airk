@@ -10,13 +10,17 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod layer0;
+pub(super) use layer0::promote_model;
+pub use layer0::{COMPACT_FP16_LAYER0_TAPS, CompactFp16Layer0GraphRefusal};
+
 const CPU: &str = "CPUExecutionProvider";
 const CUDA: &str = "CUDAExecutionProvider";
 const MAX_NATIVE_RESULT_BYTES: usize = 16 << 20;
 const MAX_CPU_VALUE_BYTES: u64 = 40;
 const COMPACT_CPU_PAYLOAD_BYTES: u64 = 34_131;
 const COMPACT_FP16_GRAPH_SHA: &str =
-    "932ed619f96b23d3e669f76d18731db1176e4f0944152ed40a866d9922182a3f";
+    "89f9c21b2fa40f3ce8af0f043453fd4eeeb42c3799e0ff22fab9e28c8d2f86e1";
 const COMPACT_FP16_ATTENTION_NODES: usize = 28;
 const LARGE_CPU_PAYLOAD_BYTES: u64 = 43_819;
 const LARGE_GRAPH_SHA: &str = "1892e5b040d8c51969f1d3361d0929950fa98f0ef4079060e48d00458635488a";
@@ -29,6 +33,7 @@ const APPROVED_WIDTHS: [usize; 4] = [32, 128, 1024, 8192];
 enum GraphPolicy {
     ContextFp32(ModelChoice),
     CompactFp16,
+    CompactFp16Layer0,
 }
 
 #[derive(Clone, Copy)]
@@ -72,6 +77,12 @@ pub(super) struct GraphEvidence {
     policy: GraphPolicy,
 }
 
+impl GraphEvidence {
+    pub(super) fn is_layer0(&self) -> bool {
+        matches!(self.policy, GraphPolicy::CompactFp16Layer0)
+    }
+}
+
 pub struct BoundedHybridScorer {
     scorer: Scorer,
     evidence: GraphEvidence,
@@ -107,6 +118,10 @@ impl CompactBoundedHybridAnswerProvenance {
 }
 
 impl GraphGate {
+    pub(super) fn is_layer0(&self) -> bool {
+        matches!(self.policy, GraphPolicy::CompactFp16Layer0)
+    }
+
     fn new(raw: &[u8], evidence_sha: Sha256Digest, model: ModelChoice) -> Result<Self> {
         let result = Self::read_result(raw, evidence_sha)?;
         ensure!(
@@ -181,7 +196,9 @@ impl GraphGate {
     ) -> Result<Self> {
         let graph = match policy {
             GraphPolicy::ContextFp32(_) => &mut result["graph_metadata"],
-            GraphPolicy::CompactFp16 => &mut result["graph_observation"]["graph_metadata"],
+            GraphPolicy::CompactFp16 | GraphPolicy::CompactFp16Layer0 => {
+                &mut result["graph_observation"]["graph_metadata"]
+            }
         };
         ensure!(
             graph["schema"] == "airk.private.ort-final-graph-metadata/1"
@@ -213,7 +230,9 @@ impl GraphGate {
         let current = serde_json::to_value(adapter)?;
         let model = match self.policy {
             GraphPolicy::ContextFp32(model) => model,
-            GraphPolicy::CompactFp16 => ModelChoice::ContextQwenCompact,
+            GraphPolicy::CompactFp16 | GraphPolicy::CompactFp16Layer0 => {
+                ModelChoice::ContextQwenCompact
+            }
         };
         ensure!(
             profile.manifest == self.profile
@@ -246,12 +265,6 @@ impl GraphGate {
         let graph = binding
             .device
             .graph_metadata(session, binding.load_deadline, &placement)?;
-        graph.validate_against(&placement)?;
-        ensure!(
-            serde_json::to_value(&graph.rows)? == self.expected_rows
-                && serde_json::to_value(graph.reported_counts)? == self.expected_counts,
-            "current Context final graph differs from reviewed graph"
-        );
         let (bounds, scope): (CpuValueBounds, &[u8]) = match self.policy {
             GraphPolicy::ContextFp32(ModelChoice::ContextQwenCompact) => (
                 CpuValueBounds::fp32(COMPACT_CPU_PAYLOAD_BYTES),
@@ -265,12 +278,39 @@ impl GraphGate {
                 CpuValueBounds::COMPACT_FP16,
                 b"airk.private.compact-fp16-cuda-bounded-hybrid/1",
             ),
+            GraphPolicy::CompactFp16Layer0 => (
+                CpuValueBounds::COMPACT_FP16,
+                b"airk.private.compact-fp16-cuda-layer0-taps/1",
+            ),
             GraphPolicy::ContextFp32(_) => {
                 anyhow::bail!("bounded hybrid model outside reviewed Context scopes")
             }
         };
-        validate_cpu_values(&graph.rows, bounds)?;
-        cuda::in_time(binding.load_deadline)?;
+        let verified = (|| -> Result<()> {
+            graph.validate_against(&placement)?;
+            if self.is_layer0() {
+                layer0::validate_graph(&graph.rows, &self.expected_rows)?;
+                layer0::validate_output_abi(session)?;
+            } else {
+                ensure!(
+                    serde_json::to_value(&graph.rows)? == self.expected_rows
+                        && serde_json::to_value(graph.reported_counts)? == self.expected_counts,
+                    "current Context final graph differs from reviewed graph"
+                );
+            }
+            validate_cpu_values(&graph.rows, bounds)?;
+            cuda::in_time(binding.load_deadline)
+        })();
+        if let Err(cause) = verified {
+            if self.is_layer0() {
+                return Err(CompactFp16Layer0GraphRefusal {
+                    observation: Box::new(graph),
+                    cause,
+                }
+                .into());
+            }
+            return Err(cause);
+        }
         let source = Sha256::digest(include_bytes!("bounded_hybrid.rs"));
         let policy_identity = framed_digest(
             scope,
@@ -519,6 +559,42 @@ impl Scorer {
         reviewed_graph_result: &[u8],
         reviewed_graph_sha: Sha256Digest,
     ) -> Result<Self> {
+        Self::open_compact_fp16_gated(
+            profile,
+            source,
+            profiling_prefix,
+            reviewed_graph_result,
+            reviewed_graph_sha,
+            false,
+        )
+    }
+
+    /// Private fixed-T32 diagnostic. Adds four outputs to a verified in-memory graph.
+    pub fn open_compact_fp16_layer0_taps(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        profiling_prefix: &Path,
+        reviewed_graph_result: &[u8],
+        reviewed_graph_sha: Sha256Digest,
+    ) -> Result<Self> {
+        Self::open_compact_fp16_gated(
+            profile,
+            source,
+            profiling_prefix,
+            reviewed_graph_result,
+            reviewed_graph_sha,
+            true,
+        )
+    }
+
+    fn open_compact_fp16_gated(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        profiling_prefix: &Path,
+        reviewed_graph_result: &[u8],
+        reviewed_graph_sha: Sha256Digest,
+        layer0: bool,
+    ) -> Result<Self> {
         use airk_core::arbiter::device::{DevicePrecision, PlacementPolicy};
 
         cuda::diagnostic::require_graph_diagnostic_profile(&profile)?;
@@ -541,7 +617,10 @@ impl Scorer {
             "Compact FP16 bounded hybrid requires the exact probe precision and device reservation"
         );
         let load_deadline = binding.load_deadline;
-        let gate = GraphGate::new_compact_fp16(reviewed_graph_result, reviewed_graph_sha)?;
+        let mut gate = GraphGate::new_compact_fp16(reviewed_graph_result, reviewed_graph_sha)?;
+        if layer0 {
+            gate.policy = GraphPolicy::CompactFp16Layer0;
+        }
         let scorer = Self::open_gated_graph(profile, source, Some(profiling_prefix), gate)?;
         scorer.compact_fp16_bounded_hybrid_attention_plan()?;
         cuda::in_time(load_deadline)?;
@@ -554,7 +633,12 @@ impl Scorer {
         let evidence = self
             .bounded_hybrid
             .as_ref()
-            .filter(|evidence| matches!(evidence.policy, GraphPolicy::CompactFp16))
+            .filter(|evidence| {
+                matches!(
+                    evidence.policy,
+                    GraphPolicy::CompactFp16 | GraphPolicy::CompactFp16Layer0
+                )
+            })
             .context("same-session Compact FP16 bounded graph evidence missing")?;
         Ok((&evidence.graph, evidence.policy_identity))
     }
@@ -569,6 +653,55 @@ impl Scorer {
             .observation()?;
         validate_compact_fp16_attention(&graph.rows, &plan)?;
         Ok(plan)
+    }
+
+    pub fn score_layer0_taps(
+        &self,
+        input: &CompiledInput,
+        deadline: Instant,
+    ) -> Result<(Vec<f32>, Vec<Vec<u16>>)> {
+        crate::native_inference::require_service_compute()?;
+        self.profile.validate_native_source()?;
+        ensure!(
+            self.bounded_hybrid
+                .as_ref()
+                .is_some_and(GraphEvidence::is_layer0),
+            "exact admitted Compact FP16 layer-0 diagnostic session required"
+        );
+        let binding = self
+            .profile
+            .gpu
+            .as_ref()
+            .context("layer-0 CUDA binding missing")?;
+        ensure!(
+            deadline <= binding.load_deadline,
+            "original layer-0 deadline differs"
+        );
+        cuda::in_time(deadline)?;
+        layer0::validate_input(input)?;
+        let description = self.profile.description();
+        input::validate(
+            input,
+            description.abi.readout,
+            description.max_tokens,
+            description.max_candidates,
+        )?;
+        self.compiler.validate_qwen_readout(input)?;
+        let plan = self
+            .fp16_attention
+            .as_ref()
+            .context("layer-0 FP16 attention plan missing")?;
+        plan.validate_input(input)?;
+        let mut session = self
+            .session
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Arbiter native session poisoned"))?;
+        let result =
+            binding.score_with_layer0_taps(&mut session, input, deadline, COMPACT_FP16_LAYER0_TAPS);
+        if result.is_ok() {
+            plan.validate_input(input)?;
+        }
+        result
     }
 
     pub fn open_compact_bounded_hybrid_profiled(

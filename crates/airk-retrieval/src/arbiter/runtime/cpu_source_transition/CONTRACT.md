@@ -320,3 +320,17 @@ The LF-normalized diagnostic.rs source advances from
 Moving the shared authority back into the strict observer and removing the
 Windows FP16 graph predicate reproduces the preceding source bytes. The
 legacy CPU descriptor, historical evidence and row identity stay bound.
+
+### Compact FP16 layer-0 diagnostic source supplement
+
+The Windows x64 test-support build adds an isolated Compact FP16 layer-0
+diagnostic. Reversing its four runtime.rs edits reproduces the preceding
+LF-normalized SHA-256
+42c0592fac9071066abb8cac765c7fe45d665c6df183c5e12aca7c8caa95981b.
+The reviewed current runtime source is
+10a292a8d136ef1a48734379c48c198c1cf5a21f094c3b7c32eb84fc719f084b.
+The exact historical CPU Focus descriptor, native CPU path, compiler,
+digest framing and case inputs are preserved. The forced diagnostic
+selection only applies to its separate Compact CUDA evidence. The closed
+source hook emits a fresh focus CPU transition row from the current source
+pin. Retained rows and their original qualification scope are preserved.

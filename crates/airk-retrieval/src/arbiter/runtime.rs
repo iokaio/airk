@@ -36,7 +36,9 @@ mod bounded_hybrid;
     windows,
     target_arch = "x86_64"
 ))]
-pub use bounded_hybrid::BoundedHybridScorer;
+pub use bounded_hybrid::{
+    BoundedHybridScorer, COMPACT_FP16_LAYER0_TAPS, CompactFp16Layer0GraphRefusal,
+};
 mod cpu_source_transition;
 #[cfg(feature = "gpu-cuda")]
 pub mod cuda;
@@ -611,6 +613,18 @@ impl Scorer {
             external_data::validate(&graph, &external)?;
             external_data::large_initializers(&graph, &external)?
         };
+        #[cfg(all(
+            feature = "gpu-cuda",
+            feature = "test-support",
+            windows,
+            target_arch = "x86_64"
+        ))]
+        let graph = match &_mode {
+            OpenMode::BoundedHybrid(gate) if gate.is_layer0() => {
+                bounded_hybrid::promote_model(&graph)?
+            }
+            _ => graph,
+        };
         crate::onnx::initialize_runtime()?;
         let environment = crate::onnx::acquire_session_environment()?;
         #[cfg(feature = "gpu-cuda")]
@@ -833,8 +847,22 @@ impl Scorer {
             expected_recipe,
             CompilerRecipe::QwenSingleChoiceV1 | CompilerRecipe::QwenRerankYesNoV1
         ) {
+            let expected_output_count = 1;
+            #[cfg(all(
+                feature = "gpu-cuda",
+                feature = "test-support",
+                windows,
+                target_arch = "x86_64"
+            ))]
+            let expected_output_count = if let OpenMode::BoundedHybrid(gate) = &_mode
+                && gate.is_layer0()
+            {
+                1 + COMPACT_FP16_LAYER0_TAPS.len()
+            } else {
+                expected_output_count
+            };
             ensure!(
-                session.outputs.len() == 1,
+                session.outputs.len() == expected_output_count,
                 "selected Qwen production graph must expose only its declared scores"
             );
         }
@@ -1019,6 +1047,19 @@ impl Scorer {
         self.profile.validate_native_source()?;
         #[cfg(not(feature = "gpu-cuda"))]
         let _ = deadline;
+        #[cfg(all(
+            feature = "gpu-cuda",
+            feature = "test-support",
+            windows,
+            target_arch = "x86_64"
+        ))]
+        ensure!(
+            !self
+                .bounded_hybrid
+                .as_ref()
+                .is_some_and(|evidence| evidence.is_layer0()),
+            "layer-0 diagnostic requires the exact tap dispatch"
+        );
         let tokens = input.input_ids.len();
         let candidates = input.candidate_positions.len();
         let focus = self.profile.description.abi.readout == Readout::FocusYesNo;

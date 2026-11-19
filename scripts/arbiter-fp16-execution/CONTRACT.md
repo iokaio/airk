@@ -261,3 +261,29 @@ the existing T32 journal, strict matching-recipe parity, original-FP32
 mass proof, complete bounded per-node profiling, 28 synchronized
 FlashAttention records and original Job/device/host settlement.
 This private result supplies single-case scoring evidence.
+
+## CPU replay of native Compact layer-zero taps
+
+[replay_layer0.py](replay_layer0.py) reads the SHA-pinned T32 native capture and
+the exact prior sealed ordinary CUDA row from the Windows campaign. Use the
+checked same-user shell and the pinned Python executable from the conversion
+plan. Set CUDA_VISIBLE_DEVICES to the empty string and TORCHINDUCTOR_CACHE_DIR
+to a checked existing campaign directory. Use an absent pycache prefix.
+
+~~~text
+python -I -B -S -X pycache_prefix=ABSENT_ABSOLUTE_PREFIX
+  scripts/arbiter-fp16-execution/replay_layer0.py
+  --native-result ABSOLUTE_LAYER0_NATIVE_RESULT --native-result-sha256 SHA
+  --sealed-result ABSOLUTE_PRIOR_NATIVE_RESULT --sealed-result-sha256 SHA
+~~~
+
+The script requires the original frozen input digest and exact decoded
+raw-score bits, including the sign of zero, before importing Torch. It restores
+the captured finite half words for Q, K, V and raw layer-zero output from
+[1, 32, width] to [1, heads, 32, 128]. It runs both the default independent
+causal attention and the CPU single-key-tile Flash recipe on the same captured
+Q/K/V bits. The JSON result goes to stdout and records each comparison's
+maximum numerical error and count of differing binary16 words. It uses the
+sealed Torch/runtime manifest and independent reference sources. This diagnostic
+measures one intermediate tensor for one input. Qualification and admission
+require separate evidence.

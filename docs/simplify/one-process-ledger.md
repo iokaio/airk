@@ -11521,3 +11521,81 @@ through the independent attention comparison. All four values occupy
 Authenticate the derived graph, audit actual placement and optimizer
 effects, and retain native synchronization and settlement. Full-width
 and Resource20 remain gated on the original matching parity criteria.
+
+### 2026-11-19 — Compact CUDA layer-0 capture and identical-operand replay
+
+The private test-support work adds four verified half outputs only to a
+disposable in-memory copy, captures ordinary scores and actual Q/K/V and
+GQA output, and preserves the original diagnostic budget and CUDA
+settlement. Inverse replay of the four shared runtime additions restored
+the previous CPU source exactly. The closed CPU source row now binds the
+reviewed current source and retains the exact legacy Focus descriptor.
+No release or current product admission is established by this diagnostic.
+
+The current source generated fresh unqualified metadata in 24.741 s
+(81dd07020ee5e3f3b51b5f55f7efb7d5ad98863d576def4dd82fabaa01fc711e).
+Its A6000 baseline graph settled in 33.544 s with zero forwards, 1,746
+nodes, 374 CPU shape/control nodes, and all 28 attention layers on CUDA.
+The checked baseline graph execution and native receipt were
+af3f5ee2b303a70bbfa09a1545c4a84422d28ce5eed6c5d8ba42047ef4280ef7 and
+89f9c21b2fa40f3ce8af0f043453fd4eeeb42c3799e0ff22fab9e28c8d2f86e1.
+
+The first capture, compact-fp16-layer0-native-capture-r3, refused before
+dispatch because static output declarations changed ORT optimization.
+The complete refused profile graph had 1,728 nodes after shape folding
+and two Slice-to-Split fusions at layer 1. Original limits, empty Job and
+device/host release were observed. Execution
+bcd701c27f51d58af39f708329a9d510caec851847d0c9e81bb2c277c119e189
+and native ed9c2cbb23fb776857ceff5af580e5c331563756ee49cfdf592a09f42bc580ad
+retain the refusal. No forward or FlashAttention record was produced.
+
+The corrected declarations retained the base graph's exact symbolic and
+unknown axes, with the unchanged T32 pre-dispatch and host buffer shapes.
+The literal protobuf control checks those axes. The corrected A6000 probe
+finished in 36.287 s with score call 0.291124 s, 1,746 profiled nodes and
+374 CPU controls. Comparing the complete typed reports leaves precisely
+four added output edges and the corresponding terminal counts. All
+eight scores reproduced the original uninstrumented CUDA run bit for
+bit. The four arrays retain 196,608 finite half words and the runtime
+log verifies all 28 named FP16 FlashAttention calls. The device and host
+settled under the original caps. Peak Job commit was 8,898,359,296 B,
+the original child exited 0, and the Job emptied naturally.
+
+Compact-fp16-layer0-native-capture-r4 retains execution
+4e889bea8e1b8c86c591192de63d568fc363ec5f5c80ab20099bbdede8144ae6,
+native 9705db75efa3e84fc955c3edeaf03e1aef70e5362161087f24250e14b75aeac6,
+journal 56cf1190cdfb781b1ceb67a338cad60fc015e0732d4c1eb17594d70fa4b49900,
+profile cc7af347a6d0bae012d39e4dd4a06734045deed7b7176b9443762e495b5bb73f,
+log 7aa11fcf55732b17a5b9c0d36c86f9a7710b16b7bea078e5081c4b9fd65a629f,
+image e42f7672eaf6f63d3a673980c4a824149d0008f568ca147380ab5329ae3507f9,
+and diagnostic policy ce65207e305be2475c6aa9ad1a341fa7b1e0143a9649ae13b22817cbe155a714.
+
+The initial CPU CLI replay refused a Torch multiprocessing alias of
+the exact replay entry point. Explicitly pinning the entry point in
+its own module census corrected the refusal. The separate successful
+read-only CPU replay finished in 7.558 s and verified 1,725 imported
+module files. Against 65,536 actual layer-0 output values with the same
+captured Q/K/V bits, the source-derived Flash reference differed in 248
+bits with maximum absolute tensor error 0.0001220703125. The original
+FP32-probability formula differed in 12,634 bits with maximum error
+0.00048828125. The replay receipt under compact-fp16-layer0-replay-r5 is
+71414e115c67b7044f6f88f9bcf9ba90cc89f279dcb0e7d90b6a473a7b5990db
+and pins the actual executable code and both GPU receipts. This isolates
+the first attention kernel when its inputs are identical. It does not
+establish the earliest full-model divergence or numerical parity at the
+score boundary. Compare independent CPU layer-0 Q/K/V against the
+retained actual operands next.
+
+Windows identity and default owner matched the human SID ending 1002.
+Pinned Rust 1.98.0, Nextest 0.9.148, warm checkout target/ and incremental=1.
+The final source group is
+7de66bc0f0477fbc4a59f8dae17f353831d911366c7c14fb581177412863b2ea.
+Clippy passed in 11.757 s
+(97e4c92839285e78b9df156afbeb94ee69ae55ad1cb603e6bacbeaa9c10c47bb).
+Nextest passed 55 with 471 filtered in 22.205 s
+(cca9ca5075b6eeebd9a27cd3b267dba8d9e2782ad9fd107b549be3ace887c9de).
+The exact image stage passed in 1.152 s
+(aac80b1ca997db97d65371a25a8f5c5a79b7674829df7542808224a39e5b6c9e).
+Exact commands, Cargo timings and JUnit are under
+windows-cuda-g5-layer0-capture-checks-r4. The two focused launcher suites
+passed 78 and 137. The CPU replay suite passed five in-memory controls.

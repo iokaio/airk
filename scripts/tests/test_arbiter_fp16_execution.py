@@ -307,6 +307,14 @@ class CompactBoundedT32Controls(unittest.TestCase):
                 change(value)
                 self.probe["validate_bounded_t32"](value, reviewed, placement, source)
 
+    def test_layer0_policy_has_its_own_framed_identity(self):
+        value, reviewed, placement, source = self.bounded_evidence()
+        diagnostic_policy = b"airk.private.compact-fp16-cuda-layer0-taps/1"
+        with self.assertRaisesRegex(ValueError, "policy identity"):
+            self.probe["validate_bounded_t32"](value, reviewed, placement, source, policy=diagnostic_policy)
+        value["bounded_policy_identity"] = "9656e47e1818def4d810b8e50b6624cb452cec5545333a10c59c77d87662725e"
+        self.probe["validate_bounded_t32"](value, reviewed, placement, source, policy=diagnostic_policy)
+
     def test_flash_backend_log_accepts_each_exact_selector_and_bare_historical_rows(self):
         rows = [
             f"Operator=GroupQueryAttention Node=/airk_g5/attention/{index}/efficient "
@@ -316,7 +324,8 @@ class CompactBoundedT32Controls(unittest.TestCase):
         prefix = ("test inference_engine::pool::arbiter::qualification::software_v2::cuda_qualification::"
                   "fp16_compact::")
         for mode, selector in [("t32", "cuda_compact_fp16_t32_component"),
-                               ("bounded-t32", "cuda_compact_fp16_bounded_t32_component")]:
+                               ("bounded-t32", "cuda_compact_fp16_bounded_t32_component"),
+                               ("layer0-t32", "cuda_compact_fp16_layer0_taps")]:
             with self.subTest(mode=mode):
                 namespaced = [prefix + selector + " ... \x1b[36m" + rows[0] + "\x1b[0m", *rows[1:]]
                 self.assertEqual(self.probe["attention_logs"]("\n".join(namespaced).encode(), mode), rows)
@@ -324,6 +333,99 @@ class CompactBoundedT32Controls(unittest.TestCase):
         refused = [rows[0], *rows[:-1]]
         with self.assertRaisesRegex(ValueError, "duplicate"):
             self.probe["attention_logs"]("\n".join(refused).encode(), "bounded-t32")
+
+
+class CompactLayer0Controls(unittest.TestCase):
+    TAPS = (
+        ("/airk_g5/attention/0/q16", 2048),
+        ("/airk_g5/attention/0/k16", 1024),
+        ("/airk_g5/weight//scorer/layers.0/self_attn/v_proj/MatMul/output16", 1024),
+        ("/airk_g5/attention/0/raw16", 2048),
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        cls.probe = runpy.run_path(str(ROOT / "scripts/arbiter-fp16-execution/probe_compact.py"))
+        cls.component = runpy.run_path(str(ROOT / "scripts/cuda-component-execution.py"))
+
+    def layer0_evidence(self):
+        node = {"name": "literal producer", "domain": "", "op": "Identity", "ep": "CUDAExecutionProvider"}
+        rows = [
+            {"kind": "graph", "graph": 0, "parent_graph": None, "parent_node": None,
+             "attribute": "", "outer_bindings": "not_applicable"},
+            {"kind": "node", "graph": 0, "node": 0, "version": 19, **node},
+        ]
+        outputs = [("scores", [1, 8], 1), *((name, [1, 32, width], 10) for name, width in self.TAPS)]
+        for value, (name, shape, elem) in enumerate(outputs):
+            rows.append({"kind": "value", "graph": 0, "value": value, "name": name, "element_type": elem,
+                         "rank": len(shape), "type_state": "tensor", "provenance": "node_output", "producer": 0})
+            rows.extend({"kind": "dimension", "graph": 0, "value": value, "index": index, "number": number,
+                         "symbol": None} for index, number in enumerate(shape))
+            rows.append({"kind": "edge", "graph": 0, "slot": value, "node": 0, "value": value, "role": 2})
+            rows.append({"kind": "edge", "graph": 0, "slot": value, "node": None, "value": value, "role": 4})
+        rows.append({"kind": "end", "graph": 0})
+        names = sum(len(name) + len("node_output") for name, _, _ in outputs)
+        spans = sum(len(text) for text in node.values()) + names
+        return {
+            "layer0_taps": [{"name": name, "width": width, "bits": [0x8000, 0x7BFF, 0x0001, 0xFBFF] * (8 * width)}
+                            for name, width in self.TAPS],
+            "final_placement": {"nodes": [dict(node, subgraph_index=0)]},
+            "layer0_final_graph": {"schema": "airk.private.ort-final-graph-metadata/1",
+                                   "complete": True, "failure": None, "shim_status": 0, "ort_error_code": 0,
+                                   "encoded_bytes": 4096, "reported_counts": [1, 5, 10, spans, 0, len(rows)],
+                                   "rows": rows},
+        }
+
+    def test_observation_requires_exact_finite_half_taps_and_the_actual_typed_graph(self):
+        self.probe["validate_layer0_evidence"](self.layer0_evidence(), self.component)
+        for bad_bits in (0x7C00, 0xFC00, 0x7E00, -1, 0x10000, False):
+            with self.subTest(bits=bad_bits), self.assertRaisesRegex(ValueError, "finite raw binary16"):
+                wrong = self.layer0_evidence()
+                wrong["layer0_taps"][0]["bits"][0] = bad_bits
+                self.probe["validate_layer0_evidence"](wrong, self.component)
+        for edit, message in (
+            (lambda item: item["layer0_taps"].reverse(), "tap name, order or width"),
+            (lambda item: item["layer0_taps"][2].update(width=2048), "tap name, order or width"),
+            (lambda item: item["layer0_taps"][3]["bits"].pop(), "finite raw binary16"),
+            (lambda item: item["layer0_final_graph"].update(complete=False), "complete native graph"),
+            (lambda item: item["layer0_final_graph"]["rows"][1].update(version=0), "graph node identity"),
+        ):
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                wrong = self.layer0_evidence()
+                edit(wrong)
+                self.probe["validate_layer0_evidence"](wrong, self.component)
+
+    def test_tap_must_be_a_cuda_half_graph_output_with_exact_width(self):
+        for field, changed in (("element_type", 1), ("rank", 2)):
+            with self.subTest(field=field):
+                wrong = self.layer0_evidence()
+                graph = wrong["layer0_final_graph"]
+                tap = next(row for row in graph["rows"] if row["kind"] == "value" and row["value"] == 1)
+                tap[field] = changed
+                if field == "rank":
+                    width = next(row for row in graph["rows"]
+                                 if row["kind"] == "dimension" and row["value"] == 1 and row["index"] == 2)
+                    graph["rows"].remove(width)
+                    graph["reported_counts"][-1] -= 1
+                with self.assertRaisesRegex(ValueError, "type, width or CUDA origin"):
+                    self.probe["validate_layer0_evidence"](wrong, self.component)
+
+    def test_only_layer0_observation_accepts_a_comparison_failure_with_finite_scores(self):
+        row = {
+            "name": "diagnostic-all-live-32", "tokens": 32,
+            "input_digest": "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102fe56fc335",
+            "raw_scores": [0.125] * 8, "elapsed_us": 21, "native_call_elapsed_us": 20,
+            "matching_fp16_raw_error": .025, "matching_fp16_mass_error": .0001,
+            "matching_fp16_argmax_matches": True, "original_fp32_raw_error": .02,
+            "original_fp32_mass_error": .0001, "original_fp32_argmax_matches": True,
+        }
+        self.assertEqual(self.probe["validate_t32_row"]([row], "layer0-t32"), row)
+        for mode in ("t32", "bounded-t32"):
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                self.probe["validate_t32_row"]([row], mode)
+        row["raw_scores"][0] = float("nan")
+        with self.assertRaisesRegex(ValueError, "finite T32 scores"):
+            self.probe["validate_t32_row"]([row], "layer0-t32")
 
 
 class CompactOwnedExitControls(unittest.TestCase):

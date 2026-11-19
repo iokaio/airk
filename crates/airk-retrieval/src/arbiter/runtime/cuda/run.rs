@@ -3,7 +3,7 @@
 use super::*;
 use ort::{
     session::{
-        Session,
+        Session, SessionOutputs,
         run_options::{HasSelectedOutputs, OutputSelector, RunOptions},
     },
     value::{DynValue, Tensor},
@@ -55,6 +55,74 @@ pub(in crate::arbiter::runtime) fn score(
     deadline: Instant,
     focus: bool,
 ) -> Result<Vec<f32>> {
+    let (scores, ()) =
+        score_with_outputs(session, binding, input, deadline, focus, Ok, |_| Ok(()))?;
+    Ok(scores)
+}
+
+#[cfg(all(feature = "test-support", windows, target_arch = "x86_64"))]
+impl Binding {
+    pub(in crate::arbiter::runtime) fn score_with_layer0_taps(
+        &self,
+        session: &mut Session,
+        input: &super::super::CompiledInput,
+        deadline: Instant,
+        taps: &[(&'static str, usize)],
+    ) -> Result<(Vec<f32>, Vec<Vec<u16>>)> {
+        ensure!(
+            self.evidence.is_none()
+                && input.input_ids.len() == 32
+                && input.candidate_positions.len() == 8
+                && taps
+                    .iter()
+                    .map(|&(_, width)| width)
+                    .eq([2048, 1024, 1024, 2048]),
+            "Compact FP16 layer-0 tap probe geometry changed"
+        );
+        score_with_outputs(
+            session,
+            self,
+            input,
+            deadline,
+            false,
+            |mut selected| {
+                for &(name, width) in taps {
+                    let buffer =
+                        Tensor::from_array(([1, 32, width], vec![half::f16::ZERO; 32 * width]))?;
+                    selected = selected.with(name).preallocate(name, buffer);
+                }
+                Ok(selected)
+            },
+            |outputs| {
+                taps.iter()
+                    .map(|&(name, width)| {
+                        let value = outputs
+                            .get(name)
+                            .with_context(|| format!("Compact FP16 tap missing: {name}"))?;
+                        let (shape, values) = value.try_extract_tensor::<half::f16>()?;
+                        ensure!(
+                            shape.as_ref() == [1, 32, width as i64]
+                                && values.len() == 32 * width
+                                && values.iter().all(|value| value.is_finite()),
+                            "Compact FP16 tap shape or finite-value contract changed: {name}"
+                        );
+                        Ok(values.iter().map(|value| value.to_bits()).collect())
+                    })
+                    .collect()
+            },
+        )
+    }
+}
+
+fn score_with_outputs<T>(
+    session: &mut Session,
+    binding: &Binding,
+    input: &super::super::CompiledInput,
+    deadline: Instant,
+    focus: bool,
+    select_additional: impl FnOnce(OutputSelector) -> Result<OutputSelector>,
+    read_additional: impl FnOnce(&SessionOutputs<'_>) -> Result<T>,
+) -> Result<(Vec<f32>, T)> {
     in_time(deadline)?;
     binding.authorize_score(input.input_digest)?;
     let tokens = input.input_ids.len();
@@ -91,14 +159,14 @@ pub(in crate::arbiter::runtime) fn score(
             ),
         ]);
     }
-    // This actual Value stays owned in RunOptions through success, error and
-    // panic cleanup. SessionOutputs only clones its backing in pinned ort rc10.
-    let options = RunOptions::new()?.with_outputs(
-        OutputSelector::no_default().with(output_name).preallocate(
-            output_name,
-            Tensor::from_array(([1, candidates], vec![0.0_f32; candidates]))?,
-        ),
+    // These Values stay owned in RunOptions through success, error and panic
+    // cleanup. SessionOutputs only clones their backing in pinned ort rc10.
+    let options = RunOptions::new()?;
+    let selected = OutputSelector::no_default().with(output_name).preallocate(
+        output_name,
+        Tensor::from_array(([1, candidates], vec![0.0_f32; candidates]))?,
     );
+    let options = options.with_outputs(select_additional(selected)?);
     let claim = binding.device.reserve_warm_work(
         binding.plan.warm_extra_bytes(),
         binding.plan.headroom_bytes(),
@@ -154,7 +222,8 @@ pub(in crate::arbiter::runtime) fn score(
         shape.as_ref() == [1, candidates as i64] && scores.iter().all(|s| s.is_finite()),
         "Arbiter GPU score shape/finite contract changed"
     );
+    let additional = read_additional(&outputs)?;
     in_time(deadline)?;
     binding.authorize_score(input.input_digest)?;
-    Ok(scores.to_vec())
+    Ok((scores.to_vec(), additional))
 }
