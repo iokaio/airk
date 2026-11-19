@@ -1572,6 +1572,69 @@ selected model, stage consent, input width and shared budget.
    truthful fit, availability and notices. Keep the three selected model slots
    and the existing promotion and publication requirements.
 
+### FP16 implementation and validation sequence
+
+Use 8,192-token Context on a target developer GPU to decide whether the FP16
+path is viable. The corrected Windows Large FP32 trace shows a
+`[32, 8192, 8192]` attention tensor. One such tensor occupies 8 GiB in FP32
+and would still occupy 4 GiB in FP16. Use fused attention that computes the
+same result without materializing the full scores or mask. Treat the byte
+counts as sizes of individual tensors. Measure peak memory separately during
+native execution.
+[Corrected Windows Large FP32 scoring evidence](../simplify/one-process-ledger.md#2026-11-18--corrected-large-fp32-passed-all-four-cuda-scoring-widths)
+
+1. **Prove the CUDA attention path on Context Compact first.** Start with the
+   maintained exporter and independent verifier. Authenticate the original
+   model, candidate weights and whole graph, then use the pinned Windows
+   runtime for small causal-mask, position, padding-hole and all-masked
+   probes. Verify the expected output for supported cases and the required
+   refusal or qualified alternative for unsupported cases. Run a single
+   profiled Compact session at 32, 128, 1,024 and 8,192 tokens after the small
+   probes pass. Trace actual kernel dispatch and placement, and check the
+   lowered graph for materialized dense attention intermediates. If a probe
+   fails, isolate graph lowering, kernel dispatch or score divergence with
+   the smallest reproducing case before spending time on a full run. Repeat
+   the sequence for Large after Compact passes and bind Large's own verified
+   prerequisites. Qualify Focus independently on its 512-token pair path.
+   [Exporter contract](../../scripts/arbiter-fp16-export/CONTRACT.md) ·
+   [Conversion custody and prerequisites](../../scripts/arbiter-fp16-execution/CONTRACT.md) ·
+   [ONNX Runtime fused attention](https://onnxruntime.ai/blogs/accelerating-llama-2)
+
+2. **Measure implementation parity and precision loss separately.** Compare
+   native scores with an independent FP16 reference to catch conversion or
+   runtime errors. Compare separately with the independent FP32 engineering
+   reference to measure the effect of half precision. Inspect full score
+   vectors, candidate order, the selected winner and margins close to
+   decision thresholds. Keep normalization and scoring in the protected
+   FP32 paths defined by the recipe. If a precision gate fails, isolate the
+   smallest sensitive operation, review the revised precision recipe as a
+   distinct candidate, and measure the latency and memory cost of retaining
+   that operation in FP32. Freeze thresholds and confirmation cases before
+   tuning, and apply the exact-artifact CAL and task gates to the final
+   candidate.
+   [Independent graph and reference contract](../../scripts/arbiter-fp16-reference/CONTRACT.md)
+
+3. **Measure user-facing speed and memory fit.** After numerical and placement
+   checks pass, collect unprofiled cold-load timings and 20 warm samples.
+   Record startup and steady-state separately, including component scoring
+   time, complete Answer latency, peak host and device memory, and residency
+   under a representative concurrent workload. Compare CPU and GPU with the
+   same selected model, corpus, request, input width and budget. Exercise
+   memory pressure, cancellation and settlement, the service-wide GPU opt-out
+   and same-model CPU fallback within the original request budget. Use the
+   A6000 for the first result and qualify target developer GPU classes at
+   their measured memory headroom. Apply the 120-second request and p95
+   limits.
+
+4. **Carry the same test cases and acceptance rules across providers.** After
+   Windows CUDA FP16 passes, run Linux CUDA on WSL2, macOS Core ML, Azure
+   Windows Radeon DirectML and Azure Linux Radeon ROCm in that order. Reuse
+   the inputs and independent score references. Pin the actual graph,
+   weights, runtime, driver and provider on each target. Allow a
+   provider-specific attention implementation with independently verified
+   masks, positions, scores, kernel placement, peak memory and fallback.
+   [Platform qualification order](#verified-starting-point-and-backend-order)
+
 ### Future GPU release precision
 
 Target FP16 as the sole GPU precision in a future release to reduce memory,
@@ -1583,6 +1646,12 @@ evidence for comparison and debugging. If an FP16 target misses a gate, record
 the blocker and revisit its GPU release scope. Show the GPU precision available
 in the installed release and keep CPU selection and the service-wide GPU opt-out
 available.
+
+For the release decision, require stable Arbiter decisions, a meaningful
+improvement in complete Answer latency, and enough measured memory headroom
+for a developer's other work. Publish measured Compact and Large fit
+requirements separately. Auto uses the qualified GPU path when the selected
+model fits and can use that model's admitted CPU path otherwise.
 
 Provisional efficient-FP16 planning targets remain about4GB for Focus,8GB for
 Compact and12–16GB for Large, not measured hardware minima. Without genuinely
