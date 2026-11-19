@@ -10995,3 +10995,21 @@ protection command was not executed. The prospective bug-report design
 remains a draft with a mismatched overlength input expectation. Earlier
 execution notes are preserved as historical records with their original
 scope and outcomes. Compact FP16 conversion preparation continues separately.
+
+### 2026-11-18 — Compact FP16 conversion metadata authenticated
+
+The first Compact preparation reached the input census merge and refused
+a duplicate path before creating metadata. The retained runtime baseline and
+the settled FP32 process proof both pinned the same Python executable. The
+maintained merger now admits identical full pins and refuses changed pins
+for the same canonical path. The focused Python suite passed 57 controls.
+
+Fresh Compact plan R2 authenticated 48,942 files, the original Compact FP32
+scoring and Resource20 receipts, and current native G5 evidence under the
+original 600-second preparation deadline. Plan SHA-256
+13a2a3fef14b34e0a63920aa1d417a80db305fafef27180a566e1045271c144f,
+retained at compact-fp16-conversion-plan-r2/compact.json. Owned execution was
+started with the exact audited plan and separate fresh output root under the
+original 8 GiB/600-second conversion limits. No candidate or native CUDA result
+is inferred from plan preparation. Independently verify graph, weights and the
+exact T32 reference after a complete conversion.

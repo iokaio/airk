@@ -807,6 +807,15 @@ def authenticate_prerequisites(plan, by_path, check=lambda: None):
     for path, sha in value['files'].items():
         require(by_path.get(path, {}).get('sha256') == sha, 'retained runtime baseline file omitted/changed')
 
+def merge_input_pins(*groups):
+    pins = {}
+    for group in groups:
+        for path, row in group.items():
+            require(path == row['path'] and pins.setdefault(path, row) == row,
+                    'conflicting input pin for one canonical path')
+    return pins
+
+
 def prepare(args):
     deadline = time.monotonic() + LIMITS['wall_seconds']
     require(sys.flags.no_site == 1 and sys.dont_write_bytecode, 'nonwriting no-site preparer required')
@@ -844,7 +853,7 @@ def prepare(args):
             'helpers': {name: pin(helper_root / name, check) for name in HELPERS},
             'prerequisite_evidence': {'first_fp32': evidence['first_fp32'], 'native_g5': evidence['native_g5']}}
     require(plan['exporter']['sha256'] == original['reviewed_library']['sha256'], 'original reviewed exporter differs')
-    rows = dict(runtime['files'], **outside, **prerequisite_rows)
+    rows = merge_input_pins(runtime['files'], outside, prerequisite_rows)
     for row in [source, plan['runtime_baseline'], selected['source_closure_authority'], *plan['helpers'].values()]:
         rows[row['path']] = row
     for key in ('python', 'powershell', 'wrapper', 'guard', 'exporter', 'source_graph', 'source_closure'):

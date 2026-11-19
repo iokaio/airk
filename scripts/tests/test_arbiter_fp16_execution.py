@@ -285,6 +285,14 @@ class PreparationControls(unittest.TestCase):
         with patch.object(M, 'pinned'), patch.object(M, 'read', return_value=value), patch.object(M, 'file_roster', return_value=set()), patch.object(M, 'pin', side_effect=FileNotFoundError), self.assertRaises(FileNotFoundError):
             M.runtime_facts(baseline, [ROOT])
 
+    def test_runtime_interpreter_pin_may_also_be_retained_process_evidence(self):
+        shared = row('python.exe')
+        pins = {shared['path']: shared}
+        self.assertEqual(M.merge_input_pins({}, pins, pins), pins)
+        changed = dict(shared, sha256='b' * 64)
+        with self.assertRaisesRegex(ValueError, 'conflicting input pin'):
+            M.merge_input_pins(pins, {shared['path']: changed})
+
     def test_actual_scoring_success_shape(self):
         M.successful_fp32(self.fp32(), M.FP32['compact'])
 
