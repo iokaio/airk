@@ -21,3 +21,25 @@ Focus reference now locates retained publisher assets from the repository, indep
 The retained prepare/owned wrappers bind historical receipt hashes, source locations and owner profiles. They are source-preserved recipes, not relocated operational launchers. Do not run them unchanged. A fresh owned launch must bind the selected worker commands above and reviewed process/resource controls; generating such a new execution seal and running a model are separate campaign steps. The static128 predecessor, before-owner-review exporter, earlier quantization versions and tiny prototypes remain historical. Tests beside these recipes may require retained private fixtures or historical seals and are not all runnable after relocation.
 
 No weights, datasets, receipts, reference-code vendor packages or Rust backups are included. Publisher inputs must already be provisioned and independently authenticated. Pure source/path and ranking tests validate this move; no model, native, quality or cross-platform qualification is claimed. Numerical tolerances and source-model revisions remain unchanged.
+
+
+## Large FP32 attention batch-view candidate
+
+`large_fp32_attention_batch_view.py` prepares a private ONNX graph candidate
+when the pinned CUDA broadcast Add exceeds the signed stride limit at 8,192
+tokens. In the checked Windows shell, give it the frozen original Large ONNX,
+the ONNX site-packages path from the provisioned reference plan and a fresh
+owned private output with an existing parent.
+
+```text
+python -I -B -S scripts/arbiter/export/qwen/large_fp32_attention_batch_view.py
+  --source ORIGINAL_LARGE_ONNX --output FRESH_PRIVATE_MODEL_ONNX
+  --onnx-site-packages PINNED_SITE_PACKAGES
+```
+
+The recipe checks the pinned source, the full batch-one ABI and all 36 mask
+Adds. It checks sample attention Add regions against independent floating-point
+broadcasting at 17, 32 and 128 tokens, then writes only the candidate graph.
+The tensor metadata retain the original external weights. Before native use,
+bind the exact original external data in a separately authenticated asset
+closure and collect new placement and scoring evidence for the new graph.
