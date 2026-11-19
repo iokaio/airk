@@ -407,6 +407,24 @@ records score errors, winner margins, one latency observation per width
 and memory snapshots. The 0.010 screen and 0.020 near-tie marker are private
 development checks. The 0.001 qualification cutoff remains in force.
 
+## Identical-operand Compact Q/K/V attention diagnostic
+
+Use `probe_compact.py qkv-layer0-t1024` with the same stage, wider CPU proof,
+reviewed load receipt and runtime as the development batch. This selector
+captures the exact all-live T1024 row once. It adds four temporary graph
+outputs for layer-zero Q, K, V and the raw FP16 GQA return, and requires the
+complete reviewed node placement, finite half words, FlashAttention logs
+and eight score words equal to the sealed untapped CUDA row. The private
+capture cap is 64 MiB for this selector.
+
+Run `replay_layer0.py --t1024` with the exact capture SHA and sealed wider
+CUDA receipt. Use the same checked Python, CPU-only cache conventions and
+input flags as the T32 replay. The pinned replay feeds identical half Q, K
+and V into dense FP32 softmax and into the wider multi-tile reference.
+Compare all layer-zero output words before the output projection. These
+results describe the exercised layer and input. A full-score attribution
+would also require evidence from later boundaries.
+
 ## Standalone Compact attention output projection
 
 Use probe_projection_output.py with the reviewed isolated Python,

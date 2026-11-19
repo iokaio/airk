@@ -27,8 +27,14 @@ The family-root source-provenance.json maps original and maintained SHA-256 valu
   The --original-dev mode audits the larger publisher DEV member and retains
   the shared corpus member header. The --original-dev-corpus mode also
   scans the exact pinned shared corpus and verifies the DEV menu document
-  keys and their embedded IDs. Both modes retain aggregate counts and skip
-  publisher question, answer and document text values.
+  keys and their embedded IDs. The `--original-dev-dependencies` mode uses
+  the same exact corpus check and emits an independent aggregate receipt for
+  answerable DEV cases with ordered offsets and complete menus disjoint from
+  TRAIN gold document IDs. It reports duplicate menu and gold-document counts,
+  shared-document case pairs, and connected component sizes. A component joins
+  cases transitively through shared exact document IDs. It measures menu
+  dependencies and leaves product families, clones and statistical power open.
+  All modes skip publisher question, answer and document text values.
 
 Run the pinned interpreter locally under the verified human identity. Redirect
 the one-line aggregate only to a new audited private campaign path. These

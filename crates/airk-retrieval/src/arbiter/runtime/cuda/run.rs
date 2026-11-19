@@ -68,10 +68,12 @@ impl Binding {
         input: &super::super::CompiledInput,
         deadline: Instant,
         taps: &[(&'static str, usize)],
+        tokens: usize,
     ) -> Result<(Vec<f32>, Vec<Vec<u16>>)> {
         ensure!(
             self.evidence.is_none()
-                && input.input_ids.len() == 32
+                && matches!(tokens, 32 | 1024)
+                && input.input_ids.len() == tokens
                 && input.candidate_positions.len() == 8
                 && taps
                     .iter()
@@ -87,8 +89,10 @@ impl Binding {
             false,
             |mut selected| {
                 for &(name, width) in taps {
-                    let buffer =
-                        Tensor::from_array(([1, 32, width], vec![half::f16::ZERO; 32 * width]))?;
+                    let buffer = Tensor::from_array((
+                        [1, tokens, width],
+                        vec![half::f16::ZERO; tokens * width],
+                    ))?;
                     selected = selected.with(name).preallocate(name, buffer);
                 }
                 Ok(selected)
@@ -101,8 +105,8 @@ impl Binding {
                             .with_context(|| format!("Compact FP16 tap missing: {name}"))?;
                         let (shape, values) = value.try_extract_tensor::<half::f16>()?;
                         ensure!(
-                            shape.as_ref() == [1, 32, width as i64]
-                                && values.len() == 32 * width
+                            shape.as_ref() == [1, tokens as i64, width as i64]
+                                && values.len() == tokens * width
                                 && values.iter().all(|value| value.is_finite()),
                             "Compact FP16 tap shape or finite-value contract changed: {name}"
                         );

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Private fixed-T32 outputs for an authenticated Compact FP16 session.
+//! Private layer-0 outputs for authenticated Compact FP16 experiments.
 
 use super::*;
 
@@ -34,13 +34,40 @@ const PROJECTION_NODES: [&str; 3] = [
 pub(super) enum Layer0Cut {
     Attention,
     Projection,
+    QkvAttentionT1024,
 }
 
 impl Layer0Cut {
     pub(super) fn taps(self) -> &'static [(&'static str, usize)] {
         match self {
-            Self::Attention => COMPACT_FP16_LAYER0_TAPS,
+            Self::Attention | Self::QkvAttentionT1024 => COMPACT_FP16_LAYER0_TAPS,
             Self::Projection => COMPACT_FP16_LAYER0_PROJECTION_TAPS,
+        }
+    }
+
+    pub(super) fn tokens(self) -> usize {
+        match self {
+            Self::Attention | Self::Projection => 32,
+            Self::QkvAttentionT1024 => 1024,
+        }
+    }
+
+    pub(super) fn validate_input(self, input: &CompiledInput) -> Result<()> {
+        match self {
+            Self::Attention | Self::Projection => validate_input(input),
+            Self::QkvAttentionT1024 => {
+                ensure!(
+                    input.input_digest == T1024_INPUT.parse()?
+                        && input.input_ids.len() == 1024
+                        && input.attention_mask == [1; 1024]
+                        && input.position_ids.iter().copied().eq(0..1024)
+                        && input.decision_position == 1023
+                        && input.candidate_positions.iter().copied().eq(32..40)
+                        && input.option_mask == [true; 8],
+                    "exact Compact Q/K/V diagnostic T1024 input required"
+                );
+                Ok(())
+            }
         }
     }
 
@@ -48,10 +75,12 @@ impl Layer0Cut {
         match self {
             Self::Attention => b"airk.private.compact-fp16-cuda-layer0-taps/1",
             Self::Projection => b"airk.private.compact-fp16-cuda-layer0-projection-taps/1",
+            Self::QkvAttentionT1024 => b"airk.private.compact-fp32-qkv-cuda-layer0-t1024/1",
         }
     }
 }
 const T32_INPUT: &str = "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102fe56fc335";
+const T1024_INPUT: &str = "948a46156a129e61b5beadce977e6314b6e96c9570a439724813fe9592fa6357";
 
 #[derive(Debug)]
 pub struct CompactFp16Layer0GraphRefusal {
@@ -217,6 +246,26 @@ impl Scorer {
             reviewed_graph_result,
             reviewed_graph_sha,
             REVIEWED_QKV,
+            None,
+        )
+    }
+
+    /// Opens the reviewed QKV graph with four private attention outputs for the sealed T1024 row.
+    pub fn open_private_compact_fp32_qkv_layer0_t1024(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        profiling_prefix: &Path,
+        reviewed_graph_result: &[u8],
+        reviewed_graph_sha: Sha256Digest,
+    ) -> Result<Self> {
+        Self::open_private_compact_fp32_projection_profiled(
+            profile,
+            source,
+            profiling_prefix,
+            reviewed_graph_result,
+            reviewed_graph_sha,
+            REVIEWED_QKV,
+            Some(Layer0Cut::QkvAttentionT1024),
         )
     }
 
@@ -234,6 +283,7 @@ impl Scorer {
             reviewed_graph_result,
             reviewed_graph_sha,
             REVIEWED_QKVO.context("reviewed Compact Q/K/V/O load receipt unavailable")?,
+            None,
         )
     }
 
@@ -244,6 +294,7 @@ impl Scorer {
         reviewed_graph_result: &[u8],
         reviewed_graph_sha: Sha256Digest,
         review: ReviewedProjection,
+        layer0: Option<Layer0Cut>,
     ) -> Result<Self> {
         require_qkv_projection_profile(&profile, review.graph_sha.parse()?)?;
         let binding = profile
@@ -259,7 +310,10 @@ impl Scorer {
             "Compact QKV projection CUDA reservation differs"
         );
         let deadline = binding.load_deadline;
-        let gate = reviewed_projection_gate(reviewed_graph_result, reviewed_graph_sha, review)?;
+        let mut gate = reviewed_projection_gate(reviewed_graph_result, reviewed_graph_sha, review)?;
+        if let Some(cut) = layer0 {
+            gate.policy = GraphPolicy::CompactFp16Layer0(cut);
+        }
         gate.verify_profile(profile.description(), binding.device.observation(deadline)?)?;
         let scorer = Self::open_internal(
             profile,
@@ -620,8 +674,12 @@ pub(super) fn validate_graph(
             ))
         };
         let assigned = match cut {
-            Layer0Cut::Attention if index == 3 => has_edge(Some(gqa), 2, 0),
-            Layer0Cut::Attention => has_edge(Some(gqa), 0, index as u64),
+            Layer0Cut::Attention | Layer0Cut::QkvAttentionT1024 if index == 3 => {
+                has_edge(Some(gqa), 2, 0)
+            }
+            Layer0Cut::Attention | Layer0Cut::QkvAttentionT1024 => {
+                has_edge(Some(gqa), 0, index as u64)
+            }
             Layer0Cut::Projection if index == 0 => projections
                 .iter()
                 .all(|&node| node.is_some() && has_edge(node, 0, 0)),
@@ -697,6 +755,10 @@ mod tests {
         write_message(&mut model, 2, b"literal producer");
         let original = model.clone();
         let derived = promote_model(&model, Layer0Cut::Attention)?;
+        assert_eq!(
+            promote_model(&model, Layer0Cut::QkvAttentionT1024)?,
+            derived
+        );
         let mut fields = derived.as_slice();
         assert_eq!(field(&mut fields)?, (1, None));
         let (number, body) = field(&mut fields)?;

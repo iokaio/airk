@@ -992,7 +992,7 @@ fn bind_t32_candidate(
     Ok(())
 }
 
-fn observe_t32_input_refusals(
+fn observe_input_refusals(
     scorer: &Scorer,
     input: &CompiledInput,
     receipt: &mut Value,
@@ -1094,6 +1094,7 @@ enum CompactFp16Probe {
     QkvProjectionGraphOnly,
     QkvProjectionT32,
     QkvDevelopmentBatch,
+    QkvLayer0T1024,
     QkvoProjectionGraphOnly,
     QkvoProjectionT32,
     BoundedT32,
@@ -1161,19 +1162,60 @@ fn cuda_compact_fp32_qkv_projection_development_batch() -> Result<()> {
     observe_compact_fp16_t32(CompactFp16Probe::QkvDevelopmentBatch)
 }
 
+#[test]
+#[ignore = "one owned Compact Q/K/V T1024 CUDA forward with exact first-layer FP16 attention taps"]
+fn cuda_compact_fp32_qkv_layer0_t1024() -> Result<()> {
+    observe_compact_fp16_t32(CompactFp16Probe::QkvLayer0T1024)
+}
+
+#[derive(Serialize)]
+struct Layer0Tap {
+    name: &'static str,
+    width: usize,
+    bits: Vec<u16>,
+}
+
+fn flush_compact_result(
+    file: &mut File,
+    receipt: &Value,
+    wide_taps: Option<&[Layer0Tap]>,
+) -> Result<()> {
+    if let Some(layer0_taps) = wide_taps {
+        #[derive(Serialize)]
+        struct Receipt<'a> {
+            #[serde(flatten)]
+            native: &'a Value,
+            layer0_taps: &'a [Layer0Tap],
+        }
+        flush_graph_diagnostic_with_cap(
+            file,
+            &Receipt {
+                native: receipt,
+                layer0_taps,
+            },
+            LAYER0_T1024_DIAGNOSTIC_BYTES,
+        )
+    } else {
+        flush_graph_diagnostic(file, receipt)
+    }
+}
+
 fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
     let (projection_spec, projection_t32, graph_only) = match mode {
         CompactFp16Probe::QkvProjectionGraphOnly => (Some(&QKV), false, true),
         CompactFp16Probe::QkvProjectionT32 => (Some(&QKV), true, false),
-        CompactFp16Probe::QkvDevelopmentBatch => (Some(&QKV), false, false),
+        CompactFp16Probe::QkvDevelopmentBatch | CompactFp16Probe::QkvLayer0T1024 => {
+            (Some(&QKV), false, false)
+        }
         CompactFp16Probe::QkvoProjectionGraphOnly => (Some(&QKVO), false, true),
         CompactFp16Probe::QkvoProjectionT32 => (Some(&QKVO), true, false),
         CompactFp16Probe::GraphOnly => (None, false, true),
         _ => (None, false, false),
     };
     let development_batch = mode == CompactFp16Probe::QkvDevelopmentBatch;
+    let qkv_layer0_t1024 = mode == CompactFp16Probe::QkvLayer0T1024;
     let projection_taps = mode == CompactFp16Probe::Layer0ProjectionTaps;
-    let layer0_taps = mode == CompactFp16Probe::Layer0Taps || projection_taps;
+    let layer0_taps = mode == CompactFp16Probe::Layer0Taps || projection_taps || qkv_layer0_t1024;
     let started_ns = airk_process::monotonic::now_ns()?;
     let started = Instant::now();
     let execution_user = airk_ipc::endpoint::current_user()?;
@@ -1262,7 +1304,7 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
     } else {
         None
     };
-    let development = if development_batch {
+    let development = if development_batch || qkv_layer0_t1024 {
         let (stage, candidate) = projection
             .as_ref()
             .context("missing development Q/K/V stage")?;
@@ -1289,7 +1331,7 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             "AIRK_CUDA_FP16_REVIEWED_GRAPH",
             "AIRK_CUDA_FP16_REVIEWED_GRAPH_SHA256",
         )?;
-        let expected = if projection_t32 || development_batch {
+        let expected = if projection_t32 || development_batch || qkv_layer0_t1024 {
             projection_spec
                 .context("missing Compact projection scope")?
                 .native_graph_sha
@@ -1366,6 +1408,7 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             CompactFp16Probe::QkvProjectionGraphOnly => QKV.graph_schema,
             CompactFp16Probe::QkvProjectionT32 => QKV.t32_schema,
             CompactFp16Probe::QkvDevelopmentBatch => "airk.private.compact-fp32-qkv-development-batch/1",
+            CompactFp16Probe::QkvLayer0T1024 => "airk.private.compact-fp32-qkv-layer0-t1024/1",
             CompactFp16Probe::QkvoProjectionGraphOnly => QKVO.graph_schema,
             CompactFp16Probe::QkvoProjectionT32 => QKVO.t32_schema,
             CompactFp16Probe::BoundedT32 => "airk.private.compact-fp16-bounded-t32-component/1",
@@ -1405,6 +1448,8 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
         receipt["reference_basis"] = json!("independent_wider_qkv_cpu_approximation");
         receipt["reference_recipe"] = references.recipe.clone();
         receipt["development_only"] = json!(true);
+    }
+    if development_batch {
         receipt["qualification_cutoff_raw"] = json!(0.001);
         receipt["development_raw_limit"] = json!(DEVELOPMENT_RAW_LIMIT);
         receipt["matching_qkv_mass_limit"] = json!(DEVELOPMENT_MASS_LIMIT);
@@ -1433,6 +1478,7 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
         },
         expires_ns,
     )?;
+    let mut wide_taps = Vec::new();
     let run = owner.run(|| -> Result<()> {
         let mut custody = Custody {
             scorer: None, device: None, owner: owner.clone(), lease: lease.clone(), charge: Some(charge),
@@ -1483,6 +1529,10 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
                         Scorer::open_private_compact_fp32_qkvo_projection_profiled(
                             execution, files, profile_prefix, graph_bytes, pin.sha256,
                         )
+                    } else if qkv_layer0_t1024 {
+                        Scorer::open_private_compact_fp32_qkv_layer0_t1024(
+                            execution, files, profile_prefix, graph_bytes, pin.sha256,
+                        )
                     } else if mode == CompactFp16Probe::QkvProjectionT32 || development_batch {
                         Scorer::open_private_compact_fp32_qkv_projection_profiled(
                             execution, files, profile_prefix, graph_bytes, pin.sha256,
@@ -1527,13 +1577,19 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
                 scorer.attention_backend_plan()?.context("actual Compact FP16 attention plan missing")?
             };
             flush_graph_diagnostic(&mut file, &receipt)?;
-            if let Some(references) = &development {
+            if development_batch {
+                let references = development.as_ref().context("development reference custody missing")?;
                 let device = custody.device.as_ref().context("development CUDA device custody missing")?;
                 return score_development_rows(
                     scorer, device, references, &mut journal, &mut receipt, &mut file, deadline,
                 );
             }
-            observe_t32_input_refusals(scorer, &reference.input, &mut receipt, &mut file)?;
+            let reference = if qkv_layer0_t1024 {
+                &development.as_ref().context("T1024 reference custody missing")?.rows[1]
+            } else {
+                reference
+            };
+            observe_input_refusals(scorer, &reference.input, &mut receipt, &mut file)?;
             receipt["numeric_forward_attempts"] = json!(1);
             flush_graph_diagnostic(&mut file, &receipt)?;
             let scored = journal.observe(operation::Kind::Numeric, 1, Some(reference.input.input_digest), || {
@@ -1557,6 +1613,28 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             })?;
             let (actual, taps) = scored.value?;
             receipt["native_forward_returned"] = json!(true);
+            if qkv_layer0_t1024 {
+                let roster = airk_retrieval::arbiter::runtime::COMPACT_FP16_LAYER0_TAPS;
+                let taps = taps.context("Compact Q/K/V T1024 attention outputs missing")?;
+                ensure!(
+                    taps.len() == roster.len()
+                        && taps.iter().zip(roster).all(|(bits, &(_, width))| bits.len() == 1024 * width)
+                        && actual.len() == 8
+                        && actual.iter().all(|score| score.is_finite()),
+                    "Compact Q/K/V T1024 outputs differ"
+                );
+                wide_taps = roster.iter().zip(taps)
+                    .map(|(&(name, width), bits)| Layer0Tap { name, width, bits })
+                    .collect();
+                receipt["rows"].as_array_mut().unwrap().push(json!({
+                    "name": reference.name, "tokens": 1024, "input_digest": reference.input.input_digest,
+                    "raw_scores": actual, "elapsed_us": scored.elapsed_us,
+                    "native_call_elapsed_us": scored.native_call_elapsed_us,
+                }));
+                flush_graph_diagnostic(&mut file, &receipt)?;
+                ensure!(scored.within_deadline, "original Compact Q/K/V T1024 numeric expiry exceeded");
+                return Ok(());
+            }
             if let Some(taps) = taps {
                 let roster = if projection_taps {
                     airk_retrieval::arbiter::runtime::COMPACT_FP16_LAYER0_PROJECTION_TAPS
@@ -1618,6 +1696,12 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
                                     &bytes, &graph.rows, &widths,
                                 )?;
                                 return Ok((true, serde_json::to_value(summary)?));
+                            }
+                            if qkv_layer0_t1024 {
+                                let summary = super::hybrid_profile_trace::compact_qkv_layer0_t1024_profiled_run(
+                                    &bytes, &graph.rows,
+                                )?;
+                                return Ok((false, serde_json::to_value(summary)?));
                             }
                             let expected_nodes = match mode {
                                 CompactFp16Probe::QkvProjectionT32 => 1942,
@@ -1743,11 +1827,17 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             receipt["layer0_final_graph"] = serde_json::to_value(&refusal.observation)?;
         }
     }
-    flush_graph_diagnostic(&mut file, &receipt)?;
+    let wide_taps = if qkv_layer0_t1024 {
+        receipt.as_object_mut().unwrap().remove("layer0_taps");
+        Some(wide_taps.as_slice())
+    } else {
+        None
+    };
+    flush_compact_result(&mut file, &receipt, wide_taps)?;
     if Instant::now() >= deadline {
         receipt["complete"] = json!(false);
         receipt["final_report_retention_exceeded_original_deadline"] = json!(true);
-        flush_graph_diagnostic(&mut file, &receipt)?;
+        flush_compact_result(&mut file, &receipt, wide_taps)?;
         return result.and_then(|()| {
             anyhow::bail!("original Compact FP16 expiry exceeded during final report retention")
         });

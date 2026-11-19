@@ -541,6 +541,46 @@ class CompactLayer0Controls(unittest.TestCase):
             self.probe["validate_t32_row"]([row], "layer0-t32")
 
 
+class CompactLayer0WiderReplayControls(unittest.TestCase):
+    def test_replay_requires_exact_native_t1024_scores_and_finite_complete_taps(self):
+        replay = runpy.run_path(str(ROOT / "scripts/arbiter-fp16-execution/replay_layer0.py"))
+        validate = replay["validated_t1024_taps"]
+        common = {"complete": True, "error": None, "native_forward_returned": True, "forward_synchronized": True}
+        score = {
+            "name": "native-all-live-1024", "tokens": 1024,
+            "input_digest": "948a46156a129e61b5beadce977e6314b6e96c9570a439724813fe9592fa6357",
+            "raw_scores": [1.0, 0.0, 2, 3, 4, 5, 6, 7],
+        }
+        capture = dict(common, schema="airk.private.compact-fp32-qkv-layer0-t1024/1",
+                       numeric_forward_attempts=1, rows=[copy.deepcopy(score)])
+        sealed_row = dict(score, forward_synchronized=True)
+        sealed = dict(common, schema="airk.private.compact-fp32-qkv-development-batch/1",
+                      numeric_forward_attempts=3, rows=[{}, sealed_row, {}])
+        taps = [{"name": name, "width": width, "bits": [0] * (1024 * width)}
+                for name, width in CompactLayer0Controls.TAPS]
+        capture["layer0_taps"] = taps
+        capture["rows"][0]["raw_scores"][0] += 2 ** -30
+        self.assertIs(validate(capture, sealed), taps)
+
+        capture["rows"][0]["raw_scores"][1] = -0.0
+        with self.assertRaisesRegex(ValueError, "captured raw scores differ"):
+            validate(capture, sealed)
+        capture["rows"][0]["raw_scores"][1] = 0.0
+
+        sealed_row["forward_synchronized"] = False
+        with self.assertRaisesRegex(ValueError, "sealed native T1024 row did not synchronize"):
+            validate(capture, sealed)
+        sealed_row["forward_synchronized"] = True
+
+        taps[0]["bits"][0] = 0x7C00
+        with self.assertRaisesRegex(ValueError, "complete finite binary16"):
+            validate(capture, sealed)
+        taps[0]["bits"][0] = 0
+        taps[0]["bits"].pop()
+        with self.assertRaisesRegex(ValueError, "complete finite binary16"):
+            validate(capture, sealed)
+
+
 class CompactOwnedExitControls(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

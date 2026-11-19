@@ -12298,3 +12298,72 @@ blocked. Use T1024 to isolate arithmetic differences on identical
 attention operands before authorizing another full-model run. Retain
 the stable rankings as development evidence. The separate confirmed
 human-judgment cohort and composed Answer checks remain open.
+
+### 2026-11-19 — Compact T1024 identical-operand FlashAttention
+
+The retained Q/K/V half-weight candidate added only four temporary
+layer-zero outputs. The exact all-live T1024 input completed one
+synchronized A6000 forward. All eight binary32 score words matched the
+sealed ordinary CUDA row. All 28 attention nodes logged FP16
+FlashAttention. The complete profile retained 1,942 nodes, 374 CPU
+shape controls and a 32 B maximum CPU control tensor. The captured
+native call took 0.535985 s including instrumentation. The original
+120 s, 32 GiB host and 24 GiB device envelopes applied. The wrapper
+finished in 51.326283 s with 9,220,952,064 B peak Job commit,
+7,931,625,472 B peak process RSS, exit 0, session and device teardown,
+and zero active processes. The verified human and default owner SID
+ended in 1002.
+
+The CPU replay took 9.357505 s. It reused the exact CUDA half Q, K and V
+words and compared 2,097,152 raw attention output words before the output
+projection. The maximum native magnitude was 2.68359375. The result
+does not assign the full eight-score drift to a layer or establish
+agreement elsewhere in the model.
+
+| CPU attention calculation | Different FP16 words | Maximum absolute error | RMS error | Differences above 0.001 |
+| --- | ---: | ---: | ---: | ---: |
+| Dense FP32 softmax | 156,308 | 0.0009765625 | 0.0000186754023 | 0 |
+| Reverse 64-by-64 tile reference | 30,720 | 0.0009765625 | 0.0000099637828 | 0 |
+
+The multi-tile reference reproduced 98.53515625% of these words exactly.
+This supports using it for diagnostics at this boundary. No layer-zero
+attention precision change is indicated. Keep the Q/K/V candidate and
+0.001 full-score qualification limit. The capture leaves upstream
+operand drift and downstream accumulation unresolved. Reserve further
+precision changes for a repeatable, consequential case with an isolated
+cause. The 8,192-token Resource20 sequence and paired judged acceptance
+remain gated.
+
+Under compact-fp16-qkv-fp32-layer0-t1024-r1, execution
+6e64b19cd5a440b9f4f56f16fd6ef27f422af4e636e2694be3adf249eedbabf7,
+native 6725b3ac6d793601a100ff7d6e812837d58b4aa33ec2b11af00d1936b2d15e03,
+profile d6b2abfd74942cb68bf1ba244b3f23801cf4b33f54b9d0e1d5fd4a97e9fd6450,
+journal 0b43eb4d20d1a7033be69976e0eea4cc30479eb16261128922e5e6df73902cd5,
+stdout 92215420a01a509c4725bb2d92551438f236a17eacfbdac9fc58f04aba67ac9a
+and image d64fb2b48039dcdc66ec7f2e7c374b2dd3fc5161932419d9a6f1f693db6058d6.
+CPU replay command receipt compact-fp16-qkv-fp32-layer0-t1024-replay-r1.json
+is 371301d8fcb9e8c05de5be794f89421829e9083d014ba08ba3b72aca2031fb2e.
+
+Pinned Rust 1.98.0 scoped Clippy passed in 13.654453 s
+(0353f3b269380757fd6cac18fd46ee6209d2a79c29640f230d1861e5467a4273).
+Nextest 0.9.148 passed 61 with 478 filtered in 25.367382 s
+(deacd06ffbefbac479159dbd5f69586fdd15a60496760bbb959e9230ab73ac21).
+The JSON-linked image built in 1.116906 s
+(cdcbe126574d242b642eebda097e530474768a9084276ec04b20b7e2748f17ae).
+Commands, pinned input seals, Cargo timings and JUnit are under
+windows-cuda-g5-qkv-layer0-t1024-checks-r1. Both crates used the warm
+Windows target/ with incremental=1. The selected FP16 Python suite
+passed 109 tests, the TechQA suite passed eight, and repository checks
+passed.
+
+The held-out work independently reproduced 77 provisional TechQA cases
+and 14 provisional ContextBench cases. The new exact TechQA archive
+dependency receipt is
+83a98930e567e829d1e14cc2421564307b4cc37f3c53832b931597df7eab2c02.
+TechQA yields 33 shared-menu groups, with 37 cases in the largest.
+The current exact Q/K/V calibration has no active rule, and the only
+retained paired Answer timing covers one FP32 request per device arm
+with budget stops and abstentions. The 98% result requires exact-artifact
+calibration, paired human evidence judgments on a native-visible frozen
+cohort and enough sample power for clustered and long-context outcomes.
+[Confirmation data audit](../arbiter/software-v2-data-audit.md#techqa-menu-dependence-and-confirmation-readiness)

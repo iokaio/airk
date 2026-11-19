@@ -95,6 +95,27 @@ class TechqaValidationMetadataControls(unittest.TestCase):
             checked["answerable_structural_rows_with_complete_corpus_without_train_gold_menu_overlap"], 0)
         self.assertEqual(checked["menu_document_ids_missing_in_corpus"], 1)
 
+    def test_dependency_components_connect_transitively_without_emitting_identifiers(self):
+        def answer(menu, gold):
+            return {"DOC_IDS": tuple(menu), "ANSWERABLE": "Y", "DOCUMENT": gold, "START_OFFSET": 0, "END_OFFSET": 1}
+
+        rows = {
+            "first": answer("AB", "A"), "bridge": answer("BC", "B"), "last": answer("CD", "D"),
+            "singleton": answer("EF", "E"), "repeats": answer("EF", "E"),
+            "exposed": answer("GT", "G"), "missing": answer("GX", "G"),
+            "invalid": answer("GG", "G"),
+        }
+        observed = AUDIT["original_dev_menu_dependencies"](rows, set("ABCDEFGT"), {"T"})
+        self.assertEqual(observed, {
+            "provisional_cases": 5,
+            "distinct_ordered_menus": 4, "distinct_unordered_menus": 4,
+            "distinct_exact_gold_documents": 4, "exact_gold_document_cluster_sizes": {1: 3, 2: 1},
+            "distinct_menu_document_ids": 6, "minimum_menu_size": 2, "maximum_menu_size": 2,
+            "all_case_pairs": 10, "pairs_sharing_at_least_one_menu_document": 3,
+            "shared_menu_document_connected_component_sizes": [3, 2],
+            "cases_with_gold_id_in_another_case_menu": 3,
+        })
+
     def test_selected_unknown_types_duplicate_ids_and_corrupt_skips_refuse(self):
         for raw in (b'[{"QUESTION_ID":"q","QUESTION_ID":"r","DOC_IDS":["a"]}]',
                     b'[{"QUESTION_ID":"q","DOC_IDS":[{"TEXT":"never decode"}]}]',

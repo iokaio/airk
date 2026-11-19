@@ -26,6 +26,7 @@ SELECTORS = {
     "projection-graph": PREFIX + "cuda_compact_fp32_qkv_projection_load_only_graph_diagnostic",
     "projection-t32": PREFIX + "cuda_compact_fp32_qkv_projection_t32_component",
     "qkv-development": PREFIX + "cuda_compact_fp32_qkv_projection_development_batch",
+    "qkv-layer0-t1024": PREFIX + "cuda_compact_fp32_qkv_layer0_t1024",
     "qkvo-metadata": PREFIX + "emit_cuda_compact_fp32_qkvo_projection_probe_metadata",
     "qkvo-graph": PREFIX + "cuda_compact_fp32_qkvo_projection_load_only_graph_diagnostic",
     "qkvo-t32": PREFIX + "cuda_compact_fp32_qkvo_projection_t32_component",
@@ -36,8 +37,16 @@ SELECTORS = {
 }
 QKVO_MODES = ("qkvo-metadata", "qkvo-graph", "qkvo-t32")
 DEVELOPMENT_MODE = "qkv-development"
-PROJECTION_SCORE_MODES = ("projection-t32", "qkvo-t32", DEVELOPMENT_MODE)
-PROJECTION_MODES = ("projection-metadata", "projection-graph", "projection-t32", DEVELOPMENT_MODE, *QKVO_MODES)
+WIDER_TAP_MODE = "qkv-layer0-t1024"
+WIDER_REFERENCE_MODES = (DEVELOPMENT_MODE, WIDER_TAP_MODE)
+PROJECTION_SCORE_MODES = ("projection-t32", "qkvo-t32", *WIDER_REFERENCE_MODES)
+PROJECTION_MODES = ("projection-metadata", "projection-graph", "projection-t32", *WIDER_REFERENCE_MODES, *QKVO_MODES)
+WIDER_TAP_SCHEMA = "airk.private.compact-fp32-qkv-layer0-t1024/1"
+WIDER_TAP_POLICY = b"airk.private.compact-fp32-qkv-cuda-layer0-t1024/1"
+SEALED_T1024_BATCH = "compact-fp16-qkv-fp32-native-development-r1"
+SEALED_T1024_EXECUTION_SHA = "ebf0f2e1eadd7ff543479a254ed81240af4830a1cc9c1c78b1db69e5f1841ade"
+SEALED_T1024_NATIVE_SHA = "4da43ecdfaeba452cc65009bcadfb82de942253c89a7d544c6285ad90855993a"
+WIDER_TAP_TOKENS = 1024
 DEVELOPMENT_SCHEMA = "airk.private.compact-fp32-qkv-development-batch/1"
 DEVELOPMENT_REFERENCE_SCHEMA = "airk.private.compact-fp32-qkv-wider-reference/1"
 DEVELOPMENT_REFERENCE_SHA = "f0d0e01fa28e7a876f1c57bc9894dff7e2a915ac8bf8150885b2aac2fdff2f14"
@@ -253,7 +262,7 @@ def linked_image(build, image, base, audit, mode):
         relevant += (BOUNDED_SOURCE, inference + "/cuda_qualification/hybrid_profile_trace.rs")
     if mode in TAP_SCOPES or mode in ("projection-graph", "qkvo-graph", *PROJECTION_SCORE_MODES):
         relevant += ("crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid/layer0.rs",)
-    if mode in TAP_SCOPES:
+    if mode in TAP_SCOPES or mode == WIDER_TAP_MODE:
         relevant += ("crates/airk-retrieval/src/arbiter/runtime/cuda/run.rs",)
     sources = {relative: exact_pin(ROOT / relative, native[relative], base) for relative in relevant}
     return log_pin, artifact, sources
@@ -717,7 +726,8 @@ def bounded_policy_identity(graph_sha, profile_sha, source_sha, *, domain=BOUNDE
     return digest.hexdigest()
 
 
-def validate_bounded_t32(value, reviewed, placement, source, *, policy=BOUNDED_POLICY, total=BOUNDED_TOTAL_NODES):
+def validate_bounded_t32(value, reviewed, placement, source, *, policy=BOUNDED_POLICY, total=BOUNDED_TOTAL_NODES,
+                         tokens=32):
     require(value["reviewed_graph"] == core(reviewed)
             and value["bounded_policy_identity"] == bounded_policy_identity(
                 reviewed["sha256"], value["profile"], source["sha256"], domain=policy),
@@ -725,7 +735,7 @@ def validate_bounded_t32(value, reviewed, placement, source, *, policy=BOUNDED_P
     require(placement_roster(value["final_placement"]) == placement_roster(placement),
             "bounded FP16 final placement differs from the complete reviewed graph")
     profiled = value["bounded_profile"]
-    expected = {"tokens": 32, "node_count": total, "cpu_nodes": BOUNDED_CPU_NODES}
+    expected = {"tokens": tokens, "node_count": total, "cpu_nodes": BOUNDED_CPU_NODES}
     bounds = {"model_run_us": (1, value["rows"][0]["native_call_elapsed_us"]),
               "cpu_input_bytes": (0, (1 << 64) - 1), "cpu_output_bytes": (0, (1 << 64) - 1),
               "cpu_max_tensor_bytes": (1, 32)}
@@ -736,7 +746,7 @@ def validate_bounded_t32(value, reviewed, placement, source, *, policy=BOUNDED_P
             "bounded FP16 profile timing, complete node coverage or CPU tensor bounds differ")
 
 
-def validate_layer0_evidence(value, component, roster=LAYER0_TAPS):
+def validate_layer0_evidence(value, component, roster=LAYER0_TAPS, *, tokens=32):
     taps = value["layer0_taps"]
     require(isinstance(taps, list) and len(taps) == len(roster), "exact four layer-0 taps required")
     for tap, (name, width) in zip(taps, roster):
@@ -744,7 +754,7 @@ def validate_layer0_evidence(value, component, roster=LAYER0_TAPS):
                 and tap["name"] == name and type(tap["width"]) is int and tap["width"] == width,
                 "layer-0 tap name, order or width differs")
         bits = tap["bits"]
-        require(isinstance(bits, list) and len(bits) == 32 * width
+        require(isinstance(bits, list) and len(bits) == tokens * width
                 and all(type(word) is int and 0 <= word <= 0xFFFF and word & 0x7C00 != 0x7C00 for word in bits),
                 "complete finite raw binary16 layer-0 tap required")
 
@@ -845,6 +855,70 @@ def validate_t32(value, paths, owned, request, evidence, metadata, manifest, ima
             "bounded runtime profile escaped its checked output prefix")
     base.pinned(trace)
     return backend
+
+
+def read_sealed_t1024(request, stage, reviewed, reference, parent, base, audit):
+    directory = CAMPAIGN / SEALED_T1024_BATCH
+    outer_path, native_path = directory / "execution.json", directory / "native-result.json"
+    audit([outer_path, native_path])
+    outer_pin = exact_pin(outer_path, SEALED_T1024_EXECUTION_SHA, base)
+    native_pin = exact_pin(native_path, SEALED_T1024_NATIVE_SHA, base)
+    outer, native = base.read(outer_path), base.read(native_path)
+    require(outer["schema"] == "airk.private.owned-compact-fp16-probe/1"
+            and outer["mode"] == DEVELOPMENT_MODE and outer["complete"] is True
+            and outer["qualification"] is False and outer["failure"] is None
+            and parent.settled(outer["owned"]) and outer["outputs"]["native"] == native_pin
+            and outer["request"] == request and outer["projection_stage"] == core(stage)
+            and outer["projection_reference"] == core(reference) and outer["reviewed_graph"]["native"] == reviewed
+            and native["schema"] == DEVELOPMENT_SCHEMA and native["complete"] is True
+            and native["development_only"] is native["forward_synchronized"] is True
+            and [item["tokens"] for item in native["rows"]] == list(DEVELOPMENT_WIDTHS),
+            "exact settled T1024 baseline scoring receipt required")
+    sealed = native["rows"][1]
+    require(sealed["forward_synchronized"] is True
+            and len(sealed["raw_scores"]) == 8
+            and all(finite(score, -math.inf, math.inf) for score in sealed["raw_scores"]),
+            "finite synchronized sealed T1024 scores required")
+    return (outer_pin, native_pin), sealed
+
+
+def validate_wider_capture(value, paths, owned, request, evidence, metadata, manifest, image, component, base,
+                           projection, reference_pin, graph, placement, policy_source, sealed):
+    validate_native_identity(value, WIDER_TAP_SCHEMA, owned, request, evidence, metadata, manifest, image, base)
+    require(value["projection_stage"] == core(projection[0])
+            and value["projection_reference"] == core(reference_pin)
+            and value["native_forward_returned"] is value["forward_synchronized"] is True
+            and value["numeric_forward_attempts"] == 1 and len(value["rows"]) == 1,
+            "one synchronized captured T1024 forward required")
+    row = value["rows"][0]
+    require(row["tokens"] == WIDER_TAP_TOKENS and row["name"] == sealed["name"]
+            and row["input_digest"] == sealed["input_digest"]
+            and len(row["raw_scores"]) == 8
+            and all(finite(score, -math.inf, math.inf) for score in row["raw_scores"])
+            and struct.pack("<8f", *row["raw_scores"]) == struct.pack("<8f", *sealed["raw_scores"])
+            and finite(row["elapsed_us"], 0, 120_000_000)
+            and finite(row["native_call_elapsed_us"], 0, row["elapsed_us"]),
+            "captured T1024 input, score words or timing differs from the sealed evidence")
+    validate_bounded_t32(value, graph, placement, policy_source, policy=WIDER_TAP_POLICY,
+                         total=PROJECTION_TOTAL_NODES, tokens=WIDER_TAP_TOKENS)
+    validate_layer0_evidence(value, component, tokens=WIDER_TAP_TOKENS)
+    events = read_operations(paths["operations"])
+    component["validate_operations"](events, value)
+    require(events[-1]["native_call_elapsed_us"] == row["native_call_elapsed_us"],
+            "captured T1024 operation timing differs")
+    plan = value["attention_plan"]
+    math_env = {"gemm": "2", "debug": "1", "unicode": True}
+    require(plan["schema"] == "airk.native.cuda-fp16-attention-plan/1"
+            and plan["dtype"] == "fp16" and plan["backend"] == "FLASH_ATTENTION"
+            and plan["math_environment"] == {"captured_before_ort": math_env, "current": math_env}
+            and len(plan["nodes"]) == 28 and {item["name"] for item in plan["nodes"]} == NAMES
+            and all(item["operator"] == "GroupQueryAttention" and item["domain"] == "com.microsoft"
+                    for item in plan["nodes"]), "exact captured FP16 FlashAttention plan required")
+    trace = value["runtime_profile"]
+    require(Path(trace["path"]) == paths["profile"] and 0 < trace["bytes"] <= LOG_CAP,
+            "exact captured T1024 runtime profile required")
+    base.pinned(trace)
+    return attention_logs(paths["stdout"].read_bytes(), WIDER_TAP_MODE)
 
 
 def development_metrics(raw, reference):
@@ -1066,7 +1140,7 @@ def run(args):
             validate_projection_artifacts(dependencies, profile, projection, base)
             independent = base.read(dependencies["independent_proof"]["path"])
             validate_projection_baseline(stage, independent)
-            if args.mode == DEVELOPMENT_MODE:
+            if args.mode in WIDER_REFERENCE_MODES:
                 projection_reference, development_reference = read_development_reference(
                     args.projection_reference, args.projection_reference_sha256,
                     projection, independent, base, audit, expires,
@@ -1094,6 +1168,12 @@ def run(args):
             projection=projection,
         )
         inputs.extend((graph_receipt, graph, graph_operations))
+    sealed_t1024 = None
+    if args.mode == WIDER_TAP_MODE:
+        sealed_pins, sealed_t1024 = read_sealed_t1024(
+            request, stage_pin, graph, projection_reference, parent, base, audit,
+        )
+        inputs.extend(sealed_pins)
     command = [image["path"], "--ignored", "--exact", SELECTORS[args.mode], "--nocapture", "--test-threads=1"]
     receipt = {
         "schema": "airk.private.owned-compact-fp16-probe/1", "mode": args.mode, "complete": False,
@@ -1111,6 +1191,8 @@ def run(args):
         receipt["projection_assets"] = {name: stage[name] for name in ("candidate_graph", "candidate_weights")}
     if projection_reference is not None:
         receipt["projection_reference"] = core(projection_reference)
+    if sealed_t1024 is not None:
+        receipt["sealed_scoring"] = {"owned": sealed_pins[0], "native": sealed_pins[1]}
     component["mkdir"](guard, out, deadline=expires)
     temp = out / "temp"
     metadata = out / "metadata"
@@ -1183,7 +1265,8 @@ def run(args):
                 paths["profile"] = traces[0]
         value = None
         if not metadata_mode and paths["native"].is_file():
-            value = base.read(paths["native"])
+            value = (base.read(paths["native"], LOG_CAP) if args.mode == WIDER_TAP_MODE
+                     else base.read(paths["native"]))
             if value.get("error"):
                 raise ValueError(value["error"])
         require(exit_code == 0, f"native child exited with Windows status 0x{exit_code:08X}")
@@ -1209,6 +1292,13 @@ def run(args):
                 receipt["projection_graph"] = validate_projection_graph(
                     value["graph_observation"]["graph_metadata"], output_projection=has_output_projection(projection),
                 )
+        elif args.mode == WIDER_TAP_MODE:
+            require(value is not None and "profile" in paths, "native capture or actual profile missing")
+            receipt["flash_attention_records"] = validate_wider_capture(
+                value, paths, receipt["owned"], request, evidence, evidence_value, manifest, image, component, base,
+                projection, projection_reference, graph, reviewed_placement, sources[BOUNDED_SOURCE], sealed_t1024,
+            )
+            receipt["raw_scores_equal_to_sealed"] = True
         elif args.mode == DEVELOPMENT_MODE:
             require(value is not None and "profile" in paths, "native development result or actual profile missing")
             receipt["flash_attention_records"] = validate_development(
@@ -1252,8 +1342,8 @@ def run(args):
                 for path in retained:
                     if path.is_file():
                         limit = (component["DIAGNOSTIC_PROOFS"]["native_result"]
-                                 if args.mode in (*GRAPH_MODES, *TAP_SCOPES, *PROJECTION_SCORE_MODES)
-                                 and path == paths["native"] else LOG_CAP)
+                                 if args.mode != WIDER_TAP_MODE and path == paths["native"]
+                                 and args.mode in (*GRAPH_MODES, *TAP_SCOPES, *PROJECTION_SCORE_MODES) else LOG_CAP)
                         size = path.stat().st_size
                         pin = (base.pin(path) if size <= limit else
                                {"path": str(path), "bytes": size, "digest_refused_beyond_bound": True})
@@ -1285,10 +1375,10 @@ def main():
     elif args.projection_stage is not None or args.projection_stage_sha256 is not None:
         parser.error("--projection-stage and --projection-stage-sha256 require a Q/K/V projection mode")
     if args.mode in PROJECTION_SCORE_MODES:
-        expected = (DEVELOPMENT_REFERENCE_SHA if args.mode == DEVELOPMENT_MODE else
+        expected = (DEVELOPMENT_REFERENCE_SHA if args.mode in WIDER_REFERENCE_MODES else
                     QKVO_REFERENCE_SHA if args.mode == "qkvo-t32" else PROJECTION_REFERENCE_SHA)
         if args.projection_reference is None or args.projection_reference_sha256 != expected:
-            parser.error("projection-t32 requires --projection-reference and the exact --projection-reference-sha256")
+            parser.error(f"{args.mode} requires --projection-reference and the exact --projection-reference-sha256")
     elif args.projection_reference is not None or args.projection_reference_sha256 is not None:
         parser.error("--projection-reference and --projection-reference-sha256 require projection-t32")
     if args.mode in REVIEWED_MODES:

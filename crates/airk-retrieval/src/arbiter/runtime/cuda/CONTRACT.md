@@ -806,3 +806,12 @@ symbolic token axis. The live CUDA edges must connect the shared input to
 all three exact MatMul nodes and the captured projections to their verified
 producers. The same T32 input and memory, profiling and settlement requirements
 govern both diagnostics.
+
+The separate Compact Q/K/V T1024 cut requires the pinned Q/K/V projection
+profile and typed load receipt. It uses the same Q/K/V optimizer settings
+and CPU control bounds as the reviewed scoring session. The derived in-memory
+model appends the same four half attention output declarations with dynamic
+token axes and preserves the complete reviewed operator placement. It accepts
+only the sealed all-live T1024 input and uses the isolated policy domain
+`airk.private.compact-fp32-qkv-cuda-layer0-t1024/1`. The transfer owner
+allocates the exact T1024 shapes and requires the existing settlement checks.

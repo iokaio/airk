@@ -22,6 +22,13 @@ SEALED_SHA = "4ab73f93188955889b3c026ceadf9283ec133ac3c1a7a70f1a8ea1cd50af41a5"
 CAPTURE_SCHEMA = "airk.private.compact-fp16-layer0-taps/1"
 SEALED_SCHEMA = "airk.private.compact-fp16-bounded-t32-component/1"
 T32_DIGEST = "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102fe56fc335"
+T1024_CAPTURE_SCHEMA = "airk.private.compact-fp32-qkv-layer0-t1024/1"
+T1024_SEALED_SCHEMA = "airk.private.compact-fp32-qkv-development-batch/1"
+T1024_SEALED_SHA = "4da43ecdfaeba452cc65009bcadfb82de942253c89a7d544c6285ad90855993a"
+T1024_DIGEST = "948a46156a129e61b5beadce977e6314b6e96c9570a439724813fe9592fa6357"
+T1024_TOKENS = 1024
+T1024_CAPTURE_MAX_BYTES = 64 << 20
+WIDER_REFERENCE_SHA = "736eee5edb965411dd74e2dcceaa11e2de80e24d49b3ae6df9b0af85cb65b735"
 TOKENS = 32
 HEAD_WIDTH = 128
 TAPS = (
@@ -64,36 +71,78 @@ def validated_taps(capture, sealed):
             "complete layer-zero capture required")
     require(capture_scores == scores(sealed, SEALED_SCHEMA),
             "captured raw scores differ from sealed native T32 scores")
-    taps = capture.get("layer0_taps")
+    return validated_tap_rows(capture.get("layer0_taps"), TOKENS)
+
+
+def t1024_scores(result, schema, attempts, row_index):
+    require(isinstance(result, dict) and result.get("schema") == schema
+            and result.get("complete") is True and result.get("error") is None
+            and result.get("native_forward_returned") is result.get("forward_synchronized") is True
+            and type(result.get("numeric_forward_attempts")) is int
+            and result["numeric_forward_attempts"] == attempts,
+            "expected a complete synchronized native T1024 result")
+    rows = result.get("rows")
+    require(isinstance(rows, list) and len(rows) == attempts and isinstance(rows[row_index], dict),
+            "expected the reviewed native T1024 score row")
+    row = rows[row_index]
+    require(row.get("name") == "native-all-live-1024"
+            and type(row.get("tokens")) is int and row["tokens"] == T1024_TOKENS
+            and row.get("input_digest") == T1024_DIGEST,
+            "frozen native T1024 row differs")
+    if schema == T1024_SEALED_SCHEMA:
+        require(row.get("forward_synchronized") is True, "sealed native T1024 row did not synchronize")
+    values = row.get("raw_scores")
+    require(isinstance(values, list) and len(values) == 8
+            and all(type(value) in (int, float) and math.isfinite(value) for value in values),
+            "expected eight finite native scores")
+    return struct.pack("<8f", *values)
+
+
+def validated_t1024_taps(capture, sealed):
+    require(t1024_scores(capture, T1024_CAPTURE_SCHEMA, 1, 0)
+            == t1024_scores(sealed, T1024_SEALED_SCHEMA, 3, 1),
+            "captured raw scores differ from sealed native T1024 scores")
+    return validated_tap_rows(capture.get("layer0_taps"), T1024_TOKENS)
+
+
+def validated_tap_rows(taps, tokens):
     require(isinstance(taps, list) and len(taps) == len(TAPS), "expected exactly four layer-zero taps")
     for tap, (name, width) in zip(taps, TAPS):
         require(isinstance(tap, dict) and set(tap) == {"name", "width", "bits"}
                 and tap["name"] == name and type(tap["width"]) is int and tap["width"] == width,
                 "layer-zero tap name, order or width differs")
         words = tap["bits"]
-        require(isinstance(words, list) and len(words) == TOKENS * width
+        require(isinstance(words, list) and len(words) == tokens * width
                 and all(type(word) is int and 0 <= word <= 0xFFFF and word & 0x7C00 != 0x7C00
                         for word in words),
                 "complete finite binary16 layer-zero bits required")
     return taps
 
 
-def head_tensor(torch, tap):
+def head_tensor(torch, tap, tokens=TOKENS):
     # The native [batch, token, width] rows flatten consecutive heads, then lanes.
     bits = torch.tensor(tap["bits"], dtype=torch.uint16, device="cpu")
     heads = tap["width"] // HEAD_WIDTH
-    return bits.view(torch.float16).reshape(1, TOKENS, heads, HEAD_WIDTH).transpose(1, 2).contiguous()
+    return bits.view(torch.float16).reshape(1, tokens, heads, HEAD_WIDTH).transpose(1, 2).contiguous()
 
 
-def compare(torch, replayed, native):
+def compare(torch, replayed, native, *, wider_statistics=False):
     require(replayed.dtype == torch.float16 and replayed.device.type == "cpu"
             and replayed.shape == native.shape and torch.isfinite(replayed).all().item(),
             "finite replayed half tensor with native geometry required")
     different = replayed.view(torch.int16) != native.view(torch.int16)
-    return {
-        "max_abs_error": (replayed.float() - native.float()).abs().amax().item(),
+    delta = (replayed.float() - native.float()).abs()
+    result = {
+        "max_abs_error": delta.amax().item(),
         "exact_bit_mismatches": different.count_nonzero().item(),
     }
+    if wider_statistics:
+        result.update(
+            native_max_abs=native.float().abs().amax().item(),
+            rms_abs_error=delta.square().mean().sqrt().item(),
+            differences_over_0_001=(delta > 0.001).count_nonzero().item(),
+        )
+    return result
 
 
 def replay(torch, reference, taps):
@@ -108,6 +157,32 @@ def replay(torch, reference, taps):
             "dense_fp32_softmax": compare(torch, dense, native),
             "single_tile_flash": compare(torch, flash, native),
         }
+
+
+def replay_t1024(torch, reference, wider_reference, taps):
+    with torch.inference_mode():
+        q, k, v, native = [head_tensor(torch, tap, T1024_TOKENS) for tap in taps]
+        mask = [1] * T1024_TOKENS
+        dense = reference.causal_half_attention(torch, q, k, v, mask)
+        scale_log2 = reference.f32(reference.f32(HEAD_WIDTH ** -0.5) * math.log2(math.e))
+        flash = wider_reference.wider_flash_attention(torch, q, k, v, mask, scale_log2, no_deadline)
+        return {
+            "tap_elements_compared": native.numel(),
+            "dense_fp32_softmax": compare(torch, dense, native, wider_statistics=True),
+            "multi_tile_flash": compare(torch, flash, native, wider_statistics=True),
+        }
+
+
+def read_t1024_capture(path, expected):
+    path = Path(path)
+    require(path.is_absolute() and path.is_file() and path.resolve(strict=True) == path
+            and not any(part.is_symlink() or part.is_junction() for part in (path, *path.parents)),
+            "canonical T1024 capture path required")
+    with path.open("rb") as stream:
+        raw = stream.read(T1024_CAPTURE_MAX_BYTES + 1)
+    require(0 < len(raw) <= T1024_CAPTURE_MAX_BYTES and hashlib.sha256(raw).hexdigest() == expected,
+            "bounded reviewed T1024 capture bytes differ")
+    return json.loads(raw), {"path": str(path), "bytes": len(raw), "sha256": expected}
 
 
 def no_deadline():
@@ -144,24 +219,42 @@ def read_only_bootstrap():
 
 def run(args):
     verifier = read_only_bootstrap()
-    require(args.sealed_result_sha256 == SEALED_SHA, "exact prior sealed CUDA result pin required")
-    capture, capture_pin = verifier.read_pinned_json(args.native_result, args.native_result_sha256, no_deadline)
-    sealed, sealed_pin = verifier.read_pinned_json(args.sealed_result, SEALED_SHA, no_deadline)
-    taps = validated_taps(capture, sealed)
+    wider = getattr(args, "t1024", False)
+    sealed_sha = T1024_SEALED_SHA if wider else SEALED_SHA
+    require(args.sealed_result_sha256 == sealed_sha, "exact prior sealed CUDA result pin required")
+    if wider:
+        capture, capture_pin = read_t1024_capture(args.native_result, args.native_result_sha256)
+    else:
+        capture, capture_pin = verifier.read_pinned_json(args.native_result, args.native_result_sha256, no_deadline)
+    sealed, sealed_pin = verifier.read_pinned_json(args.sealed_result, sealed_sha, no_deadline)
+    taps = validated_t1024_taps(capture, sealed) if wider else validated_taps(capture, sealed)
     runtime, runtime_pin = verifier.read_pinned_json(RUNTIME, RUNTIME_SHA, no_deadline)
     source = ROOT / verifier.REFERENCE_OWNER
     reference_pin = file_pin(source)
     require(reference_pin["sha256"] == verifier.REFERENCES[verifier.REFERENCE_OWNER],
             "pinned independent reference source differs")
     reference = verifier.load_module(source, "compact_layer0_half_reference")
+    wider_reference = None
+    if wider:
+        wider_source = Path(__file__).with_name("verify_projection_candidate_t32.py")
+        wider_pin = file_pin(wider_source)
+        require(wider_pin["sha256"] == WIDER_REFERENCE_SHA, "pinned wider attention reference source differs")
+        wider_reference = verifier.load_module(wider_source, "compact_layer0_wider_reference")
     before = set(sys.modules)
     sys.path.extend(runtime["import_paths"])
     import torch
 
-    torch.set_num_threads(2)
+    torch.set_num_threads(wider_reference.WIDER_CPU_THREADS if wider else 2)
     torch.set_num_interop_threads(1)
     reference.freeze_reference_math(torch)
-    comparisons = replay(torch, reference, taps)
+    if wider:
+        torch.set_float32_matmul_precision("highest")
+        comparisons = replay_t1024(torch, reference, wider_reference, taps)
+        for pin in (capture_pin, sealed_pin, wider_pin):
+            require(file_pin(Path(pin["path"])) == pin, "reviewed T1024 replay input changed")
+        comparisons.update(tokens=T1024_TOKENS, wider_attention_reference=wider_pin)
+    else:
+        comparisons = replay(torch, reference, taps)
     modules = (sys.modules[name] for name in sys.modules.keys() - before)
     # Torch may register the exact entry point again under its multiprocessing alias.
     replay_source = file_pin(Path(__file__).resolve())
@@ -169,8 +262,9 @@ def run(args):
     imported = verifier.loaded_runtime(sources, file_pin, no_deadline, modules)
     require(not torch.cuda.is_initialized(), "CPU replay initialized CUDA")
     return {
-        "schema": "airk.private.compact-fp16-layer0-replay/1",
-        "input_digest": T32_DIGEST,
+        "schema": ("airk.private.compact-fp32-qkv-layer0-t1024-replay/1"
+                   if wider else "airk.private.compact-fp16-layer0-replay/1"),
+        "input_digest": T1024_DIGEST if wider else T32_DIGEST,
         "raw_scores_equal_to_sealed": True,
         "capture": capture_pin,
         "sealed_result": sealed_pin,
@@ -186,6 +280,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for option in ("native-result", "native-result-sha256", "sealed-result", "sealed-result-sha256"):
         parser.add_argument("--" + option, required=True)
+    parser.add_argument("--t1024", action="store_true", help="replay the reviewed wider native T1024 layer-zero capture")
     args = parser.parse_args()
     try:
         result = run(args)

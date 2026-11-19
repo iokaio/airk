@@ -710,7 +710,7 @@ impl Scorer {
             "original layer-0 deadline differs"
         );
         cuda::in_time(deadline)?;
-        layer0::validate_input(input)?;
+        cut.validate_input(input)?;
         let description = self.profile.description();
         input::validate(
             input,
@@ -728,7 +728,8 @@ impl Scorer {
             .session
             .lock()
             .map_err(|_| anyhow::anyhow!("Arbiter native session poisoned"))?;
-        let result = binding.score_with_layer0_taps(&mut session, input, deadline, cut.taps());
+        let result =
+            binding.score_with_layer0_taps(&mut session, input, deadline, cut.taps(), cut.tokens());
         if result.is_ok() {
             plan.validate_input(input)?;
         }

@@ -179,19 +179,26 @@ Use the existing deadline when resuming in a new context.
   Q/K/V candidate. T128 passed with 0.006991 raw error. T1024 and T8192
   missed at 0.068153 and 0.046494. All three kept the full score order
   and passed both mass limits. The 0.001 same-recipe qualification
-  limit and 98% judged-evidence rule still apply. The largest raw gap
-  is at T1024 even after a common score shift. Use that width for the
-  next identical-operand diagnostic of wider FlashAttention arithmetic
-  before another full-model scoring run. Resource20 remains gated.
+  limit and 98% judged-evidence rule still apply. The T1024 layer-zero
+  capture reproduced all eight sealed CUDA score words. On identical
+  Q/K/V inputs, the multi-tile CPU replay matched 98.54% of attention
+  output words, with 0.000976563 maximum error. Avoid widening
+  layer-zero attention on this evidence. The next qualification work
+  is exact-artifact calibration and a powered, native-visible paired
+  judged cohort. Resource20 remains gated.
+  [T1024 attention capture and replay](simplify/one-process-ledger.md#2026-11-19--compact-t1024-identical-operand-flashattention)
   [Windows CUDA development measurements](simplify/one-process-ledger.md#2026-11-19--compact-qkv-cuda-development-screen-at-three-widths)
   [Approved development screen](arbiter/final-plan.md#approved-windows-compact-cuda-development-screen)
   For judged task quality, the original local TechQA DEV archive
   provides 77 provisional answerable cases with complete archived
   menus, publisher offsets and no menu overlap with original TRAIN
   gold IDs. The blind ContextBench complement supplies 14 provisional
-  cases across eight literal repository clusters. Check wider source
-  exposure, native-visible spans and sample power before freezing a
-  confirmation cohort or requesting additional human judgments.
+  cases across eight literal repository clusters. Exact shared menu
+  documents connect the 77 TechQA cases into 33 groups. Check wider
+  source exposure and native-visible spans, freeze paired cluster-aware
+  power and obtain additional independent judgments as needed before
+  confirmation.
+  [Dependency audit and confirmation gaps](arbiter/software-v2-data-audit.md#techqa-menu-dependence-and-confirmation-readiness)
   [Local confirmation-source inventory](arbiter/software-v2-data-audit.md#initial-context-fp16-confirmation-source-inventory)
   [Stock FP32 projection comparison](simplify/one-process-ledger.md#2026-11-19--stock-cuda-fp32-projection-is-a-compact-candidate)
   [FP32 projection output comparison](simplify/one-process-ledger.md#2026-11-19--fp32-projection-output-improves-half-rounding)

@@ -1701,9 +1701,10 @@ fn placement_diagnostic_partial_capture_or_unproven_teardown_refuses() {
 
 // This additive selector preserves the existing placement-mode wire and success rules.
 const GRAPH_DIAGNOSTIC_BYTES: usize = 16 << 20;
-fn bounded_graph_diagnostic_json(receipt: &Value, maximum: usize) -> Result<Vec<u8>> {
+const LAYER0_T1024_DIAGNOSTIC_BYTES: usize = 64 << 20;
+fn bounded_graph_diagnostic_json(receipt: &impl Serialize, maximum: usize) -> Result<Vec<u8>> {
     ensure!(
-        maximum > 0 && maximum <= GRAPH_DIAGNOSTIC_BYTES,
+        (1..=GRAPH_DIAGNOSTIC_BYTES).contains(&maximum) || maximum == LAYER0_T1024_DIAGNOSTIC_BYTES,
         "invalid graph diagnostic byte cap"
     );
     struct Bounded {
@@ -1738,8 +1739,16 @@ fn bounded_graph_diagnostic_json(receipt: &Value, maximum: usize) -> Result<Vec<
     Ok(output.bytes)
 }
 fn flush_graph_diagnostic(file: &mut File, receipt: &Value) -> Result<()> {
+    flush_graph_diagnostic_with_cap(file, receipt, GRAPH_DIAGNOSTIC_BYTES)
+}
+
+fn flush_graph_diagnostic_with_cap(
+    file: &mut File,
+    receipt: &impl Serialize,
+    maximum: usize,
+) -> Result<()> {
     // Complete bounded serialization precedes seek/write: overflow preserves prior bytes.
-    let bytes = bounded_graph_diagnostic_json(receipt, GRAPH_DIAGNOSTIC_BYTES)?;
+    let bytes = bounded_graph_diagnostic_json(receipt, maximum)?;
     file.seek(SeekFrom::Start(0))?;
     file.write_all(&bytes)?;
     file.set_len(bytes.len() as u64)?;

@@ -6,6 +6,7 @@ owns the private output path and captures stdout. No files are written here.
 """
 
 import argparse
+from collections import Counter
 import hashlib
 import json
 import os
@@ -391,6 +392,55 @@ def original_dev_counts(references, corpus, frozen_dev, train_gold):
     return result
 
 
+def original_dev_menu_dependencies(references, corpus, train_gold):
+    ordered_menus, menu_sets, gold_ids = [], [], []
+    for row in references.values():
+        menu = row["DOC_IDS"]
+        roster = set(menu)
+        if (roster and len(roster) == len(menu) and all(roster) and has_gold_metadata(row, roster)
+                and roster <= corpus and roster.isdisjoint(train_gold)):
+            ordered_menus.append(menu)
+            menu_sets.append(roster)
+            gold_ids.append(row["DOCUMENT"])
+
+    parents = list(range(len(menu_sets)))
+
+    def root(index):
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    shared_pairs = 0
+    for index, menu in enumerate(menu_sets):
+        for prior in range(index):
+            if not menu.isdisjoint(menu_sets[prior]):
+                shared_pairs += 1
+                parents[root(index)] = root(prior)
+
+    case_count = len(menu_sets)
+    menu_sizes = list(map(len, menu_sets))
+    gold_counts = Counter(gold_ids)
+    components = Counter(root(index) for index in range(case_count))
+    return {
+        "provisional_cases": case_count,
+        "distinct_ordered_menus": len(set(ordered_menus)),
+        "distinct_unordered_menus": len({frozenset(menu) for menu in menu_sets}),
+        "distinct_exact_gold_documents": len(gold_counts),
+        "exact_gold_document_cluster_sizes": dict(sorted(Counter(gold_counts.values()).items())),
+        "distinct_menu_document_ids": len(set().union(*menu_sets)),
+        "minimum_menu_size": min(menu_sizes, default=None),
+        "maximum_menu_size": max(menu_sizes, default=None),
+        "all_case_pairs": case_count * (case_count - 1) // 2,
+        "pairs_sharing_at_least_one_menu_document": shared_pairs,
+        "shared_menu_document_connected_component_sizes": sorted(components.values(), reverse=True),
+        "cases_with_gold_id_in_another_case_menu": sum(
+            any(other != index and gold in menu for other, menu in enumerate(menu_sets))
+            for index, gold in enumerate(gold_ids)
+        ),
+    }
+
+
 def read_checked_json(path, expected):
     with path.open("rb") as stream:
         raw = stream.read((8 << 20) + 1)
@@ -404,9 +454,10 @@ def archive_state(source):
     return (observed.st_dev, observed.st_ino, observed.st_size, observed.st_mtime_ns)
 
 
-def audit(*, original_dev=False, exact_dev_corpus=False):
+def audit(*, original_dev=False, exact_dev_corpus=False, menu_dependencies=False):
     started = time.monotonic()
     require(not exact_dev_corpus or original_dev, "exact shared corpus role requires original DEV")
+    require(not menu_dependencies or exact_dev_corpus, "menu dependencies require exact DEV corpus membership")
     requested_members = ORIGINAL_DEV_MEMBERS if original_dev else MEMBERS
 
     def check():
@@ -480,12 +531,20 @@ def audit(*, original_dev=False, exact_dev_corpus=False):
     else:
         counts = paired_counts(results["questions"], results["references"], results["corpus"], dev, train)
         schema = "airk.private.techqa-publisher-validation-metadata/1"
+    dependencies = {}
+    if menu_dependencies:
+        schema = "airk.private.techqa-publisher-original-dev-menu-dependencies/1"
+        observed = original_dev_menu_dependencies(results["references"], results["corpus"], train)
+        require(observed["provisional_cases"]
+                == counts["answerable_structural_rows_with_complete_corpus_without_train_gold_menu_overlap"],
+                "menu dependency population differs from the exact DEV archive census")
+        dependencies["menu_dependencies"] = observed
     check()
     return {
         "schema": schema, "complete": True,
         "archive": {"path": str(ARCHIVE), "bytes": ARCHIVE_BYTES, "sha256": ARCHIVE_SHA},
         "source": source_pin, "members": members, "counts": counts,
-        **({"corpus_membership": corpus_scope} if exact_dev_corpus else {}),
+        **({"corpus_membership": corpus_scope} if exact_dev_corpus else {}), **dependencies,
         "metadata_only": True, "question_or_answer_text_decoded": False,
         "document_text_decoded": False, "qualification": False,
         "dev": {"metadata_rows": 310, "menu_source_ids": len(dev), "fence": fence_pin, "prior_exposure_caveat": caveat_pin},
@@ -502,8 +561,11 @@ def main():
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--original-dev", action="store_true")
     modes.add_argument("--original-dev-corpus", action="store_true")
+    modes.add_argument("--original-dev-dependencies", action="store_true")
     args = parser.parse_args()
-    result = audit(original_dev=args.original_dev or args.original_dev_corpus, exact_dev_corpus=args.original_dev_corpus)
+    exact_corpus = args.original_dev_corpus or args.original_dev_dependencies
+    result = audit(original_dev=args.original_dev or exact_corpus, exact_dev_corpus=exact_corpus,
+                   menu_dependencies=args.original_dev_dependencies)
     print(json.dumps(result, allow_nan=False, separators=(",", ":")))
 
 

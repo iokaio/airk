@@ -318,3 +318,45 @@ The aggregate techqa-original-dev-corpus-metadata-r1.json is
 This proves archived menu membership. The 77 cases require
 source-family exposure and native-span checks and a prospective
 paired sample-size assessment before admission.
+
+### TechQA menu dependence and confirmation readiness
+
+The exact publisher DEV and shared corpus replay retained the 77
+provisional answerable cases. Each has a complete 50-document menu
+that avoids original TRAIN gold document IDs. The cases have 76
+distinct menus, 71 distinct exact gold documents and 3,527 unique menu
+document IDs. In 15 cases the gold ID occurs in another case's menu.
+Sixty-seven of 2,926 case pairs share a menu document. Connecting exact
+shared document IDs transitively gives 33 components, with one of
+37 cases, eight of two and 24 singletons. These components measure menu
+dependence. Product families, forks and text-level clones require
+their own checks.
+
+Run the maintained audit with `--original-dev-dependencies`. The 37.819621 s
+aggregate retained under techqa-original-dev-menu-dependencies-r1.json
+is 83a98930e567e829d1e14cc2421564307b4cc37f3c53832b931597df7eab2c02.
+The source is 1f511e1d6c0f0a1d254a77b802aedbce7a5ae8a3d134c9f7b91ed605f7c3874d.
+The exact archive, DEV member, and shared corpus pins remain embedded.
+The aggregate emits no case IDs, answers or document text. Eight focused
+controls passed. The ContextBench metadata replay still gives 14
+provisional cases across eight repository clusters.
+
+For scale, assume both variants always succeed and the 91 provisional
+cases are independent. In that simplified perfect-baseline case the
+one-sided exact 95% lower bound on FP16 success is 96.76%. Even perfect
+outcomes would need at least 149 independent cases to reach 98% in that
+example. The actual acceptance analysis uses paired outcomes, their
+discordances and corpus-dependence clusters. The example is a sensitivity
+check rather than a prescribed sample size. Confirm eligible populations,
+freeze the complete menus and native-visible gold spans, and size the
+paired long-context strata before running confirmation.
+
+The current private Q/K/V profile binds calibration
+b5ef749ce5e3349513f380c5fd03d7e1839a1f9830a4a7172ec1db59e37c1be3. It has
+zero active rules and all four action classes unsupported. The historical
+FP32 Answer timing receipt adfc16d7c410ab5f87a507c29545966c76ad08be00686274227fdbf615c51ae6
+covered one warm request per CPU and CUDA arm. Both ended at the budget
+with three abstentions. It gives no paired precision or threshold result.
+The candidate needs exact-artifact calibration and a prospectively frozen,
+native-visible judged corpus to measure consequential decisions through
+the complete Answer path.

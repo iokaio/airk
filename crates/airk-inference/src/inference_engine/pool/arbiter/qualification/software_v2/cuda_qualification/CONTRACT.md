@@ -514,3 +514,20 @@ fixed CPU controls. Each forward emits its width and input digest before
 dispatch for separate FlashAttention log verification. Adapter and host
 observations are samples. The receipt leaves continuous device peak unset.
 Qualification retains the 0.001 matching raw limit and its existing criteria.
+
+## Private Compact Q/K/V T1024 attention capture
+
+The `cuda_compact_fp32_qkv_layer0_t1024` selector uses the same Q/K/V stage,
+typed load receipt and sealed wider reference as the development batch. It
+authenticates the retained `native-all-live-1024` row and performs one
+profiled forward under the original job, device and time bounds. It retains
+the actual typed diagnostic graph, the 1,942-node profile with 374 bounded
+CPU controls, the eight raw scores and the ordered Q, K, V and raw attention
+half bits. The parent checks exact score words against the retained CUDA T1024
+development row and checks all 28 native FlashAttention records.
+
+The final `airk.private.compact-fp32-qkv-layer0-t1024/1` receipt permits up
+to 64 MiB for its 6,291,456 half words. Progress receipts and the other
+selectors retain the 16 MiB cap. The operation journal records the load and
+the single numerical call. The result records the actual CUDA and host
+teardown and carries no product admission or qualification.
