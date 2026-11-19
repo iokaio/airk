@@ -392,6 +392,37 @@ class CompactBoundedT32Controls(unittest.TestCase):
             self.probe["attention_logs"]("\n".join(refused).encode(), "bounded-t32")
 
 
+    def test_development_logs_bind_every_flash_roster_to_its_frozen_input(self):
+        widths = [128, 1024, 8192]
+        cases = [{"tokens": width, "input_digest": f"{width:064x}"} for width in widths]
+        flash = [f"Operator=GroupQueryAttention Node=/airk_g5/attention/{layer}/efficient "
+                 "DataType=fp16 SdpaKernel=FLASH_ATTENTION" for layer in range(28)]
+        lines = []
+        for case in cases:
+            lines.append(f"AIRK_CUDA_QKV_DEVELOPMENT_FORWARD {case['tokens']} {case['input_digest']}")
+            lines.extend(flash)
+        check = self.probe["development_attention_logs"]
+        self.assertEqual(check("\n".join(lines).encode(), cases), [flash] * 3)
+        bad_digest = lines.copy()
+        bad_digest[29] = bad_digest[29].replace(cases[1]["input_digest"], cases[0]["input_digest"])
+        with self.assertRaisesRegex(ValueError, "forward marker differs"):
+            check("\n".join(bad_digest).encode(), cases)
+        moved = lines.copy()
+        moved.insert(29, moved.pop(30))
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            check("\n".join(moved).encode(), cases)
+
+    def test_development_comparison_retains_the_signed_near_tie_margin(self):
+        compare = self.probe["development_metrics"]
+        lower = 1 - 1 / 128
+        metrics = compare([lower, 1, 0, 0, 0, 0, 0, 0], [1, lower, 0, 0, 0, 0, 0, 0])
+        self.assertEqual(metrics["raw_error"], 1 / 128)
+        self.assertEqual(metrics["reference_margin"], 1 / 128)
+        self.assertEqual(metrics["native_margin_for_reference_winner"], -1 / 128)
+        self.assertEqual((metrics["native_winner"], metrics["winner"]), (1, 0))
+        self.assertFalse(metrics["argmax_matches"])
+
+
 class CompactLayer0Controls(unittest.TestCase):
     TAPS = (
         ("/airk_g5/attention/0/q16", 2048),

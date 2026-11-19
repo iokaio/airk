@@ -493,3 +493,24 @@ session matches that receipt's full rows and counters. The profiler uses the
 reviewed session's operator count and requires the existing 374 bounded CPU
 controls. The original scoring limits, input, deadline and release
 observations apply. Both scoring evidence pins must be present to dispatch.
+
+## Private Compact Q/K/V development wider batch
+
+The ignored Q/K/V development selector binds the existing reviewed projection
+stage, typed load receipt and one independent wider CPU proof. The proof
+retains the original T128, T1024 and T8192 inputs and FP32 score words. Its
+source-derived tiled Flash reference approximates device arithmetic. The
+selector opens one profiled session and records three serial forwards under
+the original Windows job, device capacity and 120-second deadline.
+
+The distinct development receipt records the finite score arrays, both raw and
+mass differences, selected indices, signed margins and actual timings. The
+0.010 raw development screen treats the matching reference margin within
+0.020 as ambiguous if the winner changes. Raw or winner nonpass permits later
+safe widths. Either mass difference above 0.05, incorrect placement, invalid
+output or lost custody stops the batch after retaining available evidence.
+The complete 1,942-node typed profile checks each recorded width and the 374
+fixed CPU controls. Each forward emits its width and input digest before
+dispatch for separate FlashAttention log verification. Adapter and host
+observations are samples. The receipt leaves continuous device peak unset.
+Qualification retains the 0.001 matching raw limit and its existing criteria.

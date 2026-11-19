@@ -238,6 +238,340 @@ fn projection_reference(
     Ok((pin, reference))
 }
 
+const DEVELOPMENT_REFERENCE_SHA: &str =
+    "f0d0e01fa28e7a876f1c57bc9894dff7e2a915ac8bf8150885b2aac2fdff2f14";
+const DEVELOPMENT_RAW_LIMIT: f64 = 0.010;
+const DEVELOPMENT_MASS_LIMIT: f64 = 0.05;
+const DEVELOPMENT_NEAR_TIE_LIMIT: f64 = 2.0 * DEVELOPMENT_RAW_LIMIT;
+const RETAINED_DEVELOPMENT_FIXTURE: &str =
+    "3962186640b42648b345fa200516ed44a3de4ccab0d783e671c9c22c3b8b1bbd";
+const RETAINED_DEVELOPMENT_PRODUCER: &str =
+    "c48e88b5d6bd8dff20b052bedebf0a4a48354d57caa1d2944b2dda16281805b2";
+const DEVELOPMENT_CASES: [(usize, &str, &str); 3] = [
+    (
+        128,
+        "all-live-1",
+        "791067affc1eeba53660a0044369f22f1f463535656419c5da9a486517222c7a",
+    ),
+    (
+        1024,
+        "native-all-live-1024",
+        "948a46156a129e61b5beadce977e6314b6e96c9570a439724813fe9592fa6357",
+    ),
+    (
+        8192,
+        "native-all-live-8192",
+        "ca9d34d962e308e6e53af8e14101058e8f02fbb4151bcc65eda2ad88be3de1f0",
+    ),
+];
+
+struct DevelopmentReferences {
+    pin: ResourceFilePin,
+    recipe: Value,
+    rows: [ReferenceProof; 3],
+}
+
+fn development_references(
+    stage: &ResourceFilePin,
+    candidate: &CandidateProof,
+    baseline: &IndependentProof,
+    profile: &Profile,
+    policy: &ResourcePolicy,
+) -> Result<DevelopmentReferences> {
+    let pin = env_pin(
+        "AIRK_CUDA_FP16_PROJECTION_REFERENCE",
+        "AIRK_CUDA_FP16_PROJECTION_REFERENCE_SHA256",
+    )?;
+    ensure!(
+        pin.sha256 == DEVELOPMENT_REFERENCE_SHA.parse::<Sha256Digest>()?,
+        "exact independent Compact wider Q/K/V reference required"
+    );
+    let mut proof: Value = serde_json::from_slice(&pinned(&pin, PROOF_BYTES)?)?;
+    let recipe = proof["recipe"].clone();
+    ensure!(
+        proof["schema"] == "airk.private.compact-fp32-qkv-wider-reference/1"
+            && proof["complete"] == true
+            && proof["model"] == json!(profile.model)
+            && proof["reference_device"] == "cpu"
+            && proof["model_inference"] == true
+            && proof["torch_forward_invocations"] == 3
+            && proof["native_execution"] == false
+            && proof["qualification"] == false
+            && proof["product_admission"] == false
+            && proof["candidate"] == json!(candidate)
+            && proof["baseline_candidate"] == json!(baseline.candidate)
+            && proof["original_graph"] == json!(baseline.original_graph)
+            && proof["stage_receipt"]["path"] == json!(stage.path)
+            && proof["stage_receipt"]["sha256"] == json!(stage.sha256)
+            && recipe["qkv_fp32_routes"]
+                .as_array()
+                .is_some_and(|routes| routes.len() == 84)
+            && recipe["context_flash_single_tile"] == false
+            && recipe["torch_cpu_threads"] == 8
+            && recipe["wider_attention"]
+                == json!({
+                    "algorithm": "causal-reverse-tile-fp16-exponent",
+                    "query_block": 64, "key_block": 64, "split_kv": false,
+                }),
+        "independent wider Q/K/V reference lineage or recipe differs"
+    );
+    let mut rows = proof["references"].take();
+    let rows = rows
+        .as_array_mut()
+        .context("independent wider Q/K/V rows missing")?;
+    ensure!(
+        rows.len() == DEVELOPMENT_CASES.len(),
+        "wider Q/K/V reference roster differs"
+    );
+    let mut verified = Vec::new();
+    for (row, (width, name, input_sha)) in rows.iter_mut().zip(DEVELOPMENT_CASES) {
+        let source = row
+            .as_object_mut()
+            .context("wider Q/K/V reference row missing")?;
+        let matching = source
+            .remove("matching_qkv_fp32")
+            .context("wider Q/K/V scores missing")?;
+        ensure!(
+            source.insert("matching_fp16".into(), matching).is_none(),
+            "ambiguous wider matching scores"
+        );
+        let reference: ReferenceProof = serde_json::from_value(row.take())?;
+        let fixture_pin = reference.fixture.pin();
+        let producer_pin = reference.producer.pin();
+        let (fixture_sha, producer_sha) = if width == 1024 {
+            (FP32_FIXTURE, FP32_PRODUCER)
+        } else {
+            (RETAINED_DEVELOPMENT_FIXTURE, RETAINED_DEVELOPMENT_PRODUCER)
+        };
+        ensure!(
+            fixture_pin.sha256 == fixture_sha.parse()?
+                && producer_pin.sha256 == producer_sha.parse()?
+                && reference.name == name
+                && reference.input.input_digest == input_sha.parse()?
+                && reference.input.input_ids.len() == width
+                && reference.model == profile.model
+                && reference.compiler == profile.compiler
+                && reference.resource_policy == policy.digest()?
+                && reference.matching_fp16.iter().all(|v| v.is_finite())
+                && reference.original_fp32.iter().all(|v| v.is_finite()),
+            "independent wider Compact Q/K/V reference row differs at T{width}"
+        );
+        let fixture: NumericFixture = serde_json::from_slice(&pinned(&fixture_pin, PROOF_BYTES)?)?;
+        pinned(&producer_pin, PROOF_BYTES)?;
+        let source = fixture
+            .rows
+            .iter()
+            .find(|row| row.name == name)
+            .context("original FP32 wider fixture row missing")?;
+        let original: &[f32; 8] = source
+            .reference_original_fp32
+            .as_deref()
+            .context("original FP32 wider fixture scores missing")?
+            .try_into()?;
+        ensure!(
+            fixture.schema == "airk.arbiter.native-numeric/2"
+                && fixture.model == reference.model
+                && fixture.compiler == reference.compiler
+                && fixture.resource_policy == reference.resource_policy
+                && fixture.reference_producer.as_ref() == Some(&producer_pin)
+                && serde_json::to_value(&source.input)? == serde_json::to_value(&reference.input)?
+                && reference
+                    .input
+                    .attention_mask
+                    .iter()
+                    .all(|value| *value == 1)
+                && reference.input.option_mask == [true; 8]
+                && exact_reference_score_words(original, &reference.original_fp32),
+            "original FP32 wider fixture inputs or score words differ at T{width}"
+        );
+        verified.push(reference);
+    }
+    Ok(DevelopmentReferences {
+        pin,
+        recipe,
+        rows: verified
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("wider Q/K/V reference count differs"))?,
+    })
+}
+
+fn development_winner(scores: &[f32]) -> usize {
+    scores.iter().enumerate().fold(
+        0,
+        |best, (i, score)| {
+            if *score > scores[best] { i } else { best }
+        },
+    )
+}
+
+fn development_signed_margin(scores: &[f32], slot: usize) -> f64 {
+    let runner_up = scores
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != slot)
+        .map(|(_, score)| f64::from(*score))
+        .fold(f64::NEG_INFINITY, f64::max);
+    f64::from(scores[slot]) - runner_up
+}
+
+fn development_metrics(row: &mut Value, actual: &[f32], reference: &ReferenceProof) -> Result<()> {
+    let (raw, mass, matched) = comparison(actual, &reference.matching_fp16)?;
+    let (original_raw, original_mass, original_matched) =
+        comparison(actual, &reference.original_fp32)?;
+    let actual_winner = development_winner(actual);
+    let matching_winner = development_winner(&reference.matching_fp16);
+    let original_winner = development_winner(&reference.original_fp32);
+    let matching_margin = development_signed_margin(&reference.matching_fp16, matching_winner);
+    let near_tie = matching_margin <= DEVELOPMENT_NEAR_TIE_LIMIT;
+    row["matching_qkv_raw_error"] = json!(raw);
+    row["matching_qkv_mass_error"] = json!(mass);
+    row["matching_qkv_argmax_matches"] = json!(matched);
+    row["original_fp32_raw_error"] = json!(original_raw);
+    row["original_fp32_mass_error"] = json!(original_mass);
+    row["original_fp32_argmax_matches"] = json!(original_matched);
+    row["native_winner"] = json!(actual_winner);
+    row["matching_qkv_winner"] = json!(matching_winner);
+    row["original_fp32_winner"] = json!(original_winner);
+    row["native_winner_margin"] = json!(development_signed_margin(actual, actual_winner));
+    row["matching_qkv_reference_margin"] = json!(matching_margin);
+    row["original_fp32_reference_margin"] = json!(development_signed_margin(
+        &reference.original_fp32,
+        original_winner
+    ));
+    row["native_margin_for_matching_qkv_winner"] =
+        json!(development_signed_margin(actual, matching_winner));
+    row["native_margin_for_original_fp32_winner"] =
+        json!(development_signed_margin(actual, original_winner));
+    row["near_tie_ambiguous"] = json!(near_tie);
+    row["development_screen_pass"] = json!(raw <= DEVELOPMENT_RAW_LIMIT && (matched || near_tie));
+    ensure!(
+        mass <= DEVELOPMENT_MASS_LIMIT && original_mass <= DEVELOPMENT_MASS_LIMIT,
+        "matching Q/K/V or original FP32 mass bound refused at T{}",
+        reference.input.input_ids.len()
+    );
+    Ok(())
+}
+
+#[test]
+fn compact_qkv_development_preserves_signed_near_tie_and_mass_refusal() -> Result<()> {
+    let sha = Sha256Digest::from_bytes([1; 32]);
+    let pin = || ProofFile {
+        path: "literal".into(),
+        sha256: sha,
+        bytes: None,
+    };
+    let expected = [1.0, 0.99, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    let reference = ReferenceProof {
+        fixture: pin(),
+        producer: pin(),
+        name: "literal".into(),
+        input: CompiledInput {
+            prompt: String::new(),
+            input_ids: vec![1; 128],
+            attention_mask: vec![1; 128],
+            position_ids: (0..128).collect(),
+            decision_position: 127,
+            candidate_positions: (0..8).collect(),
+            option_mask: vec![true; 8],
+            input_digest: sha,
+        },
+        model: ModelChoice::ContextQwenCompact,
+        compiler: sha,
+        resource_policy: sha,
+        matching_fp16: expected,
+        original_fp32: expected,
+    };
+    let mut row = json!({});
+    let mut actual = [0.994, 0.996, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    development_metrics(&mut row, &actual, &reference)?;
+    assert_eq!(row["native_winner"], 1);
+    assert_eq!(row["matching_qkv_winner"], 0);
+    assert_eq!(row["matching_qkv_argmax_matches"], false);
+    assert_eq!(row["near_tie_ambiguous"], true);
+    assert_eq!(row["development_screen_pass"], true);
+    assert!(
+        row["native_margin_for_matching_qkv_winner"]
+            .as_f64()
+            .unwrap()
+            < 0.0
+    );
+    actual[0] = 0.98;
+    development_metrics(&mut row, &actual, &reference)?;
+    assert_eq!(row["development_screen_pass"], false);
+    actual[0] = 15.0;
+    assert!(development_metrics(&mut row, &actual, &reference).is_err());
+    assert!(row["matching_qkv_mass_error"].as_f64().unwrap() > 0.05);
+    Ok(())
+}
+
+fn score_development_rows(
+    scorer: &Scorer,
+    device: &cuda::CudaDevice,
+    references: &DevelopmentReferences,
+    journal: &mut operation::Journal,
+    receipt: &mut Value,
+    file: &mut File,
+    deadline: Instant,
+) -> Result<()> {
+    for (index, reference) in references.rows.iter().enumerate() {
+        let input = &reference.input;
+        let width = input.input_ids.len();
+        let before = device.observation(deadline)?;
+        let host_before = airk_kernel::service_resource_observations::rss(std::process::id());
+        receipt["numeric_forward_attempts"] = json!(index + 1);
+        flush_graph_diagnostic(file, receipt)?;
+        {
+            use std::io::Write;
+            let mut stdout = std::io::stdout().lock();
+            writeln!(
+                stdout,
+                "AIRK_CUDA_QKV_DEVELOPMENT_FORWARD {width} {}",
+                input.input_digest
+            )?;
+            stdout.flush()?;
+        }
+        let timed = journal.observe(
+            operation::Kind::Numeric,
+            index + 1,
+            Some(input.input_digest),
+            || scorer.score_with_deadline(input, deadline),
+        )?;
+        let actual = timed.value?;
+        receipt["native_forward_returned"] = json!(true);
+        let mut row = json!({
+            "name": reference.name, "tokens": width, "input_digest": input.input_digest,
+            "raw_scores": actual, "elapsed_us": timed.elapsed_us, "native_call_elapsed_us": timed.native_call_elapsed_us,
+            "within_deadline": timed.within_deadline, "forward_synchronized": false,
+            "adapter_before": before, "host_rss_before_bytes": host_before,
+        });
+        let checked = scorer.synchronize(deadline).and_then(|()| {
+            ensure!(
+                timed.within_deadline && scorer.device_settled(),
+                "wider Compact Q/K/V forward expired or remains unsettled at T{width}"
+            );
+            row["forward_synchronized"] = json!(true);
+            row["adapter_after"] = json!(device.observation(deadline)?);
+            row["host_rss_after_bytes"] = json!(airk_kernel::service_resource_observations::rss(
+                std::process::id()
+            ));
+            development_metrics(&mut row, &actual, reference)
+        });
+        if let Err(error) = &checked {
+            row["error"] = json!(format!("{error:#}"));
+        }
+        receipt["rows"].as_array_mut().unwrap().push(row);
+        flush_graph_diagnostic(file, receipt)?;
+        checked?;
+    }
+    receipt["development_screen_pass"] = json!(receipt["rows"].as_array().is_some_and(|rows| {
+        rows.len() == DEVELOPMENT_CASES.len()
+            && rows
+                .iter()
+                .all(|row| row["development_screen_pass"] == true)
+    }));
+    Ok(())
+}
+
 fn exact_reference_score_words(actual: &[f32; 8], expected: &[f32; 8]) -> bool {
     actual
         .iter()
@@ -759,6 +1093,7 @@ enum CompactFp16Probe {
     GraphOnly,
     QkvProjectionGraphOnly,
     QkvProjectionT32,
+    QkvDevelopmentBatch,
     QkvoProjectionGraphOnly,
     QkvoProjectionT32,
     BoundedT32,
@@ -820,15 +1155,23 @@ fn cuda_compact_fp32_qkvo_projection_t32_component() -> Result<()> {
     observe_compact_fp16_t32(CompactFp16Probe::QkvoProjectionT32)
 }
 
+#[test]
+#[ignore = "owned development-only Compact Q/K/V CUDA comparison at T128/T1024/T8192"]
+fn cuda_compact_fp32_qkv_projection_development_batch() -> Result<()> {
+    observe_compact_fp16_t32(CompactFp16Probe::QkvDevelopmentBatch)
+}
+
 fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
     let (projection_spec, projection_t32, graph_only) = match mode {
         CompactFp16Probe::QkvProjectionGraphOnly => (Some(&QKV), false, true),
         CompactFp16Probe::QkvProjectionT32 => (Some(&QKV), true, false),
+        CompactFp16Probe::QkvDevelopmentBatch => (Some(&QKV), false, false),
         CompactFp16Probe::QkvoProjectionGraphOnly => (Some(&QKVO), false, true),
         CompactFp16Probe::QkvoProjectionT32 => (Some(&QKVO), true, false),
         CompactFp16Probe::GraphOnly => (None, false, true),
         _ => (None, false, false),
     };
+    let development_batch = mode == CompactFp16Probe::QkvDevelopmentBatch;
     let projection_taps = mode == CompactFp16Probe::Layer0ProjectionTaps;
     let layer0_taps = mode == CompactFp16Probe::Layer0Taps || projection_taps;
     let started_ns = airk_process::monotonic::now_ns()?;
@@ -919,16 +1262,34 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
     } else {
         None
     };
+    let development = if development_batch {
+        let (stage, candidate) = projection
+            .as_ref()
+            .context("missing development Q/K/V stage")?;
+        Some(development_references(
+            stage,
+            candidate,
+            &proof,
+            &profile,
+            &input.policy,
+        )?)
+    } else {
+        None
+    };
     let reference = matching_projection
         .as_ref()
         .map_or(&proof.reference, |(_, reference)| reference);
     bind_t32_candidate(&input, &profile, &metadata, reference, candidate)?;
-    let reviewed_graph = if mode == CompactFp16Probe::BoundedT32 || layer0_taps || projection_t32 {
+    let reviewed_graph = if mode == CompactFp16Probe::BoundedT32
+        || layer0_taps
+        || projection_t32
+        || development_batch
+    {
         let pin = env_pin(
             "AIRK_CUDA_FP16_REVIEWED_GRAPH",
             "AIRK_CUDA_FP16_REVIEWED_GRAPH_SHA256",
         )?;
-        let expected = if projection_t32 {
+        let expected = if projection_t32 || development_batch {
             projection_spec
                 .context("missing Compact projection scope")?
                 .native_graph_sha
@@ -1004,6 +1365,7 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             CompactFp16Probe::GraphOnly => "airk.private.compact-fp16-graph-diagnostic/1",
             CompactFp16Probe::QkvProjectionGraphOnly => QKV.graph_schema,
             CompactFp16Probe::QkvProjectionT32 => QKV.t32_schema,
+            CompactFp16Probe::QkvDevelopmentBatch => "airk.private.compact-fp32-qkv-development-batch/1",
             CompactFp16Probe::QkvoProjectionGraphOnly => QKVO.graph_schema,
             CompactFp16Probe::QkvoProjectionT32 => QKVO.t32_schema,
             CompactFp16Probe::BoundedT32 => "airk.private.compact-fp16-bounded-t32-component/1",
@@ -1037,6 +1399,19 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
     }
     if let Some((pin, _)) = &matching_projection {
         receipt["projection_reference"] = json!(pin);
+    }
+    if let Some(references) = &development {
+        receipt["projection_reference"] = json!(references.pin);
+        receipt["reference_basis"] = json!("independent_wider_qkv_cpu_approximation");
+        receipt["reference_recipe"] = references.recipe.clone();
+        receipt["development_only"] = json!(true);
+        receipt["qualification_cutoff_raw"] = json!(0.001);
+        receipt["development_raw_limit"] = json!(DEVELOPMENT_RAW_LIMIT);
+        receipt["matching_qkv_mass_limit"] = json!(DEVELOPMENT_MASS_LIMIT);
+        receipt["original_fp32_mass_limit"] = json!(DEVELOPMENT_MASS_LIMIT);
+        receipt["near_tie_margin_limit"] = json!(DEVELOPMENT_NEAR_TIE_LIMIT);
+        receipt["development_screen_pass"] = json!(false);
+        receipt["profiled_runs"] = json!([]);
     }
     if layer0_taps {
         receipt["layer0_final_graph"] = Value::Null;
@@ -1108,7 +1483,7 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
                         Scorer::open_private_compact_fp32_qkvo_projection_profiled(
                             execution, files, profile_prefix, graph_bytes, pin.sha256,
                         )
-                    } else if mode == CompactFp16Probe::QkvProjectionT32 {
+                    } else if mode == CompactFp16Probe::QkvProjectionT32 || development_batch {
                         Scorer::open_private_compact_fp32_qkv_projection_profiled(
                             execution, files, profile_prefix, graph_bytes, pin.sha256,
                         )
@@ -1152,6 +1527,12 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
                 scorer.attention_backend_plan()?.context("actual Compact FP16 attention plan missing")?
             };
             flush_graph_diagnostic(&mut file, &receipt)?;
+            if let Some(references) = &development {
+                let device = custody.device.as_ref().context("development CUDA device custody missing")?;
+                return score_development_rows(
+                    scorer, device, references, &mut journal, &mut receipt, &mut file, deadline,
+                );
+            }
             observe_t32_input_refusals(scorer, &reference.input, &mut receipt, &mut file)?;
             receipt["numeric_forward_attempts"] = json!(1);
             flush_graph_diagnostic(&mut file, &receipt)?;
@@ -1227,6 +1608,17 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
                     receipt["runtime_profile"] = trace;
                     if reviewed_graph.is_some() {
                         let profile_summary = scorer.compact_fp16_bounded_hybrid_evidence().and_then(|(graph, _)| {
+                            if development_batch {
+                                let rows = receipt["rows"].as_array().context("development row receipt missing")?;
+                                let widths = rows.iter().map(|row| {
+                                    row["tokens"].as_u64().and_then(|n| usize::try_from(n).ok())
+                                        .context("development row width missing")
+                                }).collect::<Result<Vec<_>>>()?;
+                                let summary = super::hybrid_profile_trace::compact_fp16_development_profiled_runs(
+                                    &bytes, &graph.rows, &widths,
+                                )?;
+                                return Ok((true, serde_json::to_value(summary)?));
+                            }
                             let expected_nodes = match mode {
                                 CompactFp16Probe::QkvProjectionT32 => 1942,
                                 // Native admission already matched every typed row and counter
@@ -1236,12 +1628,14 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
                                     .count(),
                                 _ => 1746,
                             };
-                            super::hybrid_profile_trace::compact_fp16_t32_profiled_run(
+                            let summary = super::hybrid_profile_trace::compact_fp16_t32_profiled_run(
                                 &bytes, &graph.rows, expected_nodes,
-                            )
+                            )?;
+                            Ok((false, serde_json::to_value(summary)?))
                         });
                         match profile_summary {
-                            Ok(summary) => receipt["bounded_profile"] = json!(summary),
+                            Ok((true, summary)) => receipt["profiled_runs"] = summary,
+                            Ok((false, summary)) => receipt["bounded_profile"] = summary,
                             Err(error) => {
                                 receipt["bounded_profile_error"] = json!(format!("{error:#}"));
                                 teardown = Err(error);
@@ -1278,6 +1672,14 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
         }
         if let Some((pin, _)) = &matching_projection {
             teardown = teardown.and(pinned(pin, PROOF_BYTES).map(|_| ()));
+        }
+        if let Some(references) = &development {
+            teardown = teardown.and(pinned(&references.pin, PROOF_BYTES).map(|_| ()));
+            for row in &references.rows {
+                for pin in [row.fixture.pin(), row.producer.pin()] {
+                    teardown = teardown.and(pinned(&pin, PROOF_BYTES).map(|_| ()));
+                }
+            }
         }
         work.and(teardown)?;
         verify_files(custody.files.as_ref().context("Compact FP16 post-input custody missing")?, &profile)?;

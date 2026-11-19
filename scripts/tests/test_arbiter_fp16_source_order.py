@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Literal CPU controls for Compact's optional source-order arithmetic."""
+"""Literal CPU controls for Compact's independent projection reference recipes."""
 
 import importlib.util
+import math
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -93,6 +94,54 @@ class SourceOrderControls(unittest.TestCase):
         literal.route_calls = projected[:-1]
         with self.assertRaisesRegex(ValueError, "112"):
             self.owner.projection_scores(literal, "literal", lambda: None, routes=projected)
+
+    def test_wider_flash_rounds_each_reverse_tile_before_rescaling(self):
+        # Global maximum 0, last tile maximum -0.7, only the value at -0.9
+        # contributes. Rounding its tile-local 2**(-0.2) before rescaling
+        # yields 0x33f9. Global rounding or unrounded softmax yields 0x33f8.
+        scores = torch.full((1, 1, 1, 128), -torch.inf, dtype=torch.float32)
+        scores[..., [0, 64, 65]] = torch.tensor([0.0, -0.7, -0.9])
+        values = torch.zeros((1, 1, 128, 1), dtype=torch.float32)
+        values[..., 65, :] = 1.0
+        result = self.owner.reverse_flash_result(torch, scores, values, 1.0)
+        self.assertEqual(result.view(torch.uint16).item(), 0x33f9)
+        ordinary = torch.matmul(torch.softmax(scores * math.log(2), dim=-1), values).half()
+        self.assertEqual(ordinary.view(torch.uint16).item(), 0x33f8)
+        global_exp = torch.exp2(scores)
+        global_round = (torch.matmul(global_exp.half().float(), values) / global_exp.sum(dim=-1)).half()
+        self.assertEqual(global_round.view(torch.uint16).item(), 0x33f8)
+
+    def test_wider_flash_preserves_causality_and_consecutive_gqa_heads(self):
+        query = torch.zeros((1, 16, 128, 128), dtype=torch.float16)
+        key = torch.zeros((1, 8, 128, 128), dtype=torch.float16)
+        value = key.clone()
+        for head in range(8):
+            value[:, head, 64:, :] = 2 * (head + 1)
+        observed_checks = []
+        result = self.owner.wider_flash_attention(
+            torch, query, key, value, [1] * 128, 0.12751743, lambda: observed_checks.append(1))
+        self.assertEqual(len(observed_checks), 2)
+        self.assertEqual(result[0, :, 63, 0].tolist(), [0.0] * 16)
+        self.assertEqual(result[0, :, 127, 0].tolist(),
+                         [expected for head in range(1, 9) for expected in (head, head)])
+        with self.assertRaisesRegex(ValueError, "all-live"):
+            self.owner.wider_flash_attention(torch, query, key, value, [0] + [1] * 127, 0.12751743, lambda: None)
+
+    def test_wider_reference_requires_three_ordered_pinned_inputs_and_finite_scores(self):
+        schemas = self.owner.reference_identity(False, False, True)
+        self.assertEqual(schemas[0], "airk.private.compact-fp32-qkv-wider-reference/1")
+        self.assertEqual(schemas[3:], ("compact-qkv-fp32-wider-reference.json", "matching_qkv_fp32"))
+        with self.assertRaisesRegex(ValueError, "only one"):
+            self.owner.reference_identity(False, True, True)
+        expected = [{"name": name, "input": {"input_digest": digest}} for name, digest in
+                    (("128", "retained"), ("1024", "supplemental"), ("8192", "retained-long"))]
+        field = "matching_qkv_fp32"
+        finite = SimpleNamespace(finite_scores=lambda scores: scores == [0.25] * 8)
+        observed = [dict(row, **{field: [0.25] * 8}) for row in expected]
+        self.owner.matching_references(finite, {"references": observed}, expected, field, wider=True)
+        for bad in (observed[:2], observed[::-1], [dict(observed[0], **{field: [float("nan")] * 8})] + observed[1:]):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, "exact"):
+                self.owner.matching_references(finite, {"references": bad}, expected, field, wider=True)
 
     def test_exact_census_and_scope_restoration(self):
         shapes = {(1, 32, 2048): 57, (1, 32, 16, 128): 28, (1, 32, 8, 128): 28}

@@ -117,6 +117,25 @@ pub(super) fn compact_fp16_t32_profiled_run(
     Ok(run)
 }
 
+pub(super) fn compact_fp16_development_profiled_runs(
+    bytes: &[u8],
+    graph: &[GraphMetadataRow],
+    widths: &[usize],
+) -> Result<Vec<ProfiledRun>> {
+    ensure!(
+        [128, 1024, 8192].starts_with(widths),
+        "Compact Q/K/V development profile width order differs"
+    );
+    let runs = profiled_runs_for_scope(bytes, graph, widths, CpuControlScope::CompactFp16)?;
+    ensure!(
+        runs.iter().all(|run| run.node_count == 1942
+            && run.cpu_nodes == 374
+            && run.cpu_max_tensor_bytes <= 32),
+        "Compact Q/K/V development profile differs from reviewed node and CPU tensor bounds"
+    );
+    Ok(runs)
+}
+
 fn profiled_runs_for_scope(
     bytes: &[u8],
     graph: &[GraphMetadataRow],

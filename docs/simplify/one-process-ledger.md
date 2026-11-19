@@ -12226,3 +12226,75 @@ The image stage passed in 1.173921 s
 The exact commands, Cargo timings and JUnit are under
 windows-cuda-g5-qkvo-checks-r1. The 82 existing launcher checks, six
 independent graph cases and five pinned Torch controls passed.
+
+### 2026-11-19 — Compact QKV CUDA development screen at three widths
+
+The approved 0.010 raw development screen ran on the retained Windows
+A6000 Compact Q/K/V candidate. It reused stage
+87ec206416eda607ff1585809d085e37fc4f8b99a5fc029308b5c78218cefcc2 and typed
+load receipt 9271976d11b3882f4636badb321cdd817e64c3ce87bfb8197c3c5b1bb67509d8.
+Both normalized-mass limits were 0.05. The approved same-recipe
+qualification limit remains 0.001. The historical T32 raw error of
+0.0085411072 passes the development screen and exceeds qualification.
+
+The independent CPU Job completed exactly three frozen forwards in
+414.591263 s with 15,576,215,552 B peak host commit. It exited naturally
+with code 0 and zero active processes. The 64-by-64 reverse causal Flash
+approximation narrows each tile's exponents to half and accumulates in
+FP32. CUDA and CPU matrix multiplication, rescaling, exponent and
+reduction ordering can differ. Under compact-fp16-qkv-fp32-wider-reference-r1,
+the proof is f0d0e01fa28e7a876f1c57bc9894dff7e2a915ac8bf8150885b2aac2fdff2f14
+and execution is 3f160706e152bbd47a229f759db820fc99932447411a20aeb4b285dc4295e798.
+
+| Tokens | Max raw error vs matching CPU | Max raw error vs original FP32 | Max mass error vs matching CPU | Max mass error vs original FP32 | Native call | Development screen |
+| ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 128 | 0.006990910 | 0.005245209 | 0.000687708 | 0.001211228 | 0.300056 s | Pass |
+| 1,024 | 0.068153381 | 0.056758881 | 3.7324634e-8 | 1.7181386e-8 | 0.202312 s | Miss |
+| 8,192 | 0.046493530 | 0.058982849 | 0.010781661 | 0.006315817 | 0.696034 s | Miss |
+
+All three complete eight-score orders agreed across CUDA, matching CPU
+and original FP32. Native top-two gaps were 1.371896505, 14.902744293
+and 0.685325623. Matching-reference gaps were 1.368766785, 14.968845367
+and 0.733833313. At T1024, zero-based slot 6 stayed ahead of slot 7.
+Their native gap was 0.040618896, versus 0.027729034 in the matching
+reference and 0.017845154 in original FP32. Even the best shared score
+shift would leave maximum residuals of 0.033050537 at T1024 and
+0.045709610 at T8192. This batch had no near-tied winner or active
+calibration threshold. It supplies no paired judged-evidence result.
+
+Each synchronized forward used all 28 named FP16 FlashAttention layers
+and profiled 1,942 final nodes, including 374 CPU shape controls with
+at most 32 B per tensor. The 0.696034 s T8192 measurement is one
+profiled call. The ORT model_run interval was 0.680451 s. The T8192
+adapter free-memory snapshots were 45,544,898,560 B before and
+43,397,414,912 B afterward. Exact peak VRAM and unprofiled p95 were
+unavailable in this batch. The original 120 s, 32 GiB host, 24 GiB
+device reservation applied. The wrapper finished in 48.935632 s with
+8.41 GiB peak Job commit (9,032,601,600 B), 7,931,219,968 B peak process
+RSS, a natural exit 0, session and device teardown, and zero active
+processes. The verified Windows human and default owner SID ended 1002.
+
+Native outputs under compact-fp16-qkv-fp32-native-development-r1:
+execution ebf0f2e1eadd7ff543479a254ed81240af4830a1cc9c1c78b1db69e5f1841ade,
+native 4da43ecdfaeba452cc65009bcadfb82de942253c89a7d544c6285ad90855993a,
+journal 378cb9185817d454a8d68c557ceae8cc4408653c7a8d9cc2811cb6a764d53f63,
+profile dba6bd01f05905a575044825186e663f08ea1bcf64830c84e6affd376d9f9cd0,
+stdout d1b6e5b692c4b5c1751afddaf1b4e7e5b8c864a44eebf99a985ae995664c0423,
+and image 4c2950d0ccef7d2f9cb0d5607d6982164ea26603ba797af5a76908b3ea7c729e.
+
+The final Windows Rust 1.98.0 and Nextest 0.9.148 checks used the warm
+target/ with incremental=1. Scoped Clippy passed in 3.623422 s
+(41074ba446e658028ac68a06d94cf4624362c331f05a6c1512e429d96e70c92a).
+Nextest passed 59 with 479 filtered in 11.616897 s
+(fa3f9569474763ef39fcf33afd3ff52c219d1aa0256c5bafd701a93eed6bc901).
+The linked image build passed in 1.158569 s
+(f66c7e885b97cf5d4ab80fb4ba79893ac05584ef0904294b4f13e086360ac34b).
+Exact commands, timings and JUnit are retained under
+windows-cuda-g5-qkv-development-checks-r1. The scoped FP16 Python
+suite passed 108 tests and the repository checks passed.
+
+The wider raw results keep same-recipe qualification and Resource20
+blocked. Use T1024 to isolate arithmetic differences on identical
+attention operands before authorizing another full-model run. Retain
+the stable rankings as development evidence. The separate confirmed
+human-judgment cohort and composed Answer checks remain open.

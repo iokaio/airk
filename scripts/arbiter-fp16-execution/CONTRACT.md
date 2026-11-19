@@ -388,6 +388,25 @@ after the independent proof is retained. Pass its path and exact SHA
 with --reference and --reference-sha256. The comparison binds the sealed
 native and regular CPU proofs and reports the three complete-vector deltas.
 
+## Windows Compact Q/K/V development scoring
+
+Run the independent projection worker with `--wider`, the exact retained
+Q/K/V stage and a fresh `--owned-output` destination. The CPU Job makes one
+reference forward for each frozen all-live width, 128, 1,024 and 8,192.
+It preserves the Q/K/V precision recipe and the 64-by-64 reverse causal
+Flash tile shape without split-KV. CPU math approximates CUDA accumulation
+and exponent evaluation. The result is `compact-qkv-fp32-wider-reference.json`.
+
+Run `probe_compact.py qkv-development` with the exact reviewed Q/K/V load
+receipt and the wider proof as `--projection-reference`. The CUDA probe
+loads one profiled scorer and binds each Numeric operation and FP16 Flash
+log roster to its frozen input. The original host, device and deadline
+bounds apply. A raw-screen miss may retain the later safe forwards.
+Either normalized-mass comparison above 0.05 stops the batch. The receipt
+records score errors, winner margins, one latency observation per width
+and memory snapshots. The 0.010 screen and 0.020 near-tie marker are private
+development checks. The 0.001 qualification cutoff remains in force.
+
 ## Standalone Compact attention output projection
 
 Use probe_projection_output.py with the reviewed isolated Python,

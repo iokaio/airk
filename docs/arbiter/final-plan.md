@@ -1837,6 +1837,58 @@ score comparison.
    latency, memory headroom, Auto selection and same-model CPU fallback
    requirements before release confirmation.
 
+### Approved Windows Compact CUDA development screen
+
+Use 0.010 maximum absolute raw-score error for the next development
+batch on the retained Compact Q/K/V candidate. Compare against its
+independent CPU reference with the same stored half weights and
+projection precision. Retain the 0.05 normalized-mass checks against the
+matching reference and original FP32. Record the actual attention
+arithmetic used by each reference. If it differs in a way that affects
+the rounding comparison, retain that result as diagnostic.
+
+Freeze the existing all-live eight-candidate inputs before running.
+The exact Q/K/V T32 reference and CUDA receipts already cover
+diagnostic-all-live-32. The new batch uses all-live-1 at 128 tokens,
+native-all-live-1024 and native-all-live-8192, in that order. Their
+input digests are respectively
+791067affc1eeba53660a0044369f22f1f463535656419c5da9a486517222c7a,
+948a46156a129e61b5beadce977e6314b6e96c9570a439724813fe9592fa6357,
+and ca9d34d962e308e6e53af8e14101058e8f02fbb4151bcc65eda2ad88be3de1f0.
+Use the retained original FP32 references for the same frozen cases.
+The wider CPU comparison follows the pinned CUDA kernel's 64-by-64
+reverse causal tiles without split-KV. It rounds each tile's exponent to
+FP16 before applying FP32 rescaling and value accumulation. CPU matrix
+multiplication, exponent approximation and accumulation order can differ
+from the CUDA implementation, so this comparison is diagnostic.
+
+Record full score and normalized-mass drift and the reference top-two
+margin at each width. Any case with a matching reference margin of
+0.020 or less is a near tie for this screen. For a larger margin, the
+0.010 bound on every score guarantees the reference winner. Record
+calibration-threshold behavior only when a corresponding frozen
+development case and valid policy are available. The current private
+candidate has no active calibration rule. The original FP32 width
+references have no leading pair within 0.020. T1024 has a lower-ranked
+pair at zero-based positions 6 and 7 with a 0.017845154 gap. Retain their
+relative order as a diagnostic. The frozen width fixtures measure
+scoring. A decision about delivered evidence requires the composed
+Answer path and appropriate human judgments.
+
+One correctly placed, resource-safe development session can retain the
+remaining widths after a raw-screen nonpass. Stop for structural,
+resource, identity, finite-output, settlement or required mass failures.
+Record actual device placement, latency and memory observations, with
+their measurement scope. Retain the 0.001 same-recipe qualification
+limit and 98% paired judged-evidence rule. Review results on representative
+close calls and long requests before proposing any qualification change.
+
+The initial Windows CUDA batch completed all three widths. T128 passed
+the raw screen. T1024 and T8192 exceeded it. Both mass comparisons
+passed and the full score order agreed across the three frozen cases. See
+the [execution ledger](../simplify/one-process-ledger.md#2026-11-19--compact-qkv-cuda-development-screen-at-three-widths)
+for receipts, timings and follow-up.
+
 ### Reuse the retained human judgments
 
 Start with the downloaded ContextBench and TechQA artifacts. Use the

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Produce an owned independent CPU T32 reference for the staged Compact Q/K/V variant."""
+"""Produce owned independent CPU references for staged Compact projection variants."""
 
 import argparse
 import hashlib
@@ -39,6 +39,13 @@ OUTPUT_SCHEMA = "airk.private.compact-fp32-qkvo-t32-reference/1"
 OUTPUT_OWNED_SCHEMA = "airk.private.owned-compact-fp32-qkvo-t32-reference/1"
 OUTPUT_MARKER = b"AIRK_COMPACT_FP32_QKVO_T32_REFERENCE "
 OUTPUT_LEAF = "compact-qkvo-fp32-t32-reference.json"
+WIDER_SCHEMA = "airk.private.compact-fp32-qkv-wider-reference/1"
+WIDER_OWNED_SCHEMA = "airk.private.owned-compact-fp32-qkv-wider-reference/1"
+WIDER_MARKER = b"AIRK_COMPACT_FP32_QKV_WIDER_REFERENCE "
+WIDER_LEAF = "compact-qkv-fp32-wider-reference.json"
+WIDER_CPU_THREADS = 8
+FLASH_BLOCK = 64
+WIDER_TOKENS = (128, 1024, 8192)
 RMS_SHAPES = {(1, 32, 2048): 57, (1, 32, 16, 128): 28, (1, 32, 8, 128): 28}
 MAX_LOG = 64 << 20
 MAX_PROOF = 16 << 20
@@ -65,13 +72,36 @@ def load_base():
     return legacy, {"path": str(path), "bytes": len(raw), "sha256": digest}
 
 
-def reference_identity(source_order, output_projection):
-    require(not (source_order and output_projection), "select only one Compact reference recipe")
+def reference_identity(source_order, output_projection, wider=False):
+    require(sum((source_order, output_projection, wider)) <= 1, "select only one Compact reference recipe")
+    if wider:
+        return WIDER_SCHEMA, WIDER_OWNED_SCHEMA, WIDER_MARKER, WIDER_LEAF, "matching_qkv_fp32"
     if output_projection:
         return OUTPUT_SCHEMA, OUTPUT_OWNED_SCHEMA, OUTPUT_MARKER, OUTPUT_LEAF, "matching_qkvo_fp32"
     if source_order:
         return SOURCE_ORDER_SCHEMA, SOURCE_ORDER_OWNED_SCHEMA, SOURCE_ORDER_MARKER, SOURCE_ORDER_LEAF, "matching_qkv_fp32"
     return SCHEMA, OWNED_SCHEMA, MARKER, "compact-qkv-fp32-t32-reference.json", "matching_qkv_fp32"
+
+
+def reference_inputs(legacy, check, *, wider):
+    if wider:
+        return legacy.wider_references(check)
+    row, publisher_files = legacy.exact_reference(check)
+    return [row], publisher_files
+
+
+def matching_references(legacy, result, expected, field, *, wider):
+    key = "references" if wider else "reference"
+    require(("reference" if wider else "references") not in result,
+            "a single exact Compact reference payload required")
+    rows = result[key] if wider else [result[key]]
+    require(type(rows) is list and len(rows) == len(expected) == (3 if wider else 1),
+            "exact ordered Compact reference row count required")
+    for actual, source in zip(rows, expected):
+        require(type(actual) is dict and actual.keys() == source.keys() | {field}
+                and all(actual[key] == value for key, value in source.items())
+                and legacy.finite_scores(actual[field]),
+                "exact Compact reference row lineage and eight finite matching scores required")
 
 
 def read_stage(legacy, conversion, plan_pin, token, check, *, output_projection=False):
@@ -105,7 +135,7 @@ def read_stage(legacy, conversion, plan_pin, token, check, *, output_projection=
     return stage, stage_pin, candidate, source
 
 
-def projection_scores(independent, row, check, *, routes=ROUTES):
+def projection_scores(independent, row, check, *, routes=ROUTES, context_flash_single_tile=True):
     torch = independent.torch
     require((independent.layers, independent.hidden, independent.qheads, independent.kvheads, independent.dim)
             == (28, 2048, 16, 8, 128)
@@ -130,13 +160,72 @@ def projection_scores(independent, row, check, *, routes=ROUTES):
 
     independent._linear_half = linear_half
     try:
-        scores = independent.forward(row, context_flash_single_tile=True)
+        scores = independent.forward(row, context_flash_single_tile=context_flash_single_tile)
     finally:
         del independent._linear_half
     require(tuple(observed) == routes, f"exact {len(routes)} independent projection calls in model order required")
     require(scores.dtype == torch.float32 and scores.device.type == "cpu" and tuple(scores.shape) == (1, 8)
             and not torch.cuda.is_initialized(), "CPU-only FP32-ABI Compact reference vector required")
     return scores[0].tolist()
+
+
+def reverse_flash_result(torch, scores, values, scale_log2):
+    # SM86 causal D128 Flash scans key tiles from right to left. Their
+    # exponent tiles narrow before PV, while the denominator stays FP32.
+    tiles = scores.unflatten(-1, (-1, FLASH_BLOCK))
+    maxima = tiles.amax(dim=-1).flip(-1).cummax(dim=-1).values.flip(-1)
+    scaled_max = maxima * scale_log2
+    exponent = tiles.double().mul_(scale_log2).sub_(scaled_max.unsqueeze(-1).double()).float().exp2_()
+
+    # Collapse the successive rescalings to one factor per tile. CPU
+    # reductions and exponent evaluation approximate the CUDA operations.
+    scale = ((maxima - maxima[..., :1]) * scale_log2).exp2_()
+    denominator = (exponent.sum(dim=-1) * scale).sum(dim=-1, keepdim=True)
+    mass = exponent.half().float().mul_(scale.unsqueeze(-1)).flatten(-2)
+    return (torch.matmul(mass, values) * denominator.reciprocal()).half()
+
+
+def wider_flash_attention(torch, query, key, value, mask, scale_log2, check):
+    width = len(mask)
+    require(width in WIDER_TOKENS and mask == [1] * width and tuple(query.shape) == (1, 16, width, 128)
+            and tuple(key.shape) == tuple(value.shape) == (1, 8, width, 128)
+            and all(tensor.dtype == torch.float16 and tensor.device.type == "cpu"
+                    and torch.isfinite(tensor).all().item() for tensor in (query, key, value)),
+            "exact all-live wider Compact CPU GQA geometry required")
+    keys = key.repeat_interleave(2, dim=1).float()
+    values = value.repeat_interleave(2, dim=1).float()
+    output = torch.empty_like(query)
+    positions = torch.arange(width, device=query.device)
+    for first in range(0, width, FLASH_BLOCK):
+        check()
+        last = first + FLASH_BLOCK
+        scores = torch.matmul(query[:, :, first:last, :].float(), keys[:, :, :last, :].transpose(-1, -2))
+        allowed = positions[:last].unsqueeze(0) <= positions[first:last].unsqueeze(1)
+        scores.masked_fill_(~allowed, -math.inf)
+        output[:, :, first:last, :] = reverse_flash_result(torch, scores, values[:, :, :last, :], scale_log2)
+    require(torch.isfinite(output).all().item(), "nonfinite wider Compact attention output")
+    return output
+
+
+def wider_projection_scores(half, independent, row, check):
+    attention_calls = 0
+    previous_attention = half.causal_half_attention
+    scale_log2 = half.f32(half.f32(128 ** -0.5) * math.log2(math.e))
+
+    def attention(torch, query, key, value, mask, *, context_flash_single_tile):
+        nonlocal attention_calls
+        require(context_flash_single_tile is False, "wider projections require the multi-tile attention recipe")
+        output = wider_flash_attention(torch, query, key, value, mask, scale_log2, check)
+        attention_calls += 1
+        return output
+
+    half.causal_half_attention = attention
+    try:
+        scores = projection_scores(independent, row, check, context_flash_single_tile=False)
+    finally:
+        half.causal_half_attention = previous_attention
+    require(attention_calls == 28, "exact 28 wider Compact multi-tile attention calls required")
+    return scores
 
 
 def fp32_square_fma(torch, accumulator, value):
@@ -184,7 +273,15 @@ def source_order_sigmoid(torch, gate):
     return torch.where(positive, unfolded, 1.0 - unfolded)
 
 
-def source_order_recipe(enabled, output_projection=False):
+def source_order_recipe(enabled, output_projection=False, wider=False):
+    if wider:
+        return {
+            "qkv_fp32_routes": list(ROUTES),
+            "context_flash_single_tile": False,
+            "torch_cpu_threads": WIDER_CPU_THREADS,
+            "wider_attention": {"algorithm": "causal-reverse-tile-fp16-exponent",
+                                "query_block": FLASH_BLOCK, "key_block": FLASH_BLOCK, "split_kv": False},
+        }
     recipe = ({"qkvo_fp32_routes": list(OUTPUT_ROUTES), "context_flash_single_tile": True} if output_projection
               else {"qkv_fp32_routes": list(ROUTES), "context_flash_single_tile": True})
     if enabled:
@@ -240,9 +337,9 @@ def source_order_scores(half, independent, row, check):
     return scores, observed_source_order(norm_calls, gate_calls)
 
 
-def worker(deadline, expected_source, *, source_order=False, output_projection=False):
+def worker(deadline, expected_source, *, source_order=False, output_projection=False, wider=False):
     started = time.monotonic()
-    schema, _, _, _, matching_field = reference_identity(source_order, output_projection)
+    schema, _, _, _, matching_field = reference_identity(source_order, output_projection, wider)
 
     def check():
         if time.monotonic() >= deadline:
@@ -281,7 +378,7 @@ def worker(deadline, expected_source, *, source_order=False, output_projection=F
     original_graph = Path(plan["source_graph"]["path"])
     original_files, closure_pin = legacy.read_pinned_json(plan["source_closure"]["path"], plan["source_closure"]["sha256"], check)
     require(closure_pin == plan["source_closure"], "original Compact closure length differs")
-    reference, publisher_files = legacy.exact_reference(check)
+    references, publisher_files = reference_inputs(legacy, check, wider=wider)
     publisher_root = legacy.PUBLISHER_ROOT / "candidate-assets/Qwen--Qwen3-1.7B"
     for name, pin in publisher_files.items():
         require(Path(name).name == name and pin["path"] == str(publisher_root / name), "publisher source escaped its path")
@@ -316,7 +413,7 @@ def worker(deadline, expected_source, *, source_order=False, output_projection=F
         **({"output_projection": True} if output_projection else {}))
     require(typed_graph == stage["graph_proof"], "actual staged graph differs from reviewed projection proof")
 
-    torch.set_num_threads(2)
+    torch.set_num_threads(WIDER_CPU_THREADS if wider else 2)
     torch.set_num_interop_threads(1)
     independent, publisher = half.from_authenticated_original(
         torch, "compact", ROOT / legacy.PUBLISHER_OWNER, legacy.PUBLISHER_ROOT, "cpu")
@@ -326,17 +423,28 @@ def worker(deadline, expected_source, *, source_order=False, output_projection=F
         original_graph=original_graph, original_files=original_files)
     check()
     order_observation = {}
-    if source_order:
-        scores, observed = source_order_scores(half, independent, reference["input"], check)
-        order_observation["source_order_observation"] = observed
-    else:
-        routes = OUTPUT_ROUTES if output_projection else ROUTES
-        scores = projection_scores(independent, reference["input"], check, routes=routes)
-    reference[matching_field] = scores
-    require(legacy.finite_scores(scores), "eight finite independent Compact scores required")
+    for reference in references:
+        if wider:
+            width = len(reference["input"]["input_ids"])
+            print(f"AIRK_COMPACT_WIDER_CPU_START {width}", flush=True)
+        if source_order:
+            scores, observed = source_order_scores(half, independent, reference["input"], check)
+            order_observation["source_order_observation"] = observed
+        elif wider:
+            scores = wider_projection_scores(half, independent, reference["input"], check)
+        else:
+            routes = OUTPUT_ROUTES if output_projection else ROUTES
+            scores = projection_scores(independent, reference["input"], check, routes=routes)
+        check()
+        reference[matching_field] = scores
+        require(legacy.finite_scores(scores), "eight finite independent Compact scores required")
+        if wider:
+            print(f"AIRK_COMPACT_WIDER_CPU_RETURN {width}", flush=True)
+    reference_pins = {reference[key]["path"]: reference[key]
+                      for reference in references for key in ("fixture", "producer")}
     for pin in (plan_pin, prior_pin, stage_pin, plan["source_graph"], closure_pin, runtime_pin,
                 *baseline.values(), *candidate.values(), *publisher_files.values(), *reference_sources,
-                reference["fixture"], reference["producer"]):
+                *reference_pins.values()):
         conversion.pinned(pin, check)
     for name, pin in original_files.items():
         conversion.pinned(dict(pin, path=str(original_graph.parent / name)), check)
@@ -348,18 +456,19 @@ def worker(deadline, expected_source, *, source_order=False, output_projection=F
         "original_graph": plan["source_graph"], "original_closure": closure_pin,
         "publisher": publisher, "publisher_files": publisher_files,
         "verification": {"baseline": baseline_verification, "projection_graph": typed_graph},
-        "reference": reference, "reference_sources": reference_sources, "loaded_runtime": loaded,
-        "recipe": source_order_recipe(source_order, output_projection), **order_observation,
+        **({"references": references} if wider else {"reference": references[0]}),
+        "reference_sources": reference_sources, "loaded_runtime": loaded,
+        "recipe": source_order_recipe(source_order, output_projection, wider), **order_observation,
         "worker": source, "pid": os.getpid(), "execution_token": token,
         "original_deadline_monotonic": deadline, "reference_device": "cpu",
-        "model_inference": True, "torch_forward_invocations": 1,
+        "model_inference": True, "torch_forward_invocations": len(references),
         "native_execution": False, "qualification": False, "product_admission": False,
     }
 
 
-def run_owned(out, *, source_order=False, output_projection=False):
+def run_owned(out, *, source_order=False, output_projection=False, wider=False):
     started = time.monotonic()
-    schema, owned_schema, marker, leaf, matching_field = reference_identity(source_order, output_projection)
+    schema, owned_schema, marker, leaf, matching_field = reference_identity(source_order, output_projection, wider)
     legacy, legacy_pin = load_base()
     deadline = started + legacy.MAX_WALL_SECONDS
 
@@ -409,6 +518,8 @@ def run_owned(out, *, source_order=False, output_projection=False):
         argv.append("--source-order-rms-quickgelu")
     if output_projection:
         argv.append("--output-projection")
+    if wider:
+        argv.append("--wider")
     environment = {key: value for key, value in os.environ.items()
                    if not key.upper().startswith(("AIRK_", "ORT_", "PYTHON", "CUDA_", "CUDNN_", "TORCH_", "TRITON_",
                                                   "HF_", "HUGGINGFACE_"))}
@@ -446,9 +557,8 @@ def run_owned(out, *, source_order=False, output_projection=False):
             lines = [line[len(marker):] for line in stream if line.startswith(marker)]
         require(len(lines) == 1 and 0 < len(lines[0]) <= MAX_PROOF, "exact bounded projection worker proof required")
         result = json.loads(lines[0])
-        expected_reference, _ = legacy.exact_reference(check)
-        reference = dict(result["reference"])
-        matching = reference.pop(matching_field)
+        expected_references, _ = reference_inputs(legacy, check, wider=wider)
+        matching_references(legacy, result, expected_references, matching_field, wider=wider)
         require(result["schema"] == schema
                 and result["complete"] is result["model_inference"] is True
                 and result["native_execution"] is result["qualification"] is result["product_admission"] is False
@@ -458,11 +568,11 @@ def run_owned(out, *, source_order=False, output_projection=False):
                 and result["conversion_plan"] == plan_pin and result["conversion_receipt"] == prior_pin
                 and result["baseline_candidate"] == {key: stage["baseline_" + key] for key in candidate}
                 and result["verification"]["projection_graph"] == stage["graph_proof"]
-                and result["recipe"] == source_order_recipe(source_order, output_projection)
+                and result["recipe"] == source_order_recipe(source_order, output_projection, wider)
                 and result.get("source_order_observation") == (
                     observed_source_order(RMS_SHAPES, 28) if source_order else None)
-                and type(result["torch_forward_invocations"]) is int and result["torch_forward_invocations"] == 1
-                and reference == expected_reference and legacy.finite_scores(matching),
+                and type(result["torch_forward_invocations"]) is int
+                and result["torch_forward_invocations"] == len(expected_references),
                 "independent projection observation differs from the exact owned request")
         for pin in (plan_pin, prior_pin, stage_pin, source, legacy_pin, graph_source):
             conversion.pinned(pin, check)
@@ -506,6 +616,7 @@ def main():
     recipe = parser.add_mutually_exclusive_group()
     recipe.add_argument("--source-order-rms-quickgelu", action="store_true")
     recipe.add_argument("--output-projection", action="store_true")
+    recipe.add_argument("--wider", action="store_true")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--owned-output", type=Path)
     mode.add_argument("--worker", action="store_true")
@@ -520,14 +631,15 @@ def main():
     source_order, output_projection = args.source_order_rms_quickgelu, args.output_projection
     if args.owned_output is not None:
         require(args.worker_sha256 is None and args.deadline_monotonic is None, "worker args require owned launch")
-        proof = run_owned(args.owned_output, source_order=source_order, output_projection=output_projection)
+        proof = run_owned(args.owned_output, source_order=source_order, output_projection=output_projection,
+                          wider=args.wider)
         print(json.dumps({"proof": proof, "qualification": False}))
         return
     require(args.worker_sha256 and args.deadline_monotonic and math.isfinite(args.deadline_monotonic),
             "owned worker source and finite original deadline required")
     result = worker(args.deadline_monotonic, args.worker_sha256, source_order=source_order,
-                    output_projection=output_projection)
-    _, _, marker, _, _ = reference_identity(source_order, output_projection)
+                    output_projection=output_projection, wider=args.wider)
+    _, _, marker, _, _ = reference_identity(source_order, output_projection, args.wider)
     encoded = json.dumps(result, allow_nan=False, separators=(",", ":")).encode("utf-8")
     require(len(encoded) <= MAX_PROOF and time.monotonic() < args.deadline_monotonic,
             "original projection proof size or deadline exceeded")

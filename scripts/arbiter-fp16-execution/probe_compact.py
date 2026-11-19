@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import runpy
+import struct
 import sys
 import time
 
@@ -24,6 +25,7 @@ SELECTORS = {
     "projection-metadata": PREFIX + "emit_cuda_compact_fp32_qkv_projection_probe_metadata",
     "projection-graph": PREFIX + "cuda_compact_fp32_qkv_projection_load_only_graph_diagnostic",
     "projection-t32": PREFIX + "cuda_compact_fp32_qkv_projection_t32_component",
+    "qkv-development": PREFIX + "cuda_compact_fp32_qkv_projection_development_batch",
     "qkvo-metadata": PREFIX + "emit_cuda_compact_fp32_qkvo_projection_probe_metadata",
     "qkvo-graph": PREFIX + "cuda_compact_fp32_qkvo_projection_load_only_graph_diagnostic",
     "qkvo-t32": PREFIX + "cuda_compact_fp32_qkvo_projection_t32_component",
@@ -33,8 +35,15 @@ SELECTORS = {
     "layer0-projection-t32": PREFIX + "cuda_compact_fp16_layer0_projection_taps",
 }
 QKVO_MODES = ("qkvo-metadata", "qkvo-graph", "qkvo-t32")
-PROJECTION_SCORE_MODES = ("projection-t32", "qkvo-t32")
-PROJECTION_MODES = ("projection-metadata", "projection-graph", "projection-t32", *QKVO_MODES)
+DEVELOPMENT_MODE = "qkv-development"
+PROJECTION_SCORE_MODES = ("projection-t32", "qkvo-t32", DEVELOPMENT_MODE)
+PROJECTION_MODES = ("projection-metadata", "projection-graph", "projection-t32", DEVELOPMENT_MODE, *QKVO_MODES)
+DEVELOPMENT_SCHEMA = "airk.private.compact-fp32-qkv-development-batch/1"
+DEVELOPMENT_REFERENCE_SCHEMA = "airk.private.compact-fp32-qkv-wider-reference/1"
+DEVELOPMENT_REFERENCE_SHA = "f0d0e01fa28e7a876f1c57bc9894dff7e2a915ac8bf8150885b2aac2fdff2f14"
+DEVELOPMENT_WIDTHS = (128, 1024, 8192)
+DEVELOPMENT_RAW_LIMIT = .010
+DEVELOPMENT_NEAR_TIE = .020
 METADATA_MODES = ("metadata", "projection-metadata", "qkvo-metadata")
 GRAPH_MODES = ("graph", "projection-graph", "qkvo-graph")
 QKVO_STAGE_SCHEMA = "airk.private.compact-fp32-qkvo-projection-candidate/1"
@@ -338,6 +347,50 @@ def read_projection_reference(path, expected, projection, independent, base, aud
                     for scores in (matching, reference["original_fp32"])),
             "independent Compact Q/K/V reference input or finite vectors differ")
     return pin
+
+
+def read_development_reference(path, expected, projection, independent, base, audit, deadline):
+    require(path.is_absolute() and path.parent.parent == CAMPAIGN
+            and path.name == "compact-qkv-fp32-wider-reference.json"
+            and expected == DEVELOPMENT_REFERENCE_SHA,
+            "exact retained Compact wider Q/K/V CPU proof required")
+    audit([path])
+    pin = exact_pin(path, expected, base)
+    proof = base.read(pin["path"], 16 << 20)
+    stage_pin, stage = projection
+    require(proof["schema"] == DEVELOPMENT_REFERENCE_SCHEMA and proof["model"] == MODEL
+            and proof["complete"] is proof["model_inference"] is True
+            and proof["native_execution"] is proof["qualification"] is proof["product_admission"] is False
+            and proof["reference_device"] == "cpu" and proof["torch_forward_invocations"] == 3
+            and proof["stage_receipt"] == stage_pin
+            and proof["candidate"] == {"graph": stage["candidate_graph"], "weights": stage["candidate_weights"]}
+            and proof["baseline_candidate"] == independent["candidate"]
+            and proof["verification"]["projection_graph"] == stage["graph_proof"],
+            "independent wider Q/K/V proof has different artifacts or scope")
+    routes = [f"layers.{layer}.self_attn.{name}_proj.weight"
+              for layer in range(28) for name in ("q", "k", "v")]
+    require(proof["recipe"] == {
+        "qkv_fp32_routes": routes, "context_flash_single_tile": False, "torch_cpu_threads": 8,
+        "wider_attention": {"algorithm": "causal-reverse-tile-fp16-exponent",
+                            "query_block": 64, "key_block": 64, "split_kv": False},
+    }, "independent wider Q/K/V precision boundaries differ")
+
+    def check():
+        require(time.monotonic() < deadline, "original Compact phase deadline expired")
+
+    checker = runpy.run_path(str(ROOT / "scripts/arbiter-fp16-execution/verify_compact.py"))
+    originals, _ = checker["wider_references"](check)
+    references = proof["references"]
+    require(isinstance(references, list) and len(references) == len(DEVELOPMENT_WIDTHS),
+            "expected three independent wider reference rows")
+    for row, original, width in zip(references, originals, DEVELOPMENT_WIDTHS, strict=True):
+        require(set(row) == set(original) | {"matching_qkv_fp32"}
+                and all(row[key] == value for key, value in original.items())
+                and len(row["input"]["input_ids"]) == width
+                and len(row["matching_qkv_fp32"]) == 8
+                and all(finite(score, -math.inf, math.inf) for score in row["matching_qkv_fp32"]),
+                "wider reference row or exact original FP32 lineage differs")
+    return pin, proof
 
 
 def validate_projection_artifacts(pins, profile, projection, base):
@@ -794,6 +847,165 @@ def validate_t32(value, paths, owned, request, evidence, metadata, manifest, ima
     return backend
 
 
+def development_metrics(raw, reference):
+    def f32(values):
+        return struct.unpack("<8f", struct.pack("<8f", *values))
+
+    def mass(values):
+        peak = max(values)
+        weights = [math.exp(value - peak) for value in values]
+        total = sum(weights)
+        return [value / total for value in weights]
+
+    actual, expected = f32(raw), f32(reference)
+    order = sorted(range(8), key=expected.__getitem__, reverse=True)
+    actual_order = sorted(range(8), key=actual.__getitem__, reverse=True)
+    winner, ref_winner = actual_order[0], order[0]
+    return {
+        "raw_error": max(abs(a - b) for a, b in zip(actual, expected, strict=True)),
+        "mass_error": max(abs(a - b) for a, b in zip(mass(actual), mass(expected), strict=True)),
+        "argmax_matches": winner == ref_winner,
+        "winner": ref_winner,
+        "reference_margin": expected[ref_winner] - expected[order[1]],
+        "native_margin_for_reference_winner": actual[ref_winner] - max(
+            score for index, score in enumerate(actual) if index != ref_winner),
+        "native_winner": winner,
+        "native_winner_margin": actual[winner] - actual[actual_order[1]],
+    }
+
+
+def development_attention_logs(raw, rows):
+    require(0 < len(raw) <= LOG_CAP, "complete bounded development log required")
+    prefix = f"test {SELECTORS[DEVELOPMENT_MODE]} ... "
+    marker = "AIRK_CUDA_QKV_DEVELOPMENT_FORWARD "
+    chunks = []
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        line = line.removeprefix(prefix)
+        if line.startswith(marker):
+            require(len(chunks) < len(rows), "unexpected development forward marker")
+            row = rows[len(chunks)]
+            require(line == f"{marker}{row['tokens']} {row['input_digest']}",
+                    "CUDA development forward marker differs")
+            chunks.append([])
+        elif "SdpaKernel=" in line:
+            require(chunks, "received an attention log before the first development forward")
+            chunks[-1].append(line)
+    require(len(chunks) == len(rows), "exact development forward marker roster required")
+    return [attention_logs("\n".join(chunk).encode("utf-8"), DEVELOPMENT_MODE) for chunk in chunks]
+
+
+def validate_development_operations(events, value, component):
+    rows = value["rows"]
+    require(len(events) == 2 * (1 + len(rows)), "exact development Load and Numeric journals required")
+    component["validate_operations"](events[:2], value, load_only=True)
+    identity = events[0]["identity"]
+    previous = events[1]["observed_monotonic_ns"]
+    for ordinal, row in enumerate(rows, 1):
+        start, end = events[2 * ordinal:2 * ordinal + 2]
+        for turn, phase in ((start, "started"), (end, "returned")):
+            sequence = 2 * ordinal + (1 if phase == "started" else 2)
+            require(turn["schema"] == "airk.arbiter.native-operation/1"
+                    and turn["sequence"] == sequence and turn["identity"] == identity
+                    and turn["kind"] == "numeric" and turn["ordinal"] == ordinal
+                    and turn["phase"] == phase and turn["clock"] == "windows_performance_counter"
+                    and turn["operation_input_digest"] == row["input_digest"]
+                    and turn["expires_monotonic_ns"] == value["original_expires_monotonic_ns"]
+                    and previous <= turn["observed_monotonic_ns"] < turn["expires_monotonic_ns"],
+                    "development operation identity, order or deadline differs")
+            previous = turn["observed_monotonic_ns"]
+        require(start["started_monotonic_ns"] == start["observed_monotonic_ns"] == end["started_monotonic_ns"]
+                and start["native_success"] is start["native_call_elapsed_us"] is None
+                and end["native_success"] is True
+                and end["native_call_elapsed_us"] == row["native_call_elapsed_us"],
+                "development Numeric operation timing or completion differs")
+
+
+def validate_development(value, paths, owned, request, evidence, metadata, manifest, image, component, base,
+                         projection, reference_pin, reference_proof, graph, placement, source):
+    validate_native_identity(value, DEVELOPMENT_SCHEMA, owned, request, evidence, metadata, manifest, image, base)
+    require(value["development_only"] is True and value["qualification_cutoff_raw"] == .001
+            and value["development_raw_limit"] == DEVELOPMENT_RAW_LIMIT
+            and value["matching_qkv_mass_limit"] == value["original_fp32_mass_limit"] == .05
+            and value["near_tie_margin_limit"] == DEVELOPMENT_NEAR_TIE
+            and value["reference_basis"] == "independent_wider_qkv_cpu_approximation"
+            and value["reference_recipe"] == reference_proof["recipe"]
+            and value["projection_stage"] == core(projection[0]) and value["projection_reference"] == core(reference_pin)
+            and value["native_forward_returned"] is value["forward_synchronized"] is True
+            and value["numeric_forward_attempts"] == len(DEVELOPMENT_WIDTHS),
+            "development scope, cutoffs or comparison identity differs")
+    actual_placement = value["final_placement"]
+    require(actual_placement["complete"] is True
+            and actual_placement["shim_status"] == actual_placement["ort_error_code"] == 0
+            and placement_roster(actual_placement) == placement_roster(placement)
+            and value["reviewed_graph"] == core(graph)
+            and value["bounded_policy_identity"] == bounded_policy_identity(
+                graph["sha256"], value["profile"], source["sha256"]),
+            "development placement or reviewed graph policy differs")
+    plan = value["attention_plan"]
+    expected_math = {"gemm": "2", "debug": "1", "unicode": True}
+    require(plan["schema"] == "airk.native.cuda-fp16-attention-plan/1"
+            and plan["dtype"] == "fp16" and plan["backend"] == "FLASH_ATTENTION"
+            and plan["math_environment"] == {"captured_before_ort": expected_math, "current": expected_math}
+            and len(plan["nodes"]) == 28 and {node["name"] for node in plan["nodes"]} == NAMES
+            and all(node["operator"] == "GroupQueryAttention" and node["domain"] == "com.microsoft"
+                    for node in plan["nodes"]), "exact development FP16 FlashAttention plan required")
+    rows, profiles = value["rows"], value["profiled_runs"]
+    require(len(rows) == len(profiles) == len(DEVELOPMENT_WIDTHS), "exact development result and profile roster required")
+    adapter_identity = ("uuid", "ordinal", "compute_major", "compute_minor", "driver_api_version",
+                        "driver_image_sha256", "physical_total_bytes")
+    gate_results = []
+    for row, profile, reference, width in zip(rows, profiles, reference_proof["references"], DEVELOPMENT_WIDTHS, strict=True):
+        require(row["tokens"] == width and row["name"] == reference["name"]
+                and row["input_digest"] == reference["input"]["input_digest"]
+                and row["forward_synchronized"] is True
+                and len(row["raw_scores"]) == 8 and all(finite(score, -math.inf, math.inf) for score in row["raw_scores"])
+                and finite(row["elapsed_us"], 0, 120_000_000)
+                and finite(row["native_call_elapsed_us"], 0, row["elapsed_us"]),
+                "complete finite synchronized development row required")
+        for when in ("before", "after"):
+            adapter = row[f"adapter_{when}"]
+            require(all(adapter[key] == value["adapter_before"][key] for key in adapter_identity)
+                    and 0 <= adapter["free_bytes"] <= adapter["total_bytes"] <= adapter["physical_total_bytes"]
+                    and adapter["total_bytes"] > 0 and finite(row[f"host_rss_{when}_bytes"], 1, HOST),
+                    "development memory observation or adapter identity differs")
+        matching = development_metrics(row["raw_scores"], reference["matching_qkv_fp32"])
+        original = development_metrics(row["raw_scores"], reference["original_fp32"])
+        for label, stats in (("matching_qkv", matching), ("original_fp32", original)):
+            require(row[f"{label}_raw_error"] == stats["raw_error"]
+                    and math.isclose(row[f"{label}_mass_error"], stats["mass_error"], rel_tol=0.0, abs_tol=2e-15)
+                    and stats["mass_error"] <= .05
+                    and row[f"{label}_argmax_matches"] is stats["argmax_matches"]
+                    and row[f"{label}_winner"] == stats["winner"]
+                    and row[f"{label}_reference_margin"] == stats["reference_margin"]
+                    and row[f"native_margin_for_{label}_winner"] == stats["native_margin_for_reference_winner"],
+                    "development raw, mass or winner comparison could not be reproduced")
+        require(row["native_winner"] == matching["native_winner"]
+                and row["native_winner_margin"] == matching["native_winner_margin"]
+                and row["within_deadline"] is True,
+                "native winner, margin or original deadline differs")
+        near_tie = matching["reference_margin"] <= DEVELOPMENT_NEAR_TIE
+        screened = matching["raw_error"] <= DEVELOPMENT_RAW_LIMIT and (matching["argmax_matches"] or near_tie)
+        require(row["near_tie_ambiguous"] is near_tie and row["development_screen_pass"] is screened,
+                "development near-tie or raw-screen classification differs")
+        gate_results.append(screened)
+        require(profile["tokens"] == width and profile["node_count"] == PROJECTION_TOTAL_NODES
+                and profile["cpu_nodes"] == BOUNDED_CPU_NODES
+                and finite(profile["model_run_us"], 1, row["native_call_elapsed_us"])
+                and finite(profile["cpu_input_bytes"], 0, (1 << 64) - 1)
+                and finite(profile["cpu_output_bytes"], 0, (1 << 64) - 1)
+                and finite(profile["cpu_max_tensor_bytes"], 1, 32),
+                "development profile does not cover the exact bounded graph")
+    require(value["development_screen_pass"] is all(gate_results), "development batch screen differs")
+    validate_development_operations(read_operations(paths["operations"]), value, component)
+    trace = value["runtime_profile"]
+    profile_path = Path(trace["path"])
+    require(profile_path.parent == paths["stdout"].parent and profile_path.name.startswith("ort-profile")
+            and profile_path.suffix == ".json" and paths["profile"] == profile_path and 0 < trace["bytes"] <= LOG_CAP,
+            "development profile escaped its checked output prefix")
+    base.pinned(trace)
+    return development_attention_logs(paths["stdout"].read_bytes(), rows)
+
+
 def run(args):
     started = time.monotonic()
     expires = started + WALL
@@ -845,7 +1057,7 @@ def run(args):
             audit([Path(pin["path"])])
             dependencies[name] = retained_core(pin, base)
     inputs = [request, evidence, image, build, manifest, log, artifact, *sources.values(), *dependencies.values()]
-    projection_reference = None
+    projection_reference = development_reference = None
     if projection is not None:
         stage_pin, stage = projection
         inputs.extend((stage_pin, stage["candidate_graph"], stage["candidate_weights"]))
@@ -854,7 +1066,19 @@ def run(args):
             validate_projection_artifacts(dependencies, profile, projection, base)
             independent = base.read(dependencies["independent_proof"]["path"])
             validate_projection_baseline(stage, independent)
-            if args.mode in PROJECTION_SCORE_MODES:
+            if args.mode == DEVELOPMENT_MODE:
+                projection_reference, development_reference = read_development_reference(
+                    args.projection_reference, args.projection_reference_sha256,
+                    projection, independent, base, audit, expires,
+                )
+                inputs.append(projection_reference)
+                for row in development_reference["references"]:
+                    for pin in (row["fixture"], row["producer"]):
+                        if pin not in inputs:
+                            audit([Path(pin["path"])])
+                            base.pinned(pin)
+                            inputs.append(pin)
+            elif args.mode in PROJECTION_SCORE_MODES:
                 projection_reference = read_projection_reference(
                     args.projection_reference, args.projection_reference_sha256, projection, independent, base, audit,
                 )
@@ -985,6 +1209,13 @@ def run(args):
                 receipt["projection_graph"] = validate_projection_graph(
                     value["graph_observation"]["graph_metadata"], output_projection=has_output_projection(projection),
                 )
+        elif args.mode == DEVELOPMENT_MODE:
+            require(value is not None and "profile" in paths, "native development result or actual profile missing")
+            receipt["flash_attention_records"] = validate_development(
+                value, paths, receipt["owned"], request, evidence, evidence_value, manifest, image, component, base,
+                projection, projection_reference, development_reference, graph, reviewed_placement, sources[BOUNDED_SOURCE],
+            )
+            receipt["development_screen_pass"] = value["development_screen_pass"]
         else:
             require(value is not None and "profile" in paths, "native T32 result or actual profile trace missing")
             receipt["flash_attention_records"] = validate_t32(
@@ -1054,14 +1285,15 @@ def main():
     elif args.projection_stage is not None or args.projection_stage_sha256 is not None:
         parser.error("--projection-stage and --projection-stage-sha256 require a Q/K/V projection mode")
     if args.mode in PROJECTION_SCORE_MODES:
-        expected = QKVO_REFERENCE_SHA if args.mode == "qkvo-t32" else PROJECTION_REFERENCE_SHA
+        expected = (DEVELOPMENT_REFERENCE_SHA if args.mode == DEVELOPMENT_MODE else
+                    QKVO_REFERENCE_SHA if args.mode == "qkvo-t32" else PROJECTION_REFERENCE_SHA)
         if args.projection_reference is None or args.projection_reference_sha256 != expected:
             parser.error("projection-t32 requires --projection-reference and the exact --projection-reference-sha256")
     elif args.projection_reference is not None or args.projection_reference_sha256 is not None:
         parser.error("--projection-reference and --projection-reference-sha256 require projection-t32")
     if args.mode in REVIEWED_MODES:
         expected = (QKVO_REVIEWED_RECEIPT_SHA if args.mode == "qkvo-t32" else
-                    PROJECTION_REVIEWED_RECEIPT_SHA if args.mode == "projection-t32" else REVIEWED_RECEIPT_SHA)
+                    PROJECTION_REVIEWED_RECEIPT_SHA if args.mode in PROJECTION_SCORE_MODES else REVIEWED_RECEIPT_SHA)
         if args.graph_receipt is None or args.graph_receipt_sha256 != expected:
             parser.error(f"{args.mode} requires --graph-receipt and the exact reviewed --graph-receipt-sha256")
     elif args.graph_receipt is not None or args.graph_receipt_sha256 is not None:

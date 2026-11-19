@@ -175,7 +175,16 @@ Use the existing deadline when resuming in a new context.
   [Source-order CPU comparison](simplify/one-process-ledger.md#2026-11-19--source-order-compact-cpu-reference-does-not-close-raw-parity)
   [Scored Q/K/V result and blocker](simplify/one-process-ledger.md#2026-11-19--compact-qkv-t32-raw-error-improves-and-still-exceeds-the-gate)
   [Corrected CUDA observation and matching CPU reference](simplify/one-process-ledger.md#2026-11-19--corrected-compact-qkv-cuda-load-and-matching-cpu-reference-pass)
-  Matching raw parity still gates wider Windows scoring.
+  The approved 0.010 Windows CUDA development batch completed on the
+  Q/K/V candidate. T128 passed with 0.006991 raw error. T1024 and T8192
+  missed at 0.068153 and 0.046494. All three kept the full score order
+  and passed both mass limits. The 0.001 same-recipe qualification
+  limit and 98% judged-evidence rule still apply. The largest raw gap
+  is at T1024 even after a common score shift. Use that width for the
+  next identical-operand diagnostic of wider FlashAttention arithmetic
+  before another full-model scoring run. Resource20 remains gated.
+  [Windows CUDA development measurements](simplify/one-process-ledger.md#2026-11-19--compact-qkv-cuda-development-screen-at-three-widths)
+  [Approved development screen](arbiter/final-plan.md#approved-windows-compact-cuda-development-screen)
   For judged task quality, the original local TechQA DEV archive
   provides 77 provisional answerable cases with complete archived
   menus, publisher offsets and no menu overlap with original TRAIN
