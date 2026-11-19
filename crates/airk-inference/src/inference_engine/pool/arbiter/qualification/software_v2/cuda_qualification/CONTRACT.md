@@ -214,6 +214,16 @@ The graph_metadata object is the Retrieval-owned airk.private.ort-final-graph-me
 New-mode receipt serialization is compact and bounded during encoding to16MiB before the output file is changed. Existing modes retain their old pretty serialization. The receipt is synchronized and its retention checked against the unchanged original deadline. Serialization overflow cannot replace a previous partial receipt with truncated JSON or become a successful diagnostic. Primary model/load errors and actual cleanup facts remain explicit.
 
 Pure controls cover missing/failed metadata evidence, log-completeness disclosure, serializer failure before output mutation, compact JSON preservation and byte caps. They do not prove actual graph capture, CUDA execution or model qualification. Integration requires scoped Clippy and selected native tests after combined review.
+## Native Large FP32 final-graph diagnostic
+
+On Windows x64, cuda_large_fp32_load_only_graph_metadata_diagnostic uses
+the same diagnostic receipt and final graph checks with a Large FP32 Probe.
+It verifies actual 48 GiB process and aggregate Job limits, an explicit
+44 GiB device envelope (40 GiB cold, 8 GiB warm increment and 4 GiB
+headroom), and the original 120-second deadline. These device settings
+bound the graph-only experiment. A successful capture supplies no
+evidence about forward memory fit, numerical results or qualification.
+
 ## Private Compact bounded-hybrid profiling
 
 The Windows x64 ignored four-width selector uses the original 120-second

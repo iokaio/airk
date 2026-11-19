@@ -1777,6 +1777,17 @@ fn graph_diagnostic_evidence(
 #[test]
 #[ignore = "disposable final graph metadata only: original120s, explicit Compact host/Job, actual CUDA lease/device; no scorer or forward"]
 fn cuda_load_only_graph_metadata_diagnostic() -> Result<()> {
+    observe_cuda_graph_metadata(ModelChoice::ContextQwenCompact)
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[test]
+#[ignore = "disposable Large FP32 final graph; exact Windows 48 GiB process/Job, 120s, admitted CUDA; no scorer or forward"]
+fn cuda_large_fp32_load_only_graph_metadata_diagnostic() -> Result<()> {
+    observe_cuda_graph_metadata(ModelChoice::ContextQwenLarge)
+}
+
+fn observe_cuda_graph_metadata(model: ModelChoice) -> Result<()> {
     let started_ns = airk_process::monotonic::now_ns()?;
     let started = Instant::now();
     let execution_user = airk_ipc::endpoint::current_user()?;
@@ -1801,9 +1812,20 @@ fn cuda_load_only_graph_metadata_diagnostic() -> Result<()> {
     };
     ensure!(schema == SCHEMA, "unknown diagnostic request schema");
     bounds.validate()?;
+    let allowed_bounds = match model {
+        ModelChoice::ContextQwenCompact => bounds.device_limit_bytes == 24 << 30,
+        ModelChoice::ContextQwenLarge => {
+            cfg!(all(windows, target_arch = "x86_64"))
+                && bounds.host_limit_bytes == 48 << 30
+                && job_limit_bytes == 48 << 30
+                && bounds.device_limit_bytes == 44 << 30
+                && (cold_bytes, warm_bytes, headroom_bytes) == (40 << 30, 8 << 30, 4 << 30)
+        }
+        _ => false,
+    };
     ensure!(
-        bounds.deadline_ms == 120000 && bounds.device_limit_bytes == 24 << 30,
-        "graph metadata diagnostic original deadline/device bounds differ"
+        bounds.deadline_ms == 120_000 && allowed_bounds,
+        "graph metadata diagnostic process, job, deadline or device bounds differ"
     );
     let deadline = started + Duration::from_millis(bounds.deadline_ms);
     let expires_ns = started_ns
@@ -1812,10 +1834,8 @@ fn cuda_load_only_graph_metadata_diagnostic() -> Result<()> {
     // Actual source assets are authenticated below before disposable session creation.
     let (input, profile, files, _) = inputs_from(&gpu_input)?;
     ensure!(
-        profile.model == ModelChoice::ContextQwenCompact
-            && profile.device_execution.is_some()
-            && profile.cpu_fit.is_none(),
-        "graph metadata diagnostic requires frozen Compact GPU metadata"
+        profile.model == model && profile.device_execution.is_some() && profile.cpu_fit.is_none(),
+        "graph metadata diagnostic requires frozen GPU metadata for the selected model"
     );
     let capacity_plan = profile_probe_bounds(
         &bounds,
@@ -1907,7 +1927,7 @@ fn cuda_load_only_graph_metadata_diagnostic() -> Result<()> {
         let execution = catalog
             .execution_profile(profile.manifest)?
             .bind_cuda_probe(device, capacity_plan, deadline)?;
-        observer = Some(execution.cuda_load_observer()?);
+        observer = Some(execution.cuda_graph_observer()?);
         ensure!(
             Instant::now() < deadline,
             "original graph metadata diagnostic expiry before session load"

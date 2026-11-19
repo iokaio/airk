@@ -247,6 +247,15 @@ impl LoadObserver {
 impl super::super::ExecutionProfile {
     pub fn cuda_load_observer(&self) -> Result<LoadObserver> {
         require_diagnostic_profile(self)?;
+        self.diagnostic_observer()
+    }
+
+    pub fn cuda_graph_observer(&self) -> Result<LoadObserver> {
+        require_graph_diagnostic_profile(self)?;
+        self.diagnostic_observer()
+    }
+
+    fn diagnostic_observer(&self) -> Result<LoadObserver> {
         Ok(LoadObserver(
             self.gpu
                 .as_ref()
@@ -261,25 +270,47 @@ pub(crate) fn authority(
     evaluation: bool,
     release: bool,
     unqualified: bool,
-    compact: bool,
+    allowed_model: bool,
     fp32: bool,
     binding: bool,
 ) -> Result<()> {
     ensure!(
-        evaluation && !release && unqualified && compact && fp32 && binding,
-        "placement diagnostic requires unqualified native evaluation Compact FP32 binding"
+        evaluation && !release && unqualified && allowed_model && fp32 && binding,
+        "CUDA diagnostic requires an approved model with unqualified native evaluation FP32 binding"
     );
     Ok(())
 }
 #[cfg(feature = "test-support")]
 pub(crate) fn require_diagnostic_profile(profile: &super::super::ExecutionProfile) -> Result<()> {
+    require_profile(
+        profile,
+        profile.description.model == airk_core::arbiter::ModelChoice::ContextQwenCompact,
+    )
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn require_graph_diagnostic_profile(
+    profile: &super::super::ExecutionProfile,
+) -> Result<()> {
+    use airk_core::arbiter::ModelChoice;
+    let model = profile.description.model;
+    require_profile(
+        profile,
+        model == ModelChoice::ContextQwenCompact
+            || (cfg!(all(windows, target_arch = "x86_64"))
+                && model == ModelChoice::ContextQwenLarge),
+    )
+}
+
+#[cfg(feature = "test-support")]
+fn require_profile(profile: &super::super::ExecutionProfile, allowed_model: bool) -> Result<()> {
     crate::native_inference::require_service_compute()?;
     profile.validate_native_source()?;
     authority(
         profile.execution_authorized() && profile.evaluation(),
         profile.release,
         profile.description.qualification.is_none(),
-        profile.description.model == airk_core::arbiter::ModelChoice::ContextQwenCompact,
+        allowed_model,
         profile
             .description
             .device_execution

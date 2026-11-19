@@ -467,7 +467,7 @@ impl Scorer {
         profile: ExecutionProfile,
         source: &dyn AssetSource,
     ) -> Result<()> {
-        cuda::diagnostic::require_diagnostic_profile(&profile)?;
+        cuda::diagnostic::require_graph_diagnostic_profile(&profile)?;
         match Self::open_internal(profile, source, Ok, OpenMode::GraphMetadataDiagnostic)? {
             None => Ok(()),
             Some(_) => anyhow::bail!("diagnostic unexpectedly constructed a scorer"),
@@ -618,12 +618,16 @@ impl Scorer {
         }
         builder = configure(builder)?;
         #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
-        if matches!(
-            _mode,
-            OpenMode::PlacementDiagnostic | OpenMode::GraphMetadataDiagnostic
-        ) {
-            cuda::diagnostic::require_diagnostic_profile(&profile)?;
-            builder = builder.with_config_entry("session.disable_cpu_ep_fallback", "0")?;
+        match &_mode {
+            OpenMode::PlacementDiagnostic => {
+                cuda::diagnostic::require_diagnostic_profile(&profile)?;
+                builder = builder.with_config_entry("session.disable_cpu_ep_fallback", "0")?;
+            }
+            OpenMode::GraphMetadataDiagnostic => {
+                cuda::diagnostic::require_graph_diagnostic_profile(&profile)?;
+                builder = builder.with_config_entry("session.disable_cpu_ep_fallback", "0")?;
+            }
+            _ => {}
         }
         #[cfg(all(
             feature = "gpu-cuda",

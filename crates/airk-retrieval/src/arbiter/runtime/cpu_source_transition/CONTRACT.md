@@ -251,3 +251,20 @@ only the product adapter. The loader changes the two product provenance
 validation call sites to bind the declared compilation targets. The original
 SM86 scientific context checks, CPU runtime source and CPU profile bytes retain
 their independent source identities.
+
+
+### Windows Large FP32 graph-only observation
+
+The Windows x64 test-support graph-only entry shares the disposable
+SessionState collector with Compact. Its model predicate accepts Large
+in the graph-only mode. The placement-only and bounded-hybrid entries
+continue to require the Compact evaluation profile. Reversing the two
+diagnostic hooks in runtime.rs restores the exact previous LF-normalized
+SHA256 6bb97b2f5ccaba894b304ae6ec3f1b0f8260bbc2b6e3a2c19c427227af0fcd8f.
+Current runtime.rs is
+b948acc535aae2e5d22941fb4b19dead300736a489ab45145051d002db90d770.
+Reversing the private observer method and model predicate in diagnostic.rs
+restores 8b1e5334f3205367df116764dba85652f27171966567d214e37e81115c969495
+from 2cd6337af1832e09e623b099d7b74b8c4b3da3af6d379f53674eb834aa79f33d.
+The retained CPU descriptor and compiler are unchanged. Existing scoped
+controls retain the original refusal and qualification-transfer assertions.

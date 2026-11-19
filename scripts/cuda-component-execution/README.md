@@ -45,3 +45,26 @@ runtime profiling.
 
 The separate [Compact four-width profiling owner](BOUNDED-HYBRID.md) reuses the
 retained graph, held CUDA build provenance and independent references.
+
+
+## Windows Large FP32 graph capture
+
+Run with the checked Windows human identity, exclusive access to the A6000,
+and fresh host and device headroom. Use the exact Large graph-only request
+and an image selected from the successful Cargo JSON lib-test output. Stage
+the image by verified copy beside the request-pinned CUDA runtime manifest.
+Review the staged image hash and actual build receipt before execution.
+
+```text
+python -I -B -S scripts/cuda-component-execution/large_graph.py
+  --request LARGE_PROBE_REQUEST
+  --image STAGED_INFERENCE_EXE --image-sha256 SHA
+  --build-receipt BUILD_RECEIPT --build-receipt-sha256 SHA
+  --powershell VERIFIED_PWSH --output FRESH_PRIVATE_RUN_DIRECTORY
+```
+
+The private result contains the final optimized placement and graph
+inventory, with actual 48 GiB process and aggregate Job checks and the
+original 120-second deadline. The runner retains the owned process and
+settlement receipt, native result and stdout. This operation creates and
+settles a disposable session and dispatches zero forwards.

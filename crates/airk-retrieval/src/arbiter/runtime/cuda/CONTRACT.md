@@ -610,6 +610,11 @@ their existing64KiB bound and explicit truncation fields; graph-only observation
 does not require complete logs. The old placement diagnostic still refuses log
 truncation. Neither mode grants a Scorer, forward or placement-policy exception.
 
+On Windows x64, the graph-only diagnostic also accepts the unqualified
+Large FP32 evaluation binding. It uses the same authenticated model load,
+full graph collection and settlement checks. The graph observer returns
+data only.
+
 Metadata JSON is compact and at most8MiB within the existing16MiB native result;
 new native graph-only reports use bounded compact serialization. Limits are65536
 nodes,262144 values,524288 ordered edges,4096 UTF8 bytes/string,rank16,64 attributes
