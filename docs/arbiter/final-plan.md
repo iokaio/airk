@@ -1615,6 +1615,17 @@ the existing placement rules. Confirm actual FlashAttention dispatch and
 scores on the resulting scoring session.
 [Complete Compact FP16 graph evidence](../simplify/one-process-ledger.md#2026-11-19--complete-compact-fp16-placement-observed)
 
+The bounded A6000 T32 probe admitted this complete placement, then exited
+with a Windows access violation in its first forward. It produced no
+scores, completed operator profile or FlashAttention dispatch records.
+The pinned CUDA GroupQueryAttention implementation requests both present
+key/value output tensors and dereferences them before its kernel log.
+The converted graph supplies only the ordinary attention output. Correct
+the maintained graph and independent verifier to supply the required
+internal present outputs, authenticate a fresh graph and then rerun the
+small scoring probe under the original limits.
+[Bounded T32 scoring failure and source finding](../simplify/one-process-ledger.md#2026-11-19--compact-fp16-bounded-placement-passed-before-the-t32-forward-crashed)
+
 ### FP16 implementation and validation sequence
 
 Use 8,192-token Context on a target developer GPU to decide whether the FP16

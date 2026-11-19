@@ -11281,3 +11281,62 @@ optimized graph before scoring, and require real typed profiler coverage,
 matching-recipe numerical parity, original-FP32 mass bounds and all
 28 actual synchronized FlashAttention records. Same-model CPU fallback
 remains an independent Auto decision under the original budget.
+
+### 2026-11-19 — Compact FP16 bounded placement passed before the T32 forward crashed
+
+The checked A6000 bounded probe authenticated the same load-only FP16
+placement receipt and exact T32 half and FP32 references. The runtime
+reopened a profiled session and enforced the whole optimized graph, exact
+28 CUDA attention nodes, and fixed-size CPU control bounds before a
+forward. Load returned after 10.376 s. All three pre-dispatch invalid
+input controls refused. The Numeric operation started and did not return.
+
+The original child, PID 44712, exited with Windows access violation
+0xC0000005. The run took 33.859 s under the original 120-second cutoff
+and 32 GiB process, 32 GiB Job and 24 GiB device limits. Peak Job commit
+was 8,940,388,352 B. The Job emptied naturally with zero active members
+and no forced termination. Native session/device settlement, scores,
+actual FlashAttention dispatch and typed execution coverage were
+unobserved. The ORT profile file was zero bytes. The retained launcher
+error combines native exit and Job settlement. The Job and process
+observations distinguish them.
+
+The exact pinned CUDA GQA source
+fd5a1f293106c51e6e283c1647681f9a9f5d5ae3d97a1f012fa4ccf8d269f7ec
+requests present key/value outputs at slots 1 and 2 and unconditionally
+dereferences both tensors before the per-operator FlashAttention log.
+The reviewed FP16 graph supplies only slot 0. The pinned OpKernelContext
+returns null for omitted outputs. The source establishes this graph and
+kernel contract defect. No exception stack identifies the faulting
+instruction. Correct the maintained Context graph producer and independent
+verifier together, retain only scores at the public graph boundary, and
+authenticate fresh conversion, metadata, placement and profile receipts.
+The next native scoring probe needs a corrected candidate. The original
+graph and failed execution remain reproducible as historical evidence.
+
+Retained under compact-fp16-bounded-t32-r1:
+execution 0d1548ef981a83d64119f234b7c28dd119586095fbad5da810219e35373f008c,
+native 9676d91c8c2b7b735ce918dc5ad378a554cc15ff40fa7f28348ec9aa9200f9e7,
+journal c8d9e7504049145dcf8a9362abc7056f89b3bf20e47f4745853627a788cd7542,
+combined log c7d9051e2a165b5d38205fbf81ce51eff1777b33a5b725e1ad98b58bd60fb8cb,
+linked image a552bc6c804d4e434d673c98acc6909ced437a3a1764c793b530d52c15c770ae,
+placement policy fbb2846440270bdd52ce830907f73ac8acec9342d1584718bb6e319a91d06140.
+The Windows account and default owner were the verified human SID ending
+1002. No matching Application Error event or per-user crash dump was
+available during triage.
+
+On the warm checkout target/ with incremental=1, Rust 1.98.0 and Nextest
+0.9.148, the source group
+954a03e5f02dbc8e0db04351086c4061042590a5fe29b5aabbeb5d0496ddb146
+passed scoped all-feature Clippy in 19.383 s
+(14ce3bc7f6693307162916309b500899372c1c9487f1a9de865c3a86fb074668).
+Nextest passed 52 with 470 filtered in 35.468 s
+(27a83470ab6fe09cc38c1618c9bba3f514a9ec9f7c8a73d5746fb7b83f76ee41).
+The exact image stage passed in 1.134 s
+(fd357bb8c1dbfcbf060b3758b6c6c8390038ecd69c20d447095afa759af32f3e).
+Exact commands, JUnit and Cargo timings are under
+windows-cuda-g5-bounded-t32-checks-r1. The focused FP16 and common CUDA
+launcher Python suites passed 66 and 137 checks before the A6000 run.
+After improving failure reporting, the two suites passed 70 and 137.
+A read-only replay of the exact failed execution reported 0xC0000005
+separately from timeout and lingering Job members.

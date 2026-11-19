@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Run one reviewed Compact FP16 metadata, graph diagnostic, or T32 test in a Windows Job."""
+"""Run one reviewed Compact FP16 diagnostic or scoring selector in a Windows Job."""
 
 import argparse
 import ctypes
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import math
 import os
@@ -21,13 +22,22 @@ SELECTORS = {
     "metadata": PREFIX + "emit_cuda_compact_fp16_probe_metadata",
     "graph": PREFIX + "cuda_compact_fp16_load_only_graph_diagnostic",
     "t32": PREFIX + "cuda_compact_fp16_t32_component",
+    "bounded-t32": PREFIX + "cuda_compact_fp16_bounded_t32_component",
 }
+SCORING_MODES = ("t32", "bounded-t32")
 MODEL = "arbiter-context-qwen3-17b"
 PREPARE_SHA = "850cf966a73bc5ecb0aa79cc3d22559cdd3ad855fbc38f73e361f136ea88c953"
 T32_DIGEST = "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102fe56fc335"
 METADATA_SCHEMA = "airk.private.compact-fp16-probe-metadata/1"
 GRAPH_SCHEMA = "airk.private.compact-fp16-graph-diagnostic/1"
 T32_SCHEMA = "airk.private.compact-fp16-t32-component/2"
+BOUNDED_SCHEMA = "airk.private.compact-fp16-bounded-t32-component/1"
+REVIEWED_RECEIPT_SHA = "0b12892cf62e5586eca5a3d79ad1e4f9b17d43e8b724cc03fa86841537e0d841"
+REVIEWED_GRAPH_SHA = "0375d26d8fa2e92f6670a28c55d3ffaad43c3ac10326886b40c968e13fa67a00"
+BOUNDED_SOURCE = "crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid.rs"
+CPU = "CPUExecutionProvider"
+BOUNDED_CPU_NODES = 374
+BOUNDED_TOTAL_NODES = 1746
 INDEPENDENT_SCHEMA = "airk.private.compact-fp16-independent-proof/1"
 HOST = 32 << 30
 WALL = 120
@@ -54,14 +64,14 @@ def finite(value, low, high):
     return type(value) in (int, float) and math.isfinite(value) and low <= value <= high
 
 
-def attention_logs(raw):
+def attention_logs(raw, mode="t32"):
     """Accept exact stock ORT backend rows for the single accepted forward."""
     require(0 < len(raw) <= LOG_CAP, "complete bounded native log required")
     rows = {}
     for line in raw.decode("utf-8", errors="replace").splitlines():
         if "SdpaKernel=" not in line:
             continue
-        line = line.removeprefix(f"test {SELECTORS['t32']} ... ")
+        line = line.removeprefix(f"test {SELECTORS[mode]} ... ")
         line = line.removeprefix("\x1b[36m").removesuffix("\x1b[0m")
         match = re.fullmatch(
             r"Operator=GroupQueryAttention Node=(\S+) DataType=fp16 SdpaKernel=FLASH_ATTENTION"
@@ -103,6 +113,27 @@ def job_limits(api, job):
     return actual
 
 
+def observed_native_exit(owned):
+    if owned["timed_out"] is True:
+        raise TimeoutError("native child exceeded the original Compact phase deadline")
+    require(owned["log_oversized"] is False, "actual stdout exceeded its retained bound")
+    close = owned["handle_close_proof"]
+    require(owned["owned_descendants_settled"] is True
+            and owned["owned_job_forced_termination"] is False
+            and owned["owned_job_final_active_processes"] == 0
+            and owned["owned_job_final_member_pids"] == []
+            and close["forced"] is False and close["settled"] is True
+            and close["final_active"] == 0 and close["final_member_pids"] == [],
+            "native child Job did not settle naturally within the owned 32 GiB Job")
+    status = owned["exit_code"]
+    require(type(status) is int and 0 <= status <= 0xFFFFFFFF, "invalid native Windows exit status")
+    if status == 0xC0000005:
+        leader = {"pid": owned["owned_leader_pid"], "exit_observed": True, "exit_code": status}
+        require(leader in close["retained_exits"], "native access violation exit was not observed at handle close")
+        raise ValueError("native child exited with Windows access violation (0xC0000005)")
+    return status
+
+
 def exact_pin(path, expected, base):
     value = base.pin(path)
     require(value["sha256"] == expected, f"reviewed digest differs: {path}")
@@ -116,7 +147,7 @@ def retained_core(pin, base):
     return value
 
 
-def linked_image(build, image, base, audit):
+def linked_image(build, image, base, audit, mode):
     observed = base.read(build["path"], 32 << 20)
     command = observed["command"]
     require(observed["schema"] == "airk-readiness-command/1" and observed["passed"] is True
@@ -153,6 +184,8 @@ def linked_image(build, image, base, audit):
         "crates/airk-retrieval/src/arbiter/runtime/cuda/fp16.rs",
         "crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic.rs",
     )
+    if mode == "bounded-t32":
+        relevant += (BOUNDED_SOURCE, inference + "/cuda_qualification/hybrid_profile_trace.rs")
     sources = {relative: exact_pin(ROOT / relative, native[relative], base) for relative in relevant}
     return log_pin, artifact, sources
 
@@ -298,8 +331,82 @@ def validate_graph(value, events, component):
             "native graph Load duration and independent returned marker differ")
 
 
-def validate_t32(value, paths, owned, request, evidence, metadata, manifest, image, component, base):
-    validate_native_identity(value, T32_SCHEMA, owned, request, evidence, metadata, manifest, image, base)
+def reviewed_graph(receipt, request, evidence, metadata, manifest, parent, component, base, audit):
+    historical = base.read(receipt["path"])
+    owned = historical["owned"]
+    require(historical["schema"] == "airk.private.owned-compact-fp16-probe/1"
+            and historical["mode"] == "graph" and historical["complete"] is True
+            and historical["qualification"] is False and historical["failure"] is None
+            and historical["whole_phase_expired"] is False and historical["wall_seconds"] == WALL
+            and historical["execution_user_sid"] == base.SID and parent.settled(owned)
+            and historical["request"] == request and historical["reviewed_evidence"] == evidence
+            and historical["runtime_manifest"] == manifest,
+            "reviewed owned graph does not bind this Probe, metadata, runtime and settled Job")
+    source = historical["outputs"]["native"]
+    operations = historical["outputs"]["operations"]
+    require(source["sha256"] == REVIEWED_GRAPH_SHA
+            and 0 < source["bytes"] <= component["DIAGNOSTIC_PROOFS"]["native_result"]
+            and 0 < operations["bytes"] <= 128 << 10,
+            "reviewed graph receipt does not authorize the exact native graph")
+    directory = Path(receipt["path"]).parent
+    require(Path(source["path"]) == directory / "native-result.json"
+            and Path(operations["path"]) == directory / "native-result.operations.jsonl",
+            "reviewed graph evidence escaped its retained output directory")
+    audit([Path(source["path"]), Path(operations["path"])])
+    graph = base.read(base.pinned(source))
+    events = read_operations(base.pinned(operations))
+    validate_native_identity(graph, GRAPH_SCHEMA, owned, request, evidence, metadata, manifest,
+                             historical["image"], base)
+    validate_graph(graph, events, component)
+    placement = graph["graph_observation"]["placement"]
+    roster = placement_roster(placement)
+    require(len(roster) == BOUNDED_TOTAL_NODES and sum(row[-1] == CPU for row in roster) == BOUNDED_CPU_NODES
+            and all(row[0] == 0 and row[-1] in (CPU, CUDA) for row in roster),
+            "reviewed bounded graph root, node or provider census differs")
+    return source, operations, placement
+
+
+def placement_roster(placement):
+    nodes = placement["nodes"]
+    require(isinstance(nodes, list) and all(type(node["subgraph_index"]) is int for node in nodes),
+            "untyped final placement roster")
+    return sorted((node["subgraph_index"], node["name"], node["domain"], node["op"], node["ep"])
+                  for node in nodes)
+
+
+def bounded_policy_identity(graph_sha, profile_sha, source_sha):
+    fields = (b"airk.private.compact-fp16-cuda-bounded-hybrid/1",
+              bytes.fromhex(graph_sha), bytes.fromhex(profile_sha), bytes.fromhex(source_sha))
+    digest = hashlib.sha256(b"AIRK-DIGEST-1\0")
+    for field in fields:
+        digest.update(len(field).to_bytes(8, "big"))
+        digest.update(field)
+    return digest.hexdigest()
+
+
+def validate_bounded_t32(value, reviewed, placement, source):
+    require(value["reviewed_graph"] == core(reviewed)
+            and value["bounded_policy_identity"] == bounded_policy_identity(reviewed["sha256"], value["profile"],
+                                                                            source["sha256"]),
+            "reviewed graph or bounded FP16 policy identity differs")
+    require(placement_roster(value["final_placement"]) == placement_roster(placement),
+            "bounded FP16 final placement differs from the complete reviewed graph")
+    profiled = value["bounded_profile"]
+    expected = {"tokens": 32, "node_count": BOUNDED_TOTAL_NODES, "cpu_nodes": BOUNDED_CPU_NODES}
+    bounds = {"model_run_us": (1, value["rows"][0]["native_call_elapsed_us"]),
+              "cpu_input_bytes": (0, (1 << 64) - 1), "cpu_output_bytes": (0, (1 << 64) - 1),
+              "cpu_max_tensor_bytes": (1, 32)}
+    require(isinstance(profiled, dict) and set(profiled) == set(expected) | set(bounds)
+            and all(type(profiled[key]) is int and profiled[key] == size for key, size in expected.items())
+            and all(type(profiled[key]) is int and lower <= profiled[key] <= upper
+                    for key, (lower, upper) in bounds.items()),
+            "bounded FP16 profile timing, complete node coverage or CPU tensor bounds differ")
+
+
+def validate_t32(value, paths, owned, request, evidence, metadata, manifest, image, component, base, *,
+                 mode="t32", reviewed=None, reviewed_placement=None, policy_source=None):
+    schema = BOUNDED_SCHEMA if mode == "bounded-t32" else T32_SCHEMA
+    validate_native_identity(value, schema, owned, request, evidence, metadata, manifest, image, base)
     require(value["native_forward_returned"] is value["forward_synchronized"] is True
             and value["numeric_forward_attempts"] == 1, "native T32 return and synchronization required")
     rows = value["rows"]
@@ -329,19 +436,23 @@ def validate_t32(value, paths, owned, request, evidence, metadata, manifest, ima
     require(placement["scope"] == "onnxruntime-final-session-state-ep-placement"
             and placement["complete"] is True and placement["shim_status"] == placement["ort_error_code"] == 0
             and 0 < len(placed) <= 65536 and placement["reported_nodes"] == len(placed)
-            and all(node["ep"] == CUDA for node in placed)
             and sum(len(node[key].encode("utf-8")) for node in placed for key in ("name", "domain", "op", "ep"))
-                == placement["reported_string_bytes"], "complete strict CUDA placement required")
+                == placement["reported_string_bytes"], "complete final placement required")
+    if mode == "bounded-t32":
+        validate_bounded_t32(value, reviewed, reviewed_placement, policy_source)
+    else:
+        require(all(node["ep"] == CUDA for node in placed), "complete strict CUDA placement required")
     attention = [node for node in placed if node["op"] == "GroupQueryAttention"]
     require(len(attention) == 28 and {node["name"] for node in attention} == NAMES
-            and all(node["domain"] == "com.microsoft" and node["subgraph_index"] == 0 for node in attention),
+            and all(node["domain"] == "com.microsoft" and node["subgraph_index"] == 0 and node["ep"] == CUDA
+                    for node in attention),
             "complete native CUDA GQA placement required")
     events = read_operations(paths["operations"])
     component["validate_operations"](events, value)
     require(events[-1]["native_call_elapsed_us"] == row["native_call_elapsed_us"],
             "native numeric duration and independent returned marker differ")
     raw = paths["stdout"].read_bytes()
-    backend = attention_logs(raw)
+    backend = attention_logs(raw, mode)
     trace = value["runtime_profile"]
     profile_path = Path(trace["path"])
     require(profile_path.parent == paths["stdout"].parent
@@ -381,7 +492,7 @@ def run(args):
     manifest = base.pin(manifest_path)
     request_value, evidence_value = base.read(request["path"]), base.read(evidence["path"])
     validate_request(args.mode, request_value, request, evidence_value, manifest)
-    log, artifact, sources = linked_image(build, image, base, audit)
+    log, artifact, sources = linked_image(build, image, base, audit, args.mode)
     dependencies = {}
     if args.mode == "metadata":
         dependencies = evidence_value["candidate"]
@@ -395,6 +506,14 @@ def run(args):
             audit([Path(pin["path"])])
             dependencies[name] = retained_core(pin, base)
     inputs = [request, evidence, image, build, manifest, log, artifact, *sources.values(), *dependencies.values()]
+    graph_receipt = graph = graph_operations = reviewed_placement = None
+    if args.mode == "bounded-t32":
+        audit([args.graph_receipt])
+        graph_receipt = exact_pin(args.graph_receipt, REVIEWED_RECEIPT_SHA, base)
+        graph, graph_operations, reviewed_placement = reviewed_graph(
+            graph_receipt, request, evidence, evidence_value, manifest, parent, component, base, audit,
+        )
+        inputs.extend((graph_receipt, graph, graph_operations))
     command = [image["path"], "--ignored", "--exact", SELECTORS[args.mode], "--nocapture", "--test-threads=1"]
     receipt = {
         "schema": "airk.private.owned-compact-fp16-probe/1", "mode": args.mode, "complete": False,
@@ -405,6 +524,8 @@ def run(args):
         "build_log": log, "linked_image": artifact, "sources": sources, "runtime_manifest": manifest,
         "execution_user_sid": base.SID, "outputs": {},
     }
+    if graph is not None:
+        receipt["reviewed_graph"] = {"owned": graph_receipt, "native": graph, "operations": graph_operations}
     component["mkdir"](guard, out, deadline=expires)
     temp = out / "temp"
     metadata = out / "metadata"
@@ -420,7 +541,7 @@ def run(args):
             planned.append(metadata)
         else:
             planned.extend((paths["native"], paths["operations"]))
-            if args.mode == "t32":
+            if args.mode in SCORING_MODES:
                 planned.append(out / "ort-profile")
         audit(planned, False)
         env = {key: value for key, value in os.environ.items()
@@ -437,8 +558,11 @@ def run(args):
                        AIRK_CUDA_FP16_METADATA_RECEIPT_SHA256=evidence["sha256"],
                        AIRK_CUDA_QUALIFICATION_OUTPUT=str(paths["native"]),
                        ORT_CUDA_GEMM_OPTIONS="2", ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO="1")
-            if args.mode == "t32":
+            if args.mode in SCORING_MODES:
                 env["AIRK_CUDA_FP16_PROFILE_PREFIX"] = str(out / "ort-profile")
+            if graph is not None:
+                env.update(AIRK_CUDA_FP16_REVIEWED_GRAPH=graph["path"],
+                           AIRK_CUDA_FP16_REVIEWED_GRAPH_SHA256=graph["sha256"])
             receipt["inherited_math_environment"] = {key: env[key] for key in
                 ("ORT_CUDA_GEMM_OPTIONS", "ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO")}
 
@@ -458,10 +582,11 @@ def run(args):
                 command, ROOT, stdout, expires - time.monotonic(), env, stdin, HOST,
                 before_resume=before_resume, absolute_deadline=expires,
             )
+        exit_code = observed_native_exit(receipt["owned"])
         observed = list(out.rglob("*"))
         audit(observed)
         require(paths["stdout"].stat().st_size <= LOG_CAP, "actual stdout exceeded its retained bound")
-        if args.mode == "t32":
+        if args.mode in SCORING_MODES:
             traces = list(out.glob("ort-profile*.json"))
             if len(traces) == 1:
                 paths["profile"] = traces[0]
@@ -470,9 +595,10 @@ def run(args):
             value = base.read(paths["native"])
             if value.get("error"):
                 raise ValueError(value["error"])
+        require(exit_code == 0, f"native child exited with Windows status 0x{exit_code:08X}")
         require(parent.settled(receipt["owned"])
                 and finite(receipt["owned"]["peak_host_committed_bytes"], 1, HOST),
-                "native child did not naturally settle within the owned 32 GiB Job")
+                "successful native child Job or peak host proof differs")
         if args.mode == "metadata":
             value = base.read(paths["metadata"])
             receipt["metadata_artifacts"] = validate_metadata(value, paths, request, evidence, manifest, base)
@@ -483,8 +609,11 @@ def run(args):
             validate_graph(value, read_operations(paths["operations"]), component)
         else:
             require(value is not None and "profile" in paths, "native T32 result or actual profile trace missing")
-            receipt["flash_attention_records"] = validate_t32(value, paths, receipt["owned"], request, evidence,
-                                                               evidence_value, manifest, image, component, base)
+            receipt["flash_attention_records"] = validate_t32(
+                value, paths, receipt["owned"], request, evidence, evidence_value, manifest, image, component, base,
+                mode=args.mode, reviewed=graph, reviewed_placement=reviewed_placement,
+                policy_source=sources.get(BOUNDED_SOURCE),
+            )
         for pin in inputs:
             base.pinned(pin)
         for key, path in paths.items():
@@ -531,7 +660,15 @@ def main():
         parser.add_argument("--" + name, type=Path, required=True)
         parser.add_argument("--" + name + "-sha256", required=True)
     parser.add_argument("--output", type=Path, required=True)
-    raise SystemExit(0 if run(parser.parse_args()) else 1)
+    parser.add_argument("--graph-receipt", type=Path)
+    parser.add_argument("--graph-receipt-sha256")
+    args = parser.parse_args()
+    if args.mode == "bounded-t32":
+        if args.graph_receipt is None or args.graph_receipt_sha256 != REVIEWED_RECEIPT_SHA:
+            parser.error("bounded-t32 requires --graph-receipt and the exact reviewed --graph-receipt-sha256")
+    elif args.graph_receipt is not None or args.graph_receipt_sha256 is not None:
+        parser.error("--graph-receipt and --graph-receipt-sha256 are only valid for bounded-t32")
+    raise SystemExit(0 if run(args) else 1)
 
 
 if __name__ == "__main__":

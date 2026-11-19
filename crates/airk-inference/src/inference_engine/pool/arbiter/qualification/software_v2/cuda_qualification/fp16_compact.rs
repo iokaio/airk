@@ -9,6 +9,8 @@ const FP32_PRODUCER: &str = "b3849443d0d4d737d5c3f88b323b9eaffbd1045500d97f1487c
 const T32_INPUT: &str = "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102fe56fc335";
 const GRAPH_BYTES: u64 = 64 << 20;
 const PROOF_BYTES: u64 = 16 << 20;
+const REVIEWED_FP16_GRAPH_SHA256: &str =
+    "0375d26d8fa2e92f6670a28c55d3ffaad43c3ac10326886b40c968e13fa67a00";
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -520,7 +522,7 @@ fn compact_fp16_t32_limits_matching_parity_and_original_mass() -> Result<()> {
     Ok(())
 }
 
-fn read_t32_profile(scorer: &Scorer, prefix: &Path) -> Result<Value> {
+fn read_t32_profile(scorer: &Scorer, prefix: &Path) -> Result<(Value, Vec<u8>)> {
     let path = scorer.finish_profiling()?;
     let leaf = prefix
         .file_name()
@@ -537,22 +539,39 @@ fn read_t32_profile(scorer: &Scorer, prefix: &Path) -> Result<Value> {
     );
     let bytes = small(&path, 64 << 20)?;
     ensure!(!bytes.is_empty(), "Compact FP16 ORT profile is empty");
-    Ok(json!({"path": path, "bytes": bytes.len(), "sha256": sha(&bytes)}))
+    Ok((
+        json!({"path": path, "bytes": bytes.len(), "sha256": sha(&bytes)}),
+        bytes,
+    ))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CompactFp16Probe {
+    StrictT32,
+    GraphOnly,
+    BoundedT32,
 }
 
 #[test]
 #[ignore = "owned strict Compact FP16 T32 probe with a reviewed artifact, independent reference and actual CUDA runtime"]
 fn cuda_compact_fp16_t32_component() -> Result<()> {
-    observe_compact_fp16_t32(false)
+    observe_compact_fp16_t32(CompactFp16Probe::StrictT32)
 }
 
 #[test]
 #[ignore = "disposable Windows Compact FP16 final graph with the reviewed T32 Probe; no scorer or forward"]
 fn cuda_compact_fp16_load_only_graph_diagnostic() -> Result<()> {
-    observe_compact_fp16_t32(true)
+    observe_compact_fp16_t32(CompactFp16Probe::GraphOnly)
 }
 
-fn observe_compact_fp16_t32(graph_only: bool) -> Result<()> {
+#[test]
+#[ignore = "owned Compact FP16 T32 scoring with exact final graph, bounded CPU controls and native CUDA profiling"]
+fn cuda_compact_fp16_bounded_t32_component() -> Result<()> {
+    observe_compact_fp16_t32(CompactFp16Probe::BoundedT32)
+}
+
+fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
+    let graph_only = mode == CompactFp16Probe::GraphOnly;
     let started_ns = airk_process::monotonic::now_ns()?;
     let started = Instant::now();
     let execution_user = airk_ipc::endpoint::current_user()?;
@@ -617,6 +636,20 @@ fn observe_compact_fp16_t32(graph_only: bool) -> Result<()> {
     validate_independent_proof(&proof)?;
     validate_reference(&proof.reference, &profile, &input.policy)?;
     bind_t32_candidate(&input, &profile, &metadata, &proof)?;
+    let reviewed_graph = if mode == CompactFp16Probe::BoundedT32 {
+        let pin = env_pin(
+            "AIRK_CUDA_FP16_REVIEWED_GRAPH",
+            "AIRK_CUDA_FP16_REVIEWED_GRAPH_SHA256",
+        )?;
+        ensure!(
+            pin.sha256 == REVIEWED_FP16_GRAPH_SHA256.parse::<Sha256Digest>()?,
+            "unreviewed Compact FP16 graph evidence"
+        );
+        let bytes = pinned(&pin, PROOF_BYTES)?;
+        Some((pin, bytes))
+    } else {
+        None
+    };
     pinned(&runtime_manifest, 128 << 10)?;
     let (root, manifest) = airk_host::gpu_runtime::installed_paths()?;
     ensure!(
@@ -671,10 +704,10 @@ fn observe_compact_fp16_t32(graph_only: bool) -> Result<()> {
         .create_new(true)
         .open(&output)?;
     let mut receipt = json!({
-        "schema": if graph_only {
-            "airk.private.compact-fp16-graph-diagnostic/1"
-        } else {
-            "airk.private.compact-fp16-t32-component/2"
+        "schema": match mode {
+            CompactFp16Probe::StrictT32 => "airk.private.compact-fp16-t32-component/2",
+            CompactFp16Probe::GraphOnly => "airk.private.compact-fp16-graph-diagnostic/1",
+            CompactFp16Probe::BoundedT32 => "airk.private.compact-fp16-bounded-t32-component/1",
         },
         "complete": false, "qualified": false, "product_admission": false,
         "request": request_pin, "native_input": gpu_input, "profile": profile.manifest,
@@ -697,6 +730,11 @@ fn observe_compact_fp16_t32(graph_only: bool) -> Result<()> {
     });
     if graph_only {
         receipt["graph_observation"] = Value::Null;
+    }
+    if let Some((pin, _)) = &reviewed_graph {
+        receipt["reviewed_graph"] = json!(pin);
+        receipt["bounded_policy_identity"] = Value::Null;
+        receipt["bounded_profile"] = Value::Null;
     }
     flush_graph_diagnostic(&mut file, &receipt)?;
     let mut journal = operation::Journal::create_until(
@@ -748,7 +786,13 @@ fn observe_compact_fp16_t32(graph_only: bool) -> Result<()> {
             };
             let observer = execution.cuda_compact_fp16_load_observer()?;
             let loaded = journal.observe(operation::Kind::Load, 0, None, || {
-                Scorer::open_profiled(execution, files, profile_prefix)
+                if let Some((pin, graph_bytes)) = &reviewed_graph {
+                    Scorer::open_compact_fp16_bounded_hybrid_profiled(
+                        execution, files, profile_prefix, graph_bytes, pin.sha256,
+                    )
+                } else {
+                    Scorer::open_profiled(execution, files, profile_prefix)
+                }
             })?;
             receipt["load_us"] = json!(loaded.elapsed_us);
             receipt["load_native_call_us"] = json!(loaded.native_call_elapsed_us);
@@ -762,7 +806,13 @@ fn observe_compact_fp16_t32(graph_only: bool) -> Result<()> {
             let scorer = custody.scorer.as_ref().context("Compact FP16 scorer missing")?;
             receipt["execution_identity"] = json!(scorer.execution_identity()?);
             receipt["final_placement"] = json!(scorer.device_placement()?.context("actual Compact FP16 final placement missing")?);
-            receipt["attention_plan"] = scorer.attention_backend_plan()?.context("actual Compact FP16 attention plan missing")?;
+            receipt["attention_plan"] = if reviewed_graph.is_some() {
+                let (_, policy) = scorer.compact_fp16_bounded_hybrid_evidence()?;
+                receipt["bounded_policy_identity"] = json!(policy);
+                scorer.compact_fp16_bounded_hybrid_attention_plan()?
+            } else {
+                scorer.attention_backend_plan()?.context("actual Compact FP16 attention plan missing")?
+            };
             flush_graph_diagnostic(&mut file, &receipt)?;
             let reference = &proof.reference;
             observe_t32_input_refusals(scorer, &reference.input, &mut receipt, &mut file)?;
@@ -803,7 +853,21 @@ fn observe_compact_fp16_t32(graph_only: bool) -> Result<()> {
                 )
             });
             match profile_capture {
-                Ok(trace) => receipt["runtime_profile"] = trace,
+                Ok((trace, bytes)) => {
+                    receipt["runtime_profile"] = trace;
+                    if reviewed_graph.is_some() {
+                        let profile_summary = scorer.compact_fp16_bounded_hybrid_evidence().and_then(|(graph, _)| {
+                            super::hybrid_profile_trace::compact_fp16_t32_profiled_run(&bytes, &graph.rows)
+                        });
+                        match profile_summary {
+                            Ok(summary) => receipt["bounded_profile"] = json!(summary),
+                            Err(error) => {
+                                receipt["bounded_profile_error"] = json!(format!("{error:#}"));
+                                teardown = Err(error);
+                            }
+                        }
+                    }
+                }
                 Err(error) => {
                     receipt["runtime_profile_error"] = json!(format!("{error:#}"));
                     teardown = Err(error);
@@ -827,6 +891,9 @@ fn observe_compact_fp16_t32(graph_only: bool) -> Result<()> {
                 receipt["teardown_error"] = json!(format!("{error:#}"));
             }
             teardown = teardown.and(release);
+        }
+        if let Some((pin, _)) = &reviewed_graph {
+            teardown = teardown.and(pinned(pin, PROOF_BYTES).map(|_| ()));
         }
         work.and(teardown)?;
         verify_files(custody.files.as_ref().context("Compact FP16 post-input custody missing")?, &profile)?;

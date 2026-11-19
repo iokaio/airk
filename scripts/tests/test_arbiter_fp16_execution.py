@@ -168,6 +168,114 @@ class CompactT32ComparisonControls(unittest.TestCase):
                 self.probe.validate_t32_comparisons(invalid)
 
 
+class CompactBoundedT32Controls(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.probe = runpy.run_path(str(ROOT / "scripts/arbiter-fp16-execution/probe_compact.py"))
+
+    def bounded_evidence(self):
+        reviewed = {"path": str(ROOT / "reviewed-graph.json"), "sha256": "11" * 32}
+        source = {"sha256": "33" * 32}
+        reviewed_placement = {
+            "nodes": [
+                {"subgraph_index": 0, "name": "dims", "domain": "", "op": "Shape", "ep": "CPUExecutionProvider"},
+                {"subgraph_index": 0, "name": "matmul", "domain": "", "op": "MatMul", "ep": "CUDAExecutionProvider"},
+            ],
+        }
+        value = {
+            "profile": "22" * 32,
+            "reviewed_graph": dict(reviewed),
+            "bounded_policy_identity": "72f357ec0b22800ab6e79f3fba70578a25c62a76743bc47af3c91ad1850dbc0b",
+            "final_placement": {"nodes": list(reversed(copy.deepcopy(reviewed_placement["nodes"])))},
+            "rows": [{"native_call_elapsed_us": 21}],
+            "bounded_profile": {"tokens": 32, "node_count": 1746, "cpu_nodes": 374, "model_run_us": 20,
+                                "cpu_input_bytes": 200, "cpu_output_bytes": 300, "cpu_max_tensor_bytes": 32},
+        }
+        return value, reviewed, reviewed_placement, source
+
+    def test_bounded_policy_provenance_and_complete_placement_accept_reordered_rows(self):
+        self.probe["validate_bounded_t32"](*self.bounded_evidence())
+
+    def test_bounded_refuses_different_policy_graph_roster_and_profile(self):
+        changes = [
+            ("policy identity", lambda value: value.update(bounded_policy_identity="44" * 32)),
+            ("policy identity", lambda value: value["reviewed_graph"].update(sha256="44" * 32)),
+            ("complete reviewed graph", lambda value: value["final_placement"]["nodes"][0].update(name="changed")),
+            ("complete reviewed graph", lambda value: value["final_placement"]["nodes"][0].update(ep="CPUExecutionProvider")),
+            ("profile timing", lambda value: value["bounded_profile"].update(model_run_us=22)),
+            ("CPU tensor bounds", lambda value: value["bounded_profile"].update(cpu_max_tensor_bytes=33)),
+            ("complete node coverage", lambda value: value["bounded_profile"].update(cpu_nodes=373)),
+            ("complete node coverage", lambda value: value["bounded_profile"].update(node_count=1745)),
+        ]
+        for message, change in changes:
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                value, reviewed, placement, source = self.bounded_evidence()
+                change(value)
+                self.probe["validate_bounded_t32"](value, reviewed, placement, source)
+
+    def test_flash_backend_log_accepts_each_exact_selector_and_bare_historical_rows(self):
+        rows = [
+            f"Operator=GroupQueryAttention Node=/airk_g5/attention/{index}/efficient "
+            "DataType=fp16 SdpaKernel=FLASH_ATTENTION"
+            for index in range(28)
+        ]
+        prefix = ("test inference_engine::pool::arbiter::qualification::software_v2::cuda_qualification::"
+                  "fp16_compact::")
+        for mode, selector in [("t32", "cuda_compact_fp16_t32_component"),
+                               ("bounded-t32", "cuda_compact_fp16_bounded_t32_component")]:
+            with self.subTest(mode=mode):
+                namespaced = [prefix + selector + " ... \x1b[36m" + rows[0] + "\x1b[0m", *rows[1:]]
+                self.assertEqual(self.probe["attention_logs"]("\n".join(namespaced).encode(), mode), rows)
+        self.assertEqual(self.probe["attention_logs"]("\n".join(rows).encode()), rows)
+        refused = [rows[0], *rows[:-1]]
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            self.probe["attention_logs"]("\n".join(refused).encode(), "bounded-t32")
+
+
+class CompactOwnedExitControls(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.probe = runpy.run_path(str(ROOT / "scripts/arbiter-fp16-execution/probe_compact.py"))
+
+    def owned_exit(self, status):
+        return {
+            "exit_code": status, "timed_out": False, "log_oversized": False, "owned_leader_pid": 42,
+            "owned_descendants_settled": True, "owned_job_forced_termination": False,
+            "owned_job_final_active_processes": 0, "owned_job_final_member_pids": [],
+            "handle_close_proof": {
+                "forced": False, "settled": True, "final_active": 0, "final_member_pids": [],
+                "retained_exits": [{"pid": 42, "exit_observed": True, "exit_code": status}],
+            },
+        }
+
+    def test_natural_access_violation_preserves_the_actual_windows_status(self):
+        with self.assertRaisesRegex(ValueError, r"Windows access violation \(0xC0000005\)"):
+            self.probe["observed_native_exit"](self.owned_exit(3221225477))
+
+    def test_termination_and_unsettled_job_take_priority_over_status(self):
+        for changes, error, message in [
+            ({"timed_out": True, "owned_job_forced_termination": True}, TimeoutError, "original Compact phase deadline"),
+            ({"log_oversized": True, "owned_job_forced_termination": True}, ValueError, "stdout exceeded"),
+            ({"owned_job_forced_termination": True}, ValueError, "Job did not settle naturally"),
+            ({"owned_job_final_active_processes": 1}, ValueError, "Job did not settle naturally"),
+        ]:
+            with self.subTest(changes=changes), self.assertRaisesRegex(error, message):
+                owned = self.owned_exit(0xC0000005)
+                owned.update(changes)
+                self.probe["observed_native_exit"](owned)
+
+    def test_success_and_ordinary_native_refusal_statuses_pass_through_for_validation(self):
+        for code in (0, 101):
+            with self.subTest(status=code):
+                self.assertEqual(self.probe["observed_native_exit"](self.owned_exit(code)), code)
+
+    def test_missing_leader_exit_observation_cannot_attest_access_violation(self):
+        owned = self.owned_exit(0xC0000005)
+        owned["handle_close_proof"]["retained_exits"][0]["exit_observed"] = False
+        with self.assertRaisesRegex(ValueError, "was not observed at handle close"):
+            self.probe["observed_native_exit"](owned)
+
+
 class CompactGraphControls(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

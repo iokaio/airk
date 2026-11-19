@@ -211,3 +211,17 @@ Its private result schema is airk.private.compact-fp16-graph-diagnostic/1.
 The result contains zero scorer forwards and serves as input to the FP16
 placement review. T32 continues to require strict execution and all
 original FlashAttention evidence.
+
+## Owned Compact FP16 bounded T32 scoring
+
+The same parent accepts `bounded-t32` with the T32 arguments and
+`--graph-receipt ABSOLUTE_OWNED_GRAPH_RECEIPT --graph-receipt-sha256 SHA`.
+It authenticates the approved complete load-only execution and its exact
+native graph output, including the original Probe, assets and runtime.
+It passes the native graph pin to the new bounded selector. The native
+session rechecks the exact typed graph and its CPU control limits before
+the first forward. Parent acceptance requires the matching placement map,
+the existing T32 journal, strict matching-recipe parity, original-FP32
+mass proof, complete bounded per-node profiling, 28 synchronized
+FlashAttention records and original Job/device/host settlement.
+This private result supplies single-case scoring evidence.

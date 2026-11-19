@@ -369,6 +369,33 @@ The distinct private result `airk.private.compact-fp16-graph-diagnostic/1`
 has zero forward attempts and returns only observations. The ordinary
 strict FP16 T32 scorer checks placement with CPU EP fallback disabled.
 
+## Private Compact FP16 bounded T32 scoring probe
+
+The ignored Windows x64 selector
+`fp16_compact::cuda_compact_fp16_bounded_t32_component` consumes the same
+reviewed T32 Probe, independent references and bounds, plus the exact
+complete FP16 load-only native graph result. Its identity is
+`airk.private.compact-fp16-bounded-t32-component/1`. The input profile
+authenticates the graph, assets and math. The separate bounded policy
+identity binds the reviewed graph evidence and actual placement rules for
+this private experiment.
+
+Before a Scorer is returned, verify the exact typed graph and complete EP
+map against the retained observation. Require all 28 expected GQA nodes
+on CUDA. Bound CPU work to the observed fixed INT32, INT64 and Boolean
+scalars and vectors of length at most four, at most 32 bytes per value and
+9,443 bytes over distinct connected values, with zero implicit CPU inputs.
+The new scoring session gets one T32/N8 forward after the three geometry
+refusals. Require the existing numerical gates, all 28 actual FP16
+FlashAttention log rows and complete per-node profiling for that forward.
+The profiler verifies the CPU tensor types, geometry and reported bytes
+against the bounded scope. Preserve the original 120-second deadline,
+32/32 GiB host and Job, 24 GiB device envelope, and settled teardown.
+
+The bounded receipt adds the exact `reviewed_graph` pin,
+`bounded_policy_identity` and `bounded_profile` observation. Strict T32 and
+the disposable graph probe retain their original schemas and gates.
+
 ## Private Compact FP16 T32 component probe
 
 `fp16_compact::cuda_compact_fp16_t32_component` is a separate ignored Windows

@@ -28,7 +28,17 @@ fn interval(event: &Value) -> Result<(u64, u64)> {
     Ok((start, end))
 }
 
-fn control_tensors(values: &Value) -> Result<(u64, u64)> {
+#[derive(Clone, Copy)]
+enum CpuControlScope {
+    Fp32,
+    CompactFp16,
+}
+
+fn control_tensors(values: &Value, scope: CpuControlScope) -> Result<(u64, u64)> {
+    let maximum_vector_length = match scope {
+        CpuControlScope::Fp32 => 5,
+        CpuControlScope::CompactFp16 => 4,
+    };
     let mut total = 0;
     let mut maximum = 0;
     for value in values.as_array().context("ORT tensor IO roster missing")? {
@@ -40,6 +50,7 @@ fn control_tensors(values: &Value) -> Result<(u64, u64)> {
         let width = match kind.as_str() {
             "int64" => 8,
             "bool" => 1,
+            "int32" if matches!(scope, CpuControlScope::CompactFp16) => 4,
             _ => anyhow::bail!("non-control ORT CPU tensor type {kind}"),
         };
         let dims = dims.as_array().context("ORT tensor shape missing")?;
@@ -47,8 +58,8 @@ fn control_tensors(values: &Value) -> Result<(u64, u64)> {
             [] => 1,
             [axis] => axis
                 .as_u64()
-                .filter(|n| *n <= 5)
-                .context("CPU vector exceeded length five")?,
+                .filter(|n| *n <= maximum_vector_length)
+                .context("CPU vector exceeded its reviewed length bound")?,
             _ => anyhow::bail!("CPU tensor exceeds scalar or fixed vector scope"),
         };
         let bytes = width * elements;
@@ -66,9 +77,9 @@ fn arg_u64(args: &Value, key: &str) -> Result<u64> {
         .with_context(|| format!("invalid ORT {key}"))
 }
 
-fn record_cpu_event(run: &mut ProfiledRun, args: &Value) -> Result<()> {
-    let (input, input_max) = control_tensors(&args["input_type_shape"])?;
-    let (output, output_max) = control_tensors(&args["output_type_shape"])?;
+fn record_cpu_event(run: &mut ProfiledRun, args: &Value, scope: CpuControlScope) -> Result<()> {
+    let (input, input_max) = control_tensors(&args["input_type_shape"], scope)?;
+    let (output, output_max) = control_tensors(&args["output_type_shape"], scope)?;
     ensure!(
         arg_u64(args, "activation_size")?.checked_add(arg_u64(args, "parameter_size")?)
             == Some(input)
@@ -86,6 +97,30 @@ pub(super) fn profiled_runs(
     bytes: &[u8],
     graph: &[GraphMetadataRow],
     widths: &[usize],
+) -> Result<Vec<ProfiledRun>> {
+    profiled_runs_for_scope(bytes, graph, widths, CpuControlScope::Fp32)
+}
+
+pub(super) fn compact_fp16_t32_profiled_run(
+    bytes: &[u8],
+    graph: &[GraphMetadataRow],
+) -> Result<ProfiledRun> {
+    let run = profiled_runs_for_scope(bytes, graph, &[32], CpuControlScope::CompactFp16)?
+        .into_iter()
+        .next()
+        .context("Compact FP16 T32 profile run missing")?;
+    ensure!(
+        run.node_count == 1746 && run.cpu_nodes == 374 && run.cpu_max_tensor_bytes <= 32,
+        "Compact FP16 profile differs from the reviewed node and CPU tensor bounds"
+    );
+    Ok(run)
+}
+
+fn profiled_runs_for_scope(
+    bytes: &[u8],
+    graph: &[GraphMetadataRow],
+    widths: &[usize],
+    scope: CpuControlScope,
 ) -> Result<Vec<ProfiledRun>> {
     let events: Vec<Value> = serde_json::from_slice(bytes)?;
     let mut nodes = BTreeMap::new();
@@ -149,7 +184,7 @@ pub(super) fn profiled_runs(
         let run = &mut runs[index];
         run.node_count += 1;
         if ep.as_str() == CPU {
-            record_cpu_event(run, args)?;
+            record_cpu_event(run, args, scope)?;
         }
     }
     let cpu_count = nodes.values().filter(|(_, ep)| ep.as_str() == CPU).count();
@@ -159,6 +194,30 @@ pub(super) fn profiled_runs(
         "ORT forward lacks the complete final-node census"
     );
     Ok(runs)
+}
+
+#[test]
+fn compact_fp16_profile_allows_only_its_fixed_integer_scope() -> Result<()> {
+    let controls = json!([{"int32":[1]}, {"int64":[4]}, {"bool":[]}]);
+    assert_eq!(
+        control_tensors(&controls, CpuControlScope::CompactFp16)?,
+        (37, 32)
+    );
+    assert!(control_tensors(&controls, CpuControlScope::Fp32).is_err());
+    let fp32_only = json!([{"int64":[5]}]);
+    assert_eq!(
+        control_tensors(&fp32_only, CpuControlScope::Fp32)?,
+        (40, 40)
+    );
+    assert!(control_tensors(&fp32_only, CpuControlScope::CompactFp16).is_err());
+    for value in [
+        json!([{"float16":[]}]),
+        json!([{"int32":[1, 1]}]),
+        json!([{"bool":[5]}]),
+    ] {
+        assert!(control_tensors(&value, CpuControlScope::CompactFp16).is_err());
+    }
+    Ok(())
 }
 
 #[test]

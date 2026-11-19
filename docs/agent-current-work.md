@@ -124,10 +124,15 @@ Use the existing deadline when resuming in a new context.
   log on 19 November confirmed CUDA-capable, CPU-preferred nodes and reached
   its cap. The complete disposable FP16 graph diagnostic then found all 28
   attention nodes on CUDA and only fixed-size integer and Boolean CPU data.
-  Review the exact graph for an independent FP16 bounded placement candidate.
-  Prove admitted placement, actual efficient attention and matching-recipe
-  scores on the small scoring probe before the full-width gate and dependent
-  FP16 platform sequence.
+  The bounded A6000 T32 scoring probe admitted the exact graph and reached
+  its first forward, which exited with a Windows access violation. The
+  converted Context graph omits both internal present tensors required by
+  the pinned CUDA GroupQueryAttention implementation. Correct those outputs
+  in the maintained exporter and independent verifier, retain the public
+  score interface and authenticate fresh conversion, metadata and placement.
+  Then prove actual FlashAttention and matching-recipe scores on the small
+  probe before the full-width gate and dependent FP16 platform sequence.
+  [Bounded T32 failure and source finding](simplify/one-process-ledger.md#2026-11-19--compact-fp16-bounded-placement-passed-before-the-t32-forward-crashed)
   Leave Focus GPU off the critical path. The 25% plus one-second warm Answer p95
   improvement target and the 2 GiB discrete-VRAM reserve are approved for
   release confirmation where applicable. [Accepted FP16 rule](arbiter/final-plan.md#accepted-context-fp16-task-quality-qualification)

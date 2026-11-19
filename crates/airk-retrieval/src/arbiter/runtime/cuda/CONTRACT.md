@@ -759,3 +759,29 @@ and requires the corrected graph and exact 40/8/4 GiB reservation. It disables
 ORT profiling and uses a separate policy identity. Cold load and unprofiled
 T8192/N8 warm operations retain their original operation and experiment
 expiries through the existing resource-scoring guard.
+
+## Private fixed-graph Compact FP16 T32 scoring
+
+The Windows x64 test-support profiled open requires the exact unqualified
+strict Compact FP16 evaluation profile and 16/8/2 GiB CUDA reservation
+under the original binding deadline. It accepts only the retained load-only
+graph receipt
+0375d26d8fa2e92f6670a28c55d3ffaad43c3ac10326886b40c968e13fa67a00,
+the same profile and physical adapter/driver, and a complete final graph
+whose current typed ordered rows and counters match that receipt. The
+native collector checks full agreement with current final SessionState
+placement before the scorer is returned.
+
+Only CUDA and CPU assignments in one resolved root are permitted. Each
+present CPU-incident value must be an INT32, INT64 or BOOL scalar or fixed
+vector of at most four elements, 32 bytes per value and 9,443 bytes in
+aggregate over distinct values. CPU implicit inputs refuse. All 28 root
+GroupQueryAttention nodes must match the canonical FP16 plan's exact names
+and execute on CUDA. The plan retains FP16 math and the FlashAttention
+selection. Actual backend dispatch and synchronization require separate
+run evidence.
+
+The scorer retains its own admitted graph and a policy identity in
+airk.private.compact-fp16-cuda-bounded-hybrid/1. The identity binds the
+reviewed receipt, exact profile and this source. This private mode leaves
+ordinary strict Scorer admission and the FP32 graph gates intact.

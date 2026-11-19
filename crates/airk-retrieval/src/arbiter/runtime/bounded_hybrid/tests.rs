@@ -68,7 +68,7 @@ fn sample() -> Vec<GraphMetadataRow> {
 fn bounded_hybrid_cpu_value_gate_refuses_unprofiled_or_non_control_tensors() -> Result<()> {
     use GraphMetadataRow::*;
     let rows = sample();
-    validate_cpu_values(&rows, COMPACT_CPU_PAYLOAD_BYTES)?;
+    validate_cpu_values(&rows, CpuValueBounds::fp32(COMPACT_CPU_PAYLOAD_BYTES))?;
 
     let rejects = [
         (
@@ -115,14 +115,16 @@ fn bounded_hybrid_cpu_value_gate_refuses_unprofiled_or_non_control_tensors() -> 
     for (index, replacement) in rejects {
         let mut rows = rows.clone();
         rows[index] = replacement;
-        assert!(validate_cpu_values(&rows, COMPACT_CPU_PAYLOAD_BYTES).is_err());
+        assert!(
+            validate_cpu_values(&rows, CpuValueBounds::fp32(COMPACT_CPU_PAYLOAD_BYTES)).is_err()
+        );
     }
     let mut rows = rows;
     let Value { element_type, .. } = &mut rows[3] else {
         unreachable!()
     };
     *element_type = Some(1);
-    assert!(validate_cpu_values(&rows, COMPACT_CPU_PAYLOAD_BYTES).is_err());
+    assert!(validate_cpu_values(&rows, CpuValueBounds::fp32(COMPACT_CPU_PAYLOAD_BYTES)).is_err());
     Ok(())
 }
 
@@ -225,7 +227,95 @@ fn large_payload_budget_is_separate_from_compact() -> Result<()> {
         ]);
     }
     rows.push(GraphMetadataRow::End { graph: 0 });
-    assert!(validate_cpu_values(&rows, COMPACT_CPU_PAYLOAD_BYTES).is_err());
-    validate_cpu_values(&rows, LARGE_CPU_PAYLOAD_BYTES)?;
+    assert!(validate_cpu_values(&rows, CpuValueBounds::fp32(COMPACT_CPU_PAYLOAD_BYTES)).is_err());
+    validate_cpu_values(&rows, CpuValueBounds::fp32(LARGE_CPU_PAYLOAD_BYTES))?;
     Ok(())
+}
+
+#[test]
+fn compact_fp16_bounded_cpu_values_admit_only_measured_control_geometry() -> Result<()> {
+    use GraphMetadataRow::*;
+    let mut rows = sample();
+    assert!(validate_cpu_values(&rows, CpuValueBounds::COMPACT_FP16).is_err());
+    let Dimension { number, .. } = &mut rows[4] else {
+        unreachable!()
+    };
+    *number = Some(4);
+    validate_cpu_values(&rows, CpuValueBounds::COMPACT_FP16)?;
+    let Value { element_type, .. } = &mut rows[3] else {
+        unreachable!()
+    };
+    *element_type = Some(6);
+    assert!(validate_cpu_values(&rows, CpuValueBounds::fp32(COMPACT_CPU_PAYLOAD_BYTES)).is_err());
+    validate_cpu_values(&rows, CpuValueBounds::COMPACT_FP16)?;
+    let bounds = CpuValueBounds {
+        maximum_payload: 15,
+        ..CpuValueBounds::COMPACT_FP16
+    };
+    assert!(validate_cpu_values(&rows, bounds).is_err());
+    let bounds = CpuValueBounds {
+        maximum_payload: 16,
+        ..CpuValueBounds::COMPACT_FP16
+    };
+    let Edge { node, .. } = &mut rows[6] else {
+        unreachable!()
+    };
+    *node = Some(0);
+    validate_cpu_values(&rows, bounds)?;
+    let Edge { role, .. } = &mut rows[6] else {
+        unreachable!()
+    };
+    *role = 1;
+    assert!(validate_cpu_values(&rows, bounds).is_err());
+    Ok(())
+}
+
+#[test]
+fn compact_fp16_bounded_attention_requires_the_exact_canonical_cuda_roster() -> Result<()> {
+    let names = (0..28)
+        .map(|i| format!("attention-{i}"))
+        .collect::<Vec<_>>();
+    let expected = names
+        .iter()
+        .map(|name| {
+            serde_json::json!({
+                "name": name, "operator": "GroupQueryAttention", "domain": "com.microsoft"
+            })
+        })
+        .collect::<Vec<_>>();
+    let plan = serde_json::json!({
+        "nodes": expected, "operator": "GroupQueryAttention", "domain": "com.microsoft",
+        "dtype": "fp16", "backend": "FLASH_ATTENTION"
+    });
+    let mut rows = names
+        .into_iter()
+        .enumerate()
+        .map(|(i, name)| GraphMetadataRow::Node {
+            graph: 0,
+            node: i as u64,
+            name,
+            domain: "com.microsoft".into(),
+            op: "GroupQueryAttention".into(),
+            ep: "CUDAExecutionProvider".into(),
+            version: 1,
+        })
+        .collect::<Vec<_>>();
+    validate_compact_fp16_attention(&rows, &plan)?;
+    let mut altered = rows.clone();
+    altered.pop();
+    assert!(validate_compact_fp16_attention(&altered, &plan).is_err());
+    let GraphMetadataRow::Node { ep, .. } = &mut rows[0] else {
+        unreachable!()
+    };
+    *ep = "CPUExecutionProvider".into();
+    assert!(validate_compact_fp16_attention(&rows, &plan).is_err());
+    Ok(())
+}
+
+#[test]
+fn compact_fp16_bounded_graph_refuses_caller_selected_evidence() {
+    let raw = b"{}";
+    let sha = Sha256Digest::from_bytes(Sha256::digest(raw).into());
+    assert!(GraphGate::new_compact_fp16(raw, sha).is_err());
+    assert!(GraphGate::new_compact_fp16(raw, COMPACT_FP16_GRAPH_SHA.parse().unwrap()).is_err());
 }
