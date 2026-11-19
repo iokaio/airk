@@ -1253,6 +1253,7 @@ and actual native execution remain unverified. Mac Neo has an Apple A18 Pro and
 | --- | --- | --- |
 | 1 | Windows NVIDIA / CUDA | First bounded compatibility and native qualification target on the actual A6000. Pin compatible runtime, driver requirements and dependent libraries. |
 | 2 | macOS / CoreML | Inspect exact graph coverage and available unified memory on Neo; run only fitting bounded probes. Distinguish GPU, Neural Engine and CPU placement; report a genuine fit/coverage blocker. |
+| 2 | Linux Radeon / ROCm rental | Gather evidence on an actual Radeon to inform experimental Windows Radeon support. See [Linux Radeon evidence](#linux-radeon-evidence). |
 | 2 | Windows DX12 / DirectML | Evaluate available Intel hardware after a bounded graph-coverage probe. Scope results to the tested adapter and driver. Follow the separate opt-in addendum for experimental Radeon. |
 | 3 | Linux x86_64 / CUDA on WSL2 | Qualify FP32 and efficient FP16 on the existing same-user WSL2 instance after Windows qualification. Verify device access and the compatible Linux stack. CPU Linux gates continue independently. |
 
@@ -1632,7 +1633,7 @@ pass. [Datagram weekend pass](https://datagram.net/day-pass)
 Offer Windows Radeon acceleration through a separately labeled, off-by-default
 DirectML opt-in. Start with Context Compact FP32 and build on the Windows
 development workstation. Verify compile, packaging, and the available
-DirectML smoke path. Radeon hardware testing is unavailable for this work,
+DirectML smoke path. A large Windows Radeon is unavailable for native qualification,
 so disclose the tested adapters and label the Radeon path experimental in
 the setting, device status and release notes. The observed approximately
 25× A6000 speedup for the 8192-token Compact model call motivates the
@@ -1657,3 +1658,27 @@ tested scope and actual availability. Show the reason when the selected
 model uses CPU, including opt-out, provider or operator failure, and
 insufficient VRAM. Read these details from the same service metadata as
 the NVIDIA entries.
+
+### Linux Radeon evidence
+
+Use a short Linux ROCm rental on an actual Radeon to inform the Windows
+experiment. Prefer a card in a target family, such as the RX 7900 XTX
+(RDNA 3, gfx1100) or Radeon AI PRO R9700 (RDNA 4, gfx1201). Confirm the
+available card, VRAM and ROCm versions before booking. DEGIMA lists both
+cards. DigitalOcean's single-GPU MI300X is a secondary option for a Linux
+AMD inference smoke test. Record MI300X results as Instinct evidence.
+[Linux Radeon rental](https://degima.ai/) · [DigitalOcean GPU availability](https://docs.digitalocean.com/products/droplets/details/gpu-availability/) · [AMD GPU architecture targets](https://rocm.docs.amd.com/projects/install-on-windows/en/latest/reference/system-requirements.html)
+
+Use the exact Context Compact FP32 ONNX artifact and independent score
+references for 32, 128, 1,024 and 8,192 tokens. Run supported cases under
+the declared resource and time budgets. Record the adapter, driver,
+provider and actual placement, score agreement, elapsed time and observed
+device memory. Exercise opt-out and settled GPU failure through the
+shared AIRK fallback path where it is available. Use the results to
+choose the first model, input lengths and memory checks to try on Windows.
+[AMD ONNX Runtime on Linux](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/inference/onnxruntime.html)
+
+Keep Windows DirectML adapter selection, operator placement, memory fit
+and speed as unverified until observed on Windows Radeon hardware.
+The Windows feature remains off by default and experimental. Any reported
+performance or VRAM result names its actual adapter, platform and provider.
