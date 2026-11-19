@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: Apache-2.0
+'use strict';
+// Opaque native ResourceRunInput.policy values, never an alternate validator.
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+function readNativePolicy(pin){
+ if(!pin||!path.isAbsolute(pin.path)||!/^[a-f0-9]{64}$/.test(pin.sha256||''))throw Error('original native policy pin required');
+ const stat=fs.lstatSync(pin.path);if(!stat.isFile()||stat.isSymbolicLink()||stat.size>16777216)throw Error('bounded ordinary native policy file required');
+ const raw=fs.readFileSync(pin.path);if(crypto.createHash('sha256').update(raw).digest('hex')!==pin.sha256)throw Error('native policy digest differs');
+ const policy=JSON.parse(raw).policy;
+ if(!policy||!Number.isSafeInteger(policy.deadline_ms)||policy.deadline_ms<1)throw Error('positive native deadline required');
+ return {raw,policy};
+}
+module.exports={readNativePolicy};

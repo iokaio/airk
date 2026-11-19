@@ -1,0 +1,87 @@
+{
+  "schema": "airk.composed-source-transition/1",
+  "qualification": false,
+  "files": [
+    {
+      "source": "scripts/arbiter/evaluation/research_history/composed_orchestration/native_policy--35b034526a78.py",
+      "source_sha256": "a100cff6a701d98c84b17b8fcb1d161f82314581e01b1b4ede6bd7bc1f7e631d",
+      "source_bytes": 1386,
+      "destination": "native_policy.py",
+      "role": "Explicit operational adaptation; see contract and reviewed source diff, not byte-identical relocation",
+      "maintained_sha256": "4bf6a14167ac549284d631f964908e7a25133a71c36a8c98caace5a0038dda42",
+      "maintained_bytes": 963
+    },
+    {
+      "source": "scripts/arbiter/evaluation/research_history/composed_orchestration/native_delivery--33a6c9409d2f.py",
+      "source_sha256": "7f05235459bd0d3a778609e0103693ee43c9a2a1468a6ea8a72832a6ac56bd56",
+      "source_bytes": 1293,
+      "destination": "native_delivery.py",
+      "role": "Explicit operational adaptation; see contract and reviewed source diff, not byte-identical relocation",
+      "maintained_sha256": "9d21251b018a74883ea69276ba8bbaf77c582fef65a11898762709761c689231",
+      "maintained_bytes": 994
+    },
+    {
+      "source": "scripts/arbiter/research/proposals/native-client-r1/sources/3914b11aeb29f2ce--native_policy.cjs.in",
+      "source_sha256": "3914b11aeb29f2cec1bf6143a405d0dbd91d568005db12c6669875b03fd9b6fb",
+      "source_bytes": 872,
+      "destination": "native_policy.cjs",
+      "role": "Explicit operational adaptation; see contract and reviewed source diff, not byte-identical relocation",
+      "maintained_sha256": "6dd3ca35993e1409ccd731c623ddba48d1bd5ac3ba7645249b00957220e6b4dc",
+      "maintained_bytes": 911
+    },
+    {
+      "source": "scripts/arbiter/research/proposals/native-client-r1/sources/d4677ba507f41783--native_delivery.cjs",
+      "source_sha256": "d4677ba507f417834de668c3567d91e62f3710119dea628ddc3bd192279f393d",
+      "source_bytes": 1167,
+      "destination": "native_delivery.cjs",
+      "role": "Explicit operational adaptation; see contract and reviewed source diff, not byte-identical relocation",
+      "maintained_sha256": "be245c02c35bff4435edd7678611564d1f9256f78ca92c29c8deefeaf88b3e24",
+      "maintained_bytes": 1154
+    },
+    {
+      "source": "scripts/arbiter/research/proposals/native-client-r1/sources/9aba1abbc1ff5356--native_eval_session.cjs",
+      "source_sha256": "9aba1abbc1ff535674c6c2965d239d319bedf0f8d82b98548403a3d1a447fd73",
+      "source_bytes": 13204,
+      "destination": "native_eval_session.cjs",
+      "role": "Explicit operational adaptation; see contract and reviewed source diff, not byte-identical relocation",
+      "maintained_sha256": "3d90a79727615f9beb7e02ff01e0fbacde0b1c0e3d5dd595bc9bd6fe0fdfe868",
+      "maintained_bytes": 13079
+    },
+    {
+      "source": "scripts/arbiter/research/proposals/native-client-r1/sources/2ecbbb70e477902f--session_controller.cjs.in",
+      "source_sha256": "2ecbbb70e477902ffbbf98114d562ebe15389e4dbc67212200b45abe93675c07",
+      "source_bytes": 6187,
+      "destination": "session_controller.cjs",
+      "role": "Explicit operational adaptation; see contract and reviewed source diff, not byte-identical relocation",
+      "maintained_sha256": "332b1d3f77e7d7f2e920f4999a65e8e862725269f2f77542f2316bc5fdd09b9b",
+      "maintained_bytes": 8443
+    },
+    {
+      "source": "scripts/arbiter/evaluation/research_history/composed_service_r1/evidence_checks.py",
+      "source_sha256": "08a5223babb69fbcae7a956aadd5154b55a6813f3c220df83a5a8ced25942c11",
+      "source_bytes": 7204,
+      "destination": "evidence_checks.py",
+      "role": "Explicit operational adaptation; see contract and reviewed source diff, not byte-identical relocation",
+      "maintained_sha256": "08a5223babb69fbcae7a956aadd5154b55a6813f3c220df83a5a8ced25942c11",
+      "maintained_bytes": 7204
+    },
+    {
+      "source": "scripts/arbiter/evaluation/research_history/composed_service_r1/assemble_observations.py",
+      "source_sha256": "2e1804967ef9ba5f3d8caf6da9d8f2d83216fbed5ba241e4eac5ab22b3734bc1",
+      "source_bytes": 2467,
+      "destination": "assemble_observations.py",
+      "role": "Explicit operational adaptation; see contract and reviewed source diff, not byte-identical relocation",
+      "maintained_sha256": "0f7c26f5f70e5fbabffc4e4e48ef473e0f166db7803be561835e998b7e7fed6f",
+      "maintained_bytes": 2538
+    },
+    {
+      "source": "scripts/arbiter/evaluation/research_history/composed_orchestration/run_composed--5b8d0ff1dd19.py",
+      "source_sha256": "90ce5d4b2c699956b217e0b84a7aedbb61fb78dc0d3c19674e0df7a11746181a",
+      "source_bytes": 16076,
+      "destination": "run_composed.py",
+      "role": "Explicit operational adaptation; see contract and reviewed source diff, not byte-identical relocation",
+      "maintained_sha256": "2e3be0818cfde586076c73582d82ae4dc45ac23182cd0c8eb54f40e145135cb2",
+      "maintained_bytes": 17651
+    }
+  ]
+}
