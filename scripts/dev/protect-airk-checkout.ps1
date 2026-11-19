@@ -43,17 +43,15 @@ $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $user = $identity.User.Value
 $acl = Get-Acl -LiteralPath $root
 $sidType = [Security.Principal.SecurityIdentifier]
-if ($identity.Owner.Value -ne $user -or $acl.GetOwner($sidType).Value -ne $user) {
-    throw 'Run as the checkout owner with that account as the token default owner.'
-}
-
-$trusted = @($user, 'S-1-5-18', 'S-1-5-32-544',
+$owner = $acl.GetOwner($sidType).Value
+$trusted = @($owner, 'S-1-5-18', 'S-1-5-32-544',
     'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
 # Match the write, delete and ACL/owner authority mask used by CUDA custody.
 $writeMask = 0x500d0156
 $access = [Security.AccessControl.AccessControlSections]::Access
 $inherited = [Security.AccessControl.AceFlags]::Inherited
 $allow = [Security.AccessControl.AceQualifier]::AccessAllowed
+$alreadyProtected = $acl.AreAccessRulesProtected
 $original = $acl.GetSecurityDescriptorSddlForm($access)
 $raw = [Security.AccessControl.RawSecurityDescriptor]::new($original)
 if (!$acl.AreAccessRulesCanonical -or $null -eq $raw.DiscretionaryAcl) {
@@ -110,7 +108,15 @@ if (!$acl.AreAccessRulesCanonical -or !$acl.AreAccessRulesProtected) {
 "Checkout: $root"
 $changes | Format-Table -AutoSize
 
-if ($Apply -and $PSCmdlet.ShouldProcess($root, 'Protect the checkout DACL and remove foreign write grants')) {
+if ($Apply -and $alreadyProtected -and $changes.Count -eq 0) {
+    'Checkout inheritance is already protected and there are no foreign write grants at the root.'
+} elseif ($Apply -and $PSCmdlet.ShouldProcess($root, 'Protect the checkout DACL and remove foreign write grants')) {
+    if ($user -ne $owner) {
+        throw "This checkout is owned by $owner. The account running PowerShell is $($identity.Name) ($user)."
+    }
+    if ($identity.Owner.Value -ne $user) {
+        throw 'Run -Apply with the checkout owner as the token default owner.'
+    }
     if ((Get-Acl -LiteralPath $root).GetSecurityDescriptorSddlForm($access) -cne $original) {
         throw 'Checkout permissions changed during preview. Start again.'
     }
@@ -119,7 +125,10 @@ if ($Apply -and $PSCmdlet.ShouldProcess($root, 'Protect the checkout DACL and re
     )
     [IO.File]::WriteAllText($backup, $original)
     "Original DACL backup: $backup"
+    'Applying permissions. Windows can take several minutes to update inheriting files and folders.'
+    $clock = [Diagnostics.Stopwatch]::StartNew()
     Set-Acl -LiteralPath $root -AclObject $acl
+    'Windows finished applying permissions in {0:N1} seconds.' -f $clock.Elapsed.TotalSeconds
     if (!(Get-Acl -LiteralPath $root).AreAccessRulesProtected) {
         throw "Checkout root did not retain protected inheritance. Backup: $backup"
     }

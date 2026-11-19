@@ -22,6 +22,14 @@ after Visual Studio initializes the compiler environment.
 [Checked Windows execution](../../../CONTRIBUTING.md#checked-windows-execution)
 [Build contract](CONTRACT.md)
 
+Before starting the build clock, check the effective write permissions of
+the exact recipe, repository source owners, build tools, patches, and their
+parent folders. The native Windows manifest assembler checks write access as
+well as ownership. A checkout can have the right owner and inherit Modify
+grants from the drive. Use a protected checkout or have its owner preview the
+[checkout permissions helper](../../dev/protect-airk-checkout.ps1). Recheck
+the original hashes and permissions after any repair.
+
 Run these stages in order with the pinned Python executable and reviewed
 input hashes.
 
