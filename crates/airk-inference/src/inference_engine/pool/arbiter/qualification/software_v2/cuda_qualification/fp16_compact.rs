@@ -10,7 +10,7 @@ const T32_INPUT: &str = "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102
 const GRAPH_BYTES: u64 = 64 << 20;
 const PROOF_BYTES: u64 = 16 << 20;
 const REVIEWED_FP16_GRAPH_SHA256: &str =
-    "0375d26d8fa2e92f6670a28c55d3ffaad43c3ac10326886b40c968e13fa67a00";
+    "932ed619f96b23d3e669f76d18731db1176e4f0944152ed40a866d9922182a3f";
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

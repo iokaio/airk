@@ -11392,3 +11392,88 @@ and producer pairs and their four input digests. Worker SHA-256
 No wider forward, timing, memory measurement or pass is established.
 After corrected Compact T32 clears, run the wider independent CPU proof
 on the exact same converted candidate before the four-width CUDA probe.
+
+### 2026-11-19 — Corrected Compact FP16 CUDA forward settles; matching raw parity fails
+
+The owned corrected Compact conversion finished in 243.673 s under its
+original 600-second and 8 GiB caps. The original child exited 0, leaving
+the Job empty with no forced termination and peak commit 908,357,632 B.
+Fresh plan b43ddbceb00a82b9ae5cc700bb3e6b633d1ed966cc028592c6e0ab5fe836e715
+bound 48,942 inputs and original FP32 prerequisite receipts. Fresh graph
+971cf2d22d8bb7c874f3e5f5ce014bf2c494d1fb7245126d27d722223ac1577f
+reproduced all 3,441,397,760 weight bytes at
+0c4bd89d032e7dd821071c3559776cd3da50d54d84b6e575373fd8cf7003a7c3.
+The corrected conversion execution is
+547777e60cd994968849c08b5dc158432097ece6b09da37e5008fa7c34b1cc56.
+
+The independent T32 CPU proof finished in 97.569 s and authenticated the
+corrected graph and publisher parameters. The one owned worker completed
+one CPU forward, exited 0 and left an empty Job without forced cleanup.
+Peak Job commit was 15,560,044,544 B. Its execution and proof are
+52e0102daf55445a089485a02522ae4ef6426abf9252af7328b2504cfaf3e945 and
+dd4cd366335e30cafcf53f369585ad16694d9e9a83bea9a96d8180f0d16deada.
+Native metadata finished in 24.534 s
+(44326fef7435afbf4493d41c087f9a30d3e694f27455283d4fdb2ce4b52c12b5).
+
+The fresh disposable CUDA graph stage finished in 32.698 s, with no
+forward and observed device/session settlement. Its complete 1,746 nodes
+include 1,372 CUDA and 374 CPU. All 28 GQA layers are on CUDA, and each
+retains both private rank-four FP16 present outputs at the correct slots.
+The 526 distinct CPU-connected values retain the prior 32-byte maximum
+and 9,443-byte aggregate. There are 173 produced values with a consumer
+on the other provider, totaling 3,872 bytes, and zero implicit CPU inputs.
+Graph execution c523eee7990cae7684493b85f22670fb251e6a218c10733a58c26ae58042ccb3
+and native 932ed619f96b23d3e669f76d18731db1176e4f0944152ed40a866d9922182a3f
+supply the updated exact bounded placement pins.
+
+In bounded scoring, A6000 Load returned in 9.083111 s. All three
+pre-dispatch invalid input controls refused. One actual T32/N8 forward
+returned and synchronized, with 0.270945 s inside the native call. The
+retained log and exact replay verify 28 distinct FP16 FlashAttention
+records. The complete typed execution profile covered 1,746 nodes and
+374 CPU nodes, with a 32-byte maximum CPU tensor and measured input and
+output sums of 11,451 and 5,043 bytes. The original 120-second cutoff,
+32/32 GiB process/Job and 24 GiB device bounds were retained. The Job
+settled with zero active members and no forced termination. Peak Job
+commit was 9,196,949,504 B. Native device/session/host release was observed.
+
+The finite scores picked the same winner as both references. Matching-half
+raw error was 0.0248556137 against the 0.001 limit. Matching-half mass
+error was 0.0000776930 and original-FP32 mass error was 0.0000526076,
+both under 0.05. Original-FP32 raw error was 0.0157556534 and retained as
+diagnostic. The native selector reported the numerical refusal at exit
+101, and the whole run failed in 33.231 s. This is valid kernel and
+placement evidence, with no passing matching-recipe result.
+
+The pinned FlashAttention forward converts max-shifted, unnormalized
+exponentials to half before the probability/value product, keeps the
+denominator in FP32 and normalizes after accumulation. The existing
+independent half reference applies normalized FP32 softmax and uses
+FP32 probabilities for the value product. This is a verified recipe
+difference. Its share of the observed score discrepancy is still
+unmeasured. Establish a literal arithmetic witness and isolate the
+matching reference for the pinned T32 Flash path before another native
+probe. Preserve the numeric gates and original receipts.
+
+The failed bounded run is retained in compact-fp16-present-bounded-t32-r2:
+execution 6247ace73ec75ebb1e762a969a616f46fd46214b995cfba48862d37b9da18f2c,
+native 4ab73f93188955889b3c026ceadf9283ec133ac3c1a7a70f1a8ea1cd50af41a5,
+journal fbc09f3767b51081a827c1e3d2730f5894247d31b99956ecc51378f6b13d7ce5,
+combined log 6f4cc4c73c55b37e21f8e47c21603d541d8fa1e68d37446493ebce8b09c0969b,
+ORT trace 18c95ff3109007fdb54f33ed4cdc761e1a08682abdc99f58e8f7e1331192d11e,
+linked image e4087d642c23e0cd397d1487028ce642934cb347e7aed73408b82e105889243e,
+placement policy 6ed20660e424b16f4dcae628af0996dafd24fcda24b74c25411608e82c773623.
+The verified Windows human account and default owner matched SID ending 1002.
+
+Pinned Rust 1.98.0 and Nextest 0.9.148 used the warm checkout target/
+with incremental=1. Native source group
+28f5f6dd0f7239a09881f5d8aae0ae295052b4ea8389d0bfb0b9ec57e2f08362.
+Scoped Clippy passed in 13.425 s
+(569a2486a3e76062e211801d8edc88c9607000e455724f2593088f1407877f06).
+Nextest passed 54 with 470 filtered in 19.587 s
+(ee8ebdc1866bde61e36a9690f2eea6fadce0a1e12900d3c6d23fa96578fb9b20).
+The exact image stage passed in 1.112 s
+(59a756bfaca47e39014fa2ebcb53e07bc2042c937d7c3b487b07dfab56980463).
+Exact commands, JUnit and Cargo timings are under
+windows-cuda-g5-present-bounded-checks-r2. Pinned formatting and 74 focused
+Python controls passed.

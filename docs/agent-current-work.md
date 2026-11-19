@@ -130,9 +130,13 @@ Use the existing deadline when resuming in a new context.
   the pinned CUDA GroupQueryAttention implementation. Correct those outputs
   in the maintained exporter and independent verifier, retain the public
   score interface and authenticate fresh conversion, metadata and placement.
-  Then prove actual FlashAttention and matching-recipe scores on the small
-  probe before the full-width gate and dependent FP16 platform sequence.
-  [Bounded T32 failure and source finding](simplify/one-process-ledger.md#2026-11-19--compact-fp16-bounded-placement-passed-before-the-t32-forward-crashed)
+  The corrected graph and independent T32 proof passed their own gates.
+  The next A6000 probe synchronized and logged all 28 FP16 FlashAttention
+  layers with complete typed execution, but matching-half raw error was
+  0.0248556137 against 0.001. Both mass bounds and the winner checks passed.
+  Isolate the pinned CUDA probability rounding against the independent
+  reference before repeating T32 or running the wider gates.
+  [Corrected T32 execution and numerical blocker](simplify/one-process-ledger.md#2026-11-19--corrected-compact-fp16-cuda-forward-settles-matching-raw-parity-fails)
   Leave Focus GPU off the critical path. The 25% plus one-second warm Answer p95
   improvement target and the 2 GiB discrete-VRAM reserve are approved for
   release confirmation where applicable. [Accepted FP16 rule](arbiter/final-plan.md#accepted-context-fp16-task-quality-qualification)

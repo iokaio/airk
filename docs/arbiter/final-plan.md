@@ -1626,6 +1626,17 @@ internal present outputs, authenticate a fresh graph and then rerun the
 small scoring probe under the original limits.
 [Bounded T32 scoring failure and source finding](../simplify/one-process-ledger.md#2026-11-19--compact-fp16-bounded-placement-passed-before-the-t32-forward-crashed)
 
+The corrected graph retained the private cache outputs and the same
+bounded CPU placement. A6000 T32 then synchronized with all 28 actual
+FP16 FlashAttention records and a complete typed profile. Matching-half
+raw error was 0.0248556137 against 0.001. Both mass bounds and the winner
+checks passed. The pinned FlashAttention kernel rounds unnormalized
+exponentials to half before the value product. The independent half
+reference uses normalized FP32 probabilities. Isolate that difference
+with a source-derived reference and a literal control before another
+scoring run. The original numerical and performance gates still apply.
+[Corrected T32 execution and numerical blocker](../simplify/one-process-ledger.md#2026-11-19--corrected-compact-fp16-cuda-forward-settles-matching-raw-parity-fails)
+
 ### FP16 implementation and validation sequence
 
 Use 8,192-token Context on a target developer GPU to decide whether the FP16
