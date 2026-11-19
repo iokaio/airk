@@ -35,16 +35,32 @@ WIDER_CASES = (
 REFERENCE_OWNER = "scripts/arbiter-fp16-reference.py"
 PUBLISHER_OWNER = "scripts/arbiter/export/qwen/qwen3-challengers-r1/qwen3_reference_r2.py"
 REFERENCES = {
-    REFERENCE_OWNER: "fec5e8b9ed661d91103f62977374bc5c42b4b1f70a433b1b13210e7bad857bd6",
+    REFERENCE_OWNER: "2db3e6fa599633534418785fe0dc38941a4de0b869d980d16effdad174f45406",
     "scripts/arbiter-fp16-reference/graph.py": "698c779c16a6bc768d260669c1daf0840bc2512ea9d56e2df7660f43f6909f72",
     PUBLISHER_OWNER: "4c6f43d0d81539cfc6bf7b6ddf5ae69273e61508d0db3d22a5e7488c60560b6b",
 }
 MAX_WALL_SECONDS = 600
 MAX_JSON_BYTES = 32 << 20
-RESULT_MARKER = "AIRK_FP16_COMPACT_REFERENCE "
-WIDER_RESULT_MARKER = "AIRK_FP16_COMPACT_WIDER_REFERENCE "
-PROOF_SCHEMA = "airk.private.compact-fp16-independent-proof/1"
-WIDER_PROOF_SCHEMA = "airk.private.compact-fp16-wider-independent-proof/1"
+REFERENCE_OUTPUTS = {
+    "t32": (
+        "airk.private.compact-fp16-independent-proof/1",
+        "airk.private.owned-compact-fp16-independent-proof/1",
+        "AIRK_FP16_COMPACT_REFERENCE ",
+        "compact-independent-proof.json",
+    ),
+    "wider": (
+        "airk.private.compact-fp16-wider-independent-proof/1",
+        "airk.private.owned-compact-fp16-wider-independent-proof/1",
+        "AIRK_FP16_COMPACT_WIDER_REFERENCE ",
+        "compact-wider-independent-proof.json",
+    ),
+    "flash-t32": (
+        "airk.private.compact-fp16-flash-t32-independent-proof/1",
+        "airk.private.owned-compact-fp16-flash-t32-independent-proof/1",
+        "AIRK_FP16_COMPACT_FLASH_T32_REFERENCE ",
+        "compact-flash-t32-independent-proof.json",
+    ),
+}
 
 
 def require(condition, message):
@@ -318,7 +334,10 @@ def verify(args):
     original_files, closure_pin = read_pinned_json(plan["source_closure"]["path"], plan["source_closure"]["sha256"], check)
     require(closure_pin == plan["source_closure"], "original source closure length differs")
 
-    if args.wider:
+    wider = args.reference_kind == "wider"
+    flash_t32 = args.reference_kind == "flash-t32"
+    proof_schema, _, _, _ = REFERENCE_OUTPUTS[args.reference_kind]
+    if wider:
         references, publisher_files = wider_references(check)
     else:
         reference, publisher_files = exact_reference(check)
@@ -368,7 +387,7 @@ def verify(args):
     check()
     for reference in references:
         check()
-        scores = independent.forward(reference["input"])
+        scores = independent.forward(reference["input"], context_flash_single_tile=flash_t32)
         check()
         require(scores.dtype == torch.float32 and scores.device.type == "cpu" and tuple(scores.shape) == (1, 8)
                 and not torch.cuda.is_initialized(), "CPU-only FP32-ABI Compact reference vector required")
@@ -385,11 +404,11 @@ def verify(args):
     loaded = loaded_runtime(source_and_runtime, conversion.pin, check)
     check()
     return {
-        "schema": WIDER_PROOF_SCHEMA if args.wider else PROOF_SCHEMA, "model": MODEL, "complete": True,
+        "schema": proof_schema, "model": MODEL, "complete": True,
         "conversion_receipt": receipt_pin, "conversion_plan": plan_pin, "candidate": candidate,
         "original_graph": plan["source_graph"], "original_closure": closure_pin,
         "publisher": publisher, "publisher_files": publisher_files, "verification": verification,
-        **({"references": references} if args.wider else {"reference": references[0]}),
+        **({"references": references} if wider else {"reference": references[0]}),
         "reference_sources": sources, "loaded_runtime": loaded,
         "execution_token": token, "pid": os.getpid(), "reference_device": "cpu",
         "original_deadline_monotonic": args.deadline_monotonic, "elapsed_seconds": time.monotonic() - started,
@@ -446,7 +465,9 @@ def run_owned(args):
     conversion.guard(plan, temporary, True, deadline=deadline)
     stdin = out / "stdin.txt"
     stdout = out / "stdout-stderr.log"
-    proof = out / ("compact-wider-independent-proof.json" if args.wider else "compact-independent-proof.json")
+    proof_schema, owned_schema, result_marker, proof_leaf = REFERENCE_OUTPUTS[args.reference_kind]
+    wider = args.reference_kind == "wider"
+    proof = out / proof_leaf
     receipt_path = out / "execution.json"
     for path in (stdin, stdout, proof, receipt_path):
         conversion.guard(plan, path, deadline=deadline)
@@ -455,8 +476,8 @@ def run_owned(args):
             worker_pin["path"], "--conversion-receipt", prior_pin["path"],
             "--conversion-receipt-sha256", prior_pin["sha256"], "--conversion-plan", plan_pin["path"],
             "--conversion-plan-sha256", plan_pin["sha256"], "--deadline-monotonic", repr(deadline)]
-    if args.wider:
-        argv.append("--wider")
+    if args.reference_kind != "t32":
+        argv.append("--" + args.reference_kind)
     environment = {key: value for key, value in os.environ.items()
                    if not key.upper().startswith(("AIRK_", "ORT_", "PYTHON", "CUDA_", "CUDNN_", "TORCH_", "TRITON_",
                                                   "HF_", "HUGGINGFACE_"))}
@@ -465,8 +486,7 @@ def run_owned(args):
                        TORCHINDUCTOR_CACHE_DIR=str(temporary), TRITON_CACHE_DIR=str(temporary),
                        TEMP=str(temporary), TMP=str(temporary), TMPDIR=str(temporary))
     host_bytes = 32 << 30
-    receipt = {"schema": ("airk.private.owned-compact-fp16-wider-independent-proof/1" if args.wider
-                          else "airk.private.owned-compact-fp16-independent-proof/1"), "complete": False,
+    receipt = {"schema": owned_schema, "complete": False,
                "qualification": False, "failure": None, "original_deadline_monotonic": deadline,
                "host_bytes": host_bytes, "command": argv, "execution_token": token,
                "conversion_plan": plan_pin, "conversion_receipt": prior_pin, "worker": worker_pin}
@@ -498,13 +518,13 @@ def run_owned(args):
         for path in temporary.rglob("*"):
             conversion.guard(plan, path, True, deadline=deadline)
         require(not any(temporary.iterdir()), "read-only reference worker created unexpected cache outputs")
-        marker = (WIDER_RESULT_MARKER if args.wider else RESULT_MARKER).encode("ascii")
+        marker = result_marker.encode("ascii")
         with stdout.open("rb") as stream:
             results = [line[len(marker):] for line in stream if line.startswith(marker)]
         require(len(results) == 1 and 0 < len(results[0]) <= 16 << 20,
                 "exact bounded independent worker observation missing")
         observed = json.loads(results[0])
-        require(observed["schema"] == (WIDER_PROOF_SCHEMA if args.wider else PROOF_SCHEMA)
+        require(observed["schema"] == proof_schema
                 and observed["complete"] is observed["model_inference"] is True
                 and observed["native_execution"] is observed["qualification"] is False
                 and observed["conversion_plan"] == plan_pin and observed["conversion_receipt"] == prior_pin
@@ -512,9 +532,9 @@ def run_owned(args):
                 and observed["pid"] == owned["owned_leader_pid"] and observed["execution_token"] == token
                 and observed["reference_device"] == "cpu"
                 and type(observed["torch_forward_invocations"]) is int
-                and observed["torch_forward_invocations"] == (3 if args.wider else 1),
+                and observed["torch_forward_invocations"] == (3 if wider else 1),
                 "independent worker output differs from the owned request")
-        if args.wider:
+        if wider:
             expected, _ = wider_references(check)
             validate_wider_observation(observed["references"], expected)
         else:
@@ -564,7 +584,12 @@ def main():
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--deadline-monotonic", type=float)
     mode.add_argument("--owned-output", type=Path)
-    parser.add_argument("--wider", action="store_true", help="verify exact retained T128, T1024, and T8192")
+    recipe = parser.add_mutually_exclusive_group()
+    recipe.add_argument("--wider", dest="reference_kind", action="store_const", const="wider",
+                        help="verify exact retained T128, T1024, and T8192")
+    recipe.add_argument("--flash-t32", dest="reference_kind", action="store_const", const="flash-t32",
+                        help="compare the exact T32 input with pinned single-tile Context Flash arithmetic")
+    parser.set_defaults(reference_kind="t32")
     args = parser.parse_args()
     if args.owned_output is not None:
         print(json.dumps({"proof": run_owned(args), "qualification": False}))
@@ -572,7 +597,8 @@ def main():
     encoded = json.dumps(verify(args), separators=(",", ":"), allow_nan=False)
     require(len(encoded.encode("utf-8")) <= 16 << 20, "independent proof output exceeds its bound")
     require(time.monotonic() < args.deadline_monotonic, "original reference deadline expired before retention")
-    print((WIDER_RESULT_MARKER if args.wider else RESULT_MARKER) + encoded, flush=True)
+    _, _, marker, _ = REFERENCE_OUTPUTS[args.reference_kind]
+    print(marker + encoded, flush=True)
 
 
 if __name__ == "__main__":

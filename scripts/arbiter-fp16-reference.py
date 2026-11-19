@@ -54,8 +54,22 @@ def live_start(mask):
  need(1 in mask,'all masked input forbidden');start=mask.index(1)
  need(mask==[0]*start+[1]*(len(mask)-start),'right padding/hole forbidden');return start
 
-def causal_half_attention(torch,q,k,v,mask,query_block=64):
- """Independent bounded FP32 causal math over half inputs, half result.
+def _context_flash_single_tile_result(torch, scores, value, scale):
+    # ORT scale_softmax_log2 narrows the host product once. The kernel rounds the
+    # scaled max separately, then fuses score * scale_log2 - scaled_max.
+    scale_log2 = f32(scale * math.log2(math.e))
+    scaled_max = scores.amax(dim=-1, keepdim=True) * scale_log2
+    # Compute the FMA argument with a widened intermediate and one FP32 cast.
+    exponent = (scores.double() * scale_log2 - scaled_max.double()).float()
+    exp_scores = torch.exp2(exponent)
+    denominator = exp_scores.sum(dim=-1, keepdim=True, dtype=torch.float32)
+    # Flash converts the unnormalized exponent tile before PV, then normalizes
+    # the FP32 accumulator with the original FP32 sum.
+    numerator = torch.matmul(exp_scores.to(torch.float16).float(), value)
+    return (numerator * denominator.reciprocal()).to(torch.float16)
+
+def causal_half_attention(torch,q,k,v,mask,query_block=64,*,context_flash_single_tile=False):
+ """Independent bounded causal math over half inputs, half result.
  No native SDPA or ONNX path is called; this cannot prove actual efficient dispatch.
  """
  need(q.dtype==k.dtype==v.dtype==torch.float16,'attention inputs must be half')
@@ -64,6 +78,9 @@ def causal_half_attention(torch,q,k,v,mask,query_block=64):
  need(k.shape==v.shape and q.shape[2:]==k.shape[2:] and q.shape[1]%k.shape[1]==0,'GQA geometry differs')
  need(type(query_block) is int and 0<query_block<=64 and len(mask)==q.shape[2],'bounded query block required')
  start=live_start(mask);heads=q.shape[1];ratio=heads//k.shape[1]
+ if context_flash_single_tile:
+  need(start==0 and q.shape[2]<=32 and q.shape[-1]==128 and q.device.type==k.device.type==v.device.type=='cpu',
+       'Context Flash single tile requires all-live CPU T<=32 and head width 128')
  # Consecutive repeat, not alternating/tiled KV ordering.
  key=k[:,:,start:,:].repeat_interleave(ratio,dim=1).float()
  value=v[:,:,start:,:].repeat_interleave(ratio,dim=1).float()
@@ -72,11 +89,14 @@ def causal_half_attention(torch,q,k,v,mask,query_block=64):
  scale=f32(q.shape[-1]**-0.5)
  for first in range(0,live,query_block):
   last=min(live,first+query_block);query=q[:,:,start+first:start+last,:].float()
-  scores=torch.matmul(query,key.transpose(-1,-2))*scale
+  scores=torch.matmul(query,key.transpose(-1,-2))
   allowed=key_axis.unsqueeze(0)<=torch.arange(first,last,device=q.device).unsqueeze(1)
-  scores=scores.masked_fill(~allowed,float('-inf'))
-  mass=torch.softmax(scores,dim=-1,dtype=torch.float32)
-  result=torch.matmul(mass,value).to(torch.float16)
+  if context_flash_single_tile:
+   result=_context_flash_single_tile_result(torch,scores.masked_fill(~allowed,float('-inf')),value,scale)
+  else:
+   scores=(scores*scale).masked_fill(~allowed,float('-inf'))
+   mass=torch.softmax(scores,dim=-1,dtype=torch.float32)
+   result=torch.matmul(mass,value).to(torch.float16)
   output[:,:,start+first:start+last,:]=checked_finite(torch,result,'attention output')
  return output
 
@@ -127,8 +147,11 @@ class HalfReference:
   t=self.torch;need(value.dtype==t.float32,'projection source island must be FP32')
   half=value.to(t.float16);checked_finite(t,half,'half projection input')
   return checked_finite(t,t.nn.functional.linear(half,self.weights[name]),'half projection output').float()
- def forward(self,row):
+ def forward(self,row,*,context_flash_single_tile=False):
   t=self.torch;c=self.config;ids,mask,positions,candidates,options=validate_native(t,c,self.focus,row)
+  if context_flash_single_tile:
+   need(not self.focus and len(ids)<=32 and self.dim==128 and t.device(self.device).type=='cpu',
+        'Context Flash single tile requires all-live CPU T<=32 and head width 128')
   with t.inference_mode(),t.autocast(device_type=t.device(self.device).type,enabled=False):
    token=t.tensor([ids],dtype=t.int64,device=self.device);position=t.tensor([positions],dtype=t.int64,device=self.device)
    hidden=t.nn.functional.embedding(token,self.weights['embed_tokens.weight']).float()
@@ -140,7 +163,9 @@ class HalfReference:
     q=rms(t,q,self.weights[root+'self_attn.q_norm.weight'],self.eps).transpose(1,2)
     k=rms(t,k,self.weights[root+'self_attn.k_norm.weight'],self.eps).transpose(1,2)
     q,k=rotary(t,q,k,position,c['rope_theta'])
-    attention=causal_half_attention(t,q.to(t.float16),k.to(t.float16),v.to(t.float16),mask).float().transpose(1,2).reshape(1,len(ids),self.qheads*self.dim)
+    attention=causal_half_attention(t,q.to(t.float16),k.to(t.float16),v.to(t.float16),mask,
+                                    context_flash_single_tile=context_flash_single_tile)
+    attention=attention.float().transpose(1,2).reshape(1,len(ids),self.qheads*self.dim)
     hidden=residual+self.linear(attention,root+'self_attn.o_proj.weight')
     residual=hidden;normal=rms(t,hidden,self.weights[root+'post_attention_layernorm.weight'],self.eps)
     gate=self.linear(normal,root+'mlp.gate_proj.weight');up=self.linear(normal,root+'mlp.up_proj.weight')

@@ -191,6 +191,18 @@ contains the three rows and `torch_forward_invocations` is three. The worker
 uses the `AIRK_FP16_COMPACT_WIDER_REFERENCE ` marker. The default T32 mode retains
 its own original marker, schema, and output file.
 
+## Independent Compact single-tile Flash comparison
+
+Use `--flash-t32` with the original owned reference flags to produce a separate
+CPU comparison for the exact frozen T32 input. The pinned CUDA kernel rounds
+max-shifted exponentials to half before multiplying by V and divides by the
+unrounded FP32 sum after accumulation. This mode evaluates that source-derived
+recipe while keeping the same original FP32 evidence, candidate and limits.
+The proof is `compact-flash-t32-independent-proof.json` with its own worker
+marker and receipt identities. Compare the independent result against the sealed
+prior CUDA scores before another native probe. Multi-tile widths require
+separate verification of the running max, sum and output rescaling.
+
 ## Owned Compact metadata and T32 probe
 
 The [native probe parent](probe_compact.py) owns one exact test invocation.

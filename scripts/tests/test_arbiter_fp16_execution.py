@@ -208,17 +208,21 @@ class WiderCompactReferenceControls(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.reference.validate_wider_observation(bad, expected)
 
-    def test_cli_preserves_default_and_uses_a_separate_wider_marker(self):
-        for args, wider, marker in (([], False, "AIRK_FP16_COMPACT_REFERENCE "),
-                                    (["--wider"], True, "AIRK_FP16_COMPACT_WIDER_REFERENCE ")):
+    def test_cli_preserves_default_and_uses_distinct_recipe_markers(self):
+        cases = (
+            ([], "t32", "AIRK_FP16_COMPACT_REFERENCE "),
+            (["--wider"], "wider", "AIRK_FP16_COMPACT_WIDER_REFERENCE "),
+            (["--flash-t32"], "flash-t32", "AIRK_FP16_COMPACT_FLASH_T32_REFERENCE "),
+        )
+        for args, kind, marker in cases:
             argv = ["verify_compact.py", "--conversion-plan", "plan", "--conversion-plan-sha256", "a",
                     "--conversion-receipt", "receipt", "--conversion-receipt-sha256", "b",
                     "--deadline-monotonic", str(self.reference.time.monotonic() + 600), *args]
-            with self.subTest(wider=wider), patch.object(self.reference.sys, "argv", argv), \
+            with self.subTest(kind=kind), patch.object(self.reference.sys, "argv", argv), \
                     patch.object(self.reference, "verify", return_value={"complete": True}) as verify, \
                     patch("builtins.print") as emit:
                 self.reference.main()
-                self.assertIs(verify.call_args.args[0].wider, wider)
+                self.assertEqual(verify.call_args.args[0].reference_kind, kind)
                 emit.assert_called_once_with(marker + '{"complete":true}', flush=True)
 
 

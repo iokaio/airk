@@ -11393,7 +11393,7 @@ No wider forward, timing, memory measurement or pass is established.
 After corrected Compact T32 clears, run the wider independent CPU proof
 on the exact same converted candidate before the four-width CUDA probe.
 
-### 2026-11-19 — Corrected Compact FP16 CUDA forward settles; matching raw parity fails
+### 2026-11-19 — Corrected Compact FP16 CUDA forward settles and matching raw parity fails
 
 The owned corrected Compact conversion finished in 243.673 s under its
 original 600-second and 8 GiB caps. The original child exited 0, leaving
@@ -11477,3 +11477,47 @@ The exact image stage passed in 1.112 s
 Exact commands, JUnit and Cargo timings are under
 windows-cuda-g5-present-bounded-checks-r2. Pinned formatting and 74 focused
 Python controls passed.
+
+### 2026-11-19 — Single-tile Flash reference still misses Compact T32 raw parity
+
+The pinned SM86 D128 CUDA path uses one causal key tile at T32 with no
+split workspace. The independent CPU comparator models the pinned
+rounded scaled max, FP32 shifted exponential and denominator, nearest-even
+half conversion of the unnormalized exponentials before the value
+product, and late FP32 normalization before the half output. The
+literal T2 control distinguishes its 0x20b0 output from the previous
+0x20c1 calculation. The comparator preserves the original independent
+reference as separate evidence and models the operation boundaries
+without claiming identical CPU and CUDA instruction approximations or
+reduction order. Nine pinned Torch controls and 74 launcher controls
+passed. The checked Windows owner was the human SID ending 1002.
+
+The checked CPU-only compare ran one T32 forward on the exact converted
+candidate and its original frozen input. Own Job settlement was natural
+in 97.193 s, child exit 0, no surviving processes and no forced cleanup.
+Peak Job commit was 15,561,994,240 B under the original 32 GiB caps.
+Under compact-fp16-present-flash-t32-reference-r3, execution
+870f6da30c35f966606975fcb042b8958d3138dfd3bd5b6bf8a79f76865287a4
+binds the new proof
+20419f1adaa4cdc18b7558e1db8eb30b661366ec40f75d8363b40b65b84b4849,
+the retained candidate, and the explicit --flash-t32 command.
+Worker source 0f410a57014ce09a4703bd52d50e96fcc2f853605e1352b48d641f52daa3cdd6
+pins reference source
+2db3e6fa599633534418785fe0dc38941a4de0b869d980d16effdad174f45406.
+
+The offline comparison used the exact GPU score output
+4ab73f93188955889b3c026ceadf9283ec133ac3c1a7a70f1a8ea1cd50af41a5
+and the unchanged T32/N8 input and original FP32 vector. The revised
+maximum raw error was 0.0303249359 versus 0.0248556137 with the original
+half reference. The revised matching-half mass error was 0.0000865683
+with the same winner. Original-FP32 mass error remained 0.0000526076.
+The revised arithmetic alone does not explain the original score gap.
+No second GPU forward was dispatched and the 0.001 gate remains failed.
+
+Use a disposable exact-candidate layer-0 diagnostic to capture the
+actual half Q, K, V and raw GQA outputs, then replay the same input bits
+through the independent attention comparison. All four values occupy
+393,216 B at T32. Add projection input and output cuts if needed.
+Authenticate the derived graph, audit actual placement and optimizer
+effects, and retain native synchronization and settlement. Full-width
+and Resource20 remain gated on the original matching parity criteria.

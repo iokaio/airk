@@ -10,8 +10,9 @@ def config():return {'model_type':'qwen3','hidden_act':'silu','tie_word_embeddin
 def state(c):
  out={'embed_tokens.weight':t.zeros(c['vocab_size'],2,dtype=t.float32),'norm.weight':t.ones(2,dtype=t.float32)}
  root='layers.0.'
- out.update({root+'input_layernorm.weight':t.ones(2),root+'post_attention_layernorm.weight':t.ones(2),root+'self_attn.q_norm.weight':t.ones(2),root+'self_attn.k_norm.weight':t.ones(2)})
- for n,shape in {'self_attn.q_proj':(4,2),'self_attn.k_proj':(2,2),'self_attn.v_proj':(2,2),'self_attn.o_proj':(2,4),'mlp.gate_proj':(3,2),'mlp.up_proj':(3,2),'mlp.down_proj':(2,3)}.items():out[root+n+'.weight']=t.zeros(shape)
+ dim=c['head_dim']; query_width=c['num_attention_heads']*dim; kv_width=c['num_key_value_heads']*dim
+ out.update({root+'input_layernorm.weight':t.ones(2),root+'post_attention_layernorm.weight':t.ones(2),root+'self_attn.q_norm.weight':t.ones(dim),root+'self_attn.k_norm.weight':t.ones(dim)})
+ for n,shape in {'self_attn.q_proj':(query_width,2),'self_attn.k_proj':(kv_width,2),'self_attn.v_proj':(kv_width,2),'self_attn.o_proj':(2,query_width),'mlp.gate_proj':(3,2),'mlp.up_proj':(3,2),'mlp.down_proj':(2,3)}.items():out[root+n+'.weight']=t.zeros(shape)
  out['embed_tokens.weight'][1]=t.tensor([1.,2.]);out['embed_tokens.weight'][2]=t.tensor([3.,4.]);out['embed_tokens.weight'][3]=t.tensor([5.,6.])
  out['embed_tokens.weight'][2152]=t.tensor([3.0005,4.001]);out['embed_tokens.weight'][9693]=t.tensor([5.002,6.003])
  return out
@@ -63,6 +64,38 @@ class LiteralControls(unittest.TestCase):
  def test_blocking_preserves_full_small_result(self):
   q=t.tensor([[[[.5,1],[1,-1],[2,.25]],[[1,.5],[.25,2],[1,-.5]]]],dtype=t.float16);k=t.tensor([[[[1,1],[2,-1],[-1,.5]]]],dtype=t.float16);v=t.tensor([[[[2,4],[6,8],[10,12]]]],dtype=t.float16)
   self.assertTrue(t.equal(r.causal_half_attention(t,q,k,v,[1,1,1],1),r.causal_half_attention(t,q,k,v,[1,1,1],3)))
+ def test_context_flash_rounds_unnormalized_exp_before_pv(self):
+  q=t.zeros(1,2,2,128,dtype=t.float16);k=t.zeros(1,1,2,128,dtype=t.float16);v=t.zeros_like(k)
+  q[0,:,:,0]=1;k[0,0,1,0]=-8;v[0,0,:,0]=t.tensor([1,-2],dtype=t.float16)
+  flash=r.causal_half_attention(t,q,k,v,[1,1],context_flash_single_tile=True)
+  standard=r.causal_half_attention(t,q,k,v,[1,1])
+  self.assertEqual(flash.dtype,t.float16);self.assertEqual(flash.shape,q.shape)
+  # With scale 1/sqrt(128), the last query computes
+  # (1 - 2*half(exp(-8/sqrt(128)))) / (1 + exp(-8/sqrt(128))).
+  # Full FP32 softmax gives 0x20c1 and narrowing normalized mass gives 0x20c0.
+  self.assertEqual(flash[0,:,:,0].contiguous().view(t.int16).tolist(),[[0x3c00,0x20b0],[0x3c00,0x20b0]])
+  self.assertEqual(standard[0,:,:,0].contiguous().view(t.int16).tolist(),[[0x3c00,0x20c1],[0x3c00,0x20c1]])
+  self.assertEqual(t.count_nonzero(flash[...,1:]).item(),0)
+ def test_context_flash_single_tile_refuses_left_padding(self):
+  q=t.zeros(1,2,2,128,dtype=t.float16);kv=t.zeros(1,1,2,128,dtype=t.float16)
+  with self.assertRaisesRegex(ValueError,'Context Flash single tile'):
+   r.causal_half_attention(t,q,kv,kv,[0,1],context_flash_single_tile=True)
+ def test_context_flash_forward_is_opt_in_and_checks_scope_before_tensors(self):
+  context=dict(config(),head_dim=128);ref=r.HalfReference(t,context,state(context),False,'cpu')
+  row=native();flash=ref.forward(row,context_flash_single_tile=True)
+  self.assertEqual(flash.dtype,t.float32);self.assertEqual(flash.shape,(1,2))
+  self.assertEqual(flash[0,0].item(),ref.forward(row)[0,0].item())
+  self.assertEqual(flash[0,1].item(),-10000)
+  too_wide=dict(row,input_ids=[1]*33,attention_mask=[1]*33,position_ids=list(range(33)),decision_position=32)
+  focus=r.HalfReference(t,context,state(context),True,'cpu')
+  small=r.HalfReference(t,config(),state(config()),False,'cpu')
+  for disallowed,input_row in [(ref,too_wide),(focus,native(True)),(small,row)]:
+   with self.subTest(input_row=input_row['decision_position']),self.assertRaisesRegex(ValueError,'Context Flash single tile'):
+    disallowed.forward(input_row,context_flash_single_tile=True)
+  ref.device='cuda'
+  with self.assertRaisesRegex(ValueError,'Context Flash single tile'):
+   ref.forward(row,context_flash_single_tile=True)
+  self.assertFalse(t.cuda.is_initialized())
  def test_candidate_ids_are_vocabulary_ids(self):
   row=native();row['candidate_positions']=[9999];row['option_mask']=[True];r.validate_native(t,config(),False,row)
   row['candidate_positions']=[10000]
