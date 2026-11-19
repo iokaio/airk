@@ -68,3 +68,25 @@ inventory, with actual 48 GiB process and aggregate Job checks and the
 original 120-second deadline. The runner retains the owned process and
 settlement receipt, native result and stdout. This operation creates and
 settles a disposable session and dispatches zero forwards.
+
+
+## Windows Large FP32 four-width profiling
+
+Use the same launcher and arguments with a native image containing the
+Large profiling selector. Add the exact completed Large graph result and
+the two independent fixtures to select scoring.
+
+```text
+  --graph LARGE_NATIVE_GRAPH_RESULT
+  --retained LARGE_REFERENCE_FIXTURE_17_128_8192
+  --supplemental LARGE_REFERENCE_FIXTURE_32_1024
+```
+
+One owned session checks the final graph and CPU tensor bounds before scoring
+32, 128, 1,024 and 8,192 in that order. It retains the native result, ten
+operation journal records, one ORT trace and the owned execution receipt.
+The original whole-run deadline is 120 seconds. The Windows process and Job
+caps are 48 GiB each. The 44 GiB device plan includes a 40 GiB arena and 4 GiB
+headroom. The warm admission increment is 8 GiB. The trace reports per-run
+CPU tensor sizes and placement. Endpoint latency, allocation peaks and
+cold/warm qualification have separate evidence requirements.

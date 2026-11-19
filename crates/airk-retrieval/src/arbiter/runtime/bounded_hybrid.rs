@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Private fixed-graph Compact FP32 experiment.
+//! Private fixed-graph Context FP32 experiments.
 
 use super::*;
 use airk_core::{arbiter::resource_policy::ResourcePolicy, identity::framed_digest};
@@ -14,7 +14,9 @@ const CPU: &str = "CPUExecutionProvider";
 const CUDA: &str = "CUDAExecutionProvider";
 const MAX_NATIVE_RESULT_BYTES: usize = 16 << 20;
 const MAX_CPU_VALUE_BYTES: u64 = 40;
-const MAX_DISTINCT_CPU_VALUE_BYTES: u64 = 34_131;
+const COMPACT_CPU_PAYLOAD_BYTES: u64 = 34_131;
+const LARGE_CPU_PAYLOAD_BYTES: u64 = 43_819;
+const LARGE_GRAPH_SHA: &str = "1892e5b040d8c51969f1d3361d0929950fa98f0ef4079060e48d00458635488a";
 const APPROVED_WIDTHS: [usize; 4] = [32, 128, 1024, 8192];
 
 pub(super) struct GraphGate {
@@ -23,6 +25,7 @@ pub(super) struct GraphGate {
     adapter: Value,
     expected_rows: Value,
     expected_counts: Value,
+    model: ModelChoice,
 }
 
 pub(super) struct GraphEvidence {
@@ -65,12 +68,12 @@ impl CompactBoundedHybridAnswerProvenance {
 }
 
 impl GraphGate {
-    fn new(raw: &[u8], evidence_sha: Sha256Digest) -> Result<Self> {
+    fn new(raw: &[u8], evidence_sha: Sha256Digest, model: ModelChoice) -> Result<Self> {
         ensure!(
             !raw.is_empty()
                 && raw.len() <= MAX_NATIVE_RESULT_BYTES
                 && Sha256Digest::from_bytes(Sha256::digest(raw).into()) == evidence_sha,
-            "reviewed Compact graph result bytes differ"
+            "reviewed Context graph result bytes differ"
         );
         let mut result: Value = serde_json::from_slice(raw)?;
         ensure!(
@@ -83,7 +86,7 @@ impl GraphGate {
                 && result["native_host_charge_release_observed"] == true
                 && result["native_control_cleanup_observed"] == true
                 && result["placement"]["complete"] == true,
-            "complete reviewed Compact graph evidence required"
+            "complete reviewed Context graph evidence required"
         );
         let graph = &mut result["graph_metadata"];
         ensure!(
@@ -98,7 +101,7 @@ impl GraphGate {
                 && graph["reported_counts"]
                     .as_array()
                     .is_some_and(|counts| counts.len() == 6),
-            "complete reviewed Compact graph rows required"
+            "complete reviewed Context graph rows required"
         );
         let expected_rows = graph["rows"].take();
         let expected_counts = graph["reported_counts"].take();
@@ -108,6 +111,7 @@ impl GraphGate {
             adapter: result["adapter_before"].take(),
             expected_rows,
             expected_counts,
+            model,
         })
     }
 
@@ -115,6 +119,7 @@ impl GraphGate {
         let current = serde_json::to_value(adapter)?;
         ensure!(
             profile.manifest == self.profile
+                && profile.model == self.model
                 && [
                     "uuid",
                     "driver_image_sha256",
@@ -128,7 +133,7 @@ impl GraphGate {
                         .get(key)
                         .is_some_and(|expected| current.get(key) == Some(expected))
                 }),
-            "reviewed Compact profile, adapter, or driver differs"
+            "reviewed Context profile, adapter, or driver differs"
         );
         Ok(())
     }
@@ -147,13 +152,24 @@ impl GraphGate {
         ensure!(
             serde_json::to_value(&graph.rows)? == self.expected_rows
                 && serde_json::to_value(graph.reported_counts)? == self.expected_counts,
-            "current Compact final graph differs from reviewed graph"
+            "current Context final graph differs from reviewed graph"
         );
-        validate_cpu_values(&graph.rows)?;
+        let (maximum_payload, scope): (u64, &[u8]) = match self.model {
+            ModelChoice::ContextQwenCompact => (
+                COMPACT_CPU_PAYLOAD_BYTES,
+                b"airk.private.compact-cuda-bounded-hybrid/1",
+            ),
+            ModelChoice::ContextQwenLarge => (
+                LARGE_CPU_PAYLOAD_BYTES,
+                b"airk.private.large-cuda-bounded-hybrid/1",
+            ),
+            _ => anyhow::bail!("bounded hybrid model outside reviewed Context scopes"),
+        };
+        validate_cpu_values(&graph.rows, maximum_payload)?;
         cuda::in_time(binding.load_deadline)?;
         let source = Sha256::digest(include_bytes!("bounded_hybrid.rs"));
         let policy_identity = framed_digest(
-            b"airk.private.compact-cuda-bounded-hybrid/1",
+            scope,
             &[
                 self.evidence_sha.as_bytes(),
                 self.profile.as_bytes(),
@@ -167,7 +183,7 @@ impl GraphGate {
     }
 }
 
-fn validate_cpu_values(rows: &[GraphMetadataRow]) -> Result<()> {
+fn validate_cpu_values(rows: &[GraphMetadataRow], maximum_payload: u64) -> Result<()> {
     use GraphMetadataRow::*;
     let mut root_count = 0;
     let mut cpu_nodes = BTreeSet::new();
@@ -189,7 +205,7 @@ fn validate_cpu_values(rows: &[GraphMetadataRow]) -> Result<()> {
                         && parent_graph.is_none()
                         && parent_node.is_none()
                         && outer_bindings == "not_applicable",
-                    "Compact bounded hybrid requires one fully resolved root graph"
+                    "bounded hybrid requires one fully resolved root graph"
                 );
                 root_count += 1;
             }
@@ -197,7 +213,7 @@ fn validate_cpu_values(rows: &[GraphMetadataRow]) -> Result<()> {
                 cpu_nodes.insert(*node);
             }
             Node { ep, .. } => {
-                ensure!(ep == CUDA, "unexpected Compact execution provider");
+                ensure!(ep == CUDA, "unexpected bounded hybrid execution provider");
                 cuda_nodes += 1;
             }
             Value {
@@ -225,7 +241,7 @@ fn validate_cpu_values(rows: &[GraphMetadataRow]) -> Result<()> {
                 ..
             } if cpu_nodes.contains(node) => {
                 // ORT's kernel input profile omits implicit slots. The frozen
-                // Compact graph has none on CPU, so require that exact scope.
+                // Context graphs have none on CPU, so require that exact scope.
                 ensure!(*role != 1, "CPU implicit input cannot be profiled");
                 incident_values.extend(*value);
             }
@@ -260,7 +276,7 @@ fn validate_cpu_values(rows: &[GraphMetadataRow]) -> Result<()> {
         total_bytes += bytes;
     }
     ensure!(
-        total_bytes <= MAX_DISTINCT_CPU_VALUE_BYTES,
+        total_bytes <= maximum_payload,
         "distinct CPU tensor payload exceeds observed aggregate bound"
     );
     Ok(())
@@ -341,6 +357,44 @@ impl Scorer {
         )
     }
 
+    pub fn open_large_bounded_hybrid_profiled(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        profiling_prefix: &Path,
+        reviewed_graph_result: &[u8],
+        reviewed_graph_sha: Sha256Digest,
+    ) -> Result<BoundedHybridScorer> {
+        cuda::diagnostic::require_graph_diagnostic_profile(&profile)?;
+        let binding = profile
+            .gpu
+            .as_ref()
+            .context("Large bounded hybrid CUDA binding missing")?;
+        ensure!(
+            profile.description().model == ModelChoice::ContextQwenLarge
+                && reviewed_graph_sha == LARGE_GRAPH_SHA.parse()?
+                && (
+                    binding.plan.cold_peak_bytes(),
+                    binding.plan.warm_extra_bytes(),
+                    binding.plan.headroom_bytes(),
+                ) == (40 << 30, 8 << 30, 4 << 30),
+            "Large bounded hybrid requires the exact graph and device reservation"
+        );
+        let deadline = binding.load_deadline;
+        let (scorer, evidence) = Self::open_reviewed_graph(
+            profile,
+            source,
+            reviewed_graph_result,
+            reviewed_graph_sha,
+            Some(profiling_prefix),
+        )?;
+        Ok(BoundedHybridScorer {
+            scorer,
+            evidence,
+            deadline,
+            profiling: Profiling::Active,
+        })
+    }
+
     pub fn open_compact_bounded_hybrid_resource(
         profile: ExecutionProfile,
         source: &dyn AssetSource,
@@ -393,7 +447,7 @@ impl Scorer {
             overall_deadline,
             maximum_operation,
         )?;
-        let (scorer, mut evidence) = Self::open_reviewed_compact_graph(
+        let (scorer, mut evidence) = Self::open_reviewed_graph(
             profile,
             source,
             reviewed_graph_result,
@@ -445,7 +499,7 @@ impl Scorer {
                 (overall_deadline, None)
             }
         };
-        let (scorer, mut evidence) = Self::open_reviewed_compact_graph(
+        let (scorer, mut evidence) = Self::open_reviewed_graph(
             profile,
             source,
             reviewed_graph_result,
@@ -469,7 +523,7 @@ impl Scorer {
         })
     }
 
-    fn open_reviewed_compact_graph(
+    fn open_reviewed_graph(
         profile: ExecutionProfile,
         source: &dyn AssetSource,
         reviewed_graph_result: &[u8],
@@ -480,7 +534,11 @@ impl Scorer {
             .gpu
             .as_ref()
             .context("bounded hybrid CUDA binding missing")?;
-        let gate = GraphGate::new(reviewed_graph_result, reviewed_graph_sha)?;
+        let gate = GraphGate::new(
+            reviewed_graph_result,
+            reviewed_graph_sha,
+            profile.description().model,
+        )?;
         gate.verify_profile(
             profile.description(),
             binding.device.observation(binding.load_deadline)?,

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Private four-width Compact FP32 CUDA profiling with exact reference inputs.
+//! Private four-width Context FP32 CUDA profiling with exact reference inputs.
 use super::*;
 use serde_json::json;
 
@@ -12,6 +12,36 @@ const SUPPLEMENTAL_SHA: &str = "c4360d8a759c68c305fba0df7bd04001a6b043d8a2a57b36
 const CAPACITY_SHA: &str = "071891ef57f12067bd386ccb0230f5018eb2a1143109d6aeeb0db731eab50586";
 const FAILED_CAPACITY_SHA: &str =
     "e3fd8d525bd0f7abc7eae08b154dd9410c02a6ee6d27d475bce7af3b4814ef4f";
+
+struct Experiment {
+    model: ModelChoice,
+    host_gib: u64,
+    device_gib: u64,
+    graph: &'static str,
+    retained: &'static str,
+    supplemental: &'static str,
+    receipt_schema: &'static str,
+}
+
+const COMPACT: Experiment = Experiment {
+    model: ModelChoice::ContextQwenCompact,
+    host_gib: 32,
+    device_gib: 24,
+    graph: GRAPH_SHA,
+    retained: RETAINED_SHA,
+    supplemental: SUPPLEMENTAL_SHA,
+    receipt_schema: "airk.private.cuda-compact-bounded-hybrid-profile/1",
+};
+
+const LARGE: Experiment = Experiment {
+    model: ModelChoice::ContextQwenLarge,
+    host_gib: 48,
+    device_gib: 44,
+    graph: "1892e5b040d8c51969f1d3361d0929950fa98f0ef4079060e48d00458635488a",
+    retained: "c87c4edcdec2ab5e98b41bfc186c3bb7d60791e7b9efd0aea186b731eecc3dd2",
+    supplemental: "020669f0c44a959a0d95798eb3cc52925513e7e549496368017e0827a398aaef",
+    receipt_schema: "airk.private.cuda-large-bounded-hybrid-profile/1",
+};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -65,7 +95,7 @@ fn reference_arrays(row: &NumericCase) -> Result<[&[f32]; 2]> {
         row.reference_original_fp32.as_deref(),
     ) {
         (Some(same), Some(original)) if finite(same) && finite(original) => Ok([same, original]),
-        _ => anyhow::bail!("both complete, finite independent Compact references required"),
+        _ => anyhow::bail!("both complete, finite independent Context references required"),
     }
 }
 
@@ -139,7 +169,7 @@ fn score_rows(
                 && original_mass <= 0.05
                 && same_argmax
                 && original_argmax,
-            "Compact FP32 reference or original deadline refused at T{}",
+            "Context FP32 reference or original deadline refused at T{}",
             WIDTHS[index]
         );
     }
@@ -149,6 +179,16 @@ fn score_rows(
 #[test]
 #[ignore = "owned Windows CUDA job, reviewed complete graph, and exact independent Compact references"]
 fn cuda_compact_fp32_bounded_hybrid_profile() -> Result<()> {
+    profile_context(COMPACT)
+}
+
+#[test]
+#[ignore = "owned Windows 48 GiB job, reviewed Large graph, and exact independent references"]
+fn cuda_large_fp32_bounded_hybrid_profile() -> Result<()> {
+    profile_context(LARGE)
+}
+
+fn profile_context(experiment: Experiment) -> Result<()> {
     let started_ns = airk_process::monotonic::now_ns()?;
     let started = Instant::now();
     let execution_user = airk_ipc::endpoint::current_user()?;
@@ -169,15 +209,15 @@ fn cuda_compact_fp32_bounded_hybrid_profile() -> Result<()> {
         job_limit_bytes,
     } = request
     else {
-        anyhow::bail!("reviewed Compact graph Probe request required");
+        anyhow::bail!("reviewed Context graph Probe request required");
     };
     ensure!(
         schema == SCHEMA
-            && bounds.host_limit_bytes == 32 << 30
-            && job_limit_bytes == 32 << 30
+            && bounds.host_limit_bytes == experiment.host_gib << 30
+            && job_limit_bytes == experiment.host_gib << 30
             && bounds.deadline_ms == 120_000
-            && bounds.device_limit_bytes == 24 << 30,
-        "approved original Compact host, device or time bound differs"
+            && bounds.device_limit_bytes == experiment.device_gib << 30,
+        "approved original Context host, device or time bound differs"
     );
     let deadline = started + Duration::from_millis(bounds.deadline_ms);
     let expires_ns = started_ns
@@ -185,12 +225,12 @@ fn cuda_compact_fp32_bounded_hybrid_profile() -> Result<()> {
         .context("original expiry overflow")?;
     let (input, profile, files, _) = inputs_from(&gpu_input)?;
     ensure!(
-        profile.model == ModelChoice::ContextQwenCompact
+        profile.model == experiment.model
             && profile.cpu_fit.is_none()
             && profile.device_execution.is_some(),
-        "frozen Compact GPU profile required"
+        "frozen Context GPU profile required"
     );
-    profile_probe_bounds(
+    let request_capacity = profile_probe_bounds(
         &bounds,
         cold_bytes,
         warm_bytes,
@@ -198,10 +238,18 @@ fn cuda_compact_fp32_bounded_hybrid_profile() -> Result<()> {
         job_limit_bytes,
         &profile,
     )?;
-    let capacity_pin = exact_pin("AIRK_CUDA_HYBRID_CAPACITY", CAPACITY_SHA)?;
-    let (arena, capacity_plan) =
-        capacity(&pinned(&capacity_pin, 4096)?, bounds.device_limit_bytes)?;
-    let graph_pin = exact_pin("AIRK_CUDA_HYBRID_GRAPH", GRAPH_SHA)?;
+    let (capacity_pin, capacity_plan) = if experiment.model == ModelChoice::ContextQwenCompact {
+        let pin = exact_pin("AIRK_CUDA_HYBRID_CAPACITY", CAPACITY_SHA)?;
+        let (_, plan) = capacity(&pinned(&pin, 4096)?, bounds.device_limit_bytes)?;
+        (Some(pin), plan)
+    } else {
+        ensure!(
+            (cold_bytes, warm_bytes, headroom_bytes) == (40 << 30, 8 << 30, 4 << 30),
+            "Large profiling requires the reviewed load-only device reservation"
+        );
+        (None, request_capacity)
+    };
+    let graph_pin = exact_pin("AIRK_CUDA_HYBRID_GRAPH", experiment.graph)?;
     let graph_bytes = pinned(&graph_pin, PROOF_BYTES)?;
     let graph: Value = serde_json::from_slice(&graph_bytes)?;
     ensure!(
@@ -210,8 +258,8 @@ fn cuda_compact_fp32_bounded_hybrid_profile() -> Result<()> {
             && graph["runtime_manifest"] == json!(runtime_manifest),
         "reviewed graph did not consume the exact current request, input and runtime"
     );
-    let retained_pin = exact_pin("AIRK_CUDA_HYBRID_RETAINED", RETAINED_SHA)?;
-    let supplementary_pin = exact_pin("AIRK_CUDA_HYBRID_SUPPLEMENTAL", SUPPLEMENTAL_SHA)?;
+    let retained_pin = exact_pin("AIRK_CUDA_HYBRID_RETAINED", experiment.retained)?;
+    let supplementary_pin = exact_pin("AIRK_CUDA_HYBRID_SUPPLEMENTAL", experiment.supplemental)?;
     let retained: NumericFixture = serde_json::from_slice(&pinned(&retained_pin, PROOF_BYTES)?)?;
     let supplementary: NumericFixture =
         serde_json::from_slice(&pinned(&supplementary_pin, PROOF_BYTES)?)?;
@@ -221,7 +269,7 @@ fn cuda_compact_fp32_bounded_hybrid_profile() -> Result<()> {
             && supplementary.model == retained.model
             && supplementary.compiler == retained.compiler
             && supplementary.resource_policy == retained.resource_policy,
-        "supplemental Compact references use a different native scoring identity"
+        "supplemental Context references use a different native scoring identity"
     );
     numeric_rows(&supplementary.rows, &[(32, 8), (1024, 8)], false)?;
     let retained_producer = validate_reference_producer(&retained, &profile)?;
@@ -276,15 +324,16 @@ fn cuda_compact_fp32_bounded_hybrid_profile() -> Result<()> {
     let binary = file_hash(&std::env::current_exe()?)?;
     let mut file = OpenOptions::new().write(true).create_new(true).open(&out)?;
     let mut receipt = json!({
-        "schema": "airk.private.cuda-compact-bounded-hybrid-profile/1", "complete": false,
+        "schema": experiment.receipt_schema, "complete": false,
         "qualified": false, "product_admission": false, "request": request_pin, "native_input": gpu_input,
         "profile": profile.manifest, "source_manifest": input.source_manifest, "runtime_manifest": runtime_manifest,
         "reviewed_graph": graph_pin, "retained_fixture": retained_pin, "supplemental_fixture": supplementary_pin,
         "retained_producer": retained_producer, "supplemental_producer": supplementary_producer,
         "capacity_policy": capacity_pin,
         "applied_capacity": {
-            "arena_limit_bytes": arena.arena_limit_bytes, "warm_extra_bytes": arena.warm_extra_bytes,
-            "headroom_bytes": arena.headroom_bytes,
+            "arena_limit_bytes": capacity_plan.cold_peak_bytes(),
+            "warm_extra_bytes": capacity_plan.warm_extra_bytes(),
+            "headroom_bytes": capacity_plan.headroom_bytes(),
         },
         "pid": std::process::id(), "native_binary_sha256": binary, "execution_user": execution_user,
         "default_owner": default_owner, "bounds": bounds, "actual_job": actual_job,
@@ -326,7 +375,7 @@ fn cuda_compact_fp32_bounded_hybrid_profile() -> Result<()> {
             let adapters = runtime.adapters(deadline)?;
             ensure!(
                 adapters.len() == 1,
-                "Compact profile requires one observed CUDA adapter"
+                "Context profile requires one observed CUDA adapter"
             );
             let device = runtime.device(adapters[0].uuid, deadline)?;
             custody.device = Some(device.clone());
@@ -339,27 +388,33 @@ fn cuda_compact_fp32_bounded_hybrid_profile() -> Result<()> {
                 .execution_profile(profile.manifest)?
                 .bind_cuda_probe(device.clone(), capacity_plan, deadline)?;
             let loaded = operations.observe(operation::Kind::Load, 0, None, || {
-                Scorer::open_compact_bounded_hybrid_profiled(
-                    execution,
-                    files,
-                    &prefix,
-                    &graph_bytes,
-                    graph_pin.sha256,
-                )
+                let open = if experiment.model == ModelChoice::ContextQwenCompact {
+                    Scorer::open_compact_bounded_hybrid_profiled
+                } else {
+                    Scorer::open_large_bounded_hybrid_profiled
+                };
+                open(execution, files, &prefix, &graph_bytes, graph_pin.sha256)
             })?;
             receipt["load_us"] = json!(loaded.elapsed_us);
             let mut scorer = loaded.value?;
             ensure!(
                 loaded.within_deadline,
-                "original Compact session load expiry exceeded"
+                "original Context session load expiry exceeded"
             );
-            receipt["policy_identity"] = json!(airk_core::identity::framed_digest(
-                b"airk.private.compact-cuda-bounded-hybrid-capacity/2",
-                &[
-                    scorer.policy_identity().as_bytes(),
-                    capacity_pin.sha256.as_bytes()
-                ],
-            ));
+            let policy_identity = match &capacity_pin {
+                Some(pin) => airk_core::identity::framed_digest(
+                    b"airk.private.compact-cuda-bounded-hybrid-capacity/2",
+                    &[scorer.policy_identity().as_bytes(), pin.sha256.as_bytes()],
+                ),
+                None => airk_core::identity::framed_digest(
+                    b"airk.private.large-cuda-bounded-hybrid-capacity/1",
+                    &[
+                        scorer.policy_identity().as_bytes(),
+                        request_pin.sha256.as_bytes(),
+                    ],
+                ),
+            };
+            receipt["policy_identity"] = json!(policy_identity);
             receipt["adapter_loaded"] = json!(device.observation(deadline)?);
             flush_graph_diagnostic(&mut file, &receipt)?;
             score_rows(
@@ -373,7 +428,7 @@ fn cuda_compact_fp32_bounded_hybrid_profile() -> Result<()> {
             scorer.synchronize(deadline)?;
             ensure!(
                 scorer.device_settled(),
-                "Compact CUDA work remains unsettled"
+                "Context CUDA work remains unsettled"
             );
             let path = scorer.finish_profiling()?;
             ensure!(
@@ -417,13 +472,15 @@ fn cuda_compact_fp32_bounded_hybrid_profile() -> Result<()> {
                 (&supplementary_pin, PROOF_BYTES),
                 (&retained_producer, PROOF_BYTES),
                 (&supplementary_producer, PROOF_BYTES),
-                (&capacity_pin, 4096),
             ] {
                 pinned(pin, max)?;
             }
+            if let Some(pin) = &capacity_pin {
+                pinned(pin, 4096)?;
+            }
             ensure!(
                 Instant::now() < deadline,
-                "original Compact expiry exceeded during postpins"
+                "original Context expiry exceeded during postpins"
             );
             Ok(())
         })
@@ -458,7 +515,7 @@ fn cuda_compact_fp32_bounded_hybrid_profile() -> Result<()> {
                 && cleaned
                 && released
                 && !poisoned,
-            "Compact CUDA session or host release unproven"
+            "Context CUDA session or host release unproven"
         );
         final_host_peak(peak, bounds.host_limit_bytes)?;
         Ok(())
@@ -471,7 +528,7 @@ fn cuda_compact_fp32_bounded_hybrid_profile() -> Result<()> {
         receipt["complete"] = json!(false);
         receipt["final_report_retention_exceeded_original_deadline"] = json!(true);
         flush_graph_diagnostic(&mut file, &receipt)?;
-        anyhow::bail!("original Compact profiling expiry during result retention");
+        anyhow::bail!("original Context profiling expiry during result retention");
     }
     result
 }

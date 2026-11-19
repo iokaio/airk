@@ -68,7 +68,7 @@ fn sample() -> Vec<GraphMetadataRow> {
 fn bounded_hybrid_cpu_value_gate_refuses_unprofiled_or_non_control_tensors() -> Result<()> {
     use GraphMetadataRow::*;
     let rows = sample();
-    validate_cpu_values(&rows)?;
+    validate_cpu_values(&rows, COMPACT_CPU_PAYLOAD_BYTES)?;
 
     let rejects = [
         (
@@ -115,14 +115,14 @@ fn bounded_hybrid_cpu_value_gate_refuses_unprofiled_or_non_control_tensors() -> 
     for (index, replacement) in rejects {
         let mut rows = rows.clone();
         rows[index] = replacement;
-        assert!(validate_cpu_values(&rows).is_err());
+        assert!(validate_cpu_values(&rows, COMPACT_CPU_PAYLOAD_BYTES).is_err());
     }
     let mut rows = rows;
     let Value { element_type, .. } = &mut rows[3] else {
         unreachable!()
     };
     *element_type = Some(1);
-    assert!(validate_cpu_values(&rows).is_err());
+    assert!(validate_cpu_values(&rows, COMPACT_CPU_PAYLOAD_BYTES).is_err());
     Ok(())
 }
 
@@ -189,5 +189,43 @@ fn compact_resource_operations_keep_independent_deadlines_and_exact_width() -> R
     input.option_mask[0] = true;
     input.input_ids.truncate(1024);
     assert!(require_resource_operation(&input, now, operation_expiry, overall_expiry).is_err());
+    Ok(())
+}
+
+#[test]
+fn large_payload_budget_is_separate_from_compact() -> Result<()> {
+    let mut rows = sample();
+    rows.pop();
+    for value in 2..=1000 {
+        rows.extend([
+            GraphMetadataRow::Value {
+                graph: 0,
+                value,
+                name: format!("control-{value}"),
+                element_type: Some(7),
+                rank: Some(1),
+                type_state: "tensor".into(),
+                provenance: "node_output".into(),
+                producer: Some(0),
+            },
+            GraphMetadataRow::Dimension {
+                graph: 0,
+                value,
+                index: 0,
+                number: Some(5),
+                symbol: None,
+            },
+            GraphMetadataRow::Edge {
+                graph: 0,
+                node: Some(0),
+                value: Some(value),
+                role: 2,
+                slot: value - 1,
+            },
+        ]);
+    }
+    rows.push(GraphMetadataRow::End { graph: 0 });
+    assert!(validate_cpu_values(&rows, COMPACT_CPU_PAYLOAD_BYTES).is_err());
+    validate_cpu_values(&rows, LARGE_CPU_PAYLOAD_BYTES)?;
     Ok(())
 }

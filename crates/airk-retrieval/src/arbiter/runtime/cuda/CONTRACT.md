@@ -726,3 +726,14 @@ same-session graph evidence and current resource policy in a distinct private
 domain. Resource20 continues to require its exact all-live T8192/N8 input.
 Past profiling and resource receipts retain their source, image and policy
 identities. Normal and product open paths continue to require strict placement.
+
+## Private Large FP32 bounded-hybrid profile
+
+The Windows x64 test-support Large entry requires the exact observed Large
+graph receipt and its model, profile, physical adapter and driver. The same
+live placement must match the reviewed graph before scoring. The gate allows
+only fixed INT64/BOOL scalars or short vectors on CPU, with zero implicit CPU
+inputs, 40 bytes per tensor and 43,819 distinct payload bytes. The Compact
+34,131-byte limit remains model-specific. The two profiling experiments have
+distinct policy identities. The scorer uses the original deadline and the
+reviewed 40/8/4 GiB device configuration for Large.

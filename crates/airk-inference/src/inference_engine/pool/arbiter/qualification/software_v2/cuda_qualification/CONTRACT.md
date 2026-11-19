@@ -279,3 +279,16 @@ and post-input pins. The series uses shared ResourceSeries nearest-rank
 p95. It omits ORT profiling overhead, retains the separate profiled
 diagnostic evidence, and reports the component only. Composed Answer,
 physical device memory peak and product admission remain separate.
+
+## Private Large bounded-hybrid profiling
+
+The Large Windows x64 selector reuses the four-width profiled execution and
+native operation journal. It binds the exact Large graph observation, Probe
+request and both independent reference fixtures. The observed graph is checked
+again on the scoring session before the first forward. The original 120-second
+deadline, 48 GiB process and aggregate Job caps, and 44 GiB device envelope
+(40 GiB arena, 8 GiB warm increment, 4 GiB headroom) apply throughout.
+All four all-live inputs must pass both independent comparisons and the complete
+runtime trace. A failure stops the sequence and retains observed results.
+The cell supplies private profiling evidence. Cold and warm resource and product
+qualification require their separate observations.
