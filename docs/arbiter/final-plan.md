@@ -1638,9 +1638,13 @@ raw error against the same GPU scores. The disposable layer-0 capture
 then reproduced all eight GPU scores exactly. On its actual Q/K/V inputs,
 the source-derived replay matched 65,288 of 65,536 half output values
 bit for bit. The independent prefix differs in Q, K and V before attention.
-Compare the shared half projection input and the direct Q/K/V projection
-outputs to distinguish normalization and cast effects from projection
-arithmetic. The original numerical and performance gates still apply.
+The shared half input differed in five of 65,536 values. With identical
+captured input and verified weights, direct K, V and Q differed at 400,
+587 and 658 half words. Exact dot witnesses put the CPU result closer at
+each projection's maximum-error sample. Isolate the stricter pinned
+CUDA FP32 GEMM mode before another full scoring attempt. The original
+numerical and performance gates still apply.
+[Identical-input projection comparison](../simplify/one-process-ledger.md#2026-11-19--identical-half-inputs-isolate-compact-projection-rounding)
 [Independent operand comparison](../simplify/one-process-ledger.md#2026-11-19--independent-compact-prefix-differs-before-attention)
 [Layer-0 capture and replay](../simplify/one-process-ledger.md#2026-11-19--compact-cuda-layer-0-capture-and-identical-operand-replay)
 [Corrected T32 execution and numerical blocker](../simplify/one-process-ledger.md#2026-11-19--corrected-compact-fp16-cuda-forward-settles-and-matching-raw-parity-fails)

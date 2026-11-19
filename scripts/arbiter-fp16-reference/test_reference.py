@@ -9,13 +9,14 @@ r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
 
 def config():return {'model_type':'qwen3','hidden_act':'silu','tie_word_embeddings':True,'attention_bias':False,'use_sliding_window':False,'rope_scaling':None,'rope_theta':1000000,'num_hidden_layers':1,'hidden_size':2,'num_attention_heads':2,'num_key_value_heads':1,'head_dim':2,'intermediate_size':3,'rms_norm_eps':1e-6,'vocab_size':10000}
 def state(c):
- out={'embed_tokens.weight':t.zeros(c['vocab_size'],2,dtype=t.float32),'norm.weight':t.ones(2,dtype=t.float32)}
+ hidden=c['hidden_size']; intermediate=c['intermediate_size']; dim=c['head_dim']
+ query_width=c['num_attention_heads']*dim; kv_width=c['num_key_value_heads']*dim
+ out={'embed_tokens.weight':t.zeros(c['vocab_size'],hidden,dtype=t.float32),'norm.weight':t.ones(hidden,dtype=t.float32)}
  root='layers.0.'
- dim=c['head_dim']; query_width=c['num_attention_heads']*dim; kv_width=c['num_key_value_heads']*dim
- out.update({root+'input_layernorm.weight':t.ones(2),root+'post_attention_layernorm.weight':t.ones(2),root+'self_attn.q_norm.weight':t.ones(dim),root+'self_attn.k_norm.weight':t.ones(dim)})
- for n,shape in {'self_attn.q_proj':(query_width,2),'self_attn.k_proj':(kv_width,2),'self_attn.v_proj':(kv_width,2),'self_attn.o_proj':(2,query_width),'mlp.gate_proj':(3,2),'mlp.up_proj':(3,2),'mlp.down_proj':(2,3)}.items():out[root+n+'.weight']=t.zeros(shape)
- out['embed_tokens.weight'][1]=t.tensor([1.,2.]);out['embed_tokens.weight'][2]=t.tensor([3.,4.]);out['embed_tokens.weight'][3]=t.tensor([5.,6.])
- out['embed_tokens.weight'][2152]=t.tensor([3.0005,4.001]);out['embed_tokens.weight'][9693]=t.tensor([5.002,6.003])
+ out.update({root+'input_layernorm.weight':t.ones(hidden),root+'post_attention_layernorm.weight':t.ones(hidden),root+'self_attn.q_norm.weight':t.ones(dim),root+'self_attn.k_norm.weight':t.ones(dim)})
+ for n,shape in {'self_attn.q_proj':(query_width,hidden),'self_attn.k_proj':(kv_width,hidden),'self_attn.v_proj':(kv_width,hidden),'self_attn.o_proj':(hidden,query_width),'mlp.gate_proj':(intermediate,hidden),'mlp.up_proj':(intermediate,hidden),'mlp.down_proj':(hidden,intermediate)}.items():out[root+n+'.weight']=t.zeros(shape)
+ for index,values in [(1,[1.,2.]),(2,[3.,4.]),(3,[5.,6.]),(2152,[3.0005,4.001]),(9693,[5.002,6.003])]:
+  if index<c['vocab_size']:out['embed_tokens.weight'][index,:2]=t.tensor(values)
  return out
 
 def native(focus=False):
@@ -149,6 +150,50 @@ class LiteralControls(unittest.TestCase):
   ref.focus=False;ref.device='cuda'
   with self.assertRaisesRegex(ValueError,'require CPU'):
    ref.layer0_operands(row)
+  self.assertFalse(t.cuda.is_initialized())
+ def test_layer0_projection_uses_native_input_and_returns_independent_rms(self):
+  c=dict(config(),vocab_size=4,hidden_size=2048,head_dim=128,num_attention_heads=16,num_key_value_heads=8)
+  weights=state(c);root='layers.0.'
+  weights['embed_tokens.weight'][1].fill_(1)
+  weights[root+'input_layernorm.weight'][:4]=t.tensor([2.,-1.,.5,3.])
+  weights[root+'self_attn.k_proj.weight'][5,:2]=t.tensor([.5+2**-12,.25])
+  weights[root+'self_attn.v_proj.weight'][1019,1:3]=t.tensor([1.,-.5])
+  weights[root+'self_attn.q_proj.weight'][2047,1:3]=t.tensor([.5,-4.])
+  ref=r.HalfReference(t,c,weights,False,'cpu')
+  row=dict(native(),input_ids=[1]*32,attention_mask=[1]*32,position_ids=list(range(32)),decision_position=31)
+  supplied=t.zeros(1,32,2048,dtype=t.float16)
+  supplied[0,0,:3]=t.tensor([4.,-2.,.25]);supplied[0,31,:3]=t.tensor([2.,-3.,1.])
+  before=supplied.clone()
+  with patch.object(ref,'_attention_operands',side_effect=AssertionError('attention must not run')):
+   normalized,k,v,q=ref.layer0_projection_operands(row,supplied)
+  self.assertTrue(t.equal(supplied,before))
+  self.assertEqual([tuple(x.shape) for x in (normalized,k,v,q)],[(1,32,2048),(1,32,1024),(1,32,1024),(1,32,2048)])
+  for tensor in (normalized,k,v,q):
+   self.assertEqual((tensor.device.type,tensor.dtype,tensor.is_contiguous()),('cpu',t.float16,True))
+  def bits(tensor):return [word&0xffff for word in tensor.view(t.int16).flatten().tolist()]
+  # Independent normalization is from the unit embedding. Projection rows use
+  # the deliberately different supplied values and K's rounded .5 weight.
+  self.assertEqual(bits(normalized[0,0,:5]),[0x4000,0xbc00,0x3800,0x4200,0x3c00])
+  self.assertEqual(bits(k[0,[0,1,31],5]),[0x3e00,0x0000,0x3400])
+  self.assertEqual(bits(v[0,[0,1,31],1019]),[0xc040,0x0000,0xc300])
+  self.assertEqual(bits(q[0,[0,1,31],2047]),[0xc000,0x0000,0xc580])
+ def test_layer0_projection_refuses_wrong_tensor_and_nonfinite_input(self):
+  c=dict(config(),vocab_size=4,hidden_size=2048,head_dim=128,num_attention_heads=16,num_key_value_heads=8)
+  ref=r.HalfReference(t,c,state(c),False,'cpu')
+  row=dict(native(),input_ids=[1]*32,attention_mask=[1]*32,position_ids=list(range(32)),decision_position=31)
+  nonfinite=t.zeros(1,32,2048,dtype=t.float16);nonfinite[0,0,0]=float('inf')
+  with patch.object(ref,'_embed_inputs',side_effect=AssertionError('invalid input reached embedding')):
+   for supplied,error in [
+    (None,'CPU half tensor'),
+    (t.zeros(1,32,2048),'CPU half tensor'),
+    (t.zeros(1,32,1024,dtype=t.float16),'CPU half tensor'),
+    (nonfinite,'nonfinite native half projection input'),
+   ]:
+    with self.subTest(error=error),self.assertRaisesRegex(ValueError,error):
+     ref.layer0_projection_operands(row,supplied)
+  ref.hidden=2
+  with self.assertRaisesRegex(ValueError,'hidden width must be 2048'):
+   ref.layer0_projection_operands(row,nonfinite)
   self.assertFalse(t.cuda.is_initialized())
  def test_candidate_ids_are_vocabulary_ids(self):
   row=native();row['candidate_positions']=[9999];row['option_mask']=[True];r.validate_native(t,config(),False,row)

@@ -334,3 +334,12 @@ digest framing and case inputs are preserved. The forced diagnostic
 selection only applies to its separate Compact CUDA evidence. The closed
 source hook emits a fresh focus CPU transition row from the current source
 pin. Retained rows and their original qualification scope are preserved.
+
+The next Compact FP16 projection diagnostic preserves the exact same CPU
+transition prerequisites. Reversing the two Windows test-support runtime
+hunks reproduces LF-normalized source
+10a292a8d136ef1a48734379c48c198c1cf5a21f094c3b7c32eb84fc719f084b.
+The current source pin is
+52563c3185ff061dc852fbdd0f12846a6b4f04330ad2f66ddec9c8b5afa77252.
+The closed source owner emits a fresh row with the same descriptor and
+digest framing. Earlier receipts retain their original identities.

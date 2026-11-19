@@ -143,19 +143,24 @@ class HalfReference:
   if focus:
    need(c['vocab_size']>9693,'trained Focus rows unavailable')
    self.head=checked_finite(torch,publisher_state['embed_tokens.weight'][[2152,9693]].detach().to(device=device,dtype=torch.float32).contiguous(),'trained Focus readout')
+ def _linear_half(self,value,name):
+  t=self.torch
+  return checked_finite(t,t.nn.functional.linear(value,self.weights[name]),'half projection output')
  def linear(self,value,name):
   t=self.torch;need(value.dtype==t.float32,'projection source island must be FP32')
-  half=value.to(t.float16);checked_finite(t,half,'half projection input')
-  return checked_finite(t,t.nn.functional.linear(half,self.weights[name]),'half projection output').float()
+  half=checked_finite(t,value.to(t.float16),'half projection input')
+  return self._linear_half(half,name).float()
  def _embed_inputs(self,ids,positions):
   t=self.torch
   token=t.tensor([ids],dtype=t.int64,device=self.device)
   position=t.tensor([positions],dtype=t.int64,device=self.device)
   hidden=t.nn.functional.embedding(token,self.weights['embed_tokens.weight']).float()
   return hidden,position
+ def _attention_norm(self,hidden,root):
+  return rms(self.torch,hidden,self.weights[root+'input_layernorm.weight'],self.eps)
  def _attention_operands(self,hidden,position,root):
   t=self.torch;tokens=hidden.shape[1]
-  normal=rms(t,hidden,self.weights[root+'input_layernorm.weight'],self.eps)
+  normal=self._attention_norm(hidden,root)
   q=self.linear(normal,root+'self_attn.q_proj.weight').reshape(1,tokens,self.qheads,self.dim)
   k=self.linear(normal,root+'self_attn.k_proj.weight').reshape(1,tokens,self.kvheads,self.dim)
   v=self.linear(normal,root+'self_attn.v_proj.weight').reshape(1,tokens,self.kvheads,self.dim).transpose(1,2)
@@ -163,13 +168,17 @@ class HalfReference:
   k=rms(t,k,self.weights[root+'self_attn.k_norm.weight'],self.eps).transpose(1,2)
   q,k=rotary(t,q,k,position,self.config['rope_theta'])
   return q.to(t.float16),k.to(t.float16),v.to(t.float16)
- def layer0_operands(self,row):
-  """Return the first Context Compact T32 attention operands in CPU head order."""
+ def _compact_layer0_row(self,row):
   t=self.torch
   need(not self.focus and self.layers>0 and (self.qheads,self.kvheads,self.dim)==(16,8,128)
        and t.device(self.device).type=='cpu','Compact layer-zero operands require CPU and 16/8 heads of width 128')
   ids,_,positions,_,_=validate_native(t,self.config,self.focus,row)
   need(len(ids)==32,'Compact layer-zero operands require exactly 32 all-live tokens')
+  return ids,positions
+ def layer0_operands(self,row):
+  """Return the first Context Compact T32 attention operands in CPU head order."""
+  t=self.torch
+  ids,positions=self._compact_layer0_row(row)
   with t.inference_mode(),t.autocast(device_type='cpu',enabled=False):
    hidden,position=self._embed_inputs(ids,positions)
    q,k,v=self._attention_operands(hidden,position,'layers.0.')
@@ -178,6 +187,24 @@ class HalfReference:
     checked_finite(t,k,'layer-zero K').contiguous(),
     checked_finite(t,v,'layer-zero V').contiguous(),
    )
+ def layer0_projection_operands(self,row,native_half_input):
+  """Return the independent shared input and K, V, Q projected from the native input."""
+  t=self.torch
+  ids,positions=self._compact_layer0_row(row)
+  need(self.hidden==2048,'Compact layer-zero projection hidden width must be 2048')
+  need(isinstance(native_half_input,t.Tensor)
+       and native_half_input.device.type=='cpu' and native_half_input.dtype==t.float16
+       and native_half_input.layout==t.strided and tuple(native_half_input.shape)==(1,32,2048),
+       'native projection input must be a CPU half tensor of shape [1,32,2048]')
+  with t.inference_mode(),t.autocast(device_type='cpu',enabled=False):
+   shared=checked_finite(t,native_half_input,'native half projection input').contiguous()
+   hidden,_=self._embed_inputs(ids,positions)
+   root='layers.0.'
+   independent_input=checked_finite(t,self._attention_norm(hidden,root).to(t.float16),'independent half projection input')
+   k=self._linear_half(shared,root+'self_attn.k_proj.weight')
+   v=self._linear_half(shared,root+'self_attn.v_proj.weight')
+   q=self._linear_half(shared,root+'self_attn.q_proj.weight')
+   return independent_input.contiguous(),k.contiguous(),v.contiguous(),q.contiguous()
  def forward(self,row,*,context_flash_single_tile=False):
   t=self.torch;ids,mask,positions,candidates,options=validate_native(t,self.config,self.focus,row)
   if context_flash_single_tile:

@@ -11,8 +11,10 @@ use std::{
 };
 
 mod layer0;
-pub(super) use layer0::promote_model;
-pub use layer0::{COMPACT_FP16_LAYER0_TAPS, CompactFp16Layer0GraphRefusal};
+use layer0::Layer0Cut;
+pub use layer0::{
+    COMPACT_FP16_LAYER0_PROJECTION_TAPS, COMPACT_FP16_LAYER0_TAPS, CompactFp16Layer0GraphRefusal,
+};
 
 const CPU: &str = "CPUExecutionProvider";
 const CUDA: &str = "CUDAExecutionProvider";
@@ -20,7 +22,7 @@ const MAX_NATIVE_RESULT_BYTES: usize = 16 << 20;
 const MAX_CPU_VALUE_BYTES: u64 = 40;
 const COMPACT_CPU_PAYLOAD_BYTES: u64 = 34_131;
 const COMPACT_FP16_GRAPH_SHA: &str =
-    "89f9c21b2fa40f3ce8af0f043453fd4eeeb42c3799e0ff22fab9e28c8d2f86e1";
+    "47a7cd6f9e0ddf50911cc7a745bcbec4ca2a963772aad5e2e6acc663e26ec104";
 const COMPACT_FP16_ATTENTION_NODES: usize = 28;
 const LARGE_CPU_PAYLOAD_BYTES: u64 = 43_819;
 const LARGE_GRAPH_SHA: &str = "1892e5b040d8c51969f1d3361d0929950fa98f0ef4079060e48d00458635488a";
@@ -33,7 +35,16 @@ const APPROVED_WIDTHS: [usize; 4] = [32, 128, 1024, 8192];
 enum GraphPolicy {
     ContextFp32(ModelChoice),
     CompactFp16,
-    CompactFp16Layer0,
+    CompactFp16Layer0(Layer0Cut),
+}
+
+impl GraphPolicy {
+    fn layer0(self) -> Option<Layer0Cut> {
+        match self {
+            Self::CompactFp16Layer0(cut) => Some(cut),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -79,7 +90,7 @@ pub(super) struct GraphEvidence {
 
 impl GraphEvidence {
     pub(super) fn is_layer0(&self) -> bool {
-        matches!(self.policy, GraphPolicy::CompactFp16Layer0)
+        self.policy.layer0().is_some()
     }
 }
 
@@ -119,7 +130,14 @@ impl CompactBoundedHybridAnswerProvenance {
 
 impl GraphGate {
     pub(super) fn is_layer0(&self) -> bool {
-        matches!(self.policy, GraphPolicy::CompactFp16Layer0)
+        self.policy.layer0().is_some()
+    }
+
+    pub(super) fn promote_model(&self, graph: Vec<u8>) -> Result<Vec<u8>> {
+        match self.policy.layer0() {
+            Some(cut) => layer0::promote_model(&graph, cut),
+            None => Ok(graph),
+        }
     }
 
     fn new(raw: &[u8], evidence_sha: Sha256Digest, model: ModelChoice) -> Result<Self> {
@@ -196,7 +214,7 @@ impl GraphGate {
     ) -> Result<Self> {
         let graph = match policy {
             GraphPolicy::ContextFp32(_) => &mut result["graph_metadata"],
-            GraphPolicy::CompactFp16 | GraphPolicy::CompactFp16Layer0 => {
+            GraphPolicy::CompactFp16 | GraphPolicy::CompactFp16Layer0(_) => {
                 &mut result["graph_observation"]["graph_metadata"]
             }
         };
@@ -230,7 +248,7 @@ impl GraphGate {
         let current = serde_json::to_value(adapter)?;
         let model = match self.policy {
             GraphPolicy::ContextFp32(model) => model,
-            GraphPolicy::CompactFp16 | GraphPolicy::CompactFp16Layer0 => {
+            GraphPolicy::CompactFp16 | GraphPolicy::CompactFp16Layer0(_) => {
                 ModelChoice::ContextQwenCompact
             }
         };
@@ -278,19 +296,16 @@ impl GraphGate {
                 CpuValueBounds::COMPACT_FP16,
                 b"airk.private.compact-fp16-cuda-bounded-hybrid/1",
             ),
-            GraphPolicy::CompactFp16Layer0 => (
-                CpuValueBounds::COMPACT_FP16,
-                b"airk.private.compact-fp16-cuda-layer0-taps/1",
-            ),
+            GraphPolicy::CompactFp16Layer0(cut) => (CpuValueBounds::COMPACT_FP16, cut.scope()),
             GraphPolicy::ContextFp32(_) => {
                 anyhow::bail!("bounded hybrid model outside reviewed Context scopes")
             }
         };
         let verified = (|| -> Result<()> {
             graph.validate_against(&placement)?;
-            if self.is_layer0() {
-                layer0::validate_graph(&graph.rows, &self.expected_rows)?;
-                layer0::validate_output_abi(session)?;
+            if let Some(cut) = self.policy.layer0() {
+                layer0::validate_graph(&graph.rows, &self.expected_rows, cut)?;
+                layer0::validate_output_abi(session, cut)?;
             } else {
                 ensure!(
                     serde_json::to_value(&graph.rows)? == self.expected_rows
@@ -565,7 +580,7 @@ impl Scorer {
             profiling_prefix,
             reviewed_graph_result,
             reviewed_graph_sha,
-            false,
+            None,
         )
     }
 
@@ -583,7 +598,25 @@ impl Scorer {
             profiling_prefix,
             reviewed_graph_result,
             reviewed_graph_sha,
-            true,
+            Some(Layer0Cut::Attention),
+        )
+    }
+
+    /// Private fixed-T32 diagnostic of the common half input and Q/K/V projections.
+    pub fn open_compact_fp16_layer0_projection_taps(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        profiling_prefix: &Path,
+        reviewed_graph_result: &[u8],
+        reviewed_graph_sha: Sha256Digest,
+    ) -> Result<Self> {
+        Self::open_compact_fp16_gated(
+            profile,
+            source,
+            profiling_prefix,
+            reviewed_graph_result,
+            reviewed_graph_sha,
+            Some(Layer0Cut::Projection),
         )
     }
 
@@ -593,7 +626,7 @@ impl Scorer {
         profiling_prefix: &Path,
         reviewed_graph_result: &[u8],
         reviewed_graph_sha: Sha256Digest,
-        layer0: bool,
+        layer0: Option<Layer0Cut>,
     ) -> Result<Self> {
         use airk_core::arbiter::device::{DevicePrecision, PlacementPolicy};
 
@@ -618,8 +651,8 @@ impl Scorer {
         );
         let load_deadline = binding.load_deadline;
         let mut gate = GraphGate::new_compact_fp16(reviewed_graph_result, reviewed_graph_sha)?;
-        if layer0 {
-            gate.policy = GraphPolicy::CompactFp16Layer0;
+        if let Some(cut) = layer0 {
+            gate.policy = GraphPolicy::CompactFp16Layer0(cut);
         }
         let scorer = Self::open_gated_graph(profile, source, Some(profiling_prefix), gate)?;
         scorer.compact_fp16_bounded_hybrid_attention_plan()?;
@@ -636,7 +669,7 @@ impl Scorer {
             .filter(|evidence| {
                 matches!(
                     evidence.policy,
-                    GraphPolicy::CompactFp16 | GraphPolicy::CompactFp16Layer0
+                    GraphPolicy::CompactFp16 | GraphPolicy::CompactFp16Layer0(_)
                 )
             })
             .context("same-session Compact FP16 bounded graph evidence missing")?;
@@ -662,12 +695,11 @@ impl Scorer {
     ) -> Result<(Vec<f32>, Vec<Vec<u16>>)> {
         crate::native_inference::require_service_compute()?;
         self.profile.validate_native_source()?;
-        ensure!(
-            self.bounded_hybrid
-                .as_ref()
-                .is_some_and(GraphEvidence::is_layer0),
-            "exact admitted Compact FP16 layer-0 diagnostic session required"
-        );
+        let cut = self
+            .bounded_hybrid
+            .as_ref()
+            .and_then(|evidence| evidence.policy.layer0())
+            .context("exact admitted Compact FP16 layer-0 diagnostic session required")?;
         let binding = self
             .profile
             .gpu
@@ -696,8 +728,7 @@ impl Scorer {
             .session
             .lock()
             .map_err(|_| anyhow::anyhow!("Arbiter native session poisoned"))?;
-        let result =
-            binding.score_with_layer0_taps(&mut session, input, deadline, COMPACT_FP16_LAYER0_TAPS);
+        let result = binding.score_with_layer0_taps(&mut session, input, deadline, cut.taps());
         if result.is_ok() {
             plan.validate_input(input)?;
         }

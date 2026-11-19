@@ -799,3 +799,10 @@ warm reservation, synchronous call, actual GPU settlement and final score
 authorization. The result retains four ordered finite binary16 bit arrays
 and the full typed diagnostic graph. The separate diagnostic cannot dispatch
 ordinary scoring and conveys no product admission or parity pass.
+
+The separate projection cut captures the common half input and the direct
+half K, V and Q projection outputs. Each declaration preserves the original
+symbolic token axis. The live CUDA edges must connect the shared input to
+all three exact MatMul nodes and the captured projections to their verified
+producers. The same T32 input and memory, profiling and settlement requirements
+govern both diagnostics.

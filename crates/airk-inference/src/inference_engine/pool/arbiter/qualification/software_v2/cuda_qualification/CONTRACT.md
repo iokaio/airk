@@ -451,3 +451,11 @@ before attributing a difference to the uninstrumented graph. Replay the retained
 Q/K/V bits through the independent causal reference against the captured
 attention output. The result has a separate private receipt identity and never
 supplies qualification or product model admission.
+
+The projection selector separately captures the half input shared by the
+three CUDA MatMul nodes and their exact direct K, V and Q outputs. Their
+declarations retain the verified base shapes with the symbolic token axis.
+The same owned T32 input, original cutoffs and complete placement apply.
+Compare the independent normalized half input with the captured input, and
+replay the projections with the captured bytes before attributing the score
+difference to normalization or projection.

@@ -10,7 +10,7 @@ const T32_INPUT: &str = "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102
 const GRAPH_BYTES: u64 = 64 << 20;
 const PROOF_BYTES: u64 = 16 << 20;
 const REVIEWED_FP16_GRAPH_SHA256: &str =
-    "89f9c21b2fa40f3ce8af0f043453fd4eeeb42c3799e0ff22fab9e28c8d2f86e1";
+    "47a7cd6f9e0ddf50911cc7a745bcbec4ca2a963772aad5e2e6acc663e26ec104";
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -551,6 +551,7 @@ enum CompactFp16Probe {
     GraphOnly,
     BoundedT32,
     Layer0Taps,
+    Layer0ProjectionTaps,
 }
 
 #[test]
@@ -577,9 +578,16 @@ fn cuda_compact_fp16_layer0_taps() -> Result<()> {
     observe_compact_fp16_t32(CompactFp16Probe::Layer0Taps)
 }
 
+#[test]
+#[ignore = "disposable Compact FP16 T32 CUDA diagnostic of the first layer half projections"]
+fn cuda_compact_fp16_layer0_projection_taps() -> Result<()> {
+    observe_compact_fp16_t32(CompactFp16Probe::Layer0ProjectionTaps)
+}
+
 fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
     let graph_only = mode == CompactFp16Probe::GraphOnly;
-    let layer0_taps = mode == CompactFp16Probe::Layer0Taps;
+    let projection_taps = mode == CompactFp16Probe::Layer0ProjectionTaps;
+    let layer0_taps = mode == CompactFp16Probe::Layer0Taps || projection_taps;
     let started_ns = airk_process::monotonic::now_ns()?;
     let started = Instant::now();
     let execution_user = airk_ipc::endpoint::current_user()?;
@@ -717,6 +725,7 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             CompactFp16Probe::GraphOnly => "airk.private.compact-fp16-graph-diagnostic/1",
             CompactFp16Probe::BoundedT32 => "airk.private.compact-fp16-bounded-t32-component/1",
             CompactFp16Probe::Layer0Taps => "airk.private.compact-fp16-layer0-taps/1",
+            CompactFp16Probe::Layer0ProjectionTaps => "airk.private.compact-fp16-layer0-projection-taps/1",
         },
         "complete": false, "qualified": false, "product_admission": false,
         "request": request_pin, "native_input": gpu_input, "profile": profile.manifest,
@@ -800,7 +809,11 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             let observer = execution.cuda_compact_fp16_load_observer()?;
             let loaded = journal.observe(operation::Kind::Load, 0, None, || {
                 if let Some((pin, graph_bytes)) = &reviewed_graph {
-                    if layer0_taps {
+                    if projection_taps {
+                        Scorer::open_compact_fp16_layer0_projection_taps(
+                            execution, files, profile_prefix, graph_bytes, pin.sha256,
+                        )
+                    } else if layer0_taps {
                         Scorer::open_compact_fp16_layer0_taps(
                             execution, files, profile_prefix, graph_bytes, pin.sha256,
                         )
@@ -854,7 +867,11 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             let (actual, taps) = scored.value?;
             receipt["native_forward_returned"] = json!(true);
             if let Some(taps) = taps {
-                let roster = airk_retrieval::arbiter::runtime::COMPACT_FP16_LAYER0_TAPS;
+                let roster = if projection_taps {
+                    airk_retrieval::arbiter::runtime::COMPACT_FP16_LAYER0_PROJECTION_TAPS
+                } else {
+                    airk_retrieval::arbiter::runtime::COMPACT_FP16_LAYER0_TAPS
+                };
                 ensure!(taps.len() == roster.len(), "Compact FP16 layer-0 tap roster differs");
                 receipt["layer0_taps"] = json!(roster
                     .iter()

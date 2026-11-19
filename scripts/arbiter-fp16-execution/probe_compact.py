@@ -24,9 +24,8 @@ SELECTORS = {
     "t32": PREFIX + "cuda_compact_fp16_t32_component",
     "bounded-t32": PREFIX + "cuda_compact_fp16_bounded_t32_component",
     "layer0-t32": PREFIX + "cuda_compact_fp16_layer0_taps",
+    "layer0-projection-t32": PREFIX + "cuda_compact_fp16_layer0_projection_taps",
 }
-REVIEWED_MODES = ("bounded-t32", "layer0-t32")
-SCORING_MODES = ("t32", *REVIEWED_MODES)
 MODEL = "arbiter-context-qwen3-17b"
 PREPARE_SHA = "850cf966a73bc5ecb0aa79cc3d22559cdd3ad855fbc38f73e361f136ea88c953"
 T32_DIGEST = "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102fe56fc335"
@@ -34,17 +33,32 @@ METADATA_SCHEMA = "airk.private.compact-fp16-probe-metadata/1"
 GRAPH_SCHEMA = "airk.private.compact-fp16-graph-diagnostic/1"
 T32_SCHEMA = "airk.private.compact-fp16-t32-component/2"
 BOUNDED_SCHEMA = "airk.private.compact-fp16-bounded-t32-component/1"
-LAYER0_SCHEMA = "airk.private.compact-fp16-layer0-taps/1"
 BOUNDED_POLICY = b"airk.private.compact-fp16-cuda-bounded-hybrid/1"
-LAYER0_POLICY = b"airk.private.compact-fp16-cuda-layer0-taps/1"
 LAYER0_TAPS = (
     ("/airk_g5/attention/0/q16", 2048),
     ("/airk_g5/attention/0/k16", 1024),
     ("/airk_g5/weight//scorer/layers.0/self_attn/v_proj/MatMul/output16", 1024),
     ("/airk_g5/attention/0/raw16", 2048),
 )
-REVIEWED_RECEIPT_SHA = "af3f5ee2b303a70bbfa09a1545c4a84422d28ce5eed6c5d8ba42047ef4280ef7"
-REVIEWED_GRAPH_SHA = "89f9c21b2fa40f3ce8af0f043453fd4eeeb42c3799e0ff22fab9e28c8d2f86e1"
+LAYER0_PROJECTION_TAPS = (
+    ("/airk_g5/weight//scorer/layers.0/self_attn/k_proj/MatMul/input16", 2048),
+    ("/airk_g5/weight//scorer/layers.0/self_attn/k_proj/MatMul/output16", 1024),
+    ("/airk_g5/weight//scorer/layers.0/self_attn/v_proj/MatMul/output16", 1024),
+    ("/airk_g5/weight//scorer/layers.0/self_attn/q_proj/MatMul/output16", 2048),
+)
+TAP_SCOPES = {
+    "layer0-t32": (
+        "airk.private.compact-fp16-layer0-taps/1", b"airk.private.compact-fp16-cuda-layer0-taps/1", LAYER0_TAPS,
+    ),
+    "layer0-projection-t32": (
+        "airk.private.compact-fp16-layer0-projection-taps/1",
+        b"airk.private.compact-fp16-cuda-layer0-projection-taps/1", LAYER0_PROJECTION_TAPS,
+    ),
+}
+REVIEWED_MODES = ("bounded-t32", *TAP_SCOPES)
+SCORING_MODES = ("t32", *REVIEWED_MODES)
+REVIEWED_RECEIPT_SHA = "6d5e8434a350ef1a1f11decd9c6a38bf374fc11fedffb86878cc738806899d34"
+REVIEWED_GRAPH_SHA = "47a7cd6f9e0ddf50911cc7a745bcbec4ca2a963772aad5e2e6acc663e26ec104"
 BOUNDED_SOURCE = "crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid.rs"
 CPU = "CPUExecutionProvider"
 BOUNDED_CPU_NODES = 374
@@ -197,7 +211,7 @@ def linked_image(build, image, base, audit, mode):
     )
     if mode in REVIEWED_MODES:
         relevant += (BOUNDED_SOURCE, inference + "/cuda_qualification/hybrid_profile_trace.rs")
-    if mode == "layer0-t32":
+    if mode in TAP_SCOPES:
         relevant += ("crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid/layer0.rs",
                      "crates/airk-retrieval/src/arbiter/runtime/cuda/run.rs")
     sources = {relative: exact_pin(ROOT / relative, native[relative], base) for relative in relevant}
@@ -417,10 +431,10 @@ def validate_bounded_t32(value, reviewed, placement, source, *, policy=BOUNDED_P
             "bounded FP16 profile timing, complete node coverage or CPU tensor bounds differ")
 
 
-def validate_layer0_evidence(value, component):
+def validate_layer0_evidence(value, component, roster=LAYER0_TAPS):
     taps = value["layer0_taps"]
-    require(isinstance(taps, list) and len(taps) == len(LAYER0_TAPS), "exact four layer-0 taps required")
-    for tap, (name, width) in zip(taps, LAYER0_TAPS):
+    require(isinstance(taps, list) and len(taps) == len(roster), "exact four layer-0 taps required")
+    for tap, (name, width) in zip(taps, roster):
         require(isinstance(tap, dict) and set(tap) == {"name", "width", "bits"}
                 and tap["name"] == name and type(tap["width"]) is int and tap["width"] == width,
                 "layer-0 tap name, order or width differs")
@@ -436,12 +450,12 @@ def validate_layer0_evidence(value, component):
     outputs = [values[row["value"]] for row in rows
                if row["kind"] == "edge" and row["graph"] == 0 and row["role"] == 4]
     by_name = {row["name"]: row for row in outputs}
-    require(len(outputs) == 5 and set(by_name) == {"scores", *(name for name, _ in LAYER0_TAPS)},
+    require(len(outputs) == 1 + len(roster) and set(by_name) == {"scores", *(name for name, _ in roster)},
             "exact score and layer-0 graph output boundary required")
     cuda_nodes = {row["node"] for row in rows if row["kind"] == "node" and row["graph"] == 0 and row["ep"] == CUDA}
     widths = {row["value"]: row["number"] for row in rows
               if row["kind"] == "dimension" and row["graph"] == 0 and row["index"] == 2}
-    for name, width in LAYER0_TAPS:
+    for name, width in roster:
         tap = by_name[name]
         require(tap["type_state"] == "tensor" and tap["element_type"] == 10 and tap["rank"] == 3
                 and tap["provenance"] == "node_output" and tap["producer"] in cuda_nodes
@@ -458,14 +472,18 @@ def validate_t32_row(rows, mode):
             and finite(row["elapsed_us"], 0, 120_000_000)
             and finite(row["native_call_elapsed_us"], 0, row["elapsed_us"]),
             "complete finite T32 scores and timing required")
-    if mode != "layer0-t32":
+    if mode not in TAP_SCOPES:
         validate_t32_comparisons(row)
     return row
 
 
 def validate_t32(value, paths, owned, request, evidence, metadata, manifest, image, component, base, *,
                  mode="t32", reviewed=None, reviewed_placement=None, policy_source=None):
-    schema = {"t32": T32_SCHEMA, "bounded-t32": BOUNDED_SCHEMA, "layer0-t32": LAYER0_SCHEMA}[mode]
+    if mode in TAP_SCOPES:
+        schema, policy, roster = TAP_SCOPES[mode]
+    else:
+        schema = {"t32": T32_SCHEMA, "bounded-t32": BOUNDED_SCHEMA}[mode]
+        policy, roster = BOUNDED_POLICY, None
     validate_native_identity(value, schema, owned, request, evidence, metadata, manifest, image, base)
     require(value["native_forward_returned"] is value["forward_synchronized"] is True
             and value["numeric_forward_attempts"] == 1, "native T32 return and synchronization required")
@@ -490,10 +508,9 @@ def validate_t32(value, paths, owned, request, evidence, metadata, manifest, ima
             and sum(len(node[key].encode("utf-8")) for node in placed for key in ("name", "domain", "op", "ep"))
                 == placement["reported_string_bytes"], "complete final placement required")
     if mode in REVIEWED_MODES:
-        policy = LAYER0_POLICY if mode == "layer0-t32" else BOUNDED_POLICY
         validate_bounded_t32(value, reviewed, reviewed_placement, policy_source, policy=policy)
-        if mode == "layer0-t32":
-            validate_layer0_evidence(value, component)
+        if roster is not None:
+            validate_layer0_evidence(value, component, roster)
     else:
         require(all(node["ep"] == CUDA for node in placed), "complete strict CUDA placement required")
     attention = [node for node in placed if node["op"] == "GroupQueryAttention"]
@@ -696,7 +713,7 @@ def run(args):
                 for path in retained:
                     if path.is_file():
                         limit = (component["DIAGNOSTIC_PROOFS"]["native_result"]
-                                 if args.mode in ("graph", "layer0-t32") and path == paths["native"] else LOG_CAP)
+                                 if args.mode in ("graph", *TAP_SCOPES) and path == paths["native"] else LOG_CAP)
                         size = path.stat().st_size
                         pin = (base.pin(path) if size <= limit else
                                {"path": str(path), "bytes": size, "digest_refused_beyond_bound": True})
@@ -721,7 +738,7 @@ def main():
         if args.graph_receipt is None or args.graph_receipt_sha256 != REVIEWED_RECEIPT_SHA:
             parser.error(f"{args.mode} requires --graph-receipt and the exact reviewed --graph-receipt-sha256")
     elif args.graph_receipt is not None or args.graph_receipt_sha256 is not None:
-        parser.error("--graph-receipt and --graph-receipt-sha256 require bounded-t32 or layer0-t32")
+        parser.error("--graph-receipt and --graph-receipt-sha256 require a reviewed graph mode")
     raise SystemExit(0 if run(args) else 1)
 
 

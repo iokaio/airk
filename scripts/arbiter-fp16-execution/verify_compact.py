@@ -8,6 +8,7 @@ import json
 import math
 import os
 from pathlib import Path
+import struct
 import sys
 import time
 
@@ -33,6 +34,12 @@ LAYER0_OPERANDS = (
     ("/airk_g5/attention/0/k16", 1024),
     ("/airk_g5/weight//scorer/layers.0/self_attn/v_proj/MatMul/output16", 1024),
 )
+LAYER0_PROJECTIONS = (
+    ("/airk_g5/weight//scorer/layers.0/self_attn/k_proj/MatMul/input16", 2048),
+    ("/airk_g5/weight//scorer/layers.0/self_attn/k_proj/MatMul/output16", 1024),
+    LAYER0_OPERANDS[2],
+    ("/airk_g5/weight//scorer/layers.0/self_attn/q_proj/MatMul/output16", 2048),
+)
 RETAINED_FIXTURE_SHA = "3962186640b42648b345fa200516ed44a3de4ccab0d783e671c9c22c3b8b1bbd"
 RETAINED_PRODUCER_SHA = "c48e88b5d6bd8dff20b052bedebf0a4a48354d57caa1d2944b2dda16281805b2"
 WIDER_CASES = (
@@ -43,7 +50,7 @@ WIDER_CASES = (
 REFERENCE_OWNER = "scripts/arbiter-fp16-reference.py"
 PUBLISHER_OWNER = "scripts/arbiter/export/qwen/qwen3-challengers-r1/qwen3_reference_r2.py"
 REFERENCES = {
-    REFERENCE_OWNER: "d3afac6ed511ea50a86a00d378f4627470b06ffc8468fabe539587bef5675fa3",
+    REFERENCE_OWNER: "06ee65a7c9cad968affb0109e1c9628dad6475c8c999116191a57119a55568cc",
     "scripts/arbiter-fp16-reference/graph.py": "698c779c16a6bc768d260669c1daf0840bc2512ea9d56e2df7660f43f6909f72",
     PUBLISHER_OWNER: "4c6f43d0d81539cfc6bf7b6ddf5ae69273e61508d0db3d22a5e7488c60560b6b",
 }
@@ -73,6 +80,12 @@ REFERENCE_OUTPUTS = {
         "airk.private.owned-compact-fp16-layer0-operands/1",
         "AIRK_FP16_COMPACT_LAYER0_OPERANDS ",
         "compact-layer0-operands.json",
+    ),
+    "layer0-projections": (
+        "airk.private.compact-fp16-layer0-projections/1",
+        "airk.private.owned-compact-fp16-layer0-projections/1",
+        "AIRK_FP16_COMPACT_LAYER0_PROJECTIONS ",
+        "compact-layer0-projections.json",
     ),
 }
 
@@ -323,23 +336,52 @@ def captured_layer0_operands(check):
             and capture["source_mask"]["verified_candidate_graph"] == LAYER0_CANDIDATE_SHA
             and len(capture["layer0_taps"]) == 4, "reviewed exact CUDA layer-0 capture required")
     operands = capture["layer0_taps"][:3]
-    for row, (name, width) in zip(operands, LAYER0_OPERANDS):
-        check()
-        require(row["name"] == name and row["width"] == width and len(row["bits"]) == 32 * width
-                and all(type(word) is int and 0 <= word <= 0xffff and word & 0x7c00 != 0x7c00
-                        for word in row["bits"]), "reviewed layer-0 half operand differs")
+    validate_captured_half(operands, LAYER0_OPERANDS, check)
     return operands, pin
 
 
-def compare_layer0_operands(torch, operands, captured):
-    require(len(operands) == len(captured) == 3, "exact Q, K and V operands required")
+def validate_captured_half(operands, roster, check):
+    require(isinstance(operands, list) and len(operands) == len(roster), "exact layer-0 tensor roster required")
+    for row, (name, width) in zip(operands, roster):
+        check()
+        require(row["name"] == name and type(row["width"]) is int and row["width"] == width
+                and isinstance(row["bits"], list) and len(row["bits"]) == 32 * width
+                and all(type(word) is int and 0 <= word <= 0xffff and word & 0x7c00 != 0x7c00
+                        for word in row["bits"]), "reviewed layer-0 half tensor differs")
+
+
+def captured_layer0_projections(args, check):
+    require(args.projection_capture.is_relative_to(CAMPAIGN), "reviewed campaign projection capture required")
+    capture, pin = read_pinned_json(args.projection_capture, args.projection_capture_sha256, check)
+    original, _ = read_pinned_json(LAYER0_CAPTURE, LAYER0_CAPTURE_SHA, check)
+    require(capture["schema"] == "airk.private.compact-fp16-layer0-projection-taps/1"
+            and capture["complete"] is capture["native_forward_returned"] is capture["forward_synchronized"] is True
+            and capture["qualified"] is capture["product_admission"] is False
+            and len(capture["rows"]) == 1 and capture["rows"][0]["input_digest"] == INPUT_DIGEST
+            and capture["source_mask"]["verified_candidate_graph"] == LAYER0_CANDIDATE_SHA,
+            "reviewed exact CUDA projection capture required")
+    scores = capture["rows"][0]["raw_scores"]
+    original_scores = original["rows"][0]["raw_scores"]
+    require(finite_scores(scores) and finite_scores(original_scores)
+            and struct.pack("<8f", *scores) == struct.pack("<8f", *original_scores),
+            "projection capture raw score bits differ")
+    projections = capture["layer0_taps"]
+    validate_captured_half(projections, LAYER0_PROJECTIONS, check)
+    require(projections[2]["bits"] == original["layer0_taps"][2]["bits"],
+            "captured raw V differs from the original attention capture")
+    return projections, pin
+
+
+def compare_layer0_operands(torch, operands, captured, roster, *, head_order):
+    require(len(operands) == len(captured) == len(roster), "exact layer-0 comparison roster required")
     result = []
-    for operand, observed, (name, width) in zip(operands, captured, LAYER0_OPERANDS):
+    for operand, observed, (name, width) in zip(operands, captured, roster):
+        shape = (1, width // 128, 32, 128) if head_order else (1, 32, width)
         require(operand.dtype == torch.float16 and operand.device.type == "cpu"
-                and tuple(operand.shape) == (1, width // 128, 32, 128)
-                and torch.isfinite(operand).all().item(), "finite independent layer-0 operand geometry differs")
+                and tuple(operand.shape) == shape and torch.isfinite(operand).all().item(),
+                "finite independent layer-0 tensor geometry differs")
         actual = torch.tensor(observed["bits"], dtype=torch.uint16, device="cpu").view(torch.float16)
-        expected = operand.transpose(1, 2).reshape(-1)
+        expected = (operand.transpose(1, 2) if head_order else operand).reshape(-1)
         result.append({
             "name": name, "elements": 32 * width,
             "max_abs_error": (expected.float() - actual.float()).abs().amax().item(),
@@ -348,13 +390,53 @@ def compare_layer0_operands(torch, operands, captured):
     return result
 
 
-def validate_layer0_operand_observation(observed, capture_pin):
+def half_units(word):
+    """Represent a finite half as an integer in units of 2**-24."""
+    magnitude = word & 1023
+    exponent = (word >> 10) & 31
+    if exponent:
+        magnitude = (magnitude + 1024) << (exponent - 1)
+    return -magnitude if word & 0x8000 else magnitude
+
+
+def exact_dot_distances(source, weights, cpu_word, cuda_word):
+    dot = sum(half_units(x) * half_units(w) for x, w in zip(source, weights, strict=True))
+    return {
+        "cpu_distance_2^-48": abs(dot - (half_units(cpu_word) << 24)),
+        "cuda_distance_2^-48": abs(dot - (half_units(cuda_word) << 24)),
+    }
+
+
+def projection_witnesses(torch, independent, native_input, operands, captured):
+    witnesses = []
+    for kind, operand, observed in zip(("k", "v", "q"), operands[1:], captured[1:], strict=True):
+        actual = torch.tensor(observed["bits"], dtype=torch.uint16, device="cpu").view(torch.float16)
+        difference = (operand.reshape(-1).float() - actual.float()).abs()
+        index = difference.argmax().item()
+        if difference[index].item() == 0:
+            continue
+        token, column = divmod(index, observed["width"])
+        weight = independent.weights[f"layers.0.self_attn.{kind}_proj.weight"][column]
+        source_bits = native_input[0, token].contiguous().view(torch.uint16).tolist()
+        weight_bits = weight.contiguous().view(torch.uint16).tolist()
+        cpu_word = operand[0, token, column].view(torch.uint16).item()
+        cuda_word = observed["bits"][index]
+        witnesses.append({
+            "name": observed["name"], "token": token, "column": column,
+            "cpu_half_word": cpu_word, "cuda_half_word": cuda_word,
+            **exact_dot_distances(source_bits, weight_bits, cpu_word, cuda_word),
+        })
+    return witnesses
+
+
+def validate_layer0_operand_observation(observed, capture_pin, roster=LAYER0_OPERANDS):
     require(observed["layer0_capture"] == capture_pin
             and type(observed["layer0_prefix_invocations"]) is int and observed["layer0_prefix_invocations"] == 1,
             "independent layer-0 capture or execution count differs")
     comparisons = observed["layer0_operands"]
-    require(isinstance(comparisons, list) and len(comparisons) == 3, "exact layer-0 operand comparisons required")
-    for row, (name, width) in zip(comparisons, LAYER0_OPERANDS):
+    require(isinstance(comparisons, list) and len(comparisons) == len(roster),
+            "exact layer-0 tensor comparisons required")
+    for row, (name, width) in zip(comparisons, roster):
         require(isinstance(row, dict) and set(row) == {"name", "elements", "max_abs_error", "exact_bit_mismatches"}
                 and row["name"] == name and type(row["elements"]) is int and row["elements"] == 32 * width
                 and type(row["max_abs_error"]) in (int, float) and math.isfinite(row["max_abs_error"])
@@ -399,9 +481,14 @@ def verify(args):
 
     wider = args.reference_kind == "wider"
     flash_t32 = args.reference_kind == "flash-t32"
-    layer0 = args.reference_kind == "layer0-operands"
+    projections = args.reference_kind == "layer0-projections"
+    layer0 = args.reference_kind == "layer0-operands" or projections
     proof_schema, _, _, _ = REFERENCE_OUTPUTS[args.reference_kind]
-    if layer0:
+    if projections:
+        conversion.windows_owner(path=args.projection_capture)
+        conversion.windows_owner(path=LAYER0_CAPTURE)
+        captured, capture_pin = captured_layer0_projections(args, check)
+    elif layer0:
         conversion.windows_owner(path=LAYER0_CAPTURE)
         captured, capture_pin = captured_layer0_operands(check)
     if wider:
@@ -455,13 +542,22 @@ def verify(args):
     layer0_evidence = {}
     if layer0:
         require(candidate["graph"]["sha256"] == LAYER0_CANDIDATE_SHA, "layer-0 candidate graph differs")
-        operands = independent.layer0_operands(references[0]["input"])
+        if projections:
+            native_input = torch.tensor(captured[0]["bits"], dtype=torch.uint16, device="cpu")
+            native_input = native_input.view(torch.float16).reshape(1, 32, 2048)
+            operands = independent.layer0_projection_operands(references[0]["input"], native_input)
+        else:
+            operands = independent.layer0_operands(references[0]["input"])
         check()
+        roster = LAYER0_PROJECTIONS if projections else LAYER0_OPERANDS
         layer0_evidence = {
             "layer0_prefix_invocations": 1,
             "layer0_capture": capture_pin,
-            "layer0_operands": compare_layer0_operands(torch, operands, captured),
+            "layer0_operands": compare_layer0_operands(torch, operands, captured, roster, head_order=not projections),
         }
+        if projections:
+            layer0_evidence["projection_witnesses"] = projection_witnesses(
+                torch, independent, native_input, operands, captured)
         require(not torch.cuda.is_initialized(), "CPU layer-0 reference initialized CUDA")
         conversion.pinned(capture_pin, check)
     else:
@@ -521,8 +617,13 @@ def run_owned(args):
             and conversion.pin(sys.executable, check) == plan["python"]
             and sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode,
             "reviewed Compact conversion and actual isolated parent required")
-    layer0 = args.reference_kind == "layer0-operands"
-    if layer0:
+    projections = args.reference_kind == "layer0-projections"
+    layer0 = args.reference_kind == "layer0-operands" or projections
+    if projections:
+        conversion.windows_owner(path=args.projection_capture)
+        conversion.windows_owner(path=LAYER0_CAPTURE)
+        _, capture_pin = captured_layer0_projections(args, check)
+    elif layer0:
         conversion.windows_owner(path=LAYER0_CAPTURE)
         _, capture_pin = captured_layer0_operands(check)
     helper_root = ROOT / "scripts/cuda-native-execution/helpers"
@@ -562,6 +663,9 @@ def run_owned(args):
             "--conversion-plan-sha256", plan_pin["sha256"], "--deadline-monotonic", repr(deadline)]
     if args.reference_kind != "t32":
         argv.append("--" + args.reference_kind)
+    if projections:
+        argv.extend(("--projection-capture", str(args.projection_capture),
+                     "--projection-capture-sha256", args.projection_capture_sha256))
     environment = {key: value for key, value in os.environ.items()
                    if not key.upper().startswith(("AIRK_", "ORT_", "PYTHON", "CUDA_", "CUDNN_", "TORCH_", "TRITON_",
                                                   "HF_", "HUGGINGFACE_"))}
@@ -625,7 +729,8 @@ def run_owned(args):
             require(observed["reference"]["input"]["input_digest"] == INPUT_DIGEST,
                     "independent worker output differs from the owned request")
         if layer0:
-            validate_layer0_operand_observation(observed, capture_pin)
+            roster = LAYER0_PROJECTIONS if projections else LAYER0_OPERANDS
+            validate_layer0_operand_observation(observed, capture_pin, roster)
             conversion.pinned(capture_pin, check)
         check()
         with proof.open("xb") as stream:
@@ -680,8 +785,17 @@ def main():
                         help="compare the exact T32 input with pinned single-tile Context Flash arithmetic")
     recipe.add_argument("--layer0-operands", dest="reference_kind", action="store_const", const="layer0-operands",
                         help="compare independent CPU layer-0 Q, K and V with their exact CUDA capture")
+    recipe.add_argument("--layer0-projections", dest="reference_kind", action="store_const", const="layer0-projections",
+                        help="compare native and independent layer-0 projections on their identical half input")
+    parser.add_argument("--projection-capture", type=Path)
+    parser.add_argument("--projection-capture-sha256")
     parser.set_defaults(reference_kind="t32")
     args = parser.parse_args()
+    if args.reference_kind == "layer0-projections":
+        if args.projection_capture is None or args.projection_capture_sha256 is None:
+            parser.error("--layer0-projections requires both projection capture pins")
+    elif args.projection_capture is not None or args.projection_capture_sha256 is not None:
+        parser.error("projection capture pins require --layer0-projections")
     if args.owned_output is not None:
         print(json.dumps({"proof": run_owned(args), "qualification": False}))
         return

@@ -214,6 +214,15 @@ count. The separate `compact-layer0-operands.json` proof records one prefix
 and zero complete forwards. The 600-second clock, host Job, library census,
 file custody and natural settlement checks are the same as for T32.
 
+Use `--layer0-projections --projection-capture ABSOLUTE_NATIVE_RESULT
+--projection-capture-sha256 SHA` for the separate projection comparison.
+The worker authenticates the exact capture and verifies the same eight
+scores and raw V words as the retained attention diagnostic. It compares
+independently normalized and rounded input against captured half input,
+then computes direct K, V and Q with the captured input and the same
+independently verified weights. The output is `compact-layer0-projections.json`.
+This comparison runs one prefix under the original CPU bounds.
+
 ## Owned Compact metadata and T32 probe
 
 The [native probe parent](probe_compact.py) owns one exact test invocation.

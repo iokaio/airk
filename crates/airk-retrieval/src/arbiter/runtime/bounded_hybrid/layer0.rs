@@ -11,6 +11,46 @@ pub const COMPACT_FP16_LAYER0_TAPS: &[(&str, usize)] = &[
 ];
 const GQA: &str = "/airk_g5/attention/0/efficient";
 const V_PROJECTION: &str = "/airk_g5/weight//scorer/layers.0/self_attn/v_proj/MatMul/output16";
+const PROJECTION_INPUT: &str = "/airk_g5/weight//scorer/layers.0/self_attn/k_proj/MatMul/input16";
+pub const COMPACT_FP16_LAYER0_PROJECTION_TAPS: &[(&str, usize)] = &[
+    (PROJECTION_INPUT, 2048),
+    (
+        "/airk_g5/weight//scorer/layers.0/self_attn/k_proj/MatMul/output16",
+        1024,
+    ),
+    (V_PROJECTION, 1024),
+    (
+        "/airk_g5/weight//scorer/layers.0/self_attn/q_proj/MatMul/output16",
+        2048,
+    ),
+];
+const PROJECTION_NODES: [&str; 3] = [
+    "/scorer/layers.0/self_attn/k_proj/MatMul",
+    "/scorer/layers.0/self_attn/v_proj/MatMul",
+    "/scorer/layers.0/self_attn/q_proj/MatMul",
+];
+
+#[derive(Clone, Copy)]
+pub(super) enum Layer0Cut {
+    Attention,
+    Projection,
+}
+
+impl Layer0Cut {
+    pub(super) fn taps(self) -> &'static [(&'static str, usize)] {
+        match self {
+            Self::Attention => COMPACT_FP16_LAYER0_TAPS,
+            Self::Projection => COMPACT_FP16_LAYER0_PROJECTION_TAPS,
+        }
+    }
+
+    pub(super) fn scope(self) -> &'static [u8] {
+        match self {
+            Self::Attention => b"airk.private.compact-fp16-cuda-layer0-taps/1",
+            Self::Projection => b"airk.private.compact-fp16-cuda-layer0-projection-taps/1",
+        }
+    }
+}
 const T32_INPUT: &str = "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102fe56fc335";
 
 #[derive(Debug)]
@@ -116,7 +156,7 @@ fn write_output(graph: &mut Vec<u8>, name: &str, width: usize) {
     let mut shape = Vec::new();
     // Keep the admitted graph's partial shape. A fixed token count in the
     // declaration allows ORT to fold unrelated downstream shape operations.
-    if name == V_PROJECTION {
+    if name.starts_with("/airk_g5/weight/") {
         write_message(&mut shape, 1, &[8, 1]); // batch dim_value
         let mut tokens = Vec::new();
         write_message(&mut tokens, 2, b"tokens"); // dim_param
@@ -138,17 +178,16 @@ fn write_output(graph: &mut Vec<u8>, name: &str, width: usize) {
     write_message(graph, 12, &info);
 }
 
-fn validate_base_graph(mut graph: &[u8]) -> Result<()> {
-    let mut producers = [0; COMPACT_FP16_LAYER0_TAPS.len()];
+fn validate_base_graph(mut graph: &[u8], cut: Layer0Cut) -> Result<()> {
+    let taps = cut.taps();
+    let mut producers = vec![0; taps.len()];
     let mut outputs = 0;
     while !graph.is_empty() {
         match field(&mut graph)? {
             (1, Some(mut node)) => {
                 while !node.is_empty() {
                     if let (2, Some(name)) = field(&mut node)?
-                        && let Some(index) = COMPACT_FP16_LAYER0_TAPS
-                            .iter()
-                            .position(|(tap, _)| name == tap.as_bytes())
+                        && let Some(index) = taps.iter().position(|(tap, _)| name == tap.as_bytes())
                     {
                         producers[index] += 1;
                     }
@@ -172,14 +211,14 @@ fn validate_base_graph(mut graph: &[u8]) -> Result<()> {
         }
     }
     ensure!(
-        outputs == 1 && producers == [1; COMPACT_FP16_LAYER0_TAPS.len()],
+        outputs == 1 && producers.into_iter().all(|count| count == 1),
         "layer-0 requires one existing producer per tap and only the base scores output"
     );
     Ok(())
 }
 
 // Accept only after the original model digest and normal G5 audit pass.
-pub(in crate::arbiter::runtime) fn promote_model(model: &[u8]) -> Result<Vec<u8>> {
+pub(super) fn promote_model(model: &[u8], cut: Layer0Cut) -> Result<Vec<u8>> {
     let mut rest = model;
     let mut graph = None;
     while !rest.is_empty() {
@@ -193,9 +232,9 @@ pub(in crate::arbiter::runtime) fn promote_model(model: &[u8]) -> Result<Vec<u8>
         }
     }
     let (start, end, original) = graph.context("layer-0 base graph missing")?;
-    validate_base_graph(original)?;
+    validate_base_graph(original, cut)?;
     let mut graph = original.to_vec();
-    for &(name, width) in COMPACT_FP16_LAYER0_TAPS {
+    for &(name, width) in cut.taps() {
         write_output(&mut graph, name, width);
     }
     let mut derived = Vec::with_capacity(model.len() + graph.len() - original.len() + 2);
@@ -209,13 +248,17 @@ pub(in crate::arbiter::runtime) fn promote_model(model: &[u8]) -> Result<Vec<u8>
     Ok(derived)
 }
 
-pub(super) fn validate_output_abi(session: &Session) -> Result<()> {
+pub(super) fn validate_output_abi(session: &Session, cut: Layer0Cut) -> Result<()> {
     ensure!(
-        session.outputs.len() == 1 + COMPACT_FP16_LAYER0_TAPS.len(),
+        session.outputs.len() == 1 + cut.taps().len(),
         "layer-0 diagnostic output count differs"
     );
-    for &(name, width) in COMPACT_FP16_LAYER0_TAPS {
-        let batch = if name == V_PROJECTION { 1 } else { -1 };
+    for &(name, width) in cut.taps() {
+        let batch = if name.starts_with("/airk_g5/weight/") {
+            1
+        } else {
+            -1
+        };
         ensure!(
             session.outputs.iter().any(|output| output.name == name
                 && matches!(&output.output_type, ValueType::Tensor { ty, shape, .. }
@@ -252,7 +295,11 @@ fn reviewed_operator(row: &Value) -> Result<Operator<'_>> {
     ))
 }
 
-pub(super) fn validate_graph(rows: &[GraphMetadataRow], base: &Value) -> Result<()> {
+pub(super) fn validate_graph(
+    rows: &[GraphMetadataRow],
+    base: &Value,
+    cut: Layer0Cut,
+) -> Result<()> {
     use GraphMetadataRow::*;
     let mut base_ops = base
         .as_array()
@@ -264,6 +311,7 @@ pub(super) fn validate_graph(rows: &[GraphMetadataRow], base: &Value) -> Result<
     let mut live_ops = Vec::new();
     let mut cuda_nodes = BTreeSet::new();
     let mut gqa = None;
+    let mut projections = [None; PROJECTION_NODES.len()];
     for row in rows {
         if let Node {
             graph,
@@ -288,6 +336,14 @@ pub(super) fn validate_graph(rows: &[GraphMetadataRow], base: &Value) -> Result<
                 if name == GQA && op == "GroupQueryAttention" && domain == "com.microsoft" {
                     gqa = Some(*node);
                 }
+                if op == "MatMul"
+                    && domain.is_empty()
+                    && let Some(index) = PROJECTION_NODES
+                        .iter()
+                        .position(|expected| name.as_str() == *expected)
+                {
+                    projections[index] = Some(*node);
+                }
             }
         }
     }
@@ -298,7 +354,7 @@ pub(super) fn validate_graph(rows: &[GraphMetadataRow], base: &Value) -> Result<
         "layer-0 optimized operator placement differs from reviewed base"
     );
     let gqa = gqa.context("layer-0 CUDA GroupQueryAttention missing")?;
-    for (index, &(tap, _)) in COMPACT_FP16_LAYER0_TAPS.iter().enumerate() {
+    for (index, &(tap, _)) in cut.taps().iter().enumerate() {
         let value = rows
             .iter()
             .find_map(|row| match row {
@@ -314,20 +370,30 @@ pub(super) fn validate_graph(rows: &[GraphMetadataRow], base: &Value) -> Result<
                 _ => None,
             })
             .context("layer-0 half tap producer missing or not CUDA")?;
-        let (role, slot) = if index == 3 {
-            (2, 0)
-        } else {
-            (0, index as u64)
+        let has_edge = |owner, role, slot| {
+            rows.iter().any(|row| matches!(row,
+                Edge { graph: 0, node, value: Some(edge_value), role: edge_role, slot: edge_slot }
+                    if *node == owner && *edge_value == value && *edge_role == role && *edge_slot == slot
+            ))
+        };
+        let assigned = match cut {
+            Layer0Cut::Attention if index == 3 => has_edge(Some(gqa), 2, 0),
+            Layer0Cut::Attention => has_edge(Some(gqa), 0, index as u64),
+            Layer0Cut::Projection if index == 0 => projections
+                .iter()
+                .all(|&node| node.is_some() && has_edge(node, 0, 0)),
+            Layer0Cut::Projection => {
+                let node = projections[index - 1];
+                node.is_some() && has_edge(node, 2, 0)
+            }
         };
         ensure!(
-            rows.iter().any(|row| matches!(row,
-                Edge { graph: 0, node: Some(node), value: Some(edge_value), role: edge_role, slot: edge_slot }
-                    if *node == gqa && *edge_value == value && *edge_role == role && *edge_slot == slot
-            )) && rows.iter().any(|row| matches!(row,
-                Edge { graph: 0, node: None, value: Some(edge_value), role: 4, .. }
-                    if *edge_value == value
-            )),
-            "layer-0 tap is not the exact GQA operand/result and diagnostic output: {tap}"
+            assigned
+                && rows.iter().any(|row| matches!(row,
+                    Edge { graph: 0, node: None, value: Some(edge_value), role: 4, .. }
+                        if *edge_value == value
+                )),
+            "layer-0 tap does not preserve its exact CUDA boundary and diagnostic output: {tap}"
         );
     }
     Ok(())
@@ -336,6 +402,43 @@ pub(super) fn validate_graph(rows: &[GraphMetadataRow], base: &Value) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn layer0_projection_outputs_retain_the_symbolic_token_axis() -> Result<()> {
+        let expected = [
+            "/airk_g5/weight//scorer/layers.0/self_attn/k_proj/MatMul/input16",
+            "/airk_g5/weight//scorer/layers.0/self_attn/k_proj/MatMul/output16",
+            "/airk_g5/weight//scorer/layers.0/self_attn/v_proj/MatMul/output16",
+            "/airk_g5/weight//scorer/layers.0/self_attn/q_proj/MatMul/output16",
+        ];
+        let mut graph = Vec::new();
+        for name in expected {
+            let mut node = Vec::new();
+            write_message(&mut node, 2, name.as_bytes());
+            write_message(&mut graph, 1, &node);
+        }
+        write_output(&mut graph, "scores", 8);
+        let mut model = Vec::new();
+        write_message(&mut model, 7, &graph);
+        let derived = promote_model(&model, Layer0Cut::Projection)?;
+        let (_, body) = field(&mut derived.as_slice())?;
+        let mut added = body.unwrap().strip_prefix(graph.as_slice()).unwrap();
+        for (name, width_varint) in expected.into_iter().zip([16, 8, 8, 16]) {
+            let (number, body) = field(&mut added)?;
+            assert_eq!(number, 12);
+            let mut info = body.unwrap();
+            assert_eq!(field(&mut info)?, (1, Some(name.as_bytes())));
+            let (_, ty) = field(&mut info)?;
+            let (_, body) = field(&mut ty.unwrap())?;
+            let mut tensor = body.unwrap().strip_prefix(&[8, 10]).unwrap();
+            // Literal encoded dimensions: 1, symbolic tokens, and known width.
+            let mut dims = b"\x0a\x02\x08\x01\x0a\x08\x12\x06tokens\x0a\x03\x08\x80".to_vec();
+            dims.push(width_varint);
+            assert_eq!(field(&mut tensor)?, (2, Some(dims.as_slice())));
+        }
+        assert!(added.is_empty());
+        Ok(())
+    }
 
     #[test]
     fn layer0_outputs_append_to_the_existing_graph_only() -> Result<()> {
@@ -350,7 +453,7 @@ mod tests {
         write_message(&mut model, 7, &graph);
         write_message(&mut model, 2, b"literal producer");
         let original = model.clone();
-        let derived = promote_model(&model)?;
+        let derived = promote_model(&model, Layer0Cut::Attention)?;
         let mut fields = derived.as_slice();
         assert_eq!(field(&mut fields)?, (1, None));
         let (number, body) = field(&mut fields)?;
@@ -388,7 +491,8 @@ mod tests {
         );
         assert!(fields.is_empty());
         assert_eq!(model, original);
-        assert!(promote_model(&derived).is_err());
+        assert!(promote_model(&derived, Layer0Cut::Attention).is_err());
+        assert!(promote_model(&model, Layer0Cut::Projection).is_err());
         Ok(())
     }
 }

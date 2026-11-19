@@ -37,7 +37,8 @@ mod bounded_hybrid;
     target_arch = "x86_64"
 ))]
 pub use bounded_hybrid::{
-    BoundedHybridScorer, COMPACT_FP16_LAYER0_TAPS, CompactFp16Layer0GraphRefusal,
+    BoundedHybridScorer, COMPACT_FP16_LAYER0_PROJECTION_TAPS, COMPACT_FP16_LAYER0_TAPS,
+    CompactFp16Layer0GraphRefusal,
 };
 mod cpu_source_transition;
 #[cfg(feature = "gpu-cuda")]
@@ -620,9 +621,7 @@ impl Scorer {
             target_arch = "x86_64"
         ))]
         let graph = match &_mode {
-            OpenMode::BoundedHybrid(gate) if gate.is_layer0() => {
-                bounded_hybrid::promote_model(&graph)?
-            }
+            OpenMode::BoundedHybrid(gate) => gate.promote_model(graph)?,
             _ => graph,
         };
         crate::onnx::initialize_runtime()?;

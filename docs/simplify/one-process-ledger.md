@@ -11631,3 +11631,80 @@ reduction. Capture the exact symbolic-shape shared input and direct
 projection outputs in a separate private diagnostic, then replay the
 projections on identical inputs and the same verified weights.
 Retain the original T32 logit, full-width, Resource20 and quality gates.
+
+### 2026-11-19 — Identical half inputs isolate Compact projection rounding
+
+The second private cut captures the live common half input and the direct
+K, V and Q outputs from the three named CUDA MatMul nodes. The new
+private source preserves the existing CPU descriptor and ordinary scorer.
+The closed CPU transition row rebinds the exact current source after
+inverse proof of the two Windows test-support changes. The new native
+metadata and disposable base graph passed in 24.112 and 33.456 s.
+Metadata execution 465dd7da32c5b83ae8839b0637dd4c1a6b8c1620b774fd525921e9e53feb4970.
+Base graph execution 6d5e8434a350ef1a1f11decd9c6a38bf374fc11fedffb86878cc738806899d34
+and native 47a7cd6f9e0ddf50911cc7a745bcbec4ca2a963772aad5e2e6acc663e26ec104
+bind the 1,746-node and 374-CPU baseline for this source.
+
+A6000 projection capture completed in 36.210 s, with a synchronized
+0.282414 s score call, complete typed profile and all 28 FlashAttention
+records. It reproduced all eight previous scores and the earlier captured
+raw V bit for bit. The fixed T32 output arrays contain 196,608 finite
+half words. The original 120-second, 32/32 GiB process/Job and 24 GiB
+device limits applied. Peak Job commit was 9,377,718,272 B. The original
+child exited 0 with no forced termination or surviving Job member.
+Native session, device and host release were observed.
+
+Under compact-fp16-layer0-projection-capture-r5:
+execution c629759788e9a691d35ba3685754d6b7f6567d2ce42b8138ee069ebbecbd969e,
+native 8a3d7eef63fb0dca71fc5184bb37c151fa75903f95ecbf20dc39a29e09736d0e,
+journal 3ddbd3fc9df9a288b62a7604c520bba51b9d8c7dd26017636f4b08428bb3f06e,
+trace 73b5e17def49efa0643ad06424a12e3b16672f535e37e33639340bf14a67b809,
+log 05e26b041dfaa88a72f1cf4a65b6ce05f8c53728ece61ddbfbf816277ccd2648,
+image 880041390ad896cf1f760606a30da608ff093a23df95e674d45aa919483dc3b2,
+and policy b284acac40a54d2af842d439e48af13671ea50909f44207d8f589f4c700b4527.
+
+The owned independent CPU reference completed in 93.708 s with one
+prefix and zero complete forwards. The 600-second, 32 GiB process/Job
+bounds held, with 15,568,396,288 B peak Job commit, original child exit
+0, no forced termination and empty Job. Verified human SID ended in
+1002. The independent normalized and cast input differed in five of
+65,536 half words, with maximum error 0.00006103515625. With the actual
+CUDA input fed to the independent reference and the same verified half
+weights, K differed in 400 of 32,768 half words with maximum 0.0009765625.
+V differed in 587 of 32,768 with maximum 0.001953125. Q differed in 658
+of 65,536 with maximum 0.001953125.
+
+For each maximum-error projection witness, both values are adjacent
+half words. Exact integer dot products of the same half operands put
+the CPU result closer in all three sampled cases. The CUDA distances
+are 137,564,499,968, 281,762,622,592 and 279,093,832,704 units of 2^-48
+for K, V and Q. The CPU distances are 137,313,406,976, 267,993,191,296
+and 270,661,981,184. This identifies the differing projection reduction
+or final half rounding independently of input normalization. Three
+witnesses do not establish the full distribution or prove which change
+would clear the full-score gate.
+
+Under compact-fp16-layer0-projection-reference-r7:
+execution 0a3a743d59e97e250a533bfbc7f73b13a1103cfa693af0226ca6ef0273d00ef1,
+proof b2c117de8372bc63fd6451c7b7d06ac5316a8e5a45d648585ae80396ff319742,
+worker 50d5c7237cd057a1d08ea79794bbdda0f1e141438a2d22580a760e418f9e3d75,
+reference 06ee65a7c9cad968affb0109e1c9628dad6475c8c999116191a57119a55568cc.
+
+The linked runtime source exposes an independent pedantic cuBLAS FP32
+compute route. The current G5 provider identity only permits inherited
+GEMM2 for full scoring. Isolate pedantic arithmetic on verified identical
+projection operands, retaining separate evidence and the original
+qualification limits. Wider and timing gates remain pending.
+
+The final build used pinned Rust 1.98.0, Nextest 0.9.148, warm target/,
+and incremental=1. Source group
+cae5e1943e4aab9fce5332384eba975e38cb2d0ce7fdc73a363246fa86a7a6b2.
+Clippy passed in 11.576 s
+(4d392feca8bc168cbd1375ba0f29115dc2a37b80695b9faab1b0ff8e658f34df).
+Nextest passed 56 with 472 filtered in 19.619 s
+(3e07795000a08c869d2bc9843e01f41b6ee10228e97d3b7195f3667e1e7cc437).
+Exact image stage passed in 1.117 s
+(5998f641e6cd824986d82496300a03a1ef44184569e720921e39f7bd286dc4f0).
+Exact commands, JUnit and Cargo timings are under
+windows-cuda-g5-projection-capture-checks-r5. Focused Python suites
+passed 80, 137 and 15, including the literal exact-dot witness.

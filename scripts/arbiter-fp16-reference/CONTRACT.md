@@ -18,5 +18,15 @@ RoPE and final narrowing. It returns contiguous FP16 CPU Q, K and V in
 [1, heads, 32, 128] order before attention. The caller authenticates the original
 publisher configuration and the frozen native input identity.
 
+The layer-zero projection comparison calls
+HalfReference.layer0_projection_operands(row, native_half_input) with the same
+caller-authenticated Compact T32 row and a finite CPU FP16 [1, 32, 2048] capture
+of the shared normalized and narrowed projection input. It returns the
+independent shared input from embedding and RMSNorm, then raw K, V and Q from
+the supplied captured input, in that order. The four contiguous CPU FP16 tensors
+retain the native [1, 32, width] layout with widths 2048, 1024, 1024 and 2048.
+Ordinary forward and this diagnostic use the same half projection weights and
+linear operation. The caller retains the capture identity and comparison.
+
 Original and candidate learned initializer byte proof, whole graph proof, independent half/original numerical comparisons, native strict CUDA placement, actual Flash/MEA dispatch and synchronized return, resource populations, original model deadlines, task/CAL and public admission are separate requirements. Source tests establish only the independent graph/rounding/reference mechanics on literal CPU fixtures. Existing numerical limits do not change. No exporter self-comparison, matching names/counts, metadata hash or requested provider option qualifies an execution.
 Default namespace controls use a self-contained literal Scorer.text / ModuleList model with independent IEEE byte expectations and all embedding/norm/projection names. The genuine pinned publisher-wrapper witness remains only in frozen historical private R2 evidence. Maintained controls require declared Torch/ONNX dependencies, never an ignored campaign source path. Model header semantics and all graph roots are checked in addition to the complete DAG.
