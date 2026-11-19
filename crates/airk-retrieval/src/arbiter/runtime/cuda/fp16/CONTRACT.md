@@ -22,3 +22,8 @@ conditional-path review. The literal activation and refusal controls bound the
 same compatibility scope for the existing CPU profile and its calibration.
 
 Root refined the debug requirement before activation: GEMM2 and immutable preORT capture/current equality are mandatory for allG5. Debug1 is mandatory for unqualified scientific/proof bindings and the attention-backend-plan proof accessor; qualified product execution may retain debugunset/disabled without forcing user stdoutlogging. This is not a precision/algorithm fallback: same qualified graph/sdpa/math policy, TF32off and actual artifact backend evidence remain. Startup recording never changes processenv. CurrentNone -> late1 debugchange stillrefuses by snapshot mismatch.
+
+Context probe calibration binds the converted model and weight assets and the
+unchanged tokenizer. The separate unavailable action dispositions remain raw
+probe metadata. The test-support scorer input entry checks the live FP16
+geometry gate without submitting a native forward.

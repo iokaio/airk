@@ -118,3 +118,79 @@ Fresh preparation now seals the byte-identical maintained ownership primitives
 under scripts/cuda-native-execution/helpers. Historical artifact source copies
 and old plans retain their original identities; no conversion is rerun or
 qualified by this source relocation.
+
+## Independent Compact T32 reference
+
+The [Compact verifier](verify_compact.py) consumes the reviewed conversion
+receipt and its matching plan under a separate owned Windows CPU reference
+phase. Use the pinned Python from the plan. The parent supplies the original
+absolute monotonic deadline within 600 seconds, holds the reviewed inputs
+and captures the child's stdout under its checked output parent.
+
+```text
+python -I -B -S -X pycache_prefix=ABSENT_PREFIX_FROM_PLAN
+  scripts/arbiter-fp16-execution/verify_compact.py
+  --conversion-receipt ABSOLUTE_EXECUTION_JSON --conversion-receipt-sha256 SHA
+  --conversion-plan ABSOLUTE_PLAN_JSON --conversion-plan-sha256 SHA
+  --deadline-monotonic ORIGINAL_PARENT_MONOTONIC_EXPIRY
+```
+
+Use `--owned-output FRESH_CAMPAIGN_CHILD` in place of `--deadline-monotonic`
+to run through the maintained parent. It retains one same-user child under a
+32 GiB process and aggregate Job cap, the original independent 600-second
+whole deadline, a 64 MiB log and five-second cleanup. The parent authenticates
+the suspended child and requires a natural exit, empty Job and retained handle
+closure before it retains the independent proof.
+
+The parent sets `CUDA_VISIBLE_DEVICES` to the empty string before launch and
+supplies the verified human token, private cache/temp locations, and offline
+dependency settings. The worker uses the conversion plan's pinned Python and
+library census and only maintained source imports. Its Python audit hook
+refuses filesystem mutations, new processes, and network connections. Torch's
+deterministic setup can attempt an idempotent directory creation on the exact
+existing audited cache directory. New cache files and subdirectories refuse.
+The
+parent retains responsibility for native-library effects, Job bounds and
+settlement, and proof ownership.
+
+The worker reopens the conversion outcome, original Compact export and sidecar
+closure, retained T32/N8 fixture and publisher proof. The independent graph
+and parameter check precedes one CPU Torch forward derived from authenticated
+publisher weights. The fresh matching-half vector and the original independent
+FP32 vector retain separate identities under the same unchanged native input.
+
+On success the worker emits one `AIRK_FP16_COMPACT_REFERENCE ` line containing
+the UTF-8 JSON record `airk.private.compact-fp16-independent-proof/1`. The owned
+parent retains the bounded stdout and may write the JSON bytes after that marker
+to an audited fresh proof file for the native metadata selector. The record
+contains the conversion/output pins, complete graph and parameter proof, and
+both score arrays. Native dispatch, placement, resources and qualification
+require their own later observations.
+
+## Owned Compact metadata and T32 probe
+
+The [native probe parent](probe_compact.py) owns one exact test invocation.
+The first invocation consumes the reviewed Compact Prepare request and the
+independent proof. The second consumes the emitted Probe request and native
+`metadata/metadata-receipt.json` from the passing first invocation.
+
+```text
+python -I -B -S scripts/arbiter-fp16-execution/probe_compact.py {metadata|t32}
+  --request ABSOLUTE_REQUEST --request-sha256 SHA
+  --evidence ABSOLUTE_EVIDENCE --evidence-sha256 SHA
+  --image ABSOLUTE_STAGED_IMAGE --image-sha256 SHA
+  --build-receipt ABSOLUTE_REVIEWED_CARGO_RECEIPT --build-receipt-sha256 SHA
+  --powershell ABSOLUTE_POWERSHELL --powershell-sha256 SHA
+  --output FRESH_CAMPAIGN_CHILD
+```
+
+Each phase uses one original 120-second whole deadline and a 32 GiB process
+and aggregate Job, with suspended-image and token proof and natural HANDLE and
+Job settlement. It retains full bounded stdout and native outputs under the
+fresh checked child. The T32 invocation inherits GEMM2 and attention debug
+logging before ORT initialization. A passing T32 result requires all 28 named
+FP16 FlashAttention records, the durable returned operation and native
+synchronization, strict placement, both reference comparisons and teardown.
+The receipt records failures and retained raw evidence when any check refuses.
+Device capacity limits and adapter observations support the component receipt.
+Measured device peak and product qualification require separate evidence.

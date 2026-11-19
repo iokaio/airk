@@ -11013,3 +11013,96 @@ started with the exact audited plan and separate fresh output root under the
 original 8 GiB/600-second conversion limits. No candidate or native CUDA result
 is inferred from plan preparation. Independently verify graph, weights and the
 exact T32 reference after a complete conversion.
+
+### 2026-11-18 — Compact FP16 conversion and independent T32 precision blocker
+
+The reviewed Compact conversion passed in 261.473 s under the original
+8 GiB Job and 600-second limit. Peak Job commit was 907,591,680 B. The
+one child exited 0 with a naturally empty Job and all six final proofs.
+The candidate graph and 3,441,397,760-byte weights are retained under
+`compact-fp16-conversion-owned-r1`. Their SHA-256 values are
+`a9486966ce4d7df9a61fcdf30296efde3d2ae3345ff07c8fa820ce04c6482048` and
+`0c4bd89d032e7dd821071c3559776cd3da50d54d84b6e575373fd8cf7003a7c3`. The
+conversion execution receipt is `f1f485beac122a86259d074c755c87a136c54c5d13769b0cdf377609edfac24d`.
+
+The first two independently owned reference attempts settled with exit 1
+before scoring. R1 exposed Torch's synthesized module file property. R2
+exposed an idempotent check of the already created Torch cache directory.
+The revised census verifies file-backed modules through their actual file
+or import specification. The audit allows the exact existing guarded cache
+directory check and refuses new cache files or subdirectories. The actual
+model-free deterministic bootstrap authenticated 1,845 imported files
+with zero cache entries and CUDA uninitialized. All 59 focused script
+controls passed. Both original failed receipts and logs are retained.
+
+R3 passed in 99.156 s under a separate 32 GiB CPU reference Job.
+Peak Job commit was 15,558,500,352 B. The independent check verified
+all 4,538 reachable graph nodes, 28 efficient-attention layers and
+310 learned parameter arrays. One CPU Torch forward evaluated the exact
+pinned T32/N8 input. The independently generated half and original FP32
+reference vectors share argmax at candidate index 1, but differ by up to
+0.012271881 raw. No native score can be within 0.001 of both
+vectors on that component. This blocks precision qualification for this
+exact candidate, independently of CUDA implementation parity.
+
+The settled R3 receipt is `46738cb90fe71dc167448e07c7ea8b0bee485c7ce3aada6656f5d10ca5e1411d`
+and the source/graph/parameter/T32 proof is
+`14b6555a5d923d600d4d2ed54df86c872211b5050b50e7688009dcaaa2d78421`, retained under
+`compact-fp16-independent-reference-r3`. Continue the narrow native CUDA
+diagnostic for placement and backend evidence. Preserve the original
+qualification limits and attach any native refusal to the same candidate
+identity. Profiling the full width matrix depends on a candidate that can
+meet the independent precision gates.
+
+### 2026-11-18 — Compact FP16 native metadata passed and strict T32 load refused
+
+Compact FP16 metadata passed in 23.837 s in one checked, naturally
+settled native process. It bound the independent graph/weights/T32 proof,
+the original CPU Prepare, exact CUDA build, strict FP16 profile and fresh
+raw calibration. Profile identity
+ec19435c7e3447d82c9f4e6bd981420b3e9b346c69815f2d54e81452808a5f0c,
+native Probe `e1795328934ff014dd96585524cc9f98c1aa4c9911dead14c83b2ebd41583740`.
+Metadata execution `cbfeff45299851c19a0b4c3dae771a982c8fe692048d374aecc5100bf722da58`
+and native metadata `2271e56c862d8ed9a8b3af9c541acb1097ba7f1c6a531e64ffce431f8e0518c8`
+are under `compact-fp16-t32-metadata-r1`. Metadata creation dispatched zero
+model requests.
+
+The exclusive Windows A6000 T32 diagnostic used these exact inputs,
+the approved 32/32 GiB process/Job and 24 GiB device envelope, and the
+original 120-second deadline. The native Load recorded 7.098465 s and
+refused because ORT assigned some graph nodes to CPU with CPU EP fallback
+disabled. No scorer or forward was returned. No FlashAttention dispatch
+was observed. The failed owned phase took 28.632 s, exit 101, natural
+empty Job and unpoisoned native device teardown, control cleanup and host
+charge release. Peak Job commit was 8,232,452,096 B and native peak RSS was
+7,899,607,040 B. Native before and after observations both returned
+49,886,003,200 B device free. The tiny partial ORT file records startup
+evidence and contains no completed forward profile.
+
+Retained under `compact-fp16-t32-native-diagnostic-r1`:
+owned execution `ab1a841f4d56020a3fc23aa08ce0485c62630e13afe5dda74b54549c813499f0`,
+native result `6040a3b56acfd2b7821b1a3ba7d2fe32becb347138fe95531618df9e5350d514`,
+operation journal `6ce09855ca976d2fe9cfdc1cd39ed04e854a355dd4ae672c0ffff102ecdacf8c`,
+stdout `8e075eca3ce55d29113bb5a7d16e1aa734a5030723af5b6e0db19344917f4a48`,
+exact image `cb7a16fc7c0b2baf09771b87768a95040c23894375cd95d7953511115917b2d3`.
+
+Pinned Rust 1.98.0 under the warm Windows `target/`, incremental=1. Native
+group `362e5af21219488c339c7c28c60f2c9be1e36dec1a875a42a2a702b6e6a9b619`.
+Clippy passed in 29.740 s
+(`f1ffb07a0de93c1e01f8fb00ff49dca86cab72ff107fa31bdde585391c68d015`), Nextest CI
+passed 29 with 486 filtered across two binaries in
+45.721 s (`3fb4c58ad06073bc30dcc06294111c5f153875b04fcf9897ae6444496e6852af`),
+and the exact retained image linked in 1.117 s
+(`6e36815af88e1d196f3c6bfa30505b6c0880ea77fab601fdf6b41a18544f64f7`).
+The scope included the current asset-binding regression, CPU transition,
+existing G5 controls and the native metadata envelope. The owned parent
+passed 13 model-free controls. Formatting and scoped whitespace passed.
+The independent source handoffs and primary integration review covered
+the strict runtime, raw CAL, source pins, native refusal and owned settlement.
+
+The exact converted Compact graph is blocked by both the independent raw
+precision discrepancy and strict CUDA placement. Keep all four receipt
+identities and the limits as measured. Windows FP16 qualification requires
+a revised candidate that can satisfy both independent numerical lanes and
+strict placement, followed by its fresh evidence. Full-width measurement
+and the dependent Linux CUDA and Core ML gates remain pending.

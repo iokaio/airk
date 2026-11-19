@@ -1583,6 +1583,23 @@ over-budget receipts are refused before conversion.
 [Large FP32 scoring evidence](../simplify/one-process-ledger.md#2026-11-18--corrected-large-fp32-passed-all-four-cuda-scoring-widths) ·
 [Large FP32 Resource20 evidence](../simplify/one-process-ledger.md#2026-11-18--windows-large-fp32-resource20-passed)
 
+### Windows Compact FP16 first probe
+
+The reviewed Compact conversion, independent graph and weight comparison,
+and native metadata passed on 18 November. At the exact T32/N8 input, the
+independent FP16 and original FP32 references differed by 0.012271881 raw.
+The allowed raw error for each comparison is 0.001. This candidate cannot
+satisfy both comparisons. Separately, Windows CUDA session creation refused
+CPU-assigned nodes under strict placement before any forward or observed
+FlashAttention dispatch. The child and native resources settled naturally.
+
+The first blocking gate remains Windows Compact. Preserve this candidate
+and its receipts and use a revised candidate under the existing numerical
+and placement requirements. Windows full-width measurement and dependent
+FP16 platform qualification require passing evidence.
+[Independent Compact precision evidence](../simplify/one-process-ledger.md#2026-11-18--compact-fp16-conversion-and-independent-t32-precision-blocker) ·
+[Strict CUDA diagnostic](../simplify/one-process-ledger.md#2026-11-18--compact-fp16-native-metadata-passed-and-strict-t32-load-refused)
+
 ### FP16 implementation and validation sequence
 
 Use 8,192-token Context on a target developer GPU to decide whether the FP16

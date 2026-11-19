@@ -325,3 +325,66 @@ lineage for the first reference. The 120-second operation deadline and fixed
 3600-second process expiry follow the Compact Resource20 rules. The native
 receipt has its own schema and policy identity and records the lineage and
 actual native teardown and host charge release.
+
+## Private Compact FP16 T32 probe metadata
+
+The Windows x64 data-only selector
+`fp16_compact::emit_cuda_compact_fp16_probe_metadata` consumes an authenticated
+`Prepare` request through the existing
+`AIRK_CUDA_QUALIFICATION_INPUT` path and `_SHA256` variables. The request
+names the current native Compact CPU input, the original c79c model, the
+compiled CUDA manifest and the reviewed 32 GiB process and Job, 24 GiB
+device, 16/8/2 GiB phase and 120-second deadline bounds. The metadata phase
+checks the approved static build and requires the same Windows user and token
+default owner.
+
+`AIRK_CUDA_FP16_INDEPENDENT_PROOF` and its `_SHA256` pin the exact audited
+`airk.private.compact-fp16-independent-proof/1` JSON result from the
+independent verifier. It binds the complete output-reachable 28-layer graph,
+all learned parameter comparisons, exact converted `model.onnx` and
+`weights.bin` artifacts, and both independent T32/N8 reference arrays.
+The original graph and CPU assets are authenticated separately. The T32 row
+and original FP32 reference match the exact retained fixture and producer.
+The new native input leaves the historical FP32 numeric fixture unassigned.
+
+The owner creates the fresh absolute guarded `AIRK_CUDA_METADATA_DIRECTORY`
+and emits the strict FP16 profile, raw unavailable calibration, source
+manifest, native input, existing-format Probe and
+`airk.private.compact-fp16-probe-metadata/1` receipt. The source manifest
+retains both the original source and FP16 artifact lineage. The receipt
+binds the actual emitted files, compiled-runtime manifest and independent
+proof. Creation dispatches zero sessions or model requests. Actual native
+attention backend dispatch, scores, teardown, resources, product admission
+and qualification remain separate checks.
+
+## Private Compact FP16 T32 component probe
+
+`fp16_compact::cuda_compact_fp16_t32_component` is a separate ignored Windows
+x64 selector. It consumes the emitted `Probe` through
+`AIRK_CUDA_QUALIFICATION_INPUT` and `_SHA256`, and the exact emission receipt
+through `AIRK_CUDA_FP16_METADATA_RECEIPT` and `_SHA256`. A checked same-human
+parent supplies the fresh `AIRK_CUDA_QUALIFICATION_OUTPUT` and a fresh
+`AIRK_CUDA_FP16_PROFILE_PREFIX` in that output's directory. It preserves
+the original 120-second cutoff, 32/32 GiB process and Job, 24 GiB device and
+16/8/2 GiB phase bounds. Actual Job flags, full native host charge, observed
+device, evaluation lease, strict placement and teardown are required.
+
+The original independent complete graph proof binds the Compact attention
+mask shape to the GQA sequence dimensions. This graph uses that shape and
+does not consume mask values. The canonical native FP16 input guard accepts
+only all-live masks with original sequential positions for this model. The
+validation-only scorer entry checks that wrong positions, a mask hole and an
+all-zero mask refuse before any forward. One accepted T32/N8 input uses the
+unchanged reference tensors. Matching FP16 and original FP32 each require
+raw error <=0.001, mass error <=0.05 and exact argmax. FP32 fixtures and
+selectors keep their original identities.
+
+The private `airk.private.compact-fp16-t32-component/1` receipt retains
+partial rows, actual identity/placement, refusal evidence, native journal
+and settlement facts. Device settlement is observed separately when a
+refused load never returns a live scorer. The journal contains one `load` and at most one
+`numeric` operation. The actual bounded ORT profile is pinned separately
+from the expected attention plan and validated by the owner with the
+captured ORT attention debug output and actual return/synchronization
+evidence. The native receipt makes no fused-backend attestation or
+qualification claim.

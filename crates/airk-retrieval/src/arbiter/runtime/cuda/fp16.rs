@@ -214,6 +214,45 @@ fn validate_geometry(model: ModelChoice, input: &super::super::CompiledInput) ->
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "test-support")]
+impl super::super::Scorer {
+    /// Checks the exact G5 scorer's input gate without dispatching native work.
+    pub fn validate_fp16_probe_input(&self, input: &super::super::CompiledInput) -> Result<()> {
+        self.fp16_attention
+            .as_ref()
+            .context("G5 scorer required")?
+            .validate_input(input)
+    }
+}
+
+#[cfg(feature = "test-support")]
+fn context_probe_asset_bindings(
+    assets: &[airk_core::arbiter::Asset],
+) -> std::collections::BTreeMap<
+    String,
+    airk_core::arbiter::context_action::calibration::JointAssetBinding,
+> {
+    use airk_core::arbiter::{AssetRole, context_action::calibration::JointAssetBinding};
+    assets
+        .iter()
+        .filter(|asset| {
+            matches!(
+                asset.role,
+                AssetRole::Model | AssetRole::ExternalWeights | AssetRole::Tokenizer
+            )
+        })
+        .map(|asset| {
+            (
+                asset.name.clone(),
+                JointAssetBinding {
+                    role: asset.role.clone(),
+                    sha256: asset.sha256,
+                },
+            )
+        })
+        .collect()
+}
+
 /// Fresh data-only G5 profile. Never fitted CAL, release, device or execution authority.
 #[cfg(feature = "test-support")]
 #[derive(Serialize)]
@@ -323,6 +362,7 @@ pub fn prepare_fp16_probe_profile(
         c.schema = airk_core::arbiter::context_action::calibration::CALIBRATION_SCHEMA_V2.into();
         c.rules.clear();
         c.class_support = Some(unavailable_classes());
+        c.assets = context_probe_asset_bindings(&preview.assets);
         serde_json::to_vec_pretty(&c)?
     };
     calibration_bytes.push(b'\n');

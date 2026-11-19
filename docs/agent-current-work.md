@@ -114,11 +114,14 @@ Use the existing deadline when resuming in a new context.
   `large-fp32-batch-view-resource20-r1/execution.json` at SHA-256
   `8ff0d3ed5152ea533a46ab1dc258b96b536aa7df2948b49400f275aabda8fc7b`.
   [Windows Large Resource20 ledger](simplify/one-process-ledger.md#2026-11-18--windows-large-fp32-resource20-passed)
-- Windows G5 native readiness and model-specific FP32 receipt validation
-  passed. Prepare the pinned private Compact FP16 conversion and independently
-  check its graph and weights before the first native Compact probe. Proceed
-  through the approved FP16 platform order and leave Focus GPU off the critical
-  path. The 25% plus one-second warm Answer p95
+- Windows G5 readiness, Compact conversion, independent graph and weight
+  verification, and native metadata passed. The exact Compact T32 candidate
+  has a 0.012271881 raw difference between independent FP16 and FP32 references,
+  with 0.001 allowed per comparison. Strict CUDA load independently refused
+  CPU-assigned nodes before a forward. Preserve the receipts and the frozen
+  limits. A revised candidate needs new numerical and strict-placement proof
+  before the Windows full-width gate and the dependent FP16 platform sequence.
+  Leave Focus GPU off the critical path. The 25% plus one-second warm Answer p95
   improvement target and the 2 GiB discrete-VRAM reserve are approved for
   release confirmation where applicable. [FP16 plan](arbiter/final-plan.md#fp16-conversion-prerequisites)
 

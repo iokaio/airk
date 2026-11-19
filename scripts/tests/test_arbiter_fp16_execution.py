@@ -98,6 +98,39 @@ class PlanControls(unittest.TestCase):
             M.loaded_runtime({})
 
 
+class IndependentReferenceImportControls(unittest.TestCase):
+    def test_only_the_exact_existing_audited_cache_directory_may_be_checked(self):
+        path = ROOT / 'scripts/arbiter-fp16-execution/verify_compact.py'
+        spec = importlib.util.spec_from_file_location('fp16_reference_worker_cache', path)
+        reference = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(reference)
+        reference.read_only('os.mkdir', (str(ROOT), 0o700, -1), ROOT)
+        for proposed, fd in ((ROOT / 'absent-cache-child', -1), (ROOT, 1)):
+            with self.subTest(proposed=proposed, fd=fd), self.assertRaises(ValueError):
+                reference.read_only('os.mkdir', (str(proposed), 0o700, fd), ROOT)
+        with self.assertRaises(ValueError):
+            reference.read_only('open', (str(ROOT / 'cache-data'), 'w', reference.os.O_WRONLY), ROOT)
+
+    def test_generated_names_cannot_invent_a_file_or_hide_real_modules(self):
+        path = ROOT / 'scripts/arbiter-fp16-execution/verify_compact.py'
+        spec = importlib.util.spec_from_file_location('fp16_reference_worker', path)
+        reference = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(reference)
+
+        class GeneratedNamespace(types.ModuleType):
+            def __getattr__(self, key):
+                return '_ops.py' if key == '__file__' else None
+
+        synthetic = GeneratedNamespace('torch.ops')
+        real = types.SimpleNamespace(__file__=str(path))
+        real_pin = row('scripts/arbiter-fp16-execution/verify_compact.py')
+        result = reference.loaded_runtime(
+            {str(path): real_pin}, lambda file, check: real_pin, lambda: None, [synthetic, real])
+        self.assertEqual(result, {str(path): real_pin['sha256']})
+        with self.assertRaisesRegex(ValueError, 'outside sealed closure'):
+            reference.loaded_runtime({}, lambda file, check: real_pin, lambda: None, [real])
+
+
 class FinalProofControls(unittest.TestCase):
     def callbacks(self, events):
         return {name: lambda name=name: (events.append(name), row(name))[1] for name in M.PROOFS}

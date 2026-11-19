@@ -2234,3 +2234,6 @@ mod hybrid_profile_trace;
 
 #[cfg(all(windows, target_arch = "x86_64"))]
 mod batch_view;
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+mod fp16_compact;

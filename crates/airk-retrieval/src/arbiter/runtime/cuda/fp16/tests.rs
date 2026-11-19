@@ -1,6 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Pure native policy/metadata cases. No environment mutation or model invocation.
 use super::*;
+#[cfg(feature = "test-support")]
+#[test]
+fn private_context_probe_calibration_names_the_converted_assets() {
+    use airk_core::arbiter::{Asset, AssetRole};
+    let assets = [
+        ("model.onnx", AssetRole::Model, 1),
+        ("weights.bin", AssetRole::ExternalWeights, 2),
+        ("tokenizer.json", AssetRole::Tokenizer, 3),
+        ("calibration.json", AssetRole::Calibration, 4),
+    ]
+    .map(|(name, role, byte)| Asset {
+        name: name.into(),
+        role,
+        bytes: 100,
+        sha256: Sha256Digest::from_bytes([byte; 32]),
+    });
+    let bindings = context_probe_asset_bindings(&assets);
+    assert_eq!(
+        bindings.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["model.onnx", "tokenizer.json", "weights.bin"]
+    );
+    assert_eq!(bindings["model.onnx"].role, AssetRole::Model);
+    assert_eq!(bindings["weights.bin"].role, AssetRole::ExternalWeights);
+    assert_eq!(bindings["weights.bin"].sha256.as_bytes(), &[2; 32]);
+    assert_eq!(bindings["tokenizer.json"].sha256.as_bytes(), &[3; 32]);
+}
+
 fn env(gemm: Option<&str>, debug: Option<&str>) -> MathEnvironment {
     MathEnvironment {
         gemm: gemm.map(str::to_owned),
