@@ -28,6 +28,11 @@ GRAPH_VERIFIER_SHA = "160facf30e6bb1b0d5881d26a7c705c3c66ad160f74f0014d7ae5647e6
 SCHEMA = "airk.private.compact-fp32-qkv-t32-reference/1"
 OWNED_SCHEMA = "airk.private.owned-compact-fp32-qkv-t32-reference/1"
 MARKER = b"AIRK_COMPACT_FP32_QKV_T32_REFERENCE "
+SOURCE_ORDER_SCHEMA = "airk.private.compact-fp32-qkv-source-order-t32-reference/1"
+SOURCE_ORDER_OWNED_SCHEMA = "airk.private.owned-compact-fp32-qkv-source-order-t32-reference/1"
+SOURCE_ORDER_MARKER = b"AIRK_COMPACT_FP32_QKV_SOURCE_ORDER_T32_REFERENCE "
+SOURCE_ORDER_LEAF = "compact-qkv-fp32-source-order-t32-reference.json"
+RMS_SHAPES = {(1, 32, 2048): 57, (1, 32, 16, 128): 28, (1, 32, 8, 128): 28}
 MAX_LOG = 64 << 20
 MAX_PROOF = 16 << 20
 ROUTES = tuple(f"layers.{layer}.self_attn.{projection}_proj.weight"
@@ -108,7 +113,107 @@ def projection_scores(independent, row, check):
     return scores[0].tolist()
 
 
-def worker(deadline, expected_source):
+def fp32_square_fma(torch, accumulator, value):
+    # A binary32 square is exact in binary64. TwoSum retains the lost low
+    # part of adding the binary32 accumulator before the final rounding.
+    term = value.double().square()
+    acc = accumulator.double()
+    wide = term + acc
+    carried = wide - term
+    remainder = (term - (wide - carried)) + (acc - carried)
+    rounded = wide.float()
+    rounded_wide = rounded.double()
+    away = ((rounded_wide < wide) & (remainder > 0)) | ((rounded_wide > wide) & (remainder < 0))
+    step = torch.where(remainder > 0, torch.inf, -torch.inf).to(rounded.dtype)
+    neighbor = torch.nextafter(rounded, step)
+    midpoint = (rounded_wide + neighbor.double()) * 0.5
+    return torch.where(away & (wide == midpoint), neighbor, rounded)
+
+
+def source_order_square_mean(torch, value):
+    width = value.shape[-1]
+    require(value.dtype == torch.float32 and value.device.type == "cpu" and width in (128, 2048),
+            "source-order RMS requires CPU binary32 rows of width 128 or 2048")
+    lanes = value.reshape(*value.shape[:-1], width // 4, 4)
+    sums = torch.zeros_like(lanes[..., 0])
+    for word in lanes.unbind(-1):
+        sums = fp32_square_fma(torch, sums, word)
+
+    # Each warp merges lanes 0/16, 0/8, ..., with identical per-group
+    # pairing for every other participating lane. Then warp zero merges
+    # the warp partials in the same shuffle-down order.
+    sums = sums.reshape(*value.shape[:-1], width // 128, 32)
+    for stride in (16, 8, 4, 2, 1):
+        sums = sums[..., :stride] + sums[..., stride:2 * stride]
+    sums = sums.squeeze(-1)
+    for stride in (8, 4, 2, 1) if width == 2048 else ():
+        sums = sums[..., :stride] + sums[..., stride:2 * stride]
+    require(torch.isfinite(sums).all().item(), "source-order RMS square accumulation overflow")
+    return sums / width
+
+
+def source_order_sigmoid(torch, gate):
+    positive = gate >= 0
+    unfolded = 1.0 / (1.0 + torch.exp(torch.where(positive, -gate, gate)))
+    return torch.where(positive, unfolded, 1.0 - unfolded)
+
+
+def source_order_recipe(enabled):
+    recipe = {"qkv_fp32_routes": list(ROUTES), "context_flash_single_tile": True}
+    if enabled:
+        recipe["source_order"] = {
+            "rms_square_accumulation": "fp32-round-to-nearest-even-fused-square-add",
+            "rms_lane_width": 4, "rms_warp_size": 32,
+            "rms_output_order": "scale-times-cpu-rsqrt-then-input", "quickgelu": "sign-branch-cpu-exp",
+        }
+    return recipe
+
+
+def observed_source_order(norm_calls, gate_calls):
+    return {"rms": [{"shape": list(shape), "calls": count} for shape, count in norm_calls.items()],
+            "quickgelu_calls": gate_calls}
+
+
+def source_order_scores(half, independent, row, check):
+    torch = independent.torch
+    norm_calls = dict.fromkeys(RMS_SHAPES, 0)
+    gate_calls = 0
+
+    class ScopedTorch:
+        def __getattr__(self, name):
+            return getattr(torch, name)
+
+        def sigmoid(self, gate):
+            nonlocal gate_calls
+            require(tuple(gate.shape) == (1, 32, 6144) and gate.dtype == torch.float32
+                    and gate.device.type == "cpu", "exact Compact QuickGelu FP32 input required")
+            gate_calls += 1
+            return source_order_sigmoid(torch, gate)
+
+    scoped_torch = ScopedTorch()
+
+    def rms(api, value, scale, eps):
+        shape = tuple(value.shape)
+        require(api is scoped_torch and shape in norm_calls and tuple(scale.shape) == (shape[-1],)
+                and scale.dtype == torch.float32 and scale.device.type == "cpu" and eps == 1e-6,
+                "exact Compact source-order RMS input and scale required")
+        norm_calls[shape] += 1
+        inverse = torch.rsqrt(source_order_square_mean(torch, value) + eps)
+        return (scale * inverse) * value
+
+    prior_rms = half.rms
+    independent.torch = scoped_torch
+    half.rms = rms
+    try:
+        scores = projection_scores(independent, row, check)
+    finally:
+        half.rms = prior_rms
+        independent.torch = torch
+    require(norm_calls == RMS_SHAPES and gate_calls == 28, "exact 113 RMSNorm and 28 QuickGelu calls required")
+    return scores, observed_source_order(norm_calls, gate_calls)
+
+
+def worker(deadline, expected_source, *, source_order=False):
     started = time.monotonic()
 
     def check():
@@ -190,8 +295,14 @@ def worker(deadline, expected_source):
         independent, graph, onnx, {weights.name: weights}, candidate_sha256=baseline["graph"]["sha256"],
         original_graph=original_graph, original_files=original_files)
     check()
-    reference["matching_qkv_fp32"] = projection_scores(independent, reference["input"], check)
-    require(legacy.finite_scores(reference["matching_qkv_fp32"]), "eight finite independent Compact scores required")
+    order_observation = {}
+    if source_order:
+        scores, observed = source_order_scores(half, independent, reference["input"], check)
+        order_observation["source_order_observation"] = observed
+    else:
+        scores = projection_scores(independent, reference["input"], check)
+    reference["matching_qkv_fp32"] = scores
+    require(legacy.finite_scores(scores), "eight finite independent Compact scores required")
     for pin in (plan_pin, prior_pin, stage_pin, plan["source_graph"], closure_pin, runtime_pin,
                 *baseline.values(), *candidate.values(), *publisher_files.values(), *reference_sources,
                 reference["fixture"], reference["producer"]):
@@ -200,14 +311,14 @@ def worker(deadline, expected_source):
         conversion.pinned(dict(pin, path=str(original_graph.parent / name)), check)
     loaded = legacy.loaded_runtime(import_pins, conversion.pin, check)
     return {
-        "schema": SCHEMA, "complete": True, "model": legacy.MODEL,
+        "schema": SOURCE_ORDER_SCHEMA if source_order else SCHEMA, "complete": True, "model": legacy.MODEL,
         "candidate": candidate, "baseline_candidate": baseline, "stage_receipt": stage_pin,
         "conversion_plan": plan_pin, "conversion_receipt": prior_pin,
         "original_graph": plan["source_graph"], "original_closure": closure_pin,
         "publisher": publisher, "publisher_files": publisher_files,
         "verification": {"baseline": baseline_verification, "projection_graph": typed_graph},
         "reference": reference, "reference_sources": reference_sources, "loaded_runtime": loaded,
-        "recipe": {"qkv_fp32_routes": list(ROUTES), "context_flash_single_tile": True},
+        "recipe": source_order_recipe(source_order), **order_observation,
         "worker": source, "pid": os.getpid(), "execution_token": token,
         "original_deadline_monotonic": deadline, "reference_device": "cpu",
         "model_inference": True, "torch_forward_invocations": 1,
@@ -215,7 +326,7 @@ def worker(deadline, expected_source):
     }
 
 
-def run_owned(out):
+def run_owned(out, *, source_order=False):
     started = time.monotonic()
     legacy, legacy_pin = load_base()
     deadline = started + legacy.MAX_WALL_SECONDS
@@ -254,13 +365,17 @@ def run_owned(out):
         conversion.guard(plan, directory, deadline=deadline)
         directory.mkdir()
         conversion.guard(plan, directory, True, deadline=deadline)
-    log, proof, receipt_path = (out / name for name in ("stdout-stderr.log", "compact-qkv-fp32-t32-reference.json", "execution.json"))
+    leaf = SOURCE_ORDER_LEAF if source_order else "compact-qkv-fp32-t32-reference.json"
+    log, proof, receipt_path = (out / name for name in ("stdout-stderr.log", leaf, "execution.json"))
     for path in (log, proof, receipt_path):
         conversion.guard(plan, path, deadline=deadline)
     source = conversion.pin(Path(__file__).resolve(), check)
     argv = [plan["python"]["path"], "-I", "-B", "-S", "-X", "pycache_prefix=" + plan["cache_prefix"],
             source["path"], "--worker", "--deadline-monotonic", repr(deadline), "--worker-sha256", source["sha256"],
             "--stage-receipt", stage_pin["path"], "--stage-receipt-sha256", stage_pin["sha256"]]
+    if source_order:
+        argv.append("--source-order-rms-quickgelu")
+    marker = SOURCE_ORDER_MARKER if source_order else MARKER
     environment = {key: value for key, value in os.environ.items()
                    if not key.upper().startswith(("AIRK_", "ORT_", "PYTHON", "CUDA_", "CUDNN_", "TORCH_", "TRITON_",
                                                   "HF_", "HUGGINGFACE_"))}
@@ -269,7 +384,8 @@ def run_owned(out):
                        TORCHINDUCTOR_CACHE_DIR=str(temporary), TRITON_CACHE_DIR=str(temporary),
                        TEMP=str(temporary), TMP=str(temporary), TMPDIR=str(temporary))
     host = 32 << 30
-    receipt = {"schema": OWNED_SCHEMA, "complete": False, "failure": None, "qualification": False,
+    receipt = {"schema": SOURCE_ORDER_OWNED_SCHEMA if source_order else OWNED_SCHEMA,
+               "complete": False, "failure": None, "qualification": False,
                "product_admission": False, "original_deadline_monotonic": deadline, "host_bytes": host,
                "command": argv, "execution_token": token, "worker": source,
                "conversion_plan": plan_pin, "conversion_receipt": prior_pin, "stage_receipt": stage_pin}
@@ -294,13 +410,14 @@ def run_owned(out):
         conversion.guard(plan, log, True, deadline=deadline)
         require(0 < log.stat().st_size <= MAX_LOG, "bounded projection reference stdout required")
         with log.open("rb") as stream:
-            lines = [line[len(MARKER):] for line in stream if line.startswith(MARKER)]
+            lines = [line[len(marker):] for line in stream if line.startswith(marker)]
         require(len(lines) == 1 and 0 < len(lines[0]) <= MAX_PROOF, "exact bounded projection worker proof required")
         result = json.loads(lines[0])
         expected_reference, _ = legacy.exact_reference(check)
         reference = dict(result["reference"])
         matching = reference.pop("matching_qkv_fp32")
-        require(result["schema"] == SCHEMA and result["complete"] is result["model_inference"] is True
+        require(result["schema"] == (SOURCE_ORDER_SCHEMA if source_order else SCHEMA)
+                and result["complete"] is result["model_inference"] is True
                 and result["native_execution"] is result["qualification"] is result["product_admission"] is False
                 and result["pid"] == owned["owned_leader_pid"] and result["execution_token"] == token
                 and result["original_deadline_monotonic"] == deadline and result["reference_device"] == "cpu"
@@ -308,7 +425,9 @@ def run_owned(out):
                 and result["conversion_plan"] == plan_pin and result["conversion_receipt"] == prior_pin
                 and result["baseline_candidate"] == {key: stage["baseline_" + key] for key in candidate}
                 and result["verification"]["projection_graph"] == stage["graph_proof"]
-                and result["recipe"] == {"qkv_fp32_routes": list(ROUTES), "context_flash_single_tile": True}
+                and result["recipe"] == source_order_recipe(source_order)
+                and result.get("source_order_observation") == (
+                    observed_source_order(RMS_SHAPES, 28) if source_order else None)
                 and type(result["torch_forward_invocations"]) is int and result["torch_forward_invocations"] == 1
                 and reference == expected_reference and legacy.finite_scores(matching),
                 "independent projection observation differs from the exact owned request")
@@ -351,6 +470,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage-receipt", type=Path, required=True)
     parser.add_argument("--stage-receipt-sha256", required=True)
+    parser.add_argument("--source-order-rms-quickgelu", action="store_true")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--owned-output", type=Path)
     mode.add_argument("--worker", action="store_true")
@@ -363,15 +483,18 @@ def main():
             "exact reviewed staged projection receipt required")
     if args.owned_output is not None:
         require(args.worker_sha256 is None and args.deadline_monotonic is None, "worker args require owned launch")
-        print(json.dumps({"proof": run_owned(args.owned_output), "qualification": False}))
+        print(json.dumps({"proof": run_owned(args.owned_output, source_order=args.source_order_rms_quickgelu),
+                          "qualification": False}))
         return
     require(args.worker_sha256 and args.deadline_monotonic and math.isfinite(args.deadline_monotonic),
             "owned worker source and finite original deadline required")
-    result = worker(args.deadline_monotonic, args.worker_sha256)
+    source_order = args.source_order_rms_quickgelu
+    result = worker(args.deadline_monotonic, args.worker_sha256, source_order=source_order)
+    marker = SOURCE_ORDER_MARKER if source_order else MARKER
     encoded = json.dumps(result, allow_nan=False, separators=(",", ":")).encode("utf-8")
     require(len(encoded) <= MAX_PROOF and time.monotonic() < args.deadline_monotonic,
             "original projection proof size or deadline exceeded")
-    print((MARKER + encoded).decode("utf-8"), flush=True)
+    print((marker + encoded).decode("utf-8"), flush=True)
 
 
 if __name__ == "__main__":

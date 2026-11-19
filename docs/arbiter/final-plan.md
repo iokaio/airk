@@ -1658,9 +1658,12 @@ matching CPU recipe completed one T32 run on the exact frozen input.
 The A6000 returned and synchronized the complete T32 vector. Matching
 raw error fell from 0.0248556137 to 0.0085411072 against the 0.001 limit.
 Both mass bounds and the winner checks passed. The remaining engineering
-gate is numerical parity. Isolate normalization and activation arithmetic
-before another full comparison. Wider widths, Resource20 and the fresh
-judged task cohort remain pending.
+gate is numerical parity. The independent RMSNorm and QuickGelu
+source-order replay reached 0.0201478004 raw error against the same
+CUDA scores. Keep the better Q/K/V comparison and isolate the remaining
+half projections before another full comparison. Wider widths, Resource20
+and the fresh judged task cohort remain pending.
+[Source-order CPU comparison](../simplify/one-process-ledger.md#2026-11-19--source-order-compact-cpu-reference-does-not-close-raw-parity)
 [Scored Q/K/V result and blocker](../simplify/one-process-ledger.md#2026-11-19--compact-qkv-t32-raw-error-improves-and-still-exceeds-the-gate)
 [Corrected CUDA observation and matching CPU reference](../simplify/one-process-ledger.md#2026-11-19--corrected-compact-qkv-cuda-load-and-matching-cpu-reference-pass)
 [Projection candidate staging and first CUDA observation](../simplify/one-process-ledger.md#2026-11-19--compact-fp32-qkv-graph-is-staged-and-the-first-native-load-finds-initializer-expansion)

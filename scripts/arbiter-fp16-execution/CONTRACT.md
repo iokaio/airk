@@ -377,3 +377,13 @@ native and parent check the original source, exact frozen input and FP32
 score words, complete placement and typed profile, and synchronized return.
 The original 0.001 matching raw, both 0.05 mass bounds and matching winner
 must pass independently. Record actual metrics and settlement on refusal.
+
+The optional --source-order-rms-quickgelu CPU variant runs separately
+with the same authenticated input and Q/K/V recipe. Its distinct proof
+requires 113 RMS operations at their pinned widths and 28 QuickGelu
+calls. It models CUDA's fused square accumulation, warp reductions,
+multiplication order and sigmoid branches. CPU rsqrt and exp supply
+the elementary operations. Use compare_projection_source_order.py only
+after the independent proof is retained. Pass its path and exact SHA
+with --reference and --reference-sha256. The comparison binds the sealed
+native and regular CPU proofs and reports the three complete-vector deltas.

@@ -11983,3 +11983,42 @@ a fresh admitted human-judged paired cohort. Historical FINAL, the
 retained training labels and the three-row FP32 timing population do
 not provide that evidence. Requested the location of an eligible cohort
 while continuing engineering.
+
+### 2026-11-19 — Source-order Compact CPU reference does not close raw parity
+
+The independent worker kept the exact same input, Q/K/V precision
+recipe, half weights, remaining projections and single-tile Flash math.
+It modeled CUDA's lane grouping, fused FP32 square accumulations, warp
+merges and scale-times-inverse multiplication order. It used the CUDA
+QuickGelu sign branches with CPU exp and used CPU reciprocal square root.
+The diagnostic claims source order and leaves CUDA instruction-level
+rsqrtf and expf equivalence unverified. The receipt observed 57 width-2048
+RMS rows/groups, 28 Q RMS and 28 K RMS calls at width 128, and 28 QuickGelu
+calls in one independent CPU T32 forward. The published comparison opened
+the prior vectors only after this result was retained.
+
+| Comparison | Maximum raw error | Maximum mass error | Same winner |
+| --- | ---: | ---: | --- |
+| A6000 versus first matching Q/K/V CPU reference | 0.008541107177734375 | 0.00008143699270950558 | Yes |
+| A6000 versus source-order CPU diagnostic | 0.02014780044555664 | 0.00005301089144071902 | Yes |
+| Source-order versus first matching Q/K/V CPU reference | 0.022173166275024414 | 0.00013162605689176488 | Yes |
+
+The combined source-order replay increased raw error and remains a
+diagnostic. Keep the more accurate matching Q/K/V reference and the
+original 0.001 raw limit. The next projection discriminator can use the
+retained exact layer-0 CUDA half attention output as the original O
+projection operand and the authenticated O weights, before adding a
+mixed-graph layer-0 cut or running another full native forward.
+
+Under compact-fp16-qkv-fp32-source-order-reference-r1, execution
+88823c4c1cddb49a3c0eb7ee1c21e17a47287510ef63bba5f737266746a9bdeb,
+proof 8de5a749c892ab398be38749d43a9d0ce06be54581cbba0cd66546477a163c37,
+comparison 5044ec07354bcda9e4927822905f54df517ac14ecbb5a16dd4ad00a54b41def5,
+worker 83a8d4485649ac1f0681deb54095514b1aa65637b0af34e27210eb4587a23d65,
+and comparison source c5f6dad4dbf12d10f7e01e5a5ae3282cf727854b70ba2f2a88e85e1cafa82bfb.
+The independent run completed in 112.227194 s with 15,555,977,216 B
+peak Job commit, child exit 0 and natural empty settlement under the
+600-second and 32 GiB bounds. The user and default owner SID ended in
+1002. The 82 orchestration checks and all four source-order arithmetic
+controls passed. The post-run comparison also reproduced the retained
+raw and winner results and agreed on mass within floating exp precision.
