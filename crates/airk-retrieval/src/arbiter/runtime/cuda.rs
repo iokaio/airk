@@ -33,6 +33,12 @@ pub use diagnostic::{LoadObserver, LoadSnapshot};
 #[cfg(feature = "test-support")]
 pub use graph_metadata::{Observation as GraphMetadataObservation, Row as GraphMetadataRow};
 mod eligibility;
+mod fp16;
+pub(super) use fp16::AttentionPlan;
+pub(crate) use fp16::capture_at_runtime_init;
+#[cfg(feature = "test-support")]
+pub use fp16::{PreparedFp16ProbeProfile, prepare_fp16_probe_profile};
+pub use fp16::{fp16_math_policy_digest, fp16_provider_options_digest};
 mod manifest;
 mod numeric;
 pub use numeric::compare_reference_scores;
@@ -526,7 +532,10 @@ impl CudaDevice {
         policy.validate(profile)?;
         ensure!(
             policy.backend == GpuBackend::Cuda
-                && policy.precision == DevicePrecision::Float32
+                && matches!(
+                    policy.precision,
+                    DevicePrecision::Float32 | DevicePrecision::Float16
+                )
                 && !policy.tf32
                 && policy.placement == PlacementPolicy::StrictGpu
                 && policy.runtime_build == self.runtime.runtime_build()
@@ -539,9 +548,19 @@ impl CudaDevice {
                     } else {
                         compatibility_policy_digest()
                     }
-                && policy.provider_options == provider_options_digest()
-                && policy.math_policy == math_policy_digest(),
-            "GPU model/runtime/policy/precision is not the native FP32 strict variant"
+                && policy.provider_options
+                    == if policy.precision == DevicePrecision::Float32 {
+                        provider_options_digest()
+                    } else {
+                        fp16_provider_options_digest(profile.model)?
+                    }
+                && policy.math_policy
+                    == if policy.precision == DevicePrecision::Float32 {
+                        math_policy_digest()
+                    } else {
+                        fp16_math_policy_digest(profile.model)?
+                    },
+            "GPU model/runtime/policy/precision is not the native strict variant"
         );
         Ok(())
     }
@@ -741,17 +760,25 @@ impl Binding {
     pub fn configure(
         &self,
         builder: ort::session::builder::SessionBuilder,
+        profile: &Profile,
     ) -> Result<ort::session::builder::SessionBuilder> {
         in_time(self.load_deadline)?;
         let log = self.log.clone();
+        let mut provider = ort::execution_providers::CUDAExecutionProvider::default()
+            .with_device_id(self.device.ordinal())
+            .with_tf32(false)
+            .with_cuda_graph(false)
+            .with_memory_limit(usize::try_from(self.plan.cold_peak_bytes)?);
+        if profile
+            .device_execution
+            .as_ref()
+            .is_some_and(|p| p.precision == DevicePrecision::Float16)
+        {
+            fp16::require_environment(self.evidence.is_none())?;
+            provider = provider.with_attention_backend(fp16::backend(profile.model)?);
+        }
         let builder = builder
-            .with_execution_providers([ort::execution_providers::CUDAExecutionProvider::default()
-                .with_device_id(self.device.ordinal())
-                .with_tf32(false)
-                .with_cuda_graph(false)
-                .with_memory_limit(usize::try_from(self.plan.cold_peak_bytes)?)
-                .build()
-                .error_on_failure()])
+            .with_execution_providers([provider.build().error_on_failure()])
             .map_err(run_failure)?;
         Ok(builder
             .with_config_entry("session.disable_cpu_ep_fallback", "1")?

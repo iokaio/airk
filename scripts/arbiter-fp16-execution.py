@@ -424,36 +424,247 @@ G5_SOURCES = ('Cargo.lock', 'crates/airk-retrieval/Cargo.toml', 'crates/airk-ret
         'runtime/cuda/CONTRACT.md'))
 
 
-def successful_fp32(receipt):
-    require(receipt.get('schema') == 'airk.private.owned-cuda-component/1'
-            and receipt.get('complete') is True and receipt.get('failure', 'missing') is None
-            and receipt.get('execution_user_sid') == SID
-            and receipt.get('whole_phase_deadline_not_refreshed') is True
-            and receipt.get('whole_phase_expired') is False
-            and receipt.get('qualification') is False and receipt.get('product_admission') is False,
-            'genuine successful FP32 component receipt required')
+FP32 = {
+    'compact': {
+        'scoring': '1abbd515e534f4056e3c48380fffd290654e0b92dea67088ae291512f02cf2a2',
+        'resource': '941f1fc208d0379320801eecf0b6f55427c9d5b5cab37d0734e7de5852258b81',
+        'profile': '840bd478675cbf03f2477c170401af75027d55de82b6ab69933f971a1104531d',
+        'outer': 'airk.private.owned-compact-bounded-hybrid-profile/2',
+        'timing': 'airk.private.owned-compact-bounded-hybrid-resource20/1',
+        'native': 'airk.private.cuda-compact-bounded-hybrid-',
+        'selector': 'cuda_compact_fp32_bounded_hybrid_',
+        'host_gib': 32, 'device_gib': 24, 'arena': (22, 16, 2), 'lane': 'same_artifact',
+    },
+    'large': {
+        'scoring': 'ea9aefbf7e9cefb91bca8384924237f95655131cb49ac571e6900e55f3d6d820',
+        'resource': '8ff0d3ed5152ea533a46ab1dc258b96b536aa7df2948b49400f275aabda8fc7b',
+        'profile': '7e4481caaf7034a70779702edad73a0eb08321418d1b785a4b7f4f891522bdac',
+        'outer': 'airk.private.owned-large-cuda-batch-view-scoring/1',
+        'timing': 'airk.private.owned-large-cuda-batch-view-resource20/1',
+        'native': 'airk.private.cuda-large-batch-view-bounded-hybrid-',
+        'selector': 'cuda_large_fp32_batch_view_bounded_hybrid_',
+        'host_gib': 48, 'device_gib': 44, 'arena': (40, 8, 4), 'lane': 'equivalent_predecessor',
+    },
+}
+SCORING_OWNERS = {
+    'journal': 'scripts/cuda-component-execution/bounded_hybrid.py',
+    'watchdog': 'scripts/cuda-component-execution/resource20_watch.py',
+    'settlement': 'scripts/cuda-native-execution.py',
+}
+
+
+def successful_fp32(receipt, expected, *, timing=False):
+    schema = expected['timing' if timing else 'outer']
     elapsed = receipt.get('elapsed_seconds')
-    require(type(elapsed) in (int, float) and math.isfinite(elapsed) and 0 <= elapsed < 120,
-            'original FP32 whole-phase timing required')
-    for key in ('post_input_drift', 'final_input_errors', 'final_proof_errors'):
-        require(receipt.get(key) == [], 'FP32 final input/proof failure: ' + key)
-    require(receipt.get('final_proof_success') == ['native_result', 'operations', 'stdout'],
-            'complete original FP32 final proof roster required')
+    limit = 3600 if timing else 120
+    require(receipt.get('schema') == schema and receipt.get('complete') is True
+            and receipt.get('failure', 'missing') is None and receipt.get('execution_user_sid') == SID
+            and receipt.get('qualification') is False
+            and type(elapsed) in (int, float) and math.isfinite(elapsed) and 0 < elapsed < limit,
+            'genuine successful FP32 receipt and original timing required')
+    if expected['lane'] == 'same_artifact' or timing:
+        required = ['native_result', 'operations', 'stdout']
+        if not timing:
+            required.append('runtime_profile')
+        require(receipt.get('final_proof_success') == required and receipt.get('final_proof_errors') == []
+                and receipt.get('final_guard_errors') == {} and receipt.get('whole_phase_expired') is False,
+                'FP32 final proof roster or original timing differs')
+    if expected['lane'] == 'same_artifact':
+        custody = receipt.get('graph_custody', {})
+        require(receipt.get('product_admission') is False and receipt.get('whole_phase_deadline_not_refreshed') is True
+                and type(custody.get('opened_handles')) is int
+                and custody['opened_handles'] == custody.get('closed_handles') and custody['opened_handles'] > 0
+                and custody.get('close_errors') == [],
+                'FP32 Compact input custody or original timing differs')
+    else:
+        require(receipt.get('reference_basis') == expected['lane'] and receipt.get('model_requests_dispatched') is True,
+                'FP32 corrected Large reference basis differs')
 
 
-def validate_fp32_process(receipt, old):
+def core_pin(pin_row):
+    return {key: pin_row[key] for key in ('path', 'sha256')}
+
+
+def validate_fp32_process(receipt, native, image, expected, settled):
     owned = receipt['owned']
     pid = owned.get('owned_leader_pid')
     proof = owned.get('suspended_assignment', {})
-    require(type(pid) is int and pid > 0 and type(proof.get('pid')) is int and proof['pid'] == pid,
-            'actual suspended FP32 PID proof absent')
-    require(proof.get('execution_user_sid') == SID and proof.get('default_owner_sid') == SID
-            and proof.get('image') == {key: old['native_image'][key] for key in ('path', 'sha256')},
-            'actual suspended FP32 image/token proof differs')
-    require(proof.get('component_job') == {'process_bytes': 16 << 30, 'job_bytes': 24 << 30,
-                                         'flags': 8968, 'active_limit': 2},
-            'actual suspended original FP32 Job proof differs')
-    require(receipt.get('parent_python') == old['parent_python'], 'actual FP32 parent interpreter differs')
+    host = expected['host_gib'] << 30
+    require(type(pid) is int and pid > 0 and proof.get('pid') == native.get('pid') == pid
+            and proof.get('execution_user_sid') == proof.get('default_owner_sid') == SID
+            and native.get('execution_user') == native.get('default_owner') == SID
+            and proof.get('image') == core_pin(image)
+            and native.get('native_binary_sha256') == image['sha256'],
+            'actual suspended FP32 PID/image/token proof differs')
+    if expected['lane'] == 'same_artifact':
+        require(proof.get('component_job') == {'process_bytes': host, 'job_bytes': host,
+                                               'flags': 0x2308, 'active_limit': 2},
+                'actual suspended FP32 Compact Job proof differs')
+    require(settled(owned) and type(owned.get('peak_host_committed_bytes')) is int
+            and 0 < owned['peak_host_committed_bytes'] <= host
+            and native.get('actual_job') == {'process_memory_limit_bytes': host, 'job_memory_limit_bytes': host,
+                                            'flags': 0x2308}
+            and native.get('native_host_reservation_bytes') == host
+            and type(native.get('peak_process_rss_bytes')) is int and 0 < native['peak_process_rss_bytes'] <= host,
+            'actual FP32 Job, host reservation or process RSS differs')
+    arena, warm, headroom = expected['arena']
+    require(native.get('applied_capacity') == {'arena_limit_bytes': arena << 30, 'warm_extra_bytes': warm << 30,
+                                               'headroom_bytes': headroom << 30}
+            and native.get('bounds') == {'schema': 'airk.arbiter.gpu-probe-reservation/1', 'deadline_ms': 120000,
+                                         'device_limit_bytes': expected['device_gib'] << 30, 'host_limit_bytes': host}
+            and native.get('profile') == expected['profile'] and native.get('complete') is True
+            and native.get('error', 'missing') is None and native.get('native_control_cleanup_error', 'missing') is None
+            and all(native.get(key) is True for key in ('session_teardown_observed', 'native_host_charge_release_observed',
+                                                       'native_control_cleanup_observed'))
+            and all(native.get(key) is False for key in ('qualified', 'product_admission', 'process_cuda_poisoned',
+                                                         'native_control_retained_for_unknown_cuda')),
+            'FP32 profile, device reservation or native teardown differs')
+
+
+def validate_fp32_rows(native, rows, lane):
+    require([row['tokens'] for row in native['rows']] == [32, 128, 1024, 8192]
+            and [row['tokens'] for row in native['profiled_runs']] == [32, 128, 1024, 8192]
+            and len(rows) == 4, 'four exact FP32 numeric observations required')
+    for actual, expected in zip(native['rows'], rows):
+        require(actual['name'] == expected['name']
+                and actual['tokens'] == len(expected['input']['input_ids'])
+                and actual['input_digest'] == expected['input']['input_digest']
+                and actual['argmax_matches'] is True and len(actual['raw_scores']) == 8
+                and all(type(score) in (int, float) and math.isfinite(score) for score in actual['raw_scores'])
+                and all(type(actual[key]) in (int, float) and 0 <= actual[key] <= limit for key, limit in (
+                    (lane + '_raw_error', .001), ('original_fp32_raw_error', .001),
+                    (lane + '_mass_error', .05), ('original_fp32_mass_error', .05))),
+                'FP32 independent score comparison differs')
+
+
+def fp32_facts(evidence, selected_source, take, core, owners):
+    expected = FP32[evidence['model']]
+    compact = evidence['model'] == 'compact'
+    require(evidence['first_fp32']['sha256'] == expected['scoring']
+            and evidence['resource_fp32']['sha256'] == expected['resource'],
+            'exact selected model FP32 receipt identities required')
+    first, timing = (read(take(evidence[key])) for key in ('first_fp32', 'resource_fp32'))
+    historical_group = scored_scope = None
+    for timing_run, outer in ((False, first), (True, timing)):
+        successful_fp32(outer, expected, timing=timing_run)
+        native = read(take(outer['native_result']))
+        suffix = 'resource' if timing_run else 'profile'
+        require(native['schema'] == expected['native'] + suffix + '/1', 'exact FP32 native receipt schema required')
+        if compact:
+            plan = read(take(outer['plan']))
+            context = plan['context']
+            image, request, runtime = (context[key] for key in ('native_image', 'request', 'descriptor'))
+            build = read(take(context['native_build_receipt']))
+            require(plan['schema'] == ('airk.private.compact-bounded-hybrid-resource20-plan/1' if timing_run
+                                      else 'airk.private.compact-bounded-hybrid-plan/2')
+                    and outer['input_seals'] == dict(context['input_seals'], **{
+                        outer['plan']['path']: outer['plan']['sha256']})
+                    and outer['parent_python'] == context['parent_python']
+                    and context['native_group'] == build['groups']['native']['sha256'],
+                    'retained Compact plan or native build source differs')
+            take(context['parent_python'])
+            if timing_run:
+                require(plan['profile_execution'] == evidence['first_fp32']
+                        and plan['profile_result'] == first['native_result'],
+                        'Compact timing did not use the selected scoring evidence')
+            profile, native_input = context['profile'], context['native_input']
+            graph = plan['graph']
+        else:
+            image, request, runtime = (outer[key] for key in ('image', 'request', 'runtime_manifest'))
+            build = read(take(outer['build']))
+            log = take(outer['build_log'])
+            require(log.parent == Path(outer['build']['path']).parent and log.name == build['log']
+                    and outer['wall_seconds'] == (3600 if timing_run else 120)
+                    and outer['host_bytes'] == expected['host_gib'] << 30, 'retained Large build or limits differ')
+            candidate, scoring = outer['candidate_inputs'], outer['scoring_inputs']
+            profile, native_input = candidate['profile_pin'], candidate['native_input']
+            graph = scoring['reviewed_graph']
+            if timing_run:
+                require(outer['resource_inputs']['scoring_execution'] == evidence['first_fp32']
+                        and outer['resource_inputs']['scoring_result'] == first['native_result'],
+                        'Large timing did not use the selected scoring evidence')
+            else:
+                proof = read(take(scoring['reference_equivalence']))
+                require(native['reference_basis'] == expected['lane']
+                        and native['reference_equivalence'] == core_pin(scoring['reference_equivalence'])
+                        and native['reference_request'] == core_pin(scoring['reference_request'])
+                        and proof['predecessor_graph'] == selected_source['original_graph']['sha256']
+                        and proof['candidate_graph'] == candidate['graph']['sha256']
+                        and proof['exact_inverse'] is proof['operand_order_unchanged'] is True
+                        and proof['verified_mask_adds'] == 36,
+                        'Large scoring must bind the original export through the reviewed inverse proof')
+                take(scoring['reference_request'])
+                take(candidate['graph'])
+        require(build['passed'] is True and build['inputs_unchanged'] is True, 'actual passing FP32 native build required')
+        if not timing_run:
+            historical_group = build['groups']['native']['sha256']
+        selector = ('inference_engine::pool::arbiter::qualification::software_v2::cuda_qualification::'
+                    'bounded_hybrid::' + expected['selector'] + ('resource20' if timing_run else 'profile'))
+        command = ([image['path'], '--exact', selector, '--ignored', '--nocapture', '--test-threads=1'] if compact
+                   else [image['path'], '--ignored', '--exact', selector, '--test-threads=1']
+                        + (['--nocapture'] if timing_run else []))
+        require(outer['command'] == command, 'exact retained FP32 native selector required')
+        take(image)
+        validate_fp32_process(outer, native, image, expected, owners['settlement'].settled)
+        for label, row in (('request', request), ('runtime_manifest', runtime), ('native_input', native_input),
+                           ('reviewed_graph', graph)):
+            require(native[label] == core_pin(row), 'native FP32 input pin differs: ' + label)
+            take(row)
+        request_value, input_value = read(request['path']), read(native_input['path'])
+        profile_value = read(take(profile))
+        require(request_value['gpu_input'] == core_pin(native_input)
+                and request_value['runtime_manifest'] == core_pin(runtime)
+                and request_value['bounds'] == native['bounds']
+                and request_value['job_limit_bytes'] == expected['host_gib'] << 30
+                and input_value['profile'] == core_pin(profile)
+                and input_value['source_manifest'] == native['source_manifest']
+                and profile_value['manifest'] == expected['profile'],
+                'FP32 Probe/profile/source custody differs')
+        core(native['source_manifest'])
+        if compact:
+            require(profile_value['device_execution']['graph'] == selected_source['original_graph']['sha256'],
+                    'Compact scoring profile does not bind the original export graph')
+        limits = {'native_result': 16 << 20, 'operations': 128 << 10, 'stdout': 64 << 20}
+        if not timing_run:
+            limits['runtime_profile'] = 64 << 20
+            require(outer['runtime_profile'] == native['runtime_profile'], 'FP32 runtime profile pin differs')
+        for key, cap in limits.items():
+            require(0 < outer[key]['bytes'] <= cap, 'FP32 bounded output proof required: ' + key)
+            if key != 'native_result':
+                take(outer[key])
+        raw_operations = Path(outer['operations']['path']).read_bytes()
+        operations = [json.loads(line) for line in raw_operations.splitlines()]
+        scope = [native[key] for key in ('profile', 'request', 'reviewed_graph', 'runtime_manifest')]
+        if timing_run:
+            watch = outer['owned']['before_GO']['operation_watch']
+            series = native['resource']
+            require([*scope, native['input_digest']] == scored_scope
+                    and native['profiling_enabled'] is False and native['tokens'] == 8192
+                    and native['operation_deadline_ms'] == 120_000 and series['complete'] is True
+                    and series['attempted_samples'] == len(series['samples']) == 20
+                    and series['reservation_bytes'] == expected['host_gib'] << 30
+                    and watch['actual_process_exit_observed'] is True and watch['exit_code'] == 0
+                    and watch['completed_return_markers'] == 22 and watch['observed_events'] == operations,
+                    'complete independently watched FP32 Resource20 evidence required')
+            identity = {'input_sha256': native['request']['sha256'], 'profile': native['profile'],
+                        'process_id': native['pid'], 'native_binary_sha256': native['native_binary_sha256']}
+            state = owners['watchdog'].Operations(identity, native['input_digest'],
+                                                  native['original_whole_expires_monotonic_ns'])
+            prefix = b''
+            for line, event in zip(raw_operations.splitlines(keepends=True), operations):
+                prefix += line
+                state.feed(prefix, event['observed_monotonic_ns'])
+            state.prove_exit(0)
+        else:
+            fixtures = [read(core(native[key])) for key in ('retained_fixture', 'supplemental_fixture')]
+            for key, fixture in zip(('retained_producer', 'supplemental_producer'), fixtures):
+                require(native[key] == fixture['reference_producer'], 'FP32 reference producer differs')
+                core(native[key])
+            validate_fp32_rows(native, owners['journal'].selected_rows(*fixtures), expected['lane'])
+            owners['journal'].journal(operations, native)
+            scored_scope = [*scope, native['rows'][-1]['input_digest']]
+    return historical_group
+
 
 def successful_readiness(receipt, kind):
     require(receipt.get('schema') == 'airk-readiness-command/1'
@@ -497,62 +708,47 @@ def g5_source_facts(group, root, check=lambda: None):
         rows[row['path']] = row
     return rows
 
-def prerequisite_facts(evidence, check=lambda: None):
-    """Reopen immutable historical FP32 and current G5 evidence, without dispatch."""
+def fp32_owners(validators, take):
+    root = Path(__file__).resolve().parents[1]
+    require(set(validators) == set(SCORING_OWNERS), 'complete prerequisite validator roster required')
+    owners = {}
+    for key, relative in SCORING_OWNERS.items():
+        row = validators[key]
+        require(row['path'] == str(root / relative), 'maintained FP32 prerequisite validator required: ' + key)
+        owners[key] = load(take(row), 'fp16_fp32_' + key)
+    native = owners['settlement']
+    require(native.HELPERS == HELPERS, 'original settlement owner differs')
+    for name, sha in HELPERS.items():
+        take(dict(native.pin(native.MAINTAINED_HELPER_ROOT / name), sha256=sha))
+    owners['settlement'], _ = native.helpers({'ownership_helper_root': str(native.MAINTAINED_HELPER_ROOT)})
+    return owners
+
+
+def prerequisite_facts(evidence, selected_source, check=lambda: None):
+    """Reopen sealed model-specific FP32 and current G5 evidence without dispatch."""
     root = Path(__file__).resolve().parents[1]
     rows = {}
     def take(row):
-        pinned(row, check); rows[row['path']] = row
+        if row['path'] not in rows:
+            windows_owner(path=row['path'])
+            pinned(row, check)
+            rows[row['path']] = row
+        require(rows[row['path']] == row, 'conflicting prerequisite pin for one path')
         return Path(row['path'])
     def core(row):
-        full = pin(row['path'], check)
+        if row['path'] not in rows:
+            windows_owner(path=row['path'])
+        full = rows.get(row['path']) or pin(row['path'], check)
         require(full['sha256'] == row['sha256'], 'prerequisite core pin changed')
         return take(full)
-    for row in evidence['validators'].values():
-        take(row)
-    require(set(evidence['validators']) == {'component', 'native'}, 'complete prerequisite validator roster required')
-    require(evidence['validators']['component']['path'] == str(root / 'scripts/cuda-component-execution.py')
-            and evidence['validators']['native']['path'] == str(root / 'scripts/cuda-native-execution.py'),
-            'maintained prerequisite validators required')
-    c = load(evidence['validators']['component']['path'], 'fp16_component_prerequisite')
-    b = c.base()
-    first = read(take(evidence['first_fp32']))
-    successful_fp32(first)
-    old = read(take(first['plan']))
-    require(old.get('schema') == c.SCHEMA and old.get('human_sid') == SID
-            and old.get('selector') == c.SELECTOR and old.get('limits') == c.LIMITS,
-            'original Compact17 source plan required')
-    require(first['command'] == [old['native_image']['path'], '--exact', c.SELECTOR, '--ignored', '--nocapture', '--test-threads=1']
-            and first['input_seals'] == dict(old['input_seals'], **{first['plan']['path']: first['plan']['sha256']}),
-            'FP32 original command/input identity differs')
-    for key in ('native_image', 'image_packet', 'native_build_receipt', 'request', 'native_input', 'profile', 'descriptor'):
-        take(old[key])
-    for row in old['runtime_files']:
-        take(row)
-    for name, sha in HELPERS.items():
-        path = Path(old['ownership_helper_root']) / name
-        row = pin(path, check); require(row['sha256'] == sha, 'original settlement helper changed'); take(row)
-    b.source_image(old)
-    validate_fp32_process(first, old)
-    take(old['parent_python'])
-    parent, _ = b.helpers(old)
-    require(parent.settled(first['owned']) and type(first['owned'].get('peak_host_committed_bytes')) is int
-            and 0 < first['owned']['peak_host_committed_bytes'] <= 24 << 30, 'actual FP32 HANDLE/Job settlement absent')
-    native, profile, fixture = c.input_facts(old, b)
-    for row in (native['numeric_fixture'], native['source_manifest'], fixture['reference_producer']):
-        core(row)
-    for key, cap in c.PROOFS.items():
-        require(first[key]['bytes'] <= cap, 'FP32 original output cap exceeded')
-        take(first[key])
-    value = read(first['native_result']['path'])
-    c.validate_native(value, old, first['owned']['owned_leader_pid'], native, profile, fixture)
-    c.validate_operations([json.loads(line) for line in Path(first['operations']['path']).read_text(encoding='utf-8').splitlines()], value)
+    owners = fp32_owners(evidence['validators'], take)
+    historical_group = fp32_facts(evidence, selected_source, take, core, owners)
     tests = read(take(evidence['native_g5']))
     clippy = read(take(evidence['native_g5_clippy']))
     successful_readiness(tests, 'tests'); successful_readiness(clippy, 'clippy')
     require(tests['groups']['native'] == clippy['groups']['native'], 'G5 Clippy/tests source groups differ')
     group = tests['groups']['native']
-    require(group['sha256'] != old['native_group'], 'G5 cannot retag the original FP32 source epoch')
+    require(group['sha256'] != historical_group, 'G5 cannot retag the original FP32 source epoch')
     for row in g5_source_facts(group, root, check).values():
         take(row)
     junit = tests['junit']; leaf = Path(junit['path'])
@@ -564,7 +760,7 @@ def prerequisite_facts(evidence, check=lambda: None):
 
 
 def source_facts(source, model, check=lambda: None):
-    require(model == 'compact', 'only Compact has an implemented genuine FP32 prerequisite validator')
+    require(model in FP32, 'only Compact and Large have genuine FP32 prerequisite validators')
     require(source['sha256'] == SOURCE_PLAN_SHA, 'original export source plan identity differs')
     original = read(pinned(source, check))
     require(original.get('schema') == 'airk.private.g5-original3-export-run-plan/1', 'original source schema differs')
@@ -599,10 +795,10 @@ def authenticate_prerequisites(plan, by_path, check=lambda: None):
             and plan['python'] == original['python'] and plan['exporter']['sha256'] == original['reviewed_library']['sha256'],
             'conversion differs from authentic original source data')
     evidence = read(pinned(plan['prerequisites_manifest'], check))
-    require(evidence.get('schema') == 'airk.private.fp16-prerequisites/1'
+    require(evidence.get('schema') == 'airk.private.fp16-prerequisites/2' and evidence.get('model') == plan['model']
             and {key: evidence[key] for key in ('first_fp32', 'native_g5')} == plan['prerequisite_evidence'],
             'prerequisite manifest identity differs')
-    for path, row in prerequisite_facts(evidence, check).items():
+    for path, row in prerequisite_facts(evidence, selected, check).items():
         require(by_path.get(path) == row, 'prerequisite dependency omitted from input census')
     baseline = plan['runtime_baseline']
     require(baseline['sha256'] == RUNTIME_BASELINE_SHA, 'original runtime baseline identity differs')
@@ -620,12 +816,11 @@ def prepare(args):
     root = Path(__file__).resolve().parents[1]
     source = pin(args.source_plan, check)
     original, selected = source_facts(source, args.model, check)
-    evidence = {'schema': 'airk.private.fp16-prerequisites/1',
-                'first_fp32': pin(args.first_fp32, check), 'native_g5': pin(args.native_g5, check),
-                'native_g5_clippy': pin(args.native_g5_clippy, check),
-                'validators': {'component': pin(root / 'scripts/cuda-component-execution.py', check),
-                               'native': pin(root / 'scripts/cuda-native-execution.py', check)}}
-    prerequisite_rows = prerequisite_facts(evidence, check)
+    evidence = {'schema': 'airk.private.fp16-prerequisites/2', 'model': args.model,
+                'first_fp32': pin(args.first_fp32, check), 'resource_fp32': pin(args.resource_fp32, check),
+                'native_g5': pin(args.native_g5, check), 'native_g5_clippy': pin(args.native_g5_clippy, check),
+                'validators': {key: pin(root / relative, check) for key, relative in SCORING_OWNERS.items()}}
+    prerequisite_rows = prerequisite_facts(evidence, selected, check)
     python = original['python']; pinned(python, check)
     require(pin(sys.executable, check) == python, 'original interpreter required for preparation')
     home = Path(python['path']).parent
@@ -692,13 +887,13 @@ def main():
     mode.add_argument('--worker', action='store_true')
     parser.add_argument('--plan', type=Path, required=True)
     parser.add_argument('--plan-sha256')
-    for name in ('source-plan', 'first-fp32', 'native-g5', 'native-g5-clippy', 'runtime-baseline', 'output-root', 'cache-prefix', 'powershell'):
+    for name in ('source-plan', 'first-fp32', 'resource-fp32', 'native-g5', 'native-g5-clippy', 'runtime-baseline', 'output-root', 'cache-prefix', 'powershell'):
         parser.add_argument('--' + name, type=Path)
     parser.add_argument('--model', choices=('focus', 'compact', 'large'))
     parser.add_argument('--deadline', type=float)
     args = parser.parse_args()
     if args.prepare:
-        require(all(getattr(args, name) is not None for name in ('source_plan', 'first_fp32', 'native_g5', 'native_g5_clippy', 'runtime_baseline', 'output_root', 'cache_prefix', 'powershell', 'model')), 'complete prepare arguments required')
+        require(all(getattr(args, name) is not None for name in ('source_plan', 'first_fp32', 'resource_fp32', 'native_g5', 'native_g5_clippy', 'runtime_baseline', 'output_root', 'cache_prefix', 'powershell', 'model')), 'complete prepare arguments required')
         print(json.dumps({'plan': prepare(args), 'conversion_executed': False, 'qualification': False}))
         return
     require(args.plan_sha256 is not None, 'reviewed plan hash required')

@@ -52,10 +52,10 @@ The maintained [graph exporter](../../scripts/export-arbiter-fp16.py) implements
 half-precision learned weights with protected FP32 operations. Its
 [contract](../../scripts/arbiter-fp16-export/CONTRACT.md) records exact source
 lineages, conversion rules, attention semantics and numerical gates. Synthetic
-controls validate conversion mechanics only. Selected-model conversion remains
-held until the actual FP32 and native G5 preconditions pass; this tool cannot
-activate or qualify a model. Independent whole-graph, numerical, backend,
-resource and product checks remain required.
+controls validate conversion mechanics. The [conversion custody contract](../../scripts/arbiter-fp16-execution/CONTRACT.md)
+binds the selected model's Windows FP32 scoring and timing evidence and the
+separate native G5 prerequisites. The resulting candidate requires independent
+whole-graph, numerical, backend, resource and product checks.
 
 ## Research credits and permitted-use boundaries
 

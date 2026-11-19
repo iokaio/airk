@@ -212,12 +212,14 @@ class OutputControls(unittest.TestCase):
 
 class PreparationControls(unittest.TestCase):
     def fp32(self):
-        return {'schema': 'airk.private.owned-cuda-component/1', 'complete': True, 'failure': None,
-                'execution_user_sid': 'S-1-5-21-3678370870-3858642417-826968105-1002',
+        return {'schema': 'airk.private.owned-compact-bounded-hybrid-profile/2', 'complete': True,
+                'failure': None, 'execution_user_sid': 'S-1-5-21-3678370870-3858642417-826968105-1002',
                 'whole_phase_deadline_not_refreshed': True, 'whole_phase_expired': False,
                 'qualification': False, 'product_admission': False, 'elapsed_seconds': 119.5,
-                'post_input_drift': [], 'final_input_errors': [], 'final_proof_errors': [],
-                'final_proof_success': ['native_result', 'operations', 'stdout']}
+                'graph_custody': {'opened_handles': 15, 'closed_handles': 15, 'close_errors': []},
+                'final_guard_errors': {}, 'final_proof_errors': [],
+                'final_proof_success': ['native_result', 'operations', 'stdout', 'runtime_profile']}
+
 
     def readiness(self, kind='tests'):
         return {'schema': 'airk-readiness-command/1', 'status': 'completed', 'passed': True,
@@ -231,10 +233,16 @@ class PreparationControls(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'source plan identity'):
             M.source_facts(row(), 'compact')
 
-    def test_unimplemented_variant_evidence_refuses(self):
-        for model in ('focus', 'large'):
-            with self.subTest(model=model), self.assertRaisesRegex(ValueError, 'only Compact'):
-                M.source_facts(row(), model)
+    def test_focus_has_no_qualified_fp32_prerequisite(self):
+        with self.assertRaisesRegex(ValueError, 'only Compact and Large'):
+            M.source_facts(row(), 'focus')
+
+    def test_wrong_model_receipt_refuses_before_open(self):
+        evidence = {'model': 'large',
+                    'first_fp32': row('compact-proof', sha='1abbd515e534f4056e3c48380fffd290654e0b92dea67088ae291512f02cf2a2'),
+                    'resource_fp32': row('large-timing', sha='8ff0d3ed5152ea533a46ab1dc258b96b536aa7df2948b49400f275aabda8fc7b')}
+        with self.assertRaisesRegex(ValueError, 'exact selected model'):
+            M.fp32_facts(evidence, {}, lambda proof: self.fail('wrong-model proof opened'), None, {})
 
     def test_original_source_graph_and_closure_are_reopened(self):
         original = {'schema': 'airk.private.g5-original3-export-run-plan/1', 'models': [
@@ -277,19 +285,30 @@ class PreparationControls(unittest.TestCase):
         with patch.object(M, 'pinned'), patch.object(M, 'read', return_value=value), patch.object(M, 'file_roster', return_value=set()), patch.object(M, 'pin', side_effect=FileNotFoundError), self.assertRaises(FileNotFoundError):
             M.runtime_facts(baseline, [ROOT])
 
-    def test_actual_component_success_shape(self):
-        M.successful_fp32(self.fp32())
+    def test_actual_scoring_success_shape(self):
+        M.successful_fp32(self.fp32(), M.FP32['compact'])
 
     def test_fp32_failed_late_missing_or_retagged_refuses(self):
         for key, value in [('complete', False), ('failure', {}), ('whole_phase_expired', True), ('elapsed_seconds', 120),
                            ('qualification', True), ('product_admission', True), ('execution_user_sid', 'other'),
                            ('final_proof_success', ['native_result']), ('final_proof_errors', [{}]),
-                           ('post_input_drift', ['changed']), ('final_input_errors', [{}])]:
+                           ('final_guard_errors', {'output': 'changed'}),
+                           ('graph_custody', {'opened_handles': 15, 'closed_handles': 14, 'close_errors': []})]:
             receipt = self.fp32(); receipt[key] = value
-            with self.subTest(key=key), self.assertRaises(ValueError): M.successful_fp32(receipt)
+            with self.subTest(key=key), self.assertRaises(ValueError): M.successful_fp32(receipt, M.FP32['compact'])
         for key in self.fp32():
             receipt = self.fp32(); del receipt[key]
-            with self.subTest(missing=key), self.assertRaises(ValueError): M.successful_fp32(receipt)
+            with self.subTest(missing=key), self.assertRaises(ValueError): M.successful_fp32(receipt, M.FP32['compact'])
+
+    def test_large_scoring_requires_the_equivalent_predecessor_basis(self):
+        receipt = {'schema': 'airk.private.owned-large-cuda-batch-view-scoring/1', 'complete': True,
+                   'failure': None, 'execution_user_sid': 'S-1-5-21-3678370870-3858642417-826968105-1002',
+                   'qualification': False, 'elapsed_seconds': 84, 'reference_basis': 'equivalent_predecessor',
+                   'model_requests_dispatched': True}
+        M.successful_fp32(receipt, M.FP32['large'])
+        for wrong in ('same_artifact', None):
+            with self.subTest(wrong=wrong), self.assertRaisesRegex(ValueError, 'reference basis'):
+                M.successful_fp32(dict(receipt, reference_basis=wrong), M.FP32['large'])
 
     def test_actual_readiness_shapes(self):
         M.successful_readiness(self.readiness(), 'tests')
@@ -387,38 +406,76 @@ class G5EvidenceControls(unittest.TestCase):
                 M.validate_junit(document(remaining), 24)
 
 class FP32ProcessProofControls(unittest.TestCase):
-    def fixture(self):
-        old = {'native_image': row('native-image'), 'parent_python': row('python')}
-        receipt = {'parent_python': row('python'), 'owned': {'owned_leader_pid': 123,
-            'suspended_assignment': {'pid': 123, 'image': {'path': str(ROOT / 'native-image'), 'sha256': 'a' * 64},
-            'execution_user_sid': 'S-1-5-21-3678370870-3858642417-826968105-1002',
-            'default_owner_sid': 'S-1-5-21-3678370870-3858642417-826968105-1002',
-            'component_job': {'process_bytes': 17179869184, 'job_bytes': 25769803776, 'flags': 8968, 'active_limit': 2}}}}
-        return receipt, old
+    def fixture(self, model='compact'):
+        large = model == 'large'
+        host, device = (48 << 30, 44 << 30) if large else (32 << 30, 24 << 30)
+        arena, warm, headroom = (40 << 30, 8 << 30, 4 << 30) if large else (22 << 30, 16 << 30, 2 << 30)
+        image = row('native-image')
+        sid = 'S-1-5-21-3678370870-3858642417-826968105-1002'
+        proof = {'pid': 123, 'image': {'path': str(ROOT / 'native-image'), 'sha256': 'a' * 64},
+                 'execution_user_sid': sid, 'default_owner_sid': sid}
+        if not large:
+            proof['component_job'] = {'process_bytes': 34359738368, 'job_bytes': 34359738368,
+                                      'flags': 8968, 'active_limit': 2}
+        receipt = {'owned': {'owned_leader_pid': 123, 'suspended_assignment': proof,
+                            'peak_host_committed_bytes': host - 1}}
+        native = {'pid': 123, 'execution_user': sid, 'default_owner': sid, 'native_binary_sha256': 'a' * 64,
+                  'actual_job': {'process_memory_limit_bytes': host, 'job_memory_limit_bytes': host, 'flags': 8968},
+                  'native_host_reservation_bytes': host, 'peak_process_rss_bytes': host - 1,
+                  'applied_capacity': {'arena_limit_bytes': arena, 'warm_extra_bytes': warm, 'headroom_bytes': headroom},
+                  'bounds': {'schema': 'airk.arbiter.gpu-probe-reservation/1', 'deadline_ms': 120000,
+                             'device_limit_bytes': device, 'host_limit_bytes': host},
+                  'profile': '7e4481caaf7034a70779702edad73a0eb08321418d1b785a4b7f4f891522bdac' if large else
+                             '840bd478675cbf03f2477c170401af75027d55de82b6ab69933f971a1104531d',
+                  'complete': True, 'error': None, 'native_control_cleanup_error': None,
+                  'session_teardown_observed': True, 'native_host_charge_release_observed': True,
+                  'native_control_cleanup_observed': True, 'qualified': False, 'product_admission': False,
+                  'process_cuda_poisoned': False, 'native_control_retained_for_unknown_cuda': False}
+        return receipt, native, image, M.FP32[model], lambda owned: True
 
-    def test_actual_suspended_os_proof_passes(self):
-        M.validate_fp32_process(*self.fixture())
+    def test_both_actual_suspended_os_proof_shapes(self):
+        for model in ('compact', 'large'):
+            with self.subTest(model=model):
+                M.validate_fp32_process(*self.fixture(model))
 
     def test_missing_or_changed_suspended_proof_refuses(self):
         for key in ('pid', 'image', 'execution_user_sid', 'default_owner_sid', 'component_job'):
             for action in ('missing', 'changed'):
-                receipt, old = self.fixture()
-                if action == 'missing': del receipt['owned']['suspended_assignment'][key]
-                else: receipt['owned']['suspended_assignment'][key] = 'other'
+                args = self.fixture()
+                proof = args[0]['owned']['suspended_assignment']
+                if action == 'missing':
+                    del proof[key]
+                else:
+                    proof[key] = 'other'
                 with self.subTest(key=key, action=action), self.assertRaises(ValueError):
-                    M.validate_fp32_process(receipt, old)
+                    M.validate_fp32_process(*args)
 
-    def test_original_job_fields_cannot_change(self):
-        for key in ('process_bytes', 'job_bytes', 'flags', 'active_limit'):
-            receipt, old = self.fixture(); receipt['owned']['suspended_assignment']['component_job'][key] += 1
-            with self.subTest(key=key), self.assertRaises(ValueError): M.validate_fp32_process(receipt, old)
+    def test_original_process_job_device_caps_and_release_are_required(self):
+        for model, host in (('compact', 32 << 30), ('large', 48 << 30)):
+            for key, value in (('native_host_reservation_bytes', host + 1),
+                               ('peak_process_rss_bytes', host + 1),
+                               ('applied_capacity', {}), ('native_host_charge_release_observed', False),
+                               ('actual_job', {'process_memory_limit_bytes': host, 'job_memory_limit_bytes': host + 1}),
+                               ('native_control_retained_for_unknown_cuda', True)):
+                args = self.fixture(model)
+                args[1][key] = value
+                with self.subTest(model=model, key=key), self.assertRaises(ValueError):
+                    M.validate_fp32_process(*args)
 
-    def test_actual_pid_and_parent_python_must_match(self):
-        for key, value in [('owned_leader_pid', 124), ('owned_leader_pid', True)]:
-            receipt, old = self.fixture(); receipt['owned'][key] = value
-            with self.assertRaises(ValueError): M.validate_fp32_process(receipt, old)
-        receipt, old = self.fixture(); receipt['parent_python'] = row('other-python')
-        with self.assertRaises(ValueError): M.validate_fp32_process(receipt, old)
+    def test_actual_pid_and_parent_settlement_are_required(self):
+        for value in (124, True):
+            args = self.fixture()
+            args[0]['owned']['owned_leader_pid'] = value
+            with self.assertRaises(ValueError):
+                M.validate_fp32_process(*args)
+        args = self.fixture('large')
+        args[0]['owned']['peak_host_committed_bytes'] = (48 << 30) + 1
+        with self.assertRaises(ValueError):
+            M.validate_fp32_process(*args)
+        with self.assertRaises(ValueError):
+            M.validate_fp32_process(*self.fixture('large')[:4], lambda owned: False)
+
+
 
 if __name__ == '__main__':
     unittest.main()

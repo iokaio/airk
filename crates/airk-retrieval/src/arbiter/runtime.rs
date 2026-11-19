@@ -379,6 +379,8 @@ impl EvaluationCatalog {
 pub struct Scorer {
     profile: ExecutionProfile,
     compiler: Compiler,
+    #[cfg(feature = "gpu-cuda")]
+    fp16_attention: Option<cuda::AttentionPlan>,
     session: Mutex<session_owner::SessionOwner>,
     _environment: crate::onnx::SessionEnvironmentLease,
     physical_cores: usize,
@@ -580,8 +582,35 @@ impl Scorer {
             .filter(|asset| asset.role == AssetRole::ExternalWeights)
             .map(|asset| (asset.name.clone(), asset.bytes))
             .collect();
-        external_data::validate(&graph, &external)?;
-        let large_initializers = external_data::large_initializers(&graph, &external)?;
+        #[cfg(feature = "gpu-cuda")]
+        let fp16_attention = if gpu.is_some()
+            && profile
+                .description
+                .device_execution
+                .as_ref()
+                .is_some_and(|p| {
+                    p.precision == airk_core::arbiter::device::DevicePrecision::Float16
+                }) {
+            Some(cuda::AttentionPlan::from_graph(
+                profile.description(),
+                &graph,
+                &external,
+            )?)
+        } else {
+            None
+        };
+        #[cfg(feature = "gpu-cuda")]
+        let large_initializers = if fp16_attention.is_some() {
+            external_data::half_initializers(&graph, &external)?
+        } else {
+            external_data::validate(&graph, &external)?;
+            external_data::large_initializers(&graph, &external)?
+        };
+        #[cfg(not(feature = "gpu-cuda"))]
+        let large_initializers = {
+            external_data::validate(&graph, &external)?;
+            external_data::large_initializers(&graph, &external)?
+        };
         crate::onnx::initialize_runtime()?;
         let environment = crate::onnx::acquire_session_environment()?;
         #[cfg(feature = "gpu-cuda")]
@@ -604,7 +633,7 @@ impl Scorer {
         #[cfg(feature = "gpu-cuda")]
         {
             builder = match &gpu {
-                Some(binding) => binding.configure(builder)?,
+                Some(binding) => binding.configure(builder, profile.description())?,
                 None => builder.with_execution_providers([CPUExecutionProvider::default()
                     .with_arena_allocator(false)
                     .build()])?,
@@ -670,6 +699,17 @@ impl Scorer {
                         Tensor::from_array((tensor.shape.clone(), values))?.into_dyn()
                     }
                     2 => Tensor::from_array((tensor.shape.clone(), data.to_vec()))?.into_dyn(),
+                    #[cfg(feature = "gpu-cuda")]
+                    10 if fp16_attention.is_some() => {
+                        ensure!(data.len() % 2 == 0, "unaligned F16 initializer bytes");
+                        let values = data
+                            .as_chunks::<2>()
+                            .0
+                            .iter()
+                            .map(|x| half::f16::from_bits(u16::from_le_bytes(*x)))
+                            .collect::<Vec<_>>();
+                        Tensor::from_array((tensor.shape.clone(), values))?.into_dyn()
+                    }
                     _ => anyhow::bail!("unsupported large initializer element"),
                 };
                 // AddExternalInitializers runs BEFORE file-in-memory injection
@@ -734,7 +774,15 @@ impl Scorer {
                 OpenMode::BoundedHybrid(gate) => {
                     bounded_hybrid = Some(gate.verify_session(binding, &session)?);
                 }
-                OpenMode::Execution => binding.device.placement(&session)?.require_strict()?,
+                OpenMode::Execution => {
+                    let placement = binding.device.placement(&session)?;
+                    if let Some(plan) = &fp16_attention {
+                        plan.require_placement(&placement)?;
+                        plan.require_math_environment()?;
+                    } else {
+                        placement.require_strict()?;
+                    }
+                }
             }
         }
 
@@ -863,6 +911,8 @@ impl Scorer {
         Ok(Some(Self {
             profile,
             compiler,
+            #[cfg(feature = "gpu-cuda")]
+            fp16_attention,
             session: Mutex::new(session),
             _environment: environment,
             physical_cores,
@@ -985,13 +1035,22 @@ impl Scorer {
             .map_err(|_| anyhow::anyhow!("Arbiter native session poisoned"))?;
         #[cfg(feature = "gpu-cuda")]
         if let Some(binding) = &self.profile.gpu {
-            return cuda::score_gpu(
+            if let Some(plan) = &self.fp16_attention {
+                plan.validate_input(input)?;
+            }
+            let result = cuda::score_gpu(
                 &mut session,
                 binding,
                 input,
                 deadline.context("original GPU score deadline required")?,
                 focus,
             );
+            if result.is_ok()
+                && let Some(plan) = &self.fp16_attention
+            {
+                plan.validate_input(input)?;
+            }
+            return result;
         }
         let output_name = if focus { "logits" } else { "scores" };
         let options =
@@ -1516,6 +1575,18 @@ impl Scorer {
             .as_ref()
             .map(|b| b.device.placement(&session))
             .transpose()
+    }
+
+    /// Native graph/final-placement plan, never a backend/completion permit.
+    pub fn attention_backend_plan(&self) -> Result<Option<serde_json::Value>> {
+        let Some(plan) = &self.fp16_attention else {
+            return Ok(None);
+        };
+        let placement = self
+            .device_placement()?
+            .context("G5 CUDA placement missing")?;
+        plan.require_placement(&placement)?;
+        Ok(Some(plan.observation()?))
     }
 }
 

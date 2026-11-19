@@ -1565,15 +1565,12 @@ selected model, stage consent, input width and shared budget.
 
 ### FP16 conversion prerequisites
 
-The maintained conversion owner currently accepts only Compact and
-authenticates an earlier 17-token receipt under a 24 GiB host commit bound.
-Update its validators and owning contract as the first G5 implementation
-milestone. Bind the following model-specific evidence to its original
-command, input, graph and runtime identities, recorded caps, numerical rows,
-and actual process, Job and reservation settlement. Retain the existing
-requirement for fresh, separately reviewed native G5 Clippy and focused
-test receipts. Exercise refusals for wrong-model, incomplete and
-over-budget evidence before a conversion launch.
+The maintained conversion owner authenticates the selected Context model's
+four-width FP32 scoring receipt and separate Resource20 receipt. It checks the
+original commands, graph, input, runtime, numerical rows, limits and
+settlement. Current native G5 Clippy and the separately retained focused
+Nextest/JUnit evidence passed on Windows. Wrong-model, incomplete and
+over-budget receipts are refused before conversion.
 [Current conversion contract](../../scripts/arbiter-fp16-execution/CONTRACT.md)
 
 | Model | FP32 evidence to bind | Effect on FP16 |

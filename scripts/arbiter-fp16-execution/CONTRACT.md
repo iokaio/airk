@@ -3,18 +3,27 @@
 This maintained owner performs one explicitly reviewed graph conversion, never
 model inference, GPU/native execution, training, activation or qualification.
 `--prepare` creates only fresh private metadata after authenticating the frozen
-original export source plan, the retained runtime baseline, genuine successful
-Compact17 FP32 component evidence, and separate successful merged-G5 Clippy and
-Nextest/JUnit evidence. It never starts conversion. Compact17 is a component
-prerequisite only, not full8192 or product qualification; Focus/Large preparation
-refuses until their own actual FP32 validators exist. Root reviews the resulting
-plan before explicitly invoking `--execute-reviewed-conversion`.
+original export source plan, the retained runtime baseline, the selected model's
+Windows CUDA FP32 scoring and Resource20 receipts, and separate merged-G5 Clippy
+and Nextest/JUnit evidence. The explicit model is Compact or Large. Focus awaits
+its independent prerequisite. Preparation creates metadata for review before
+an explicit `--execute-reviewed-conversion` invocation.
 
-Preparation reopens the actual FP32 result and four-event journal through the
-maintained component validators and checks the original retained HANDLE/Job
-settlement, actual suspended PID/image/user/default-owner/Job and parent Python,
-preserved image/build identity and final proof receipts. Its original
-native source epoch remains historical; later G5 changes cannot rewrite it.
+Preparation requires the exact four-width and separate unprofiled timing
+receipts supplied through `--first-fp32` and `--resource-fp32`. Both bind the
+same selected graph, native Probe, runtime and 8192-token scoring input.
+Compact retains the original 32/32 GiB process/Job and 24 GiB device envelopes
+and same-artifact reference. Large retains 48/48 GiB, 44 GiB device, and the
+reviewed equivalent-predecessor lineage back to the original export.
+Preparation reopens the original numerical and timing outputs and checks the
+ten scored and 44 unprofiled journal events under their original deadlines.
+It authenticates the native and suspended PID/image/user/default-owner,
+actual Job, host reservation and native teardown, natural HANDLE/Job
+settlement, and immutable original build and output pins. Each original source
+epoch remains distinct from the current G5 readiness source group.
+The private `airk.private.fp16-prerequisites/2` manifest binds model, scoring,
+timing, current readiness and the maintained validator sources. The conversion
+plan's schema and original limits are preserved.
 G5 receipts must identify the same native group, unchanged successful inputs,
 current required G5/provider/CPU-transition sources and all15 literal G5 tests,
 all9 current CPU controls and the new G5 transition control in passing JUnit.

@@ -14,7 +14,7 @@ default = ["local-inference"]
 local-inference = ["dep:ort", "dep:tokenizers"]
 test-support = []
 # One static CUDA-capable ORT core; optional providers remain unloaded for CPU.
-gpu-cuda = ["local-inference", "ort/cuda", "dep:windows-sys"]
+gpu-cuda = ["local-inference", "ort/cuda", "ort/half", "dep:half", "dep:windows-sys"]
 
 [dependencies]
 airk-core.workspace = true
@@ -28,6 +28,7 @@ serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 ort = { workspace = true, optional = true }
+half = { version = "=2.7.1", default-features = false, features = ["std"], optional = true }
 tokenizers = { workspace = true, optional = true }
 
 # Actual service-lease ownership for native component qualification only.

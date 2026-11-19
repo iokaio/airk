@@ -8212,3 +8212,43 @@ passed for 9,819 public files, and whitespace checks passed.
 The Windows Large FP32 stopping point is closed. Next action is the
 model-specific FP16 conversion prerequisite validator and live G5 integration
 for Compact first. The original FP16 campaign deadline remains in force.
+
+### 2026-11-18 — Windows native G5 readiness and FP32 prerequisite custody passed
+
+The conversion owner now reopens the exact preserved Compact and corrected
+Large scoring and Resource20 evidence under their distinct scopes. The live
+read-only checks authenticated both model-specific receipt pairs, native
+PID/image/Job/host release, all scored and unprofiled journal events, and
+the original export graph lineage. The Compact and Large scoring source
+groups remain 048fcfcabdf7bf5a248f672b3a75a49ae1ace31bf6102784e6db6a3e883b9cdd
+and 85ba2a57bafa0eabbf038ad857fc2ce1fcb378b01c355c28f5e40096f96b67a3.
+No model inference was dispatched by these prerequisite checks.
+
+Native G5 R3 was integrated against the current graph diagnostics, bounded
+FP32 hybrid, and SM89/120 sources. Independent owner reviews and primary
+combined review compared the maintained R3 patch and current runtime sources.
+Reversing the runtime hooks reproduces b948acc535aae2e5d22941fb4b19dead300736a489ab45145051d002db90d770
+from 42c0592fac9071066abb8cac765c7fe45d665c6df183c5e12aca7c8caa95981b.
+The closed CPU Focus transition preserves its catalog, descriptor, task,
+Core, compiler and no-qualification-transfer rules. The private probe
+contracts use zero-based positions, the original experimental environment
+check, and exact efficient-attention placement. The pinned ORT enum module
+path was corrected before integrated compilation.
+
+Pinned Windows Rust 1.98.0, warm `target/`, incremental=1, native group
+034b57a1f065bf8626b5de91c4abdfa002f04aac443f455823188d412ebff9f5.
+Clippy passed in 56.198 s (`b196e812da72f7a784279f147a787db13bb2086fd68952b48824b52c9da48eb0`).
+Nextest CI passed 31, with 295 filtered, in 75.112 s
+(`38ce8ddbc6c7400c315cce69e312918aab634192ac6b1098f91efaa508f2a837`).
+The conversion validator accepted the independently named JUnit roster
+(`0d34b87372552748f19edbf7266e1cbe4ba98fafbd16028f8821c6d8b791135e`)
+including all 25 required controls. Exact commands and Cargo timings are in
+`windows-cuda-g5-readiness-r1`. Formatting, 56 focused Python tests, the
+repository check for 9,824 public files, and whitespace passed. Execution
+and output ownership were checked under the
+approved current Windows human and default-owner SID.
+
+Next action is to prepare and run the pinned private Compact FP16 conversion,
+then independently check the graph and half values before actual native CUDA
+qualification. Windows Large FP32 remains closed at local DCO commit 05ef32bd.
+The 20 November campaign cutoff remains in force.

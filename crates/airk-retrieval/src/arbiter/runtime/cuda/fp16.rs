@@ -1,0 +1,412 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Separate G5 math/attention identity. Metadata is never execution authority.
+use super::*;
+use airk_core::arbiter::ModelChoice;
+use ort::execution_providers::cuda::CUDAAttentionBackend;
+use std::sync::OnceLock;
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+struct MathEnvironment {
+    gemm: Option<String>,
+    debug: Option<String>,
+    unicode: bool,
+}
+static INITIAL: OnceLock<MathEnvironment> = OnceLock::new();
+fn environment() -> MathEnvironment {
+    let gemm = std::env::var_os("ORT_CUDA_GEMM_OPTIONS");
+    let debug = std::env::var_os("ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO");
+    MathEnvironment {
+        unicode: gemm.as_ref().is_none_or(|x| x.to_str().is_some())
+            && debug.as_ref().is_none_or(|x| x.to_str().is_some()),
+        gemm: gemm.and_then(|x| x.into_string().ok()),
+        debug: debug.and_then(|x| x.into_string().ok()),
+    }
+}
+/// Called once inside the central ORT initialization BEFORE any OrtEnv. It
+/// observes inherited settings without rejecting/changing the CPU/FP32 path.
+pub(crate) fn capture_at_runtime_init() {
+    INITIAL.get_or_init(environment);
+}
+fn check_environment(
+    initial: &MathEnvironment,
+    current: &MathEnvironment,
+    proof: bool,
+) -> Result<()> {
+    ensure!(
+        initial.unicode
+            && initial == current
+            && initial.gemm.as_deref() == Some("2")
+            && (!proof || initial.debug.as_deref() == Some("1")),
+        "G5 requires unchanged inherited GEMM2 and proof-only debug1 captured before ORT initialization"
+    );
+    Ok(())
+}
+pub(super) fn require_environment(proof: bool) -> Result<()> {
+    let initial = INITIAL
+        .get()
+        .context("G5 math environment was not captured before ORT initialization")?;
+    check_environment(initial, &environment(), proof)
+}
+fn family(model: ModelChoice) -> Result<(&'static str, &'static str)> {
+    match model {
+        ModelChoice::FocusQwenReranker06B => {
+            Ok(("focus-qwen3-reranker-06b", "EFFICIENT_ATTENTION"))
+        }
+        ModelChoice::ContextQwenCompact => Ok(("context-qwen3-17b", "FLASH_ATTENTION")),
+        ModelChoice::ContextQwenLarge => Ok(("context-qwen3-4b", "FLASH_ATTENTION")),
+        _ => anyhow::bail!("G5 supports only selected Qwen model slots"),
+    }
+}
+pub fn fp16_provider_options_digest(model: ModelChoice) -> Result<Sha256Digest> {
+    let (model, backend) = family(model)?;
+    Ok(airk_core::identity::framed_digest(b"airk.native.cuda.provider-options/2",&[model.as_bytes(),backend.as_bytes(),b"cuda-only;error-on-failure;disable-cpu-fallback=1;tf32=0;cuda-graph=0;arena=declared-cold-peak;cpu-f32-scores;original-deadline;ORT_CUDA_GEMM_OPTIONS=2;attention-debug1=qualification-proof-only;synchronize=ORT-default+primary-context"]))
+}
+pub fn fp16_math_policy_digest(model: ModelChoice) -> Result<Sha256Digest> {
+    let (model, backend) = family(model)?;
+    Ok(airk_core::identity::framed_digest(b"airk.native.cuda.math-policy/2",&[model.as_bytes(),backend.as_bytes(),include_bytes!("fp16.rs"),include_bytes!("../../external_data/g5.rs"),include_bytes!("../cuda.rs"),include_bytes!("../../runtime.rs"),include_bytes!("../../external_data.rs"),include_bytes!("../../../onnx.rs"),b"g5-full-fp16-learned-weights-except-rms-scales-and-focus-readout;ieee754-rne-no-clipping;f32-residual-rmsnorm-qk-norm-rope-silu-gate-sparse-readout;epsilon=1e-6;theta=1000000;head128;original-scale-bits=3db504f3;f32-output-abi;tf32=0;half-gemm-compute32f-no-reduced-precision-reduction;unchanged-numeric-limits;actual-backend-and-completion-proof-separate"]))
+}
+pub(super) fn backend(model: ModelChoice) -> Result<CUDAAttentionBackend> {
+    Ok(if family(model)?.1 == "EFFICIENT_ATTENTION" {
+        CUDAAttentionBackend::EFFICIENT_ATTENTION
+    } else {
+        CUDAAttentionBackend::FLASH_ATTENTION
+    })
+}
+#[derive(Clone, Debug, Serialize)]
+pub(in crate::arbiter::runtime) struct AttentionPlan {
+    schema: &'static str,
+    graph: Sha256Digest,
+    model: ModelChoice,
+    operator: &'static str,
+    domain: &'static str,
+    dtype: &'static str,
+    backend: &'static str,
+    math_policy: Sha256Digest,
+    provider_options: Sha256Digest,
+    nodes: Vec<crate::arbiter::external_data::g5::AttentionNode>,
+}
+impl AttentionPlan {
+    pub(in crate::arbiter::runtime) fn from_graph(
+        profile: &Profile,
+        graph: &[u8],
+        files: &BTreeMap<String, u64>,
+    ) -> Result<Self> {
+        let p = profile
+            .device_execution
+            .as_ref()
+            .context("G5 CPU descriptor")?;
+        ensure!(
+            p.precision == DevicePrecision::Float16
+                && !p.tf32
+                && p.math_policy == fp16_math_policy_digest(profile.model)?
+                && p.provider_options == fp16_provider_options_digest(profile.model)?,
+            "G5 profile math/provider identity differs"
+        );
+        let actual = Sha256Digest::from_bytes(Sha256::digest(graph).into());
+        ensure!(
+            actual == p.graph,
+            "G5 actual graph differs from immutable descriptor"
+        );
+        let nodes = crate::arbiter::external_data::g5::audit(graph, files, profile.model)?;
+        Ok(Self {
+            schema: "airk.native.cuda-fp16-attention-plan/1",
+            graph: actual,
+            model: profile.model,
+            operator: if profile.model == ModelChoice::FocusQwenReranker06B {
+                "MultiHeadAttention"
+            } else {
+                "GroupQueryAttention"
+            },
+            domain: "com.microsoft",
+            dtype: "fp16",
+            backend: family(profile.model)?.1,
+            math_policy: p.math_policy,
+            provider_options: p.provider_options,
+            nodes,
+        })
+    }
+    pub(in crate::arbiter::runtime) fn require_math_environment(&self) -> Result<()> {
+        require_environment(false)
+    }
+    pub(in crate::arbiter::runtime) fn require_placement(
+        &self,
+        placement: &PlacementObservation,
+    ) -> Result<()> {
+        placement.clone().require_strict()?;
+        let actual = placement
+            .nodes
+            .iter()
+            .filter(|n| {
+                matches!(
+                    n.op.as_str(),
+                    "MultiHeadAttention"
+                        | "GroupQueryAttention"
+                        | "Attention"
+                        | "PackedAttention"
+                        | "DecoderMaskedMultiHeadAttention"
+                )
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            actual.len() == self.nodes.len()
+                && self.nodes.iter().all(|expected| actual
+                    .iter()
+                    .filter(|n| n.subgraph_index == 0
+                        && n.name == expected.name
+                        && n.op == expected.operator
+                        && n.domain == expected.domain
+                        && n.ep == "CUDAExecutionProvider")
+                    .count()
+                    == 1),
+            "G5 final SessionState attention roster differs"
+        );
+        Ok(())
+    }
+    pub(in crate::arbiter::runtime) fn validate_input(
+        &self,
+        input: &super::super::CompiledInput,
+    ) -> Result<()> {
+        require_environment(false)?;
+        validate_geometry(self.model, input)
+    }
+    pub(in crate::arbiter::runtime) fn observation(&self) -> Result<serde_json::Value> {
+        require_environment(true)?;
+        let mut result = serde_json::to_value(self)?;
+        result["math_environment"] =
+            serde_json::json!({"captured_before_ort":INITIAL.get(),"current":environment()});
+        result["qualification"] = false.into();
+        result["actual_backend_observed"] = false.into();
+        result["forward_completion_claimed"] = false.into();
+        Ok(result)
+    }
+}
+fn validate_geometry(model: ModelChoice, input: &super::super::CompiledInput) -> Result<()> {
+    let tokens = input.input_ids.len();
+    ensure!(
+        input.attention_mask.len() == tokens
+            && input.position_ids.len() == tokens
+            && input
+                .position_ids
+                .iter()
+                .enumerate()
+                .all(|(i, p)| *p == i as i64)
+            && input.decision_position == tokens as i64 - 1,
+        "G5 original positions/decision/input length differ"
+    );
+    if model == ModelChoice::FocusQwenReranker06B {
+        ensure!(
+            tokens == 512
+                && input.attention_mask.last() == Some(&1)
+                && input.attention_mask.iter().all(|m| matches!(m, 0 | 1))
+                && input.attention_mask.windows(2).all(|p| p[0] <= p[1]),
+            "G5 Focus requires static512 nonempty live suffix"
+        );
+    } else {
+        ensure!(
+            (1..=8192).contains(&tokens)
+                && input.attention_mask.iter().all(|m| *m == 1)
+                && !input.candidate_positions.is_empty()
+                && input.candidate_positions.len() <= 8,
+            "G5 Context requires original all-live8192/N8 geometry"
+        );
+    }
+    Ok(())
+}
+#[cfg(test)]
+mod tests;
+
+/// Fresh data-only G5 profile. Never fitted CAL, release, device or execution authority.
+#[cfg(feature = "test-support")]
+#[derive(Serialize)]
+pub struct PreparedFp16ProbeProfile {
+    pub profile: Profile,
+    pub calibration_name: String,
+    pub calibration_bytes: Vec<u8>,
+    pub original_graph: Sha256Digest,
+    pub attention_plan: serde_json::Value,
+}
+#[cfg(feature = "test-support")]
+pub fn prepare_fp16_probe_profile(
+    cpu: &Profile,
+    source: &dyn super::super::AssetSource,
+    assets: Vec<airk_core::arbiter::Asset>,
+    original_graph: Sha256Digest,
+    runtime_manifest: &[u8],
+    runtime_manifest_sha256: Sha256Digest,
+    plan: DeviceCapacityPlan,
+) -> Result<PreparedFp16ProbeProfile> {
+    use airk_core::arbiter::{AssetRole, Task};
+    let runtime_build = probe_runtime_identity(runtime_manifest, runtime_manifest_sha256)?;
+    cpu.validate()?;
+    super::super::validate_selected_policies(cpu)?;
+    let (id, original, threads) = match cpu.model {
+        ModelChoice::FocusQwenReranker06B => (
+            "private-cuda-fp16-focus-efficient-probe-v1",
+            "19b20ad4e39e173f6da602094b9c1583726a65fa76742553f97ec6f0f58436a1",
+            4,
+        ),
+        ModelChoice::ContextQwenCompact => (
+            "private-cuda-fp16-compact-efficient-probe-v1",
+            "c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4",
+            4,
+        ),
+        ModelChoice::ContextQwenLarge => (
+            "private-cuda-fp16-large-efficient-probe-v1",
+            "f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94",
+            16,
+        ),
+        _ => anyhow::bail!("G5 unsupported model"),
+    };
+    ensure!(
+        original_graph == original.parse()?
+            && cpu.device_execution.is_none()
+            && if cpu.model == ModelChoice::FocusQwenReranker06B {
+                cpu.max_tokens == 512 && cpu.max_candidates == 4
+            } else {
+                cpu.max_tokens == 8192 && cpu.max_candidates == 8
+            },
+        "G5 original FP32 lineage/current input contract differs"
+    );
+    let mut names = BTreeSet::new();
+    ensure!(
+        (2..=128).contains(&assets.len())
+            && assets.iter().all(|a| names.insert(a.name.clone())
+                && matches!(a.role, AssetRole::Model | AssetRole::ExternalWeights)),
+        "G5 transformed model/weight roster invalid"
+    );
+    let mut preview = cpu.clone();
+    preview
+        .assets
+        .retain(|a| !matches!(a.role, AssetRole::Model | AssetRole::ExternalWeights));
+    preview.assets.extend(assets.iter().cloned());
+    preview.downloads.clear();
+    preview.qualified_targets.clear();
+    preview.qualification = None;
+    preview.validate()?;
+    let models = assets
+        .iter()
+        .filter(|a| a.role == AssetRole::Model)
+        .collect::<Vec<_>>();
+    ensure!(models.len() == 1, "G5 singleton graph required");
+    let graph = super::super::bytes(source, models[0], 64 << 20)?;
+    let external = assets
+        .iter()
+        .filter(|a| a.role == AssetRole::ExternalWeights)
+        .map(|a| (a.name.clone(), a.bytes))
+        .collect();
+    crate::arbiter::external_data::g5::audit(&graph, &external, cpu.model)?;
+
+    for a in assets
+        .iter()
+        .filter(|a| a.role == AssetRole::ExternalWeights)
+    {
+        super::super::bytes(source, a, 16u64 << 30)?;
+    }
+    let calibrations = cpu
+        .assets
+        .iter()
+        .filter(|a| a.role == AssetRole::Calibration)
+        .collect::<Vec<_>>();
+    ensure!(
+        calibrations.len() == 1,
+        "G5 current native calibration missing"
+    );
+    let raw = super::super::bytes(source, calibrations[0], 64 << 10)?;
+    let mut calibration_bytes = if cpu.model == ModelChoice::FocusQwenReranker06B {
+        super::super::qualification::focus_raw_metadata(cpu, cpu.task_policies[&Task::FocusRank])?
+    } else {
+        let mut c =
+            airk_core::arbiter::context_action::calibration::JointCalibration::parse_and_validate(
+                &raw,
+                cpu,
+                crate::arbiter::context_action::policy_digest()?,
+            )?;
+        c.schema = airk_core::arbiter::context_action::calibration::CALIBRATION_SCHEMA_V2.into();
+        c.rules.clear();
+        c.class_support = Some(unavailable_classes());
+        serde_json::to_vec_pretty(&c)?
+    };
+    calibration_bytes.push(b'\n');
+    let mut profile = cpu.clone();
+    let host_fit = profile
+        .cpu_fit
+        .take()
+        .context("G5 native host fit missing")?;
+    ensure!(
+        host_fit.intra_threads == threads && host_fit.minimum_physical_cores == threads,
+        "G5 unchanged selected host tier required"
+    );
+    profile.profile_id = id.into();
+    profile.runtime = GpuBackend::Cuda.runtime().into();
+    profile.downloads.clear();
+    profile.qualified_targets.clear();
+    profile.qualification = None;
+    profile
+        .assets
+        .retain(|a| !matches!(a.role, AssetRole::Model | AssetRole::ExternalWeights));
+    profile.assets.extend(assets);
+    let calibration_name = calibrations[0].name.clone();
+    let sha = Sha256Digest::from_bytes(Sha256::digest(&calibration_bytes).into());
+    profile.calibration = sha;
+    let a = profile
+        .assets
+        .iter_mut()
+        .find(|a| a.role == AssetRole::Calibration)
+        .context("G5 CAL asset missing")?;
+    a.sha256 = sha;
+    a.bytes = calibration_bytes.len() as u64;
+    let graph_sha = Sha256Digest::from_bytes(Sha256::digest(&graph).into());
+    profile.device_execution = Some(DeviceExecution {
+        schema: DEVICE_EXECUTION_SCHEMA.into(),
+        backend: GpuBackend::Cuda,
+        runtime_build,
+        compatibility_policy: compatibility_policy_digest(),
+        provider_options: fp16_provider_options_digest(cpu.model)?,
+        math_policy: fp16_math_policy_digest(cpu.model)?,
+        precision: DevicePrecision::Float16,
+        tf32: false,
+        placement: PlacementPolicy::StrictGpu,
+        graph: graph_sha,
+        host_fit,
+        memory: DeviceMemory::Dedicated {
+            required_peak_bytes: plan.cold_peak_bytes,
+            headroom_bytes: plan.headroom_bytes,
+        },
+    });
+    let files = profile
+        .assets
+        .iter()
+        .filter(|a| a.role == AssetRole::ExternalWeights)
+        .map(|a| (a.name.clone(), a.bytes))
+        .collect();
+    let attention = AttentionPlan::from_graph(&profile, &graph, &files)?;
+    profile.manifest = Sha256Digest::from_bytes([0; 32]);
+    let canonical = serde_json::to_vec(&(
+        cpu.manifest,
+        original_graph,
+        runtime_manifest_sha256,
+        &profile,
+        plan.cold_peak_bytes,
+        plan.warm_extra_bytes,
+        plan.headroom_bytes,
+    ))?;
+    profile.manifest = airk_core::identity::framed_digest(
+        b"airk.private.cuda-fp16-efficient-probe-profile/1",
+        &[&canonical],
+    );
+    profile.validate()?;
+    super::super::validate_selected_policies(&profile)?;
+    if cpu.model != ModelChoice::FocusQwenReranker06B {
+        airk_core::arbiter::context_action::calibration::JointCalibration::parse_and_validate(
+            &calibration_bytes,
+            &profile,
+            crate::arbiter::context_action::policy_digest()?,
+        )?;
+    }
+    Ok(PreparedFp16ProbeProfile {
+        profile,
+        calibration_name,
+        calibration_bytes,
+        original_graph,
+        attention_plan: serde_json::to_value(attention)?,
+    })
+}

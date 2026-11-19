@@ -1,0 +1,175 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Pure native policy/metadata cases. No environment mutation or model invocation.
+use super::*;
+fn env(gemm: Option<&str>, debug: Option<&str>) -> MathEnvironment {
+    MathEnvironment {
+        gemm: gemm.map(str::to_owned),
+        debug: debug.map(str::to_owned),
+        unicode: true,
+    }
+}
+#[test]
+fn inherited_exact_settings_pass_and_late_setter_or_drift_refuses() {
+    let allowed = env(Some("2"), Some("1"));
+    assert!(check_environment(&allowed, &allowed, true).is_ok());
+    for initial in [
+        env(None, None),
+        env(Some("0"), Some("1")),
+        env(Some("2"), None),
+    ] {
+        assert!(check_environment(&initial, &allowed, true).is_err());
+    }
+    for current in [
+        env(Some("3"), Some("1")),
+        env(Some("2"), Some("0")),
+        MathEnvironment {
+            unicode: false,
+            ..allowed.clone()
+        },
+    ] {
+        assert!(check_environment(&allowed, &current, true).is_err());
+    }
+}
+#[test]
+fn fp32_policy_remains_distinct_from_each_model_fp16_policy() -> Result<()> {
+    let f32 = math_policy_digest();
+    let f32provider = provider_options_digest();
+    let mut identities = BTreeSet::new();
+    for model in [
+        ModelChoice::FocusQwenReranker06B,
+        ModelChoice::ContextQwenCompact,
+        ModelChoice::ContextQwenLarge,
+    ] {
+        let half = fp16_math_policy_digest(model)?;
+        assert_ne!(f32, half);
+        assert!(identities.insert(half));
+        assert_ne!(f32provider, fp16_provider_options_digest(model)?);
+    }
+    assert!(fp16_math_policy_digest(ModelChoice::SmallIntern).is_err());
+    Ok(())
+}
+fn input(tokens: usize) -> super::super::super::CompiledInput {
+    super::super::super::CompiledInput {
+        prompt: "literal synthetic".into(),
+        input_ids: vec![1; tokens],
+        attention_mask: vec![1; tokens],
+        position_ids: (0..tokens as i64).collect(),
+        decision_position: tokens as i64 - 1,
+        candidate_positions: vec![32, 33],
+        option_mask: vec![true, true],
+        input_digest: Sha256Digest::from_bytes([7; 32]),
+    }
+}
+#[test]
+fn context_boundaries_and_exact_original_mask_positions_refuse_unsupported_input() -> Result<()> {
+    for tokens in [1, 17, 128, 8192] {
+        validate_geometry(ModelChoice::ContextQwenCompact, &input(tokens))?;
+        validate_geometry(ModelChoice::ContextQwenLarge, &input(tokens))?;
+    }
+    for tokens in [0, 8193] {
+        assert!(validate_geometry(ModelChoice::ContextQwenCompact, &input(tokens)).is_err());
+    }
+    let mut bad = input(17);
+    bad.attention_mask[0] = 0;
+    assert!(validate_geometry(ModelChoice::ContextQwenCompact, &bad).is_err());
+    bad.attention_mask[0] = 1;
+    bad.position_ids[0] = 1;
+    assert!(validate_geometry(ModelChoice::ContextQwenCompact, &bad).is_err());
+    Ok(())
+}
+#[test]
+fn focus_all_live_and_extreme_left_pad_pass_without_renumbering() -> Result<()> {
+    for prefix in [0, 1, 511] {
+        let mut row = input(512);
+        row.attention_mask[..prefix].fill(0);
+        validate_geometry(ModelChoice::FocusQwenReranker06B, &row)?;
+        assert_eq!(row.position_ids[511], 511);
+    }
+    let mut bad = input(512);
+    bad.attention_mask[111] = 0;
+    assert!(validate_geometry(ModelChoice::FocusQwenReranker06B, &bad).is_err());
+    bad.attention_mask.fill(0);
+    assert!(validate_geometry(ModelChoice::FocusQwenReranker06B, &bad).is_err());
+    assert!(validate_geometry(ModelChoice::FocusQwenReranker06B, &input(128)).is_err());
+    Ok(())
+}
+#[test]
+fn half_initializer_bit_loading_preserves_half_values_without_rounding() {
+    let bits = [0x0000u16, 0x8000, 0x0001, 0x3c00, 0x7bff];
+    let bytes = bits
+        .iter()
+        .flat_map(|x| x.to_le_bytes())
+        .collect::<Vec<_>>();
+    let values = bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|x| half::f16::from_bits(u16::from_le_bytes(*x)))
+        .collect::<Vec<_>>();
+    assert_eq!(values.iter().map(|x| x.to_bits()).collect::<Vec<_>>(), bits);
+}
+
+#[test]
+fn actual_final_placement_needs_exact_complete_attention_roster() -> Result<()> {
+    let model = ModelChoice::ContextQwenCompact;
+    let nodes = (0..28)
+        .map(|i| crate::arbiter::external_data::g5::AttentionNode {
+            name: format!("/airk_g5/attention/{i}/efficient"),
+            operator: "GroupQueryAttention".into(),
+            domain: "com.microsoft".into(),
+        })
+        .collect::<Vec<_>>();
+    let plan = AttentionPlan {
+        schema: "airk.native.cuda-fp16-attention-plan/1",
+        graph: Sha256Digest::from_bytes([3; 32]),
+        model,
+        operator: "GroupQueryAttention",
+        domain: "com.microsoft",
+        dtype: "fp16",
+        backend: "FLASH_ATTENTION",
+        math_policy: fp16_math_policy_digest(model)?,
+        provider_options: fp16_provider_options_digest(model)?,
+        nodes,
+    };
+    let base = PlacementObservation {
+        scope: "literal synthetic final SessionState",
+        complete: true,
+        shim_status: 0,
+        ort_error_code: 0,
+        reported_nodes: 28,
+        reported_string_bytes: 1024,
+        nodes: (0..28)
+            .map(|i| PlacedNode {
+                subgraph_index: 0,
+                name: format!("/airk_g5/attention/{i}/efficient"),
+                domain: "com.microsoft".into(),
+                op: "GroupQueryAttention".into(),
+                ep: "CUDAExecutionProvider".into(),
+            })
+            .collect(),
+    };
+    plan.require_placement(&base)?;
+    for case in 0..7 {
+        let mut bad = base.clone();
+        match case {
+            0 => bad.nodes.clear(),
+            1 => {
+                bad.nodes.pop();
+            }
+            2 => bad.nodes[1].name = bad.nodes[0].name.clone(),
+            3 => bad.nodes[1].name = "foreign-attention".into(),
+            4 => bad.nodes[1].ep = "CPUExecutionProvider".into(),
+            5 => bad.nodes[1].subgraph_index = 1,
+            _ => bad.complete = false,
+        };
+        assert!(plan.require_placement(&bad).is_err(), "literal case{case}");
+    }
+    Ok(())
+}
+
+#[test]
+fn qualified_product_math_does_not_force_attention_debug_logging() {
+    let allowed = env(Some("2"), None);
+    assert!(check_environment(&allowed, &allowed, false).is_ok());
+    assert!(check_environment(&allowed, &allowed, true).is_err());
+}

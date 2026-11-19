@@ -12,6 +12,8 @@ enum Field<'a> {
     Integer(u64),
     Bytes(&'a [u8]),
     Fixed,
+    #[cfg(feature = "gpu-cuda")]
+    FloatBits(u32),
 }
 struct Cursor<'a>(&'a [u8]);
 impl<'a> Cursor<'a> {
@@ -52,8 +54,15 @@ impl<'a> Cursor<'a> {
                 Field::Bytes(self.take(size)?)
             }
             5 => {
-                self.take(4)?;
-                Field::Fixed
+                #[cfg(feature = "gpu-cuda")]
+                {
+                    Field::FloatBits(u32::from_le_bytes(self.take(4)?.try_into()?))
+                }
+                #[cfg(not(feature = "gpu-cuda"))]
+                {
+                    self.take(4)?;
+                    Field::Fixed
+                }
             }
             _ => bail!("unsupported ONNX protobuf group"),
         };
@@ -86,6 +95,9 @@ struct Audit<'a> {
     external: BTreeSet<String>,
     fields: usize,
     large: Vec<LargeInitializer>,
+    half: bool,
+    half_count: usize,
+    ranges: BTreeMap<String, Vec<(u64, u64)>>,
 }
 impl Audit<'_> {
     fn visit(&mut self, bytes: &[u8], message: Message, depth: usize) -> Result<()> {
@@ -246,6 +258,33 @@ impl Audit<'_> {
                 length > 0 && offset.checked_add(length).is_some_and(|end| end <= size),
                 "ONNX external range exceeds verified data"
             );
+            if self.half {
+                let element = tensor_element.context("F16 tensor element missing")?;
+                let width = match element {
+                    1 => 4u64,
+                    10 => 2,
+                    _ => bail!("G5 external initializer must be F16 or protected F32"),
+                };
+                ensure!(
+                    !shape.is_empty() && shape.len() <= 16 && shape.iter().all(|x| *x > 0),
+                    "invalid G5 external shape"
+                );
+                let expected = shape
+                    .iter()
+                    .try_fold(width, |n, x| n.checked_mul(*x as u64))
+                    .context("G5 external shape overflow")?;
+                ensure!(expected == length, "G5 external dtype/shape/length differs");
+                let end = offset.checked_add(length).context("G5 range overflow")?;
+                let ranges = self.ranges.entry(name.into()).or_default();
+                ensure!(
+                    ranges.iter().all(|(a, b)| end <= *a || *b <= offset),
+                    "overlapping G5 external tensor ranges"
+                );
+                ranges.push((offset, end));
+                if element == 10 {
+                    self.half_count += 1;
+                }
+            }
             if length >= (1u64 << 31) {
                 // ORT 1.30's file-in-memory API embeds raw TensorProto bytes,
                 // whose per-tensor size is bounded below this boundary. Its
@@ -255,6 +294,7 @@ impl Audit<'_> {
                 let width = match element {
                     1 => 4u64,
                     2 => 1,
+                    10 if self.half => 2,
                     _ => bail!("unsupported large external tensor element"),
                 };
                 ensure!(
@@ -305,6 +345,9 @@ pub(crate) fn validate(model: &[u8], files: &BTreeMap<String, u64>) -> Result<BT
         external: BTreeSet::new(),
         fields: 0,
         large: Vec::new(),
+        half: false,
+        half_count: 0,
+        ranges: BTreeMap::new(),
     };
     audit.visit(model, Message::Model, 0)?;
     ensure!(
@@ -328,11 +371,43 @@ pub(crate) fn large_initializers(
         external: BTreeSet::new(),
         fields: 0,
         large: Vec::new(),
+        half: false,
+        half_count: 0,
+        ranges: BTreeMap::new(),
     };
     audit.visit(model, Message::Model, 0)?;
     ensure!(
         audit.external.len() == files.len(),
         "unused ONNX external asset"
+    );
+    Ok(audit.large)
+}
+
+#[cfg(feature = "gpu-cuda")]
+pub(crate) mod g5;
+/// Additive G5 storage audit. Legacy CPU/F32 entry points retain their scope.
+#[cfg(feature = "gpu-cuda")]
+pub(crate) fn half_initializers(
+    model: &[u8],
+    files: &BTreeMap<String, u64>,
+) -> Result<Vec<LargeInitializer>> {
+    ensure!(
+        !model.is_empty() && model.len() <= MAX_GRAPH && files.len() <= 128,
+        "G5 graph/catalog capacity"
+    );
+    let mut audit = Audit {
+        files,
+        external: BTreeSet::new(),
+        fields: 0,
+        large: Vec::new(),
+        half: true,
+        half_count: 0,
+        ranges: BTreeMap::new(),
+    };
+    audit.visit(model, Message::Model, 0)?;
+    ensure!(
+        audit.external.len() == files.len() && audit.half_count > 0,
+        "G5 needs complete actual half-weight closure"
     );
     Ok(audit.large)
 }

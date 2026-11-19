@@ -268,3 +268,30 @@ restores 8b1e5334f3205367df116764dba85652f27171966567d214e37e81115c969495
 from 2cd6337af1832e09e623b099d7b74b8c4b3da3af6d379f53674eb834aa79f33d.
 The retained CPU descriptor and compiler are unchanged. Existing scoped
 controls retain the original refusal and qualification-transfer assertions.
+
+## Reviewed G5 CPU/F32 source supplement
+
+The live LF-normalized runtime.rs changes from
+`b948acc535aae2e5d22941fb4b19dead300736a489ab45145051d002db90d770`
+to `42c0592fac9071066abb8cac765c7fe45d665c6df183c5e12aca7c8caa95981b`. The CUDA bridge changes
+from `31fdb63b4b388f71900703fc627be9e75598e716d6db50020a7ee1286c9d0dc4`
+to `1744cc2d0a37ee1dfd69ccf532992b636911a6395a3c93f4c95966eb7e6950a7`. Inverse replay
+of the G5 integration, including the scoped formatting correction, reproduces
+both predecessor files byte for byte. The preceding graph-only, placement and
+product architecture source identities remain historical evidence. The closed
+current-source check uses the new runtime hash.
+
+CPU and FP32 continue through the original graph and external-data validation,
+F32/U8 loading, compiler and ABI, score path, fit and reservation. The CUDA
+session derives an FP16 attention plan only for an actual FP16 binding.
+That branch adds half initializer loading, a precision-specific provider and
+math policy, and native input and final placement checks. FP32 CUDA keeps its
+provider and math policy digests and strict placement path. The shared ORT
+initialization observes inherited math settings without changing CPU or FP32
+configuration.
+
+The exact pre-1.9 legacy Focus descriptor, catalog, task, Core and compiler
+pins, profile bytes and URLs stay bound. The existing source row schema stays
+/1. The current runtime and transition owner hashes produce a fresh row and
+fresh input-binding provenance. Historical numeric, calibration, resource and
+task evidence retain their original identities.

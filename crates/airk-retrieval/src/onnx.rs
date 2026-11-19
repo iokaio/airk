@@ -443,13 +443,16 @@ impl OnnxModel {
 }
 
 /// Initialize the engine linked into the authenticated service image. No
-/// environment variable, ambient search path, or external ORT image is read.
+/// ambient search path or external ORT image is read. Optional G5 math settings
+/// are observed before initialization; this path never changes the environment.
 pub(crate) fn initialize_runtime() -> Result<()> {
     crate::native_inference::require_service_compute()?;
     static READY: std::sync::OnceLock<std::result::Result<(), String>> = std::sync::OnceLock::new();
     READY
         .get_or_init(|| {
             (|| -> Result<()> {
+                #[cfg(feature = "gpu-cuda")]
+                crate::arbiter::runtime::cuda::capture_at_runtime_init();
                 // SAFETY: the pinned static ONNX Runtime API base and its version
                 // string have process lifetime. Neither call creates an OrtEnv.
                 let version = unsafe {
