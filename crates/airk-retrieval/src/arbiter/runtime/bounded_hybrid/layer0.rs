@@ -75,6 +75,89 @@ impl std::error::Error for CompactFp16Layer0GraphRefusal {
     }
 }
 
+const REVIEWED_QKV_PROJECTION_GRAPH: &str =
+    "e621cf6bffad1f0a27e3cc1ecba5b4379949295498f6585963620d71cfe4ff14";
+const REVIEWED_QKV_PROJECTION_LOAD: &str =
+    "42a273598b5c8678535691426ed725041a5d9565ff1fbaf535a43938894f07a4";
+
+fn qkv_projection_options(
+    builder: ort::session::builder::SessionBuilder,
+) -> Result<ort::session::builder::SessionBuilder> {
+    Ok(builder
+        .with_config_entry(
+            "optimization.constant_folding_max_output_size_in_bytes",
+            "1048576",
+        )?
+        .with_config_entry("optimization.enable_cast_chain_elimination", "0")?
+        .with_config_entry(
+            "optimization.disable_specified_optimizers",
+            "FuseFp16InitializerToFp32NodeTransformer",
+        )?)
+}
+
+fn reviewed_qkv_projection_gate(raw: &[u8], evidence_sha: Sha256Digest) -> Result<GraphGate> {
+    ensure!(
+        evidence_sha == REVIEWED_QKV_PROJECTION_LOAD.parse()?,
+        "exact reviewed Compact QKV graph receipt required"
+    );
+    let result = GraphGate::read_result(raw, evidence_sha)?;
+    let snapshot = &result["graph_observation"];
+    let teardown = &snapshot["teardown"];
+    ensure!(
+        result["schema"] == "airk.private.compact-fp32-qkv-graph-diagnostic/1"
+            && result["complete"] == true
+            && result["qualified"] == false
+            && result["product_admission"] == false
+            && result["source_mask"]["verified_candidate_graph"] == REVIEWED_QKV_PROJECTION_GRAPH
+            && result["numeric_forward_attempts"] == 0
+            && result["native_forward_returned"] == false
+            && result["forward_synchronized"] == false
+            && result.get("runtime_profile").is_some_and(Value::is_null)
+            && result["rows"].as_array().is_some_and(Vec::is_empty)
+            && result["input_refusals"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
+            && result["session_teardown_observed"] == true
+            && result["device_teardown_observed"] == true
+            && result["native_host_charge_release_observed"] == true
+            && result["native_control_cleanup_observed"] == true
+            && result["native_control_retained_for_unknown_cuda"] == false
+            && result["process_cuda_poisoned"] == false
+            && snapshot["session_created"] == true
+            && snapshot["placement"]["complete"] == true
+            && teardown["pre_sync_observed"] == true
+            && teardown["session_drop_attempted"] == true
+            && teardown["session_drop_returned"] == true
+            && teardown["post_sync_observed"] == true
+            && teardown["pending_claims"] == 0
+            && teardown["poisoned"] == false
+            && teardown["errors"].as_array().is_some_and(Vec::is_empty),
+        "complete reviewed Compact QKV graph-only evidence required"
+    );
+    GraphGate::from_result(result, evidence_sha, GraphPolicy::CompactFp16)
+}
+
+fn require_qkv_projection_profile(
+    profile: &ExecutionProfile,
+    graph_sha: Sha256Digest,
+) -> Result<()> {
+    use airk_core::arbiter::device::DevicePrecision;
+
+    cuda::diagnostic::require_graph_diagnostic_profile(profile)?;
+    let description = profile.description();
+    let device = description
+        .device_execution
+        .as_ref()
+        .context("Compact QKV projection diagnostic CUDA profile missing")?;
+    ensure!(
+        description.model == ModelChoice::ContextQwenCompact
+            && device.precision == DevicePrecision::Float16
+            && device.graph == graph_sha,
+        "Compact QKV projection diagnostic profile or graph differs"
+    );
+    Ok(())
+}
+
 impl Scorer {
     /// Captures one disposable observation of a separately reviewed Compact FP16
     /// graph whose Q, K and V projections are under diagnostic review.
@@ -84,36 +167,15 @@ impl Scorer {
         baseline_graph_sha: Sha256Digest,
         reviewed_graph_sha: Sha256Digest,
     ) -> Result<()> {
-        use airk_core::arbiter::device::DevicePrecision;
-
-        cuda::diagnostic::require_graph_diagnostic_profile(&profile)?;
-        let description = profile.description();
-        let device = description
-            .device_execution
-            .as_ref()
-            .context("Compact QKV projection diagnostic CUDA profile missing")?;
         ensure!(
-            description.model == ModelChoice::ContextQwenCompact
-                && device.precision == DevicePrecision::Float16
-                && device.graph == reviewed_graph_sha
-                && reviewed_graph_sha != baseline_graph_sha,
+            reviewed_graph_sha != baseline_graph_sha,
             "Compact QKV projection diagnostic requires a distinct reviewed graph identity"
         );
+        require_qkv_projection_profile(&profile, reviewed_graph_sha)?;
         let session = Self::open_internal(
             profile,
             source,
-            |builder| {
-                Ok(builder
-                    .with_config_entry(
-                        "optimization.constant_folding_max_output_size_in_bytes",
-                        "1048576",
-                    )?
-                    .with_config_entry("optimization.enable_cast_chain_elimination", "0")?
-                    .with_config_entry(
-                        "optimization.disable_specified_optimizers",
-                        "FuseFp16InitializerToFp32NodeTransformer",
-                    )?)
-            },
+            qkv_projection_options,
             OpenMode::GraphMetadataDiagnostic,
         )?;
         ensure!(
@@ -121,6 +183,65 @@ impl Scorer {
             "QKV projection diagnostic unexpectedly returned a scorer"
         );
         Ok(())
+    }
+
+    /// Opens only the reviewed Compact projection experiment in a bounded CUDA session.
+    pub fn open_private_compact_fp32_qkv_projection_profiled(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        profiling_prefix: &Path,
+        reviewed_graph_result: &[u8],
+        reviewed_graph_sha: Sha256Digest,
+    ) -> Result<Self> {
+        require_qkv_projection_profile(&profile, REVIEWED_QKV_PROJECTION_GRAPH.parse()?)?;
+        let binding = profile
+            .gpu
+            .as_ref()
+            .context("Compact QKV projection CUDA binding missing")?;
+        ensure!(
+            (
+                binding.plan.cold_peak_bytes(),
+                binding.plan.warm_extra_bytes(),
+                binding.plan.headroom_bytes(),
+            ) == (16 << 30, 8 << 30, 2 << 30),
+            "Compact QKV projection CUDA reservation differs"
+        );
+        let deadline = binding.load_deadline;
+        let gate = reviewed_qkv_projection_gate(reviewed_graph_result, reviewed_graph_sha)?;
+        gate.verify_profile(profile.description(), binding.device.observation(deadline)?)?;
+        let scorer = Self::open_internal(
+            profile,
+            source,
+            |builder| Ok(qkv_projection_options(builder)?.with_profiling(profiling_prefix)?),
+            OpenMode::BoundedHybrid(Box::new(gate)),
+        )?
+        .context("Compact QKV projection scorer missing")?;
+        scorer.compact_fp16_bounded_hybrid_attention_plan()?;
+        cuda::in_time(deadline)?;
+        Ok(scorer)
+    }
+
+    /// Scores the original independent T32 input through the reviewed QKV projection experiment.
+    pub fn score_private_compact_fp32_qkv_projection_t32(
+        &self,
+        input: &CompiledInput,
+        deadline: Instant,
+    ) -> Result<Vec<f32>> {
+        require_qkv_projection_profile(&self.profile, REVIEWED_QKV_PROJECTION_GRAPH.parse()?)?;
+        let binding = self
+            .profile
+            .gpu
+            .as_ref()
+            .context("Compact QKV projection CUDA binding missing")?;
+        ensure!(
+            self.bounded_hybrid
+                .as_ref()
+                .is_some_and(|evidence| matches!(evidence.policy, GraphPolicy::CompactFp16))
+                && deadline <= binding.load_deadline,
+            "reviewed Compact QKV projection scorer and original deadline required"
+        );
+        validate_input(input)?;
+        self.score_with_deadline(input, deadline)
     }
 }
 

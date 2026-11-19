@@ -11921,3 +11921,65 @@ Focused Python passed 82 execution controls and nine ONNX controls.
 Freeze this exact graph and reference for the owned Windows CUDA T32
 scoring comparison. Wider scoring, timing and task qualification remain
 pending.
+
+### 2026-11-19 — Compact QKV T32 raw error improves and still exceeds the gate
+
+The first scored wrapper stopped at reference preflight before native
+load. Comparing JSON numeric representations refused the source input
+and original score receipt. The replacement check decodes the established
+typed input and compares binary32 score words, preserving signed zero.
+The focused literal regression distinguishes equal binary32 values
+from different JSON numbers and refuses a signed-zero change. The original
+preflight refusal is recorded in compact-fp16-qkv-fp32-native-t32-r1,
+execution 9db8fab83832b2a57caea45ab665333b875c66d0bf0d75f232e69d0f504bb04c.
+
+The corrected R2 launch used the exact Compact graph and independent
+CPU score proof. The A6000 ran one T32 forward and synchronized all
+eight scores within the original limits. The full typed profiler covered
+1,942 nodes, 374 bounded CPU controls and a 32 B maximum CPU tensor.
+The log attested all 28 named FP16 FlashAttention dispatches. Load took
+9.944354 s, the single native call ran for 0.319185 s, and the profiled
+model phase took 0.301877 s. These are T32 diagnostic timings.
+
+| Comparison | Maximum raw error | Mass error | Same winner |
+| --- | ---: | ---: | --- |
+| Independent matching recipe | 0.008541107177734375 | 0.00008143699270950384 | Yes |
+| Independent original FP32 | 0.008760690689086914 | 0.00006774523027230916 | Yes |
+
+The prior Compact matching raw error was 0.024855613708496094. The revised
+Q/K/V execution reduces it by about 66%. The original matching raw limit
+is 0.001 and both mass limits are 0.05. The raw comparison refused this
+candidate. The child exited 101 after the numeric assertion. The session,
+device, host reservation and owned Job settled naturally in 40.148683 s
+with zero remaining processes, no forced termination and 8,896,729,088 B
+peak Job commit. No performance, wider width or task qualification was
+claimed.
+
+Under compact-fp16-qkv-fp32-native-t32-r2:
+execution a479f953b5c13076d7c54388a89e257f6a18dc3cc5031a3bae9fa89e2b99e3ee,
+native 217431438d1bf79bbffa071c9d69d62f4dcb73c44cdee458c19cc50a544d774f,
+operations 310f40478662ab39848d5facdc1ba32eb4d42e3212dd177fc21ef5f2858b86c1,
+profile b4e9ce20f86824bff7b9794fc8273b0358dec8dffa88f66fd5501a993491970d,
+image c10dab311eb581b9bcf5572db05606997475eb20100bd0cf3c2c7fca47b2fe8b.
+The verified human user and default owner were SID ending 1002.
+
+The scored R2 batch used pinned Rust 1.98.0, Nextest 0.9.148, warm target/
+and incremental=1. In windows-cuda-g5-qkv-projection-score-checks-r1,
+Clippy passed in 3.626019 s
+(ed5a7b931182c3ed6f45c0798c76afc86344206422b2a078bc58e235f7f965ee).
+Nextest passed 57 with 475 filtered in 10.835780 s
+(9933d0833d579ed272aac6f6fcf486c176e3b443192036a6c239280c080f6117).
+The exact image build passed in 1.256004 s
+(3bb75b5f4a3c595c262660c2c695968ecd5eaf790fab78bbb359af717e2448fe).
+The Python launcher suite passed 82 and the isolated actual-receipt
+replay checked the specific graph and CPU proof plus the numeric limits.
+
+Next, isolate the pinned CUDA RMSNorm reduction and multiplication order
+and the QuickGelu sigmoid branches in an independent CPU diagnostic.
+Keep verified weights, stock FP32 Q/K/V, remaining half projections,
+single-tile Flash math and the accepted limits. Compare only after
+independent scores return. Formal task qualification separately needs
+a fresh admitted human-judged paired cohort. Historical FINAL, the
+retained training labels and the three-row FP32 timing population do
+not provide that evidence. Requested the location of an eligible cohort
+while continuing engineering.

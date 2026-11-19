@@ -104,13 +104,14 @@ pub(super) fn profiled_runs(
 pub(super) fn compact_fp16_t32_profiled_run(
     bytes: &[u8],
     graph: &[GraphMetadataRow],
+    expected_nodes: usize,
 ) -> Result<ProfiledRun> {
     let run = profiled_runs_for_scope(bytes, graph, &[32], CpuControlScope::CompactFp16)?
         .into_iter()
         .next()
         .context("Compact FP16 T32 profile run missing")?;
     ensure!(
-        run.node_count == 1746 && run.cpu_nodes == 374 && run.cpu_max_tensor_bytes <= 32,
+        run.node_count == expected_nodes && run.cpu_nodes == 374 && run.cpu_max_tensor_bytes <= 32,
         "Compact FP16 profile differs from the reviewed node and CPU tensor bounds"
     );
     Ok(run)

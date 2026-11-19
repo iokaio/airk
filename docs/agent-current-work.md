@@ -155,8 +155,13 @@ Use the existing deadline when resuming in a new context.
   this private probe. The corrected A6000 load passed with all 84
   FP32 projections, explicit CUDA weight casts and 374 bounded CPU
   shape controls. The distinct independent CPU reference completed
-  one full T32 forward. Run the owned A6000 T32 comparison against
-  this exact graph and reference before advancing to wider widths.
+  one full T32 forward. The owned A6000 score returned and synchronized
+  with all 28 FP16 FlashAttention layers. Matching raw error fell from
+  0.0248556137 to 0.0085411072. Both mass bounds and the winner checks
+  passed. Raw error still exceeds 0.001. Hold wider scoring and isolate
+  the remaining normalization and activation arithmetic differences
+  with an independent source-order CPU diagnostic.
+  [Scored Q/K/V result and blocker](simplify/one-process-ledger.md#2026-11-19--compact-qkv-t32-raw-error-improves-and-still-exceeds-the-gate)
   [Corrected CUDA observation and matching CPU reference](simplify/one-process-ledger.md#2026-11-19--corrected-compact-qkv-cuda-load-and-matching-cpu-reference-pass)
   Matching raw parity still gates wider Windows scoring.
   [Stock FP32 projection comparison](simplify/one-process-ledger.md#2026-11-19--stock-cuda-fp32-projection-is-a-compact-candidate)

@@ -472,3 +472,10 @@ cast-chain elimination and excludes the Level 4 FP16-initializer-to-FP32
 fusion. The parent verifies the complete final typed
 graph, including the 84 CUDA FP32 Q/K/V MatMuls and their half boundaries.
 The selectors retain zero forwards and emit an unqualified device profile.
+
+The separate T32 selector consumes the exact passing Q/K/V graph
+observation and matching CPU recipe. It compares one synchronized
+eight-score forward with the independent matching and original FP32
+vectors. It enforces the existing matching raw, both mass and matching
+winner criteria. The complete typed profiler must cover all reviewed
+1,942 nodes and the 374 bounded CPU controls.

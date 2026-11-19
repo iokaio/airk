@@ -369,3 +369,11 @@ Flash attention reference and retains all eight scores for the matching
 recipe and original FP32. The 32 GiB Job, original 600-second deadline and
 verified account and default file owner apply. No GPU output feeds the
 independent vector.
+
+The projection-t32 probe requires the exact corrected projection-graph
+receipt and the independently generated --projection-reference. Bind their
+SHA-256 pins alongside the existing stage and native metadata pins. The
+native and parent check the original source, exact frozen input and FP32
+score words, complete placement and typed profile, and synchronized return.
+The original 0.001 matching raw, both 0.05 mass bounds and matching winner
+must pass independently. Record actual metrics and settlement on refusal.

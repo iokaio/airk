@@ -35,3 +35,10 @@ lossy Cast-chain elimination for the disposable graph metadata observation.
 It also excludes FuseFp16InitializerToFp32NodeTransformer to retain explicit
 weight Casts. It returns no scorer. The caller binds the baseline, candidate, original half
 sidecar and final typed CUDA projection placements.
+
+The scored test-support path requires the exact passing private Q/K/V
+load receipt and the same optimizer settings used for its observation.
+It uses the bounded Compact CPU control policy and exact final graph row
+comparison before permitting the frozen T32 forward. Device provenance,
+attention proof, capacity and the original deadline apply at both entry
+points.

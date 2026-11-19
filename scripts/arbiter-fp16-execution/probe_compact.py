@@ -23,16 +23,23 @@ SELECTORS = {
     "graph": PREFIX + "cuda_compact_fp16_load_only_graph_diagnostic",
     "projection-metadata": PREFIX + "emit_cuda_compact_fp32_qkv_projection_probe_metadata",
     "projection-graph": PREFIX + "cuda_compact_fp32_qkv_projection_load_only_graph_diagnostic",
+    "projection-t32": PREFIX + "cuda_compact_fp32_qkv_projection_t32_component",
     "t32": PREFIX + "cuda_compact_fp16_t32_component",
     "bounded-t32": PREFIX + "cuda_compact_fp16_bounded_t32_component",
     "layer0-t32": PREFIX + "cuda_compact_fp16_layer0_taps",
     "layer0-projection-t32": PREFIX + "cuda_compact_fp16_layer0_projection_taps",
 }
-PROJECTION_MODES = ("projection-metadata", "projection-graph")
+PROJECTION_MODES = ("projection-metadata", "projection-graph", "projection-t32")
 METADATA_MODES = ("metadata", "projection-metadata")
 GRAPH_MODES = ("graph", "projection-graph")
 PROJECTION_METADATA_SCHEMA = "airk.private.compact-fp32-qkv-probe-metadata/1"
 PROJECTION_GRAPH_SCHEMA = "airk.private.compact-fp32-qkv-graph-diagnostic/1"
+PROJECTION_T32_SCHEMA = "airk.private.compact-fp32-qkv-t32-component/1"
+PROJECTION_REFERENCE_SCHEMA = "airk.private.compact-fp32-qkv-t32-reference/1"
+PROJECTION_REFERENCE_SHA = "304d9b16922ce88f9db181c1e1956d9c0aa99ab29c5ef4dff26f2c37f5b0fa28"
+PROJECTION_REVIEWED_RECEIPT_SHA = "9271976d11b3882f4636badb321cdd817e64c3ce87bfb8197c3c5b1bb67509d8"
+PROJECTION_REVIEWED_GRAPH_SHA = "42a273598b5c8678535691426ed725041a5d9565ff1fbaf535a43938894f07a4"
+PROJECTION_TOTAL_NODES = 1942
 PROJECTION_STAGE_SHA = "87ec206416eda607ff1585809d085e37fc4f8b99a5fc029308b5c78218cefcc2"
 PROJECTION_BASELINE_SHA = "971cf2d22d8bb7c874f3e5f5ce014bf2c494d1fb7245126d27d722223ac1577f"
 PROJECTION_GRAPH_SHA = "e621cf6bffad1f0a27e3cc1ecba5b4379949295498f6585963620d71cfe4ff14"
@@ -67,7 +74,7 @@ TAP_SCOPES = {
         b"airk.private.compact-fp16-cuda-layer0-projection-taps/1", LAYER0_PROJECTION_TAPS,
     ),
 }
-REVIEWED_MODES = ("bounded-t32", *TAP_SCOPES)
+REVIEWED_MODES = ("bounded-t32", "projection-t32", *TAP_SCOPES)
 SCORING_MODES = ("t32", *REVIEWED_MODES)
 REVIEWED_RECEIPT_SHA = "6d5e8434a350ef1a1f11decd9c6a38bf374fc11fedffb86878cc738806899d34"
 REVIEWED_GRAPH_SHA = "47a7cd6f9e0ddf50911cc7a745bcbec4ca2a963772aad5e2e6acc663e26ec104"
@@ -223,7 +230,7 @@ def linked_image(build, image, base, audit, mode):
     )
     if mode in REVIEWED_MODES:
         relevant += (BOUNDED_SOURCE, inference + "/cuda_qualification/hybrid_profile_trace.rs")
-    if mode in TAP_SCOPES or mode == "projection-graph":
+    if mode in TAP_SCOPES or mode in ("projection-graph", "projection-t32"):
         relevant += ("crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid/layer0.rs",)
     if mode in TAP_SCOPES:
         relevant += ("crates/airk-retrieval/src/arbiter/runtime/cuda/run.rs",)
@@ -265,6 +272,40 @@ def projection_stage(path, expected, base, audit):
 def validate_projection_baseline(stage, independent):
     require(independent["candidate"] == {"graph": stage["baseline_graph"], "weights": stage["baseline_weights"]},
             "Q/K/V projection stage does not bind the original independent baseline")
+
+
+def read_projection_reference(path, expected, projection, independent, base, audit):
+    require(path.is_absolute() and path.parent.parent == CAMPAIGN
+            and path.name == "compact-qkv-fp32-t32-reference.json"
+            and expected == PROJECTION_REFERENCE_SHA, "exact retained Compact Q/K/V CPU proof required")
+    audit([path])
+    pin = exact_pin(path, expected, base)
+    proof = base.read(pin["path"], 16 << 20)
+    stage_pin, stage = projection
+    require(proof["schema"] == PROJECTION_REFERENCE_SCHEMA and proof["model"] == MODEL
+            and proof["complete"] is proof["model_inference"] is True
+            and proof["native_execution"] is proof["qualification"] is proof["product_admission"] is False
+            and proof["reference_device"] == "cpu" and type(proof["torch_forward_invocations"]) is int
+            and proof["torch_forward_invocations"] == 1 and proof["stage_receipt"] == stage_pin
+            and proof["candidate"] == {"graph": stage["candidate_graph"], "weights": stage["candidate_weights"]}
+            and proof["baseline_candidate"] == independent["candidate"]
+            and proof["verification"]["projection_graph"] == stage["graph_proof"],
+            "independent Compact Q/K/V proof has different stage, assets or forward scope")
+    routes = [f"layers.{layer}.self_attn.{name}_proj.weight"
+              for layer in range(28) for name in ("q", "k", "v")]
+    require(proof["recipe"] == {"qkv_fp32_routes": routes, "context_flash_single_tile": True},
+            "independent Compact Q/K/V matching recipe differs")
+    reference = dict(proof["reference"])
+    matching = reference.pop("matching_qkv_fp32")
+    original = dict(independent["reference"])
+    original.pop("matching_fp16")
+    require(reference == original and reference["name"] == "diagnostic-all-live-32"
+            and reference["input"]["input_digest"] == T32_DIGEST
+            and all(isinstance(scores, list) and len(scores) == 8
+                    and all(finite(score, -math.inf, math.inf) for score in scores)
+                    for scores in (matching, reference["original_fp32"])),
+            "independent Compact Q/K/V reference input or finite vectors differ")
+    return pin
 
 
 def validate_projection_artifacts(pins, profile, projection, base):
@@ -506,11 +547,12 @@ def validate_projection_graph(graph):
             "activation_upcasts": len(input_casts), "output_downcasts": len(projections)}
 
 
-def reviewed_graph(receipt, request, evidence, metadata, manifest, parent, component, base, audit):
+def reviewed_graph(receipt, request, evidence, metadata, manifest, parent, component, base, audit, *, projection=None):
     historical = base.read(receipt["path"])
     owned = historical["owned"]
+    mode = "projection-graph" if projection is not None else "graph"
     require(historical["schema"] == "airk.private.owned-compact-fp16-probe/1"
-            and historical["mode"] == "graph" and historical["complete"] is True
+            and historical["mode"] == mode and historical["complete"] is True
             and historical["qualification"] is False and historical["failure"] is None
             and historical["whole_phase_expired"] is False and historical["wall_seconds"] == WALL
             and historical["execution_user_sid"] == base.SID and parent.settled(owned)
@@ -519,7 +561,8 @@ def reviewed_graph(receipt, request, evidence, metadata, manifest, parent, compo
             "reviewed owned graph does not bind this Probe, metadata, runtime and settled Job")
     source = historical["outputs"]["native"]
     operations = historical["outputs"]["operations"]
-    require(source["sha256"] == REVIEWED_GRAPH_SHA
+    expected = PROJECTION_REVIEWED_GRAPH_SHA if projection is not None else REVIEWED_GRAPH_SHA
+    require(source["sha256"] == expected
             and 0 < source["bytes"] <= component["DIAGNOSTIC_PROOFS"]["native_result"]
             and 0 < operations["bytes"] <= 128 << 10,
             "reviewed graph receipt does not authorize the exact native graph")
@@ -530,12 +573,20 @@ def reviewed_graph(receipt, request, evidence, metadata, manifest, parent, compo
     audit([Path(source["path"]), Path(operations["path"])])
     graph = base.read(base.pinned(source))
     events = read_operations(base.pinned(operations))
-    validate_native_identity(graph, GRAPH_SCHEMA, owned, request, evidence, metadata, manifest,
+    schema = PROJECTION_GRAPH_SCHEMA if projection is not None else GRAPH_SCHEMA
+    validate_native_identity(graph, schema, owned, request, evidence, metadata, manifest,
                              historical["image"], base)
     validate_graph(graph, events, component)
+    if projection is not None:
+        pin, stage = projection
+        typed = validate_projection_graph(graph["graph_observation"]["graph_metadata"])
+        require(graph.get("projection_stage") == historical.get("projection_stage") == core(pin)
+                and historical["projection_assets"] == {name: stage[name] for name in ("candidate_graph", "candidate_weights")}
+                and typed == historical["projection_graph"], "reviewed Q/K/V graph stage or typed summary differs")
     placement = graph["graph_observation"]["placement"]
     roster = placement_roster(placement)
-    require(len(roster) == BOUNDED_TOTAL_NODES and sum(row[-1] == CPU for row in roster) == BOUNDED_CPU_NODES
+    total = PROJECTION_TOTAL_NODES if projection is not None else BOUNDED_TOTAL_NODES
+    require(len(roster) == total and sum(row[-1] == CPU for row in roster) == BOUNDED_CPU_NODES
             and all(row[0] == 0 and row[-1] in (CPU, CUDA) for row in roster),
             "reviewed bounded graph root, node or provider census differs")
     return source, operations, placement
@@ -559,7 +610,7 @@ def bounded_policy_identity(graph_sha, profile_sha, source_sha, *, domain=BOUNDE
     return digest.hexdigest()
 
 
-def validate_bounded_t32(value, reviewed, placement, source, *, policy=BOUNDED_POLICY):
+def validate_bounded_t32(value, reviewed, placement, source, *, policy=BOUNDED_POLICY, total=BOUNDED_TOTAL_NODES):
     require(value["reviewed_graph"] == core(reviewed)
             and value["bounded_policy_identity"] == bounded_policy_identity(
                 reviewed["sha256"], value["profile"], source["sha256"], domain=policy),
@@ -567,7 +618,7 @@ def validate_bounded_t32(value, reviewed, placement, source, *, policy=BOUNDED_P
     require(placement_roster(value["final_placement"]) == placement_roster(placement),
             "bounded FP16 final placement differs from the complete reviewed graph")
     profiled = value["bounded_profile"]
-    expected = {"tokens": 32, "node_count": BOUNDED_TOTAL_NODES, "cpu_nodes": BOUNDED_CPU_NODES}
+    expected = {"tokens": 32, "node_count": total, "cpu_nodes": BOUNDED_CPU_NODES}
     bounds = {"model_run_us": (1, value["rows"][0]["native_call_elapsed_us"]),
               "cpu_input_bytes": (0, (1 << 64) - 1), "cpu_output_bytes": (0, (1 << 64) - 1),
               "cpu_max_tensor_bytes": (1, 32)}
@@ -625,13 +676,18 @@ def validate_t32_row(rows, mode):
 
 
 def validate_t32(value, paths, owned, request, evidence, metadata, manifest, image, component, base, *,
-                 mode="t32", reviewed=None, reviewed_placement=None, policy_source=None):
+                 mode="t32", reviewed=None, reviewed_placement=None, policy_source=None,
+                 projection=None, projection_reference=None):
     if mode in TAP_SCOPES:
         schema, policy, roster = TAP_SCOPES[mode]
     else:
-        schema = {"t32": T32_SCHEMA, "bounded-t32": BOUNDED_SCHEMA}[mode]
+        schema = {"t32": T32_SCHEMA, "bounded-t32": BOUNDED_SCHEMA, "projection-t32": PROJECTION_T32_SCHEMA}[mode]
         policy, roster = BOUNDED_POLICY, None
     validate_native_identity(value, schema, owned, request, evidence, metadata, manifest, image, base)
+    if mode == "projection-t32":
+        require(value.get("projection_stage") == core(projection[0])
+                and value.get("projection_reference") == core(projection_reference),
+                "native Q/K/V projection stage or independent CPU proof differs")
     require(value["native_forward_returned"] is value["forward_synchronized"] is True
             and value["numeric_forward_attempts"] == 1, "native T32 return and synchronization required")
     row = validate_t32_row(value["rows"], mode)
@@ -655,7 +711,8 @@ def validate_t32(value, paths, owned, request, evidence, metadata, manifest, ima
             and sum(len(node[key].encode("utf-8")) for node in placed for key in ("name", "domain", "op", "ep"))
                 == placement["reported_string_bytes"], "complete final placement required")
     if mode in REVIEWED_MODES:
-        validate_bounded_t32(value, reviewed, reviewed_placement, policy_source, policy=policy)
+        total = PROJECTION_TOTAL_NODES if mode == "projection-t32" else BOUNDED_TOTAL_NODES
+        validate_bounded_t32(value, reviewed, reviewed_placement, policy_source, policy=policy, total=total)
         if roster is not None:
             validate_layer0_evidence(value, component, roster)
     else:
@@ -731,19 +788,28 @@ def run(args):
             audit([Path(pin["path"])])
             dependencies[name] = retained_core(pin, base)
     inputs = [request, evidence, image, build, manifest, log, artifact, *sources.values(), *dependencies.values()]
+    projection_reference = None
     if projection is not None:
         stage_pin, stage = projection
         inputs.extend((stage_pin, stage["candidate_graph"], stage["candidate_weights"]))
-        if graph_mode:
+        if not metadata_mode:
             profile = base.read(dependencies["profile_pin"]["path"])
             validate_projection_artifacts(dependencies, profile, projection, base)
-            validate_projection_baseline(stage, base.read(dependencies["independent_proof"]["path"]))
+            independent = base.read(dependencies["independent_proof"]["path"])
+            validate_projection_baseline(stage, independent)
+            if args.mode == "projection-t32":
+                projection_reference = read_projection_reference(
+                    args.projection_reference, args.projection_reference_sha256, projection, independent, base, audit,
+                )
+                inputs.append(projection_reference)
     graph_receipt = graph = graph_operations = reviewed_placement = None
     if args.mode in REVIEWED_MODES:
         audit([args.graph_receipt])
-        graph_receipt = exact_pin(args.graph_receipt, REVIEWED_RECEIPT_SHA, base)
+        expected = PROJECTION_REVIEWED_RECEIPT_SHA if projection is not None else REVIEWED_RECEIPT_SHA
+        graph_receipt = exact_pin(args.graph_receipt, expected, base)
         graph, graph_operations, reviewed_placement = reviewed_graph(
             graph_receipt, request, evidence, evidence_value, manifest, parent, component, base, audit,
+            projection=projection,
         )
         inputs.extend((graph_receipt, graph, graph_operations))
     command = [image["path"], "--ignored", "--exact", SELECTORS[args.mode], "--nocapture", "--test-threads=1"]
@@ -761,6 +827,8 @@ def run(args):
     if projection is not None:
         receipt["projection_stage"] = core(stage_pin)
         receipt["projection_assets"] = {name: stage[name] for name in ("candidate_graph", "candidate_weights")}
+    if projection_reference is not None:
+        receipt["projection_reference"] = core(projection_reference)
     component["mkdir"](guard, out, deadline=expires)
     temp = out / "temp"
     metadata = out / "metadata"
@@ -787,6 +855,9 @@ def run(args):
         if projection is not None:
             env.update(AIRK_CUDA_FP16_PROJECTION_STAGE=stage_pin["path"],
                        AIRK_CUDA_FP16_PROJECTION_STAGE_SHA256=stage_pin["sha256"])
+        if projection_reference is not None:
+            env.update(AIRK_CUDA_FP16_PROJECTION_REFERENCE=projection_reference["path"],
+                       AIRK_CUDA_FP16_PROJECTION_REFERENCE_SHA256=projection_reference["sha256"])
         if metadata_mode:
             env.update(AIRK_CUDA_FP16_INDEPENDENT_PROOF=evidence["path"],
                        AIRK_CUDA_FP16_INDEPENDENT_PROOF_SHA256=evidence["sha256"],
@@ -856,7 +927,8 @@ def run(args):
             receipt["flash_attention_records"] = validate_t32(
                 value, paths, receipt["owned"], request, evidence, evidence_value, manifest, image, component, base,
                 mode=args.mode, reviewed=graph, reviewed_placement=reviewed_placement,
-                policy_source=sources.get(BOUNDED_SOURCE),
+                policy_source=sources.get(BOUNDED_SOURCE), projection=projection,
+                projection_reference=projection_reference,
             )
         for pin in inputs:
             base.pinned(pin)
@@ -886,7 +958,8 @@ def run(args):
                 for path in retained:
                     if path.is_file():
                         limit = (component["DIAGNOSTIC_PROOFS"]["native_result"]
-                                 if args.mode in (*GRAPH_MODES, *TAP_SCOPES) and path == paths["native"] else LOG_CAP)
+                                 if args.mode in (*GRAPH_MODES, *TAP_SCOPES, "projection-t32")
+                                 and path == paths["native"] else LOG_CAP)
                         size = path.stat().st_size
                         pin = (base.pin(path) if size <= limit else
                                {"path": str(path), "bytes": size, "digest_refused_beyond_bound": True})
@@ -908,14 +981,22 @@ def main():
     parser.add_argument("--graph-receipt-sha256")
     parser.add_argument("--projection-stage", type=Path)
     parser.add_argument("--projection-stage-sha256")
+    parser.add_argument("--projection-reference", type=Path)
+    parser.add_argument("--projection-reference-sha256")
     args = parser.parse_args()
     if args.mode in PROJECTION_MODES:
         if args.projection_stage is None or args.projection_stage_sha256 != PROJECTION_STAGE_SHA:
             parser.error(f"{args.mode} requires --projection-stage and the exact reviewed --projection-stage-sha256")
     elif args.projection_stage is not None or args.projection_stage_sha256 is not None:
         parser.error("--projection-stage and --projection-stage-sha256 require a Q/K/V projection mode")
+    if args.mode == "projection-t32":
+        if args.projection_reference is None or args.projection_reference_sha256 != PROJECTION_REFERENCE_SHA:
+            parser.error("projection-t32 requires --projection-reference and the exact --projection-reference-sha256")
+    elif args.projection_reference is not None or args.projection_reference_sha256 is not None:
+        parser.error("--projection-reference and --projection-reference-sha256 require projection-t32")
     if args.mode in REVIEWED_MODES:
-        if args.graph_receipt is None or args.graph_receipt_sha256 != REVIEWED_RECEIPT_SHA:
+        expected = PROJECTION_REVIEWED_RECEIPT_SHA if args.mode == "projection-t32" else REVIEWED_RECEIPT_SHA
+        if args.graph_receipt is None or args.graph_receipt_sha256 != expected:
             parser.error(f"{args.mode} requires --graph-receipt and the exact reviewed --graph-receipt-sha256")
     elif args.graph_receipt is not None or args.graph_receipt_sha256 is not None:
         parser.error("--graph-receipt and --graph-receipt-sha256 require a reviewed graph mode")

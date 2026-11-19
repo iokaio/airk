@@ -1655,8 +1655,13 @@ of ordinary constant folding. Exclude that optimizer from the private
 session. The corrected native observation retained all 84 CUDA FP32
 Q/K/V matmuls and each weight upcast and result downcast. The independent
 matching CPU recipe completed one T32 run on the exact frozen input.
-Compare the full A6000 score vector against it under the original
-numerical gate before scheduling wider scoring or performance runs.
+The A6000 returned and synchronized the complete T32 vector. Matching
+raw error fell from 0.0248556137 to 0.0085411072 against the 0.001 limit.
+Both mass bounds and the winner checks passed. The remaining engineering
+gate is numerical parity. Isolate normalization and activation arithmetic
+before another full comparison. Wider widths, Resource20 and the fresh
+judged task cohort remain pending.
+[Scored Q/K/V result and blocker](../simplify/one-process-ledger.md#2026-11-19--compact-qkv-t32-raw-error-improves-and-still-exceeds-the-gate)
 [Corrected CUDA observation and matching CPU reference](../simplify/one-process-ledger.md#2026-11-19--corrected-compact-qkv-cuda-load-and-matching-cpu-reference-pass)
 [Projection candidate staging and first CUDA observation](../simplify/one-process-ledger.md#2026-11-19--compact-fp32-qkv-graph-is-staged-and-the-first-native-load-finds-initializer-expansion)
 [Stock FP32 projection comparison](../simplify/one-process-ledger.md#2026-11-19--stock-cuda-fp32-projection-is-a-compact-candidate)
